@@ -33,7 +33,7 @@ func TestRegisterUser_SendsFullNameForTheProfileTrigger(t *testing.T) {
 	defer srv.Close()
 
 	svc := NewAuthService(integrations.NewSupabaseRestClient(srv.URL, "k"), nil, config.Config{})
-	err := svc.RegisterUser(domain.RegisterRequest{
+	_, err := svc.RegisterUser(domain.RegisterRequest{
 		FirstName: "Ada", LastName: "Obi", Email: "ada@example.test",
 		Password: "Str0ngPass!23", ConfirmPassword: "Str0ngPass!23", UserType: "user",
 	})
@@ -53,7 +53,7 @@ func TestRegisterUser_SendsFullNameForTheProfileTrigger(t *testing.T) {
 
 func TestRegisterUser_RejectsMismatchedConfirmation(t *testing.T) {
 	svc := NewAuthService(integrations.NewSupabaseRestClient("http://unused", "k"), nil, config.Config{})
-	err := svc.RegisterUser(domain.RegisterRequest{
+	_, err := svc.RegisterUser(domain.RegisterRequest{
 		Email: "a@b.test", Password: "Str0ngPass!23", ConfirmPassword: "different",
 	})
 	if err == nil {
@@ -76,11 +76,74 @@ func TestRegisterUser_SucceedsEvenIfTheProfileWriteFails(t *testing.T) {
 	defer srv.Close()
 
 	svc := NewAuthService(integrations.NewSupabaseRestClient(srv.URL, "k"), nil, config.Config{})
-	if err := svc.RegisterUser(domain.RegisterRequest{
+	if _, err := svc.RegisterUser(domain.RegisterRequest{
 		FirstName: "Ada", LastName: "Obi", Email: "ada@example.test", Phone: "08031234567",
 		Password: "Str0ngPass!23", ConfirmPassword: "Str0ngPass!23", UserType: "user",
 	}); err != nil {
 		t.Errorf("registration reported failure for an account that WAS created: %v", err)
+	}
+}
+
+// The contract had firstName+lastName+confirmPassword+userType ALL required,
+// while its only caller posts {fullName, email, phone, password} — so every
+// registration through it returned 400. Both shapes must now work.
+func TestRegisterUser_AcceptsTheFullNameShapeItsCallerActuallySends(t *testing.T) {
+	var captured map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/auth/v1/signup") {
+			body, _ := io.ReadAll(r.Body)
+			_ = json.Unmarshal(body, &captured)
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"id":"user-9","email":"ada@example.test"}`))
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`[]`))
+	}))
+	defer srv.Close()
+
+	svc := NewAuthService(integrations.NewSupabaseRestClient(srv.URL, "k"), nil, config.Config{})
+	res, err := svc.RegisterUser(domain.RegisterRequest{
+		// No firstName/lastName, no confirmPassword, no userType.
+		FullName: "Ada Obi", Email: "ada@example.test", Password: "Str0ngPass!23",
+	})
+	if err != nil {
+		t.Fatalf("the shape its only caller sends must be accepted: %v", err)
+	}
+	data, _ := captured["data"].(map[string]any)
+	if data["full_name"] != "Ada Obi" {
+		t.Errorf("full_name = %v, want \"Ada Obi\"", data["full_name"])
+	}
+	if data["user_type"] != "user" {
+		t.Errorf("user_type = %v, want the \"user\" default", data["user_type"])
+	}
+	if res.UserID != "user-9" {
+		t.Errorf("UserID = %q — the response body was discarded, which is why no caller could get a session", res.UserID)
+	}
+	if !res.NeedsVerification() {
+		t.Error("no access token came back, so this account MUST be treated as unverified")
+	}
+}
+
+func TestRegisterResult_ReportsAVerifiedSessionWhenConfirmationIsOff(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"access_token":"at","refresh_token":"rt","user":{"id":"u-5","email":"a@b.test"}}`))
+	}))
+	defer srv.Close()
+
+	svc := NewAuthService(integrations.NewSupabaseRestClient(srv.URL, "k"), nil, config.Config{})
+	res, err := svc.RegisterUser(domain.RegisterRequest{
+		FullName: "A B", Email: "a@b.test", Password: "Str0ngPass!23",
+	})
+	if err != nil {
+		t.Fatalf("RegisterUser: %v", err)
+	}
+	if res.NeedsVerification() {
+		t.Error("a session came back, so the account is usable immediately")
+	}
+	if res.UserID != "u-5" || res.AccessToken != "at" || res.RefreshToken != "rt" {
+		t.Errorf("session not surfaced: %+v", res)
 	}
 }
 

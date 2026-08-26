@@ -85,7 +85,13 @@ until changed in the dashboard (Authentication → Email Templates → Confirm s
 
 ---
 
-## Divergence — three registrations, two paradigms
+## Divergence — three registrations, two paradigms  ✅ RESOLVED
+
+> **RESOLVED.** Go now owns registration; the web route proxies to it and the
+> mobile app calls that gateway, exactly as sign-in does. Getting there required
+> fixing Go's contract first: its bindings required firstName+lastName+
+> confirmPassword+userType while its only caller posts {fullName, email, phone,
+> password}, so **registration through it returned 400 every time**.
 
 Sign-IN was deliberately consolidated onto Go. `app/api/auth/login/route.ts`
 carries an explicit comment: having a second implementation meant phone-vs-email

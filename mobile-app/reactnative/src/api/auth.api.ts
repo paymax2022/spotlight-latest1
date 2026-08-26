@@ -132,38 +132,65 @@ export async function login(payload: { identifier: string; password: string }): 
   return mapSession(data.session, data.user);
 }
 
+/**
+ * Registration goes through the gateway, exactly as login does.
+ *
+ * This used to call supabase.auth.signUp straight from the CLIENT, which made it
+ * a third registration implementation alongside the web route and Go. Only the
+ * web one attributed referrals and only Go wrote an audit event, so what a new
+ * account ended up with depended on where it was created.
+ *
+ * Go now owns registration: it sets the metadata the profile trigger reads,
+ * writes the phone the trigger does not copy, attributes the referral, and
+ * records the audit event.
+ */
 export async function register(payload: {
   fullName: string;
   email: string;
   phone: string;
   password: string;
+  referralCode?: string;
 }): Promise<AuthResult> {
-  const supabase = createSupabaseClient();
   const email = payload.email.trim().toLowerCase();
-  const { data, error } = await supabase.auth.signUp({
+  const res = await api.post('/api/auth/register', {
+    fullName: payload.fullName.trim(),
     email,
+    phone: payload.phone.trim(),
     password: payload.password,
-    options: {
-      data: {
-        full_name: payload.fullName.trim(),
-        fullName: payload.fullName.trim(),
-        phone: payload.phone.trim(),
-      },
-    },
+    referralCode: payload.referralCode ?? '',
   });
 
-  if (error) throw readableAuthError(error, 'Sign up failed. Please try again.');
+  const data = res?.data as {
+    user?: { id?: string; email?: string; fullName?: string };
+    tokens?: { accessToken?: string; refreshToken?: string };
+    needsVerification?: boolean;
+  };
 
-  if (data.user) {
-    await supabase.from('user_profiles').upsert({
-      id: data.user.id,
-      email,
-      full_name: payload.fullName.trim(),
-      phone: payload.phone.trim(),
-    });
+  const accessToken = data?.tokens?.accessToken ?? '';
+  const refreshToken = data?.tokens?.refreshToken ?? '';
+
+  // No session means a code is pending. Return a result whose accessToken is
+  // empty, because authStore derives needsOtp from exactly that.
+  if (!accessToken || !refreshToken) {
+    return {
+      user: {
+        id: data?.user?.id ?? '',
+        email: data?.user?.email ?? email,
+        fullName: data?.user?.fullName ?? payload.fullName.trim(),
+      } as AuthResult['user'],
+      tokens: { accessToken: '', refreshToken: undefined },
+    };
   }
 
-  return mapSession(data.session, data.user);
+  // Adopt the session so the rest of the app — which reads it for its bearer
+  // token — is unaffected by where registration happened. Same as login.
+  const supabase = createSupabaseClient();
+  const { data: adopted, error } = await supabase.auth.setSession({
+    access_token: accessToken,
+    refresh_token: refreshToken,
+  });
+  if (error) throw readableAuthError(error, 'Sign up failed. Please try again.');
+  return mapSession(adopted.session, adopted.user);
 }
 
 export async function verifyOtp(payload: { email: string; otp: string }): Promise<void> {

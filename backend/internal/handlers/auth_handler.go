@@ -1,9 +1,10 @@
 package handlers
 
 import (
-	"log"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"log"
 	"net/http"
 	"strings"
 
@@ -14,9 +15,10 @@ import (
 )
 
 type AuthHandler struct {
-	auth  services.AuthService
-	rbac  services.RBACService
-	audit services.AuditService
+	attributeReferral ReferralAttributor
+	auth              services.AuthService
+	rbac              services.RBACService
+	audit             services.AuditService
 
 	// Optional session-hardening collaborators (#19). Nil unless wired and the
 	// feature flag is on; Login degrades gracefully when absent.
@@ -26,6 +28,18 @@ type AuthHandler struct {
 
 func NewAuthHandler(auth services.AuthService, rbac services.RBACService, audit services.AuditService) *AuthHandler {
 	return &AuthHandler{auth: auth, rbac: rbac, audit: audit}
+}
+
+// ReferralAttributor attributes a freshly-created account to a referrer (or to
+// the house). Injected as a function because the referral service needs the pgx
+// pool, which is built AFTER this handler — the same reason WithSessions exists.
+type ReferralAttributor func(ctx context.Context, userID, referralCode string) error
+
+// WithReferralAttribution wires signup attribution. Without it registration still
+// works and simply does not attribute, which is how it behaved before.
+func (h *AuthHandler) WithReferralAttribution(fn ReferralAttributor) *AuthHandler {
+	h.attributeReferral = fn
+	return h
 }
 
 // WithSessions enables session issuance + suspicious-login evaluation on Login.
@@ -73,13 +87,49 @@ func (h *AuthHandler) Register(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": "invalid payload"})
 		return
 	}
-	if err := h.auth.RegisterUser(in); err != nil {
+	res, err := h.auth.RegisterUser(in)
+	if err != nil {
 		h.audit.LogAction("", "", "register.failed", "auth", "user", "", nil, map[string]any{"email": in.Email}, c.ClientIP(), c.Request.UserAgent(), "medium")
-		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": err.Error()})
+		// Deliberately generic: echoing "already registered" would let anyone test
+		// which addresses have accounts.
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": "Registration failed. Please check your details and try again."})
 		return
 	}
-	h.audit.LogAction("", "", "register.success", "auth", "user", "", nil, map[string]any{"email": in.Email, "userType": in.UserType}, c.ClientIP(), c.Request.UserAgent(), "info")
-	c.JSON(http.StatusCreated, gin.H{"success": true, "message": "Registration successful. Enter the code we emailed you to verify your account."})
+
+	// Attribution never blocks signup: the account exists, and a referral credit is
+	// not worth failing a registration over. Idempotent on referred_user_id, so a
+	// retry is safe.
+	if h.attributeReferral != nil && res.UserID != "" {
+		if err := h.attributeReferral(c.Request.Context(), res.UserID, in.ReferralCode); err != nil {
+			log.Printf("[auth] register: referral attribution failed for %s: %v", res.UserID, err)
+		}
+	}
+
+	h.audit.LogAction(res.UserID, res.UserID, "register.success", "auth", "user", res.UserID, nil,
+		map[string]any{"email": in.Email, "userType": in.UserTypeOrDefault()}, c.ClientIP(), c.Request.UserAgent(), "info")
+
+	needsVerification := res.NeedsVerification()
+	message := "Registration successful. Enter the code we emailed you to verify your account."
+	if !needsVerification {
+		message = "Registration successful."
+	}
+
+	// The session is carried in THREE shapes on purpose, exactly as Login does:
+	// each existing client reads it differently and none should have to change.
+	//   session.access_token  — the prod mobile app
+	//   tokens.accessToken    — the web gateway's historic shape
+	//   access_token          — apps/mobile-starter, which reads it alongside user
+	body := gin.H{
+		"success":           true,
+		"message":           message,
+		"needsVerification": needsVerification,
+		"user":              gin.H{"id": res.UserID, "email": res.Email, "fullName": in.FullNameOrJoin()},
+		"session":           gin.H{"access_token": res.AccessToken, "refresh_token": res.RefreshToken},
+		"tokens":            gin.H{"accessToken": res.AccessToken, "refreshToken": res.RefreshToken},
+		"access_token":      res.AccessToken,
+		"refresh_token":     res.RefreshToken,
+	}
+	c.JSON(http.StatusCreated, body)
 }
 
 func (h *AuthHandler) Login(c *gin.Context) {

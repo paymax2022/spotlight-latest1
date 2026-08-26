@@ -18,7 +18,7 @@ import (
 )
 
 type AuthService interface {
-	RegisterUser(in domain.RegisterRequest) error
+	RegisterUser(in domain.RegisterRequest) (*RegisterResult, error)
 	LoginUser(in domain.LoginRequest) (map[string]any, error)
 	RequestPasswordReset(email string) error
 	ResetPassword(token, password string) error
@@ -36,40 +36,67 @@ func NewAuthService(supabase *integrations.SupabaseRestClient, rbac RBACService,
 	return &authService{supabase: supabase, rbac: rbac, cfg: cfg}
 }
 
-// extractSignupUserID pulls the new user's id out of a Supabase signup response.
-//
-// The shape depends on whether email confirmation is required: with it OFF the
-// body is {access_token, user:{id}}, with it ON there is no session and the user
-// object IS the body, {id, email, confirmation_sent_at}. Both clouds require
-// confirmation and local now does too, but handling only one shape would break
-// silently the moment that setting differs between environments.
-func extractSignupUserID(body []byte) string {
-	var parsed struct {
-		ID   string `json:"id"`
-		User struct {
-			ID string `json:"id"`
-		} `json:"user"`
-	}
-	if err := json.Unmarshal(body, &parsed); err != nil {
-		return ""
-	}
-	if strings.TrimSpace(parsed.User.ID) != "" {
-		return parsed.User.ID
-	}
-	return strings.TrimSpace(parsed.ID)
+// RegisterResult is what registration produces, rather than the bare error the
+// caller used to get. Discarding the response body meant this endpoint could
+// never return a user or a session, which is why the web and mobile apps each
+// grew their own signUp call instead of using it.
+type RegisterResult struct {
+	UserID string
+	Email  string
+	// Session is nil when email confirmation is required — which both cloud
+	// projects require — and the caller must then send the user to enter a code.
+	AccessToken  string
+	RefreshToken string
 }
 
-func (s *authService) RegisterUser(in domain.RegisterRequest) error {
-	if in.Password != in.ConfirmPassword {
-		return fmt.Errorf("password confirmation mismatch")
+// NeedsVerification reports whether the account still has to confirm an emailed
+// code before it can be used.
+func (r *RegisterResult) NeedsVerification() bool {
+	return r == nil || strings.TrimSpace(r.AccessToken) == ""
+}
+
+// signupResponse covers BOTH Supabase signup shapes: with confirmation OFF the
+// body is {access_token, user:{id}}; with it ON there is no session and the user
+// object IS the body, {id, email}. Handling one shape would break silently the
+// moment an environment differed — which is precisely what audit item B3 was.
+type signupResponse struct {
+	ID           string `json:"id"`
+	Email        string `json:"email"`
+	AccessToken  string `json:"access_token"`
+	RefreshToken string `json:"refresh_token"`
+	User         struct {
+		ID    string `json:"id"`
+		Email string `json:"email"`
+	} `json:"user"`
+}
+
+func parseSignupResponse(body []byte) *RegisterResult {
+	var p signupResponse
+	if err := json.Unmarshal(body, &p); err != nil {
+		return &RegisterResult{}
+	}
+	out := &RegisterResult{AccessToken: p.AccessToken, RefreshToken: p.RefreshToken}
+	if strings.TrimSpace(p.User.ID) != "" {
+		out.UserID, out.Email = p.User.ID, p.User.Email
+	} else {
+		out.UserID, out.Email = strings.TrimSpace(p.ID), p.Email
+	}
+	return out
+}
+
+// extractSignupUserID is retained for callers that only need the id.
+func extractSignupUserID(body []byte) string { return parseSignupResponse(body).UserID }
+
+func (s *authService) RegisterUser(in domain.RegisterRequest) (*RegisterResult, error) {
+	// Only when the client actually sent it — see domain.RegisterRequest.
+	if strings.TrimSpace(in.ConfirmPassword) != "" && in.Password != in.ConfirmPassword {
+		return nil, fmt.Errorf("password confirmation mismatch")
 	}
 
 	// full_name is what the on_auth_user_created trigger (handle_new_user) copies
-	// into user_profiles: COALESCE(raw_user_meta_data->>'full_name', ''). This path
-	// sent only first_name/last_name, so every account registered through it got a
-	// profile with an EMPTY name — verified against the live database. first_name
-	// and last_name stay for callers that read them.
-	fullName := strings.TrimSpace(strings.TrimSpace(in.FirstName) + " " + strings.TrimSpace(in.LastName))
+	// into user_profiles: COALESCE(raw_user_meta_data->>'full_name', ''). Sending
+	// only first_name/last_name gave every account an EMPTY profile name.
+	fullName := in.FullNameOrJoin()
 
 	payload := map[string]any{
 		"email":    strings.TrimSpace(strings.ToLower(in.Email)),
@@ -78,44 +105,43 @@ func (s *authService) RegisterUser(in domain.RegisterRequest) error {
 			"full_name":  fullName,
 			"first_name": in.FirstName,
 			"last_name":  in.LastName,
-			"user_type":  in.UserType,
+			"user_type":  in.UserTypeOrDefault(),
 			"phone":      in.Phone,
 		},
 	}
 	b, _ := json.Marshal(payload)
 	req, err := http.NewRequest(http.MethodPost, strings.TrimRight(s.supabase.BaseURL(), "/")+"/auth/v1/signup", bytes.NewReader(b))
 	if err != nil {
-		return err
+		return nil, err
 	}
 	req.Header.Set("apikey", s.supabase.APIKey())
 	req.Header.Set("Authorization", "Bearer "+s.supabase.APIKey())
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer resp.Body.Close()
 	respBody, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode >= 400 {
-		// The status is deliberately not echoed to the caller by the handler: a
-		// distinguishable "already registered" would be an enumeration oracle.
-		return fmt.Errorf("registration failed: %d", resp.StatusCode)
+		// The handler does not echo this: a distinguishable "already registered"
+		// would be an account-enumeration oracle.
+		return nil, fmt.Errorf("registration failed: %d", resp.StatusCode)
 	}
 
-	// The trigger does not copy phone, so it needs an explicit write — the web and
-	// mobile paths both do the same upsert. Best-effort: the ACCOUNT EXISTS at this
-	// point, and failing the request here would invite the user to register again
-	// and hit "already registered" on an account that is genuinely theirs.
-	if phone := strings.TrimSpace(in.Phone); phone != "" {
-		if userID := extractSignupUserID(respBody); userID != "" {
-			if err := s.supabase.REST(http.MethodPatch, "user_profiles",
-				map[string]string{"id": "eq." + userID},
-				map[string]any{"phone": phone}, nil); err != nil {
-				log.Printf("[auth] register: profile phone update failed for %s: %v", userID, err)
-			}
+	result := parseSignupResponse(respBody)
+
+	// The trigger does not copy phone, so it needs an explicit write. Best-effort:
+	// the ACCOUNT EXISTS by now, and failing here would send the user back to
+	// register and meet "already registered" on an account that is genuinely theirs.
+	if phone := strings.TrimSpace(in.Phone); phone != "" && result.UserID != "" {
+		if err := s.supabase.REST(http.MethodPatch, "user_profiles",
+			map[string]string{"id": "eq." + result.UserID},
+			map[string]any{"phone": phone}, nil); err != nil {
+			log.Printf("[auth] register: profile phone update failed for %s: %v", result.UserID, err)
 		}
 	}
-	return nil
+	return result, nil
 }
 
 // resolveLoginEmail turns a client-supplied identifier into the account email.
