@@ -72,3 +72,25 @@ test('no voting screen gates a purchase on contest.paidVotingEnabled directly', 
 
   assert.deepEqual(offenders, [], `gate the purchase on getPaidVotingAvailability instead:\n${offenders.join('\n')}`);
 });
+
+// ---------------------------------------------------------------------------
+// Dead-endpoint guard.
+//
+// /api/votes/paid/wallet debits the wallet atomically, prices the package
+// server-side, records the transaction and credits the votes. The client never
+// called it: paymentMethod was dropped, so "Pay with Wallet" opened a Paystack
+// charge instead and sent the voter to wait for a payment nobody asked them to
+// make. A correct, complete money-path endpoint was dead code.
+
+test('the wallet rail calls the wallet endpoint, not the Paystack one', () => {
+  const src = readFileSync(join(process.cwd(), 'src/features/voting/api/voting.api.ts'), 'utf8');
+
+  assert.ok(
+    src.includes("'/api/votes/paid/wallet'"),
+    'wallet vote purchases must POST /api/votes/paid/wallet — it debits the wallet; /paid/initiate opens a card charge',
+  );
+  assert.ok(
+    /paymentMethod === 'WALLET'/.test(src),
+    'the wallet rail must be selected by paymentMethod, not ignored',
+  );
+});

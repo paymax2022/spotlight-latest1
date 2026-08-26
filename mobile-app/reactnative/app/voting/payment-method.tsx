@@ -45,6 +45,17 @@ export default function PaymentMethodScreen() {
   const votingClosed = !votingWindow.open || paidVoting.available === false;
 
   const goToProcessing = (result: VotePaidInitiateResult) => {
+    // The wallet rail debits and credits the votes in the same call, so there is
+    // nothing left to verify. Sending it to payment-processing would poll a
+    // Paystack reference that does not exist and strand a completed purchase on
+    // a spinner.
+    if (result.status === 'SUCCESSFUL') {
+      const credited = result.votesToCredit ?? totalVotes;
+      router.replace(
+        `/voting/vote-success?contestantId=${contestantId}&contestId=${contestId}&votes=${credited}&voteType=PAID`,
+      );
+      return;
+    }
     const params = `transactionId=${encodeURIComponent(result.transactionId)}&reference=${encodeURIComponent(result.reference)}&contestantId=${contestantId}&contestId=${contestId}&votes=${votes}`;
     router.push(`/voting/payment-processing?${params}`);
   };

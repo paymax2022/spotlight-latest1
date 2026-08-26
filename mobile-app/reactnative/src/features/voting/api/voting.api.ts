@@ -404,6 +404,39 @@ export async function initiatePaidVote(payload: VotePaidInitiatePayload): Promis
       status: 'PROCESSING',
     };
   }
+  // The wallet rail has its OWN endpoint, and this used to ignore it: the
+  // paymentMethod was dropped here, so "Pay with Wallet" opened a Paystack
+  // transaction instead of debiting the wallet, then sent the voter to a
+  // processing screen to wait for a payment they were never asked to make.
+  //
+  // /paid/wallet debits atomically, prices the package server-side, records the
+  // transaction and credits the votes in one call — so it comes back already
+  // SUCCESSFUL, with nothing to verify.
+  if (payload.paymentMethod === 'WALLET') {
+    if (!payload.packageId) {
+      throw new Error('Select a vote package to pay from your wallet.');
+    }
+    const walletRes = await api.post(
+      '/api/votes/paid/wallet',
+      {
+        contestId:    payload.contestId,
+        contestantId: payload.contestantId,
+        packageId:    payload.packageId,
+        voterEmail:   payload.voterEmail,
+        voterName:    payload.voterName,
+      },
+      { headers: { 'Idempotency-Key': payload.idempotencyKey } },
+    );
+    const w = (walletRes.data?.data ?? walletRes.data) as Record<string, unknown>;
+    return {
+      transactionId:  String(w.transactionId ?? ''),
+      reference:      String(w.paymentReference ?? ''),
+      votesToCredit:  w.votesCredited != null ? Number(w.votesCredited) : payload.votes,
+      amountExpected: w.amountKobo != null ? Number(w.amountKobo) : payload.amount,
+      status:         'SUCCESSFUL',
+    };
+  }
+
   // Backend: POST /api/votes/paid/initiate (no /voting prefix, no /v2).
   // Requires voterEmail + voterName; vote count goes in `customVoteQuantity`
   // unless a preset `packageId` is supplied.
