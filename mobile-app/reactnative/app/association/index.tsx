@@ -11,6 +11,7 @@ import { Radius } from '@/constants/radius';
 import SearchBar from '@/components/SearchBar';
 import SectionHeader from '@/components/SectionHeader';
 import StateView from '@/components/StateView';
+import PromoBanner from '@/components/PromoBanner';
 import OrganisationCard from '@/features/association/components/OrganisationCard';
 import { useOrganisations } from '@/features/association/hooks/useAssociation';
 
@@ -72,6 +73,16 @@ export default function AssociationDiscovery() {
           ListHeaderComponent={
             <>
               {!search ? (
+                <View style={styles.bannerBleed}>
+                  <PromoBanner
+                    title="Run your association online"
+                    subtitle="Dues, elections, events and digital member IDs — all in one place."
+                    cta="Create an organisation"
+                    onPress={() => router.push('/association/create')}
+                  />
+                </View>
+              ) : null}
+              {!search ? (
                 <View style={styles.codeRow}>
                   <CodeChip icon={<Ticket size={18} color={Colors.primary} strokeWidth={2} />} label="Invite code" onPress={() => router.push('/association/join/invite')} />
                   <CodeChip icon={<KeyRound size={18} color={Colors.primary} strokeWidth={2} />} label="Access code" onPress={() => router.push('/association/join/access-code')} />
@@ -106,6 +117,7 @@ function CodeChip({ icon, label, onPress }: { icon: React.ReactNode; label: stri
 
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: Colors.background },
+  bannerBleed: { marginHorizontal: -Spacing.containerMargin },
   codeRow: { flexDirection: 'row', gap: Spacing.sm, marginBottom: Spacing.md },
   codeChip: { flex: 1, alignItems: 'center', gap: 6, backgroundColor: Colors.surfaceContainerLowest, borderRadius: Radius.lg, borderWidth: 1, borderColor: Colors.outlineVariant, paddingVertical: Spacing.md },
   codeIcon: { width: 40, height: 40, borderRadius: Radius.md, backgroundColor: Colors.iconBgPurple, alignItems: 'center', justifyContent: 'center' },
