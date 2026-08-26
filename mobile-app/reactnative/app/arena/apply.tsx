@@ -18,6 +18,8 @@ import {
   arenaApplicationDraft, patchApplicationDraft, ensureApplicationDraft, resetApplicationDraft, stubCaptureBase64,
 } from '@/features/arena/draft';
 import { NIGERIA_STATES } from '@/features/arena/constants';
+import { useAccountIdentity } from '@/features/account/identity';
+import AccountDetailsCard from '@/features/account/AccountDetailsCard';
 
 const VEHICLE_TYPES = ['Car / Saloon', 'Bus / Minibus', 'Truck / Lorry', 'Tricycle (Keke)', 'Motorcycle (Okada)'];
 
@@ -26,6 +28,10 @@ const VEHICLE_TYPES = ['Car / Saloon', 'Bus / Minibus', 'Truck / Lorry', 'Tricyc
  * so a KYC step-up or backgrounding doesn't lose progress). Home-state selector
  * covers 36 states + FCT. License upload is a stubbed sandbox capture. Only asks
  * for what's needed to apply.
+ *
+ * Name and phone come from the ACCOUNT — the driver gave them at sign-up, so
+ * they are shown read-only rather than asked for again. An account missing one
+ * still gets an input for it, and what is typed there is kept in the draft.
  */
 export default function ApplyScreen() {
   const { competitionId: raw } = useLocalSearchParams<{ competitionId?: string }>();
@@ -33,7 +39,9 @@ export default function ApplyScreen() {
   ensureApplicationDraft(competitionId);
   const submit = useSubmitApplication();
 
+  const account = useAccountIdentity();
   const d = arenaApplicationDraft.current;
+  // Seeded from the draft only where the account has nothing to offer.
   const [fullName, setFullName] = useState(d.fullName);
   const [phone, setPhone] = useState(d.phone);
   const [homeState, setHomeState] = useState(d.homeState);
@@ -65,9 +73,14 @@ export default function ApplyScreen() {
     }, 1000);
   };
 
+  // What is actually submitted: the account's value, or what the applicant typed
+  // into the one input still shown because the account had none.
+  const applicantName  = account.fullName || fullName.trim();
+  const applicantPhone = account.phone || phone.trim();
+
   const canSubmit =
-    fullName.trim().length >= 2 &&
-    phone.trim().length >= 7 &&
+    applicantName.length >= 2 &&
+    applicantPhone.length >= 7 &&
     !!homeState &&
     !!vehicle &&
     !submit.isPending;
@@ -78,8 +91,8 @@ export default function ApplyScreen() {
         competitionId,
         homeState,
         payload: {
-          full_name: fullName.trim(),
-          phone: phone.trim(),
+          full_name: applicantName,
+          phone: applicantPhone,
           years_driving: years.trim(),
           vehicle_type: vehicle,
           motivation: motivation.trim(),
@@ -124,9 +137,22 @@ export default function ApplyScreen() {
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
         <Text style={styles.intro}>Tell us about you and your driving. Your answers save automatically as you go.</Text>
 
-        <TextInputField label="Full name" placeholder="As on your licence" value={fullName}
-          onChangeText={(t) => { setFullName(t); save({ fullName: t }); }} autoCapitalize="words" />
-        <PhoneNumberInput label="Phone number" value={phone} onChange={({ e164, nsn }) => ((t) => { setPhone(t); save({ phone: t }); })(e164 || nsn)} />
+        <AccountDetailsCard
+          rows={[
+            { label: 'Name',  value: account.fullName },
+            { label: 'Phone', value: account.phone },
+          ]}
+        />
+
+        {!account.fullName && (
+          <TextInputField label="Full name" placeholder="As on your licence" value={fullName}
+            onChangeText={(t) => { setFullName(t); save({ fullName: t }); }} autoCapitalize="words" />
+        )}
+        {/* Keeps the shared PhoneNumberInput — only reached when the account has
+            no phone on file. */}
+        {!account.phone && (
+          <PhoneNumberInput label="Phone number" value={phone} onChange={({ e164, nsn }) => ((t) => { setPhone(t); save({ phone: t }); })(e164 || nsn)} />
+        )}
         <SelectField label="Home state (36 states + FCT)" placeholder="Select your state" value={homeState}
           options={NIGERIA_STATES} onChange={(v) => { setHomeState(v); save({ homeState: v }); }} />
         <TextInputField label="Years driving" placeholder="e.g. 6" value={years} keyboardType="number-pad"
