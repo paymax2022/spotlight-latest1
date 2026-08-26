@@ -16,6 +16,21 @@ export async function GET(request: Request) {
     const { data, error } = await query;
     if (error) return errorResponse('Failed to load settings', 500);
 
+    // Every contest is listed, not only those that already have a settings row.
+    //
+    // Listing only configured contests was a chicken-and-egg: voting_settings is
+    // written BY the settings page, which is reachable only from this list — so a
+    // contest with no row could never be configured, and with the table empty the
+    // dashboard showed "No voting settings configured yet" and no way forward.
+    const { data: allContests, error: contestsErr } = await supabase
+      .from('contests')
+      .select('id, name, slug, status, voting_enabled, voting_type, vote_price_ngn')
+      .order('created_at', { ascending: false });
+    if (contestsErr) {
+      console.error('[admin/voting/settings] contest list failed', contestsErr);
+      return errorResponse('Failed to load contests', 500);
+    }
+
     // voting_settings stores snake_case and carries no contest name. The admin
     // dashboard reads camelCase (contestId, contestName, …), so every field came
     // back undefined and its links rendered as /admin/voting/undefined/settings.
@@ -37,17 +52,30 @@ export async function GET(request: Request) {
       }
     }
 
-    const settings = rows.map((r) => {
-      const meta = namesById.get(r.contest_id as string);
+    const settingsByContest = new Map(rows.map((r) => [r.contest_id as string, r]));
+
+    // A contest with no settings row is reported as unconfigured rather than
+    // omitted, so it can be opened and configured. `configured` lets the
+    // dashboard say which is which instead of implying every contest is set up.
+    const source = contestId
+      ? (allContests ?? []).filter((c) => c.id === contestId)
+      : (allContests ?? []);
+
+    const settings = source.map((c) => {
+      const r = settingsByContest.get(c.id as string) ?? {};
       return {
         ...r,
-        contestId: r.contest_id,
-        contestName: meta?.name ?? '',
-        contestSlug: meta?.slug ?? '',
-        status: meta?.status ?? r.status ?? 'draft',
-        votingEnabled: Boolean(r.voting_enabled),
-        votingType: r.voting_type ?? 'free',
-        votingEndsAt: r.voting_ends_at ?? null,
+        configured: settingsByContest.has(c.id as string),
+        contestId: c.id,
+        contestName: (c.name as string) ?? '',
+        contestSlug: (c.slug as string) ?? '',
+        status: (c.status as string) ?? 'draft',
+        // The contest row is the authority for whether voting is on and what a
+        // vote costs; voting_settings carries the rest of the configuration.
+        votingEnabled: Boolean(c.voting_enabled),
+        votingType: (c.voting_type as string) ?? 'free',
+        votePriceNgn: Number(c.vote_price_ngn ?? 0),
+        votingEndsAt: (r as Record<string, unknown>).voting_ends_at ?? null,
       };
     });
 

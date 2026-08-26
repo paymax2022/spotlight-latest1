@@ -11,6 +11,9 @@ interface ContestVotingSummary {
   status: string;
   votingEnabled: boolean;
   votingType: string;
+  /** False when this contest has no voting_settings row yet. */
+  configured?: boolean;
+  votePriceNgn?: number;
   totalVotes: number;
   totalRevenue: number;
   openFraudFlags: number;
@@ -46,8 +49,10 @@ export default function AdminVotingDashboard() {
 
       {contests.length === 0 ? (
         <div className="bg-gray-800 rounded-2xl p-12 text-center">
-          <p className="text-gray-400">No voting settings configured yet.</p>
-          <p className="text-gray-500 text-sm mt-2">Open a contest and enable voting in its settings.</p>
+          <p className="text-gray-400">No contests exist yet.</p>
+          <p className="text-gray-500 text-sm mt-2">
+            Create one under Contests, then configure its voting here.
+          </p>
         </div>
       ) : (
         <div className="grid gap-4">
@@ -66,6 +71,23 @@ export default function AdminVotingDashboard() {
                       Voting ON
                     </span>
                   )}
+                  {c.configured === false && (
+                    <span
+                      className="text-xs px-2 py-0.5 rounded-full bg-blue-600/20 text-blue-300 font-medium"
+                      title="No voting settings saved yet — open Settings to create them"
+                    >
+                      Not configured
+                    </span>
+                  )}
+                  {!c.votePriceNgn ? (
+                    <span className="text-xs px-2 py-0.5 rounded-full bg-gray-700 text-gray-300 font-medium">
+                      Free votes only
+                    </span>
+                  ) : (
+                    <span className="text-xs px-2 py-0.5 rounded-full bg-emerald-600/20 text-emerald-300 font-medium">
+                      ₦{Number(c.votePriceNgn).toLocaleString('en-NG')} / vote
+                    </span>
+                  )}
                 </div>
                 <div className="flex gap-4 mt-2 text-sm text-gray-400">
                   <span>Type: {c.votingType}</span>
@@ -78,6 +100,12 @@ export default function AdminVotingDashboard() {
                   className="bg-gray-700 hover:bg-gray-600 text-white text-xs px-3 py-2 rounded-lg transition-all"
                 >
                   Settings
+                </Link>
+                <Link
+                  href={`/admin/voting/${c.contestId}/packages`}
+                  className="bg-gray-700 hover:bg-gray-600 text-white text-xs px-3 py-2 rounded-lg transition-all"
+                >
+                  Packages
                 </Link>
                 <Link
                   href={`/admin/voting/${c.contestId}/leaderboard`}
