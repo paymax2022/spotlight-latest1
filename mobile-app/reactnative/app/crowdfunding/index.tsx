@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text, ScrollView, StyleSheet, Pressable, FlatList } from 'react-native';
+import { View, Text, ScrollView, StyleSheet, Pressable, FlatList, Image } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { Bookmark, Plus, ArrowLeft, Bell } from 'lucide-react-native';
@@ -15,6 +15,9 @@ import CategoryTile from '@/features/crowdfunding/components/CategoryTile';
 import { useCampaigns, useCategories, useToggleSave } from '@/features/crowdfunding/hooks/useCrowdfunding';
 import { INVESTMENT_ENABLED, CSR_ENABLED } from '@/features/crowdfunding/constants/crowdfunding.constants';
 import { TrendingUp, Building2 } from 'lucide-react-native';
+
+/** Source artwork is 1200x600. */
+const BANNER_ASPECT = 2;
 
 export default function CrowdfundingHome() {
   const categories = useCategories();
@@ -79,6 +82,29 @@ export default function CrowdfundingHome() {
               placeholder="Search campaigns, creators, causes…"
               editable={false}
               onPress={() => router.push('/crowdfunding/search')}
+            />
+          </View>
+
+          {/* Campaign banner, full-bleed at the source's 2:1 aspect (1200x600).
+              The ASPECT LIVES ON THE WRAPPER, not the Image: on
+              react-native-web a require()d asset gives the Image an inline
+              height from its intrinsic size (600px), which beats an
+              aspect-ratio rule and stretched the banner to 375x600. A plain
+              View has no such intrinsic size, so its aspect-ratio holds — and
+              because it is pure CSS it stays correct on resize, which neither
+              useWindowDimensions nor onLayout did here. */}
+          <View style={styles.bannerFrame}>
+            <Image
+              source={require('../../assets/banners/crowdfunding-banner.jpg')}
+              // width/height 100% are REQUIRED, not redundant with absoluteFill:
+              // rn-web gives a require()d asset an inline intrinsic size (1200x600)
+              // that beats absoluteFill's right/bottom, so the image would render
+              // at full size and be cropped by the frame instead of scaled into it.
+              style={[StyleSheet.absoluteFill, { width: '100%', height: '100%' }]}
+              resizeMode="cover"
+              accessible
+              accessibilityRole="image"
+              accessibilityLabel="Crowdfund your dreams on Spotlight — one app, countless supporters, unlimited possibilities."
             />
           </View>
 
@@ -205,6 +231,13 @@ const styles = StyleSheet.create({
   headerTitle: { ...Typography.titleLg, color: Colors.onSurface },
   scroll: { paddingBottom: 120 },
   searchWrap: { marginTop: Spacing.sm },
+  bannerFrame: {
+    width: '100%',
+    aspectRatio: BANNER_ASPECT,
+    marginTop: Spacing.md,
+    marginBottom: Spacing.md,
+    overflow: 'hidden',
+  },
   investBanner: { flexDirection: 'row', alignItems: 'center', gap: Spacing.md, backgroundColor: Colors.tertiaryContainer, borderRadius: Radius.lg, padding: Spacing.md, marginHorizontal: Spacing.containerMargin, marginBottom: Spacing.md },
   investIcon: { width: 40, height: 40, borderRadius: Radius.md, backgroundColor: 'rgba(255,255,255,0.18)', alignItems: 'center', justifyContent: 'center' },
   investTitle: { ...Typography.labelLg, color: Colors.onPrimary },
