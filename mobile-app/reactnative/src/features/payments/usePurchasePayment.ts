@@ -8,6 +8,7 @@ import { generateIdempotencyKey } from '@/utils/idempotency';
 import { usePaystackGateway } from './usePaystackGateway';
 import type { PaystackGatewayController } from './paystackGateway';
 import { verifyPin } from '@/features/transfers/api';
+import { describePinFailure } from './pinFailure';
 import {
   WALLET_PIN_REQUIRED,
   requiresPin,
@@ -318,9 +319,13 @@ export function usePurchasePayment<T = unknown>(): PurchaseController<T> {
       setPhase('charging');
       try {
         await verifyPin(pin);
-      } catch {
-        setPhase('pin');
-        setError('Incorrect PIN. Please try again.');
+      } catch (e) {
+        // /pin/verify answers 403 for five different reasons. Returning to the PIN
+        // pad for all of them told a locked-out or PIN-less customer to keep
+        // guessing — and every guess is scored against the lockout.
+        const failure = describePinFailure(e);
+        setPhase(failure.retryable ? 'pin' : 'error');
+        setError(failure.message);
         return;
       }
       await walletCharge(req, pin);
