@@ -39,6 +39,18 @@ export interface FilmAcademyInterestArea {
   fee_ngn: number;
 }
 
+/**
+ * The applicant's details as the ACCOUNT already holds them. The apply form
+ * shows these read-only rather than asking for them again; a field that is an
+ * empty string is genuinely missing from the profile and still has to be asked
+ * for. `null` for the whole object means signed out.
+ */
+export interface FilmAcademyApplicant {
+  full_name: string;
+  email: string;
+  phone: string;
+}
+
 export interface FilmAcademyOverview {
   batches: FilmAcademyBatch[];
   /** Batch ids this user has already applied to; drives the Applied state. */
@@ -57,14 +69,20 @@ export interface FilmAcademyOverview {
    * rule the server actually enforces.
    */
   maxInterestAreas: number;
-
+  /** Signed-in applicant's known details, or null when signed out. */
+  applicant: FilmAcademyApplicant | null;
 }
 
 export interface FilmAcademyApplicationInput {
   batch_id: string;
-  full_name: string;
-  email: string;
-  phone: string;
+  /**
+   * Identity fields. OPTIONAL because the server takes them from the signed-in
+   * account first — the form only sends one when the profile has no value for
+   * it. `email` is always ignored in favour of the session's own address.
+   */
+  full_name?: string;
+  email?: string;
+  phone?: string;
   areas_of_interest: string[];
   motivation: string;
   experience?: string;

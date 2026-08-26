@@ -47,6 +47,7 @@ import { POST, GET } from '../../../app/api/academy/apply/route';
 import { requireRequestUser } from '@/src/lib/auth/request';
 import { createAdminClient } from '@/lib/supabase/server';
 import { verifyPaystackTransaction } from '@/src/lib/payments/paystack';
+import { getOrCreateUserProfile } from '@/src/server/user/profile';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -100,7 +101,7 @@ function mockInterestAreas(
 }
 
 function setupHappyPathMock() {
-  const { mock, maybySingle, insertFn } = makeSupabaseMock();
+  const { mock, maybySingle, insertFn, updateFn, updateEq } = makeSupabaseMock();
   mockInterestAreas(mock);
 
   maybySingle
@@ -120,7 +121,7 @@ function setupHappyPathMock() {
   insertFn.mockResolvedValue({ error: null });
 
   vi.mocked(createAdminClient).mockReturnValue(mock as any);
-  return { mock, maybySingle, insertFn };
+  return { mock, maybySingle, insertFn, updateFn, updateEq };
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
@@ -480,5 +481,126 @@ describe('POST /api/academy/apply', () => {
     const body = await res.json();
     const d = body.data ?? body;
     expect(d.maxInterestAreas).toBe(2);
+  });
+});
+
+/**
+ * The applicant already gave their name, email and phone at sign-up. The form
+ * must not ask again, so the route resolves all three from the account and only
+ * falls back to the body for what the profile genuinely lacks.
+ */
+describe('POST /api/academy/apply — identity comes from the account', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    authAsTestUser();
+  });
+
+  function profileOnFile(overrides: Record<string, unknown> = {}) {
+    vi.mocked(getOrCreateUserProfile).mockResolvedValue({
+      id: TEST_USER.id,
+      email: TEST_USER.email,
+      role: 'USER',
+      displayName: 'Ada Okafor',
+      phone: '08012345678',
+      profileTypes: ['general_applicant'],
+      ...overrides,
+    } as any);
+  }
+
+  it('accepts an application that sends no name, email or phone at all', async () => {
+    profileOnFile();
+    const { insertFn } = setupHappyPathMock();
+
+    const res = await POST(
+      makeRequest('/api/academy/apply', {
+        body: {
+          batch_id: 'batch-001',
+          areas_of_interest: ['acting'],
+          motivation: 'I want to become a professional actor.',
+          payment_preference: 'installment',
+        },
+      }),
+    );
+
+    expect(res.status).toBe(201);
+    expect(insertFn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        full_name: 'Ada Okafor',
+        email: TEST_USER.email,
+        phone: '08012345678',
+      }),
+    );
+  });
+
+  it('files the application under the SESSION email, not one supplied by the caller', async () => {
+    profileOnFile();
+    const { insertFn } = setupHappyPathMock();
+
+    const res = await POST(
+      makeRequest('/api/academy/apply', {
+        body: makeApplyBody({ email: 'someone-else@example.com' }),
+      }),
+    );
+
+    expect(res.status).toBe(201);
+    // The email keys the duplicate-application check — a caller must not be
+    // able to file under an address that is not their own.
+    expect(insertFn).toHaveBeenCalledWith(
+      expect.objectContaining({ email: TEST_USER.email }),
+    );
+  });
+
+  it('still asks for a name the profile does not have, and saves it back', async () => {
+    profileOnFile({ displayName: undefined, phone: '' });
+    const { insertFn, updateFn, updateEq } = setupHappyPathMock();
+
+    const res = await POST(
+      makeRequest('/api/academy/apply', {
+        body: makeApplyBody({ full_name: 'Chidi Nwosu', phone: '08099998888' }),
+      }),
+    );
+
+    expect(res.status).toBe(201);
+    expect(insertFn).toHaveBeenCalledWith(
+      expect.objectContaining({ full_name: 'Chidi Nwosu', phone: '08099998888' }),
+    );
+    // Backfilled, so no other module has to ask for them again.
+    expect(updateFn).toHaveBeenCalledWith({ full_name: 'Chidi Nwosu', phone: '08099998888' });
+    expect(updateEq).toHaveBeenCalledWith('id', TEST_USER.id);
+  });
+
+  it('never overwrites details the profile already holds', async () => {
+    profileOnFile();
+    const { updateFn } = setupHappyPathMock();
+
+    const res = await POST(
+      makeRequest('/api/academy/apply', {
+        body: makeApplyBody({ full_name: 'Someone Else', phone: '08000000000' }),
+      }),
+    );
+
+    expect(res.status).toBe(201);
+    expect(updateFn).not.toHaveBeenCalled();
+  });
+
+  it('treats a display name that is just the account email as no name at all', async () => {
+    profileOnFile({ displayName: TEST_USER.email });
+    setupHappyPathMock();
+
+    const res = await POST(
+      makeRequest('/api/academy/apply', {
+        body: {
+          batch_id: 'batch-001',
+          areas_of_interest: ['acting'],
+          motivation: 'I want to become a professional actor.',
+        },
+      }),
+    );
+    const body = await res.json();
+
+    // Sign-up stores the email as the display name when none was given. Filing
+    // "student@example.com" as the applicant's name would be worse than asking.
+    expect(res.status).toBe(400);
+    expect(body.error).toMatch(/full name/i);
   });
 });
