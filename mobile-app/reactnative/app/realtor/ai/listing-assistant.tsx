@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { View, Text, ScrollView, StyleSheet, Pressable } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import { useMutation } from '@tanstack/react-query';
 import { Sparkles, X, Copy, RefreshCw } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
@@ -41,7 +42,7 @@ export default function AIListingAssistantScreen() {
           <Sparkles size={20} color={Colors.primary} strokeWidth={2} />
           <Text style={styles.title}>AI listing assistant</Text>
         </View>
-        <Pressable onPress={() => router.back()} hitSlop={10} accessibilityLabel="Close">
+        <Pressable onPress={() => goBack('/realtor')} hitSlop={10} accessibilityLabel="Close">
           <X size={22} color={Colors.onSurface} strokeWidth={2} />
         </Pressable>
       </View>
@@ -112,7 +113,7 @@ export default function AIListingAssistantScreen() {
 
       <View style={styles.footer}>
         {gen.data ? (
-          <PrimaryButton label="Use this draft" onPress={() => router.back()} />
+          <PrimaryButton label="Use this draft" onPress={() => goBack('/realtor')} />
         ) : (
           <PrimaryButton label="Generate listing" onPress={() => gen.mutate()} loading={gen.isPending} />
         )}

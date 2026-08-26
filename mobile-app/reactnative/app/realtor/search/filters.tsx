@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { View, Text, ScrollView, StyleSheet, Pressable } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import { X } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
@@ -31,14 +32,14 @@ export default function FiltersScreen() {
       return { ...d, amenities: set.size ? Array.from(set) : undefined };
     });
 
-  const apply = () => { store.replaceFilter(draft); router.back(); };
+  const apply = () => { store.replaceFilter(draft); goBack('/realtor/search'); };
   const clearAll = () => setDraft({ sort: draft.sort });
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
       <View style={styles.header}>
         <Text style={styles.title}>Filters</Text>
-        <Pressable onPress={() => router.back()} hitSlop={10} accessibilityRole="button" accessibilityLabel="Close filters">
+        <Pressable onPress={() => goBack('/realtor/search')} hitSlop={10} accessibilityRole="button" accessibilityLabel="Close filters">
           <X size={22} color={Colors.onSurface} strokeWidth={2} />
         </Pressable>
       </View>

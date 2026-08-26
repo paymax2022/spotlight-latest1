@@ -2,6 +2,7 @@ import React from 'react';
 import { View, Text, ScrollView, Image, Pressable, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import {
   ArrowLeft, Heart, Share2, Flag, ChevronRight, ShieldCheck, Receipt,
   Target, Megaphone, Users, FileText, HelpCircle, Gift, MapPin, Snowflake,
@@ -51,7 +52,7 @@ export default function CampaignDetailScreen() {
     return (
       <SafeAreaView style={styles.safe}>
         <FloatingBack />
-        <StateView kind="error" icon="FileQuestion" title="Campaign not found" message="This campaign may have been removed." actionLabel="Go back" onAction={() => router.back()} />
+        <StateView kind="error" icon="FileQuestion" title="Campaign not found" message="This campaign may have been removed." actionLabel="Go back" onAction={() => goBack('/crowdfunding')} />
       </SafeAreaView>
     );
   }
@@ -71,7 +72,7 @@ export default function CampaignDetailScreen() {
             <View style={[styles.coverImg, styles.coverPlaceholder]} />
           )}
           <SafeAreaView edges={['top']} style={styles.coverBar}>
-            <Pressable onPress={() => router.back()} style={styles.circleBtn} accessibilityLabel="Go back">
+            <Pressable onPress={() => goBack('/crowdfunding')} style={styles.circleBtn} accessibilityLabel="Go back">
               <ArrowLeft size={20} color={Colors.onSurface} strokeWidth={2} />
             </Pressable>
             <View style={styles.coverActions}>
@@ -253,7 +254,7 @@ export default function CampaignDetailScreen() {
 function FloatingBack() {
   return (
     <SafeAreaView edges={['top']} style={styles.floatingBack}>
-      <Pressable onPress={() => router.back()} style={styles.circleBtn} accessibilityLabel="Go back">
+      <Pressable onPress={() => goBack('/crowdfunding')} style={styles.circleBtn} accessibilityLabel="Go back">
         <ArrowLeft size={20} color={Colors.onSurface} strokeWidth={2} />
       </Pressable>
     </SafeAreaView>

@@ -14,6 +14,7 @@ import React, { useEffect, useState } from 'react';
 import { View, Text, ScrollView, StyleSheet, Pressable, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import { X, Zap, Wallet, CheckCircle2, AlertTriangle, RefreshCw, ArrowUpRight, TrendingUp } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
@@ -71,7 +72,7 @@ function BoostPurchase({ listingId, onPurchased }: { listingId: string; onPurcha
     <SafeAreaView style={styles.safe} edges={['top']}>
       <View style={styles.header}>
         <Text style={styles.headerTitle}>Boost your listing</Text>
-        <Pressable onPress={() => router.back()} hitSlop={10} style={styles.iconBtn} accessibilityLabel="Close">
+        <Pressable onPress={() => goBack('/marketplace')} hitSlop={10} style={styles.iconBtn} accessibilityLabel="Close">
           <X size={22} color={Colors.onSurface} />
         </Pressable>
       </View>

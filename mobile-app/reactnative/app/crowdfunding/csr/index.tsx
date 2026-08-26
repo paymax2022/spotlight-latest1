@@ -2,6 +2,7 @@ import React from 'react';
 import { View, Text, ScrollView, Pressable, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import { ArrowLeft, BadgeCheck, HandCoins, ChevronRight, BarChart3, ReceiptText, Users } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
@@ -107,7 +108,7 @@ function CsrHomeEnabled() {
 function Header({ company, verified }: { company?: string; verified?: boolean }) {
   return (
     <View style={styles.header}>
-      <Pressable onPress={() => router.back()} hitSlop={10} style={styles.iconBtn} accessibilityLabel="Go back"><ArrowLeft size={22} color={Colors.onSurface} strokeWidth={2} /></Pressable>
+      <Pressable onPress={() => goBack('/crowdfunding')} hitSlop={10} style={styles.iconBtn} accessibilityLabel="Go back"><ArrowLeft size={22} color={Colors.onSurface} strokeWidth={2} /></Pressable>
       <View style={styles.headerTitleWrap}>
         <Text style={styles.eyebrow}>Corporate CSR</Text>
         <View style={styles.companyRow}>

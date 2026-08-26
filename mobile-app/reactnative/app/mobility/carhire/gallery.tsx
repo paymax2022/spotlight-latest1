@@ -2,6 +2,7 @@ import React, { useMemo, useRef, useState } from 'react';
 import { View, Text, StyleSheet, Image, Pressable, ScrollView, FlatList, useWindowDimensions, Platform } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import { WebView } from 'react-native-webview';
 import { X, Play } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
@@ -57,7 +58,7 @@ export default function CarHireGalleryScreen() {
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
       <View style={styles.header}>
-        <Pressable onPress={() => router.back()} hitSlop={12} style={styles.closeBtn} accessibilityLabel="Close gallery">
+        <Pressable onPress={() => goBack('/mobility/carhire')} hitSlop={12} style={styles.closeBtn} accessibilityLabel="Close gallery">
           <X size={22} color={Colors.white} strokeWidth={2.2} />
         </Pressable>
         <View style={{ flex: 1 }}>
@@ -104,7 +105,7 @@ export default function CarHireGalleryScreen() {
       </ScrollView>
 
       <View style={styles.footer}>
-        <Pressable style={styles.cta} onPress={() => router.back()} accessibilityLabel={`Choose the ${label}`}>
+        <Pressable style={styles.cta} onPress={() => goBack('/mobility/carhire')} accessibilityLabel={`Choose the ${label}`}>
           <Text style={styles.ctaText}>Back to booking</Text>
         </Pressable>
       </View>

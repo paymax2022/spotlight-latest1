@@ -3,6 +3,7 @@ import PhoneNumberInput from '@/components/PhoneNumberInput';
 import { View, Text, ScrollView, Image, Pressable, StyleSheet, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import { Camera } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
@@ -49,7 +50,7 @@ export default function EditProfile() {
   const onSave = () => {
     if (!f.fullName.trim()) { Alert.alert('Name required', 'Please enter your full name.'); return; }
     update.mutate(f, {
-      onSuccess: () => router.back(),
+      onSuccess: () => goBack('/association/profile'),
       onError: () => Alert.alert('Could not save', 'Please try again.'),
     });
   };

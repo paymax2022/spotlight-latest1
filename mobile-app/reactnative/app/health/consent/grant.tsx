@@ -2,6 +2,7 @@ import React, { useMemo, useState } from 'react';
 import { View, Text, ScrollView, StyleSheet, Pressable } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import * as Icons from 'lucide-react-native';
 import { Check, ShieldCheck, X } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
@@ -59,7 +60,7 @@ export default function GrantConsentScreen() {
       },
       {
         onSuccess: () => {
-          alertAsync({ title: 'Access granted', message: 'A revocable consent grant was created.', buttonLabel: 'Done' }).then(() => router.back());
+          alertAsync({ title: 'Access granted', message: 'A revocable consent grant was created.', buttonLabel: 'Done' }).then(() => goBack('/health/consent'));
         },
         onError: () => alertAsync({ title: 'Could not grant', message: 'Please try again.' }),
       },
@@ -72,7 +73,7 @@ export default function GrantConsentScreen() {
         title="Grant access"
         showBack={false}
         rightSlot={
-          <Pressable onPress={() => router.back()} hitSlop={8} accessibilityLabel="Close">
+          <Pressable onPress={() => goBack('/health/consent')} hitSlop={8} accessibilityLabel="Close">
             <X size={22} color={Colors.onSurface} strokeWidth={2} />
           </Pressable>
         }

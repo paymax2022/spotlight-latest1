@@ -1,5 +1,6 @@
 import React from 'react';
 import { router, useLocalSearchParams } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import EdgeState from '@/features/crowdfunding/components/EdgeState';
 
 type EdgeConfig = {
@@ -40,9 +41,9 @@ export default function EdgeScreen() {
       message={cfg.message}
       tone={cfg.tone}
       primaryLabel={cfg.primaryLabel}
-      onPrimary={cfg.primaryLabel ? () => (cfg.primaryHref ? router.replace(cfg.primaryHref as never) : router.back()) : undefined}
+      onPrimary={cfg.primaryLabel ? () => (cfg.primaryHref ? router.replace(cfg.primaryHref as never) : goBack('/crowdfunding')) : undefined}
       secondaryLabel="Go back"
-      onSecondary={() => router.back()}
+      onSecondary={() => goBack('/crowdfunding')}
     />
   );
 }

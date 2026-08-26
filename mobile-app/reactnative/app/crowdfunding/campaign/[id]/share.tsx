@@ -2,6 +2,7 @@ import React from 'react';
 import { View, Text, Pressable, StyleSheet, Share } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import { X, Link2, MessageCircle, Facebook, Twitter, Linkedin, QrCode } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
@@ -37,7 +38,7 @@ export default function ShareScreen() {
       <View style={styles.grabber} />
       <View style={styles.header}>
         <Text style={styles.title}>Share campaign</Text>
-        <Pressable onPress={() => router.back()} hitSlop={10} accessibilityLabel="Close"><X size={22} color={Colors.onSurface} strokeWidth={2} /></Pressable>
+        <Pressable onPress={() => goBack('/crowdfunding')} hitSlop={10} accessibilityLabel="Close"><X size={22} color={Colors.onSurface} strokeWidth={2} /></Pressable>
       </View>
 
       <Text style={styles.subtitle} numberOfLines={2}>{c?.title ?? 'Help this campaign reach more supporters.'}</Text>

@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { View, Text, StyleSheet, Pressable, FlatList } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import { MapPin, Building2, Navigation, Landmark } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
@@ -27,7 +28,7 @@ export default function DestinationScreen() {
 
   const pick = (d: DestinationSuggestion) => {
     setQuery({ destination: d.name, destinationId: d.id });
-    router.back();
+    goBack('/stays');
   };
 
   return (
@@ -35,7 +36,7 @@ export default function DestinationScreen() {
       <ScreenHeader title="Where to?" />
       <SearchBar value={q} onChangeText={setQ} autoFocus placeholder="City, area or hotel name" />
 
-      <Pressable style={styles.nearRow} onPress={() => { setQuery({ destination: 'Near me', destinationId: undefined }); router.back(); }}>
+      <Pressable style={styles.nearRow} onPress={() => { setQuery({ destination: 'Near me', destinationId: undefined }); goBack('/stays'); }}>
         <View style={styles.nearIcon}><Navigation size={18} color={Colors.secondary} strokeWidth={2} /></View>
         <Text style={styles.nearText}>Use my current location</Text>
       </Pressable>

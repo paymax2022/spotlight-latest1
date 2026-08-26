@@ -5,6 +5,10 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
+// Aliased: this screen already has a local `goBack` that steps back through
+// the wizard. Without the alias my call sites resolved to THAT function and
+// recursed into it with an argument it does not take.
+import { goBack as leaveScreen } from '@/lib/navigation';
 import { LinearGradient } from 'expo-linear-gradient';
 import {
   CheckCircle2, XCircle, Plus, Trash2, ShieldCheck, Sparkles, Clock3, Building2, BadgeCheck,
@@ -304,7 +308,7 @@ export default function RegisterBusinessScreen() {
   };
 
   const goBack = () => {
-    if (step === 0) { router.back(); return; }
+    if (step === 0) { leaveScreen('/profile/business'); return; }
     setStep((s) => Math.max(0, s - 1));
   };
 

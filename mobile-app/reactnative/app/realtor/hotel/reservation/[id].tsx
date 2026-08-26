@@ -2,6 +2,7 @@ import React from 'react';
 import { View, Text, ScrollView, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import { QrCode } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
@@ -28,7 +29,7 @@ export default function HotelReservationScreen() {
   const res = useReservation(String(id));
 
   if (res.isLoading) return <SafeAreaView style={styles.safe} edges={['top']}><ScreenHeader title="Reservation" /><StateView kind="loading" /></SafeAreaView>;
-  if (!res.data) return <SafeAreaView style={styles.safe} edges={['top']}><ScreenHeader title="Reservation" /><StateView kind="error" title="Not found" actionLabel="Back" onAction={() => router.back()} /></SafeAreaView>;
+  if (!res.data) return <SafeAreaView style={styles.safe} edges={['top']}><ScreenHeader title="Reservation" /><StateView kind="error" title="Not found" actionLabel="Back" onAction={() => goBack('/realtor/hotel')} /></SafeAreaView>;
   const r = res.data;
   const meta = STATUS[r.status];
 

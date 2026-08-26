@@ -2,6 +2,7 @@ import React from 'react';
 import { View, Text, StyleSheet, Pressable } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import { Check } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
@@ -18,7 +19,7 @@ export default function SortScreen() {
 
   const pick = (s: SortKey) => {
     setFilter({ sort: s });
-    router.back();
+    goBack('/stays');
   };
 
   return (

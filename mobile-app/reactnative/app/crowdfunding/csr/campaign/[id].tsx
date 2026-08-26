@@ -2,6 +2,7 @@ import React from 'react';
 import { ScrollView, View, Text, Image, Pressable, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import { ArrowLeft, BadgeCheck, HandCoins } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
@@ -27,7 +28,7 @@ export default function CsrCampaignDetail() {
         <View style={styles.cover}>
           {c.coverImage ? <Image source={{ uri: c.coverImage }} style={styles.coverImg} resizeMode="cover" /> : <View style={[styles.coverImg, styles.coverPlaceholder]} />}
           <SafeAreaView edges={['top']} style={styles.coverBar}>
-            <Pressable onPress={() => router.back()} style={styles.circleBtn} accessibilityLabel="Go back"><ArrowLeft size={20} color={Colors.onSurface} strokeWidth={2} /></Pressable>
+            <Pressable onPress={() => goBack('/crowdfunding/csr')} style={styles.circleBtn} accessibilityLabel="Go back"><ArrowLeft size={20} color={Colors.onSurface} strokeWidth={2} /></Pressable>
           </SafeAreaView>
         </View>
         <View style={styles.container}>
