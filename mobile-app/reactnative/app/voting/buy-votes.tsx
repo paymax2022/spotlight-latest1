@@ -12,6 +12,7 @@ import PrimaryButton from '@/components/PrimaryButton';
 import { useVotePackages } from '@/features/voting/hooks/useVotePackages';
 import { useContestDetails } from '@/features/voting/hooks/useContestDetails';
 import { getVotingWindow } from '@/features/voting/utils/votingWindow';
+import { getPaidVotingAvailability } from '@/features/voting/utils/paidVoting';
 import VotePackageCard from '@/features/voting/components/VotePackageCard';
 import { formatAmount } from '@/features/voting/utils/voteFormatters';
 import type { VotePackage } from '@/features/voting/types/voting.types';
@@ -27,7 +28,11 @@ export default function BuyVotesScreen() {
   // disagree. Status alone let an expired contest through — getVotingWindow
   // treats an unloaded contest as open, so a pending query still does not block.
   const votingWindow = getVotingWindow(contest);
-  const votingClosed = !votingWindow.open || (!!contest && contest.paidVotingEnabled === false);
+
+  // Gates on what is actually purchasable — a per-vote price OR a package — not
+  // on a flag the admin console does not write. See getPaidVotingAvailability.
+  const paidVoting = getPaidVotingAvailability(contest, packages);
+  const votingClosed = !votingWindow.open || paidVoting.available === false;
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
@@ -45,7 +50,10 @@ export default function BuyVotesScreen() {
         {votingClosed && (
           <View style={styles.closedBanner}>
             <Lock size={16} color={Colors.error} strokeWidth={2} />
-            <Text style={styles.closedText}>{votingWindow.message ?? 'Paid voting is unavailable for this contest.'}</Text>
+            <Text style={styles.closedText}>
+              {votingWindow.message ??
+                'No vote packages are on sale for this contest yet.'}
+            </Text>
           </View>
         )}
 
