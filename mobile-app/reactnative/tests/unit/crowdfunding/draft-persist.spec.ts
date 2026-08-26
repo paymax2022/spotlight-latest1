@@ -3,6 +3,10 @@
 // media URIs are not carried across.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+// `@/` + extensionless, resolved by tests/unit/ts-path-hooks.mjs. A relative
+// '…/draftPersistence.ts' works under --experimental-strip-types but fails the
+// repo-wide mobile tsc lane with TS5097 (allowImportingTsExtensions is off).
+import { persistableMedia } from '@/features/crowdfunding/store/draftPersistence';
 
 // In-memory stand-in for AsyncStorage (which is localStorage on RN web).
 const mem = new Map<string, string>();
@@ -17,8 +21,6 @@ test('draft round-trips through storage and strips blob: media URIs', async () =
   const { create } = await import('zustand');
   const { persist, createJSONStorage } = await import('zustand/middleware');
 
-  // The REAL persistence rules from the shipped store.
-  const { persistableMedia } = await import('../../../src/features/crowdfunding/store/draftPersistence.ts');
   const emptyDraft = { type: null as string | null, category: null as string | null, title: '', goalKobo: 0, coverImageUri: null as string | null, videoUri: null as string | null, galleryUris: [] as string[] };
 
   const makeStore = () =>
