@@ -3,6 +3,59 @@ import { assertAdminPermission } from '@/src/server/admin/auth';
 import { createAdminClient } from '@/lib/supabase/server';
 import { appendAuditLog } from '@/src/server/voting/audit.service';
 
+/**
+ * A datetime-local input submits '' when left blank, and `?? null` catches only
+ * null/undefined — never an empty string. Passing '' into a timestamptz column
+ * makes Postgres reject the whole upsert, so saving settings without filling in
+ * the optional voting window failed with:
+ *   invalid input syntax for type timestamp with time zone: ""
+ * Same trap as the vote-packages route.
+ */
+function optionalTimestamp(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  return trimmed === '' ? null : trimmed;
+}
+
+/**
+ * The admin's paid-voting toggle lives in `voting_settings`, but the mobile app
+ * never reads that table: it gates on `connect_contests.paid_vote_kobo`, which a
+ * trigger mirrors from `contests.vote_price_ngn * 100`. Saving the toggle alone
+ * therefore changed nothing on the phone — the console said paid voting was on
+ * while every device said it was unavailable.
+ *
+ * This carries the decision across to the fields that are actually read. Turning
+ * paid voting OFF zeroes the price, so the two can never disagree in the other
+ * direction either.
+ *
+ * `voting_enabled` had the same split — GET reports the contest row while POST
+ * only ever wrote the settings row — so it is synced here as well, and the form
+ * loads both from the contest row so the value round-trips instead of drifting.
+ *
+ * Failures are reported, not swallowed: a save that half-applied is exactly the
+ * silent divergence this exists to end.
+ */
+async function syncContestVotingState(
+  supabase: ReturnType<typeof createAdminClient>,
+  body: Record<string, unknown>,
+): Promise<string | null> {
+  const paidVotingEnabled = Boolean(body.paidVotingEnabled ?? false);
+  const parsed = Number(body.pricePerVoteNgn);
+  const price = paidVotingEnabled && Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
+
+  const { error } = await supabase
+    .from('contests')
+    .update({
+      voting_enabled: Boolean(body.votingEnabled ?? false),
+      voting_type: (body.votingType as string) ?? (price > 0 ? 'paid' : 'free'),
+      vote_price_ngn: price,
+      vote_price: price,
+    })
+    .eq('id', body.contestId as string);
+
+  return error ? error.message : null;
+}
+
 export async function GET(request: Request) {
   try {
     const identity = await assertAdminPermission(request, 'votes:manage');
@@ -117,11 +170,11 @@ export async function POST(request: Request) {
           show_public_rank: body.showPublicRank ?? true,
           active_phase_key: body.activePhaseKey ?? null,
           allow_vote_sharing: body.allowVoteSharing ?? true,
-          voting_starts_at: body.votingStartsAt ?? null,
-          voting_ends_at: body.votingEndsAt ?? null,
+          voting_starts_at: optionalTimestamp(body.votingStartsAt),
+          voting_ends_at: optionalTimestamp(body.votingEndsAt),
           timezone: body.timezone ?? 'Africa/Lagos',
           leaderboard_freeze_enabled: body.leaderboardFreezeEnabled ?? false,
-          leaderboard_freeze_at: body.leaderboardFreezeAt ?? null,
+          leaderboard_freeze_at: optionalTimestamp(body.leaderboardFreezeAt),
           fraud_detection_enabled: body.fraudDetectionEnabled ?? true,
           status: body.status ?? 'draft',
         },
@@ -131,6 +184,11 @@ export async function POST(request: Request) {
       .single();
 
     if (error) return errorResponse(error.message, 500);
+
+    const syncError = await syncContestVotingState(supabase, body);
+    if (syncError) {
+      return errorResponse(`Settings saved, but the contest could not be updated: ${syncError}`, 500);
+    }
 
     await appendAuditLog({
       actorId: identity.actorId,

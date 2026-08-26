@@ -111,10 +111,25 @@ export async function publishContestToVotingPlane(
 
   if (existing) {
     const id = (existing as { id: string }).id;
-    // Deliberately does NOT overwrite `status`: an admin who opened voting must
-    // not have it forced back to draft by an unrelated edit to the registration
-    // form. Republishing updates the description, never the live state.
-    const { status: _ignored, ...safeUpdate } = payload;
+    // Republishing refreshes the DESCRIPTIVE fields only. Everything below is a
+    // live commercial decision an admin makes in the voting console, and an
+    // unrelated edit to the registration form must not silently undo it:
+    //   status              - an opened contest must not snap back to upcoming
+    //   voting_enabled      - voting an admin closed must not reopen
+    //   voting_type         - paid must not revert to free
+    //   vote_price_ngn      - the mirror turns this into connect_contests
+    //   vote_price            .paid_vote_kobo, which is what the phone gates on,
+    //                         so resetting it to 0 silently kills paid voting
+    //   max_votes_per_user  - the free allowance an admin tuned
+    const {
+      status: _status,
+      voting_enabled: _votingEnabled,
+      voting_type: _votingType,
+      vote_price_ngn: _votePriceNgn,
+      vote_price: _votePrice,
+      max_votes_per_user: _maxVotes,
+      ...safeUpdate
+    } = payload;
     const { error } = await supabase.from('contests').update(safeUpdate).eq('id', id);
     if (error) {
       console.error('[publish-to-voting] update failed', { slug: def.slug, error: error.message });

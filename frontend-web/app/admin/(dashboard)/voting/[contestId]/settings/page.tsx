@@ -20,6 +20,7 @@ export default function VotingSettingsPage() {
     requireCaptcha: false,
     voteCooldownSeconds: 0,
     paidVotingEnabled: false,
+    pricePerVoteNgn: 0,
     currency: 'NGN',
     paymentProvider: 'paystack',
     paymentRefPrefix: 'SPT-VOTE',
@@ -49,7 +50,10 @@ export default function VotingSettingsPage() {
           const s = json.settings[0];
           setForm({
             contestId,
-            votingEnabled: s.voting_enabled,
+            // The API reports these two from the CONTEST row, which it treats as
+            // the authority; reading the settings-table copy instead let the form
+            // save back a stale value and quietly flip a live contest.
+            votingEnabled: s.votingEnabled ?? s.voting_enabled ?? false,
             votingType: s.voting_type,
             freeVotingEnabled: s.free_voting_enabled,
             freeVotesPerDay: s.free_votes_per_day,
@@ -59,7 +63,8 @@ export default function VotingSettingsPage() {
             requireLoginForFreeVote: s.require_login_for_free_vote,
             requireCaptcha: s.require_captcha,
             voteCooldownSeconds: s.vote_cooldown_seconds,
-            paidVotingEnabled: s.paid_voting_enabled,
+            paidVotingEnabled: s.paid_voting_enabled ?? false,
+            pricePerVoteNgn: s.votePriceNgn ?? 0,
             currency: s.currency,
             paymentProvider: s.payment_provider,
             paymentRefPrefix: s.payment_ref_prefix,
@@ -166,6 +171,11 @@ export default function VotingSettingsPage() {
       <div className="bg-gray-900 rounded-2xl p-5 mb-4">
         <h2 className="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-2">Paid Voting</h2>
         {field('paidVotingEnabled', 'Enable Paid Voting', 'checkbox')}
+        {field('pricePerVoteNgn', 'Price Per Vote (₦)', 'number')}
+        <p className="text-xs text-gray-500 -mt-2 mb-3">
+          Leave at 0 to sell vote packages only. Voters can buy whenever there is a
+          price per vote or at least one active package.
+        </p>
         {field('currency', 'Currency', 'select', ['NGN', 'USD', 'GBP'])}
         {field('paymentProvider', 'Payment Provider', 'select', ['paystack', 'flutterwave', 'monnify', 'squad'])}
         {field('paymentRefPrefix', 'Reference Prefix', 'text')}
