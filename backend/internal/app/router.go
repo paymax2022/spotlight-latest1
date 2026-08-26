@@ -345,6 +345,15 @@ func NewRouter(cfg config.Config) *gin.Engine {
 		}
 	}
 
+	// Signup referral attribution. Wired HERE rather than where authHandler is
+	// built, because it needs the shared pool that is only created above — the
+	// same ordering constraint WithSessions works around.
+	if sharedPool != nil {
+		if attributor := NewSignupAttributor(sharedPool); attributor != nil {
+			authHandler.WithReferralAttribution(attributor)
+		}
+	}
+
 	// Shared Redis client for idempotency fast-paths (arena ledger, etc.). nil when
 	// REDIS_URL is unset or the connection fails — callers fall back to DB-unique
 	// constraints, so Redis is a latency optimization, never a correctness dependency.

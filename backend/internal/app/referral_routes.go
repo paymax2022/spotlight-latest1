@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"log"
+	"spotlight/backend/internal/handlers"
 
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -30,6 +31,36 @@ import (
 // these routes inherit the same gate. Money path reuses the finance ledger: real
 // payouts post balanced double-entries with idempotency keys; house accruals are
 // notional (non-withdrawable), excluded from override chains and K-factor.
+// NewSignupAttributor builds the §7A attribution service and returns it as the
+// narrow function the auth handler needs. Registration is where attribution has
+// to happen — the web route did it and the Go route did not, which is one of the
+// reasons the two implementations could not simply be merged.
+//
+// Returns nil on a nil pool, and the handler then skips attribution rather than
+// failing signup.
+func NewSignupAttributor(pool *pgxpool.Pool) handlers.ReferralAttributor {
+	if pool == nil {
+		return nil
+	}
+	svc := newAttributionService(pool)
+	return func(ctx context.Context, userID, referralCode string) error {
+		_, err := svc.ResolveReferrer(ctx, userID, attribution.ResolveOpts{CodeEntered: referralCode})
+		return err
+	}
+}
+
+// newAttributionService assembles the §7A dependency graph. Extracted so signup
+// and the referral routes build it the same way instead of drifting.
+func newAttributionService(pool *pgxpool.Pool) *attribution.Service {
+	financeLedgerSvc := financeledger.NewService(financeledger.NewRepository(pool), nil)
+	codeSvc := referrals.NewService(pool, financeLedgerSvc)
+	cfgSvc := referralconfig.NewService(pool)
+	eventsSvc := referralevents.NewService(pool)
+	houseSvc := referralhouse.NewService(pool)
+	rewardSvc := referralledger.NewService(pool, financeLedgerSvc)
+	return attribution.NewService(pool, codeSvc, houseSvc, rewardSvc, cfgSvc, eventsSvc)
+}
+
 func RegisterReferral(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pgxpool.Pool, rbac services.RBACService) {
 	if pool == nil {
 		log.Println("[referral] nil pool — skipping referral routes")

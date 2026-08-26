@@ -23,6 +23,7 @@ import type {
   RegistrationDraft,
 } from './types';
 import { buildStepsForContest } from './forms';
+import { markAccountProvidedFields } from './account-prefill';
 
 // Re-export shared reference data so callers importing from this module (store,
 // wizard, admin components) continue to work without changes.
@@ -46,7 +47,9 @@ export { registrationFormBuilders, buildStepsForContest } from './forms';
  * capability-driven default form.
  */
 export function buildRegistrationSteps(draft: RegistrationDraft): RegistrationStep[] {
-  return buildStepsForContest(draft);
+  // Details the applicant already gave at sign-up are pre-filled and locked, so
+  // no contest form asks for them twice. See `./account-prefill`.
+  return markAccountProvidedFields(buildStepsForContest(draft), draft);
 }
 
 /**

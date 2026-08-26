@@ -14,6 +14,7 @@ import {
   runBasicFraudChecks,
   validateStepData,
 } from '@/src/features/registration/validation';
+import { ACCOUNT_PROVIDED_KEYS } from '@/src/features/registration/account-prefill';
 import type {
   ContestRegistrationDefinition,
   ApplicationStatus,
@@ -269,6 +270,8 @@ export function startRegistrationDraft(params: {
   userId?: string;
   role?: RegistrationDraft['role'];
   accountData?: Record<string, unknown>;
+  /** Account-resolved details; see the same param on the Supabase store. */
+  accountPrefill?: { values: Record<string, unknown>; providedKeys: string[] };
 }) {
   const contest = getRegistrationContestBySlug(params.contestSlug) || resolveContestRegistration(params.contestSlug);
   if (!contest) {
@@ -290,6 +293,8 @@ export function startRegistrationDraft(params: {
     updatedAt: now,
     formData: {
       ...(params.accountData || {}),
+      ...(params.accountPrefill?.values || {}),
+      [ACCOUNT_PROVIDED_KEYS]: params.accountPrefill?.providedKeys || [],
       'contest.title': contest.title,
       'contest.category': contest.contestCategory,
       'contest.type': contest.contestType,

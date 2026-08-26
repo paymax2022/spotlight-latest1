@@ -1,4 +1,5 @@
 import React, { useRef, useState } from 'react';
+import PhoneNumberInput from '@/components/PhoneNumberInput';
 import { ActivityIndicator, Linking, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
@@ -292,14 +293,7 @@ export default function EducationScreen() {
               name="customerPhone"
               control={control}
               render={({ field }) => (
-                <TextInputField
-                  label="Phone Number"
-                  placeholder="0801 234 5678"
-                  keyboardType="phone-pad"
-                  value={field.value}
-                  onChangeText={field.onChange}
-                  error={errors.customerPhone?.message}
-                />
+                <PhoneNumberInput label="Phone Number" value={field.value} onChange={({ e164, nsn }) => (field.onChange)(e164 || nsn)} error={errors.customerPhone?.message} />
               )}
             />
           </View>

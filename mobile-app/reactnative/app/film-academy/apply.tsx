@@ -3,6 +3,14 @@
 // the server: full_name, email, phone, batch_id, at least one area of interest,
 // and motivation. Those are validated here too so a user is not sent a 400 for
 // something the form could have told them immediately.
+//
+// IDENTITY IS NOT RE-ASKED. Name, email and phone come from the signed-in
+// account (the overview payload's `applicant`, with the auth store as an
+// immediate fallback) and are shown read-only. Only a field the account genuinely
+// lacks gets an input — and what the user types there is saved back to the
+// profile by the server, so the next module does not ask for it either. The
+// email is never editable: it is the account's address, and the server uses the
+// session's own value regardless of what is posted.
 
 import React from 'react';
 import {
@@ -17,6 +25,9 @@ import { Typography } from '@/constants/typography';
 import { Spacing } from '@/constants/spacing';
 import { Radius } from '@/constants/radius';
 import { getOverview, applyToBatch } from '@/features/filmAcademy/api';
+import { useAuthStore } from '@/store/authStore';
+import { normalizeAccountName } from '@/features/account/name';
+import AccountDetailsCard from '@/features/account/AccountDetailsCard';
 import { usePaystackGateway, PAYSTACK_PUBLIC_KEY } from '@/features/payments';
 import { FILM_ACADEMY_KEY } from './index';
 
@@ -48,8 +59,20 @@ export default function FilmAcademyApplyScreen() {
   // rather than letting the user tap Pay into a dead sheet.
   const payReady = Boolean(PAYSTACK_PUBLIC_KEY);
 
+  // What the platform already knows. The server payload wins (it reads the
+  // canonical user_profiles row); the auth store fills in before that lands so
+  // the card is never briefly blank on a warm cache.
+  const account = useAuthStore((s) => s.user);
+  const accountName = normalizeAccountName(account?.fullName, account?.email);
+  const known = {
+    fullName: (data?.applicant?.full_name || accountName || '').trim(),
+    email:    (data?.applicant?.email     || account?.email  || '').trim(),
+    phone:    (data?.applicant?.phone     || account?.phone  || '').trim(),
+  };
+
+  // Only ever hold what the ACCOUNT could not supply. A field the account has is
+  // not editable here — changing it belongs in the profile, not in one form.
   const [fullName, setFullName]     = React.useState('');
-  const [email, setEmail]           = React.useState('');
   const [phone, setPhone]           = React.useState('');
   const [areas, setAreas]           = React.useState<string[]>([]);
   const [motivation, setMotivation] = React.useState('');
@@ -76,8 +99,25 @@ export default function FilmAcademyApplyScreen() {
   // The only amount charged at submit. Non-refundable.
   const applicationFee = baseFee;
 
+  // The cap is served by the API, not hardcoded here: it is a commercial rule and
+  // the server is what enforces it. This only stops the user reaching a rejection.
+  const maxAreas = data?.maxInterestAreas ?? 2;
+  const atLimit = areas.length >= maxAreas;
+
+  // What actually gets submitted: the account's value, or — only where the
+  // account had none — what the user typed into the one input we still show.
+  const applicantName  = known.fullName || fullName.trim();
+  const applicantEmail = known.email;
+  const applicantPhone = known.phone || phone.trim();
+
   const toggleArea = (a: string) =>
-    setAreas((prev) => (prev.includes(a) ? prev.filter((x) => x !== a) : [...prev, a]));
+    setAreas((prev) => {
+      if (prev.includes(a)) return prev.filter((x) => x !== a);
+      // Silently ignoring the tap would look like a broken button, so the chip is
+      // disabled and labelled instead — see `atLimit` below.
+      if (prev.length >= maxAreas) return prev;
+      return [...prev, a];
+    });
 
   /**
    * Posts the application. `reference` is the paid application-fee reference,
@@ -88,9 +128,11 @@ export default function FilmAcademyApplyScreen() {
     try {
       await applyToBatch({
         batch_id: batchId!,
-        full_name: fullName.trim(),
-        email: email.trim(),
-        phone: phone.trim(),
+        // Sent for older servers that still require them. A current server
+        // ignores the email and re-derives all three from the session.
+        full_name: applicantName,
+        email: applicantEmail,
+        phone: applicantPhone,
         areas_of_interest: areas,
         motivation: motivation.trim(),
         experience: experience.trim() || undefined,
@@ -112,10 +154,15 @@ export default function FilmAcademyApplyScreen() {
     setError(null);
     // Mirror the server's required fields rather than discovering them via a 400.
     if (!batchId)            return setError('No cohort selected.');
-    if (!fullName.trim())    return setError('Enter your full name.');
-    if (!email.trim())       return setError('Enter your email address.');
-    if (!phone.trim())       return setError('Enter your phone number.');
+    // The email is the account's own; if there is none, the session is not one
+    // that can apply — say so rather than showing an input we would ignore.
+    if (!applicantEmail)     return setError('Please sign in to apply.');
+    if (!applicantName)      return setError('Enter your full name.');
+    if (!applicantPhone)     return setError('Enter your phone number.');
     if (areas.length === 0)  return setError('Choose at least one area of interest.');
+    if (areas.length > maxAreas) {
+      return setError(`Choose at most ${maxAreas} areas of interest for this batch.`);
+    }
     if (!motivation.trim())  return setError('Tell us why you want to join.');
 
     // No fee due — submit straight away.
@@ -131,7 +178,7 @@ export default function FilmAcademyApplyScreen() {
     // against it), hence the x100 to reach kobo.
     setBusy(true);
     gateway.open({
-      email: email.trim(),
+      email: applicantEmail,
       amountKobo: Math.round(applicationFee * 100),
       domain: 'academy_application',
       metadataFields: [
@@ -175,15 +222,33 @@ export default function FilmAcademyApplyScreen() {
           </View>
         )}
 
-        <Field label="Full name"     value={fullName} onChange={setFullName} placeholder="Your full name" />
-        <Field label="Email"         value={email}    onChange={setEmail}    placeholder="you@example.com"
-               keyboardType="email-address" autoCapitalize="none" />
-        <Field label="Phone number"  value={phone}    onChange={setPhone}    placeholder="0801 234 5678"
-               keyboardType="phone-pad" />
+        {/* Your details, as the account already holds them — read-only. */}
+        <AccountDetailsCard
+          rows={[
+            { label: 'Name',  value: known.fullName },
+            { label: 'Email', value: known.email },
+            { label: 'Phone', value: known.phone },
+          ]}
+        />
+
+        {/* Only what the account could NOT supply. Answered once: the server
+            saves it to the profile, so no other module asks again. */}
+        {!known.fullName && (
+          <Field label="Full name" value={fullName} onChange={setFullName} placeholder="Your full name" />
+        )}
+        {!known.phone && (
+          <Field label="Phone number" value={phone} onChange={setPhone} placeholder="0801 234 5678"
+                 keyboardType="phone-pad" />
+        )}
 
         <Text style={styles.label}>Areas of interest</Text>
         <Text style={styles.totalNote}>
           Amounts shown are tuition, payable only if you are offered a place.
+        </Text>
+        <Text style={[styles.noticeText, atLimit && styles.limitReached]}>
+          {atLimit
+            ? `You have chosen ${maxAreas} of ${maxAreas}. Deselect one to swap it.`
+            : `Choose up to ${maxAreas} for this batch — ${areas.length} of ${maxAreas} selected.`}
         </Text>
         {interestAreas.length === 0 ? (
           <Text style={styles.noticeText}>
@@ -194,13 +259,15 @@ export default function FilmAcademyApplyScreen() {
             {interestAreas.map((a) => {
               const on = areas.includes(a.slug);
               const fee = Number(a.fee_ngn ?? 0);
+              const blocked = !on && atLimit;
               return (
                 <Pressable
                   key={a.slug}
                   onPress={() => toggleArea(a.slug)}
-                  style={[styles.chip, on && styles.chipOn]}
+                  disabled={blocked}
+                  style={[styles.chip, on && styles.chipOn, blocked && styles.chipBlocked]}
                   accessibilityRole="checkbox"
-                  accessibilityState={{ checked: on }}
+                  accessibilityState={{ checked: on, disabled: blocked }}
                   accessibilityLabel={fee > 0 ? `${a.label}, tuition ₦${fee.toLocaleString('en-NG')}` : `${a.label}, no tuition`}
                 >
                   {on && <Check size={13} color={Colors.primary} />}
@@ -325,6 +392,7 @@ const styles = StyleSheet.create({
   chip:        { flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 12, paddingVertical: 8,
                  borderRadius: Radius.md, backgroundColor: Colors.surface },
   chipOn:      { backgroundColor: Colors.iconBgPurple },
+  chipBlocked: { opacity: 0.35 },
   chipText:    { ...Typography.labelMd, color: Colors.onSurfaceVariant },
   chipTextOn:  { color: Colors.primary },
   chipFee:     { ...Typography.labelSm, color: Colors.onSurfaceVariant },
@@ -343,6 +411,7 @@ const styles = StyleSheet.create({
   noticeBox:   { backgroundColor: Colors.iconBgGold, borderRadius: Radius.lg, padding: Spacing.lg, gap: 4 },
   noticeTitle: { ...Typography.labelLg, color: Colors.onSurface },
   noticeText:  { ...Typography.bodyMd, color: Colors.onSurfaceVariant },
+  limitReached: { color: Colors.gold },
   submit:      { backgroundColor: Colors.primary, borderRadius: Radius.md, paddingVertical: 14,
                  alignItems: 'center', marginTop: Spacing.sm },
   submitBusy:  { opacity: 0.7 },

@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import PhoneNumberInput from '@/components/PhoneNumberInput';
 import { View, Text, ScrollView, Image, Pressable, StyleSheet, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
@@ -69,7 +70,7 @@ export default function EditProfile() {
         </View>
 
         <TextInputField label="Full name" value={f.fullName} onChangeText={(t) => set('fullName', t)} />
-        <TextInputField label="Phone" value={f.phone} onChangeText={(t) => set('phone', t)} keyboardType="phone-pad" />
+        <PhoneNumberInput label="Phone" value={f.phone} onChange={({ e164, nsn }) => ((t) => set('phone', t))(e164 || nsn)} />
         <TextInputField label="Email" value={f.email} onChangeText={(t) => set('email', t)} keyboardType="email-address" autoCapitalize="none" />
         <TextInputField label="Profession" value={f.profession} onChangeText={(t) => set('profession', t)} />
         <TextInputField label="Location" value={f.location} onChangeText={(t) => set('location', t)} />
@@ -78,12 +79,12 @@ export default function EditProfile() {
 
         <Text style={styles.sectionTitle}>Emergency contact</Text>
         <TextInputField label="Name" value={f.emergency.name} onChangeText={(t) => set('emergency', { ...f.emergency, name: t })} />
-        <TextInputField label="Phone" value={f.emergency.phone} onChangeText={(t) => set('emergency', { ...f.emergency, phone: t })} keyboardType="phone-pad" />
+        <PhoneNumberInput label="Phone" value={f.emergency.phone} onChange={({ e164, nsn }) => ((t) => set('emergency', { ...f.emergency, phone: t }))(e164 || nsn)} />
 
         <Text style={styles.sectionTitle}>Next of kin</Text>
         <TextInputField label="Name" value={f.nextOfKin.name} onChangeText={(t) => set('nextOfKin', { ...f.nextOfKin, name: t })} />
         <TextInputField label="Relationship" value={f.nextOfKin.relationship} onChangeText={(t) => set('nextOfKin', { ...f.nextOfKin, relationship: t })} />
-        <TextInputField label="Phone" value={f.nextOfKin.phone} onChangeText={(t) => set('nextOfKin', { ...f.nextOfKin, phone: t })} keyboardType="phone-pad" />
+        <PhoneNumberInput label="Phone" value={f.nextOfKin.phone} onChange={({ e164, nsn }) => ((t) => set('nextOfKin', { ...f.nextOfKin, phone: t }))(e164 || nsn)} />
       </ScrollView>
 
       <View style={styles.footer}>
