@@ -8,7 +8,8 @@ import ScreenHeader from '@/components/ScreenHeader';
 import StateView from '@/components/StateView';
 import SegmentedTabs from '@/features/crowdfunding/components/SegmentedTabs';
 import CreatorCampaignRow from '@/features/crowdfunding/components/CreatorCampaignRow';
-import { useMyCampaigns } from '@/features/crowdfunding/hooks/useCreator';
+import { useMyCampaigns, useCreatorStats } from '@/features/crowdfunding/hooks/useCreator';
+import CreatorCampaignsBanner from '@/features/crowdfunding/components/CreatorCampaignsBanner';
 
 const TABS = [
   { value: 'all', label: 'All' },
@@ -33,11 +34,19 @@ const EMPTY: Record<string, { title: string; message: string }> = {
 export default function MyCampaignsScreen() {
   const [tab, setTab] = useState('all');
   const { data, isLoading, isError, refetch, isRefetching } = useMyCampaigns(tab === 'all' ? undefined : tab);
+  const stats = useCreatorStats();
   const e = EMPTY[tab];
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
       <ScreenHeader title="My campaigns" />
+      <View style={styles.bannerWrap}>
+        <CreatorCampaignsBanner
+          stats={stats.data}
+          isLoading={stats.isLoading}
+          onStart={() => router.push('/crowdfunding/create')}
+        />
+      </View>
       <View style={styles.tabs}>
         <SegmentedTabs options={TABS} value={tab} onChange={setTab} scrollable />
       </View>
@@ -74,6 +83,7 @@ export default function MyCampaignsScreen() {
 
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: Colors.background },
+  bannerWrap: { paddingHorizontal: Spacing.containerMargin, paddingTop: Spacing.xs },
   tabs: { paddingBottom: Spacing.sm },
   list: { paddingHorizontal: Spacing.containerMargin, gap: Spacing.sm, paddingBottom: 100, flexGrow: 1 },
 });
