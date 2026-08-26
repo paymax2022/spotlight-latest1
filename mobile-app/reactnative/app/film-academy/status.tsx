@@ -57,6 +57,9 @@ function statusPresentation(status: string | null): { label: string; color: stri
 const ACTION_ROUTES: Record<string, string> = {
   pay_application_fee: '/film-academy',
   pay_tuition: '/film-academy/tuition',
+  // An overdue notice that cannot be acted on is just an accusation — it goes to
+  // the same screen as a normal instalment payment.
+  tuition_overdue: '/film-academy/tuition',
   start_learning: '/film-academy/learn',
 };
 
@@ -66,7 +69,10 @@ function ActionCard({ action }: { action: FilmAcademyAction }) {
   // The server returns no route — it serves both this app and the web console,
   // which route differently — so the destination is resolved here by key.
   const target = ACTION_ROUTES[action.key] ?? null;
-  const isPayment = action.key === 'pay_tuition' || action.key === 'pay_application_fee';
+  const isPayment =
+    action.key === 'pay_tuition' ||
+    action.key === 'pay_application_fee' ||
+    action.key === 'tuition_overdue';
 
   const body = (
     <View style={[styles.actionCard, isPayment && styles.actionCardAccent]}>

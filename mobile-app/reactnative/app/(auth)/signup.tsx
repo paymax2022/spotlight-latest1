@@ -1,11 +1,13 @@
 import React, { useState } from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
-import { User, Mail, Phone, Lock, Gift } from 'lucide-react-native';
+import { User, Mail, Lock, Gift } from 'lucide-react-native';
 import { router } from 'expo-router';
 import { useForm, Controller } from 'react-hook-form';
 import { z } from 'zod';
 import { zodResolver } from '@hookform/resolvers/zod';
 import AuthScreenWrapper from '@/components/AuthScreenWrapper';
+import PhoneNumberInput from '@/components/PhoneNumberInput';
+import { isValid as isValidPhone } from '@/lib/phone/phone';
 import TextInputField from '@/components/TextInputField';
 import PrimaryButton from '@/components/PrimaryButton';
 import { Colors } from '@/constants/colors';
@@ -18,7 +20,9 @@ import { attribute as attributeReferral } from '@/features/referral/rewards/api'
 const schema = z.object({
   fullName: z.string().min(2, 'Enter your full name'),
   email:    z.string().email('Enter a valid email'),
-  phone:    z.string().min(10, 'Enter a valid phone number'),
+  // Validated with the shared util rather than a length check: "0801234567"
+  // is ten characters and passes min(10) while being one digit short.
+  phone:    z.string().refine((v) => isValidPhone(v), 'Enter a valid phone number'),
   password: z.string().min(8, 'Password must be at least 8 characters'),
   // Direct Referral Rewards (PRD §5.2) — optional. Attribution is invisible to
   // the referred user; a blank or bad code never blocks signup.
@@ -66,9 +70,12 @@ export default function SignupScreen() {
           error={errors.email?.message} value={field.value} onChangeText={field.onChange} />
       )} />
       <Controller name="phone" control={control} render={({ field }) => (
-        <TextInputField label="Phone number" placeholder="+234 80X XXX XXXX" keyboardType="phone-pad"
-          leftIcon={<Phone size={18} color={Colors.outline} strokeWidth={1.8} />}
-          error={errors.phone?.message} value={field.value} onChangeText={field.onChange} />
+        // Stores E.164 ("+2348012345678"). The value submitted is therefore the
+        // same shape the backend's NormalizePhone resolves at sign-in, so an
+        // account can always be found by the number it was created with.
+        <PhoneNumberInput label="Phone number"
+          value={field.value} onChange={({ e164, nsn }) => field.onChange(e164 || nsn)}
+          error={errors.phone?.message} testID="signup-phone" />
       )} />
       <Controller name="password" control={control} render={({ field }) => (
         <TextInputField label="Password" placeholder="Min. 8 characters" secure

@@ -5,7 +5,10 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
+	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -16,7 +19,7 @@ import (
 )
 
 type AuthService interface {
-	RegisterUser(in domain.RegisterRequest) error
+	RegisterUser(in domain.RegisterRequest) (*RegisterResult, error)
 	LoginUser(in domain.LoginRequest) (map[string]any, error)
 	RequestPasswordReset(email string) error
 	ResetPassword(token, password string) error
@@ -34,37 +37,112 @@ func NewAuthService(supabase *integrations.SupabaseRestClient, rbac RBACService,
 	return &authService{supabase: supabase, rbac: rbac, cfg: cfg}
 }
 
-func (s *authService) RegisterUser(in domain.RegisterRequest) error {
-	if in.Password != in.ConfirmPassword {
-		return fmt.Errorf("password confirmation mismatch")
+// RegisterResult is what registration produces, rather than the bare error the
+// caller used to get. Discarding the response body meant this endpoint could
+// never return a user or a session, which is why the web and mobile apps each
+// grew their own signUp call instead of using it.
+type RegisterResult struct {
+	UserID string
+	Email  string
+	// Session is nil when email confirmation is required — which both cloud
+	// projects require — and the caller must then send the user to enter a code.
+	AccessToken  string
+	RefreshToken string
+}
+
+// NeedsVerification reports whether the account still has to confirm an emailed
+// code before it can be used.
+func (r *RegisterResult) NeedsVerification() bool {
+	return r == nil || strings.TrimSpace(r.AccessToken) == ""
+}
+
+// signupResponse covers BOTH Supabase signup shapes: with confirmation OFF the
+// body is {access_token, user:{id}}; with it ON there is no session and the user
+// object IS the body, {id, email}. Handling one shape would break silently the
+// moment an environment differed — which is precisely what audit item B3 was.
+type signupResponse struct {
+	ID           string `json:"id"`
+	Email        string `json:"email"`
+	AccessToken  string `json:"access_token"`
+	RefreshToken string `json:"refresh_token"`
+	User         struct {
+		ID    string `json:"id"`
+		Email string `json:"email"`
+	} `json:"user"`
+}
+
+func parseSignupResponse(body []byte) *RegisterResult {
+	var p signupResponse
+	if err := json.Unmarshal(body, &p); err != nil {
+		return &RegisterResult{}
 	}
+	out := &RegisterResult{AccessToken: p.AccessToken, RefreshToken: p.RefreshToken}
+	if strings.TrimSpace(p.User.ID) != "" {
+		out.UserID, out.Email = p.User.ID, p.User.Email
+	} else {
+		out.UserID, out.Email = strings.TrimSpace(p.ID), p.Email
+	}
+	return out
+}
+
+// extractSignupUserID is retained for callers that only need the id.
+func extractSignupUserID(body []byte) string { return parseSignupResponse(body).UserID }
+
+func (s *authService) RegisterUser(in domain.RegisterRequest) (*RegisterResult, error) {
+	// Only when the client actually sent it — see domain.RegisterRequest.
+	if strings.TrimSpace(in.ConfirmPassword) != "" && in.Password != in.ConfirmPassword {
+		return nil, fmt.Errorf("password confirmation mismatch")
+	}
+
+	// full_name is what the on_auth_user_created trigger (handle_new_user) copies
+	// into user_profiles: COALESCE(raw_user_meta_data->>'full_name', ''). Sending
+	// only first_name/last_name gave every account an EMPTY profile name.
+	fullName := in.FullNameOrJoin()
+
 	payload := map[string]any{
 		"email":    strings.TrimSpace(strings.ToLower(in.Email)),
 		"password": in.Password,
 		"data": map[string]any{
+			"full_name":  fullName,
 			"first_name": in.FirstName,
 			"last_name":  in.LastName,
-			"user_type":  in.UserType,
+			"user_type":  in.UserTypeOrDefault(),
 			"phone":      in.Phone,
 		},
 	}
 	b, _ := json.Marshal(payload)
 	req, err := http.NewRequest(http.MethodPost, strings.TrimRight(s.supabase.BaseURL(), "/")+"/auth/v1/signup", bytes.NewReader(b))
 	if err != nil {
-		return err
+		return nil, err
 	}
 	req.Header.Set("apikey", s.supabase.APIKey())
 	req.Header.Set("Authorization", "Bearer "+s.supabase.APIKey())
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer resp.Body.Close()
+	respBody, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode >= 400 {
-		return fmt.Errorf("registration failed: %d", resp.StatusCode)
+		// The handler does not echo this: a distinguishable "already registered"
+		// would be an account-enumeration oracle.
+		return nil, fmt.Errorf("registration failed: %d", resp.StatusCode)
 	}
-	return nil
+
+	result := parseSignupResponse(respBody)
+
+	// The trigger does not copy phone, so it needs an explicit write. Best-effort:
+	// the ACCOUNT EXISTS by now, and failing here would send the user back to
+	// register and meet "already registered" on an account that is genuinely theirs.
+	if phone := strings.TrimSpace(in.Phone); phone != "" && result.UserID != "" {
+		if err := s.supabase.REST(http.MethodPatch, "user_profiles",
+			map[string]string{"id": "eq." + result.UserID},
+			map[string]any{"phone": phone}, nil); err != nil {
+			log.Printf("[auth] register: profile phone update failed for %s: %v", result.UserID, err)
+		}
+	}
+	return result, nil
 }
 
 // resolveLoginEmail turns a client-supplied identifier into the account email.
@@ -124,6 +202,17 @@ func (s *authService) phoneToEmail(nsn string) string {
 	return found
 }
 
+// ErrEmailNotConfirmed means the credentials were CORRECT but the address has
+// not been verified yet.
+//
+// Safe to distinguish from a bad password, which is not obvious and was checked
+// against the live server before relying on it: Supabase returns
+// email_not_confirmed ONLY when the password is right. A wrong password on an
+// unconfirmed account, and an address with no account at all, both come back as
+// invalid_credentials. So this reveals nothing to someone who does not already
+// hold the password, and it is the only way to offer the user a route forward.
+var ErrEmailNotConfirmed = errors.New("email not confirmed")
+
 func (s *authService) LoginUser(in domain.LoginRequest) (map[string]any, error) {
 	email := s.resolveLoginEmail(in.Identifier, in.Email)
 	if email == "" {
@@ -153,6 +242,20 @@ func (s *authService) LoginUser(in domain.LoginRequest) (map[string]any, error) 
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode >= 400 {
+		errBody, _ := io.ReadAll(resp.Body)
+		var upstream struct {
+			ErrorCode string `json:"error_code"`
+		}
+		_ = json.Unmarshal(errBody, &upstream)
+
+		// The password was CORRECT — only verification is missing. Counting this as
+		// a failed attempt locks the account out after MaxFailedLoginAttempts for
+		// doing nothing wrong, and the user cannot escape it: every retry is
+		// another strike, and the thing they need to fix is not their password.
+		if upstream.ErrorCode == "email_not_confirmed" {
+			return nil, ErrEmailNotConfirmed
+		}
+
 		if user != nil {
 			_ = s.bumpFailedLogin(user)
 		}

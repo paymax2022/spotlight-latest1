@@ -2,7 +2,7 @@
 // Accepts the application form + payment_preference, stores both.
 
 import { ApiError, errorResponse, handleApiError, successResponse } from '@/src/lib/api/responses';
-import { requireRequestUser } from '@/src/lib/auth/request';
+import { requireRequestUser, type RequestUser } from '@/src/lib/auth/request';
 import { createAdminClient } from '@/lib/supabase/server';
 import { getBatchAreaSlugs } from '@/src/server/services/academy/batchAreas';
 import { getOrCreateUserProfile } from '@/src/server/user/profile';
@@ -79,6 +79,71 @@ function isDuplicateApplicationError(error: { code?: string; message?: string } 
   return text.includes('23505') || text.includes('already applied');
 }
 
+/**
+ * The applicant's identity as the PLATFORM already knows it.
+ *
+ * The account is the source of truth for these three fields — the user gave
+ * them at sign-up, so the application form must not ask for them again. The
+ * email in particular is taken from the authenticated session and NOT from the
+ * request body: it keys the duplicate-application check, so accepting a
+ * client-supplied address would let one account file under another's email.
+ */
+async function getApplicantIdentity(user: RequestUser) {
+  // Optional chaining throughout: a profile row that is missing, partial, or
+  // from an older schema must degrade to "the account knows nothing", which
+  // makes the form ask — it must never fail the application with a 500.
+  const profile = (await getOrCreateUserProfile(user)) as
+    | Awaited<ReturnType<typeof getOrCreateUserProfile>>
+    | undefined;
+  const email = (user.email || profile?.email || '').trim();
+  const composed = [profile?.firstName, profile?.lastName].filter(Boolean).join(' ').trim();
+  // normalizeProfile folds user_profiles.full_name into displayName.
+  const fullName = composed || (profile?.displayName || '').trim();
+
+  return {
+    // Sign-up stores the email as the display name when no name was given.
+    // That is not a name — treat it as missing so the form can ask for one,
+    // rather than filing "you@example.com" as the applicant.
+    fullName: fullName && fullName.toLowerCase() !== email.toLowerCase() ? fullName : '',
+    email,
+    phone: (profile?.phone || '').trim(),
+    // Also already on file. Unlike the three above these stay editable on the
+    // form — they are per-application details a user may reasonably restate —
+    // but there is no reason to make them start empty.
+    gender: (profile?.gender || '').trim(),
+    dateOfBirth: (profile?.dateOfBirth || '').trim(),
+    state: (profile?.state || '').trim(),
+    city: (profile?.city || '').trim(),
+    country: (profile?.country || '').trim(),
+    profile,
+  };
+}
+
+/**
+ * Backfills the account with details the applicant had to type because the
+ * profile was missing them, so the NEXT module does not ask again. Only ever
+ * fills blanks — it never overwrites what the user already set, and a failure
+ * (older schema without these columns) must not fail the application.
+ */
+async function backfillProfileDetails(
+  userId: string,
+  current: { fullName: string; phone: string },
+  supplied: { fullName: string; phone: string },
+) {
+  const patch: Record<string, string> = {};
+  if (!current.fullName && supplied.fullName) patch.full_name = supplied.fullName;
+  if (!current.phone && supplied.phone) patch.phone = supplied.phone;
+  if (Object.keys(patch).length === 0) return;
+
+  try {
+    const supabase = createAdminClient();
+    const { error } = await supabase.from('user_profiles').update(patch).eq('id', userId);
+    if (error) console.warn('[academy] profile backfill skipped:', error.message);
+  } catch (error) {
+    console.warn('[academy] profile backfill skipped:', error);
+  }
+}
+
 async function getActiveAcademySettings() {
   const supabase = createAdminClient();
   const { data, error } = await supabase
@@ -142,6 +207,20 @@ async function getOptionalRequestUser(request: Request) {
   }
 }
 
+/**
+ * How many priced areas one application may carry, per batch.
+ *
+ * Enforced on the SERVER because the cap is a commercial rule, not a UI nicety:
+ * the mobile form stops at this number, but the form is not what decides. An
+ * application that slipped past it would be charged for every area it named.
+ *
+ * Applied to the DEDUPLICATED list — see the duplicate check below.
+ *
+ * Existing applications that already exceed it are deliberately left alone; the
+ * cap governs new and edited submissions only.
+ */
+const MAX_INTEREST_AREAS_PER_APPLICATION = 2;
+
 export async function POST(request: Request) {
   try {
     const user = await requireRequestUser(request);
@@ -150,9 +229,15 @@ export async function POST(request: Request) {
 
     const paymentPreference = body.payment_preference === 'one_off' ? 'one_off' : 'installment';
     const batchId = getString(body.batch_id);
-    const fullName = getString(body.full_name);
-    const email = getString(body.email) || getString(user.email);
-    const phone = getString(body.phone);
+
+    // Identity comes from the ACCOUNT first. The form only sends these when the
+    // profile has no value for them, so a signed-in applicant is never asked to
+    // retype what they gave at sign-up.
+    const identity = await getApplicantIdentity(user);
+    const fullName = identity.fullName || getString(body.full_name);
+    // Session-derived, never client-supplied — see getApplicantIdentity.
+    const email = identity.email || getString(body.email);
+    const phone = identity.phone || getString(body.phone);
     const areasOfInterest = getStringArray(body.areas_of_interest);
     const motivation = getString(body.motivation);
     const experience = getString(body.experience);
@@ -164,6 +249,18 @@ export async function POST(request: Request) {
     if (!batchId) return errorResponse('Batch selection is required', 400);
     if (areasOfInterest.length === 0) {
       return errorResponse('At least one area of interest is required', 400);
+    }
+    // Duplicates are collapsed BEFORE the cap is applied. Counting the raw list
+    // would let ['acting','acting','acting'] read as three selections, and — worse
+    // — would price the same area three times in the tuition sum below.
+    if (new Set(areasOfInterest).size !== areasOfInterest.length) {
+      return errorResponse('The same area of interest was selected more than once', 400);
+    }
+    if (areasOfInterest.length > MAX_INTEREST_AREAS_PER_APPLICATION) {
+      return errorResponse(
+        `Choose at most ${MAX_INTEREST_AREAS_PER_APPLICATION} areas of interest for this batch`,
+        400,
+      );
     }
     if (!motivation) return errorResponse('Motivation is required', 400);
 
@@ -290,7 +387,13 @@ export async function POST(request: Request) {
       }
     }
 
-    await getOrCreateUserProfile(user);
+    // The account is missing details the applicant just typed — save them so no
+    // other module has to ask for them again.
+    await backfillProfileDetails(
+      user.id,
+      { fullName: identity.fullName, phone: identity.phone },
+      { fullName, phone },
+    );
 
     const applicationId = crypto.randomUUID();
     const paymentStatus = registrationFeeRequired ? 'paid' : 'not_required';
@@ -403,8 +506,33 @@ export async function GET(request: Request) {
 
     const user = await getOptionalRequestUser(request);
     let appliedBatchIds: string[] = [];
+    // What the platform already knows about the applicant. The form renders
+    // these read-only instead of asking for them again, and only shows an input
+    // for a field the account genuinely lacks. Signed-out callers get null and
+    // the form falls back to asking, as before.
+    let applicant: {
+      full_name: string; email: string; phone: string;
+      gender: string; date_of_birth: string; state: string; city: string; country: string;
+    } | null = null;
 
     if (user) {
+      try {
+        const identity = await getApplicantIdentity(user);
+        applicant = {
+          full_name: identity.fullName,
+          email: identity.email,
+          phone: identity.phone,
+          gender: identity.gender,
+          date_of_birth: identity.dateOfBirth,
+          state: identity.state,
+          city: identity.city,
+          country: identity.country,
+        };
+      } catch (error) {
+        // Prefill is a convenience — never fail the batch list over it.
+        console.warn('[academy] could not load applicant identity:', error);
+      }
+
       const query = supabase
         .from('academy_applications')
         .select('batch_id')
@@ -455,7 +583,13 @@ export async function GET(request: Request) {
       fee_ngn: Number((a as { fee_ngn: number | null }).fee_ngn ?? 0),
     }));
 
-    return successResponse({ success: true, batches, appliedBatchIds, settings, interestAreas, batchAreas });
+    // The cap travels WITH the catalogue so the client never hardcodes its own
+    // copy of a commercial rule that lives on the server.
+    return successResponse({
+      success: true, batches, appliedBatchIds, settings, interestAreas, batchAreas,
+      maxInterestAreas: MAX_INTEREST_AREAS_PER_APPLICATION,
+      applicant,
+    });
   } catch (error) {
     return handleApiError(error, 'Failed to load batches');
   }

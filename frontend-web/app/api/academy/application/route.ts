@@ -6,6 +6,7 @@
 import { errorResponse, handleApiError, successResponse } from '@/src/lib/api/responses';
 import { requireRequestUser } from '@/src/lib/auth/request';
 import { createAdminClient } from '@/lib/supabase/server';
+import { summariseCompliance } from '@/src/server/services/academy/compliance';
 
 type RequiredAction = {
   key: string;
@@ -138,6 +139,24 @@ function buildActions(
       });
     }
 
+    // Arrears are stated plainly rather than used to silently lock someone out.
+    // Suspending access is an admin decision with real consequences for a paying
+    // learner; the system's job here is to make the debt impossible to miss.
+    const compliance = summariseCompliance(payments);
+    if (compliance.state === 'overdue') {
+      actions.unshift({
+        key: 'tuition_overdue',
+        label:
+          compliance.overdueCount === 1
+            ? 'A tuition instalment is overdue'
+            : `${compliance.overdueCount} tuition instalments are overdue`,
+        detail: `₦${compliance.arrearsNgn.toLocaleString('en-NG')} is past due${
+          compliance.daysLate > 0 ? ` by ${compliance.daysLate} day${compliance.daysLate === 1 ? '' : 's'}` : ''
+        }. Settle it to keep your place on the programme.`,
+        amountNgn: compliance.arrearsNgn,
+      });
+    }
+
     // Learning opens on ENROLMENT, not on the plan being fully settled. A learner on
     // a three-month plan would otherwise be locked out until the course was nearly
     // over, despite having paid to secure the place.
@@ -235,6 +254,7 @@ export async function GET(request: Request) {
       plan,
       payments,
       enrolled: Boolean(enrolRes.data),
+      compliance: summariseCompliance(payments),
       actions: buildActions(application as Record<string, any>, payments, Boolean(enrolRes.data)),
     });
   } catch (error) {

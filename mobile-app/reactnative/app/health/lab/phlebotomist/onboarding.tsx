@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import PhoneNumberInput from '@/components/PhoneNumberInput';
 import { View, Text, ScrollView, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { CircleCheck, CircleAlert, Clock, ShieldCheck } from 'lucide-react-native';
@@ -107,12 +108,7 @@ export default function PhlebotomistOnboardingScreen() {
             onChangeText={setFullName}
             placeholder="e.g. Amaka Okafor"
           />
-          <TextInputField
-            label="Phone number"
-            value={phone}
-            onChangeText={setPhone}
-            placeholder="e.g. 0803 000 0000"
-          />
+          <PhoneNumberInput label="Phone number" value={phone} onChange={({ e164, nsn }) => (setPhone)(e164 || nsn)} />
         </View>
 
         <View style={styles.card}>

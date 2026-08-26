@@ -1,4 +1,5 @@
 import React, { useMemo, useState } from 'react';
+import PhoneNumberInput from '@/components/PhoneNumberInput';
 import { View, Text, ScrollView, StyleSheet, Pressable, KeyboardAvoidingView, Platform } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
@@ -135,13 +136,7 @@ export default function CreateAccessCodeScreen() {
               <Text style={styles.contactsText}>Choose from contacts</Text>
             </Pressable>
 
-            <TextInputField
-              label="Phone number (optional)"
-              placeholder="+234 800 000 0000"
-              value={phone}
-              onChangeText={setPhone}
-              keyboardType="phone-pad"
-            />
+            <PhoneNumberInput label="Phone number (optional)" value={phone} onChange={({ e164, nsn }) => (setPhone)(e164 || nsn)} />
             <TextInputField
               label="Purpose (optional)"
               placeholder="e.g. Family visit, package delivery"

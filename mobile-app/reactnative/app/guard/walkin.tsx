@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import PhoneNumberInput from '@/components/PhoneNumberInput';
 import { View, Text, ScrollView, StyleSheet, Pressable, KeyboardAvoidingView, Platform } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
@@ -75,7 +76,7 @@ export default function WalkInScreen() {
           <View style={styles.form}>
             <TextInputField label="Visitor name" placeholder="Full name" value={name} onChangeText={setName} autoCapitalize="words" leftIcon={<User size={18} color={Colors.outline} />} />
             <TextInputField label="Host unit" placeholder="e.g. Block C, Flat 4" value={unit} onChangeText={setUnit} leftIcon={<MapPin size={18} color={Colors.outline} />} />
-            <TextInputField label="Phone (optional)" placeholder="+234 800 000 0000" value={phone} onChangeText={setPhone} keyboardType="phone-pad" />
+            <PhoneNumberInput label="Phone (optional)" value={phone} onChange={({ e164, nsn }) => (setPhone)(e164 || nsn)} />
             <TextInputField label="Purpose (optional)" placeholder="Reason for visit" value={purpose} onChangeText={setPurpose} leftIcon={<FileText size={18} color={Colors.outline} />} />
           </View>
 

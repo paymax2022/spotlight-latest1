@@ -43,10 +43,11 @@ vi.mock('@/src/lib/payments/paystack', () => ({
 
 // ── Import after mocks ────────────────────────────────────────────────────────
 
-import { POST } from '../../../app/api/academy/apply/route';
+import { POST, GET } from '../../../app/api/academy/apply/route';
 import { requireRequestUser } from '@/src/lib/auth/request';
 import { createAdminClient } from '@/lib/supabase/server';
 import { verifyPaystackTransaction } from '@/src/lib/payments/paystack';
+import { getOrCreateUserProfile } from '@/src/server/user/profile';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -100,7 +101,7 @@ function mockInterestAreas(
 }
 
 function setupHappyPathMock() {
-  const { mock, maybySingle, insertFn } = makeSupabaseMock();
+  const { mock, maybySingle, insertFn, updateFn, updateEq } = makeSupabaseMock();
   mockInterestAreas(mock);
 
   maybySingle
@@ -120,7 +121,7 @@ function setupHappyPathMock() {
   insertFn.mockResolvedValue({ error: null });
 
   vi.mocked(createAdminClient).mockReturnValue(mock as any);
-  return { mock, maybySingle, insertFn };
+  return { mock, maybySingle, insertFn, updateFn, updateEq };
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
@@ -414,5 +415,192 @@ describe('POST /api/academy/apply', () => {
 
     expect(res.status).toBe(400);
     expect(body.error).toMatch(/area of interest/i);
+  });
+
+  // ── The two-area cap ────────────────────────────────────────────────────────
+  // A commercial rule, so it is enforced on the SERVER. The mobile form stops at
+  // two, but an application that slipped past the form would be CHARGED for every
+  // area it named — which is why these are route tests, not UI tests.
+
+  it('rejects more than two areas of interest', async () => {
+    const { mock } = makeSupabaseMock();
+    mockInterestAreas(mock, [
+      { slug: 'acting', fee_ngn: 50000 },
+      { slug: 'editing', fee_ngn: 35000 },
+      { slug: 'sound', fee_ngn: 20000 },
+    ]);
+    vi.mocked(createAdminClient).mockReturnValue(mock as any);
+
+    const res = await POST(makeRequest('/api/academy/apply', {
+      body: makeApplyBody({ areas_of_interest: ['acting', 'editing', 'sound'] }),
+    }));
+    const body = await res.json();
+
+    expect(res.status).toBe(400);
+    expect(body.error).toMatch(/at most 2/i);
+  });
+
+  it('accepts exactly two areas — the cap is inclusive', async () => {
+    // Off-by-one here would reject a legitimate application, so the boundary is
+    // pinned from both sides.
+    const { mock } = setupHappyPathMock();
+    mockInterestAreas(mock, [
+      { slug: 'acting', fee_ngn: 0 },
+      { slug: 'editing', fee_ngn: 0 },
+    ]);
+    vi.mocked(createAdminClient).mockReturnValue(mock as any);
+
+    const res = await POST(makeRequest('/api/academy/apply', {
+      body: makeApplyBody({ areas_of_interest: ['acting', 'editing'] }),
+    }));
+    expect(res.status).toBe(201); // 201 Created — the application was accepted
+  });
+
+  it('rejects a duplicated slug rather than counting it once', async () => {
+    // ['acting','acting','acting'] must not read as three selections — and more
+    // importantly must not price the same area three times in the tuition sum.
+    const { mock } = makeSupabaseMock();
+    mockInterestAreas(mock, [{ slug: 'acting', fee_ngn: 50000 }]);
+    vi.mocked(createAdminClient).mockReturnValue(mock as any);
+
+    const res = await POST(makeRequest('/api/academy/apply', {
+      body: makeApplyBody({ areas_of_interest: ['acting', 'acting', 'acting'] }),
+    }));
+    const body = await res.json();
+
+    expect(res.status).toBe(400);
+    expect(body.error).toMatch(/more than once/i);
+  });
+
+  it('publishes the cap on GET so the client does not hardcode its own copy', async () => {
+    const { mock } = makeSupabaseMock();
+    mockInterestAreas(mock);
+    vi.mocked(createAdminClient).mockReturnValue(mock as any);
+
+    const res = await GET(makeRequest('/api/academy/apply', { method: 'GET' }));
+    const body = await res.json();
+    const d = body.data ?? body;
+    expect(d.maxInterestAreas).toBe(2);
+  });
+});
+
+/**
+ * The applicant already gave their name, email and phone at sign-up. The form
+ * must not ask again, so the route resolves all three from the account and only
+ * falls back to the body for what the profile genuinely lacks.
+ */
+describe('POST /api/academy/apply — identity comes from the account', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    authAsTestUser();
+  });
+
+  function profileOnFile(overrides: Record<string, unknown> = {}) {
+    vi.mocked(getOrCreateUserProfile).mockResolvedValue({
+      id: TEST_USER.id,
+      email: TEST_USER.email,
+      role: 'USER',
+      displayName: 'Ada Okafor',
+      phone: '08012345678',
+      profileTypes: ['general_applicant'],
+      ...overrides,
+    } as any);
+  }
+
+  it('accepts an application that sends no name, email or phone at all', async () => {
+    profileOnFile();
+    const { insertFn } = setupHappyPathMock();
+
+    const res = await POST(
+      makeRequest('/api/academy/apply', {
+        body: {
+          batch_id: 'batch-001',
+          areas_of_interest: ['acting'],
+          motivation: 'I want to become a professional actor.',
+          payment_preference: 'installment',
+        },
+      }),
+    );
+
+    expect(res.status).toBe(201);
+    expect(insertFn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        full_name: 'Ada Okafor',
+        email: TEST_USER.email,
+        phone: '08012345678',
+      }),
+    );
+  });
+
+  it('files the application under the SESSION email, not one supplied by the caller', async () => {
+    profileOnFile();
+    const { insertFn } = setupHappyPathMock();
+
+    const res = await POST(
+      makeRequest('/api/academy/apply', {
+        body: makeApplyBody({ email: 'someone-else@example.com' }),
+      }),
+    );
+
+    expect(res.status).toBe(201);
+    // The email keys the duplicate-application check — a caller must not be
+    // able to file under an address that is not their own.
+    expect(insertFn).toHaveBeenCalledWith(
+      expect.objectContaining({ email: TEST_USER.email }),
+    );
+  });
+
+  it('still asks for a name the profile does not have, and saves it back', async () => {
+    profileOnFile({ displayName: undefined, phone: '' });
+    const { insertFn, updateFn, updateEq } = setupHappyPathMock();
+
+    const res = await POST(
+      makeRequest('/api/academy/apply', {
+        body: makeApplyBody({ full_name: 'Chidi Nwosu', phone: '08099998888' }),
+      }),
+    );
+
+    expect(res.status).toBe(201);
+    expect(insertFn).toHaveBeenCalledWith(
+      expect.objectContaining({ full_name: 'Chidi Nwosu', phone: '08099998888' }),
+    );
+    // Backfilled, so no other module has to ask for them again.
+    expect(updateFn).toHaveBeenCalledWith({ full_name: 'Chidi Nwosu', phone: '08099998888' });
+    expect(updateEq).toHaveBeenCalledWith('id', TEST_USER.id);
+  });
+
+  it('never overwrites details the profile already holds', async () => {
+    profileOnFile();
+    const { updateFn } = setupHappyPathMock();
+
+    const res = await POST(
+      makeRequest('/api/academy/apply', {
+        body: makeApplyBody({ full_name: 'Someone Else', phone: '08000000000' }),
+      }),
+    );
+
+    expect(res.status).toBe(201);
+    expect(updateFn).not.toHaveBeenCalled();
+  });
+
+  it('treats a display name that is just the account email as no name at all', async () => {
+    profileOnFile({ displayName: TEST_USER.email });
+    setupHappyPathMock();
+
+    const res = await POST(
+      makeRequest('/api/academy/apply', {
+        body: {
+          batch_id: 'batch-001',
+          areas_of_interest: ['acting'],
+          motivation: 'I want to become a professional actor.',
+        },
+      }),
+    );
+    const body = await res.json();
+
+    // Sign-up stores the email as the display name when none was given. Filing
+    // "student@example.com" as the applicant's name would be worse than asking.
+    expect(res.status).toBe(400);
+    expect(body.error).toMatch(/full name/i);
   });
 });
