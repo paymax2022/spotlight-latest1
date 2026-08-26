@@ -1,6 +1,8 @@
 import { successResponse, errorResponse, handleApiError } from '@/src/lib/api/responses';
 import { buildRegistrationSteps } from '@/src/features/registration/config';
-import { getRegistrationDraft, saveRegistrationStep } from '@/src/server/registration/supabase-store';
+import { applyAccountPrefill, getRegistrationDraft, saveRegistrationStep } from '@/src/server/registration/supabase-store';
+import { getOrCreateUserProfile } from '@/src/server/user/profile';
+import { buildAccountPrefill } from '@/src/features/registration/account-prefill';
 import type { RegistrationStepKey } from '@/src/features/registration/types';
 import { requireUser } from '@/src/lib/auth/server';
 
@@ -23,8 +25,18 @@ export async function GET(request: Request, ctx: { params: Promise<{ id: string 
       return errorResponse('Forbidden', 403);
     }
 
-    const steps = buildRegistrationSteps(draft);
-    return successResponse({ success: true, draft, steps });
+    // Drafts started before account prefill existed still ask for details the
+    // account already holds — fill their blanks on first open. No-ops once done.
+    let prefilled = draft;
+    try {
+      const profile = await getOrCreateUserProfile({ id: user.id, email: user.email || undefined });
+      prefilled = await applyAccountPrefill(draft, buildAccountPrefill(profile));
+    } catch (error) {
+      console.warn('[registration] could not prefill from the account:', error);
+    }
+
+    const steps = buildRegistrationSteps(prefilled);
+    return successResponse({ success: true, draft: prefilled, steps });
   } catch (error) {
     if (error instanceof Error && error.message === 'UNAUTHORIZED') {
       return errorResponse('Authentication required', 401);

@@ -11,6 +11,7 @@ import {
   runBasicFraudChecks,
   validateStepData,
 } from '@/src/features/registration/validation';
+import { ACCOUNT_PROVIDED_KEYS } from '@/src/features/registration/account-prefill';
 import {
   listRegistrationContests,
   getRegistrationContestBySlug,
@@ -217,11 +218,60 @@ export async function saveRegistrationStep(params: {
   return { draft: nextDraft, validation };
 }
 
+/**
+ * Fill an EXISTING draft's blanks from the applicant's account, once.
+ *
+ * Drafts started before account prefill existed carry no marker and would keep
+ * asking for a name and phone the platform already has. This backfills them the
+ * first time such a draft is opened.
+ *
+ * Blanks only: an answer the applicant already typed is never overwritten, and
+ * a draft that is no longer editable is left completely alone. Returns the draft
+ * unchanged when there is nothing to add, so it is safe to call on every read.
+ */
+export async function applyAccountPrefill(
+  draft: RegistrationDraft,
+  prefill: { values: Record<string, unknown>; providedKeys: string[] },
+): Promise<RegistrationDraft> {
+  if (draft.status !== 'draft') return draft;
+  if (Array.isArray(draft.formData?.[ACCOUNT_PROVIDED_KEYS])) return draft;
+
+  const merged = { ...draft.formData };
+  const filled: string[] = [];
+  for (const key of prefill.providedKeys) {
+    const current = merged[key];
+    if (current !== undefined && current !== null && String(current).trim() !== '') continue;
+    merged[key] = prefill.values[key];
+    filled.push(key);
+  }
+  // Records only what the backfill actually WROTE. A value already sitting in an
+  // old draft was typed by the applicant, and marking that as account-supplied
+  // would lock their own answer where they can no longer edit it.
+  merged[ACCOUNT_PROVIDED_KEYS] = filled;
+
+  const { error } = await getSupabase()
+    .from('registrations')
+    .update({ form_data: merged, updated_at: nowIso() })
+    .eq('id', draft.id);
+
+  // A failed backfill costs the convenience, not the application — the draft is
+  // returned with the values applied for this response and retried next read.
+  if (error) console.warn('[registration] account prefill backfill failed:', error.message);
+
+  return { ...draft, formData: merged };
+}
+
 export async function startRegistrationDraft(params: {
   contestSlug: string;
   userId?: string;
   role?: 'public_user' | 'invited_applicant' | 'staff';
   accountData?: Record<string, unknown>;
+  /**
+   * Details resolved SERVER-SIDE from the applicant's account, plus the keys
+   * they filled. Spread after `accountData` so a client-supplied blob can never
+   * pass itself off as account-verified — see `features/registration/account-prefill`.
+   */
+  accountPrefill?: { values: Record<string, unknown>; providedKeys: string[] };
 }) {
   const contest = getRegistrationContestBySlug(params.contestSlug) || resolveContestRegistration(params.contestSlug);
   if (!contest) {
@@ -233,6 +283,8 @@ export async function startRegistrationDraft(params: {
 
   const formData = {
     ...(params.accountData || {}),
+    ...(params.accountPrefill?.values || {}),
+    [ACCOUNT_PROVIDED_KEYS]: params.accountPrefill?.providedKeys || [],
     'contest.title': contest.title,
     'contest.category': contest.contestCategory,
     'contest.type': contest.contestType,

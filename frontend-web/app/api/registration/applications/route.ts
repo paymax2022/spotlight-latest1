@@ -2,6 +2,8 @@ import { successResponse, errorResponse, handleApiError } from '@/src/lib/api/re
 import { listRegistrationApplications, startRegistrationDraft } from '@/src/server/registration/supabase-store';
 import type { RegistrationListFilter } from '@/src/features/registration/types';
 import { requireUser } from '@/src/lib/auth/server';
+import { getOrCreateUserProfile } from '@/src/server/user/profile';
+import { buildAccountPrefill } from '@/src/features/registration/account-prefill';
 
 export async function GET(request: Request) {
   try {
@@ -43,11 +45,25 @@ export async function POST(request: Request) {
     // (see 20260811232202 CHECK) — fold the app's wider role set onto it.
     const storeRole =
       body.role === 'admin' || body.role === 'super_admin' ? 'staff' : 'public_user';
+
+    // Seed the draft with what the applicant already gave at sign-up, so no
+    // contest form asks for their name, phone or contact details again. Resolved
+    // server-side from the profile — never from the request — and a failure here
+    // only costs the convenience, so it must not block starting an application.
+    let accountPrefill: { values: Record<string, unknown>; providedKeys: string[] } | undefined;
+    try {
+      const profile = await getOrCreateUserProfile({ id: user.id, email: user.email || undefined });
+      accountPrefill = buildAccountPrefill(profile);
+    } catch (error) {
+      console.warn('[registration] could not prefill from the account:', error);
+    }
+
     const draft = await startRegistrationDraft({
       contestSlug: body.contestSlug,
       userId: user.id,
       role: storeRole,
       accountData: body.accountData,
+      accountPrefill,
     });
 
     return successResponse({ success: true, draft }, 201);
