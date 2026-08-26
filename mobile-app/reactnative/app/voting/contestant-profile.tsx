@@ -4,6 +4,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import { ArrowLeft, Share2, Heart, BadgeCheck, MapPin, Music, PlayCircle, ExternalLink } from 'lucide-react-native';
 import { useQueryClient } from '@tanstack/react-query';
 import { Colors } from '@/constants/colors';
@@ -134,7 +135,7 @@ export default function ContestantProfileScreen() {
     <SafeAreaView style={styles.safe} edges={['top']}>
       {/* Floating controls */}
       <View style={styles.floatingBar}>
-        <Pressable onPress={() => router.back()} style={styles.floatBtn}>
+        <Pressable onPress={() => goBack(`/voting/contestants?contestId=${contestId}`)} style={styles.floatBtn}>
           <ArrowLeft size={20} color={Colors.onSurface} strokeWidth={2} />
         </Pressable>
         <View style={styles.floatRight}>
