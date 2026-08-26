@@ -38,7 +38,17 @@ import type {
 const USE_MOCK = resolveUseMock(process.env.NEXT_PUBLIC_CF_USE_MOCK);
 
 function adminBase(): string {
-  return env.apiBaseUrl.replace(/\/api\/v1\/?$/, '/api/crowdfunding/admin');
+  // Strip a trailing /api/v1 (if present) to get the API ROOT, then append the
+  // module's absolute path — the same shape restaurantAdminService uses.
+  //
+  // This used to REPLACE /api/v1 with the module path, which silently produced a
+  // base with no module prefix at all once frontend-admin moved env.apiBaseUrl to
+  // the same-origin proxy (<origin>/api/admin-proxy): the regex no longer matched,
+  // so every call went to <proxy>/campaigns instead of
+  // <proxy>/api/crowdfunding/admin/campaigns, and 404'd. Stripping is a no-op when
+  // there is nothing to strip, so this form is correct for both base shapes.
+  const root = env.apiBaseUrl.replace(/\/api\/v1\/?$/, '');
+  return `${root}/api/crowdfunding/admin`;
 }
 function authHeaders(): Record<string, string> {
   if (typeof window === 'undefined') return {};
