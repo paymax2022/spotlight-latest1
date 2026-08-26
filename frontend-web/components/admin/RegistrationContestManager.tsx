@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
-import { authHeaders } from '@/src/lib/auth/client';
+import { adminAuthHeaders } from '@/src/lib/auth/client';
 import { DEFAULT_APPLICANT_CATEGORIES, NIGERIA_STATES } from '@/src/features/registration/config';
 import {
   FIELD_CATALOG,
@@ -195,7 +195,10 @@ export default function RegistrationContestManager() {
     setLoading(true);
     setError('');
     try {
-      const res = await fetch('/api/admin/contests', { cache: 'no-store' });
+      const res = await fetch('/api/admin/contests', {
+        cache: 'no-store',
+        headers: await adminAuthHeaders(),
+      });
       const payload = await res.json().catch(() => ({}));
       if (!res.ok || !payload?.success) throw new Error(payload?.error || 'Failed to load contests.');
       setContests(Array.isArray(payload?.contests) ? payload.contests : []);
@@ -263,7 +266,7 @@ export default function RegistrationContestManager() {
     try {
       const res = await fetch(`/api/admin/contests/${encodeURIComponent(slug)}/status`, {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json', ...(await authHeaders()) },
+        headers: await adminAuthHeaders(true),
         body: JSON.stringify({ status }),
       });
       const payload = await res.json().catch(() => ({}));
@@ -296,7 +299,7 @@ export default function RegistrationContestManager() {
     try {
       const res = await fetch('/api/admin/contests', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: await adminAuthHeaders(true),
         body: JSON.stringify({ ...form, formSchema: buildFormSchemaPayload() }),
       });
       const payload = await res.json().catch(() => ({}));

@@ -1,4 +1,5 @@
 import { errorResponse, handleApiError, successResponse } from '@/src/lib/api/responses';
+import { assertAdminPermission } from '@/src/server/admin/auth';
 import type { ContestCategory, ContestRegistrationDefinition, ContestType } from '@/src/features/registration/types';
 import { sanitizeContestFormSchema } from '@/src/features/registration/field-catalog';
 import { createRegistrationContest, listRegistrationContests } from '@/src/server/registration/store';
@@ -47,8 +48,14 @@ function toSlug(raw: string) {
     .replace(/-+/g, '-');
 }
 
-export async function GET() {
+export async function GET(request: Request) {
   try {
+    // Was UNGATED. The [slug] sibling has always required programs:manage, but
+    // this collection route required nothing, so anyone who could reach the
+    // origin could list and create contests. Same permission as the sibling —
+    // an endpoint that publishes to the app must not be looser than the one
+    // that edits a single contest.
+    await assertAdminPermission(request, 'programs:manage');
     // Postgres is the source of truth now, but the in-memory catalog still holds
     // the code-defined contests (and anything created before this route started
     // persisting), so both are listed. Postgres wins on slug collision.
@@ -63,6 +70,10 @@ export async function GET() {
 
 export async function POST(request: Request) {
   try {
+    // Assert BEFORE reading the body, so an unauthenticated caller learns
+    // nothing about which payloads are valid.
+    await assertAdminPermission(request, 'programs:manage');
+
     const body = await request.json().catch(() => ({}));
 
     const title = String(body?.title || '').trim();
