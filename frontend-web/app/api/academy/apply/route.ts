@@ -142,6 +142,20 @@ async function getOptionalRequestUser(request: Request) {
   }
 }
 
+/**
+ * How many priced areas one application may carry, per batch.
+ *
+ * Enforced on the SERVER because the cap is a commercial rule, not a UI nicety:
+ * the mobile form stops at this number, but the form is not what decides. An
+ * application that slipped past it would be charged for every area it named.
+ *
+ * Applied to the DEDUPLICATED list — see the duplicate check below.
+ *
+ * Existing applications that already exceed it are deliberately left alone; the
+ * cap governs new and edited submissions only.
+ */
+const MAX_INTEREST_AREAS_PER_APPLICATION = 2;
+
 export async function POST(request: Request) {
   try {
     const user = await requireRequestUser(request);
@@ -164,6 +178,18 @@ export async function POST(request: Request) {
     if (!batchId) return errorResponse('Batch selection is required', 400);
     if (areasOfInterest.length === 0) {
       return errorResponse('At least one area of interest is required', 400);
+    }
+    // Duplicates are collapsed BEFORE the cap is applied. Counting the raw list
+    // would let ['acting','acting','acting'] read as three selections, and — worse
+    // — would price the same area three times in the tuition sum below.
+    if (new Set(areasOfInterest).size !== areasOfInterest.length) {
+      return errorResponse('The same area of interest was selected more than once', 400);
+    }
+    if (areasOfInterest.length > MAX_INTEREST_AREAS_PER_APPLICATION) {
+      return errorResponse(
+        `Choose at most ${MAX_INTEREST_AREAS_PER_APPLICATION} areas of interest for this batch`,
+        400,
+      );
     }
     if (!motivation) return errorResponse('Motivation is required', 400);
 
@@ -455,7 +481,12 @@ export async function GET(request: Request) {
       fee_ngn: Number((a as { fee_ngn: number | null }).fee_ngn ?? 0),
     }));
 
-    return successResponse({ success: true, batches, appliedBatchIds, settings, interestAreas, batchAreas });
+    // The cap travels WITH the catalogue so the client never hardcodes its own
+    // copy of a commercial rule that lives on the server.
+    return successResponse({
+      success: true, batches, appliedBatchIds, settings, interestAreas, batchAreas,
+      maxInterestAreas: MAX_INTEREST_AREAS_PER_APPLICATION,
+    });
   } catch (error) {
     return handleApiError(error, 'Failed to load batches');
   }

@@ -51,6 +51,13 @@ export interface FilmAcademyOverview {
    * or present with an empty list — offers every active area.
    */
   batchAreas: Record<string, string[]>;
+  /**
+   * How many priced areas one application may carry. Served by the API so the
+   * cap is not duplicated as a client-side constant that can drift from the
+   * rule the server actually enforces.
+   */
+  maxInterestAreas: number;
+
 }
 
 export interface FilmAcademyApplicationInput {

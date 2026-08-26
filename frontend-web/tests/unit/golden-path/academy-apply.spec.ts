@@ -43,7 +43,7 @@ vi.mock('@/src/lib/payments/paystack', () => ({
 
 // ── Import after mocks ────────────────────────────────────────────────────────
 
-import { POST } from '../../../app/api/academy/apply/route';
+import { POST, GET } from '../../../app/api/academy/apply/route';
 import { requireRequestUser } from '@/src/lib/auth/request';
 import { createAdminClient } from '@/lib/supabase/server';
 import { verifyPaystackTransaction } from '@/src/lib/payments/paystack';
@@ -414,5 +414,71 @@ describe('POST /api/academy/apply', () => {
 
     expect(res.status).toBe(400);
     expect(body.error).toMatch(/area of interest/i);
+  });
+
+  // ── The two-area cap ────────────────────────────────────────────────────────
+  // A commercial rule, so it is enforced on the SERVER. The mobile form stops at
+  // two, but an application that slipped past the form would be CHARGED for every
+  // area it named — which is why these are route tests, not UI tests.
+
+  it('rejects more than two areas of interest', async () => {
+    const { mock } = makeSupabaseMock();
+    mockInterestAreas(mock, [
+      { slug: 'acting', fee_ngn: 50000 },
+      { slug: 'editing', fee_ngn: 35000 },
+      { slug: 'sound', fee_ngn: 20000 },
+    ]);
+    vi.mocked(createAdminClient).mockReturnValue(mock as any);
+
+    const res = await POST(makeRequest('/api/academy/apply', {
+      body: makeApplyBody({ areas_of_interest: ['acting', 'editing', 'sound'] }),
+    }));
+    const body = await res.json();
+
+    expect(res.status).toBe(400);
+    expect(body.error).toMatch(/at most 2/i);
+  });
+
+  it('accepts exactly two areas — the cap is inclusive', async () => {
+    // Off-by-one here would reject a legitimate application, so the boundary is
+    // pinned from both sides.
+    const { mock } = setupHappyPathMock();
+    mockInterestAreas(mock, [
+      { slug: 'acting', fee_ngn: 0 },
+      { slug: 'editing', fee_ngn: 0 },
+    ]);
+    vi.mocked(createAdminClient).mockReturnValue(mock as any);
+
+    const res = await POST(makeRequest('/api/academy/apply', {
+      body: makeApplyBody({ areas_of_interest: ['acting', 'editing'] }),
+    }));
+    expect(res.status).toBe(201); // 201 Created — the application was accepted
+  });
+
+  it('rejects a duplicated slug rather than counting it once', async () => {
+    // ['acting','acting','acting'] must not read as three selections — and more
+    // importantly must not price the same area three times in the tuition sum.
+    const { mock } = makeSupabaseMock();
+    mockInterestAreas(mock, [{ slug: 'acting', fee_ngn: 50000 }]);
+    vi.mocked(createAdminClient).mockReturnValue(mock as any);
+
+    const res = await POST(makeRequest('/api/academy/apply', {
+      body: makeApplyBody({ areas_of_interest: ['acting', 'acting', 'acting'] }),
+    }));
+    const body = await res.json();
+
+    expect(res.status).toBe(400);
+    expect(body.error).toMatch(/more than once/i);
+  });
+
+  it('publishes the cap on GET so the client does not hardcode its own copy', async () => {
+    const { mock } = makeSupabaseMock();
+    mockInterestAreas(mock);
+    vi.mocked(createAdminClient).mockReturnValue(mock as any);
+
+    const res = await GET(makeRequest('/api/academy/apply', { method: 'GET' }));
+    const body = await res.json();
+    const d = body.data ?? body;
+    expect(d.maxInterestAreas).toBe(2);
   });
 });

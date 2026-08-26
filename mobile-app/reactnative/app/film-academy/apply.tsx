@@ -76,8 +76,19 @@ export default function FilmAcademyApplyScreen() {
   // The only amount charged at submit. Non-refundable.
   const applicationFee = baseFee;
 
+  // The cap is served by the API, not hardcoded here: it is a commercial rule and
+  // the server is what enforces it. This only stops the user reaching a rejection.
+  const maxAreas = data?.maxInterestAreas ?? 2;
+  const atLimit = areas.length >= maxAreas;
+
   const toggleArea = (a: string) =>
-    setAreas((prev) => (prev.includes(a) ? prev.filter((x) => x !== a) : [...prev, a]));
+    setAreas((prev) => {
+      if (prev.includes(a)) return prev.filter((x) => x !== a);
+      // Silently ignoring the tap would look like a broken button, so the chip is
+      // disabled and labelled instead — see `atLimit` below.
+      if (prev.length >= maxAreas) return prev;
+      return [...prev, a];
+    });
 
   /**
    * Posts the application. `reference` is the paid application-fee reference,
@@ -116,6 +127,9 @@ export default function FilmAcademyApplyScreen() {
     if (!email.trim())       return setError('Enter your email address.');
     if (!phone.trim())       return setError('Enter your phone number.');
     if (areas.length === 0)  return setError('Choose at least one area of interest.');
+    if (areas.length > maxAreas) {
+      return setError(`Choose at most ${maxAreas} areas of interest for this batch.`);
+    }
     if (!motivation.trim())  return setError('Tell us why you want to join.');
 
     // No fee due — submit straight away.
@@ -185,6 +199,11 @@ export default function FilmAcademyApplyScreen() {
         <Text style={styles.totalNote}>
           Amounts shown are tuition, payable only if you are offered a place.
         </Text>
+        <Text style={[styles.noticeText, atLimit && styles.limitReached]}>
+          {atLimit
+            ? `You have chosen ${maxAreas} of ${maxAreas}. Deselect one to swap it.`
+            : `Choose up to ${maxAreas} for this batch — ${areas.length} of ${maxAreas} selected.`}
+        </Text>
         {interestAreas.length === 0 ? (
           <Text style={styles.noticeText}>
             No areas are available to choose right now. Please try again later.
@@ -194,13 +213,15 @@ export default function FilmAcademyApplyScreen() {
             {interestAreas.map((a) => {
               const on = areas.includes(a.slug);
               const fee = Number(a.fee_ngn ?? 0);
+              const blocked = !on && atLimit;
               return (
                 <Pressable
                   key={a.slug}
                   onPress={() => toggleArea(a.slug)}
-                  style={[styles.chip, on && styles.chipOn]}
+                  disabled={blocked}
+                  style={[styles.chip, on && styles.chipOn, blocked && styles.chipBlocked]}
                   accessibilityRole="checkbox"
-                  accessibilityState={{ checked: on }}
+                  accessibilityState={{ checked: on, disabled: blocked }}
                   accessibilityLabel={fee > 0 ? `${a.label}, tuition ₦${fee.toLocaleString('en-NG')}` : `${a.label}, no tuition`}
                 >
                   {on && <Check size={13} color={Colors.primary} />}
@@ -325,6 +346,7 @@ const styles = StyleSheet.create({
   chip:        { flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 12, paddingVertical: 8,
                  borderRadius: Radius.md, backgroundColor: Colors.surface },
   chipOn:      { backgroundColor: Colors.iconBgPurple },
+  chipBlocked: { opacity: 0.35 },
   chipText:    { ...Typography.labelMd, color: Colors.onSurfaceVariant },
   chipTextOn:  { color: Colors.primary },
   chipFee:     { ...Typography.labelSm, color: Colors.onSurfaceVariant },
@@ -343,6 +365,7 @@ const styles = StyleSheet.create({
   noticeBox:   { backgroundColor: Colors.iconBgGold, borderRadius: Radius.lg, padding: Spacing.lg, gap: 4 },
   noticeTitle: { ...Typography.labelLg, color: Colors.onSurface },
   noticeText:  { ...Typography.bodyMd, color: Colors.onSurfaceVariant },
+  limitReached: { color: Colors.gold },
   submit:      { backgroundColor: Colors.primary, borderRadius: Radius.md, paddingVertical: 14,
                  alignItems: 'center', marginTop: Spacing.sm },
   submitBusy:  { opacity: 0.7 },

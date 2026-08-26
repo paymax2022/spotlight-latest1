@@ -46,6 +46,8 @@ export async function getOverview(): Promise<FilmAcademyOverview> {
     interestAreas: body?.interestAreas ?? [],
     // Absent = every batch unrestricted, which is the pre-feature behaviour.
     batchAreas: body?.batchAreas ?? {},
+    // Fall back to 2 only if an older server omits it — the server still enforces.
+    maxInterestAreas: body?.maxInterestAreas ?? 2,
   };
 }
 
