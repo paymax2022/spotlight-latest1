@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"log"
 	"net/http"
 	"strings"
@@ -140,6 +141,20 @@ func (h *AuthHandler) Login(c *gin.Context) {
 	}
 	out, err := h.auth.LoginUser(in)
 	if err != nil {
+		// Correct password, unverified address. Answered distinctly so the client
+		// can send the user to enter their code instead of telling them their
+		// password is wrong — which is what it used to say, leaving them stuck
+		// with no route forward. See ErrEmailNotConfirmed for why this does not
+		// leak account existence.
+		if errors.Is(err, services.ErrEmailNotConfirmed) {
+			h.audit.LogLogin("", in.Email, "failed", "email_not_confirmed", c.ClientIP(), c.Request.UserAgent(), map[string]any{})
+			c.JSON(http.StatusForbidden, gin.H{
+				"success": false,
+				"code":    "email_not_confirmed",
+				"error":   "Your email address has not been verified yet.",
+			})
+			return
+		}
 		h.audit.LogLogin("", in.Email, "failed", "invalid_credentials", c.ClientIP(), c.Request.UserAgent(), map[string]any{})
 		c.JSON(http.StatusUnauthorized, gin.H{"success": false, "error": "invalid credentials"})
 		return

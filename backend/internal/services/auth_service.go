@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -201,6 +202,17 @@ func (s *authService) phoneToEmail(nsn string) string {
 	return found
 }
 
+// ErrEmailNotConfirmed means the credentials were CORRECT but the address has
+// not been verified yet.
+//
+// Safe to distinguish from a bad password, which is not obvious and was checked
+// against the live server before relying on it: Supabase returns
+// email_not_confirmed ONLY when the password is right. A wrong password on an
+// unconfirmed account, and an address with no account at all, both come back as
+// invalid_credentials. So this reveals nothing to someone who does not already
+// hold the password, and it is the only way to offer the user a route forward.
+var ErrEmailNotConfirmed = errors.New("email not confirmed")
+
 func (s *authService) LoginUser(in domain.LoginRequest) (map[string]any, error) {
 	email := s.resolveLoginEmail(in.Identifier, in.Email)
 	if email == "" {
@@ -230,6 +242,20 @@ func (s *authService) LoginUser(in domain.LoginRequest) (map[string]any, error) 
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode >= 400 {
+		errBody, _ := io.ReadAll(resp.Body)
+		var upstream struct {
+			ErrorCode string `json:"error_code"`
+		}
+		_ = json.Unmarshal(errBody, &upstream)
+
+		// The password was CORRECT — only verification is missing. Counting this as
+		// a failed attempt locks the account out after MaxFailedLoginAttempts for
+		// doing nothing wrong, and the user cannot escape it: every retry is
+		// another strike, and the thing they need to fix is not their password.
+		if upstream.ErrorCode == "email_not_confirmed" {
+			return nil, ErrEmailNotConfirmed
+		}
+
 		if user != nil {
 			_ = s.bumpFailedLogin(user)
 		}

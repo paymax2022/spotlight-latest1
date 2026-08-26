@@ -53,10 +53,19 @@ export default function LoginPage() {
     setBusy(true);
     setError('');
     try {
+      const normalized = email.trim().toLowerCase();
       const { error: e } = await supabase.auth.signInWithPassword({
-        email: email.trim().toLowerCase(),
+        email: normalized,
         password,
       });
+      // The password was RIGHT and only verification is missing — Supabase returns
+      // this code ONLY when the credentials check out. Sending them to enter their
+      // code beats showing a sign-in error they cannot act on, which is what an
+      // unverified account used to get.
+      if (e && (e as { code?: string }).code === 'email_not_confirmed') {
+        router.push(`/verify-email?email=${encodeURIComponent(normalized)}&next=${encodeURIComponent(next)}`);
+        return;
+      }
       if (e) throw e;
       router.replace(next);
     } catch (err) {

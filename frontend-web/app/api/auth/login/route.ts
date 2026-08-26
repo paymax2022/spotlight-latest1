@@ -58,9 +58,20 @@ export async function POST(request: Request) {
     const payload = await upstream.json().catch(() => null);
 
     if (!upstream.ok) {
-      // Pass Go's status through. It answers 401 with a DELIBERATELY generic
-      // message so a wrong password and an unknown account are indistinguishable;
-      // do not enrich it here.
+      // 403 + email_not_confirmed means the password was RIGHT and only
+      // verification is missing. It must survive as its own case: collapsing it
+      // into 401 told the user their credentials were wrong and left them with
+      // no way to reach the code-entry screen.
+      if (upstream.status === 403 && payload?.code === 'email_not_confirmed') {
+        return NextResponse.json(
+          { error: payload?.error ?? 'Your email address has not been verified yet.',
+            code: 'email_not_confirmed' },
+          { status: 403 },
+        );
+      }
+      // Otherwise pass Go's status through. It answers 401 with a DELIBERATELY
+      // generic message so a wrong password and an unknown account are
+      // indistinguishable; do not enrich it here.
       return NextResponse.json(
         { error: payload?.error ?? 'Invalid credentials' },
         { status: upstream.status === 400 ? 401 : upstream.status },

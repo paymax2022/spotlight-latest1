@@ -110,9 +110,34 @@ async function restoreSessionFromStoredTokens() {
  * The proxy returns a real Supabase session, which is handed to the client so every
  * other screen (all of which read the Supabase session) keeps working unchanged.
  */
+/**
+ * Thrown when the password was RIGHT but the address is unverified. Carries the
+ * email so the caller can open the code screen for the correct account.
+ */
+export class EmailNotConfirmedError extends Error {
+  readonly email: string;
+  constructor(email: string) {
+    super('Your email address has not been verified yet.');
+    this.name = 'EmailNotConfirmedError';
+    this.email = email;
+  }
+}
+
 export async function login(payload: { identifier: string; password: string }): Promise<AuthResult> {
   const identifier = payload.identifier.trim();
-  const res = await api.post('/api/auth/login', { identifier, password: payload.password });
+  let res;
+  try {
+    res = await api.post('/api/auth/login', { identifier, password: payload.password });
+  } catch (err) {
+    // 403 + email_not_confirmed is not a credential failure — surfacing it as one
+    // told the user their password was wrong and left them stuck, since the thing
+    // they needed to fix was not their password.
+    const e = err as { response?: { status?: number; data?: { code?: string } } };
+    if (e?.response?.status === 403 && e.response?.data?.code === 'email_not_confirmed') {
+      throw new EmailNotConfirmedError(identifier);
+    }
+    throw err;
+  }
 
   const session = (res?.data as { session?: Record<string, unknown> })?.session;
   const accessToken = typeof session?.access_token === 'string' ? session.access_token : '';
