@@ -1,4 +1,5 @@
 import React, { useEffect } from 'react';
+import PhoneNumberInput from '@/components/PhoneNumberInput';
 import { View, Text, ScrollView, StyleSheet, Pressable } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
@@ -58,7 +59,7 @@ export default function ApplyScreen() {
         <SectionHeader title="Personal details" style={styles.sectionFlush} />
         <TextInputField label="Full name" placeholder="As on your ID" value={draft.fullName} onChangeText={(t) => set({ fullName: t })} />
         <TextInputField label="Email" placeholder="you@email.com" keyboardType="email-address" autoCapitalize="none" value={draft.email} onChangeText={(t) => set({ email: t })} />
-        <TextInputField label="Phone number" placeholder="080..." keyboardType="phone-pad" value={draft.phone} onChangeText={(t) => set({ phone: t })} />
+        <PhoneNumberInput label="Phone number" value={draft.phone} onChange={({ e164, nsn }) => ((t) => set({ phone: t }))(e164 || nsn)} />
         <TextInputField label="Number of occupants" placeholder="1" keyboardType="number-pad" value={draft.occupants ? String(draft.occupants) : ''} onChangeText={(t) => set({ occupants: Number(t.replace(/\D/g, '')) || 1 })} />
         <TextInputField label="Preferred move-in date" placeholder="e.g. 1 Aug 2026" value={draft.moveInDate} onChangeText={(t) => set({ moveInDate: t })} />
 
@@ -86,7 +87,7 @@ export default function ApplyScreen() {
 
         <SectionHeader title="Guarantor" style={styles.sectionFlush} />
         <TextInputField label="Guarantor name" placeholder="Full name" value={draft.guarantorName} onChangeText={(t) => set({ guarantorName: t })} />
-        <TextInputField label="Guarantor phone" placeholder="080..." keyboardType="phone-pad" value={draft.guarantorPhone} onChangeText={(t) => set({ guarantorPhone: t })} />
+        <PhoneNumberInput label="Guarantor phone" value={draft.guarantorPhone} onChange={({ e164, nsn }) => ((t) => set({ guarantorPhone: t }))(e164 || nsn)} />
         <TextInputField label="Relationship" placeholder="e.g. Employer, relative" value={draft.guarantorRelationship} onChangeText={(t) => set({ guarantorRelationship: t })} />
 
         {/* Screening consent */}

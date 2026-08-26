@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import PhoneNumberInput from '@/components/PhoneNumberInput';
 import { View, Text, StyleSheet, ScrollView, Pressable } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
@@ -56,7 +57,7 @@ export default function LeadGuestScreen() {
 
             <TextInputField label="Full name" value={form.fullName} onChangeText={(t) => update({ fullName: t })} placeholder="As on your ID" autoCapitalize="words" />
             <TextInputField label="Email" value={form.email} onChangeText={(t) => update({ email: t })} placeholder="you@example.com" keyboardType="email-address" autoCapitalize="none" />
-            <TextInputField label="Phone" value={form.phone} onChangeText={(t) => update({ phone: t })} placeholder="+234…" keyboardType="phone-pad" />
+            <PhoneNumberInput label="Phone" value={form.phone} onChange={({ e164, nsn }) => ((t) => update({ phone: t }))(e164 || nsn)} />
             <TextInputField label="Country" value={form.country} onChangeText={(t) => update({ country: t })} placeholder="Nigeria" />
 
             <View style={styles.consent}>

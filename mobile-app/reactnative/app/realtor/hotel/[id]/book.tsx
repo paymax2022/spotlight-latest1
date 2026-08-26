@@ -1,4 +1,5 @@
 import React, { useMemo, useState } from 'react';
+import PhoneNumberInput from '@/components/PhoneNumberInput';
 import { View, Text, ScrollView, StyleSheet, Pressable } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
@@ -75,7 +76,7 @@ export default function HotelBookScreen() {
 
         <Text style={[styles.label, { marginTop: Spacing.lg }]}>Guest details</Text>
         <TextInputField label="Lead guest name" placeholder="Full name" value={name} onChangeText={setName} />
-        <TextInputField label="Phone" placeholder="080..." keyboardType="phone-pad" value={phone} onChangeText={setPhone} />
+        <PhoneNumberInput label="Phone" value={phone} onChange={({ e164, nsn }) => (setPhone)(e164 || nsn)} />
         <TextInputField label="Special request (optional)" placeholder="e.g. high floor, late check-in" value={request} onChangeText={setRequest} multiline />
 
         <View style={{ marginTop: Spacing.sm }}>

@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import PhoneNumberInput from '@/components/PhoneNumberInput';
 import { View, Text, ScrollView, StyleSheet, Pressable, ActivityIndicator } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
@@ -125,8 +126,7 @@ export default function ApplyScreen() {
 
         <TextInputField label="Full name" placeholder="As on your licence" value={fullName}
           onChangeText={(t) => { setFullName(t); save({ fullName: t }); }} autoCapitalize="words" />
-        <TextInputField label="Phone number" placeholder="080…" value={phone} keyboardType="phone-pad"
-          onChangeText={(t) => { setPhone(t); save({ phone: t }); }} />
+        <PhoneNumberInput label="Phone number" value={phone} onChange={({ e164, nsn }) => ((t) => { setPhone(t); save({ phone: t }); })(e164 || nsn)} />
         <SelectField label="Home state (36 states + FCT)" placeholder="Select your state" value={homeState}
           options={NIGERIA_STATES} onChange={(v) => { setHomeState(v); save({ homeState: v }); }} />
         <TextInputField label="Years driving" placeholder="e.g. 6" value={years} keyboardType="number-pad"
