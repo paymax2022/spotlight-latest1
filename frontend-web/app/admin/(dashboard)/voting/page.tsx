@@ -55,7 +55,7 @@ export default function AdminVotingDashboard() {
             <div key={c.contestId} className="bg-gray-800 rounded-2xl p-5 flex items-center justify-between gap-4">
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2">
-                  <h3 className="text-white font-semibold truncate">{c.contestId}</h3>
+                  <h3 className="text-white font-semibold truncate">{c.contestName || c.contestSlug || c.contestId}</h3>
                   <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
                     c.status === 'active' ? 'bg-green-600/20 text-green-400' : 'bg-gray-700 text-gray-400'
                   }`}>

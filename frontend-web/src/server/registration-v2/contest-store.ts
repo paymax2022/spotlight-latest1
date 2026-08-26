@@ -111,22 +111,37 @@ export async function contestSlugExists(slug: string): Promise<boolean> {
   return Boolean(data && data.length > 0);
 }
 
+/** One persisted contest by slug, or null. */
+export async function getPersistedContestBySlug(slug: string): Promise<PersistedContest | null> {
+  const all = await listPersistedContests();
+  return all.find((c) => c.slug === slug) ?? null;
+}
+
 /**
  * Contest definitions held in Postgres, newest first. Rows written before this
  * module existed have no contest_config, so a definition is reconstructed from
  * the columns rather than dropped from the list.
  */
-export async function listPersistedContests(): Promise<ContestRegistrationDefinition[]> {
+export type PersistedContest = ContestRegistrationDefinition & {
+  /** public.contests.id — the key every per-contest admin route is addressed by. */
+  id?: string;
+};
+
+export async function listPersistedContests(): Promise<PersistedContest[]> {
   const { data, error } = await getSupabase()
     .from('contests')
-    .select('slug, name, category, contest_type, location_scope, entry_fee_ngn, season_name, voting_enabled, contest_config, created_at')
+    .select('id, slug, name, category, contest_type, location_scope, entry_fee_ngn, season_name, voting_enabled, contest_config, created_at')
     .order('created_at', { ascending: false });
   if (error) throw new Error(`Failed to list contests: ${error.message}`);
 
   return (data ?? []).map((row) => {
+    const id = row.id as string | undefined;
     const cfg = (row.contest_config ?? null) as ContestRegistrationDefinition | null;
-    if (cfg && typeof cfg === 'object' && cfg.slug) return cfg;
+    // The id lives on the row, never in contest_config — carry it onto the
+    // definition so the admin table can link to per-contest routes.
+    if (cfg && typeof cfg === 'object' && cfg.slug) return { ...cfg, id };
     return {
+      id,
       slug: String(row.slug ?? ''),
       title: String(row.name ?? ''),
       contestCategory: 'other',
@@ -144,6 +159,6 @@ export async function listPersistedContests(): Promise<ContestRegistrationDefini
       supportsSchoolEntry: false,
       supportsGroupEntry: false,
       categoryQuestionSet: 'other',
-    } as ContestRegistrationDefinition;
+    } as PersistedContest;
   }).filter((c) => c.slug);
 }

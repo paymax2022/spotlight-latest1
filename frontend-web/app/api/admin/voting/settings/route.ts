@@ -16,7 +16,42 @@ export async function GET(request: Request) {
     const { data, error } = await query;
     if (error) return errorResponse('Failed to load settings', 500);
 
-    return successResponse({ success: true, settings: data ?? [] });
+    // voting_settings stores snake_case and carries no contest name. The admin
+    // dashboard reads camelCase (contestId, contestName, …), so every field came
+    // back undefined and its links rendered as /admin/voting/undefined/settings.
+    // Map here, and join public.contests for the name/slug/status it needs.
+    const rows = data ?? [];
+    const contestIds = rows.map((r) => r.contest_id).filter(Boolean);
+    const namesById = new Map<string, { name: string; slug: string | null; status: string }>();
+    if (contestIds.length > 0) {
+      const { data: contests } = await supabase
+        .from('contests')
+        .select('id, name, slug, status')
+        .in('id', contestIds);
+      for (const c of contests ?? []) {
+        namesById.set(c.id as string, {
+          name: (c.name as string) ?? '',
+          slug: (c.slug as string) ?? null,
+          status: (c.status as string) ?? 'draft',
+        });
+      }
+    }
+
+    const settings = rows.map((r) => {
+      const meta = namesById.get(r.contest_id as string);
+      return {
+        ...r,
+        contestId: r.contest_id,
+        contestName: meta?.name ?? '',
+        contestSlug: meta?.slug ?? '',
+        status: meta?.status ?? r.status ?? 'draft',
+        votingEnabled: Boolean(r.voting_enabled),
+        votingType: r.voting_type ?? 'free',
+        votingEndsAt: r.voting_ends_at ?? null,
+      };
+    });
+
+    return successResponse({ success: true, settings });
   } catch (error) {
     return handleApiError(error, 'Failed to load voting settings');
   }

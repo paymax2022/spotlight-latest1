@@ -78,6 +78,16 @@ export async function POST(request: Request) {
     if (!allowedTypes.includes(contestType)) return errorResponse('Invalid contest type.', 400);
     if (!seasonOrEdition) return errorResponse('Season / edition is required.', 400);
 
+    // Auditions are optional. When they are on, at least one state is required —
+    // otherwise the contest schedules auditions nowhere. Mirrors the client check.
+    const supportsAuditionScheduling = Boolean(body?.supportsAuditionScheduling);
+    const auditionStates = Array.isArray(body?.auditionStates)
+      ? body.auditionStates.map((item: unknown) => String(item)).filter(Boolean)
+      : [];
+    if (supportsAuditionScheduling && auditionStates.length === 0) {
+      return errorResponse('Select at least one audition state, or turn auditions off.', 400);
+    }
+
     const isPaid = Boolean(body?.isPaid);
     const registrationFeeNgn = isPaid ? Number(body?.registrationFeeNgn || 0) : 0;
     if (isPaid && (!Number.isFinite(registrationFeeNgn) || registrationFeeNgn < 0)) {
@@ -102,12 +112,11 @@ export async function POST(request: Request) {
       requiresMedical: Boolean(body?.requiresMedical),
       requiresBootcampReadiness: Boolean(body?.requiresBootcampReadiness),
       supportsVoting: Boolean(body?.supportsVoting),
-      supportsAuditionScheduling: Boolean(body?.supportsAuditionScheduling),
+      supportsAuditionScheduling,
       supportsSchoolEntry: Boolean(body?.supportsSchoolEntry),
       supportsGroupEntry: Boolean(body?.supportsGroupEntry),
-      auditionStates: Array.isArray(body?.auditionStates)
-        ? body.auditionStates.map((item: unknown) => String(item)).filter(Boolean)
-        : [],
+      // Cleared when auditions are off, so a disabled contest never stores states.
+      auditionStates: supportsAuditionScheduling ? auditionStates : [],
       applicantCategories: Array.isArray(body?.applicantCategories)
         ? body.applicantCategories.map((item: unknown) => String(item)).filter(Boolean)
         : [],
