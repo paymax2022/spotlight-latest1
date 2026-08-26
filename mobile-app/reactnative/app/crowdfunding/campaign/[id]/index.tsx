@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useRef } from 'react';
 import { View, Text, ScrollView, Image, Pressable, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
@@ -20,6 +20,7 @@ import CampaignStatusBadge from '@/features/crowdfunding/components/CampaignStat
 import VerificationBadge from '@/features/crowdfunding/components/VerificationBadge';
 import ContributorRow from '@/features/crowdfunding/components/ContributorRow';
 import { useCampaign, useCampaignContributors, useToggleSave } from '@/features/crowdfunding/hooks/useCrowdfunding';
+import { recordCampaignEvent } from '@/features/crowdfunding/api/crowdfunding.api';
 import { formatNaira, relativeTime } from '@/features/crowdfunding/utils/crowdfundingFormatters';
 import type { CampaignStatus, DisbursementModel } from '@/features/crowdfunding/types/crowdfunding.types';
 
@@ -42,6 +43,18 @@ const NOTICE: Partial<Record<CampaignStatus, { icon: React.ReactNode; title: str
 export default function CampaignDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const { data: c, isLoading, isError, refetch } = useCampaign(id);
+
+  // Record ONE view per mounted campaign — this is what the creator's Views,
+  // Conversion and traffic-source figures are computed from. The ref guards
+  // against React re-running the effect (StrictMode double-invoke, a refetch
+  // changing deps) turning a single visit into several. `source` stays 'direct'
+  // here; a deep link that carries a channel should pass it through instead.
+  const viewRecorded = useRef<string | null>(null);
+  useEffect(() => {
+    if (!id || viewRecorded.current === id) return;
+    viewRecorded.current = id;
+    void recordCampaignEvent(id, 'VIEW', 'direct');
+  }, [id]);
   const contributors = useCampaignContributors(id);
   const toggleSave = useToggleSave();
 

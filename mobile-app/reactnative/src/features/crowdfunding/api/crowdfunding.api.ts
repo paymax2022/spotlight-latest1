@@ -200,6 +200,31 @@ export async function getRecentlyViewed(): Promise<CampaignSummary[]> {
 }
 
 /** Optimistic toggle in mock mode; real impl POST/DELETE /saves. */
+/**
+ * Record a VIEW or SHARE against a campaign.
+ *
+ * These events are what make the creator performance screen's Views, Shares,
+ * Conversion and traffic-source figures real — before this existed the backend
+ * derived them from a hash of the campaign id.
+ *
+ * Deliberately FIRE-AND-FORGET: analytics must never break or delay what the
+ * user actually asked for, so the promise always resolves and failures are
+ * swallowed rather than surfaced. It is also skipped entirely in mock mode so a
+ * mock session never writes to a real analytics table.
+ */
+export async function recordCampaignEvent(
+  id: string,
+  type: 'VIEW' | 'SHARE',
+  source = 'direct',
+): Promise<void> {
+  if (USE_MOCK || !id) return;
+  try {
+    await api.post(`/api/v1/crowdfunding/campaigns/${id}/events`, { type, source });
+  } catch {
+    // Analytics is best-effort — never surface this to the user.
+  }
+}
+
 export async function toggleSaveCampaign(id: string, saved: boolean): Promise<{ id: string; saved: boolean }> {
   if (USE_MOCK) {
     await delay(120);

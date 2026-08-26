@@ -9,6 +9,8 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"spotlight/backend/internal/crowdfunding/engage"
 )
 
 // Service exposes the crowdfunding creator-dashboard slice over a pgx pool.
@@ -534,23 +536,88 @@ func (s *Service) GetCampaignAnalytics(ctx context.Context, campaignID string) (
 		avg = totalRaised / int64(contributorCount)
 	}
 
-	// Deterministic views/shares from the id so the dashboard is stable.
-	seed := idSeed(campaignID)
-	views := 1200 + seed%8000 + contributorCount*40
-	shares := 40 + seed%400
+	// Views / shares / traffic — real rows from cf_campaign_events.
+	//
+	// These were previously invented from a hash of the campaign id
+	//   views  := 1200 + idSeed(campaignID)%8000 + contributorCount*40
+	//   shares := 40 + idSeed(campaignID)%400
+	// with the traffic breakdown a fixed percentage split of that number. The
+	// figures moved when contributors changed, which is what made them read as
+	// real. They are now aggregated from recorded events, and a campaign with no
+	// traffic yet honestly reports zero.
+	var views, shares int
+	if err := s.db.QueryRow(ctx, `
+		SELECT
+			COUNT(*) FILTER (WHERE event_type = 'VIEW'),
+			COUNT(*) FILTER (WHERE event_type = 'SHARE')
+		FROM cf_campaign_events
+		WHERE campaign_id = $1`, campaignID).Scan(&views, &shares); err != nil {
+		return nil, err
+	}
 
+	// Conversion is contributors per view. Guarding on views keeps a campaign
+	// with contributions but no recorded views at 0 rather than dividing by zero
+	// or reporting an infinite rate.
 	conversion := 0.0
 	if views > 0 {
 		conversion = round2(float64(contributorCount) / float64(views) * 100)
 	}
 
-	// Fixed traffic-source breakdown scaled to total views.
-	traffic := []TrafficSource{
-		{Source: "WhatsApp", Visits: views * 38 / 100, Contributions: contributorCount * 40 / 100},
-		{Source: "Direct", Visits: views * 27 / 100, Contributions: contributorCount * 30 / 100},
-		{Source: "Instagram", Visits: views * 18 / 100, Contributions: contributorCount * 15 / 100},
-		{Source: "Twitter/X", Visits: views * 11 / 100, Contributions: contributorCount * 10 / 100},
-		{Source: "Other", Visits: views * 6 / 100, Contributions: contributorCount * 5 / 100},
+	// Traffic sources: visits are VIEW events grouped by channel; contributions
+	// are attributed LAST-TOUCH — each contribution is credited to the channel of
+	// that contributor's most recent view of this campaign before they gave.
+	// Anonymous views cannot be attributed to a contribution, so they count as
+	// visits only, which is the honest reading.
+	const trafficQ = `
+		WITH visits AS (
+			SELECT source, COUNT(*) AS visits
+			FROM cf_campaign_events
+			WHERE campaign_id = $1 AND event_type = 'VIEW'
+			GROUP BY source
+		),
+		attributed AS (
+			SELECT (
+				SELECT e.source
+				FROM cf_campaign_events e
+				WHERE e.campaign_id = co.campaign_id
+				  AND e.event_type = 'VIEW'
+				  AND e.actor_user_id = co.contributor_id
+				  AND e.created_at <= co.created_at
+				ORDER BY e.created_at DESC
+				LIMIT 1
+			) AS source
+			FROM contributions co
+			WHERE co.campaign_id = $1 AND co.status IN ('escrowed','released')
+		),
+		gave AS (
+			SELECT source, COUNT(*) AS contributions
+			FROM attributed
+			WHERE source IS NOT NULL
+			GROUP BY source
+		)
+		SELECT v.source, v.visits, COALESCE(g.contributions, 0)
+		FROM visits v
+		LEFT JOIN gave g ON g.source = v.source
+		ORDER BY v.visits DESC`
+
+	trafficRows, err := s.db.Query(ctx, trafficQ, campaignID)
+	if err != nil {
+		return nil, err
+	}
+	defer trafficRows.Close()
+
+	traffic := []TrafficSource{}
+	for trafficRows.Next() {
+		var key string
+		var ts TrafficSource
+		if err := trafficRows.Scan(&key, &ts.Visits, &ts.Contributions); err != nil {
+			return nil, err
+		}
+		ts.Source = engage.SourceLabel(key)
+		traffic = append(traffic, ts)
+	}
+	if err := trafficRows.Err(); err != nil {
+		return nil, err
 	}
 
 	return &CampaignAnalytics{
@@ -562,14 +629,6 @@ func (s *Service) GetCampaignAnalytics(ctx context.Context, campaignID string) (
 		DailyRaised:             daily,
 		TrafficSources:          traffic,
 	}, nil
-}
-
-func idSeed(id string) int {
-	sum := 0
-	for _, ch := range id {
-		sum += int(ch)
-	}
-	return sum
 }
 
 // ─── Milestones ──────────────────────────────────────────────────────────────

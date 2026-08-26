@@ -9,6 +9,7 @@ import { Typography } from '@/constants/typography';
 import { Spacing } from '@/constants/spacing';
 import { Radius } from '@/constants/radius';
 import { useCampaign } from '@/features/crowdfunding/hooks/useCrowdfunding';
+import { recordCampaignEvent } from '@/features/crowdfunding/api/crowdfunding.api';
 
 const CHANNELS = [
   { key: 'copy', label: 'Copy link', icon: Link2, bg: Colors.iconBgPurple, fg: Colors.primary },
@@ -25,6 +26,13 @@ export default function ShareScreen() {
   const url = `https://spotlight.ng/c/${id}`;
 
   const onChannel = async (key: string) => {
+    // Record the share against the channel the creator will see in their
+    // traffic-source breakdown. 'copy' and 'qr' produce a link with no channel
+    // of its own, so they count as 'direct'. Fired before the native sheet
+    // because we cannot tell whether the user completed or dismissed it, and an
+    // intent to share is the signal the creator cares about.
+    void recordCampaignEvent(id, 'SHARE', key === 'copy' || key === 'qr' ? 'direct' : key);
+
     if (key === 'whatsapp' || key === 'facebook' || key === 'x' || key === 'linkedin') {
       try {
         await Share.share({ message: `${c?.title ?? 'Support this campaign'} — ${url}`, url });
