@@ -11,7 +11,7 @@ import PrimaryButton from '@/components/PrimaryButton';
 import { useCampaignDraft } from '@/features/crowdfunding/store/campaignDraftStore';
 
 const TITLE_MAX = 70;
-const SUMMARY_MAX = 140;
+const SUMMARY_MAX = 40;
 
 export default function CreateDetailsScreen() {
   const { draft, patch } = useCampaignDraft();
@@ -35,7 +35,7 @@ export default function CreateDetailsScreen() {
 
           <TextInputField
             label="Short summary"
-            placeholder="One or two sentences supporters see first."
+            placeholder="One short line supporters see first."
             value={draft.summary}
             onChangeText={(t) => patch({ summary: t.slice(0, SUMMARY_MAX) })}
             multiline
