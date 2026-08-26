@@ -2,6 +2,13 @@ import { errorResponse, handleApiError, successResponse } from '@/src/lib/api/re
 import type { ContestCategory, ContestRegistrationDefinition, ContestType } from '@/src/features/registration/types';
 import { sanitizeContestFormSchema } from '@/src/features/registration/field-catalog';
 import { createRegistrationContest, listRegistrationContests } from '@/src/server/registration/store';
+import {
+  contestSlugExists,
+  listPersistedContests,
+  persistContestDefinition,
+} from '@/src/server/registration-v2/contest-store';
+import { publishContestToVotingPlane } from '@/src/server/registration-v2/publish-to-voting';
+import { createAdminClient } from '@/lib/supabase/server';
 
 const allowedCategories: ContestCategory[] = [
   'music',
@@ -42,8 +49,13 @@ function toSlug(raw: string) {
 
 export async function GET() {
   try {
-    const contests = listRegistrationContests();
-    return successResponse({ success: true, contests });
+    // Postgres is the source of truth now, but the in-memory catalog still holds
+    // the code-defined contests (and anything created before this route started
+    // persisting), so both are listed. Postgres wins on slug collision.
+    const persisted = await listPersistedContests();
+    const seen = new Set(persisted.map((c) => c.slug));
+    const legacy = listRegistrationContests().filter((c) => !seen.has(c.slug));
+    return successResponse({ success: true, contests: [...persisted, ...legacy] });
   } catch (error) {
     return handleApiError(error, 'Failed to load admin contests');
   }
@@ -70,6 +82,10 @@ export async function POST(request: Request) {
     const registrationFeeNgn = isPaid ? Number(body?.registrationFeeNgn || 0) : 0;
     if (isPaid && (!Number.isFinite(registrationFeeNgn) || registrationFeeNgn < 0)) {
       return errorResponse('Registration fee must be a valid number for paid contests.', 400);
+    }
+
+    if (await contestSlugExists(slug)) {
+      return errorResponse('A contest with that slug already exists.', 409);
     }
 
     const contest = createRegistrationContest({
@@ -99,7 +115,29 @@ export async function POST(request: Request) {
       formSchema: sanitizeContestFormSchema(body?.formSchema),
     });
 
-    return successResponse({ success: true, contest }, 201);
+    // Write through to Postgres so the contest exists outside this process: the
+    // web contest list, the Go voting API, and the mobile app all read the DB.
+    // The in-memory write above is kept because the registration flow resolves a
+    // contest by slug out of that catalog (store.ts is protected — see the
+    // registration-v2 module header).
+    const { id } = (await persistContestDefinition(contest)) ?? { id: undefined };
+
+    // Publish votable contests into the voting plane so the mobile app can see
+    // them. The registration definition and the votable contest are different
+    // records; this is the seam between them.
+    //
+    // Best-effort by design: the contest IS saved at this point, and failing the
+    // response here would tell an admin their contest was not created when it
+    // was. The outcome is reported instead, so a failure is visible rather than
+    // silent.
+    const publish = await publishContestToVotingPlane(createAdminClient(), contest).catch(
+      (err): Awaited<ReturnType<typeof publishContestToVotingPlane>> => {
+        console.error('[admin/contests] publish to voting plane threw', err);
+        return { published: false, reason: 'failed', detail: String(err) };
+      },
+    );
+
+    return successResponse({ success: true, contest: { ...contest, id }, publish }, 201);
   } catch (error) {
     return handleApiError(error, 'Failed to create contest');
   }
