@@ -146,6 +146,18 @@ export default function VotingSettingsPage() {
     <div className="p-6 max-w-2xl mx-auto">
       <h1 className="text-xl font-bold text-white mb-6">Voting Settings</h1>
 
+      {form.status !== 'active' && (
+        <div className="bg-amber-950/40 border border-amber-700/60 rounded-2xl p-4 mb-4">
+          <p className="text-amber-200 text-sm font-semibold">
+            Voting is {String(form.status ?? 'draft')} — nothing below is live yet
+          </p>
+          <p className="text-amber-200/80 text-xs mt-1">
+            The toggles on this page take effect only when Status is <strong>active</strong>.
+            Until then every vote is refused, however they are set.
+          </p>
+        </div>
+      )}
+
       <div className="bg-gray-900 rounded-2xl p-5 mb-4">
         <h2 className="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-2">Voting Status</h2>
         {field('status', 'Status', 'select', ['draft', 'active', 'paused', 'closed'])}
