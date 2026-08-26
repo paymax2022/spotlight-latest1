@@ -31,7 +31,7 @@ export default function Bio() {
   return (
     <OnboardingStep
       step={4}
-      totalSteps={6}
+      totalSteps={5}
       title="Tell your story"
       subtitle="A short bio and a few interests go a long way."
       primaryLabel="Continue"

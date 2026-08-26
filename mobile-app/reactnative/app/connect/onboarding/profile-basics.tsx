@@ -91,7 +91,7 @@ export default function ProfileBasics() {
   return (
     <OnboardingStep
       step={2}
-      totalSteps={6}
+      totalSteps={5}
       title="The basics"
       subtitle="This helps people find the real you. You must be 18 or older."
       primaryLabel="Continue"
