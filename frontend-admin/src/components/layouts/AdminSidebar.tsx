@@ -50,6 +50,7 @@ const navItemsBase: NavItem[] = [
   { label: 'Judges & Scores', href: '/admin/judges-scores', section: 'Contests', permissions: ['scores:manage'] },
   { label: 'Open Mic', href: '/admin/open-mic', section: 'Contests' },
   { label: 'Registration / Applicants', href: '/admin/registration', section: 'Contests', permissions: ['applications:review'] },
+  { label: 'Stages & Evictions', href: '/admin/stages-evictions', section: 'Contests', permissions: ['programs:manage'] },
   { label: 'Voting Visibility', href: '/admin/voting/visibility', section: 'Voting', permissions: ['votes:manage'] },
   { label: 'Chat Sessions', href: '/admin/chatbot', section: 'Support' },
   { label: 'Leads Queue', href: '/admin/leads', section: 'Support' },
