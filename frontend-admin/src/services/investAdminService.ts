@@ -3,7 +3,7 @@
 // requires the `invest.manage` permission). Mock-flagged for dev: flip with
 // NEXT_PUBLIC_INVEST_ADMIN_USE_MOCK=false to hit the live endpoints.
 
-import { env } from '@/config/env';
+import { apiV1 } from '@/config/env';
 import { operationKey } from './idempotency';
 import type {
   InvestOverview, AdminStockAsset, AdminOrder, FeeConfig, AuditEntry, AssetUpdate,
@@ -23,8 +23,7 @@ import type {
 const USE_MOCK = (process.env.NEXT_PUBLIC_INVEST_ADMIN_USE_MOCK ?? 'false').toLowerCase() === 'true';
 
 function base(): string {
-  // env.apiBaseUrl already ends with /api/v1
-  return `${env.apiBaseUrl}/admin/invest`;
+  return `${apiV1()}/admin/invest`;
 }
 
 function authHeaders(): Record<string, string> {

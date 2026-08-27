@@ -1,4 +1,4 @@
-import { env } from '@/config/env';
+import { apiV1 } from '@/config/env';
 import type {
   StemContest,
   StemEmergingInnovator,
@@ -38,7 +38,7 @@ function adminHeaders() {
 }
 
 export async function getStemOverview(): Promise<StemOverview | null> {
-  const res = await fetch(`${env.apiBaseUrl}/admin/stem/overview`, {
+  const res = await fetch(`${apiV1()}/admin/stem/overview`, {
     cache: 'no-store',
     credentials: 'include',
     headers: adminHeaders(),
@@ -49,7 +49,7 @@ export async function getStemOverview(): Promise<StemOverview | null> {
 }
 
 export async function listStemSchools(limit = 100): Promise<StemSchool[]> {
-  const url = new URL(`${env.apiBaseUrl}/admin/schools`);
+  const url = new URL(`${apiV1()}/admin/schools`);
   url.searchParams.set('limit', String(limit));
   const res = await fetch(url.toString(), {
     cache: 'no-store',
@@ -87,7 +87,7 @@ export async function createStemSchool(input: {
   preferredContestCategory?: string;
   submittedBy?: string;
 }): Promise<StemSchool | null> {
-  const res = await fetch(`${env.apiBaseUrl}/schools`, {
+  const res = await fetch(`${apiV1()}/schools`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(input),
@@ -102,7 +102,7 @@ export async function updateStemSchoolVerification(
   status: string,
   reason = ''
 ): Promise<boolean> {
-  const res = await fetch(`${env.apiBaseUrl}/admin/schools/${encodeURIComponent(schoolId)}/verification`, {
+  const res = await fetch(`${apiV1()}/admin/schools/${encodeURIComponent(schoolId)}/verification`, {
     method: 'PATCH',
     credentials: 'include',
     headers: { 'Content-Type': 'application/json', ...adminHeaders() },
@@ -113,7 +113,7 @@ export async function updateStemSchoolVerification(
 }
 
 export async function getStemSchoolDashboard(schoolId: string): Promise<StemSchoolDashboard | null> {
-  const res = await fetch(`${env.apiBaseUrl}/admin/schools/${encodeURIComponent(schoolId)}/dashboard`, {
+  const res = await fetch(`${apiV1()}/admin/schools/${encodeURIComponent(schoolId)}/dashboard`, {
     cache: 'no-store',
     credentials: 'include',
     headers: adminHeaders(),
@@ -124,7 +124,7 @@ export async function getStemSchoolDashboard(schoolId: string): Promise<StemScho
 }
 
 export async function listStemSchoolTeams(limit = 100): Promise<StemSchoolTeam[]> {
-  const url = new URL(`${env.apiBaseUrl}/admin/school-teams`);
+  const url = new URL(`${apiV1()}/admin/school-teams`);
   url.searchParams.set('limit', String(limit));
   const res = await fetch(url.toString(), {
     cache: 'no-store',
@@ -137,7 +137,7 @@ export async function listStemSchoolTeams(limit = 100): Promise<StemSchoolTeam[]
 }
 
 export async function listStemSchoolProfiles(limit = 100): Promise<StemSchoolProfile[]> {
-  const url = new URL(`${env.apiBaseUrl}/admin/school-profiles`);
+  const url = new URL(`${apiV1()}/admin/school-profiles`);
   url.searchParams.set('limit', String(limit));
   const res = await fetch(url.toString(), {
     cache: 'no-store',
@@ -159,7 +159,7 @@ export async function createStemSchoolProfile(input: {
   gradeLevel?: string;
   specialization?: string;
 }): Promise<StemSchoolProfile | null> {
-  const res = await fetch(`${env.apiBaseUrl}/school-profiles`, {
+  const res = await fetch(`${apiV1()}/school-profiles`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(input),
@@ -177,7 +177,7 @@ export async function createStemSchoolTeam(input: {
   projectTitle?: string;
   teamSize?: number;
 }): Promise<StemSchoolTeam | null> {
-  const res = await fetch(`${env.apiBaseUrl}/school-teams`, {
+  const res = await fetch(`${apiV1()}/school-teams`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(input),
@@ -188,7 +188,7 @@ export async function createStemSchoolTeam(input: {
 }
 
 export async function listStemEmergingInnovators(limit = 100): Promise<StemEmergingInnovator[]> {
-  const url = new URL(`${env.apiBaseUrl}/admin/emerging-innovators`);
+  const url = new URL(`${apiV1()}/admin/emerging-innovators`);
   url.searchParams.set('limit', String(limit));
   const res = await fetch(url.toString(), {
     cache: 'no-store',
@@ -224,7 +224,7 @@ export async function createStemEmergingInnovator(input: {
   idVerificationUrl?: string;
   submittedBy?: string;
 }): Promise<StemEmergingInnovator | null> {
-  const res = await fetch(`${env.apiBaseUrl}/emerging-innovators`, {
+  const res = await fetch(`${apiV1()}/emerging-innovators`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(input),
@@ -235,7 +235,7 @@ export async function createStemEmergingInnovator(input: {
 }
 
 export async function listStemEmergingTeams(limit = 100): Promise<StemEmergingTeam[]> {
-  const url = new URL(`${env.apiBaseUrl}/admin/emerging-teams`);
+  const url = new URL(`${apiV1()}/admin/emerging-teams`);
   url.searchParams.set('limit', String(limit));
   const res = await fetch(url.toString(), {
     cache: 'no-store',
@@ -248,7 +248,7 @@ export async function listStemEmergingTeams(limit = 100): Promise<StemEmergingTe
 }
 
 export async function listStemEmergingProjects(limit = 100): Promise<StemEmergingProject[]> {
-  const url = new URL(`${env.apiBaseUrl}/admin/emerging-projects`);
+  const url = new URL(`${apiV1()}/admin/emerging-projects`);
   url.searchParams.set('limit', String(limit));
   const res = await fetch(url.toString(), {
     cache: 'no-store',
@@ -261,7 +261,7 @@ export async function listStemEmergingProjects(limit = 100): Promise<StemEmergin
 }
 
 export async function listStemContests(limit = 100): Promise<StemContest[]> {
-  const url = new URL(`${env.apiBaseUrl}/admin/stem-contests`);
+  const url = new URL(`${apiV1()}/admin/stem-contests`);
   url.searchParams.set('limit', String(limit));
   const res = await fetch(url.toString(), {
     cache: 'no-store',
@@ -287,7 +287,7 @@ export async function createStemContest(input: {
   stageTransitions?: Record<string, string[]>;
   status?: string;
 }): Promise<StemContest | null> {
-  const res = await fetch(`${env.apiBaseUrl}/admin/stem-contests`, {
+  const res = await fetch(`${apiV1()}/admin/stem-contests`, {
     method: 'POST',
     credentials: 'include',
     headers: { 'Content-Type': 'application/json', ...adminHeaders() },
@@ -305,7 +305,7 @@ export async function checkStemEligibility(input: {
   schoolLevel?: string;
   schoolVerified?: boolean;
 }): Promise<StemEligibilityResult | null> {
-  const res = await fetch(`${env.apiBaseUrl}/admin/stem-eligibility/check`, {
+  const res = await fetch(`${apiV1()}/admin/stem-eligibility/check`, {
     method: 'POST',
     credentials: 'include',
     headers: { 'Content-Type': 'application/json', ...adminHeaders() },
@@ -317,7 +317,7 @@ export async function checkStemEligibility(input: {
 }
 
 export async function listStemLeaderboard(contestId: string, limit = 100): Promise<StemLeaderboardEntry[]> {
-  const url = new URL(`${env.apiBaseUrl}/admin/stem-leaderboard`);
+  const url = new URL(`${apiV1()}/admin/stem-leaderboard`);
   url.searchParams.set('contestId', contestId);
   url.searchParams.set('limit', String(limit));
   const res = await fetch(url.toString(), {
@@ -335,7 +335,7 @@ export async function listStemLeaderboardSlices(
   by: 'participant_type' | 'state' = 'participant_type',
   limit = 100
 ): Promise<StemLeaderboardSlice[]> {
-  const url = new URL(`${env.apiBaseUrl}/admin/stem-leaderboard/slices`);
+  const url = new URL(`${apiV1()}/admin/stem-leaderboard/slices`);
   url.searchParams.set('contestId', contestId);
   url.searchParams.set('by', by);
   url.searchParams.set('limit', String(limit));
@@ -350,7 +350,7 @@ export async function listStemLeaderboardSlices(
 }
 
 export async function listStemSubmissions(limit = 100, status = ''): Promise<StemSubmission[]> {
-  const url = new URL(`${env.apiBaseUrl}/admin/stem-submissions`);
+  const url = new URL(`${apiV1()}/admin/stem-submissions`);
   url.searchParams.set('limit', String(limit));
   if (status) url.searchParams.set('status', status);
   const res = await fetch(url.toString(), {
@@ -368,7 +368,7 @@ export async function updateStemSubmissionStatus(
   status: string,
   reviewStage = ''
 ): Promise<boolean> {
-  const res = await fetch(`${env.apiBaseUrl}/admin/stem-submissions/${encodeURIComponent(submissionId)}/status`, {
+  const res = await fetch(`${apiV1()}/admin/stem-submissions/${encodeURIComponent(submissionId)}/status`, {
     method: 'PATCH',
     credentials: 'include',
     headers: { 'Content-Type': 'application/json', ...adminHeaders() },
@@ -379,7 +379,7 @@ export async function updateStemSubmissionStatus(
 }
 
 export async function listStemJudgingScores(applicationId: string, limit = 100): Promise<StemJudgingScore[]> {
-  const url = new URL(`${env.apiBaseUrl}/admin/stem-judging/scores`);
+  const url = new URL(`${apiV1()}/admin/stem-judging/scores`);
   url.searchParams.set('applicationId', applicationId);
   url.searchParams.set('limit', String(limit));
   const res = await fetch(url.toString(), {
@@ -393,7 +393,7 @@ export async function listStemJudgingScores(applicationId: string, limit = 100):
 }
 
 export async function createStemJudgingScore(input: StemJudgingScore): Promise<StemJudgingScore | null> {
-  const res = await fetch(`${env.apiBaseUrl}/admin/stem-judging/scores`, {
+  const res = await fetch(`${apiV1()}/admin/stem-judging/scores`, {
     method: 'POST',
     credentials: 'include',
     headers: { 'Content-Type': 'application/json', ...adminHeaders() },
@@ -408,7 +408,7 @@ export async function updateStemJudgingScoreReviewState(
   scoreId: string,
   input: { reviewStatus: string; isLocked: boolean; lockReason?: string; lockedBy?: string }
 ): Promise<boolean> {
-  const res = await fetch(`${env.apiBaseUrl}/admin/stem-judging/scores/${encodeURIComponent(scoreId)}/review-state`, {
+  const res = await fetch(`${apiV1()}/admin/stem-judging/scores/${encodeURIComponent(scoreId)}/review-state`, {
     method: 'PATCH',
     credentials: 'include',
     headers: { 'Content-Type': 'application/json', ...adminHeaders() },
@@ -419,7 +419,7 @@ export async function updateStemJudgingScoreReviewState(
 }
 
 export async function listStemJudgingRubrics(contestId = '', limit = 100): Promise<StemJudgingRubric[]> {
-  const url = new URL(`${env.apiBaseUrl}/admin/stem-judging/rubrics`);
+  const url = new URL(`${apiV1()}/admin/stem-judging/rubrics`);
   if (contestId) url.searchParams.set('contestId', contestId);
   url.searchParams.set('limit', String(limit));
   const res = await fetch(url.toString(), {
@@ -433,7 +433,7 @@ export async function listStemJudgingRubrics(contestId = '', limit = 100): Promi
 }
 
 export async function listStemJudgingCriteria(rubricId: string, limit = 100): Promise<StemJudgingCriterion[]> {
-  const url = new URL(`${env.apiBaseUrl}/admin/stem-judging/criteria`);
+  const url = new URL(`${apiV1()}/admin/stem-judging/criteria`);
   url.searchParams.set('rubricId', rubricId);
   url.searchParams.set('limit', String(limit));
   const res = await fetch(url.toString(), {
@@ -453,7 +453,7 @@ export async function createStemJudgingRubric(input: {
   status?: string;
   criteria?: Array<{ key: string; label: string; weightPct: number; maxScore: number; description?: string }>;
 }): Promise<{ rubric: StemJudgingRubric; criteria: StemJudgingCriterion[] } | null> {
-  const res = await fetch(`${env.apiBaseUrl}/admin/stem-judging/rubrics`, {
+  const res = await fetch(`${apiV1()}/admin/stem-judging/rubrics`, {
     method: 'POST',
     credentials: 'include',
     headers: { 'Content-Type': 'application/json', ...adminHeaders() },
@@ -471,7 +471,7 @@ export async function listStemJudgeAssignments(
   filters: { contestId?: string; applicationId?: string; judgeUserId?: string },
   limit = 100
 ): Promise<StemJudgeAssignment[]> {
-  const url = new URL(`${env.apiBaseUrl}/admin/stem-judging/assignments`);
+  const url = new URL(`${apiV1()}/admin/stem-judging/assignments`);
   if (filters.contestId) url.searchParams.set('contestId', filters.contestId);
   if (filters.applicationId) url.searchParams.set('applicationId', filters.applicationId);
   if (filters.judgeUserId) url.searchParams.set('judgeUserId', filters.judgeUserId);
@@ -487,7 +487,7 @@ export async function listStemJudgeAssignments(
 }
 
 export async function createStemJudgeAssignment(input: StemJudgeAssignment): Promise<StemJudgeAssignment | null> {
-  const res = await fetch(`${env.apiBaseUrl}/admin/stem-judging/assignments`, {
+  const res = await fetch(`${apiV1()}/admin/stem-judging/assignments`, {
     method: 'POST',
     credentials: 'include',
     headers: { 'Content-Type': 'application/json', ...adminHeaders() },
@@ -502,7 +502,7 @@ export async function updateStemJudgeAssignmentConflict(
   assignmentId: string,
   input: { hasConflict: boolean; conflictReason?: string; status?: string }
 ): Promise<boolean> {
-  const res = await fetch(`${env.apiBaseUrl}/admin/stem-judging/assignments/${encodeURIComponent(assignmentId)}/conflict`, {
+  const res = await fetch(`${apiV1()}/admin/stem-judging/assignments/${encodeURIComponent(assignmentId)}/conflict`, {
     method: 'PATCH',
     credentials: 'include',
     headers: { 'Content-Type': 'application/json', ...adminHeaders() },
@@ -513,7 +513,7 @@ export async function updateStemJudgeAssignmentConflict(
 }
 
 export async function listStemVotingRules(contestId = '', limit = 100): Promise<StemVotingRule[]> {
-  const url = new URL(`${env.apiBaseUrl}/admin/stem-voting/rules`);
+  const url = new URL(`${apiV1()}/admin/stem-voting/rules`);
   if (contestId) url.searchParams.set('contestId', contestId);
   url.searchParams.set('limit', String(limit));
   const res = await fetch(url.toString(), { cache: 'no-store', credentials: 'include', headers: adminHeaders() });
@@ -523,7 +523,7 @@ export async function listStemVotingRules(contestId = '', limit = 100): Promise<
 }
 
 export async function upsertStemVotingRule(input: StemVotingRule): Promise<StemVotingRule | null> {
-  const res = await fetch(`${env.apiBaseUrl}/admin/stem-voting/rules`, {
+  const res = await fetch(`${apiV1()}/admin/stem-voting/rules`, {
     method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json', ...adminHeaders() }, body: JSON.stringify(input),
   });
   const payload = await res.json().catch(() => ({}));
@@ -532,7 +532,7 @@ export async function upsertStemVotingRule(input: StemVotingRule): Promise<StemV
 }
 
 export async function listStemVotePackages(contestId = '', limit = 100): Promise<StemVotePackage[]> {
-  const url = new URL(`${env.apiBaseUrl}/admin/stem-voting/packages`);
+  const url = new URL(`${apiV1()}/admin/stem-voting/packages`);
   if (contestId) url.searchParams.set('contestId', contestId);
   url.searchParams.set('limit', String(limit));
   const res = await fetch(url.toString(), { cache: 'no-store', credentials: 'include', headers: adminHeaders() });
@@ -542,7 +542,7 @@ export async function listStemVotePackages(contestId = '', limit = 100): Promise
 }
 
 export async function createStemVotePackage(input: StemVotePackage): Promise<StemVotePackage | null> {
-  const res = await fetch(`${env.apiBaseUrl}/admin/stem-voting/packages`, {
+  const res = await fetch(`${apiV1()}/admin/stem-voting/packages`, {
     method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json', ...adminHeaders() }, body: JSON.stringify(input),
   });
   const payload = await res.json().catch(() => ({}));
@@ -551,7 +551,7 @@ export async function createStemVotePackage(input: StemVotePackage): Promise<Ste
 }
 
 export async function listStemVoteTransactions(contestId = '', limit = 100): Promise<StemVoteTransaction[]> {
-  const url = new URL(`${env.apiBaseUrl}/admin/stem-voting/transactions`);
+  const url = new URL(`${apiV1()}/admin/stem-voting/transactions`);
   if (contestId) url.searchParams.set('contestId', contestId);
   url.searchParams.set('limit', String(limit));
   const res = await fetch(url.toString(), { cache: 'no-store', credentials: 'include', headers: adminHeaders() });
@@ -561,7 +561,7 @@ export async function listStemVoteTransactions(contestId = '', limit = 100): Pro
 }
 
 export async function createStemVoteTransaction(input: StemVoteTransaction): Promise<StemVoteTransaction | null> {
-  const res = await fetch(`${env.apiBaseUrl}/admin/stem-voting/transactions`, {
+  const res = await fetch(`${apiV1()}/admin/stem-voting/transactions`, {
     method: 'POST',
     credentials: 'include',
     headers: { 'Content-Type': 'application/json', ...adminHeaders() },
@@ -573,7 +573,7 @@ export async function createStemVoteTransaction(input: StemVoteTransaction): Pro
 }
 
 export async function listStemBootcampCohorts(contestId = '', limit = 100): Promise<StemBootcampCohort[]> {
-  const url = new URL(`${env.apiBaseUrl}/admin/stem-bootcamp/cohorts`);
+  const url = new URL(`${apiV1()}/admin/stem-bootcamp/cohorts`);
   if (contestId) url.searchParams.set('contestId', contestId);
   url.searchParams.set('limit', String(limit));
   const res = await fetch(url.toString(), { cache: 'no-store', credentials: 'include', headers: adminHeaders() });
@@ -583,7 +583,7 @@ export async function listStemBootcampCohorts(contestId = '', limit = 100): Prom
 }
 
 export async function createStemBootcampCohort(input: StemBootcampCohort): Promise<StemBootcampCohort | null> {
-  const res = await fetch(`${env.apiBaseUrl}/admin/stem-bootcamp/cohorts`, {
+  const res = await fetch(`${apiV1()}/admin/stem-bootcamp/cohorts`, {
     method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json', ...adminHeaders() }, body: JSON.stringify(input),
   });
   const payload = await res.json().catch(() => ({}));
@@ -592,7 +592,7 @@ export async function createStemBootcampCohort(input: StemBootcampCohort): Promi
 }
 
 export async function listStemBootcampTasks(cohortId = '', limit = 100): Promise<StemBootcampTask[]> {
-  const url = new URL(`${env.apiBaseUrl}/admin/stem-bootcamp/tasks`);
+  const url = new URL(`${apiV1()}/admin/stem-bootcamp/tasks`);
   if (cohortId) url.searchParams.set('cohortId', cohortId);
   url.searchParams.set('limit', String(limit));
   const res = await fetch(url.toString(), {
@@ -606,7 +606,7 @@ export async function listStemBootcampTasks(cohortId = '', limit = 100): Promise
 }
 
 export async function createStemBootcampTask(input: StemBootcampTask): Promise<StemBootcampTask | null> {
-  const res = await fetch(`${env.apiBaseUrl}/admin/stem-bootcamp/tasks`, {
+  const res = await fetch(`${apiV1()}/admin/stem-bootcamp/tasks`, {
     method: 'POST',
     credentials: 'include',
     headers: { 'Content-Type': 'application/json', ...adminHeaders() },
@@ -618,7 +618,7 @@ export async function createStemBootcampTask(input: StemBootcampTask): Promise<S
 }
 
 export async function listStemBootcampScores(cohortId = '', applicationId = '', limit = 100): Promise<StemBootcampScore[]> {
-  const url = new URL(`${env.apiBaseUrl}/admin/stem-bootcamp/scores`);
+  const url = new URL(`${apiV1()}/admin/stem-bootcamp/scores`);
   if (cohortId) url.searchParams.set('cohortId', cohortId);
   if (applicationId) url.searchParams.set('applicationId', applicationId);
   url.searchParams.set('limit', String(limit));
@@ -633,7 +633,7 @@ export async function listStemBootcampScores(cohortId = '', applicationId = '', 
 }
 
 export async function upsertStemBootcampScore(input: StemBootcampScore): Promise<StemBootcampScore | null> {
-  const res = await fetch(`${env.apiBaseUrl}/admin/stem-bootcamp/scores`, {
+  const res = await fetch(`${apiV1()}/admin/stem-bootcamp/scores`, {
     method: 'POST',
     credentials: 'include',
     headers: { 'Content-Type': 'application/json', ...adminHeaders() },
@@ -645,7 +645,7 @@ export async function upsertStemBootcampScore(input: StemBootcampScore): Promise
 }
 
 export async function listStemSponsors(limit = 100): Promise<StemSponsor[]> {
-  const url = new URL(`${env.apiBaseUrl}/admin/stem-sponsors`);
+  const url = new URL(`${apiV1()}/admin/stem-sponsors`);
   url.searchParams.set('limit', String(limit));
   const res = await fetch(url.toString(), { cache: 'no-store', credentials: 'include', headers: adminHeaders() });
   const payload = await res.json().catch(() => ({}));
@@ -654,7 +654,7 @@ export async function listStemSponsors(limit = 100): Promise<StemSponsor[]> {
 }
 
 export async function createStemSponsor(input: StemSponsor): Promise<StemSponsor | null> {
-  const res = await fetch(`${env.apiBaseUrl}/admin/stem-sponsors`, {
+  const res = await fetch(`${apiV1()}/admin/stem-sponsors`, {
     method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json', ...adminHeaders() }, body: JSON.stringify(input),
   });
   const payload = await res.json().catch(() => ({}));
@@ -663,7 +663,7 @@ export async function createStemSponsor(input: StemSponsor): Promise<StemSponsor
 }
 
 export async function listStemCertificates(limit = 100): Promise<StemCertificate[]> {
-  const url = new URL(`${env.apiBaseUrl}/admin/stem-awards/certificates`);
+  const url = new URL(`${apiV1()}/admin/stem-awards/certificates`);
   url.searchParams.set('limit', String(limit));
   const res = await fetch(url.toString(), { cache: 'no-store', credentials: 'include', headers: adminHeaders() });
   const payload = await res.json().catch(() => ({}));
@@ -672,7 +672,7 @@ export async function listStemCertificates(limit = 100): Promise<StemCertificate
 }
 
 export async function createStemCertificate(input: StemCertificate): Promise<StemCertificate | null> {
-  const res = await fetch(`${env.apiBaseUrl}/admin/stem-awards/certificates`, {
+  const res = await fetch(`${apiV1()}/admin/stem-awards/certificates`, {
     method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json', ...adminHeaders() }, body: JSON.stringify(input),
   });
   const payload = await res.json().catch(() => ({}));
@@ -681,7 +681,7 @@ export async function createStemCertificate(input: StemCertificate): Promise<Ste
 }
 
 export async function listStemBadges(limit = 100): Promise<StemBadge[]> {
-  const url = new URL(`${env.apiBaseUrl}/admin/stem-awards/badges`);
+  const url = new URL(`${apiV1()}/admin/stem-awards/badges`);
   url.searchParams.set('limit', String(limit));
   const res = await fetch(url.toString(), { cache: 'no-store', credentials: 'include', headers: adminHeaders() });
   const payload = await res.json().catch(() => ({}));
@@ -690,7 +690,7 @@ export async function listStemBadges(limit = 100): Promise<StemBadge[]> {
 }
 
 export async function createStemBadge(input: StemBadge): Promise<StemBadge | null> {
-  const res = await fetch(`${env.apiBaseUrl}/admin/stem-awards/badges`, {
+  const res = await fetch(`${apiV1()}/admin/stem-awards/badges`, {
     method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json', ...adminHeaders() }, body: JSON.stringify(input),
   });
   const payload = await res.json().catch(() => ({}));
@@ -699,7 +699,7 @@ export async function createStemBadge(input: StemBadge): Promise<StemBadge | nul
 }
 
 export async function listStemBadgeAwards(applicationId = '', limit = 100): Promise<StemBadgeAward[]> {
-  const url = new URL(`${env.apiBaseUrl}/admin/stem-awards/badge-awards`);
+  const url = new URL(`${apiV1()}/admin/stem-awards/badge-awards`);
   if (applicationId) url.searchParams.set('applicationId', applicationId);
   url.searchParams.set('limit', String(limit));
   const res = await fetch(url.toString(), { cache: 'no-store', credentials: 'include', headers: adminHeaders() });
@@ -709,7 +709,7 @@ export async function listStemBadgeAwards(applicationId = '', limit = 100): Prom
 }
 
 export async function awardStemBadge(input: StemBadgeAward): Promise<StemBadgeAward | null> {
-  const res = await fetch(`${env.apiBaseUrl}/admin/stem-awards/badge-awards`, {
+  const res = await fetch(`${apiV1()}/admin/stem-awards/badge-awards`, {
     method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json', ...adminHeaders() }, body: JSON.stringify(input),
   });
   const payload = await res.json().catch(() => ({}));
@@ -718,14 +718,14 @@ export async function awardStemBadge(input: StemBadgeAward): Promise<StemBadgeAw
 }
 
 export async function getStemReportSummary(): Promise<StemReportSummary | null> {
-  const res = await fetch(`${env.apiBaseUrl}/admin/stem-reports/summary`, { cache: 'no-store', credentials: 'include', headers: adminHeaders() });
+  const res = await fetch(`${apiV1()}/admin/stem-reports/summary`, { cache: 'no-store', credentials: 'include', headers: adminHeaders() });
   const payload = await res.json().catch(() => ({}));
   if (!res.ok || !payload?.success || !payload?.summary) return null;
   return payload.summary as StemReportSummary;
 }
 
 export async function getStemReportBuckets(kind: string, contestId = '', limit = 100): Promise<StemReportBucket[]> {
-  const url = new URL(`${env.apiBaseUrl}/admin/stem-reports/buckets`);
+  const url = new URL(`${apiV1()}/admin/stem-reports/buckets`);
   url.searchParams.set('kind', kind);
   if (contestId) url.searchParams.set('contestId', contestId);
   url.searchParams.set('limit', String(limit));

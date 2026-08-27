@@ -1,11 +1,11 @@
-import { env } from '@/config/env';
+import { apiV1 } from '@/config/env';
 import type { CompetitionOverview, OpenMicCompetition } from '@/types/competitions';
 
 export async function getCompetitionOverview(): Promise<CompetitionOverview | null> {
   const headers: Record<string, string> = {};
 
   try {
-    const res = await fetch(`${env.apiBaseUrl}/admin/competitions/overview`, {
+    const res = await fetch(`${apiV1()}/admin/competitions/overview`, {
       cache: 'no-store',
       credentials: 'include',
       headers,
@@ -28,7 +28,7 @@ export async function getCompetitionOverview(): Promise<CompetitionOverview | nu
     console.error('Failed to fetch competition overview:', error);
     // Check if backend is accessible
     if (error instanceof TypeError && error.message === 'Failed to fetch') {
-      console.error(`Cannot reach backend at ${env.apiBaseUrl}. Is the Go backend running on port 8091?`);
+      console.error(`Cannot reach backend at ${apiV1()}. Is the Go backend running on port 8091?`);
     }
     return null;
   }
@@ -37,7 +37,7 @@ export async function getCompetitionOverview(): Promise<CompetitionOverview | nu
 export async function listOpenMicCompetitions(limit = 100): Promise<OpenMicCompetition[]> {
   const headers: Record<string, string> = {};
 
-  const url = new URL(`${env.apiBaseUrl}/admin/competitions/open-mic`);
+  const url = new URL(`${apiV1()}/admin/competitions/open-mic`);
   url.searchParams.set('limit', String(limit));
 
   const res = await fetch(url.toString(), {
@@ -66,7 +66,7 @@ export async function createOpenMicCompetition(input: {
 }): Promise<OpenMicCompetition | null> {
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
 
-  const res = await fetch(`${env.apiBaseUrl}/admin/competitions/open-mic`, {
+  const res = await fetch(`${apiV1()}/admin/competitions/open-mic`, {
     method: 'POST',
     credentials: 'include',
     headers,

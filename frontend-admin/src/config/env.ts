@@ -34,4 +34,28 @@ export const env = {
   webAppBaseUrl: (process.env.NEXT_PUBLIC_WEB_APP_BASE_URL || 'http://localhost:3000').replace(/\/+$/, ''),
 };
 
+/**
+ * The API root, with any trailing /api/v1 removed.
+ *
+ * apiBaseUrl is the same-origin proxy (<origin>/api/admin-proxy), whose path is
+ * forwarded verbatim to ADMIN_API_BASE_URL. So a caller must spell out the FULL
+ * backend path — the backend mounts modules at several roots (/api/finance/...,
+ * /api/crowdfunding/..., /api/v1/...), and no single base can cover them all.
+ */
+export function apiRoot(): string {
+  return env.apiBaseUrl.replace(/\/api\/v1\/?$/, '').replace(/\/$/, '');
+}
+
+/**
+ * The /api/v1 namespace. Use for routes Go mounts under it (the /admin/* consoles).
+ *
+ * These call sites used to append straight onto apiBaseUrl, which worked only while
+ * that value ended in /api/v1. Once it became the proxy origin, they silently
+ * dropped the namespace and 404'd. Naming the namespace explicitly means the URL no
+ * longer depends on how the base happens to be spelled.
+ */
+export function apiV1(): string {
+  return `${apiRoot()}/api/v1`;
+}
+
 export const hasSupabaseConfig = Boolean(env.supabaseUrl && env.supabaseAnonKey);
