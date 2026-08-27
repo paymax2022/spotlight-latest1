@@ -7,7 +7,7 @@
  * difference — the service shape, the envelope and the auth header are identical,
  * so a module can later be moved from web to Go by changing one base.
  */
-import { env } from '@/config/env';
+import { webProxyBase } from '@/config/env';
 
 export type AdminContest = {
   id: string;
@@ -20,12 +20,7 @@ export type AdminContest = {
 };
 
 function webBase(): string {
-  // Strip a trailing /api/v1 to get the origin, then append this proxy's path —
-  // the same shape adminBase() uses, and for the same reason: replacing the
-  // suffix silently produced a base with no module prefix once apiBaseUrl moved
-  // to the same-origin proxy.
-  const root = env.apiBaseUrl.replace(/\/api\/v1\/?$/, '');
-  return `${root}/api/web-proxy`;
+  return webProxyBase();
 }
 
 function authHeaders(): Record<string, string> {

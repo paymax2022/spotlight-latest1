@@ -59,3 +59,30 @@ export function apiV1(): string {
 }
 
 export const hasSupabaseConfig = Boolean(env.supabaseUrl && env.supabaseAnonKey);
+
+/**
+ * frontend-admin's own origin, browser or server. Shared by adminApiBase()
+ * above and webProxyBase() below — the two same-origin proxies this app owns.
+ */
+function selfOrigin(): string {
+  if (typeof window !== 'undefined') return window.location.origin;
+  return process.env.ADMIN_SELF_ORIGIN || 'http://127.0.0.1:3001';
+}
+
+/**
+ * Base for the PATH A web proxy (/api/web-proxy/<...> -> frontend-web), used
+ * by services with no Go module (contests, scoring, open-mic, registration —
+ * see docs/adr/ADR-047-admin-console-consolidation-path-a.md).
+ *
+ * Deliberately NOT derived from env.apiBaseUrl. Every one of those services
+ * originally computed this by stripping a trailing "/api/v1" off apiBaseUrl
+ * to recover "the origin" — a hack that broke silently (double-proxied,
+ * 404ing paths like /api/admin-proxy/api/web-proxy/...) once apiBaseUrl
+ * became the admin-proxy path itself and stopped ending in /api/v1 (see
+ * apiRoot()'s comment above for that same regression on the Go-backend side).
+ * This computes the origin directly instead of parsing another base's shape.
+ */
+export function webProxyBase(): string {
+  return `${selfOrigin()}/api/web-proxy`;
+}
+
