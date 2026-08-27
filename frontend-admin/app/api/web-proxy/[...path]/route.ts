@@ -48,6 +48,13 @@ async function forward(request: Request, ctx: { params: Promise<{ path: string[]
   if (auth) headers['Authorization'] = auth;
   const contentType = request.headers.get('content-type');
   if (contentType) headers['Content-Type'] = contentType;
+  // Not a secret — a per-request dedup key the CALLER generates and frontend-web
+  // requires for money mutations (see app/api/admin/payments-finance/wallet/
+  // adjust/route.ts). Every route proxied here until payments-finance only
+  // needed Authorization + Content-Type, so this was never forwarded; without
+  // it, any money-mutation route reached through this proxy 400s unconditionally.
+  const idempotencyKey = request.headers.get('idempotency-key');
+  if (idempotencyKey) headers['Idempotency-Key'] = idempotencyKey;
 
   const method = request.method;
   const body = method === 'GET' || method === 'HEAD' ? undefined : await request.text();

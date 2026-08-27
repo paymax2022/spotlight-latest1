@@ -82,6 +82,12 @@ const navItemsBase: NavItem[] = [
   { label: 'Emerging Teams', href: '/admin/emerging-teams', section: 'Programs', stemAccess: 'read' },
   { label: 'Emerging Projects', href: '/admin/emerging-projects', section: 'Programs', stemAccess: 'read' },
   { label: 'Finance Overview', href: '/admin/finance', section: 'Finance', permissions: ['audit.logs.view'] },
+  // Path A console (admin consolidation): data lives in frontend-web, reached
+  // through /api/web-proxy — see ADR-047. finance:adjust:initiate is
+  // frontend-web's own permission name (checked server-side there), listed
+  // here only for sidebar visibility consistency with the other Path A
+  // entries above.
+  { label: 'Payments & Finance', href: '/admin/payments-finance', section: 'Finance', permissions: ['finance:adjust:initiate'] },
   { label: 'KYC Queue', href: '/admin/finance/kyc', section: 'Finance', permissions: ['audit.logs.view'] },
   { label: 'KYC Verification', href: '/admin/finance/kyc-verify', section: 'Finance', permissions: ['finance.admin.kyc'] },
   { label: 'Wallet Lookup', href: '/admin/finance/wallets', section: 'Finance', permissions: ['audit.logs.view'] },

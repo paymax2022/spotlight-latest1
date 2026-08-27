@@ -24,17 +24,43 @@ export async function signInAdmin(username: string, password: string) {
   const role =
     profileRole ||
     (typeof data.user.user_metadata?.role === 'string' ? data.user.user_metadata.role : null) ||
-    (typeof data.user.app_metadata?.role === 'string' ? data.user.app_metadata.role : null);
+    (typeof data.user.app_metadata?.role === 'string' ? data.user.app_metadata.role : null) ||
+    '';
 
-  if (role !== 'admin') {
+  // Block 9 (Payments & Finance): finance_admin/finance_maker/finance_checker/
+  // finance_viewer are real roles frontend-web's rbac.ts defines permissions
+  // for (finance:adjust:initiate, finance:adjust:approve, ...) — they were
+  // simply never allowed past THIS gate, so nobody holding them could ever
+  // reach the console, regardless of what they were permissioned to do once
+  // there. Mirrored from frontend-web/src/server/admin/rbac.ts's
+  // rolePermissions map — keep the two in sync if either changes; that file
+  // is the source of truth for what the finance:* checks server-side.
+  const FINANCE_ROLE_PERMISSIONS: Record<string, string[]> = {
+    finance_admin: [
+      'dashboard:view', 'finance:view', 'finance:refund',
+      'finance:adjust:initiate', 'finance:adjust:approve',
+      'utility:manage', 'utility:support', 'reports:export', 'audit:view',
+    ],
+    finance_maker: ['dashboard:view', 'finance:view', 'finance:adjust:initiate', 'audit:view'],
+    finance_checker: ['dashboard:view', 'finance:view', 'finance:adjust:approve', 'audit:view'],
+    finance_viewer: ['dashboard:view', 'finance:view', 'audit:view'],
+  };
+
+  if (role !== 'admin' && !(role in FINANCE_ROLE_PERMISSIONS)) {
     await supabase.auth.signOut();
     throw new Error('Access denied. Admin privileges required.');
   }
 
   // Top-level admin roles get a wildcard so the admin console UI is usable.
   // The Go backend independently enforces RBAC per-route, so this gate is UX-only.
+  // Finance roles get their REAL scoped permission list instead — a wildcard
+  // here would let e.g. finance_viewer see every write action's button even
+  // though the server-side finance:adjust:initiate check would then 403 it;
+  // scoped permissions keep the sidebar/buttons honest about what actually works.
   const TOP_LEVEL_ADMIN_ROLES = ['admin', 'super-admin', 'system-admin'];
-  const permissions = TOP_LEVEL_ADMIN_ROLES.includes(role) ? ['*'] : [];
+  const permissions = TOP_LEVEL_ADMIN_ROLES.includes(role)
+    ? ['*']
+    : (FINANCE_ROLE_PERMISSIONS[role] ?? []);
 
   if (typeof window !== 'undefined') {
     const accessToken = data.session?.access_token ?? '';
