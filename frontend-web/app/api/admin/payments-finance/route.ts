@@ -25,9 +25,9 @@ type DbRow = Record<string, unknown>;
  */
 const CUSTOMER_ACCOUNT_TYPES = ['wallet', 'user_wallet', 'group_wallet'] as const;
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any -- mirrors the
-// original page's own `filter: (query: any) => any` signature; the Supabase
-// query builder's fluent type is not worth chaining through a helper.
+// `any` here mirrors the original page's own `filter: (query: any) => any`
+// signature — the Supabase query builder's fluent type is not worth chaining
+// through a helper.
 async function queryRows<T>(
   table: string,
   select: string,
