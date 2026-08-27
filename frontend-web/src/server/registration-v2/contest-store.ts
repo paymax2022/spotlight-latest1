@@ -110,6 +110,48 @@ export async function persistContestDefinition(
   return data ? { id: data.id as string } : null;
 }
 
+/**
+ * Update a persisted contest definition in-place (by its current slug).
+ *
+ * Mirrors persistContestDefinition's column mapping so the two never drift
+ * apart. Thrown, not swallowed, on a missing row or a Postgres error — same
+ * contract as persistContestDefinition.
+ */
+export async function updateContestDefinition(
+  currentSlug: string,
+  def: ContestRegistrationDefinition,
+): Promise<void> {
+  const { error, count } = await getSupabase()
+    .from('contests')
+    .update({
+      name: def.title,
+      slug: def.slug,
+      category: categoryLabel(def.contestCategory),
+      contest_type: def.contestType,
+      location_scope: def.regionScope,
+      entry_fee_ngn: def.isPaid ? Math.max(0, Math.round(def.registrationFeeNgn ?? 0)) : 0,
+      season_name: def.seasonOrEdition,
+      voting_enabled: def.supportsVoting,
+      age_min: def.legalAdultAge,
+      contest_config: def as unknown as Record<string, unknown>,
+    }, { count: 'exact' })
+    .eq('slug', currentSlug);
+
+  if (error) throw new Error(`Failed to update contest in Postgres: ${error.message}`);
+  if (!count) throw new Error('Contest not found.');
+}
+
+/** Delete a persisted contest definition by slug. Throws if the row doesn't exist. */
+export async function deleteContestDefinition(slug: string): Promise<void> {
+  const { error, count } = await getSupabase()
+    .from('contests')
+    .delete({ count: 'exact' })
+    .eq('slug', slug);
+
+  if (error) throw new Error(`Failed to delete contest from Postgres: ${error.message}`);
+  if (!count) throw new Error('Contest not found.');
+}
+
 /** Is a slug already taken in Postgres? contests.slug carries no UNIQUE index. */
 export async function contestSlugExists(slug: string): Promise<boolean> {
   const { data, error } = await getSupabase()
