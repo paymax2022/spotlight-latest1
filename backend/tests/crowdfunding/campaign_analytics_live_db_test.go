@@ -55,16 +55,33 @@ func liveDBPool(t *testing.T) *pgxpool.Pool {
 	if err := pool.Ping(context.Background()); err != nil {
 		t.Fatalf("ping: %v", err)
 	}
+
+	// The pool is closed via t.Cleanup, NOT `defer` in the caller. t.Cleanup runs
+	// LIFO and only AFTER the test function returns, so a `defer pool.Close()` in
+	// the test would close the pool BEFORE the fixture cleanup registered below
+	// ever runs — every DELETE would fail against a closed pool. Registering the
+	// close here, first, guarantees it runs LAST. This is not hypothetical: the
+	// original version of this file used `defer pool.Close()` and silently leaked
+	// nine campaigns, twelve users and their contributions into the shared dev
+	// database before anyone noticed.
+	t.Cleanup(pool.Close)
 	return pool
 }
 
-// seedCampaign creates a creator, a campaign and returns their ids. Every row is
-// namespaced by a fresh uuid and removed on cleanup, so the test is safe to
-// re-run and cannot disturb existing data.
-func seedCampaign(t *testing.T, ctx context.Context, pool *pgxpool.Pool) (campaignID, creatorID string) {
+// seedCampaign creates a creator and a campaign, and returns their ids plus a
+// trackUser hook for any additional user the test creates (e.g. a contributor).
+//
+// Everything is namespaced by a fresh uuid and removed on cleanup, so the test is
+// safe to re-run and cannot disturb existing data. Cleanup deletes in FK-safe
+// order — events and contributions reference the campaign, and contributions
+// reference the contributor — and REPORTS failures instead of swallowing them: a
+// cleanup that silently fails leaks rows into a shared database, which is exactly
+// how this file once left nine stray campaigns behind.
+func seedCampaign(t *testing.T, ctx context.Context, pool *pgxpool.Pool) (campaignID, creatorID string, trackUser func(string)) {
 	t.Helper()
 	creatorID = uuid.NewString()
 	campaignID = uuid.NewString()
+	extraUsers := []string{}
 
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO auth.users (id, email, aud, role)
@@ -80,12 +97,27 @@ func seedCampaign(t *testing.T, ctx context.Context, pool *pgxpool.Pool) (campai
 	}
 
 	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, `DELETE FROM cf_campaign_events WHERE campaign_id = $1`, campaignID)
-		_, _ = pool.Exec(ctx, `DELETE FROM contributions WHERE campaign_id = $1`, campaignID)
-		_, _ = pool.Exec(ctx, `DELETE FROM campaigns WHERE id = $1`, campaignID)
-		_, _ = pool.Exec(ctx, `DELETE FROM auth.users WHERE id = $1`, creatorID)
+		mustExec := func(what, sql string, args ...any) {
+			if _, err := pool.Exec(ctx, sql, args...); err != nil {
+				t.Errorf("cleanup %s: %v (fixture rows may be left in the database)", what, err)
+			}
+		}
+		mustExec("events", `DELETE FROM cf_campaign_events WHERE campaign_id = $1`, campaignID)
+		mustExec("contributions", `DELETE FROM contributions WHERE campaign_id = $1`, campaignID)
+		mustExec("campaign", `DELETE FROM campaigns WHERE id = $1`, campaignID)
+		for _, u := range extraUsers {
+			mustExec("extra user", `DELETE FROM auth.users WHERE id = $1`, u)
+		}
+		mustExec("creator", `DELETE FROM auth.users WHERE id = $1`, creatorID)
+
+		// Prove the fixture is actually gone rather than trusting the DELETEs.
+		var left int
+		if err := pool.QueryRow(ctx, `SELECT COUNT(*) FROM campaigns WHERE id = $1`, campaignID).Scan(&left); err == nil && left != 0 {
+			t.Errorf("fixture campaign %s survived cleanup", campaignID)
+		}
 	})
-	return campaignID, creatorID
+
+	return campaignID, creatorID, func(id string) { extraUsers = append(extraUsers, id) }
 }
 
 // TestLiveDB_AnalyticsAreZeroWithoutEvents is the regression that kills the
@@ -94,9 +126,8 @@ func seedCampaign(t *testing.T, ctx context.Context, pool *pgxpool.Pool) (campai
 func TestLiveDB_AnalyticsAreZeroWithoutEvents(t *testing.T) {
 	ctx := context.Background()
 	pool := liveDBPool(t)
-	defer pool.Close()
 
-	campaignID, _ := seedCampaign(t, ctx, pool)
+	campaignID, _, _ := seedCampaign(t, ctx, pool)
 	svc := creator.NewService(pool)
 
 	a, err := svc.GetCampaignAnalytics(ctx, campaignID)
@@ -122,9 +153,8 @@ func TestLiveDB_AnalyticsAreZeroWithoutEvents(t *testing.T) {
 func TestLiveDB_AnalyticsCountRecordedEvents(t *testing.T) {
 	ctx := context.Background()
 	pool := liveDBPool(t)
-	defer pool.Close()
 
-	campaignID, _ := seedCampaign(t, ctx, pool)
+	campaignID, _, _ := seedCampaign(t, ctx, pool)
 
 	for _, ev := range []struct{ typ, src string }{
 		{"VIEW", "whatsapp"}, {"VIEW", "whatsapp"}, {"VIEW", "facebook"},
@@ -163,9 +193,8 @@ func TestLiveDB_AnalyticsCountRecordedEvents(t *testing.T) {
 func TestLiveDB_ContributionAttributedToLastTouch(t *testing.T) {
 	ctx := context.Background()
 	pool := liveDBPool(t)
-	defer pool.Close()
 
-	campaignID, _ := seedCampaign(t, ctx, pool)
+	campaignID, _, trackUser := seedCampaign(t, ctx, pool)
 	contributorID := uuid.NewString()
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO auth.users (id, email, aud, role)
@@ -173,7 +202,7 @@ func TestLiveDB_ContributionAttributedToLastTouch(t *testing.T) {
 		contributorID, "cf-contrib-"+contributorID+"@test.local"); err != nil {
 		t.Fatalf("seed contributor: %v", err)
 	}
-	t.Cleanup(func() { _, _ = pool.Exec(ctx, `DELETE FROM auth.users WHERE id = $1`, contributorID) })
+	trackUser(contributorID)
 
 	gaveAt := time.Now()
 	// First touch WhatsApp, LAST touch Facebook, then the contribution.
