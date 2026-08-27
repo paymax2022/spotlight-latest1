@@ -1,16 +1,16 @@
 import { successResponse, errorResponse, handleApiError } from '@/src/lib/api/responses';
 import { assertAdminPermission } from '@/src/server/admin/auth';
-import { getWeek, finalizeEviction } from '@/src/server/services/reality-show/store';
+import { getWeek, finalizeEviction } from '@/src/server/services/reality-show/persistence';
 
 export async function POST(request: Request, ctx: { params: Promise<{ id: string }> }) {
   const params = await ctx.params;
   try {
     const identity = await assertAdminPermission(request, 'programs:manage');
-    const week = getWeek(params.id);
+    const week = await getWeek(params.id);
     if (!week) return errorResponse('Week not found', 404);
 
     const body = await request.json().catch(() => ({})) as { note?: string };
-    const result = finalizeEviction(params.id, identity.actorId, body.note);
+    const result = await finalizeEviction(params.id, identity.actorId, body.note);
 
     return successResponse({
       week: result.week,
