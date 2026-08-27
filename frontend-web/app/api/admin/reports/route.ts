@@ -1,16 +1,25 @@
 import { handleApiError, successResponse } from '@/src/lib/api/responses';
 import { assertAdminPermission } from '@/src/server/admin/auth';
-import { listRegistrationApplications } from '@/src/server/registration/store';
-import { listSubmissions, listContests as listOpenMicContests } from '@/src/server/openmic/store';
+// ADMIN CONSOLIDATION, slice 5 (see docs/adr/ADR-047): registration/store is
+// the in-memory version nothing real ever writes to — real applications live
+// in Supabase (registration/supabase-store), same fix as the openmic import
+// above. listRegistrationApplications here is async and its filter argument
+// is required (not optional), unlike the memory version.
+import { listRegistrationApplications } from '@/src/server/registration/supabase-store';
+// ADMIN CONSOLIDATION, slice 5 (see docs/adr/ADR-047): the in-memory openmic/store
+// import is never written to by any real flow; every open-mic admin page and API
+// route reads openmic/persistence (Supabase-backed) instead. persistence.ts is
+// async where store.ts was sync — both calls below are awaited accordingly.
+import { listSubmissions, listContests as listOpenMicContests } from '@/src/server/openmic/persistence';
 import { listStemApplications, listStemAdminContests } from '@/src/server/stem/store';
 
 export async function GET(request: Request) {
   try {
     await assertAdminPermission(request, 'reports:export');
 
-    const registrations = listRegistrationApplications();
-    const openMicSubmissions = listSubmissions();
-    const openMicContests = listOpenMicContests({ includeNonPublic: true });
+    const registrations = await listRegistrationApplications({});
+    const openMicSubmissions = await listSubmissions();
+    const openMicContests = await listOpenMicContests({ includeNonPublic: true });
     const stemApplications = listStemApplications();
     const stemContests = listStemAdminContests();
 
