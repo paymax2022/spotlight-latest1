@@ -48,10 +48,57 @@ runs in slices, each shipped independently:
 - **Slice 3** (`f0af9361`) — the data-path spike: how does frontend-admin reach
   the four TypeScript-layer modules that have no Go backend? Contests was the
   pilot. **Path A**, below, is the answer this slice validated.
-- **Slice 4** (planned) — roll Path A out to the remaining three: openmic,
-  registration, scoring, reality-show.
-- **Slice 5** (planned) — fix the store-vs-persistence import mismatch caught
-  while spiking slice 3 (below), then delete `frontend-web/app/admin`.
+- **Slice 4** (`bf44098a` Open Mic, `c7e504d0` Judges & Scores, plus the
+  Stages & Evictions console below) — Path A rolled out to three of the four
+  remaining orphaned modules. Registration's console shipped as part of slice 5
+  (below) rather than separately, since fixing its data path and giving it a
+  console were the same PR.
+- **Slice 5** (`397b2835`) — fixed the store-vs-persistence import mismatch
+  caught while spiking slice 3: the admin dashboard, reports, bulk-action
+  review and the registration/applicants routes all read (and bulk-action
+  wrote) `registration/store`, the in-memory version nothing real ever writes
+  to, instead of `registration/supabase-store`. Shipped frontend-admin's
+  Registration / Applicants console in the same commit. **Deleting
+  `frontend-web/app/admin` did not happen in this slice** — see "Remaining
+  work" below; that was this ADR's original plan for slice 5 but turned out to
+  need its own slice once the scope of "fix the mismatch" became clear.
+- **Reality-show / Stages & Evictions** — the fourth orphaned module got its
+  data-path fix (`c7aa80e3`: `reality-show/persistence.ts` replaces the
+  `globalThis` store the admin API routes read from) and its frontend-admin
+  console (`realityShowAdminService.ts` + `app/admin/stages-evictions/*`) in
+  two separate passes, the console following after the fact rather than in the
+  same commit as slices 4/5 — worth knowing if a future audit expects one
+  commit per module the way Open Mic and Judges & Scores got.
+
+### Remaining work (as of 2026-08-27, after slice 5 + the reality-show console)
+
+All four orphaned modules (contests, open-mic, scoring, registration,
+reality-show — five, counting contests) now have both a real data path and a
+frontend-admin console. What is NOT done:
+
+- **`frontend-web/app/admin` still exists in full** — both `(dashboard)` (11
+  route groups: contests, film-academy, judges-scores, open-mic,
+  payments-finance, sme-pitch, stages-evictions, stem, utility, voting, and the
+  catch-all `[module]`) and `(modules)` (74 directories, the copy from the
+  original `feat/admin-portal-consolidation` attempt). Deleting it was always
+  the point of this ADR; it hasn't started. Slice 1's CI guard
+  (`admin-drift-guard.yml`) is the only thing preventing re-divergence in the
+  meantime, and it now has nothing left to protect once the deletion happens —
+  it can retire alongside `frontend-web/app/admin`.
+- The known issue below (stale `openmic/store` import) lives in
+  `frontend-web/app/admin/(dashboard)/page.tsx` specifically, which is deleted
+  wholesale once the surface goes — fixing it in place would be wasted work.
+- Open Mic's documented scope cut stands: fraud-alert resolution, marking
+  notifications sent, payment reconciliation, finalist generation, winner
+  announcement, and building/locking the finale playlist have no admin UI
+  wired to their (already Path-A-ready) API routes yet.
+- A new mismatch surfaced while building the Stages & Evictions console:
+  `reality_show_contestants.application_id` has a foreign key to
+  `public.contest_registration_applications`, a different and currently empty
+  table from `public.registrations` — the one the live registration flow (and
+  the Registration / Applicants console above) actually writes to. This is the
+  same class of bug slice 5 fixed for registration itself, not yet triaged for
+  reality-show. Not fixed here; flagged for whoever picks up reality-show next.
 
 ### Path A: expose orphaned data as an authenticated API, proxy it, don't rebuild it in Go
 
@@ -102,14 +149,27 @@ excepted — that needs a real admin sign-in):
 
 `tsc` clean in both apps.
 
-### Known issue surfaced, not fixed, by the slice 3 spike
+### Known issue surfaced by the slice 3 spike — status after slice 5
 
-The frontend-admin dashboard root imports `openmic/store` (in-memory) where the
-other consoles import `openmic/persistence` (Supabase-backed), and
-`contests/[slug]/applicants` imports both stores side by side. This is a real
-data-correctness bug — reads and writes can land in memory and vanish — not a
-Path A design question, so it's scoped to slice 5 rather than folded into slice
-3 or 4.
+The original finding: `frontend-web/app/admin/(dashboard)/page.tsx` (the
+retiring surface's OWN dashboard root, not frontend-admin's — frontend-admin
+has no server-side access to frontend-web's TypeScript modules, they're
+separate Next.js apps) imports `openmic/store` (in-memory) where every other
+open-mic page under `(dashboard)/open-mic/**` imports `openmic/persistence`
+(Supabase-backed). `contests/[slug]/applicants` similarly imports both
+`registration/store` and `registration/supabase-store` side by side — though
+that one turned out to be intentional: `registration/store` there supplies
+only the static contest catalog (name/slug metadata), not applicant data, and
+contest definitions are meant to stay in-memory config rather than a live
+table (`registration/supabase-store.ts` re-exports them from `store.ts` for
+exactly this reason).
+
+**registration/applications/dashboard/reports's live-data mismatch is fixed**
+(slice 5, `397b2835`) — those routes now read `registration/supabase-store`.
+**The `openmic/store` import in `frontend-web/app/admin/(dashboard)/page.tsx`
+is NOT fixed** — it's still there, still wrong, but that whole file is deleted
+once `frontend-web/app/admin` goes (see "Remaining work" above), so it was
+left alone rather than patched in a file with a known expiry date.
 
 ## Consequences
 
@@ -130,19 +190,23 @@ Path A design question, so it's scoped to slice 5 rather than folded into slice
   frontend-admin's server runtime even after `frontend-web/app/admin` itself is
   deleted — the TypeScript data layer survives in frontend-web even though its
   admin UI does not.
-- `frontend-web/app/admin` cannot be deleted until slice 4 finishes; until then
-  slice 1's guard is the only thing preventing re-divergence, and it costs every
-  PR that happens to touch either directory a CI check.
+- `frontend-web/app/admin` could not be deleted until slice 4 finished, which
+  it now has (see "Remaining work" above) — but the deletion itself is still
+  outstanding. Until it happens, slice 1's guard is the only thing preventing
+  re-divergence, and it costs every PR that happens to touch either directory
+  a CI check.
 
 ### Risks
 - A future module could be added to frontend-web's TypeScript layer with admin
   needs and nobody remembers Path A exists, reinventing a third pattern.
   Mitigated by this ADR plus the two-proxy naming (`web-proxy` vs
   `admin-proxy`) making the split visible at the call site.
-- The slice-5 store/persistence mismatch is a live data bug sitting in
-  production admin surfaces until it's fixed; Path A's contests pilot did not
-  touch openmic, so it neither caused nor fixed it, but it's now formally
-  scheduled rather than only noted in a commit body.
+- The slice-5 store/persistence mismatch for registration/dashboard/reports is
+  fixed (`397b2835`). The same class of mismatch is still open for reality-show
+  (`reality_show_contestants.application_id` → `contest_registration_applications`,
+  an empty table, instead of `registrations`) — see "Remaining work" above.
+  Path A's contests pilot did not touch either module, so it neither caused nor
+  fixes these; each has needed its own dedicated pass.
 
 ## Alternatives considered
 
@@ -155,11 +219,21 @@ Path A design question, so it's scoped to slice 5 rather than folded into slice
 
 ## Related
 
-- Commits: `07125457` (slice 1, CI drift guard), `f0af9361` (slice 3, Path A spike)
+- Commits: `07125457` (slice 1, CI drift guard), `f0af9361` (slice 3, Path A
+  spike), `4918b6d6` (shared Path A scaffolding for slices 4/4a/5), `c7aa80e3`
+  (reality-show data-path fix), `397b2835` (slice 5, registration/dashboard/
+  reports fix + console), `bf44098a` (slice 4, Open Mic console), `c7e504d0`
+  (slice 4a, Judges & Scores console + moved off its own `globalThis` mock onto
+  `public.judge_application_scorecards`). The Stages & Evictions console
+  (`realityShowAdminService.ts`, `app/admin/stages-evictions/*`) followed in a
+  separate pass after these; check `git log` for its commit if citing it later.
 - `.github/workflows/admin-drift-guard.yml`, `scripts/ci/check-admin-surface-drift.sh`
-- `frontend-admin/app/api/web-proxy/[...path]`, `frontend-admin/app/admin/contests`
+- `frontend-admin/app/api/web-proxy/[...path]`, `frontend-admin/app/admin/contests`,
+  `frontend-admin/app/admin/judges-scores`, `frontend-admin/app/admin/open-mic`,
+  `frontend-admin/app/admin/registration`, `frontend-admin/app/admin/stages-evictions`
 - Superseded direction: `ADMIN_CONSOLIDATION_SUMMARY.md` (root) — describes the
   original frontend-web-absorbs-frontend-admin plan; kept for history, no longer
-  the plan. Should be marked superseded or removed once slice 5 lands.
+  the plan. Still not marked superseded/removed — see "Remaining work" above;
+  low priority since it already carries a banner pointing here.
 - Linked ADRs: none yet (`ADR-025-backend-module-consolidation.md` is a different
   consolidation — backend modules, not admin consoles — no dependency)
