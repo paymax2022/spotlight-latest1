@@ -1382,19 +1382,19 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		// review console could never load a real campaign and fell back to fixtures.
 		// This is the identical omission already fixed for the finance group above.
 		//
-		// NOTE: authentication only. Any signed-in user can currently reach these
-		// endpoints, including POST /campaigns/:id/decision, which approves, rejects
-		// or freezes a campaign. A permission gate belongs here, but no role in this
-		// database holds any *.admin.* permission yet, so adding one now would 403
-		// every operator and take the console from wrong to unusable. Tracked in the
-		// response to this change rather than shipped half-done.
+		// Authorization, not just authentication. Reading the queue and DECIDING on a
+		// campaign are separate permissions, mirroring escrow.admin.view /
+		// escrow.admin.resolve: an ops reviewer who may triage submissions should not
+		// thereby be able to release one to the public or freeze someone's fundraiser.
+		// Both are seeded and granted to super-admin and system-admin by
+		// 20261229000000_crowdfunding_admin_permissions.sql.
 		cfAdmin := r.Group("/api/crowdfunding/admin")
 		cfAdmin.Use(middleware.RequireAuthContext(supabase, rbac))
 		cfAdmin.Use(requireUserID())
-		cfAdmin.GET("/stats", cfHandler.AdminStats)
-		cfAdmin.GET("/campaigns", cfHandler.AdminListPending)
-		cfAdmin.GET("/campaigns/:id", cfHandler.AdminGetCampaign)
-		cfAdmin.POST("/campaigns/:id/decision", cfHandler.AdminDecide)
+		cfAdmin.GET("/stats", middleware.RequirePermission(rbac, "crowdfunding.admin.review"), cfHandler.AdminStats)
+		cfAdmin.GET("/campaigns", middleware.RequirePermission(rbac, "crowdfunding.admin.review"), cfHandler.AdminListPending)
+		cfAdmin.GET("/campaigns/:id", middleware.RequirePermission(rbac, "crowdfunding.admin.review"), cfHandler.AdminGetCampaign)
+		cfAdmin.POST("/campaigns/:id/decision", middleware.RequirePermission(rbac, "crowdfunding.admin.decide"), cfHandler.AdminDecide)
 		cfadminext.RegisterAdmin(cfAdmin, pool, ledgerSvc)
 	}
 
