@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { adminAuthHeaders } from '@/src/lib/auth/client';
-import InterestAreasManager from '@/app/admin/(dashboard)/film-academy/_components/InterestAreasManager';
+import InterestAreasManager from './InterestAreasManager';
 
 const SCHEDULES = [
   { value: 'weekdays', label: 'Weekdays (Mon-Fri)' },

@@ -70,35 +70,45 @@ runs in slices, each shipped independently:
   same commit as slices 4/5 — worth knowing if a future audit expects one
   commit per module the way Open Mic and Judges & Scores got.
 
-### Remaining work (as of 2026-08-27, after slice 5 + the reality-show console)
+### Remaining work (as of 2026-08-28)
 
-All four orphaned modules (contests, open-mic, scoring, registration,
-reality-show — five, counting contests) now have both a real data path and a
-frontend-admin console. What is NOT done:
+The auto-detection this ADR relied on (grep frontend-web/app/admin for
+`@/src/server` imports to find modules with no Go backend) missed two:
+**sme-pitch** and **payments-finance** — both read frontend-web's TypeScript
+layer directly but happened to sit outside the four this ADR originally
+named. Caught only by auditing every file under `frontend-web/app/admin`
+before deleting it, rather than trusting the original four-module count.
+Both now have a real data path and a frontend-admin console, same as the
+original four (contests, open-mic, scoring, registration) plus reality-show
+— six orphaned modules total, all covered.
 
-- **`frontend-web/app/admin` still exists in full** — both `(dashboard)` (11
-  route groups: contests, film-academy, judges-scores, open-mic,
-  payments-finance, sme-pitch, stages-evictions, stem, utility, voting, and the
-  catch-all `[module]`) and `(modules)` (74 directories, the copy from the
-  original `feat/admin-portal-consolidation` attempt). Deleting it was always
-  the point of this ADR; it hasn't started. Slice 1's CI guard
-  (`admin-drift-guard.yml`) is the only thing preventing re-divergence in the
-  meantime, and it now has nothing left to protect once the deletion happens —
-  it can retire alongside `frontend-web/app/admin`.
-- The known issue below (stale `openmic/store` import) lives in
-  `frontend-web/app/admin/(dashboard)/page.tsx` specifically, which is deleted
-  wholesale once the surface goes — fixing it in place would be wasted work.
+**`frontend-web/app/admin` has been deleted** (both `(dashboard)`, 11 route
+groups, and `(modules)`, 74 directories from the original
+`feat/admin-portal-consolidation` attempt) — the point of this ADR, done.
+Deleted alongside it: slice 1's CI guard (`admin-drift-guard.yml` +
+`scripts/ci/check-admin-surface-drift.sh`, PR-triggered, dead weight once
+there was nothing left to protect) and the two now-meaningless
+`app/admin/(modules)` / `app/admin/[...slug]` exclusions in
+`frontend-web/tsconfig.json` (that file's own comment already said to
+remove them "as the consolidation cleanup lands").
+
+What's still open, unrelated to the deletion itself:
 - Open Mic's documented scope cut stands: fraud-alert resolution, marking
   notifications sent, payment reconciliation, finalist generation, winner
   announcement, and building/locking the finale playlist have no admin UI
   wired to their (already Path-A-ready) API routes yet.
-- A new mismatch surfaced while building the Stages & Evictions console:
+- A mismatch surfaced while building the Stages & Evictions console:
   `reality_show_contestants.application_id` has a foreign key to
   `public.contest_registration_applications`, a different and currently empty
   table from `public.registrations` — the one the live registration flow (and
-  the Registration / Applicants console above) actually writes to. This is the
-  same class of bug slice 5 fixed for registration itself, not yet triaged for
-  reality-show. Not fixed here; flagged for whoever picks up reality-show next.
+  the Registration / Applicants console) actually writes to. Same class of
+  bug slice 5 fixed for registration itself, not yet triaged for reality-show.
+- The route-guard gap found while wiring payments-finance for a real
+  `finance_admin` account — `frontend-admin/src/features/auth/routeGuard.ts`
+  default-denies any unlisted `/admin/*` route — is fixed for all six Path A
+  consoles (separate commit), but the same audit hasn't been run against
+  frontend-admin's other, Go-backed consoles; a non-wildcard role could still
+  be silently locked out of any of those the same way.
 
 ### Path A: expose orphaned data as an authenticated API, proxy it, don't rebuild it in Go
 
@@ -190,11 +200,8 @@ left alone rather than patched in a file with a known expiry date.
   frontend-admin's server runtime even after `frontend-web/app/admin` itself is
   deleted — the TypeScript data layer survives in frontend-web even though its
   admin UI does not.
-- `frontend-web/app/admin` could not be deleted until slice 4 finished, which
-  it now has (see "Remaining work" above) — but the deletion itself is still
-  outstanding. Until it happens, slice 1's guard is the only thing preventing
-  re-divergence, and it costs every PR that happens to touch either directory
-  a CI check.
+- `frontend-web/app/admin` is deleted (see "Remaining work" above), along
+  with slice 1's guard — nothing left for it to protect.
 
 ### Risks
 - A future module could be added to frontend-web's TypeScript layer with admin
@@ -228,9 +235,11 @@ left alone rather than patched in a file with a known expiry date.
   (`realityShowAdminService.ts`, `app/admin/stages-evictions/*`) followed in a
   separate pass after these; check `git log` for its commit if citing it later.
 - `.github/workflows/admin-drift-guard.yml`, `scripts/ci/check-admin-surface-drift.sh`
+  — deleted alongside `frontend-web/app/admin`; linked here for history.
 - `frontend-admin/app/api/web-proxy/[...path]`, `frontend-admin/app/admin/contests`,
   `frontend-admin/app/admin/judges-scores`, `frontend-admin/app/admin/open-mic`,
-  `frontend-admin/app/admin/registration`, `frontend-admin/app/admin/stages-evictions`
+  `frontend-admin/app/admin/registration`, `frontend-admin/app/admin/stages-evictions`,
+  `frontend-admin/app/admin/sme-pitch`, `frontend-admin/app/admin/payments-finance`
 - Superseded direction: `ADMIN_CONSOLIDATION_SUMMARY.md` (root) — describes the
   original frontend-web-absorbs-frontend-admin plan; kept for history, no longer
   the plan. Still not marked superseded/removed — see "Remaining work" above;
