@@ -68,9 +68,14 @@ export default function CompetitionsListPage() {
     <Page>
       <PageHeader
         title="Competitions"
-        subtitle="Real contests as seen by the mobile app (public.connect_contests)."
+        subtitle="Live voting view — stages, contestants and vote totals exactly as the mobile app sees them (public.connect_contests, mirrored from every contest automatically)."
         actions={<Link href="/admin/competitions/create"><Button variant="primary">+ New Competition</Button></Link>}
       />
+
+      <p style={{ color: colors.muted, fontSize: 13, marginTop: -8, marginBottom: 16 }}>
+        Only voting-relevant fields live here. For the full admin record — category, type, region,
+        fees — see <Link href="/admin/contests" style={{ color: colors.primary }}>Contest Records</Link>.
+      </p>
 
       {error && <p style={{ color: colors.danger }}>{error}</p>}
 

@@ -9,6 +9,7 @@
  * `@/src/server/*` directly, which is exactly what could not be carried across.
  */
 import { useCallback, useEffect, useState } from 'react';
+import Link from 'next/link';
 import { listAdminContests, type AdminContest } from '@/services/contestsAdminService';
 import { Page, PageHeader, Card, Button, Badge, colors } from '@/components/ui/vuexy';
 
@@ -45,11 +46,22 @@ export default function ContestsAdminPage() {
   return (
     <Page>
       <PageHeader
-        title="Contests"
-        subtitle="Every contest on the platform. Served from the web app over the admin web proxy."
+        title="Contest Records"
+        subtitle="The admin-authored record for every contest — category, type, dates — regardless of whether it supports voting."
       />
 
       <Card>
+        <p style={{ color: colors.muted, fontSize: 13, margin: '0 0 16px' }}>
+          This is the source record admins create and edit; it always contains every contest the
+          platform tracks, including ones with no voting (auditions, pitch competitions). Every
+          row here mirrors automatically into the mobile voting app the moment it's created or
+          updated — for live stage progress, contestant counts and vote totals, see{' '}
+          <Link href="/admin/competitions/list" style={{ color: colors.primary }}>Competitions</Link>.
+          Status labels differ between the two: this page shows draft/active/upcoming/ended, while
+          Competitions collapses "upcoming" into "draft" to match what the mobile app can render —
+          the same contest can legitimately show a different-looking status on each page.
+        </p>
+
         {loading && <p style={{ color: colors.muted }}>Loading contests…</p>}
 
         {error && (

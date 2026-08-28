@@ -46,7 +46,7 @@ const navItemsBase: NavItem[] = [
   // Path A consoles (admin consolidation slices 3-4): data lives in frontend-web,
   // reached through /api/web-proxy — see ADR-047. No countKey (frontend-web, not the Go
   // admin API, so getAdminMenuCounts has no number for these).
-  { label: 'All Contests', href: '/admin/contests', section: 'Contests' },
+  { label: 'Contest Records', href: '/admin/contests', section: 'Contests' },
   { label: 'Judges & Scores', href: '/admin/judges-scores', section: 'Contests', permissions: ['scores:manage'] },
   { label: 'Open Mic', href: '/admin/open-mic', section: 'Contests' },
   { label: 'Registration / Applicants', href: '/admin/registration', section: 'Contests', permissions: ['applications:review'] },
