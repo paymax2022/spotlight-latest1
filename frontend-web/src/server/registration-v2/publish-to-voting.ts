@@ -15,32 +15,26 @@
 //
 // Nothing here edits a protected legacy file. The contests/voting module is
 // wrapped, not modified, per CLAUDE.md and the vote-bridge skill.
-import type {
-  ContestRegistrationDefinition,
-  ContestType,
-} from '@/src/features/registration/types';
+import type { ContestRegistrationDefinition } from '@/src/features/registration/types';
 import { createAdminClient } from '@/lib/supabase/server';
 
 type Db = ReturnType<typeof createAdminClient>;
 
 /**
- * Only these carry audience voting as the mechanic. An audition, a pitch
- * competition or a school contest has entrants but no public vote, and
- * publishing one would put it in front of voters with nothing to vote on.
- */
-const VOTABLE_TYPES = new Set<ContestType>([
-  'public_voting_contest',
-  'bootcamp_reality_show',
-  'housemate_reality_show',
-]);
-
-/**
- * A contest typed as votable but explicitly flagged `supportsVoting: false` is
- * contradictory data. The admin's explicit flag wins — refusing to publish is
- * recoverable, publishing something they switched off is not.
+ * Whether a contest publishes to the voting plane. This used to also require
+ * def.contestType to be one of a fixed "votable" set (public_voting_contest,
+ * bootcamp_reality_show, housemate_reality_show) — but the contests ->
+ * connect_contests DB trigger (20261223000000) mirrors EVERY contest
+ * unconditionally regardless of type, and contest-store.ts already derives
+ * voting_enabled/max_votes_per_user purely from supportsVoting. The type gate
+ * here was therefore only ever blocking the descriptive-field resync on this
+ * function's update path for non-"votable" types, while the contest was
+ * already live on mobile via the trigger — a UI restriction with no backing
+ * enforcement. An admin's explicit supportsVoting choice is now what decides
+ * this for every contest type.
  */
 export function isVotableContest(def: ContestRegistrationDefinition): boolean {
-  return VOTABLE_TYPES.has(def.contestType) && def.supportsVoting !== false;
+  return def.supportsVoting === true;
 }
 
 export type PublishOutcome =

@@ -1,1222 +1,590 @@
 'use client';
 
-import { useState, useEffect } from 'react';
-import Link from 'next/link';
+import { useState, useEffect, useCallback, Suspense, type CSSProperties } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { Page, PageHeader, Card, Button, Input, colors } from '@/components/ui/vuexy';
+import Link from 'next/link';
+import { Page, PageHeader, Card, Button, Input, Badge, colors, thCell, tdCell } from '@/components/ui/vuexy';
+import {
+  createFullContest, updateFullContest, deleteFullContest, getFullContest, setContestStatus,
+  listAdminContests,
+  listContestStages, createContestStage, deleteContestStage,
+  type FullContest, type ContestCategory, type ContestType, type RegionScope, type ContestPublishStatus,
+  type AdminContest, type ContestStage,
+} from '@/services/contestsAdminService';
 
-type Benefit = {
-  id: string;
-  name: string;
-  type: 'cash' | 'non-cash';
-  description: string;
+// Real contest create/edit — POST/PATCH /api/admin/contests[/[slug]], the
+// same route SME Pitch's console already uses. Previously this page was a
+// 1222-line editor for prize pools, position awards and cash/non-cash
+// benefits, all written to localStorage only — none of that has a real
+// backend counterpart anywhere in this codebase, so "editing" a competition
+// here never touched anything real. A contest created here with a votable
+// contestType and "public voting" turned on auto-publishes to
+// connect_contests, which is what the mobile app reads — that's the real
+// "connect it to mobile app" path, not a fabricated prize schema.
+
+const CATEGORIES: ContestCategory[] = [
+  'music', 'acting', 'comedy_content', 'dance', 'film_production',
+  'stem_innovation', 'sme_pitch', 'school_campus', 'open_mic',
+  'general_reality_show', 'other',
+];
+
+const TYPES: ContestType[] = [
+  'online_contest', 'physical_audition', 'hybrid_contest',
+  'public_voting_contest', 'bootcamp_reality_show', 'housemate_reality_show',
+  'pitch_competition', 'school_vs_school_contest', 'regional_contest',
+  'national_contest', 'international_entry',
+];
+
+const NIGERIA_STATES = [
+  'Abia', 'Adamawa', 'Akwa Ibom', 'Anambra', 'Bauchi', 'Bayelsa', 'Benue', 'Borno',
+  'Cross River', 'Delta', 'Ebonyi', 'Edo', 'Ekiti', 'Enugu', 'FCT Abuja', 'Gombe',
+  'Imo', 'Jigawa', 'Kaduna', 'Kano', 'Katsina', 'Kebbi', 'Kogi', 'Kwara', 'Lagos',
+  'Nasarawa', 'Niger', 'Ogun', 'Ondo', 'Osun', 'Oyo', 'Plateau', 'Rivers', 'Sokoto',
+  'Taraba', 'Yobe', 'Zamfara',
+];
+
+function toSlug(raw: string) {
+  return raw.toLowerCase().trim().replace(/[^a-z0-9\s-]/g, '').replace(/\s+/g, '-').replace(/-+/g, '-');
+}
+
+const RECENT_PAGE_SIZE = 10;
+
+const recentStatusColor: Record<string, string> = {
+  draft: colors.muted,
+  upcoming: colors.warning,
+  active: colors.success,
+  ended: colors.secondary,
 };
 
-type Award = {
-  position: number;
-  title: string;
-  amount?: number;
-  benefits: Benefit[];
+function fmtRecentDate(v: string | null | undefined): string {
+  return v ? new Date(v).toLocaleDateString('en-NG') : '—';
+}
+
+type StageDraft = {
+  stageName: string;
+  votingStartsAt: string;
+  votingEndsAt: string;
+  promotionCriteria: string;
 };
 
-type Beat = {
-  id: string;
-  title: string;
-  genre: string;
-  duration: string;
-  fileUrl?: string;
-  uploadDate: string;
-};
+function emptyStageDraft(): StageDraft {
+  return { stageName: '', votingStartsAt: '', votingEndsAt: '', promotionCriteria: '' };
+}
 
-type VotingPricingPlan = {
-  id: string;
-  voteCount: number;
-  price: number;
-  discount?: number;
-};
+const labelStyle: CSSProperties = { display: 'block', fontSize: 12, color: colors.muted, marginBottom: 4 };
+const selectStyle: CSSProperties = { width: '100%', padding: '8px 10px', borderRadius: 6, border: `1px solid ${colors.inputBorder}`, fontSize: 13 };
+const checkboxGrid: CSSProperties = { display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 6, maxHeight: 160, overflow: 'auto', border: `1px solid ${colors.border}`, borderRadius: 6, padding: 10 };
 
-type OpenMicData = {
-  beatWindow: { start: string; end: string };
-  submissionWindow: { start: string; end: string };
-  votingWindow: { start: string; end: string };
-  beats: Beat[];
-  submissionGuidelines: string;
-  // Voting Configuration
-  votingType: 'free' | 'paid';
-  costPerVote: number;
-  maxVotesPerUser: number;
-  voteWeighting: 'equal' | 'tiered' | 'weighted';
-  votingRules: string;
-  // Voting Pricing Plans
-  votingPricingPlans: VotingPricingPlan[];
-  freeVotesPerUser: number;
-  freeVoteWindow: number; // in hours (24hrs)
-  // Reward Configuration
-  rewardType: 'cash' | 'hybrid' | 'non-cash';
-  rewardDetails: string;
-  maxSongsPerArtist: number;
-};
+type FormState = Omit<FullContest, 'id' | 'status'>;
 
-export default function CreateCompetitionPage() {
+function initialForm(): FormState {
+  return {
+    title: '', slug: '', contestCategory: 'other', contestType: 'online_contest',
+    seasonOrEdition: 'Season 1', regionScope: 'national', isPaid: false, registrationFeeNgn: 0,
+    legalAdultAge: 18, supportsVoting: false, supportsAuditionScheduling: false,
+    supportsGroupEntry: false, supportsSchoolEntry: false, requiresGuardianConsentForMinors: false,
+    requiresMedical: false, requiresBootcampReadiness: false, auditionStates: [], applicantCategories: [],
+  };
+}
+
+function CreateCompetitionContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const competitionId = searchParams.get('id');
-  const [formData, setFormData] = useState({
-    title: '',
-    description: '',
-    type: 'open-mic',
-    status: 'draft',
-    startDate: '',
-    endDate: '',
-    registrationDeadline: '',
-    maxParticipants: '',
-    prizePool: '',
-    banner: '',
-    currency: 'NGN',
-    eligibility: '',
-    rules: '',
-  });
-  const [openMicData, setOpenMicData] = useState<OpenMicData>({
-    beatWindow: { start: '', end: '' },
-    submissionWindow: { start: '', end: '' },
-    votingWindow: { start: '', end: '' },
-    beats: [],
-    submissionGuidelines: '',
-    votingType: 'free',
-    costPerVote: 0,
-    maxVotesPerUser: 10,
-    voteWeighting: 'equal',
-    votingRules: '',
-    votingPricingPlans: [
-      { id: '1', voteCount: 1, price: 100 },
-      { id: '2', voteCount: 10, price: 1000 },
-      { id: '3', voteCount: 20, price: 1900 },
-      { id: '4', voteCount: 40, price: 3500 },
-      { id: '5', voteCount: 50, price: 4000 },
-      { id: '6', voteCount: 100, price: 7500 },
-      { id: '7', voteCount: 200, price: 14000 },
-    ],
-    freeVotesPerUser: 1,
-    freeVoteWindow: 24,
-    rewardType: 'cash',
-    rewardDetails: '',
-    maxSongsPerArtist: 1,
-  });
-  const [newBeat, setNewBeat] = useState<Partial<Beat>>({
-    title: '',
-    genre: '',
-    duration: '',
-  });
-  const [newPricingPlan, setNewPricingPlan] = useState<Partial<VotingPricingPlan>>({
-    voteCount: 1,
-    price: 100,
-  });
-  const [awards, setAwards] = useState<Award[]>([
-    { position: 1, title: 'Gold Medal', amount: 0, benefits: [] },
-    { position: 2, title: 'Silver Medal', amount: 0, benefits: [] },
-    { position: 3, title: 'Bronze Medal', amount: 0, benefits: [] },
-  ]);
+  const editSlug = searchParams.get('id') || searchParams.get('slug') || '';
+  const isEdit = Boolean(editSlug);
+
+  const [form, setForm] = useState<FormState>(initialForm());
+  const [slugTouched, setSlugTouched] = useState(isEdit);
+  const [loading, setLoading] = useState(isEdit);
   const [saving, setSaving] = useState(false);
-  const [error, setError] = useState('');
-  const [newBenefitByPosition, setNewBenefitByPosition] = useState<Record<number, Benefit>>({
-    1: { id: '', name: '', type: 'non-cash', description: '' },
-    2: { id: '', name: '', type: 'non-cash', description: '' },
-    3: { id: '', name: '', type: 'non-cash', description: '' },
-  });
+  const [deleting, setDeleting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [status, setStatusState] = useState<ContestPublishStatus>('upcoming');
+  const [publishing, setPublishing] = useState(false);
+  const [toast, setToast] = useState('');
 
-  useEffect(() => {
-    if (competitionId && typeof window !== 'undefined') {
-      const stored = localStorage.getItem('competitions');
-      if (stored) {
-        try {
-          const competitions = JSON.parse(stored);
-          const competition = competitions.find((c: any) => c.id === competitionId);
-          if (competition) {
-            setFormData({
-              title: competition.title || '',
-              description: competition.description || '',
-              type: competition.type || 'open-mic',
-              status: competition.status || 'draft',
-              startDate: competition.startDate || '',
-              endDate: competition.endDate || '',
-              registrationDeadline: competition.registrationDeadline || '',
-              maxParticipants: competition.maxParticipants || '',
-              prizePool: '',
-              banner: competition.banner || '',
-              currency: competition.currency || 'NGN',
-              eligibility: competition.eligibility || '',
-              rules: competition.rules || '',
-            });
-            if (competition.awards && competition.awards.length > 0) {
-              const awardList = competition.awards.map((award: any) => ({
-                position: award.position,
-                title: award.title || '',
-                amount: award.amount || 0,
-                benefits: award.benefits || []
-              }));
-              setAwards(awardList);
-              const newBenefitMap: Record<number, Benefit> = {};
-              awardList.forEach((award: Award) => {
-                newBenefitMap[award.position] = { id: '', name: '', type: 'non-cash', description: '' };
-              });
-              setNewBenefitByPosition(newBenefitMap);
-            }
-            if (competition.type === 'open-mic' && competition.openMicData) {
-              setOpenMicData(competition.openMicData);
-            }
-          }
-        } catch (err) {
-          console.error('Failed to load competition:', err);
-        }
-      }
-    }
-  }, [competitionId]);
+  const [recent, setRecent] = useState<AdminContest[]>([]);
+  const [recentLoading, setRecentLoading] = useState(true);
+  const [recentError, setRecentError] = useState<string | null>(null);
+  const [recentPage, setRecentPage] = useState(1);
 
-  const handleChange = (field: string, value: string) => {
-    setFormData(prev => ({ ...prev, [field]: value }));
-  };
+  // Stages — persisted (loaded from the API once the contest exists) plus a
+  // local draft list used while still creating a contest that has no id yet.
+  const [stages, setStages] = useState<ContestStage[]>([]);
+  const [stagesLoading, setStagesLoading] = useState(false);
+  const [stagesError, setStagesError] = useState<string | null>(null);
+  const [draftStages, setDraftStages] = useState<StageDraft[]>([]);
+  const [stageForm, setStageForm] = useState<StageDraft>(emptyStageDraft());
+  const [savingStage, setSavingStage] = useState(false);
 
-  const handleOpenMicChange = (field: string, value: string | number) => {
-    setOpenMicData(prev => ({ ...prev, [field]: value }));
-  };
-
-  const handleOpenMicWindowChange = (window: 'beatWindow' | 'submissionWindow' | 'votingWindow', type: 'start' | 'end', value: string) => {
-    setOpenMicData(prev => ({
-      ...prev,
-      [window]: { ...prev[window], [type]: value }
-    }));
-  };
-
-  const addBeat = () => {
-    if (!newBeat.title?.trim() || !newBeat.genre?.trim() || !newBeat.duration?.trim()) {
-      setError('Beat title, genre, and duration are required');
-      return;
-    }
-    const beat: Beat = {
-      id: `beat-${Date.now()}`,
-      title: newBeat.title.trim(),
-      genre: newBeat.genre.trim(),
-      duration: newBeat.duration.trim(),
-      fileUrl: newBeat.fileUrl || '',
-      uploadDate: new Date().toISOString().split('T')[0],
-    };
-    setOpenMicData(prev => ({
-      ...prev,
-      beats: [...prev.beats, beat]
-    }));
-    setNewBeat({ title: '', genre: '', duration: '' });
-    setError('');
-  };
-
-  const removeBeat = (beatId: string) => {
-    setOpenMicData(prev => ({
-      ...prev,
-      beats: prev.beats.filter(b => b.id !== beatId)
-    }));
-  };
-
-  const addPricingPlan = () => {
-    if (!newPricingPlan.voteCount || !newPricingPlan.price) {
-      setError('Vote count and price are required');
-      return;
-    }
-    const plan: VotingPricingPlan = {
-      id: `plan-${Date.now()}`,
-      voteCount: newPricingPlan.voteCount,
-      price: newPricingPlan.price,
-      discount: newPricingPlan.discount || 0,
-    };
-    setOpenMicData(prev => ({
-      ...prev,
-      votingPricingPlans: [...prev.votingPricingPlans, plan]
-    }));
-    setNewPricingPlan({ voteCount: 1, price: 100 });
-    setError('');
-  };
-
-  const removePricingPlan = (planId: string) => {
-    setOpenMicData(prev => ({
-      ...prev,
-      votingPricingPlans: prev.votingPricingPlans.filter(p => p.id !== planId)
-    }));
-  };
-
-  const addBenefitToPosition = (position: number) => {
-    const benefit = newBenefitByPosition[position];
-    if (!benefit.name.trim() || !benefit.description.trim()) {
-      setError('Benefit name and description are required');
-      return;
-    }
-    setAwards(awards.map(a =>
-      a.position === position
-        ? { ...a, benefits: [...a.benefits, { ...benefit, id: `benefit-${Date.now()}` }] }
-        : a
-    ));
-    setNewBenefitByPosition({
-      ...newBenefitByPosition,
-      [position]: { id: '', name: '', type: 'non-cash', description: '' }
-    });
-  };
-
-  const removeBenefitFromPosition = (position: number, benefitId: string) => {
-    setAwards(awards.map(a =>
-      a.position === position
-        ? { ...a, benefits: a.benefits.filter(b => b.id !== benefitId) }
-        : a
-    ));
-  };
-
-  const updateAward = (position: number, field: string, value: string | number) => {
-    setAwards(awards.map(a => a.position === position ? { ...a, [field]: value } : a));
-  };
-
-  const addAwardPosition = () => {
-    const maxPosition = Math.max(...awards.map(a => a.position), 0);
-    setAwards([...awards, { position: maxPosition + 1, title: '', amount: 0, benefits: [] }]);
-    setNewBenefitByPosition({
-      ...newBenefitByPosition,
-      [maxPosition + 1]: { id: '', name: '', type: 'non-cash', description: '' }
-    });
-  };
-
-  const calculateTotalPrizePool = () => {
-    return awards.reduce((sum, award) => sum + (award.amount || 0), 0);
-  };
-
-  const formatCurrency = (value: number, currency: string = formData.currency) => {
-    const currencyMap: Record<string, string> = {
-      'NGN': 'en-NG',
-      'USD': 'en-US',
-      'EUR': 'de-DE',
-      'GBP': 'en-GB',
-    };
-    return new Intl.NumberFormat(currencyMap[currency] || 'en-NG', {
-      style: 'currency',
-      currency: currency,
-      minimumFractionDigits: 0,
-      maximumFractionDigits: 0,
-    }).format(value);
-  };
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!formData.title.trim()) {
-      setError('Competition title is required');
-      return;
-    }
-    setSaving(true);
-    setError('');
+  const loadRecent = useCallback(async () => {
+    setRecentLoading(true);
+    setRecentError(null);
     try {
-      await new Promise(resolve => setTimeout(resolve, 500));
+      const rows = await listAdminContests();
+      rows.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+      setRecent(rows);
+    } catch (e) {
+      setRecentError(e instanceof Error ? e.message : 'Failed to load recent contests');
+    } finally {
+      setRecentLoading(false);
+    }
+  }, []);
 
-      const newCompetition: any = {
-        id: `comp-${Date.now()}`,
-        title: formData.title.trim(),
-        description: formData.description.trim(),
-        type: formData.type as 'open-mic' | 'reality-tv' | 'multi-skill' | 'other',
-        status: formData.status as 'draft' | 'upcoming' | 'active' | 'ended',
-        startDate: formData.startDate,
-        endDate: formData.endDate,
-        registrationDeadline: formData.registrationDeadline,
-        maxParticipants: formData.maxParticipants ? parseInt(formData.maxParticipants) : null,
-        participantCount: 0,
-        totalPrizePool: calculateTotalPrizePool(),
-        banner: formData.banner,
-        currency: formData.currency,
-        eligibility: formData.eligibility.trim(),
-        rules: formData.rules.trim(),
-        awards,
-      };
+  useEffect(() => { void loadRecent(); }, [loadRecent]);
 
-      if (formData.type === 'open-mic') {
-        newCompetition.openMicData = openMicData;
-      }
+  const loadContest = useCallback(async () => {
+    if (!isEdit) return;
+    setLoading(true);
+    setError(null);
+    try {
+      const c = await getFullContest(editSlug);
+      setForm({
+        title: c.title, slug: c.slug, contestCategory: c.contestCategory, contestType: c.contestType,
+        seasonOrEdition: c.seasonOrEdition, regionScope: c.regionScope, isPaid: c.isPaid,
+        registrationFeeNgn: c.registrationFeeNgn, legalAdultAge: c.legalAdultAge,
+        supportsVoting: c.supportsVoting, supportsAuditionScheduling: c.supportsAuditionScheduling,
+        supportsGroupEntry: c.supportsGroupEntry, supportsSchoolEntry: c.supportsSchoolEntry,
+        requiresGuardianConsentForMinors: c.requiresGuardianConsentForMinors,
+        requiresMedical: c.requiresMedical, requiresBootcampReadiness: c.requiresBootcampReadiness,
+        auditionStates: c.auditionStates ?? [], applicantCategories: c.applicantCategories ?? [],
+      });
+      if (c.status) setStatusState(c.status as ContestPublishStatus);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to load contest');
+    } finally {
+      setLoading(false);
+    }
+  }, [isEdit, editSlug]);
 
-      let competitions: any[] = [];
-      if (typeof window !== 'undefined') {
-        const stored = localStorage.getItem('competitions');
-        if (stored) {
-          try {
-            competitions = JSON.parse(stored);
-          } catch {
-            competitions = [];
-          }
-        }
-      }
+  useEffect(() => { void loadContest(); }, [loadContest]);
 
-      if (competitionId) {
-        const index = competitions.findIndex((c: any) => c.id === competitionId);
-        if (index !== -1) {
-          competitions[index] = { ...competitions[index], ...newCompetition, id: competitionId };
-        } else {
-          competitions.push(newCompetition);
-        }
+  const loadStages = useCallback(async () => {
+    if (!isEdit) return;
+    setStagesLoading(true);
+    setStagesError(null);
+    try {
+      setStages(await listContestStages(editSlug));
+    } catch (e) {
+      setStagesError(e instanceof Error ? e.message : 'Failed to load stages');
+    } finally {
+      setStagesLoading(false);
+    }
+  }, [isEdit, editSlug]);
+
+  useEffect(() => { void loadStages(); }, [loadStages]);
+
+  const addStageToDraftOrContest = useCallback(async () => {
+    if (!stageForm.stageName.trim()) { setStagesError('Stage name is required'); return; }
+    setSavingStage(true);
+    setStagesError(null);
+    try {
+      if (isEdit) {
+        await createContestStage(editSlug, {
+          stageName: stageForm.stageName.trim(),
+          promotionCriteria: stageForm.promotionCriteria.trim() || undefined,
+          votingStartsAt: stageForm.votingStartsAt || null,
+          votingEndsAt: stageForm.votingEndsAt || null,
+        });
+        await loadStages();
       } else {
-        competitions.push(newCompetition);
+        setDraftStages((prev) => [...prev, stageForm]);
+      }
+      setStageForm(emptyStageDraft());
+    } catch (e) {
+      setStagesError(e instanceof Error ? e.message : 'Failed to add stage');
+    } finally {
+      setSavingStage(false);
+    }
+  }, [isEdit, editSlug, stageForm, loadStages]);
+
+  const removeStage = useCallback(async (stageId: string) => {
+    setStagesError(null);
+    try {
+      await deleteContestStage(editSlug, stageId);
+      await loadStages();
+    } catch (e) {
+      setStagesError(e instanceof Error ? e.message : 'Failed to remove stage');
+    }
+  }, [editSlug, loadStages]);
+
+  function removeDraftStage(index: number) {
+    setDraftStages((prev) => prev.filter((_, i) => i !== index));
+  }
+
+  const publish = useCallback(async (next: ContestPublishStatus) => {
+    setPublishing(true);
+    setError(null);
+    try {
+      const result = await setContestStatus(editSlug, next);
+      setStatusState(next);
+      setToast(`Status set to "${next}" — mobile app now sees: ${result.mobileStatus ?? 'not mirrored'}`);
+      setTimeout(() => setToast(''), 4000);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to publish contest');
+    } finally {
+      setPublishing(false);
+    }
+  }, [editSlug]);
+
+  function setTitle(title: string) {
+    setForm((f) => ({ ...f, title, slug: slugTouched ? f.slug : toSlug(title) }));
+  }
+
+  function toggleState(state: string) {
+    setForm((f) => ({
+      ...f,
+      auditionStates: f.auditionStates.includes(state) ? f.auditionStates.filter((s) => s !== state) : [...f.auditionStates, state],
+    }));
+  }
+
+  const save = useCallback(async () => {
+    if (!form.title.trim() || !form.slug.trim()) { setError('Title and slug are required'); return; }
+    setSaving(true);
+    setError(null);
+    try {
+      const payload = { ...form, title: form.title.trim(), slug: form.slug.trim(), registrationFeeNgn: form.isPaid ? form.registrationFeeNgn : 0 };
+      const saved = isEdit ? await updateFullContest(editSlug, payload) : await createFullContest(payload);
+
+      // Flush any stages queued while the contest didn't have an id yet.
+      if (!isEdit && draftStages.length > 0) {
+        for (const draft of draftStages) {
+          await createContestStage(saved.slug, {
+            stageName: draft.stageName.trim(),
+            promotionCriteria: draft.promotionCriteria.trim() || undefined,
+            votingStartsAt: draft.votingStartsAt || null,
+            votingEndsAt: draft.votingEndsAt || null,
+          }).catch((e) => {
+            setStagesError(e instanceof Error ? e.message : `Failed to save stage "${draft.stageName}"`);
+          });
+        }
+        setDraftStages([]);
       }
 
-      if (typeof window !== 'undefined') {
-        localStorage.setItem('competitions', JSON.stringify(competitions));
-      }
-
-      console.log('Created competition:', newCompetition);
-      router.push('/admin/competitions/list');
-    } catch (err) {
-      setError('Failed to create competition');
+      setRecentPage(1);
+      await loadRecent();
+      router.push(`/admin/competitions/create?id=${saved.slug}`);
+      router.refresh();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to save contest');
     } finally {
       setSaving(false);
     }
-  };
+  }, [form, isEdit, editSlug, router, loadRecent, draftStages]);
+
+  const remove = useCallback(async () => {
+    if (!isEdit) return;
+    if (!window.confirm(`Delete ${form.title}? This removes the contest configuration.`)) return;
+    setDeleting(true);
+    setError(null);
+    try {
+      await deleteFullContest(editSlug);
+      router.push('/admin/competitions/list');
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to delete contest');
+      setDeleting(false);
+    }
+  }, [isEdit, editSlug, form.title, router]);
+
+  if (loading) return <Page><p style={{ color: colors.muted }}>Loading contest…</p></Page>;
 
   return (
-    <Page style={{ padding: '0.5rem 0.5rem 2rem' }}>
+    <Page>
+      <Link href="/admin/competitions/list" style={{ fontSize: 13, color: colors.primary, textDecoration: 'none' }}>← Competitions</Link>
       <PageHeader
-        title="Create Competition"
-        subtitle="Set up a new competition with banners, benefits, and recognition awards."
+        title={isEdit ? `Edit: ${form.title || editSlug}` : 'Create Competition'}
+        subtitle="Real contest, written to public.contests. Any contest with public voting turned on auto-publishes to connect_contests — the table the mobile app reads."
       />
 
-      <Link href="/admin/competitions/list" style={{ marginBottom: '1rem', display: 'block', color: colors.primary, textDecoration: 'none', fontSize: '14px' }}>
-        ← Back to Competitions
-      </Link>
+      {toast && <p style={{ color: colors.success, fontSize: 13 }}>{toast}</p>}
+      {error && <p style={{ color: colors.danger }}>{error}</p>}
 
-      <form onSubmit={handleSubmit} style={{ display: 'grid', gap: '1rem' }}>
-        <Card title="Competition Details">
-          <div style={{ display: 'grid', gap: '1rem', marginTop: '1rem' }}>
-            <div>
-              <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, marginBottom: '0.5rem', color: colors.text }}>
-                Title *
-              </label>
-              <Input
-                placeholder="e.g., Open Mic Q4 2024"
-                value={formData.title}
-                onChange={(e) => handleChange('title', e.target.value)}
-              />
-            </div>
-
-            <div>
-              <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, marginBottom: '0.5rem', color: colors.text }}>
-                Description
-              </label>
-              <textarea
-                placeholder="Brief description of the competition"
-                value={formData.description}
-                onChange={(e) => handleChange('description', e.target.value)}
-                style={{
-                  width: '100%',
-                  padding: '0.4rem 0.55rem',
-                  border: `1px solid ${colors.inputBorder}`,
-                  borderRadius: '0.375rem',
-                  fontSize: '0.85rem',
-                  background: colors.card,
-                  color: colors.text,
-                  fontFamily: 'inherit',
-                  minHeight: '80px',
-                  resize: 'vertical'
-                }}
-              />
-            </div>
-
-            <div>
-              <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, marginBottom: '0.5rem', color: colors.text }}>
-                Eligibility Requirements
-              </label>
-              <textarea
-                placeholder="Who can participate (age, location, skills, etc.)"
-                value={formData.eligibility}
-                onChange={(e) => handleChange('eligibility', e.target.value)}
-                style={{
-                  width: '100%',
-                  padding: '0.4rem 0.55rem',
-                  border: `1px solid ${colors.inputBorder}`,
-                  borderRadius: '0.375rem',
-                  fontSize: '0.85rem',
-                  background: colors.card,
-                  color: colors.text,
-                  fontFamily: 'inherit',
-                  minHeight: '80px',
-                  resize: 'vertical'
-                }}
-              />
-            </div>
-
-            <div>
-              <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, marginBottom: '0.5rem', color: colors.text }}>
-                Rules & Terms
-              </label>
-              <textarea
-                placeholder="Competition rules and terms"
-                value={formData.rules}
-                onChange={(e) => handleChange('rules', e.target.value)}
-                style={{
-                  width: '100%',
-                  padding: '0.4rem 0.55rem',
-                  border: `1px solid ${colors.inputBorder}`,
-                  borderRadius: '0.375rem',
-                  fontSize: '0.85rem',
-                  background: colors.card,
-                  color: colors.text,
-                  fontFamily: 'inherit',
-                  minHeight: '80px',
-                  resize: 'vertical'
-                }}
-              />
-            </div>
-
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
-              <div>
-                <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, marginBottom: '0.5rem', color: colors.text }}>
-                  Type
-                </label>
-                <select
-                  value={formData.type}
-                  onChange={(e) => handleChange('type', e.target.value)}
-                  style={{
-                    width: '100%',
-                    padding: '0.4rem 0.55rem',
-                    border: `1px solid ${colors.inputBorder}`,
-                    borderRadius: '0.375rem',
-                    fontSize: '0.85rem',
-                    background: colors.card,
-                    cursor: 'pointer',
-                    color: colors.text
-                  }}
-                >
-                  <option value="open-mic">Open Mic</option>
-                  <option value="reality-tv">Reality TV</option>
-                  <option value="multi-skill">Multi-Skill</option>
-                </select>
-              </div>
-              <div>
-                <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, marginBottom: '0.5rem', color: colors.text }}>
-                  Status
-                </label>
-                <select
-                  value={formData.status}
-                  onChange={(e) => handleChange('status', e.target.value)}
-                  style={{
-                    width: '100%',
-                    padding: '0.4rem 0.55rem',
-                    border: `1px solid ${colors.inputBorder}`,
-                    borderRadius: '0.375rem',
-                    fontSize: '0.85rem',
-                    background: colors.card,
-                    cursor: 'pointer',
-                    color: colors.text
-                  }}
-                >
-                  <option value="draft">Draft</option>
-                  <option value="upcoming">Upcoming</option>
-                  <option value="active">Active</option>
-                </select>
-              </div>
-            </div>
-
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
-              <div>
-                <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, marginBottom: '0.5rem', color: colors.text }}>
-                  Start Date
-                </label>
-                <Input
-                  type="date"
-                  value={formData.startDate}
-                  onChange={(e) => handleChange('startDate', e.target.value)}
-                />
-              </div>
-              <div>
-                <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, marginBottom: '0.5rem', color: colors.text }}>
-                  End Date
-                </label>
-                <Input
-                  type="date"
-                  value={formData.endDate}
-                  onChange={(e) => handleChange('endDate', e.target.value)}
-                />
-              </div>
-              <div>
-                <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, marginBottom: '0.5rem', color: colors.text }}>
-                  Registration Deadline
-                </label>
-                <Input
-                  type="date"
-                  value={formData.registrationDeadline}
-                  onChange={(e) => handleChange('registrationDeadline', e.target.value)}
-                />
-              </div>
-              <div>
-                <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, marginBottom: '0.5rem', color: colors.text }}>
-                  Max Participants
-                </label>
-                <Input
-                  type="number"
-                  placeholder="e.g., 500"
-                  value={formData.maxParticipants}
-                  onChange={(e) => handleChange('maxParticipants', e.target.value)}
-                  min="1"
-                />
-              </div>
-            </div>
-
-            <div>
-              <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, marginBottom: '0.5rem', color: colors.text }}>
-                Total Prize Pool - Calculated from awards
-              </label>
-              <div style={{ padding: '0.75rem', background: colors.inputBorder + '20', borderRadius: '0.375rem', fontSize: '1rem', fontWeight: 600, color: colors.success }}>
-                {formatCurrency(calculateTotalPrizePool())}
-              </div>
-            </div>
-
-            <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: '1rem' }}>
-              <div>
-                <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, marginBottom: '0.5rem', color: colors.text }}>
-                  Banner URL
-                </label>
-                <Input
-                  type="url"
-                  placeholder="https://example.com/banner.jpg"
-                  value={formData.banner}
-                  onChange={(e) => handleChange('banner', e.target.value)}
-                />
-              </div>
-              <div>
-                <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, marginBottom: '0.5rem', color: colors.text }}>
-                  Currency
-                </label>
-                <select
-                  value={formData.currency}
-                  onChange={(e) => handleChange('currency', e.target.value)}
-                  style={{
-                    width: '100%',
-                    padding: '0.4rem 0.55rem',
-                    border: `1px solid ${colors.inputBorder}`,
-                    borderRadius: '0.375rem',
-                    fontSize: '0.85rem',
-                    background: colors.card,
-                    cursor: 'pointer',
-                    color: colors.text
-                  }}
-                >
-                  <option value="NGN">₦ NGN</option>
-                  <option value="USD">$ USD</option>
-                  <option value="EUR">€ EUR</option>
-                  <option value="GBP">£ GBP</option>
-                </select>
-              </div>
+      {isEdit && (
+        <Card style={{ marginBottom: 16 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+            <span style={{ fontSize: 13, fontWeight: 600 }}>
+              Status: <span style={{ color: status === 'active' ? colors.success : status === 'ended' ? colors.muted : colors.warning }}>{status}</span>
+            </span>
+            <span style={{ fontSize: 12, color: colors.muted }}>
+              {status === 'active' ? 'Live and votable on mobile right now.' : status === 'ended' ? 'Closed — visible but not accepting votes.' : status === 'upcoming' ? 'Visible on web, hidden on mobile until activated.' : 'Hidden everywhere.'}
+            </span>
+            <div style={{ marginLeft: 'auto', display: 'flex', gap: 6 }}>
+              {status !== 'active' && (
+                <Button sm variant="primary" disabled={publishing} onClick={() => void publish('active')}>
+                  {publishing ? 'Publishing…' : 'Publish (go live on mobile)'}
+                </Button>
+              )}
+              {status === 'active' && (
+                <Button sm variant="danger" disabled={publishing} onClick={() => void publish('ended')}>
+                  {publishing ? 'Ending…' : 'End contest'}
+                </Button>
+              )}
             </div>
           </div>
         </Card>
+      )}
 
-        {formData.type === 'open-mic' && (
-          <Card title="Open Mic Configuration">
-            <div style={{ display: 'grid', gap: '1rem', marginTop: '1rem' }}>
-              <div style={{ padding: '1rem', background: colors.inputBorder + '15', borderRadius: '0.375rem', borderLeft: `4px solid ${colors.primary}` }}>
-                <h4 style={{ fontSize: '13px', fontWeight: 600, color: colors.text, margin: '0 0 1rem 0', textTransform: 'uppercase' }}>
-                  🎵 Beat Download Window
-                </h4>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
-                  <div>
-                    <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, marginBottom: '0.5rem', color: colors.text }}>
-                      Beat Available From
-                    </label>
-                    <Input
-                      type="date"
-                      value={openMicData.beatWindow.start}
-                      onChange={(e) => handleOpenMicWindowChange('beatWindow', 'start', e.target.value)}
-                    />
-                  </div>
-                  <div>
-                    <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, marginBottom: '0.5rem', color: colors.text }}>
-                      Beat Download Until
-                    </label>
-                    <Input
-                      type="date"
-                      value={openMicData.beatWindow.end}
-                      onChange={(e) => handleOpenMicWindowChange('beatWindow', 'end', e.target.value)}
-                    />
-                  </div>
-                </div>
-              </div>
+      <Card style={{ marginBottom: 16 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr', gap: 12, marginBottom: 12 }}>
+          <div>
+            <label style={labelStyle}>Title</label>
+            <Input style={{ width: '100%' }} value={form.title} onChange={(e) => setTitle(e.target.value)} />
+          </div>
+          <div>
+            <label style={labelStyle}>Slug</label>
+            <Input style={{ width: '100%' }} value={form.slug} onChange={(e) => { setSlugTouched(true); setForm((f) => ({ ...f, slug: toSlug(e.target.value) })); }} />
+          </div>
+          <div>
+            <label style={labelStyle}>Season / edition</label>
+            <Input style={{ width: '100%' }} value={form.seasonOrEdition} onChange={(e) => setForm((f) => ({ ...f, seasonOrEdition: e.target.value }))} />
+          </div>
+        </div>
 
-              <div style={{ padding: '1rem', background: colors.inputBorder + '15', borderRadius: '0.375rem', borderLeft: `4px solid ${colors.primary}` }}>
-                <h4 style={{ fontSize: '13px', fontWeight: 600, color: colors.text, margin: '0 0 1rem 0', textTransform: 'uppercase' }}>
-                  📤 Song Submission Window
-                </h4>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
-                  <div>
-                    <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, marginBottom: '0.5rem', color: colors.text }}>
-                      Submissions Open
-                    </label>
-                    <Input
-                      type="date"
-                      value={openMicData.submissionWindow.start}
-                      onChange={(e) => handleOpenMicWindowChange('submissionWindow', 'start', e.target.value)}
-                    />
-                  </div>
-                  <div>
-                    <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, marginBottom: '0.5rem', color: colors.text }}>
-                      Submissions Close
-                    </label>
-                    <Input
-                      type="date"
-                      value={openMicData.submissionWindow.end}
-                      onChange={(e) => handleOpenMicWindowChange('submissionWindow', 'end', e.target.value)}
-                    />
-                  </div>
-                </div>
-                <div style={{ marginTop: '1rem' }}>
-                  <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, marginBottom: '0.5rem', color: colors.text }}>
-                    Max Songs per Artist
-                  </label>
-                  <Input
-                    type="number"
-                    placeholder="e.g., 1"
-                    value={openMicData.maxSongsPerArtist}
-                    onChange={(e) => handleOpenMicChange('maxSongsPerArtist', parseInt(e.target.value) || 1)}
-                    min="1"
-                  />
-                </div>
-                <div style={{ marginTop: '1rem' }}>
-                  <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, marginBottom: '0.5rem', color: colors.text }}>
-                    Submission Guidelines
-                  </label>
-                  <textarea
-                    placeholder="E.g., Song must be original creation using provided beat, 3-5 minutes duration, MP3 or WAV format"
-                    value={openMicData.submissionGuidelines}
-                    onChange={(e) => handleOpenMicChange('submissionGuidelines', e.target.value)}
-                    style={{
-                      width: '100%',
-                      padding: '0.4rem 0.55rem',
-                      border: `1px solid ${colors.inputBorder}`,
-                      borderRadius: '0.375rem',
-                      fontSize: '0.85rem',
-                      background: colors.card,
-                      color: colors.text,
-                      fontFamily: 'inherit',
-                      minHeight: '80px',
-                      resize: 'vertical'
-                    }}
-                  />
-                </div>
-              </div>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12, marginBottom: 12 }}>
+          <div>
+            <label style={labelStyle}>Category</label>
+            <select style={selectStyle} value={form.contestCategory} onChange={(e) => setForm((f) => ({ ...f, contestCategory: e.target.value as ContestCategory }))}>
+              {CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}
+            </select>
+          </div>
+          <div>
+            <label style={labelStyle}>Type</label>
+            <select style={selectStyle} value={form.contestType} onChange={(e) => setForm((f) => ({ ...f, contestType: e.target.value as ContestType }))}>
+              {TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
+            </select>
+          </div>
+          <div>
+            <label style={labelStyle}>Region scope</label>
+            <select style={selectStyle} value={form.regionScope} onChange={(e) => setForm((f) => ({ ...f, regionScope: e.target.value as RegionScope }))}>
+              {(['state', 'regional', 'national', 'international'] as const).map((s) => <option key={s} value={s}>{s}</option>)}
+            </select>
+          </div>
+        </div>
 
-              <div style={{ padding: '1rem', background: colors.inputBorder + '15', borderRadius: '0.375rem', borderLeft: `4px solid ${colors.primary}` }}>
-                <h4 style={{ fontSize: '13px', fontWeight: 600, color: colors.text, margin: '0 0 1rem 0', textTransform: 'uppercase' }}>
-                  🗳️ Voting Window
-                </h4>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
-                  <div>
-                    <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, marginBottom: '0.5rem', color: colors.text }}>
-                      Voting Opens
-                    </label>
-                    <Input
-                      type="date"
-                      value={openMicData.votingWindow.start}
-                      onChange={(e) => handleOpenMicWindowChange('votingWindow', 'start', e.target.value)}
-                    />
-                  </div>
-                  <div>
-                    <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, marginBottom: '0.5rem', color: colors.text }}>
-                      Voting Closes
-                    </label>
-                    <Input
-                      type="date"
-                      value={openMicData.votingWindow.end}
-                      onChange={(e) => handleOpenMicWindowChange('votingWindow', 'end', e.target.value)}
-                    />
-                  </div>
-                </div>
-              </div>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 12 }}>
+          <div>
+            <label style={labelStyle}>Registration fee (NGN, 0 = free)</label>
+            <Input style={{ width: '100%' }} type="number" min={0} value={form.registrationFeeNgn}
+              onChange={(e) => setForm((f) => ({ ...f, isPaid: Number(e.target.value) > 0, registrationFeeNgn: Number(e.target.value || 0) }))} />
+          </div>
+          <div>
+            <label style={labelStyle}>Legal adult age</label>
+            <Input style={{ width: '100%' }} type="number" min={10} max={30} value={form.legalAdultAge}
+              onChange={(e) => setForm((f) => ({ ...f, legalAdultAge: Number(e.target.value || 18) }))} />
+          </div>
+        </div>
 
-              <div style={{ padding: '1rem', background: colors.inputBorder + '15', borderRadius: '0.375rem', borderLeft: `4px solid ${colors.primary}` }}>
-                <h4 style={{ fontSize: '13px', fontWeight: 600, color: colors.text, margin: '0 0 1rem 0', textTransform: 'uppercase' }}>
-                  🎯 Voting Configuration
-                </h4>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginBottom: '1rem' }}>
-                  <div>
-                    <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, marginBottom: '0.5rem', color: colors.text }}>
-                      Voting Type
-                    </label>
-                    <select
-                      value={openMicData.votingType}
-                      onChange={(e) => handleOpenMicChange('votingType', e.target.value)}
-                      style={{
-                        width: '100%',
-                        padding: '0.4rem 0.55rem',
-                        border: `1px solid ${colors.inputBorder}`,
-                        borderRadius: '0.375rem',
-                        fontSize: '0.85rem',
-                        background: colors.card,
-                        cursor: 'pointer',
-                        color: colors.text
-                      }}
-                    >
-                      <option value="free">Free Voting</option>
-                      <option value="paid">Paid Voting</option>
-                    </select>
-                  </div>
-                  {openMicData.votingType === 'paid' && (
-                    <div>
-                      <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, marginBottom: '0.5rem', color: colors.text }}>
-                        Cost per Vote (₦)
-                      </label>
-                      <Input
-                        type="number"
-                        placeholder="e.g., 50"
-                        value={openMicData.costPerVote}
-                        onChange={(e) => handleOpenMicChange('costPerVote', parseInt(e.target.value) || 0)}
-                        min="0"
-                      />
-                    </div>
-                  )}
-                </div>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginBottom: '1rem' }}>
-                  <div>
-                    <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, marginBottom: '0.5rem', color: colors.text }}>
-                      Max Votes per User
-                    </label>
-                    <Input
-                      type="number"
-                      placeholder="e.g., 10"
-                      value={openMicData.maxVotesPerUser}
-                      onChange={(e) => handleOpenMicChange('maxVotesPerUser', parseInt(e.target.value) || 1)}
-                      min="1"
-                    />
-                  </div>
-                  <div>
-                    <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, marginBottom: '0.5rem', color: colors.text }}>
-                      Vote Weighting
-                    </label>
-                    <select
-                      value={openMicData.voteWeighting}
-                      onChange={(e) => handleOpenMicChange('voteWeighting', e.target.value)}
-                      style={{
-                        width: '100%',
-                        padding: '0.4rem 0.55rem',
-                        border: `1px solid ${colors.inputBorder}`,
-                        borderRadius: '0.375rem',
-                        fontSize: '0.85rem',
-                        background: colors.card,
-                        cursor: 'pointer',
-                        color: colors.text
-                      }}
-                    >
-                      <option value="equal">Equal (1 vote = 1 point)</option>
-                      <option value="tiered">Tiered (VIP votes weighted higher)</option>
-                      <option value="weighted">Weighted Custom</option>
-                    </select>
-                  </div>
-                </div>
-                <div>
-                  <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, marginBottom: '0.5rem', color: colors.text }}>
-                    Voting Rules & Guidelines
-                  </label>
-                  <textarea
-                    placeholder="E.g., Bots and fake accounts will be disqualified. Each user can vote max 10 times. Voting is open to all. Winners determined by total votes received during voting window."
-                    value={openMicData.votingRules}
-                    onChange={(e) => handleOpenMicChange('votingRules', e.target.value)}
-                    style={{
-                      width: '100%',
-                      padding: '0.4rem 0.55rem',
-                      border: `1px solid ${colors.inputBorder}`,
-                      borderRadius: '0.375rem',
-                      fontSize: '0.85rem',
-                      background: colors.card,
-                      color: colors.text,
-                      fontFamily: 'inherit',
-                      minHeight: '80px',
-                      resize: 'vertical'
-                    }}
-                  />
-                </div>
-              </div>
+        <div style={{
+          padding: 12, borderRadius: 8, marginBottom: 12,
+          background: colors.bg,
+          border: `1px solid ${colors.primary}`,
+        }}>
+          <label style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 13, fontWeight: 600 }}>
+            <input type="checkbox" checked={form.supportsVoting}
+              onChange={(e) => setForm((f) => ({ ...f, supportsVoting: e.target.checked }))} />
+            Enable public voting (publishes to the mobile app)
+          </label>
+          <p style={{ margin: '6px 0 0', fontSize: 11, color: colors.muted }}>
+            Any contest type can carry public voting. Turning this on mirrors it into connect_contests, which is what mobile&apos;s contest list reads — it will appear on the phone.
+          </p>
+        </div>
 
-              <div style={{ padding: '1rem', background: colors.inputBorder + '15', borderRadius: '0.375rem', borderLeft: `4px solid ${colors.primary}` }}>
-                <h4 style={{ fontSize: '13px', fontWeight: 600, color: colors.text, margin: '0 0 1rem 0', textTransform: 'uppercase' }}>
-                  💰 Voting Pricing Plans
-                </h4>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr 0.8fr', gap: '0.5rem', alignItems: 'flex-end', marginBottom: '1rem' }}>
-                  <div>
-                    <label style={{ fontSize: '11px', fontWeight: 600, color: colors.muted, display: 'block', marginBottom: '0.3rem' }}>
-                      Vote Count
-                    </label>
-                    <Input
-                      type="number"
-                      placeholder="e.g., 10"
-                      value={newPricingPlan.voteCount || ''}
-                      onChange={(e) => setNewPricingPlan({ ...newPricingPlan, voteCount: parseInt(e.target.value) || 0 })}
-                      min="1"
-                    />
-                  </div>
-                  <div>
-                    <label style={{ fontSize: '11px', fontWeight: 600, color: colors.muted, display: 'block', marginBottom: '0.3rem' }}>
-                      Price (₦)
-                    </label>
-                    <Input
-                      type="number"
-                      placeholder="e.g., 1000"
-                      value={newPricingPlan.price || ''}
-                      onChange={(e) => setNewPricingPlan({ ...newPricingPlan, price: parseInt(e.target.value) || 0 })}
-                      min="0"
-                    />
-                  </div>
-                  <div>
-                    <label style={{ fontSize: '11px', fontWeight: 600, color: colors.muted, display: 'block', marginBottom: '0.3rem' }}>
-                      Discount (%)
-                    </label>
-                    <Input
-                      type="number"
-                      placeholder="e.g., 5"
-                      value={newPricingPlan.discount || ''}
-                      onChange={(e) => setNewPricingPlan({ ...newPricingPlan, discount: parseInt(e.target.value) || 0 })}
-                      min="0"
-                      max="100"
-                    />
-                  </div>
-                  <Button onClick={addPricingPlan} style={{ marginTop: '1.5rem' }}>
-                    Add
-                  </Button>
-                </div>
+        <div style={{ marginBottom: 12 }}>
+          <label style={labelStyle}>Audition / entry states</label>
+          <div style={checkboxGrid}>
+            {NIGERIA_STATES.map((s) => (
+              <label key={s} style={{ fontSize: 12, color: colors.muted, display: 'flex', gap: 6, alignItems: 'center' }}>
+                <input type="checkbox" checked={form.auditionStates.includes(s)} onChange={() => toggleState(s)} />
+                {s}
+              </label>
+            ))}
+          </div>
+        </div>
 
-                {openMicData.votingPricingPlans.length > 0 && (
-                  <div style={{ marginBottom: '1rem' }}>
-                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
-                      <thead>
-                        <tr style={{ borderBottom: `1px solid ${colors.inputBorder}` }}>
-                          <th style={{ textAlign: 'left', padding: '0.5rem', fontWeight: 600, color: colors.text }}>Votes</th>
-                          <th style={{ textAlign: 'left', padding: '0.5rem', fontWeight: 600, color: colors.text }}>Price (₦)</th>
-                          <th style={{ textAlign: 'left', padding: '0.5rem', fontWeight: 600, color: colors.text }}>Price per Vote</th>
-                          <th style={{ textAlign: 'left', padding: '0.5rem', fontWeight: 600, color: colors.text }}>Discount</th>
-                          <th style={{ textAlign: 'center', padding: '0.5rem', fontWeight: 600, color: colors.text }}>Action</th>
+        <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', fontSize: 12, color: colors.muted, marginBottom: 12 }}>
+          {([
+            ['supportsAuditionScheduling', 'Audition scheduling'],
+            ['supportsGroupEntry', 'Team / group entry'],
+            ['supportsSchoolEntry', 'School entry'],
+            ['requiresGuardianConsentForMinors', 'Guardian consent for minors'],
+            ['requiresMedical', 'Medical disclosure'],
+            ['requiresBootcampReadiness', 'Bootcamp readiness questions'],
+          ] as const).map(([key, label]) => (
+            <label key={key} style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+              <input type="checkbox" checked={form[key]} onChange={(e) => setForm((f) => ({ ...f, [key]: e.target.checked }))} />
+              {label}
+            </label>
+          ))}
+        </div>
+
+        <div style={{ display: 'flex', gap: 8 }}>
+          <Button variant="primary" disabled={saving || deleting} onClick={() => void save()}>
+            {saving ? 'Saving…' : isEdit ? 'Save changes' : 'Create competition'}
+          </Button>
+          {isEdit && (
+            <Button variant="danger" disabled={saving || deleting} onClick={() => void remove()}>
+              {deleting ? 'Deleting…' : 'Delete competition'}
+            </Button>
+          )}
+        </div>
+      </Card>
+
+      <Card title="Stages" style={{ marginBottom: 16 }}>
+        <p style={{ margin: '0 0 12px', fontSize: 12, color: colors.muted }}>
+          {isEdit
+            ? 'Each stage has its own voting window and a promotion criteria note describing how contestants advance to the next one.'
+            : 'Queue stages now — they are created together with the contest when you save.'}
+        </p>
+
+        {stagesError && <p style={{ color: colors.danger, fontSize: 13, margin: '0 0 12px' }}>{stagesError}</p>}
+
+        {(isEdit ? stagesLoading : false) ? (
+          <p style={{ color: colors.muted, margin: '0 0 12px' }}>Loading stages…</p>
+        ) : (
+          <div style={{ marginBottom: 12 }}>
+            {(isEdit ? stages.length === 0 : draftStages.length === 0) ? (
+              <p style={{ color: colors.muted, fontSize: 13, margin: '0 0 12px' }}>No stages yet.</p>
+            ) : (
+              <div style={{ overflowX: 'auto', marginBottom: 12 }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                  <thead>
+                    <tr>
+                      <th style={thCell}>#</th>
+                      <th style={thCell}>Name</th>
+                      <th style={thCell}>Starts / Ends</th>
+                      <th style={thCell}>Promotion criteria</th>
+                      <th style={thCell} />
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {isEdit
+                      ? stages.map((s) => (
+                        <tr key={s.id}>
+                          <td style={tdCell}>{s.stageNumber}</td>
+                          <td style={tdCell}><strong>{s.stageName}</strong></td>
+                          <td style={tdCell}>{fmtRecentDate(s.votingStartsAt)} – {fmtRecentDate(s.votingEndsAt)}</td>
+                          <td style={tdCell}>{s.promotionCriteria || '—'}</td>
+                          <td style={tdCell}>
+                            <Button sm variant="danger" onClick={() => void removeStage(s.id)}>Remove</Button>
+                          </td>
                         </tr>
-                      </thead>
-                      <tbody>
-                        {openMicData.votingPricingPlans.map((plan) => (
-                          <tr key={plan.id} style={{ borderBottom: `1px solid ${colors.inputBorder}` }}>
-                            <td style={{ padding: '0.5rem', color: colors.text }}>{plan.voteCount} votes</td>
-                            <td style={{ padding: '0.5rem', color: colors.text }}>₦{plan.price.toLocaleString()}</td>
-                            <td style={{ padding: '0.5rem', color: colors.muted }}>₦{(plan.price / plan.voteCount).toFixed(2)}</td>
-                            <td style={{ padding: '0.5rem', color: colors.text }}>{plan.discount}%</td>
-                            <td style={{ padding: '0.5rem', textAlign: 'center' }}>
-                              <Button
-                                onClick={() => removePricingPlan(plan.id)}
-                                style={{
-                                  padding: '0.3rem 0.6rem',
-                                  fontSize: '0.75rem',
-                                  background: '#ff4444',
-                                  color: 'white',
-                                  border: 'none',
-                                  borderRadius: '0.25rem',
-                                  cursor: 'pointer'
-                                }}
-                              >
-                                Remove
-                              </Button>
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
-
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginTop: '1rem', paddingTop: '1rem', borderTop: `1px solid ${colors.inputBorder}` }}>
-                  <div>
-                    <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, marginBottom: '0.5rem', color: colors.text }}>
-                      Free Votes per User
-                    </label>
-                    <Input
-                      type="number"
-                      placeholder="e.g., 1"
-                      value={openMicData.freeVotesPerUser}
-                      onChange={(e) => handleOpenMicChange('freeVotesPerUser', parseInt(e.target.value) || 1)}
-                      min="0"
-                    />
-                  </div>
-                  <div>
-                    <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, marginBottom: '0.5rem', color: colors.text }}>
-                      Free Vote Window (hours)
-                    </label>
-                    <Input
-                      type="number"
-                      placeholder="e.g., 24"
-                      value={openMicData.freeVoteWindow}
-                      onChange={(e) => handleOpenMicChange('freeVoteWindow', parseInt(e.target.value) || 24)}
-                      min="1"
-                    />
-                  </div>
-                </div>
+                      ))
+                      : draftStages.map((d, i) => (
+                        <tr key={i}>
+                          <td style={tdCell}>{i + 1}</td>
+                          <td style={tdCell}><strong>{d.stageName}</strong></td>
+                          <td style={tdCell}>{d.votingStartsAt || '—'} – {d.votingEndsAt || '—'}</td>
+                          <td style={tdCell}>{d.promotionCriteria || '—'}</td>
+                          <td style={tdCell}>
+                            <Button sm variant="danger" onClick={() => removeDraftStage(i)}>Remove</Button>
+                          </td>
+                        </tr>
+                      ))}
+                  </tbody>
+                </table>
               </div>
-
-              <div style={{ padding: '1rem', background: colors.inputBorder + '15', borderRadius: '0.375rem', borderLeft: `4px solid ${colors.primary}` }}>
-                <h4 style={{ fontSize: '13px', fontWeight: 600, color: colors.text, margin: '0 0 1rem 0', textTransform: 'uppercase' }}>
-                  🎼 Available Beats
-                </h4>
-                <div style={{ display: 'grid', gridTemplateColumns: '2fr 1.5fr 1fr 1.2fr 0.8fr', gap: '0.5rem', alignItems: 'flex-end', marginBottom: '1rem' }}>
-                  <div>
-                    <label style={{ fontSize: '11px', fontWeight: 600, color: colors.muted, display: 'block', marginBottom: '0.3rem' }}>
-                      Beat Title
-                    </label>
-                    <Input
-                      placeholder="e.g., Afrobeats Groove"
-                      value={newBeat.title || ''}
-                      onChange={(e) => setNewBeat({ ...newBeat, title: e.target.value })}
-                    />
-                  </div>
-                  <div>
-                    <label style={{ fontSize: '11px', fontWeight: 600, color: colors.muted, display: 'block', marginBottom: '0.3rem' }}>
-                      Genre
-                    </label>
-                    <Input
-                      placeholder="e.g., Afrobeats"
-                      value={newBeat.genre || ''}
-                      onChange={(e) => setNewBeat({ ...newBeat, genre: e.target.value })}
-                    />
-                  </div>
-                  <div>
-                    <label style={{ fontSize: '11px', fontWeight: 600, color: colors.muted, display: 'block', marginBottom: '0.3rem' }}>
-                      Duration
-                    </label>
-                    <Input
-                      placeholder="e.g., 3:45"
-                      value={newBeat.duration || ''}
-                      onChange={(e) => setNewBeat({ ...newBeat, duration: e.target.value })}
-                    />
-                  </div>
-                  <div>
-                    <label style={{ fontSize: '11px', fontWeight: 600, color: colors.muted, display: 'block', marginBottom: '0.3rem' }}>
-                      File URL
-                    </label>
-                    <Input
-                      type="url"
-                      placeholder="https://..."
-                      value={newBeat.fileUrl || ''}
-                      onChange={(e) => setNewBeat({ ...newBeat, fileUrl: e.target.value })}
-                    />
-                  </div>
-                  <Button variant="primary" onClick={addBeat} style={{ marginBottom: 0, padding: '0.4rem 0.6rem', fontSize: '0.8rem' }}>
-                    Add
-                  </Button>
-                </div>
-
-                {openMicData.beats.length > 0 && (
-                  <div style={{ marginTop: '1rem' }}>
-                    {openMicData.beats.map((beat) => (
-                      <div key={beat.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.75rem', background: colors.card, borderRadius: '0.25rem', marginBottom: '0.5rem', fontSize: '0.85rem' }}>
-                        <div>
-                          <strong>🎵 {beat.title}</strong> • {beat.genre} • {beat.duration}
-                        </div>
-                        <button
-                          type="button"
-                          onClick={() => removeBeat(beat.id)}
-                          style={{
-                            padding: '0.2rem 0.4rem',
-                            background: colors.danger,
-                            color: 'white',
-                            border: 'none',
-                            borderRadius: '0.25rem',
-                            cursor: 'pointer',
-                            fontSize: '0.7rem',
-                          }}
-                        >
-                          ✕
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-
-              <div style={{ padding: '1rem', background: colors.inputBorder + '15', borderRadius: '0.375rem', borderLeft: `4px solid ${colors.primary}` }}>
-                <h4 style={{ fontSize: '13px', fontWeight: 600, color: colors.text, margin: '0 0 1rem 0', textTransform: 'uppercase' }}>
-                  🏆 Reward Configuration
-                </h4>
-                <div>
-                  <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, marginBottom: '0.5rem', color: colors.text }}>
-                    Reward Type
-                  </label>
-                  <select
-                    value={openMicData.rewardType}
-                    onChange={(e) => handleOpenMicChange('rewardType', e.target.value)}
-                    style={{
-                      width: '100%',
-                      padding: '0.4rem 0.55rem',
-                      border: `1px solid ${colors.inputBorder}`,
-                      borderRadius: '0.375rem',
-                      fontSize: '0.85rem',
-                      background: colors.card,
-                      cursor: 'pointer',
-                      color: colors.text,
-                      marginBottom: '1rem'
-                    }}
-                  >
-                    <option value="cash">Cash Prize</option>
-                    <option value="hybrid">Hybrid (Cash + Perks)</option>
-                    <option value="non-cash">Non-Cash (Perks Only)</option>
-                  </select>
-                </div>
-                <div>
-                  <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, marginBottom: '0.5rem', color: colors.text }}>
-                    Reward Details
-                  </label>
-                  <textarea
-                    placeholder="E.g., 1st Place: ₦100,000 + 3-month promotion, 2nd Place: ₦50,000 + 1-month promotion, 3rd Place: Certificate + featured on homepage"
-                    value={openMicData.rewardDetails}
-                    onChange={(e) => handleOpenMicChange('rewardDetails', e.target.value)}
-                    style={{
-                      width: '100%',
-                      padding: '0.4rem 0.55rem',
-                      border: `1px solid ${colors.inputBorder}`,
-                      borderRadius: '0.375rem',
-                      fontSize: '0.85rem',
-                      background: colors.card,
-                      color: colors.text,
-                      fontFamily: 'inherit',
-                      minHeight: '100px',
-                      resize: 'vertical'
-                    }}
-                  />
-                </div>
-              </div>
-            </div>
-          </Card>
+            )}
+          </div>
         )}
 
-        <Card title="Position Awards & Benefits">
-          <div style={{ display: 'grid', gap: '1.5rem', marginTop: '1rem' }}>
-            {awards.map((award) => (
-              <div key={award.position} style={{ padding: '1rem', background: colors.inputBorder + '15', borderRadius: '0.375rem', borderLeft: `4px solid ${colors.primary}` }}>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr 1fr', gap: '0.75rem', marginBottom: '1rem', alignItems: 'center' }}>
-                  <div>
-                    <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, marginBottom: '0.3rem', color: colors.text }}>
-                      Position {award.position}
-                    </label>
-                  </div>
-                  <div>
-                    <Input
-                      placeholder="e.g., Gold Medal, Champion"
-                      value={award.title}
-                      onChange={(e) => updateAward(award.position, 'title', e.target.value)}
-                    />
-                  </div>
-                  <div>
-                    <Input
-                      type="number"
-                      placeholder="Prize (₦)"
-                      value={award.amount || ''}
-                      onChange={(e) => updateAward(award.position, 'amount', e.target.value ? parseInt(e.target.value) : 0)}
-                    />
-                  </div>
-                </div>
+        <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr', gap: 12, marginBottom: 12 }}>
+          <div>
+            <label style={labelStyle}>Stage name</label>
+            <Input style={{ width: '100%' }} placeholder="e.g., Auditions, Semi-final, Grand finale"
+              value={stageForm.stageName} onChange={(e) => setStageForm((f) => ({ ...f, stageName: e.target.value }))} />
+          </div>
+          <div>
+            <label style={labelStyle}>Starts</label>
+            <Input style={{ width: '100%' }} type="date" value={stageForm.votingStartsAt}
+              onChange={(e) => setStageForm((f) => ({ ...f, votingStartsAt: e.target.value }))} />
+          </div>
+          <div>
+            <label style={labelStyle}>Ends</label>
+            <Input style={{ width: '100%' }} type="date" value={stageForm.votingEndsAt}
+              onChange={(e) => setStageForm((f) => ({ ...f, votingEndsAt: e.target.value }))} />
+          </div>
+        </div>
+        <div style={{ marginBottom: 12 }}>
+          <label style={labelStyle}>Promotion criteria</label>
+          <Input style={{ width: '100%' }} placeholder="e.g., Top 10 by votes advance to the next stage"
+            value={stageForm.promotionCriteria} onChange={(e) => setStageForm((f) => ({ ...f, promotionCriteria: e.target.value }))} />
+        </div>
+        <Button variant="primary" type="button" disabled={savingStage} onClick={() => void addStageToDraftOrContest()}>
+          {savingStage ? 'Adding…' : isEdit ? 'Add stage' : 'Queue stage'}
+        </Button>
+      </Card>
 
-                <div style={{ borderTop: `1px solid ${colors.border}`, paddingTop: '1rem', marginBottom: '1rem' }}>
-                  <h4 style={{ fontSize: '12px', fontWeight: 600, color: colors.text, marginBottom: '0.75rem', textTransform: 'uppercase' }}>
-                    Benefits & Perks for Position {award.position}
-                  </h4>
-
-                  <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 2fr 0.8fr', gap: '0.5rem', alignItems: 'flex-end', marginBottom: '0.75rem' }}>
-                    <div>
-                      <label style={{ fontSize: '11px', fontWeight: 600, color: colors.muted, display: 'block', marginBottom: '0.3rem' }}>
-                        Name
-                      </label>
-                      <Input
-                        placeholder="e.g., Cash Bonus"
-                        value={newBenefitByPosition[award.position]?.name || ''}
-                        onChange={(e) => setNewBenefitByPosition({
-                          ...newBenefitByPosition,
-                          [award.position]: { ...newBenefitByPosition[award.position], name: e.target.value }
-                        })}
-                      />
-                    </div>
-                    <div>
-                      <label style={{ fontSize: '11px', fontWeight: 600, color: colors.muted, display: 'block', marginBottom: '0.3rem' }}>
-                        Type
-                      </label>
-                      <select
-                        value={newBenefitByPosition[award.position]?.type || 'non-cash'}
-                        onChange={(e) => setNewBenefitByPosition({
-                          ...newBenefitByPosition,
-                          [award.position]: { ...newBenefitByPosition[award.position], type: e.target.value as 'cash' | 'non-cash' }
-                        })}
-                        style={{
-                          width: '100%',
-                          padding: '0.35rem 0.45rem',
-                          border: `1px solid ${colors.inputBorder}`,
-                          borderRadius: '0.375rem',
-                          fontSize: '0.8rem',
-                          background: colors.card,
-                          cursor: 'pointer',
-                          color: colors.text
-                        }}
-                      >
-                        <option value="non-cash">Non-Cash</option>
-                        <option value="cash">Cash</option>
-                      </select>
-                    </div>
-                    <div>
-                      <label style={{ fontSize: '11px', fontWeight: 600, color: colors.muted, display: 'block', marginBottom: '0.3rem' }}>
-                        Description
-                      </label>
-                      <Input
-                        placeholder="e.g., Recognition certificate"
-                        value={newBenefitByPosition[award.position]?.description || ''}
-                        onChange={(e) => setNewBenefitByPosition({
-                          ...newBenefitByPosition,
-                          [award.position]: { ...newBenefitByPosition[award.position], description: e.target.value }
-                        })}
-                      />
-                    </div>
-                    <Button variant="primary" onClick={() => addBenefitToPosition(award.position)} style={{ marginBottom: 0, padding: '0.4rem 0.6rem', fontSize: '0.8rem' }}>
-                      Add
-                    </Button>
-                  </div>
-
-                  {award.benefits.length > 0 && (
-                    <div style={{ marginTop: '0.75rem' }}>
-                      {award.benefits.map((benefit) => (
-                        <div key={benefit.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.5rem', background: colors.card, borderRadius: '0.25rem', marginBottom: '0.4rem', fontSize: '0.8rem' }}>
-                          <span>{benefit.type === 'cash' ? '💰' : '🎁'} <strong>{benefit.name}</strong> - {benefit.description}</span>
-                          <button
-                            type="button"
-                            onClick={() => removeBenefitFromPosition(award.position, benefit.id)}
-                            style={{
-                              padding: '0.2rem 0.4rem',
-                              background: colors.danger,
-                              color: 'white',
-                              border: 'none',
-                              borderRadius: '0.25rem',
-                              cursor: 'pointer',
-                              fontSize: '0.7rem',
-                            }}
-                          >
-                            ✕
-                          </button>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              </div>
-            ))}
-            <Button variant="outline" type="button" onClick={addAwardPosition}>
-              + Add Another Position
+      <Card title="Recently Created Contests" style={{ padding: 0, overflow: 'hidden' }}>
+        {recentError && (
+          <div style={{ padding: '0.75rem 1rem', color: colors.danger, fontSize: '0.85rem' }}>{recentError}</div>
+        )}
+        <table style={{ borderCollapse: 'collapse', width: '100%' }}>
+          <thead>
+            <tr>
+              <th style={thCell}>Name</th>
+              <th style={thCell}>Type</th>
+              <th style={thCell}>Status</th>
+              <th style={thCell}>Starts / Ends</th>
+              <th style={thCell}>Created</th>
+            </tr>
+          </thead>
+          <tbody>
+            {recentLoading ? (
+              <tr><td style={{ ...tdCell, color: colors.muted }} colSpan={5}>Loading…</td></tr>
+            ) : recent.length === 0 ? (
+              <tr><td style={{ ...tdCell, color: colors.muted }} colSpan={5}>No contests created yet.</td></tr>
+            ) : (
+              recent.slice((recentPage - 1) * RECENT_PAGE_SIZE, recentPage * RECENT_PAGE_SIZE).map((c) => (
+                <tr key={c.id}>
+                  <td style={tdCell}>
+                    {c.slug ? (
+                      <Link href={`/admin/competitions/create?id=${c.slug}`} style={{ color: colors.text, textDecoration: 'none', fontWeight: 600 }}>
+                        {c.name}
+                      </Link>
+                    ) : (
+                      <span style={{ fontWeight: 600 }}>{c.name} <span style={{ fontSize: 11, color: colors.muted, fontWeight: 400 }}>(no slug on file)</span></span>
+                    )}
+                  </td>
+                  <td style={tdCell}>{c.contest_type}</td>
+                  <td style={tdCell}><Badge text={c.status} color={recentStatusColor[c.status] ?? colors.muted} /></td>
+                  <td style={tdCell}>{fmtRecentDate(c.start_date)} – {fmtRecentDate(c.end_date)}</td>
+                  <td style={tdCell}>{fmtRecentDate(c.created_at)}</td>
+                </tr>
+              ))
+            )}
+          </tbody>
+        </table>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 14px', borderTop: `1px solid ${colors.border}`, fontSize: '0.85rem', color: colors.muted }}>
+          <span>
+            {recent.length === 0
+              ? 'Showing 0 of 0 contests'
+              : `Showing ${(recentPage - 1) * RECENT_PAGE_SIZE + 1}–${Math.min(recentPage * RECENT_PAGE_SIZE, recent.length)} of ${recent.length} contests`}
+          </span>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            <Button variant="outline" sm type="button" disabled={recentPage <= 1} onClick={() => setRecentPage((p) => Math.max(1, p - 1))}>
+              Previous
+            </Button>
+            <span>Page {recentPage} of {Math.max(1, Math.ceil(recent.length / RECENT_PAGE_SIZE))}</span>
+            <Button
+              variant="outline"
+              sm
+              type="button"
+              disabled={recentPage >= Math.max(1, Math.ceil(recent.length / RECENT_PAGE_SIZE))}
+              onClick={() => setRecentPage((p) => Math.min(Math.max(1, Math.ceil(recent.length / RECENT_PAGE_SIZE)), p + 1))}
+            >
+              Next
             </Button>
           </div>
-        </Card>
-
-        {error && (
-          <div style={{ padding: '0.75rem', background: colors.danger + '20', border: `1px solid ${colors.danger}`, borderRadius: '0.375rem', color: colors.danger, fontSize: '0.85rem' }}>
-            {error}
-          </div>
-        )}
-
-        <div style={{ display: 'flex', gap: '0.75rem' }}>
-          <Button variant="primary" type="submit" disabled={saving}>
-            {saving ? 'Creating...' : 'Create Competition'}
-          </Button>
-          <Button variant="outline" type="button" onClick={() => router.back()}>
-            Cancel
-          </Button>
         </div>
-      </form>
+      </Card>
     </Page>
+  );
+}
+
+export default function CreateCompetitionPage() {
+  return (
+    <Suspense fallback={<Page><p style={{ color: colors.muted }}>Loading…</p></Page>}>
+      <CreateCompetitionContent />
+    </Suspense>
   );
 }

@@ -1,201 +1,118 @@
 'use client';
 
-import { useState, useMemo, useEffect } from 'react';
-import { useRouter } from 'next/navigation';
+import { useState, useMemo, useEffect, useCallback } from 'react';
+import Link from 'next/link';
 import { Page, PageHeader, Card, Button, Input, Badge, colors, tint, thCell, tdCell } from '@/components/ui/vuexy';
+import { listVotingContests } from '@/services/competitionsService';
+import type { VotingContest } from '@/types/competitions';
 
-type Benefit = {
-  id: string;
-  name: string;
-  type: 'cash' | 'non-cash';
-  description: string;
-};
-
-type Award = {
-  position: number;
-  title: string;
-  amount?: number;
-  benefits: Benefit[];
-};
-
-type Competition = {
-  id: string;
-  title: string;
-  type: 'open-mic' | 'reality-tv' | 'multi-skill' | 'other';
-  status: 'draft' | 'upcoming' | 'active' | 'ended';
-  startDate: string;
-  endDate: string;
-  participantCount: number;
-  totalPrizePool: number;
-  banner?: string;
-  currency?: string;
-  awards?: Award[];
-};
-
-// Mock data - replace with API call
-const MOCK_COMPETITIONS: Competition[] = [
-  {
-    id: '1',
-    title: 'Open Mic Q3 2024',
-    type: 'open-mic',
-    status: 'active',
-    startDate: '2024-07-01',
-    endDate: '2024-09-30',
-    participantCount: 342,
-    totalPrizePool: 500000,
-    currency: 'NGN',
-    awards: [
-      { position: 1, title: 'Gold Medal', amount: 250000, benefits: [{ id: 'b1', name: 'Cash Prize', type: 'cash', description: '250K naira' }] },
-      { position: 2, title: 'Silver Medal', amount: 150000, benefits: [{ id: 'b2', name: 'Cash Prize', type: 'cash', description: '150K naira' }] },
-      { position: 3, title: 'Bronze Medal', amount: 100000, benefits: [{ id: 'b3', name: 'Certificate', type: 'non-cash', description: 'Recognition certificate' }] },
-    ]
-  },
-  { id: '2', title: 'Reality TV Season 2', type: 'reality-tv', status: 'active', startDate: '2024-06-15', endDate: '2024-10-15', participantCount: 128, totalPrizePool: 2000000 },
-  { id: '3', title: 'Multi-Skill Challenge', type: 'multi-skill', status: 'upcoming', startDate: '2024-09-01', endDate: '2024-11-01', participantCount: 0, totalPrizePool: 750000 },
-  { id: '4', title: 'Open Mic Q2 2024', type: 'open-mic', status: 'ended', startDate: '2024-04-01', endDate: '2024-06-30', participantCount: 298, totalPrizePool: 450000 },
-];
+// Real contests as seen by the mobile app — GET /api/v1/connect/contests, the
+// SAME endpoint mobile's getContests() calls. Previously this page rendered a
+// hardcoded MOCK_COMPETITIONS array seeded straight into localStorage on
+// first load, so "editing" a competition here never touched anything real
+// and the list bore no relation to what mobile users actually see. There is
+// no prize-pool / awards / benefits concept in the real data — connect_contests
+// has none — so that part of the old UI is gone rather than faked.
 
 const statusColor: Record<string, string> = {
-  'draft': colors.muted,
-  'upcoming': colors.warning,
-  'active': colors.success,
-  'ended': colors.secondary,
+  draft: colors.muted,
+  open: colors.success,
+  closed: colors.secondary,
 };
 
-const typeLabel: Record<string, string> = {
-  'open-mic': '🎤 Open Mic',
-  'reality-tv': '📺 Reality TV',
-  'multi-skill': '🎯 Multi-Skill',
-  'other': '📋 Other',
-};
+function formatNaira(kobo: number): string {
+  return new Intl.NumberFormat('en-NG', { style: 'currency', currency: 'NGN', maximumFractionDigits: 0 }).format(kobo / 100);
+}
+
+function fmtDate(v: string | null | undefined): string {
+  return v ? new Date(v).toLocaleDateString('en-NG') : '—';
+}
 
 export default function CompetitionsListPage() {
-  const router = useRouter();
   const [search, setSearch] = useState('');
-  const [filterType, setFilterType] = useState<string>('');
   const [filterStatus, setFilterStatus] = useState<string>('');
-  const [competitions, setCompetitions] = useState<Competition[]>(MOCK_COMPETITIONS);
-  const [selectedComp, setSelectedComp] = useState<Competition | null>(null);
+  const [contests, setContests] = useState<VotingContest[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
-  const formatCurrency = (value: number, currency: string = 'NGN') => {
-    const currencyMap: Record<string, string> = {
-      'NGN': 'en-NG',
-      'USD': 'en-US',
-      'EUR': 'de-DE',
-      'GBP': 'en-GB',
-    };
-    return new Intl.NumberFormat(currencyMap[currency] || 'en-NG', {
-      style: 'currency',
-      currency: currency,
-      minimumFractionDigits: 0,
-      maximumFractionDigits: 0,
-    }).format(value);
-  };
-
-  useEffect(() => {
-    if (typeof window !== 'undefined') {
-      const stored = localStorage.getItem('competitions');
-      if (stored) {
-        try {
-          setCompetitions(JSON.parse(stored));
-        } catch {
-          setCompetitions(MOCK_COMPETITIONS);
-          localStorage.setItem('competitions', JSON.stringify(MOCK_COMPETITIONS));
-        }
-      } else {
-        // Initialize localStorage with mock data on first load
-        setCompetitions(MOCK_COMPETITIONS);
-        localStorage.setItem('competitions', JSON.stringify(MOCK_COMPETITIONS));
-      }
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      setContests(await listVotingContests());
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to load contests');
+    } finally {
+      setLoading(false);
     }
   }, []);
 
+  useEffect(() => { void load(); }, [load]);
+
   const filtered = useMemo(() => {
-    return competitions.filter((c) => {
+    return contests.filter((c) => {
       const matchSearch = c.title.toLowerCase().includes(search.toLowerCase());
-      const matchType = !filterType || c.type === filterType;
       const matchStatus = !filterStatus || c.status === filterStatus;
-      return matchSearch && matchType && matchStatus;
+      return matchSearch && matchStatus;
     });
-  }, [search, filterType, filterStatus, competitions]);
+  }, [search, filterStatus, contests]);
 
   return (
     <Page>
       <PageHeader
-        title="Competitions Management"
-        subtitle="Create, edit, and manage all contests across the platform."
-        actions={<Button variant="primary" onClick={() => router.push('/admin/competitions/create')}>+ New Competition</Button>}
+        title="Competitions"
+        subtitle="Real contests as seen by the mobile app (public.connect_contests)."
+        actions={<Link href="/admin/competitions/create"><Button variant="primary">+ New Competition</Button></Link>}
       />
 
-      {/* Filters */}
+      {error && <p style={{ color: colors.danger }}>{error}</p>}
+
       <Card title="Filters" style={{ marginBottom: 16 }}>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 12, marginTop: 12 }}>
-          <Input
-            placeholder="Search competitions..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-          />
-          <select value={filterType} onChange={(e) => setFilterType(e.target.value)} style={{
-            padding: '0.4rem 0.55rem', border: `1px solid ${colors.inputBorder}`, borderRadius: '0.375rem',
-            fontSize: '0.85rem', background: colors.card, cursor: 'pointer', color: colors.text
-          }}>
-            <option value="">All Types</option>
-            <option value="open-mic">Open Mic</option>
-            <option value="reality-tv">Reality TV</option>
-            <option value="multi-skill">Multi-Skill</option>
-          </select>
+          <Input placeholder="Search contests..." value={search} onChange={(e) => setSearch(e.target.value)} />
           <select value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)} style={{
             padding: '0.4rem 0.55rem', border: `1px solid ${colors.inputBorder}`, borderRadius: '0.375rem',
-            fontSize: '0.85rem', background: colors.card, cursor: 'pointer', color: colors.text
+            fontSize: '0.85rem', background: colors.card, cursor: 'pointer', color: colors.text,
           }}>
             <option value="">All Status</option>
             <option value="draft">Draft</option>
-            <option value="upcoming">Upcoming</option>
-            <option value="active">Active</option>
-            <option value="ended">Ended</option>
+            <option value="open">Open</option>
+            <option value="closed">Closed</option>
           </select>
         </div>
       </Card>
 
-      {/* Competitions Table */}
       <Card style={{ padding: 0, overflow: 'hidden' }}>
         <table style={{ borderCollapse: 'collapse', width: '100%' }}>
           <thead>
             <tr>
               <th style={thCell}>Title</th>
-              <th style={thCell}>Type</th>
               <th style={thCell}>Status</th>
-              <th style={thCell}>Participants</th>
-              <th style={thCell}>Prize Pool</th>
-              <th style={thCell}>Benefits</th>
+              <th style={thCell}>Contestants</th>
+              <th style={thCell}>Total Votes</th>
+              <th style={thCell}>Paid Vote Price</th>
+              <th style={thCell}>Opens / Closes</th>
               <th style={thCell}>Actions</th>
             </tr>
           </thead>
           <tbody>
-            {filtered.length === 0 ? (
-              <tr><td style={{ ...tdCell, color: colors.muted }} colSpan={7}>No competitions found.</td></tr>
+            {loading ? (
+              <tr><td style={{ ...tdCell, color: colors.muted }} colSpan={7}>Loading…</td></tr>
+            ) : filtered.length === 0 ? (
+              <tr><td style={{ ...tdCell, color: colors.muted }} colSpan={7}>No contests found.</td></tr>
             ) : (
-              filtered.map((comp) => (
-                <tr key={comp.id} style={{ background: comp.status === 'active' ? tint(colors.success, 0.04) : 'transparent' }}>
-                  <td style={tdCell}><strong>{comp.title}</strong></td>
-                  <td style={tdCell}>{typeLabel[comp.type]}</td>
-                  <td style={tdCell}><Badge text={comp.status} color={statusColor[comp.status]} /></td>
-                  <td style={tdCell}>{comp.participantCount.toLocaleString()}</td>
-                  <td style={tdCell}>{formatCurrency(comp.totalPrizePool, comp.currency || 'NGN')}</td>
+              filtered.map((c) => (
+                <tr key={c.id} style={{ background: c.status === 'open' ? tint(colors.success, 0.04) : 'transparent' }}>
+                  <td style={tdCell}><strong>{c.title}</strong></td>
+                  <td style={tdCell}><Badge text={c.status} color={statusColor[c.status] ?? colors.muted} /></td>
+                  <td style={tdCell}>{c.contestant_count.toLocaleString()}</td>
+                  <td style={tdCell}>{c.total_votes.toLocaleString()}</td>
+                  <td style={tdCell}>{c.paid_vote_kobo > 0 ? formatNaira(c.paid_vote_kobo) : 'Free only'}</td>
+                  <td style={tdCell}>{fmtDate(c.opens_at)} – {fmtDate(c.closes_at)}</td>
                   <td style={tdCell}>
-                    {comp.awards && comp.awards.some(a => a.benefits && a.benefits.length > 0) ? (
-                      <span style={{ fontSize: '0.8rem', color: colors.success }}>
-                        {comp.awards.reduce((sum, a) => sum + (a.benefits?.length || 0), 0)} benefit{comp.awards.reduce((sum, a) => sum + (a.benefits?.length || 0), 0) !== 1 ? 's' : ''}
-                      </span>
-                    ) : (
-                      <span style={{ fontSize: '0.8rem', color: colors.muted }}>None</span>
-                    )}
-                  </td>
-                  <td style={tdCell}>
-                    <div style={{ display: 'flex', gap: 6 }}>
-                      <Button variant="outline" sm onClick={() => setSelectedComp(comp)}>Details</Button>
-                      <Button variant="outline" sm onClick={() => router.push(`/admin/competitions/create?id=${comp.id}`)}>Edit</Button>
-                    </div>
+                    <Link href={`/admin/competitions/results?contestId=${c.id}`}>
+                      <Button variant="outline" sm>Leaderboard</Button>
+                    </Link>
                   </td>
                 </tr>
               ))
@@ -203,98 +120,9 @@ export default function CompetitionsListPage() {
           </tbody>
         </table>
         <div style={{ padding: '12px 14px', borderTop: `1px solid ${colors.border}`, fontSize: '0.85rem', color: colors.muted }}>
-          Showing {filtered.length} of {competitions.length} competitions
+          Showing {filtered.length} of {contests.length} contests
         </div>
       </Card>
-
-      {/* Details Modal */}
-      {selectedComp && (
-        <div style={{
-          position: 'fixed',
-          top: 0,
-          left: 0,
-          right: 0,
-          bottom: 0,
-          background: 'rgba(0,0,0,0.5)',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          zIndex: 1000,
-          padding: '1rem'
-        }}>
-          <Card style={{ maxWidth: '600px', width: '100%', maxHeight: '90vh', overflow: 'auto' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
-              <h2 style={{ margin: 0, fontSize: '1.25rem', color: colors.text }}>{selectedComp.title}</h2>
-              <button
-                onClick={() => setSelectedComp(null)}
-                style={{
-                  background: 'none',
-                  border: 'none',
-                  fontSize: '1.5rem',
-                  cursor: 'pointer',
-                  color: colors.muted,
-                }}
-              >
-                ✕
-              </button>
-            </div>
-
-            {selectedComp.banner && (
-              <div style={{ marginBottom: '1rem' }}>
-                <img
-                  src={selectedComp.banner}
-                  alt="Competition Banner"
-                  style={{ width: '100%', maxHeight: '200px', objectFit: 'cover', borderRadius: '0.375rem' }}
-                  onError={(e) => (e.currentTarget.style.display = 'none')}
-                />
-              </div>
-            )}
-
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginBottom: '1rem', fontSize: '0.85rem' }}>
-              <div>
-                <span style={{ color: colors.muted }}>Type:</span> {typeLabel[selectedComp.type]}
-              </div>
-              <div>
-                <span style={{ color: colors.muted }}>Status:</span> <Badge text={selectedComp.status} color={statusColor[selectedComp.status]} />
-              </div>
-              <div>
-                <span style={{ color: colors.muted }}>Prize Pool:</span> {formatCurrency(selectedComp.totalPrizePool, selectedComp.currency || 'NGN')}
-              </div>
-              <div>
-                <span style={{ color: colors.muted }}>Participants:</span> {selectedComp.participantCount}
-              </div>
-            </div>
-
-            {selectedComp.awards && selectedComp.awards.length > 0 && (
-              <div style={{ paddingTop: '1rem', borderTop: `1px solid ${colors.border}` }}>
-                <h3 style={{ fontSize: '0.9rem', fontWeight: 600, color: colors.text, marginBottom: '0.75rem' }}>
-                  Position Awards & Benefits
-                </h3>
-                {selectedComp.awards.map((award) => (
-                  <div key={award.position} style={{ marginBottom: '1rem', padding: '0.75rem', background: colors.inputBorder + '15', borderRadius: '0.375rem', borderLeft: `3px solid ${colors.primary}` }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem', paddingBottom: '0.5rem', borderBottom: `1px solid ${colors.border}` }}>
-                      <span style={{ fontWeight: 600, fontSize: '0.9rem' }}>Position {award.position}: {award.title}</span>
-                      {award.amount ? <span style={{ color: colors.success, fontWeight: 600 }}>{formatCurrency(award.amount, selectedComp.currency || 'NGN')}</span> : null}
-                    </div>
-                    {award.benefits && award.benefits.length > 0 ? (
-                      <div>
-                        {award.benefits.map((benefit) => (
-                          <div key={benefit.id} style={{ padding: '0.4rem 0', fontSize: '0.8rem' }}>
-                            <span>{benefit.type === 'cash' ? '💰' : '🎁'} <strong>{benefit.name}</strong></span>
-                            <div style={{ color: colors.muted, fontSize: '0.75rem', marginLeft: '1.2rem' }}>{benefit.description}</div>
-                          </div>
-                        ))}
-                      </div>
-                    ) : (
-                      <span style={{ color: colors.muted, fontSize: '0.8rem' }}>No benefits assigned</span>
-                    )}
-                  </div>
-                ))}
-              </div>
-            )}
-          </Card>
-        </div>
-      )}
     </Page>
   );
 }

@@ -40,7 +40,7 @@ export async function GET(request: Request) {
     const supabase = createAdminClient();
     let query = supabase
       .from('contests')
-      .select('id, name, contest_type, status, start_date, end_date, created_at')
+      .select('id, slug, name, contest_type, status, start_date, end_date, created_at')
       .order('created_at', { ascending: false });
 
     if (type) query = query.eq('contest_type', type);

@@ -98,6 +98,21 @@ export async function persistContestDefinition(
       season_name: def.seasonOrEdition,
       voting_enabled: def.supportsVoting,
       age_min: def.legalAdultAge,
+      // publishContestToVotingPlane (called right after this, same request) was
+      // meant to set these on first creation — but it does a slug lookup first,
+      // finds the row THIS insert just created, and takes its "existing contest,
+      // preserve admin-tuned values" branch instead, which deliberately excludes
+      // these four fields. The two functions race to create the same row and
+      // this one always wins, so publishContestToVotingPlane's insert-only
+      // defaults never actually ran for any contest. Set here instead: without
+      // max_votes_per_user, the connect_contests mirror trigger derives
+      // free_votes_per_user as 0, and a "votable" contest with zero free votes
+      // and no paid price is unvotable — it shows up on mobile but nobody can
+      // vote on it.
+      max_votes_per_user: def.supportsVoting ? 1 : 0,
+      voting_type: 'free',
+      vote_price_ngn: 0,
+      vote_price: 0,
       contest_config: def as unknown as Record<string, unknown>,
     })
     .select('id')

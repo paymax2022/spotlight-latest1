@@ -15,3 +15,40 @@ export type OpenMicCompetition = {
   is_featured?: boolean;
   created_at?: string | null;
 };
+
+// Mirrors backend/internal/connect/voting/models.go Contest — the row shape
+// of public.connect_contests, the table mobile's getContests() reads.
+export type VotingContest = {
+  id: string;
+  title: string;
+  description?: string | null;
+  status: 'draft' | 'open' | 'closed' | string;
+  paid_vote_kobo: number;
+  free_votes_per_user: number;
+  velocity_per_minute: number;
+  opens_at?: string | null;
+  closes_at?: string | null;
+  created_at: string;
+  contestant_count: number;
+  total_votes: number;
+};
+
+// Mirrors backend/internal/connect/voting/repo.go RosterEntry — one row of
+// GET /contests/:id/contestants, already ranked by total votes server-side.
+export type ContestRosterEntry = {
+  contestant_id: string;
+  name: string;
+  stage_name: string;
+  category: string;
+  state: string;
+  bio: string;
+  photo_url: string;
+  media_url: string;
+  status: string;
+  is_active: boolean;
+  contest_id?: string;
+  free_votes: number;
+  paid_votes: number;
+  total_votes: number;
+  rank: number;
+};
