@@ -503,7 +503,7 @@ func (s *Service) DecideKyc(ctx context.Context, id, adminID string, approve boo
 	if err != nil {
 		return fmt.Errorf("adminext: kyc case not found")
 	}
-	if profile.Status != financekyc.StatusSubmitted {
+	if profile.Status != financekyc.StatusPending {
 		return fmt.Errorf("adminext: cannot decide a KYC case in %s state", profile.Status)
 	}
 	actorID := adminID
@@ -538,7 +538,7 @@ func (s *Service) DecideKyc(ctx context.Context, id, adminID string, approve boo
 // GetComplianceSummary derives compliance counters from the cf_* tables.
 func (s *Service) GetComplianceSummary(ctx context.Context) (*ComplianceSummary, error) {
 	out := &ComplianceSummary{RetentionPolicyDays: 2555, LastRegulatoryExport: "2026-05-31T00:00:00Z"}
-	_ = s.db.QueryRow(ctx, `SELECT COUNT(*) FROM user_profiles WHERE kyc_status = 'submitted'`).Scan(&out.PendingKyc)
+	_ = s.db.QueryRow(ctx, `SELECT COUNT(*) FROM user_profiles WHERE kyc_status = 'pending'`).Scan(&out.PendingKyc)
 	out.PendingKyb = 0 // the platform's shared KYC (finance/kyc) has no business-entity tier — see adminext.KycCase
 	_ = s.db.QueryRow(ctx, `SELECT COUNT(*) FROM cf_data_requests WHERE status <> 'COMPLETED'`).Scan(&out.OpenDataRequests)
 	_ = s.db.QueryRow(ctx, `SELECT COUNT(*) FROM cf_audit_logs WHERE created_at >= date_trunc('day', NOW())`).Scan(&out.AuditEventsToday)

@@ -57,8 +57,17 @@ func (s *Service) GetProfile(ctx context.Context, userID string) (*Profile, erro
 	return p, nil
 }
 
-// Initiate moves the user to status=submitted for the requested tier.
-// Idempotent: submitting again while already in 'submitted' is a no-op.
+// Initiate moves the user to status=pending for the requested tier.
+// Idempotent: submitting again while already in 'pending' is a no-op.
+//
+// The status written here MUST be a value user_profiles_kyc_status_check
+// actually permits (unverified/pending/verified/failed/suspended — see
+// 20260613000000_kyc_fields.sql). It used to write 'submitted', which the
+// constraint rejects outright, so every real submission failed and
+// ListPending's `WHERE kyc_status = 'submitted'` could never match a row
+// even if it hadn't (backend/internal/handlers/admin_console_handler_test.go
+// already documents this exact mismatch for the older admin console, which
+// works around it by checking both values).
 func (s *Service) Initiate(ctx context.Context, userID string, req InitiateRequest) (*Profile, error) {
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
@@ -66,9 +75,20 @@ func (s *Service) Initiate(ctx context.Context, userID string, req InitiateReque
 	}
 	defer tx.Rollback(ctx)
 
+	// Captured for the audit row below — kyc_events.old_status/old_tier record
+	// what the profile was BEFORE this transition, and new_tier is NOT NULL even
+	// though Initiate itself never changes the tier (only Approve does).
+	var oldStatus string
+	var oldTier int
+	if err := tx.QueryRow(ctx,
+		`SELECT COALESCE(kyc_status,'unverified'), COALESCE(kyc_tier,0) FROM user_profiles WHERE id=$1 FOR UPDATE`,
+		userID).Scan(&oldStatus, &oldTier); err != nil {
+		return nil, fmt.Errorf("kyc: lookup user=%s: %w", userID, err)
+	}
+
 	const update = `
 		UPDATE user_profiles
-		SET kyc_status = 'submitted',
+		SET kyc_status = 'pending',
 		    kyc_submitted_at = NOW(),
 		    kyc_requested_tier = $2,
 		    document_type = COALESCE($3, document_type),
@@ -94,9 +114,9 @@ func (s *Service) Initiate(ctx context.Context, userID string, req InitiateReque
 	}
 
 	const audit = `
-		INSERT INTO kyc_events (user_id, event_type, new_tier)
-		VALUES ($1, 'initiated', $2)`
-	if _, err := tx.Exec(ctx, audit, userID, req.RequestedTier); err != nil {
+		INSERT INTO kyc_events (user_id, old_status, new_status, old_tier, new_tier, document_type)
+		VALUES ($1, $2, 'pending', $3, $3, $4)`
+	if _, err := tx.Exec(ctx, audit, userID, oldStatus, oldTier, req.DocumentType); err != nil {
 		return nil, fmt.Errorf("kyc: write audit event: %w", err)
 	}
 
@@ -114,6 +134,14 @@ func (s *Service) Approve(ctx context.Context, userID string, newTier int, actor
 	}
 	defer tx.Rollback(ctx)
 
+	var oldStatus string
+	var oldTier int
+	if err := tx.QueryRow(ctx,
+		`SELECT COALESCE(kyc_status,'unverified'), COALESCE(kyc_tier,0) FROM user_profiles WHERE id=$1 FOR UPDATE`,
+		userID).Scan(&oldStatus, &oldTier); err != nil {
+		return nil, fmt.Errorf("kyc: lookup user=%s: %w", userID, err)
+	}
+
 	const update = `
 		UPDATE user_profiles
 		SET kyc_tier = $2, kyc_status = 'verified', kyc_verified_at = NOW(), updated_at = NOW()
@@ -123,9 +151,9 @@ func (s *Service) Approve(ctx context.Context, userID string, newTier int, actor
 	}
 
 	const audit = `
-		INSERT INTO kyc_events (user_id, event_type, new_tier, actor_id)
-		VALUES ($1, 'verified', $2, $3)`
-	if _, err := tx.Exec(ctx, audit, userID, newTier, actorID); err != nil {
+		INSERT INTO kyc_events (user_id, old_status, new_status, old_tier, new_tier, actor_id)
+		VALUES ($1, $2, 'verified', $3, $4, $5)`
+	if _, err := tx.Exec(ctx, audit, userID, oldStatus, oldTier, newTier, actorID); err != nil {
 		return nil, fmt.Errorf("kyc: write audit event: %w", err)
 	}
 
@@ -145,14 +173,14 @@ func (s *Service) Approve(ctx context.Context, userID string, newTier int, actor
 	return s.GetProfile(ctx, userID)
 }
 
-// ListPending returns all profiles currently awaiting admin review (status=submitted).
+// ListPending returns all profiles currently awaiting admin review (status=pending).
 func (s *Service) ListPending(ctx context.Context, limit, offset int) ([]Profile, error) {
 	const q = `
 		SELECT id, COALESCE(kyc_tier, 0), COALESCE(kyc_status, 'none'),
 		       kyc_submitted_at, kyc_verified_at, COALESCE(phone_verified, false),
 		       document_type, kyc_requested_tier
 		FROM user_profiles
-		WHERE kyc_status = 'submitted'
+		WHERE kyc_status = 'pending'
 		ORDER BY kyc_submitted_at ASC
 		LIMIT $1 OFFSET $2`
 
@@ -179,15 +207,37 @@ func (s *Service) ListPending(ctx context.Context, limit, offset int) ([]Profile
 	return profiles, rows.Err()
 }
 
-// Fail marks a KYC attempt as failed.
+// Fail marks a KYC attempt as failed. Atomic with its audit row (the update and
+// audit insert used to be two unguarded statements — a crash between them left
+// a status change with no audit trail).
 func (s *Service) Fail(ctx context.Context, userID string, actorID *string) error {
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("kyc: begin tx: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	var oldStatus string
+	var oldTier int
+	if err := tx.QueryRow(ctx,
+		`SELECT COALESCE(kyc_status,'unverified'), COALESCE(kyc_tier,0) FROM user_profiles WHERE id=$1 FOR UPDATE`,
+		userID).Scan(&oldStatus, &oldTier); err != nil {
+		return fmt.Errorf("kyc: lookup user=%s: %w", userID, err)
+	}
+
 	const update = `UPDATE user_profiles SET kyc_status='failed', updated_at=NOW() WHERE id=$1`
-	if _, err := s.db.Exec(ctx, update, userID); err != nil {
+	if _, err := tx.Exec(ctx, update, userID); err != nil {
 		return fmt.Errorf("kyc: fail user=%s: %w", userID, err)
 	}
-	const audit = `INSERT INTO kyc_events (user_id, event_type, actor_id) VALUES ($1, 'failed', $2)`
-	_, err := s.db.Exec(ctx, audit, userID, actorID)
-	return err
+
+	const audit = `
+		INSERT INTO kyc_events (user_id, old_status, new_status, old_tier, new_tier, actor_id)
+		VALUES ($1, $2, 'failed', $3, $3, $4)`
+	if _, err := tx.Exec(ctx, audit, userID, oldStatus, oldTier, actorID); err != nil {
+		return fmt.Errorf("kyc: write audit event: %w", err)
+	}
+
+	return tx.Commit(ctx)
 }
 
 // hashIfPresent returns a deterministic argon2id hash of the value if non-nil.
