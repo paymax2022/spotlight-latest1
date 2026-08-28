@@ -275,3 +275,35 @@ export async function saveContestantFromEviction(
   if (!result.success) throw new Error(result.message || 'Save was refused.');
   return result;
 }
+
+/**
+ * Extend a pending eviction's grace period — POST
+ * /api/connect/admin/contests/:id/extend-grace-period (ExtendGracePeriod,
+ * guard connect.contests.manage — an admin action, not judge-only). Each
+ * call ADDS additionalHours to the CURRENT grace_period_ends_at, it doesn't
+ * reset it, so calling twice compounds.
+ *
+ * The Go response never actually carries the new end time (eviction_repo.go
+ * scans new_grace_period_ends_at from the RPC and then drops it — SaveResponse
+ * has no field for it), so the caller should reload the evictions list after
+ * this succeeds rather than trust anything from this call's own payload.
+ */
+export async function extendGracePeriod(
+  contestId: string,
+  evictionId: string,
+  additionalHours = 24,
+): Promise<{ success: boolean; message: string }> {
+  const res = await fetch(`${apiRoot()}/api/connect/admin/contests/${contestId}/extend-grace-period`, {
+    method: 'POST',
+    headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+    body: JSON.stringify({ eviction_id: evictionId, additional_hours: additionalHours }),
+  });
+  const payload = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    if (res.status === 404) throw new Error('Stage eviction is not enabled on this backend (FEATURE_CONTEST_STAGE_EVICTION_ENABLED is off).');
+    throw new Error(payload?.error || `Failed to extend grace period: ${res.status}`);
+  }
+  const result = { success: Boolean(payload?.success), message: String(payload?.message ?? '') };
+  if (!result.success) throw new Error(result.message || 'Extend was refused.');
+  return result;
+}

@@ -11,7 +11,7 @@ import {
   type FullContest, type ContestCategory, type ContestType, type RegionScope, type ContestPublishStatus,
   type AdminContest, type ContestStage, type AdvanceStageResult,
 } from '@/services/contestsAdminService';
-import { triggerStageEviction, finalizeStageEvictions, getContestEvictions, saveContestantFromEviction } from '@/services/competitionsService';
+import { triggerStageEviction, finalizeStageEvictions, getContestEvictions, saveContestantFromEviction, extendGracePeriod } from '@/services/competitionsService';
 import type { StageEvictionInfo } from '@/types/competitions';
 
 // Real contest create/edit — POST/PATCH /api/admin/contests[/[slug]], the
@@ -135,6 +135,7 @@ function CreateCompetitionContent() {
   const [stageEvictions, setStageEvictions] = useState<StageEvictionInfo[]>([]);
   const [evictionsLoading, setEvictionsLoading] = useState(false);
   const [savingEvictionId, setSavingEvictionId] = useState<string | null>(null);
+  const [extendingEvictionId, setExtendingEvictionId] = useState<string | null>(null);
 
   const loadRecent = useCallback(async () => {
     setRecentLoading(true);
@@ -288,6 +289,20 @@ function CreateCompetitionContent() {
       setStagesError(e instanceof Error ? e.message : 'Failed to save contestant');
     } finally {
       setSavingEvictionId(null);
+    }
+  }, [contestId, loadEvictions]);
+
+  const runExtend = useCallback(async (evictionId: string) => {
+    if (!contestId) { setStagesError('Contest id not loaded yet — reload the page.'); return; }
+    setExtendingEvictionId(evictionId);
+    setStagesError(null);
+    try {
+      await extendGracePeriod(contestId, evictionId, 24);
+      await loadEvictions();
+    } catch (e) {
+      setStagesError(e instanceof Error ? e.message : 'Failed to extend grace period');
+    } finally {
+      setExtendingEvictionId(null);
     }
   }, [contestId, loadEvictions]);
 
@@ -590,13 +605,14 @@ function CreateCompetitionContent() {
                                   <div style={{ fontSize: 12, color: colors.text }}>
                                     {pending.length > 0 && (
                                       <>
-                                        <strong>{pending.length} contestant(s) pending eviction</strong> — grace period until{' '}
-                                        {fmtRecentDate(pending[0]?.grace_period_ends_at)}. A judge can save one contestant per stage until then;
-                                        click <em>Finalize</em> once the grace period has passed to make the rest permanent.
+                                        <strong>{pending.length} contestant(s) pending eviction</strong>. A judge can save one
+                                        contestant per stage before its grace period ends; click <em>Finalize</em> once a grace
+                                        period has passed to make that eviction permanent.
                                         <ul style={{ margin: '6px 0 0', paddingLeft: 18 }}>
                                           {pending.map((r) => (
                                             <li key={r.id} style={{ marginBottom: 4 }}>
-                                              {r.contestant_name || r.contestant_id} — {r.vote_count} votes (rank #{r.eviction_rank}){' '}
+                                              {r.contestant_name || r.contestant_id} — {r.vote_count} votes (rank #{r.eviction_rank}) —
+                                              grace period until {fmtRecentDate(r.grace_period_ends_at)}{' '}
                                               <Button
                                                 sm
                                                 variant="outline"
@@ -605,6 +621,15 @@ function CreateCompetitionContent() {
                                                 style={{ marginLeft: 8 }}
                                               >
                                                 {savingEvictionId === r.id ? 'Saving…' : 'Save'}
+                                              </Button>
+                                              <Button
+                                                sm
+                                                variant="outline"
+                                                disabled={extendingEvictionId === r.id}
+                                                onClick={() => void runExtend(r.id)}
+                                                style={{ marginLeft: 6 }}
+                                              >
+                                                {extendingEvictionId === r.id ? 'Extending…' : 'Extend +24h'}
                                               </Button>
                                             </li>
                                           ))}
