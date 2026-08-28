@@ -9,16 +9,17 @@ import {
   listSubmissions,
 } from '@/src/server/openmic/persistence';
 
-export async function GET(request: Request, context: { params: { id: string } }) {
+export async function GET(request: Request, context: { params: Promise<{ id: string }> }) {
+  const params = await context.params;
   try {
     await assertOpenMicReadAdmin(request);
     const [contest, applications, downloads, submissions, payments, fraudAlerts] = await Promise.all([
-      getContestById(context.params.id),
-      listApplications({ contestId: context.params.id }),
-      listBeatDownloads(context.params.id),
-      listSubmissions({ contestId: context.params.id }),
-      listPaymentEvents(context.params.id),
-      listFraudAlerts(context.params.id),
+      getContestById(params.id),
+      listApplications({ contestId: params.id }),
+      listBeatDownloads(params.id),
+      listSubmissions({ contestId: params.id }),
+      listPaymentEvents(params.id),
+      listFraudAlerts(params.id),
     ]);
     const totalVotes = submissions.reduce((sum, row) => sum + row.voteCount, 0);
     const approvedSongs = submissions.filter((row) =>

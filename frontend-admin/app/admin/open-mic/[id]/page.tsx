@@ -73,9 +73,18 @@ export default function OpenMicContestAdminPage() {
   const [contestError, setContestError] = useState<string | null>(null);
   const [tab, setTab] = useState<Tab>('Applications');
 
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [rows, setRows] = useState<unknown>(null);
+  // Which tab `rows` actually holds data for. Switching tabs re-renders
+  // immediately with the NEW tab but the OLD rows/loading (loadTab only runs
+  // after that render commits, via the effect below) — every branch below
+  // reads `rows` unconditionally once its tab is active, so without this a
+  // tab switch could render e.g. the Finalists branch (`rows.finalists.map`)
+  // against Submissions' leftover array rows and crash. Gating on
+  // `loadedTab === tab` instead of `!loading` means a tab only ever renders
+  // against rows fetched for that same tab.
+  const [loadedTab, setLoadedTab] = useState<Tab | null>(null);
 
   useEffect(() => {
     if (!contestId) return;
@@ -100,6 +109,7 @@ export default function OpenMicContestAdminPage() {
         case 'Finale': setRows(await getOpenMicFinalePlaylist(contestId)); break;
         case 'Reports': setRows(await getOpenMicReportMetrics(contestId)); break;
       }
+      setLoadedTab(tab);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -132,7 +142,7 @@ export default function OpenMicContestAdminPage() {
           </div>
         )}
 
-        {!loading && !error && tab === 'Applications' && (
+        {!loading && !error && loadedTab === 'Applications' && (
           <Table
             columns={['Artist', 'Email', 'Phone', 'Application', 'Payment', 'Beat Download']}
             rows={(rows as Awaited<ReturnType<typeof listOpenMicApplications>>).map((a) => [
@@ -142,7 +152,7 @@ export default function OpenMicContestAdminPage() {
           />
         )}
 
-        {!loading && !error && tab === 'Submissions' && (
+        {!loading && !error && loadedTab === 'Submissions' && (
           <Table
             columns={['Artist', 'Song', 'Status', 'Votes', 'Finalist', 'Winner']}
             rows={(rows as Awaited<ReturnType<typeof listOpenMicSubmissions>>).map((s) => [
@@ -153,7 +163,7 @@ export default function OpenMicContestAdminPage() {
           />
         )}
 
-        {!loading && !error && tab === 'Finalists' && (
+        {!loading && !error && loadedTab === 'Finalists' && (
           <Table
             columns={['Rank', 'Artist', 'Song', 'Votes']}
             rows={(rows as Awaited<ReturnType<typeof listOpenMicFinalists>>).finalists.map((f, i) => [
@@ -162,7 +172,7 @@ export default function OpenMicContestAdminPage() {
           />
         )}
 
-        {!loading && !error && tab === 'Winners' && (
+        {!loading && !error && loadedTab === 'Winners' && (
           <Table
             columns={['Winner', 'Song', 'Votes', 'Prize']}
             rows={(rows as Awaited<ReturnType<typeof listOpenMicSubmissions>>).map((w) => [
@@ -171,7 +181,7 @@ export default function OpenMicContestAdminPage() {
           />
         )}
 
-        {!loading && !error && tab === 'Payments' && (
+        {!loading && !error && loadedTab === 'Payments' && (
           <Table
             columns={['Type', 'Amount', 'Status', 'Reference', 'When']}
             rows={(rows as Awaited<ReturnType<typeof listOpenMicPayments>>).map((p) => [
@@ -181,7 +191,7 @@ export default function OpenMicContestAdminPage() {
           />
         )}
 
-        {!loading && !error && tab === 'Fraud Alerts' && (
+        {!loading && !error && loadedTab === 'Fraud Alerts' && (
           <Table
             columns={['Severity', 'Reason', 'Votes in event', 'Status', 'When']}
             rows={(rows as Awaited<ReturnType<typeof listOpenMicFraudAlerts>>).map((a) => [
@@ -191,7 +201,7 @@ export default function OpenMicContestAdminPage() {
           />
         )}
 
-        {!loading && !error && tab === 'Beat Downloads' && (
+        {!loading && !error && loadedTab === 'Beat Downloads' && (
           <Table
             columns={['Artist', 'Email', 'Terms', 'Paid Access', 'Downloaded At']}
             rows={(rows as Awaited<ReturnType<typeof listOpenMicBeatDownloads>>).map((d) => [
@@ -202,7 +212,7 @@ export default function OpenMicContestAdminPage() {
           />
         )}
 
-        {!loading && !error && tab === 'Votes' && (() => {
+        {!loading && !error && loadedTab === 'Votes' && (() => {
           const v = rows as Awaited<ReturnType<typeof getOpenMicVotingAnalytics>>;
           return (
             <>
@@ -219,7 +229,7 @@ export default function OpenMicContestAdminPage() {
           );
         })()}
 
-        {!loading && !error && tab === 'Notifications' && (
+        {!loading && !error && loadedTab === 'Notifications' && (
           <Table
             columns={['Audience', 'Channel', 'Sent', 'When']}
             rows={(rows as Awaited<ReturnType<typeof listOpenMicNotifications>>).map((n) => [
@@ -229,7 +239,7 @@ export default function OpenMicContestAdminPage() {
           />
         )}
 
-        {!loading && !error && tab === 'Finale' && (
+        {!loading && !error && loadedTab === 'Finale' && (
           <>
             {contest && (
               <div style={{ marginBottom: 16, fontSize: 13, color: colors.muted }}>
@@ -247,7 +257,7 @@ export default function OpenMicContestAdminPage() {
           </>
         )}
 
-        {!loading && !error && tab === 'Reports' && (() => {
+        {!loading && !error && loadedTab === 'Reports' && (() => {
           const m = rows as Awaited<ReturnType<typeof getOpenMicReportMetrics>>;
           return (
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12 }}>

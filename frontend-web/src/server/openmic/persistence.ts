@@ -38,14 +38,11 @@ import {
   listFraudAlerts as listFraudAlertsMemory,
   listNotifications as listNotificationsMemory,
   listPaymentEvents as listPaymentEventsMemory,
-  markNotificationSent as markNotificationSentMemory,
-  resolveFraudAlert as resolveFraudAlertMemory,
   listSubmissions as listSubmissionsMemory,
   logBeatDownload as logBeatDownloadMemory,
   reviewApplication as reviewApplicationMemory,
   reviewSubmission as reviewSubmissionMemory,
   saveFinalePlaylist as saveFinalePlaylistMemory,
-  updatePaymentEventStatus as updatePaymentEventStatusMemory,
   setFinalePlaylistLocked as setFinalePlaylistLockedMemory,
   updateFinalePlaybackItem as updateFinalePlaybackItemMemory,
   updateContest as updateContestMemory,
@@ -121,8 +118,6 @@ async function resolveApplicantUserId(
   if (!createdId) throw new Error('Failed to resolve applicant user id.');
   return createdId;
 }
-
-const OPEN_MIC_AUDIT_ADMIN_ID = '00000000-0000-0000-0000-000000000001';
 
 function mapContestRow(row: any): OpenMicContest {
   const assets = (row.sponsor_assets || {}) as Record<string, any>;
@@ -242,27 +237,6 @@ function mapContestRow(row: any): OpenMicContest {
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
-}
-
-async function insertOpenMicAuditEvent(input: {
-  action: string;
-  targetType: string;
-  targetId?: string;
-  metadata?: Record<string, unknown>;
-}) {
-  if (!shouldUseDb()) return;
-  try {
-    const supabase = createAdminClient();
-    await supabase.from('admin_audit_logs').insert({
-      admin_user_id: OPEN_MIC_AUDIT_ADMIN_ID,
-      action: input.action,
-      target_type: input.targetType,
-      target_id: input.targetId || null,
-      metadata: input.metadata || {},
-    });
-  } catch {
-    return;
-  }
 }
 
 function mapSubmissionRow(row: any): OpenMicSubmission {
@@ -389,201 +363,232 @@ export async function listContests(input?: { includeNonPublic?: boolean; month?:
   }
 }
 
+function mapPaymentEventRow(row: any): OpenMicPaymentEvent {
+  return {
+    id: row.id,
+    contestId: row.contest_id,
+    applicationId: row.application_id || undefined,
+    submissionId: row.submission_id || undefined,
+    eventType: row.event_type as OpenMicPaymentEvent['eventType'],
+    amountNgn: Number(row.amount_ngn || 0),
+    paymentStatus: row.payment_status as OpenMicPaymentEvent['paymentStatus'],
+    paymentReference: row.payment_reference || undefined,
+    provider: row.provider || undefined,
+    metadata: row.metadata || {},
+    createdAt: row.created_at,
+  };
+}
+
 export async function listPaymentEvents(contestId?: string): Promise<OpenMicPaymentEvent[]> {
   if (!shouldUseDb()) return [];
   try {
     const supabase = createAdminClient();
-    let query = supabase
-      .from('admin_audit_logs')
-      .select('*')
-      .eq('target_type', 'open_mic_payment_event')
-      .order('created_at', { ascending: false });
-    if (contestId) query = query.eq('metadata->>contestId', contestId);
+    let query = supabase.from('open_mic_payment_events').select('*').order('created_at', { ascending: false });
+    if (contestId) query = query.eq('contest_id', contestId);
     const { data, error } = await query;
     if (error) throw error;
-    const base = safeArray<any>(data).map((row) => {
-      const m = (row.metadata || {}) as Record<string, any>;
-      return {
-        id: row.target_id || row.id,
-        contestId: String(m.contestId || ''),
-        applicationId: m.applicationId || undefined,
-        submissionId: m.submissionId || undefined,
-        eventType: String(m.eventType || 'entry_fee') as OpenMicPaymentEvent['eventType'],
-        amountNgn: Number(m.amountNgn || 0),
-        paymentStatus: String(m.paymentStatus || 'pending') as OpenMicPaymentEvent['paymentStatus'],
-        paymentReference: m.paymentReference || undefined,
-        provider: m.provider || undefined,
-        metadata: m.metadata || {},
-        createdAt: row.created_at,
-      };
-    });
-    const { data: actions } = await supabase
-      .from('admin_audit_logs')
-      .select('*')
-      .eq('target_type', 'open_mic_payment_event_action')
-      .order('created_at', { ascending: false });
-    const actionMap = new Map<string, OpenMicPaymentEvent['paymentStatus']>();
-    for (const row of safeArray<any>(actions)) {
-      const m = (row.metadata || {}) as Record<string, any>;
-      const id = String(m.paymentEventId || '');
-      if (!id || actionMap.has(id)) continue;
-      actionMap.set(id, String(m.paymentStatus || 'pending') as OpenMicPaymentEvent['paymentStatus']);
-    }
-    return base.map((row) => (actionMap.has(row.id) ? { ...row, paymentStatus: actionMap.get(row.id)! } : row));
+    return safeArray<any>(data).map(mapPaymentEventRow);
   } catch (error) {
     if (!shouldFallback(error)) throw error;
     return listPaymentEventsMemory(contestId);
   }
 }
 
+function mapNotificationRow(row: any): OpenMicNotification {
+  return {
+    id: row.id,
+    contestId: row.contest_id || undefined,
+    applicationId: row.application_id || undefined,
+    submissionId: row.submission_id || undefined,
+    audience: row.audience as OpenMicNotification['audience'],
+    channel: row.channel as OpenMicNotification['channel'],
+    eventKey: row.event_key || '',
+    title: row.title || '',
+    message: row.message || '',
+    status: row.status as OpenMicNotification['status'],
+    sentAt: row.sent_at || undefined,
+    createdAt: row.created_at,
+  };
+}
+
 export async function listNotifications(contestId?: string): Promise<OpenMicNotification[]> {
   if (!shouldUseDb()) return [];
   try {
     const supabase = createAdminClient();
-    let query = supabase
-      .from('admin_audit_logs')
-      .select('*')
-      .eq('target_type', 'open_mic_notification')
-      .order('created_at', { ascending: false });
-    if (contestId) query = query.eq('metadata->>contestId', contestId);
+    let query = supabase.from('open_mic_notifications').select('*').order('created_at', { ascending: false });
+    if (contestId) query = query.eq('contest_id', contestId);
     const { data, error } = await query;
     if (error) throw error;
-    const base = safeArray<any>(data).map((row) => {
-      const m = (row.metadata || {}) as Record<string, any>;
-      return {
-        id: row.target_id || row.id,
-        contestId: m.contestId || undefined,
-        applicationId: m.applicationId || undefined,
-        submissionId: m.submissionId || undefined,
-        audience: String(m.audience || 'artist') as OpenMicNotification['audience'],
-        channel: String(m.channel || 'in_app') as OpenMicNotification['channel'],
-        eventKey: String(m.eventKey || ''),
-        title: String(m.title || ''),
-        message: String(m.message || ''),
-        status: String(m.status || 'queued') as OpenMicNotification['status'],
-        sentAt: m.sentAt || undefined,
-        createdAt: row.created_at,
-      };
-    });
-    const { data: actions } = await supabase
-      .from('admin_audit_logs')
-      .select('*')
-      .eq('target_type', 'open_mic_notification_action')
-      .order('created_at', { ascending: false });
-    const actionMap = new Map<string, { status: OpenMicNotification['status']; sentAt?: string }>();
-    for (const row of safeArray<any>(actions)) {
-      const m = (row.metadata || {}) as Record<string, any>;
-      const id = String(m.notificationId || '');
-      if (!id || actionMap.has(id)) continue;
-      actionMap.set(id, {
-        status: String(m.status || 'sent') as OpenMicNotification['status'],
-        sentAt: row.created_at,
-      });
-    }
-    return base.map((row) => (actionMap.has(row.id) ? { ...row, ...actionMap.get(row.id)! } : row));
+    return safeArray<any>(data).map(mapNotificationRow);
   } catch (error) {
     if (!shouldFallback(error)) throw error;
     return listNotificationsMemory(contestId);
   }
 }
 
+function mapFraudAlertRow(row: any): OpenMicFraudAlert {
+  return {
+    id: row.id,
+    contestId: row.contest_id,
+    submissionId: row.submission_id,
+    severity: row.severity as OpenMicFraudAlert['severity'],
+    reason: row.reason || '',
+    votesInEvent: Number(row.votes_in_event || 0),
+    status: row.status as OpenMicFraudAlert['status'],
+    resolvedAt: row.resolved_at || undefined,
+    resolutionNote: row.resolution_note || undefined,
+    createdAt: row.created_at,
+  };
+}
+
 export async function listFraudAlerts(contestId?: string): Promise<OpenMicFraudAlert[]> {
   if (!shouldUseDb()) return [];
   try {
     const supabase = createAdminClient();
-    let query = supabase
-      .from('admin_audit_logs')
-      .select('*')
-      .eq('target_type', 'open_mic_fraud_alert')
-      .order('created_at', { ascending: false });
-    if (contestId) query = query.eq('metadata->>contestId', contestId);
+    let query = supabase.from('open_mic_fraud_alerts').select('*').order('created_at', { ascending: false });
+    if (contestId) query = query.eq('contest_id', contestId);
     const { data, error } = await query;
     if (error) throw error;
-    const base = safeArray<any>(data).map((row) => {
-      const m = (row.metadata || {}) as Record<string, any>;
-      return {
-        id: row.target_id || row.id,
-        contestId: String(m.contestId || ''),
-        submissionId: String(m.submissionId || ''),
-        severity: String(m.severity || 'medium') as OpenMicFraudAlert['severity'],
-        reason: String(m.reason || ''),
-        votesInEvent: Number(m.votesInEvent || 0),
-        status: String(m.status || 'open') as OpenMicFraudAlert['status'],
-        resolvedAt: m.resolvedAt || undefined,
-        resolutionNote: m.resolutionNote || undefined,
-        createdAt: row.created_at,
-      };
-    });
-    const { data: actions } = await supabase
-      .from('admin_audit_logs')
-      .select('*')
-      .eq('target_type', 'open_mic_fraud_alert_action')
-      .order('created_at', { ascending: false });
-    const actionMap = new Map<string, { status: OpenMicFraudAlert['status']; resolvedAt?: string; resolutionNote?: string }>();
-    for (const row of safeArray<any>(actions)) {
-      const m = (row.metadata || {}) as Record<string, any>;
-      const id = String(m.alertId || '');
-      if (!id || actionMap.has(id)) continue;
-      actionMap.set(id, {
-        status: String(m.status || 'resolved') as OpenMicFraudAlert['status'],
-        resolvedAt: row.created_at,
-        resolutionNote: m.resolutionNote || undefined,
-      });
-    }
-    return base.map((row) => (actionMap.has(row.id) ? { ...row, ...actionMap.get(row.id)! } : row));
+    return safeArray<any>(data).map(mapFraudAlertRow);
   } catch (error) {
     if (!shouldFallback(error)) throw error;
     return listFraudAlertsMemory(contestId);
   }
 }
 
-export async function bulkMarkNotificationsSent(contestId: string, notificationIds: string[]) {
-  const updated = notificationIds.map((id) => markNotificationSentMemory(id));
-  await Promise.all(
-    updated.map((row) =>
-      insertOpenMicAuditEvent({
-        action: 'open_mic_notification_marked_sent',
-        targetType: 'open_mic_notification_action',
-        targetId: row.id,
-        metadata: { contestId, notificationId: row.id, status: 'sent' },
-      })
-    )
-  );
-  return updated;
+/**
+ * Record a payment event (entry fee, vote payment, refund). Nothing in this
+ * codebase calls this yet — the real Open Mic entry-fee/vote-payment flow
+ * does not post here — but the table and mapping are real and tested, ready
+ * for that wiring rather than another silently-broken placeholder.
+ */
+export async function createPaymentEvent(input: {
+  contestId: string;
+  applicationId?: string;
+  submissionId?: string;
+  eventType: OpenMicPaymentEvent['eventType'];
+  amountNgn: number;
+  paymentStatus?: OpenMicPaymentEvent['paymentStatus'];
+  paymentReference?: string;
+  provider?: string;
+  metadata?: Record<string, unknown>;
+}): Promise<OpenMicPaymentEvent> {
+  const supabase = createAdminClient();
+  const { data, error } = await supabase
+    .from('open_mic_payment_events')
+    .insert({
+      contest_id: input.contestId,
+      application_id: input.applicationId || null,
+      submission_id: input.submissionId || null,
+      event_type: input.eventType,
+      amount_ngn: Math.max(0, Math.round(input.amountNgn)),
+      payment_status: input.paymentStatus || 'pending',
+      payment_reference: input.paymentReference || null,
+      provider: input.provider || null,
+      metadata: input.metadata || {},
+    })
+    .select('*')
+    .single();
+  if (error) throw error;
+  return mapPaymentEventRow(data);
 }
 
-export async function bulkResolveFraudAlerts(contestId: string, alertIds: string[], resolutionNote?: string) {
-  const updated = alertIds.map((id) => resolveFraudAlertMemory(id, resolutionNote));
-  await Promise.all(
-    updated.map((row) =>
-      insertOpenMicAuditEvent({
-        action: 'open_mic_fraud_alert_resolved',
-        targetType: 'open_mic_fraud_alert_action',
-        targetId: row.id,
-        metadata: { contestId, alertId: row.id, status: 'resolved', resolutionNote: resolutionNote || '' },
-      })
-    )
-  );
-  return updated;
+/** Record a notification. Nothing in this codebase calls this yet — see createPaymentEvent. */
+export async function createNotification(input: {
+  contestId?: string;
+  applicationId?: string;
+  submissionId?: string;
+  audience: OpenMicNotification['audience'];
+  channel: OpenMicNotification['channel'];
+  eventKey: string;
+  title: string;
+  message: string;
+}): Promise<OpenMicNotification> {
+  const supabase = createAdminClient();
+  const { data, error } = await supabase
+    .from('open_mic_notifications')
+    .insert({
+      contest_id: input.contestId || null,
+      application_id: input.applicationId || null,
+      submission_id: input.submissionId || null,
+      audience: input.audience,
+      channel: input.channel,
+      event_key: input.eventKey,
+      title: input.title,
+      message: input.message,
+    })
+    .select('*')
+    .single();
+  if (error) throw error;
+  return mapNotificationRow(data);
+}
+
+/** Record a fraud alert. Nothing in this codebase calls this yet — see createPaymentEvent. */
+export async function createFraudAlert(input: {
+  contestId: string;
+  submissionId: string;
+  severity: OpenMicFraudAlert['severity'];
+  reason: string;
+  votesInEvent: number;
+}): Promise<OpenMicFraudAlert> {
+  const supabase = createAdminClient();
+  const { data, error } = await supabase
+    .from('open_mic_fraud_alerts')
+    .insert({
+      contest_id: input.contestId,
+      submission_id: input.submissionId,
+      severity: input.severity,
+      reason: input.reason,
+      votes_in_event: input.votesInEvent,
+    })
+    .select('*')
+    .single();
+  if (error) throw error;
+  return mapFraudAlertRow(data);
+}
+
+export async function bulkMarkNotificationsSent(contestId: string, notificationIds: string[]): Promise<OpenMicNotification[]> {
+  const supabase = createAdminClient();
+  const { data, error } = await supabase
+    .from('open_mic_notifications')
+    .update({ status: 'sent', sent_at: new Date().toISOString() })
+    .eq('contest_id', contestId)
+    .in('id', notificationIds)
+    .select('*');
+  if (error) throw error;
+  return safeArray<any>(data).map(mapNotificationRow);
+}
+
+export async function bulkResolveFraudAlerts(
+  contestId: string,
+  alertIds: string[],
+  resolutionNote?: string
+): Promise<OpenMicFraudAlert[]> {
+  const supabase = createAdminClient();
+  const { data, error } = await supabase
+    .from('open_mic_fraud_alerts')
+    .update({ status: 'resolved', resolved_at: new Date().toISOString(), resolution_note: resolutionNote || null })
+    .eq('contest_id', contestId)
+    .in('id', alertIds)
+    .select('*');
+  if (error) throw error;
+  return safeArray<any>(data).map(mapFraudAlertRow);
 }
 
 export async function bulkUpdatePaymentEventStatus(
   contestId: string,
   paymentEventIds: string[],
   nextStatus: OpenMicPaymentEvent['paymentStatus']
-) {
-  const updated = paymentEventIds.map((id) => updatePaymentEventStatusMemory(id, nextStatus));
-  await Promise.all(
-    updated.map((row) =>
-      insertOpenMicAuditEvent({
-        action: 'open_mic_payment_event_status_updated',
-        targetType: 'open_mic_payment_event_action',
-        targetId: row.id,
-        metadata: { contestId, paymentEventId: row.id, paymentStatus: nextStatus },
-      })
-    )
-  );
-  return updated;
+): Promise<OpenMicPaymentEvent[]> {
+  const supabase = createAdminClient();
+  const { data, error } = await supabase
+    .from('open_mic_payment_events')
+    .update({ payment_status: nextStatus, updated_at: new Date().toISOString() })
+    .eq('contest_id', contestId)
+    .in('id', paymentEventIds)
+    .select('*');
+  if (error) throw error;
+  return safeArray<any>(data).map(mapPaymentEventRow);
 }
 
 export async function getContestBySlug(slug: string) {
@@ -1059,20 +1064,14 @@ export async function createApplication(input: Parameters<typeof createApplicati
 
     const { error } = await supabase.from('competition_enrollments').insert(insertPayload);
     if (error) throw error;
-    await insertOpenMicAuditEvent({
-      action: 'open_mic_application_received',
-      targetType: 'open_mic_notification',
-      targetId: app.id,
-      metadata: {
-        contestId: app.contestId,
-        applicationId: app.id,
-        audience: 'artist',
-        channel: 'in_app',
-        eventKey: 'application_received',
-        title: 'Application Received',
-        message: `Your application for ${app.contestSlug} has been received.`,
-        status: 'queued',
-      },
+    await createNotification({
+      contestId: app.contestId,
+      applicationId: app.id,
+      audience: 'artist',
+      channel: 'in_app',
+      eventKey: 'application_received',
+      title: 'Application Received',
+      message: `Your application for ${app.contestSlug} has been received.`,
     });
     return { success: true as const, application: app };
   } catch (error) {
@@ -1193,51 +1192,34 @@ export async function reviewApplication(
       .eq('id', applicationId);
     if (error) throw error;
     if (updated.applicationStatus === 'approved') {
-      await insertOpenMicAuditEvent({
-        action: 'open_mic_application_approved',
-        targetType: 'open_mic_notification',
-        targetId: updated.id,
-        metadata: {
-          contestId: updated.contestId,
-          applicationId: updated.id,
-          audience: 'artist',
-          channel: 'in_app',
-          eventKey: 'application_approved',
-          title: 'Application Approved',
-          message: `Hi ${updated.stageName}, your application has been approved.`,
-          status: 'queued',
-        },
+      await createNotification({
+        contestId: updated.contestId,
+        applicationId: updated.id,
+        audience: 'artist',
+        channel: 'in_app',
+        eventKey: 'application_approved',
+        title: 'Application Approved',
+        message: `Hi ${updated.stageName}, your application has been approved.`,
       });
     }
     if (updated.applicationStatus === 'rejected') {
-      await insertOpenMicAuditEvent({
-        action: 'open_mic_application_rejected',
-        targetType: 'open_mic_notification',
-        targetId: updated.id,
-        metadata: {
-          contestId: updated.contestId,
-          applicationId: updated.id,
-          audience: 'artist',
-          channel: 'in_app',
-          eventKey: 'application_rejected',
-          title: 'Application Rejected',
-          message: updated.rejectionReason || 'Your application was not approved.',
-          status: 'queued',
-        },
+      await createNotification({
+        contestId: updated.contestId,
+        applicationId: updated.id,
+        audience: 'artist',
+        channel: 'in_app',
+        eventKey: 'application_rejected',
+        title: 'Application Rejected',
+        message: updated.rejectionReason || 'Your application was not approved.',
       });
     }
     if (['paid', 'waived'].includes(updated.paymentStatus)) {
-      await insertOpenMicAuditEvent({
-        action: 'open_mic_entry_fee_event',
-        targetType: 'open_mic_payment_event',
-        targetId: updated.id,
-        metadata: {
-          contestId: updated.contestId,
-          applicationId: updated.id,
-          eventType: 'entry_fee',
-          amountNgn: updated.paymentStatus === 'paid' ? (await getContestById(updated.contestId))?.registrationFeeNgn || 0 : 0,
-          paymentStatus: updated.paymentStatus === 'paid' ? 'successful' : 'waived',
-        },
+      await createPaymentEvent({
+        contestId: updated.contestId,
+        applicationId: updated.id,
+        eventType: 'entry_fee',
+        amountNgn: updated.paymentStatus === 'paid' ? (await getContestById(updated.contestId))?.registrationFeeNgn || 0 : 0,
+        paymentStatus: updated.paymentStatus === 'paid' ? 'successful' : 'waived',
       });
     }
     return updated;
@@ -1602,37 +1584,26 @@ export async function castVote(input: OpenMicVoteInput) {
     const updated = { voteCount: newVoteCount, leaderboardScore: newScore };
     if (input.source === 'paid') {
       const contest = await getContestById(input.contestId);
-      await insertOpenMicAuditEvent({
-        action: 'open_mic_vote_payment_event',
-        targetType: 'open_mic_payment_event',
-        targetId: input.submissionId,
-        metadata: {
-          contestId: input.contestId,
-          submissionId: input.submissionId,
-          eventType: 'vote_payment',
-          amountNgn: (contest?.votingConfig.votePrice || 0) * input.votes,
-          paymentStatus: 'successful',
-          paymentReference: input.paymentReference || '',
-          metadata: { votes: input.votes, source: input.source },
-        },
+      await createPaymentEvent({
+        contestId: input.contestId,
+        submissionId: input.submissionId,
+        eventType: 'vote_payment',
+        amountNgn: (contest?.votingConfig.votePrice || 0) * input.votes,
+        paymentStatus: 'successful',
+        paymentReference: input.paymentReference || undefined,
+        metadata: { votes: input.votes, source: input.source },
       });
     }
     const contest = await getContestById(input.contestId);
     const suspiciousThreshold = contest?.votingConfig.suspiciousVoteThreshold ?? 100;
     const suspiciousHighThreshold = contest?.votingConfig.suspiciousVoteHighThreshold ?? 300;
     if (input.votes >= suspiciousThreshold) {
-      await insertOpenMicAuditEvent({
-        action: 'open_mic_voting_spike_alert',
-        targetType: 'open_mic_fraud_alert',
-        targetId: input.submissionId,
-        metadata: {
-          contestId: input.contestId,
-          submissionId: input.submissionId,
-          severity: input.votes >= suspiciousHighThreshold ? 'high' : 'medium',
-          reason: 'Large vote quantity in single transaction',
-          votesInEvent: input.votes,
-          status: 'open',
-        },
+      await createFraudAlert({
+        contestId: input.contestId,
+        submissionId: input.submissionId,
+        severity: input.votes >= suspiciousHighThreshold ? 'high' : 'medium',
+        reason: 'Large vote quantity in single transaction',
+        votesInEvent: input.votes,
       });
     }
 
