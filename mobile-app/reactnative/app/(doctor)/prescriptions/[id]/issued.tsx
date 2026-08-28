@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { View, Text, ScrollView, StyleSheet, Pressable, Platform, Modal } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import { Share2, History, XCircle, Pill, ChevronRight, X, Check } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Radius } from '@/constants/radius';
@@ -86,7 +87,7 @@ export default function IssuedPrescriptionScreen() {
       await cancel.mutateAsync({ prescriptionId, reason });
       setCancelOpen(false);
       await alertAsync({ title: 'Cancelled', message: 'The prescription has been cancelled.' });
-      router.back();
+      goBack('/prescriptions');
     } catch {
       alertAsync({ title: 'Failed', message: 'Could not cancel the prescription. Please try again.' });
     }

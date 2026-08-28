@@ -2,6 +2,7 @@ import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import { ShieldAlert, Check } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
@@ -53,7 +54,7 @@ export default function KycGap() {
 
       <View style={styles.footer}>
         <PrimaryButton label="Go to verification" onPress={() => router.push('/(tabs)/wallet')} />
-        <PrimaryButton label="Not now" variant="ghost" onPress={() => router.back()} />
+        <PrimaryButton label="Not now" variant="ghost" onPress={() => goBack('/insurance')} />
       </View>
     </SafeAreaView>
   );

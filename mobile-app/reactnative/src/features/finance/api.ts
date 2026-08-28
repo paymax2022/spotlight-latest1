@@ -1,4 +1,5 @@
 // Estate finance dashboard (Block 40) — types + dual mock/live api.
+import { mockAllowed } from '@/config/mockPolicy';
 import { api } from '@/api/client';
 
 export interface FinanceDashboard {
@@ -12,7 +13,7 @@ export interface FinanceDashboard {
   recentPayments: { id: string; amountKobo: number; method: string; payerName?: string; createdAt: string }[];
 }
 
-export const USE_MOCK = (process.env.EXPO_PUBLIC_FINANCE_USE_MOCK ?? 'true') !== 'false';
+export const USE_MOCK = mockAllowed(process.env.EXPO_PUBLIC_FINANCE_USE_MOCK, true);
 export const FINANCE_API_BASE = '/api/v1/estate/finance';
 
 export const CATEGORY_LABELS: Record<string, string> = {

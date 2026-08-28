@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { View, Text, ScrollView, StyleSheet, Platform, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import * as Icons from 'lucide-react-native';
 import type { LucideIcon } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
@@ -47,7 +48,7 @@ export default function NotificationPreferencesScreen() {
     try {
       await update.mutateAsync({ preferences: local });
       Alert.alert('Saved', 'Your notification preferences have been updated.');
-      router.back();
+      goBack('/notifications');
     } catch {
       Alert.alert('Save failed', 'Please try again in a moment.');
     }

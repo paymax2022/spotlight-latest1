@@ -4,6 +4,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	financekyc "spotlight/backend/internal/finance/kyc"
 	financeledger "spotlight/backend/internal/finance/ledger"
 )
 
@@ -12,12 +13,13 @@ import (
 // requireUserID() middleware so c.GetString("user_id") is populated).
 //
 // ledgerSvc is the finance ledger used by the withdrawal-approval money-path; it
-// may be nil (the payout path then fails closed).
+// may be nil (the payout path then fails closed). kycSvc is the platform's
+// shared KYC service used by the KYC queue; nil fails that endpoint closed too.
 //
 // It is purely additive: it registers NEW sub-paths under the same group the
 // campaign-review handlers already use, and never edits shared route files.
-func RegisterAdmin(rg *gin.RouterGroup, db *pgxpool.Pool, ledgerSvc *financeledger.Service) {
-	h := NewHandler(NewService(db).WithLedger(ledgerSvc))
+func RegisterAdmin(rg *gin.RouterGroup, db *pgxpool.Pool, ledgerSvc *financeledger.Service, kycSvc *financekyc.Service) {
+	h := NewHandler(NewService(db).WithLedger(ledgerSvc).WithKYC(kycSvc))
 
 	// Finance — refunds & settlement.
 	rg.GET("/finance/summary", h.FinanceSummary)

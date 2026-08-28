@@ -5,6 +5,7 @@ import React from 'react';
 import { View, Text, StyleSheet, Pressable, FlatList, RefreshControl } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import { ArrowLeft, Star, UserCheck, Store } from 'lucide-react-native';
 import { Typography } from '@/constants/typography';
 import { Spacing } from '@/constants/spacing';
@@ -20,7 +21,7 @@ export default function FollowingScreen() {
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
       <View style={styles.header}>
-        <Pressable onPress={() => router.back()} hitSlop={12} accessibilityLabel="Back"><ArrowLeft size={24} color={MarketColors.text} /></Pressable>
+        <Pressable onPress={() => goBack('/marketplace/account')} hitSlop={12} accessibilityLabel="Back"><ArrowLeft size={24} color={MarketColors.text} /></Pressable>
         <Text style={styles.headerTitle}>Following</Text>
         <View style={{ width: 24 }} />
       </View>

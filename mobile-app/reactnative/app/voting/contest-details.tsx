@@ -4,6 +4,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import { ArrowLeft, Users, Trophy, Share2, ShieldCheck } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
@@ -41,7 +42,7 @@ export default function ContestDetailsScreen() {
       <SafeAreaView style={styles.safe} edges={['top']}>
         <View style={styles.errorBox}>
           <Text style={styles.errorText}>Could not load contest. Please try again.</Text>
-          <Pressable onPress={() => router.back()} style={styles.backLink}>
+          <Pressable onPress={() => goBack('/voting')} style={styles.backLink}>
             <Text style={styles.backLinkText}>Go back</Text>
           </Pressable>
         </View>
@@ -53,7 +54,7 @@ export default function ContestDetailsScreen() {
     <SafeAreaView style={styles.safe} edges={['top']}>
       {/* Floating back + share */}
       <View style={styles.floatingBar}>
-        <Pressable onPress={() => router.back()} style={styles.floatBtn}>
+        <Pressable onPress={() => goBack('/voting')} style={styles.floatBtn}>
           <ArrowLeft size={20} color={Colors.onSurface} strokeWidth={2} />
         </Pressable>
         <Pressable onPress={() => setShareOpen(true)} style={styles.floatBtn}>

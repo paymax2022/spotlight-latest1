@@ -7,9 +7,10 @@
 // price carries an explicit currency; NGN is the default, USD-priced upscale
 // supply is converted with a visible note (never silent — PRD §12 / build-plan §2).
 
+import { mockAllowed } from '@/config/mockPolicy';
 import { Colors } from '@/constants/colors';
 
-export const USE_MOCK = (process.env.EXPO_PUBLIC_STAYS_USE_MOCK ?? 'true') !== 'false';
+export const USE_MOCK = mockAllowed(process.env.EXPO_PUBLIC_STAYS_USE_MOCK, true);
 
 // Stays REST namespace. The Next.js gateway rewrites /api/finance/:path* to the
 // Go backend verbatim (see frontend-web/next.config.mjs), and the Go stays

@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { View, Text, ScrollView, StyleSheet, Pressable, TextInput } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import { ArrowLeft, Search, Plus, Star, MapPin, ChevronRight, Package } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
@@ -20,7 +21,7 @@ export default function BrowseListings() {
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
       <View style={styles.header}>
-        <Pressable onPress={() => router.back()} hitSlop={10} style={styles.iconBtn} accessibilityLabel="Go back"><ArrowLeft size={22} color={Colors.onSurface} /></Pressable>
+        <Pressable onPress={() => goBack('/social')} hitSlop={10} style={styles.iconBtn} accessibilityLabel="Go back"><ArrowLeft size={22} color={Colors.onSurface} /></Pressable>
         <View style={styles.headerTitleWrap}><Text style={styles.eyebrow}>Marketplace</Text><Text style={styles.headerTitle}>Buy & sell with escrow</Text></View>
         <Pressable onPress={() => router.push('/social/listing/create')} hitSlop={10} style={styles.iconBtn} accessibilityLabel="Create listing"><Plus size={22} color={Colors.onSurface} /></Pressable>
       </View>

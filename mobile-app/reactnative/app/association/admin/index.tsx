@@ -2,6 +2,7 @@ import React from 'react';
 import { View, Text, ScrollView, Pressable, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import { ArrowLeft, UserCheck, Wallet, UploadCloud, Users, ChevronRight, ScrollText } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
@@ -23,7 +24,7 @@ export default function AdminDashboard() {
     return (
       <SafeAreaView style={styles.safe} edges={['top']}>
         <View style={styles.header}>
-          <Pressable onPress={() => router.back()} hitSlop={10} style={styles.iconBtn} accessibilityLabel="Go back">
+          <Pressable onPress={() => goBack('/association')} hitSlop={10} style={styles.iconBtn} accessibilityLabel="Go back">
             <ArrowLeft size={22} color={Colors.onSurface} strokeWidth={2} />
           </Pressable>
           <View style={styles.headerTitleWrap}><Text style={styles.headerTitle}>Admin</Text></View>
@@ -36,7 +37,7 @@ export default function AdminDashboard() {
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
       <View style={styles.header}>
-        <Pressable onPress={() => router.back()} hitSlop={10} style={styles.iconBtn} accessibilityLabel="Go back">
+        <Pressable onPress={() => goBack('/association')} hitSlop={10} style={styles.iconBtn} accessibilityLabel="Go back">
           <ArrowLeft size={22} color={Colors.onSurface} strokeWidth={2} />
         </Pressable>
         <View style={styles.headerTitleWrap}>

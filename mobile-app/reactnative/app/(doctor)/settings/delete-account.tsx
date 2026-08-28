@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { View, Text, ScrollView, StyleSheet, Platform, KeyboardAvoidingView } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import { AlertTriangle } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Radius } from '@/constants/radius';
@@ -40,7 +41,7 @@ export default function DeleteAccountScreen() {
     try {
       await remove.mutateAsync({ reason: reason.trim() || undefined });
       await alertAsync({ title: 'Request submitted', message: 'Your account deletion request has been received.' });
-      router.back();
+      goBack('/settings');
     } catch {
       await alertAsync({ title: 'Failed', message: 'Could not submit your request. Please try again.' });
     }

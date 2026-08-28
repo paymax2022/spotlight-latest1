@@ -1,9 +1,10 @@
+import { mockAllowed } from '@/config/mockPolicy';
 import { Colors } from '@/constants/colors';
 import type { ElectionStatus } from '../types/election.types';
 
 // Flip to false once the real /elections endpoints land (or set
 // EXPO_PUBLIC_ELECTION_USE_MOCK=false). Mirrors the visitor/voting convention.
-export const USE_MOCK = (process.env.EXPO_PUBLIC_ELECTION_USE_MOCK ?? 'true') !== 'false';
+export const USE_MOCK = mockAllowed(process.env.EXPO_PUBLIC_ELECTION_USE_MOCK, true);
 
 // Elections are served by the resident-scoped frontend-web handlers under
 // /api/v1/elections (GET list, GET /active, GET /{id}, GET /{id}/ballot,

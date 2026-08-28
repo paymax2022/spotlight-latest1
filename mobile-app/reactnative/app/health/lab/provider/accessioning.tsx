@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { View, Text, ScrollView, Pressable, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import { ShieldCheck, Camera, CircleCheck, TriangleAlert } from 'lucide-react-native';
 
 import { Colors } from '@/constants/colors';
@@ -123,7 +124,7 @@ export default function LabProviderAccessioningScreen() {
         </View>
 
         {result && result.status === 'breached' ? (
-          <PrimaryButton label="Flag for recollection" variant="ghost" onPress={() => router.back()} />
+          <PrimaryButton label="Flag for recollection" variant="ghost" onPress={() => goBack('/health/lab')} />
         ) : (
           <PrimaryButton
             label="Accession sample"

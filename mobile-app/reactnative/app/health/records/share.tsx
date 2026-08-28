@@ -2,6 +2,7 @@ import React, { useMemo, useState } from 'react';
 import { View, Text, ScrollView, StyleSheet, Pressable } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import * as Icons from 'lucide-react-native';
 import { Check, ShieldCheck, X } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
@@ -45,7 +46,7 @@ export default function ShareRecordScreen() {
       },
       {
         onSuccess: () => {
-          alertAsync({ title: 'Shared', message: 'A revocable consent grant was created. Manage it anytime in Consent.', buttonLabel: 'Done' }).then(() => router.back());
+          alertAsync({ title: 'Shared', message: 'A revocable consent grant was created. Manage it anytime in Consent.', buttonLabel: 'Done' }).then(() => goBack('/health/records'));
         },
         onError: () => alertAsync({ title: 'Could not share', message: 'Please try again.' }),
       },
@@ -58,7 +59,7 @@ export default function ShareRecordScreen() {
         title="Share record"
         showBack={false}
         rightSlot={
-          <Pressable onPress={() => router.back()} hitSlop={8} accessibilityLabel="Close">
+          <Pressable onPress={() => goBack('/health/records')} hitSlop={8} accessibilityLabel="Close">
             <X size={22} color={Colors.onSurface} strokeWidth={2} />
           </Pressable>
         }

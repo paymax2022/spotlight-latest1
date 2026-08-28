@@ -8,6 +8,7 @@
 //  • every money mutation carries an Idempotency-Key;
 //  • quote → (lock) → execute against a quote_id (price never assumed stable).
 
+import { mockAllowed } from '@/config/mockPolicy';
 import { api } from '@/api/client';
 import type {
   WalletBalance,
@@ -44,7 +45,7 @@ import {
 
 // ─── Feature flag: flip to false once real endpoints are ready ─────────────────
 // Mock by default; flip with EXPO_PUBLIC_FX_USE_MOCK=false to hit the Go backend.
-const USE_MOCK = (process.env.EXPO_PUBLIC_FX_USE_MOCK ?? 'true').toLowerCase() !== 'false';
+const USE_MOCK = mockAllowed(process.env.EXPO_PUBLIC_FX_USE_MOCK, true);
 
 /** Simulated network latency so loading states render in mock mode. */
 const delay = (ms = 320) => new Promise((r) => setTimeout(r, ms));

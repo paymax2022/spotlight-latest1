@@ -3,6 +3,7 @@ package crowdfunding
 import (
 	"context"
 	"fmt"
+	"time"
 )
 
 // categoryLabels mirrors the seeded crowdfunding_categories (avoids a join per row).
@@ -48,12 +49,50 @@ func reviewTransition(current, decision string) (string, bool) {
 }
 
 // AdminListPending returns campaigns awaiting (or in) review.
-func (s *Service) AdminListPending(ctx context.Context, status string) ([]CampaignSummary, error) {
+// AdminCampaignSummary is the review-queue shape: everything the public list
+// carries, plus the two fields the moderation console needs and the public one
+// must never expose.
+//
+// submittedAt and riskLevel were already SELECTed by the discovery query and
+// then dropped by toSummary, so the admin console rendered blanks for both —
+// including the queue's sort key. They are added here rather than on
+// CampaignSummary because that type is also the PUBLIC discovery payload, and
+// riskLevel is an internal fraud signal: putting it there would publish the
+// platform's own risk assessment of every campaign to anyone browsing.
+type AdminCampaignSummary struct {
+	CampaignSummary
+	SubmittedAt string `json:"submittedAt"`
+	RiskLevel   string `json:"riskLevel"`
+}
+
+func (s *Service) AdminListPending(ctx context.Context, status string) ([]AdminCampaignSummary, error) {
 	q := CampaignQuery{Status: status}
 	if status == "" {
 		q.Status = "PENDING_REVIEW"
 	}
-	return s.ListCampaigns(ctx, q)
+
+	where, args := buildDiscoveryWhere(q, 1)
+	sql := fmt.Sprintf(`SELECT %s FROM campaigns c %s %s LIMIT 60`, selectCols, where, sortClause(q.Sort))
+	rows, err := s.db.Query(ctx, sql, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := []AdminCampaignSummary{}
+	for rows.Next() {
+		r, err := scanRow(rows.Scan)
+		if err != nil {
+			return nil, err
+		}
+		name, typ, verif := s.creatorMeta(ctx, r.creatorID)
+		out = append(out, AdminCampaignSummary{
+			CampaignSummary: r.toSummary(name, typ, verif),
+			SubmittedAt:     r.submittedAt.UTC().Format(time.RFC3339),
+			RiskLevel:       r.riskLevel,
+		})
+	}
+	return out, rows.Err()
 }
 
 // AdminDecide applies a guarded review transition atomically and writes an audit row.

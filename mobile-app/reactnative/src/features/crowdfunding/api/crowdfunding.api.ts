@@ -3,6 +3,7 @@
 // flip USE_MOCK to false once the real /crowdfunding endpoints land.
 // IRON RULE: all monetary amounts are integers in minor units (kobo).
 
+import { mockAllowed } from '@/config/mockPolicy';
 import { api } from '@/api/client';
 import type {
   Campaign,
@@ -39,7 +40,7 @@ import {
 // ─── Feature flag ─────────────────────────────────────────────────────────────
 // Mock is the default. Set EXPO_PUBLIC_CF_USE_MOCK=false to hit the live backend
 // (Next.js proxy at /api/v1/crowdfunding/* → Go /api/finance/crowdfunding/*).
-const USE_MOCK = process.env.EXPO_PUBLIC_CF_USE_MOCK !== 'false';
+const USE_MOCK = mockAllowed(process.env.EXPO_PUBLIC_CF_USE_MOCK, true);
 
 // Base path of the crowdfunding proxy on the frontend-web Next.js server.
 const LIVE = '/api/v1/crowdfunding';
@@ -199,6 +200,31 @@ export async function getRecentlyViewed(): Promise<CampaignSummary[]> {
 }
 
 /** Optimistic toggle in mock mode; real impl POST/DELETE /saves. */
+/**
+ * Record a VIEW or SHARE against a campaign.
+ *
+ * These events are what make the creator performance screen's Views, Shares,
+ * Conversion and traffic-source figures real — before this existed the backend
+ * derived them from a hash of the campaign id.
+ *
+ * Deliberately FIRE-AND-FORGET: analytics must never break or delay what the
+ * user actually asked for, so the promise always resolves and failures are
+ * swallowed rather than surfaced. It is also skipped entirely in mock mode so a
+ * mock session never writes to a real analytics table.
+ */
+export async function recordCampaignEvent(
+  id: string,
+  type: 'VIEW' | 'SHARE',
+  source = 'direct',
+): Promise<void> {
+  if (USE_MOCK || !id) return;
+  try {
+    await api.post(`/api/v1/crowdfunding/campaigns/${id}/events`, { type, source });
+  } catch {
+    // Analytics is best-effort — never surface this to the user.
+  }
+}
+
 export async function toggleSaveCampaign(id: string, saved: boolean): Promise<{ id: string; saved: boolean }> {
   if (USE_MOCK) {
     await delay(120);
@@ -451,9 +477,34 @@ export async function submitCampaign(
 
     return { campaignId: id, status, reference: `SPL-CFNEW-${Date.now()}` };
   }
+  // Map explicitly onto the Go SubmitCampaignRequest DTO. Spreading the raw
+  // draft looked equivalent but was not: the server field is `coverImageUrl`
+  // while the draft carries `coverImageUri`, so every cover image was silently
+  // dropped, and the spread hid that the DTO accepts none of the wizard's
+  // budget/milestone/reward/document/beneficiary data either — the wizard
+  // collects all of it and the server discards it. Keep this list explicit so
+  // the next field that stops being persisted is visible in review.
   const res = await api.post(
     `${LIVE}/campaigns`,
-    { ...draft, submitForReview },
+    {
+      type: draft.type,
+      category: draft.category,
+      title: draft.title,
+      summary: draft.summary,
+      story: draft.story,
+      goalKobo: draft.goalKobo,
+      deadline: draft.deadline,
+      location: draft.location,
+      refundPolicy: draft.refundPolicy,
+      disbursementModel: draft.disbursementModel,
+      // Only a remotely-resolvable URL may be persisted. The media step stores
+      // the raw picker URI (file:// on native, blob: on web) and there is NO
+      // upload step yet, so sending it would replace a silently-dropped cover
+      // with a stored path that renders broken for every other viewer. Send it
+      // only once it is an http(s) URL — which is what an R2 upload will yield.
+      coverImageUrl: /^https?:\/\//i.test(draft.coverImageUri ?? '') ? draft.coverImageUri : null,
+      submitForReview,
+    },
     { headers: { 'Idempotency-Key': idempotencyKey } },
   );
   return res.data?.data ?? res.data;

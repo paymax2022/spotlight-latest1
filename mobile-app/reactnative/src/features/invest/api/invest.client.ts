@@ -8,10 +8,11 @@
 // Flip to live with EXPO_PUBLIC_INVEST_USE_MOCK=false (requires the backend
 // running with FEATURE_INVEST_ENABLED=true).
 
+import { mockAllowed } from '@/config/mockPolicy';
 import { api } from '@/api/client';
 
 export const INVEST_USE_MOCK =
-  (process.env.EXPO_PUBLIC_INVEST_USE_MOCK ?? 'true').toLowerCase() !== 'false';
+  mockAllowed(process.env.EXPO_PUBLIC_INVEST_USE_MOCK, true);
 
 // Mock-latency helper so loading states render in mock mode.
 export const waitMock = <T>(value: T, ms = 320): Promise<T> =>

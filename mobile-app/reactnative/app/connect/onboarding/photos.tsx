@@ -89,7 +89,7 @@ export default function Photos() {
   return (
     <OnboardingStep
       step={3}
-      totalSteps={8}
+      totalSteps={5}
       title="Add your photos"
       subtitle="Add at least one. Your first photo is your primary. Clear, recent photos build trust."
       primaryLabel="Continue"

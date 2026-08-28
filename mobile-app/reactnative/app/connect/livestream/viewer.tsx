@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { View, Text, Image, FlatList, Pressable, StyleSheet, TextInput, KeyboardAvoidingView, Platform } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import { Gift, Eye, Heart, Flag, UserPlus, Swords, Send, Trophy } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
@@ -28,7 +29,7 @@ export default function LiveViewerScreen() {
   if (stream.isError || !stream.data) {
     return (
       <SafeAreaView style={styles.safe}>
-        <StateView kind="error" title="Stream unavailable" message="This stream may have ended." actionLabel="Back" onAction={() => router.back()} />
+        <StateView kind="error" title="Stream unavailable" message="This stream may have ended." actionLabel="Back" onAction={() => goBack('/connect')} />
       </SafeAreaView>
     );
   }
@@ -77,7 +78,7 @@ export default function LiveViewerScreen() {
               <Text style={[styles.followText, following && styles.followingText]}>{following ? 'Following' : 'Follow'}</Text>
             </Pressable>
           </View>
-          <Pressable style={styles.closeBtn} accessibilityLabel="Leave stream" onPress={() => router.back()}>
+          <Pressable style={styles.closeBtn} accessibilityLabel="Leave stream" onPress={() => goBack('/connect')}>
             <Text style={styles.closeX}>✕</Text>
           </Pressable>
         </View>

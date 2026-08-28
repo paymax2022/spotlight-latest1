@@ -1,12 +1,13 @@
 'use client';
 
 import Link from 'next/link';
-import { usePathname } from 'next/navigation';
+import { usePathname, useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
 import type { AdminMenuCounts } from '@/types/admin';
 import { getAdminMenuCounts } from '@/services/adminApiClient';
 import { canManageStem, canReadStem, getCurrentStemRole } from '@/config/stemAccess';
 import { hasAnyPermission, type AuthUser } from '@/features/auth/rbac';
+import { clearAdminSession } from '@/features/auth/adminAuth';
 import { colors, tint } from '@/components/ui/vuexy';
 
 type SectionIcon = '📊' | '🏆' | '👥' | '💰' | '🏥' | '🎓' | '🏨' | '🚗' | '🍽️' | '🏠' | '⚙️';
@@ -41,8 +42,16 @@ const navItemsBase: NavItem[] = [
   { label: 'Competitions', href: '/admin/competitions/list', section: 'Contests', permissions: ['contest.create', 'contest.update'] },
   { label: 'Participants', href: '/admin/competitions/participants', section: 'Contests', permissions: ['contest.create', 'contest.update'] },
   { label: 'Results & Leaderboard', href: '/admin/competitions/results', section: 'Contests', permissions: ['contest.create', 'contest.update'] },
-  { label: 'Open Mic Editions', href: '/admin/competitions/open-mic', section: 'Contests' },
   { label: 'Contest Settings', href: '/admin/competitions/settings', section: 'Contests', permissions: ['contest.create'] },
+  // Path A consoles (admin consolidation slices 3-4): data lives in frontend-web,
+  // reached through /api/web-proxy — see ADR-047. No countKey (frontend-web, not the Go
+  // admin API, so getAdminMenuCounts has no number for these).
+  { label: 'Contest Records', href: '/admin/contests', section: 'Contests' },
+  { label: 'Judges & Scores', href: '/admin/judges-scores', section: 'Contests', permissions: ['scores:manage'] },
+  { label: 'Open Mic', href: '/admin/open-mic', section: 'Contests' },
+  { label: 'Registration / Applicants', href: '/admin/registration', section: 'Contests', permissions: ['applications:review'] },
+  { label: 'Stages & Evictions', href: '/admin/stages-evictions', section: 'Contests', permissions: ['programs:manage'] },
+  { label: 'SME Pitch', href: '/admin/sme-pitch', section: 'Contests', permissions: ['programs:manage'] },
   { label: 'Voting Visibility', href: '/admin/voting/visibility', section: 'Voting', permissions: ['votes:manage'] },
   { label: 'Chat Sessions', href: '/admin/chatbot', section: 'Support' },
   { label: 'Leads Queue', href: '/admin/leads', section: 'Support' },
@@ -73,6 +82,12 @@ const navItemsBase: NavItem[] = [
   { label: 'Emerging Teams', href: '/admin/emerging-teams', section: 'Programs', stemAccess: 'read' },
   { label: 'Emerging Projects', href: '/admin/emerging-projects', section: 'Programs', stemAccess: 'read' },
   { label: 'Finance Overview', href: '/admin/finance', section: 'Finance', permissions: ['audit.logs.view'] },
+  // Path A console (admin consolidation): data lives in frontend-web, reached
+  // through /api/web-proxy — see ADR-047. finance:adjust:initiate is
+  // frontend-web's own permission name (checked server-side there), listed
+  // here only for sidebar visibility consistency with the other Path A
+  // entries above.
+  { label: 'Payments & Finance', href: '/admin/payments-finance', section: 'Finance', permissions: ['finance:adjust:initiate'] },
   { label: 'KYC Queue', href: '/admin/finance/kyc', section: 'Finance', permissions: ['audit.logs.view'] },
   { label: 'KYC Verification', href: '/admin/finance/kyc-verify', section: 'Finance', permissions: ['finance.admin.kyc'] },
   { label: 'Wallet Lookup', href: '/admin/finance/wallets', section: 'Finance', permissions: ['audit.logs.view'] },
@@ -506,9 +521,11 @@ const sections = ['Overview', 'Contests', 'Voting', 'Support', 'Programs', 'Fina
 
 export function AdminSidebar() {
   const pathname = usePathname() ?? '';
+  const router = useRouter();
   const [counts, setCounts] = useState<AdminMenuCounts | null>(null);
   const [authUser, setAuthUser] = useState<AuthUser | null>(null);
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+  const [loggingOut, setLoggingOut] = useState(false);
   const role = getCurrentStemRole();
   const allowRead = canReadStem(role);
   const allowManage = canManageStem(role);
@@ -531,17 +548,28 @@ export function AdminSidebar() {
     localStorage.setItem('admin_sidebar_expanded', JSON.stringify(next));
   };
 
-  return (
-    <aside style={{ width: 280, borderRight: `1px solid ${colors.border}`, minHeight: '100vh', padding: 12, background: colors.bg, overflowY: 'auto' }}>
-      <Link href="/admin" style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 20, padding: '10px 8px', borderRadius: '0.375rem', background: isActive('/admin') ? tint(colors.primary, 0.1) : 'transparent', textDecoration: 'none', transition: 'all .15s' }}>
-        <span style={{ fontSize: 20 }}>📊</span>
-        <div>
-          <div style={{ fontSize: 13, fontWeight: 700, color: colors.text }}>Admin</div>
-          <div style={{ fontSize: 11, color: colors.muted }}>Dashboard</div>
-        </div>
-      </Link>
+  const handleLogOut = async () => {
+    if (loggingOut) return;
+    setLoggingOut(true);
+    try {
+      await clearAdminSession();
+    } finally {
+      router.replace('/admin/login');
+    }
+  };
 
-      {sections.map((section) => {
+  return (
+    <aside style={{ width: 280, borderRight: `1px solid ${colors.border}`, height: '100vh', background: colors.bg, display: 'flex', flexDirection: 'column' }}>
+      <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: 12 }}>
+        <Link href="/admin" style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 20, padding: '10px 8px', borderRadius: '0.375rem', background: isActive('/admin') ? tint(colors.primary, 0.1) : 'transparent', textDecoration: 'none', transition: 'all .15s' }}>
+          <span style={{ fontSize: 20 }}>📊</span>
+          <div>
+            <div style={{ fontSize: 13, fontWeight: 700, color: colors.text }}>Admin</div>
+            <div style={{ fontSize: 11, color: colors.muted }}>Dashboard</div>
+          </div>
+        </Link>
+
+        {sections.map((section) => {
         const items = navItemsBase.filter((item) => {
           if (item.section !== section) return false;
           if (item.stemAccess === 'read' && !allowRead) return false;
@@ -622,7 +650,70 @@ export function AdminSidebar() {
             )}
           </div>
         );
-      })}
+        })}
+      </div>
+
+      <div style={{ borderTop: `1px solid ${colors.border}`, padding: 12, flexShrink: 0 }}>
+        {authUser && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10, padding: '0 4px' }}>
+            <div
+              style={{
+                width: 30,
+                height: 30,
+                borderRadius: '50%',
+                background: tint(colors.primary, 0.15),
+                color: colors.primary,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                fontSize: 13,
+                fontWeight: 700,
+                flexShrink: 0,
+              }}
+            >
+              {(authUser.email || '?').trim().charAt(0).toUpperCase()}
+            </div>
+            <div style={{ minWidth: 0 }}>
+              <div style={{ fontSize: 12.5, fontWeight: 600, color: colors.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {authUser.email || 'Signed in'}
+              </div>
+              <div style={{ fontSize: 11, color: colors.muted, textTransform: 'capitalize' }}>
+                {authUser.roles?.[0] || 'admin'}
+              </div>
+            </div>
+          </div>
+        )}
+        <button
+          onClick={() => void handleLogOut()}
+          disabled={loggingOut}
+          style={{
+            width: '100%',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: 8,
+            padding: '8px 8px',
+            border: `1px solid ${colors.border}`,
+            borderRadius: '0.375rem',
+            background: 'transparent',
+            color: colors.danger,
+            cursor: loggingOut ? 'default' : 'pointer',
+            fontSize: 13,
+            fontWeight: 600,
+            opacity: loggingOut ? 0.6 : 1,
+            transition: 'all .15s',
+          }}
+          onMouseEnter={(e) => {
+            if (!loggingOut) e.currentTarget.style.background = tint(colors.danger, 0.08);
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.background = 'transparent';
+          }}
+        >
+          <span>🚪</span>
+          <span>{loggingOut ? 'Signing out…' : 'Log out'}</span>
+        </button>
+      </div>
     </aside>
   );
 }

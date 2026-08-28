@@ -1,0 +1,141 @@
+// Publish an admin-created registration contest into the voting plane.
+//
+// THE THREE PLANES
+//   contest_registration_contests  what /admin/contests persists (registration
+//                                  definition: form schema, fees, consent rules)
+//   contests                       the contest the web app and admin voting
+//                                  console operate on
+//   connect_contests               what the MOBILE app reads, via Go
+//                                  GET /api/v1/connect/contests
+//
+// The second hop already exists: 20261223000000_connect_contests_bridge.sql
+// mirrors contests -> connect_contests on a trigger, preserving the id. So this
+// module only has to write the FIRST hop. Writing to `contests` is enough for a
+// contest to reach the phone.
+//
+// Nothing here edits a protected legacy file. The contests/voting module is
+// wrapped, not modified, per CLAUDE.md and the vote-bridge skill.
+import type { ContestRegistrationDefinition } from '@/src/features/registration/types';
+import { createAdminClient } from '@/lib/supabase/server';
+
+type Db = ReturnType<typeof createAdminClient>;
+
+/**
+ * Whether a contest publishes to the voting plane. This used to also require
+ * def.contestType to be one of a fixed "votable" set (public_voting_contest,
+ * bootcamp_reality_show, housemate_reality_show) — but the contests ->
+ * connect_contests DB trigger (20261223000000) mirrors EVERY contest
+ * unconditionally regardless of type, and contest-store.ts already derives
+ * voting_enabled/max_votes_per_user purely from supportsVoting. The type gate
+ * here was therefore only ever blocking the descriptive-field resync on this
+ * function's update path for non-"votable" types, while the contest was
+ * already live on mobile via the trigger — a UI restriction with no backing
+ * enforcement. An admin's explicit supportsVoting choice is now what decides
+ * this for every contest type.
+ */
+export function isVotableContest(def: ContestRegistrationDefinition): boolean {
+  return def.supportsVoting === true;
+}
+
+export type PublishOutcome =
+  | { published: true; contestId: string; created: boolean }
+  | { published: false; reason: 'not_votable' | 'invalid_title' | 'failed'; detail?: string };
+
+/**
+ * Free votes granted per user when a contest is published.
+ *
+ * The mirror trigger derives connect_contests.free_votes_per_user from
+ * contests.max_votes_per_user via GREATEST(COALESCE(x, 0), 0). Leaving it NULL
+ * would therefore publish a contest with ZERO free votes — and with paid voting
+ * off, nobody could vote at all. One free vote matches connect_contests' own
+ * column default.
+ */
+const DEFAULT_FREE_VOTES_PER_USER = 1;
+
+export async function publishContestToVotingPlane(
+  supabase: Db,
+  def: ContestRegistrationDefinition,
+): Promise<PublishOutcome> {
+  if (!isVotableContest(def)) return { published: false, reason: 'not_votable' };
+
+  // connect_contests.title has a 2..200 CHECK. The mirror trigger silently skips
+  // a row it cannot represent, which would leave a contest that looks published
+  // but never reaches the phone — so it is rejected here, where it can be said.
+  const name = (def.title ?? '').trim();
+  if (name.length < 2) {
+    return { published: false, reason: 'invalid_title', detail: 'Title must be at least 2 characters' };
+  }
+
+  const payload = {
+    name: name.slice(0, 200),
+    slug: def.slug,
+    category: def.contestCategory,
+    contest_type: def.contestType,
+    description: def.seasonOrEdition ? `${def.title} — ${def.seasonOrEdition}` : def.title,
+    // UPCOMING, never live. Creating a contest and opening voting on it are
+    // different decisions, so this must not publish straight to 'active' — the
+    // mirror maps upcoming -> draft, keeping it off the phone until an admin sets
+    // it active. 'draft' was too strict: it also hides the contest from the WEB
+    // list (/api/v1/contests filters active|upcoming), which stranded contests
+    // with no way back. Only ever applies on insert; see the update branch below.
+    status: 'upcoming' as const,
+    voting_enabled: true,
+    // Paid voting OFF. A vote price is a commercial decision an admin makes
+    // explicitly; inventing one here would put a price in front of voters that
+    // nobody set.
+    voting_type: 'free',
+    vote_price_ngn: 0,
+    vote_price: 0,
+    max_votes_per_user: DEFAULT_FREE_VOTES_PER_USER,
+  };
+
+  // Keyed on slug, which carries a unique index. Select-then-write rather than
+  // ON CONFLICT because that index is PARTIAL, and an inferred conflict target
+  // must restate the predicate exactly or Postgres rejects it.
+  const { data: existing, error: findErr } = await supabase
+    .from('contests')
+    .select('id')
+    .eq('slug', def.slug)
+    .maybeSingle();
+
+  if (findErr) {
+    console.error('[publish-to-voting] slug lookup failed', { slug: def.slug, error: findErr.message });
+    return { published: false, reason: 'failed', detail: findErr.message };
+  }
+
+  if (existing) {
+    const id = (existing as { id: string }).id;
+    // Republishing refreshes the DESCRIPTIVE fields only. Everything below is a
+    // live commercial decision an admin makes in the voting console, and an
+    // unrelated edit to the registration form must not silently undo it:
+    //   status              - an opened contest must not snap back to upcoming
+    //   voting_enabled      - voting an admin closed must not reopen
+    //   voting_type         - paid must not revert to free
+    //   vote_price_ngn      - the mirror turns this into connect_contests
+    //   vote_price            .paid_vote_kobo, which is what the phone gates on,
+    //                         so resetting it to 0 silently kills paid voting
+    //   max_votes_per_user  - the free allowance an admin tuned
+    const {
+      status: _status,
+      voting_enabled: _votingEnabled,
+      voting_type: _votingType,
+      vote_price_ngn: _votePriceNgn,
+      vote_price: _votePrice,
+      max_votes_per_user: _maxVotes,
+      ...safeUpdate
+    } = payload;
+    const { error } = await supabase.from('contests').update(safeUpdate).eq('id', id);
+    if (error) {
+      console.error('[publish-to-voting] update failed', { slug: def.slug, error: error.message });
+      return { published: false, reason: 'failed', detail: error.message };
+    }
+    return { published: true, contestId: id, created: false };
+  }
+
+  const { data, error } = await supabase.from('contests').insert(payload).select('id').single();
+  if (error || !data) {
+    console.error('[publish-to-voting] insert failed', { slug: def.slug, error: error?.message });
+    return { published: false, reason: 'failed', detail: error?.message };
+  }
+  return { published: true, contestId: (data as { id: string }).id, created: true };
+}

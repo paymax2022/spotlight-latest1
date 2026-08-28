@@ -2,6 +2,7 @@ import React from 'react';
 import { View, Text, ScrollView, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
 import { Spacing } from '@/constants/spacing';
@@ -26,7 +27,7 @@ export default function CheckoutReview() {
   if (isError || !e) return <Shell><StateView kind="error" title="Couldn't load order" message="Please try again." actionLabel="Retry" onAction={() => refetch()} /></Shell>;
 
   const tier = e.tiers.find((t) => t.id === tierId);
-  if (!tier) return <Shell><StateView kind="error" title="Ticket unavailable" message="Please pick a ticket tier again." actionLabel="Back" onAction={() => router.back()} /></Shell>;
+  if (!tier) return <Shell><StateView kind="error" title="Ticket unavailable" message="Please pick a ticket tier again." actionLabel="Back" onAction={() => goBack('/events')} /></Shell>;
 
   const subtotalKobo = tier.price_kobo * quantity;
   const feeKobo = tier.price_kobo === 0 ? 0 : Math.round(subtotalKobo * 0.015); // service fee

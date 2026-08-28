@@ -16,7 +16,7 @@ const quickLinks = [
     section: 'Contests',
     items: [
       { href: '/admin/competitions', label: 'Competitions', description: 'Manage contest entries and judging', color: '#8b5cf6' },
-      { href: '/admin/competitions/open-mic', label: 'Open Mic Editions', description: 'Configure open-mic seasons', color: '#8b5cf6' },
+      { href: '/admin/open-mic', label: 'Open Mic', description: 'Applications, submissions, judging, finale, payments', color: '#8b5cf6' },
     ],
   },
   {

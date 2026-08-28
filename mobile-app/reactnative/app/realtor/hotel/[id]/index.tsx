@@ -2,6 +2,7 @@ import React from 'react';
 import { View, Text, Image, ScrollView, StyleSheet, Pressable } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import { ArrowLeft, Star, MapPin, Users, Coffee, Check } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
@@ -20,7 +21,7 @@ export default function HotelDetailScreen() {
   const hotel = useHotel(String(id));
 
   if (hotel.isLoading) return <SafeAreaView style={styles.safe}><StateView kind="loading" message="Loading hotel…" /></SafeAreaView>;
-  if (!hotel.data) return <SafeAreaView style={styles.safe}><StateView kind="error" title="Hotel unavailable" actionLabel="Back" onAction={() => router.back()} /></SafeAreaView>;
+  if (!hotel.data) return <SafeAreaView style={styles.safe}><StateView kind="error" title="Hotel unavailable" actionLabel="Back" onAction={() => goBack('/realtor/hotel')} /></SafeAreaView>;
   const h = hotel.data;
 
   return (
@@ -28,7 +29,7 @@ export default function HotelDetailScreen() {
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scroll}>
         <Image source={{ uri: h.media[0] ?? h.coverUrl }} style={styles.cover} />
         <SafeAreaView edges={['top']} style={styles.headerOverlay} pointerEvents="box-none">
-          <Pressable onPress={() => router.back()} style={styles.circleBtn} hitSlop={8} accessibilityLabel="Back"><ArrowLeft size={20} color={Colors.onSurface} strokeWidth={2} /></Pressable>
+          <Pressable onPress={() => goBack('/realtor/hotel')} style={styles.circleBtn} hitSlop={8} accessibilityLabel="Back"><ArrowLeft size={20} color={Colors.onSurface} strokeWidth={2} /></Pressable>
         </SafeAreaView>
 
         <View style={styles.body}>

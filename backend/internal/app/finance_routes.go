@@ -1375,13 +1375,27 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		cfcsr.Register(cfGroup, pool)
 
 		// Admin review group (matches the admin web client's /api/crowdfunding/admin base).
+		//
+		// RequireAuthContext validates the bearer token and SETS user_id; requireUserID
+		// then fail-closes if it is missing. Without the first, user_id is never set
+		// and every route here answered 401 even with a valid token — so the admin
+		// review console could never load a real campaign and fell back to fixtures.
+		// This is the identical omission already fixed for the finance group above.
+		//
+		// Authorization, not just authentication. Reading the queue and DECIDING on a
+		// campaign are separate permissions, mirroring escrow.admin.view /
+		// escrow.admin.resolve: an ops reviewer who may triage submissions should not
+		// thereby be able to release one to the public or freeze someone's fundraiser.
+		// Both are seeded and granted to super-admin and system-admin by
+		// 20261229000000_crowdfunding_admin_permissions.sql.
 		cfAdmin := r.Group("/api/crowdfunding/admin")
+		cfAdmin.Use(middleware.RequireAuthContext(supabase, rbac))
 		cfAdmin.Use(requireUserID())
-		cfAdmin.GET("/stats", cfHandler.AdminStats)
-		cfAdmin.GET("/campaigns", cfHandler.AdminListPending)
-		cfAdmin.GET("/campaigns/:id", cfHandler.AdminGetCampaign)
-		cfAdmin.POST("/campaigns/:id/decision", cfHandler.AdminDecide)
-		cfadminext.RegisterAdmin(cfAdmin, pool, ledgerSvc)
+		cfAdmin.GET("/stats", middleware.RequirePermission(rbac, "crowdfunding.admin.review"), cfHandler.AdminStats)
+		cfAdmin.GET("/campaigns", middleware.RequirePermission(rbac, "crowdfunding.admin.review"), cfHandler.AdminListPending)
+		cfAdmin.GET("/campaigns/:id", middleware.RequirePermission(rbac, "crowdfunding.admin.review"), cfHandler.AdminGetCampaign)
+		cfAdmin.POST("/campaigns/:id/decision", middleware.RequirePermission(rbac, "crowdfunding.admin.decide"), cfHandler.AdminDecide)
+		cfadminext.RegisterAdmin(cfAdmin, pool, ledgerSvc, kycSvc)
 	}
 
 	// --- Restaurant & Delivery routes ---

@@ -2,6 +2,7 @@ import React, { useMemo, useState } from 'react';
 import { View, Text, ScrollView, Pressable, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import { Minus, Plus, CircleCheck } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
@@ -79,7 +80,7 @@ export default function PaidVoteScreen() {
           <View style={{ width: '100%', marginTop: Spacing.lg }}>
             <PrimaryButton label="See results" variant="secondary" onPress={() => router.replace({ pathname: '/connect/voting/results', params: { id: cId } })} />
             <View style={{ height: Spacing.sm }} />
-            <PrimaryButton label="Done" onPress={() => router.back()} />
+            <PrimaryButton label="Done" onPress={() => goBack('/connect')} />
           </View>
         </View>
       </SafeAreaView>

@@ -378,6 +378,13 @@ export interface TopupInput {
    * fresh allowance. Defaults to 'wallet' (standalone funding).
    */
   purpose?: 'wallet' | 'checkout';
+  /**
+   * What the checkout is buying — 'vote_purchase', 'food_order', and so on.
+   * Recorded so a funded purchase is distinguishable from someone simply adding
+   * money to their wallet, in the intent, on the ledger entry and at the PSP.
+   * NULL for standalone funding.
+   */
+  checkoutDomain?: string | null;
 }
 
 export interface TopupIntentResult {
@@ -420,6 +427,9 @@ export async function createTopupIntent(
     payment_reference: paymentReference,
     idempotency_key: input.idempotencyKey,
     purpose: input.purpose ?? 'wallet',
+    // What this money is buying. NULL for standalone funding — that really is
+    // just a top-up. See ADR-PR<pr-number>-topup-checkout-domain.
+    checkout_domain: input.checkoutDomain ?? null,
     status: 'pending',
   });
 
@@ -439,9 +449,13 @@ export async function createTopupIntent(
     amountKobo: input.amountKobo,
     callbackUrl: input.callbackUrl,
     metadata: {
+      // The webhook matches on `type`, so it must stay 'wallet_topup' — the rail
+      // is a top-up regardless of what raised it. checkout_domain rides
+      // alongside so the PSP dashboard shows why the charge exists.
       type: 'wallet_topup',
       topup_intent_id: intentId,
       user_id: userId,
+      checkout_domain: input.checkoutDomain ?? null,
     },
   });
 

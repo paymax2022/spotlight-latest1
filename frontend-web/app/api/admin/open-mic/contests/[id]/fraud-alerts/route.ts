@@ -11,12 +11,13 @@ function toCsv(rows: Array<Record<string, unknown>>) {
   return lines.join('\n');
 }
 
-export async function GET(request: Request, context: { params: { id: string } }) {
+export async function GET(request: Request, context: { params: Promise<{ id: string }> }) {
+  const params = await context.params;
   try {
     await assertOpenMicReadAdmin(request);
     const { searchParams } = new URL(request.url);
     const format = (searchParams.get('format') || '').toLowerCase();
-    const alerts = await listFraudAlerts(context.params.id);
+    const alerts = await listFraudAlerts(params.id);
     if (format === 'csv') {
       const csv = toCsv(
         alerts.map((row) => ({
@@ -31,7 +32,7 @@ export async function GET(request: Request, context: { params: { id: string } })
       return new Response(csv, {
         headers: {
           'Content-Type': 'text/csv; charset=utf-8',
-          'Content-Disposition': `attachment; filename="open-mic-${context.params.id}-fraud-alerts.csv"`,
+          'Content-Disposition': `attachment; filename="open-mic-${params.id}-fraud-alerts.csv"`,
         },
       });
     }

@@ -1,4 +1,4 @@
-import { env } from '@/config/env';
+import { apiV1 } from '@/config/env';
 import type {
   ModuleAuditEntry,
   ModuleEnvironment,
@@ -30,7 +30,7 @@ export class ModuleApiError extends Error {
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   let res: Response;
   try {
-    res = await fetch(`${env.apiBaseUrl}/admin/modules${path}`, {
+    res = await fetch(`${apiV1()}/admin/modules${path}`, {
       credentials: 'include',
       cache: 'no-store',
       headers: { 'Content-Type': 'application/json' },

@@ -13,6 +13,7 @@
 //   GET  /api/v1/me/capabilities
 // passing the Idempotency-Key header on every mutation.
 
+import { mockAllowed } from '@/config/mockPolicy';
 import { api } from '@/api/client';
 import { Colors } from '@/constants/colors';
 import { applyEvent } from '../lib/applicationStateMachine';
@@ -45,7 +46,7 @@ import type {
 //
 // ⚠️ The server side needs FEATURE_ONBOARDING_ENABLED=true, or the Go routes are
 // not registered at all and every call 404s.
-const USE_MOCK = (process.env.EXPO_PUBLIC_MERCHANT_USE_MOCK ?? 'false').toLowerCase() === 'true';
+const USE_MOCK = mockAllowed(process.env.EXPO_PUBLIC_MERCHANT_USE_MOCK, false);
 
 const delay = (ms = 320) => new Promise((r) => setTimeout(r, ms));
 const nowISO = () => new Date().toISOString();

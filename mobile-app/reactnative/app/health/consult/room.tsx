@@ -11,6 +11,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import { Mic, MicOff, Video, VideoOff, PhoneOff, Send, TriangleAlert } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
@@ -133,7 +134,7 @@ export default function ConsultRoomScreen() {
           >
             {videoOff ? <VideoOff size={22} color={Colors.white} strokeWidth={2} /> : <Video size={22} color={Colors.white} strokeWidth={2} />}
           </Pressable>
-          <Pressable style={[styles.ctrl, styles.ctrlEnd]} onPress={() => router.back()} accessibilityLabel="End consult">
+          <Pressable style={[styles.ctrl, styles.ctrlEnd]} onPress={() => goBack('/health')} accessibilityLabel="End consult">
             <PhoneOff size={22} color={Colors.white} strokeWidth={2} />
           </Pressable>
         </View>

@@ -1,11 +1,11 @@
-import { env } from '@/config/env';
+import { apiV1 } from '@/config/env';
 import type { Analytics } from '@/types/analytics';
 
 export async function getAnalyticsSummary(): Promise<Analytics | null> {
   const headers: Record<string, string> = {};
 
   try {
-    const res = await fetch(`${env.apiBaseUrl}/admin/analytics/summary`, {
+    const res = await fetch(`${apiV1()}/admin/analytics/summary`, {
       cache: 'no-store',
       credentials: 'include',
       headers,

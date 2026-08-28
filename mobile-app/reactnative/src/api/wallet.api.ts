@@ -74,10 +74,17 @@ export async function initiateFunding(payload: {
    * funding still requires Tier 1 (ADR-042). Defaults to standalone funding.
    */
   purpose?: 'wallet' | 'checkout';
+  /**
+   * What the checkout is buying — 'vote_purchase', 'food_order', ... Recorded
+   * server-side so the funding is not filed as an anonymous wallet top-up.
+   * Ignored for standalone funding, which is not buying anything.
+   */
+  domain?: string;
 }): Promise<{ authorizationUrl: string; reference: string }> {
   const res  = await api.post('/api/v1/wallet/topup',
     {
       amount_kobo: payload.amountKobo,
+      checkout_domain: payload.domain,
       callback_url: payload.callbackUrl,
       purpose: payload.purpose ?? 'wallet',
     },

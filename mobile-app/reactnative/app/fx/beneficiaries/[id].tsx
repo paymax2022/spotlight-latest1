@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { View, Text, Pressable, ScrollView, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import { Star, Pencil, Trash2, Send, BadgeCheck, ShieldAlert } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
@@ -29,7 +30,7 @@ export default function BeneficiaryDetailScreen() {
     return <SafeAreaView style={styles.safe}><ScreenHeader title="Beneficiary" /><StateView kind="loading" /></SafeAreaView>;
   }
   if (!beneficiary) {
-    return <SafeAreaView style={styles.safe}><ScreenHeader title="Beneficiary" /><StateView kind="error" title="Beneficiary not found" actionLabel="Back" onAction={() => router.back()} /></SafeAreaView>;
+    return <SafeAreaView style={styles.safe}><ScreenHeader title="Beneficiary" /><StateView kind="error" title="Beneficiary not found" actionLabel="Back" onAction={() => goBack('/fx/beneficiaries')} /></SafeAreaView>;
   }
 
   const meta = CURRENCIES[beneficiary.currency];
@@ -43,7 +44,7 @@ export default function BeneficiaryDetailScreen() {
       destructive: true,
     });
     if (!ok) return;
-    setRemoving(true); await del.mutateAsync(beneficiary.id); router.back();
+    setRemoving(true); await del.mutateAsync(beneficiary.id); goBack('/fx/beneficiaries');
   };
 
   return (

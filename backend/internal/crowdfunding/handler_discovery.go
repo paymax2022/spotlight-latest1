@@ -79,7 +79,7 @@ func (h *Handler) AdminListPending(c *gin.Context) {
 
 // AdminGetCampaign — GET /admin/campaigns/:id.
 func (h *Handler) AdminGetCampaign(c *gin.Context) {
-	detail, err := h.svc.GetDetail(c.Request.Context(), c.Param("id"))
+	detail, err := h.svc.AdminCampaignDetail(c.Request.Context(), c.Param("id"))
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "campaign not found"})
 		return

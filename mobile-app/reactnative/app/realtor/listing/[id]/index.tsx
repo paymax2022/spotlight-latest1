@@ -2,6 +2,7 @@ import React from 'react';
 import { View, Text, Image, ScrollView, StyleSheet, Pressable, FlatList } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import {
   ArrowLeft, Share2, Heart, BedDouble, Bath, Maximize, MapPin, ShieldCheck,
   Star, MessageCircle, ChevronRight, Images, Flag,
@@ -70,7 +71,7 @@ export default function ListingDetailScreen() {
         </Pressable>
 
         <SafeAreaView edges={['top']} style={styles.headerOverlay} pointerEvents="box-none">
-          <Pressable onPress={() => router.back()} style={styles.circleBtn} hitSlop={8} accessibilityLabel="Go back">
+          <Pressable onPress={() => goBack('/realtor')} style={styles.circleBtn} hitSlop={8} accessibilityLabel="Go back">
             <ArrowLeft size={20} color={Colors.onSurface} strokeWidth={2} />
           </Pressable>
           <View style={styles.headerActions}>
@@ -216,7 +217,7 @@ function Fact({ icon, value, label }: { icon: React.ReactNode; value: string; la
 function FloatingBack() {
   return (
     <SafeAreaView edges={['top']} style={styles.headerOverlay} pointerEvents="box-none">
-      <Pressable onPress={() => router.back()} style={styles.circleBtn} hitSlop={8} accessibilityLabel="Go back">
+      <Pressable onPress={() => goBack('/realtor')} style={styles.circleBtn} hitSlop={8} accessibilityLabel="Go back">
         <ArrowLeft size={20} color={Colors.onSurface} strokeWidth={2} />
       </Pressable>
     </SafeAreaView>

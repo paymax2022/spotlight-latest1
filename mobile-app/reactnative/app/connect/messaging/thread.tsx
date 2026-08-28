@@ -5,6 +5,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import {
   ArrowLeft, BadgeCheck, Phone, Video, ShieldAlert,
   Send, Sparkles, MapPin, Lock,
@@ -132,7 +133,7 @@ export default function MessageThread() {
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
       <View style={styles.header}>
-        <Pressable onPress={() => router.back()} hitSlop={10} style={styles.headerBtn}>
+        <Pressable onPress={() => goBack('/connect')} hitSlop={10} style={styles.headerBtn}>
           <ArrowLeft size={22} color={Colors.onSurface} strokeWidth={2} />
         </Pressable>
 

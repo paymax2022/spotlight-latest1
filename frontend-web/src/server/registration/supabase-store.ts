@@ -25,6 +25,7 @@ import type {
   RegistrationDraft,
   RegistrationStepKey,
   RegistrationStatusEvent,
+  RegistrationReviewInput,
 } from '@/src/features/registration/types';
 
 // Service-role Supabase client, created LAZILY. A module-level createClient()
@@ -500,6 +501,61 @@ export async function withdrawRegistrationApplication(
     new_status: 'withdrawn',
     note: note || 'Application withdrawn by applicant',
     actor_role: 'public_user',
+    created_at: now,
+  });
+
+  return rowToDraft(data);
+}
+
+/**
+ * ADMIN CONSOLIDATION, slice 5 (see docs/adr/ADR-047). This did not exist here
+ * before — the admin review/approve/reject/shortlist routes called the
+ * in-memory registration/store version instead, which writes to a Map nothing
+ * else reads. Every real application lives in the `registrations` table (see
+ * startRegistrationDraft/saveRegistrationStep above), so an admin clicking
+ * "Approve" updated a map the applicant's real record never saw — the decision
+ * looked successful and silently didn't apply. Mirrors withdrawRegistrationApplication's
+ * shape immediately above: update the row, then append a
+ * registration_status_events row for the audit timeline.
+ */
+export async function reviewRegistrationApplication(
+  applicationId: string,
+  input: RegistrationReviewInput,
+): Promise<RegistrationDraft> {
+  const current = await getRegistrationDraft(applicationId);
+  if (!current) throw new Error('Application not found.');
+
+  const now = nowIso();
+  const nextFraudFlags = input.fraudFlags || current.fraudFlags;
+  const nextFormData = {
+    ...current.formData,
+    'admin.reviewNote': input.note || '',
+    'admin.reviewScore': typeof input.score === 'number' ? input.score : current.formData['admin.reviewScore'],
+    'admin.requestedFields': input.requestedFields || current.formData['admin.requestedFields'],
+  };
+
+  const { data, error } = await getSupabase()
+    .from('registrations')
+    .update({
+      status: input.status,
+      form_data: nextFormData,
+      fraud_flags: nextFraudFlags,
+      updated_at: now,
+    })
+    .eq('id', applicationId)
+    .select('*')
+    .single();
+
+  if (error) {
+    throw new Error(`Failed to review registration: ${error.message}`);
+  }
+
+  await getSupabase().from('registration_status_events').insert({
+    registration_id: applicationId,
+    old_status: current.status,
+    new_status: input.status,
+    note: input.note || 'Admin review action',
+    actor_role: 'admin',
     created_at: now,
   });
 

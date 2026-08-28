@@ -1,3 +1,4 @@
+import { mockAllowed } from '@/config/mockPolicy';
 import { api } from '@/api/client';
 import type {
   Contest,
@@ -29,9 +30,17 @@ import {
   MOCK_VOTING_NOTIFICATIONS,
 } from './voting.mock';
 
-// ─── Feature flag: flip to false once real endpoints are ready ─────────────────
-// Mock by default; set EXPO_PUBLIC_VOTING_USE_MOCK=false to hit the live backend.
-const USE_MOCK = (process.env.EXPO_PUBLIC_VOTING_USE_MOCK ?? 'true').toLowerCase() !== 'false';
+// ─── Mock data: OPT-IN ONLY ───────────────────────────────────────────────────
+// This used to default to MOCK, so any environment that forgot the flag served
+// invented contests, contestants and vote packages while looking entirely normal.
+// Fake data that shows up silently is worse than an empty screen or an error:
+// nobody goes looking for a bug they cannot see.
+//
+// The default is now LIVE. Mock is only used when someone explicitly asks for it
+// with EXPO_PUBLIC_VOTING_USE_MOCK=true — so forgetting the flag now produces a
+// visible failure against the real backend rather than a convincing fiction.
+// Live by default, and NEVER mock on staging or production — see mockPolicy.ts.
+const USE_MOCK = mockAllowed(process.env.EXPO_PUBLIC_VOTING_USE_MOCK, false);
 
 // Live voting is served by the Go backend's Connect module. Contests,
 // contestants and free votes all come from here; the roster is the same ranked
@@ -251,10 +260,44 @@ function movementFromTrend(
 
 // ─── Vote Packages ─────────────────────────────────────────────────────────────
 
+/**
+ * Paid vote packages for a contest.
+ *
+ * The path used to be '/voting/packages', which does not exist and returned 404
+ * on every call. Nothing noticed because the mock branch above short-circuited
+ * before the request was ever made — the endpoint had never actually run.
+ *
+ * The real route returns { id, votes, bonusVotes, priceKobo, label, popular },
+ * which is not the client's VotePackage shape, so it is mapped here rather than
+ * cast. `amount` is KOBO on this side: payment-method.tsx passes it straight to
+ * the gateway as amountKobo.
+ *
+ * No packages is a legitimate answer — a contest with paid voting off has none —
+ * so an empty array is returned rather than treated as an error.
+ */
 export async function getVotePackages(contestId?: string): Promise<VotePackage[]> {
   if (USE_MOCK) return MOCK_VOTE_PACKAGES;
-  const res = await api.get('/voting/packages', { params: { contestId } });
-  return (res.data?.data ?? res.data) as VotePackage[];
+  if (!contestId) return [];
+
+  const res = await api.get(`/api/v1/contests/${contestId}/vote-packages`);
+  const rows = (res.data?.data ?? res.data ?? []) as Array<{
+    id: string;
+    votes: number;
+    bonusVotes?: number;
+    priceKobo: number;
+    label?: string;
+    popular?: boolean;
+  }>;
+
+  return rows.map((r) => ({
+    id: r.id,
+    votes: Number(r.votes ?? 0),
+    amount: Number(r.priceKobo ?? 0),
+    currency: 'NGN' as const,
+    label: r.label,
+    bonusVotes: r.bonusVotes ? Number(r.bonusVotes) : undefined,
+    isPopular: Boolean(r.popular),
+  }));
 }
 
 // ─── Free Vote Allocation (PER CONTESTANT) ──────────────────────────────────────
@@ -361,6 +404,39 @@ export async function initiatePaidVote(payload: VotePaidInitiatePayload): Promis
       status: 'PROCESSING',
     };
   }
+  // The wallet rail has its OWN endpoint, and this used to ignore it: the
+  // paymentMethod was dropped here, so "Pay with Wallet" opened a Paystack
+  // transaction instead of debiting the wallet, then sent the voter to a
+  // processing screen to wait for a payment they were never asked to make.
+  //
+  // /paid/wallet debits atomically, prices the package server-side, records the
+  // transaction and credits the votes in one call — so it comes back already
+  // SUCCESSFUL, with nothing to verify.
+  if (payload.paymentMethod === 'WALLET') {
+    if (!payload.packageId) {
+      throw new Error('Select a vote package to pay from your wallet.');
+    }
+    const walletRes = await api.post(
+      '/api/votes/paid/wallet',
+      {
+        contestId:    payload.contestId,
+        contestantId: payload.contestantId,
+        packageId:    payload.packageId,
+        voterEmail:   payload.voterEmail,
+        voterName:    payload.voterName,
+      },
+      { headers: { 'Idempotency-Key': payload.idempotencyKey } },
+    );
+    const w = (walletRes.data?.data ?? walletRes.data) as Record<string, unknown>;
+    return {
+      transactionId:  String(w.transactionId ?? ''),
+      reference:      String(w.paymentReference ?? ''),
+      votesToCredit:  w.votesCredited != null ? Number(w.votesCredited) : payload.votes,
+      amountExpected: w.amountKobo != null ? Number(w.amountKobo) : payload.amount,
+      status:         'SUCCESSFUL',
+    };
+  }
+
   // Backend: POST /api/votes/paid/initiate (no /voting prefix, no /v2).
   // Requires voterEmail + voterName; vote count goes in `customVoteQuantity`
   // unless a preset `packageId` is supplied.

@@ -12,6 +12,7 @@ import React from 'react';
 import { View, Text, StyleSheet, ScrollView, Pressable, ActivityIndicator, RefreshControl } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import { useQuery } from '@tanstack/react-query';
 import { ChevronLeft, ChevronRight, CircleCheck, Clock, CircleAlert, FileText } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
@@ -134,7 +135,7 @@ export default function FilmAcademyStatusScreen() {
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
       <View style={styles.header}>
-        <Pressable onPress={() => router.back()} hitSlop={12} style={styles.back}>
+        <Pressable onPress={() => goBack('/film-academy')} hitSlop={12} style={styles.back}>
           <ChevronLeft size={24} color={Colors.onSurface} />
         </Pressable>
         <Text style={styles.headerTitle}>My application</Text>

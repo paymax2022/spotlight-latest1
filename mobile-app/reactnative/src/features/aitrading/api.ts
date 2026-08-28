@@ -10,11 +10,12 @@
 // TRADING_USE_MOCK defaults TRUE so the stack is demoable offline. Set
 // EXPO_PUBLIC_TRADING_USE_MOCK=false to hit the real proxy.
 
+import { mockAllowed } from '@/config/mockPolicy';
 import { api } from '@/api/client';
 
 export const TRADING_BASE = '/api/v1/trading';
 export const TRADING_USE_MOCK =
-  (process.env.EXPO_PUBLIC_TRADING_USE_MOCK ?? 'true').toLowerCase() !== 'false';
+  mockAllowed(process.env.EXPO_PUBLIC_TRADING_USE_MOCK, true);
 
 // ── Types (camelCase) ─────────────────────────────────────────────────────────
 export type TradingKycStatus =

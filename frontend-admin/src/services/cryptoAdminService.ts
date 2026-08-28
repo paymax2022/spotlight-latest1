@@ -8,7 +8,7 @@
 // value_kobo are NGN kobo. units / minor_unit_scale are integer asset-minor-unit
 // fields — never rendered as money, only formatKobo() output is money-facing.
 
-import { env } from '@/config/env';
+import { apiV1 } from '@/config/env';
 import { operationKey } from './idempotency';
 import type {
   CryptoAsset, CryptoOrder, CryptoAssetConfigRequest,
@@ -30,9 +30,8 @@ import type {
 const USE_MOCK = (process.env.NEXT_PUBLIC_CRYPTO_ADMIN_USE_MOCK ?? 'false').toLowerCase() === 'true';
 
 function base(): string {
-  // env.apiBaseUrl already ends with /api/v1; crypto admin is mounted directly
   // at /api/v1/admin/crypto (no extra prefix-stripping needed, unlike marketplace).
-  return `${env.apiBaseUrl}/admin/crypto`;
+  return `${apiV1()}/admin/crypto`;
 }
 
 function authHeaders(): Record<string, string> {

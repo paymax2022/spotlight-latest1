@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { View, Text, Pressable, ScrollView, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import { Target, Lightbulb, Trophy, Sparkles } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
@@ -97,7 +98,7 @@ export default function AdaptivePractice() {
             </View>
           ))}
         </ScrollView>
-        <View style={styles.footer}><PrimaryButton label="Done" onPress={() => router.back()} /></View>
+        <View style={styles.footer}><PrimaryButton label="Done" onPress={() => goBack('/learn/academy')} /></View>
       </SafeAreaView>
     );
   }

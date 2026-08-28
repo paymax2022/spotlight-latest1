@@ -1,6 +1,10 @@
 import { successResponse, errorResponse, handleApiError } from '@/src/lib/api/responses';
 import { assertAdminPermission } from '@/src/server/admin/auth';
-import { getRegistrationDraft } from '@/src/server/registration/store';
+// ADMIN CONSOLIDATION, slice 5 (see docs/adr/ADR-047): registration/store is
+// the in-memory version nothing real ever writes to — real applications live
+// in Supabase (registration/supabase-store). getRegistrationDraft here is
+// async where the memory version was sync; both call sites below are awaited.
+import { getRegistrationDraft } from '@/src/server/registration/supabase-store';
 import {
   upsertScorecard, listScorecardsForApplication,
   getScoreSummary, getRubricForContest,
@@ -24,11 +28,11 @@ export async function GET(request: Request, ctx: { params: Promise<{ id: string 
   try {
     await assertAdminPermission(request, 'scores:manage');
 
-    const draft = getRegistrationDraft(params.id);
+    const draft = await getRegistrationDraft(params.id);
     if (!draft) return errorResponse('Application not found', 404);
 
-    const scorecards = listScorecardsForApplication(params.id);
-    const summary    = getScoreSummary(params.id);
+    const scorecards = await listScorecardsForApplication(params.id);
+    const summary    = await getScoreSummary(params.id);
     const rubric     = getRubricForContest(draft.contestSlug);
 
     return successResponse({ scorecards, summary, rubric });
@@ -43,7 +47,7 @@ export async function POST(request: Request, ctx: { params: Promise<{ id: string
   try {
     const identity = await assertAdminPermission(request, 'scores:manage');
 
-    const draft = getRegistrationDraft(params.id);
+    const draft = await getRegistrationDraft(params.id);
     if (!draft) return errorResponse('Application not found', 404);
 
     const body = await request.json() as {
@@ -58,7 +62,7 @@ export async function POST(request: Request, ctx: { params: Promise<{ id: string
 
     const judgeName = await getJudgeName(identity.actorId);
 
-    const card = upsertScorecard({
+    const card = await upsertScorecard({
       applicationId: params.id,
       judgeId:       identity.actorId,
       judgeName,
@@ -68,7 +72,7 @@ export async function POST(request: Request, ctx: { params: Promise<{ id: string
       notes:         body.notes ?? '',
     });
 
-    const summary = getScoreSummary(params.id);
+    const summary = await getScoreSummary(params.id);
     return successResponse({ scorecard: card, summary });
   } catch (error) {
     return handleApiError(error, 'Failed to save scorecard');

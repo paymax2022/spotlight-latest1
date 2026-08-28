@@ -1,5 +1,5 @@
-import React from 'react';
-import { ScrollView, View, Text, Image, Pressable, StyleSheet } from 'react-native';
+import React, { useState } from 'react';
+import { ScrollView, View, Text, Image, Pressable, StyleSheet, ActivityIndicator } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { ImagePlus, Plus, X, Video, Camera, Images } from 'lucide-react-native';
@@ -11,17 +11,43 @@ import WizardHeader from '@/features/crowdfunding/components/WizardHeader';
 import PrimaryButton from '@/components/PrimaryButton';
 import { useCampaignDraft } from '@/features/crowdfunding/store/campaignDraftStore';
 import { pickFromLibrary, pickMultipleFromLibrary, takePhoto } from '@/features/crowdfunding/utils/mediaPicker';
+import { uploadCampaignCover } from '@/features/crowdfunding/api/coverUpload';
+import { getErrorMessage } from '@/utils/errorMapper';
 
 export default function CreateMediaScreen() {
   const { draft, patch } = useCampaignDraft();
+  const [uploading, setUploading] = useState(false);
+  const [coverError, setCoverError] = useState('');
+
+  /**
+   * Upload immediately, then store the RETURNED URL rather than the picker URI.
+   * The picker URI is blob: on web and file:// on native; neither survives to the
+   * server, and the submit payload drops any cover that is not already http(s) —
+   * which is why chosen covers never appeared.
+   *
+   * On failure the draft keeps no cover, so "Continue" stays disabled and the
+   * problem is visible here rather than as a missing image days later.
+   */
+  const acceptCover = async (uri: string) => {
+    setUploading(true);
+    setCoverError('');
+    try {
+      const { url } = await uploadCampaignCover(uri);
+      patch({ coverImageUri: url });
+    } catch (err) {
+      setCoverError(getErrorMessage(err));
+    } finally {
+      setUploading(false);
+    }
+  };
 
   const pickCover = async () => {
     const asset = await pickFromLibrary({ kind: 'images', allowsEditing: true, aspect: [16, 9] });
-    if (asset) patch({ coverImageUri: asset.uri });
+    if (asset) await acceptCover(asset.uri);
   };
   const shootCover = async () => {
     const asset = await takePhoto({ allowsEditing: true, aspect: [16, 9] });
-    if (asset) patch({ coverImageUri: asset.uri });
+    if (asset) await acceptCover(asset.uri);
   };
   const addGallery = async () => {
     const remaining = 6 - draft.galleryUris.length;
@@ -41,8 +67,14 @@ export default function CreateMediaScreen() {
       <ScrollView contentContainerStyle={styles.body} showsVerticalScrollIndicator={false}>
         <Text style={styles.label}>Cover image</Text>
         <Text style={styles.hint}>This is the first thing supporters see. Use a clear, genuine photo.</Text>
+        {coverError ? <Text style={styles.coverError} role="alert">{coverError}</Text> : null}
 
-        {draft.coverImageUri ? (
+        {uploading ? (
+          <View style={[styles.coverWrap, styles.coverBusy]}>
+            <ActivityIndicator color={Colors.primary} />
+            <Text style={styles.coverBusyText}>Uploading cover…</Text>
+          </View>
+        ) : draft.coverImageUri ? (
           <View style={styles.coverWrap}>
             <Image source={{ uri: draft.coverImageUri }} style={styles.cover} resizeMode="cover" />
             <Pressable style={styles.coverRemove} onPress={() => patch({ coverImageUri: null })} accessibilityLabel="Remove cover">
@@ -112,6 +144,9 @@ export default function CreateMediaScreen() {
 }
 
 const styles = StyleSheet.create({
+  coverBusy: { alignItems: 'center', justifyContent: 'center', gap: Spacing.xs },
+  coverBusyText: { ...Typography.labelSm, color: Colors.onSurfaceVariant },
+  coverError: { ...Typography.labelSm, color: Colors.error ?? '#ef4444', marginBottom: Spacing.xs },
   safe: { flex: 1, backgroundColor: Colors.background },
   body: { paddingHorizontal: Spacing.containerMargin, paddingTop: Spacing.md, paddingBottom: Spacing.lg },
   label: { ...Typography.labelMd, color: Colors.onSurface },

@@ -3,6 +3,59 @@ import { assertAdminPermission } from '@/src/server/admin/auth';
 import { createAdminClient } from '@/lib/supabase/server';
 import { appendAuditLog } from '@/src/server/voting/audit.service';
 
+/**
+ * A datetime-local input submits '' when left blank, and `?? null` catches only
+ * null/undefined — never an empty string. Passing '' into a timestamptz column
+ * makes Postgres reject the whole upsert, so saving settings without filling in
+ * the optional voting window failed with:
+ *   invalid input syntax for type timestamp with time zone: ""
+ * Same trap as the vote-packages route.
+ */
+function optionalTimestamp(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  return trimmed === '' ? null : trimmed;
+}
+
+/**
+ * The admin's paid-voting toggle lives in `voting_settings`, but the mobile app
+ * never reads that table: it gates on `connect_contests.paid_vote_kobo`, which a
+ * trigger mirrors from `contests.vote_price_ngn * 100`. Saving the toggle alone
+ * therefore changed nothing on the phone — the console said paid voting was on
+ * while every device said it was unavailable.
+ *
+ * This carries the decision across to the fields that are actually read. Turning
+ * paid voting OFF zeroes the price, so the two can never disagree in the other
+ * direction either.
+ *
+ * `voting_enabled` had the same split — GET reports the contest row while POST
+ * only ever wrote the settings row — so it is synced here as well, and the form
+ * loads both from the contest row so the value round-trips instead of drifting.
+ *
+ * Failures are reported, not swallowed: a save that half-applied is exactly the
+ * silent divergence this exists to end.
+ */
+async function syncContestVotingState(
+  supabase: ReturnType<typeof createAdminClient>,
+  body: Record<string, unknown>,
+): Promise<string | null> {
+  const paidVotingEnabled = Boolean(body.paidVotingEnabled ?? false);
+  const parsed = Number(body.pricePerVoteNgn);
+  const price = paidVotingEnabled && Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
+
+  const { error } = await supabase
+    .from('contests')
+    .update({
+      voting_enabled: Boolean(body.votingEnabled ?? false),
+      voting_type: (body.votingType as string) ?? (price > 0 ? 'paid' : 'free'),
+      vote_price_ngn: price,
+      vote_price: price,
+    })
+    .eq('id', body.contestId as string);
+
+  return error ? error.message : null;
+}
+
 export async function GET(request: Request) {
   try {
     const identity = await assertAdminPermission(request, 'votes:manage');
@@ -16,7 +69,70 @@ export async function GET(request: Request) {
     const { data, error } = await query;
     if (error) return errorResponse('Failed to load settings', 500);
 
-    return successResponse({ success: true, settings: data ?? [] });
+    // Every contest is listed, not only those that already have a settings row.
+    //
+    // Listing only configured contests was a chicken-and-egg: voting_settings is
+    // written BY the settings page, which is reachable only from this list — so a
+    // contest with no row could never be configured, and with the table empty the
+    // dashboard showed "No voting settings configured yet" and no way forward.
+    const { data: allContests, error: contestsErr } = await supabase
+      .from('contests')
+      .select('id, name, slug, status, voting_enabled, voting_type, vote_price_ngn')
+      .order('created_at', { ascending: false });
+    if (contestsErr) {
+      console.error('[admin/voting/settings] contest list failed', contestsErr);
+      return errorResponse('Failed to load contests', 500);
+    }
+
+    // voting_settings stores snake_case and carries no contest name. The admin
+    // dashboard reads camelCase (contestId, contestName, …), so every field came
+    // back undefined and its links rendered as /admin/voting/undefined/settings.
+    // Map here, and join public.contests for the name/slug/status it needs.
+    const rows = data ?? [];
+    const contestIds = rows.map((r) => r.contest_id).filter(Boolean);
+    const namesById = new Map<string, { name: string; slug: string | null; status: string }>();
+    if (contestIds.length > 0) {
+      const { data: contests } = await supabase
+        .from('contests')
+        .select('id, name, slug, status')
+        .in('id', contestIds);
+      for (const c of contests ?? []) {
+        namesById.set(c.id as string, {
+          name: (c.name as string) ?? '',
+          slug: (c.slug as string) ?? null,
+          status: (c.status as string) ?? 'draft',
+        });
+      }
+    }
+
+    const settingsByContest = new Map(rows.map((r) => [r.contest_id as string, r]));
+
+    // A contest with no settings row is reported as unconfigured rather than
+    // omitted, so it can be opened and configured. `configured` lets the
+    // dashboard say which is which instead of implying every contest is set up.
+    const source = contestId
+      ? (allContests ?? []).filter((c) => c.id === contestId)
+      : (allContests ?? []);
+
+    const settings = source.map((c) => {
+      const r = settingsByContest.get(c.id as string) ?? {};
+      return {
+        ...r,
+        configured: settingsByContest.has(c.id as string),
+        contestId: c.id,
+        contestName: (c.name as string) ?? '',
+        contestSlug: (c.slug as string) ?? '',
+        status: (c.status as string) ?? 'draft',
+        // The contest row is the authority for whether voting is on and what a
+        // vote costs; voting_settings carries the rest of the configuration.
+        votingEnabled: Boolean(c.voting_enabled),
+        votingType: (c.voting_type as string) ?? 'free',
+        votePriceNgn: Number(c.vote_price_ngn ?? 0),
+        votingEndsAt: (r as Record<string, unknown>).voting_ends_at ?? null,
+      };
+    });
+
+    return successResponse({ success: true, settings });
   } catch (error) {
     return handleApiError(error, 'Failed to load voting settings');
   }
@@ -54,11 +170,11 @@ export async function POST(request: Request) {
           show_public_rank: body.showPublicRank ?? true,
           active_phase_key: body.activePhaseKey ?? null,
           allow_vote_sharing: body.allowVoteSharing ?? true,
-          voting_starts_at: body.votingStartsAt ?? null,
-          voting_ends_at: body.votingEndsAt ?? null,
+          voting_starts_at: optionalTimestamp(body.votingStartsAt),
+          voting_ends_at: optionalTimestamp(body.votingEndsAt),
           timezone: body.timezone ?? 'Africa/Lagos',
           leaderboard_freeze_enabled: body.leaderboardFreezeEnabled ?? false,
-          leaderboard_freeze_at: body.leaderboardFreezeAt ?? null,
+          leaderboard_freeze_at: optionalTimestamp(body.leaderboardFreezeAt),
           fraud_detection_enabled: body.fraudDetectionEnabled ?? true,
           status: body.status ?? 'draft',
         },
@@ -68,6 +184,11 @@ export async function POST(request: Request) {
       .single();
 
     if (error) return errorResponse(error.message, 500);
+
+    const syncError = await syncContestVotingState(supabase, body);
+    if (syncError) {
+      return errorResponse(`Settings saved, but the contest could not be updated: ${syncError}`, 500);
+    }
 
     await appendAuditLog({
       actorId: identity.actorId,

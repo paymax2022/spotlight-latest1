@@ -102,29 +102,20 @@ type FraudAlert struct {
 
 // ─── KYC / KYB ───────────────────────────────────────────────────────────────
 
-// KycDoc matches CfKycDoc.
-type KycDoc struct {
-	ID       string `json:"id"`
-	Label    string `json:"label"`
-	Type     string `json:"type"`
-	Verified bool   `json:"verified"`
-}
-
-// KycCase matches CfKycCase.
+// KycCase matches CfKycCase — the crowdfunding console's view onto the
+// platform-wide finance/kyc queue (backend/internal/finance/kyc), scoped to
+// identity verification. There is no crowdfunding-specific KYC dataset: this
+// is real user_profiles.kyc_* state, not a bespoke case record.
 type KycCase struct {
-	ID                string   `json:"id"`
-	Kind              string   `json:"kind"`
-	Status            string   `json:"status"`
-	ApplicantName     string   `json:"applicantName"`
-	ApplicantType     string   `json:"applicantType"`
-	Email             string   `json:"email"`
-	IDLabel           string   `json:"idLabel"`
-	BankLabel         string   `json:"bankLabel"`
-	SubmittedAt       string   `json:"submittedAt"`
-	Documents         []KycDoc `json:"documents"`
-	DuplicateIdentity bool     `json:"duplicateIdentity"`
-	DuplicateBank     bool     `json:"duplicateBank"`
-	RiskLevel         string   `json:"riskLevel"`
+	ID            string  `json:"id"` // the user's id
+	Status        string  `json:"status"`
+	ApplicantName string  `json:"applicantName"`
+	ApplicantType string  `json:"applicantType"` // always "Individual" — platform KYC has no business-entity tier
+	Email         string  `json:"email"`
+	Tier          int     `json:"tier"` // requested tier (1-3)
+	DocumentType  *string `json:"documentType"`
+	SubmittedAt   string  `json:"submittedAt"`
+	VerifiedAt    *string `json:"verifiedAt"`
 }
 
 // ─── Compliance ──────────────────────────────────────────────────────────────

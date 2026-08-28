@@ -8,6 +8,7 @@
 // hidden recipe path. Flip EXPO_PUBLIC_NUTRITION_USE_MOCK=false when the Go
 // endpoints are reachable.
 
+import { mockAllowed } from '@/config/mockPolicy';
 import { api } from '@/api/client';
 import type {
   DishNutritionProfile,
@@ -29,7 +30,7 @@ import {
 } from './mock';
 
 export const USE_MOCK =
-  (process.env.EXPO_PUBLIC_NUTRITION_USE_MOCK ?? 'true').toLowerCase() !== 'false';
+  mockAllowed(process.env.EXPO_PUBLIC_NUTRITION_USE_MOCK, true);
 
 const BASE = '/api/v1/nutrition';
 const delay = (ms = 280) => new Promise((r) => setTimeout(r, ms));

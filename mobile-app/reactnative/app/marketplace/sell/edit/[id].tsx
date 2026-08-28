@@ -11,6 +11,7 @@ import { View, Text, ScrollView, StyleSheet, Pressable, TextInput } from 'react-
 import { alertAsync } from '@/lib/confirm';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import { ArrowLeft, ShieldAlert, Info } from 'lucide-react-native';
 import { Typography } from '@/constants/typography';
 import { Spacing } from '@/constants/spacing';
@@ -172,7 +173,7 @@ export default function EditListingScreen() {
 
         <View style={{ height: Spacing.lg }} />
         <PrimaryButton label={update.isPending ? 'Saving…' : 'Save changes'} onPress={onSave} disabled={!canSave || terminal} />
-        <Pressable style={styles.cancel} onPress={() => router.back()}><Text style={styles.cancelText}>Cancel</Text></Pressable>
+        <Pressable style={styles.cancel} onPress={() => goBack('/marketplace/sell')}><Text style={styles.cancelText}>Cancel</Text></Pressable>
       </ScrollView>
     </SafeAreaView>
   );
@@ -181,7 +182,7 @@ export default function EditListingScreen() {
 function Header() {
   return (
     <View style={styles.header}>
-      <Pressable onPress={() => router.back()} hitSlop={12} accessibilityLabel="Back"><ArrowLeft size={24} color={MarketColors.text} /></Pressable>
+      <Pressable onPress={() => goBack('/marketplace/sell')} hitSlop={12} accessibilityLabel="Back"><ArrowLeft size={24} color={MarketColors.text} /></Pressable>
       <Text style={styles.headerTitle}>Edit</Text>
       <View style={{ width: 24 }} />
     </View>

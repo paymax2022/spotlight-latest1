@@ -2,6 +2,7 @@ import React from 'react';
 import { View, Text, ScrollView, StyleSheet, Pressable, Platform } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import { ArrowLeft, ShieldCheck, Lock, Wallet, CreditCard } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
@@ -11,6 +12,9 @@ import { shadow1 } from '@/constants/shadows';
 import PrimaryButton from '@/components/PrimaryButton';
 import { useInitiatePaidVote } from '@/features/voting/hooks/useVote';
 import { useContestDetails } from '@/features/voting/hooks/useContestDetails';
+import { useVotePackages } from '@/features/voting/hooks/useVotePackages';
+import { getVotingWindow } from '@/features/voting/utils/votingWindow';
+import { getPaidVotingAvailability } from '@/features/voting/utils/paidVoting';
 import { formatAmount } from '@/features/voting/utils/voteFormatters';
 import type { VotePaidInitiateResult } from '@/features/voting/types/voting.types';
 import { useAuthStore } from '@/store/authStore';
@@ -23,17 +27,35 @@ export default function PaymentMethodScreen() {
   const checkout = usePurchasePayment<VotePaidInitiateResult>();
   const user = useAuthStore((s) => s.user);
   const { data: contest } = useContestDetails(contestId ?? '');
+  const { data: packages } = useVotePackages(contestId);
 
   const totalAmount = Number(amount ?? 0);
   const totalVotes  = Number(votes ?? 0);
 
-  // Block purchases when the contest is not actively accepting votes. We only
-  // gate on a *known* non-live status so a slow/absent contest query doesn't
-  // wrongly lock out a paying voter.
-  const votingClosed =
-    !!contest && (contest.status !== 'LIVE' || contest.paidVotingEnabled === false);
+  // Block purchases when the contest is not actively accepting votes. Shares the
+  // deadline-aware window with the rest of the voting flow — a status-only check
+  // let a contest past its end date take a payment the server would then refuse,
+  // which is the worst place to discover it. An unloaded contest still counts as
+  // open, so a slow query does not lock out a paying voter.
+  const votingWindow = getVotingWindow(contest);
+  // Same predicate as buy-votes: a contest that sells only packages has no
+  // per-vote price, and gating on contest.paidVotingEnabled alone refused a
+  // payment for the very package the voter had just picked.
+  const paidVoting = getPaidVotingAvailability(contest, packages);
+  const votingClosed = !votingWindow.open || paidVoting.available === false;
 
   const goToProcessing = (result: VotePaidInitiateResult) => {
+    // The wallet rail debits and credits the votes in the same call, so there is
+    // nothing left to verify. Sending it to payment-processing would poll a
+    // Paystack reference that does not exist and strand a completed purchase on
+    // a spinner.
+    if (result.status === 'SUCCESSFUL') {
+      const credited = result.votesToCredit ?? totalVotes;
+      router.replace(
+        `/voting/vote-success?contestantId=${contestantId}&contestId=${contestId}&votes=${credited}&voteType=PAID`,
+      );
+      return;
+    }
     const params = `transactionId=${encodeURIComponent(result.transactionId)}&reference=${encodeURIComponent(result.reference)}&contestantId=${contestantId}&contestId=${contestId}&votes=${votes}`;
     router.push(`/voting/payment-processing?${params}`);
   };
@@ -46,13 +68,24 @@ export default function PaymentMethodScreen() {
       amountKobo: totalAmount,
       title: `${totalVotes} votes`,
       domain: 'vote_purchase',
-      charge: (method) => initiate.mutateAsync({
+      // BOTH rails spend the wallet. The card rail does not charge the card for
+      // this purchase: it opens a wallet TOP-UP, waits for the webhook to credit
+      // it, and only then calls charge() — so by the time we get here the money
+      // is already in the wallet (same shape as ADR-041's card rail).
+      //
+      // This used to pass 'CARD', which opened a SECOND Paystack transaction that
+      // nobody ever paid — no authorizationUrl is opened anywhere in the app — and
+      // then sent the voter to payment-processing to poll it. Paystack reported it
+      // unpaid, the row went payment_status='failed', and /votes/paid/verify
+      // answered 400 "This payment was not successful". The voter had paid, their
+      // wallet was funded, and they got no votes.
+      charge: () => initiate.mutateAsync({
         contestantId: contestantId ?? '',
         contestId: contestId ?? '',
         votes: totalVotes,
         amount: totalAmount,
         packageId: packageId || undefined,
-        paymentMethod: method === 'wallet' ? 'WALLET' : 'CARD',
+        paymentMethod: 'WALLET',
         voterEmail: user?.email ?? '',
         voterName:  user?.fullName ?? '',
       }),
@@ -63,7 +96,7 @@ export default function PaymentMethodScreen() {
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
       <View style={styles.header}>
-        <Pressable onPress={() => router.back()} style={styles.backBtn}>
+        <Pressable onPress={() => goBack(`/voting/buy-votes?contestantId=${contestantId}&contestId=${contestId}`)} style={styles.backBtn}>
           <ArrowLeft size={22} color={Colors.onSurface} strokeWidth={2} />
         </Pressable>
         <Text style={styles.title}>Payment Method</Text>
@@ -102,7 +135,7 @@ export default function PaymentMethodScreen() {
           <View style={styles.closedBanner}>
             <Lock size={16} color={Colors.error} strokeWidth={2} />
             <Text style={styles.closedText}>
-              Voting is closed for this contest. Payments are temporarily unavailable.
+              {votingWindow.message ?? 'No vote packages are on sale for this contest yet.'} Payments are unavailable.
             </Text>
           </View>
         )}

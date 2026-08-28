@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
 import { User, Mail, Lock, Gift } from 'lucide-react-native';
 import { router } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import { useForm, Controller } from 'react-hook-form';
 import { z } from 'zod';
 import { zodResolver } from '@hookform/resolvers/zod';
@@ -98,7 +99,7 @@ export default function SignupScreen() {
         <Text style={styles.link}>Privacy Policy</Text>.
       </Text>
 
-      <Pressable onPress={() => router.back()} style={styles.signIn}>
+      <Pressable onPress={() => goBack('/')} style={styles.signIn}>
         <Text style={styles.signInText}>Already have an account? <Text style={styles.signInLink}>Sign in</Text></Text>
       </Pressable>
     </AuthScreenWrapper>

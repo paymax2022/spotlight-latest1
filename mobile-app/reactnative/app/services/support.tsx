@@ -3,6 +3,7 @@ import { View, Text, ScrollView, StyleSheet, Pressable, Platform, KeyboardAvoidi
 import { alertAsync } from '@/lib/confirm';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import { ArrowLeft, Headphones, Mail, MessageCircle, Phone, ChevronDown } from 'lucide-react-native';
 import PrimaryButton from '@/components/PrimaryButton';
 import TextInputField from '@/components/TextInputField';
@@ -50,7 +51,7 @@ export default function SupportScreen() {
         message: 'Thanks — our support team will reply to your registered email, usually within a few hours.',
         buttonLabel: 'Done',
       });
-      router.back();
+      goBack('/services');
     }, 600);
   };
 
@@ -61,7 +62,7 @@ export default function SupportScreen() {
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
       <View style={styles.topBar}>
-        <Pressable onPress={() => router.back()} style={styles.iconBtn} accessibilityRole="button" accessibilityLabel="Go back">
+        <Pressable onPress={() => goBack('/services')} style={styles.iconBtn} accessibilityRole="button" accessibilityLabel="Go back">
           <ArrowLeft size={22} color={Colors.primary} strokeWidth={2.2} />
         </Pressable>
         <Text style={styles.topTitle}>Help & support</Text>
