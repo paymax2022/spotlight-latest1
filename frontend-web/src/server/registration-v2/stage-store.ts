@@ -82,6 +82,26 @@ export async function listContestStages(contestId: string): Promise<ContestStage
   return (data ?? []).map((row) => fromRow(row as unknown as StageRow));
 }
 
+/**
+ * Stage counts for a batch of contests, keyed by contest id. Used by the
+ * admin contest list to show a "N stages" badge per row without an N+1 of
+ * per-contest requests — one query, tallied client-side since a GROUP BY
+ * count isn't expressible through supabase-js without an RPC.
+ */
+export async function getStageCounts(contestIds: string[]): Promise<Record<string, number>> {
+  if (contestIds.length === 0) return {};
+  const { data, error } = await createAdminClient()
+    .from('contest_stages')
+    .select('contest_id')
+    .in('contest_id', contestIds);
+  if (error) throw new Error(`Failed to load contest stage counts: ${error.message}`);
+  const counts: Record<string, number> = {};
+  for (const row of (data ?? []) as { contest_id: string }[]) {
+    counts[row.contest_id] = (counts[row.contest_id] ?? 0) + 1;
+  }
+  return counts;
+}
+
 export type StageInput = {
   stageNumber: number;
   stageName: string;

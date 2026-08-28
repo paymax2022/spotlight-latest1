@@ -4,6 +4,7 @@ import { useState, useMemo, useEffect, useCallback } from 'react';
 import Link from 'next/link';
 import { Page, PageHeader, Card, Button, Input, Badge, colors, tint, thCell, tdCell } from '@/components/ui/vuexy';
 import { listVotingContests } from '@/services/competitionsService';
+import { getContestStageCounts } from '@/services/contestsAdminService';
 import type { VotingContest } from '@/types/competitions';
 
 // Real contests as seen by the mobile app — GET /api/v1/connect/contests, the
@@ -34,12 +35,18 @@ export default function CompetitionsListPage() {
   const [contests, setContests] = useState<VotingContest[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [stageCounts, setStageCounts] = useState<Record<string, number>>({});
 
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      setContests(await listVotingContests());
+      const rows = await listVotingContests();
+      setContests(rows);
+      // Best-effort: a stage-count failure shouldn't block the contest list itself.
+      getContestStageCounts(rows.map((c) => c.id))
+        .then(setStageCounts)
+        .catch(() => setStageCounts({}));
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to load contests');
     } finally {
@@ -88,6 +95,7 @@ export default function CompetitionsListPage() {
             <tr>
               <th style={thCell}>Title</th>
               <th style={thCell}>Status</th>
+              <th style={thCell}>Stages</th>
               <th style={thCell}>Contestants</th>
               <th style={thCell}>Total Votes</th>
               <th style={thCell}>Paid Vote Price</th>
@@ -97,14 +105,22 @@ export default function CompetitionsListPage() {
           </thead>
           <tbody>
             {loading ? (
-              <tr><td style={{ ...tdCell, color: colors.muted }} colSpan={7}>Loading…</td></tr>
+              <tr><td style={{ ...tdCell, color: colors.muted }} colSpan={8}>Loading…</td></tr>
             ) : filtered.length === 0 ? (
-              <tr><td style={{ ...tdCell, color: colors.muted }} colSpan={7}>No contests found.</td></tr>
+              <tr><td style={{ ...tdCell, color: colors.muted }} colSpan={8}>No contests found.</td></tr>
             ) : (
-              filtered.map((c) => (
+              filtered.map((c) => {
+                const stageCount = stageCounts[c.id] ?? 0;
+                return (
                 <tr key={c.id} style={{ background: c.status === 'open' ? tint(colors.success, 0.04) : 'transparent' }}>
                   <td style={tdCell}><strong>{c.title}</strong></td>
                   <td style={tdCell}><Badge text={c.status} color={statusColor[c.status] ?? colors.muted} /></td>
+                  <td style={tdCell}>
+                    <Badge
+                      text={stageCount === 1 ? '1 stage' : `${stageCount} stages`}
+                      color={stageCount > 0 ? colors.info : colors.muted}
+                    />
+                  </td>
                   <td style={tdCell}>{c.contestant_count.toLocaleString()}</td>
                   <td style={tdCell}>{c.total_votes.toLocaleString()}</td>
                   <td style={tdCell}>{c.paid_vote_kobo > 0 ? formatNaira(c.paid_vote_kobo) : 'Free only'}</td>
@@ -115,7 +131,8 @@ export default function CompetitionsListPage() {
                     </Link>
                   </td>
                 </tr>
-              ))
+                );
+              })
             )}
           </tbody>
         </table>

@@ -214,3 +214,14 @@ export async function deleteContestStage(slug: string, stageId: string): Promise
   });
   await readJsonOrThrow(res, 'Deleting contest stage');
 }
+
+/** Bulk stage counts for a list of contest ids — one request per page load, not one per row. */
+export async function getContestStageCounts(contestIds: string[]): Promise<Record<string, number>> {
+  if (contestIds.length === 0) return {};
+  const res = await fetch(`${webBase()}/api/admin/contests/stage-counts?ids=${contestIds.map(encodeURIComponent).join(',')}`, {
+    cache: 'no-store',
+    headers: authHeaders(),
+  });
+  const json = await readJsonOrThrow(res, 'Loading contest stage counts');
+  return (json.counts as Record<string, number>) ?? {};
+}
