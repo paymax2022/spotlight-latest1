@@ -56,7 +56,7 @@ export default function ContestCard({ contest, onPress, style }: Props) {
           </View>
         </View>
 
-        {contest.status === 'LIVE' && (
+        {contest.status === 'LIVE' && contest.endsAt && (
           <View style={styles.footer}>
             <Text style={styles.endsLabel}>Ends in</Text>
             <CountdownTimer endsAt={contest.endsAt} size="sm" color={Colors.primary} />
