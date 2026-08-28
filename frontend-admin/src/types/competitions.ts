@@ -76,3 +76,21 @@ export type StageContestant = {
   eviction_id?: string | null;
   grace_period_end?: string | null;
 };
+
+// Mirrors backend/internal/connect/voting/eviction_service.go EvictionInfo —
+// one row per eviction (pending, saved, or finalized) for a contest, the
+// live server-side source of truth for what's still savable — unlike
+// StageEvictionResult above, which is only the one-shot response of the
+// TriggerEvictions call that created them and disappears on reload.
+export type StageEvictionInfo = {
+  id: string;
+  contestant_id: string;
+  contestant_name: string;
+  stage_number: number;
+  vote_count: number;
+  eviction_rank: number;
+  grace_period_ends_at: string;
+  status: string; // 'pending' | 'saved' | 'finalized'
+  save_count: number;
+  can_be_saved: boolean;
+};

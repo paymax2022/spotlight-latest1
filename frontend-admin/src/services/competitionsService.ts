@@ -1,5 +1,5 @@
 import { apiV1, apiRoot } from '@/config/env';
-import type { CompetitionOverview, OpenMicCompetition, VotingContest, ContestRosterEntry, StageEvictionResult, StageContestant } from '@/types/competitions';
+import type { CompetitionOverview, OpenMicCompetition, VotingContest, ContestRosterEntry, StageEvictionResult, StageContestant, StageEvictionInfo } from '@/types/competitions';
 
 function authHeaders(): Record<string, string> {
   if (typeof window === 'undefined') return {};
@@ -224,4 +224,54 @@ export async function getContestantsByStage(contestId: string, stageNumber: numb
   const payload = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(payload?.error || `Failed to load stage contestants: ${res.status}`);
   return (payload?.data as StageContestant[]) ?? [];
+}
+
+/**
+ * All evictions (pending/saved/finalized) for a contest — GET
+ * /api/v1/connect/contests/:id/evictions (GetEvictions, member-authenticated,
+ * no special permission). The live server-side source of truth for what a
+ * judge can still save, unlike the one-shot TriggerEvictions response which
+ * only exists in this page's local state until the next reload.
+ */
+export async function getContestEvictions(contestId: string): Promise<StageEvictionInfo[]> {
+  const res = await fetch(`${apiV1()}/connect/contests/${contestId}/evictions`, {
+    cache: 'no-store',
+    headers: authHeaders(),
+  });
+  const payload = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(payload?.error || `Failed to load evictions: ${res.status}`);
+  return (payload?.data as StageEvictionInfo[]) ?? [];
+}
+
+/**
+ * Judge/admin save — POST /api/connect/admin/contests/:id/save
+ * (eviction_handlers.go SaveContestant, guard connect.contests.judge).
+ * Pulls a pending eviction back from the brink within its grace period.
+ * The backend caps this at ONE save per (judge, stage) — a second save
+ * attempt in the same stage comes back with success:false and a message
+ * saying so, not an error; surfaced to the caller as a thrown Error either
+ * way so the UI has one place to show it.
+ */
+export async function saveContestantFromEviction(
+  contestId: string,
+  evictionId: string,
+  reason?: string,
+): Promise<{ success: boolean; message: string; saveRecordId: string | null }> {
+  const res = await fetch(`${apiRoot()}/api/connect/admin/contests/${contestId}/save`, {
+    method: 'POST',
+    headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+    body: JSON.stringify({ eviction_id: evictionId, reason }),
+  });
+  const payload = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    if (res.status === 404) throw new Error('Stage eviction is not enabled on this backend (FEATURE_CONTEST_STAGE_EVICTION_ENABLED is off).');
+    throw new Error(payload?.error || `Failed to save contestant: ${res.status}`);
+  }
+  const result = {
+    success: Boolean(payload?.success),
+    message: String(payload?.message ?? ''),
+    saveRecordId: (payload?.save_record_id as string | null) ?? null,
+  };
+  if (!result.success) throw new Error(result.message || 'Save was refused.');
+  return result;
 }

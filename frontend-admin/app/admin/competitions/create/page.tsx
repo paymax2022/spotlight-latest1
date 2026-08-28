@@ -11,8 +11,8 @@ import {
   type FullContest, type ContestCategory, type ContestType, type RegionScope, type ContestPublishStatus,
   type AdminContest, type ContestStage, type AdvanceStageResult,
 } from '@/services/contestsAdminService';
-import { triggerStageEviction, finalizeStageEvictions } from '@/services/competitionsService';
-import type { StageEvictionResult } from '@/types/competitions';
+import { triggerStageEviction, finalizeStageEvictions, getContestEvictions, saveContestantFromEviction } from '@/services/competitionsService';
+import type { StageEvictionInfo } from '@/types/competitions';
 
 // Real contest create/edit — POST/PATCH /api/admin/contests[/[slug]], the
 // same route SME Pitch's console already uses. Previously this page was a
@@ -125,9 +125,16 @@ function CreateCompetitionContent() {
   const [contestId, setContestId] = useState<string>('');
   const [evictingStage, setEvictingStage] = useState<number | null>(null);
   const [finalizingStage, setFinalizingStage] = useState<number | null>(null);
-  const [evictionResults, setEvictionResults] = useState<Record<number, StageEvictionResult[]>>({});
   const [advancingStage, setAdvancingStage] = useState<number | null>(null);
   const [advanceResults, setAdvanceResults] = useState<Record<number, AdvanceStageResult>>({});
+
+  // Live server-side evictions (pending/saved/finalized) per contest, the
+  // source of truth a judge saves against — unlike a one-shot trigger
+  // response, this survives a reload and reflects saves/finalizes as they
+  // happen.
+  const [stageEvictions, setStageEvictions] = useState<StageEvictionInfo[]>([]);
+  const [evictionsLoading, setEvictionsLoading] = useState(false);
+  const [savingEvictionId, setSavingEvictionId] = useState<string | null>(null);
 
   const loadRecent = useCallback(async () => {
     setRecentLoading(true);
@@ -187,6 +194,20 @@ function CreateCompetitionContent() {
 
   useEffect(() => { void loadStages(); }, [loadStages]);
 
+  const loadEvictions = useCallback(async () => {
+    if (!contestId) return;
+    setEvictionsLoading(true);
+    try {
+      setStageEvictions(await getContestEvictions(contestId));
+    } catch (e) {
+      setStagesError(e instanceof Error ? e.message : 'Failed to load evictions');
+    } finally {
+      setEvictionsLoading(false);
+    }
+  }, [contestId]);
+
+  useEffect(() => { void loadEvictions(); }, [loadEvictions]);
+
   const addStageToDraftOrContest = useCallback(async () => {
     if (!stageForm.stageName.trim()) { setStagesError('Stage name is required'); return; }
     setSavingStage(true);
@@ -231,16 +252,16 @@ function CreateCompetitionContent() {
     setEvictingStage(stage.stageNumber);
     setStagesError(null);
     try {
-      const results = await triggerStageEviction(contestId, stage.stageNumber, {
+      await triggerStageEviction(contestId, stage.stageNumber, {
         evictionPercentage: stage.evictionPercentage,
       });
-      setEvictionResults((prev) => ({ ...prev, [stage.stageNumber]: results }));
+      await loadEvictions();
     } catch (e) {
       setStagesError(e instanceof Error ? e.message : 'Failed to trigger eviction');
     } finally {
       setEvictingStage(null);
     }
-  }, [contestId]);
+  }, [contestId, loadEvictions]);
 
   const runFinalize = useCallback(async (stage: ContestStage) => {
     if (!contestId) { setStagesError('Contest id not loaded yet — reload the page.'); return; }
@@ -248,13 +269,27 @@ function CreateCompetitionContent() {
     setStagesError(null);
     try {
       await finalizeStageEvictions(contestId, stage.stageNumber);
-      setEvictionResults((prev) => { const next = { ...prev }; delete next[stage.stageNumber]; return next; });
+      await loadEvictions();
     } catch (e) {
       setStagesError(e instanceof Error ? e.message : 'Failed to finalize evictions');
     } finally {
       setFinalizingStage(null);
     }
-  }, [contestId]);
+  }, [contestId, loadEvictions]);
+
+  const runSave = useCallback(async (evictionId: string) => {
+    if (!contestId) { setStagesError('Contest id not loaded yet — reload the page.'); return; }
+    setSavingEvictionId(evictionId);
+    setStagesError(null);
+    try {
+      await saveContestantFromEviction(contestId, evictionId);
+      await loadEvictions();
+    } catch (e) {
+      setStagesError(e instanceof Error ? e.message : 'Failed to save contestant');
+    } finally {
+      setSavingEvictionId(null);
+    }
+  }, [contestId, loadEvictions]);
 
   const runAdvance = useCallback(async (stage: ContestStage) => {
     setAdvancingStage(stage.stageNumber);
@@ -497,6 +532,7 @@ function CreateCompetitionContent() {
         </p>
 
         {stagesError && <p style={{ color: colors.danger, fontSize: 13, margin: '0 0 12px' }}>{stagesError}</p>}
+        {evictionsLoading && <p style={{ color: colors.muted, fontSize: 12, margin: '0 0 12px' }}>Refreshing evictions…</p>}
 
         {(isEdit ? stagesLoading : false) ? (
           <p style={{ color: colors.muted, margin: '0 0 12px' }}>Loading stages…</p>
@@ -542,27 +578,52 @@ function CreateCompetitionContent() {
                               </div>
                             </td>
                           </tr>
-                          {evictionResults[s.stageNumber] && (
-                            <tr>
-                              <td />
-                              <td colSpan={5} style={{ ...tdCell, background: colors.headBg }}>
-                                {evictionResults[s.stageNumber].length === 0 ? (
-                                  <span style={{ fontSize: 12, color: colors.muted }}>No contestants met the eviction threshold.</span>
-                                ) : (
+                          {(() => {
+                            const stageEvictionRows = stageEvictions.filter((e) => e.stage_number === s.stageNumber);
+                            const pending = stageEvictionRows.filter((e) => e.status === 'pending');
+                            const resolved = stageEvictionRows.filter((e) => e.status !== 'pending');
+                            if (stageEvictionRows.length === 0) return null;
+                            return (
+                              <tr>
+                                <td />
+                                <td colSpan={5} style={{ ...tdCell, background: colors.headBg }}>
                                   <div style={{ fontSize: 12, color: colors.text }}>
-                                    <strong>{evictionResults[s.stageNumber].length} contestant(s) marked for eviction</strong> — grace period until{' '}
-                                    {fmtRecentDate(evictionResults[s.stageNumber][0]?.grace_period_end)}. A judge can still save any of them until then;
-                                    click <em>Finalize</em> once the grace period has passed to make it permanent.
-                                    <ul style={{ margin: '6px 0 0', paddingLeft: 18 }}>
-                                      {evictionResults[s.stageNumber].map((r) => (
-                                        <li key={r.eviction_id}>Contestant {r.contestant_id} — {r.vote_count} votes (rank #{r.eviction_rank})</li>
-                                      ))}
-                                    </ul>
+                                    {pending.length > 0 && (
+                                      <>
+                                        <strong>{pending.length} contestant(s) pending eviction</strong> — grace period until{' '}
+                                        {fmtRecentDate(pending[0]?.grace_period_ends_at)}. A judge can save one contestant per stage until then;
+                                        click <em>Finalize</em> once the grace period has passed to make the rest permanent.
+                                        <ul style={{ margin: '6px 0 0', paddingLeft: 18 }}>
+                                          {pending.map((r) => (
+                                            <li key={r.id} style={{ marginBottom: 4 }}>
+                                              {r.contestant_name || r.contestant_id} — {r.vote_count} votes (rank #{r.eviction_rank}){' '}
+                                              <Button
+                                                sm
+                                                variant="outline"
+                                                disabled={savingEvictionId === r.id || !r.can_be_saved}
+                                                onClick={() => void runSave(r.id)}
+                                                style={{ marginLeft: 8 }}
+                                              >
+                                                {savingEvictionId === r.id ? 'Saving…' : 'Save'}
+                                              </Button>
+                                            </li>
+                                          ))}
+                                        </ul>
+                                      </>
+                                    )}
+                                    {resolved.length > 0 && (
+                                      <p style={{ margin: pending.length > 0 ? '8px 0 0' : 0, color: colors.muted }}>
+                                        {resolved.filter((e) => e.status === 'saved').length > 0 &&
+                                          `${resolved.filter((e) => e.status === 'saved').length} saved by a judge. `}
+                                        {resolved.filter((e) => e.status === 'finalized').length > 0 &&
+                                          `${resolved.filter((e) => e.status === 'finalized').length} finalized (evicted).`}
+                                      </p>
+                                    )}
                                   </div>
-                                )}
-                              </td>
-                            </tr>
-                          )}
+                                </td>
+                              </tr>
+                            );
+                          })()}
                           {advanceResults[s.stageNumber] && (
                             <tr>
                               <td />
