@@ -98,6 +98,13 @@ jobs:
       - name: Set APP_ENV and the module flags
         run: |
           set -euo pipefail
+          # FEATURE_CONNECT_ENABLED is the umbrella gate for the whole Connect
+          # surface (internal/app/connect_routes.go) — every /api/v1/connect/*
+          # and /api/connect/admin/* route, including the base "list contests"
+          # read, was 404ing on staging because this was never set here. It
+          # also gates gifting/payouts/AML under the same switch (there is no
+          # narrower flag), so this turns those on for staging too, not just
+          # voting.
           railway variable set \
             APP_ENV=staging \
             FEATURE_WALLET_ENABLED=true \
@@ -130,6 +137,7 @@ jobs:
             FEATURE_AICARE_ENABLED=true \
             FEATURE_BANK_TRANSFERS_ENABLED=true \
             FEATURE_CONTEST_STAGE_EVICTION_ENABLED=true \
+            FEATURE_CONNECT_ENABLED=true \
             --service "$SERVICE" --environment "$ENVIRONMENT" --project "$PROJECT" \
             --skip-deploys
 
@@ -168,7 +176,7 @@ jobs:
               "HEALTH_PHARMACY","STAYS","ESTATE","REALTOR","CROWDFUNDING","ASSOCIATION",
               "GROUPS","EVENTS","CREATORS","DISPUTES","RATINGS",
               "UTILITY_PAYMENTS","HEALTH_LAB","HEALTH_VET","AICARE","BANK_TRANSFERS",
-              "CONTEST_STAGE_EVICTION",
+              "CONTEST_STAGE_EVICTION","CONNECT",
             ].map((s) => `FEATURE_${s}_ENABLED`);
             let vars;
             try {
