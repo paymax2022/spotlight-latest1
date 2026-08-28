@@ -52,7 +52,7 @@ export default function KycQueuePage() {
                   </div>
                   <div style={{ fontWeight: 600, fontSize: '0.95rem' }}>{k.applicantName}</div>
                   <div style={{ fontSize: '0.8rem', color: colors.muted }}>
-                    {k.email} · {k.documentType ?? 'No document type on file'} · submitted {new Date(k.submittedAt).toLocaleDateString()}
+                    {k.email} · {k.documentType ?? 'No document type on file'} · submitted {k.submittedAt ? new Date(k.submittedAt).toLocaleDateString() : 'date unknown'}
                   </div>
                 </div>
                 <div style={{ display: 'flex', gap: '0.4rem' }}>
