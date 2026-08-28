@@ -129,6 +129,7 @@ jobs:
             FEATURE_HEALTH_VET_ENABLED=true \
             FEATURE_AICARE_ENABLED=true \
             FEATURE_BANK_TRANSFERS_ENABLED=true \
+            FEATURE_CONTEST_STAGE_EVICTION_ENABLED=true \
             --service "$SERVICE" --environment "$ENVIRONMENT" --project "$PROJECT" \
             --skip-deploys
 
@@ -167,6 +168,7 @@ jobs:
               "HEALTH_PHARMACY","STAYS","ESTATE","REALTOR","CROWDFUNDING","ASSOCIATION",
               "GROUPS","EVENTS","CREATORS","DISPUTES","RATINGS",
               "UTILITY_PAYMENTS","HEALTH_LAB","HEALTH_VET","AICARE","BANK_TRANSFERS",
+              "CONTEST_STAGE_EVICTION",
             ].map((s) => `FEATURE_${s}_ENABLED`);
             let vars;
             try {
