@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
 import { ChevronDown, ChevronUp, ShieldCheck } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
@@ -8,8 +8,31 @@ import { Spacing } from '@/constants/spacing';
 import { shadow1 } from '@/constants/shadows';
 import { VOTING_RULES } from '../constants/voting.constants';
 
-export default function VotingRulesCard() {
+interface Props {
+  /**
+   * The CONTEST's actual admin-configured free-vote allowance. When provided,
+   * overrides the generic "Free Voting" rule text (which otherwise quotes the
+   * app-wide default) so a contest with its own free-vote count — including
+   * zero, meaning free voting is off for that contest — is described
+   * accurately instead of a number that may not apply to it.
+   */
+  freeVotesPerDay?: number;
+}
+
+export default function VotingRulesCard({ freeVotesPerDay }: Props) {
   const [openIdx, setOpenIdx] = useState<number | null>(0);
+
+  const sections = useMemo(() => {
+    if (freeVotesPerDay === undefined) return VOTING_RULES;
+    const freeVoteRule = freeVotesPerDay > 0
+      ? `You get ${freeVotesPerDay} free vote${freeVotesPerDay === 1 ? '' : 's'} per day per contest.`
+      : 'This contest does not offer free votes — all votes are paid.';
+    return VOTING_RULES.map((section) => (
+      section.title === 'Free Voting'
+        ? { ...section, rules: [freeVoteRule, ...section.rules.slice(1)] }
+        : section
+    ));
+  }, [freeVotesPerDay]);
 
   return (
     <View style={[styles.card, shadow1]}>
@@ -18,7 +41,7 @@ export default function VotingRulesCard() {
         <Text style={styles.title}>Voting Rules & Policies</Text>
       </View>
 
-      {VOTING_RULES.map((section, i) => {
+      {sections.map((section, i) => {
         const isOpen = openIdx === i;
         return (
           <View key={section.title} style={styles.section}>
@@ -41,7 +64,7 @@ export default function VotingRulesCard() {
                 ))}
               </View>
             )}
-            {i < VOTING_RULES.length - 1 && <View style={styles.divider} />}
+            {i < sections.length - 1 && <View style={styles.divider} />}
           </View>
         );
       })}

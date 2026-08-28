@@ -1,7 +1,7 @@
 import React from 'react';
 import { View, Text, Pressable, ScrollView, StyleSheet, RefreshControl, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { router } from 'expo-router';
+import { router, useLocalSearchParams } from 'expo-router';
 import { ChevronRight, Trophy, Banknote, MapPin, ClipboardList } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
@@ -14,8 +14,13 @@ import { useContests, useStartDraft } from '@/features/registration/hooks/useReg
 import type { ContestRegistrationDefinition } from '@/features/registration/types/registration.types';
 
 export default function RegistrationHomeScreen() {
+  const { contestTitle } = useLocalSearchParams<{ contestTitle?: string }>();
   const contests = useContests();
   const startDraft = useStartDraft();
+  const autoStartAttempted = React.useRef(false);
+  const [autoMatchState, setAutoMatchState] = React.useState<'checking' | 'no-match' | null>(
+    contestTitle ? 'checking' : null,
+  );
 
   const onStart = (slug: string) => {
     startDraft.mutate(slug, {
@@ -23,6 +28,37 @@ export default function RegistrationHomeScreen() {
       onError: () => Alert.alert('Could not start', 'We could not start your application. Please try again.'),
     });
   };
+
+  // Arriving from a specific contest (e.g. "Apply to Compete" on a voting
+  // contest's details screen) should land the applicant straight in that
+  // contest's application wizard, not a generic pick-a-program list. There is
+  // no live foreign key between a voting contest and a registration program —
+  // they're separate catalogs — so this matches by keyword against each
+  // program's category/applicant-category labels. Falls back to the plain
+  // list below when nothing matches confidently, so nothing regresses for a
+  // contest type the registration catalog doesn't cover yet.
+  React.useEffect(() => {
+    if (!contestTitle || autoStartAttempted.current || !contests.data) return;
+    autoStartAttempted.current = true;
+    const match = findBestContestMatch(contestTitle, contests.data);
+    if (match) {
+      onStart(match.slug);
+    } else {
+      setAutoMatchState('no-match');
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [contestTitle, contests.data]);
+
+  const autoStarting = autoMatchState === 'checking' || startDraft.isPending;
+
+  if (contestTitle && autoStarting) {
+    return (
+      <SafeAreaView style={styles.safe} edges={['top']}>
+        <ScreenHeader title="Register / Apply" subtitle="Enter a Spotlight contest" />
+        <StateView kind="loading" message={`Opening the application for "${contestTitle}"…`} />
+      </SafeAreaView>
+    );
+  }
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
@@ -66,6 +102,37 @@ export default function RegistrationHomeScreen() {
       )}
     </SafeAreaView>
   );
+}
+
+/**
+ * Best-effort match from a live voting contest's title to a registration
+ * catalog entry, by keyword overlap against contestCategory + applicantCategories.
+ * Requires a single unambiguous top scorer — ties or zero hits return null so
+ * the caller falls back to showing the full list instead of guessing wrong.
+ */
+function findBestContestMatch(
+  contestTitle: string,
+  contests: ContestRegistrationDefinition[],
+): ContestRegistrationDefinition | null {
+  const normalizedTitle = contestTitle.toLowerCase();
+  let best: ContestRegistrationDefinition | null = null;
+  let bestScore = 0;
+  let tie = false;
+
+  for (const def of contests) {
+    const keywords = [def.contestCategory.replace(/_/g, ' '), ...(def.applicantCategories ?? [])];
+    const score = keywords.filter((kw) => kw && normalizedTitle.includes(kw.toLowerCase())).length;
+    if (score === 0) continue;
+    if (score > bestScore) {
+      best = def;
+      bestScore = score;
+      tie = false;
+    } else if (score === bestScore) {
+      tie = true;
+    }
+  }
+
+  return tie ? null : best;
 }
 
 function ContestCard({ contest, loading, onPress }: { contest: ContestRegistrationDefinition; loading: boolean; onPress: () => void }) {
