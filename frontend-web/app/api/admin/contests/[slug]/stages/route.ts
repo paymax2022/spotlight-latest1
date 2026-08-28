@@ -36,6 +36,14 @@ export async function POST(request: Request, ctx: { params: Promise<{ slug: stri
       stageNumber = existing.reduce((max, s) => Math.max(max, s.stageNumber), 0) + 1;
     }
 
+    let evictionPercentage: number | undefined;
+    if (body.evictionPercentage !== undefined && body.evictionPercentage !== null && body.evictionPercentage !== '') {
+      evictionPercentage = Number(body.evictionPercentage);
+      if (!Number.isFinite(evictionPercentage) || evictionPercentage <= 0 || evictionPercentage >= 100) {
+        return errorResponse('Eviction percentage must be between 1 and 99.', 400);
+      }
+    }
+
     const stage = await createContestStage(contest.id, {
       stageNumber,
       stageName,
@@ -43,6 +51,7 @@ export async function POST(request: Request, ctx: { params: Promise<{ slug: stri
       promotionCriteria: body.promotionCriteria ? String(body.promotionCriteria) : undefined,
       votingStartsAt: body.votingStartsAt ? String(body.votingStartsAt) : null,
       votingEndsAt: body.votingEndsAt ? String(body.votingEndsAt) : null,
+      evictionPercentage,
     });
     return successResponse({ success: true, stage }, 201);
   } catch (error) {

@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback, Suspense, type CSSProperties } from 'react';
+import { useState, useEffect, useCallback, Suspense, Fragment, type CSSProperties } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { Page, PageHeader, Card, Button, Input, Badge, colors, thCell, tdCell } from '@/components/ui/vuexy';
@@ -11,6 +11,8 @@ import {
   type FullContest, type ContestCategory, type ContestType, type RegionScope, type ContestPublishStatus,
   type AdminContest, type ContestStage,
 } from '@/services/contestsAdminService';
+import { triggerStageEviction, finalizeStageEvictions } from '@/services/competitionsService';
+import type { StageEvictionResult } from '@/types/competitions';
 
 // Real contest create/edit — POST/PATCH /api/admin/contests[/[slug]], the
 // same route SME Pitch's console already uses. Previously this page was a
@@ -65,10 +67,11 @@ type StageDraft = {
   votingStartsAt: string;
   votingEndsAt: string;
   promotionCriteria: string;
+  evictionPercentage: string;
 };
 
 function emptyStageDraft(): StageDraft {
-  return { stageName: '', votingStartsAt: '', votingEndsAt: '', promotionCriteria: '' };
+  return { stageName: '', votingStartsAt: '', votingEndsAt: '', promotionCriteria: '', evictionPercentage: '20' };
 }
 
 const labelStyle: CSSProperties = { display: 'block', fontSize: 12, color: colors.muted, marginBottom: 4 };
@@ -117,6 +120,13 @@ function CreateCompetitionContent() {
   const [stageForm, setStageForm] = useState<StageDraft>(emptyStageDraft());
   const [savingStage, setSavingStage] = useState(false);
 
+  // The real contest UUID (public.contests.id) — the eviction endpoints below
+  // are Go routes keyed on this id, not the slug the rest of this page uses.
+  const [contestId, setContestId] = useState<string>('');
+  const [evictingStage, setEvictingStage] = useState<number | null>(null);
+  const [finalizingStage, setFinalizingStage] = useState<number | null>(null);
+  const [evictionResults, setEvictionResults] = useState<Record<number, StageEvictionResult[]>>({});
+
   const loadRecent = useCallback(async () => {
     setRecentLoading(true);
     setRecentError(null);
@@ -150,6 +160,7 @@ function CreateCompetitionContent() {
         auditionStates: c.auditionStates ?? [], applicantCategories: c.applicantCategories ?? [],
       });
       if (c.status) setStatusState(c.status as ContestPublishStatus);
+      if (c.id) setContestId(c.id);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to load contest');
     } finally {
@@ -185,6 +196,7 @@ function CreateCompetitionContent() {
           promotionCriteria: stageForm.promotionCriteria.trim() || undefined,
           votingStartsAt: stageForm.votingStartsAt || null,
           votingEndsAt: stageForm.votingEndsAt || null,
+          evictionPercentage: stageForm.evictionPercentage ? Number(stageForm.evictionPercentage) : undefined,
         });
         await loadStages();
       } else {
@@ -211,6 +223,36 @@ function CreateCompetitionContent() {
   function removeDraftStage(index: number) {
     setDraftStages((prev) => prev.filter((_, i) => i !== index));
   }
+
+  const runEviction = useCallback(async (stage: ContestStage) => {
+    if (!contestId) { setStagesError('Contest id not loaded yet — reload the page.'); return; }
+    setEvictingStage(stage.stageNumber);
+    setStagesError(null);
+    try {
+      const results = await triggerStageEviction(contestId, stage.stageNumber, {
+        evictionPercentage: stage.evictionPercentage,
+      });
+      setEvictionResults((prev) => ({ ...prev, [stage.stageNumber]: results }));
+    } catch (e) {
+      setStagesError(e instanceof Error ? e.message : 'Failed to trigger eviction');
+    } finally {
+      setEvictingStage(null);
+    }
+  }, [contestId]);
+
+  const runFinalize = useCallback(async (stage: ContestStage) => {
+    if (!contestId) { setStagesError('Contest id not loaded yet — reload the page.'); return; }
+    setFinalizingStage(stage.stageNumber);
+    setStagesError(null);
+    try {
+      await finalizeStageEvictions(contestId, stage.stageNumber);
+      setEvictionResults((prev) => { const next = { ...prev }; delete next[stage.stageNumber]; return next; });
+    } catch (e) {
+      setStagesError(e instanceof Error ? e.message : 'Failed to finalize evictions');
+    } finally {
+      setFinalizingStage(null);
+    }
+  }, [contestId]);
 
   const publish = useCallback(async (next: ContestPublishStatus) => {
     setPublishing(true);
@@ -245,6 +287,7 @@ function CreateCompetitionContent() {
     try {
       const payload = { ...form, title: form.title.trim(), slug: form.slug.trim(), registrationFeeNgn: form.isPaid ? form.registrationFeeNgn : 0 };
       const saved = isEdit ? await updateFullContest(editSlug, payload) : await createFullContest(payload);
+      if (saved.id) setContestId(saved.id);
 
       // Flush any stages queued while the contest didn't have an id yet.
       if (!isEdit && draftStages.length > 0) {
@@ -254,6 +297,7 @@ function CreateCompetitionContent() {
             promotionCriteria: draft.promotionCriteria.trim() || undefined,
             votingStartsAt: draft.votingStartsAt || null,
             votingEndsAt: draft.votingEndsAt || null,
+            evictionPercentage: draft.evictionPercentage ? Number(draft.evictionPercentage) : undefined,
           }).catch((e) => {
             setStagesError(e instanceof Error ? e.message : `Failed to save stage "${draft.stageName}"`);
           });
@@ -432,8 +476,8 @@ function CreateCompetitionContent() {
       <Card title="Stages" style={{ marginBottom: 16 }}>
         <p style={{ margin: '0 0 12px', fontSize: 12, color: colors.muted }}>
           {isEdit
-            ? 'Each stage has its own voting window and a promotion criteria note describing how contestants advance to the next one.'
-            : 'Queue stages now — they are created together with the contest when you save.'}
+            ? 'Each stage runs for a defined window, then eviction can be triggered: the bottom Evicts% of contestants by vote count are marked out, and everyone else simply carries on into the next stage — there is no separate "advance" step.'
+            : 'Queue stages now — they are created together with the contest when you save. Running eviction happens afterwards, from this page in edit mode.'}
         </p>
 
         {stagesError && <p style={{ color: colors.danger, fontSize: 13, margin: '0 0 12px' }}>{stagesError}</p>}
@@ -453,21 +497,54 @@ function CreateCompetitionContent() {
                       <th style={thCell}>Name</th>
                       <th style={thCell}>Starts / Ends</th>
                       <th style={thCell}>Promotion criteria</th>
+                      <th style={thCell}>Evicts</th>
                       <th style={thCell} />
                     </tr>
                   </thead>
                   <tbody>
                     {isEdit
                       ? stages.map((s) => (
-                        <tr key={s.id}>
-                          <td style={tdCell}>{s.stageNumber}</td>
-                          <td style={tdCell}><strong>{s.stageName}</strong></td>
-                          <td style={tdCell}>{fmtRecentDate(s.votingStartsAt)} – {fmtRecentDate(s.votingEndsAt)}</td>
-                          <td style={tdCell}>{s.promotionCriteria || '—'}</td>
-                          <td style={tdCell}>
-                            <Button sm variant="danger" onClick={() => void removeStage(s.id)}>Remove</Button>
-                          </td>
-                        </tr>
+                        <Fragment key={s.id}>
+                          <tr>
+                            <td style={tdCell}>{s.stageNumber}</td>
+                            <td style={tdCell}><strong>{s.stageName}</strong></td>
+                            <td style={tdCell}>{fmtRecentDate(s.votingStartsAt)} – {fmtRecentDate(s.votingEndsAt)}</td>
+                            <td style={tdCell}>{s.promotionCriteria || '—'}</td>
+                            <td style={tdCell}>{s.evictionPercentage}%</td>
+                            <td style={tdCell}>
+                              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                                <Button sm disabled={evictingStage === s.stageNumber} onClick={() => void runEviction(s)}>
+                                  {evictingStage === s.stageNumber ? 'Evicting…' : 'Run eviction'}
+                                </Button>
+                                <Button sm disabled={finalizingStage === s.stageNumber} onClick={() => void runFinalize(s)}>
+                                  {finalizingStage === s.stageNumber ? 'Finalizing…' : 'Finalize'}
+                                </Button>
+                                <Button sm variant="danger" onClick={() => void removeStage(s.id)}>Remove</Button>
+                              </div>
+                            </td>
+                          </tr>
+                          {evictionResults[s.stageNumber] && (
+                            <tr>
+                              <td />
+                              <td colSpan={5} style={{ ...tdCell, background: colors.headBg }}>
+                                {evictionResults[s.stageNumber].length === 0 ? (
+                                  <span style={{ fontSize: 12, color: colors.muted }}>No contestants met the eviction threshold.</span>
+                                ) : (
+                                  <div style={{ fontSize: 12, color: colors.text }}>
+                                    <strong>{evictionResults[s.stageNumber].length} contestant(s) marked for eviction</strong> — grace period until{' '}
+                                    {fmtRecentDate(evictionResults[s.stageNumber][0]?.grace_period_end)}. A judge can still save any of them until then;
+                                    click <em>Finalize</em> once the grace period has passed to make it permanent.
+                                    <ul style={{ margin: '6px 0 0', paddingLeft: 18 }}>
+                                      {evictionResults[s.stageNumber].map((r) => (
+                                        <li key={r.eviction_id}>Contestant {r.contestant_id} — {r.vote_count} votes (rank #{r.eviction_rank})</li>
+                                      ))}
+                                    </ul>
+                                  </div>
+                                )}
+                              </td>
+                            </tr>
+                          )}
+                        </Fragment>
                       ))
                       : draftStages.map((d, i) => (
                         <tr key={i}>
@@ -475,6 +552,7 @@ function CreateCompetitionContent() {
                           <td style={tdCell}><strong>{d.stageName}</strong></td>
                           <td style={tdCell}>{d.votingStartsAt || '—'} – {d.votingEndsAt || '—'}</td>
                           <td style={tdCell}>{d.promotionCriteria || '—'}</td>
+                          <td style={tdCell}>{d.evictionPercentage || 20}%</td>
                           <td style={tdCell}>
                             <Button sm variant="danger" onClick={() => removeDraftStage(i)}>Remove</Button>
                           </td>
@@ -487,7 +565,7 @@ function CreateCompetitionContent() {
           </div>
         )}
 
-        <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr', gap: 12, marginBottom: 12 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr 1fr', gap: 12, marginBottom: 12 }}>
           <div>
             <label style={labelStyle}>Stage name</label>
             <Input style={{ width: '100%' }} placeholder="e.g., Auditions, Semi-final, Grand finale"
@@ -502,6 +580,11 @@ function CreateCompetitionContent() {
             <label style={labelStyle}>Ends</label>
             <Input style={{ width: '100%' }} type="date" value={stageForm.votingEndsAt}
               onChange={(e) => setStageForm((f) => ({ ...f, votingEndsAt: e.target.value }))} />
+          </div>
+          <div>
+            <label style={labelStyle}>Evicts bottom %</label>
+            <Input style={{ width: '100%' }} type="number" min={1} max={99} value={stageForm.evictionPercentage}
+              onChange={(e) => setStageForm((f) => ({ ...f, evictionPercentage: e.target.value }))} />
           </div>
         </div>
         <div style={{ marginBottom: 12 }}>

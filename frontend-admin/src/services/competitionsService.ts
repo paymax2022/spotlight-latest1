@@ -1,5 +1,5 @@
 import { apiV1, apiRoot } from '@/config/env';
-import type { CompetitionOverview, OpenMicCompetition, VotingContest, ContestRosterEntry } from '@/types/competitions';
+import type { CompetitionOverview, OpenMicCompetition, VotingContest, ContestRosterEntry, StageEvictionResult, StageContestant } from '@/types/competitions';
 
 function authHeaders(): Record<string, string> {
   if (typeof window === 'undefined') return {};
@@ -158,4 +158,70 @@ export async function castAdminVote(contestId: string, contestantId: string, vot
     if (res.status === 404) throw new Error('Admin voting is not enabled on this backend (FEATURE_CONTEST_STAGE_EVICTION_ENABLED is off).');
     throw new Error(payload?.error || `Failed to cast admin vote: ${res.status}`);
   }
+}
+
+/**
+ * Trigger eviction for a stage — POST /api/connect/admin/contests/:id/stages/
+ * :stageNumber/evict (eviction_handlers.go TriggerEvictions). Marks the
+ * bottom eviction_percentage% of this stage's contestants (by vote count) as
+ * pending eviction, each with a grace period a judge can still save them
+ * within (see judges-scores). Survivors are simply everyone not marked —
+ * there is no separate "advance" call. Requires connect.contests.manage and
+ * FEATURE_CONTEST_STAGE_EVICTION_ENABLED, same as castAdminVote above.
+ */
+export async function triggerStageEviction(
+  contestId: string,
+  stageNumber: number,
+  options?: { evictionPercentage?: number; gracePeriodHours?: number },
+): Promise<StageEvictionResult[]> {
+  const res = await fetch(`${apiRoot()}/api/connect/admin/contests/${contestId}/stages/${stageNumber}/evict`, {
+    method: 'POST',
+    headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      stage_number: stageNumber,
+      eviction_percentage: options?.evictionPercentage,
+      grace_period_hours: options?.gracePeriodHours,
+    }),
+  });
+  const payload = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    if (res.status === 404) throw new Error('Stage eviction is not enabled on this backend (FEATURE_CONTEST_STAGE_EVICTION_ENABLED is off).');
+    throw new Error(payload?.error || `Failed to trigger eviction: ${res.status}`);
+  }
+  return (payload?.data as StageEvictionResult[]) ?? [];
+}
+
+/**
+ * Finalize a stage's pending evictions once the grace period has passed —
+ * POST /api/connect/admin/contests/:id/stages/:stageNumber/finalize-evictions
+ * (FinalizeEvictions). Turns "pending" eviction records into permanent ones;
+ * anyone not saved by a judge in the grace window is out for good.
+ */
+export async function finalizeStageEvictions(contestId: string, stageNumber: number): Promise<void> {
+  const res = await fetch(`${apiRoot()}/api/connect/admin/contests/${contestId}/stages/${stageNumber}/finalize-evictions`, {
+    method: 'POST',
+    headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+    body: JSON.stringify({ stage_number: stageNumber }),
+  });
+  const payload = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    if (res.status === 404) throw new Error('Stage eviction is not enabled on this backend (FEATURE_CONTEST_STAGE_EVICTION_ENABLED is off).');
+    throw new Error(payload?.error || `Failed to finalize evictions: ${res.status}`);
+  }
+}
+
+/**
+ * Contestants currently in a stage with their eviction status — GET
+ * /api/v1/connect/contests/:id/stages/:stageNumber/contestants
+ * (GetContestantsByStage). Member-authenticated only, no special permission,
+ * same as listVotingContests/getContestRoster above.
+ */
+export async function getContestantsByStage(contestId: string, stageNumber: number): Promise<StageContestant[]> {
+  const res = await fetch(`${apiV1()}/connect/contests/${contestId}/stages/${stageNumber}/contestants`, {
+    cache: 'no-store',
+    headers: authHeaders(),
+  });
+  const payload = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(payload?.error || `Failed to load stage contestants: ${res.status}`);
+  return (payload?.data as StageContestant[]) ?? [];
 }

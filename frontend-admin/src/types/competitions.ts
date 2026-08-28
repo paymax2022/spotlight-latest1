@@ -52,3 +52,27 @@ export type ContestRosterEntry = {
   total_votes: number;
   rank: number;
 };
+
+// Mirrors backend/internal/connect/voting/eviction_handlers.go EvictionResponse —
+// one row per contestant just marked for eviction by TriggerEvictions.
+export type StageEvictionResult = {
+  contestant_id: string;
+  vote_count: number;
+  eviction_rank: number;
+  eviction_id: string;
+  evicted_at: string;
+  grace_period_end: string;
+};
+
+// Mirrors backend/internal/connect/voting/eviction_service.go StageContestant —
+// one row per contestant currently in a stage, with their eviction status.
+export type StageContestant = {
+  id: string;
+  name: string;
+  photo_url: string;
+  vote_count: number;
+  eviction_status: string;
+  eviction_template: string;
+  eviction_id?: string | null;
+  grace_period_end?: string | null;
+};

@@ -179,6 +179,8 @@ export type ContestStageInput = {
   promotionCriteria?: string;
   votingStartsAt?: string | null;
   votingEndsAt?: string | null;
+  /** Bottom % of this stage's contestants evicted when eviction is triggered (1-99, default 20). */
+  evictionPercentage?: number;
 };
 
 export async function listContestStages(slug: string): Promise<ContestStage[]> {

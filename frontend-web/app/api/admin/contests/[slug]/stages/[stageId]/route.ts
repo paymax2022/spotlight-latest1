@@ -11,6 +11,15 @@ export async function PATCH(request: Request, ctx: { params: Promise<{ slug: str
     if (!contest?.id) return errorResponse('Contest not found', 404);
 
     const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
+
+    let evictionPercentage: number | undefined;
+    if (body.evictionPercentage !== undefined) {
+      evictionPercentage = Number(body.evictionPercentage);
+      if (!Number.isFinite(evictionPercentage) || evictionPercentage <= 0 || evictionPercentage >= 100) {
+        return errorResponse('Eviction percentage must be between 1 and 99.', 400);
+      }
+    }
+
     const stage = await updateContestStage(contest.id, params.stageId, {
       stageNumber: body.stageNumber !== undefined ? Number(body.stageNumber) : undefined,
       stageName: body.stageName !== undefined ? String(body.stageName).trim() : undefined,
@@ -18,6 +27,7 @@ export async function PATCH(request: Request, ctx: { params: Promise<{ slug: str
       promotionCriteria: body.promotionCriteria !== undefined ? String(body.promotionCriteria) : undefined,
       votingStartsAt: body.votingStartsAt !== undefined ? (body.votingStartsAt ? String(body.votingStartsAt) : null) : undefined,
       votingEndsAt: body.votingEndsAt !== undefined ? (body.votingEndsAt ? String(body.votingEndsAt) : null) : undefined,
+      evictionPercentage,
     });
     return successResponse({ success: true, stage });
   } catch (error) {

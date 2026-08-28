@@ -109,6 +109,9 @@ export type StageInput = {
   promotionCriteria?: string;
   votingStartsAt?: string | null;
   votingEndsAt?: string | null;
+  /** Bottom % of this stage's contestants (by vote count) evicted when an admin
+   *  triggers eviction. DB default 20 applies when omitted. */
+  evictionPercentage?: number;
 };
 
 export async function createContestStage(contestId: string, input: StageInput): Promise<ContestStage> {
@@ -122,6 +125,7 @@ export async function createContestStage(contestId: string, input: StageInput): 
       promotion_criteria: input.promotionCriteria || null,
       voting_starts_at: input.votingStartsAt || null,
       voting_ends_at: input.votingEndsAt || null,
+      ...(input.evictionPercentage !== undefined ? { eviction_percentage: input.evictionPercentage } : {}),
     })
     .select(STAGE_COLUMNS)
     .single();
@@ -141,6 +145,7 @@ export async function updateContestStage(
   if (input.promotionCriteria !== undefined) patch.promotion_criteria = input.promotionCriteria || null;
   if (input.votingStartsAt !== undefined) patch.voting_starts_at = input.votingStartsAt || null;
   if (input.votingEndsAt !== undefined) patch.voting_ends_at = input.votingEndsAt || null;
+  if (input.evictionPercentage !== undefined) patch.eviction_percentage = input.evictionPercentage;
 
   const { data, error } = await createAdminClient()
     .from('contest_stages')
