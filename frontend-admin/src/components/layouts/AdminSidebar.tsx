@@ -41,7 +41,6 @@ const navItemsBase: NavItem[] = [
   { label: 'Competitions', href: '/admin/competitions/list', section: 'Contests', permissions: ['contest.create', 'contest.update'] },
   { label: 'Participants', href: '/admin/competitions/participants', section: 'Contests', permissions: ['contest.create', 'contest.update'] },
   { label: 'Results & Leaderboard', href: '/admin/competitions/results', section: 'Contests', permissions: ['contest.create', 'contest.update'] },
-  { label: 'Open Mic Editions', href: '/admin/competitions/open-mic', section: 'Contests' },
   { label: 'Contest Settings', href: '/admin/competitions/settings', section: 'Contests', permissions: ['contest.create'] },
   // Path A consoles (admin consolidation slices 3-4): data lives in frontend-web,
   // reached through /api/web-proxy — see ADR-047. No countKey (frontend-web, not the Go
