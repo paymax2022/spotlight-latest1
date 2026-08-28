@@ -171,7 +171,7 @@ func (h *Handler) setFreeze(c *gin.Context, freeze bool) {
 
 // ListKyc — GET /kyc.
 func (h *Handler) ListKyc(c *gin.Context) {
-	items, err := h.svc.ListKyc(c.Request.Context(), c.Query("kind"), c.Query("status"))
+	items, err := h.svc.ListKyc(c.Request.Context(), c.Query("status"))
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return

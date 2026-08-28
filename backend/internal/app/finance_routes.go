@@ -1395,7 +1395,7 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		cfAdmin.GET("/campaigns", middleware.RequirePermission(rbac, "crowdfunding.admin.review"), cfHandler.AdminListPending)
 		cfAdmin.GET("/campaigns/:id", middleware.RequirePermission(rbac, "crowdfunding.admin.review"), cfHandler.AdminGetCampaign)
 		cfAdmin.POST("/campaigns/:id/decision", middleware.RequirePermission(rbac, "crowdfunding.admin.decide"), cfHandler.AdminDecide)
-		cfadminext.RegisterAdmin(cfAdmin, pool, ledgerSvc)
+		cfadminext.RegisterAdmin(cfAdmin, pool, ledgerSvc, kycSvc)
 	}
 
 	// --- Restaurant & Delivery routes ---

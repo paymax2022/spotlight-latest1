@@ -208,30 +208,21 @@ export interface CfFeatureFlag {
 
 // ─── KYC / KYB verification ───────────────────────────────────────────────────
 
-export type CfKycKind = 'KYC' | 'KYB';
 export type CfKycStatus = 'PENDING' | 'APPROVED' | 'REJECTED';
 
-export interface CfKycDoc {
-  id: string;
-  label: string;              // 'NIN', 'CAC certificate', 'Selfie', 'Bank statement'
-  type: 'image' | 'pdf';
-  verified: boolean;
-}
-
+// Sourced from the platform's shared KYC (finance/kyc), not a crowdfunding-
+// specific dataset — there's no business-entity (KYB) tier, so every case is
+// an individual identity verification distinguished only by requested tier.
 export interface CfKycCase {
-  id: string;
-  kind: CfKycKind;
+  id: string; // the user's id
   status: CfKycStatus;
   applicantName: string;
-  applicantType: string;      // 'Individual' | 'NGO' | 'SME'
+  applicantType: string; // always 'Individual'
   email: string;
-  idLabel: string;            // masked NIN/BVN or RC number
-  bankLabel: string;
+  tier: number; // requested tier (1-3)
+  documentType: string | null;
   submittedAt: string;
-  documents: CfKycDoc[];
-  duplicateIdentity: boolean;
-  duplicateBank: boolean;
-  riskLevel: CfRiskLevel;
+  verifiedAt: string | null;
 }
 
 // ─── Compliance ───────────────────────────────────────────────────────────────

@@ -137,6 +137,57 @@ func (s *Service) creatorMeta(ctx context.Context, creatorID string) (name, typ,
 	return
 }
 
+// creatorEmail resolves a creator's login email. Tolerates absence.
+func (s *Service) creatorEmail(ctx context.Context, creatorID string) string {
+	var email *string
+	_ = s.db.QueryRow(ctx, `SELECT email FROM auth.users WHERE id = $1`, creatorID).Scan(&email)
+	if email != nil {
+		return *email
+	}
+	return ""
+}
+
+func strOr(p *string, fallback string) string {
+	if p != nil && *p != "" {
+		return *p
+	}
+	return fallback
+}
+
+// AdminCampaignDetail returns the review-console shape (frontend-admin
+// CfReviewCampaign): flat creator fields plus the raw (unmapped) review status,
+// unlike GetDetail's public/mobile shape which nests creator info and collapses
+// CHANGES_REQUESTED into PENDING_REVIEW. Budget/documents/risk-signal
+// itemization has no backing tables yet, so those come back as empty arrays
+// (never null/omitted) rather than fabricated — the console must not invent
+// diligence data it doesn't have.
+func (s *Service) AdminCampaignDetail(ctx context.Context, id string) (map[string]any, error) {
+	sql := fmt.Sprintf(`SELECT %s FROM campaigns c WHERE c.id = $1`, selectCols)
+	r, err := scanRow(s.db.QueryRow(ctx, sql, id).Scan)
+	if err != nil {
+		return nil, err
+	}
+	name, typ, verif := s.creatorMeta(ctx, r.creatorID)
+	email := s.creatorEmail(ctx, r.creatorID)
+
+	return map[string]any{
+		"id": r.id, "title": r.title, "summary": r.summary, "story": r.story,
+		"type": r.typ, "status": r.reviewStatus, "category": r.category,
+		"coverImage": r.coverURL, "goalKobo": r.goalKobo, "raisedKobo": r.raisedKobo,
+		"contributorCount": r.contributorCount,
+		"createdAt":        r.createdAt.UTC().Format(time.RFC3339),
+		"submittedAt":      r.submittedAt.UTC().Format(time.RFC3339),
+		"creatorName":      name, "creatorType": typ, "creatorVerification": verif, "creatorEmail": email,
+		"beneficiaryName": name, "beneficiaryRelationship": "Self",
+		"bankLabel":         "Not on file",
+		"location":          strOr(r.location, "Not specified"),
+		"disbursementModel": r.disbursementModel, "refundPolicy": r.refundPolicy,
+		"budget": []any{}, "documents": []any{},
+		"riskLevel": r.riskLevel, "riskScore": r.riskScore, "riskSignals": []any{},
+		"adminNote": r.adminNote,
+	}, nil
+}
+
 // ListCategories returns enabled categories with live campaign counts.
 func (s *Service) ListCategories(ctx context.Context) ([]CategoryDTO, error) {
 	const q = `
