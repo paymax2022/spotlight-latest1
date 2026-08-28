@@ -227,3 +227,24 @@ export async function getContestStageCounts(contestIds: string[]): Promise<Recor
   const json = await readJsonOrThrow(res, 'Loading contest stage counts');
   return (json.counts as Record<string, number>) ?? {};
 }
+
+export type AdvanceStageResult = {
+  advancedCount: number;
+  nextStageNumber: number | null;
+  blockedReason: string | null;
+};
+
+/**
+ * Moves a stage's survivors into stage_number + 1 — POST
+ * /api/admin/contests/:slug/stage-advance. Refuses (blockedReason set) when
+ * there's no next stage, or when the stage still has pending evictions.
+ */
+export async function advanceStageSurvivors(slug: string, stageNumber: number): Promise<AdvanceStageResult> {
+  const res = await fetch(`${webBase()}/api/admin/contests/${slug}/stage-advance`, {
+    method: 'POST',
+    headers: authHeaders(),
+    body: JSON.stringify({ stageNumber }),
+  });
+  const json = await readJsonOrThrow(res, 'Advancing stage survivors');
+  return json.result as AdvanceStageResult;
+}

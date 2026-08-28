@@ -7,9 +7,9 @@ import { Page, PageHeader, Card, Button, Input, Badge, colors, thCell, tdCell } 
 import {
   createFullContest, updateFullContest, deleteFullContest, getFullContest, setContestStatus,
   listAdminContests,
-  listContestStages, createContestStage, deleteContestStage,
+  listContestStages, createContestStage, deleteContestStage, advanceStageSurvivors,
   type FullContest, type ContestCategory, type ContestType, type RegionScope, type ContestPublishStatus,
-  type AdminContest, type ContestStage,
+  type AdminContest, type ContestStage, type AdvanceStageResult,
 } from '@/services/contestsAdminService';
 import { triggerStageEviction, finalizeStageEvictions } from '@/services/competitionsService';
 import type { StageEvictionResult } from '@/types/competitions';
@@ -126,6 +126,8 @@ function CreateCompetitionContent() {
   const [evictingStage, setEvictingStage] = useState<number | null>(null);
   const [finalizingStage, setFinalizingStage] = useState<number | null>(null);
   const [evictionResults, setEvictionResults] = useState<Record<number, StageEvictionResult[]>>({});
+  const [advancingStage, setAdvancingStage] = useState<number | null>(null);
+  const [advanceResults, setAdvanceResults] = useState<Record<number, AdvanceStageResult>>({});
 
   const loadRecent = useCallback(async () => {
     setRecentLoading(true);
@@ -253,6 +255,20 @@ function CreateCompetitionContent() {
       setFinalizingStage(null);
     }
   }, [contestId]);
+
+  const runAdvance = useCallback(async (stage: ContestStage) => {
+    setAdvancingStage(stage.stageNumber);
+    setStagesError(null);
+    try {
+      const result = await advanceStageSurvivors(editSlug, stage.stageNumber);
+      setAdvanceResults((prev) => ({ ...prev, [stage.stageNumber]: result }));
+      if (!result.blockedReason) await loadStages();
+    } catch (e) {
+      setStagesError(e instanceof Error ? e.message : 'Failed to advance stage survivors');
+    } finally {
+      setAdvancingStage(null);
+    }
+  }, [editSlug, loadStages]);
 
   const publish = useCallback(async (next: ContestPublishStatus) => {
     setPublishing(true);
@@ -476,8 +492,8 @@ function CreateCompetitionContent() {
       <Card title="Stages" style={{ marginBottom: 16 }}>
         <p style={{ margin: '0 0 12px', fontSize: 12, color: colors.muted }}>
           {isEdit
-            ? 'Each stage runs for a defined window, then eviction can be triggered: the bottom Evicts% of contestants by vote count are marked out, and everyone else simply carries on into the next stage — there is no separate "advance" step.'
-            : 'Queue stages now — they are created together with the contest when you save. Running eviction happens afterwards, from this page in edit mode.'}
+            ? 'Contestants are auto-assigned to Stage 1 as soon as it exists. Each stage runs for a defined window: Run eviction marks the bottom Evicts% for elimination (with a grace period a judge can still save them in), Finalize locks that in once the grace period passes, and Advance survivors moves everyone else into the next stage.'
+            : 'Queue stages now — they are created together with the contest when you save. Running eviction and advancing survivors happens afterwards, from this page in edit mode.'}
         </p>
 
         {stagesError && <p style={{ color: colors.danger, fontSize: 13, margin: '0 0 12px' }}>{stagesError}</p>}
@@ -519,6 +535,9 @@ function CreateCompetitionContent() {
                                 <Button sm disabled={finalizingStage === s.stageNumber} onClick={() => void runFinalize(s)}>
                                   {finalizingStage === s.stageNumber ? 'Finalizing…' : 'Finalize'}
                                 </Button>
+                                <Button sm variant="primary" disabled={advancingStage === s.stageNumber} onClick={() => void runAdvance(s)}>
+                                  {advancingStage === s.stageNumber ? 'Advancing…' : 'Advance survivors'}
+                                </Button>
                                 <Button sm variant="danger" onClick={() => void removeStage(s.id)}>Remove</Button>
                               </div>
                             </td>
@@ -540,6 +559,20 @@ function CreateCompetitionContent() {
                                       ))}
                                     </ul>
                                   </div>
+                                )}
+                              </td>
+                            </tr>
+                          )}
+                          {advanceResults[s.stageNumber] && (
+                            <tr>
+                              <td />
+                              <td colSpan={5} style={{ ...tdCell, background: advanceResults[s.stageNumber].blockedReason ? '#fff4e5' : colors.headBg }}>
+                                {advanceResults[s.stageNumber].blockedReason ? (
+                                  <span style={{ fontSize: 12, color: colors.warning }}>⚠ {advanceResults[s.stageNumber].blockedReason}</span>
+                                ) : (
+                                  <span style={{ fontSize: 12, color: colors.success }}>
+                                    ✓ {advanceResults[s.stageNumber].advancedCount} survivor(s) advanced to Stage {advanceResults[s.stageNumber].nextStageNumber}.
+                                  </span>
                                 )}
                               </td>
                             </tr>

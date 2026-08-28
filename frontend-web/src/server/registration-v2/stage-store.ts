@@ -168,3 +168,29 @@ export async function deleteContestStage(contestId: string, stageId: string): Pr
   if (error) throw new Error(`Failed to delete contest stage: ${error.message}`);
   if (!count) throw new Error('Contest stage not found.');
 }
+
+export type AdvanceStageResult = {
+  advancedCount: number;
+  nextStageNumber: number | null;
+  blockedReason: string | null;
+};
+
+/**
+ * Moves a stage's survivors (assignments still 'active' — i.e. never marked
+ * for eviction) into stage_number + 1, via the advance_stage_survivors RPC
+ * (20270105000000_advance_stage_survivors.sql). Refuses (blockedReason set,
+ * advancedCount 0) when there's no next stage defined, or when the stage
+ * still has pending evictions — finalize those first.
+ */
+export async function advanceStageSurvivors(contestId: string, stageNumber: number): Promise<AdvanceStageResult> {
+  const { data, error } = await createAdminClient()
+    .rpc('advance_stage_survivors', { p_contest_id: contestId, p_stage_number: stageNumber })
+    .single();
+  if (error) throw new Error(`Failed to advance stage survivors: ${error.message}`);
+  const row = data as { advanced_count: number; next_stage_number: number | null; blocked_reason: string | null };
+  return {
+    advancedCount: row.advanced_count,
+    nextStageNumber: row.next_stage_number,
+    blockedReason: row.blocked_reason,
+  };
+}
