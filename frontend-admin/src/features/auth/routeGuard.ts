@@ -156,6 +156,12 @@ const routePermissions: Array<{ prefix: string; permissions: string[] }> = [
   // real boundary; this only avoids showing an operator a page whose every
   // button will 403.
   { prefix: '/admin/association/organisations', permissions: ['savings.admin.recon', 'savings.admin.view'] },
+  // Content authoring (announcements, meetings, documents, events, tasks) is a
+  // write surface too — every page under it exists to create, edit and delete
+  // rows, and `notify` fans one create out to every active member. Listed ahead
+  // of the catch-all for the same reason as the register above: a view-only
+  // operator should not be shown a page whose every button will 403.
+  { prefix: '/admin/association/content', permissions: ['savings.admin.recon', 'savings.admin.view'] },
   { prefix: '/admin/association', permissions: ['savings.admin.view', 'savings.admin.dashboard', 'savings.admin.recon'] },
   { prefix: '/admin/realtor', permissions: ['realtor.admin.view'] },
   { prefix: '/admin/telemedicine', permissions: ['health.admin.view'] },

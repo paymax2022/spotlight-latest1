@@ -459,6 +459,17 @@ const navItemsBase: NavItem[] = [
   { label: 'Dues & Finance', href: '/admin/association/dues', section: 'Community', permissions: ['savings.admin.recon', 'savings.admin.view'] },
   { label: 'Members', href: '/admin/association/members', section: 'Community', permissions: ['savings.admin.view'] },
   { label: 'Elections', href: '/admin/association/elections', section: 'Community', permissions: ['savings.admin.view'] },
+  // Content authoring. assoc_announcements / meetings / documents / events /
+  // tasks each had a member-facing READ endpoint and NO writer anywhere in the
+  // repo, so those member screens rendered an empty state permanently and rows
+  // could only be inserted by hand-written SQL. These five are the writer, and
+  // they gate on savings.admin.recon (authoring, not merely reading) to match
+  // the organisation register.
+  { label: 'Announcements', href: '/admin/association/content/announcements', section: 'Community', permissions: ['savings.admin.recon', 'savings.admin.view'] },
+  { label: 'Meetings', href: '/admin/association/content/meetings', section: 'Community', permissions: ['savings.admin.recon', 'savings.admin.view'] },
+  { label: 'Documents', href: '/admin/association/content/documents', section: 'Community', permissions: ['savings.admin.recon', 'savings.admin.view'] },
+  { label: 'Association Events', href: '/admin/association/content/events', section: 'Community', permissions: ['savings.admin.recon', 'savings.admin.view'] },
+  { label: 'Association Tasks', href: '/admin/association/content/tasks', section: 'Community', permissions: ['savings.admin.recon', 'savings.admin.view'] },
   { label: 'Bulk Import', href: '/admin/association/import', section: 'Community', permissions: ['savings.admin.recon', 'savings.admin.view'] },
   { label: 'Association Audit Log', href: '/admin/association/audit', section: 'Community', permissions: ['savings.admin.view', 'savings.admin.recon'] },
   // ── P2P Marketplace (Social — escrow marketplace; admin = dispute arbitration) ──
