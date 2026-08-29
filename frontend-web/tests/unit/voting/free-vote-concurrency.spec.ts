@@ -9,10 +9,25 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { bridgedCastFreeVote } from '@/server/voting-bridge/bridge';
 import { createAdminClient } from '@/lib/supabase/admin';
+import { assertKycTier, KycGateError } from '@/server/voting-bridge/kyc-gate';
 import { enableBridge } from '@/server/voting-bridge/feature-flag';
 
 // Mock Supabase client
 vi.mock('@/lib/supabase/admin');
+
+// The KYC tier gate is mocked at the module boundary rather than choreographed
+// through the Supabase stub below. bridgedCastFreeVote gained the
+// assertKycTier() call (bridge.ts step 2) in the same commit that added these
+// specs, so their stubs never arranged its three-query chain
+// (profiles -> contestants -> competitions); single() returned undefined, the
+// gate fail-closed on the TypeError, and every vote in this file was refused.
+// Mocking the gate keeps each test on its actual subject — idempotency, caching
+// and outbox behaviour — while the gate's own logic stays covered by
+// tests/unit/voting/kyc-gate.spec.ts.
+vi.mock('@/server/voting-bridge/kyc-gate', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/server/voting-bridge/kyc-gate')>();
+  return { ...actual, assertKycTier: vi.fn() };
+});
 
 describe('Free Vote Concurrency', () => {
   const mockVoteRequest = {
@@ -31,6 +46,7 @@ describe('Free Vote Concurrency', () => {
   const idempotencyKey = 'request-abc-def-ghi-123';
 
   beforeEach(() => {
+    vi.mocked(assertKycTier).mockResolvedValue(true as never);
     enableBridge();
   });
 
