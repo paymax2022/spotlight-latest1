@@ -568,8 +568,10 @@ func (s *Service) GetCard(ctx context.Context, userID string) (MembershipCard, e
 // GetProfile returns the caller's full editable profile.
 func (s *Service) GetProfile(ctx context.Context, userID string) (*MyProfile, error) {
 	const q = `
-		SELECT mp.full_name, m.member_code, mp.photo_url, mp.email, mp.phone,
-		       mp.profession, mp.location, mp.dob::text, mp.bio,
+		SELECT COALESCE(mp.full_name, ''), m.member_code, mp.photo_url,
+		       COALESCE(mp.email, ''), COALESCE(mp.phone, ''),
+		       COALESCE(mp.profession, ''), COALESCE(mp.location, ''),
+		       mp.dob::text, COALESCE(mp.bio, ''),
 		       mp.emergency, mp.next_of_kin,
 		       COALESCE(mc.label,'Member'), ch.name
 		FROM assoc_memberships m
@@ -865,8 +867,11 @@ func (s *Service) membershipOrg(ctx context.Context, membershipID string) (strin
 
 // GetDirectory returns the member directory, optionally filtered.
 func (s *Service) GetDirectory(ctx context.Context, userID string, q MemberDirectoryQuery) ([]MemberProfileSummary, error) {
+	// full_name is nullable and FullName is not a pointer, so an incomplete
+	// profile crashed the whole listing with "cannot scan NULL into *string".
+	// Falls back to the member code so a nameless member is still identifiable.
 	query := `
-		SELECT m.id, mp.full_name, m.member_code, mp.photo_url,
+		SELECT m.id, COALESCE(mp.full_name, m.member_code, ''), m.member_code, mp.photo_url,
 		       COALESCE(mc.label,'Member'), ch.name, m.status, mp.profession,
 		       m.organisation_id::text
 		FROM assoc_memberships m
@@ -964,7 +969,7 @@ func (s *Service) GetMember(ctx context.Context, viewerID, targetID string) (*Me
 	}) == nil
 
 	q := `
-		SELECT m.id, mp.full_name, m.member_code, mp.photo_url,
+		SELECT m.id, COALESCE(mp.full_name, m.member_code, ''), m.member_code, mp.photo_url,
 		       COALESCE(mc.label,'Member'), ch.name, m.status, mp.profession,
 		       mp.email, mp.phone, mp.location, m.joined_at::text,
 		       m.payment_standing, mp.bio, mp.contact_restricted,

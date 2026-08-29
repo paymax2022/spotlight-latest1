@@ -578,3 +578,96 @@ func TestGetAdminAccess_RecognisesPlatformSuperAdmin(t *testing.T) {
 		t.Fatalf("capabilities = %+v; want full", access.Can)
 	}
 }
+
+// TestDirectoryAndProfile_SurviveNullFullName pins a crash that took out the
+// whole member directory: full_name is nullable, FullName is not a pointer, and
+// 339 rows in the local database have no name — so GetDirectory returned
+// "cannot scan NULL into *string" for any organisation containing one, killing
+// the admin Members page and every assignee picker built on it.
+func TestDirectoryAndProfile_SurviveNullFullName(t *testing.T) {
+	pool := liveDBPool(t)
+	defer pool.Close()
+	ctx := context.Background()
+	svc := newLiveAssociationService(pool)
+
+	orgID := seedOrganisation(t, ctx, pool, "Null Name Org "+uuid.New().String()[:8])
+	userID, membershipID := seedActiveMembership(t, ctx, pool, orgID)
+	// A profile row with NO name — exactly the shape that crashed.
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO assoc_member_profiles (membership_id, full_name) VALUES ($1, NULL)
+		 ON CONFLICT (membership_id) DO UPDATE SET full_name = NULL`, membershipID); err != nil {
+		t.Fatalf("seed null-name profile: %v", err)
+	}
+
+	rows, err := svc.GetDirectory(ctx, userID, association.MemberDirectoryQuery{})
+	if err != nil {
+		t.Fatalf("GetDirectory crashed on a NULL full_name: %v", err)
+	}
+	var found bool
+	for _, r := range rows {
+		if r.ID == membershipID {
+			found = true
+			if r.FullName == "" {
+				t.Fatal("nameless member rendered with an empty name; expected the member code as a fallback")
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("the nameless member is missing from the directory (%d rows)", len(rows))
+	}
+
+	if _, err := svc.GetProfile(ctx, userID); err != nil {
+		t.Fatalf("GetProfile crashed on a NULL full_name: %v", err)
+	}
+}
+
+// TestCommitteeCrud_UsesTheRealColumn pins a bug hidden by a swallowed error:
+// assoc_committees has `purpose`, not `description`. The SELECT's error was
+// discarded by `if err == nil`, so every organisation reported committees: []
+// while committeeCount showed the true number, and create/update failed
+// outright.
+func TestCommitteeCrud_UsesTheRealColumn(t *testing.T) {
+	ctx := context.Background()
+	founder, orgID, svc, done := seedFounder(t, ctx, "committee")
+	defer done()
+
+	purpose := "Oversees the annual audit"
+	id, err := svc.CreateCommittee(ctx, founder, orgID, association.CommitteeRequest{
+		Name: "Finance Committee", Description: &purpose,
+	})
+	if err != nil {
+		t.Fatalf("create committee: %v", err)
+	}
+
+	detail, err := svc.GetAdminOrganisation(ctx, founder, orgID)
+	if err != nil {
+		t.Fatalf("org detail: %v", err)
+	}
+	// The draft seeds one committee and we just added another.
+	if detail.CommitteeCount != len(detail.Committees) {
+		t.Fatalf("committeeCount=%d but committees[] has %d — the sub-list is silently empty",
+			detail.CommitteeCount, len(detail.Committees))
+	}
+	var seen bool
+	for _, c := range detail.Committees {
+		if c.ID == id {
+			seen = true
+			if c.Description == nil || *c.Description != purpose {
+				t.Fatalf("committee purpose = %v; want %q", c.Description, purpose)
+			}
+		}
+	}
+	if !seen {
+		t.Fatalf("created committee %s missing from the org detail", id)
+	}
+
+	newPurpose := "Oversees audit and procurement"
+	if err := svc.UpdateCommittee(ctx, founder, id, association.CommitteeRequest{
+		Name: "Finance & Procurement", Description: &newPurpose,
+	}); err != nil {
+		t.Fatalf("update committee: %v", err)
+	}
+	if err := svc.DeleteCommittee(ctx, founder, id); err != nil {
+		t.Fatalf("delete committee: %v", err)
+	}
+}

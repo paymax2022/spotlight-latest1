@@ -81,6 +81,10 @@ func (s *Service) GetAdminOrganisation(ctx context.Context, adminID, orgID strin
 	}
 
 	d.Chapters = []Chapter{}
+	// NOTE: these sub-lists used `if err == nil`, so a query error (or a per-row
+	// scan error) produced a silently empty list rather than a failure. A wrong
+	// column name therefore looked like "this org has no committees" while
+	// committeeCount reported 2. Errors are returned now.
 	if rows, err := s.db.Query(ctx, `
 		SELECT id, name, level, parent_id,
 		       (SELECT count(*) FROM assoc_memberships m WHERE m.chapter_id=c.id AND m.status='ACTIVE')
@@ -96,7 +100,7 @@ func (s *Service) GetAdminOrganisation(ctx context.Context, adminID, orgID strin
 
 	d.Committees = []AdminCommittee{}
 	if rows, err := s.db.Query(ctx, `
-		SELECT id, name, description,
+		SELECT id, name, purpose,
 		       (SELECT count(*) FROM assoc_committee_members cm WHERE cm.committee_id=c.id AND cm.status='ACTIVE')
 		FROM assoc_committees c WHERE organisation_id=$1 ORDER BY name`, orgID); err == nil {
 		defer rows.Close()
@@ -506,7 +510,7 @@ func (s *Service) CreateCommittee(ctx context.Context, adminID, orgID string, re
 	}
 	defer tx.Rollback(ctx)
 	if _, err := tx.Exec(ctx,
-		`INSERT INTO assoc_committees (id, organisation_id, name, description) VALUES ($1,$2,$3,$4)`,
+		`INSERT INTO assoc_committees (id, organisation_id, name, purpose) VALUES ($1,$2,$3,$4)`,
 		id, orgID, req.Name, req.Description); err != nil {
 		return "", fmt.Errorf("association: create committee: %w", err)
 	}
@@ -531,7 +535,7 @@ func (s *Service) UpdateCommittee(ctx context.Context, adminID, committeeID stri
 	}
 	defer tx.Rollback(ctx)
 	if _, err := tx.Exec(ctx,
-		`UPDATE assoc_committees SET name=$2, description=$3 WHERE id=$1`,
+		`UPDATE assoc_committees SET name=$2, purpose=$3 WHERE id=$1`,
 		committeeID, req.Name, req.Description); err != nil {
 		return fmt.Errorf("association: update committee: %w", err)
 	}
