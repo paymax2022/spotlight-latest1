@@ -59,7 +59,7 @@ export async function POST(request: Request, ctx: { params: Promise<{ id: string
 
     // Idempotency-Key replay: return the same intent rather than opening a
     // second Paystack transaction for a retried/duplicate request.
-    const existing = findRegistrationPaymentIntentByIdempotencyKey(idempotencyKey);
+    const existing = await findRegistrationPaymentIntentByIdempotencyKey(idempotencyKey);
     if (existing) {
       return NextResponse.json({
         success: true,
@@ -88,9 +88,8 @@ export async function POST(request: Request, ctx: { params: Promise<{ id: string
       },
     });
 
-    const intent = createRegistrationPaymentIntent({
+    const intent = await createRegistrationPaymentIntent({
       applicationId: params.id,
-      userId: user.id,
       amountKobo,
       paymentReference,
       idempotencyKey,
