@@ -156,16 +156,16 @@ func (s *Service) UpdateOrganisation(ctx context.Context, adminID, orgID string,
 		return nil, err
 	}
 	if req.GroupType != nil && !validGroupTypes[*req.GroupType] {
-		return nil, fmt.Errorf("association: invalid groupType %q", *req.GroupType)
+		return nil, fmt.Errorf("%w: association: invalid groupType %q", ErrInvalidInput, *req.GroupType)
 	}
 	if req.ApprovalRule != nil && !validApprovalRules[*req.ApprovalRule] {
-		return nil, fmt.Errorf("association: invalid approvalRule %q", *req.ApprovalRule)
+		return nil, fmt.Errorf("%w: association: invalid approvalRule %q", ErrInvalidInput, *req.ApprovalRule)
 	}
 	if req.RegistrationFeeKobo != nil && *req.RegistrationFeeKobo < 0 {
-		return nil, fmt.Errorf("association: registrationFeeKobo must not be negative")
+		return nil, fmt.Errorf("%w: association: registrationFeeKobo must not be negative", ErrInvalidInput)
 	}
 	if req.GraceDays != nil && *req.GraceDays < 0 {
-		return nil, fmt.Errorf("association: graceDays must not be negative")
+		return nil, fmt.Errorf("%w: association: graceDays must not be negative", ErrInvalidInput)
 	}
 
 	sets := []string{"updated_at = now()"}
@@ -176,7 +176,7 @@ func (s *Service) UpdateOrganisation(ctx context.Context, adminID, orgID string,
 	}
 	if req.Name != nil {
 		if strings.TrimSpace(*req.Name) == "" {
-			return nil, fmt.Errorf("association: name must not be blank")
+			return nil, fmt.Errorf("%w: association: name must not be blank", ErrInvalidInput)
 		}
 		add("name", *req.Name)
 	}
@@ -411,7 +411,7 @@ func (s *Service) CreateChapter(ctx context.Context, adminID, orgID string, req 
 	}
 	level := nz(req.Level, "STATE")
 	if !validChapterLevels[level] {
-		return "", fmt.Errorf("association: invalid chapter level %q", level)
+		return "", fmt.Errorf("%w: association: invalid chapter level %q", ErrInvalidInput, level)
 	}
 	id := uuid.New().String()
 	tx, err := s.db.Begin(ctx)
@@ -441,7 +441,7 @@ func (s *Service) UpdateChapter(ctx context.Context, adminID, chapterID string, 
 	}
 	level := nz(req.Level, "STATE")
 	if !validChapterLevels[level] {
-		return fmt.Errorf("association: invalid chapter level %q", level)
+		return fmt.Errorf("%w: association: invalid chapter level %q", ErrInvalidInput, level)
 	}
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
@@ -578,11 +578,11 @@ func (s *Service) CreateCategory(ctx context.Context, adminID, orgID string, req
 		return "", err
 	}
 	if req.DuesKobo < 0 {
-		return "", fmt.Errorf("association: duesKobo must not be negative")
+		return "", fmt.Errorf("%w: association: duesKobo must not be negative", ErrInvalidInput)
 	}
 	cadence := nz(req.Cadence, "ANNUAL")
 	if !validCadences[cadence] {
-		return "", fmt.Errorf("association: invalid cadence %q", cadence)
+		return "", fmt.Errorf("%w: association: invalid cadence %q", ErrInvalidInput, cadence)
 	}
 	id := uuid.New().String()
 	tx, err := s.db.Begin(ctx)
@@ -619,11 +619,11 @@ func (s *Service) UpdateCategory(ctx context.Context, adminID, categoryID string
 		return err
 	}
 	if req.DuesKobo < 0 {
-		return fmt.Errorf("association: duesKobo must not be negative")
+		return fmt.Errorf("%w: association: duesKobo must not be negative", ErrInvalidInput)
 	}
 	cadence := nz(req.Cadence, "ANNUAL")
 	if !validCadences[cadence] {
-		return fmt.Errorf("association: invalid cadence %q", cadence)
+		return fmt.Errorf("%w: association: invalid cadence %q", ErrInvalidInput, cadence)
 	}
 	var prevKobo int64
 	if err := s.db.QueryRow(ctx,

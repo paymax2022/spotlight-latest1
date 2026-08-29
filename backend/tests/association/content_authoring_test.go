@@ -10,6 +10,7 @@ package association_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -443,5 +444,137 @@ func TestFullDuesLifecycle_RunThenPayPostsBalancedLedger(t *testing.T) {
 	}
 	if splitTotal != duesKobo {
 		t.Fatalf("revenue split sums to %d kobo; want exactly the dues amount %d", splitTotal, duesKobo)
+	}
+}
+
+// TestAdminContentListings_AreReachableAndOrgScoped pins the routing gap: the
+// six admin listing handlers and services existed but were never registered in
+// routes.go, so every one of them 404'd and the console could not see the
+// content it had just authored.
+func TestAdminContentListings_AreReachableAndOrgScoped(t *testing.T) {
+	ctx := context.Background()
+	founder, orgID, svc, done := seedFounder(t, ctx, "listings")
+	defer done()
+
+	if _, err := svc.CreateAnnouncement(ctx, founder, orgID, association.AnnouncementRequest{Title: "Listing check"}); err != nil {
+		t.Fatalf("create announcement: %v", err)
+	}
+	if _, err := svc.CreateMeeting(ctx, founder, orgID, association.MeetingRequest{
+		Title: "Listing meeting", StartsAt: rfc3339In(24 * time.Hour),
+	}); err != nil {
+		t.Fatalf("create meeting: %v", err)
+	}
+
+	anns, err := svc.ListAdminAnnouncements(ctx, founder, orgID, 0, 0)
+	if err != nil {
+		t.Fatalf("list announcements: %v", err)
+	}
+	if len(anns) != 1 || anns[0].Title != "Listing check" {
+		t.Fatalf("announcements = %+v; want exactly the one just created", anns)
+	}
+	if anns[0].Meta == nil {
+		t.Fatal("announcement row has nil meta")
+	}
+
+	meetings, err := svc.ListAdminMeetings(ctx, founder, orgID, 0, 0)
+	if err != nil {
+		t.Fatalf("list meetings: %v", err)
+	}
+	if len(meetings) != 1 {
+		t.Fatalf("meetings = %d; want 1", len(meetings))
+	}
+
+	// Each listing must exist and be callable; empty is fine, an error is not.
+	for name, fn := range map[string]func() ([]association.AdminContentRow, error){
+		"documents": func() ([]association.AdminContentRow, error) {
+			return svc.ListAdminDocuments(ctx, founder, orgID, 0, 0)
+		},
+		"events": func() ([]association.AdminContentRow, error) {
+			return svc.ListAdminEvents(ctx, founder, orgID, 0, 0)
+		},
+		"tasks": func() ([]association.AdminContentRow, error) {
+			return svc.ListAdminTasks(ctx, founder, orgID, 0, 0)
+		},
+		"duesRuns": func() ([]association.AdminContentRow, error) {
+			return svc.ListAdminDuesRuns(ctx, founder, orgID, 0, 0)
+		},
+	} {
+		if _, err := fn(); err != nil {
+			t.Fatalf("list %s: %v", name, err)
+		}
+	}
+
+	// And they must be org-scoped: a stranger gets ErrForbidden, not rows.
+	stranger := uuid.New().String()
+	if _, err := svc.ListAdminAnnouncements(ctx, stranger, orgID, 0, 0); err == nil {
+		t.Fatal("a stranger could list another organisation's announcements")
+	}
+}
+
+// TestValidationErrors_Map400NotServerError pins the status mapping: these were
+// plain fmt.Errorf values, so statusFor's default branch turned a user's typo
+// into a 500.
+func TestValidationErrors_Map400NotServerError(t *testing.T) {
+	ctx := context.Background()
+	founder, orgID, svc, done := seedFounder(t, ctx, "validation")
+	defer done()
+
+	cases := map[string]error{}
+	_, cases["paid event with no fee"] = svc.CreateEvent(ctx, founder, orgID, association.EventRequest{
+		Title: "x", StartsAt: rfc3339In(time.Hour), Paid: true, FeeKobo: 0,
+	})
+	_, cases["free event with a fee"] = svc.CreateEvent(ctx, founder, orgID, association.EventRequest{
+		Title: "x", StartsAt: rfc3339In(time.Hour), Paid: false, FeeKobo: 100,
+	})
+	_, cases["bad meeting mode"] = svc.CreateMeeting(ctx, founder, orgID, association.MeetingRequest{
+		Title: "x", Mode: "TELEPATHY", StartsAt: rfc3339In(time.Hour),
+	})
+	_, cases["malformed timestamp"] = svc.CreateMeeting(ctx, founder, orgID, association.MeetingRequest{
+		Title: "x", StartsAt: "not-a-time",
+	})
+
+	for label, err := range cases {
+		if err == nil {
+			t.Fatalf("%s: expected rejection, got none", label)
+		}
+		if !errors.Is(err, association.ErrInvalidInput) {
+			t.Fatalf("%s: %v does not wrap ErrInvalidInput, so it maps to 500 instead of 400", label, err)
+		}
+	}
+}
+
+// TestGetAdminAccess_RecognisesPlatformSuperAdmin pins the gap between what the
+// server authorizes and what this endpoint reported: every guard checks
+// isPlatformSuperAdmin first, but GetAdminAccess read only assoc_member_roles,
+// so a platform super-admin was told isAdmin:false and the UI hid everything
+// they could actually do.
+func TestGetAdminAccess_RecognisesPlatformSuperAdmin(t *testing.T) {
+	pool := liveDBPool(t)
+	defer pool.Close()
+	ctx := context.Background()
+	svc := newLiveAssociationService(pool)
+
+	// The seeded platform admin holds the 'super-admin' slug and no association
+	// membership — exactly the shape that reported as a plain member.
+	var adminID string
+	if err := pool.QueryRow(ctx, `
+		SELECT u.id::text FROM auth.users u
+		JOIN public.user_roles ur ON ur.user_id = u.id
+		JOIN public.roles r ON r.id = ur.role_id
+		WHERE r.slug = 'super-admin'
+		  AND NOT EXISTS (SELECT 1 FROM assoc_memberships m WHERE m.user_id = u.id)
+		LIMIT 1`).Scan(&adminID); err != nil {
+		t.Skipf("no membership-less platform super-admin seeded: %v", err)
+	}
+
+	access, err := svc.GetAdminAccess(ctx, adminID)
+	if err != nil {
+		t.Fatalf("admin access: %v", err)
+	}
+	if !access.IsAdmin {
+		t.Fatal("platform super-admin reported as isAdmin:false while every server guard authorizes them")
+	}
+	if !access.Can.ManageMembers || !access.Can.ManageFinance {
+		t.Fatalf("capabilities = %+v; want full", access.Can)
 	}
 }

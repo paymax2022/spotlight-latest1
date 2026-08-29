@@ -368,7 +368,8 @@ func (h *Handler) ListOfflinePayments(c *gin.Context) {
 // statusFor maps domain errors to HTTP codes.
 func statusFor(err error) int {
 	switch {
-	case errors.Is(err, ErrIdempotencyRequired), errors.Is(err, ErrInvalidBallot):
+	case errors.Is(err, ErrIdempotencyRequired), errors.Is(err, ErrInvalidBallot),
+		errors.Is(err, ErrInvalidInput):
 		return http.StatusBadRequest
 	case errors.Is(err, ErrForbidden), errors.Is(err, ErrIneligible), errors.Is(err, ErrVotingClosed):
 		return http.StatusForbidden

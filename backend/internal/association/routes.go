@@ -138,6 +138,16 @@ func RegisterRoutes(rg *gin.RouterGroup, h *Handler) {
 	// the repo, so they were permanently empty and content could only arrive by
 	// hand-written SQL. Child routes use :childId — gin allows one param name per
 	// path position and :id is already the organisation at that depth.
+	// Org-scoped admin listings. The member-facing reads join through the
+	// CALLER's own memberships, so they return nothing for a platform admin —
+	// the console had no way to see the content it can author.
+	rg.GET("/admin/organisations/:id/announcements", h.ListAdminAnnouncements())
+	rg.GET("/admin/organisations/:id/meetings", h.ListAdminMeetings())
+	rg.GET("/admin/organisations/:id/documents", h.ListAdminDocuments())
+	rg.GET("/admin/organisations/:id/events", h.ListAdminEvents())
+	rg.GET("/admin/organisations/:id/tasks", h.ListAdminTasks())
+	rg.GET("/admin/organisations/:id/dues/runs", h.ListAdminDuesRuns())
+
 	rg.POST("/admin/organisations/:id/announcements", h.CreateAnnouncement)
 	rg.PATCH("/admin/announcements/:childId", h.UpdateAnnouncement)
 	rg.DELETE("/admin/announcements/:childId", h.DeleteAnnouncement)

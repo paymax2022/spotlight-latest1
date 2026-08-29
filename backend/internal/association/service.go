@@ -31,6 +31,12 @@ var ErrForbidden = errors.New("association: forbidden")
 // and retry forever.
 var ErrNoMembership = errors.New("association: no membership")
 
+// ErrInvalidInput marks a caller-supplied value the server rejects — an
+// incoherent event price, a bad enum, a malformed timestamp. These were plain
+// fmt.Errorf values, so statusFor's default branch mapped them to 500 and a
+// user's typo looked like a server fault.
+var ErrInvalidInput = errors.New("association: invalid input")
+
 // Service manages association dues payments, receipts, and admin approvals.
 type Service struct {
 	db         *pgxpool.Pool
@@ -672,7 +678,22 @@ func (s *Service) GetAdminAccess(ctx context.Context, userID string) (*AdminAcce
 	var role, jurisdiction string
 	var orgID, orgName *string
 	if err := s.db.QueryRow(ctx, q, userID).Scan(&role, &jurisdiction, &orgID, &orgName); err != nil {
-		// No role row → not an admin
+		// No assoc_member_roles row. That is not the end of the story: every
+		// server-side guard (requireCapInOrg / requireAdminInOrg / requireCap)
+		// first checks isPlatformSuperAdmin, so a platform super-admin holding no
+		// association membership WOULD be authorized — while this endpoint told
+		// the client isAdmin:false and the UI hid everything they could actually
+		// do. OrganisationID stays nil: they are not scoped to one org, and the
+		// console picks the org explicitly.
+		if s.isPlatformSuperAdmin(ctx, userID) {
+			return &AdminAccess{
+				IsAdmin:      true,
+				Role:         "SUPER_ADMIN",
+				RoleLabel:    "Platform Super Admin",
+				Jurisdiction: "NATIONAL",
+				Can:          capabilitiesFor("SUPER_ADMIN"),
+			}, nil
+		}
 		return &AdminAccess{IsAdmin: false, Role: "NONE", RoleLabel: "Member", Jurisdiction: "CHAPTER"}, nil
 	}
 	caps := capabilitiesFor(role)

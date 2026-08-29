@@ -40,7 +40,7 @@ func parseTime(v *string, field string) (*time.Time, error) {
 	}
 	t, err := time.Parse(time.RFC3339, *v)
 	if err != nil {
-		return nil, fmt.Errorf("association: %s must be RFC3339: %w", field, err)
+		return nil, fmt.Errorf("%w: association: %s must be RFC3339: %w", ErrInvalidInput, field, err)
 	}
 	return &t, nil
 }
@@ -48,7 +48,7 @@ func parseTime(v *string, field string) (*time.Time, error) {
 func mustParseTime(v, field string) (time.Time, error) {
 	t, err := time.Parse(time.RFC3339, strings.TrimSpace(v))
 	if err != nil {
-		return time.Time{}, fmt.Errorf("association: %s must be RFC3339: %w", field, err)
+		return time.Time{}, fmt.Errorf("%w: association: %s must be RFC3339: %w", ErrInvalidInput, field, err)
 	}
 	return t, nil
 }
@@ -146,11 +146,11 @@ func (s *Service) CreateMeeting(ctx context.Context, adminID, orgID string, r Me
 	}
 	mode := nz(r.Mode, "PHYSICAL")
 	if !validMeetingModes[mode] {
-		return "", fmt.Errorf("association: invalid meeting mode %q", mode)
+		return "", fmt.Errorf("%w: association: invalid meeting mode %q", ErrInvalidInput, mode)
 	}
 	state := nz(r.State, "UPCOMING")
 	if !validMeetingStates[state] {
-		return "", fmt.Errorf("association: invalid meeting state %q", state)
+		return "", fmt.Errorf("%w: association: invalid meeting state %q", ErrInvalidInput, state)
 	}
 	startsAt, err := mustParseTime(r.StartsAt, "startsAt")
 	if err != nil {
@@ -161,7 +161,7 @@ func (s *Service) CreateMeeting(ctx context.Context, adminID, orgID string, r Me
 		return "", err
 	}
 	if endsAt != nil && endsAt.Before(startsAt) {
-		return "", fmt.Errorf("association: endsAt is before startsAt")
+		return "", fmt.Errorf("%w: association: endsAt is before startsAt", ErrInvalidInput)
 	}
 	agenda, err := json.Marshal(nonNilStrings(r.Agenda))
 	if err != nil {
@@ -208,11 +208,11 @@ func (s *Service) UpdateMeeting(ctx context.Context, adminID, id string, r Meeti
 	}
 	mode := nz(r.Mode, "PHYSICAL")
 	if !validMeetingModes[mode] {
-		return fmt.Errorf("association: invalid meeting mode %q", mode)
+		return fmt.Errorf("%w: association: invalid meeting mode %q", ErrInvalidInput, mode)
 	}
 	state := nz(r.State, "UPCOMING")
 	if !validMeetingStates[state] {
-		return fmt.Errorf("association: invalid meeting state %q", state)
+		return fmt.Errorf("%w: association: invalid meeting state %q", ErrInvalidInput, state)
 	}
 	startsAt, err := mustParseTime(r.StartsAt, "startsAt")
 	if err != nil {
@@ -281,7 +281,7 @@ func (s *Service) CreateDocument(ctx context.Context, adminID, orgID string, r D
 	}
 	kind := nz(r.Kind, "pdf")
 	if !validDocKinds[kind] {
-		return "", fmt.Errorf("association: invalid document kind %q", kind)
+		return "", fmt.Errorf("%w: association: invalid document kind %q", ErrInvalidInput, kind)
 	}
 	id := uuid.New().String()
 	tx, err := s.db.Begin(ctx)
@@ -320,7 +320,7 @@ func (s *Service) UpdateDocument(ctx context.Context, adminID, id string, r Docu
 	}
 	kind := nz(r.Kind, "pdf")
 	if !validDocKinds[kind] {
-		return fmt.Errorf("association: invalid document kind %q", kind)
+		return fmt.Errorf("%w: association: invalid document kind %q", ErrInvalidInput, kind)
 	}
 	return s.simpleUpdate(ctx, adminID, orgID, "DOCUMENT_UPDATE", "document", id, func(tx pgx.Tx) error {
 		_, err := tx.Exec(ctx, `
@@ -358,15 +358,15 @@ func (s *Service) CreateEvent(ctx context.Context, adminID, orgID string, r Even
 		return "", err
 	}
 	if r.FeeKobo < 0 {
-		return "", fmt.Errorf("association: feeKobo must not be negative")
+		return "", fmt.Errorf("%w: association: feeKobo must not be negative", ErrInvalidInput)
 	}
 	// A paid event with no fee (or a fee on a free event) is a configuration
 	// mistake that would otherwise surface as a silently free ticket.
 	if r.Paid && r.FeeKobo == 0 {
-		return "", fmt.Errorf("association: a paid event needs a feeKobo greater than zero")
+		return "", fmt.Errorf("%w: association: a paid event needs a feeKobo greater than zero", ErrInvalidInput)
 	}
 	if !r.Paid && r.FeeKobo > 0 {
-		return "", fmt.Errorf("association: feeKobo is set but the event is not marked paid")
+		return "", fmt.Errorf("%w: association: feeKobo is set but the event is not marked paid", ErrInvalidInput)
 	}
 	startsAt, err := mustParseTime(r.StartsAt, "startsAt")
 	if err != nil {
@@ -377,10 +377,10 @@ func (s *Service) CreateEvent(ctx context.Context, adminID, orgID string, r Even
 		return "", err
 	}
 	if endsAt != nil && endsAt.Before(startsAt) {
-		return "", fmt.Errorf("association: endsAt is before startsAt")
+		return "", fmt.Errorf("%w: association: endsAt is before startsAt", ErrInvalidInput)
 	}
 	if r.Capacity != nil && *r.Capacity < 0 {
-		return "", fmt.Errorf("association: capacity must not be negative")
+		return "", fmt.Errorf("%w: association: capacity must not be negative", ErrInvalidInput)
 	}
 
 	id := uuid.New().String()
@@ -419,10 +419,10 @@ func (s *Service) UpdateEvent(ctx context.Context, adminID, id string, r EventRe
 		return err
 	}
 	if r.FeeKobo < 0 {
-		return fmt.Errorf("association: feeKobo must not be negative")
+		return fmt.Errorf("%w: association: feeKobo must not be negative", ErrInvalidInput)
 	}
 	if r.Paid && r.FeeKobo == 0 {
-		return fmt.Errorf("association: a paid event needs a feeKobo greater than zero")
+		return fmt.Errorf("%w: association: a paid event needs a feeKobo greater than zero", ErrInvalidInput)
 	}
 	startsAt, err := mustParseTime(r.StartsAt, "startsAt")
 	if err != nil {
@@ -480,11 +480,11 @@ func (s *Service) CreateTask(ctx context.Context, adminID, orgID string, r TaskR
 	}
 	status := nz(r.Status, "ASSIGNED")
 	if !validTaskStatuses[status] {
-		return "", fmt.Errorf("association: invalid task status %q", status)
+		return "", fmt.Errorf("%w: association: invalid task status %q", ErrInvalidInput, status)
 	}
 	priority := nz(r.Priority, "MEDIUM")
 	if !validTaskPriorities[priority] {
-		return "", fmt.Errorf("association: invalid task priority %q", priority)
+		return "", fmt.Errorf("%w: association: invalid task priority %q", ErrInvalidInput, priority)
 	}
 	dueDate, err := parseTime(r.DueDate, "dueDate")
 	if err != nil {
@@ -547,11 +547,11 @@ func (s *Service) UpdateTask(ctx context.Context, adminID, id string, r TaskRequ
 	}
 	status := nz(r.Status, "ASSIGNED")
 	if !validTaskStatuses[status] {
-		return fmt.Errorf("association: invalid task status %q", status)
+		return fmt.Errorf("%w: association: invalid task status %q", ErrInvalidInput, status)
 	}
 	priority := nz(r.Priority, "MEDIUM")
 	if !validTaskPriorities[priority] {
-		return fmt.Errorf("association: invalid task priority %q", priority)
+		return fmt.Errorf("%w: association: invalid task priority %q", ErrInvalidInput, priority)
 	}
 	dueDate, err := parseTime(r.DueDate, "dueDate")
 	if err != nil {
@@ -641,7 +641,7 @@ func (s *Service) RunDues(ctx context.Context, adminID, orgID string, r DuesRunR
 	}
 	scope := nz(r.Scope, "NATIONAL")
 	if !validInvoiceScopes[scope] {
-		return nil, fmt.Errorf("association: invalid scope %q", scope)
+		return nil, fmt.Errorf("%w: association: invalid scope %q", ErrInvalidInput, scope)
 	}
 	dueDate, err := parseTime(r.DueDate, "dueDate")
 	if err != nil {
@@ -749,11 +749,11 @@ func (s *Service) CreateInvoice(ctx context.Context, adminID string, r InvoiceRe
 		return "", ErrIdempotencyRequired
 	}
 	if r.AmountKobo <= 0 {
-		return "", fmt.Errorf("association: amountKobo must be greater than zero")
+		return "", fmt.Errorf("%w: association: amountKobo must be greater than zero", ErrInvalidInput)
 	}
 	scope := nz(r.Scope, "NATIONAL")
 	if !validInvoiceScopes[scope] {
-		return "", fmt.Errorf("association: invalid scope %q", scope)
+		return "", fmt.Errorf("%w: association: invalid scope %q", ErrInvalidInput, scope)
 	}
 	orgID, err := s.membershipOrg(ctx, r.MembershipID)
 	if err != nil {

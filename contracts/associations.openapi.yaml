@@ -571,11 +571,17 @@ paths:
       parameters: [ { $ref: '#/components/parameters/ChildId' } ]
       responses: { '200': { $ref: '#/components/responses/Ok' }, '403': { $ref: '#/components/responses/Forbidden' } }
   # ── Content authoring ─────────────────────────────────────────────────────
-  # assoc_announcements / meetings / documents / events / tasks / notifications
-  # / devices / dues_invoices all had READ endpoints and no writer anywhere in
-  # the repo, so they were permanently empty and content could only arrive by
-  # hand-written SQL.
   /associations/admin/organisations/{id}/announcements:
+    get:
+      tags: [Admin]
+      summary: List an organisation's announcements
+      parameters:
+        - { $ref: '#/components/parameters/Id' }
+        - { name: limit,  in: query, schema: { type: integer, minimum: 1, maximum: 200 } }
+        - { name: offset, in: query, schema: { type: integer, minimum: 0 } }
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/AdminContentRow' } } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
     post:
       tags: [Admin]
       summary: Post an announcement (optionally notifying every active member)
@@ -595,6 +601,16 @@ paths:
       parameters: [ { $ref: '#/components/parameters/ChildId' } ]
       responses: { '200': { $ref: '#/components/responses/Ok' }, '403': { $ref: '#/components/responses/Forbidden' } }
   /associations/admin/organisations/{id}/meetings:
+    get:
+      tags: [Admin]
+      summary: List an organisation's meetings
+      parameters:
+        - { $ref: '#/components/parameters/Id' }
+        - { name: limit,  in: query, schema: { type: integer, minimum: 1, maximum: 200 } }
+        - { name: offset, in: query, schema: { type: integer, minimum: 0 } }
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/AdminContentRow' } } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
     post:
       tags: [Admin]
       summary: Schedule a meeting
@@ -621,6 +637,16 @@ paths:
       requestBody: { required: true, content: { application/json: { schema: { type: object, properties: { published: { type: boolean } }, required: [published] } } } }
       responses: { '200': { $ref: '#/components/responses/Ok' }, '403': { $ref: '#/components/responses/Forbidden' } }
   /associations/admin/organisations/{id}/documents:
+    get:
+      tags: [Admin]
+      summary: List an organisation's documents
+      parameters:
+        - { $ref: '#/components/parameters/Id' }
+        - { name: limit,  in: query, schema: { type: integer, minimum: 1, maximum: 200 } }
+        - { name: offset, in: query, schema: { type: integer, minimum: 0 } }
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/AdminContentRow' } } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
     post:
       tags: [Admin]
       summary: Add a document to the vault
@@ -640,6 +666,16 @@ paths:
       parameters: [ { $ref: '#/components/parameters/ChildId' } ]
       responses: { '200': { $ref: '#/components/responses/Ok' }, '403': { $ref: '#/components/responses/Forbidden' } }
   /associations/admin/organisations/{id}/events:
+    get:
+      tags: [Admin]
+      summary: List an organisation's events
+      parameters:
+        - { $ref: '#/components/parameters/Id' }
+        - { name: limit,  in: query, schema: { type: integer, minimum: 1, maximum: 200 } }
+        - { name: offset, in: query, schema: { type: integer, minimum: 0 } }
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/AdminContentRow' } } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
     post:
       tags: [Admin]
       summary: Create an event. A paid event must carry a positive feeKobo.
@@ -659,6 +695,16 @@ paths:
       parameters: [ { $ref: '#/components/parameters/ChildId' } ]
       responses: { '200': { $ref: '#/components/responses/Ok' }, '400': { description: 'Event has paid registrations' }, '403': { $ref: '#/components/responses/Forbidden' } }
   /associations/admin/organisations/{id}/tasks:
+    get:
+      tags: [Admin]
+      summary: List an organisation's tasks
+      parameters:
+        - { $ref: '#/components/parameters/Id' }
+        - { name: limit,  in: query, schema: { type: integer, minimum: 1, maximum: 200 } }
+        - { name: offset, in: query, schema: { type: integer, minimum: 0 } }
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/AdminContentRow' } } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
     post:
       tags: [Admin]
       summary: Create and assign a task
@@ -677,6 +723,17 @@ paths:
       summary: Delete a task
       parameters: [ { $ref: '#/components/parameters/ChildId' } ]
       responses: { '200': { $ref: '#/components/responses/Ok' }, '403': { $ref: '#/components/responses/Forbidden' } }
+  /associations/admin/organisations/{id}/dues/runs:
+    get:
+      tags: [Admin]
+      summary: List the dues runs raised for an organisation
+      parameters:
+        - { $ref: '#/components/parameters/Id' }
+        - { name: limit,  in: query, schema: { type: integer, minimum: 1, maximum: 200 } }
+        - { name: offset, in: query, schema: { type: integer, minimum: 0 } }
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/AdminContentRow' } } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
   /associations/admin/organisations/{id}/dues/run:
     post:
       tags: [Admin]
@@ -972,6 +1029,20 @@ components:
         metadata:    { type: object, additionalProperties: true }
         createdAt:   { type: string }
         at:          { type: string }
+    AdminContentRow:
+      type: object
+      description: >-
+        One row of any admin content listing. The shape is uniform across the
+        content types so one table component can render them all; type-specific
+        fields live in `meta`.
+      properties:
+        id:        { type: string }
+        title:     { type: string }
+        subtitle:  { type: string }
+        status:    { type: string }
+        at:        { type: [string, 'null'] }
+        createdAt: { type: [string, 'null'] }
+        meta:      { type: object, additionalProperties: true }
     AnnouncementRequest:
       type: object
       required: [title]
