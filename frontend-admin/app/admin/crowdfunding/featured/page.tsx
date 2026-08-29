@@ -1,31 +1,43 @@
 'use client';
 
 // ── Crowdfunding — Featured campaigns ────────────────────────────────────────
-// Two jobs on one screen:
-//   1. Management — flip the featured / trending / urgent placement flags.
-//   2. Reporting  — how many campaigns carry each flag, and what the featured
-//      rail is actually raising.
+// Three jobs on one screen:
+//   1. Queue      — action campaign owners' requests for the featured slot.
+//   2. Management — flip the featured / trending / urgent placement flags.
+//   3. Reporting  — how many campaigns carry each flag, how many requests are
+//      waiting, and what the featured rail is actually raising.
+//
+// The request queue lives HERE rather than on its own page because approving a
+// request sets the very `featured` flag the management list below owns: after an
+// approval the campaign appears in that list on the same screen, under one refresh
+// and one mental model. The pending count also sits in the stat row, so a queue
+// cannot quietly accumulate.
 //
 // Placement rule (enforced by the backend, mirrored here): a flag may only be set
 // TRUE on an ACTIVE campaign. Turning a flag OFF is legal at any status — that is
 // how a frozen or completed campaign gets pulled off the home rail — so the UI
 // gates the ON direction only, and says why in the row rather than presenting a
-// dead control. Every write renders the SERVER's copy of the campaign, so a
-// refusal can never be mistaken for a success.
+// dead control. The same rule gates approvals, since an approval is a promotion.
+// Every write renders the SERVER's copy, so a refusal can never be mistaken for a
+// success.
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   listFeaturedCampaigns,
   setCampaignFlags,
   getFeaturedReport,
+  listFeatureRequests,
+  decideFeatureRequest,
 } from '@/services/crowdfundingAdminService';
 import type {
   CfFeaturedCampaign,
   CfFeaturedReport,
   CfCampaignFlag,
   CfCampaignStatus,
+  CfFeatureRequest,
 } from '@/types/crowdfunding';
 import { Page, PageHeader, Card, Button, Badge, Input, colors, tint, thCell, tdCell } from '@/components/ui/vuexy';
+import FeatureRequestQueue from './_FeatureRequestQueue';
 
 const STATUS_BADGE: Record<CfCampaignStatus, string> = {
   ACTIVE: colors.success,
@@ -69,11 +81,14 @@ const FILTERS: Array<{ key: FilterKey; label: string }> = [
   { key: 'urgent', label: 'Urgent' },
 ];
 
-function Stat({ label, value, color }: { label: string; value: number; color: string }) {
+/** `value` accepts a string so a stat whose figure is UNKNOWN can render '—' rather than a misleading 0. */
+function Stat({ label, value, color }: { label: string; value: number | string; color: string }) {
   return (
     <Card style={{ flex: '1 1 10rem', minWidth: '9rem' }}>
       <div style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5, color: colors.muted }}>{label}</div>
-      <div style={{ fontSize: 26, fontWeight: 800, color, marginTop: 4 }}>{value.toLocaleString('en-NG')}</div>
+      <div style={{ fontSize: 26, fontWeight: 800, color, marginTop: 4 }}>
+        {typeof value === 'number' ? value.toLocaleString('en-NG') : value}
+      </div>
     </Card>
   );
 }
@@ -81,16 +96,45 @@ function Stat({ label, value, color }: { label: string; value: number; color: st
 export default function FeaturedCampaignsAdminPage() {
   const [campaigns, setCampaigns] = useState<CfFeaturedCampaign[]>([]);
   const [report, setReport] = useState<CfFeaturedReport | null>(null);
+  const [requests, setRequests] = useState<CfFeatureRequest[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [rowErrors, setRowErrors] = useState<Record<string, string>>({});
+  const [requestsLoading, setRequestsLoading] = useState(true);
+  const [requestsError, setRequestsError] = useState<string | null>(null);
+  const [requestBusy, setRequestBusy] = useState<string | null>(null);
+  const [requestErrors, setRequestErrors] = useState<Record<string, string>>({});
   const [filter, setFilter] = useState<FilterKey>('ALL');
   const [search, setSearch] = useState('');
+
+  /**
+   * The queue is loaded SEPARATELY from the campaign list and report, and its
+   * failure is scoped to the queue.
+   *
+   * The feature-request endpoints are newer than the rest of this page: folding
+   * them into the same Promise.all would mean a 404 (backend not yet deployed, flag
+   * off, route renamed) blanks the whole screen and takes flag management down with
+   * it. Campaign management must keep working when the queue cannot load.
+   */
+  const loadRequests = useCallback(async () => {
+    setRequestsLoading(true);
+    try {
+      setRequests(await listFeatureRequests());
+      setRequestsError(null);
+      setRequestErrors({});
+    } catch (e) {
+      setRequests([]);
+      setRequestsError(errMsg(e));
+    } finally {
+      setRequestsLoading(false);
+    }
+  }, []);
 
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
+    void loadRequests();
     try {
       const [list, rep] = await Promise.all([listFeaturedCampaigns(), getFeaturedReport()]);
       setCampaigns(list);
@@ -101,8 +145,46 @@ export default function FeaturedCampaignsAdminPage() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [loadRequests]);
   useEffect(() => { void load(); }, [load]);
+
+  /**
+   * Approve or reject one feature request.
+   *
+   * An approval sets the campaign's `featured` flag server-side, so the campaign
+   * list and the report are reloaded alongside the queue — otherwise the row below
+   * would keep claiming the campaign is not featured. Nothing is rendered
+   * optimistically: the returned request replaces the row, then everything is
+   * refetched from the server.
+   */
+  const decide = useCallback(async (r: CfFeatureRequest, approve: boolean, note: string) => {
+    const key = `${r.id}:${approve ? 'approve' : 'reject'}`;
+    setRequestBusy(key);
+    setRequestErrors((prev) => {
+      if (!prev[r.id]) return prev;
+      const rest = { ...prev };
+      delete rest[r.id];
+      return rest;
+    });
+    try {
+      const updated = await decideFeatureRequest(r.id, approve, note);
+      setRequests((prev) => prev.map((x) => (x.id === r.id ? updated : x)));
+      const [list, rep] = await Promise.all([listFeaturedCampaigns(), getFeaturedReport()]);
+      setCampaigns(list);
+      setReport(rep);
+      await loadRequests();
+    } catch (e) {
+      setRequestErrors((prev) => ({ ...prev, [r.id]: errMsg(e) }));
+      // The write failed — re-read server truth so the row cannot be left showing a
+      // decision that was never persisted. Deliberately NOT loadRequests(): that
+      // clears the row errors, which would wipe the refusal we just recorded.
+      try {
+        setRequests(await listFeatureRequests());
+      } catch { /* keep the row error visible */ }
+    } finally {
+      setRequestBusy(null);
+    }
+  }, [loadRequests]);
 
   async function toggle(c: CfFeaturedCampaign, flag: CfCampaignFlag) {
     const next = !c[flag];
@@ -133,6 +215,14 @@ export default function FeaturedCampaignsAdminPage() {
     }
   }
 
+  // Prefer the server's own tally when the report carries one; otherwise count the
+  // queue. The report endpoint predates the queue, so `pendingRequestCount` is
+  // optional and the stat card must be right either way.
+  const pendingRequestCount = useMemo(
+    () => report?.pendingRequestCount ?? requests.filter((r) => r.status === 'PENDING').length,
+    [report, requests],
+  );
+
   const visible = useMemo(() => {
     const q = search.trim().toLowerCase();
     return campaigns.filter((c) => {
@@ -147,7 +237,7 @@ export default function FeaturedCampaignsAdminPage() {
     <Page>
       <PageHeader
         title="Featured Campaigns"
-        subtitle="Promote campaigns onto the discovery rails and report on what the featured slots are raising. Only ACTIVE campaigns can be promoted."
+        subtitle="Action owners' requests for the featured slot, promote campaigns onto the discovery rails, and report on what the featured slots are raising. Only ACTIVE campaigns can be promoted."
         actions={<Button variant="outline" sm onClick={() => void load()} disabled={loading}>Refresh</Button>}
       />
 
@@ -163,7 +253,26 @@ export default function FeaturedCampaignsAdminPage() {
         <Stat label="Trending" value={report?.trendingCount ?? 0} color={colors.info} />
         <Stat label="Urgent" value={report?.urgentCount ?? 0} color={colors.danger} />
         <Stat label="Active campaigns" value={report?.activeCount ?? 0} color={colors.success} />
+        {/* When the queue could not be loaded the count is unknown, not zero — a
+            "0" here would report "no work waiting" on no evidence. */}
+        <Stat
+          label="Pending requests"
+          value={requestsError ? '—' : pendingRequestCount}
+          color={requestsError ? colors.danger : pendingRequestCount > 0 ? colors.warning : colors.muted}
+        />
       </div>
+
+      {/* ── Owner feature requests ────────────────────────────────────────── */}
+      <FeatureRequestQueue
+        requests={requests}
+        loading={requestsLoading}
+        loadError={requestsError}
+        busyKey={requestBusy}
+        errors={requestErrors}
+        onApprove={(r) => void decide(r, true, '')}
+        onReject={(r, note) => void decide(r, false, note)}
+        onRetry={() => void loadRequests()}
+      />
 
       <Card title="Featured rail performance" style={{ marginBottom: '1.25rem' }}>
         {!report ? (
