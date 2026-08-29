@@ -42,6 +42,13 @@ func RegisterAdmin(rg *gin.RouterGroup, db *pgxpool.Pool, ledgerSvc *financeledg
 	rg.GET("/featured/report", h.FeaturedReport)
 	rg.PATCH("/campaigns/:id/flags", h.PatchCampaignFlags)
 
+	// Owner-initiated featured-rail requests (the creator side writes these via
+	// POST /api/v1/crowdfunding/creator/campaigns/:id/feature-request). Approval
+	// is the only path from a request to a placement — see feature_requests.go.
+	rg.GET("/feature-requests", h.ListFeatureRequests)
+	rg.POST("/feature-requests/:id/approve", h.ApproveFeatureRequest)
+	rg.POST("/feature-requests/:id/reject", h.RejectFeatureRequest)
+
 	// Fraud & campaign freeze.
 	rg.GET("/fraud-alerts", h.ListFraudAlerts)
 	rg.POST("/campaigns/:id/freeze", h.FreezeCampaign)

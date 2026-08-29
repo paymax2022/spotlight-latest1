@@ -312,3 +312,45 @@ func (h *Handler) PatchCampaignFlags(c *gin.Context) {
 	}
 	c.JSON(http.StatusOK, res)
 }
+
+// ─── Owner feature-request queue ─────────────────────────────────────────────
+
+// ListFeatureRequests — GET /feature-requests. The owner-initiated placement
+// queue, PENDING first. Optional ?status= filter.
+func (h *Handler) ListFeatureRequests(c *gin.Context) {
+	items, err := h.svc.ListFeatureRequests(c.Request.Context(), c.Query("status"))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"requests": items})
+}
+
+// ApproveFeatureRequest — POST /feature-requests/:id/approve (no body).
+// Sets campaigns.featured and marks the request APPROVED in ONE transaction.
+func (h *Handler) ApproveFeatureRequest(c *gin.Context) { h.decideFeatureRequest(c, true) }
+
+// RejectFeatureRequest — POST /feature-requests/:id/reject, body {"note": "..."}.
+// Never touches campaigns.featured.
+func (h *Handler) RejectFeatureRequest(c *gin.Context) { h.decideFeatureRequest(c, false) }
+
+func (h *Handler) decideFeatureRequest(c *gin.Context, approve bool) {
+	// The body is optional on both routes (approve takes none), so a missing or
+	// malformed body must not fail the decision — only the note is read from it.
+	var req NoteRequest
+	_ = c.ShouldBindJSON(&req)
+
+	res, err := h.svc.DecideFeatureRequest(c.Request.Context(), c.Param("id"), c.GetString("user_id"), approve, req.Note)
+	if err != nil {
+		switch {
+		case errors.Is(err, ErrFeatureRequestNotFound), errors.Is(err, ErrCampaignNotFound):
+			c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		case errors.Is(err, ErrFeatureRequestNotPending), errors.Is(err, ErrCampaignNotActive):
+			c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
+		default:
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		}
+		return
+	}
+	c.JSON(http.StatusOK, res)
+}

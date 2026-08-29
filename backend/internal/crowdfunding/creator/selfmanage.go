@@ -359,6 +359,19 @@ func (s *Service) audit(ctx context.Context, tx pgx.Tx, actor, action, target st
 	return err
 }
 
+// latestFeatureRequestStatusCol is the campaign's most recent feature-request
+// status, or NULL when it has never asked. Defined once and shared by every
+// owner-facing projection so the single-campaign response and the list response
+// can never disagree about whether a request is pending.
+//
+// "Latest" is by created_at: a campaign may ask again after a rejection or a
+// withdrawal (the partial unique index only forbids two OPEN requests), so
+// several rows can exist and only the newest describes the current state.
+const latestFeatureRequestStatusCol = `
+	(SELECT fr.status FROM cf_feature_requests fr
+	 WHERE fr.campaign_id = c.id
+	 ORDER BY fr.created_at DESC LIMIT 1)`
+
 // ownedSummaryCols is the single-campaign projection, matching GetMyCampaigns so
 // the mobile client gets an identically-shaped object back from every mutation.
 // raised_kobo and the contributor count are DERIVED, never stored.
@@ -371,7 +384,7 @@ const ownedSummaryCols = `
 	COALESCE((SELECT COUNT(DISTINCT co.contributor_id) FROM contributions co
 	          WHERE co.campaign_id = c.id AND co.status IN ('escrowed','released')), 0),
 	c.deadline, c.verified, c.featured, c.trending, c.urgent, c.location,
-	c.paused_at`
+	c.paused_at,` + latestFeatureRequestStatusCol
 
 // readOwnedSummary reads one campaign in the list-card shape. q is a pool or a
 // tx, so the post-write read runs INSIDE the mutating transaction and the
@@ -389,7 +402,7 @@ func readOwnedSummary(ctx context.Context, q interface {
 		Scan(&sum.ID, &sum.Title, &sum.Summary, &sum.Type, &sum.Status,
 			&sum.Category, &sum.CoverImage, &sum.GoalKobo, &sum.RaisedKobo, &sum.Currency,
 			&sum.ContributorCount, &deadline, &sum.Verified, &sum.Featured, &sum.Trending,
-			&sum.Urgent, &sum.Location, &pausedAt)
+			&sum.Urgent, &sum.Location, &pausedAt, &sum.FeatureRequestStatus)
 	if err != nil {
 		return nil, ErrNotFound
 	}

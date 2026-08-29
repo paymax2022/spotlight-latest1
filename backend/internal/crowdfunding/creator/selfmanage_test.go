@@ -10,6 +10,7 @@ package creator
 // guard nothing actually verifies in CI.
 
 import (
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -353,6 +354,45 @@ func TestGuardFeatureRequest(t *testing.T) {
 			}
 		})
 	}
+}
+
+// ─── Owner payload contract ──────────────────────────────────────────────────
+
+// The mobile client keys off these exact names. paused and featureRequestStatus
+// are both additions to an existing payload, so a rename or an accidental
+// omitempty is a silent break rather than a compile error.
+func TestCampaignSummary_JSONContract(t *testing.T) {
+	payload := mustJSONSummary(t, CampaignSummary{ID: "c1", Title: "T"})
+	for _, key := range []string{`"paused"`, `"featureRequestStatus"`} {
+		if !strings.Contains(payload, key) {
+			t.Errorf("missing %s in owner payload: %s", key, payload)
+		}
+	}
+	// Never requested → explicit null, not "" and not an omitted key. The app
+	// distinguishes "no request" from a request in some state.
+	if !strings.Contains(payload, `"featureRequestStatus":null`) {
+		t.Errorf("a campaign that never asked must emit a null featureRequestStatus: %s", payload)
+	}
+}
+
+// A pending request must surface as PENDING so the app can show it instead of
+// inviting the owner to ask twice — the second ask is refused by the one-open-
+// request index anyway, so without this the only feedback would be a 409.
+func TestCampaignSummary_PendingRequestSurfaces(t *testing.T) {
+	pending := "PENDING"
+	payload := mustJSONSummary(t, CampaignSummary{ID: "c1", FeatureRequestStatus: &pending})
+	if !strings.Contains(payload, `"featureRequestStatus":"PENDING"`) {
+		t.Errorf("pending request must surface to the owner: %s", payload)
+	}
+}
+
+func mustJSONSummary(t *testing.T, s CampaignSummary) string {
+	t.Helper()
+	b, err := json.Marshal(s)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	return string(b)
 }
 
 // ─── Audit ───────────────────────────────────────────────────────────────────

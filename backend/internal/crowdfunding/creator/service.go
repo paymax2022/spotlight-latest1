@@ -340,7 +340,7 @@ func (s *Service) GetMyCampaigns(ctx context.Context, userID, status string) ([]
 		       COALESCE((SELECT COUNT(DISTINCT co.contributor_id) FROM contributions co
 		                 WHERE co.campaign_id = c.id AND co.status IN ('escrowed','released')), 0),
 		       c.deadline, c.verified, c.featured, c.trending, c.urgent, c.location,
-		       c.paused_at
+		       c.paused_at,` + latestFeatureRequestStatusCol + `
 		FROM campaigns c
 		WHERE c.creator_id = $1 AND c.deleted_at IS NULL`
 	args := []any{userID}
@@ -368,7 +368,7 @@ func (s *Service) GetMyCampaigns(ctx context.Context, userID, status string) ([]
 			&sum.ID, &sum.Title, &sum.Summary, &sum.Type, &sum.Status,
 			&sum.Category, &sum.CoverImage, &sum.GoalKobo, &sum.RaisedKobo, &sum.Currency,
 			&sum.ContributorCount, &deadline, &sum.Verified, &sum.Featured, &sum.Trending, &sum.Urgent, &sum.Location,
-			&pausedAt,
+			&pausedAt, &sum.FeatureRequestStatus,
 		); err != nil {
 			return nil, err
 		}

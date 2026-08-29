@@ -85,11 +85,16 @@ type FeaturedReportEntry struct {
 
 // FeaturedReport summarises current placement across the platform.
 type FeaturedReport struct {
-	FeaturedCount int                   `json:"featuredCount"`
-	TrendingCount int                   `json:"trendingCount"`
-	UrgentCount   int                   `json:"urgentCount"`
-	ActiveCount   int                   `json:"activeCount"`
-	Featured      []FeaturedReportEntry `json:"featured"`
+	FeaturedCount int `json:"featuredCount"`
+	TrendingCount int `json:"trendingCount"`
+	UrgentCount   int `json:"urgentCount"`
+	ActiveCount   int `json:"activeCount"`
+	// PendingRequestCount is the size of the owner feature-request queue — the
+	// console badges it so an operator sees waiting requests without opening the
+	// queue. Folded into the existing aggregate as a scalar subquery, so it costs
+	// no extra round trip.
+	PendingRequestCount int                   `json:"pendingRequestCount"`
+	Featured            []FeaturedReportEntry `json:"featured"`
 }
 
 // CampaignFlagsRequest is the PATCH body. Pointers, not bools: a nil field means
@@ -304,9 +309,13 @@ func (s *Service) GetFeaturedReport(ctx context.Context) (*FeaturedReport, error
 			COUNT(*) FILTER (WHERE featured),
 			COUNT(*) FILTER (WHERE trending),
 			COUNT(*) FILTER (WHERE urgent),
-			COUNT(*) FILTER (WHERE review_status=$1)
+			COUNT(*) FILTER (WHERE review_status=$1),
+			(SELECT COUNT(*) FROM cf_feature_requests fr
+			 JOIN campaigns fc ON fc.id = fr.campaign_id
+			 WHERE fr.status='PENDING' AND fc.deleted_at IS NULL)
 		FROM campaigns`, reviewStatusActive).Scan(
-		&out.FeaturedCount, &out.TrendingCount, &out.UrgentCount, &out.ActiveCount); err != nil {
+		&out.FeaturedCount, &out.TrendingCount, &out.UrgentCount, &out.ActiveCount,
+		&out.PendingRequestCount); err != nil {
 		return nil, err
 	}
 
