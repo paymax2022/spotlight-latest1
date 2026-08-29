@@ -441,12 +441,16 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 	// under /internal/webhooks/{mycover,octamile} (UNauthenticated — signature
 	// verified inside the gateway). Reuses wallet/ledger/settlement/kyc.
 	if cfg.FeatureInsuranceEnabled && pool != nil {
-		insuranceMember := finance.Group("/insurance")
+		// Pass the bare finance group: RegisterInsurance/RegisterInsuranceClaims
+		// each add the "/insurance" segment themselves (mg := member.Group("/insurance")),
+		// so finance.Group("/insurance") here double-mounted every member route at
+		// /api/finance/insurance/insurance/* instead of /api/finance/insurance/*
+		// (the client contract) — same class of bug documented for savings above.
 		insuranceAdmin := r.Group("/api/insurance/admin")
 		insuranceAdmin.Use(requireUserID())
-		insuranceWebhooks := r.Group("/internal/webhooks")                                      // provider-signed, no user auth
-		RegisterInsurance(insuranceMember, insuranceAdmin, pool, rbac)                          // gateway/catalog/policy/quote/saga/consent
-		RegisterInsuranceClaims(insuranceMember, insuranceAdmin, insuranceWebhooks, pool, rbac) // claims/embedded/webhooks/reconciliation
+		insuranceWebhooks := r.Group("/internal/webhooks")                                // provider-signed, no user auth
+		RegisterInsurance(finance, insuranceAdmin, pool, rbac)                          // gateway/catalog/policy/quote/saga/consent
+		RegisterInsuranceClaims(finance, insuranceAdmin, insuranceWebhooks, pool, rbac) // claims/embedded/webhooks/reconciliation
 	}
 
 	// --- Hotel Booking / Stays (Property Suite, dual-rail supply gateway) ---
