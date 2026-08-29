@@ -53,7 +53,7 @@ export default function LeaderboardScreen() {
       </View>
 
       {/* Countdown */}
-      {contest?.status === 'LIVE' && (
+      {contest?.status === 'LIVE' && contest.endsAt && (
         <View style={styles.countdownRow}>
           <Text style={styles.countdownLabel}>Voting closes in</Text>
           <CountdownTimer endsAt={contest.endsAt} color={Colors.primary} />

@@ -291,9 +291,19 @@ func (h *Handler) ListEvents(c *gin.Context) {
 
 // ── Admin reads ───────────────────────────────────────────────────────────────
 
+// GET /associations/admin/organisations
+func (h *Handler) GetAdminOrganisations(c *gin.Context) {
+	list, err := h.svc.ListAdminOrganisations(c.Request.Context(), c.GetString("user_id"), c.Query("search"))
+	if err != nil {
+		c.JSON(statusFor(err), gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, list)
+}
+
 // GET /associations/admin/kpis
 func (h *Handler) GetAdminKpis(c *gin.Context) {
-	kpis, err := h.svc.GetAdminKpis(c.Request.Context(), c.GetString("user_id"))
+	kpis, err := h.svc.GetAdminKpis(c.Request.Context(), c.GetString("user_id"), c.Query("org_id"))
 	if err != nil {
 		c.JSON(statusFor(err), gin.H{"error": err.Error()})
 		return
@@ -303,7 +313,7 @@ func (h *Handler) GetAdminKpis(c *gin.Context) {
 
 // GET /associations/admin/approvals
 func (h *Handler) ListApprovals(c *gin.Context) {
-	list, err := h.svc.GetApprovalQueue(c.Request.Context(), c.GetString("user_id"), c.Query("jurisdiction"))
+	list, err := h.svc.GetApprovalQueue(c.Request.Context(), c.GetString("user_id"), c.Query("jurisdiction"), c.Query("org_id"))
 	if err != nil {
 		c.JSON(statusFor(err), gin.H{"error": err.Error()})
 		return
@@ -323,7 +333,7 @@ func (h *Handler) GetApproval(c *gin.Context) {
 
 // GET /associations/admin/finance
 func (h *Handler) GetFinanceSummary(c *gin.Context) {
-	fs, err := h.svc.GetFinanceSummary(c.Request.Context(), c.GetString("user_id"))
+	fs, err := h.svc.GetFinanceSummary(c.Request.Context(), c.GetString("user_id"), c.Query("org_id"))
 	if err != nil {
 		c.JSON(statusFor(err), gin.H{"error": err.Error()})
 		return
@@ -333,7 +343,7 @@ func (h *Handler) GetFinanceSummary(c *gin.Context) {
 
 // GET /associations/admin/finance/offline
 func (h *Handler) ListOfflinePayments(c *gin.Context) {
-	list, err := h.svc.GetOfflinePayments(c.Request.Context(), c.GetString("user_id"))
+	list, err := h.svc.GetOfflinePayments(c.Request.Context(), c.GetString("user_id"), c.Query("org_id"))
 	if err != nil {
 		c.JSON(statusFor(err), gin.H{"error": err.Error()})
 		return

@@ -40,15 +40,33 @@ type CategoryDTO struct {
 	CampaignCount int    `json:"campaignCount"`
 }
 
-// AdminStats matches the admin CfPlatformStats (subset that we can derive live).
+// CategoryStat is one row of AdminStats.CategoryBreakdown.
+type CategoryStat struct {
+	Category   string `json:"category"`
+	Count      int    `json:"count"`
+	RaisedKobo int64  `json:"raisedKobo"`
+}
+
+// AdminStats matches the admin CfPlatformStats. Every field is derived live
+// from a real table; PaymentSuccessRate is the one exception — there is no
+// payment-attempt/failure log for crowdfunding contributions (only successful
+// contributions are ever inserted), so it stays 0 rather than being computed
+// from an unrelated proxy (e.g. refund rate) that would misrepresent it.
 type AdminStats struct {
-	TotalCampaigns      int   `json:"totalCampaigns"`
-	ActiveCampaigns     int   `json:"activeCampaigns"`
-	PendingReview       int   `json:"pendingReview"`
-	RejectedCampaigns   int   `json:"rejectedCampaigns"`
-	TotalRaisedKobo     int64 `json:"totalRaisedKobo"`
-	PlatformRevenueKobo int64 `json:"platformRevenueKobo"`
-	EscrowKobo          int64 `json:"escrowKobo"`
+	TotalCampaigns         int            `json:"totalCampaigns"`
+	ActiveCampaigns        int            `json:"activeCampaigns"`
+	PendingReview          int            `json:"pendingReview"`
+	RejectedCampaigns      int            `json:"rejectedCampaigns"`
+	TotalRaisedKobo        int64          `json:"totalRaisedKobo"`
+	PlatformRevenueKobo    int64          `json:"platformRevenueKobo"`
+	EscrowKobo             int64          `json:"escrowKobo"`
+	WithdrawalsPending     int            `json:"withdrawalsPending"`
+	WithdrawalsPendingKobo int64          `json:"withdrawalsPendingKobo"`
+	RefundRequests         int            `json:"refundRequests"`
+	FraudAlerts            int            `json:"fraudAlerts"`
+	OpenTickets            int            `json:"openTickets"`
+	PaymentSuccessRate     float64        `json:"paymentSuccessRate"` // 0-100; see type comment
+	CategoryBreakdown      []CategoryStat `json:"categoryBreakdown"`
 }
 
 // reviewRow is the internal row scanned for list/detail queries.

@@ -43,7 +43,7 @@ export default function ContestHero({ contest, height = 260 }: Props) {
             <Text style={styles.statValue}>{formatVoteCount(contest.totalVotes)}</Text>
             <Text style={styles.statLabel}>Total Votes</Text>
           </View>
-          {contest.status === 'LIVE' && (
+          {contest.status === 'LIVE' && contest.endsAt && (
             <>
               <View style={styles.divider} />
               <View style={styles.stat}>

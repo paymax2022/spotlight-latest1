@@ -133,7 +133,7 @@ func (s *Service) AdminDecide(ctx context.Context, campaignID, adminID, decision
 
 // AdminStats returns platform-wide counters derived live from the ledger/tables.
 func (s *Service) AdminStats(ctx context.Context) (*AdminStats, error) {
-	st := &AdminStats{}
+	st := &AdminStats{CategoryBreakdown: []CategoryStat{}}
 	const q = `
 		SELECT
 			COUNT(*),
@@ -151,5 +151,30 @@ func (s *Service) AdminStats(ctx context.Context) (*AdminStats, error) {
 			COALESCE(SUM(amount_kobo) FILTER (WHERE status='escrowed'),0)
 		FROM contributions`).Scan(&st.TotalRaisedKobo, &st.EscrowKobo)
 	st.PlatformRevenueKobo = st.TotalRaisedKobo / 40 // 2.5% indicative
+
+	_ = s.db.QueryRow(ctx, `
+		SELECT COUNT(*), COALESCE(SUM(amount_kobo),0) FROM cf_withdrawals WHERE status='PENDING'`,
+	).Scan(&st.WithdrawalsPending, &st.WithdrawalsPendingKobo)
+	_ = s.db.QueryRow(ctx, `SELECT COUNT(*) FROM cf_refunds WHERE status='REQUESTED'`).Scan(&st.RefundRequests)
+	_ = s.db.QueryRow(ctx, `SELECT COUNT(*) FROM cf_fraud_alerts WHERE status IN ('OPEN','INVESTIGATING')`).Scan(&st.FraudAlerts)
+	_ = s.db.QueryRow(ctx, `SELECT COUNT(*) FROM cf_support_tickets WHERE status IN ('OPEN','PENDING')`).Scan(&st.OpenTickets)
+
+	rows, err := s.db.Query(ctx, `
+		SELECT c.category, COUNT(*),
+		       COALESCE(SUM((SELECT COALESCE(SUM(co.amount_kobo),0) FROM contributions co
+		                     WHERE co.campaign_id = c.id AND co.status IN ('escrowed','released'))), 0)
+		FROM campaigns c
+		GROUP BY c.category
+		ORDER BY 3 DESC`)
+	if err == nil {
+		defer rows.Close()
+		for rows.Next() {
+			var cs CategoryStat
+			if err := rows.Scan(&cs.Category, &cs.Count, &cs.RaisedKobo); err == nil {
+				st.CategoryBreakdown = append(st.CategoryBreakdown, cs)
+			}
+		}
+	}
+
 	return st, nil
 }
