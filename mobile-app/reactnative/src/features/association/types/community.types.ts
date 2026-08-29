@@ -60,6 +60,24 @@ export interface EventSummary {
   coverUrl:  string | null;
 }
 
+/**
+ * Outcome of `POST /events/:id/register`.
+ *
+ * A PAID event no longer hands back a free ticket. It raises an invoice and
+ * returns `registered: false`, `paymentRequired: true` and the `invoiceId` to
+ * settle; `ticketCode` stays null until that invoice is PAID. A FREE event
+ * still registers immediately and issues the ticket on the spot.
+ */
+export interface EventRegistrationResult {
+  ok:              boolean;
+  registered:      boolean;
+  paymentRequired: boolean;
+  ticketCode:      string | null;
+  invoiceId:       string | null;
+  /** Integer minor units (kobo); 0 for a free event. */
+  amountKobo:      number;
+}
+
 export interface Event extends EventSummary {
   description:  string;
   endsAt:       string | null;

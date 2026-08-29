@@ -115,7 +115,12 @@ export interface MembershipCard {
   status:        MemberStatus;
   paymentStanding: PaymentStanding;
   verified:      boolean;
-  validThrough:  string;           // ISO date
+  /**
+   * ISO date, and NULLABLE — the live DTO omits it for a card with no expiry.
+   * It was typed non-null, so the card formatted `undefined` as a date and read
+   * "Valid thru 1 Jan 1970". Guard before formatting.
+   */
+  validThrough:  string | null;
   qrPayload:     string;           // opaque verification token
 }
 
@@ -198,7 +203,12 @@ export interface DuesInvoice {
   amountKobo:  number;
   cadence:     DuesCadence;
   status:      InvoiceStatus;
-  dueDate:     string;             // ISO
+  /**
+   * ISO, and NULLABLE: an ad-hoc or open-ended invoice — an event registration,
+   * for one — carries no due date. Never format it without a null guard;
+   * `new Date(null)` is 1 Jan 1970, not an error.
+   */
+  dueDate:     string | null;
   scope:       'NATIONAL' | 'STATE' | 'LOCAL' | 'COMMITTEE';
   /**
    * Authoritative revenue split, computed server-side. The client never

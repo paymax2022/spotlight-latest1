@@ -61,6 +61,11 @@ export function useRegisterEvent() {
     onSuccess: (_d, id) => {
       qc.invalidateQueries({ queryKey: [KEY, 'event', id] });
       qc.invalidateQueries({ queryKey: [KEY, 'events'] });
+      // Registering for a PAID event raises a dues invoice. The payment screen
+      // reads that invoice out of the dues list, so leaving the dues cache
+      // stale would send the member to "we couldn't find this invoice" for the
+      // invoice that had just been created for them.
+      qc.invalidateQueries({ queryKey: [KEY, 'dues'] });
     },
   });
 }

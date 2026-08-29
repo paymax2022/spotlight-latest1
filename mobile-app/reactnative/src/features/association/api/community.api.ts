@@ -4,7 +4,7 @@ import { api } from '@/api/client';
 import { generateIdempotencyKey } from '@/utils/idempotency';
 import { USE_MOCK, ASSOCIATION_API_BASE as BASE } from '../constants/association.constants';
 import type {
-  Committee, CommitteeSummary, Event, EventSummary, EventRsvp,
+  Committee, CommitteeSummary, Event, EventSummary, EventRsvp, EventRegistrationResult,
 } from '../types/community.types';
 import { MOCK_COMMITTEES, MOCK_EVENTS } from './community.mock';
 
@@ -84,8 +84,33 @@ export async function rsvpEvent(id: string, rsvp: EventRsvp): Promise<{ ok: true
   return data;
 }
 
-export async function registerEvent(id: string): Promise<{ ok: true; ticketCode: string }> {
-  if (USE_MOCK) { await delay(400); return { ok: true, ticketCode: `SPOTLIGHT:EVT:${id}:ticket` }; }
+/**
+ * Register for an event.
+ *
+ * The response shape changed with the paid-event money path: a paid event no
+ * longer issues a free ticket. It answers `registered: false`,
+ * `paymentRequired: true` and an `invoiceId`, and the caller must send the
+ * member to settle that invoice (`/association/pay/[invoiceId]`) — the ticket
+ * is released once it is PAID, so `ticketCode` is null until then.
+ *
+ * Calling it twice does not raise a second invoice: the server hands back the
+ * outstanding one for the same (event, membership).
+ */
+export async function registerEvent(id: string): Promise<EventRegistrationResult> {
+  if (USE_MOCK) {
+    await delay(400);
+    const mock = MOCK_EVENTS.find((e) => e.id === id);
+    if (mock?.paid && mock.feeKobo > 0) {
+      return {
+        ok: true, registered: false, paymentRequired: true,
+        ticketCode: null, invoiceId: `mock_inv_${id}`, amountKobo: mock.feeKobo,
+      };
+    }
+    return {
+      ok: true, registered: true, paymentRequired: false,
+      ticketCode: `SPOTLIGHT:EVT:${id}:ticket`, invoiceId: null, amountKobo: 0,
+    };
+  }
   const { data } = await api.post(`${BASE}/events/${id}/register`, {}, {
     headers: { 'Idempotency-Key': generateIdempotencyKey() },
   });

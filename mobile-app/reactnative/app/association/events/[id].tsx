@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { View, Text, Image, ScrollView, Pressable, StyleSheet, Alert } from 'react-native';
+import { View, Text, Image, ScrollView, Pressable, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import { MapPin, CalendarDays, Users, FileText, CheckCircle2, Star } from 'lucide-react-native';
@@ -12,6 +12,7 @@ import ScreenHeader from '@/components/ScreenHeader';
 import StateView from '@/components/StateView';
 import PrimaryButton from '@/components/PrimaryButton';
 import QrCodeView from '@/components/QrCodeView';
+import { alertAsync } from '@/lib/confirm';
 import { useEvent, useRsvpEvent, useRegisterEvent, useSubmitEventFeedback } from '@/features/association/hooks/useCommunity';
 import { formatDateTime, formatNaira } from '@/features/association/utils/associationFormatters';
 
@@ -45,20 +46,47 @@ export default function EventDetail() {
 
   const e = event.data;
   const isPast = e.state === 'PAST';
-  const isRegistered = e.registered || registered || register.isSuccess;
+  // A successful register call is NOT proof of registration any more: for a
+  // paid event the call succeeds while returning `registered: false` plus an
+  // invoice to settle. Reading `register.isSuccess` here is what would show a
+  // ticket for a seat nobody had paid for.
+  const isRegistered = e.registered || registered || register.data?.registered === true;
   const feedbackDone = e.feedbackSubmitted || feedback.isSuccess;
 
+  /** The invoice this member still owes for the event, if any. */
+  const pendingInvoiceId = register.data?.paymentRequired ? register.data.invoiceId : null;
+
+  /**
+   * Register.
+   *
+   * A PAID event no longer issues a ticket here — the server raises an invoice
+   * and answers `paymentRequired` with the id to settle, so the member is sent
+   * to the existing invoice payment screen. A free event registers outright.
+   */
   const onRegister = () => {
     register.mutate(e.id, {
-      onSuccess: () => setRegistered(true),
-      onError: () => Alert.alert('Could not register', 'Please try again.'),
+      onSuccess: (res) => {
+        if (res.paymentRequired && res.invoiceId) {
+          router.push(`/association/pay/${res.invoiceId}`);
+          return;
+        }
+        if (res.registered) { setRegistered(true); return; }
+        alertAsync({
+          title: 'Not registered yet',
+          message: 'Your registration could not be completed. Please try again.',
+        });
+      },
+      onError: (err) => alertAsync({
+        title: 'Could not register',
+        message: (err as Error)?.message ?? 'Please try again.',
+      }),
     });
   };
 
   const onSubmitFeedback = () => {
     if (rating === 0) return;
     feedback.mutate({ rating, comment: '' }, {
-      onSuccess: () => { setShowFeedback(false); Alert.alert('Thank you', 'Your feedback was submitted.'); },
+      onSuccess: () => { setShowFeedback(false); alertAsync({ title: 'Thank you', message: 'Your feedback was submitted.' }); },
     });
   };
 
@@ -145,6 +173,14 @@ export default function EventDetail() {
           )
         ) : isRegistered ? (
           <View style={styles.doneRow}><CheckCircle2 size={18} color={Colors.teal} strokeWidth={2.4} /><Text style={styles.doneText}>You’re registered</Text></View>
+        ) : pendingInvoiceId ? (
+          // Registration raised an invoice and is not confirmed until it is
+          // paid — say that, rather than leaving the member on a button that
+          // looks like it did nothing.
+          <PrimaryButton
+            label={`Pay ${formatNaira(register.data?.amountKobo ?? e.feeKobo)} to confirm`}
+            onPress={() => router.push(`/association/pay/${pendingInvoiceId}`)}
+          />
         ) : e.paid ? (
           <PrimaryButton label={`Register · ${formatNaira(e.feeKobo)}`} onPress={() => router.push(`/association/event-pay/${e.id}`)} />
         ) : (
