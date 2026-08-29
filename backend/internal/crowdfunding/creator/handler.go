@@ -43,9 +43,10 @@ func (h *Handler) ListContributions(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": items})
 }
 
-// GetContribution — GET /contributions/:id.
+// GetContribution — GET /contributions/:id. Scoped to the caller: another
+// contributor's id reads as 404, not as their contribution.
 func (h *Handler) GetContribution(c *gin.Context) {
-	item, err := h.svc.GetContribution(c.Request.Context(), c.Param("id"))
+	item, err := h.svc.GetContribution(c.Request.Context(), c.Param("id"), c.GetString("user_id"))
 	if err != nil {
 		c.JSON(statusFor(err), gin.H{"error": "contribution not found"})
 		return
@@ -54,11 +55,12 @@ func (h *Handler) GetContribution(c *gin.Context) {
 }
 
 // RequestRefund — POST /contributions/:id/refund-request. Records intent only;
-// no money is moved (an admin processes the refund later).
+// no money is moved (an admin processes the refund later). Scoped to the
+// caller: another contributor's id reads as 404, not as their refund request.
 func (h *Handler) RequestRefund(c *gin.Context) {
 	var in RefundRequestInput
 	_ = c.ShouldBindJSON(&in)
-	res, err := h.svc.RequestRefund(c.Request.Context(), c.Param("id"), in.Reason)
+	res, err := h.svc.RequestRefund(c.Request.Context(), c.Param("id"), c.GetString("user_id"), in.Reason)
 	if err != nil {
 		c.JSON(statusFor(err), gin.H{"error": err.Error()})
 		return
