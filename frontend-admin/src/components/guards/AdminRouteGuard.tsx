@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
 import type { AuthUser } from '@/features/auth/rbac';
 import { isRouteAllowed } from '@/features/auth/routeGuard';
+import { startAdminSessionSync, syncAdminSession } from '@/features/auth/adminSession';
 
 // Public admin routes render WITHOUT a session. They live under app/admin/ so
 // they inherit this guard; without this exemption the guard swallows the login
@@ -38,23 +39,44 @@ export function AdminRouteGuard({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     if (isPublic) return; // login / unauthorized need no session
-    try {
-      const raw = localStorage.getItem('spotlight_admin_user');
-      const token = localStorage.getItem('spotlight_admin_access_token');
-      if (!raw || !token) {
-        router.replace('/admin/login');
-        return;
+    let cancelled = false;
+
+    // Republish (refreshing if needed) the Supabase session onto the key the
+    // service layer reads BEFORE rendering the page. Supabase access tokens live
+    // one hour and nothing else rewrites that key, so without this the guard
+    // waved operators into a console whose every request 401'd — see
+    // features/auth/adminSession. Expiry is now a redirect to login, not a wall
+    // of per-page fetch errors.
+    (async () => {
+      try {
+        const raw = localStorage.getItem('spotlight_admin_user');
+        if (!raw) {
+          router.replace('/admin/login');
+          return;
+        }
+        const live = await syncAdminSession();
+        if (cancelled) return;
+        if (!live) {
+          router.replace('/admin/login');
+          return;
+        }
+        const user = JSON.parse(raw) as AuthUser;
+        if (!isRouteAllowed(pathname, user)) {
+          router.replace('/admin/unauthorized');
+          return;
+        }
+        setReady(true);
+      } catch {
+        if (!cancelled) router.replace('/admin/login');
       }
-      const user = JSON.parse(raw) as AuthUser;
-      if (!isRouteAllowed(pathname, user)) {
-        router.replace('/admin/unauthorized');
-        return;
-      }
-      setReady(true);
-    } catch {
-      router.replace('/admin/login');
-    }
+    })();
+
+    return () => { cancelled = true; };
   }, [pathname, router, isPublic]);
+
+  // Keep mirroring hourly refreshes for as long as the console is open, so a
+  // session that goes stale while a page sits idle heals itself.
+  useEffect(() => (isPublic ? undefined : startAdminSessionSync()), [isPublic]);
 
   if (isPublic) return <>{children}</>; // render login/unauthorized freely
   if (!ready) return null;
