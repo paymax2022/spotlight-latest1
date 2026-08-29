@@ -85,7 +85,7 @@ export default function CreatorDashboard() {
               <StateView kind="empty" compact icon="Megaphone" title="No active campaigns" message="Launch a campaign to start raising." />
             ) : (
               active.map((c) => (
-                <CreatorCampaignRow key={c.id} campaign={c} onPress={() => router.push(`/crowdfunding/creator/performance/${c.id}`)} />
+                <CreatorCampaignRow key={c.id} campaign={c} onPress={() => router.push(`/crowdfunding/creator/campaign/${c.id}`)} />
               ))
             )}
           </View>

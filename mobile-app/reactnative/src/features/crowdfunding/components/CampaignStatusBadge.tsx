@@ -14,6 +14,7 @@ interface Props {
 // Pill-shaped status chips: high-contrast text on a 10% tint (per DESIGN-Mobile.md).
 const MAP: Record<CampaignStatus, { label: string; fg: string; bg: string }> = {
   ACTIVE:         { label: 'Active',          fg: Colors.tertiaryContainer, bg: Colors.iconBgTeal },
+  PAUSED:         { label: 'Paused',          fg: '#B65A00',                bg: Colors.iconBgOrange },
   DRAFT:          { label: 'Draft',           fg: Colors.onSurfaceVariant,  bg: Colors.surfaceContainerHigh },
   PENDING_REVIEW: { label: 'Under review',    fg: Colors.onPrimaryFixedVariant, bg: Colors.iconBgPurple },
   COMPLETED:      { label: 'Completed',       fg: Colors.secondary,         bg: Colors.iconBgBlue },

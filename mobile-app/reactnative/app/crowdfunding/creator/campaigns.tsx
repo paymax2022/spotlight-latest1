@@ -14,6 +14,7 @@ import CreatorCampaignsBanner from '@/features/crowdfunding/components/CreatorCa
 const TABS = [
   { value: 'all', label: 'All' },
   { value: 'ACTIVE', label: 'Active' },
+  { value: 'PAUSED', label: 'Paused' },
   { value: 'DRAFT', label: 'Drafts' },
   { value: 'PENDING_REVIEW', label: 'In review' },
   { value: 'COMPLETED', label: 'Completed' },
@@ -24,6 +25,7 @@ const TABS = [
 const EMPTY: Record<string, { title: string; message: string }> = {
   all: { title: 'No campaigns yet', message: 'Start your first campaign to begin raising funds.' },
   ACTIVE: { title: 'No active campaigns', message: 'Approved, live campaigns will appear here.' },
+  PAUSED: { title: 'No paused campaigns', message: 'Campaigns you pause are hidden from discovery and listed here.' },
   DRAFT: { title: 'No drafts', message: 'Campaigns you save but don’t submit stay here.' },
   PENDING_REVIEW: { title: 'Nothing in review', message: 'Submitted campaigns awaiting admin approval show here.' },
   COMPLETED: { title: 'No completed campaigns', message: 'Finished campaigns will be listed here.' },
@@ -65,10 +67,13 @@ export default function MyCampaignsScreen() {
           renderItem={({ item }) => (
             <CreatorCampaignRow
               campaign={item}
+              // A row is the way into managing that campaign — edit, pause,
+              // feature, withdraw, delete — not just its analytics. A DRAFT has
+              // never been submitted, so it goes back to the wizard preview.
               onPress={() =>
                 item.status === 'DRAFT'
                   ? router.push('/crowdfunding/create/preview')
-                  : router.push(`/crowdfunding/creator/performance/${item.id}`)
+                  : router.push(`/crowdfunding/creator/campaign/${item.id}`)
               }
             />
           )}

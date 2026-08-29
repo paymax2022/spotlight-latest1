@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { ScrollView, View, Text, TextInput, Pressable, StyleSheet, KeyboardAvoidingView, Platform } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { router } from 'expo-router';
+import { router, useLocalSearchParams } from 'expo-router';
 import { Check, Landmark, FileUp, Clock } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
@@ -15,7 +15,13 @@ import { formatNaira } from '@/features/crowdfunding/utils/crowdfundingFormatter
 import { sanitizeMoneyInput, nairaStringToKobo } from '@/utils/money';
 
 export default function WithdrawScreen() {
-  const wallet = useCampaignWallet();
+  // Opened from the owner management screen with the campaign to withdraw from;
+  // opened bare from the wallet it keeps the previous default. Without this the
+  // screen always read the default campaign wallet, so an owner who reached it
+  // from a specific campaign could be shown — and could withdraw against — a
+  // balance belonging to a different campaign.
+  const { campaign } = useLocalSearchParams<{ campaign?: string }>();
+  const wallet = useCampaignWallet(campaign);
   const banks = useBankAccounts();
   const submit = useSubmitWithdrawal();
 
@@ -35,7 +41,7 @@ export default function WithdrawScreen() {
   const onSubmit = () => {
     if (!selectedBank) return;
     submit.mutate(
-      { campaignId: wallet.data?.campaignId ?? 'my1', amountKobo, bankAccountId: selectedBank, reason: reason.trim(), evidenceLabel: evidence ? 'evidence.pdf' : null },
+      { campaignId: campaign ?? wallet.data?.campaignId ?? 'my1', amountKobo, bankAccountId: selectedBank, reason: reason.trim(), evidenceLabel: evidence ? 'evidence.pdf' : null },
       { onSuccess: () => setDone(true) },
     );
   };

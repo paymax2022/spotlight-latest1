@@ -55,6 +55,8 @@ export default function CrowdfundingLayout() {
       {/* Creator dashboard (F) */}
       <Stack.Screen name="creator/index" />
       <Stack.Screen name="creator/campaigns" />
+      <Stack.Screen name="creator/campaign/[id]/index" />
+      <Stack.Screen name="creator/campaign/[id]/edit" />
       <Stack.Screen name="creator/performance/[id]" />
       <Stack.Screen name="creator/withdrawals" />
       <Stack.Screen name="creator/notifications" />
