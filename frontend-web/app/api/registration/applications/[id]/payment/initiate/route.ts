@@ -3,6 +3,7 @@ import { errorResponse, handleApiError } from '@/src/lib/api/responses';
 import { requireUser } from '@/src/lib/auth/server';
 import { checkRateLimit } from '@/src/lib/voting/rate-limit';
 import { initializePaystackPayment } from '@/src/server/voting/payment/paystack';
+import { resolveReturnOrigin } from '@/src/server/registration/return-origin';
 import {
   getRegistrationDraft,
   findRegistrationPaymentIntentByIdempotencyKey,
@@ -87,10 +88,16 @@ export async function POST(request: Request, ctx: { params: Promise<{ id: string
     }
 
     const paymentReference = reference();
-    const callbackUrl = new URL(
-      `/api/registration/applications/${params.id}/payment/callback?reference=${encodeURIComponent(paymentReference)}`,
-      request.url,
-    ).toString();
+    // Capture WHERE this payment was started from. The callback is reached by a
+    // top-level navigation from Paystack and so has no Origin of its own; this
+    // is the only point in the flow where the browser identifies itself. Only an
+    // allow-listed origin is carried, and it is re-validated before use.
+    const returnOrigin = resolveReturnOrigin(request);
+    const callbackPath =
+      `/api/registration/applications/${params.id}/payment/callback` +
+      `?reference=${encodeURIComponent(paymentReference)}` +
+      (returnOrigin ? `&return=${encodeURIComponent(returnOrigin)}` : '');
+    const callbackUrl = new URL(callbackPath, request.url).toString();
 
     const authorizationUrl = await initializePaystackPayment({
       reference: paymentReference,

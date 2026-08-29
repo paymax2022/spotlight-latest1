@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { handleApiError } from '@/src/lib/api/responses';
 import { verifyPaystackPayment } from '@/src/server/voting/payment/paystack';
+import { buildWebReturnUrl, isReturnableOrigin } from '@/src/server/registration/return-origin';
 import {
   getRegistrationPaymentIntentByReference,
   markRegistrationPaymentIntentStatus,
@@ -31,15 +32,16 @@ export async function GET(request: Request, ctx: { params: Promise<{ id: string 
   try {
     const url = new URL(request.url);
     const reference = url.searchParams.get('reference') || url.searchParams.get('trxref') || '';
-    if (!reference) return redirectToApp(params.id, 'FAILED');
+    const returnOrigin = url.searchParams.get('return');
+    if (!reference) return redirectToApp(params.id, 'FAILED', undefined, undefined, returnOrigin);
 
     const intent = await getRegistrationPaymentIntentByReference(reference);
     if (!intent || intent.applicationId !== params.id) {
-      return redirectToApp(params.id, 'FAILED', reference);
+      return redirectToApp(params.id, 'FAILED', reference, undefined, returnOrigin);
     }
 
     if (intent.status === 'completed') {
-      return redirectToApp(params.id, 'SUCCESSFUL', reference, intent.id);
+      return redirectToApp(params.id, 'SUCCESSFUL', reference, intent.id, returnOrigin);
     }
 
     const verification = await verifyPaystackPayment(reference);
@@ -47,26 +49,48 @@ export async function GET(request: Request, ctx: { params: Promise<{ id: string 
       // Not-yet-settled, same "keep polling" treatment payment/verify gives
       // it — the redirect target's own verify call resolves this properly;
       // this route's job is best-effort recording, not the final word.
-      return redirectToApp(params.id, 'PENDING', reference, intent.id);
+      return redirectToApp(params.id, 'PENDING', reference, intent.id, returnOrigin);
     }
 
     if (verification.amountKobo < intent.amountKobo) {
       await markRegistrationPaymentIntentStatus(intent.id, 'failed', 'Paystack amount is lower than the registration fee.');
-      return redirectToApp(params.id, 'FAILED', reference, intent.id);
+      return redirectToApp(params.id, 'FAILED', reference, intent.id, returnOrigin);
     }
 
     await applyRegistrationPaymentSuccess(params.id, { reference, method: 'PAYSTACK' });
     await markRegistrationPaymentIntentStatus(intent.id, 'completed');
 
-    return redirectToApp(params.id, 'SUCCESSFUL', reference, intent.id);
+    return redirectToApp(params.id, 'SUCCESSFUL', reference, intent.id, returnOrigin);
   } catch (error) {
     return handleApiError(error, 'Failed to process registration payment callback');
   }
 }
 
-function redirectToApp(applicationId: string, status: string, reference?: string, transactionId?: string) {
+function redirectToApp(
+  applicationId: string,
+  status: string,
+  reference?: string,
+  transactionId?: string,
+  returnOrigin?: string | null,
+) {
   const params = new URLSearchParams({ status });
   if (reference) params.set('reference', reference);
   if (transactionId) params.set('transactionId', transactionId);
+
+  // A browser cannot follow paymaxrn://, so a web payment used to end here on a
+  // dead navigation. Return to the origin the payment was started from instead —
+  // RE-VALIDATED, because this value travelled out to Paystack and back and is
+  // therefore not trusted input. Anything unrecognised falls through to the
+  // scheme, which remains correct for the native app.
+  if (isReturnableOrigin(returnOrigin)) {
+    return NextResponse.redirect(
+      buildWebReturnUrl(returnOrigin as string, applicationId, {
+        status,
+        reference,
+        transactionId,
+      }),
+    );
+  }
+
   return NextResponse.redirect(`paymaxrn://registration/${applicationId}/payment-processing?${params.toString()}`);
 }
