@@ -6,6 +6,7 @@
 // the doctor.client.ts / fx.api.ts convention. Flip to live by setting
 // `EXPO_PUBLIC_TELEMEDICINE_USE_MOCK=false`.
 
+import { mockAllowed } from '@/config/mockPolicy';
 import { Colors } from '@/constants/colors';
 import { api } from '@/api/client';
 import { generateIdempotencyKey } from '@/utils/idempotency';
@@ -34,7 +35,7 @@ const wait = <T>(value: T, ms = 350): Promise<T> =>
 // ─── Feature flag: flip to false once the Go backend is ready ─────────────────
 // Mock by default; flip with EXPO_PUBLIC_TELEMEDICINE_USE_MOCK=false to hit the
 // live /api/v1/telemedicine/* routes (see backend/internal/app/finance_routes.go).
-const TELEMEDICINE_USE_MOCK = (process.env.EXPO_PUBLIC_TELEMEDICINE_USE_MOCK ?? 'true') !== 'false';
+const TELEMEDICINE_USE_MOCK = mockAllowed(process.env.EXPO_PUBLIC_TELEMEDICINE_USE_MOCK, true);
 
 // All live telemedicine endpoints live under this prefix on the API base URL.
 const BASE = '/api/v1/telemedicine';

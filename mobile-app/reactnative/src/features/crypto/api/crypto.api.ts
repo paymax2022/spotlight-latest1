@@ -9,6 +9,7 @@
 //  • execution runs against a server quote id — price is never assumed (Rule 2);
 //  • the client never computes fees/eligibility authoritatively — server wins.
 
+import { mockAllowed } from '@/config/mockPolicy';
 import { api } from '@/api/client';
 import { buildQuote, buildSwapQuote } from '../utils/cryptoFormatters';
 import {
@@ -45,7 +46,7 @@ import type {
 } from '../types/crypto.types';
 
 // ─── Feature flag: flip to false once real endpoints are ready ────────────────
-const USE_MOCK = (process.env.EXPO_PUBLIC_CRYPTO_USE_MOCK ?? 'true').toLowerCase() !== 'false';
+const USE_MOCK = mockAllowed(process.env.EXPO_PUBLIC_CRYPTO_USE_MOCK, true);
 
 /** Simulated network latency so loading states render in mock mode. */
 const delay = (ms = 320) => new Promise((r) => setTimeout(r, ms));

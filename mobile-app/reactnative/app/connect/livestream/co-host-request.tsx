@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import { UserPlus, CircleCheck } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
@@ -37,7 +38,7 @@ export default function CoHostRequestScreen() {
           <>
             <Text style={styles.title}>Request sent</Text>
             <Text style={styles.sub}>The host will see your request. You'll be notified if you're invited to join the stream.</Text>
-            <View style={styles.btnWrap}><PrimaryButton label="Back to stream" onPress={() => router.back()} /></View>
+            <View style={styles.btnWrap}><PrimaryButton label="Back to stream" onPress={() => goBack('/connect')} /></View>
           </>
         ) : (
           <>

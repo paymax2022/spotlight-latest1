@@ -1,7 +1,6 @@
 import React from 'react';
 import { ScrollView, View, Text, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { router } from 'expo-router';
 import {
   Camera,
   ShieldCheck,
@@ -16,7 +15,6 @@ import { Spacing } from '@/constants/spacing';
 import { Radius } from '@/constants/radius';
 import ScreenHeader from '@/components/ScreenHeader';
 import StateView from '@/components/StateView';
-import PrimaryButton from '@/components/PrimaryButton';
 import { ConnectColors } from '@/features/connect/constants/connect.constants';
 import { useBadges } from '@/features/connect/profile/hooks';
 import type { VerificationBadge, VerificationBadgeState } from '@/features/connect/profile/types';
@@ -60,15 +58,6 @@ function BadgeCard({ badge }: { badge: VerificationBadge }) {
           <StateIcon size={14} color={state.color} strokeWidth={2.4} />
           <Text style={[styles.statePillText, { color: state.color }]}>{state.label}</Text>
         </View>
-
-        {badge.state === 'unverified' ? (
-          <PrimaryButton
-            label="Verify now"
-            variant="ghost"
-            fullWidth={false}
-            onPress={() => router.push('/connect/onboarding/verify-intro')}
-          />
-        ) : null}
       </View>
     </View>
   );

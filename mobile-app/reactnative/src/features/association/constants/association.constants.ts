@@ -1,5 +1,6 @@
 // ── Association — Constants ───────────────────────────────────────────────────
 
+import { mockAllowed } from '@/config/mockPolicy';
 import { Colors } from '@/constants/colors';
 import type {
   GroupType,
@@ -18,7 +19,7 @@ import type {
  * Live endpoints are served under the API client's baseURL (see src/api/client.ts)
  * at the paths documented in contracts/associations.openapi.yaml.
  */
-export const USE_MOCK = (process.env.EXPO_PUBLIC_ASSOCIATION_USE_MOCK ?? 'true') !== 'false';
+export const USE_MOCK = mockAllowed(process.env.EXPO_PUBLIC_ASSOCIATION_USE_MOCK, true);
 
 /**
  * Live API base path for the association module.

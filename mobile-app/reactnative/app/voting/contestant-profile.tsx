@@ -4,6 +4,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import { ArrowLeft, Share2, Heart, BadgeCheck, MapPin, Music, PlayCircle, ExternalLink } from 'lucide-react-native';
 import { useQueryClient } from '@tanstack/react-query';
 import { Colors } from '@/constants/colors';
@@ -16,6 +17,7 @@ import { useContestantProfile } from '@/features/voting/hooks/useContestantProfi
 import { useContestDetails } from '@/features/voting/hooks/useContestDetails';
 import { useFreeVoteAllocation, useCastFreeVotes } from '@/features/voting/hooks/useVote';
 import { useVotePackages } from '@/features/voting/hooks/useVotePackages';
+import { getVotingWindow } from '@/features/voting/utils/votingWindow';
 import RankBadge from '@/features/voting/components/RankBadge';
 import RankMovementBadge from '@/features/voting/components/RankMovementBadge';
 import FreeVoteBadge from '@/features/voting/components/FreeVoteBadge';
@@ -25,7 +27,6 @@ import VoteConfirmationSheet from '@/features/voting/components/VoteConfirmation
 import ShareBottomSheet from '@/features/voting/components/ShareBottomSheet';
 import { formatVoteCount } from '@/features/voting/utils/voteFormatters';
 import type { VotePackage } from '@/features/voting/types/voting.types';
-import { MOCK_FREE_VOTE_ALLOCATION, MOCK_VOTE_PACKAGES } from '@/features/voting/api/voting.mock';
 
 /**
  * The sample link is contestant-submitted registration data, so it is untrusted
@@ -59,6 +60,9 @@ export default function ContestantProfileScreen() {
 
   const { data: contestant, isLoading } = useContestantProfile(contestantId ?? '');
   const { data: parentContest } = useContestDetails(contestId ?? '');
+  // Deadline-aware, not status-only: nothing flips a contest to 'ended' when its
+  // end date passes, so a finished contest still reports LIVE.
+  const votingWindow = getVotingWindow(parentContest);
   const { data: freeVotes }  = useFreeVoteAllocation(contestId ?? '', contestantId ?? '');
   const { data: packages }   = useVotePackages(contestId);
 
@@ -110,14 +114,28 @@ export default function ContestantProfileScreen() {
     );
   }
 
-  const displayFreeVotes = freeVotes ?? MOCK_FREE_VOTE_ALLOCATION;
-  const displayPackages  = packages  ?? MOCK_VOTE_PACKAGES;
+  // NO MOCK FALLBACK. These previously read `?? MOCK_…`, which meant a live
+  // response that was missing, empty or still loading silently rendered invented
+  // vote packages — regardless of EXPO_PUBLIC_VOTING_USE_MOCK.
+  //
+  // That was not merely cosmetic: handlePaidVote builds the payment URL from
+  // `pkg.amount` and `pkg.id`, so a tap on a fabricated package sent a real voter
+  // into checkout with a price and a package id the server has never heard of.
+  //
+  // Absent data now reads as absent. Free-vote state falls back to a ZERO
+  // allowance (never a generous invented one), and paid packages simply are not
+  // offered until the server says what they are.
+  // `freeVotes` stays possibly-undefined on purpose: "we do not know yet" and
+  // "you have none left" are different facts, and the reset countdown below is
+  // only truthful for the second one. Substituting a zero allowance would show a
+  // countdown to a date the server never sent.
+  const displayPackages: VotePackage[] = packages ?? [];
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
       {/* Floating controls */}
       <View style={styles.floatingBar}>
-        <Pressable onPress={() => router.back()} style={styles.floatBtn}>
+        <Pressable onPress={() => goBack(`/voting/contestants?contestId=${contestId}`)} style={styles.floatBtn}>
           <ArrowLeft size={20} color={Colors.onSurface} strokeWidth={2} />
         </Pressable>
         <View style={styles.floatRight}>
@@ -181,16 +199,19 @@ export default function ContestantProfileScreen() {
             <Text style={styles.voteCount}>{showVoteCount ? formatVoteCount(contestant.votes ?? 0) : '—'}</Text>
             <Text style={styles.voteLabel}>Total Votes</Text>
             <View style={styles.stripDivider} />
-            {displayFreeVotes.remaining === 0 ? (
+            {!freeVotes ? (
+              // Unknown, not zero — say nothing rather than assert an allowance.
+              <Text style={styles.voteLabel}>—</Text>
+            ) : freeVotes.remaining === 0 ? (
               <FreeVoteResetCountdown
-                resetAt={displayFreeVotes.resetsAt}
+                resetAt={freeVotes.resetsAt}
                 size="sm"
                 onReset={() =>
                   qc.invalidateQueries({ queryKey: ['voting', 'free-votes', contestId] })
                 }
               />
             ) : (
-              <FreeVoteBadge remaining={displayFreeVotes.remaining} total={displayFreeVotes.total} />
+              <FreeVoteBadge remaining={freeVotes.remaining} total={freeVotes.total} />
             )}
           </View>
 
@@ -223,18 +244,30 @@ export default function ContestantProfileScreen() {
           {/* Stats */}
           <ContestantStatsCard contestant={contestant} />
 
-          {/* Vote CTA */}
+          {/* Vote CTA — gated on the SAME window the server enforces, so a closed
+              contest never offers an action that is going to be refused. Users
+              used to tap through and meet "Voting is closed" on the next screen. */}
           <View style={styles.ctaBlock}>
+            {!votingWindow.open && (
+              <Text style={styles.votingClosedNote}>{votingWindow.message}</Text>
+            )}
             <PrimaryButton
-              label={`Vote for ${contestant.stageName ?? contestant.name}`}
-              onPress={() => setVoteOpen(true)}
+              label={
+                votingWindow.open
+                  ? `Vote for ${contestant.stageName ?? contestant.name}`
+                  : 'Voting closed'
+              }
+              onPress={() => votingWindow.open && setVoteOpen(true)}
+              disabled={!votingWindow.open}
               style={styles.voteBtn}
             />
-            <PrimaryButton
-              label="Buy Vote Packages"
-              onPress={() => router.push(`/voting/buy-votes?contestantId=${contestant.id}&contestId=${contestId}`)}
-              variant="secondary"
-            />
+            {votingWindow.open && (
+              <PrimaryButton
+                label="Buy Vote Packages"
+                onPress={() => router.push(`/voting/buy-votes?contestantId=${contestant.id}&contestId=${contestId}`)}
+                variant="secondary"
+              />
+            )}
           </View>
         </View>
       </ScrollView>
@@ -243,7 +276,10 @@ export default function ContestantProfileScreen() {
         visible={voteOpen}
         onClose={() => setVoteOpen(false)}
         contestant={contestant}
-        freeVotes={displayFreeVotes}
+        // In the sheet an unknown allowance is treated as none: offering a free
+        // vote the server has not authorised produces a failed cast and a
+        // confusing error, which is worse than not offering it.
+        freeVotes={freeVotes ?? { total: 0, used: 0, remaining: 0, resetsAt: '' }}
         packages={displayPackages}
         onConfirmFree={handleFreeVote}
         onConfirmPaid={handlePaidVote}
@@ -293,5 +329,6 @@ const styles = StyleSheet.create({
   sampleHost:  { ...Typography.bodyMd, color: Colors.primary, flex: 1 },
   sampleHint:  { ...Typography.bodySm, color: Colors.onSurfaceVariant },
   ctaBlock:    { gap: Spacing.sm },
+  votingClosedNote: { ...Typography.caption, color: Colors.onSurfaceVariant, textAlign: 'center' },
   voteBtn:     {},
 });

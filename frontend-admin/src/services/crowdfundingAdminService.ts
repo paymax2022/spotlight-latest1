@@ -6,6 +6,7 @@
 
 import { env } from '@/config/env';
 import { operationKey } from './idempotency';
+import { resolveUseMock } from '@/config/useMock';
 import type {
   CfReviewCampaign,
   CfReviewDecision,
@@ -29,10 +30,25 @@ import type {
 
 // Mock is the default. Set NEXT_PUBLIC_CF_USE_MOCK=false to hit the live Go backend
 // at /api/crowdfunding/admin/* (campaign review queue, decision, stats).
-const USE_MOCK = process.env.NEXT_PUBLIC_CF_USE_MOCK !== 'false';
+// Migrated to resolveUseMock now that the Go endpoints are confirmed live:
+// GET /api/crowdfunding/admin/campaigns returns real PENDING_REVIEW campaigns.
+// The old inline check defaulted to MOCK unless someone set the flag, which is
+// why a campaign submitted from the app never appeared in this console — the
+// page was showing fixtures and there was nothing to indicate it.
+const USE_MOCK = resolveUseMock(process.env.NEXT_PUBLIC_CF_USE_MOCK);
 
 function adminBase(): string {
-  return env.apiBaseUrl.replace(/\/api\/v1\/?$/, '/api/crowdfunding/admin');
+  // Strip a trailing /api/v1 (if present) to get the API ROOT, then append the
+  // module's absolute path — the same shape restaurantAdminService uses.
+  //
+  // This used to REPLACE /api/v1 with the module path, which silently produced a
+  // base with no module prefix at all once frontend-admin moved env.apiBaseUrl to
+  // the same-origin proxy (<origin>/api/admin-proxy): the regex no longer matched,
+  // so every call went to <proxy>/campaigns instead of
+  // <proxy>/api/crowdfunding/admin/campaigns, and 404'd. Stripping is a no-op when
+  // there is nothing to strip, so this form is correct for both base shapes.
+  const root = env.apiBaseUrl.replace(/\/api\/v1\/?$/, '');
+  return `${root}/api/crowdfunding/admin`;
 }
 function authHeaders(): Record<string, string> {
   if (typeof window === 'undefined') return {};
@@ -440,46 +456,31 @@ export async function toggleFeatureFlag(key: string, enabled: boolean): Promise<
 
 // ─── KYC / KYB ────────────────────────────────────────────────────────────────
 
+// Mirrors the platform's shared KYC (finance/kyc) — see CfKycCase.
 const MOCK_KYC: CfKycCase[] = [
   {
-    id: 'kc1', kind: 'KYC', status: 'PENDING', applicantName: 'Aisha Bello', applicantType: 'Individual',
-    email: 'aisha.bello@example.com', idLabel: 'NIN ••• 4821', bankLabel: 'GTBank ••• 4821',
-    submittedAt: '2026-06-18T11:00:00Z', duplicateIdentity: false, duplicateBank: false, riskLevel: 'LOW',
-    documents: [
-      { id: 'd1', label: 'Government ID (NIN)', type: 'image', verified: true },
-      { id: 'd2', label: 'Selfie verification', type: 'image', verified: true },
-    ],
+    id: 'kc1', status: 'PENDING', applicantName: 'Aisha Bello', applicantType: 'Individual',
+    email: 'aisha.bello@example.com', tier: 1, documentType: 'NIN',
+    submittedAt: '2026-06-18T11:00:00Z', verifiedAt: null,
   },
   {
-    id: 'kc2', kind: 'KYC', status: 'PENDING', applicantName: 'John Doe', applicantType: 'Individual',
-    email: 'jd1990@example.com', idLabel: 'NIN ••• 0012', bankLabel: 'Access ••• 0012',
-    submittedAt: '2026-06-18T20:30:00Z', duplicateIdentity: true, duplicateBank: true, riskLevel: 'HIGH',
-    documents: [{ id: 'd1', label: 'Government ID (NIN)', type: 'image', verified: false }],
+    id: 'kc2', status: 'PENDING', applicantName: 'John Doe', applicantType: 'Individual',
+    email: 'jd1990@example.com', tier: 2, documentType: 'BVN',
+    submittedAt: '2026-06-18T20:30:00Z', verifiedAt: null,
   },
   {
-    id: 'kc3', kind: 'KYB', status: 'PENDING', applicantName: 'Enugu Codes Initiative', applicantType: 'NGO',
-    email: 'hello@enugucodes.org', idLabel: 'RC 1456782', bankLabel: 'Zenith ••• 7740',
-    submittedAt: '2026-06-17T09:00:00Z', duplicateIdentity: false, duplicateBank: false, riskLevel: 'LOW',
-    documents: [
-      { id: 'd1', label: 'CAC registration', type: 'pdf', verified: true },
-      { id: 'd2', label: 'Board authorisation letter', type: 'pdf', verified: true },
-      { id: 'd3', label: 'Tax document (TIN)', type: 'pdf', verified: false },
-    ],
-  },
-  {
-    id: 'kc4', kind: 'KYB', status: 'APPROVED', applicantName: 'Niger Delta Relief Org', applicantType: 'NGO',
-    email: 'ops@ndrelief.org', idLabel: 'RC 998120', bankLabel: 'UBA ••• 3318',
-    submittedAt: '2026-06-15T10:00:00Z', duplicateIdentity: false, duplicateBank: false, riskLevel: 'LOW',
-    documents: [{ id: 'd1', label: 'CAC registration', type: 'pdf', verified: true }],
+    id: 'kc3', status: 'PENDING', applicantName: 'Adaeze Okonkwo', applicantType: 'Individual',
+    email: 'adaeze@example.com', tier: 1, documentType: 'NIN',
+    submittedAt: '2026-06-17T09:00:00Z', verifiedAt: null,
   },
 ];
 
-export async function listKycCases(kind?: string, status?: string): Promise<CfKycCase[]> {
+export async function listKycCases(status?: string): Promise<CfKycCase[]> {
   if (USE_MOCK) {
     await delay();
-    return MOCK_KYC.filter((k) => (!kind || k.kind === kind) && (!status || k.status === status));
+    return MOCK_KYC.filter((k) => !status || k.status === status);
   }
-  const res = await fetch(`${adminBase()}/kyc?kind=${kind ?? ''}&status=${status ?? ''}`, { cache: 'no-store', headers: authHeaders() });
+  const res = await fetch(`${adminBase()}/kyc?status=${status ?? ''}`, { cache: 'no-store', headers: authHeaders() });
   if (!res.ok) throw new Error(`KYC list failed: ${res.status}`);
   return (await res.json()).cases ?? [];
 }
@@ -517,8 +518,8 @@ export async function getComplianceSummary(): Promise<CfComplianceSummary> {
   if (USE_MOCK) {
     await delay();
     return {
-      pendingKyc: MOCK_KYC.filter((k) => k.kind === 'KYC' && k.status === 'PENDING').length,
-      pendingKyb: MOCK_KYC.filter((k) => k.kind === 'KYB' && k.status === 'PENDING').length,
+      pendingKyc: MOCK_KYC.filter((k) => k.status === 'PENDING').length,
+      pendingKyb: 0, // the platform's shared KYC has no business-entity tier
       openDataRequests: MOCK_DATA_REQUESTS.filter((d) => d.status !== 'COMPLETED').length,
       investmentEnabled: MOCK_FLAGS.find((f) => f.key === 'investment')?.enabled ?? false,
       retentionPolicyDays: 2555,

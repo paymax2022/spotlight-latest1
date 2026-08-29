@@ -10,11 +10,12 @@
 // (not at booking) — this screen only ever shows an estimate, never a payment
 // sheet. IRON RULES: all money is integer kobo; never computed on the client.
 
+import { mockAllowed } from '@/config/mockPolicy';
 import { api } from '@/api/client';
 import { getSecureItem, setSecureItem, deleteSecureItem } from '@/lib/secureStorage';
 
 const USE_MOCK =
-  (process.env.EXPO_PUBLIC_SCHEDULED_USE_MOCK ?? process.env.EXPO_PUBLIC_MOBILITY_USE_MOCK ?? 'true').toLowerCase() !== 'false';
+  mockAllowed(process.env.EXPO_PUBLIC_SCHEDULED_USE_MOCK ?? process.env.EXPO_PUBLIC_MOBILITY_USE_MOCK, true);
 
 const BASE = '/api/finance/mobility/scheduled';
 const delay = (ms = 320) => new Promise((r) => setTimeout(r, ms));

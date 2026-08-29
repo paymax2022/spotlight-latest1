@@ -1,4 +1,5 @@
 // Estate Vendors / Artisans (Block 37) — types + dual mock/live api + constants.
+import { mockAllowed } from '@/config/mockPolicy';
 import { api } from '@/api/client';
 import { Colors } from '@/constants/colors';
 
@@ -14,7 +15,7 @@ export interface VendorJob {
   repairRequestId?: string; status: JobStatus; amountKobo: number; createdAt: string;
 }
 
-export const USE_MOCK = (process.env.EXPO_PUBLIC_VENDORS_USE_MOCK ?? 'true') !== 'false';
+export const USE_MOCK = mockAllowed(process.env.EXPO_PUBLIC_VENDORS_USE_MOCK, true);
 
 // Vendors/Artisans are served by the resident-scoped frontend-web handlers under
 // /api/v1/estate/vendors. The current resident's estate is derived SERVER-SIDE

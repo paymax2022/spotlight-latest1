@@ -4,16 +4,17 @@ name: _reusable frontend-web
 # Called by ci.yml. Can also be called from module workflows.
 #
 # Scripts live in frontend-web/package.json:
-#   test:regression -> golden-path suite (tests/unit/golden-path) — see note below
+#   test:regression -> vitest run tests/unit/golden-path
 #   test:money      -> vitest run tests/unit/estate tests/unit/wallet tests/unit/tiers
-#   contract:check  -> node scripts/contract-check.mjs (impl vs contracts/openapi.yaml)
+#   contract:check  -> node scripts/contract-check.mjs (estate impl vs
+#                      contracts/estate.openapi.yaml — estate only, NOT openapi.yaml)
 #   lint            -> next lint
 #
-# NOTE: CLAUDE.md references `npm run test:regression`, but the current
-# frontend-web/package.json has no `test:regression` script — the golden-path
-# specs live in tests/unit/golden-path/. We invoke them directly so the gate is
-# real today; add a `test:regression` script that points at that folder to make
-# this a one-word command. Tracked in docs/ops/CI_GATES.md.
+# The `test:regression` script now exists, so the regression step below takes its
+# first branch. The fallback that invokes tests/unit/golden-path directly is kept
+# deliberately: it is what made this gate real during the period the script was
+# missing, and it keeps the gate honest on any branch or worktree predating it
+# rather than failing with "Missing script".
 
 on:
   workflow_call:

@@ -3,6 +3,7 @@ import PhoneNumberInput from '@/components/PhoneNumberInput';
 import { View, Text, ScrollView, StyleSheet, Pressable, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import { Check, FileUp, CheckCircle2, Clock } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
@@ -114,7 +115,7 @@ export default function DriverOnboardingScreen() {
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
-      <ScreenHeader title={STEP_TITLE[step]} subtitle={step !== 'status' ? `Step ${stepIndex + 1} of 3` : undefined} onBack={() => (stepIndex > 0 && step !== 'status' ? setStep(STEP_ORDER[stepIndex - 1]) : router.back())} />
+      <ScreenHeader title={STEP_TITLE[step]} subtitle={step !== 'status' ? `Step ${stepIndex + 1} of 3` : undefined} onBack={() => (stepIndex > 0 && step !== 'status' ? setStep(STEP_ORDER[stepIndex - 1]) : goBack('/mobility/driver'))} />
 
       {/* Progress */}
       {step !== 'status' && (

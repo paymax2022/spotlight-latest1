@@ -12,6 +12,7 @@
  * Wallet → wallet (Paymax P2P) keeps using the existing transfers.api.ts so the
  * P2P flow is unchanged.
  */
+import { mockAllowed } from '@/config/mockPolicy';
 import { api } from '@/api/client';
 import { generateIdempotencyKey } from '@/utils/idempotency';
 import { transfersMock } from './mock';
@@ -24,7 +25,7 @@ import type {
 } from './types';
 
 export const USE_MOCK =
-  (process.env.EXPO_PUBLIC_TRANSFERS_USE_MOCK ?? 'true') !== 'false';
+  mockAllowed(process.env.EXPO_PUBLIC_TRANSFERS_USE_MOCK, true);
 
 type ApiRecord = Record<string, unknown>;
 const unwrap = (res: { data?: ApiRecord }): ApiRecord =>

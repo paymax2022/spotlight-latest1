@@ -2,6 +2,7 @@ import React, { useMemo, useState } from 'react';
 import { View, Text, ScrollView, StyleSheet, Pressable, TextInput } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import { ArrowLeft, Droplets, Trophy, Radio } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
@@ -44,7 +45,7 @@ export default function SpraySend() {
   if (done) {
     return (
       <SafeAreaView style={styles.safe} edges={['top']}>
-        <View style={styles.header}><Pressable onPress={() => router.back()} hitSlop={10} style={styles.iconBtn}><ArrowLeft size={22} color={Colors.onSurface} /></Pressable><Text style={styles.headerTitle}>Sprayed!</Text><View style={styles.iconBtn} /></View>
+        <View style={styles.header}><Pressable onPress={() => goBack('/social')} hitSlop={10} style={styles.iconBtn}><ArrowLeft size={22} color={Colors.onSurface} /></Pressable><Text style={styles.headerTitle}>Sprayed!</Text><View style={styles.iconBtn} /></View>
         <StateView kind="empty" icon="Droplets" title="💸 Sprayed!" message={`You sprayed ${formatNaira(effectiveKobo)} on ${target.data?.title ?? 'the live'}.`} actionLabel="See leaderboard" onAction={() => router.replace(`/social/spray/leaderboard?targetId=${targetId}`)} />
       </SafeAreaView>
     );
@@ -53,7 +54,7 @@ export default function SpraySend() {
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
       <View style={styles.header}>
-        <Pressable onPress={() => router.back()} hitSlop={10} style={styles.iconBtn} accessibilityLabel="Go back"><ArrowLeft size={22} color={Colors.onSurface} /></Pressable>
+        <Pressable onPress={() => goBack('/social')} hitSlop={10} style={styles.iconBtn} accessibilityLabel="Go back"><ArrowLeft size={22} color={Colors.onSurface} /></Pressable>
         <Text style={styles.headerTitle}>Spray</Text>
         <Pressable onPress={() => router.push(`/social/spray/leaderboard?targetId=${targetId}`)} hitSlop={10} style={styles.iconBtn} accessibilityLabel="Leaderboard"><Trophy size={20} color={Colors.onSurface} /></Pressable>
       </View>

@@ -1,6 +1,8 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
+import Link from 'next/link';
+import { adminAuthHeaders } from '@/src/lib/auth/client';
 import { DEFAULT_APPLICANT_CATEGORIES, NIGERIA_STATES } from '@/src/features/registration/config';
 import {
   FIELD_CATALOG,
@@ -100,15 +102,16 @@ const defaultForm = {
   requiresMedical: true,
   requiresBootcampReadiness: true,
   supportsVoting: true,
-  supportsAuditionScheduling: true,
+  supportsAuditionScheduling: false,
   supportsSchoolEntry: false,
   supportsGroupEntry: false,
-  auditionStates: ['Lagos'],
+  auditionStates: [] as string[],
   applicantCategories: ['General Reality Show', 'Music', 'Acting'],
 };
 
 export default function RegistrationContestManager() {
-  const [contests, setContests] = useState<ContestRegistrationDefinition[]>([]);
+  const [contests, setContests] = useState<Array<ContestRegistrationDefinition & { id?: string; status?: string }>>([]);
+  const [statusBusy, setStatusBusy] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState('');
@@ -192,7 +195,10 @@ export default function RegistrationContestManager() {
     setLoading(true);
     setError('');
     try {
-      const res = await fetch('/api/admin/contests', { cache: 'no-store' });
+      const res = await fetch('/api/admin/contests', {
+        cache: 'no-store',
+        headers: await adminAuthHeaders(),
+      });
       const payload = await res.json().catch(() => ({}));
       if (!res.ok || !payload?.success) throw new Error(payload?.error || 'Failed to load contests.');
       setContests(Array.isArray(payload?.contests) ? payload.contests : []);
@@ -219,6 +225,17 @@ export default function RegistrationContestManager() {
     });
   };
 
+  // Audition is optional. When it is switched off the selected states are
+  // dropped — otherwise a contest saved with auditions disabled would still ship
+  // a state list, and switching it back on would silently restore stale choices.
+  const setAuditionEnabled = (enabled: boolean) => {
+    setForm((prev) => ({
+      ...prev,
+      supportsAuditionScheduling: enabled,
+      auditionStates: enabled ? prev.auditionStates : [],
+    }));
+  };
+
   const toggleState = (state: string) => {
     setForm((prev) => {
       const exists = prev.auditionStates.includes(state);
@@ -239,14 +256,50 @@ export default function RegistrationContestManager() {
     });
   };
 
+  // Publish / unpublish. Until this existed a contest could not be moved out of
+  // the status it was created with, so an admin-created contest never reached
+  // either the web list or the phone.
+  const changeStatus = async (slug: string, status: string) => {
+    setStatusBusy(slug);
+    setMessage('');
+    setError('');
+    try {
+      const res = await fetch(`/api/admin/contests/${encodeURIComponent(slug)}/status`, {
+        method: 'PATCH',
+        headers: await adminAuthHeaders(true),
+        body: JSON.stringify({ status }),
+      });
+      const payload = await res.json().catch(() => ({}));
+      if (!res.ok || !payload?.success) throw new Error(payload?.error || 'Failed to update status.');
+      setMessage(
+        status === 'active'
+          ? 'Contest is live — it now appears in the mobile voting list.'
+          : `Contest status set to ${status}.`,
+      );
+      await loadContests();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to update status.');
+    } finally {
+      setStatusBusy(null);
+    }
+  };
+
   const submit = async () => {
+    // Auditions are optional, but enabling them without naming a state produces a
+    // contest that schedules auditions nowhere. Caught here so the admin sees it
+    // against the field, and again server-side in the route.
+    if (form.supportsAuditionScheduling && form.auditionStates.length === 0) {
+      setMessage('');
+      setError('Select at least one audition state, or turn auditions off.');
+      return;
+    }
     setSaving(true);
     setMessage('');
     setError('');
     try {
       const res = await fetch('/api/admin/contests', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: await adminAuthHeaders(true),
         body: JSON.stringify({ ...form, formSchema: buildFormSchemaPayload() }),
       });
       const payload = await res.json().catch(() => ({}));
@@ -292,8 +345,14 @@ export default function RegistrationContestManager() {
           <div><label className="form-label">Registration fee (NGN)</label><input className="form-input" type="number" min={0} value={form.registrationFeeNgn} onChange={(e) => setField('registrationFeeNgn', Number(e.target.value || 0))} disabled={!form.isPaid} /></div>
         </div>
 
+        {form.supportsAuditionScheduling && (
         <div className="mt-3">
-          <label className="form-label">Audition states</label>
+          <label className="form-label">
+            Audition states <span className="text-red-500">*</span>
+          </label>
+          <p className="text-[11px] text-foreground-muted mb-1">
+            Auditions are enabled, so at least one state must be selected.
+          </p>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-2 max-h-44 overflow-auto border border-border rounded-sm p-3">
             {sortedStates.map((state) => (
               <label key={state} className="text-[12px] text-foreground-muted flex items-center gap-2">
@@ -302,7 +361,11 @@ export default function RegistrationContestManager() {
               </label>
             ))}
           </div>
+          {form.auditionStates.length === 0 && (
+            <p className="text-[11px] text-red-500 mt-1">Select at least one audition state.</p>
+          )}
         </div>
+        )}
 
         <div className="mt-3">
           <label className="form-label">Applicant categories</label>
@@ -321,7 +384,7 @@ export default function RegistrationContestManager() {
           <label className="flex items-center gap-2"><input type="checkbox" checked={form.requiresMedical} onChange={(e) => setField('requiresMedical', e.target.checked)} /> Medical disclosure required</label>
           <label className="flex items-center gap-2"><input type="checkbox" checked={form.requiresBootcampReadiness} onChange={(e) => setField('requiresBootcampReadiness', e.target.checked)} /> Bootcamp readiness required</label>
           <label className="flex items-center gap-2"><input type="checkbox" checked={form.supportsVoting} onChange={(e) => setField('supportsVoting', e.target.checked)} /> Public voting enabled</label>
-          <label className="flex items-center gap-2"><input type="checkbox" checked={form.supportsAuditionScheduling} onChange={(e) => setField('supportsAuditionScheduling', e.target.checked)} /> Audition scheduling enabled</label>
+          <label className="flex items-center gap-2"><input type="checkbox" checked={form.supportsAuditionScheduling} onChange={(e) => setAuditionEnabled(e.target.checked)} /> Auditions required</label>
           <label className="flex items-center gap-2"><input type="checkbox" checked={form.supportsGroupEntry} onChange={(e) => setField('supportsGroupEntry', e.target.checked)} /> Group entry allowed</label>
         </div>
 
@@ -450,7 +513,9 @@ export default function RegistrationContestManager() {
                   <th className="py-3 px-3">Category</th>
                   <th className="py-3 px-3">Type</th>
                   <th className="py-3 px-3">Fee</th>
-                  <th className="py-3 px-3">Audition states</th>
+                  <th className="py-3 px-3">Auditions</th>
+                  <th className="py-3 px-3">Visibility</th>
+                  <th className="py-3 px-3">Manage</th>
                 </tr>
               </thead>
               <tbody>
@@ -461,7 +526,55 @@ export default function RegistrationContestManager() {
                     <td className="py-2.5 px-3">{contest.contestCategory}</td>
                     <td className="py-2.5 px-3">{contest.contestType}</td>
                     <td className="py-2.5 px-3">{contest.isPaid ? `NGN ${Number(contest.registrationFeeNgn || 0).toLocaleString('en-NG')}` : 'Free'}</td>
-                    <td className="py-2.5 px-3">{(contest.auditionStates || []).slice(0, 3).join(', ')}{(contest.auditionStates || []).length > 3 ? '...' : ''}</td>
+                    <td className="py-2.5 px-3">
+                      {contest.supportsAuditionScheduling
+                        ? `${(contest.auditionStates || []).slice(0, 3).join(', ')}${(contest.auditionStates || []).length > 3 ? '…' : ''}`
+                        : <span className="text-foreground-dim">Not required</span>}
+                    </td>
+                    <td className="py-2.5 px-3">
+                      {contest.id ? (
+                        <select
+                          className="form-input py-1 text-[12px]"
+                          value={contest.status ?? 'upcoming'}
+                          disabled={statusBusy === contest.slug}
+                          onChange={(e) => changeStatus(contest.slug, e.target.value)}
+                          aria-label={`Visibility for ${contest.title}`}
+                        >
+                          <option value="draft">Draft — hidden everywhere</option>
+                          <option value="upcoming">Upcoming — web only</option>
+                          <option value="active">Active — live on mobile</option>
+                          <option value="ended">Ended — closed</option>
+                        </select>
+                      ) : (
+                        <span className="text-[12px] text-foreground-dim">{contest.status ?? '—'}</span>
+                      )}
+                    </td>
+                    <td className="py-2.5 px-3">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <Link
+                          href={`/admin/contests/${contest.slug}/applicants`}
+                          className="text-[12px] underline underline-offset-2 hover:text-foreground"
+                        >
+                          Applicants
+                        </Link>
+                        {/* Voting settings are addressed by contests.id. Contests
+                            created before this page persisted to Postgres have no
+                            id, so the link is omitted rather than rendered as
+                            /admin/voting/undefined/settings. */}
+                        {contest.id ? (
+                          <Link
+                            href={`/admin/voting/${contest.id}/settings`}
+                            className="text-[12px] underline underline-offset-2 hover:text-foreground"
+                          >
+                            Voting settings
+                          </Link>
+                        ) : (
+                          <span className="text-[12px] text-foreground-dim" title="This contest is not in the database yet">
+                            Voting settings n/a
+                          </span>
+                        )}
+                      </div>
+                    </td>
                   </tr>
                 ))}
               </tbody>

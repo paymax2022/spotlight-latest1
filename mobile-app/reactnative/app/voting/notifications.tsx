@@ -2,6 +2,7 @@ import React from 'react';
 import { View, Text, FlatList, StyleSheet, Pressable } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import { ArrowLeft, Bell, Gift, Zap, Clock, TrendingUp, CheckCircle2, XCircle, Trophy } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
@@ -31,7 +32,7 @@ export default function VotingNotificationsScreen() {
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
       <View style={styles.header}>
-        <Pressable onPress={() => router.back()} style={styles.backBtn}>
+        <Pressable onPress={() => goBack('/voting')} style={styles.backBtn}>
           <ArrowLeft size={22} color={Colors.onSurface} strokeWidth={2} />
         </Pressable>
         <Text style={styles.title}>Notifications</Text>

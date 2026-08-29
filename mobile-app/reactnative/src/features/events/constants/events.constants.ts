@@ -1,3 +1,4 @@
+import { mockAllowed } from '@/config/mockPolicy';
 import { Colors } from '@/constants/colors';
 
 // Mock unless explicitly disabled — matches the app-wide convention used by
@@ -6,7 +7,7 @@ import { Colors } from '@/constants/colors';
 // plural EXPO_PUBLIC_EVENTS_USE_MOCK never matched the configured flag, so the
 // toggle silently did nothing and the module always hit the live backend.
 export const USE_MOCK =
-  (process.env.EXPO_PUBLIC_EVENT_USE_MOCK ?? 'true').toLowerCase() !== 'false';
+  mockAllowed(process.env.EXPO_PUBLIC_EVENT_USE_MOCK, true);
 
 // Events REST namespace — Go backend `top5events` module, mounted directly
 // under /api/finance/events/* (see backend/internal/top5events). Composed

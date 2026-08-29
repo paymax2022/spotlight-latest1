@@ -30,6 +30,12 @@ type Restaurant struct {
 	// Store coordinates, for map rendering and the distance-based delivery quote.
 	GeoLat *float64 `json:"geo_lat,omitempty"`
 	GeoLng *float64 `json:"geo_lng,omitempty"`
+
+	// HasPromo reports a promo that is live RIGHT NOW (see livePromoExists in
+	// discovery_page.go). Populated by the discovery reads only; the code and
+	// terms are deliberately NOT here — a discount is validated and priced
+	// server-side at PlaceOrder, and this is purely the "offer available" badge.
+	HasPromo bool `json:"has_promo"`
 }
 
 // MenuCategory groups menu items (e.g. "Starters", "Mains").

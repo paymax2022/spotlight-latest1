@@ -2,6 +2,7 @@ import React, { useCallback, useMemo, useRef, useState } from 'react';
 import { View, Text, ScrollView, StyleSheet, Pressable, ActivityIndicator, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import * as Icons from 'lucide-react-native';
 import StateView from '@/components/StateView';
 import PrimaryButton from '@/components/PrimaryButton';
@@ -21,7 +22,7 @@ import {
 import { resolveRestaurantName, groupPackagesByRestaurant, UNKNOWN_RESTAURANT_ID } from '@/features/food/restaurantName';
 import { formatNaira } from '@/features/food/utils';
 import { resolveDeliveryFee } from '@/features/food/deliveryFee';
-import { useRestaurant, useRestaurants, useRestaurantNames } from '@/features/food/hooks';
+import { useRestaurant, useRestaurantNames } from '@/features/food/hooks';
 import { usePurchasePayment, PaymentSheet } from '@/features/payments';
 import { CartNutritionSummary } from '@/features/nutrition';
 
@@ -48,27 +49,29 @@ export default function CheckoutScreen() {
   const { data: restaurant } = useRestaurant(restaurantId ?? undefined);
 
   // Names for the OTHER restaurants in a multi-restaurant cart. Lines added in
-  // this session carry their own name; this covers carts hydrated from storage
-  // or the server, whose lines predate that field. Already cached by the food
-  // screens (staleTime 30s), so it costs no extra round-trip in practice.
-  const { data: allRestaurants } = useRestaurants();
+  // this session carry their own name; the per-id lookup below covers carts
+  // hydrated from storage or the server, whose lines predate that field.
+  //
+  // This used to seed the map from the WHOLE discovery list. That list is now
+  // paged, so it would have named only the restaurants that happened to be on
+  // page 1 — and the by-id fetch already covers every case it did, without
+  // depending on a shop being open or on the first page.
   const restaurantNameById = useMemo(() => {
     const m = new Map<string, string>();
-    for (const r of allRestaurants ?? []) if (r.id && r.name) m.set(r.id, r.name);
     // The cart's primary restaurant is known to the store even when discovery
     // does not list it (e.g. it has since closed).
-    if (restaurantId && restaurantName && !m.has(restaurantId)) m.set(restaurantId, restaurantName);
+    if (restaurantId && restaurantName) m.set(restaurantId, restaurantName);
     return m;
-  }, [allRestaurants, restaurantId, restaurantName]);
+  }, [restaurantId, restaurantName]);
 
   // The cart's restaurant groups, in render order. Lifted out of the JSX so the
   // unresolved ids below can be computed before rendering.
   const restaurantGroups = useMemo(() => groupPackagesByRestaurant(packages, restaurantId), [packages, restaurantId]);
 
-  // Ids that NEITHER a captured line name NOR discovery can name. Discovery is
-  // `WHERE is_open = TRUE`, so a closed restaurant is missing from it entirely —
-  // and a cart outlives opening hours. These are fetched by id, which has no
-  // such filter. Usually empty, in which case no request is made.
+  // Ids that neither a captured line name nor the cart's own primary restaurant
+  // can name. Fetched by id, which has no is_open filter and no paging — a cart
+  // outlives opening hours, and discovery is `WHERE is_open = TRUE`. Usually
+  // empty, in which case no request is made.
   const unresolvedRestaurantIds = useMemo(
     () =>
       restaurantGroups
@@ -209,7 +212,7 @@ export default function CheckoutScreen() {
     return (
       <SafeAreaView style={s.safe} edges={['top']}>
         <View style={s.topBar}>
-          <Pressable onPress={() => router.back()} style={s.iconButton} accessibilityLabel="Go back">
+          <Pressable onPress={() => goBack('/food')} style={s.iconButton} accessibilityLabel="Go back">
             <Icons.ArrowLeft size={22} color={Colors.primary} strokeWidth={2.2} />
           </Pressable>
           <Text style={s.topTitle}>Checkout</Text>
@@ -223,7 +226,7 @@ export default function CheckoutScreen() {
   return (
     <SafeAreaView style={s.safe} edges={['top']}>
       <View style={s.topBar}>
-        <Pressable onPress={() => router.back()} style={s.iconButton} accessibilityLabel="Go back">
+        <Pressable onPress={() => goBack('/food')} style={s.iconButton} accessibilityLabel="Go back">
           <Icons.ArrowLeft size={22} color={Colors.primary} strokeWidth={2.2} />
         </Pressable>
         <Text style={s.topTitle}>Checkout</Text>

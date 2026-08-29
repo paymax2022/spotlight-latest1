@@ -2,10 +2,11 @@ import { handleApiError, successResponse } from '@/src/lib/api/responses';
 import { assertOpenMicReadAdmin } from '@/src/server/openmic/auth';
 import { listApplications } from '@/src/server/openmic/persistence';
 
-export async function GET(request: Request, context: { params: { id: string } }) {
+export async function GET(request: Request, context: { params: Promise<{ id: string }> }) {
+  const params = await context.params;
   try {
     await assertOpenMicReadAdmin(request);
-    const applications = await listApplications({ contestId: context.params.id });
+    const applications = await listApplications({ contestId: params.id });
     return successResponse({
       success: true,
       applications: applications.map((row) => ({

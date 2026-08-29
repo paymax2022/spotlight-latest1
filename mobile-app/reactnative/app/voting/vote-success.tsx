@@ -2,6 +2,7 @@ import React from 'react';
 import { View, Text, StyleSheet, Platform } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
 import { Spacing } from '@/constants/spacing';
@@ -34,7 +35,7 @@ export default function VoteSuccessScreen() {
           />
           <PrimaryButton
             label="Vote Again"
-            onPress={() => router.back()}
+            onPress={() => goBack('/voting')}
             variant="secondary"
           />
           <PrimaryButton

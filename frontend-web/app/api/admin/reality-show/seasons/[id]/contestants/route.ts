@@ -1,13 +1,13 @@
 import { successResponse, errorResponse, handleApiError } from '@/src/lib/api/responses';
 import { assertAdminPermission } from '@/src/server/admin/auth';
-import { getSeason, listContestants, addContestant } from '@/src/server/services/reality-show/store';
+import { getSeason, listContestants, addContestant } from '@/src/server/services/reality-show/persistence';
 
 export async function GET(request: Request, ctx: { params: Promise<{ id: string }> }) {
   const params = await ctx.params;
   try {
     await assertAdminPermission(request, 'dashboard:view');
-    if (!getSeason(params.id)) return errorResponse('Season not found', 404);
-    return successResponse({ contestants: listContestants(params.id) });
+    if (!(await getSeason(params.id))) return errorResponse('Season not found', 404);
+    return successResponse({ contestants: await listContestants(params.id) });
   } catch (error) {
     return handleApiError(error, 'Failed to list contestants');
   }
@@ -17,7 +17,7 @@ export async function POST(request: Request, ctx: { params: Promise<{ id: string
   const params = await ctx.params;
   try {
     const identity = await assertAdminPermission(request, 'programs:manage');
-    if (!getSeason(params.id)) return errorResponse('Season not found', 404);
+    if (!(await getSeason(params.id))) return errorResponse('Season not found', 404);
 
     const body = await request.json() as Record<string, unknown>;
     if (!body.displayName || typeof body.displayName !== 'string') {
@@ -27,7 +27,7 @@ export async function POST(request: Request, ctx: { params: Promise<{ id: string
       return errorResponse('applicationId is required', 400);
     }
 
-    const contestant = addContestant({
+    const contestant = await addContestant({
       seasonId: params.id,
       applicationId: body.applicationId,
       userId: typeof body.userId === 'string' ? body.userId : '',

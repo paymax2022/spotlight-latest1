@@ -2,10 +2,11 @@
 // Verification onboarding (spec A, §16). Mock-flagged; flip USE_MOCK=false once
 // POST /v1/customers + verification endpoints land.
 
+import { mockAllowed } from '@/config/mockPolicy';
 import { api } from '@/api/client';
 import type { Verification, KycSubmission } from '../types/fx.types';
 
-const USE_MOCK = (process.env.EXPO_PUBLIC_FX_USE_MOCK ?? 'true').toLowerCase() !== 'false';
+const USE_MOCK = mockAllowed(process.env.EXPO_PUBLIC_FX_USE_MOCK, true);
 const delay = (ms = 320) => new Promise((r) => setTimeout(r, ms));
 // Unwrap { data: ... } by key presence (see fx.api.ts) so an empty { data: null }
 // yields null rather than the wrapper object.

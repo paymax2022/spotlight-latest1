@@ -1,11 +1,11 @@
 import { successResponse, errorResponse, handleApiError } from '@/src/lib/api/responses';
 import { assertAdminPermission } from '@/src/server/admin/auth';
-import { listSeasons, createSeason } from '@/src/server/services/reality-show/store';
+import { listSeasons, createSeason } from '@/src/server/services/reality-show/persistence';
 
 export async function GET(request: Request) {
   try {
     await assertAdminPermission(request, 'dashboard:view');
-    return successResponse({ seasons: listSeasons() });
+    return successResponse({ seasons: await listSeasons() });
   } catch (error) {
     return handleApiError(error, 'Failed to list seasons');
   }
@@ -18,7 +18,7 @@ export async function POST(request: Request) {
     if (!body.seasonName || typeof body.seasonName !== 'string') {
       return errorResponse('seasonName is required', 400);
     }
-    const season = createSeason({
+    const season = await createSeason({
       seasonName: body.seasonName,
       seasonNumber: Number(body.seasonNumber ?? 1),
       contestSlug: typeof body.contestSlug === 'string' ? body.contestSlug : 'reality-tv-show',

@@ -7,6 +7,7 @@ import React from 'react';
 import { View, Text, StyleSheet, ScrollView, Pressable, ActivityIndicator, RefreshControl } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import { ArrowLeft, ShieldAlert, TrendingUp, Wallet, Info, Lock } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
@@ -28,7 +29,7 @@ export default function AiTradingHome() {
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
       <View style={styles.topBar}>
-        <Pressable onPress={() => router.back()} hitSlop={12} accessibilityLabel="Back"><ArrowLeft size={22} color={Colors.onSurface} /></Pressable>
+        <Pressable onPress={() => goBack('/')} hitSlop={12} accessibilityLabel="Back"><ArrowLeft size={22} color={Colors.onSurface} /></Pressable>
         <Text style={styles.topTitle}>AI Trading</Text>
         <View style={{ width: 22 }} />
       </View>

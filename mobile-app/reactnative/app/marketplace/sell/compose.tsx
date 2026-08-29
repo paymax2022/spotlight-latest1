@@ -16,6 +16,10 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { View, Text, ScrollView, StyleSheet, Pressable, TextInput, Image, Switch } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
+// Aliased: this screen already has a local `goBack` that steps back through
+// the wizard. Without the alias my call sites resolved to THAT function and
+// recursed into it with an argument it does not take.
+import { goBack as leaveScreen } from '@/lib/navigation';
 import * as ImagePicker from 'expo-image-picker';
 import { ArrowLeft, Camera, ImagePlus, CheckCircle2, ShieldCheck, Truck, MapPin, Handshake } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
@@ -238,7 +242,7 @@ export default function SellWizard() {
   const goBack = () => {
     const order: Step[] = ['capture', 'composer', 'attributes', 'price', 'preview'];
     const i = order.indexOf(step);
-    if (i <= 0) { router.back(); return; }
+    if (i <= 0) { leaveScreen('/marketplace/sell'); return; }
     setStep(order[i - 1]);
   };
 

@@ -3,6 +3,7 @@ import PhoneNumberInput from '@/components/PhoneNumberInput';
 import { ScrollView, View, Text, Pressable, StyleSheet, KeyboardAvoidingView, Platform } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import { Camera } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
@@ -32,7 +33,7 @@ export default function ProfileSettings() {
           <TextInputField label="Email address" value={email} onChangeText={setEmail} keyboardType="email-address" autoCapitalize="none" />
         </ScrollView>
         <View style={styles.footer}>
-          <PrimaryButton label="Save changes" onPress={() => router.back()} />
+          <PrimaryButton label="Save changes" onPress={() => goBack('/crowdfunding/settings')} />
         </View>
       </KeyboardAvoidingView>
     </SafeAreaView>

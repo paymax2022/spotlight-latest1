@@ -1,9 +1,9 @@
-import { env } from '@/config/env';
+import { apiV1 } from '@/config/env';
 import type { AdminMenuCounts } from '@/types/admin';
 
 export async function getAdminMenuCounts(): Promise<AdminMenuCounts | null> {
   try {
-    const response = await fetch(`${env.apiBaseUrl}/admin/menu-counts`, {
+    const response = await fetch(`${apiV1()}/admin/menu-counts`, {
       method: 'GET',
       credentials: 'include',
       cache: 'no-store',

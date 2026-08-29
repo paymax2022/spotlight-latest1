@@ -149,6 +149,9 @@ export interface ContestRegistrationDefinition {
   auditionStates?: string[];
   applicantCategories?: string[];
   categoryQuestionSet: ContestCategory;
+  // Contest-specific voting rules/policies text shown on the mobile contest
+  // details screen, above the platform's default rules sections.
+  rulesText?: string;
   // Optional admin-defined form mapping. When present the contestant form is
   // built from this schema; when absent the contest falls back to its tailored
   // code template (forms/<slug>.ts) or the capability-driven default.

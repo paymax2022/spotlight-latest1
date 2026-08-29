@@ -6,16 +6,31 @@
 // Money is BIGINT kobo (minor units). Balances are ledger projections (NL-8);
 // every approval / offline decision / member action is recorded to audit (NL-12).
 
-import { env } from '@/config/env';
+import { apiRoot } from '@/config/env';
+import { resolveUseMock } from '@/config/useMock';
 
-const USE_MOCK = (process.env.NEXT_PUBLIC_ASSOCIATION_ADMIN_USE_MOCK ?? 'true').toLowerCase() !== 'false';
+// Migrated to resolveUseMock now that the Go endpoints are confirmed live
+// (backend/internal/association, registered at /api/finance/associations —
+// see routes.go). The old inline check defaulted to MOCK unless someone
+// remembered to set the flag, which is why this console showed fixtures with
+// nothing to indicate it.
+const USE_MOCK = resolveUseMock(process.env.NEXT_PUBLIC_ASSOCIATION_ADMIN_USE_MOCK);
 
 // /api/finance/associations/admin — approvals, finance, offline decisions,
 // member actions, import, audit-log all live under this admin sub-group
 // (routes.go: rg.GET("/admin/kpis") etc., where rg is already the
 // /api/finance/associations group).
+//
+// apiRoot() strips a trailing /api/v1 (if present) before appending the
+// module's absolute path — same shape crowdfundingAdminService uses. This
+// used to REPLACE /api/v1 with the module path directly on env.apiBaseUrl,
+// which silently produced a base with no module prefix at all once
+// env.apiBaseUrl became the same-origin proxy path (<origin>/api/admin-proxy,
+// no /api/v1 suffix): the regex no longer matched, so every call went to
+// <proxy>/kpis instead of <proxy>/api/finance/associations/admin/kpis, and
+// 404'd — the exact regression apiRoot()'s own doc comment describes.
 function adminBase(): string {
-  return env.apiBaseUrl.replace(/\/api\/v1\/?$/, '/api/finance/associations/admin');
+  return `${apiRoot()}/api/finance/associations/admin`;
 }
 // /api/finance/associations — the module root. The member DIRECTORY reads
 // (GET /members, GET /members/:id) are registered directly on the module
@@ -23,7 +38,7 @@ function adminBase(): string {
 // non-admin base. Member ACTIONS (suspend/restore/transfer/role) ARE under
 // /admin/members/:id/* (routes.go lines 79-88) — those use adminBase().
 function moduleBase(): string {
-  return env.apiBaseUrl.replace(/\/api\/v1\/?$/, '/api/finance/associations');
+  return `${apiRoot()}/api/finance/associations`;
 }
 function authHeaders(): Record<string, string> {
   if (typeof window === 'undefined') return {};
@@ -41,6 +56,47 @@ function newIdempotencyKey(): string {
   return `assoc-admin-${Date.now()}-${Math.random().toString(36).slice(2, 12)}`;
 }
 const delay = (ms = 240) => new Promise((r) => setTimeout(r, ms));
+
+// ── Org picker ───────────────────────────────────────────────────────────────
+// Every admin read below is scoped to ONE association organisation
+// (backend/internal/association/service.go resolveOrgID). A real per-org
+// officer using the mobile in-app admin surface never needs this — the
+// backend falls back to their own membership when org_id is omitted. The
+// platform console has no such membership, so it must always pass one
+// explicitly; this module-level singleton (backed by localStorage so it
+// survives navigation between the seven association admin pages) is that
+// selection. useSelectedOrg() in _ui.tsx is the React-facing wrapper.
+const ORG_STORAGE_KEY = 'association_admin_selected_org';
+let selectedOrgId: string | null = null;
+let orgHydrated = false;
+const orgListeners = new Set<(id: string | null) => void>();
+
+export function getSelectedOrgId(): string | null {
+  if (!orgHydrated) {
+    orgHydrated = true;
+    if (typeof window !== 'undefined') selectedOrgId = localStorage.getItem(ORG_STORAGE_KEY);
+  }
+  return selectedOrgId;
+}
+export function setSelectedOrgId(id: string | null): void {
+  selectedOrgId = id;
+  orgHydrated = true;
+  if (typeof window !== 'undefined') {
+    if (id) localStorage.setItem(ORG_STORAGE_KEY, id);
+    else localStorage.removeItem(ORG_STORAGE_KEY);
+  }
+  orgListeners.forEach((fn) => fn(id));
+}
+export function onSelectedOrgChange(fn: (id: string | null) => void): () => void {
+  orgListeners.add(fn);
+  return () => orgListeners.delete(fn);
+}
+/** Merge org_id (if one is selected) into an existing query string. */
+function withOrg(qs: URLSearchParams): URLSearchParams {
+  const id = getSelectedOrgId();
+  if (id) qs.set('org_id', id);
+  return qs;
+}
 
 async function getJson<T>(path: string, base: 'admin' | 'module' = 'admin'): Promise<T> {
   const root = base === 'admin' ? adminBase() : moduleBase();
@@ -82,132 +138,135 @@ const iso = (hoursAgo: number) => new Date(Date.now() - hoursAgo * 3_600_000).to
 const dateStr = (daysAgo: number) => new Date(Date.now() - daysAgo * 86_400_000).toISOString().slice(0, 10);
 
 // ── Types ────────────────────────────────────────────────────────────────────
-export interface AssociationKpis {
-  associations_total: number;
-  members_total: number;
-  members_active: number;
-  members_suspended: number;
-  dues_outstanding_kobo: number;
-  dues_collected_30d_kobo: number;
-  approvals_pending: number;
-  offline_payments_pending: number;
-  activity: { id: string; kind: string; label: string; ref?: string | null; created_at: string }[];
+
+/** One entry in the org picker — see ListAdminOrganisations (routes.go). */
+export interface AdminOrgOption {
+  id: string;
+  name: string;
+  published: boolean;
+  verified: boolean;
+  memberCount: number;
 }
 
-export type ApprovalStatus = 'pending' | 'approved' | 'rejected';
+// Mirrors the real Go AdminKpis struct field-for-field (service.go GetAdminKpis) —
+// scoped to ONE organisation (the org picker's selection), not a platform-wide
+// total. There is no "associations_total" or activity-feed concept at this
+// level; the dashboard page reads recent activity from listAuditLog() instead,
+// which already has a real backend behind it.
+export interface AssociationKpis {
+  totalMembers: number;
+  activeMembers: number;
+  pendingApprovals: number;
+  unpaidMembers: number;
+  duesCollectedKobo: number;
+  duesOutstandingKobo: number;
+}
+
+// Mirrors the real Go AdminApplicationSummary field-for-field (model.go).
+// There is no per-application "association_name" or "membership_tier" —
+// category/chapter/jurisdiction are what the backend actually tracks, and
+// the queue is already scoped to one org (the org picker's selection).
+export type ApprovalStatus = 'PENDING' | 'PENDING_CHAPTER' | 'PENDING_NATIONAL' | 'INFO_REQUESTED' | 'APPROVED' | 'REJECTED';
 export interface ApprovalRecord {
   id: string;
-  association_name: string;
-  applicant_masked: string;
-  membership_tier: string;
-  submitted_at: string;
+  applicantName: string;
+  category: string;
+  chapter: string;
+  submittedAt: string;
   status: ApprovalStatus;
+  jurisdiction: string;
+  paid: boolean;
 }
+// Backend ApprovalDecisionRequest.Decision is APPROVE | REJECT | REQUEST_INFO
+// (model.go) — the console only offers the two-button approve/reject flow.
 export type ApprovalDecision = 'approve' | 'reject';
-export interface ApprovalDecisionResult { id: string; status: ApprovalStatus; audit_id: string; message: string; }
-
-export interface AssociationFinance {
-  dues_outstanding_kobo: number;
-  dues_collected_30d_kobo: number;
-  offline_pending_kobo: number;
-  online_collected_30d_kobo: number;
-}
-export type OfflineStatus = 'pending' | 'approved' | 'rejected';
-export interface OfflinePayment {
-  id: string;
-  association_name: string;
-  member_masked: string;
-  amount_kobo: number;
-  method: string;
-  reference: string;
-  status: OfflineStatus;
-  submitted_at: string;
-}
-export type OfflineDecision = 'approve' | 'reject';
-export interface OfflineDecisionResult { id: string; status: OfflineStatus; audit_id: string; message: string; }
 
 // ── KPIs / dashboard ─────────────────────────────────────────────────────────
 const KPIS: AssociationKpis = {
-  associations_total: 86,
-  members_total: 12_440,
-  members_active: 11_680,
-  members_suspended: 92,
-  dues_outstanding_kobo: 18_900_000_00,
-  dues_collected_30d_kobo: 64_200_000_00,
-  approvals_pending: 23,
-  offline_payments_pending: 11,
-  activity: [
-    { id: 'ev1', kind: 'approved', label: 'Membership application approved', ref: 'app_551', created_at: iso(0.5) },
-    { id: 'ev2', kind: 'pending', label: 'Offline bank-transfer payment submitted for review', ref: 'off_204', created_at: iso(1.5) },
-    { id: 'ev3', kind: 'suspended', label: 'Member suspended for dues default', ref: 'mem_9981', created_at: iso(4) },
-  ],
+  totalMembers: 12_440,
+  activeMembers: 11_680,
+  pendingApprovals: 23,
+  unpaidMembers: 340,
+  duesCollectedKobo: 64_200_000_00,
+  duesOutstandingKobo: 18_900_000_00,
 };
 export async function getAssociationKpis(): Promise<AssociationKpis> {
-  if (USE_MOCK) { await delay(); return { ...KPIS, activity: [...KPIS.activity] }; }
-  return getJson<AssociationKpis>('/kpis');
+  if (USE_MOCK) { await delay(); return { ...KPIS }; }
+  return getJson<AssociationKpis>(`/kpis?${withOrg(new URLSearchParams())}`);
 }
 
 // ── Approvals ────────────────────────────────────────────────────────────────
 const APPROVALS: ApprovalRecord[] = [
-  { id: 'app_551', association_name: 'Lagos Traders Union', applicant_masked: 'Chioma A•••', membership_tier: 'Standard', submitted_at: iso(6), status: 'pending' },
-  { id: 'app_549', association_name: 'Tech Founders Guild', applicant_masked: 'Tunde B•••', membership_tier: 'Premium', submitted_at: iso(20), status: 'pending' },
-  { id: 'app_540', association_name: 'Market Women Co-op', applicant_masked: 'Aisha M•••', membership_tier: 'Standard', submitted_at: iso(72), status: 'approved' },
+  { id: 'app_551', applicantName: 'Chioma Adeyemi', category: 'Standard', chapter: 'Lagos Chapter', submittedAt: iso(6), status: 'PENDING', jurisdiction: 'LAGOS', paid: true },
+  { id: 'app_549', applicantName: 'Tunde Balogun', category: 'Premium', chapter: 'Abuja Chapter', submittedAt: iso(20), status: 'PENDING', jurisdiction: 'ABUJA', paid: false },
+  { id: 'app_540', applicantName: 'Aisha Mohammed', category: 'Standard', chapter: 'Kano Chapter', submittedAt: iso(72), status: 'PENDING_NATIONAL', jurisdiction: 'KANO', paid: true },
 ];
-export async function listApprovals(opts?: { status?: string }): Promise<ApprovalRecord[]> {
-  if (USE_MOCK) {
-    await delay();
-    let rows = [...APPROVALS];
-    if (opts?.status) rows = rows.filter((a) => a.status === opts.status);
-    return rows;
-  }
-  const qs = new URLSearchParams();
-  if (opts?.status) qs.set('status', opts.status);
-  return getJson<ApprovalRecord[]>(`/approvals${qs.toString() ? `?${qs}` : ''}`);
+// The backend never accepts a status filter (GetApprovalQueue hardcodes
+// PENDING/PENDING_CHAPTER/PENDING_NATIONAL/INFO_REQUESTED) — it's already a
+// pending-only action queue, not a full history. jurisdiction is the one
+// filter it does support.
+export async function listApprovals(opts?: { jurisdiction?: string }): Promise<ApprovalRecord[]> {
+  if (USE_MOCK) { await delay(); return [...APPROVALS]; }
+  const qs = withOrg(new URLSearchParams());
+  if (opts?.jurisdiction) qs.set('jurisdiction', opts.jurisdiction);
+  return getJson<ApprovalRecord[]>(`/approvals?${qs}`);
 }
-export async function decideApplication(id: string, decision: ApprovalDecision, note?: string): Promise<ApprovalDecisionResult> {
-  if (USE_MOCK) {
-    await delay();
-    return { id, status: decision === 'approve' ? 'approved' : 'rejected', audit_id: `aud_${Math.random().toString(36).slice(2, 10)}`, message: `Application ${id}: ${decision} recorded to immutable audit (NL-12).` };
-  }
-  return sendJson<ApprovalDecisionResult>('POST', `/approvals/${id}/decision`, { decision, note });
+export async function decideApplication(id: string, decision: ApprovalDecision, note?: string): Promise<{ ok: boolean }> {
+  if (USE_MOCK) { await delay(); return { ok: true }; }
+  return sendJson<{ ok: boolean }>('POST', `/approvals/${id}/decision`, { decision: decision === 'approve' ? 'APPROVE' : 'REJECT', note });
 }
 
 // ── Finance + offline payments ───────────────────────────────────────────────
+// Mirrors the real Go FinanceSummary / OfflinePayment structs field-for-field
+// (model.go) — scoped to one org, no "association_name" per row.
+export interface AssociationFinance {
+  collectedKobo: number;
+  outstandingKobo: number;
+  paidMembers: number;
+  unpaidMembers: number;
+  offlinePending: number;
+}
+export interface OfflinePayment {
+  id: string;
+  memberName: string;
+  memberId: string;
+  amountKobo: number;
+  method: string;
+  reference: string;
+  forItem: string;
+  submittedAt: string;
+  status: string;
+}
+
 const FINANCE: AssociationFinance = {
-  dues_outstanding_kobo: 18_900_000_00,
-  dues_collected_30d_kobo: 64_200_000_00,
-  offline_pending_kobo: 2_400_000_00,
-  online_collected_30d_kobo: 61_800_000_00,
+  collectedKobo: 64_200_000_00,
+  outstandingKobo: 18_900_000_00,
+  paidMembers: 11_340,
+  unpaidMembers: 340,
+  offlinePending: 11,
 };
 export async function getAssociationFinance(): Promise<AssociationFinance> {
   if (USE_MOCK) { await delay(); return { ...FINANCE }; }
-  return getJson<AssociationFinance>('/finance');
+  return getJson<AssociationFinance>(`/finance?${withOrg(new URLSearchParams())}`);
 }
 
 const OFFLINE: OfflinePayment[] = [
-  { id: 'off_204', association_name: 'Lagos Traders Union', member_masked: 'Bola T•••', amount_kobo: 50_000_00, method: 'bank_transfer', reference: 'TRF-99201', status: 'pending', submitted_at: iso(3) },
-  { id: 'off_199', association_name: 'Tech Founders Guild', member_masked: 'Seun K•••', amount_kobo: 120_000_00, method: 'cash_deposit', reference: 'DEP-44120', status: 'pending', submitted_at: iso(10) },
-  { id: 'off_188', association_name: 'Market Women Co-op', member_masked: 'Funke A•••', amount_kobo: 20_000_00, method: 'bank_transfer', reference: 'TRF-88110', status: 'approved', submitted_at: iso(48) },
+  { id: 'off_204', memberName: 'Bola Thompson', memberId: 'LTU-2201', amountKobo: 50_000_00, method: 'bank_transfer', reference: 'TRF-99201', forItem: '2026 Annual Dues', submittedAt: iso(3), status: 'PENDING' },
+  { id: 'off_199', memberName: 'Seun Kolawole', memberId: 'TFG-0043', amountKobo: 120_000_00, method: 'cash_deposit', reference: 'DEP-44120', forItem: '2026 Annual Dues', submittedAt: iso(10), status: 'PENDING' },
 ];
-export async function listOfflinePayments(opts?: { status?: string }): Promise<OfflinePayment[]> {
-  if (USE_MOCK) {
-    await delay();
-    let rows = [...OFFLINE];
-    if (opts?.status) rows = rows.filter((o) => o.status === opts.status);
-    return rows;
-  }
-  const qs = new URLSearchParams();
-  if (opts?.status) qs.set('status', opts.status);
-  return getJson<OfflinePayment[]>(`/finance/offline${qs.toString() ? `?${qs}` : ''}`);
+// GetOfflinePayments hardcodes status='PENDING' — there is no status filter
+// to pass (an approved/rejected payment simply stops appearing here).
+export async function listOfflinePayments(): Promise<OfflinePayment[]> {
+  if (USE_MOCK) { await delay(); return [...OFFLINE]; }
+  return getJson<OfflinePayment[]>(`/finance/offline?${withOrg(new URLSearchParams())}`);
 }
-export async function decideOfflinePayment(id: string, decision: OfflineDecision, note?: string): Promise<OfflineDecisionResult> {
-  if (USE_MOCK) {
-    await delay();
-    return { id, status: decision === 'approve' ? 'approved' : 'rejected', audit_id: `aud_${Math.random().toString(36).slice(2, 10)}`, message: `Offline payment ${id}: ${decision}. ${decision === 'approve' ? 'Balanced ledger entry posted (NL-8).' : 'No funds moved.'} Recorded to audit (NL-12).` };
-  }
+export async function decideOfflinePayment(id: string, decision: ApprovalDecision, note?: string): Promise<{ ok: boolean }> {
+  if (USE_MOCK) { await delay(); return { ok: true }; }
   // Backend contract (handler_actions.go DecideOfflinePayment): POST body is
   // { approve: boolean }, keyed on Idempotency-Key (money path — NL-6/NL-8).
-  return sendJson<OfflineDecisionResult>('POST', `/finance/offline/${id}/decision`, { approve: decision === 'approve' }, { idempotent: true });
+  // note has nowhere to go on this endpoint — it isn't part of the request.
+  void note;
+  return sendJson<{ ok: boolean }>('POST', `/finance/offline/${id}/decision`, { approve: decision === 'approve' }, { idempotent: true });
 }
 
 // ── Members directory + detail + actions ────────────────────────────────────
@@ -269,12 +328,15 @@ export async function listMembers(filters?: MemberDirectoryFilters): Promise<Mem
     }
     return rows;
   }
-  const qs = new URLSearchParams();
+  const qs = withOrg(new URLSearchParams());
   if (filters?.search) qs.set('search', filters.search);
   if (filters?.chapterId) qs.set('chapterId', filters.chapterId);
   if (filters?.category) qs.set('category', filters.category);
   if (filters?.status) qs.set('status', filters.status);
-  // GET /members is on the module root, not /admin (routes.go line 30).
+  // GET /members is on the module root, not /admin (routes.go line 30). The
+  // org_id override is what makes this usable from the platform console at
+  // all — the endpoint's DEFAULT scoping is "orgs I actively belong to",
+  // which is empty for a platform admin (service.go GetDirectory).
   return getJson<MemberSummary[]>(`/members${qs.toString() ? `?${qs}` : ''}`, 'module');
 }
 
@@ -394,9 +456,32 @@ export async function listAuditLog(action?: string): Promise<AuditLogEntry[]> {
     await delay();
     return action ? MOCK_AUDIT_LOG.filter((e) => e.action === action) : [...MOCK_AUDIT_LOG];
   }
-  const qs = new URLSearchParams();
+  const qs = withOrg(new URLSearchParams());
   if (action) qs.set('action', action);
-  return getJson<AuditLogEntry[]>(`/audit-log${qs.toString() ? `?${qs}` : ''}`);
+  return getJson<AuditLogEntry[]>(`/audit-log?${qs}`);
+}
+
+// ── Org picker ───────────────────────────────────────────────────────────────
+const MOCK_ORGS: AdminOrgOption[] = [
+  { id: 'org_ltu', name: 'Lagos Traders Union', published: true, verified: true, memberCount: 4820 },
+  { id: 'org_tfg', name: 'Tech Founders Guild', published: true, verified: true, memberCount: 1240 },
+  { id: 'org_mwc', name: 'Market Women Co-op', published: true, verified: false, memberCount: 6380 },
+];
+/**
+ * Feeds the org picker (see the "Org picker" comment above authHeaders).
+ * A platform super-admin gets every organisation; a real per-org officer
+ * gets only the org(s) they administer (backend/internal/association
+ * service.go ListAdminOrganisations).
+ */
+export async function listAdminOrganisations(search?: string): Promise<AdminOrgOption[]> {
+  if (USE_MOCK) {
+    await delay();
+    const q = (search || '').toLowerCase();
+    return q ? MOCK_ORGS.filter((o) => o.name.toLowerCase().includes(q)) : [...MOCK_ORGS];
+  }
+  const qs = new URLSearchParams();
+  if (search) qs.set('search', search);
+  return getJson<AdminOrgOption[]>(`/organisations${qs.toString() ? `?${qs}` : ''}`);
 }
 
 // ── Elections (TS-13 / AD-004/005) ───────────────────────────────────────────
@@ -466,7 +551,7 @@ function mockPositionResults(e: AdminElectionDetail): AdminPositionResult[] {
 
 export async function listElections(): Promise<AdminElectionSummary[]> {
   if (USE_MOCK) { await delay(); return mockElections.map(mockSummary); }
-  return getJson<AdminElectionSummary[]>('/elections', 'module');
+  return getJson<AdminElectionSummary[]>(`/elections?${withOrg(new URLSearchParams())}`, 'module');
 }
 export async function getElection(id: string): Promise<AdminElectionDetail> {
   if (USE_MOCK) {
@@ -496,7 +581,9 @@ export async function createElection(input: CreateElectionInput): Promise<{ id: 
     });
     return { id };
   }
-  return sendJson<{ id: string }>('POST', '/elections', input, { base: 'module' });
+  const orgId = getSelectedOrgId();
+  const qs = orgId ? `?org_id=${encodeURIComponent(orgId)}` : '';
+  return sendJson<{ id: string }>('POST', `/elections${qs}`, input, { base: 'module' });
 }
 export async function addElectionCandidate(id: string, input: { positionId: string; membershipId: string; manifesto?: string }): Promise<{ id: string }> {
   if (USE_MOCK) {

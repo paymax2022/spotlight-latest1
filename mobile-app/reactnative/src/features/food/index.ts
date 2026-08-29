@@ -3,6 +3,7 @@ export * from './types';
 export * from './hooks';
 export * from './utils';
 export { useOrderRealtime } from './useOrderRealtime';
+export { useRestaurantQueueRealtime } from './useRestaurantQueueRealtime';
 export {
   useCartStore,
   cartSubtotalKobo,

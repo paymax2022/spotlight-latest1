@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { ScrollView, View, Text, StyleSheet, KeyboardAvoidingView, Platform } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import { Check } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
@@ -37,7 +38,7 @@ export default function ChangePasswordScreen() {
     return (
       <SafeAreaView style={styles.safe} edges={['top']}>
         <ScreenHeader title="Password changed" showBack={false} />
-        <StateView kind="empty" icon="ShieldCheck" title="Password updated" message="Your password was changed successfully. Use it next time you sign in." actionLabel="Done" onAction={() => router.back()} />
+        <StateView kind="empty" icon="ShieldCheck" title="Password updated" message="Your password was changed successfully. Use it next time you sign in." actionLabel="Done" onAction={() => goBack('/crowdfunding/settings')} />
       </SafeAreaView>
     );
   }

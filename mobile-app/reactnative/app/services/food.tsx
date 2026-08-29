@@ -9,6 +9,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as Icons from 'lucide-react-native';
 import SearchBar from '@/components/SearchBar';
@@ -17,7 +18,9 @@ import { Radius } from '@/constants/radius';
 import { Spacing } from '@/constants/spacing';
 import { Typography } from '@/constants/typography';
 import { shadow1, shadow2 } from '@/constants/shadows';
-import { useRestaurants } from '@/features/food/hooks';
+import { useRestaurantSearch } from '@/features/food/hooks';
+import { useDebouncedValue } from '@/features/food/useDebouncedValue';
+import { useMyStores } from '@/features/restaurantmerchant/hooks';
 import { useCartStore, cartItemCount } from '@/features/food/cartStore';
 import { formatNairaWhole } from '@/features/food/utils';
 import type { Restaurant } from '@/features/food/types';
@@ -28,7 +31,7 @@ import type { Restaurant } from '@/features/food/types';
 // to render a hard-coded RESTAURANTS array whose ids ('1','2',…) matched nothing
 // real, and every card pushed a bare '/food' — so the tapped restaurant was
 // silently discarded and you always landed on the generic list. It now reads the
-// same live `useRestaurants()` query the /food discovery screen uses, so the
+// same live paged query the /food discovery screen uses, so the
 // cards are real and deep-link to the right store.
 
 const CUISINE_FILTERS = [
@@ -53,7 +56,7 @@ const CATEGORIES = [
   { id: 'orders',    label: 'My Orders',  icon: 'ReceiptText', accent: Colors.primary,    bg: Colors.iconBgPurple,        href: '/food/orders' },
 ] as const;
 
-// The restaurant list is now fetched live via useRestaurants() in the component
+// The restaurant list is fetched live and PAGED via useRestaurantSearch() in the component
 // below. The former hard-coded RESTAURANTS array lived here.
 
 // ── Sub-components ──────────────────────────────────────────────────────────
@@ -182,39 +185,88 @@ const rc = StyleSheet.create({
   closed:   { ...Typography.labelSm, color: Colors.error },
 });
 
+/**
+ * The merchant's way in.
+ *
+ * The owner console (create store, menu, hours, earnings, staff) has existed at
+ * /food/restaurant/* the whole time, but nothing in the Food module linked to
+ * it — you had to already know the route. So every screen here was
+ * customer-only, and a restaurateur had no path from "I want to sell" to the
+ * create-store form.
+ *
+ * One card, two states, driven by whether the signed-in user already owns a
+ * store: create, or jump straight into managing what they run. While the lookup
+ * is in flight the card renders nothing rather than flashing the wrong label at
+ * an owner.
+ */
+function MerchantEntryCard() {
+  const { data: stores, isLoading } = useMyStores();
+  if (isLoading) return null;
+
+  const owned = stores ?? [];
+  const hasStore = owned.length > 0;
+  const subtitle = hasStore
+    ? owned.length === 1
+      ? owned[0].name
+      : `${owned.length} outlets`
+    : 'Create your store and start receiving orders';
+
+  return (
+    <Pressable
+      onPress={() => router.push(hasStore ? '/food/restaurant' : '/food/restaurant/manage')}
+      style={({ pressed }) => [s.merchantCard, shadow1, pressed && { opacity: 0.85 }]}
+      accessibilityRole="button"
+      accessibilityLabel={hasStore ? 'Open your restaurant dashboard' : 'Create your restaurant'}
+    >
+      <View style={s.merchantIcon}>
+        <Icons.Store size={20} color={Colors.primary} strokeWidth={2} />
+      </View>
+      <View style={{ flex: 1 }}>
+        <Text style={s.merchantTitle}>{hasStore ? 'Your restaurant' : 'Sell on Paymax Food'}</Text>
+        <Text style={s.merchantSubtitle} numberOfLines={1}>{subtitle}</Text>
+      </View>
+      <Icons.ChevronRight size={16} color={Colors.outline} strokeWidth={2} />
+    </Pressable>
+  );
+}
+
 // ── Main screen ─────────────────────────────────────────────────────────────
 
 export default function FoodScreen() {
   const [cuisine, setCuisine] = useState<Cuisine>('all');
   const [search, setSearch]   = useState('');
 
-  const { data: restaurants, isLoading, isError, refetch } = useRestaurants();
   const packages = useCartStore((st) => st.packages);
   const cartCount = cartItemCount(packages);
 
-  const query = search.trim().toLowerCase();
+  const query = search.trim();
+  const debouncedQuery = useDebouncedValue(query);
 
-  // Name/tag search only. Dish-level search is deliberately NOT done here: the
-  // list endpoint returns no menu, so matching dishes would need one detail
-  // fetch per restaurant. The previous hard-coded `menuItems` arrays made it
-  // look like dish search worked when it was only ever matching a copy of the
-  // mock menu. Dish search belongs on the server (backend/internal/restaurant/
-  // search.go exists for exactly this) — see the note in the module summary.
-  const filtered = (restaurants ?? []).filter((r) => {
-    const matchesCuisine = cuisine === 'all' || r.cuisine === cuisine;
-    if (!matchesCuisine) return false;
-    if (!query) return true;
-    return (
-      r.name.toLowerCase().includes(query) ||
-      r.tags.some((t) => t.toLowerCase().includes(query))
-    );
-  });
+  // Search and the cuisine chips are SERVER params now. They used to run over an
+  // in-memory copy of every open restaurant — 2,016 rows, one card each, which
+  // is what made this screen cost ~48k DOM nodes to render. Filtering only the
+  // rows already downloaded was never an option: a search would then match
+  // whichever page happened to have loaded.
+  //
+  // Still name/description/cuisine, not dishes. Dish-level search exists in
+  // backend/internal/restaurant/search.go but is not yet routed; when it is,
+  // this call is the place it lands.
+  const {
+    items: filtered,
+    total,
+    isLoading,
+    isError,
+    refetch,
+    fetchNextPage,
+    hasNextPage,
+    isFetchingNextPage,
+  } = useRestaurantSearch({ q: debouncedQuery, cuisine: cuisine === 'all' ? '' : cuisine });
 
   return (
     <SafeAreaView style={s.safe} edges={['top']}>
       {/* Top bar */}
       <View style={s.topBar}>
-        <Pressable onPress={() => router.back()} style={s.iconButton} accessibilityRole="button" accessibilityLabel="Go back">
+        <Pressable onPress={() => goBack('/services')} style={s.iconButton} accessibilityRole="button" accessibilityLabel="Go back">
           <Icons.ArrowLeft size={22} color={Colors.primary} strokeWidth={2.2} />
         </Pressable>
         <Text style={s.topTitle}>Food & Delivery</Text>
@@ -287,6 +339,9 @@ export default function FoodScreen() {
           ))}
         </View>
 
+        {/* Merchant entry point — see MerchantEntryCard. */}
+        <MerchantEntryCard />
+
         {/* Cuisine filter chips */}
         <ScrollView
           horizontal
@@ -311,7 +366,11 @@ export default function FoodScreen() {
             {cuisine === 'all' ? 'All Restaurants' : CUISINE_FILTERS.find((f) => f.key === cuisine)?.label}
           </Text>
           <Text style={s.sectionMeta}>
-            {isLoading ? '…' : `${filtered.filter((r) => r.isOpen).length} open`}
+            {isLoading
+              ? '…'
+              : filtered.length < total
+                ? `${filtered.length} of ${total.toLocaleString('en-NG')}`
+                : `${total.toLocaleString('en-NG')} open`}
           </Text>
         </View>
 
@@ -327,18 +386,35 @@ export default function FoodScreen() {
             </View>
           ) : filtered.length === 0 ? (
             <Text style={s.empty}>
-              {query ? `No restaurants match "${search}"` : 'No restaurants available yet.'}
+              {debouncedQuery ? `No restaurants match "${debouncedQuery}"` : 'No restaurants available yet.'}
             </Text>
           ) : (
-            filtered.map((item) => (
-              <RestaurantCard
-                key={item.id}
-                item={item}
-                // Deep-link to the tapped store. The old handler pushed a bare
-                // '/food', throwing the id away.
-                onPress={() => router.push(`/food/restaurant/${item.id}`)}
-              />
-            ))
+            <>
+              {filtered.map((item) => (
+                <RestaurantCard
+                  key={item.id}
+                  item={item}
+                  // Deep-link to the tapped store. The old handler pushed a bare
+                  // '/food', throwing the id away.
+                  onPress={() => router.push(`/food/restaurant/${item.id}`)}
+                />
+              ))}
+              {hasNextPage ? (
+                <Pressable
+                  onPress={() => fetchNextPage()}
+                  disabled={isFetchingNextPage}
+                  style={({ pressed }) => [s.loadMore, pressed && { opacity: 0.85 }, isFetchingNextPage && { opacity: 0.6 }]}
+                  accessibilityRole="button"
+                  accessibilityLabel="Load more restaurants"
+                >
+                  <Text style={s.loadMoreLabel}>
+                    {isFetchingNextPage
+                      ? 'Loading…'
+                      : `Load more (${(total - filtered.length).toLocaleString('en-NG')} left)`}
+                  </Text>
+                </Pressable>
+              ) : null}
+            </>
           )}
         </View>
       </ScrollView>
@@ -444,6 +520,39 @@ const s = StyleSheet.create({
   chipLabel:       { ...Typography.labelMd, color: Colors.onSurfaceVariant },
   chipLabelActive: { color: Colors.white },
   list:  { paddingHorizontal: Spacing.containerMargin, paddingTop: Spacing.sm },
+  loadMore: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: Spacing.md,
+    borderRadius: Radius.lg,
+    borderWidth: 1,
+    borderColor: Colors.outlineVariant,
+    backgroundColor: Colors.surfaceContainerLowest,
+    marginBottom: Spacing.md,
+  },
+  loadMoreLabel: { ...Typography.labelMd, color: Colors.primary },
+  merchantCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.md,
+    marginHorizontal: Spacing.containerMargin,
+    marginTop: Spacing.md,
+    padding: Spacing.md,
+    borderRadius: Radius.lg,
+    borderWidth: 1,
+    borderColor: Colors.surfaceContainerHigh,
+    backgroundColor: Colors.surfaceContainerLowest,
+  },
+  merchantIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: Radius.md,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: Colors.iconBgPurple,
+  },
+  merchantTitle: { ...Typography.labelLg, color: Colors.onSurface },
+  merchantSubtitle: { ...Typography.labelSm, color: Colors.onSurfaceVariant, marginTop: 2 },
   empty: { ...Typography.bodyMd, color: Colors.outline, textAlign: 'center', marginTop: Spacing.xxl },
   errorBox: { alignItems: 'center', gap: Spacing.sm },
   retry: { ...Typography.labelLg, color: Colors.primary },

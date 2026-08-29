@@ -5,6 +5,7 @@ import React, { useState } from 'react';
 import { View, Text, StyleSheet, ScrollView, Pressable, TextInput } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import { ArrowLeft, Info } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
@@ -31,7 +32,7 @@ export default function RedeemScreen() {
     try {
       const r = await redeem.mutateAsync(units);
       await alertAsync({ title: 'Withdrawal submitted', message: `${formatNaira(r.cashKobo)} paid to your Paymax wallet at ${formatNaira(r.navPerUnitKobo)} / unit.`, buttonLabel: 'Done' });
-      router.back();
+      goBack('/ai-trading');
     } catch (e) {
       alertAsync({ title: 'Could not withdraw', message: e instanceof Error ? e.message : 'Please try again.' });
     }
@@ -40,7 +41,7 @@ export default function RedeemScreen() {
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
       <View style={styles.topBar}>
-        <Pressable onPress={() => router.back()} hitSlop={12} accessibilityLabel="Back"><ArrowLeft size={22} color={Colors.onSurface} /></Pressable>
+        <Pressable onPress={() => goBack('/ai-trading')} hitSlop={12} accessibilityLabel="Back"><ArrowLeft size={22} color={Colors.onSurface} /></Pressable>
         <Text style={styles.topTitle}>Withdraw</Text>
         <View style={{ width: 22 }} />
       </View>

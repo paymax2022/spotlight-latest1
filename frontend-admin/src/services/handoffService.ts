@@ -1,4 +1,4 @@
-import { env } from '@/config/env';
+import { apiV1 } from '@/config/env';
 import type { HandoffRow } from '@/types/handoff';
 
 function adminHeaders() {
@@ -7,7 +7,7 @@ function adminHeaders() {
 }
 
 export async function listHandoffs(limit = 200, sessionId = '', status = ''): Promise<HandoffRow[]> {
-  const url = new URL(`${env.apiBaseUrl}/admin/handoffs`);
+  const url = new URL(`${apiV1()}/admin/handoffs`);
   url.searchParams.set('limit', String(limit));
   if (sessionId.trim()) url.searchParams.set('sessionId', sessionId.trim());
   if (status.trim()) url.searchParams.set('status', status.trim());
@@ -23,7 +23,7 @@ export async function listHandoffs(limit = 200, sessionId = '', status = ''): Pr
 }
 
 export async function updateHandoffStatus(id: string, status: string): Promise<boolean> {
-  const res = await fetch(`${env.apiBaseUrl}/admin/handoffs/${encodeURIComponent(id)}`, {
+  const res = await fetch(`${apiV1()}/admin/handoffs/${encodeURIComponent(id)}`, {
     method: 'PATCH',
     credentials: 'include',
     headers: adminHeaders(),

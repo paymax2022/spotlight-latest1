@@ -14,7 +14,11 @@ import { NextResponse } from 'next/server';
  */
 export const dynamic = 'force-dynamic';
 
-const ADMIN_API_BASE_URL = process.env.ADMIN_API_BASE_URL || 'http://localhost:8080/api/v1';
+// The backend ROOT — no /api/v1 suffix. Callers spell out the full backend path
+// (/api/finance/..., /api/crowdfunding/..., /api/v1/admin/...), because the backend
+// mounts modules at several roots and no single prefix covers them all. A base that
+// ended in /api/v1 silently 404'd every module not mounted under it.
+const ADMIN_API_BASE_URL = process.env.ADMIN_API_BASE_URL || 'http://localhost:8080';
 const TIMEOUT_MS = Number(process.env.ADMIN_PROXY_TIMEOUT_MS ?? 20_000);
 
 async function forward(request: Request, ctx: { params: Promise<{ path: string[] }> }) {

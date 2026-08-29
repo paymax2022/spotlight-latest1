@@ -255,18 +255,16 @@ func (s *Service) UpdateProfile(ctx context.Context, userID string, in UpdatePro
 
 // ── Admin: audit log ──────────────────────────────────────────────────────────
 
-// GetAuditLog returns recent audit entries scoped to the admin's organisation
-// (plus org-less entries the admin actioned), optionally filtered by action.
-func (s *Service) GetAuditLog(ctx context.Context, adminID, action string) ([]AuditLogEntry, error) {
+// GetAuditLog returns recent audit entries scoped to the resolved org (see
+// resolveOrgID; plus org-less entries the admin actioned), optionally
+// filtered by action.
+func (s *Service) GetAuditLog(ctx context.Context, adminID, action, orgIDOverride string) ([]AuditLogEntry, error) {
 	if err := s.requireAssocAdmin(ctx, adminID); err != nil {
 		return nil, err
 	}
-	var orgID string
-	if err := s.db.QueryRow(ctx, `
-		SELECT m.organisation_id FROM assoc_member_roles r
-		JOIN assoc_memberships m ON m.id=r.membership_id
-		WHERE m.user_id=$1 LIMIT 1`, adminID).Scan(&orgID); err != nil {
-		return nil, fmt.Errorf("association: admin org: %w", err)
+	orgID, err := s.resolveOrgID(ctx, adminID, orgIDOverride)
+	if err != nil {
+		return nil, err
 	}
 	q := `
 		SELECT id, COALESCE(actor_id::text,''), action, COALESCE(subject_type,''),

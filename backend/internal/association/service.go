@@ -599,8 +599,34 @@ func (s *Service) GetAdminAccess(ctx context.Context, userID string) (*AdminAcce
 	}, nil
 }
 
+// isPlatformSuperAdmin mirrors user_has_permission()'s hard-coded bypass
+// (20260527100000_enterprise_auth_rbac.sql): any user holding the platform
+// public.roles 'super-admin' role passes ANY permission check regardless of
+// association-specific role rows. Without this, the platform admin console
+// (which authenticates via platform RBAC, not assoc_member_roles) has no way
+// to reach association admin data at all — every association operator is
+// scoped to organisations they personally joined as a member, which is the
+// right model for association self-governance but wrong for the ops console
+// this function backs.
+func (s *Service) isPlatformSuperAdmin(ctx context.Context, userID string) bool {
+	var ok bool
+	if err := s.db.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM public.user_roles ur
+			JOIN public.roles r ON r.id = ur.role_id
+			WHERE ur.user_id = $1 AND ur.is_active = true AND r.is_active = true
+				AND r.slug = 'super-admin' AND (ur.expires_at IS NULL OR ur.expires_at > now())
+		)`, userID).Scan(&ok); err != nil {
+		return false
+	}
+	return ok
+}
+
 // requireAssocAdmin checks that the caller holds an admin role; returns ErrForbidden otherwise.
 func (s *Service) requireAssocAdmin(ctx context.Context, userID string) error {
+	if s.isPlatformSuperAdmin(ctx, userID) {
+		return nil
+	}
 	var count int
 	if err := s.db.QueryRow(ctx, `
 		SELECT count(*) FROM assoc_member_roles r
@@ -615,6 +641,9 @@ func (s *Service) requireAssocAdmin(ctx context.Context, userID string) error {
 // requested capability is set. Returns ErrForbidden when not an admin or when
 // the role lacks the capability.
 func (s *Service) requireCap(ctx context.Context, userID string, check func(AdminCapabilities) bool) error {
+	if s.isPlatformSuperAdmin(ctx, userID) {
+		return nil
+	}
 	const q = `
 		SELECT r.role FROM assoc_member_roles r
 		JOIN assoc_memberships m ON m.id = r.membership_id
@@ -662,6 +691,9 @@ func capabilitiesFor(role string) AdminCapabilities {
 func (s *Service) requireCapInOrg(ctx context.Context, userID, orgID string, check func(AdminCapabilities) bool) error {
 	if orgID == "" {
 		return ErrForbidden
+	}
+	if s.isPlatformSuperAdmin(ctx, userID) {
+		return nil
 	}
 	const q = `
 		SELECT r.role FROM assoc_member_roles r
@@ -740,11 +772,25 @@ func (s *Service) GetDirectory(ctx context.Context, userID string, q MemberDirec
 	}
 	// Cross-group isolation (DR-004 / GR-010): restrict to organisations where the
 	// caller holds an ACTIVE membership — a viewer never sees a foreign org's roll.
-	args = append(args, userID)
-	uidPos := len(args)
-	query += fmt.Sprintf(` AND m.organisation_id IN (SELECT organisation_id FROM assoc_memberships WHERE user_id=$%d AND status='ACTIVE')`, uidPos)
+	//
+	// The admin console's org picker overrides this with an explicit org_id
+	// instead — a platform admin has no ACTIVE membership of their own, so the
+	// default clause would always return empty for them. requireCapInOrg
+	// authorizes the override the same way every other admin mutation does
+	// (platform super-admin, or a real per-org admin role in that org).
+	if q.OrgID != "" {
+		if err := s.requireCapInOrg(ctx, userID, q.OrgID, func(AdminCapabilities) bool { return true }); err != nil {
+			return nil, err
+		}
+		args = append(args, q.OrgID)
+		query += fmt.Sprintf(` AND m.organisation_id=$%d`, len(args))
+	} else {
+		args = append(args, userID)
+		query += fmt.Sprintf(` AND m.organisation_id IN (SELECT organisation_id FROM assoc_memberships WHERE user_id=$%d AND status='ACTIVE')`, len(args))
+	}
 	// Respect the viewer's privacy: don't expose contact-restricted profiles to non-self.
-	query += fmt.Sprintf(` AND (mp.contact_restricted=false OR m.user_id=$%d)`, uidPos)
+	args = append(args, userID)
+	query += fmt.Sprintf(` AND (mp.contact_restricted=false OR m.user_id=$%d)`, len(args))
 	query += ` ORDER BY mp.full_name LIMIT 200`
 
 	rows, err := s.db.Query(ctx, query, args...)
@@ -1036,18 +1082,98 @@ func (s *Service) GetEvents(ctx context.Context, userID string) ([]EventSummary,
 
 // ── Admin reads ───────────────────────────────────────────────────────────────
 
-// GetAdminKpis returns high-level KPIs for the first org the admin manages.
-func (s *Service) GetAdminKpis(ctx context.Context, adminID string) (*AdminKpis, error) {
-	if err := s.requireAssocAdmin(ctx, adminID); err != nil {
-		return nil, err
+// resolveOrgID authorizes and resolves the organisation an admin console call
+// is scoped to. An explicit orgID (the frontend's org picker — see
+// ListAdminOrganisations) wins, after verifying the caller may act on it:
+// a platform super-admin may pick any org, and a real per-org officer may
+// only pick an org they hold a role in (requireCapInOrg, org-scoped, closes
+// the cross-org IDOR the same way every other admin mutation already does).
+//
+// An empty orgID falls back to the caller's own primary admin-org
+// membership — unchanged behavior for a real association officer using the
+// mobile in-app admin surface, which has no org picker in front of it and
+// only ever manages the one org they belong to.
+func (s *Service) resolveOrgID(ctx context.Context, adminID, orgID string) (string, error) {
+	if orgID != "" {
+		if err := s.requireCapInOrg(ctx, adminID, orgID, func(AdminCapabilities) bool { return true }); err != nil {
+			return "", err
+		}
+		return orgID, nil
 	}
-	// Scope to the admin's organisation.
-	var orgID string
+	var oid string
 	if err := s.db.QueryRow(ctx, `
 		SELECT m.organisation_id FROM assoc_member_roles r
 		JOIN assoc_memberships m ON m.id=r.membership_id
-		WHERE m.user_id=$1 LIMIT 1`, adminID).Scan(&orgID); err != nil {
-		return nil, fmt.Errorf("association: admin org: %w", err)
+		WHERE m.user_id=$1 LIMIT 1`, adminID).Scan(&oid); err != nil {
+		return "", fmt.Errorf("association: admin org: %w", err)
+	}
+	return oid, nil
+}
+
+// ListAdminOrganisations feeds the admin console's org picker. A platform
+// super-admin gets every organisation (optionally filtered by name search —
+// there is no per-org membership to narrow the set, and the table is large
+// enough in practice that an unfiltered call should still page reasonably);
+// a real per-org officer gets only the organisation(s) they hold an admin
+// role in, same as requireAssocAdmin/resolveOrgID's fallback path.
+func (s *Service) ListAdminOrganisations(ctx context.Context, adminID, search string) ([]AdminOrgOption, error) {
+	if err := s.requireAssocAdmin(ctx, adminID); err != nil {
+		return nil, err
+	}
+	var rows pgx.Rows
+	var err error
+	if s.isPlatformSuperAdmin(ctx, adminID) {
+		q := `
+			SELECT o.id, o.name, o.published, o.verified,
+			       (SELECT count(*) FROM assoc_memberships m WHERE m.organisation_id=o.id)
+			FROM assoc_organisations o`
+		args := []any{}
+		if search != "" {
+			args = append(args, "%"+search+"%")
+			q += ` WHERE o.name ILIKE $1`
+		}
+		q += ` ORDER BY o.created_at DESC LIMIT 100`
+		rows, err = s.db.Query(ctx, q, args...)
+	} else {
+		q := `
+			SELECT o.id, o.name, o.published, o.verified,
+			       (SELECT count(*) FROM assoc_memberships mm WHERE mm.organisation_id=o.id)
+			FROM assoc_organisations o
+			WHERE o.id IN (
+				SELECT am.organisation_id FROM assoc_member_roles ar
+				JOIN assoc_memberships am ON am.id=ar.membership_id
+				WHERE am.user_id=$1 AND ar.role != 'NONE')`
+		args := []any{adminID}
+		if search != "" {
+			args = append(args, "%"+search+"%")
+			q += fmt.Sprintf(` AND o.name ILIKE $%d`, len(args))
+		}
+		q += ` ORDER BY o.created_at DESC LIMIT 100`
+		rows, err = s.db.Query(ctx, q, args...)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("association: list orgs: %w", err)
+	}
+	defer rows.Close()
+	out := []AdminOrgOption{}
+	for rows.Next() {
+		var o AdminOrgOption
+		if err := rows.Scan(&o.ID, &o.Name, &o.Published, &o.Verified, &o.MemberCount); err != nil {
+			continue
+		}
+		out = append(out, o)
+	}
+	return out, rows.Err()
+}
+
+// GetAdminKpis returns high-level KPIs for the resolved org (see resolveOrgID).
+func (s *Service) GetAdminKpis(ctx context.Context, adminID, orgIDOverride string) (*AdminKpis, error) {
+	if err := s.requireAssocAdmin(ctx, adminID); err != nil {
+		return nil, err
+	}
+	orgID, err := s.resolveOrgID(ctx, adminID, orgIDOverride)
+	if err != nil {
+		return nil, err
 	}
 	var kpi AdminKpis
 	_ = s.db.QueryRow(ctx, `SELECT count(*) FROM assoc_memberships WHERE organisation_id=$1`, orgID).Scan(&kpi.TotalMembers)
@@ -1059,9 +1185,14 @@ func (s *Service) GetAdminKpis(ctx context.Context, adminID string) (*AdminKpis,
 	return &kpi, nil
 }
 
-// GetApprovalQueue returns applications awaiting the admin's decision.
-func (s *Service) GetApprovalQueue(ctx context.Context, adminID, jurisdiction string) ([]AdminApplicationSummary, error) {
+// GetApprovalQueue returns applications awaiting the admin's decision, scoped
+// to the resolved org (see resolveOrgID).
+func (s *Service) GetApprovalQueue(ctx context.Context, adminID, jurisdiction, orgIDOverride string) ([]AdminApplicationSummary, error) {
 	if err := s.requireAssocAdmin(ctx, adminID); err != nil {
+		return nil, err
+	}
+	orgID, err := s.resolveOrgID(ctx, adminID, orgIDOverride)
+	if err != nil {
 		return nil, err
 	}
 	q := `
@@ -1074,11 +1205,8 @@ func (s *Service) GetApprovalQueue(ctx context.Context, adminID, jurisdiction st
 		LEFT JOIN assoc_chapters ch ON ch.id=a.chapter_id
 		LEFT JOIN auth.users u ON u.id=a.user_id
 		WHERE a.status IN ('PENDING','PENDING_CHAPTER','PENDING_NATIONAL','INFO_REQUESTED')
-		  AND a.organisation_id IN (
-			SELECT am.organisation_id FROM assoc_member_roles ar
-			JOIN assoc_memberships am ON am.id=ar.membership_id
-			WHERE am.user_id=$1 AND ar.role != 'NONE')`
-	args := []any{adminID}
+		  AND a.organisation_id=$1`
+	args := []any{orgID}
 	if jurisdiction != "" && jurisdiction != "ALL" {
 		args = append(args, jurisdiction)
 		q += fmt.Sprintf(` AND a.jurisdiction=$%d`, len(args))
@@ -1139,16 +1267,14 @@ func (s *Service) GetApplication(ctx context.Context, adminID, appID string) (*A
 	return &app, nil
 }
 
-// GetFinanceSummary returns aggregate finance stats for the admin's organisation.
-func (s *Service) GetFinanceSummary(ctx context.Context, adminID string) (*FinanceSummary, error) {
+// GetFinanceSummary returns aggregate finance stats for the resolved org (see resolveOrgID).
+func (s *Service) GetFinanceSummary(ctx context.Context, adminID, orgIDOverride string) (*FinanceSummary, error) {
 	if err := s.requireAssocAdmin(ctx, adminID); err != nil {
 		return nil, err
 	}
-	var orgID string
-	if err := s.db.QueryRow(ctx, `
-		SELECT m.organisation_id FROM assoc_member_roles r
-		JOIN assoc_memberships m ON m.id=r.membership_id WHERE m.user_id=$1 LIMIT 1`, adminID).Scan(&orgID); err != nil {
-		return nil, fmt.Errorf("association: admin org: %w", err)
+	orgID, err := s.resolveOrgID(ctx, adminID, orgIDOverride)
+	if err != nil {
+		return nil, err
 	}
 	var fs FinanceSummary
 	_ = s.db.QueryRow(ctx, `SELECT COALESCE(SUM(p.amount_kobo),0) FROM assoc_payments p JOIN assoc_memberships m ON m.id=p.membership_id WHERE m.organisation_id=$1 AND p.status='SUCCESS'`, orgID).Scan(&fs.CollectedKobo)
@@ -1159,9 +1285,14 @@ func (s *Service) GetFinanceSummary(ctx context.Context, adminID string) (*Finan
 	return &fs, nil
 }
 
-// GetOfflinePayments returns pending offline payment proofs awaiting admin approval.
-func (s *Service) GetOfflinePayments(ctx context.Context, adminID string) ([]OfflinePayment, error) {
+// GetOfflinePayments returns pending offline payment proofs awaiting admin
+// approval, scoped to the resolved org (see resolveOrgID).
+func (s *Service) GetOfflinePayments(ctx context.Context, adminID, orgIDOverride string) ([]OfflinePayment, error) {
 	if err := s.requireAssocAdmin(ctx, adminID); err != nil {
+		return nil, err
+	}
+	orgID, err := s.resolveOrgID(ctx, adminID, orgIDOverride)
+	if err != nil {
 		return nil, err
 	}
 	rows, err := s.db.Query(ctx, `
@@ -1173,11 +1304,8 @@ func (s *Service) GetOfflinePayments(ctx context.Context, adminID string) ([]Off
 		JOIN assoc_dues_invoices i ON i.id=p.invoice_id
 		LEFT JOIN assoc_member_profiles mp ON mp.membership_id=m.id
 		WHERE p.offline=true AND p.status='PENDING'
-		  AND m.organisation_id IN (
-			SELECT am.organisation_id FROM assoc_member_roles ar
-			JOIN assoc_memberships am ON am.id=ar.membership_id
-			WHERE am.user_id=$1 AND ar.role != 'NONE')
-		ORDER BY p.created_at DESC LIMIT 200`, adminID)
+		  AND m.organisation_id=$1
+		ORDER BY p.created_at DESC LIMIT 200`, orgID)
 	if err != nil {
 		return nil, fmt.Errorf("association: offline payments: %w", err)
 	}

@@ -7,6 +7,7 @@ import React from 'react';
 import { View, Text, StyleSheet, Pressable, FlatList } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import { ArrowLeft, ArrowDown, ArrowUp, HeartOff } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
@@ -23,7 +24,7 @@ export default function SavedItems() {
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
       <View style={styles.topRow}>
-        <Pressable onPress={() => router.back()} hitSlop={10} accessibilityLabel="Back"><ArrowLeft size={22} color={Colors.onSurface} /></Pressable>
+        <Pressable onPress={() => goBack('/marketplace')} hitSlop={10} accessibilityLabel="Back"><ArrowLeft size={22} color={Colors.onSurface} /></Pressable>
         <Text style={styles.title}>Saved items</Text>
       </View>
 

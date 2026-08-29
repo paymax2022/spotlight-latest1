@@ -2,6 +2,7 @@ import React from 'react';
 import { View, Text, ScrollView, StyleSheet, Pressable, FlatList, Image } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import { Bookmark, Plus, ArrowLeft, Bell } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
@@ -24,10 +25,16 @@ export default function CrowdfundingHome() {
   const featured = useCampaigns({ collection: 'featured' });
   const urgent = useCampaigns({ collection: 'urgent' });
   const trending = useCampaigns({ collection: 'trending', sort: 'trending' });
+  // Unfiltered — no collection/category, just every campaign the discovery
+  // endpoint's ACTIVE-only default returns. Featured/urgent/trending are
+  // curated subsets an admin flags; an ordinary active campaign with none of
+  // those flags set is otherwise invisible on this screen, so this is the
+  // one section that's guaranteed to surface every active campaign.
+  const allActive = useCampaigns({ sort: 'newest' });
   const toggleSave = useToggleSave();
 
-  const loading = featured.isLoading && trending.isLoading;
-  const errored = featured.isError && trending.isError;
+  const loading = featured.isLoading && trending.isLoading && allActive.isLoading;
+  const errored = featured.isError && trending.isError && allActive.isError;
 
   const goCollection = (collection: string, title: string) =>
     router.push(`/crowdfunding/campaigns?collection=${collection}&title=${encodeURIComponent(title)}`);
@@ -36,7 +43,7 @@ export default function CrowdfundingHome() {
     <SafeAreaView style={styles.safe} edges={['top']}>
       {/* Header */}
       <View style={styles.header}>
-        <Pressable onPress={() => router.back()} hitSlop={10} style={styles.iconBtn} accessibilityLabel="Go back">
+        <Pressable onPress={() => goBack('/')} hitSlop={10} style={styles.iconBtn} accessibilityLabel="Go back">
           <ArrowLeft size={22} color={Colors.onSurface} strokeWidth={2} />
         </Pressable>
         <View style={styles.headerTitleWrap}>
@@ -69,7 +76,7 @@ export default function CrowdfundingHome() {
           title="Couldn't load campaigns"
           message="Check your connection and try again."
           actionLabel="Retry"
-          onAction={() => { featured.refetch(); trending.refetch(); urgent.refetch(); }}
+          onAction={() => { featured.refetch(); trending.refetch(); urgent.refetch(); allActive.refetch(); }}
         />
       ) : (
         <ScrollView
@@ -198,6 +205,23 @@ export default function CrowdfundingHome() {
                 onToggleSave={(next) => toggleSave.mutate({ id: item.id, saved: next })}
               />
             ))}
+          </View>
+
+          {/* Every active campaign — unfiltered, so nothing without a
+              featured/trending/urgent flag is ever invisible on this screen. */}
+          <SectionHeader title="All active campaigns" actionLabel="See all" onAction={() => router.push('/crowdfunding/campaigns?sort=newest&title=All%20active%20campaigns')} style={styles.sectionGap} />
+          <View style={styles.vList}>
+            {(allActive.data ?? []).slice(0, 6).map((item) => (
+              <CampaignCard
+                key={item.id}
+                campaign={item}
+                onPress={() => router.push(`/crowdfunding/campaign/${item.id}`)}
+                onToggleSave={(next) => toggleSave.mutate({ id: item.id, saved: next })}
+              />
+            ))}
+            {allActive.data?.length === 0 && (
+              <StateView kind="empty" compact title="No active campaigns" message="Check back soon." />
+            )}
           </View>
         </ScrollView>
       )}

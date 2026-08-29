@@ -1,8 +1,8 @@
-import { env } from '@/config/env';
+import { apiV1 } from '@/config/env';
 import type { ChatSession, ChatSessionDetail } from '@/types/chat';
 
 export async function listChatSessions(limit = 100): Promise<ChatSession[]> {
-  const url = new URL(`${env.apiBaseUrl}/admin/chatbot/sessions`);
+  const url = new URL(`${apiV1()}/admin/chatbot/sessions`);
   url.searchParams.set('limit', String(limit));
 
   const headers: Record<string, string> = {};
@@ -16,7 +16,7 @@ export async function listChatSessions(limit = 100): Promise<ChatSession[]> {
 export async function getChatSessionDetail(sessionId: string): Promise<ChatSessionDetail> {
   const headers: Record<string, string> = {};
 
-  const res = await fetch(`${env.apiBaseUrl}/admin/chatbot/sessions/${encodeURIComponent(sessionId)}`, {
+  const res = await fetch(`${apiV1()}/admin/chatbot/sessions/${encodeURIComponent(sessionId)}`, {
     cache: 'no-store',
     credentials: 'include',
     headers,

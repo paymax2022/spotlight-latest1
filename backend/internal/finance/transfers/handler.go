@@ -1,6 +1,7 @@
 package transfers
 
 import (
+	"errors"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -23,10 +24,17 @@ func NewHandler(svc *Service, walletTransfersEnabled, bankTransfersEnabled bool)
 }
 
 func writeError(c *gin.Context, err error) {
-	c.JSON(HTTPStatusForError(err), gin.H{
+	body := gin.H{
 		"error": err.Error(),
 		"code":  ErrorCode(err),
-	})
+	}
+	// A wrong PIN says how many tries are left, so the customer is warned before
+	// the lockout rather than after it.
+	var attempt *PinAttemptError
+	if errors.As(err, &attempt) {
+		body["attempts_remaining"] = attempt.Remaining
+	}
+	c.JSON(HTTPStatusForError(err), body)
 }
 
 func unavailable(c *gin.Context, feature string) {

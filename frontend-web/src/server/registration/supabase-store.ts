@@ -25,6 +25,7 @@ import type {
   RegistrationDraft,
   RegistrationStepKey,
   RegistrationStatusEvent,
+  RegistrationReviewInput,
 } from '@/src/features/registration/types';
 
 // Service-role Supabase client, created LAZILY. A module-level createClient()
@@ -402,18 +403,138 @@ export async function submitRegistrationApplication(applicationId: string) {
   return { success: true, draft, message: `Your application has been submitted. Reference: ${draft.reference}.` };
 }
 
-// Payment intents stay in the in-memory store BY DESIGN (see its module note:
-// the intent record is replay-safety/audit for the Paystack gateway and moves
-// to Postgres only alongside a dedicated table mirroring utility_paystack_intents).
-// Delegate instead of stubbing — the previous stubs threw/returned null, which
-// silently broke registration payments when routes switched to this store.
-export {
-  findRegistrationPaymentIntentByIdempotencyKey,
-  createRegistrationPaymentIntent,
-  getRegistrationPaymentIntentByReference,
-  markRegistrationPaymentIntentStatus,
-  applyRegistrationPaymentSuccess,
-} from '@/src/server/registration/store';
+// Payment intents live in public.registration_payment_intents — real
+// Postgres, not the in-memory store. They used to delegate to
+// registration/store.ts's in-memory Map (a prior fix's comment called this
+// "BY DESIGN", reasoning the table wasn't wired up yet), which meant every
+// intent vanished on a server restart/redeploy — a verified, successful
+// Paystack charge could still leave an application looking unpaid forever
+// because the record proving it happened was gone. Fixed: the table already
+// existed for exactly this (its own migration says so); this is that move.
+//
+// applyRegistrationPaymentSuccess had the same bug one level up: it wrote
+// "paid" onto the in-memory store.ts draft Map, which getRegistrationDraft
+// (above, Postgres-only) never reads — so even a successful verify() call
+// never actually marked the real draft as paid. Fixed the same way, via the
+// same update-in-place pattern saveRegistrationStep already uses.
+export type RegistrationPaymentIntent = {
+  id: string;
+  applicationId: string;
+  amountKobo: number;
+  method: 'PAYSTACK';
+  paymentReference: string;
+  idempotencyKey: string;
+  // Matches registration_payment_intents_status_check exactly — 'pending'
+  // (the in-memory type's original value) isn't a value the DB constraint
+  // allows.
+  status: 'initiated' | 'completed' | 'verified' | 'failed';
+  failureReason?: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+function rowToPaymentIntent(row: Record<string, unknown>): RegistrationPaymentIntent {
+  return {
+    id: row.id as string,
+    applicationId: row.application_id as string,
+    amountKobo: Number(row.amount_kobo),
+    method: 'PAYSTACK',
+    paymentReference: row.reference as string,
+    idempotencyKey: row.idempotency_key as string,
+    status: row.status as RegistrationPaymentIntent['status'],
+    failureReason: (row.failure_reason as string | null) ?? undefined,
+    createdAt: row.created_at as string,
+    updatedAt: row.updated_at as string,
+  };
+}
+
+export async function findRegistrationPaymentIntentByIdempotencyKey(
+  idempotencyKey: string,
+): Promise<RegistrationPaymentIntent | null> {
+  const { data, error } = await getSupabase()
+    .from('registration_payment_intents')
+    .select('*')
+    .eq('idempotency_key', idempotencyKey)
+    .maybeSingle();
+  if (error) throw new Error(`Failed to look up payment intent: ${error.message}`);
+  return data ? rowToPaymentIntent(data) : null;
+}
+
+export async function getRegistrationPaymentIntentByReference(
+  reference: string,
+): Promise<RegistrationPaymentIntent | null> {
+  const { data, error } = await getSupabase()
+    .from('registration_payment_intents')
+    .select('*')
+    .eq('reference', reference)
+    .maybeSingle();
+  if (error) throw new Error(`Failed to look up payment intent: ${error.message}`);
+  return data ? rowToPaymentIntent(data) : null;
+}
+
+export async function createRegistrationPaymentIntent(input: {
+  applicationId: string;
+  amountKobo: number;
+  paymentReference: string;
+  idempotencyKey: string;
+}): Promise<RegistrationPaymentIntent> {
+  const { data, error } = await getSupabase()
+    .from('registration_payment_intents')
+    .insert({
+      application_id: input.applicationId,
+      reference: input.paymentReference,
+      amount_kobo: input.amountKobo,
+      method: 'PAYSTACK',
+      idempotency_key: input.idempotencyKey,
+      status: 'initiated',
+    })
+    .select('*')
+    .single();
+  if (error) throw new Error(`Failed to create payment intent: ${error.message}`);
+  return rowToPaymentIntent(data);
+}
+
+export async function markRegistrationPaymentIntentStatus(
+  id: string,
+  status: 'completed' | 'failed',
+  failureReason?: string,
+): Promise<RegistrationPaymentIntent | null> {
+  const { data, error } = await getSupabase()
+    .from('registration_payment_intents')
+    .update({ status, failure_reason: failureReason ?? null, updated_at: nowIso() })
+    .eq('id', id)
+    .select('*')
+    .maybeSingle();
+  if (error) throw new Error(`Failed to update payment intent: ${error.message}`);
+  return data ? rowToPaymentIntent(data) : null;
+}
+
+// Applies a verified Paystack success onto the draft — the same formData
+// shape the (former) mock client wrote, so nothing downstream (submit screen,
+// completion %) needs to change.
+export async function applyRegistrationPaymentSuccess(
+  applicationId: string,
+  params: { reference: string; method: 'PAYSTACK' },
+): Promise<RegistrationDraft> {
+  const draft = await getRegistrationDraft(applicationId);
+  if (!draft) throw new Error('Application not found.');
+
+  const mergedData = {
+    ...draft.formData,
+    'payment.paymentStatus': 'paid',
+    'payment.transactionReference': params.reference,
+    'payment.method': params.method,
+  };
+  const updatedAt = nowIso();
+
+  const { error } = await getSupabase()
+    .from('registrations')
+    .update({ form_data: mergedData, updated_at: updatedAt })
+    .eq('id', applicationId);
+  if (error) throw new Error(`Failed to record payment success: ${error.message}`);
+
+  return { ...draft, formData: mergedData, updatedAt };
+}
 
 export async function listRegistrationApplications(filter: {
   contestSlug?: string;
@@ -500,6 +621,61 @@ export async function withdrawRegistrationApplication(
     new_status: 'withdrawn',
     note: note || 'Application withdrawn by applicant',
     actor_role: 'public_user',
+    created_at: now,
+  });
+
+  return rowToDraft(data);
+}
+
+/**
+ * ADMIN CONSOLIDATION, slice 5 (see docs/adr/ADR-047). This did not exist here
+ * before — the admin review/approve/reject/shortlist routes called the
+ * in-memory registration/store version instead, which writes to a Map nothing
+ * else reads. Every real application lives in the `registrations` table (see
+ * startRegistrationDraft/saveRegistrationStep above), so an admin clicking
+ * "Approve" updated a map the applicant's real record never saw — the decision
+ * looked successful and silently didn't apply. Mirrors withdrawRegistrationApplication's
+ * shape immediately above: update the row, then append a
+ * registration_status_events row for the audit timeline.
+ */
+export async function reviewRegistrationApplication(
+  applicationId: string,
+  input: RegistrationReviewInput,
+): Promise<RegistrationDraft> {
+  const current = await getRegistrationDraft(applicationId);
+  if (!current) throw new Error('Application not found.');
+
+  const now = nowIso();
+  const nextFraudFlags = input.fraudFlags || current.fraudFlags;
+  const nextFormData = {
+    ...current.formData,
+    'admin.reviewNote': input.note || '',
+    'admin.reviewScore': typeof input.score === 'number' ? input.score : current.formData['admin.reviewScore'],
+    'admin.requestedFields': input.requestedFields || current.formData['admin.requestedFields'],
+  };
+
+  const { data, error } = await getSupabase()
+    .from('registrations')
+    .update({
+      status: input.status,
+      form_data: nextFormData,
+      fraud_flags: nextFraudFlags,
+      updated_at: now,
+    })
+    .eq('id', applicationId)
+    .select('*')
+    .single();
+
+  if (error) {
+    throw new Error(`Failed to review registration: ${error.message}`);
+  }
+
+  await getSupabase().from('registration_status_events').insert({
+    registration_id: applicationId,
+    old_status: current.status,
+    new_status: input.status,
+    note: input.note || 'Admin review action',
+    actor_role: 'admin',
     created_at: now,
   });
 

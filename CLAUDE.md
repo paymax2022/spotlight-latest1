@@ -40,7 +40,8 @@ API source of truth: `contracts/openapi.yaml`.
   review, and the break only surfaces on the base branch after your merge. When it happens,
   the migration that reached the base branch **last** renumbers. Enforced by
   `scripts/ci/check-migration-versions.sh` in the `hygiene` CI lane.
-- The regression suite (`npm run test:regression`) must be green before and after every change.
+- The golden-path regression suite must be green before and after every change:
+  `cd frontend-web && npm run test:regression` (9 specs, 120 tests).
 
 ### Workflow
 - API changes start in `contracts/openapi.yaml` — spec PR first, then implementation.
@@ -77,7 +78,7 @@ API source of truth: `contracts/openapi.yaml`.
 - **Test runner (frontend):** Vitest 4.1 (`frontend-web/vitest.config.ts`), v8 coverage,
   node environment. ~42 specs under `frontend-web/tests/` (golden-path, finance money-invariants,
   wallet/ledger, tiers). Mobile: Playwright e2e under `mobile-app/reactnative/tests/e2e/`.
-- **Test runner (backend):** `go test` (see `Makefile` `test`/`verify`, run `-race`). ~253 Go
+- **Test runner (backend):** `go test` (see `Makefile` `test`/`verify`, run `-race`). ~464 Go
   test files incl. `backend/tests/` domain + invariant suites (ledger, settlement split, fees,
   fx, crypto/cryptoaml, arenaquiz, edtechfees…); live-DB integration tests gated on
   `TEST_DATABASE_URL`. NOTE: repo-wide `ci.yml` runs only build+vet — full `go test` runs in
@@ -91,14 +92,24 @@ API source of truth: `contracts/openapi.yaml`.
   `backend/`, `mobile-app/`, `supabase/`, `docs/`.
 
 ## Commands you should know
-- `npm run test:regression` — legacy golden-path suite (must always pass)
-- `npm run test:money` — ledger/idempotency/limits invariant tests
-- `npm run contract:check` — implementation vs openapi.yaml
+There is **no root `package.json`** — every `npm run` below must be run from its own
+module directory.
+- `cd frontend-web && npm run test:regression` — golden-path regression suite
+  (must always pass): `tests/unit/golden-path`, 9 specs, 120 tests
+- `cd frontend-web && npm run test:money` — money invariants (`tests/unit/estate`,
+  `tests/unit/wallet`, `tests/unit/tiers`)
+- `cd frontend-web && npm run contract:check` — estate implementation vs
+  `contracts/estate.openapi.yaml` (estate only — it does not check `openapi.yaml`)
 - `cd frontend-web && npm run lint` — ESLint via Next.js lint config
 - `cd frontend-admin && npm run type-check` — TypeScript strict check (`tsc --noEmit`)
 - `cd frontend-web && npx tsc --noEmit` — TypeScript check for the web app
 - `cd backend && go vet ./...` — Go static analysis
-- `cd backend && go build ./...` — Go compile check (no test framework configured yet)
+- `cd backend && go build ./...` — Go compile check
+- `cd backend && go test ./... -count=1` — Go unit tests (464 `*_test.go` files;
+  live-DB suites skip unless `TEST_DATABASE_URL` is set)
+- `make test` — the same suite with `-race` (needs Postgres + `RAILS_MODE=fake`)
+- `make verify` — the go-live gate: build, vet, tsc, contract-check, migrate-reset,
+  test, security-scan
 - `cd frontend-web && npx vitest run` — run all unit tests once
 - `cd frontend-web && npx vitest run --coverage` — with v8 coverage report
 - `supabase db push` — apply pending migrations to the connected Supabase project

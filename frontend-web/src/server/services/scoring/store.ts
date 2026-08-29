@@ -1,4 +1,4 @@
-import { randomUUID } from 'crypto';
+import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 
 // ── Rubric definitions per contest type ───────────────────────────────────────
 
@@ -88,41 +88,58 @@ export interface ScoreSummary {
   consensusRecommendation: Recommendation;
 }
 
-// ── Store ────────────────────────────────────────────────────────────────────
+// ── Supabase-backed store (public.judge_application_scorecards) ────────────────
+// See supabase/migrations/20261230000000_judge_application_scorecards.sql —
+// this used to be a globalThis Map, so every score vanished on server
+// restart/redeploy. Service-role client mirrors registration/supabase-store.ts:
+// created lazily so importing this file with env unset (vitest collection,
+// next build) doesn't throw, and the routes calling in have already checked
+// assertAdminPermission, so RLS on the table is defense-in-depth, not the gate.
 
-interface ScoringStore {
-  scorecards: Map<string, JudgeScoreCard>;  // id → scorecard
+let supabaseClient: SupabaseClient | null = null;
+function getSupabase() {
+  if (!supabaseClient) {
+    supabaseClient = createClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL || '',
+      process.env.SUPABASE_SERVICE_ROLE_KEY || '',
+      { auth: { persistSession: false } },
+    );
+  }
+  return supabaseClient;
 }
 
-function getStore(): ScoringStore {
-  const key = '__spotlightScoringStore';
-  const g = globalThis as unknown as Record<string, ScoringStore | undefined>;
-  if (!g[key]) g[key] = { scorecards: new Map() };
-  return g[key] as ScoringStore;
+interface ScorecardRow {
+  id: string;
+  application_id: string;
+  judge_id: string;
+  judge_name: string;
+  contest_slug: string;
+  scores: Record<string, number>;
+  total_score: number;
+  max_score: number;
+  percentage_score: number;
+  recommendation: Recommendation;
+  notes: string;
+  created_at: string;
+  updated_at: string;
 }
 
-function now() { return new Date().toISOString(); }
-
-// ── CRUD ─────────────────────────────────────────────────────────────────────
-
-export function getScorecard(id: string): JudgeScoreCard | null {
-  return getStore().scorecards.get(id) ?? null;
-}
-
-export function getScorecardForJudge(applicationId: string, judgeId: string): JudgeScoreCard | null {
-  return Array.from(getStore().scorecards.values())
-    .find((s) => s.applicationId === applicationId && s.judgeId === judgeId) ?? null;
-}
-
-export function listScorecardsForApplication(applicationId: string): JudgeScoreCard[] {
-  return Array.from(getStore().scorecards.values())
-    .filter((s) => s.applicationId === applicationId)
-    .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
-}
-
-export function listAllScorecards(): JudgeScoreCard[] {
-  return Array.from(getStore().scorecards.values())
-    .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+function fromRow(row: ScorecardRow): JudgeScoreCard {
+  return {
+    id: row.id,
+    applicationId: row.application_id,
+    judgeId: row.judge_id,
+    judgeName: row.judge_name,
+    contestSlug: row.contest_slug,
+    scores: row.scores ?? {},
+    totalScore: Number(row.total_score),
+    maxScore: Number(row.max_score),
+    percentageScore: Number(row.percentage_score),
+    recommendation: row.recommendation,
+    notes: row.notes,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
 }
 
 function calcTotals(scores: Record<string, number>, rubric: RubricCriterion[]) {
@@ -131,7 +148,30 @@ function calcTotals(scores: Record<string, number>, rubric: RubricCriterion[]) {
   return { totalScore: total, maxScore: max, percentageScore: max > 0 ? Math.round((total / max) * 100) : 0 };
 }
 
-export function upsertScorecard(input: {
+// ── CRUD ─────────────────────────────────────────────────────────────────────
+
+export async function getScorecardForJudge(applicationId: string, judgeId: string): Promise<JudgeScoreCard | null> {
+  const { data, error } = await getSupabase()
+    .from('judge_application_scorecards')
+    .select('*')
+    .eq('application_id', applicationId)
+    .eq('judge_id', judgeId)
+    .maybeSingle();
+  if (error) throw new Error(`Failed to load scorecard: ${error.message}`);
+  return data ? fromRow(data as ScorecardRow) : null;
+}
+
+export async function listScorecardsForApplication(applicationId: string): Promise<JudgeScoreCard[]> {
+  const { data, error } = await getSupabase()
+    .from('judge_application_scorecards')
+    .select('*')
+    .eq('application_id', applicationId)
+    .order('updated_at', { ascending: false });
+  if (error) throw new Error(`Failed to list scorecards: ${error.message}`);
+  return (data as ScorecardRow[] ?? []).map(fromRow);
+}
+
+export async function upsertScorecard(input: {
   applicationId: string;
   judgeId: string;
   judgeName: string;
@@ -139,33 +179,32 @@ export function upsertScorecard(input: {
   scores: Record<string, number>;
   recommendation: Recommendation;
   notes: string;
-}): JudgeScoreCard {
-  const store = getStore();
+}): Promise<JudgeScoreCard> {
   const rubric = getRubricForContest(input.contestSlug);
   const { totalScore, maxScore, percentageScore } = calcTotals(input.scores, rubric);
 
-  const existing = getScorecardForJudge(input.applicationId, input.judgeId);
-  const card: JudgeScoreCard = {
-    id: existing?.id ?? randomUUID(),
-    applicationId: input.applicationId,
-    judgeId: input.judgeId,
-    judgeName: input.judgeName,
-    contestSlug: input.contestSlug,
-    scores: input.scores,
-    totalScore,
-    maxScore,
-    percentageScore,
-    recommendation: input.recommendation,
-    notes: input.notes,
-    createdAt: existing?.createdAt ?? now(),
-    updatedAt: now(),
-  };
-  store.scorecards.set(card.id, card);
-  return card;
+  const { data, error } = await getSupabase()
+    .from('judge_application_scorecards')
+    .upsert({
+      application_id: input.applicationId,
+      judge_id: input.judgeId,
+      judge_name: input.judgeName,
+      contest_slug: input.contestSlug,
+      scores: input.scores,
+      total_score: totalScore,
+      max_score: maxScore,
+      percentage_score: percentageScore,
+      recommendation: input.recommendation,
+      notes: input.notes,
+    }, { onConflict: 'application_id,judge_id' })
+    .select('*')
+    .single();
+  if (error) throw new Error(`Failed to save scorecard: ${error.message}`);
+  return fromRow(data as ScorecardRow);
 }
 
-export function getScoreSummary(applicationId: string): ScoreSummary | null {
-  const cards = listScorecardsForApplication(applicationId);
+export async function getScoreSummary(applicationId: string): Promise<ScoreSummary | null> {
+  const cards = await listScorecardsForApplication(applicationId);
   if (cards.length === 0) return null;
 
   const totals = cards.map((c) => c.percentageScore);
@@ -187,6 +226,10 @@ export function getScoreSummary(applicationId: string): ScoreSummary | null {
   };
 }
 
-export function getScoredApplicationIds(): Set<string> {
-  return new Set(Array.from(getStore().scorecards.values()).map((s) => s.applicationId));
+export async function getScoredApplicationIds(): Promise<Set<string>> {
+  const { data, error } = await getSupabase()
+    .from('judge_application_scorecards')
+    .select('application_id');
+  if (error) throw new Error(`Failed to list scored applications: ${error.message}`);
+  return new Set((data as { application_id: string }[] ?? []).map((r) => r.application_id));
 }

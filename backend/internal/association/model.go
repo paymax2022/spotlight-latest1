@@ -319,6 +319,15 @@ type EventSummary struct {
 
 // ── Admin ─────────────────────────────────────────────────────────────────────
 
+// AdminOrgOption is one entry in the admin console's org picker.
+type AdminOrgOption struct {
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Published   bool   `json:"published"`
+	Verified    bool   `json:"verified"`
+	MemberCount int    `json:"memberCount"`
+}
+
 type AdminKpis struct {
 	TotalMembers        int   `json:"totalMembers"`
 	ActiveMembers       int   `json:"activeMembers"`
@@ -377,6 +386,11 @@ type MemberDirectoryQuery struct {
 	ChapterID string `form:"chapterId"`
 	Category  string `form:"category"`
 	Status    string `form:"status"`
+	// OrgID is an explicit organisation override for the admin console's org
+	// picker — authorized via resolveOrgID (platform super-admin, or a real
+	// per-org admin role in that org) rather than the member self-service
+	// "any org I actively belong to" scoping GetDirectory uses by default.
+	OrgID string `form:"org_id"`
 }
 
 // RevenueSplit computes the configurable dues split (National 50 / State 30 /

@@ -10,14 +10,14 @@
 // (Iron Rule: money handling). Display-only conversion to ₦ happens here via
 // formatNaira, mirroring associationAdminService's convention exactly.
 
-import { env } from '@/config/env';
+import { apiV1 } from '@/config/env';
 import { operationKey } from './idempotency';
 
 function adminBase(): string {
-  return `${env.apiBaseUrl.replace(/\/$/, '')}/spotlight/admin`;
+  return `${apiV1()}/spotlight/admin`;
 }
 function moduleBase(): string {
-  return `${env.apiBaseUrl.replace(/\/$/, '')}/spotlight`;
+  return `${apiV1()}/spotlight`;
 }
 function authHeaders(): Record<string, string> {
   if (typeof window === 'undefined') return {};

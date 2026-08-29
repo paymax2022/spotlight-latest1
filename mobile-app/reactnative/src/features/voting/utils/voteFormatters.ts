@@ -39,6 +39,34 @@ export function formatDate(iso: string): string {
   });
 }
 
+/**
+ * Format a contest's start/end window as a compact range, e.g. "12 Aug – 13 Sep"
+ * or "28 Dec 2026 – 3 Jan 2027" when the range crosses a year boundary. Falls
+ * back to a single-ended "From"/"Until" when only one side is known, and to
+ * `null` when neither is — callers should hide the period row in that case
+ * rather than render an empty string.
+ */
+export function formatContestPeriod(startsAt?: string, endsAt?: string): string | null {
+  if (!startsAt && !endsAt) return null;
+
+  const start = startsAt ? new Date(startsAt) : null;
+  const end = endsAt ? new Date(endsAt) : null;
+
+  if (start && !end) {
+    return `From ${start.toLocaleDateString('en-NG', { day: 'numeric', month: 'short', year: 'numeric' })}`;
+  }
+  if (end && !start) {
+    return `Until ${end.toLocaleDateString('en-NG', { day: 'numeric', month: 'short', year: 'numeric' })}`;
+  }
+
+  const sameYear = start!.getFullYear() === end!.getFullYear();
+  const startLabel = start!.toLocaleDateString('en-NG', {
+    day: 'numeric', month: 'short', year: sameYear ? undefined : 'numeric',
+  });
+  const endLabel = end!.toLocaleDateString('en-NG', { day: 'numeric', month: 'short', year: 'numeric' });
+  return `${startLabel} – ${endLabel}`;
+}
+
 // Format rank: 1 → "1st", 2 → "2nd", 3 → "3rd"
 export function formatRank(rank: number): string {
   if (rank === 1) return '1st';

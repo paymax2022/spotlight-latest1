@@ -2,6 +2,7 @@ import React, { useMemo, useState } from 'react';
 import { View, Text, TextInput, ScrollView, StyleSheet, KeyboardAvoidingView, Platform } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
 import { Spacing } from '@/constants/spacing';
@@ -44,7 +45,7 @@ export default function RecurringPayoutScreen() {
         title: 'Schedule created',
         message: `${formatMoney(amount, source)} to ${beneficiaryName} every ${frequency === 'weekly' ? 'week' : 'month'}, starting ${startDate}.`,
         buttonLabel: 'Done',
-      }).then(() => router.back());
+      }).then(() => goBack('/fx/send'));
     }, 900);
   };
 

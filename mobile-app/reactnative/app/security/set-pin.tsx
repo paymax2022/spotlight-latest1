@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { View, Text, StyleSheet, Pressable, ActivityIndicator } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { ShieldCheck, X } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
@@ -62,7 +63,7 @@ export default function SetTransactionPinScreen() {
     // then refresh from source.
     qc.setQueryData(PIN_STATUS_KEY, { hasPin: true });
     qc.invalidateQueries({ queryKey: PIN_STATUS_KEY });
-    if (mode === 'manage') router.back();
+    if (mode === 'manage') goBack('/');
     // Required-mode gate: return the user to wherever they were blocked and let
     // them continue; fall back to home when there's nothing to resume.
     else resumeOrFallback('/(tabs)/home');
@@ -135,7 +136,7 @@ export default function SetTransactionPinScreen() {
     <SafeAreaView style={styles.safe} edges={['top', 'bottom']}>
       {/* Manage mode gets a cancel affordance; required mode is blocking. */}
       {mode === 'manage' ? (
-        <Pressable onPress={() => router.back()} style={styles.close} hitSlop={10} accessibilityLabel="Close">
+        <Pressable onPress={() => goBack('/')} style={styles.close} hitSlop={10} accessibilityLabel="Close">
           <X size={22} color={Colors.onSurfaceVariant} strokeWidth={2} />
         </Pressable>
       ) : null}

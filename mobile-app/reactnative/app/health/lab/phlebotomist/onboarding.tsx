@@ -10,6 +10,7 @@ import { Spacing } from '@/constants/spacing';
 import { Radius } from '@/constants/radius';
 import { shadow1 } from '@/constants/shadows';
 import { router } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 
 import ScreenHeader from '@/components/ScreenHeader';
 import StateView from '@/components/StateView';
@@ -72,7 +73,7 @@ export default function PhlebotomistOnboardingScreen() {
           title="Application submitted"
           message="Your MLSCN details are under review. You become assignable for collections once verified."
           actionLabel="Done"
-          onAction={() => router.back()}
+          onAction={() => goBack('/health/lab')}
         />
       </SafeAreaView>
     );

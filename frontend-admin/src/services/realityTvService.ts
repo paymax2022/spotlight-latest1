@@ -1,10 +1,10 @@
-import { env } from '@/config/env';
+import { apiV1 } from '@/config/env';
 import type { RealityTVDashboardMetrics } from '@/types/realityTv';
 
 export async function getRealityTVDashboard(): Promise<RealityTVDashboardMetrics | null> {
   const headers: Record<string, string> = {};
 
-  const res = await fetch(`${env.apiBaseUrl}/admin/reality-tv/dashboard`, {
+  const res = await fetch(`${apiV1()}/admin/reality-tv/dashboard`, {
     cache: 'no-store',
     credentials: 'include',
     headers,

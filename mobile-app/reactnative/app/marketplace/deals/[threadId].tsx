@@ -9,6 +9,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { View, Text, StyleSheet, Pressable, FlatList, TextInput, KeyboardAvoidingView, Platform, Modal } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import { ArrowLeft, Send, HandCoins, Handshake, CheckCircle2, Star } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
@@ -365,7 +366,7 @@ export default function DealRoom() {
 function Header({ title, subtitle }: { title: string; subtitle?: string }) {
   return (
     <View style={styles.header}>
-      <Pressable onPress={() => router.back()} hitSlop={10} style={styles.iconBtn} accessibilityLabel="Go back">
+      <Pressable onPress={() => goBack('/marketplace/deals')} hitSlop={10} style={styles.iconBtn} accessibilityLabel="Go back">
         <ArrowLeft size={22} color={Colors.onSurface} />
       </Pressable>
       <View style={{ flex: 1 }}>

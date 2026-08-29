@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { View, Text, ScrollView, StyleSheet, Pressable, TextInput } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import { ArrowLeft } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
@@ -38,7 +39,7 @@ export default function CreateListing() {
   if (done) {
     return (
       <SafeAreaView style={styles.safe} edges={['top']}>
-        <View style={styles.header}><Pressable onPress={() => router.back()} hitSlop={10} style={styles.iconBtn}><ArrowLeft size={22} color={Colors.onSurface} /></Pressable><Text style={styles.headerTitle}>Listed</Text><View style={styles.iconBtn} /></View>
+        <View style={styles.header}><Pressable onPress={() => goBack('/social')} hitSlop={10} style={styles.iconBtn}><ArrowLeft size={22} color={Colors.onSurface} /></Pressable><Text style={styles.headerTitle}>Listed</Text><View style={styles.iconBtn} /></View>
         <StateView kind="empty" icon="CheckCircle2" title="Listing published" message="Your item is now live in the marketplace. Buyers pay into escrow." actionLabel="Browse marketplace" onAction={() => router.replace('/social/listing/browse')} />
       </SafeAreaView>
     );
@@ -47,7 +48,7 @@ export default function CreateListing() {
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
       <View style={styles.header}>
-        <Pressable onPress={() => router.back()} hitSlop={10} style={styles.iconBtn} accessibilityLabel="Go back"><ArrowLeft size={22} color={Colors.onSurface} /></Pressable>
+        <Pressable onPress={() => goBack('/social')} hitSlop={10} style={styles.iconBtn} accessibilityLabel="Go back"><ArrowLeft size={22} color={Colors.onSurface} /></Pressable>
         <Text style={styles.headerTitle}>New listing</Text>
         <View style={styles.iconBtn} />
       </View>
