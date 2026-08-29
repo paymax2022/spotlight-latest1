@@ -159,6 +159,65 @@ export interface RegistrationDraft {
   fraudFlags: string[];
 }
 
+// ── Voting seam ──────────────────────────────────────────────────────────────
+// An approved application becomes a contestant, but until now nothing told the
+// applicant: the status screen showed a chip and a withdraw button and stopped.
+// GET /api/registration/applications/:id/voting joins the roster entry and the
+// contest so the screen can offer contest details, voting and sharing.
+
+export type RegistrationVotingReason =
+  | 'not_approved'
+  | 'not_promoted'
+  | 'no_contest'
+  | 'contestant_inactive'
+  | 'contest_not_open';
+
+export interface RegistrationVotingContest {
+  id: string;
+  slug: string | null;
+  title: string;
+  description: string | null;
+  status: string;
+  freeVotesPerUser: number;
+  /** Integer minor units (kobo). Never a float. */
+  paidVoteKobo: number;
+  bannerImageUrl: string | null;
+  rulesText: string | null;
+  opensAt: string | null;
+  closesAt: string | null;
+}
+
+export interface RegistrationVotingContestant {
+  id: string;
+  name: string;
+  stageName: string | null;
+  photoUrl: string | null;
+  category: string | null;
+  state: string | null;
+  totalVotes: number;
+  ranking: number | null;
+  isActive: boolean;
+  isVerified: boolean;
+  status: string | null;
+}
+
+export interface RegistrationVoting {
+  votable: boolean;
+  /** Why voting is unavailable, so the screen can say something specific. */
+  reason: RegistrationVotingReason | null;
+  applicationStatus: string;
+  contest: RegistrationVotingContest | null;
+  contestant: RegistrationVotingContestant | null;
+  /** Relative in-app path; the screen resolves it against the share origin. */
+  sharePath: string | null;
+  shareText: string | null;
+}
+
+export interface RegistrationVotingResponse {
+  success: boolean;
+  voting: RegistrationVoting;
+}
+
 export interface RegistrationStatusEvent {
   id: string;
   applicationId: string;
