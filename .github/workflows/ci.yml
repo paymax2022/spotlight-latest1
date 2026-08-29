@@ -42,19 +42,28 @@ on:
       - 'docs/**'
   pull_request:
     branches: [develop, staging, prod]
+  # Manual dispatch also doubles as the only way to run this pipeline's CI
+  # gates against `main` — push/pull_request above deliberately don't include
+  # it (Railway has no Production branch mapping to `main`, so it never needed
+  # its own push trigger), which meant `main`'s last real CI result could go
+  # stale indefinitely with nothing to refresh it. Both deploy inputs are
+  # optional: leave them blank to run CI only (against whichever branch you
+  # pick in the dispatch UI/API `ref`), or fill both in to also deploy — the
+  # deploy jobs below still gate strictly on confirm_deploy being the exact
+  # string 'DEPLOY', so a CI-only dispatch can never trigger a release.
   workflow_dispatch:
     inputs:
       deploy_environment:
-        description: 'Railway environment to deploy'
-        required: true
+        description: 'Railway environment to deploy (leave unset to just run CI)'
+        required: false
         type: choice
         options:
           - development
           - staging
           - production
       confirm_deploy:
-        description: 'Type DEPLOY to confirm the selected release'
-        required: true
+        description: 'Type DEPLOY to confirm the selected release (leave blank to just run CI)'
+        required: false
         type: string
 
 permissions:
