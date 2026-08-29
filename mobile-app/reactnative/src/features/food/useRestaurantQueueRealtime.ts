@@ -1,5 +1,7 @@
 // ── Restaurant & Delivery — merchant queue realtime ──────────────────────────
 //
+// Decision record: ADR-PR140.
+//
 // WHY THIS EXISTS, SEPARATELY FROM useOrderRealtime
 // useOrderRealtime subscribes to ONE order and drops every frame whose
 // `order_id` is not that order. A merchant's problem is the opposite: the order

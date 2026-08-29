@@ -47,7 +47,7 @@ func isKnownRiderStatus(s string) bool {
 	return false
 }
 
-// riderStatusSQL is mapRiderStatus expressed as SQL.
+// riderStatusSQL is mapRiderStatus expressed as SQL (ADR-PR141).
 //
 // It has to exist in SQL, not just in Go: the roster now filters, counts and
 // pages on status, and a status computed after the rows come back cannot do any

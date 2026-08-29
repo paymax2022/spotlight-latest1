@@ -477,6 +477,8 @@ func (h *Handler) RateOrder(c *gin.Context) {
 // per-order subscription is needed).
 // ServeUserWS → GET /restaurant/ws — the caller's own realtime stream.
 //
+// See ADR-PR140 for the full decision record.
+//
 // WHY THIS EXISTS
 // The hub is keyed by USER id: Realtime.publish resolves an order's participants
 // and calls hub.SendToUser(uid, …). ServeOrderWS's :orderId is therefore only an

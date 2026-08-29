@@ -233,7 +233,7 @@ func adminOrderOrderBy(sort string) string {
 // in one of these is finished: nothing more will be dispatched, delivered or
 // settled for it.
 //
-// This is the single definition. Two admin reads had drifted to a stale
+// This is the single definition (ADR-PR141). Two admin reads had drifted to a stale
 // two-value idea of "finished" (`delivered, cancelled`) written before the
 // lifecycle gained rejected / dispatch_failed / delivery_failed, which left 183
 // of the dispatch board's 345 rows showing CLOSED orders as awaiting a rider —
