@@ -84,8 +84,14 @@ export default function EventDetail() {
           {isRegistered ? (
             <View style={styles.ticketCard}>
               <Text style={styles.ticketLabel}>Your ticket</Text>
-              <QrCodeView payload={e.ticketCode} size={150} />
-              <Text style={styles.ticketHint}>Present this QR at check-in</Text>
+              {e.ticketCode ? (
+                <>
+                  <QrCodeView payload={e.ticketCode} size={150} />
+                  <Text style={styles.ticketHint}>Present this QR at check-in</Text>
+                </>
+              ) : (
+                <Text style={styles.ticketHint}>Your ticket code is being issued — check back shortly.</Text>
+              )}
               {e.checkedIn ? (
                 <View style={styles.checkedRow}>
                   <CheckCircle2 size={15} color={Colors.teal} strokeWidth={2.4} />
@@ -96,11 +102,11 @@ export default function EventDetail() {
           ) : null}
 
           {/* Documents */}
-          {e.documents.length > 0 ? (
+          {(e.documents ?? []).length > 0 ? (
             <>
               <Text style={styles.sectionTitle}>Documents</Text>
               <View style={styles.gap8}>
-                {e.documents.map((d) => (
+                {(e.documents ?? []).map((d) => (
                   <Pressable key={d.id} style={[styles.docRow, shadow1]} accessibilityRole="button" accessibilityLabel={`Open ${d.name}`}>
                     <FileText size={18} color={Colors.secondary} strokeWidth={2} />
                     <Text style={styles.docName} numberOfLines={1}>{d.name}</Text>

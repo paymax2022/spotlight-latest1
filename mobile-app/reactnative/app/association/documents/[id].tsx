@@ -55,6 +55,7 @@ export default function DocumentDetailScreen() {
   }
 
   const acknowledged = d.acknowledged || ack.isSuccess;
+  const versionHistory = d.versionHistory ?? [];
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
@@ -94,7 +95,8 @@ export default function DocumentDetailScreen() {
         {/* Version history */}
         <Text style={styles.sectionTitle}>Version history</Text>
         <View style={[styles.card, shadow1]}>
-          {d.versionHistory.map((v, i) => (
+          {versionHistory.length === 0 ? <Text style={styles.emptyText}>No version history recorded.</Text> : null}
+          {versionHistory.map((v, i) => (
             <View key={v.version} style={[styles.versionRow, i > 0 && styles.versionDivider]}>
               <History size={15} color={Colors.onSurfaceVariant} strokeWidth={2} />
               <View style={{ flex: 1 }}>
@@ -105,10 +107,12 @@ export default function DocumentDetailScreen() {
           ))}
         </View>
 
-        <View style={styles.uploadedRow}>
-          <Lock size={13} color={Colors.outline} strokeWidth={2} />
-          <Text style={styles.uploadedText}>Uploaded by {d.uploadedBy}</Text>
-        </View>
+        {d.uploadedBy ? (
+          <View style={styles.uploadedRow}>
+            <Lock size={13} color={Colors.outline} strokeWidth={2} />
+            <Text style={styles.uploadedText}>Uploaded by {d.uploadedBy}</Text>
+          </View>
+        ) : null}
       </ScrollView>
 
       {d.requiresAck ? (
@@ -147,6 +151,7 @@ const styles = StyleSheet.create({
   versionDivider: { borderTopWidth: 1, borderTopColor: Colors.outlineVariant },
   versionLabel: { ...Typography.labelMd, color: Colors.onSurface },
   versionNote: { ...Typography.labelSm, color: Colors.onSurfaceVariant },
+  emptyText: { ...Typography.bodySm, color: Colors.onSurfaceVariant },
   uploadedRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: Spacing.xs },
   uploadedText: { ...Typography.caption, color: Colors.outline },
   footer: { paddingHorizontal: Spacing.containerMargin, paddingTop: Spacing.sm, paddingBottom: Spacing.lg, backgroundColor: Colors.background, borderTopWidth: 1, borderTopColor: Colors.outlineVariant },

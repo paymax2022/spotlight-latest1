@@ -73,7 +73,7 @@ export default function OrganisationDetail() {
             <ShieldCheck size={16} color={Colors.primary} strokeWidth={2} />
             <Text style={styles.cardTitle}>{GROUP_TYPE_LABEL[o.groupType]}</Text>
           </View>
-          <Text style={styles.body}>{o.approvalSummary}</Text>
+          <Text style={styles.body}>{o.approvalSummary ?? 'Approval path not published.'}</Text>
         </View>
 
         {/* About */}
@@ -83,7 +83,7 @@ export default function OrganisationDetail() {
         {/* Membership categories */}
         <Text style={styles.sectionTitle}>Membership categories</Text>
         <View style={styles.gap8}>
-          {o.membershipCategories.map((c) => (
+          {(o.membershipCategories ?? []).map((c) => (
             <View key={c.id} style={[styles.rowCard, shadow1]}>
               <Layers size={16} color={Colors.secondary} strokeWidth={2} />
               <View style={{ flex: 1 }}>
@@ -98,7 +98,9 @@ export default function OrganisationDetail() {
         {/* Requirements */}
         <Text style={styles.sectionTitle}>What you’ll need</Text>
         <View style={styles.gap8}>
-          {o.requirements.map((r) => (
+          {(o.requirements ?? []).length === 0 ? (
+            <Text style={styles.reqText}>No requirements have been published.</Text>
+          ) : (o.requirements ?? []).map((r) => (
             <View key={r.id} style={styles.reqRow}>
               <ListChecks size={15} color={Colors.teal} strokeWidth={2} />
               <Text style={styles.reqText}>{r.label}{r.required ? '' : ' (optional)'}</Text>

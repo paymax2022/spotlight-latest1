@@ -27,14 +27,15 @@ export interface Organisation extends OrganisationSummary {
   foundedYear:       number | null;
   requiresPayment:    boolean;
   registrationFeeKobo: number;     // 0 when free
-  approvalSummary:    string;      // human-readable approval path
+  approvalSummary?:   string;      // human-readable approval path
   membershipCategories: MembershipCategory[];
   chapters:           Chapter[];
-  requirements:       JoinRequirement[];
-  rules:              string[];    // group rules the applicant must accept
+  /** Every collection below is optional — the live DTO returns a subset. */
+  requirements?:      JoinRequirement[];
+  rules?:             string[];    // group rules the applicant must accept
   website:            string | null;
-  branches:           string[];        // local branches under the selected chapter (B12)
-  committeeOptions:   string[];        // committees a joiner can express interest in (B13)
+  branches?:          string[];        // local branches under the selected chapter (B12)
+  committeeOptions?:  string[];        // committees a joiner can express interest in (B13)
 }
 
 export interface MembershipCategory {
@@ -142,7 +143,9 @@ export interface MemberProfileSummary {
   chapterName:   string | null;
   status:        MemberStatus;
   profession:    string | null;
-  committees:    string[];
+  committees?:   string[];
+  /** Present on the live DTO; used to resolve the member's organisation. */
+  organisationId?: string | null;
 }
 
 export interface MemberProfile extends MemberProfileSummary {
@@ -197,6 +200,11 @@ export interface DuesInvoice {
   status:      InvoiceStatus;
   dueDate:     string;             // ISO
   scope:       'NATIONAL' | 'STATE' | 'LOCAL' | 'COMMITTEE';
+  /**
+   * Authoritative revenue split, computed server-side. The client never
+   * invents percentages — when this is absent the breakdown is not shown.
+   */
+  split?:      RevenueSplitLine[];
 }
 
 export interface RevenueSplitLine {

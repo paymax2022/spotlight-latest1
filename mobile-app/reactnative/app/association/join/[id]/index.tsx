@@ -32,9 +32,15 @@ export default function JoinOrganisation() {
     setCommittees((cur) => (cur.includes(name) ? cur.filter((c) => c !== name) : [...cur, name]));
 
   const o = org.data;
-  const categoryOptions = useMemo(() => o?.membershipCategories.map((c) => c.label) ?? [], [o]);
-  const chapterOptions = useMemo(() => o?.chapters.map((c) => c.name) ?? [], [o]);
-  const needsSponsor = o?.requirements.some((r) => r.type === 'SPONSOR') ?? false;
+  const categoryOptions = useMemo(() => o?.membershipCategories?.map((c) => c.label) ?? [], [o]);
+  const chapterOptions = useMemo(() => o?.chapters?.map((c) => c.name) ?? [], [o]);
+  // Every collection below is optional on the live DTO — a partial payload
+  // must render an empty section, never crash.
+  const requirements = useMemo(() => o?.requirements ?? [], [o]);
+  const branches = o?.branches ?? [];
+  const committeeOptions = o?.committeeOptions ?? [];
+  const rules = o?.rules ?? [];
+  const needsSponsor = requirements.some((r) => r.type === 'SPONSOR');
 
   if (org.isLoading) {
     return (
@@ -58,8 +64,8 @@ export default function JoinOrganisation() {
   const onSubmit = () => {
     setTouched(true);
     if (!valid) return;
-    const cat = o.membershipCategories.find((c) => c.label === category);
-    const ch = o.chapters.find((c) => c.name === chapter);
+    const cat = (o.membershipCategories ?? []).find((c) => c.label === category);
+    const ch = (o.chapters ?? []).find((c) => c.name === chapter);
     submit.mutate(
       {
         organisationId: o.id,
@@ -83,7 +89,7 @@ export default function JoinOrganisation() {
     <SafeAreaView style={styles.safe} edges={['top']}>
       <ScreenHeader title={`Join ${o.acronym ?? o.name}`} />
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled">
-        <Text style={styles.intro}>Complete the details below to apply. {o.approvalSummary}</Text>
+        <Text style={styles.intro}>Complete the details below to apply.{o.approvalSummary ? ` ${o.approvalSummary}` : ''}</Text>
 
         <SelectField
           label="Membership category"
@@ -103,21 +109,21 @@ export default function JoinOrganisation() {
           error={touched && !chapter ? 'Please choose a chapter' : undefined}
         />
 
-        {o.branches.length > 0 ? (
+        {branches.length > 0 ? (
           <SelectField
             label="Local branch (optional)"
             placeholder="Select your local branch"
             value={branch}
-            options={o.branches}
+            options={branches}
             onChange={setBranch}
           />
         ) : null}
 
-        {o.committeeOptions.length > 0 ? (
+        {committeeOptions.length > 0 ? (
           <View>
             <Text style={styles.committeeLabel}>Committee interest (optional)</Text>
             <View style={styles.committeeRow}>
-              {o.committeeOptions.map((name) => {
+              {committeeOptions.map((name) => {
                 const active = committees.includes(name);
                 return (
                   <Pressable
@@ -147,7 +153,7 @@ export default function JoinOrganisation() {
         ) : null}
 
         {/* Required documents step */}
-        {o.requirements.some((r) => r.type === 'DOCUMENT') ? (
+        {requirements.some((r) => r.type === 'DOCUMENT') ? (
           <Pressable style={styles.docsRow} onPress={() => router.push(`/association/join/${o.id}/documents`)} accessibilityRole="button" accessibilityLabel="Upload required documents">
             <Upload size={18} color={Colors.secondary} strokeWidth={2} />
             <Text style={styles.docsText}>Upload required documents</Text>
@@ -158,7 +164,9 @@ export default function JoinOrganisation() {
         {/* Rules consent */}
         <Text style={styles.rulesTitle}>Group rules</Text>
         <View style={styles.rulesCard}>
-          {o.rules.map((rule, i) => (
+          {rules.length === 0 ? (
+            <Text style={styles.ruleText}>This organisation has not published any group rules.</Text>
+          ) : rules.map((rule, i) => (
             <Text key={i} style={styles.ruleText}>• {rule}</Text>
           ))}
         </View>

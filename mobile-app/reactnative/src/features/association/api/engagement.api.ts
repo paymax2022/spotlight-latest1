@@ -89,6 +89,17 @@ export async function getMeetings(): Promise<MeetingSummary[]> {
   return data;
 }
 
+/**
+ * The Go meeting-detail DTO names the caller's own RSVP `myRsvp`; the screens
+ * read `rsvp`. Normalise at the seam so the UI keeps one field name. The list
+ * DTO already carries `rsvp` and is left untouched.
+ */
+function normaliseMeeting(dto: (Meeting & { myRsvp?: RsvpStatus }) | null | undefined): Meeting {
+  const raw = (dto ?? {}) as Meeting & { myRsvp?: RsvpStatus };
+  const { myRsvp, ...rest } = raw;
+  return { ...rest, rsvp: rest.rsvp ?? myRsvp ?? null } as Meeting;
+}
+
 export async function getMeeting(id: string): Promise<Meeting> {
   if (USE_MOCK) {
     await delay();
@@ -97,7 +108,7 @@ export async function getMeeting(id: string): Promise<Meeting> {
     return found;
   }
   const { data } = await api.get(`${BASE}/meetings/${id}`);
-  return data;
+  return normaliseMeeting(data);
 }
 
 export async function rsvpMeeting(id: string, status: RsvpStatus): Promise<{ ok: true }> {

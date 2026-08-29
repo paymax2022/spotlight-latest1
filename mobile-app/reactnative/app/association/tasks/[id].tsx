@@ -54,7 +54,10 @@ export default function TaskDetail() {
   const status = TASK_STATUS_STYLE[liveStatus];
   const priority = TASK_PRIORITY_STYLE[t.priority];
   const next = NEXT_STATUS[liveStatus];
-  const doneCount = t.checklist.filter((c) => c.done).length;
+  // Checklist / comments are optional on the live DTO.
+  const checklist = t.checklist ?? [];
+  const comments = t.comments ?? [];
+  const doneCount = checklist.filter((c) => c.done).length;
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
@@ -100,11 +103,11 @@ export default function TaskDetail() {
         <Text style={styles.body}>{t.description}</Text>
 
         {/* Checklist */}
-        {t.checklist.length > 0 ? (
+        {checklist.length > 0 ? (
           <>
-            <Text style={styles.sectionTitle}>Checklist ({doneCount}/{t.checklist.length})</Text>
+            <Text style={styles.sectionTitle}>Checklist ({doneCount}/{checklist.length})</Text>
             <View style={[styles.metaCard, shadow1]}>
-              {t.checklist.map((c) => (
+              {checklist.map((c) => (
                 <View key={c.id} style={styles.checkRow}>
                   {c.done ? <CheckSquare size={18} color={Colors.teal} strokeWidth={2} /> : <Square size={18} color={Colors.outline} strokeWidth={2} />}
                   <Text style={[styles.checkText, c.done && styles.checkTextDone]}>{c.label}</Text>
@@ -115,11 +118,11 @@ export default function TaskDetail() {
         ) : null}
 
         {/* Comments */}
-        {t.comments.length > 0 ? (
+        {comments.length > 0 ? (
           <>
             <Text style={styles.sectionTitle}>Comments</Text>
             <View style={styles.gap8}>
-              {t.comments.map((cm) => (
+              {comments.map((cm) => (
                 <View key={cm.id} style={[styles.commentCard, shadow1]}>
                   <View style={styles.commentHead}>
                     <MessageSquare size={13} color={Colors.primary} strokeWidth={2} />

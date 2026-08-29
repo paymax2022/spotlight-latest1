@@ -36,9 +36,15 @@ export interface AdminApplication extends AdminApplicationSummary {
   phone:     string;
   profession: string;
   sponsor:   string | null;
-  documents: ApplicationDoc[];
+  /** Optional: the live DTO omits it while document capture is being built. */
+  documents?: ApplicationDoc[];
   registrationFeeKobo: number;
-  slaHoursLeft: number;        // negative when breached
+  /**
+   * Hours left on the review SLA; negative when breached.
+   * Optional because the live DTO does not always compute it — rendering
+   * `undefined` here produced a literal "NaNh left to review".
+   */
+  slaHoursLeft?: number;
 }
 
 // ─── Finance / treasurer (S) ──────────────────────────────────────────────────
@@ -50,8 +56,9 @@ export interface FinanceSummary {
   outstandingKobo: number;
   paidMembers:     number;
   unpaidMembers:   number;
-  byChapter:       RevenueLine[];
-  byCategory:      RevenueLine[];
+  /** Optional: the live DTO omits the breakdowns until reporting is wired. */
+  byChapter?:      RevenueLine[];
+  byCategory?:     RevenueLine[];
   offlinePending:  number;
 }
 

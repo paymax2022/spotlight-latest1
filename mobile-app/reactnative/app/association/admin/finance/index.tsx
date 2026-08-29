@@ -58,17 +58,13 @@ export default function FinanceDashboard() {
             <ChevronRight size={18} color={Colors.outline} strokeWidth={2} />
           </Pressable>
 
-          {/* Revenue by chapter */}
+          {/* Revenue by chapter — the breakdown is optional on the live DTO. */}
           <SectionHeader title="Revenue by chapter" style={styles.sectionGap} />
-          <View style={[styles.card, shadow1]}>
-            {fin.data.byChapter.map((l, i) => <RevRow key={l.label} line={l} max={maxOf(fin.data.byChapter)} divider={i > 0} />)}
-          </View>
+          <RevenueCard lines={fin.data.byChapter ?? []} />
 
           {/* Revenue by category */}
           <SectionHeader title="Revenue by category" style={styles.sectionGap} />
-          <View style={[styles.card, shadow1]}>
-            {fin.data.byCategory.map((l, i) => <RevRow key={l.label} line={l} max={maxOf(fin.data.byCategory)} divider={i > 0} />)}
-          </View>
+          <RevenueCard lines={fin.data.byCategory ?? []} />
         </ScrollView>
       )}
     </SafeAreaView>
@@ -77,6 +73,23 @@ export default function FinanceDashboard() {
 
 function maxOf(lines: RevenueLine[]): number {
   return Math.max(1, ...lines.map((l) => l.amountKobo));
+}
+
+/** Renders a breakdown, or an empty state when the payload carries none. */
+function RevenueCard({ lines }: { lines: RevenueLine[] }) {
+  if (lines.length === 0) {
+    return (
+      <View style={[styles.card, shadow1]}>
+        <Text style={styles.emptyText}>No breakdown available yet.</Text>
+      </View>
+    );
+  }
+  const max = maxOf(lines);
+  return (
+    <View style={[styles.card, shadow1]}>
+      {lines.map((l, i) => <RevRow key={l.label} line={l} max={max} divider={i > 0} />)}
+    </View>
+  );
 }
 
 function RevRow({ line, max, divider }: { line: RevenueLine; max: number; divider: boolean }) {
@@ -113,6 +126,7 @@ const styles = StyleSheet.create({
   badgeText: { ...Typography.caption, color: Colors.onPrimary, fontWeight: '700' as const },
   sectionGap: { paddingHorizontal: 0, marginTop: Spacing.sm },
   card: { backgroundColor: Colors.surfaceContainerLowest, borderRadius: Radius.lg, borderWidth: 1, borderColor: Colors.outlineVariant, padding: Spacing.md },
+  emptyText: { ...Typography.bodySm, color: Colors.onSurfaceVariant, paddingVertical: Spacing.sm },
   revRow: { paddingVertical: Spacing.sm, gap: 6 },
   revDivider: { borderTopWidth: 1, borderTopColor: Colors.outlineVariant },
   revHead: { flexDirection: 'row', justifyContent: 'space-between' },
