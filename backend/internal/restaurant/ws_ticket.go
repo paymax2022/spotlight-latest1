@@ -28,7 +28,7 @@ import (
 // Secret comes from WS_TICKET_SIGNING_SECRET (fail-closed if unset).
 
 // WSScopeUser is the reserved `order_id` marking a ticket that authenticates a
-// USER-scoped socket rather than one bound to a single order (ADR-PR140).
+// USER-scoped socket rather than one bound to a single order (ADR-049).
 //
 // Safe as a sentinel because every real order id is a UUID, so it can never
 // collide, and validateWSTicket compares order_id for exact equality — an

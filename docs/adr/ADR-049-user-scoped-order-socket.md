@@ -1,16 +1,16 @@
-# ADR-PR140 — The merchant order queue subscribes to the user, not to an order
+# ADR-049 — The merchant order queue subscribes to the user, not to an order
 
 **Status:** Accepted
 **Date:** 2026-08-29
 **Deciders:** Restaurant & Delivery module
 
-> Written with the `ADR-PR140` placeholder per `docs/adr/ADR-000-template.md`.
+> Written with the `ADR-049` placeholder per `docs/adr/ADR-000-template.md`.
 > **140 is not a real pull request.** This work landed by direct push to
 > `develop` (commits `e47f45d7`…`b45a9e8f`), so no PR number exists to name it
 > after. The placeholder is only a unique sort-and-rewrite token for
 > `adr-assign.yml`, which allocates the real number on push; 140 was chosen
 > because it follows 139, the last placeholder the repo used, so this ADR and its
-> sibling `ADR-PR141` are numbered in the order they were written.
+> sibling `ADR-050` are numbered in the order they were written.
 
 ## Context
 
@@ -153,4 +153,4 @@ frame must not be able to cause it.
 - `backend/internal/restaurant/ws_tracking.go` — the user-keyed hub this relies on
 - `frontend-web/src/lib/restaurant/ws-ticket.ts` — `buildUserWsTicket`
 - `mobile-app/reactnative/src/features/food/useRestaurantQueueRealtime.ts`
-- Sibling: ADR-PR141 (rider status in SQL)
+- Sibling: ADR-050 (rider status in SQL)

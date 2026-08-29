@@ -62,7 +62,7 @@ function signTicket(orderId: string, userId: string): { ticket: string; expiresA
 
 /**
  * Reserved `order_id` for a USER-scoped ticket (see WSScopeUser in the Go
- * validator, and ADR-PR140). A real order id is always a UUID, so this cannot collide, and the
+ * validator, and ADR-049). A real order id is always a UUID, so this cannot collide, and the
  * validator compares order_id exactly — an order ticket cannot be replayed on
  * the user socket, nor the reverse.
  */

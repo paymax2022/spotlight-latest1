@@ -1,12 +1,12 @@
-# ADR-PR141 — Derived rider status is computed in SQL, with the Go function kept as its tested specification
+# ADR-050 — Derived rider status is computed in SQL, with the Go function kept as its tested specification
 
 **Status:** Accepted
 **Date:** 2026-08-29
 **Deciders:** Restaurant & Delivery module
 
-> Written with the `ADR-PR141` placeholder per `docs/adr/ADR-000-template.md`.
+> Written with the `ADR-050` placeholder per `docs/adr/ADR-000-template.md`.
 > **141 is not a real pull request** — this work landed by direct push to
-> `develop`. See the note in ADR-PR140 for why, and why 140/141 were chosen.
+> `develop`. See the note in ADR-049 for why, and why 140/141 were chosen.
 
 ## Context
 
@@ -136,4 +136,4 @@ removing the failure mode rather than papering over it.
 - `backend/internal/restaurant/admin_repo.go` — `mapRiderStatus`, kept as the specification
 - `backend/internal/restaurant/admin_orders.go` — `terminalOrderStatuses`, `terminalOrderStatusSQL()`
 - `backend/internal/restaurant/admin_dispatch_test.go` — `TestRiderStatusSQLMatchesGo`, `TestRiderStatusSQLShape`
-- Sibling: ADR-PR140 (user-scoped order socket)
+- Sibling: ADR-049 (user-scoped order socket)

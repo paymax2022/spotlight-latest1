@@ -106,7 +106,7 @@ type AdminPayoutRun struct {
 // mapRiderStatus maps the transport driver status + verification onto the ops
 // console's rider status vocabulary (available|on_delivery|offline|suspended).
 //
-// NOT called in production any more (ADR-PR141) — the roster computes status in SQL, because
+// NOT called in production any more (ADR-050) — the roster computes status in SQL, because
 // it now filters, counts and pages on it and none of that can be done to a value
 // derived after the rows come back. This is kept deliberately as the executable
 // SPECIFICATION that riderStatusSQL is tested against

@@ -1,6 +1,6 @@
 // ── Restaurant & Delivery — merchant queue realtime ──────────────────────────
 //
-// Decision record: ADR-PR140.
+// Decision record: ADR-049.
 //
 // WHY THIS EXISTS, SEPARATELY FROM useOrderRealtime
 // useOrderRealtime subscribes to ONE order and drops every frame whose
