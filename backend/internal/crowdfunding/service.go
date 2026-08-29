@@ -116,6 +116,26 @@ func (s *Service) Get(ctx context.Context, id string) (*Campaign, error) {
 	)
 }
 
+// CreatorPayoutPct and PlatformFeePct are the crowdfunding split, and this is
+// the ONLY authority for those numbers.
+//
+// The fee is DEDUCTED from the creator's payout, never added to the
+// contributor's bill: a ₦1,000 contribution debits the contributor ₦1,000,
+// pays the creator ₦900 and keeps ₦100. Anything that displays a fee — a
+// checkout quote, a receipt — must describe that shape, and every past
+// contribution is recorded under it.
+//
+// Two other places used to state a different number and neither moved money:
+// the mobile client derived 2.5% and added it on top of the charge, and
+// cf_fee_config.platform_fee_bps (admin-editable, currently 250) is read by the
+// admin console and by nothing else. If the split is ever meant to become
+// configurable, it is this constant that has to start reading that table —
+// changing the table alone has no effect on any money.
+const (
+	CreatorPayoutPct = 0.90
+	PlatformFeePct   = 0.10
+)
+
 // Contribute escrows a contributor's funds toward a campaign, then immediately
 // settles the 90/10 split (creator/platform) so the contribution is available
 // in the creator's wallet on arrival — no goal-gated escrow hold. This is a
@@ -184,7 +204,7 @@ func (s *Service) Contribute(ctx context.Context, campaignID, contributorID stri
 	// (money is accounted for either way); a settle failure here is logged and
 	// left 'escrowed' rather than failing the whole call — there is no unwind
 	// for money the contributor has already paid.
-	split := settlement.Split{ProviderID: creatorID, ProviderPct: 0.90, PlatformPct: 0.10}
+	split := settlement.Split{ProviderID: creatorID, ProviderPct: CreatorPayoutPct, PlatformPct: PlatformFeePct}
 	if err := s.settlement.Settle(ctx, contrib.SettlementID, split); err != nil {
 		log.Printf("[crowdfunding] instant settle failed for contribution %s (left escrowed, needs manual sweep): %v", contrib.ID, err)
 	} else if _, err := s.db.Exec(ctx, `UPDATE contributions SET status='released' WHERE id=$1`, contrib.ID); err != nil {
@@ -231,8 +251,8 @@ func (s *Service) Release(ctx context.Context, campaignID, creatorID string) err
 
 	split := settlement.Split{
 		ProviderID:  creatorID,
-		ProviderPct: 0.90,
-		PlatformPct: 0.10,
+		ProviderPct: CreatorPayoutPct,
+		PlatformPct: PlatformFeePct,
 	}
 	for _, entry := range contribs {
 		if err := s.settlement.Settle(ctx, entry.settlementID, split); err != nil {

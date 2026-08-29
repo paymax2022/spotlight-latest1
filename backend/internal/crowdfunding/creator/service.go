@@ -4,12 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"spotlight/backend/internal/crowdfunding"
 	"spotlight/backend/internal/crowdfunding/engage"
 )
 
@@ -26,9 +28,13 @@ func NewService(db *pgxpool.Pool) *Service { return &Service{db: db} }
 // ErrNotFound is returned when an id resolves to no row.
 var ErrNotFound = errors.New("crowdfunding/creator: not found")
 
-// platformFeeBps is the indicative platform fee (2.5%) used to derive a
-// contribution's fee/total breakdown (the contributions table stores net kobo).
-const platformFeeBps = 250
+// The fee/total breakdown a contribution reports is READ FROM THE SETTLEMENT it
+// was escrowed under, never re-derived here. This file used to carry its own
+// `platformFeeBps = 250` and report fee = 2.5% of the amount with
+// total = amount + fee, which was wrong in both directions: the platform's cut
+// is crowdfunding.PlatformFeePct (10%), and it is DEDUCTED from the creator's
+// payout rather than added to the contributor's bill. A ₦1,000 contribution
+// therefore rendered as "₦1,025 total paid" against a ₦1,000 debit.
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
 
@@ -151,9 +157,11 @@ func (s *Service) ListContributions(ctx context.Context, userID, status string) 
 	const q = `
 		SELECT co.id::text, COALESCE(co.idempotency_key,''), co.campaign_id::text,
 		       COALESCE(c.title,''), c.cover_url, co.amount_kobo, co.status, co.created_at,
-		       EXISTS (SELECT 1 FROM cf_refund_requests r WHERE r.contribution_id = co.id) AS refund_requested
+		       EXISTS (SELECT 1 FROM cf_refund_requests r WHERE r.contribution_id = co.id) AS refund_requested,
+		       st.total_kobo, st.fee_kobo, st.provider_kobo, st.settled_at
 		FROM contributions co
 		JOIN campaigns c ON c.id = co.campaign_id
+		LEFT JOIN settlements st ON st.id = co.settlement_id
 		WHERE co.contributor_id = $1
 		ORDER BY co.created_at DESC
 		LIMIT 200`
@@ -197,9 +205,11 @@ func (s *Service) GetContribution(ctx context.Context, id, contributorID string)
 	const q = `
 		SELECT co.id::text, COALESCE(co.idempotency_key,''), co.campaign_id::text,
 		       COALESCE(c.title,''), c.cover_url, co.amount_kobo, co.status, co.created_at,
-		       EXISTS (SELECT 1 FROM cf_refund_requests r WHERE r.contribution_id = co.id) AS refund_requested
+		       EXISTS (SELECT 1 FROM cf_refund_requests r WHERE r.contribution_id = co.id) AS refund_requested,
+		       st.total_kobo, st.fee_kobo, st.provider_kobo, st.settled_at
 		FROM contributions co
 		JOIN campaigns c ON c.id = co.campaign_id
+		LEFT JOIN settlements st ON st.id = co.settlement_id
 		WHERE co.id = $1 AND co.contributor_id::text = $2`
 	c, err := scanContribution(s.db.QueryRow(ctx, q, id, contributorID).Scan)
 	if err != nil {
@@ -211,38 +221,67 @@ func (s *Service) GetContribution(ctx context.Context, id, contributorID string)
 	return &c, nil
 }
 
-// scanContribution scans a contribution row and derives the fee/total breakdown
-// (the contributions table stores net kobo only) and the client status.
+// scanContribution scans a contribution row plus the settlement it was escrowed
+// under, and reports the money that actually moved.
 func scanContribution(scan func(dest ...any) error) (Contribution, error) {
 	var (
-		id, idemKey, campaignID, title string
-		cover                          *string
-		amount                         int64
-		rawStatus                      string
-		createdAt                      time.Time
-		refundRequested                bool
+		id, idemKey, campaignID, title   string
+		cover                            *string
+		amount                           int64
+		rawStatus                        string
+		createdAt                        time.Time
+		refundRequested                  bool
+		settTotal, settFee, settProvider *int64
+		settledAt                        *time.Time
 	)
-	if err := scan(&id, &idemKey, &campaignID, &title, &cover, &amount, &rawStatus, &createdAt, &refundRequested); err != nil {
+	if err := scan(&id, &idemKey, &campaignID, &title, &cover, &amount, &rawStatus, &createdAt, &refundRequested,
+		&settTotal, &settFee, &settProvider, &settledAt); err != nil {
 		return Contribution{}, err
 	}
-	fee := amount * platformFeeBps / 10000
+
+	// What the contributor was actually debited. The settlement row is the
+	// authority — Escrow re-reads total_kobo rather than echoing the caller's
+	// argument, so on a replay it can legitimately differ from
+	// contributions.amount_kobo, and the amount HELD is the amount charged.
+	paid := amount
+	if settTotal != nil {
+		paid = *settTotal
+	}
+
+	// fee_kobo / provider_kobo are written by Settle, not by Escrow — and they are
+	// NOT NULL DEFAULT 0, so an escrowed row carries a real, meaningless zero
+	// rather than a NULL. Nullness therefore cannot distinguish "not settled yet"
+	// from "settled with no fee"; settled_at can, because only Settle writes it.
+	// Reporting the default zero would tell the creator they are taking no
+	// deduction, so before settlement we project the split that Settle WILL apply.
+	// The projection reads the same constant the settlement splits by, so the two
+	// cannot drift the way the old hardcoded 2.5% did.
+	fee, net := int64(0), paid
+	if settledAt != nil && settFee != nil && settProvider != nil {
+		fee, net = *settFee, *settProvider
+	} else {
+		fee = int64(math.Round(float64(paid) * crowdfunding.PlatformFeePct))
+		net = paid - fee
+	}
+
 	return Contribution{
-		ID:              id,
-		Reference:       reference(id, idemKey),
-		CampaignID:      campaignID,
-		CampaignTitle:   title,
-		CampaignCover:   cover,
-		AmountKobo:      amount,
-		FeeKobo:         fee,
-		TotalKobo:       amount + fee,
-		Currency:        "NGN",
-		Status:          contributionStatus(rawStatus, refundRequested),
-		PaymentMethod:   "WALLET",
-		Anonymous:       false,
-		Message:         nil,
-		RewardTierTitle: nil,
-		CreatedAt:       rfc3339(createdAt),
-		RefundEligible:  rawStatus == "escrowed" && !refundRequested,
+		ID:                id,
+		Reference:         reference(id, idemKey),
+		CampaignID:        campaignID,
+		CampaignTitle:     title,
+		CampaignCover:     cover,
+		AmountKobo:        amount,
+		FeeKobo:           fee,
+		NetToCampaignKobo: net,
+		TotalKobo:         paid,
+		Currency:          "NGN",
+		Status:            contributionStatus(rawStatus, refundRequested),
+		PaymentMethod:     "WALLET",
+		Anonymous:         false,
+		Message:           nil,
+		RewardTierTitle:   nil,
+		CreatedAt:         rfc3339(createdAt),
+		RefundEligible:    rawStatus == "escrowed" && !refundRequested,
 	}, nil
 }
 
