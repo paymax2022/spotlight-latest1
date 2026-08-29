@@ -4,12 +4,13 @@
 
 export type CampaignStatus =
   | 'ACTIVE'
+  | 'PAUSED'          // owner-paused: hidden from public discovery, funds untouched
   | 'DRAFT'
   | 'PENDING_REVIEW'
   | 'COMPLETED'
   | 'EXPIRED'
   | 'CANCELLED'
-  | 'FROZEN'
+  | 'FROZEN'          // paused by Trust & Safety — the owner cannot resume it
   | 'REJECTED';
 
 export type CampaignType =
@@ -163,6 +164,16 @@ export interface Campaign {
   trending: boolean;
   urgent: boolean;
   saved?: boolean;
+
+  /**
+   * State of the owner's request to be featured on the discovery rail.
+   * OPTIONAL because it is owner-scoped: the public campaign payload does not
+   * carry it. When the server omits it we fall back to `featured` alone (see
+   * `featureRequestState` in crowdfundingFormatters) rather than guessing that
+   * no request is outstanding — an owner must never be shown "Request feature"
+   * for a request that is already sitting in an admin queue.
+   */
+  featureRequestStatus?: 'NONE' | 'PENDING' | 'APPROVED' | 'REJECTED';
 
   budget: BudgetItem[];
   milestones: CampaignMilestone[];
@@ -400,6 +411,24 @@ export interface SubmitCampaignResult {
   campaignId: string;
   status: Extract<CampaignStatus, 'DRAFT' | 'PENDING_REVIEW'>;
   reference: string;
+}
+
+// ─── Owner self-management (Section G2) ───────────────────────────────────────
+
+/**
+ * Patch body for `PATCH /creator/campaigns/:id`. Every key is OPTIONAL and the
+ * server applies subset semantics: an absent key is left unchanged. That is why
+ * this is not `Partial<CampaignDraftInput>` — the wire contract distinguishes
+ * "not supplied" from "cleared", so the edit screen must send only the fields
+ * the owner actually touched.
+ */
+export interface CampaignEditInput {
+  title?: string;
+  summary?: string;
+  story?: string;
+  category?: string;
+  coverImage?: string | null;
+  goalKobo?: number;
 }
 
 // ─── Wallet, ledger & withdrawal (Section I) ──────────────────────────────────

@@ -20,6 +20,7 @@ import type {
   CreatorNotification,
   CampaignAnalytics,
   CampaignDraftInput,
+  CampaignEditInput,
   SubmitCampaignResult,
 } from '../types/crowdfunding.types';
 import {
@@ -409,6 +410,126 @@ export async function getCampaignAnalytics(id: string): Promise<CampaignAnalytic
   }
   const res = await api.get(`/api/v1/crowdfunding/creator/campaigns/${id}/analytics`);
   return (res.data?.data ?? res.data) as CampaignAnalytics;
+}
+
+// ─── Owner self-management (Section G2) ───────────────────────────────────────
+// Every call here is owner-scoped and mutates a campaign the caller owns. They
+// all resolve to the campaign the SERVER returned (except delete, which returns
+// nothing) so a screen renders authoritative state instead of a local guess.
+
+/** Locate a campaign in the mock creator dataset, or throw the way the API would. */
+function mockOwned(id: string): Campaign {
+  const found = MOCK_MY_CAMPAIGNS.find((c) => c.id === id);
+  if (!found) throw new Error('Campaign not found');
+  return found;
+}
+
+/**
+ * Update a campaign the caller owns.
+ *
+ * Subset semantics: only the keys present in `patch` change. The caller is
+ * responsible for sending just the fields the owner edited — spreading a whole
+ * form here would silently overwrite fields the owner never opened.
+ */
+export async function updateCampaign(id: string, patch: CampaignEditInput): Promise<Campaign> {
+  if (USE_MOCK) {
+    await delay(600);
+    const c = mockOwned(id);
+    if (patch.title !== undefined) c.title = patch.title;
+    if (patch.summary !== undefined) c.summary = patch.summary;
+    if (patch.story !== undefined) c.story = patch.story;
+    if (patch.coverImage !== undefined) c.coverImage = patch.coverImage;
+    if (patch.goalKobo !== undefined) c.goalKobo = patch.goalKobo;
+    if (patch.category !== undefined) {
+      c.category = patch.category;
+      c.categoryLabel = CAMPAIGN_CATEGORIES.find((k) => k.slug === patch.category)?.label ?? c.categoryLabel;
+    }
+    return { ...c };
+  }
+  const res = await api.patch(`${LIVE}/creator/campaigns/${id}`, patch);
+  return (res.data?.data ?? res.data) as Campaign;
+}
+
+/**
+ * Pause or resume a campaign. A paused campaign is hidden from public discovery
+ * and stops accepting contributions; nothing already raised is affected.
+ */
+export async function setCampaignPaused(id: string, paused: boolean): Promise<Campaign> {
+  if (USE_MOCK) {
+    await delay(500);
+    const c = mockOwned(id);
+    // Mirror the server's refusals so mock mode cannot teach a workflow the
+    // live backend rejects.
+    if (paused && c.status !== 'ACTIVE') throw new Error('Only a live campaign can be paused.');
+    if (!paused && c.status !== 'PAUSED') throw new Error('This campaign is not paused.');
+    c.status = paused ? 'PAUSED' : 'ACTIVE';
+    // A paused campaign cannot hold a featured slot on the discovery rail.
+    if (paused) c.featured = false;
+    return { ...c };
+  }
+  const res = await api.post(`${LIVE}/creator/campaigns/${id}/${paused ? 'pause' : 'resume'}`);
+  return (res.data?.data ?? res.data) as Campaign;
+}
+
+/**
+ * Permanently delete a campaign. The server allows this ONLY while the campaign
+ * has never received funds and answers 409 otherwise — the contribution record
+ * has to outlive the campaign. The UI gates on the same rule, but the server is
+ * the authority and its refusal is surfaced verbatim.
+ */
+export async function deleteCampaign(id: string): Promise<void> {
+  if (USE_MOCK) {
+    await delay(600);
+    const c = mockOwned(id);
+    if (c.raisedKobo > 0 || c.contributorCount > 0) {
+      throw new Error('This campaign has received contributions and cannot be deleted.');
+    }
+    const idx = MOCK_MY_CAMPAIGNS.findIndex((m) => m.id === id);
+    if (idx >= 0) MOCK_MY_CAMPAIGNS.splice(idx, 1);
+    return;
+  }
+  await api.delete(`${LIVE}/creator/campaigns/${id}`);
+}
+
+/** Ask an admin to feature this campaign. Refused unless the campaign is ACTIVE. */
+export async function requestCampaignFeature(id: string): Promise<Campaign> {
+  if (USE_MOCK) {
+    await delay(500);
+    const c = mockOwned(id);
+    if (c.status !== 'ACTIVE') throw new Error('Only a live campaign can be featured.');
+    c.featureRequestStatus = 'PENDING';
+    return { ...c };
+  }
+  const res = await api.post(`${LIVE}/creator/campaigns/${id}/feature-request`);
+  return (res.data?.data ?? res.data) as Campaign;
+}
+
+/** Withdraw a pending feature request before an admin acts on it. */
+export async function withdrawCampaignFeatureRequest(id: string): Promise<Campaign> {
+  if (USE_MOCK) {
+    await delay(400);
+    const c = mockOwned(id);
+    c.featureRequestStatus = 'NONE';
+    return { ...c };
+  }
+  const res = await api.delete(`${LIVE}/creator/campaigns/${id}/feature-request`);
+  return (res.data?.data ?? res.data) as Campaign;
+}
+
+/**
+ * Take your own campaign off the featured rail. Always permitted — this is the
+ * owner's escape hatch from a placement an admin granted.
+ */
+export async function unfeatureCampaign(id: string): Promise<Campaign> {
+  if (USE_MOCK) {
+    await delay(400);
+    const c = mockOwned(id);
+    c.featured = false;
+    c.featureRequestStatus = 'NONE';
+    return { ...c };
+  }
+  const res = await api.post(`${LIVE}/creator/campaigns/${id}/unfeature`);
+  return (res.data?.data ?? res.data) as Campaign;
 }
 
 // ─── Campaign creation (Section G) ────────────────────────────────────────────
