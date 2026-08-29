@@ -247,6 +247,41 @@ describe('Bridge Saga (Failure Handling)', () => {
     expect(result.error).toContain('tier');
   });
 
+  it('preserves the thrown status code so the route can answer 403, not 400', async () => {
+    // The failure path used to return only { success, error }, so the route
+    // mapped a KYC rejection and a malformed body to the same 400. Carrying the
+    // code is what lets /api/v2/votes/free answer 403 (and, once the atomic
+    // claim is wired, 429 for a cap-exhausted voter).
+    const mockSupabase = {
+      from: vi.fn().mockReturnThis(),
+      insert: vi.fn().mockReturnThis(),
+      update: vi.fn().mockReturnThis(),
+      select: vi.fn().mockReturnThis(),
+      eq: vi.fn().mockReturnThis(),
+      single: vi.fn(),
+    };
+    (createAdminClient as any).mockReturnValue(mockSupabase);
+    mockSupabase.insert.mockImplementationOnce(() => {
+      mockSupabase.select.mockReturnThis();
+      mockSupabase.single.mockResolvedValueOnce({ data: { response: {} }, error: null });
+      return mockSupabase;
+    });
+
+    vi.mocked(assertKycTier).mockRejectedValueOnce(
+      new KycGateError('Insufficient KYC tier: requires tier 2, user has tier 0', 403),
+    );
+
+    const result = await bridgedCastFreeVote(
+      mockVoteRequest,
+      userId,
+      idempotencyKey,
+      mockContext,
+    );
+
+    expect(result.success).toBe(false);
+    expect(result.statusCode).toBe(403);
+  });
+
   it('should handle race between failure and cache storage', async () => {
     const mockSupabase = {
       from: vi.fn().mockReturnThis(),

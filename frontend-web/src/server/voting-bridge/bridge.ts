@@ -25,6 +25,28 @@ export interface VoteResponse {
   voteId?: string;
   totalVotes?: number;
   error?: string;
+  /**
+   * HTTP status the caller should surface. The bridge's failure path used to
+   * flatten every throw into a bare message, so the route mapped all of them to
+   * 400 — a KYC rejection (403) and a rate/cap refusal (429) arrived
+   * indistinguishable from a malformed body. Carrying the code keeps the
+   * thrower's intent intact. Absent means "no opinion"; the route decides.
+   */
+  statusCode?: number;
+}
+
+/**
+ * The two error types thrown under the bridge disagree on the property name:
+ * ApiError (src/lib/api/responses) uses `status`, KycGateError
+ * (voting-bridge/kyc-gate) uses `statusCode`. Read both rather than picking one
+ * and silently dropping the other's intent.
+ */
+function statusOf(error: unknown): number | undefined {
+  if (!error || typeof error !== 'object') return undefined;
+  const e = error as { status?: unknown; statusCode?: unknown };
+  if (typeof e.statusCode === 'number') return e.statusCode;
+  if (typeof e.status === 'number') return e.status;
+  return undefined;
 }
 
 /**
@@ -124,6 +146,7 @@ export async function bridgedCastFreeVote(
     return {
       success: false,
       error: error instanceof Error ? error.message : 'Unknown error',
+      statusCode: statusOf(error),
     };
   }
 }
@@ -241,6 +264,7 @@ export async function bridgedVerifyPaidVote(
     return {
       success: false,
       error: error instanceof Error ? error.message : 'Unknown error',
+      statusCode: statusOf(error),
     };
   }
 }

@@ -6,9 +6,25 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { bridgedCastFreeVote } from '@/server/voting-bridge/bridge';
 import { validateRequest } from '@/lib/auth/request';
+import { checkRateLimit } from '@/src/lib/voting/rate-limit';
 
 export async function POST(request: NextRequest) {
   try {
+    // --- Rate limit: 30 free-vote requests per IP per minute ---
+    // v1 (app/api/votes/free) has always had this; v2 shipped without it, so the
+    // route the vote modal actually calls was unthrottled. Same key, limit and
+    // window as v1 so the two cannot drift apart again.
+    const rlIp = request.headers.get('x-forwarded-for') ||
+                 request.headers.get('x-real-ip') ||
+                 'unknown';
+    const rl = checkRateLimit(`vote:free:${rlIp}`, 30, 60_000);
+    if (!rl.allowed) {
+      return NextResponse.json(
+        { error: 'Too many requests. Please slow down.' },
+        { status: 429 }
+      );
+    }
+
     // Get idempotency key from headers
     const idempotencyKey = request.headers.get('X-Idempotency-Key');
     if (!idempotencyKey) {
@@ -64,7 +80,7 @@ export async function POST(request: NextRequest) {
     if (!result.success) {
       return NextResponse.json(
         { error: result.error || 'Failed to cast vote' },
-        { status: 400 }
+        { status: result.statusCode ?? 400 }
       );
     }
 

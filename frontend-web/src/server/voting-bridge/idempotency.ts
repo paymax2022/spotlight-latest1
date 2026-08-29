@@ -4,6 +4,17 @@
  */
 
 import { createAdminClient } from '@/lib/supabase/admin';
+import { ApiError } from '@/src/lib/api/responses';
+
+/**
+ * How long a duplicate waits for the in-flight original to publish its result.
+ * The window only has to cover a normal vote round-trip: the race being closed
+ * is a double-click or a retry storm, measured in milliseconds.
+ */
+const CLAIM_WAIT_ATTEMPTS = 10;
+const CLAIM_WAIT_INTERVAL_MS = 100;
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 /**
  * Check if an idempotency key has already been claimed and return cached result
@@ -24,27 +35,48 @@ export async function checkAndClaimIdempotencyKey(key: string) {
       .single();
 
     if (error) {
-      // Key already exists — fetch the cached response
+      // Key already exists — someone else claimed it.
       if (error.code === '23505') {
-        const { data: existing } = await supabase
-          .from('bridge_idempotency_keys')
-          .select('response')
-          .eq('key', key)
-          .single();
+        // The winner publishes its response only AFTER the vote completes, so a
+        // duplicate arriving concurrently used to read the placeholder `{}`, fall
+        // through to `return null`, and cast a SECOND vote. The dedupe was real
+        // for sequential retries and absent for concurrent ones — exactly the
+        // case an idempotency key exists to cover. Wait for the winner instead.
+        for (let attempt = 0; attempt < CLAIM_WAIT_ATTEMPTS; attempt++) {
+          const { data: existing } = await supabase
+            .from('bridge_idempotency_keys')
+            .select('response')
+            .eq('key', key)
+            .single();
 
-        if (existing && existing.response && Object.keys(existing.response).length > 0) {
-          return existing.response;
+          if (existing && existing.response && Object.keys(existing.response).length > 0) {
+            return existing.response;
+          }
+          await sleep(CLAIM_WAIT_INTERVAL_MS);
         }
+
+        // Still nothing: the original is wedged or died before publishing. Refuse
+        // rather than proceed — proceeding is precisely the double-vote this
+        // guards. This is recoverable: a fresh submission mints a new key (see
+        // VoteModal), so only a retry reusing THIS key is refused.
+        throw new ApiError(
+          'This vote is already being processed. Please try again.',
+          409,
+        );
       }
-      // Key doesn't exist yet or wasn't inserted — continue to call the function
+      // Some other insert error — don't block the request.
       return null;
     }
 
     // Key was inserted successfully — continue to call the function
     return null;
   } catch (error) {
+    // The 409 above is a DECISION, not a failure. This catch's fail-open policy
+    // (below) would swallow it back into `return null` and let the duplicate
+    // vote — reinstating the exact hole the wait closes. Let it through.
+    if (error instanceof ApiError) throw error;
     console.error('[Idempotency] checkAndClaimIdempotencyKey error:', error);
-    // On error, don't block the request — allow it to proceed
+    // On unexpected error, don't block the request — allow it to proceed
     return null;
   }
 }
