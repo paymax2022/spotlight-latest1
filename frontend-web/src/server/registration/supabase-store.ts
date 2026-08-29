@@ -512,6 +512,21 @@ export async function markRegistrationPaymentIntentStatus(
 // Applies a verified Paystack success onto the draft — the same formData
 // shape the (former) mock client wrote, so nothing downstream (submit screen,
 // completion %) needs to change.
+/**
+ * What a Paystack-settled registration fee records in `payment.method`.
+ *
+ * Must stay a verbatim member of that field's `options` in every paid form, or
+ * validation rejects it — see tests/unit/registration/payment-method-value.spec.ts.
+ *
+ * 'Card' rather than the true channel because we cannot read one: Paystack's
+ * verify response does expose `channel` ('card' | 'bank' | 'ussd' | ...), but
+ * verifyPaystackPayment does not surface it and lives in a protected legacy file
+ * (src/server/voting/payment/paystack.ts) that must be wrapped, not edited. Card
+ * is the dominant Paystack channel, so it is the least-wrong default; plumbing
+ * the real channel through an adapter would let this become exact.
+ */
+export const PAYSTACK_METHOD_OPTION = 'Card';
+
 export async function applyRegistrationPaymentSuccess(
   applicationId: string,
   params: { reference: string; method: 'PAYSTACK' },
@@ -523,7 +538,16 @@ export async function applyRegistrationPaymentSuccess(
     ...draft.formData,
     'payment.paymentStatus': 'paid',
     'payment.transactionReference': params.reference,
-    'payment.method': params.method,
+    // NOT params.method. That is the GATEWAY ('PAYSTACK'), while payment.method
+    // is the applicant-facing "how did you pay", whose options are
+    // Card / Bank Transfer / USSD / Wallet. Writing the gateway here meant
+    // validateStepData's select-option check rejected the very value this
+    // function had just recorded, so a successfully PAID application could
+    // never be submitted (submitRegistration validates every step).
+    'payment.method': PAYSTACK_METHOD_OPTION,
+    // The gateway is still worth keeping; it just does not belong in a field
+    // that means something else.
+    'payment.gateway': params.method,
   };
   const updatedAt = nowIso();
 
