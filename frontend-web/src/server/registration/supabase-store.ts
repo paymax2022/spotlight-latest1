@@ -19,6 +19,10 @@ import {
 // Contest definitions also stay in the in-memory catalog; re-export so routes
 // importing them from this module resolve.
 export { listRegistrationContests, getRegistrationContestBySlug } from '@/src/server/registration/store';
+import {
+  getPersistedContestBySlug,
+  getPersistedContestById,
+} from '@/src/server/registration-v2/contest-store';
 import type {
   ContestRegistrationDefinition,
   ApplicationStatus,
@@ -104,7 +108,7 @@ export async function saveRegistrationStep(params: {
   };
 
   // Lock contest identity
-  const lockedContest = getRegistrationContestBySlug(draft.contestSlug) || resolveContestRegistration(draft.contestSlug);
+  const lockedContest = await resolveAnyContest(draft.contestSlug);
   if (lockedContest) {
     mergedData['contestSlug'] = lockedContest.slug;
     mergedData['contest.title'] = lockedContest.title;
@@ -262,6 +266,44 @@ export async function applyAccountPrefill(
   return { ...draft, formData: merged };
 }
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * Resolve a contest for registration by slug OR by a real contest's id.
+ *
+ * Checks, in order:
+ *   1. The in-memory catalog (the 5 hand-tailored templates, plus anything
+ *      created through the older in-memory-only admin path) — unchanged
+ *      behaviour, zero risk to what already works.
+ *   2. A real Postgres contest (public.contests, admin-managed) by slug.
+ *   3. The same, by id — what a deep link from the voting/mobile UI actually
+ *      carries (contest.id), since a real contest was never given a slug the
+ *      registration catalog knew about. This is the missing link: without
+ *      it, "Apply to Compete" on a real contest had nothing to resolve to
+ *      and either 404'd or (client-side) fell back to guessing a match by
+ *      title against unrelated templates.
+ *
+ * A real contest resolved this way has no bespoke forms/<slug>.ts template
+ * (registrationFormBuilders is keyed on the 5 known slugs) and no admin
+ * formSchema unless one was set — buildStepsForContest's existing fallback
+ * to buildDefaultSteps handles that by design, so nothing else needs to
+ * change for a real contest's application to render correctly.
+ */
+async function resolveAnyContest(slugOrId: string): Promise<ContestRegistrationDefinition | null> {
+  const inMemory = getRegistrationContestBySlug(slugOrId) || resolveContestRegistration(slugOrId);
+  if (inMemory) return inMemory;
+
+  const bySlug = await getPersistedContestBySlug(slugOrId);
+  if (bySlug) return bySlug;
+
+  if (UUID_RE.test(slugOrId)) {
+    const byId = await getPersistedContestById(slugOrId);
+    if (byId) return byId;
+  }
+
+  return null;
+}
+
 export async function startRegistrationDraft(params: {
   contestSlug: string;
   userId?: string;
@@ -274,7 +316,7 @@ export async function startRegistrationDraft(params: {
    */
   accountPrefill?: { values: Record<string, unknown>; providedKeys: string[] };
 }) {
-  const contest = getRegistrationContestBySlug(params.contestSlug) || resolveContestRegistration(params.contestSlug);
+  const contest = await resolveAnyContest(params.contestSlug);
   if (!contest) {
     throw new Error('Contest not found.');
   }
@@ -315,7 +357,12 @@ export async function startRegistrationDraft(params: {
     .from('registrations')
     .insert({
       user_id: params.userId,
-      contest_slug: params.contestSlug,
+      // The RESOLVED slug, not params.contestSlug verbatim — a caller may have
+      // passed a real contest's id (see resolveAnyContest above), which must
+      // never end up stored as the draft's contest_slug: every later lookup
+      // (saveRegistrationStep's contest lock, buildStepsForContest) resolves
+      // by slug, not id.
+      contest_slug: contest.slug,
       reference,
       form_data: formData,
       current_step: 'contest_selection',

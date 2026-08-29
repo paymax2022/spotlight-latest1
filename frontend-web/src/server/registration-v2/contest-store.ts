@@ -187,6 +187,19 @@ export async function getPersistedContestBySlug(slug: string): Promise<Persisted
 }
 
 /**
+ * One persisted contest by its public.contests.id — the id the voting plane
+ * (mobile's contest-details screen, Go's /api/v1/connect/contests) actually
+ * carries. Registration's own catalog is keyed on slug, which a real contest
+ * never exposed to that screen; resolving by id is what lets "Apply to
+ * Compete" on a real contest reach the actual contest instead of a title
+ * guess against unrelated registration templates.
+ */
+export async function getPersistedContestById(id: string): Promise<PersistedContest | null> {
+  const all = await listPersistedContests();
+  return all.find((c) => c.id === id) ?? null;
+}
+
+/**
  * Contest definitions held in Postgres, newest first. Rows written before this
  * module existed have no contest_config, so a definition is reconstructed from
  * the columns rather than dropped from the list.
