@@ -149,6 +149,8 @@ export interface ContestRegistrationDefinition {
   auditionStates?: string[];
   applicantCategories?: string[];
   categoryQuestionSet: ContestCategory;
+  // URL of the banner image shown on the mobile contest list/detail screens.
+  bannerImageUrl?: string;
   // Optional admin-defined form mapping. When present the contestant form is
   // built from this schema; when absent the contest falls back to its tailored
   // code template (forms/<slug>.ts) or the capability-driven default.

@@ -21,7 +21,7 @@ type Repository struct {
 func NewRepository(db *pgxpool.Pool) *Repository { return &Repository{db: db} }
 
 const contestColumns = `id, title, description, status, paid_vote_kobo,
-	free_votes_per_user, velocity_per_minute, opens_at, closes_at, created_at`
+	free_votes_per_user, velocity_per_minute, opens_at, closes_at, created_at, banner_image_url`
 
 // ListContests returns open/closed contests, newest first.
 func (r *Repository) ListContests(ctx context.Context, limit int) ([]Contest, error) {
@@ -67,6 +67,7 @@ func scanContest(s rowScanner) (*Contest, error) {
 	if err := s.Scan(
 		&c.ID, &c.Title, &c.Description, &c.Status, &c.PaidVoteKobo,
 		&c.FreeVotesPerUser, &c.VelocityPerMinute, &c.OpensAt, &c.ClosesAt, &c.CreatedAt,
+		&c.BannerImageURL,
 	); err != nil {
 		return nil, err
 	}
@@ -80,7 +81,7 @@ func scanContestWithCounts(s rowScanner) (*Contest, error) {
 	if err := s.Scan(
 		&c.ID, &c.Title, &c.Description, &c.Status, &c.PaidVoteKobo,
 		&c.FreeVotesPerUser, &c.VelocityPerMinute, &c.OpensAt, &c.ClosesAt, &c.CreatedAt,
-		&c.ContestantCount, &c.TotalVotes,
+		&c.BannerImageURL, &c.ContestantCount, &c.TotalVotes,
 	); err != nil {
 		return nil, err
 	}
