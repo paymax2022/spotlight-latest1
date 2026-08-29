@@ -295,7 +295,15 @@ export interface Contribution {
 }
 
 export interface InitiateContributionResult {
-  reference: string;
+  /**
+   * The server-assigned contribution id. This is the handle every follow-up
+   * read uses, because it is the only identifier the contribute endpoint
+   * actually returns — the human `reference` is derived server-side and comes
+   * back on the contribution read, not on the charge.
+   */
+  contributionId: string;
+  /** Human-facing reference, only when the server already minted one. */
+  reference?: string;
   status: ContributionStatus;
   authorizationUrl?: string;   // for card/bank redirect
 }
