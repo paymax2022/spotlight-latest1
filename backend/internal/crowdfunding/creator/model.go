@@ -26,22 +26,28 @@ type Contributor struct {
 
 // Contribution mirrors the client Contribution type (the caller's own record).
 type Contribution struct {
-	ID              string  `json:"id"`
-	Reference       string  `json:"reference"`
-	CampaignID      string  `json:"campaignId"`
-	CampaignTitle   string  `json:"campaignTitle"`
-	CampaignCover   *string `json:"campaignCover"`
-	AmountKobo      int64   `json:"amountKobo"`
-	FeeKobo         int64   `json:"feeKobo"`
-	TotalKobo       int64   `json:"totalKobo"`
-	Currency        string  `json:"currency"`
-	Status          string  `json:"status"` // ContributionStatus
-	PaymentMethod   string  `json:"paymentMethod"`
-	Anonymous       bool    `json:"anonymous"`
-	Message         *string `json:"message"`
-	RewardTierTitle *string `json:"rewardTierTitle"`
-	CreatedAt       string  `json:"createdAt"`
-	RefundEligible  bool    `json:"refundEligible"`
+	ID            string  `json:"id"`
+	Reference     string  `json:"reference"`
+	CampaignID    string  `json:"campaignId"`
+	CampaignTitle string  `json:"campaignTitle"`
+	CampaignCover *string `json:"campaignCover"`
+	AmountKobo    int64   `json:"amountKobo"`
+	// FeeKobo is the platform's cut, DEDUCTED from the creator's payout — it is
+	// not part of what the contributor paid. TotalKobo is what the contributor
+	// was actually debited, and NetToCampaignKobo is what reaches the campaign.
+	// So the arithmetic is amount == total and amount - fee == net, NOT
+	// amount + fee == total.
+	FeeKobo           int64   `json:"feeKobo"`
+	NetToCampaignKobo int64   `json:"netToCampaignKobo"`
+	TotalKobo         int64   `json:"totalKobo"`
+	Currency          string  `json:"currency"`
+	Status            string  `json:"status"` // ContributionStatus
+	PaymentMethod     string  `json:"paymentMethod"`
+	Anonymous         bool    `json:"anonymous"`
+	Message           *string `json:"message"`
+	RewardTierTitle   *string `json:"rewardTierTitle"`
+	CreatedAt         string  `json:"createdAt"`
+	RefundEligible    bool    `json:"refundEligible"`
 }
 
 // CreatorStats mirrors the client CreatorStats type. Balances are derived.
@@ -137,23 +143,23 @@ type RewardBacker struct {
 
 // CampaignSummary mirrors the client CampaignSummary type (list cards).
 type CampaignSummary struct {
-	ID                  string  `json:"id"`
-	Title               string  `json:"title"`
-	Summary             string  `json:"summary"`
-	Type                string  `json:"type"`
-	Status              string  `json:"status"`
-	Category            string  `json:"category"`
-	CategoryLabel       string  `json:"categoryLabel"`
-	CoverImage          *string `json:"coverImage"`
-	GoalKobo            int64   `json:"goalKobo"`
-	RaisedKobo          int64   `json:"raisedKobo"`
-	Currency            string  `json:"currency"`
-	ContributorCount    int     `json:"contributorCount"`
-	Deadline            *string `json:"deadline"`
-	Verified            bool    `json:"verified"`
-	Featured            bool    `json:"featured"`
-	Trending            bool    `json:"trending"`
-	Urgent              bool    `json:"urgent"`
+	ID               string  `json:"id"`
+	Title            string  `json:"title"`
+	Summary          string  `json:"summary"`
+	Type             string  `json:"type"`
+	Status           string  `json:"status"`
+	Category         string  `json:"category"`
+	CategoryLabel    string  `json:"categoryLabel"`
+	CoverImage       *string `json:"coverImage"`
+	GoalKobo         int64   `json:"goalKobo"`
+	RaisedKobo       int64   `json:"raisedKobo"`
+	Currency         string  `json:"currency"`
+	ContributorCount int     `json:"contributorCount"`
+	Deadline         *string `json:"deadline"`
+	Verified         bool    `json:"verified"`
+	Featured         bool    `json:"featured"`
+	Trending         bool    `json:"trending"`
+	Urgent           bool    `json:"urgent"`
 	// Paused is TRUE while campaigns.paused_at is set — the owner has taken the
 	// campaign out of public discovery (and out of accepting contributions).
 	// Distinct from Status, which carries the ADMIN review_status.
@@ -166,10 +172,10 @@ type CampaignSummary struct {
 	// this the only feedback would be a 409.
 	FeatureRequestStatus *string `json:"featureRequestStatus"`
 	Saved                bool    `json:"saved"`
-	Location            *string `json:"location"`
-	CreatorName         string  `json:"creatorName"`
-	CreatorType         string  `json:"creatorType"`
-	CreatorVerification string  `json:"creatorVerification"`
+	Location             *string `json:"location"`
+	CreatorName          string  `json:"creatorName"`
+	CreatorType          string  `json:"creatorType"`
+	CreatorVerification  string  `json:"creatorVerification"`
 }
 
 // ─── Request DTOs ────────────────────────────────────────────────────────────

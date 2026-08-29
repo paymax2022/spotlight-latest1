@@ -37,7 +37,12 @@ export default function ContributionDetailScreen() {
               <Row label="Reference" value={c.reference} />
               <Row label="Payment method" value={c.paymentMethod} />
               <Row label="Contribution" value={formatNaira(c.amountKobo)} />
-              <Row label="Fees" value={formatNaira(c.feeKobo)} />
+              {/* The fee is DEDUCTED from the campaign's payout, so it is shown
+                  as a subtraction against what the campaign receives — not as a
+                  line added into "Total paid". These rows used to read
+                  1,000 / 25 / 1,025 against a 1,000 debit. */}
+              <Row label="Platform fee (deducted)" value={`− ${formatNaira(c.feeKobo)}`} />
+              <Row label="Campaign receives" value={formatNaira(c.netToCampaignKobo)} />
               <View style={styles.divider} />
               <Row label="Total paid" value={formatNaira(c.totalKobo)} bold />
             </View>

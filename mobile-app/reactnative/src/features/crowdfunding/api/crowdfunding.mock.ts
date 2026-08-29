@@ -320,25 +320,29 @@ export const MOCK_CAMPAIGNS: Campaign[] = [
 export const MOCK_RECENTLY_VIEWED = ['cf3', 'cf1', 'cf4'];
 
 // ─── Contribution history (current user) ─────────────────────────────────────
+// Money follows the DEDUCTED model the settlement actually applies: the
+// contributor is debited the contribution (total == amount) and the platform's
+// 10% comes out of the campaign's payout (net == amount - fee). These rows used
+// to carry an additive breakdown with a ~2.5% fee, which no rail ever charged.
 export const MOCK_CONTRIBUTIONS: Contribution[] = [
   {
     id: 'ct1', reference: 'SPL-CF-1001', campaignId: 'cf1', campaignTitle: 'Help Baby Zara Get Open-Heart Surgery',
     campaignCover: 'https://images.unsplash.com/photo-1576765608535-5f04d1e3f289?w=400&q=80',
-    amountKobo: 500_000, feeKobo: 12_500, totalKobo: 512_500, currency: 'NGN', status: 'SUCCESSFUL',
+    amountKobo: 500_000, feeKobo: 50_000, netToCampaignKobo: 450_000, totalKobo: 500_000, currency: 'NGN', status: 'SUCCESSFUL',
     paymentMethod: 'WALLET', anonymous: false, message: 'Praying for Zara’s full recovery 🙏', rewardTierTitle: null,
     createdAt: '2026-06-14T10:22:00Z', refundEligible: true,
   },
   {
     id: 'ct2', reference: 'SPL-CF-1002', campaignId: 'cf3', campaignTitle: 'Àdìre: A Documentary on Yoruba Textile Art',
     campaignCover: 'https://images.unsplash.com/photo-1489599849927-2ee91cede3ba?w=400&q=80',
-    amountKobo: 2_500_000, feeKobo: 100_500, totalKobo: 2_600_500, currency: 'NGN', status: 'SUCCESSFUL',
+    amountKobo: 2_500_000, feeKobo: 250_000, netToCampaignKobo: 2_250_000, totalKobo: 2_500_000, currency: 'NGN', status: 'SUCCESSFUL',
     paymentMethod: 'CARD', anonymous: false, message: null, rewardTierTitle: 'Àdìre Scarf',
     createdAt: '2026-06-08T16:40:00Z', refundEligible: false,
   },
   {
     id: 'ct3', reference: 'SPL-CF-1003', campaignId: 'cf4', campaignTitle: 'Flood Relief for Bayelsa Families',
     campaignCover: 'https://images.unsplash.com/photo-1547683905-f686c993aae5?w=400&q=80',
-    amountKobo: 200_000, feeKobo: 8_000, totalKobo: 208_000, currency: 'NGN', status: 'REFUND_REQUESTED',
+    amountKobo: 200_000, feeKobo: 20_000, netToCampaignKobo: 180_000, totalKobo: 200_000, currency: 'NGN', status: 'REFUND_REQUESTED',
     paymentMethod: 'CARD', anonymous: true, message: null, rewardTierTitle: null,
     createdAt: '2026-06-06T09:05:00Z', refundEligible: true,
   },
