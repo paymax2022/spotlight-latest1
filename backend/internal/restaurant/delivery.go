@@ -9,37 +9,16 @@ import (
 
 // ── Discovery / reads ─────────────────────────────────────────────────────────
 
-// ListOpenRestaurants returns the discovery list of open restaurants.
+// ListOpenRestaurants returns the WHOLE discovery list of open restaurants,
+// unpaged. Retained for internal callers and tests that want the full set; the
+// HTTP handler serves ListOpenRestaurantsPage instead, because at 2,016 open
+// rows an unbounded list is a payload no client should be asked to render.
+//
+// The predicate, column list and ordering all come from discovery_page.go, so
+// this and the paged read cannot drift apart.
 func (s *Service) ListOpenRestaurants(ctx context.Context) ([]Restaurant, error) {
-	// The listing gate is applied ONLY when moderation is enabled. With it off the
-	// predicate is byte-identical to what discovery has always run, so the consumer
-	// experience is unchanged (PRD §1.4). With it on, only APPROVED listings are
-	// public — and every pre-existing restaurant was backfilled APPROVED, so the
-	// change is felt by new shops, not by the estate.
-	gate := ""
-	if s.moderationOn {
-		gate = " AND listing_review_status = 'APPROVED'"
-	}
-	q := `SELECT id, owner_id, name, COALESCE(description,''), address, logo_url, is_open, rating, COALESCE(cuisine,''), created_at,
-	                  min_order_kobo, packaging_fee_kobo, prep_time_minutes, geo_lat, geo_lng
-	           FROM restaurants WHERE is_open = TRUE` + gate + ` ORDER BY created_at DESC`
-	rows, err := s.db.Query(ctx, q)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	// Non-nil so the handler serialises `[]` rather than `null` on an empty
-	// result — a JSON null breaks array-typed clients.
-	out := []Restaurant{}
-	for rows.Next() {
-		var r Restaurant
-		if err := rows.Scan(&r.ID, &r.OwnerID, &r.Name, &r.Description, &r.Address, &r.LogoURL, &r.IsOpen, &r.Rating, &r.Cuisine, &r.CreatedAt,
-			&r.MinOrderKobo, &r.PackagingFeeKobo, &r.PrepTimeMinutes, &r.GeoLat, &r.GeoLng); err != nil {
-			return nil, err
-		}
-		out = append(out, r)
-	}
-	return out, rows.Err()
+	where, args := buildDiscoveryWhere(DiscoveryParams{}, s.moderationOn)
+	return s.queryRestaurants(ctx, where, discoveryOrderBy(""), args, 0, 0)
 }
 
 // RestaurantDetail is a restaurant plus its categorized menu.
@@ -53,11 +32,12 @@ func (s *Service) GetRestaurantDetail(ctx context.Context, restaurantID string) 
 	var r Restaurant
 	// Detail previously omitted rating and cuisine too, so a store page showed a
 	// zero rating even though the list showed the real one.
-	const qr = `SELECT id, owner_id, name, COALESCE(description,''), address, logo_url, is_open, rating, COALESCE(cuisine,''), created_at,
-	                   min_order_kobo, packaging_fee_kobo, prep_time_minutes, geo_lat, geo_lng
-	            FROM restaurants WHERE id=$1`
+	// Same column list (and same promo projection) as the discovery page, so a
+	// store shows the identical badge whether you reached it from the list or a
+	// deep link.
+	const qr = `SELECT ` + discoveryColumns + ` FROM restaurants r WHERE r.id=$1`
 	if err := s.db.QueryRow(ctx, qr, restaurantID).Scan(&r.ID, &r.OwnerID, &r.Name, &r.Description, &r.Address, &r.LogoURL, &r.IsOpen, &r.Rating, &r.Cuisine, &r.CreatedAt,
-		&r.MinOrderKobo, &r.PackagingFeeKobo, &r.PrepTimeMinutes, &r.GeoLat, &r.GeoLng); err != nil {
+		&r.MinOrderKobo, &r.PackagingFeeKobo, &r.PrepTimeMinutes, &r.GeoLat, &r.GeoLng, &r.HasPromo); err != nil {
 		return nil, fmt.Errorf("restaurant: not found")
 	}
 

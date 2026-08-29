@@ -176,6 +176,24 @@ describe('mapRestaurantDetail — flattening the nested detail body', () => {
   });
 });
 
+describe('mapRestaurant — the offer badge', () => {
+  // The card's green badge is driven by `promo`. The server sends a BOOLEAN
+  // (`has_promo`), never the offer's terms — a discount is validated and priced
+  // server-side at PlaceOrder — so anything other than an explicit true must
+  // read as "no offer" rather than inventing a label.
+  it('badges a restaurant with a live offer', () => {
+    assert.equal(mapRestaurant({ ...GO_ROW, has_promo: true }).promo, 'Offer');
+    assert.equal(mapRestaurant({ ...GO_ROW, hasPromo: true }).promo, 'Offer');
+  });
+
+  it('shows no badge when the server reports no live offer', () => {
+    assert.equal(mapRestaurant({ ...GO_ROW, has_promo: false }).promo, null);
+    // Absent (older payload) and truthy-but-not-true must not badge either.
+    assert.equal(mapRestaurant(GO_ROW).promo, null);
+    assert.equal(mapRestaurant({ ...GO_ROW, has_promo: 'yes' }).promo, null);
+  });
+});
+
 describe('mapMenuItem', () => {
   it('reads is_available, and hides an item on a malformed row', () => {
     assert.equal(mapMenuItem({ id: 'i', name: 'n', is_available: true }).available, true);
