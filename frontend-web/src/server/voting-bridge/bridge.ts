@@ -4,7 +4,7 @@
  */
 
 import { createAdminClient } from '@/lib/supabase/admin';
-import { checkAndClaimIdempotencyKey, storeIdempotencyResult } from './idempotency';
+import { checkAndClaimIdempotencyKey, storeIdempotencyResult, releaseIdempotencyKey } from './idempotency';
 import { assertKycTier } from './kyc-gate';
 import { enqueueOutboxEvent } from './outbox';
 import { isBridgeEnabled } from './feature-flag';
@@ -98,12 +98,18 @@ export async function bridgedCastFreeVote(
     };
   }
 
+  // Whether THIS call owns the idempotency claim. Only the owner may release it:
+  // a 409 from checkAndClaimIdempotencyKey means someone else holds the claim,
+  // and releasing theirs would hand this duplicate a second vote.
+  let ownsClaim = false;
+
   try {
     // Step 1: Idempotency check — return cached result if exists
     const cached = await checkAndClaimIdempotencyKey(idempotencyKey);
     if (cached) {
       return cached as VoteResponse;
     }
+    ownsClaim = true;
 
     // Step 2: KYC tier gate (does not touch protected files)
     if (userId) {
@@ -166,6 +172,12 @@ export async function bridgedCastFreeVote(
 
     return result;
   } catch (error) {
+    // Free the claim so a retry with the same key re-attempts rather than being
+    // refused forever by the 409 guard. The claim row is written before the vote
+    // and filled in after, so a failure leaves it holding the empty placeholder.
+    if (ownsClaim) {
+      await releaseIdempotencyKey(idempotencyKey);
+    }
     console.error('[VoteBridge] castFreeVote error:', error);
     return {
       success: false,

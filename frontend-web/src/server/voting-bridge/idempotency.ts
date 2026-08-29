@@ -82,6 +82,30 @@ export async function checkAndClaimIdempotencyKey(key: string) {
 }
 
 /**
+ * Release a claim whose operation failed, so a retry with the same key can
+ * re-attempt.
+ *
+ * The claim row is inserted BEFORE the vote and only filled in afterwards, so a
+ * failed attempt otherwise leaves a row holding the empty placeholder forever.
+ * Paired with the wait-then-409 guard in checkAndClaimIdempotencyKey that would
+ * then refuse every retry of that key permanently, turning one transient
+ * failure into a key the voter can never use again. Only the caller that OWNS
+ * the claim may release it — releasing someone else's would hand a concurrent
+ * duplicate a second vote.
+ */
+export async function releaseIdempotencyKey(key: string) {
+  const supabase = createAdminClient();
+
+  try {
+    await supabase.from('bridge_idempotency_keys').delete().eq('key', key);
+  } catch (error) {
+    // Best-effort: the key expires on its own (see cleanupExpiredKeys), and a
+    // failed release must never mask the original error.
+    console.error('[Idempotency] releaseIdempotencyKey error:', error);
+  }
+}
+
+/**
  * Store the result of a vote operation against an idempotency key
  */
 export async function storeIdempotencyResult(key: string, result: any) {
