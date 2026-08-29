@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { View, Text, Image, Pressable, StyleSheet, ScrollView } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
@@ -68,6 +68,16 @@ export default function DiscoveryStackScreen() {
 
   const profiles = stackQuery.data ?? [];
   const current = profiles[index];
+
+  // The ScrollView is one long-lived instance reused across every card in the
+  // deck — advancing to the next profile only swaps `current`, it doesn't
+  // remount. Without this, whatever scroll offset was left on the previous
+  // profile carries straight over: swipe past someone you'd scrolled down on,
+  // and the next profile silently opens mid-scroll instead of from the top.
+  const scrollRef = useRef<ScrollView>(null);
+  useEffect(() => {
+    scrollRef.current?.scrollTo({ y: 0, animated: false });
+  }, [current?.id]);
 
   const headerRight = useMemo(
     () => (
@@ -173,7 +183,7 @@ export default function DiscoveryStackScreen() {
         />
       ) : (
         <View style={styles.body}>
-          <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
+          <ScrollView ref={scrollRef} contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
             <Pressable
               accessibilityRole="button"
               accessibilityLabel={`View ${current.displayName}'s profile`}
