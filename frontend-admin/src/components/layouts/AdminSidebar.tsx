@@ -445,6 +445,7 @@ const navItemsBase: NavItem[] = [
   { label: 'Membership Approvals', href: '/admin/association/approvals', section: 'Community', permissions: ['savings.admin.view'] },
   { label: 'Dues & Finance', href: '/admin/association/dues', section: 'Community', permissions: ['savings.admin.recon', 'savings.admin.view'] },
   { label: 'Members', href: '/admin/association/members', section: 'Community', permissions: ['savings.admin.view'] },
+  { label: 'Elections', href: '/admin/association/elections', section: 'Community', permissions: ['savings.admin.view'] },
   { label: 'Bulk Import', href: '/admin/association/import', section: 'Community', permissions: ['savings.admin.recon', 'savings.admin.view'] },
   { label: 'Association Audit Log', href: '/admin/association/audit', section: 'Community', permissions: ['savings.admin.view', 'savings.admin.recon'] },
   // ── P2P Marketplace (Social — escrow marketplace; admin = dispute arbitration) ──

@@ -83,6 +83,7 @@ func RegisterRoutes(rg *gin.RouterGroup, h *Handler) {
 	rg.POST("/events/:id/feedback", h.SubmitEventFeedback)
 
 	// ── Admin ───────────────────────────────────────────────────
+	rg.GET("/admin/organisations", h.GetAdminOrganisations)
 	rg.GET("/admin/kpis", h.GetAdminKpis)
 	rg.GET("/admin/audit-log", h.GetAuditLog)
 	rg.GET("/admin/approvals", h.ListApprovals)

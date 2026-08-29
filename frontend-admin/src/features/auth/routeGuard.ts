@@ -141,7 +141,14 @@ const routePermissions: Array<{ prefix: string; permissions: string[] }> = [
   { prefix: '/admin/vendors', permissions: ['marketplace.admin.view'] },
   { prefix: '/admin/insurance', permissions: ['insurance.admin.view'] },
   { prefix: '/admin/estate', permissions: ['estate.admin.view'] },
-  { prefix: '/admin/association', permissions: ['estate.admin.view'] },
+  // Association has no dedicated permission family yet — it reuses
+  // savings.admin.* (see ASSOCIATION_PERMS in app/admin/association/_ui.tsx,
+  // which every sub-page gates on). This prefix used to require
+  // estate.admin.view — copy/paste from the line above — which no
+  // association operator holds, so the route guard redirected them away
+  // before the page ever rendered regardless of what the sidebar or the
+  // page's own permission check said.
+  { prefix: '/admin/association', permissions: ['savings.admin.view', 'savings.admin.dashboard', 'savings.admin.recon'] },
   { prefix: '/admin/realtor', permissions: ['realtor.admin.view'] },
   { prefix: '/admin/telemedicine', permissions: ['health.admin.view'] },
   { prefix: '/admin/health', permissions: ['health.admin.view'] },

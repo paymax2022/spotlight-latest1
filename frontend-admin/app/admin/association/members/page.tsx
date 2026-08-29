@@ -4,35 +4,39 @@ import Link from 'next/link';
 import { useCallback, useEffect, useState } from 'react';
 import { listMembers, type MemberSummary } from '@/services/associationAdminService';
 import {
-  AssociationTabs, DisclosureNote, StateBlock, FilterBar,
+  AssociationTabs, DisclosureNote, StateBlock, FilterBar, OrgPicker, useSelectedOrg,
   useAssociationPermissions, ASSOCIATION_PERMS, PermissionBanner,
 } from '../_ui';
 import { Page, PageHeader, Card, Button, Input, Badge, colors, thCell, tdCell } from '@/components/ui/vuexy';
 
 function statusColor(status: string) {
-  if (status === 'active') return colors.success;
-  if (status === 'suspended') return colors.danger;
+  if (status === 'ACTIVE') return colors.success;
+  if (status === 'SUSPENDED') return colors.danger;
   return colors.warning;
 }
 
 export default function AssociationMembersPage() {
   const { can } = useAssociationPermissions();
   const canView = can(ASSOCIATION_PERMS.view);
+  const orgId = useSelectedOrg();
 
   const [rows, setRows] = useState<MemberSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
-  const [status, setStatus] = useState('');
 
+  // No status filter here: GetDirectory (service.go) hardcodes
+  // WHERE m.status='ACTIVE' and ANDs any status param onto that, so
+  // anything but 'ACTIVE' always returns empty — this directory only ever
+  // lists active members.
   const load = useCallback(async () => {
     setLoading(true); setError(null);
-    try { setRows(await listMembers({ search: search || undefined, status: status || undefined })); }
+    try { setRows(await listMembers({ search: search || undefined })); }
     catch (e) { setError(String(e)); }
     finally { setLoading(false); }
-  }, [search, status]);
+  }, [search]);
 
-  useEffect(() => { void load(); }, [load]);
+  useEffect(() => { void load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [load, orgId]);
 
   return (
     <Page>
@@ -42,6 +46,7 @@ export default function AssociationMembersPage() {
         actions={<Button variant="outline" onClick={() => void load()} disabled={loading}>{loading ? 'Loading…' : 'Refresh'}</Button>}
       />
       <AssociationTabs active="members" />
+      <OrgPicker />
       <DisclosureNote>
         Backed by <code>GET /api/finance/associations/members</code>. Member actions (suspend, restore, transfer,
         role) live on the member detail page and are recorded to the immutable audit log (NL-12).
@@ -53,15 +58,6 @@ export default function AssociationMembersPage() {
         <div style={{ minWidth: 220 }}>
           <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, color: colors.text, marginBottom: '0.25rem' }}>Search (name or member ID)</label>
           <Input placeholder="e.g. Bola or LTU-2201" value={search} onChange={(e) => setSearch(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && void load()} />
-        </div>
-        <div>
-          <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, color: colors.text, marginBottom: '0.25rem' }}>Status</label>
-          <select value={status} onChange={(e) => setStatus(e.target.value)}>
-            <option value="">All</option>
-            <option value="active">Active</option>
-            <option value="suspended">Suspended</option>
-            <option value="pending">Pending</option>
-          </select>
         </div>
         <Button variant="outline" onClick={() => void load()}>Apply</Button>
       </FilterBar>
