@@ -3,18 +3,30 @@
 // /api/finance/restaurant. Mock-flagged for dev: flip with
 // NEXT_PUBLIC_RESTAURANT_ADMIN_USE_MOCK=false to hit the live endpoints.
 //
-// NOTE: The backend does not (yet) expose an admin-wide order list. It exposes
-// `GET /restaurant` (list restaurants) and a role-scoped `GET /restaurant/orders`.
-// For admin monitoring we list restaurants, then aggregate orders. If a global
-// order feed becomes available, point listOrders() at it and drop the per-
-// restaurant fan-out below.
+// NOTE: the two reads an operator lives in — the restaurant register and the
+// order feed — are NOT on this member root. Both are admin surfaces under
+// /api/restaurant/admin (RBAC restaurant.manage); see storeBase()/adminBase().
+// The member routes here are owner-scoped and answer an operator about the
+// handful of rows they personally own.
 
 import { env } from '@/config/env';
+import { ACTIVE_ORDER_STATUSES, ORDER_STATUSES, isTerminalOrderStatus } from '@/types/restaurantAdmin';
 import type {
-  Order,
+  AdminDispatchPage,
+  AdminDispatchQuery,
+  AdminRiderPage,
+  AdminRiderQuery,
+  AdminOrderPage,
+  AdminOrderQuery,
+  AdminOrderRow,
+  AdminRestaurantPage,
+  AdminRestaurantQuery,
+  AdminRestaurantRow,
   OrderStatus,
   Restaurant,
   Rider,
+  OrderDispatchStatus,
+  RiderStatus,
   DispatchOrder,
   RestaurantApplication,
   OnboardingStatus,
@@ -60,12 +72,9 @@ function authHeaders(): Record<string, string> {
 
 const delay = (ms = 280) => new Promise((r) => setTimeout(r, ms));
 
-async function req<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(base() + path, { ...init, headers: authHeaders(), cache: 'no-store' });
-  const body = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(body?.error || `Request failed (${res.status})`);
-  return (body?.data ?? body) as T;
-}
+// (There was a base()-relative `req` helper here. Its only caller was the old
+// owner-scoped listOrders; everything else goes through reqAt with an explicit
+// root, because the member and admin roots are different hosts of truth.)
 
 // ─── Mock datasets ────────────────────────────────────────────────────────────
 
@@ -75,41 +84,212 @@ const MOCK_RESTAURANTS: Restaurant[] = [
   { id: 'r3', owner_id: 'u-7003', name: 'Pasta & Co', cuisine: 'Italian', address: '8 Admiralty Way, Lekki', phone: '+2348010000003', is_open: false, rating: 4.1, rating_count: 56, created_at: new Date(Date.now() - 86400000 * 9).toISOString() },
 ];
 
-const MOCK_ORDERS: Order[] = [
-  { id: 'o1', restaurant_id: 'r1', restaurant_name: 'Mama Put Express', customer_id: 'u-1842', rider_id: 'rd-12', status: 'delivered', items: [{ item_id: 'i1', name: 'Jollof + Chicken', unit_price_kobo: 350_000, quantity: 2 }], subtotal_kobo: 700_000, delivery_fee_kobo: 120_000, service_fee_kobo: 35_000, total_kobo: 855_000, delivery_address: '3 Glover Rd, Ikoyi', created_at: new Date(Date.now() - 7200000).toISOString(), updated_at: new Date(Date.now() - 5400000).toISOString() },
-  { id: 'o2', restaurant_id: 'r2', restaurant_name: 'Suya Spot GRA', customer_id: 'u-2210', rider_id: null, status: 'preparing', items: [{ item_id: 'i2', name: 'Beef Suya (large)', unit_price_kobo: 250_000, quantity: 3 }], subtotal_kobo: 750_000, delivery_fee_kobo: 150_000, service_fee_kobo: 37_500, total_kobo: 937_500, delivery_address: '20 Aguiyi Ironsi, Maitama', created_at: new Date(Date.now() - 1800000).toISOString(), updated_at: new Date(Date.now() - 600000).toISOString() },
-  { id: 'o3', restaurant_id: 'r1', restaurant_name: 'Mama Put Express', customer_id: 'u-3098', rider_id: 'rd-8', status: 'picked_up', items: [{ item_id: 'i3', name: 'Egusi + Pounded Yam', unit_price_kobo: 420_000, quantity: 1 }], subtotal_kobo: 420_000, delivery_fee_kobo: 130_000, service_fee_kobo: 21_000, total_kobo: 571_000, delivery_address: '14 Bourdillon, Ikoyi', created_at: new Date(Date.now() - 2400000).toISOString(), updated_at: new Date(Date.now() - 300000).toISOString() },
-  { id: 'o4', restaurant_id: 'r3', restaurant_name: 'Pasta & Co', customer_id: 'u-4412', rider_id: null, status: 'cancelled', items: [{ item_id: 'i4', name: 'Carbonara', unit_price_kobo: 550_000, quantity: 1 }], subtotal_kobo: 550_000, delivery_fee_kobo: 140_000, service_fee_kobo: 27_500, total_kobo: 717_500, delivery_address: '8 Admiralty Way, Lekki', created_at: new Date(Date.now() - 9600000).toISOString(), updated_at: new Date(Date.now() - 9000000).toISOString() },
-  { id: 'o5', restaurant_id: 'r2', restaurant_name: 'Suya Spot GRA', customer_id: 'u-5521', rider_id: null, status: 'no_rider', items: [{ item_id: 'i5', name: 'Chicken Suya', unit_price_kobo: 300_000, quantity: 2 }], subtotal_kobo: 600_000, delivery_fee_kobo: 160_000, service_fee_kobo: 30_000, total_kobo: 790_000, delivery_address: '2 IBB Way, Maitama', created_at: new Date(Date.now() - 3000000).toISOString(), updated_at: new Date(Date.now() - 2700000).toISOString() },
+// Fixtures for the ADMIN feed, so mock and live share one shape. Statuses here
+// are drawn from the `orders_status_check` vocabulary only — the old fixtures
+// carried `no_rider`, a value the column cannot hold, which is how the console's
+// fiction survived review for as long as it did.
+const MOCK_ORDERS: AdminOrderRow[] = [
+  { id: 'o1-3f2a', restaurant_id: 'r1', restaurant_name: 'Mama Put Express', customer_id: 'u-1842', rider_id: 'rd-12', rider_name: 'Ngozi A.', status: 'delivered', dispatch_status: 'delivered', item_count: 2, subtotal_kobo: 700_000, delivery_fee_kobo: 120_000, service_fee_kobo: 35_000, packaging_fee_kobo: 0, surge_kobo: 0, tip_kobo: 0, discount_kobo: 0, total_kobo: 855_000, delivery_address: '3 Glover Rd, Ikoyi', created_at: new Date(Date.now() - 7_200_000).toISOString(), updated_at: new Date(Date.now() - 5_400_000).toISOString(), delivered_at: new Date(Date.now() - 5_400_000).toISOString(), age_minutes: 0 },
+  { id: 'o2-8b41', restaurant_id: 'r2', restaurant_name: 'Suya Spot GRA', customer_id: 'u-2210', rider_id: null, rider_name: null, status: 'preparing', dispatch_status: 'none', item_count: 3, subtotal_kobo: 750_000, delivery_fee_kobo: 150_000, service_fee_kobo: 37_500, packaging_fee_kobo: 0, surge_kobo: 0, tip_kobo: 0, discount_kobo: 0, total_kobo: 937_500, delivery_address: '20 Aguiyi Ironsi, Maitama', created_at: new Date(Date.now() - 1_800_000).toISOString(), updated_at: new Date(Date.now() - 600_000).toISOString(), age_minutes: 0 },
+  { id: 'o3-c07d', restaurant_id: 'r1', restaurant_name: 'Mama Put Express', customer_id: 'u-3098', rider_id: 'rd-8', rider_name: 'Chidi O.', status: 'picked_up', dispatch_status: 'assigned', item_count: 1, subtotal_kobo: 420_000, delivery_fee_kobo: 130_000, service_fee_kobo: 21_000, packaging_fee_kobo: 0, surge_kobo: 0, tip_kobo: 0, discount_kobo: 0, total_kobo: 571_000, delivery_address: '14 Bourdillon, Ikoyi', created_at: new Date(Date.now() - 2_400_000).toISOString(), updated_at: new Date(Date.now() - 300_000).toISOString(), ready_at: new Date(Date.now() - 900_000).toISOString(), age_minutes: 0 },
+  { id: 'o4-1e55', restaurant_id: 'r3', restaurant_name: 'Pasta & Co', customer_id: 'u-4412', rider_id: null, rider_name: null, status: 'cancelled', dispatch_status: 'none', status_reason: 'Customer cancelled before prep', item_count: 1, subtotal_kobo: 550_000, delivery_fee_kobo: 140_000, service_fee_kobo: 27_500, packaging_fee_kobo: 0, surge_kobo: 0, tip_kobo: 0, discount_kobo: 0, total_kobo: 717_500, delivery_address: '8 Admiralty Way, Lekki', created_at: new Date(Date.now() - 9_600_000).toISOString(), updated_at: new Date(Date.now() - 9_000_000).toISOString(), age_minutes: 0 },
+  { id: 'o5-9a20', restaurant_id: 'r2', restaurant_name: 'Suya Spot GRA', customer_id: 'u-5521', rider_id: null, rider_name: null, status: 'dispatch_failed', dispatch_status: 'searching', status_reason: 'No rider accepted after 3 broadcast rounds', item_count: 2, subtotal_kobo: 600_000, delivery_fee_kobo: 160_000, service_fee_kobo: 30_000, packaging_fee_kobo: 0, surge_kobo: 0, tip_kobo: 0, discount_kobo: 0, total_kobo: 790_000, delivery_address: '2 IBB Way, Maitama', created_at: new Date(Date.now() - 3_000_000).toISOString(), updated_at: new Date(Date.now() - 2_700_000).toISOString(), age_minutes: 0 },
+  { id: 'o6-4d18', restaurant_id: 'r1', restaurant_name: 'Mama Put Express', customer_id: 'u-6603', rider_id: null, rider_name: null, status: 'pending', dispatch_status: 'none', item_count: 4, subtotal_kobo: 1_120_000, delivery_fee_kobo: 120_000, service_fee_kobo: 56_000, packaging_fee_kobo: 20_000, surge_kobo: 0, tip_kobo: 50_000, discount_kobo: 100_000, total_kobo: 1_266_000, delivery_address: '9 Kingsway Rd, Ikoyi', created_at: new Date(Date.now() - 420_000).toISOString(), updated_at: new Date(Date.now() - 420_000).toISOString(), age_minutes: 0 },
+  { id: 'o7-77bc', restaurant_id: 'r3', restaurant_name: 'Pasta & Co', customer_id: 'u-7714', rider_id: 'rd-15', rider_name: 'Emeka U.', status: 'delivery_failed', dispatch_status: 'assigned', status_reason: 'Address unreachable; customer unresponsive', item_count: 1, subtotal_kobo: 550_000, delivery_fee_kobo: 140_000, service_fee_kobo: 27_500, packaging_fee_kobo: 0, surge_kobo: 40_000, tip_kobo: 0, discount_kobo: 0, total_kobo: 757_500, delivery_address: '31 Admiralty Way, Lekki', created_at: new Date(Date.now() - 15_000_000).toISOString(), updated_at: new Date(Date.now() - 14_400_000).toISOString(), age_minutes: 0 },
 ];
+
+/** All ten statuses at zero — the server guarantees a complete map, so does this. */
+function emptyStatusCounts(): Record<OrderStatus, number> {
+  return Object.fromEntries(ORDER_STATUSES.map((s) => [s, 0])) as Record<OrderStatus, number>;
+}
+
+/**
+ * Filter / sort / page / aggregate the fixtures exactly as AdminListOrders does
+ * in SQL, so mock mode and live mode page identically. Mock mode that ignored
+ * the filters would hide precisely the paging and race bugs this page is being
+ * fixed for.
+ */
+function mockOrderPage(params: AdminOrderQuery, limit: number, offset: number): AdminOrderPage {
+  const q = (params.q ?? '').trim().toLowerCase();
+  // Everything EXCEPT the status filter — the aggregates below must span every
+  // status (server side: buildAdminOrderWhere(p, includeStatus=false)).
+  const base = MOCK_ORDERS.filter((o) => {
+    if (params.dispatch && o.dispatch_status !== params.dispatch) return false;
+    if (params.restaurantId && o.restaurant_id !== params.restaurantId) return false;
+    if (params.riderId && o.rider_id !== params.riderId) return false;
+    if (params.unassigned && (o.rider_id || ['delivered', 'cancelled', 'rejected'].includes(o.status))) return false;
+    if (q && ![o.id, o.restaurant_name, o.delivery_address].some((v) => v.toLowerCase().includes(q))) return false;
+    return true;
+  });
+
+  const statusCounts = emptyStatusCounts();
+  for (const o of base) statusCounts[o.status] += 1;
+  const activeTotal = ACTIVE_ORDER_STATUSES.reduce((n, s) => n + statusCounts[s], 0);
+  const grossDeliveredKobo = base
+    .filter((o) => o.status === 'delivered')
+    .reduce((n, o) => n + o.total_kobo, 0);
+
+  const matched = params.status ? base.filter((o) => o.status === params.status) : base;
+  const ms = (v: string) => new Date(v).getTime();
+  const sorted = [...matched].sort((a, b) => {
+    switch (params.sort) {
+      case 'oldest': return ms(a.created_at) - ms(b.created_at) || a.id.localeCompare(b.id);
+      case 'total': return b.total_kobo - a.total_kobo || ms(b.created_at) - ms(a.created_at);
+      case 'updated': return ms(b.updated_at) - ms(a.updated_at) || b.id.localeCompare(a.id);
+      default: return ms(b.created_at) - ms(a.created_at) || b.id.localeCompare(a.id);
+    }
+  });
+
+  const now = Date.now();
+  const items = sorted.slice(offset, offset + limit).map((o) => ({
+    ...o,
+    // Age is server-computed live, so a fixture cannot carry a fixed one without
+    // going stale the moment the tab is left open.
+    age_minutes: isTerminalOrderStatus(o.status) ? 0 : Math.max(0, Math.floor((now - ms(o.created_at)) / 60_000)),
+  }));
+
+  return {
+    items,
+    total: matched.length,
+    limit,
+    offset,
+    hasMore: offset + items.length < matched.length,
+    statusCounts,
+    activeTotal,
+    grossDeliveredKobo,
+  };
+}
 
 // ─── API ──────────────────────────────────────────────────────────────────────
 
-export async function listRestaurants(): Promise<Restaurant[]> {
-  if (USE_MOCK) { await delay(); return MOCK_RESTAURANTS; }
-  // No trailing slash: the Go route is registered as "" on the /restaurant group,
-  // so `/` produced `/api/finance/restaurant/` and relied on Gin's
-  // RedirectTrailingSlash 301 to land. That redirect drops the Authorization
-  // header on some clients, which surfaced as a spurious 401.
-  //
-  // The handler answers `{"restaurants": [...]}`; req() only peels a `data`
-  // envelope, so without this the page received an object and .map'd over it.
-  const raw = await req<Restaurant[] | { restaurants?: Restaurant[] }>('');
-  return Array.isArray(raw) ? raw : raw?.restaurants ?? [];
-}
+/**
+ * One page of the operator's restaurant REGISTER.
+ *
+ * This used to call the customer discovery endpoint (`GET /api/finance/
+ * restaurant`), which is `WHERE is_open = TRUE`. So the console showed 2,016 of
+ * the 2,227 rows in `restaurants`, and the 211 it hid — closed shops, listings
+ * still awaiting review — are exactly the ones an operator needs to act on. The
+ * "Restaurants" KPI counted that filtered list and read as the platform total.
+ *
+ * It also fetched every row at once and rendered a table row each. The register
+ * endpoint pages (default 25, max 200) and filters in SQL.
+ */
+export async function listRestaurants(params: AdminRestaurantQuery = {}): Promise<AdminRestaurantPage> {
+  const limit = params.limit ?? 25;
+  const offset = params.offset ?? 0;
 
-// Admin order monitoring. There is no admin-wide order feed on the backend yet,
-// so when not mocking we fan out across restaurants using the role-scoped
-// `GET /restaurant/orders?role=restaurant` view per restaurant. Replace with a
-// single global endpoint when one exists.
-export async function listOrders(status?: OrderStatus | ''): Promise<Order[]> {
   if (USE_MOCK) {
     await delay();
-    return status ? MOCK_ORDERS.filter((o) => o.status === status) : MOCK_ORDERS;
+    const rows = MOCK_RESTAURANTS.slice(offset, offset + limit);
+    return {
+      items: rows,
+      total: MOCK_RESTAURANTS.length,
+      openTotal: MOCK_RESTAURANTS.filter((r) => r.is_open).length,
+      limit,
+      offset,
+      hasMore: offset + rows.length < MOCK_RESTAURANTS.length,
+    };
   }
-  const qs = new URLSearchParams({ role: 'restaurant' });
-  if (status) qs.set('status', status);
-  return req<Order[]>(`/orders?${qs.toString()}`);
+
+  const qs = new URLSearchParams({ limit: String(limit), offset: String(offset) });
+  if (params.q?.trim()) qs.set('q', params.q.trim());
+  if (params.status && params.status !== 'all') qs.set('status', params.status);
+  if (params.review) qs.set('review', params.review);
+  if (params.sort) qs.set('sort', params.sort);
+
+  // Mounted on the ADMIN group (restaurant.manage), not the member group — hence
+  // storeBase() (/api/restaurant/admin/restaurants) rather than base().
+  const body = await reqAt<{
+    restaurants?: AdminRestaurantRow[];
+    total?: number;
+    open_total?: number;
+    has_more?: boolean;
+  }>(`${storeBase()}?${qs.toString()}`);
+
+  const items = body?.restaurants ?? [];
+  const total = typeof body?.total === 'number' ? body.total : offset + items.length;
+  return {
+    items,
+    total,
+    openTotal: typeof body?.open_total === 'number' ? body.open_total : items.filter((r) => r.is_open).length,
+    limit,
+    offset,
+    hasMore: typeof body?.has_more === 'boolean' ? body.has_more : offset + items.length < total,
+  };
+}
+
+/**
+ * One page of the platform-wide ORDER FEED
+ * (GET /api/restaurant/admin/orders, RBAC restaurant.manage).
+ *
+ * This used to call the MEMBER route `GET /api/finance/restaurant/orders
+ * ?role=restaurant`, which is owner-scoped — `JOIN restaurants r ON
+ * r.id = o.restaurant_id WHERE r.owner_id = $1`. An operator therefore saw the
+ * orders of restaurants THEY personally own: none of the 2,174 on the platform.
+ * That handler also ignored `?status=` outright, so every filter chip returned
+ * the same (empty) list and nothing about the screen said so.
+ *
+ * The feed pages (default 25, max 200), filters in SQL, and returns aggregates
+ * over the WHOLE filtered set so the KPI tiles do not degrade into "…among the
+ * 25 on screen" — see AdminOrderPage.
+ *
+ * A status outside the `orders_status_check` vocabulary is a 400 from the
+ * server, not an empty page: a stale client fails loudly rather than reporting
+ * zero orders in a state that cannot exist.
+ */
+export async function listOrders(params: AdminOrderQuery = {}): Promise<AdminOrderPage> {
+  const limit = params.limit ?? 25;
+  const offset = params.offset ?? 0;
+
+  if (USE_MOCK) {
+    await delay();
+    return mockOrderPage(params, limit, offset);
+  }
+
+  const qs = new URLSearchParams({ limit: String(limit), offset: String(offset) });
+  if (params.status) qs.set('status', params.status);
+  if (params.dispatch) qs.set('dispatch', params.dispatch);
+  if (params.q?.trim()) qs.set('q', params.q.trim());
+  if (params.restaurantId) qs.set('restaurant_id', params.restaurantId);
+  if (params.riderId) qs.set('rider_id', params.riderId);
+  if (params.unassigned) qs.set('unassigned', '1');
+  if (params.sort) qs.set('sort', params.sort);
+
+  // Mounted on the ADMIN group (restaurant.manage). Orders hang off adminBase()
+  // directly — /api/restaurant/admin/orders — NOT off storeBase(), which is the
+  // per-restaurant store/menu subtree.
+  const body = await reqAt<{
+    orders?: AdminOrderRow[];
+    total?: number;
+    has_more?: boolean;
+    status_counts?: Partial<Record<OrderStatus, number>>;
+    active_total?: number;
+    gross_delivered_kobo?: number;
+  }>(`${adminBase()}/orders?${qs.toString()}`);
+
+  const items = body?.orders ?? [];
+  const total = typeof body?.total === 'number' ? body.total : offset + items.length;
+
+  // Start from a complete zeroed map and overlay: a chip whose count is missing
+  // must read 0, never `undefined` rendered as blank.
+  const statusCounts = emptyStatusCounts();
+  for (const [s, n] of Object.entries(body?.status_counts ?? {})) {
+    if (s in statusCounts && typeof n === 'number') statusCounts[s as OrderStatus] = n;
+  }
+
+  return {
+    items,
+    total,
+    limit,
+    offset,
+    hasMore: typeof body?.has_more === 'boolean' ? body.has_more : offset + items.length < total,
+    statusCounts,
+    activeTotal:
+      typeof body?.active_total === 'number'
+        ? body.active_total
+        : ACTIVE_ORDER_STATUSES.reduce((n, s) => n + statusCounts[s], 0),
+    grossDeliveredKobo: typeof body?.gross_delivered_kobo === 'number' ? body.gross_delivered_kobo : 0,
+  };
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -306,21 +486,148 @@ const MOCK_RIDERS: Rider[] = [
 ];
 
 const MOCK_DISPATCH: DispatchOrder[] = [
-  { id: 'o3', restaurant_id: 'r1', restaurant_name: 'Mama Put Express', status: 'picked_up', rider_id: 'rd-8', rider_name: 'Chidi O.', delivery_address: '14 Bourdillon, Ikoyi', total_kobo: 571_000, delivery_fee_kobo: 130_000, ready_at: new Date(Date.now() - 900_000).toISOString(), created_at: new Date(Date.now() - 2_400_000).toISOString(), waiting_minutes: 0 },
-  { id: 'o5', restaurant_id: 'r2', restaurant_name: 'Suya Spot GRA', status: 'no_rider', rider_id: null, rider_name: null, delivery_address: '2 IBB Way, Maitama', total_kobo: 790_000, delivery_fee_kobo: 160_000, ready_at: new Date(Date.now() - 1_500_000).toISOString(), created_at: new Date(Date.now() - 3_000_000).toISOString(), waiting_minutes: 25 },
-  { id: 'o7', restaurant_id: 'r1', restaurant_name: 'Mama Put Express', status: 'ready', rider_id: null, rider_name: null, delivery_address: '9 Kingsway Rd, Ikoyi', total_kobo: 420_000, delivery_fee_kobo: 120_000, ready_at: new Date(Date.now() - 240_000).toISOString(), created_at: new Date(Date.now() - 1_200_000).toISOString(), waiting_minutes: 4 },
+  { id: 'o3', restaurant_id: 'r1', restaurant_name: 'Mama Put Express', status: 'picked_up', dispatch_status: 'assigned', rider_id: 'rd-8', rider_name: 'Chidi O.', delivery_address: '14 Bourdillon, Ikoyi', total_kobo: 571_000, delivery_fee_kobo: 130_000, ready_at: new Date(Date.now() - 900_000).toISOString(), created_at: new Date(Date.now() - 2_400_000).toISOString(), waiting_minutes: 0 },
+  // `no_rider` was never an order status. The real state for "broadcast rounds
+  // ran out and nobody took it" is dispatch_failed.
+  { id: 'o5', restaurant_id: 'r2', restaurant_name: 'Suya Spot GRA', status: 'dispatch_failed', dispatch_status: 'searching', rider_id: null, rider_name: null, delivery_address: '2 IBB Way, Maitama', total_kobo: 790_000, delivery_fee_kobo: 160_000, ready_at: new Date(Date.now() - 1_500_000).toISOString(), created_at: new Date(Date.now() - 3_000_000).toISOString(), waiting_minutes: 25 },
+  { id: 'o7', restaurant_id: 'r1', restaurant_name: 'Mama Put Express', status: 'ready', dispatch_status: 'none', rider_id: null, rider_name: null, delivery_address: '9 Kingsway Rd, Ikoyi', total_kobo: 420_000, delivery_fee_kobo: 120_000, ready_at: new Date(Date.now() - 240_000).toISOString(), created_at: new Date(Date.now() - 1_200_000).toISOString(), waiting_minutes: 4 },
 ];
 
-export async function listRiders(): Promise<Rider[]> {
-  if (USE_MOCK) { await delay(); return MOCK_RIDERS; }
-  // TARGET: GET /api/restaurant/admin/riders (restaurant.admin.dispatch)
-  return reqAt<Rider[]>(`${adminBase()}/riders`);
+const RIDER_STATUSES: readonly RiderStatus[] = ['available', 'on_delivery', 'offline', 'suspended'];
+const DISPATCH_STATUSES: readonly OrderDispatchStatus[] = ['none', 'searching', 'assigned', 'delivered'];
+
+/** Zeroed count maps, so a chip whose count the server omitted reads 0, not blank. */
+function emptyRiderCounts(): Record<RiderStatus, number> {
+  return RIDER_STATUSES.reduce((a, s) => { a[s] = 0; return a; }, {} as Record<RiderStatus, number>);
+}
+function emptyDispatchCounts(): Record<OrderDispatchStatus, number> {
+  return DISPATCH_STATUSES.reduce((a, s) => { a[s] = 0; return a; }, {} as Record<OrderDispatchStatus, number>);
 }
 
-export async function listDispatchQueue(): Promise<DispatchOrder[]> {
-  if (USE_MOCK) { await delay(); return MOCK_DISPATCH; }
-  // TARGET: GET /api/restaurant/admin/dispatch/queue (restaurant.admin.dispatch)
-  return reqAt<DispatchOrder[]>(`${adminBase()}/dispatch/queue`);
+/**
+ * One page of the rider roster.
+ *
+ * Was unbounded — every driver in one response, with the board then counting the
+ * array it held. `drivers` grows with traffic rather than with the merchant
+ * estate, and the counts have to come from the server or "Available riders"
+ * silently means "available among the 25 on screen".
+ */
+export async function listRiders(params: AdminRiderQuery = {}): Promise<AdminRiderPage> {
+  const limit = params.limit ?? 25;
+  const offset = params.offset ?? 0;
+
+  if (USE_MOCK) {
+    await delay();
+    const all = MOCK_RIDERS.filter((r) => {
+      if (params.status && r.status !== params.status) return false;
+      if (params.vehicle && r.vehicle !== params.vehicle) return false;
+      const q = params.q?.trim().toLowerCase();
+      if (q && !(r.name.toLowerCase().includes(q) || (r.phone ?? '').toLowerCase().includes(q))) return false;
+      return true;
+    });
+    // Counts span every status under the OTHER filters, matching
+    // buildRiderRosterWhere(p, includeStatus=false) on the server.
+    const counted = MOCK_RIDERS.filter((r) => {
+      if (params.vehicle && r.vehicle !== params.vehicle) return false;
+      const q = params.q?.trim().toLowerCase();
+      if (q && !(r.name.toLowerCase().includes(q) || (r.phone ?? '').toLowerCase().includes(q))) return false;
+      return true;
+    });
+    const statusCounts = emptyRiderCounts();
+    for (const r of counted) statusCounts[r.status] = (statusCounts[r.status] ?? 0) + 1;
+    const items = all.slice(offset, offset + limit);
+    return { items, total: all.length, limit, offset, hasMore: offset + items.length < all.length, statusCounts };
+  }
+
+  const qs = new URLSearchParams({ limit: String(limit), offset: String(offset) });
+  if (params.status) qs.set('status', params.status);
+  if (params.vehicle) qs.set('vehicle', params.vehicle);
+  if (params.q?.trim()) qs.set('q', params.q.trim());
+  if (params.sort) qs.set('sort', params.sort);
+
+  const body = await reqAt<{
+    riders?: Rider[]; total?: number; has_more?: boolean;
+    status_counts?: Partial<Record<RiderStatus, number>>;
+  }>(`${adminBase()}/riders?${qs.toString()}`);
+
+  const items = body?.riders ?? [];
+  const total = typeof body?.total === 'number' ? body.total : offset + items.length;
+  const statusCounts = emptyRiderCounts();
+  for (const [k, v] of Object.entries(body?.status_counts ?? {})) {
+    if (k in statusCounts && typeof v === 'number') statusCounts[k as RiderStatus] = v;
+  }
+  return {
+    items, total, limit, offset,
+    hasMore: typeof body?.has_more === 'boolean' ? body.has_more : offset + items.length < total,
+    statusCounts,
+  };
+}
+
+/**
+ * One page of the dispatch queue, newest-waiting LAST (the server orders
+ * longest-waiting first — a dispatch board is worked worst-first).
+ *
+ * `stalledTotal` and `stalledAfterMinutes` come from the server so the console
+ * neither counts only what it rendered nor keeps its own idea of how long is
+ * too long.
+ */
+export async function listDispatchQueue(params: AdminDispatchQuery = {}): Promise<AdminDispatchPage> {
+  const limit = params.limit ?? 25;
+  const offset = params.offset ?? 0;
+  const FALLBACK_STALLED_MINUTES = 10;
+
+  if (USE_MOCK) {
+    await delay();
+    const matches = (o: DispatchOrder, withDispatch: boolean) => {
+      if (withDispatch && params.dispatch && (o.dispatch_status ?? 'none') !== params.dispatch) return false;
+      if (params.restaurantId && o.restaurant_id !== params.restaurantId) return false;
+      if (params.stalled && !(o.dispatch_status === 'searching' && (o.waiting_minutes ?? 0) >= FALLBACK_STALLED_MINUTES)) return false;
+      const q = params.q?.trim().toLowerCase();
+      if (q && !(o.id.toLowerCase().includes(q) || (o.restaurant_name ?? '').toLowerCase().includes(q) || (o.delivery_address ?? '').toLowerCase().includes(q))) return false;
+      return true;
+    };
+    const all = MOCK_DISPATCH.filter((o) => matches(o, true));
+    const dispatchCounts = emptyDispatchCounts();
+    let stalledTotal = 0;
+    for (const o of MOCK_DISPATCH.filter((o) => matches(o, false))) {
+      const d = (o.dispatch_status ?? 'none') as OrderDispatchStatus;
+      dispatchCounts[d] = (dispatchCounts[d] ?? 0) + 1;
+      if (o.dispatch_status === 'searching' && (o.waiting_minutes ?? 0) >= FALLBACK_STALLED_MINUTES) stalledTotal += 1;
+    }
+    const items = all.slice(offset, offset + limit);
+    return {
+      items, total: all.length, limit, offset,
+      hasMore: offset + items.length < all.length,
+      dispatchCounts, stalledTotal, stalledAfterMinutes: FALLBACK_STALLED_MINUTES,
+    };
+  }
+
+  const qs = new URLSearchParams({ limit: String(limit), offset: String(offset) });
+  if (params.dispatch) qs.set('dispatch', params.dispatch);
+  if (params.q?.trim()) qs.set('q', params.q.trim());
+  if (params.restaurantId) qs.set('restaurant_id', params.restaurantId);
+  if (params.stalled) qs.set('stalled', '1');
+  if (params.sort) qs.set('sort', params.sort);
+
+  const body = await reqAt<{
+    orders?: DispatchOrder[]; total?: number; has_more?: boolean;
+    dispatch_counts?: Partial<Record<OrderDispatchStatus, number>>;
+    stalled_total?: number; stalled_after_minutes?: number;
+  }>(`${adminBase()}/dispatch/queue?${qs.toString()}`);
+
+  const items = body?.orders ?? [];
+  const total = typeof body?.total === 'number' ? body.total : offset + items.length;
+  const dispatchCounts = emptyDispatchCounts();
+  for (const [k, v] of Object.entries(body?.dispatch_counts ?? {})) {
+    if (k in dispatchCounts && typeof v === 'number') dispatchCounts[k as OrderDispatchStatus] = v;
+  }
+  return {
+    items, total, limit, offset,
+    hasMore: typeof body?.has_more === 'boolean' ? body.has_more : offset + items.length < total,
+    dispatchCounts,
+    stalledTotal: typeof body?.stalled_total === 'number' ? body.stalled_total : 0,
+    stalledAfterMinutes: typeof body?.stalled_after_minutes === 'number' ? body.stalled_after_minutes : FALLBACK_STALLED_MINUTES,
+  };
 }
 
 // Manually assign/offer an order to a specific rider. Targets the live admin
@@ -331,7 +638,9 @@ export async function assignRider(orderId: string, riderId: string): Promise<{ o
     await delay();
     const d = MOCK_DISPATCH.find((o) => o.id === orderId);
     const r = MOCK_RIDERS.find((x) => x.id === riderId);
-    if (d && r) { d.rider_id = riderId; d.rider_name = r.name; d.status = 'assigned'; r.status = 'on_delivery'; r.active_order_id = orderId; }
+    // Assigning a rider moves dispatch_status, not the order's own status — the
+    // kitchen state (ready/preparing) is unchanged by who picks it up.
+    if (d && r) { d.rider_id = riderId; d.rider_name = r.name; d.dispatch_status = 'assigned'; r.status = 'on_delivery'; r.active_order_id = orderId; }
     return { ok: true };
   }
   // TARGET: POST /api/restaurant/admin/orders/:id/assign (restaurant.admin.dispatch)
@@ -347,10 +656,18 @@ export async function redispatchOrder(orderId: string): Promise<{ ok: true }> {
   if (USE_MOCK) {
     await delay();
     const d = MOCK_DISPATCH.find((o) => o.id === orderId);
-    if (d) { d.status = 'ready'; d.waiting_minutes = 0; }
+    // Re-dispatch restarts courier SOURCING; it does not touch the kitchen
+    // state. Setting status='ready' here modelled the wrong column — the real
+    // call moves dispatch_status back to 'searching' and leaves status alone.
+    if (d) { d.dispatch_status = 'searching'; d.rider_id = null; d.rider_name = null; d.waiting_minutes = 0; }
     return { ok: true };
   }
-  return reqAt<{ ok: true }>(`${base()}/orders/${orderId}/dispatch`, { method: 'POST' });
+  // adminBase(), NOT base(). The member route
+  // /api/finance/restaurant/orders/:id/dispatch is owner-gated in its handler
+  // (`only the restaurant may re-dispatch`) and an operator is never the owner,
+  // so this button answered 403 every single time. The admin route runs the same
+  // idempotent DispatchOrder behind restaurant.admin.dispatch.
+  return reqAt<{ ok: true }>(`${adminBase()}/orders/${orderId}/dispatch`, { method: 'POST' });
 }
 
 // ── Restaurant onboarding / KYC review queue ─────────────────────────────────
