@@ -87,6 +87,7 @@ function initialForm(): FormState {
     legalAdultAge: 18, supportsVoting: false, supportsAuditionScheduling: false,
     supportsGroupEntry: false, supportsSchoolEntry: false, requiresGuardianConsentForMinors: false,
     requiresMedical: false, requiresBootcampReadiness: false, auditionStates: [], applicantCategories: [],
+    rulesText: '',
   };
 }
 
@@ -168,6 +169,7 @@ function CreateCompetitionContent() {
         requiresGuardianConsentForMinors: c.requiresGuardianConsentForMinors,
         requiresMedical: c.requiresMedical, requiresBootcampReadiness: c.requiresBootcampReadiness,
         auditionStates: c.auditionStates ?? [], applicantCategories: c.applicantCategories ?? [],
+        rulesText: c.rulesText ?? '',
       });
       if (c.status) setStatusState(c.status as ContestPublishStatus);
       if (c.id) setContestId(c.id);
@@ -448,6 +450,20 @@ function CreateCompetitionContent() {
             <label style={labelStyle}>Season / edition</label>
             <Input style={{ width: '100%' }} value={form.seasonOrEdition} onChange={(e) => setForm((f) => ({ ...f, seasonOrEdition: e.target.value }))} />
           </div>
+        </div>
+
+        <div style={{ marginBottom: 12 }}>
+          <label style={labelStyle}>Voting rules & policies</label>
+          <textarea
+            value={form.rulesText ?? ''}
+            placeholder="e.g. eligibility requirements, disqualification grounds, prize conditions…"
+            onChange={(e) => setForm((f) => ({ ...f, rulesText: e.target.value }))}
+            rows={4}
+            style={{ display: 'block', width: '100%', padding: '0.5rem', border: `1px solid ${colors.border}`, borderRadius: 6, resize: 'vertical', boxSizing: 'border-box', font: 'inherit', fontSize: 13 }}
+          />
+          <p style={{ margin: '4px 0 0', fontSize: 11, color: colors.muted }}>
+            Shown on the mobile contest details screen, above the platform&apos;s default voting rules. Leave blank to show only the defaults.
+          </p>
         </div>
 
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12, marginBottom: 12 }}>

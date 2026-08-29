@@ -113,6 +113,7 @@ export async function persistContestDefinition(
       voting_type: 'free',
       vote_price_ngn: 0,
       vote_price: 0,
+      rules_text: def.rulesText?.trim() || '',
       contest_config: def as unknown as Record<string, unknown>,
     })
     .select('id')
@@ -148,6 +149,7 @@ export async function updateContestDefinition(
       season_name: def.seasonOrEdition,
       voting_enabled: def.supportsVoting,
       age_min: def.legalAdultAge,
+      rules_text: def.rulesText?.trim() || '',
       contest_config: def as unknown as Record<string, unknown>,
     }, { count: 'exact' })
     .eq('slug', currentSlug);
@@ -207,7 +209,7 @@ export function isContestStatus(value: unknown): value is ContestStatus {
 export async function listPersistedContests(): Promise<PersistedContest[]> {
   const { data, error } = await getSupabase()
     .from('contests')
-    .select('id, slug, name, status, category, contest_type, location_scope, entry_fee_ngn, season_name, voting_enabled, contest_config, created_at')
+    .select('id, slug, name, status, category, contest_type, location_scope, entry_fee_ngn, season_name, voting_enabled, rules_text, contest_config, created_at')
     .order('created_at', { ascending: false });
   if (error) throw new Error(`Failed to list contests: ${error.message}`);
 
@@ -238,6 +240,7 @@ export async function listPersistedContests(): Promise<PersistedContest[]> {
       supportsSchoolEntry: false,
       supportsGroupEntry: false,
       categoryQuestionSet: 'other',
+      rulesText: String(row.rules_text ?? ''),
     } as PersistedContest;
   }).filter((c) => c.slug);
 }
