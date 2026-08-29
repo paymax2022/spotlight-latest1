@@ -153,27 +153,38 @@ export default function CrowdfundingHome() {
             )}
           />
 
-          {/* Featured carousel */}
-          <SectionHeader title="Featured" actionLabel="See all" onAction={() => goCollection('featured', 'Featured campaigns')} style={styles.sectionGap} />
-          <FlatList
-            data={featured.data ?? []}
-            horizontal
-            keyExtractor={(c) => c.id}
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={styles.hCarousel}
-            renderItem={({ item }) => (
-              <CampaignCard
-                campaign={item}
-                variant="compact"
-                onPress={() => router.push(`/crowdfunding/campaign/${item.id}`)}
-                onToggleSave={(next) => toggleSave.mutate({ id: item.id, saved: next })}
+          {/* Featured carousel. A CURATED section with nothing in it renders
+              NOTHING — header and "See all" included. An empty-state card
+              inside the horizontal list was also laid out as a list ITEM, so
+              it sat left-aligned in the carousel rather than centred; hiding
+              the section removes both the dead space and that mis-layout. */}
+          {featured.isLoading ? (
+            <SectionPlaceholder title="Featured" />
+          ) : (featured.data?.length ?? 0) > 0 ? (
+            <>
+              <SectionHeader title="Featured" actionLabel="See all" onAction={() => goCollection('featured', 'Featured campaigns')} style={styles.sectionGap} />
+              <FlatList
+                data={featured.data ?? []}
+                horizontal
+                keyExtractor={(c) => c.id}
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={styles.hCarousel}
+                renderItem={({ item }) => (
+                  <CampaignCard
+                    campaign={item}
+                    variant="compact"
+                    onPress={() => router.push(`/crowdfunding/campaign/${item.id}`)}
+                    onToggleSave={(next) => toggleSave.mutate({ id: item.id, saved: next })}
+                  />
+                )}
               />
-            )}
-            ListEmptyComponent={<EmptyInline />}
-          />
+            </>
+          ) : null}
 
           {/* Urgent strip */}
-          {(urgent.data?.length ?? 0) > 0 && (
+          {urgent.isLoading ? (
+            <SectionPlaceholder title="Urgent — needs help now" />
+          ) : (urgent.data?.length ?? 0) > 0 ? (
             <>
               <SectionHeader title="Urgent — needs help now" actionLabel="See all" onAction={() => goCollection('urgent', 'Urgent campaigns')} style={styles.sectionGap} />
               <FlatList
@@ -192,34 +203,52 @@ export default function CrowdfundingHome() {
                 )}
               />
             </>
-          )}
+          ) : null}
 
-          {/* Trending vertical list */}
-          <SectionHeader title="Trending now" actionLabel="See all" onAction={() => goCollection('trending', 'Trending campaigns')} style={styles.sectionGap} />
-          <View style={styles.vList}>
-            {(trending.data ?? []).slice(0, 4).map((item) => (
-              <CampaignCard
-                key={item.id}
-                campaign={item}
-                onPress={() => router.push(`/crowdfunding/campaign/${item.id}`)}
-                onToggleSave={(next) => toggleSave.mutate({ id: item.id, saved: next })}
-              />
-            ))}
-          </View>
+          {/* Trending vertical list — same rule as Featured: curated and
+              empty means the whole section is absent. This one had neither an
+              empty component nor a guard, so an empty collection left the
+              heading and "See all" stranded above blank space. */}
+          {trending.isLoading ? (
+            <SectionPlaceholder title="Trending now" />
+          ) : (trending.data?.length ?? 0) > 0 ? (
+            <>
+              <SectionHeader title="Trending now" actionLabel="See all" onAction={() => goCollection('trending', 'Trending campaigns')} style={styles.sectionGap} />
+              <View style={styles.vList}>
+                {(trending.data ?? []).slice(0, 4).map((item) => (
+                  <CampaignCard
+                    key={item.id}
+                    campaign={item}
+                    onPress={() => router.push(`/crowdfunding/campaign/${item.id}`)}
+                    onToggleSave={(next) => toggleSave.mutate({ id: item.id, saved: next })}
+                  />
+                ))}
+              </View>
+            </>
+          ) : null}
 
           {/* Every active campaign — unfiltered, so nothing without a
               featured/trending/urgent flag is ever invisible on this screen. */}
           <SectionHeader title="All active campaigns" actionLabel="See all" onAction={() => router.push('/crowdfunding/campaigns?sort=newest&title=All%20active%20campaigns')} style={styles.sectionGap} />
           <View style={styles.vList}>
-            {(allActive.data ?? []).slice(0, 6).map((item) => (
-              <CampaignCard
-                key={item.id}
-                campaign={item}
-                onPress={() => router.push(`/crowdfunding/campaign/${item.id}`)}
-                onToggleSave={(next) => toggleSave.mutate({ id: item.id, saved: next })}
-              />
-            ))}
-            {allActive.data?.length === 0 && (
+            {allActive.isLoading ? (
+              <StateView kind="loading" compact />
+            ) : (allActive.data?.length ?? 0) > 0 ? (
+              (allActive.data ?? []).slice(0, 6).map((item) => (
+                <CampaignCard
+                  key={item.id}
+                  campaign={item}
+                  onPress={() => router.push(`/crowdfunding/campaign/${item.id}`)}
+                  onToggleSave={(next) => toggleSave.mutate({ id: item.id, saved: next })}
+                />
+              ))
+            ) : (
+              // Deliberately still SHOWN when empty, unlike the curated
+              // sections above: if every one of those is hidden this is the
+              // only thing left to explain the blank screen. `?? 0` matters —
+              // when this query alone fails `data` is undefined, and the old
+              // `=== 0` check then rendered neither cards nor a message,
+              // leaving the very header-over-white-space this fix is about.
               <StateView kind="empty" compact title="No active campaigns" message="Check back soon." />
             )}
           </View>
@@ -239,8 +268,24 @@ export default function CrowdfundingHome() {
   );
 }
 
-function EmptyInline() {
-  return <StateView kind="empty" compact title="Nothing here yet" message="New campaigns appear here soon." />;
+/**
+ * Stand-in for a curated section whose query has not settled yet.
+ *
+ * The screen-level loader clears as soon as the FIRST of the discovery
+ * queries resolves, so the others can still be in flight when the page
+ * paints. Deciding visibility on `data.length` alone would read those as
+ * empty and hide them, then reveal them milliseconds later — the section
+ * would pop in under the user's thumb. Holding the slot keeps the page
+ * stable; the section is only ever removed once its query has actually
+ * come back empty.
+ */
+function SectionPlaceholder({ title }: { title: string }) {
+  return (
+    <>
+      <SectionHeader title={title} style={styles.sectionGap} />
+      <StateView kind="loading" compact />
+    </>
+  );
 }
 
 const styles = StyleSheet.create({

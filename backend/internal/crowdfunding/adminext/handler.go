@@ -262,3 +262,53 @@ func (h *Handler) SetUserStatus(c *gin.Context) {
 	}
 	c.JSON(http.StatusOK, gin.H{"ok": true})
 }
+
+// ─── Featured / trending / urgent placement ──────────────────────────────────
+
+// ListFeatured — GET /featured. The placement pool: every ACTIVE campaign plus
+// anything still carrying a flag.
+func (h *Handler) ListFeatured(c *gin.Context) {
+	items, err := h.svc.ListFeaturedCandidates(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"campaigns": items})
+}
+
+// FeaturedReport — GET /featured/report (singleton, returned directly).
+func (h *Handler) FeaturedReport(c *gin.Context) {
+	res, err := h.svc.GetFeaturedReport(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, res)
+}
+
+// PatchCampaignFlags — PATCH /campaigns/:id/flags.
+//
+// Partial update: only the keys present in the body change. Promotion (setting a
+// flag TRUE) on a campaign that is not ACTIVE is refused with 409 — the same
+// illegal-state code ApproveWithdrawal uses. An empty/none-of-the-three body is
+// 400 rather than a silent no-op success.
+func (h *Handler) PatchCampaignFlags(c *gin.Context) {
+	var req CampaignFlagsRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	res, err := h.svc.SetCampaignFlags(c.Request.Context(), c.Param("id"), c.GetString("user_id"), req)
+	if err != nil {
+		switch {
+		case errors.Is(err, ErrCampaignNotFound):
+			c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		case errors.Is(err, ErrCampaignNotActive):
+			c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
+		default:
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		}
+		return
+	}
+	c.JSON(http.StatusOK, res)
+}

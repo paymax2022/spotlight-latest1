@@ -37,6 +37,11 @@ func RegisterAdmin(rg *gin.RouterGroup, db *pgxpool.Pool, ledgerSvc *financeledg
 	rg.POST("/withdrawals/:id/approve", h.ApproveWithdrawal)
 	rg.POST("/withdrawals/:id/reject", h.RejectWithdrawal)
 
+	// Featured / trending / urgent placement (public discovery rails).
+	rg.GET("/featured", h.ListFeatured)
+	rg.GET("/featured/report", h.FeaturedReport)
+	rg.PATCH("/campaigns/:id/flags", h.PatchCampaignFlags)
+
 	// Fraud & campaign freeze.
 	rg.GET("/fraud-alerts", h.ListFraudAlerts)
 	rg.POST("/campaigns/:id/freeze", h.FreezeCampaign)

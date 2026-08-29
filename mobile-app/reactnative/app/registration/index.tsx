@@ -3,6 +3,7 @@ import { View, Text, Pressable, ScrollView, StyleSheet, RefreshControl, Alert } 
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import { ChevronRight, Trophy, Banknote, MapPin, ClipboardList } from 'lucide-react-native';
+import { goBack } from '@/lib/navigation';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
 import { Spacing } from '@/constants/spacing';
@@ -71,7 +72,7 @@ export default function RegistrationHomeScreen() {
   if ((contestId || contestTitle) && autoStarting) {
     return (
       <SafeAreaView style={styles.safe} edges={['top']}>
-        <ScreenHeader title="Register / Apply" subtitle="Enter a Spotlight contest" />
+        <ScreenHeader title="Register / Apply" subtitle="Enter a Spotlight contest" onBack={() => goBack('/voting')} />
         <StateView kind="loading" message={contestTitle ? `Opening the application for "${contestTitle}"…` : 'Opening the application…'} />
       </SafeAreaView>
     );
@@ -83,7 +84,7 @@ export default function RegistrationHomeScreen() {
   if (contestId && autoMatchState === 'not-found') {
     return (
       <SafeAreaView style={styles.safe} edges={['top']}>
-        <ScreenHeader title="Register / Apply" subtitle={contestTitle || 'This contest'} />
+        <ScreenHeader title="Register / Apply" subtitle={contestTitle || 'This contest'} onBack={() => goBack('/voting')} />
         <StateView
           kind="error"
           title="Applications aren't open for this contest"
@@ -100,6 +101,7 @@ export default function RegistrationHomeScreen() {
       <ScreenHeader
         title="Register / Apply"
         subtitle="Enter a Spotlight contest"
+        onBack={() => goBack('/voting')}
         rightSlot={
           <Pressable onPress={() => router.push('/registration/applications' as never)} hitSlop={10} accessibilityLabel="My applications">
             <ClipboardList size={22} color={Colors.onSurface} />

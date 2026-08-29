@@ -110,6 +110,7 @@ const navItemsBase: NavItem[] = [
   { label: 'Fraud & Risk', href: '/admin/crowdfunding/fraud', section: 'Crowdfunding', permissions: ['crowdfunding.risk'] },
   { label: 'Support & Disputes', href: '/admin/crowdfunding/support', section: 'Crowdfunding', permissions: ['crowdfunding.support'] },
   { label: 'Compliance', href: '/admin/crowdfunding/compliance', section: 'Crowdfunding', permissions: ['crowdfunding.compliance'] },
+  { label: 'Featured Campaigns', href: '/admin/crowdfunding/featured', section: 'Crowdfunding', permissions: ['crowdfunding.config'] },
   { label: 'Configuration', href: '/admin/crowdfunding/config', section: 'Crowdfunding', permissions: ['crowdfunding.config'] },
   { label: 'Connect Dashboard', href: '/admin/connect/dashboard', section: 'Connect', permissions: ['connect.config.view'] },
   { label: 'Users & Identity', href: '/admin/connect/users', section: 'Connect', permissions: ['connect.users.view'] },
