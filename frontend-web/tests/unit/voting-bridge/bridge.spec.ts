@@ -37,6 +37,10 @@ vi.mock('@/src/server/voting-bridge/outbox', () => ({
   enqueueOutboxEvent: vi.fn(),
 }));
 
+vi.mock('@/src/server/voting/free-vote.service', () => ({
+  castFreeVote: vi.fn(),
+}));
+
 import { bridgedCastFreeVote } from '@/src/server/voting-bridge/bridge';
 import { castFreeVoteAtomic } from '@/src/server/voting-bridge/free-vote-atomic';
 import {
@@ -46,6 +50,7 @@ import {
 } from '@/src/server/voting-bridge/idempotency';
 import { assertKycTier } from '@/src/server/voting-bridge/kyc-gate';
 import { enqueueOutboxEvent } from '@/src/server/voting-bridge/outbox';
+import { castFreeVote } from '@/src/server/voting/free-vote.service';
 
 const REQ = { contestId: 'contest-001', contestantId: 'contestant-001' };
 const CTX = { ipAddress: '1.2.3.4', userAgent: 'agent', deviceFingerprint: 'fp-1' };
@@ -76,18 +81,43 @@ afterEach(disableBridge);
 describe('bridgedCastFreeVote — bridge off', () => {
   beforeEach(disableBridge);
 
-  // NOTE: the bridge's own comment here says "fall through to original legacy
-  // function", but no fallthrough was ever implemented — it returns an error and
-  // never imports castFreeVote. Asserting what the code does, not what the
-  // comment claims; the mismatch is worth resolving separately, because the flag
-  // defaults to disabled and /api/v2/votes/free is what the vote modal calls.
-  it('refuses rather than falling through to the legacy service', async () => {
+  // The flag defaults to DISABLED and /api/v2/votes/free is what the vote modal
+  // calls, so "off" has to mean legacy, not broken. This previously asserted the
+  // refusal the bridge actually returned, which is the behaviour that made an
+  // unset flag equivalent to free voting being switched off entirely.
+  it('serves the vote from the legacy engine instead of refusing', async () => {
+    vi.mocked(castFreeVote).mockResolvedValue({
+      success: true,
+      votesAdded: 1,
+      totalFreeVotesUsed: 1,
+      freeVotesRemaining: 4,
+      newTotalVotes: 10,
+      fraudStatus: 'clean',
+    } as never);
+
     const result = await bridgedCastFreeVote(REQ, 'user-001', 'key-000', CTX);
 
-    expect(result.success).toBe(false);
-    expect(result.error).toBe('Bridge not enabled');
+    expect(castFreeVote).toHaveBeenCalledOnce();
+    expect(result.success).toBe(true);
+    expect(result.votesAdded).toBe(1);
+    expect(result.freeVotesRemaining).toBe(4);
+    // Bridge machinery stays out of the legacy path — that is what "off" means.
     expect(checkAndClaimIdempotencyKey).not.toHaveBeenCalled();
     expect(castFreeVoteAtomic).not.toHaveBeenCalled();
+    expect(assertKycTier).not.toHaveBeenCalled();
+  });
+
+  it('maps a legacy throw onto the bridge\'s return contract, with its status', async () => {
+    const { ApiError } = await import('@/src/lib/api/responses');
+    vi.mocked(castFreeVote).mockRejectedValue(new ApiError('Free voting is not enabled', 400));
+
+    const result = await bridgedCastFreeVote(REQ, 'user-001', 'key-000', CTX);
+
+    // The legacy service throws; the bridge returns. Without the mapping this
+    // would escape as an unhandled rejection and the route would answer 500.
+    expect(result.success).toBe(false);
+    expect(result.error).toBe('Free voting is not enabled');
+    expect(result.statusCode).toBe(400);
   });
 });
 
