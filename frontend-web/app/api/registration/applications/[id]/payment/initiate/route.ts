@@ -6,7 +6,9 @@ import { initializePaystackPayment } from '@/src/server/voting/payment/paystack'
 import {
   getRegistrationDraft,
   findRegistrationPaymentIntentByIdempotencyKey,
+  getRegistrationPaymentIntentByApplicationAndMethod,
   createRegistrationPaymentIntent,
+  retryRegistrationPaymentIntent,
 } from '@/src/server/registration/supabase-store';
 
 // Registration fee payment — real Paystack gateway (test mode; the same
@@ -69,6 +71,21 @@ export async function POST(request: Request, ctx: { params: Promise<{ id: string
       }, { status: 200 });
     }
 
+    // `unique_payment_per_app_method` allows only ONE row per (application,
+    // method) — a page refresh, back button, or any retry sends a NEW
+    // Idempotency-Key, invisible to the lookup above, and used to fall
+    // straight into a second INSERT that violated that constraint (500).
+    const existingForApp = await getRegistrationPaymentIntentByApplicationAndMethod(params.id, 'PAYSTACK');
+    if (existingForApp && (existingForApp.status === 'completed' || existingForApp.status === 'verified')) {
+      return NextResponse.json({
+        success: true,
+        transactionId: existingForApp.id,
+        reference: existingForApp.paymentReference,
+        status: 'completed',
+        message: 'This application has already been paid for.',
+      }, { status: 200 });
+    }
+
     const paymentReference = reference();
     const callbackUrl = new URL(
       `/api/registration/applications/${params.id}/payment/callback?reference=${encodeURIComponent(paymentReference)}`,
@@ -88,12 +105,12 @@ export async function POST(request: Request, ctx: { params: Promise<{ id: string
       },
     });
 
-    const intent = await createRegistrationPaymentIntent({
-      applicationId: params.id,
-      amountKobo,
-      paymentReference,
-      idempotencyKey,
-    });
+    // A row already exists for this (application, method) but is
+    // 'initiated'/'failed' — a legitimate retry. Re-issue it in place rather
+    // than INSERT, which the unique constraint would reject.
+    const intent = existingForApp
+      ? await retryRegistrationPaymentIntent(existingForApp.id, { paymentReference, idempotencyKey, amountKobo })
+      : await createRegistrationPaymentIntent({ applicationId: params.id, amountKobo, paymentReference, idempotencyKey });
 
     return NextResponse.json({
       success: true,

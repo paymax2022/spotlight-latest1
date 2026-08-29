@@ -472,6 +472,27 @@ export async function getRegistrationPaymentIntentByReference(
   return data ? rowToPaymentIntent(data) : null;
 }
 
+// `unique_payment_per_app_method` allows only ONE row per (application_id,
+// method) — a second `initiate` call for the same application (page refresh,
+// back button, a retry with a fresh Idempotency-Key) is invisible to the
+// idempotency-key lookup above and previously fell straight into an INSERT,
+// hitting that constraint and 500ing. Callers must check this before
+// inserting: reuse (retry) the existing row for 'initiated'/'failed', or
+// short-circuit entirely for 'completed'/'verified'.
+export async function getRegistrationPaymentIntentByApplicationAndMethod(
+  applicationId: string,
+  method: 'PAYSTACK',
+): Promise<RegistrationPaymentIntent | null> {
+  const { data, error } = await getSupabase()
+    .from('registration_payment_intents')
+    .select('*')
+    .eq('application_id', applicationId)
+    .eq('method', method)
+    .maybeSingle();
+  if (error) throw new Error(`Failed to look up payment intent: ${error.message}`);
+  return data ? rowToPaymentIntent(data) : null;
+}
+
 export async function createRegistrationPaymentIntent(input: {
   applicationId: string;
   amountKobo: number;
@@ -491,6 +512,33 @@ export async function createRegistrationPaymentIntent(input: {
     .select('*')
     .single();
   if (error) throw new Error(`Failed to create payment intent: ${error.message}`);
+  return rowToPaymentIntent(data);
+}
+
+// Re-issues a fresh Paystack reference onto an existing 'initiated'/'failed'
+// intent row, in place — required because `unique_payment_per_app_method`
+// permits only one row per (application_id, method), so a retry can never be
+// a second INSERT. `reference` and `idempotency_key` both carry their own
+// UNIQUE constraint too; both must be values not already in use, which a
+// freshly generated reference and the caller's new Idempotency-Key satisfy.
+export async function retryRegistrationPaymentIntent(
+  id: string,
+  input: { paymentReference: string; idempotencyKey: string; amountKobo: number },
+): Promise<RegistrationPaymentIntent> {
+  const { data, error } = await getSupabase()
+    .from('registration_payment_intents')
+    .update({
+      reference: input.paymentReference,
+      idempotency_key: input.idempotencyKey,
+      amount_kobo: input.amountKobo,
+      status: 'initiated',
+      failure_reason: null,
+      updated_at: nowIso(),
+    })
+    .eq('id', id)
+    .select('*')
+    .single();
+  if (error) throw new Error(`Failed to retry payment intent: ${error.message}`);
   return rowToPaymentIntent(data);
 }
 
