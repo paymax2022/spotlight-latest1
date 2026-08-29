@@ -13,6 +13,7 @@ import StateView from '@/components/StateView';
 import { useCampaignWallet, useBankAccounts, useSubmitWithdrawal } from '@/features/crowdfunding/hooks/useExtras';
 import { formatNaira } from '@/features/crowdfunding/utils/crowdfundingFormatters';
 import { sanitizeMoneyInput, nairaStringToKobo } from '@/utils/money';
+import { resolveWithdrawalCampaignId } from '@/features/crowdfunding/utils/withdrawalTarget';
 
 export default function WithdrawScreen() {
   // Opened from the owner management screen with the campaign to withdraw from;
@@ -31,17 +32,23 @@ export default function WithdrawScreen() {
   const [evidence, setEvidence] = useState(false);
   const [done, setDone] = useState(false);
 
+  // The campaign this withdrawal is against: the one the screen was opened for
+  // when there is one, otherwise the loaded wallet's. Never a hardcoded id.
+  const targetCampaignId = resolveWithdrawalCampaignId(campaign, wallet.data?.campaignId);
+
   const available = wallet.data?.availableKobo ?? 0;
   const amountKobo = amountText ? nairaStringToKobo(amountText) : 0;
   const over = amountKobo > available;
   const defaultBank = banks.data?.find((b) => b.isDefault)?.id ?? null;
   const selectedBank = bankId ?? defaultBank;
-  const valid = amountKobo > 0 && !over && selectedBank && reason.trim().length > 2;
+  const valid = amountKobo > 0 && !over && selectedBank && reason.trim().length > 2 && !!targetCampaignId;
 
   const onSubmit = () => {
-    if (!selectedBank) return;
+    // No resolvable campaign means no defensible destination for the money —
+    // refuse rather than fall back to some other campaign's pot.
+    if (!selectedBank || !targetCampaignId) return;
     submit.mutate(
-      { campaignId: campaign ?? wallet.data?.campaignId ?? 'my1', amountKobo, bankAccountId: selectedBank, reason: reason.trim(), evidenceLabel: evidence ? 'evidence.pdf' : null },
+      { campaignId: targetCampaignId, amountKobo, bankAccountId: selectedBank, reason: reason.trim(), evidenceLabel: evidence ? 'evidence.pdf' : null },
       { onSuccess: () => setDone(true) },
     );
   };
