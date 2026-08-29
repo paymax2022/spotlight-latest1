@@ -68,7 +68,7 @@ const medicalFields: RegistrationField[] = [
 
 const paymentFields: RegistrationField[] = [
   { key: 'payment.feeAmount', label: 'Registration fee amount', type: 'number', required: true, readOnly: true, helpText: 'This amount is configured by admin and cannot be edited.' },
-  { key: 'payment.method', label: 'Payment method', type: 'select', options: ['Card', 'Bank Transfer', 'USSD', 'Wallet', 'Waiver'], required: true },
+  { key: 'payment.method', label: 'Payment method', type: 'select', options: ['Card', 'Bank Transfer', 'USSD', 'Wallet', 'Waiver'] },  // deliberately not required at wizard time — written by the payment flow; enforced in validation.ts
   { key: 'payment.transactionReference', label: 'Transaction reference', type: 'text' },
 ];
 
