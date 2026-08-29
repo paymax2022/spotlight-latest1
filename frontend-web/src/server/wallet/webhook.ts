@@ -1,7 +1,5 @@
 import crypto from 'node:crypto';
-import { createAdminClient } from '@/lib/supabase/server';
-import { creditWallet } from './service';
-import { buildIdempotencyKey } from './ledger';
+import { findTopupIntent, settleTopupIntent } from './settle';
 
 interface WalletWebhookResult {
   processed: boolean;
@@ -53,66 +51,29 @@ export async function handleWalletTopupWebhook(
   const reference = event.data?.reference;
   if (!reference) return { processed: false, duplicate: false, error: 'Missing reference' };
 
-  const supabase = createAdminClient();
-
-  // Find the matching topup intent
-  const { data: intent } = await supabase
-    .from('wallet_topup_intents')
-    .select('id, user_id, amount_kobo, status')
-    .eq('payment_reference', reference)
-    .maybeSingle();
-
+  // Settlement itself lives in ./settle, shared with the verify-on-read fallback
+  // (src/server/wallet/verify.ts). Both derive the ledger idempotency key from
+  // the intent id, so a webhook and a verify racing the same payment credit it
+  // exactly once.
+  const intent = await findTopupIntent(reference);
   if (!intent) {
     // No matching intent — not our event
     return { processed: false, duplicate: false };
   }
 
-  // Idempotency: already credited
   if (intent.status === 'completed') {
     return { processed: false, duplicate: true };
   }
 
-  // Credit what Paystack actually collected, not what the intent hoped for.
-  // The handler used to read `amount` off the event and never compare it, so any
+  // Credit what Paystack actually collected, not what the intent hoped for. The
+  // handler used to read `amount` off the event and never compare it, so any
   // divergence between the initialized amount and the settled one would be
   // credited at the intent's figure. Every module checkout now funds itself
   // through this path, so a mismatch here would mint wallet balance.
-  const paidKobo = Number(event.data?.amount ?? 0);
-  const intentKobo = Number(intent.amount_kobo ?? 0);
-  if (!Number.isInteger(paidKobo) || paidKobo !== intentKobo) {
-    const message = `Amount mismatch for ${reference}: charged ${paidKobo} kobo, intent expects ${intentKobo} kobo`;
-    await supabase
-      .from('wallet_topup_intents')
-      .update({ status: 'failed', error_message: message, updated_at: new Date().toISOString() })
-      .eq('id', intent.id);
-    return { processed: false, duplicate: false, error: message };
+  const result = await settleTopupIntent(intent, Number(event.data?.amount ?? 0), reference);
+
+  if (!result.settled) {
+    return { processed: false, duplicate: false, error: result.error };
   }
-
-  try {
-    const idempotencyKey = buildIdempotencyKey('topup', intent.id as string, 'CREDIT');
-
-    await creditWallet(intent.user_id as string, {
-      amountKobo: intent.amount_kobo as number,
-      reference: `TOPUP:${reference}`,
-      idempotencyKey,
-      description: 'Wallet top-up via Paystack',
-      metadata: { payment_reference: reference, topup_intent_id: intent.id },
-    });
-
-    await supabase
-      .from('wallet_topup_intents')
-      .update({ status: 'completed', updated_at: new Date().toISOString() })
-      .eq('id', intent.id);
-
-    return { processed: true, duplicate: false };
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-
-    await supabase
-      .from('wallet_topup_intents')
-      .update({ status: 'failed', error_message: message, updated_at: new Date().toISOString() })
-      .eq('id', intent.id);
-
-    return { processed: false, duplicate: false, error: message };
-  }
+  return { processed: !result.alreadySettled, duplicate: result.alreadySettled };
 }

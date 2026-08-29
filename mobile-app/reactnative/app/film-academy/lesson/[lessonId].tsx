@@ -5,17 +5,19 @@
 // never disagree.
 
 import React, { useState } from 'react';
-import { View, Text, StyleSheet, ScrollView, Pressable, ActivityIndicator, Linking } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, Pressable, ActivityIndicator } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { ChevronLeft, CircleCheck, Circle, Play, FileText, Clock } from 'lucide-react-native';
+import { ChevronLeft, ChevronRight, CircleCheck, Circle, Clock, Home } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
 import { Spacing } from '@/constants/spacing';
 import { Radius } from '@/constants/radius';
 import { getCurriculum, setLessonProgress, FILM_ACADEMY_LEARN_KEY } from '@/features/filmAcademy/api';
 import { Lecture } from '@/features/filmAcademy/Lecture';
+import { InlineVideo } from '@/features/filmAcademy/InlineVideo';
 import { getErrorMessage } from '@/utils/errorMapper';
 
 export default function FilmAcademyLessonScreen() {
@@ -30,7 +32,10 @@ export default function FilmAcademyLessonScreen() {
   });
 
   const modules = data?.modules ?? [];
-  const lesson = modules.flatMap((m) => m.lessons).find((l) => l.id === lessonId) ?? null;
+  const flatLessons = modules.flatMap((m) => m.lessons);
+  const lessonIndex = flatLessons.findIndex((l) => l.id === lessonId);
+  const lesson = lessonIndex >= 0 ? flatLessons[lessonIndex] : null;
+  const nextLesson = lessonIndex >= 0 ? flatLessons[lessonIndex + 1] ?? null : null;
   const moduleTitle = modules.find((m) => m.lessons.some((l) => l.id === lessonId))?.title ?? '';
 
   const toggle = async () => {
@@ -47,14 +52,11 @@ export default function FilmAcademyLessonScreen() {
     }
   };
 
-  const openLink = (url: string) => {
-    void Linking.openURL(url).catch(() => setError('Could not open that link.'));
-  };
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
       <View style={styles.header}>
-        <Pressable onPress={() => router.back()} hitSlop={12} style={styles.back}>
+        <Pressable onPress={() => goBack('/film-academy')} hitSlop={12} style={styles.back}>
           <ChevronLeft size={24} color={Colors.onSurface} />
         </Pressable>
         <Text style={styles.headerTitle} numberOfLines={1}>{moduleTitle || 'Lesson'}</Text>
@@ -98,20 +100,18 @@ export default function FilmAcademyLessonScreen() {
               </View>
             )}
 
+            {/* Played in place. These used to call Linking.openURL, which handed
+                the learner to the YouTube app or a new tab and lost their place
+                in the course. */}
             {!!lesson.video_url && (
-              <Pressable onPress={() => openLink(lesson.video_url!)} style={styles.resourceBtn}>
-                <Play size={18} color={Colors.black} />
-                <Text style={styles.resourceBtnText}>Watch the lesson</Text>
-              </Pressable>
+              <InlineVideo url={lesson.video_url} label="Watch the lesson" />
             )}
 
             {!!lesson.resource_url && (
-              <Pressable onPress={() => openLink(lesson.resource_url!)} style={styles.resourceLink}>
-                <FileText size={18} color={Colors.gold} />
-                <Text style={styles.resourceLinkText}>
-                  {lesson.resource_label || 'Open the resource'}
-                </Text>
-              </Pressable>
+              <InlineVideo
+                url={lesson.resource_url}
+                label={lesson.resource_label || 'Further material'}
+              />
             )}
 
             {!!error && <Text style={styles.error}>{error}</Text>}
@@ -134,6 +134,27 @@ export default function FilmAcademyLessonScreen() {
                 </>
               )}
             </Pressable>
+
+            {/* Continue to the next lesson (which may be in the next module —
+                flatLessons is flattened across modules in curriculum order), or
+                once this is the last lesson, back to the academy home. */}
+            {nextLesson ? (
+              <Pressable
+                onPress={() => router.push(`/film-academy/lesson/${nextLesson.id}`)}
+                style={styles.nextBtn}
+              >
+                <Text style={styles.nextBtnText} numberOfLines={1}>Next: {nextLesson.title}</Text>
+                <ChevronRight size={18} color={Colors.onPrimary} />
+              </Pressable>
+            ) : (
+              <Pressable
+                onPress={() => router.replace('/film-academy')}
+                style={styles.nextBtn}
+              >
+                <Home size={18} color={Colors.onPrimary} />
+                <Text style={styles.nextBtnText}>Back to Academy</Text>
+              </Pressable>
+            )}
           </>
         )}
       </ScrollView>
@@ -160,15 +181,6 @@ const styles = StyleSheet.create({
   meta:        { ...Typography.labelSm, color: Colors.onSurfaceVariant },
   body:        { ...Typography.bodyMd, color: Colors.onSurfaceVariant, marginTop: Spacing.xs },
   lecture:     { marginTop: Spacing.sm, marginBottom: Spacing.sm },
-
-  resourceBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: Spacing.sm,
-                 backgroundColor: Colors.gold, borderRadius: Radius.md, paddingVertical: Spacing.md,
-                 marginTop: Spacing.sm },
-  resourceBtnText: { ...Typography.labelLg, color: Colors.black },
-  resourceLink: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm,
-                  backgroundColor: Colors.surface, borderRadius: Radius.md, padding: Spacing.lg },
-  resourceLinkText: { ...Typography.labelLg, color: Colors.gold },
-
   error:       { ...Typography.bodySm, color: Colors.error, marginTop: Spacing.xs },
 
   markBtn:     { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: Spacing.sm,
@@ -177,4 +189,9 @@ const styles = StyleSheet.create({
   markBtnDone: { borderColor: Colors.teal },
   markBtnBusy: { opacity: 0.6 },
   markBtnText: { ...Typography.labelLg, color: Colors.onSurface },
+
+  nextBtn:     { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: Spacing.sm,
+                 backgroundColor: Colors.primary, borderRadius: Radius.md, paddingVertical: Spacing.md,
+                 marginTop: Spacing.sm },
+  nextBtnText: { ...Typography.labelLg, color: Colors.onPrimary, flexShrink: 1 },
 });

@@ -14,6 +14,7 @@
 //  • SF-4 — academic access (leaderboard, competition) is NEVER gated by fee
 //    payment status. The competition slice shares no service with the fees slice.
 
+import { mockAllowed } from '@/config/mockPolicy';
 import { Colors } from '@/constants/colors';
 import type { InvoiceStatus, InstallmentStatus, HardshipStatus } from './types';
 
@@ -21,7 +22,7 @@ import type { InvoiceStatus, InstallmentStatus, HardshipStatus } from './types';
 // /api/finance/academy/fees + /competition routes are reachable. Mock-first,
 // mirroring the sibling academy / connect / crowdfunding conventions.
 export const USE_MOCK =
-  (process.env.EXPO_PUBLIC_ACADEMY_FEES_USE_MOCK ?? 'true') !== 'false';
+  mockAllowed(process.env.EXPO_PUBLIC_ACADEMY_FEES_USE_MOCK, true);
 
 // Member REST namespace — the fees + competition endpoints mount under the same
 // academy finance group as the rest of the academy module. Confirmed against

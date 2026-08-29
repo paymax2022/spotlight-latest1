@@ -2,6 +2,7 @@ import React from 'react';
 import { View, Text, ScrollView, StyleSheet, Pressable } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import {
   Home, BedDouble, ReceiptText, DoorOpen, ChevronRight, UserPlus, FileBadge,
 } from 'lucide-react-native';
@@ -74,7 +75,7 @@ export default function PropertyHub() {
               here as soon as they go live.
             </Text>
             <Pressable
-              onPress={() => router.back()}
+              onPress={() => goBack('/')}
               accessibilityRole="button"
               accessibilityLabel="Go back"
               style={styles.emptyBtn}

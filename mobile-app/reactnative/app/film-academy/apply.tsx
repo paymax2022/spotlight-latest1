@@ -18,6 +18,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { ChevronLeft, Check } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
@@ -141,7 +142,7 @@ export default function FilmAcademyApplyScreen() {
       });
       await qc.invalidateQueries({ queryKey: FILM_ACADEMY_KEY });
       Alert.alert('Application submitted', 'We will be in touch about next steps.');
-      router.back();
+      goBack('/film-academy');
     } catch (e) {
       const msg = (e as { response?: { data?: { error?: string } } })?.response?.data?.error;
       setError(msg || 'Could not submit your application. Please try again.');
@@ -194,7 +195,7 @@ export default function FilmAcademyApplyScreen() {
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
       <View style={styles.header}>
-        <Pressable onPress={() => router.back()} hitSlop={12} style={styles.back}>
+        <Pressable onPress={() => goBack('/film-academy')} hitSlop={12} style={styles.back}>
           <ChevronLeft size={24} color={Colors.onSurface} />
         </Pressable>
         <Text style={styles.headerTitle}>Apply</Text>

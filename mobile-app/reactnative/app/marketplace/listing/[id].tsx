@@ -9,6 +9,7 @@ import React, { useEffect, useState } from 'react';
 import { View, Text, StyleSheet, Pressable, ScrollView, Image, Dimensions } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import { ArrowLeft, Heart, Flag, ShieldAlert, Phone, ChevronRight } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
@@ -47,7 +48,7 @@ export default function ListingDetail() {
   if (listing.isError || !listing.data) {
     return (
       <SafeAreaView style={styles.safe} edges={['top']}>
-        <View style={styles.topRow}><Pressable onPress={() => router.back()} hitSlop={10}><ArrowLeft size={22} color={Colors.onSurface} /></Pressable></View>
+        <View style={styles.topRow}><Pressable onPress={() => goBack('/marketplace')} hitSlop={10}><ArrowLeft size={22} color={Colors.onSurface} /></Pressable></View>
         <StateView kind="error" title="Couldn't load listing" actionLabel="Retry" onAction={() => listing.refetch()} />
       </SafeAreaView>
     );
@@ -81,7 +82,7 @@ export default function ListingDetail() {
     <SafeAreaView style={styles.safe} edges={['top']}>
       {/* Floating top bar */}
       <View style={styles.topBar}>
-        <Pressable style={styles.roundBtn} onPress={() => router.back()} hitSlop={8} accessibilityLabel="Back"><ArrowLeft size={20} color={Colors.onSurface} /></Pressable>
+        <Pressable style={styles.roundBtn} onPress={() => goBack('/marketplace')} hitSlop={8} accessibilityLabel="Back"><ArrowLeft size={20} color={Colors.onSurface} /></Pressable>
         <View style={styles.topBarRight}>
           <Pressable style={styles.roundBtn} onPress={toggleSave} hitSlop={8} accessibilityLabel="Save listing">
             <Heart size={18} color={saved ? MarketColors.danger : Colors.onSurface} fill={saved ? MarketColors.danger : 'transparent'} />

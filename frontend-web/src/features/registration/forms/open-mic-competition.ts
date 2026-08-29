@@ -13,6 +13,10 @@ import type { RegistrationDraft, RegistrationField, RegistrationStep } from '../
 
 const LEGAL_ADULT_AGE = 16;
 const PERFORMANCE_SKILLS = ['Singing', 'Rapping', 'Spoken Word', 'Comedy', 'Instrumentalist'];
+const PERFORMANCE_GENRES = [
+  'Afrobeats', 'Hip-Hop', 'R&B', 'Gospel', 'Highlife', 'Fuji', 'Amapiano',
+  'Jazz', 'Pop', 'Reggae / Dancehall', 'Folk / Traditional', 'Spoken Word / Poetry', 'Other',
+];
 
 function isMinor(draft: RegistrationDraft): boolean {
   const age = Number(draft.formData['derived.age'] || 0);
@@ -49,14 +53,9 @@ const guardianConsentFields: RegistrationField[] = [
   { key: 'guardian.consentGranted', label: 'I authorize this applicant to perform in the Open Mic Competition', type: 'checkbox', required: true },
 ];
 
-const identityFields: RegistrationField[] = [
-  { key: 'identity.idType', label: 'ID type', type: 'select', options: ['National ID', 'School ID', 'International passport', 'Voter card', 'Birth certificate', 'Other approved ID'], required: true },
-  { key: 'identity.idUpload', label: 'ID upload', type: 'file', required: true, accept: '.jpg,.jpeg,.png,.pdf' },
-];
-
 const performanceFields: RegistrationField[] = [
   { key: 'category.performanceType', label: 'Performance type', type: 'select', options: ['Singing', 'Rap', 'Spoken Word', 'Comedy', 'Instrumental', 'Other'], required: true },
-  { key: 'category.genre', label: 'Genre / style', type: 'text', required: true },
+  { key: 'category.genre', label: 'Genre / style', type: 'select', options: [...PERFORMANCE_GENRES], required: true },
   { key: 'category.durationMinutes', label: 'Planned performance length (minutes)', type: 'number' },
   { key: 'category.audioUpload', label: 'Upload audition audio', type: 'file', accept: '.mp3,.wav,.m4a' },
   { key: 'category.sampleLink', label: 'Performance sample link', type: 'url' },
@@ -80,7 +79,7 @@ const complianceFields: RegistrationField[] = [
 
 const paymentFields: RegistrationField[] = [
   { key: 'payment.feeAmount', label: 'Registration fee amount', type: 'number', required: true, readOnly: true, helpText: 'This amount is configured by admin and cannot be edited.' },
-  { key: 'payment.method', label: 'Payment method', type: 'select', options: ['Card', 'Bank Transfer', 'USSD', 'Wallet'], required: true },
+  { key: 'payment.method', label: 'Payment method', type: 'select', options: ['Card', 'Bank Transfer', 'USSD', 'Wallet'] },  // deliberately not required at wizard time — written by the payment flow; enforced in validation.ts
   { key: 'payment.transactionReference', label: 'Transaction reference', type: 'text' },
 ];
 
@@ -116,7 +115,6 @@ export function buildOpenMicCompetitionSteps(draft: RegistrationDraft): Registra
   ];
 
   const contestRequirementFields = [
-    ...identityFields,
     ...performanceFields,
     ...mediaFields,
     ...socialFields,

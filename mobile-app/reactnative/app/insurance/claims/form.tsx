@@ -2,6 +2,7 @@ import React, { useMemo, useRef, useState } from 'react';
 import { View, Text, ScrollView, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import ScreenHeader from '@/components/ScreenHeader';
 import StateView from '@/components/StateView';
 import PrimaryButton from '@/components/PrimaryButton';
@@ -51,7 +52,7 @@ export default function ClaimForm() {
     return (
       <SafeAreaView style={styles.safe} edges={['top']}>
         <ScreenHeader title="Claim details" />
-        <StateView kind="error" title="Couldn't load policy" actionLabel="Back" onAction={() => router.back()} />
+        <StateView kind="error" title="Couldn't load policy" actionLabel="Back" onAction={() => goBack('/insurance/claims')} />
       </SafeAreaView>
     );
   }

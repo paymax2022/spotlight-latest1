@@ -3,10 +3,13 @@ import { errorResponse, handleApiError } from '@/src/lib/api/responses';
 import { requireUser } from '@/src/lib/auth/server';
 import { checkRateLimit } from '@/src/lib/voting/rate-limit';
 import { initializePaystackPayment } from '@/src/server/voting/payment/paystack';
+import { resolveReturnOrigin } from '@/src/server/registration/return-origin';
 import {
   getRegistrationDraft,
   findRegistrationPaymentIntentByIdempotencyKey,
+  getRegistrationPaymentIntentByApplicationAndMethod,
   createRegistrationPaymentIntent,
+  retryRegistrationPaymentIntent,
 } from '@/src/server/registration/supabase-store';
 
 // Registration fee payment — real Paystack gateway (test mode; the same
@@ -59,7 +62,7 @@ export async function POST(request: Request, ctx: { params: Promise<{ id: string
 
     // Idempotency-Key replay: return the same intent rather than opening a
     // second Paystack transaction for a retried/duplicate request.
-    const existing = findRegistrationPaymentIntentByIdempotencyKey(idempotencyKey);
+    const existing = await findRegistrationPaymentIntentByIdempotencyKey(idempotencyKey);
     if (existing) {
       return NextResponse.json({
         success: true,
@@ -69,11 +72,32 @@ export async function POST(request: Request, ctx: { params: Promise<{ id: string
       }, { status: 200 });
     }
 
+    // `unique_payment_per_app_method` allows only ONE row per (application,
+    // method) — a page refresh, back button, or any retry sends a NEW
+    // Idempotency-Key, invisible to the lookup above, and used to fall
+    // straight into a second INSERT that violated that constraint (500).
+    const existingForApp = await getRegistrationPaymentIntentByApplicationAndMethod(params.id, 'PAYSTACK');
+    if (existingForApp && (existingForApp.status === 'completed' || existingForApp.status === 'verified')) {
+      return NextResponse.json({
+        success: true,
+        transactionId: existingForApp.id,
+        reference: existingForApp.paymentReference,
+        status: 'completed',
+        message: 'This application has already been paid for.',
+      }, { status: 200 });
+    }
+
     const paymentReference = reference();
-    const callbackUrl = new URL(
-      `/api/registration/applications/${params.id}/payment/callback?reference=${encodeURIComponent(paymentReference)}`,
-      request.url,
-    ).toString();
+    // Capture WHERE this payment was started from. The callback is reached by a
+    // top-level navigation from Paystack and so has no Origin of its own; this
+    // is the only point in the flow where the browser identifies itself. Only an
+    // allow-listed origin is carried, and it is re-validated before use.
+    const returnOrigin = resolveReturnOrigin(request);
+    const callbackPath =
+      `/api/registration/applications/${params.id}/payment/callback` +
+      `?reference=${encodeURIComponent(paymentReference)}` +
+      (returnOrigin ? `&return=${encodeURIComponent(returnOrigin)}` : '');
+    const callbackUrl = new URL(callbackPath, request.url).toString();
 
     const authorizationUrl = await initializePaystackPayment({
       reference: paymentReference,
@@ -88,13 +112,12 @@ export async function POST(request: Request, ctx: { params: Promise<{ id: string
       },
     });
 
-    const intent = createRegistrationPaymentIntent({
-      applicationId: params.id,
-      userId: user.id,
-      amountKobo,
-      paymentReference,
-      idempotencyKey,
-    });
+    // A row already exists for this (application, method) but is
+    // 'initiated'/'failed' — a legitimate retry. Re-issue it in place rather
+    // than INSERT, which the unique constraint would reject.
+    const intent = existingForApp
+      ? await retryRegistrationPaymentIntent(existingForApp.id, { paymentReference, idempotencyKey, amountKobo })
+      : await createRegistrationPaymentIntent({ applicationId: params.id, amountKobo, paymentReference, idempotencyKey });
 
     return NextResponse.json({
       success: true,

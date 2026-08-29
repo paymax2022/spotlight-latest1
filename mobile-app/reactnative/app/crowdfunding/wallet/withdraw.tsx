@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { ScrollView, View, Text, TextInput, Pressable, StyleSheet, KeyboardAvoidingView, Platform } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { router } from 'expo-router';
+import { router, useLocalSearchParams } from 'expo-router';
 import { Check, Landmark, FileUp, Clock } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
@@ -13,9 +13,16 @@ import StateView from '@/components/StateView';
 import { useCampaignWallet, useBankAccounts, useSubmitWithdrawal } from '@/features/crowdfunding/hooks/useExtras';
 import { formatNaira } from '@/features/crowdfunding/utils/crowdfundingFormatters';
 import { sanitizeMoneyInput, nairaStringToKobo } from '@/utils/money';
+import { resolveWithdrawalCampaignId } from '@/features/crowdfunding/utils/withdrawalTarget';
 
 export default function WithdrawScreen() {
-  const wallet = useCampaignWallet();
+  // Opened from the owner management screen with the campaign to withdraw from;
+  // opened bare from the wallet it keeps the previous default. Without this the
+  // screen always read the default campaign wallet, so an owner who reached it
+  // from a specific campaign could be shown — and could withdraw against — a
+  // balance belonging to a different campaign.
+  const { campaign } = useLocalSearchParams<{ campaign?: string }>();
+  const wallet = useCampaignWallet(campaign);
   const banks = useBankAccounts();
   const submit = useSubmitWithdrawal();
 
@@ -25,17 +32,23 @@ export default function WithdrawScreen() {
   const [evidence, setEvidence] = useState(false);
   const [done, setDone] = useState(false);
 
+  // The campaign this withdrawal is against: the one the screen was opened for
+  // when there is one, otherwise the loaded wallet's. Never a hardcoded id.
+  const targetCampaignId = resolveWithdrawalCampaignId(campaign, wallet.data?.campaignId);
+
   const available = wallet.data?.availableKobo ?? 0;
   const amountKobo = amountText ? nairaStringToKobo(amountText) : 0;
   const over = amountKobo > available;
   const defaultBank = banks.data?.find((b) => b.isDefault)?.id ?? null;
   const selectedBank = bankId ?? defaultBank;
-  const valid = amountKobo > 0 && !over && selectedBank && reason.trim().length > 2;
+  const valid = amountKobo > 0 && !over && selectedBank && reason.trim().length > 2 && !!targetCampaignId;
 
   const onSubmit = () => {
-    if (!selectedBank) return;
+    // No resolvable campaign means no defensible destination for the money —
+    // refuse rather than fall back to some other campaign's pot.
+    if (!selectedBank || !targetCampaignId) return;
     submit.mutate(
-      { campaignId: wallet.data?.campaignId ?? 'my1', amountKobo, bankAccountId: selectedBank, reason: reason.trim(), evidenceLabel: evidence ? 'evidence.pdf' : null },
+      { campaignId: targetCampaignId, amountKobo, bankAccountId: selectedBank, reason: reason.trim(), evidenceLabel: evidence ? 'evidence.pdf' : null },
       { onSuccess: () => setDone(true) },
     );
   };
@@ -43,12 +56,12 @@ export default function WithdrawScreen() {
   if (done) {
     return (
       <SafeAreaView style={styles.safe} edges={['top']}>
-        <ScreenHeader title="Withdrawal submitted" showBack={false} />
+        <ScreenHeader title="Withdrawal complete" showBack={false} />
         <StateView
           kind="empty"
-          icon="Clock"
-          title="Request submitted for review"
-          message={`Your withdrawal of ${formatNaira(amountKobo)} is pending admin approval. You'll be notified once it's processed — usually within 24 hours.`}
+          icon="CheckCircle2"
+          title="Withdrawal complete"
+          message={`${formatNaira(amountKobo)} has been sent to your bank account — no approval wait.`}
           actionLabel="Back to wallet"
           onAction={() => router.dismissTo('/crowdfunding/wallet')}
         />
@@ -58,7 +71,7 @@ export default function WithdrawScreen() {
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
-      <ScreenHeader title="Request withdrawal" />
+      <ScreenHeader title="Withdraw funds" />
       <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
         <ScrollView contentContainerStyle={styles.body} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
           <View style={styles.availCard}>
@@ -102,11 +115,11 @@ export default function WithdrawScreen() {
 
           <View style={styles.noteRow}>
             <Clock size={14} color={Colors.onSurfaceVariant} strokeWidth={2} />
-            <Text style={styles.note}>Withdrawals require KYC verification and admin approval before disbursement.</Text>
+            <Text style={styles.note}>Withdrawals require KYC verification and pay out immediately — no approval wait.</Text>
           </View>
         </ScrollView>
         <View style={styles.footer}>
-          <PrimaryButton label={amountKobo > 0 ? `Request ${formatNaira(amountKobo)}` : 'Request withdrawal'} onPress={onSubmit} disabled={!valid} loading={submit.isPending} />
+          <PrimaryButton label={amountKobo > 0 ? `Withdraw ${formatNaira(amountKobo)}` : 'Withdraw funds'} onPress={onSubmit} disabled={!valid} loading={submit.isPending} />
         </View>
       </KeyboardAvoidingView>
     </SafeAreaView>

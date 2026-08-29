@@ -5,6 +5,12 @@ import {
   getRegistrationContestBySlug,
   updateRegistrationContest,
 } from '@/src/server/registration/store';
+import {
+  deleteContestDefinition,
+  getPersistedContestBySlug,
+  persistContestDefinition,
+  updateContestDefinition,
+} from '@/src/server/registration-v2/contest-store';
 import type { ContestCategory, ContestRegistrationDefinition, ContestType } from '@/src/features/registration/types';
 import { sanitizeContestFormSchema } from '@/src/features/registration/field-catalog';
 
@@ -88,6 +94,7 @@ function normalizeContestPayload(body: Record<string, unknown>): Partial<Contest
       ? body.applicantCategories.map((item) => String(item)).filter(Boolean)
       : [],
     categoryQuestionSet: contestCategory,
+    rulesText: String(body.rulesText || '').trim(),
   };
 
   // Only touch the form schema when the caller actually sends one, so a partial
@@ -100,11 +107,24 @@ function normalizeContestPayload(body: Record<string, unknown>): Partial<Contest
   return normalized;
 }
 
+// GET/PATCH/DELETE used to read/write ONLY the in-memory catalog
+// (registration/store.ts) — a globalThis Map, gone on restart. Meanwhile the
+// sibling collection route's POST already writes through to Postgres
+// (registration-v2/contest-store.ts, see its own header). The result: editing
+// or deleting a contest here appeared to succeed but never touched Postgres,
+// so the change was silently lost the moment the process restarted, and a
+// contest that only exists in Postgres (created before this process booted)
+// 404'd here even though the public list showed it. Postgres is now checked
+// first for GET, and PATCH/DELETE write through to both stores the same way
+// POST does — tolerating "not found" in either individual store so a
+// contest that only ever reached one side (e.g. a pre-existing catalog seed
+// never persisted) still edits/deletes cleanly.
+
 export async function GET(request: Request, ctx: { params: Promise<{ slug: string }> }) {
   const params = await ctx.params;
   try {
     await assertAdminPermission(request, 'programs:manage');
-    const contest = getRegistrationContestBySlug(params.slug);
+    const contest = (await getPersistedContestBySlug(params.slug)) ?? getRegistrationContestBySlug(params.slug);
     if (!contest) return errorResponse('Contest not found', 404);
     return successResponse({ success: true, contest });
   } catch (error) {
@@ -117,14 +137,43 @@ export async function PATCH(request: Request, ctx: { params: Promise<{ slug: str
   try {
     await assertAdminPermission(request, 'programs:manage');
     const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
-    const contest = updateRegistrationContest(params.slug, normalizeContestPayload(body));
-    return successResponse({ success: true, contest });
+    const patch = normalizeContestPayload(body);
+
+    let memoryResult: ContestRegistrationDefinition | null = null;
+    try {
+      memoryResult = updateRegistrationContest(params.slug, patch);
+    } catch (err) {
+      if (!(err instanceof Error) || !err.message.includes('not found')) throw err;
+    }
+
+    // The Postgres row needs a complete definition, not a partial patch — the
+    // memory update above already merged the patch onto the prior record when
+    // that record existed there; otherwise fall back to whatever Postgres has.
+    const base = memoryResult ?? (await getPersistedContestBySlug(params.slug));
+    if (!base) return errorResponse('Contest not found', 404);
+    const full: ContestRegistrationDefinition = { ...base, ...patch } as ContestRegistrationDefinition;
+
+    let postgresOk = true;
+    try {
+      await updateContestDefinition(params.slug, full);
+    } catch (err) {
+      if (err instanceof Error && err.message.includes('not found')) postgresOk = false;
+      else throw err;
+    }
+
+    // A contest edited here for the first time may exist only in the legacy
+    // catalog (created before this route wrote through to Postgres, or before
+    // updateContestDefinition existed). Rather than silently keep the edit
+    // memory-only — the exact bug this route was fixed for — persist it now.
+    if (!postgresOk) await persistContestDefinition(full);
+
+    if (!memoryResult && !postgresOk) return errorResponse('Contest not found', 404);
+    return successResponse({ success: true, contest: full });
   } catch (error) {
     const message = error instanceof Error ? error.message : '';
     if (message.includes('required') || message.includes('Invalid') || message.includes('valid')) {
       return errorResponse(message, 400);
     }
-    if (message.includes('not found')) return errorResponse('Contest not found', 404);
     if (message.includes('already exists')) return errorResponse(message, 409);
     return handleApiError(error, 'Failed to update contest');
   }
@@ -134,11 +183,26 @@ export async function DELETE(request: Request, ctx: { params: Promise<{ slug: st
   const params = await ctx.params;
   try {
     await assertAdminPermission(request, 'programs:manage');
-    deleteRegistrationContest(params.slug);
+
+    let memoryOk = true;
+    try {
+      deleteRegistrationContest(params.slug);
+    } catch (err) {
+      if (err instanceof Error && err.message.includes('not found')) memoryOk = false;
+      else throw err;
+    }
+
+    let postgresOk = true;
+    try {
+      await deleteContestDefinition(params.slug);
+    } catch (err) {
+      if (err instanceof Error && err.message.includes('not found')) postgresOk = false;
+      else throw err;
+    }
+
+    if (!memoryOk && !postgresOk) return errorResponse('Contest not found', 404);
     return successResponse({ success: true });
   } catch (error) {
-    const message = error instanceof Error ? error.message : '';
-    if (message.includes('not found')) return errorResponse('Contest not found', 404);
     return handleApiError(error, 'Failed to delete contest');
   }
 }

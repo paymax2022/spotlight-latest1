@@ -7,6 +7,7 @@ import React, { useMemo, useState } from 'react';
 import { View, Text, StyleSheet, Pressable, FlatList, ScrollView } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import { ArrowLeft, Map as MapIcon, LayoutGrid, List as ListIcon, Bell, SlidersHorizontal, Check } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
@@ -72,7 +73,7 @@ export default function MarketplaceResults() {
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
       <View style={styles.topRow}>
-        <Pressable onPress={() => router.back()} hitSlop={10} accessibilityLabel="Back"><ArrowLeft size={22} color={Colors.onSurface} /></Pressable>
+        <Pressable onPress={() => goBack('/marketplace')} hitSlop={10} accessibilityLabel="Back"><ArrowLeft size={22} color={Colors.onSurface} /></Pressable>
         <Text style={styles.title} numberOfLines={1}>{raw.q ? `“${raw.q}”` : 'Results'}</Text>
         <View style={styles.topActions}>
           <Pressable onPress={onSaveSearch} hitSlop={8} accessibilityLabel="Save this search"><Bell size={20} color={saveSearch.isSuccess ? MarketColors.brand : Colors.onSurface} /></Pressable>

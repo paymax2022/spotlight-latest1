@@ -2,6 +2,7 @@ import React from 'react';
 import { View, Text, ScrollView, Pressable, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import { ArrowLeft, Bell, Plus, Wallet, Users, TrendingUp, ChevronRight, Eye } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
@@ -25,7 +26,7 @@ export default function CreatorDashboard() {
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
       <View style={styles.header}>
-        <Pressable onPress={() => router.back()} hitSlop={10} style={styles.iconBtn} accessibilityLabel="Go back">
+        <Pressable onPress={() => goBack('/crowdfunding')} hitSlop={10} style={styles.iconBtn} accessibilityLabel="Go back">
           <ArrowLeft size={22} color={Colors.onSurface} strokeWidth={2} />
         </Pressable>
         <View style={styles.headerTitleWrap}>
@@ -84,7 +85,7 @@ export default function CreatorDashboard() {
               <StateView kind="empty" compact icon="Megaphone" title="No active campaigns" message="Launch a campaign to start raising." />
             ) : (
               active.map((c) => (
-                <CreatorCampaignRow key={c.id} campaign={c} onPress={() => router.push(`/crowdfunding/creator/performance/${c.id}`)} />
+                <CreatorCampaignRow key={c.id} campaign={c} onPress={() => router.push(`/crowdfunding/creator/campaign/${c.id}`)} />
               ))
             )}
           </View>

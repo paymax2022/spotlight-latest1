@@ -103,8 +103,9 @@ func (h *Handler) ListWithdrawals(c *gin.Context) {
 
 // ApproveWithdrawal — POST /withdrawals/:id/approve.
 //
-// MONEY-PATH: releases campaign escrow to the payout-clearing account and marks
-// the withdrawal COMPLETED. Requires an Idempotency-Key header (fail-closed).
+// MONEY-PATH: debits the creator's own settled wallet balance to the
+// payout-clearing account and marks the withdrawal COMPLETED. Requires an
+// Idempotency-Key header (fail-closed).
 func (h *Handler) ApproveWithdrawal(c *gin.Context) {
 	idempotencyKey := c.GetHeader("Idempotency-Key")
 	if idempotencyKey == "" {
@@ -116,7 +117,7 @@ func (h *Handler) ApproveWithdrawal(c *gin.Context) {
 		switch {
 		case errors.Is(err, ErrWithdrawalNotFound):
 			c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
-		case errors.Is(err, ErrWithdrawalIllegalState):
+		case errors.Is(err, ErrWithdrawalIllegalState), errors.Is(err, ErrInsufficientBalance):
 			c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
 		default:
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -171,7 +172,7 @@ func (h *Handler) setFreeze(c *gin.Context, freeze bool) {
 
 // ListKyc — GET /kyc.
 func (h *Handler) ListKyc(c *gin.Context) {
-	items, err := h.svc.ListKyc(c.Request.Context(), c.Query("kind"), c.Query("status"))
+	items, err := h.svc.ListKyc(c.Request.Context(), c.Query("status"))
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -260,4 +261,96 @@ func (h *Handler) SetUserStatus(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"ok": true})
+}
+
+// ─── Featured / trending / urgent placement ──────────────────────────────────
+
+// ListFeatured — GET /featured. The placement pool: every ACTIVE campaign plus
+// anything still carrying a flag.
+func (h *Handler) ListFeatured(c *gin.Context) {
+	items, err := h.svc.ListFeaturedCandidates(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"campaigns": items})
+}
+
+// FeaturedReport — GET /featured/report (singleton, returned directly).
+func (h *Handler) FeaturedReport(c *gin.Context) {
+	res, err := h.svc.GetFeaturedReport(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, res)
+}
+
+// PatchCampaignFlags — PATCH /campaigns/:id/flags.
+//
+// Partial update: only the keys present in the body change. Promotion (setting a
+// flag TRUE) on a campaign that is not ACTIVE is refused with 409 — the same
+// illegal-state code ApproveWithdrawal uses. An empty/none-of-the-three body is
+// 400 rather than a silent no-op success.
+func (h *Handler) PatchCampaignFlags(c *gin.Context) {
+	var req CampaignFlagsRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	res, err := h.svc.SetCampaignFlags(c.Request.Context(), c.Param("id"), c.GetString("user_id"), req)
+	if err != nil {
+		switch {
+		case errors.Is(err, ErrCampaignNotFound):
+			c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		case errors.Is(err, ErrCampaignNotActive):
+			c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
+		default:
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		}
+		return
+	}
+	c.JSON(http.StatusOK, res)
+}
+
+// ─── Owner feature-request queue ─────────────────────────────────────────────
+
+// ListFeatureRequests — GET /feature-requests. The owner-initiated placement
+// queue, PENDING first. Optional ?status= filter.
+func (h *Handler) ListFeatureRequests(c *gin.Context) {
+	items, err := h.svc.ListFeatureRequests(c.Request.Context(), c.Query("status"))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"requests": items})
+}
+
+// ApproveFeatureRequest — POST /feature-requests/:id/approve (no body).
+// Sets campaigns.featured and marks the request APPROVED in ONE transaction.
+func (h *Handler) ApproveFeatureRequest(c *gin.Context) { h.decideFeatureRequest(c, true) }
+
+// RejectFeatureRequest — POST /feature-requests/:id/reject, body {"note": "..."}.
+// Never touches campaigns.featured.
+func (h *Handler) RejectFeatureRequest(c *gin.Context) { h.decideFeatureRequest(c, false) }
+
+func (h *Handler) decideFeatureRequest(c *gin.Context, approve bool) {
+	// The body is optional on both routes (approve takes none), so a missing or
+	// malformed body must not fail the decision — only the note is read from it.
+	var req NoteRequest
+	_ = c.ShouldBindJSON(&req)
+
+	res, err := h.svc.DecideFeatureRequest(c.Request.Context(), c.Param("id"), c.GetString("user_id"), approve, req.Note)
+	if err != nil {
+		switch {
+		case errors.Is(err, ErrFeatureRequestNotFound), errors.Is(err, ErrCampaignNotFound):
+			c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		case errors.Is(err, ErrFeatureRequestNotPending), errors.Is(err, ErrCampaignNotActive):
+			c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
+		default:
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		}
+		return
+	}
+	c.JSON(http.StatusOK, res)
 }

@@ -2,6 +2,7 @@ import React from 'react';
 import { View, Text, ScrollView, StyleSheet, Pressable } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import * as Icons from 'lucide-react-native';
 import StateView from '@/components/StateView';
 import PrimaryButton from '@/components/PrimaryButton';
@@ -141,7 +142,7 @@ export default function PromotionDetailScreen() {
 function Header() {
   return (
     <View style={s.topBar}>
-      <Pressable onPress={() => router.back()} style={s.iconButton} accessibilityLabel="Go back">
+      <Pressable onPress={() => goBack('/featured/promotions')} style={s.iconButton} accessibilityLabel="Go back">
         <Icons.ArrowLeft size={22} color={Colors.primary} strokeWidth={2.2} />
       </Pressable>
       <Text style={s.topTitle}>Promotion</Text>

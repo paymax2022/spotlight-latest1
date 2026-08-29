@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { View, Text, ScrollView, StyleSheet, Pressable } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import { Home, KeyRound, BedDouble, Check, ShieldCheck } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
@@ -52,7 +53,7 @@ export default function PropertyRoles() {
       // Step-up verification required before higher-exposure roles are granted.
       router.push('/kyc');
     } else {
-      router.back();
+      goBack('/property');
     }
   };
 

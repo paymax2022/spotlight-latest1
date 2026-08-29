@@ -2,6 +2,7 @@ import React from 'react';
 import { View, Text, ScrollView, Pressable, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import {
   ArrowLeft, Bell, CreditCard, Users, IdCard, CalendarDays, Megaphone, ListTodo, ChevronRight, AlertTriangle, FileText, MessageCircle, Sparkles, Ticket, Building2, UserRound, ShieldCheck, Vote,
 } from 'lucide-react-native';
@@ -38,7 +39,7 @@ export default function MemberHome() {
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
       <View style={styles.header}>
-        <Pressable onPress={() => router.back()} hitSlop={10} style={styles.iconBtn} accessibilityLabel="Go back">
+        <Pressable onPress={() => goBack('/association')} hitSlop={10} style={styles.iconBtn} accessibilityLabel="Go back">
           <ArrowLeft size={22} color={Colors.onSurface} strokeWidth={2} />
         </Pressable>
         <View style={styles.headerTitleWrap}>

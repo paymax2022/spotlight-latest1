@@ -4,6 +4,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import { ChevronLeft } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
@@ -18,6 +19,22 @@ import { isLockedForEditing } from '@/features/registration/utils/status';
 import { withCityOptions, dependentCityKey } from '@/features/registration/utils/cityOptions';
 import { validateRequiredFields } from '@/features/registration/lib/validation';
 import type { RegistrationStep } from '@/features/registration/types/registration.types';
+
+/**
+ * Fields this screen never renders. Payment is collected on the dedicated
+ * payment screen, not in the wizard, and the ID fields are not asked for here.
+ *
+ * Anything listed here is also excluded from validation (see visibleStep below):
+ * validating a field the user cannot see can only ever dead-end them.
+ */
+const HIDDEN_FIELD_KEYS = [
+  'payment.method',
+  'payment.transactionReference',
+  'id.cardType',
+  'id.number',
+  'personal.idCardType',
+  'personal.idNumber',
+];
 
 export default function RegistrationWizardScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -103,9 +120,20 @@ export default function RegistrationWizardScreen() {
 
   const isLastStep = stepIndex === steps.length - 1;
 
+  // The fields this screen actually shows. Render and validation MUST agree:
+  // they used to diverge — the render filtered these keys out while
+  // validateRequiredFields still walked the full step — so a required field the
+  // user could not see blocked the step forever, and Save & continue looked
+  // inert (no request, banner with nothing highlighted). Deriving both from one
+  // list makes that class of bug impossible rather than merely fixed.
+  const visibleStep: RegistrationStep = {
+    ...step,
+    fields: step.fields.filter((field) => !HIDDEN_FIELD_KEYS.includes(field.key)),
+  };
+
   const handleNext = () => {
     // Client-side validation: check required fields are filled
-    const validationErrors = validateRequiredFields(step, draft?.formData ?? {}, edits);
+    const validationErrors = validateRequiredFields(visibleStep, draft?.formData ?? {}, edits);
     if (Object.keys(validationErrors).length > 0) {
       setErrors(validationErrors);
       return;
@@ -133,7 +161,7 @@ export default function RegistrationWizardScreen() {
 
   const handleBack = () => {
     if (stepIndex === 0) {
-      router.back();
+      goBack('/registration');
     } else {
       setStepIndex((i) => Math.max(0, i - 1));
     }
@@ -157,19 +185,7 @@ export default function RegistrationWizardScreen() {
             </View>
           )}
 
-          {step.fields
-            .filter((field) => {
-              // Exclude payment and ID fields
-              const excludedFields = [
-                'payment.method',
-                'payment.transactionReference',
-                'id.cardType',
-                'id.number',
-                'personal.idCardType',
-                'personal.idNumber',
-              ];
-              return !excludedFields.includes(field.key);
-            })
+          {visibleStep.fields
             .map((field) => (
               <FieldRenderer
                 key={field.key}

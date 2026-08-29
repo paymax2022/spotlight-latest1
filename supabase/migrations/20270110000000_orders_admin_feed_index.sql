@@ -1,0 +1,23 @@
+-- Index the admin order feed's default ordering.
+--
+-- ADDITIVE ONLY: creates one index. No DROP, no rename, no type change.
+--
+-- WHY
+-- GET /api/restaurant/admin/orders (backend/internal/restaurant/admin_orders.go)
+-- pages the whole platform's orders with `ORDER BY created_at DESC, id DESC`.
+-- `orders` had indexes on customer_id, restaurant_id, rider_id, status and
+-- dispatch_status, but none on created_at — so every page of the feed sorted the
+-- entire table. At 2,174 rows that measured 2.7ms and nobody would notice;
+-- `orders` is the fastest-growing table in this module, and an unindexed sort is
+-- the kind of thing that is fine until it very suddenly is not.
+--
+-- The index matches the query's ordering EXACTLY, including the `id` tiebreaker.
+-- That tiebreaker is not cosmetic: without a unique trailing column, rows sharing
+-- a created_at can be returned in a different order per query, so a paged feed
+-- repeats some orders and never shows others.
+--
+-- Deliberately NOT CONCURRENTLY: Supabase runs each migration inside a
+-- transaction and CREATE INDEX CONCURRENTLY cannot run in one. On a table this
+-- size the lock is milliseconds; revisit if `orders` grows past a few million.
+CREATE INDEX IF NOT EXISTS orders_created_at_idx
+  ON public.orders (created_at DESC, id DESC);

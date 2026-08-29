@@ -1,12 +1,11 @@
 // ── Direct Referral Rewards — admin service (ADR-022) ─────────────────────────
 // Mock by default (mirrors referralAdminService / connectAdminService). Flip with
 // NEXT_PUBLIC_REFERRAL_REWARDS_USE_MOCK=false to hit the live Go backend at the
-// admin mount /v1/admin/referrals. env.apiBaseUrl already ends in /api/v1, so we
 // append /admin/referrals → /api/v1/admin/referrals (proxied to the Go backend's
 // /v1/admin/referrals group). Bearer token + RBAC referral.admin.* on the server;
 // the sidebar gates the nav entries. Money is BIGINT kobo throughout.
 
-import { env } from '@/config/env';
+import { apiV1 } from '@/config/env';
 import type {
   ProgramConfig,
   ConfigPublishInput,
@@ -26,8 +25,8 @@ const USE_MOCK =
   (process.env.NEXT_PUBLIC_REFERRAL_REWARDS_USE_MOCK ?? 'true').toLowerCase() !== 'false';
 
 function adminBase(): string {
-  // env.apiBaseUrl = http://host/api/v1 → http://host/api/v1/admin/referrals
-  return `${env.apiBaseUrl.replace(/\/$/, '')}/admin/referrals`;
+  // apiV1() = http://host/api/v1 → http://host/api/v1/admin/referrals
+  return `${apiV1()}/admin/referrals`;
 }
 function authHeaders(): Record<string, string> {
   if (typeof window === 'undefined') return { 'Content-Type': 'application/json' };

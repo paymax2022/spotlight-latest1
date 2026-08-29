@@ -38,13 +38,19 @@ type InitiateRequest struct {
 	NIN           *string `json:"nin,omitempty"`
 }
 
-// AuditEvent is written to kyc_events on every state transition.
+// AuditEvent is written to kyc_events on every state transition. Field names
+// mirror the actual table (20260613010000_kyc_events.sql) — old_status/
+// new_status/old_tier/new_tier/document_type/actor_id/note — not an
+// event_type column, which the table has never had.
 type AuditEvent struct {
-	ID        string    `json:"id"`
-	UserID    string    `json:"user_id"`
-	EventType string    `json:"event_type"` // initiated | verified | failed | reverted
-	OldTier   Tier      `json:"old_tier"`
-	NewTier   Tier      `json:"new_tier"`
-	CreatedAt time.Time `json:"created_at"`
-	ActorID   *string   `json:"actor_id,omitempty"` // nil = system; set = admin
+	ID           string    `json:"id"`
+	UserID       string    `json:"user_id"`
+	OldStatus    *string   `json:"old_status,omitempty"`
+	NewStatus    Status    `json:"new_status"`
+	OldTier      *Tier     `json:"old_tier,omitempty"`
+	NewTier      Tier      `json:"new_tier"`
+	DocumentType *string   `json:"document_type,omitempty"`
+	ActorID      *string   `json:"actor_id,omitempty"` // nil = system/self; set = admin
+	Note         *string   `json:"note,omitempty"`
+	CreatedAt    time.Time `json:"created_at"`
 }

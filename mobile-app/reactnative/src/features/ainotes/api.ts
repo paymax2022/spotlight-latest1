@@ -1,6 +1,7 @@
 // Estate AI meeting notes (Block 33) — types + dual mock/live api.
 // Live mode targets the transcript-based backend: POST /meetings/:mid/ai-notes
 // (claude-sonnet-4-6), GET /ai-notes/:id, POST /ai-notes/:id/approve.
+import { mockAllowed } from '@/config/mockPolicy';
 import { api } from '@/api/client';
 
 export type AiNoteStatus = 'processing' | 'complete' | 'failed';
@@ -34,7 +35,7 @@ export interface GenerateNoteInput {
   transcript: string;
 }
 
-export const USE_MOCK = (process.env.EXPO_PUBLIC_AINOTES_USE_MOCK ?? 'true') !== 'false';
+export const USE_MOCK = mockAllowed(process.env.EXPO_PUBLIC_AINOTES_USE_MOCK, true);
 export const AINOTES_API_BASE = '/api/v1/estate/ai-notes';
 export const AINOTES_MEETINGS_BASE = '/api/v1/estate/meetings';
 

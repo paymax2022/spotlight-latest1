@@ -1,6 +1,7 @@
 // ── Crowdfunding — Wallet / support / notifications / rewards / settings API ──
 // Mock-backed; mirrors crowdfunding.api.ts conventions. Money in kobo.
 
+import { mockAllowed } from '@/config/mockPolicy';
 import { api } from '@/api/client';
 import type {
   CampaignWalletSummary,
@@ -31,7 +32,7 @@ import {
   MOCK_COMMENTS,
 } from './crowdfundingExtras.mock';
 
-const USE_MOCK = process.env.EXPO_PUBLIC_CF_USE_MOCK !== 'false';
+const USE_MOCK = mockAllowed(process.env.EXPO_PUBLIC_CF_USE_MOCK, true);
 const delay = (ms = 300) => new Promise((r) => setTimeout(r, ms));
 
 // ─── Wallet & ledger ──────────────────────────────────────────────────────────

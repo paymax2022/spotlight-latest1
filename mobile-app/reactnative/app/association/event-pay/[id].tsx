@@ -2,6 +2,7 @@ import React from 'react';
 import { View, Text, ScrollView, StyleSheet, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
 import { Spacing } from '@/constants/spacing';
@@ -32,7 +33,7 @@ export default function EventPay() {
     return (
       <SafeAreaView style={styles.safe} edges={['top']}>
         <ScreenHeader title="Event payment" />
-        <StateView kind="error" title="Couldn't load" message="Please try again." actionLabel="Back" onAction={() => router.back()} />
+        <StateView kind="error" title="Couldn't load" message="Please try again." actionLabel="Back" onAction={() => goBack('/association')} />
       </SafeAreaView>
     );
   }

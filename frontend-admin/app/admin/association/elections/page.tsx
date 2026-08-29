@@ -6,7 +6,7 @@ import {
   listElections, createElection,
   type AdminElectionSummary, type ElectionRole,
 } from '@/services/associationAdminService';
-import { PageHeader, AssociationTabs, Card, Badge, DisclosureNote, StateBlock, AuditNote, btn, btnPrimary, btnDanger, th, td, input, label, select, fmtDate } from '../_ui';
+import { PageHeader, AssociationTabs, Card, Badge, DisclosureNote, StateBlock, AuditNote, OrgPicker, useSelectedOrg, btn, btnPrimary, btnDanger, th, td, input, label, select, fmtDate } from '../_ui';
 
 type DraftPosition = { title: string; seats: number; role: ElectionRole };
 const ROLE_OPTIONS: { v: ElectionRole; l: string }[] = [
@@ -18,6 +18,7 @@ const ROLE_OPTIONS: { v: ElectionRole; l: string }[] = [
 ];
 
 export default function ElectionsPage() {
+  const orgId = useSelectedOrg();
   const [rows, setRows] = useState<AdminElectionSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -37,7 +38,7 @@ export default function ElectionsPage() {
     catch (e) { setError(String(e)); }
     finally { setLoading(false); }
   }
-  useEffect(() => { load(); }, []);
+  useEffect(() => { load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [orgId]);
 
   function setPos(i: number, patch: Partial<DraftPosition>) {
     setPositions((p) => p.map((row, idx) => (idx === i ? { ...row, ...patch } : row)));
@@ -67,6 +68,7 @@ export default function ElectionsPage() {
     <div style={{ padding: '0.5rem 0.5rem 2rem' }}>
       <PageHeader title="Elections" subtitle="Set up and run association elections. Ballots are secret; results stay sealed until published." action={<button onClick={load} style={btn()}>Refresh</button>} />
       <AssociationTabs active="elections" />
+      <OrgPicker />
       <DisclosureNote>Officer actions post to <code>/api/finance/associations/elections</code>. One-member-one-vote, eligibility and tally are enforced server-side; the immutable audit log records every lifecycle change (NL-12).</DisclosureNote>
 
       {msg && <AuditNote>{msg}</AuditNote>}

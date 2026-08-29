@@ -3,6 +3,7 @@
 // settle on completion) and carries an Idempotency-Key. Callout/distance fares
 // come from the SERVER.
 
+import { mockAllowed } from '@/config/mockPolicy';
 import { api } from '@/api/client';
 import type {
   TowingJob,
@@ -19,7 +20,7 @@ import {
 } from './towing.mock';
 
 const USE_MOCK =
-  (process.env.EXPO_PUBLIC_TOWING_USE_MOCK ?? process.env.EXPO_PUBLIC_MOBILITY_USE_MOCK ?? 'true').toLowerCase() !== 'false';
+  mockAllowed(process.env.EXPO_PUBLIC_TOWING_USE_MOCK ?? process.env.EXPO_PUBLIC_MOBILITY_USE_MOCK, true);
 
 const BASE = '/api/v1';
 const delay = (ms = 320) => new Promise((r) => setTimeout(r, ms));

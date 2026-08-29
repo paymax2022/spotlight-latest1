@@ -1,4 +1,5 @@
 // Estate Maintenance / Repairs (Block 32) — types + dual mock/live api + constants.
+import { mockAllowed } from '@/config/mockPolicy';
 import { api } from '@/api/client';
 import { Colors } from '@/constants/colors';
 import { generateIdempotencyKey } from '@/utils/idempotency';
@@ -16,7 +17,7 @@ export interface RepairRequest {
 export interface CreateRepairInput { category: RepairCategory; description: string; urgency: RepairUrgency; idempotencyKey: string; }
 export interface AddRepairUpdateInput { status: RepairStatus; note?: string; idempotencyKey: string; }
 
-export const USE_MOCK = (process.env.EXPO_PUBLIC_REPAIRS_USE_MOCK ?? 'true') !== 'false';
+export const USE_MOCK = mockAllowed(process.env.EXPO_PUBLIC_REPAIRS_USE_MOCK, true);
 
 // Repairs/maintenance are served by the resident-scoped frontend-web handlers
 // under /api/v1/estate/repairs (GET list, POST create, GET/POST /{id}/updates).

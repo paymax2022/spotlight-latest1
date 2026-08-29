@@ -271,7 +271,7 @@ export async function initiateRegistrationPayment(params: {
         ...entry.draft.formData,
         'payment.paymentStatus':       'paid',
         'payment.transactionReference': reference,
-        'payment.method':              'WALLET',
+        'payment.method':              'Wallet',
       };
       mockDrafts.set(params.id, { ...entry, draft: { ...entry.draft, formData, updatedAt: new Date().toISOString() } });
       saveMockDrafts();
@@ -325,7 +325,7 @@ export async function verifyRegistrationPayment(params: {
       ...entry.draft.formData,
       'payment.paymentStatus':       'paid',
       'payment.transactionReference': params.reference,
-      'payment.method':              'PAYSTACK',
+      'payment.method':              'Card',
     };
     mockDrafts.set(params.id, { ...entry, draft: { ...entry.draft, formData, updatedAt: new Date().toISOString() } });
     saveMockDrafts();

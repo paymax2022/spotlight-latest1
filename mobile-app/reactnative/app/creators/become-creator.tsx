@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { View, Text, ScrollView, StyleSheet, Pressable, TextInput } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import { X, ArrowLeft, Check } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
@@ -42,8 +43,8 @@ export default function BecomeCreator() {
   if (done) {
     return (
       <SafeAreaView style={styles.safe} edges={['top']}>
-        <View style={styles.header}><Pressable onPress={() => router.back()} hitSlop={10} style={styles.iconBtn}><X size={22} color={Colors.onSurface} /></Pressable><Text style={styles.headerTitle}>Submitted</Text><View style={styles.iconBtn} /></View>
-        <StateView kind="empty" icon="CheckCircle2" title="Application submitted" message="We're reviewing your creator profile and payout KYC. You'll be notified once approved." actionLabel="Done" onAction={() => router.back()} />
+        <View style={styles.header}><Pressable onPress={() => goBack('/creators')} hitSlop={10} style={styles.iconBtn}><X size={22} color={Colors.onSurface} /></Pressable><Text style={styles.headerTitle}>Submitted</Text><View style={styles.iconBtn} /></View>
+        <StateView kind="empty" icon="CheckCircle2" title="Application submitted" message="We're reviewing your creator profile and payout KYC. You'll be notified once approved." actionLabel="Done" onAction={() => goBack('/creators')} />
       </SafeAreaView>
     );
   }
@@ -51,7 +52,7 @@ export default function BecomeCreator() {
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
       <View style={styles.header}>
-        <Pressable onPress={() => (step === 0 ? router.back() : setStep(step - 1))} hitSlop={10} style={styles.iconBtn} accessibilityLabel="Back">
+        <Pressable onPress={() => (step === 0 ? goBack('/creators') : setStep(step - 1))} hitSlop={10} style={styles.iconBtn} accessibilityLabel="Back">
           {step === 0 ? <X size={22} color={Colors.onSurface} /> : <ArrowLeft size={22} color={Colors.onSurface} />}
         </Pressable>
         <Text style={styles.headerTitle}>Become a creator</Text>

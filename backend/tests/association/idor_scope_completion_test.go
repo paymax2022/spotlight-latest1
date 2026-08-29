@@ -61,7 +61,7 @@ func TestLiveDB_IDOR_GetApprovalQueue_ScopedToAdminOrg(t *testing.T) {
 
 	// Admin of org A must NOT see org B's pending application.
 	adminA := seedAdminRole(t, ctx, pool, orgA, "NATIONAL_ADMIN")
-	listA, err := svc.GetApprovalQueue(ctx, adminA, "")
+	listA, err := svc.GetApprovalQueue(ctx, adminA, "", "")
 	if err != nil {
 		t.Fatalf("approval queue (A): %v", err)
 	}
@@ -72,7 +72,7 @@ func TestLiveDB_IDOR_GetApprovalQueue_ScopedToAdminOrg(t *testing.T) {
 	}
 	// Positive: admin of org B DOES see org B's own pending application.
 	adminB := seedAdminRole(t, ctx, pool, orgB, "NATIONAL_ADMIN")
-	listB, err := svc.GetApprovalQueue(ctx, adminB, "")
+	listB, err := svc.GetApprovalQueue(ctx, adminB, "", "")
 	if err != nil {
 		t.Fatalf("approval queue (B): %v", err)
 	}
@@ -102,7 +102,7 @@ func TestLiveDB_IDOR_GetOfflinePayments_ScopedToAdminOrg(t *testing.T) {
 
 	// Finance admin of org A must NOT see org B's offline payment.
 	financeAdminA := seedAdminRole(t, ctx, pool, orgA, "FINANCE_ADMIN")
-	listA, err := svc.GetOfflinePayments(ctx, financeAdminA)
+	listA, err := svc.GetOfflinePayments(ctx, financeAdminA, "")
 	if err != nil {
 		t.Fatalf("offline payments (A): %v", err)
 	}
@@ -113,7 +113,7 @@ func TestLiveDB_IDOR_GetOfflinePayments_ScopedToAdminOrg(t *testing.T) {
 	}
 	// Positive: finance admin of org B DOES see org B's own offline payment.
 	financeAdminB := seedAdminRole(t, ctx, pool, orgB, "FINANCE_ADMIN")
-	listB, err := svc.GetOfflinePayments(ctx, financeAdminB)
+	listB, err := svc.GetOfflinePayments(ctx, financeAdminB, "")
 	if err != nil {
 		t.Fatalf("offline payments (B): %v", err)
 	}

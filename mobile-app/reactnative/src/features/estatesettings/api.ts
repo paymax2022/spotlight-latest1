@@ -1,4 +1,5 @@
 // Estate member settings (Block 45) — types + dual mock/live api.
+import { mockAllowed } from '@/config/mockPolicy';
 import { api } from '@/api/client';
 
 export interface MemberSettings {
@@ -13,7 +14,7 @@ export interface MemberSettings {
   language: string;
 }
 
-export const USE_MOCK = (process.env.EXPO_PUBLIC_ESTATESETTINGS_USE_MOCK ?? 'true') !== 'false';
+export const USE_MOCK = mockAllowed(process.env.EXPO_PUBLIC_ESTATESETTINGS_USE_MOCK, true);
 export const SETTINGS_API_BASE = '/api/v1/estate/settings';
 
 export const DEFAULT_SETTINGS: MemberSettings = {

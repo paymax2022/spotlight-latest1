@@ -4,6 +4,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import { ArrowLeft, Trophy, EyeOff } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
@@ -41,7 +42,7 @@ export default function LeaderboardScreen() {
     <SafeAreaView style={styles.safe} edges={['top']}>
       {/* Header */}
       <View style={styles.header}>
-        <Pressable onPress={() => router.back()} style={styles.backBtn}>
+        <Pressable onPress={() => goBack('/voting')} style={styles.backBtn}>
           <ArrowLeft size={22} color={Colors.onSurface} strokeWidth={2} />
         </Pressable>
         <View style={styles.titleBlock}>
@@ -52,7 +53,7 @@ export default function LeaderboardScreen() {
       </View>
 
       {/* Countdown */}
-      {contest?.status === 'LIVE' && (
+      {contest?.status === 'LIVE' && contest.endsAt && (
         <View style={styles.countdownRow}>
           <Text style={styles.countdownLabel}>Voting closes in</Text>
           <CountdownTimer endsAt={contest.endsAt} color={Colors.primary} />

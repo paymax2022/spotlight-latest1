@@ -1,6 +1,7 @@
 // ── Crowdfunding — Investment (Section L) data layer ─────────────────────────
 // Mock-backed. Money in kobo. The module entry is gated by INVESTMENT_ENABLED.
 
+import { mockAllowed } from '@/config/mockPolicy';
 import { api } from '@/api/client';
 import { generateIdempotencyKey } from '@/utils/idempotency';
 import type {
@@ -14,7 +15,7 @@ import type {
   InvestorRiskProfile,
 } from '../types/investment.types';
 
-const USE_MOCK = process.env.EXPO_PUBLIC_CF_USE_MOCK !== 'false';
+const USE_MOCK = mockAllowed(process.env.EXPO_PUBLIC_CF_USE_MOCK, true);
 const delay = (ms = 320) => new Promise((r) => setTimeout(r, ms));
 
 // Mutable in mock mode so onboarding progress persists within a session.

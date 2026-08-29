@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { View, Text, ScrollView, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import { CheckCircle2 } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
@@ -27,7 +28,7 @@ export default function Redeem() {
 
   if (loading) return <Shell><StateView kind="loading" message="Loading reward…" /></Shell>;
   if (catalog.isError || account.isError) return <Shell><StateView kind="error" title="Couldn't load reward" message="Please try again." actionLabel="Retry" onAction={() => { catalog.refetch(); account.refetch(); }} /></Shell>;
-  if (!item || !account.data) return <Shell><StateView kind="error" title="Reward unavailable" message="This reward could not be found." actionLabel="Back" onAction={() => router.back()} /></Shell>;
+  if (!item || !account.data) return <Shell><StateView kind="error" title="Reward unavailable" message="This reward could not be found." actionLabel="Back" onAction={() => goBack('/loyalty')} /></Shell>;
 
   const balance = account.data.balancePoints;
   const afford = balance >= item.costPoints;

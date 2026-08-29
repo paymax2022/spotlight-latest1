@@ -7,6 +7,7 @@
 // IRON RULES: all money is integer kobo; placing an order carries an
 // Idempotency-Key; price breakdowns come from the SERVER — never computed here.
 
+import { mockAllowed } from '@/config/mockPolicy';
 import { api } from '@/api/client';
 import type {
   Restaurant,
@@ -42,9 +43,7 @@ import { computeDeliveryFeeMock, type DeliveryQuote } from './deliveryFee';
 export type { DeliveryQuote, DeliveryFeeBreakdown } from './deliveryFee';
 
 export const USE_MOCK =
-  (process.env.EXPO_PUBLIC_FOOD_USE_MOCK ??
-    process.env.EXPO_PUBLIC_RESTAURANT_USE_MOCK ??
-    'true').toLowerCase() !== 'false';
+  mockAllowed(process.env.EXPO_PUBLIC_FOOD_USE_MOCK ?? process.env.EXPO_PUBLIC_RESTAURANT_USE_MOCK, true);
 
 const BASE = '/api/v1/restaurant';
 const delay = (ms = 320) => new Promise((r) => setTimeout(r, ms));
@@ -68,23 +67,97 @@ function mapOrder(raw: Order): Order {
 }
 
 // ─── Discovery ────────────────────────────────────────────────────────────────
-export async function listRestaurants(): Promise<Restaurant[]> {
+
+/** One page of discovery results, with the totals needed to keep paging. */
+export interface RestaurantPage {
+  items: Restaurant[];
+  total: number;
+  limit: number;
+  offset: number;
+  hasMore: boolean;
+}
+
+/** Server-side filters. `cuisine: 'all'` and an empty query mean "no filter". */
+export interface RestaurantQuery {
+  q?: string;
+  cuisine?: string;
+  /** 'eta' sorts by kitchen prep time — what the Nearby view uses. */
+  sort?: 'newest' | 'rating' | 'name' | 'eta';
+  /** Keep only restaurants running a live offer (the Offers view). */
+  promo?: boolean;
+  limit?: number;
+  offset?: number;
+}
+
+export const RESTAURANT_PAGE_SIZE = 20;
+
+/**
+ * One page of open restaurants.
+ *
+ * This used to fetch the ENTIRE list — 2,016 open rows against the live DB — and
+ * every screen filtered it in memory. The list view rendered a card per row, so
+ * a single browse cost ~48k DOM nodes on web and a payload that had to be fully
+ * parsed before anything was drawn.
+ *
+ * Search and cuisine are now sent to the server WITH the page. They have to move
+ * together: filtering a page locally would quietly hide every match that fell on
+ * a later page, which is worse than slow.
+ */
+export async function listRestaurants(params: RestaurantQuery = {}): Promise<RestaurantPage> {
+  const limit = params.limit ?? RESTAURANT_PAGE_SIZE;
+  const offset = params.offset ?? 0;
+
   if (USE_MOCK) {
     await delay();
-    return MOCK_RESTAURANTS;
+    // Mirror the server's filter semantics so the mock and live paths page
+    // identically — a mock that ignored the filters would page a different list.
+    const q = (params.q ?? '').trim().toLowerCase();
+    const cuisine = (params.cuisine ?? '').trim().toLowerCase();
+    const all = MOCK_RESTAURANTS.filter((r) => {
+      if (cuisine && cuisine !== 'all' && r.cuisine.toLowerCase() !== cuisine) return false;
+      if (params.promo && !r.promo) return false;
+      if (!q) return true;
+      return r.name.toLowerCase().includes(q) || r.tags.some((t) => t.toLowerCase().includes(q));
+    });
+    const items = all.slice(offset, offset + limit);
+    return { items, total: all.length, limit, offset, hasMore: offset + items.length < all.length };
   }
-  // The Go discovery handler answers `{"restaurants": [...]}` (handler_delivery.go
-  // ListRestaurants) and the Next proxy forwards the body VERBATIM, so `unwrap`
-  // — which only peels a `data` envelope — hands back that OBJECT rather than an
-  // array. mapRestaurants peels the `restaurants` key, tolerating a bare array in
-  // case the handler is ever flattened.
+
+  // The Go discovery handler answers `{"restaurants": [...], "total", "limit",
+  // "offset", "has_more"}` (handler_delivery.go ListRestaurants) and the Next
+  // proxy forwards the body VERBATIM, so `unwrap` — which only peels a `data`
+  // envelope — hands back that OBJECT rather than an array. mapRestaurants peels
+  // the `restaurants` key, tolerating a bare array in case the handler is ever
+  // flattened.
   //
   // It also NORMALIZES each row. The rows were previously cast straight to
   // `Restaurant`, but the server sends neither `tags` nor `etaLabel` nor the icon
   // triple — those only existed in mock.ts. A cast is compile-time only, so the
   // fields simply arrived undefined and RestaurantCard crashed on
   // `item.tags.map` as soon as the list loaded for real.
-  return mapRestaurants(unwrap<unknown>(await api.get(`${BASE}`)));
+  const body = unwrap<Record<string, unknown>>(
+    await api.get(`${BASE}`, {
+      params: {
+        q: params.q || undefined,
+        cuisine: params.cuisine || undefined,
+        sort: params.sort,
+        promo: params.promo ? '1' : undefined,
+        limit,
+        offset,
+      },
+    }),
+  );
+  const items = mapRestaurants(body);
+  // Fall back to the page itself when an older backend answers without totals,
+  // rather than reporting 0 results next to a full list.
+  const total = typeof body?.total === 'number' ? body.total : offset + items.length;
+  return {
+    items,
+    total,
+    limit,
+    offset,
+    hasMore: typeof body?.has_more === 'boolean' ? body.has_more : offset + items.length < total,
+  };
 }
 
 export async function getRestaurant(id: string): Promise<RestaurantDetail> {

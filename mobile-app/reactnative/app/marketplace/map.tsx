@@ -9,6 +9,7 @@ import React, { useEffect, useState } from 'react';
 import { View, Text, StyleSheet, Pressable, ScrollView } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import { ArrowLeft, MapPin, List as ListIcon, Navigation } from 'lucide-react-native';
 import * as Location from 'expo-location';
 import { Colors } from '@/constants/colors';
@@ -55,9 +56,9 @@ export default function MarketplaceMap() {
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
       <View style={styles.topRow}>
-        <Pressable onPress={() => router.back()} hitSlop={10} accessibilityLabel="Back to results"><ArrowLeft size={22} color={Colors.onSurface} /></Pressable>
+        <Pressable onPress={() => goBack('/marketplace')} hitSlop={10} accessibilityLabel="Back to results"><ArrowLeft size={22} color={Colors.onSurface} /></Pressable>
         <Text style={styles.title}>Map view</Text>
-        <Pressable onPress={() => router.back()} hitSlop={8} accessibilityLabel="List view"><ListIcon size={20} color={Colors.onSurface} /></Pressable>
+        <Pressable onPress={() => goBack('/marketplace')} hitSlop={8} accessibilityLabel="List view"><ListIcon size={20} color={Colors.onSurface} /></Pressable>
       </View>
 
       {/* Map surface (placeholder — clustered pins render here in native builds) */}

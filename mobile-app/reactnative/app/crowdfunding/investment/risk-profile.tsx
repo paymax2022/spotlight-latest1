@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { ScrollView, View, Text, Pressable, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
 import { Spacing } from '@/constants/spacing';
@@ -45,7 +46,7 @@ export default function RiskProfileScreen() {
 
   const save = () => {
     if (!result) return;
-    complete.mutate({ step: 'risk', riskProfile: result }, { onSuccess: () => router.back() });
+    complete.mutate({ step: 'risk', riskProfile: result }, { onSuccess: () => goBack('/crowdfunding/investment') });
   };
 
   return (

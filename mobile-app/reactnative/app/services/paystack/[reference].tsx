@@ -4,6 +4,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import { ArrowLeft, Clock, XCircle, RefreshCw } from 'lucide-react-native';
 import { useQuery } from '@tanstack/react-query';
 import PrimaryButton from '@/components/PrimaryButton';
@@ -93,7 +94,7 @@ export default function PaystackIntentScreen() {
         <View style={styles.actions}>
           {failed ? (
             <>
-              <PrimaryButton label="Try Again" onPress={() => router.back()} />
+              <PrimaryButton label="Try Again" onPress={() => goBack('/services')} />
               <PrimaryButton
                 label="View Transactions"
                 variant="secondary"

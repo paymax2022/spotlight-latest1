@@ -34,7 +34,7 @@ func buildPublishedRoleElection(t *testing.T, ctx context.Context, pool *pgxpool
 	_, candAMem = seedActiveMembership(t, ctx, pool, org)
 	_, candBMem = seedActiveMembership(t, ctx, pool, org)
 
-	electionID, err := svc.CreateElection(ctx, officer, association.CreateElectionInput{
+	electionID, err := svc.CreateElection(ctx, officer, "", association.CreateElectionInput{
 		Title:     "Exco",
 		Positions: []association.CreatePositionInput{{Title: "President", Seats: 1, Role: "NATIONAL_ADMIN"}},
 	})

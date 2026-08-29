@@ -9,6 +9,13 @@ import type { CampaignStatus } from '../types/crowdfunding.types';
 interface Props {
   status: CampaignStatus;
   size?: 'sm' | 'md';
+  /**
+   * Owner-paused. Rendered as a SECOND pill beside the real status rather than
+   * replacing it: `paused` and `status` are orthogonal, and collapsing them
+   * would hide a FROZEN fraud stop behind the friendlier word "Paused" —
+   * exactly the campaign whose real state a reader most needs to see.
+   */
+  paused?: boolean;
 }
 
 // Pill-shaped status chips: high-contrast text on a 10% tint (per DESIGN-Mobile.md).
@@ -23,17 +30,37 @@ const MAP: Record<CampaignStatus, { label: string; fg: string; bg: string }> = {
   REJECTED:       { label: 'Rejected',        fg: Colors.error,             bg: Colors.iconBgRed },
 };
 
-export default function CampaignStatusBadge({ status, size = 'md' }: Props) {
+const PAUSED_FG = '#B65A00';
+
+export default function CampaignStatusBadge({ status, size = 'md', paused }: Props) {
   const { label, fg, bg } = MAP[status];
   return (
-    <View style={[styles.pill, size === 'sm' && styles.pillSm, { backgroundColor: bg }]}>
-      <View style={[styles.dot, { backgroundColor: fg }]} />
-      <Text style={[styles.label, size === 'sm' && styles.labelSm, { color: fg }]}>{label}</Text>
+    <View style={styles.group}>
+      <View style={[styles.pill, size === 'sm' && styles.pillSm, { backgroundColor: bg }]}>
+        <View style={[styles.dot, { backgroundColor: fg }]} />
+        <Text style={[styles.label, size === 'sm' && styles.labelSm, { color: fg }]}>{label}</Text>
+      </View>
+      {paused ? (
+        <View
+          style={[styles.pill, size === 'sm' && styles.pillSm, { backgroundColor: Colors.iconBgOrange }]}
+          accessibilityLabel={`Paused, and ${label.toLowerCase()}`}
+        >
+          <View style={[styles.dot, { backgroundColor: PAUSED_FG }]} />
+          <Text style={[styles.label, size === 'sm' && styles.labelSm, { color: PAUSED_FG }]}>Paused</Text>
+        </View>
+      ) : null}
     </View>
   );
 }
 
 const styles = StyleSheet.create({
+  group: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: 6,
+    alignSelf: 'flex-start',
+  },
   pill: {
     flexDirection: 'row',
     alignItems: 'center',

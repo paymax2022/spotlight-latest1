@@ -4,6 +4,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	financekyc "spotlight/backend/internal/finance/kyc"
 	financeledger "spotlight/backend/internal/finance/ledger"
 )
 
@@ -12,12 +13,13 @@ import (
 // requireUserID() middleware so c.GetString("user_id") is populated).
 //
 // ledgerSvc is the finance ledger used by the withdrawal-approval money-path; it
-// may be nil (the payout path then fails closed).
+// may be nil (the payout path then fails closed). kycSvc is the platform's
+// shared KYC service used by the KYC queue; nil fails that endpoint closed too.
 //
 // It is purely additive: it registers NEW sub-paths under the same group the
 // campaign-review handlers already use, and never edits shared route files.
-func RegisterAdmin(rg *gin.RouterGroup, db *pgxpool.Pool, ledgerSvc *financeledger.Service) {
-	h := NewHandler(NewService(db).WithLedger(ledgerSvc))
+func RegisterAdmin(rg *gin.RouterGroup, db *pgxpool.Pool, ledgerSvc *financeledger.Service, kycSvc *financekyc.Service) {
+	h := NewHandler(NewService(db).WithLedger(ledgerSvc).WithKYC(kycSvc))
 
 	// Finance — refunds & settlement.
 	rg.GET("/finance/summary", h.FinanceSummary)
@@ -34,6 +36,18 @@ func RegisterAdmin(rg *gin.RouterGroup, db *pgxpool.Pool, ledgerSvc *financeledg
 	rg.GET("/withdrawals", h.ListWithdrawals)
 	rg.POST("/withdrawals/:id/approve", h.ApproveWithdrawal)
 	rg.POST("/withdrawals/:id/reject", h.RejectWithdrawal)
+
+	// Featured / trending / urgent placement (public discovery rails).
+	rg.GET("/featured", h.ListFeatured)
+	rg.GET("/featured/report", h.FeaturedReport)
+	rg.PATCH("/campaigns/:id/flags", h.PatchCampaignFlags)
+
+	// Owner-initiated featured-rail requests (the creator side writes these via
+	// POST /api/v1/crowdfunding/creator/campaigns/:id/feature-request). Approval
+	// is the only path from a request to a placement — see feature_requests.go.
+	rg.GET("/feature-requests", h.ListFeatureRequests)
+	rg.POST("/feature-requests/:id/approve", h.ApproveFeatureRequest)
+	rg.POST("/feature-requests/:id/reject", h.RejectFeatureRequest)
 
 	// Fraud & campaign freeze.
 	rg.GET("/fraud-alerts", h.ListFraudAlerts)

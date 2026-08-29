@@ -2,17 +2,19 @@ import { errorResponse, handleApiError, successResponse } from '@/src/lib/api/re
 import { assertOpenMicAdmin, assertOpenMicReadAdmin } from '@/src/server/openmic/auth';
 import { getFinalePlaylist, saveFinalePlaylist } from '@/src/server/openmic/persistence';
 
-export async function GET(request: Request, context: { params: { id: string } }) {
+export async function GET(request: Request, context: { params: Promise<{ id: string }> }) {
+  const params = await context.params;
   try {
     await assertOpenMicReadAdmin(request);
-    const playlist = await getFinalePlaylist(context.params.id);
+    const playlist = await getFinalePlaylist(params.id);
     return successResponse({ success: true, playlist });
   } catch (error) {
     return handleApiError(error, 'Failed to load finale playlist');
   }
 }
 
-export async function POST(request: Request, context: { params: { id: string } }) {
+export async function POST(request: Request, context: { params: Promise<{ id: string }> }) {
+  const params = await context.params;
   try {
     await assertOpenMicAdmin(request);
     const body = (await request.json()) as { entries?: Array<{ submissionId?: string; order?: number }> };
@@ -20,7 +22,7 @@ export async function POST(request: Request, context: { params: { id: string } }
       .filter((item) => item.submissionId)
       .map((item) => ({ submissionId: String(item.submissionId), order: item.order }));
     if (entries.length === 0) return errorResponse('entries is required', 400);
-    const playlist = await saveFinalePlaylist(context.params.id, entries);
+    const playlist = await saveFinalePlaylist(params.id, entries);
     return successResponse({ success: true, playlist });
   } catch (error) {
     return handleApiError(error, 'Failed to save finale playlist');

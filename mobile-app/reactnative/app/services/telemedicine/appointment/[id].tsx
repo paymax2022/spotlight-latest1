@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { View, Text, ScrollView, StyleSheet, Modal, Pressable, Platform, ActivityIndicator } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import {
   Video, Phone, MessageCircle, FileText, X, CalendarClock, NotebookPen,
 } from 'lucide-react-native';
@@ -54,7 +55,7 @@ export default function AppointmentDetailScreen() {
       qc.invalidateQueries({ queryKey: ['tele-appointments'] });
       qc.invalidateQueries({ queryKey: ['tele-appointment', id] });
       setSheet(null);
-      router.back();
+      goBack('/services/telemedicine');
     },
   });
 

@@ -18,6 +18,7 @@ import (
 //	POST /support/tickets/:id/reply  → append a reply, set ticket PENDING
 //	GET  /notifications              → caller's notifications
 //	POST /notifications/read         → mark all notifications read
+//	POST /campaigns/:id/events       → record a VIEW or SHARE (analytics)
 //	GET  /settings/notifications     → notification preferences
 //	PUT  /settings/notifications     → upsert notification preferences
 func Register(rg *gin.RouterGroup, db *pgxpool.Pool) {
@@ -32,6 +33,10 @@ func Register(rg *gin.RouterGroup, db *pgxpool.Pool) {
 
 	rg.GET("/notifications", h.GetNotifications)
 	rg.POST("/notifications/read", h.MarkNotificationsRead)
+
+	// Engagement events feeding creator analytics. Public-ish: an anonymous
+	// view still counts, so this must not require user_id to be set.
+	rg.POST("/campaigns/:id/events", h.RecordCampaignEvent)
 
 	rg.GET("/settings/notifications", h.GetNotificationPrefs)
 	rg.PUT("/settings/notifications", h.UpdateNotificationPrefs)

@@ -3,6 +3,7 @@ package crowdfunding
 import (
 	"context"
 	"fmt"
+	"time"
 )
 
 // categoryLabels mirrors the seeded crowdfunding_categories (avoids a join per row).
@@ -48,12 +49,50 @@ func reviewTransition(current, decision string) (string, bool) {
 }
 
 // AdminListPending returns campaigns awaiting (or in) review.
-func (s *Service) AdminListPending(ctx context.Context, status string) ([]CampaignSummary, error) {
+// AdminCampaignSummary is the review-queue shape: everything the public list
+// carries, plus the two fields the moderation console needs and the public one
+// must never expose.
+//
+// submittedAt and riskLevel were already SELECTed by the discovery query and
+// then dropped by toSummary, so the admin console rendered blanks for both —
+// including the queue's sort key. They are added here rather than on
+// CampaignSummary because that type is also the PUBLIC discovery payload, and
+// riskLevel is an internal fraud signal: putting it there would publish the
+// platform's own risk assessment of every campaign to anyone browsing.
+type AdminCampaignSummary struct {
+	CampaignSummary
+	SubmittedAt string `json:"submittedAt"`
+	RiskLevel   string `json:"riskLevel"`
+}
+
+func (s *Service) AdminListPending(ctx context.Context, status string) ([]AdminCampaignSummary, error) {
 	q := CampaignQuery{Status: status}
 	if status == "" {
 		q.Status = "PENDING_REVIEW"
 	}
-	return s.ListCampaigns(ctx, q)
+
+	where, args := buildDiscoveryWhere(q, 1)
+	sql := fmt.Sprintf(`SELECT %s FROM campaigns c %s %s LIMIT 60`, selectCols, where, sortClause(q.Sort))
+	rows, err := s.db.Query(ctx, sql, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := []AdminCampaignSummary{}
+	for rows.Next() {
+		r, err := scanRow(rows.Scan)
+		if err != nil {
+			return nil, err
+		}
+		name, typ, verif := s.creatorMeta(ctx, r.creatorID)
+		out = append(out, AdminCampaignSummary{
+			CampaignSummary: r.toSummary(name, typ, verif),
+			SubmittedAt:     r.submittedAt.UTC().Format(time.RFC3339),
+			RiskLevel:       r.riskLevel,
+		})
+	}
+	return out, rows.Err()
 }
 
 // AdminDecide applies a guarded review transition atomically and writes an audit row.
@@ -94,7 +133,7 @@ func (s *Service) AdminDecide(ctx context.Context, campaignID, adminID, decision
 
 // AdminStats returns platform-wide counters derived live from the ledger/tables.
 func (s *Service) AdminStats(ctx context.Context) (*AdminStats, error) {
-	st := &AdminStats{}
+	st := &AdminStats{CategoryBreakdown: []CategoryStat{}}
 	const q = `
 		SELECT
 			COUNT(*),
@@ -112,5 +151,30 @@ func (s *Service) AdminStats(ctx context.Context) (*AdminStats, error) {
 			COALESCE(SUM(amount_kobo) FILTER (WHERE status='escrowed'),0)
 		FROM contributions`).Scan(&st.TotalRaisedKobo, &st.EscrowKobo)
 	st.PlatformRevenueKobo = st.TotalRaisedKobo / 40 // 2.5% indicative
+
+	_ = s.db.QueryRow(ctx, `
+		SELECT COUNT(*), COALESCE(SUM(amount_kobo),0) FROM cf_withdrawals WHERE status='PENDING'`,
+	).Scan(&st.WithdrawalsPending, &st.WithdrawalsPendingKobo)
+	_ = s.db.QueryRow(ctx, `SELECT COUNT(*) FROM cf_refunds WHERE status='REQUESTED'`).Scan(&st.RefundRequests)
+	_ = s.db.QueryRow(ctx, `SELECT COUNT(*) FROM cf_fraud_alerts WHERE status IN ('OPEN','INVESTIGATING')`).Scan(&st.FraudAlerts)
+	_ = s.db.QueryRow(ctx, `SELECT COUNT(*) FROM cf_support_tickets WHERE status IN ('OPEN','PENDING')`).Scan(&st.OpenTickets)
+
+	rows, err := s.db.Query(ctx, `
+		SELECT c.category, COUNT(*),
+		       COALESCE(SUM((SELECT COALESCE(SUM(co.amount_kobo),0) FROM contributions co
+		                     WHERE co.campaign_id = c.id AND co.status IN ('escrowed','released'))), 0)
+		FROM campaigns c
+		GROUP BY c.category
+		ORDER BY 3 DESC`)
+	if err == nil {
+		defer rows.Close()
+		for rows.Next() {
+			var cs CategoryStat
+			if err := rows.Scan(&cs.Category, &cs.Count, &cs.RaisedKobo); err == nil {
+				st.CategoryBreakdown = append(st.CategoryBreakdown, cs)
+			}
+		}
+	}
+
 	return st, nil
 }

@@ -1,5 +1,5 @@
 import React from 'react';
-import { ScrollView, View, Text, Pressable, StyleSheet } from 'react-native';
+import { ScrollView, View, Text, Image, Pressable, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import { Eye, Share2, Target, Users, ChevronRight, Megaphone, Wallet, MessageSquare } from 'lucide-react-native';
@@ -9,6 +9,7 @@ import { Spacing } from '@/constants/spacing';
 import { Radius } from '@/constants/radius';
 import ScreenHeader from '@/components/ScreenHeader';
 import StateView from '@/components/StateView';
+import PrimaryButton from '@/components/PrimaryButton';
 import CampaignProgress from '@/features/crowdfunding/components/CampaignProgress';
 import CampaignStatusBadge from '@/features/crowdfunding/components/CampaignStatusBadge';
 import { useMyCampaigns, useCampaignAnalytics } from '@/features/crowdfunding/hooks/useCreator';
@@ -35,7 +36,24 @@ export default function CampaignPerformanceScreen() {
     <SafeAreaView style={styles.safe} edges={['top']}>
       <ScreenHeader title="Performance" subtitle={campaign.title} />
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.body}>
-        <View style={styles.statusRow}><CampaignStatusBadge status={campaign.status} /></View>
+        {/* Campaign banner */}
+        <View style={styles.banner}>
+          {campaign.coverImage ? (
+            <Image source={{ uri: campaign.coverImage }} style={styles.bannerImg} resizeMode="cover" />
+          ) : (
+            <View style={[styles.bannerImg, styles.bannerPlaceholder]} />
+          )}
+        </View>
+
+        <View style={styles.statusRow}><CampaignStatusBadge status={campaign.status} paused={campaign.paused} /></View>
+
+        <View style={styles.fundBtn}>
+          <PrimaryButton
+            label="Fund Campaign"
+            onPress={() => router.push(`/crowdfunding/contribute/${id}` as never)}
+            disabled={campaign.status !== 'ACTIVE'}
+          />
+        </View>
 
         {/* Funding progress */}
         <View style={styles.card}>
@@ -115,6 +133,10 @@ function ActionRow({ icon, label, onPress }: { icon: React.ReactNode; label: str
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: Colors.background },
   body: { paddingHorizontal: Spacing.containerMargin, paddingBottom: 60 },
+  banner: { height: 180, borderRadius: Radius.lg, overflow: 'hidden', marginTop: Spacing.md, marginBottom: Spacing.md, backgroundColor: Colors.surfaceContainerHigh },
+  bannerImg: { width: '100%', height: '100%' },
+  bannerPlaceholder: { backgroundColor: Colors.surfaceContainerHigh },
+  fundBtn: { marginBottom: Spacing.md },
   statusRow: { marginBottom: Spacing.sm },
   card: { backgroundColor: Colors.surfaceContainerLowest, borderRadius: Radius.lg, borderWidth: 1, borderColor: Colors.surfaceContainerHigh, padding: Spacing.md },
   kpiGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.sm, marginTop: Spacing.md },

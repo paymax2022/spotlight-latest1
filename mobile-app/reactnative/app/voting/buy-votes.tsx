@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { View, Text, ScrollView, StyleSheet, Pressable, Platform } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import { ArrowLeft, Lock } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
@@ -10,6 +11,8 @@ import { Radius } from '@/constants/radius';
 import PrimaryButton from '@/components/PrimaryButton';
 import { useVotePackages } from '@/features/voting/hooks/useVotePackages';
 import { useContestDetails } from '@/features/voting/hooks/useContestDetails';
+import { getVotingWindow } from '@/features/voting/utils/votingWindow';
+import { getPaidVotingAvailability } from '@/features/voting/utils/paidVoting';
 import VotePackageCard from '@/features/voting/components/VotePackageCard';
 import { formatAmount } from '@/features/voting/utils/voteFormatters';
 import type { VotePackage } from '@/features/voting/types/voting.types';
@@ -21,15 +24,20 @@ export default function BuyVotesScreen() {
   const [selected, setSelected] = useState<VotePackage | null>(null);
 
   const pkgs = packages ?? [];
-  // Only gate on a known non-live status so a pending contest query doesn't
-  // wrongly block a voter before the data lands.
-  const votingClosed =
-    !!contest && (contest.status !== 'LIVE' || contest.paidVotingEnabled === false);
+  // Deadline-aware and shared with the screen that links here, so the two cannot
+  // disagree. Status alone let an expired contest through — getVotingWindow
+  // treats an unloaded contest as open, so a pending query still does not block.
+  const votingWindow = getVotingWindow(contest);
+
+  // Gates on what is actually purchasable — a per-vote price OR a package — not
+  // on a flag the admin console does not write. See getPaidVotingAvailability.
+  const paidVoting = getPaidVotingAvailability(contest, packages);
+  const votingClosed = !votingWindow.open || paidVoting.available === false;
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
       <View style={styles.header}>
-        <Pressable onPress={() => router.back()} style={styles.backBtn}>
+        <Pressable onPress={() => goBack(`/voting/contestant-profile?contestantId=${contestantId}&contestId=${contestId}`)} style={styles.backBtn}>
           <ArrowLeft size={22} color={Colors.onSurface} strokeWidth={2} />
         </Pressable>
         <Text style={styles.title}>Buy Vote Packages</Text>
@@ -42,7 +50,10 @@ export default function BuyVotesScreen() {
         {votingClosed && (
           <View style={styles.closedBanner}>
             <Lock size={16} color={Colors.error} strokeWidth={2} />
-            <Text style={styles.closedText}>Voting is closed for this contest.</Text>
+            <Text style={styles.closedText}>
+              {votingWindow.message ??
+                'No vote packages are on sale for this contest yet.'}
+            </Text>
           </View>
         )}
 
