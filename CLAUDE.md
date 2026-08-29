@@ -78,7 +78,7 @@ API source of truth: `contracts/openapi.yaml`.
 - **Test runner (frontend):** Vitest 4.1 (`frontend-web/vitest.config.ts`), v8 coverage,
   node environment. ~42 specs under `frontend-web/tests/` (golden-path, finance money-invariants,
   wallet/ledger, tiers). Mobile: Playwright e2e under `mobile-app/reactnative/tests/e2e/`.
-- **Test runner (backend):** `go test` (see `Makefile` `test`/`verify`, run `-race`). ~253 Go
+- **Test runner (backend):** `go test` (see `Makefile` `test`/`verify`, run `-race`). ~464 Go
   test files incl. `backend/tests/` domain + invariant suites (ledger, settlement split, fees,
   fx, crypto/cryptoaml, arenaquiz, edtechfees…); live-DB integration tests gated on
   `TEST_DATABASE_URL`. NOTE: repo-wide `ci.yml` runs only build+vet — full `go test` runs in
@@ -104,7 +104,12 @@ module directory.
 - `cd frontend-admin && npm run type-check` — TypeScript strict check (`tsc --noEmit`)
 - `cd frontend-web && npx tsc --noEmit` — TypeScript check for the web app
 - `cd backend && go vet ./...` — Go static analysis
-- `cd backend && go build ./...` — Go compile check (no test framework configured yet)
+- `cd backend && go build ./...` — Go compile check
+- `cd backend && go test ./... -count=1` — Go unit tests (464 `*_test.go` files;
+  live-DB suites skip unless `TEST_DATABASE_URL` is set)
+- `make test` — the same suite with `-race` (needs Postgres + `RAILS_MODE=fake`)
+- `make verify` — the go-live gate: build, vet, tsc, contract-check, migrate-reset,
+  test, security-scan
 - `cd frontend-web && npx vitest run` — run all unit tests once
 - `cd frontend-web && npx vitest run --coverage` — with v8 coverage report
 - `supabase db push` — apply pending migrations to the connected Supabase project
