@@ -27,6 +27,15 @@ import (
 //   ticket  = "<encoded>.<sig>"
 // Secret comes from WS_TICKET_SIGNING_SECRET (fail-closed if unset).
 
+// WSScopeUser is the reserved `order_id` marking a ticket that authenticates a
+// USER-scoped socket rather than one bound to a single order.
+//
+// Safe as a sentinel because every real order id is a UUID, so it can never
+// collide, and validateWSTicket compares order_id for exact equality — an
+// order ticket therefore cannot be replayed on the user socket, nor the reverse.
+// The two scopes are separated by construction, not by convention.
+const WSScopeUser = "*"
+
 type wsTicketPayload struct {
 	Sub     string `json:"sub"`
 	OrderID string `json:"order_id"`

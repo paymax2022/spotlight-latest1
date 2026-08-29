@@ -2,6 +2,7 @@ package restaurant
 
 import (
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -20,13 +21,40 @@ func ownerErrStatus(err error) int {
 // ── Reads ─────────────────────────────────────────────────────────────────────
 
 // ListRestaurants → GET /restaurant (discovery list of open restaurants).
+//
+// Paged: ?limit (default 20, max 50) & ?offset, with ?q and ?cuisine applied in
+// SQL before the page is cut. It used to return every open row — 2,016 of them —
+// and let the client filter in memory; see discovery_page.go for why both moved
+// server-side together.
+//
+// The body still carries `restaurants`, so a client that only reads that key
+// keeps working (it simply receives the first page).
 func (h *Handler) ListRestaurants(c *gin.Context) {
-	list, err := h.svc.ListOpenRestaurants(c.Request.Context())
+	page, err := h.svc.ListOpenRestaurantsPage(c.Request.Context(), DiscoveryParams{
+		Query:   c.Query("q"),
+		Cuisine: c.Query("cuisine"),
+		Sort:    c.Query("sort"),
+		Limit:   queryInt(c, "limit"),
+		Offset:  queryInt(c, "offset"),
+		// ?promo=1 backs the "Offers" browse tile.
+		PromoOnly: c.Query("promo") == "1" || c.Query("promo") == "true",
+	})
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"restaurants": list})
+	c.JSON(http.StatusOK, page)
+}
+
+// queryInt reads an optional non-negative integer query param. An absent or
+// unparseable value yields 0, which every caller treats as "use the default" —
+// a bad ?limit must not 400 a browse request.
+func queryInt(c *gin.Context, key string) int {
+	n, err := strconv.Atoi(c.Query(key))
+	if err != nil || n < 0 {
+		return 0
+	}
+	return n
 }
 
 // GetRestaurant → GET /restaurant/:id (restaurant detail + menu).
@@ -447,6 +475,41 @@ func (h *Handler) RateOrder(c *gin.Context) {
 // the server pushes "order.status", "order.location", and "order.message"
 // events for orders the user participates in (delivery is per-user, so no
 // per-order subscription is needed).
+// ServeUserWS → GET /restaurant/ws — the caller's own realtime stream.
+//
+// WHY THIS EXISTS
+// The hub is keyed by USER id: Realtime.publish resolves an order's participants
+// and calls hub.SendToUser(uid, …). ServeOrderWS's :orderId is therefore only an
+// authorization gate — once connected you already receive every frame addressed
+// to you, for any order. That left the merchant queue unable to hear about a NEW
+// order, because subscribing required an order id the merchant did not yet have;
+// it polled every 6s instead.
+//
+// This endpoint drops the order gate and keeps the identity. It cannot widen
+// what anyone sees: SendToUser only ever delivers frames already destined for
+// this user, so the socket carries exactly the caller's own events — strictly
+// narrower than what an order-scoped socket already hands them.
+func (h *Handler) ServeUserWS(c *gin.Context) {
+	uid := c.GetString("user_id")
+	if uid == "" {
+		// Same fallback as ServeOrderWS: WS clients cannot set Authorization
+		// across the proxy hop, so accept the short-lived HMAC ticket — here one
+		// minted for the USER scope rather than for a single order.
+		if sub, ok := validateWSTicket(c.Query("ticket"), WSScopeUser); ok {
+			uid = sub
+		}
+	}
+	if uid == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
+		return
+	}
+	if h.hub == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "realtime not configured"})
+		return
+	}
+	_ = h.hub.ServeHTTP(c.Writer, c.Request, uid)
+}
+
 func (h *Handler) ServeOrderWS(c *gin.Context) {
 	uid := c.GetString("user_id")
 	if uid == "" {

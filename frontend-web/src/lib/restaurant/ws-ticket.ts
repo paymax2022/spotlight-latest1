@@ -61,6 +61,31 @@ function signTicket(orderId: string, userId: string): { ticket: string; expiresA
 }
 
 /**
+ * Reserved `order_id` for a USER-scoped ticket (see WSScopeUser in the Go
+ * validator). A real order id is always a UUID, so this cannot collide, and the
+ * validator compares order_id exactly — an order ticket cannot be replayed on
+ * the user socket, nor the reverse.
+ */
+const WS_SCOPE_USER = '*';
+
+/**
+ * Build the signed, direct-to-backend WebSocket URL for the USER's own stream.
+ *
+ * The merchant order queue needs this because it cannot subscribe per-order to
+ * an order nobody has told it about yet — that is what kept it on a 6s poll.
+ * The hub is keyed by user id, so this socket carries exactly the frames already
+ * addressed to this caller and widens nothing.
+ *
+ * The caller MUST have already authenticated the user (requireRequestUser).
+ */
+export function buildUserWsTicket(userId: string): { url: string; expiresAt: number } {
+  const { ticket, expiresAt } = signTicket(WS_SCOPE_USER, userId);
+  const url =
+    `${goBackendWsBase()}/api/finance/restaurant/ws` + `?ticket=${encodeURIComponent(ticket)}`;
+  return { url, expiresAt };
+}
+
+/**
  * Build the signed, direct-to-backend WebSocket URL for an order.
  * The caller MUST have already authenticated the user (requireRequestUser).
  */
