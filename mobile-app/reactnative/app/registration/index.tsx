@@ -14,12 +14,12 @@ import { useContests, useStartDraft } from '@/features/registration/hooks/useReg
 import type { ContestRegistrationDefinition } from '@/features/registration/types/registration.types';
 
 export default function RegistrationHomeScreen() {
-  const { contestTitle } = useLocalSearchParams<{ contestTitle?: string }>();
+  const { contestTitle, contestId } = useLocalSearchParams<{ contestTitle?: string; contestId?: string }>();
   const contests = useContests();
   const startDraft = useStartDraft();
   const autoStartAttempted = React.useRef(false);
-  const [autoMatchState, setAutoMatchState] = React.useState<'checking' | 'no-match' | null>(
-    contestTitle ? 'checking' : null,
+  const [autoMatchState, setAutoMatchState] = React.useState<'checking' | 'no-match' | 'not-found' | null>(
+    contestId || contestTitle ? 'checking' : null,
   );
 
   const onStart = (slug: string) => {
@@ -30,15 +30,32 @@ export default function RegistrationHomeScreen() {
   };
 
   // Arriving from a specific contest (e.g. "Apply to Compete" on a voting
-  // contest's details screen) should land the applicant straight in that
-  // contest's application wizard, not a generic pick-a-program list. There is
-  // no live foreign key between a voting contest and a registration program —
-  // they're separate catalogs — so this matches by keyword against each
-  // program's category/applicant-category labels. Falls back to the plain
-  // list below when nothing matches confidently, so nothing regresses for a
-  // contest type the registration catalog doesn't cover yet.
+  // contest's details screen) must land the applicant on THAT contest's
+  // application, never a generic pick-a-program list — a contest can have
+  // batches/editions, but they all belong to the contest the applicant
+  // opened, not some unrelated one.
+  //
+  // contestId (the real public.contests.id the details screen actually has)
+  // is the exact, reliable path: the backend resolves it directly against
+  // Postgres (see resolveAnyContest), independent of the registration
+  // catalog's 5 hand-tailored templates. contestTitle-only is a legacy
+  // fallback for any caller that still doesn't have an id — it keyword-matches
+  // against the catalog and, on failure, shows the plain list below (the one
+  // remaining case that can still surface unrelated contests; kept only for
+  // backward compatibility since nothing in this app constructs it anymore).
   React.useEffect(() => {
-    if (!contestTitle || autoStartAttempted.current || !contests.data) return;
+    if (autoStartAttempted.current) return;
+
+    if (contestId) {
+      autoStartAttempted.current = true;
+      startDraft.mutate(contestId, {
+        onSuccess: (draft) => router.push(`/registration/${draft.id}/wizard` as never),
+        onError: () => setAutoMatchState('not-found'),
+      });
+      return;
+    }
+
+    if (!contestTitle || !contests.data) return;
     autoStartAttempted.current = true;
     const match = findBestContestMatch(contestTitle, contests.data);
     if (match) {
@@ -47,15 +64,33 @@ export default function RegistrationHomeScreen() {
       setAutoMatchState('no-match');
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [contestTitle, contests.data]);
+  }, [contestId, contestTitle, contests.data]);
 
   const autoStarting = autoMatchState === 'checking' || startDraft.isPending;
 
-  if (contestTitle && autoStarting) {
+  if ((contestId || contestTitle) && autoStarting) {
     return (
       <SafeAreaView style={styles.safe} edges={['top']}>
         <ScreenHeader title="Register / Apply" subtitle="Enter a Spotlight contest" />
-        <StateView kind="loading" message={`Opening the application for "${contestTitle}"…`} />
+        <StateView kind="loading" message={contestTitle ? `Opening the application for "${contestTitle}"…` : 'Opening the application…'} />
+      </SafeAreaView>
+    );
+  }
+
+  // A specific contest (by id) failed to resolve — never fall through to the
+  // generic list here, since that's exactly the "opened one contest, ended up
+  // looking at unrelated ones" mixup this path exists to prevent.
+  if (contestId && autoMatchState === 'not-found') {
+    return (
+      <SafeAreaView style={styles.safe} edges={['top']}>
+        <ScreenHeader title="Register / Apply" subtitle={contestTitle || 'This contest'} />
+        <StateView
+          kind="error"
+          title="Applications aren't open for this contest"
+          message="This contest isn't accepting registrations right now. Check back later, or browse other open contests."
+          actionLabel="Browse open contests"
+          onAction={() => router.replace('/registration' as never)}
+        />
       </SafeAreaView>
     );
   }

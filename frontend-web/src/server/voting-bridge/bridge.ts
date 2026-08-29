@@ -9,6 +9,11 @@ import { assertKycTier } from './kyc-gate';
 import { enqueueOutboxEvent } from './outbox';
 import { isBridgeEnabled } from './feature-flag';
 import { castFreeVoteAtomic } from './free-vote-atomic';
+// The legacy engine this bridge wraps. Imported, never edited — both live in
+// protected files (see .claude/hooks/protect-legacy.sh); free-vote-atomic.ts
+// already takes the same approach with their helpers.
+import { castFreeVote } from '@/src/server/voting/free-vote.service';
+import { verifyAndCreditPaidVote } from '@/src/server/voting/paid-vote.service';
 import type { FraudStatus } from '@/src/features/voting/types';
 
 export interface CastFreeVoteRequest {
@@ -81,14 +86,46 @@ export async function bridgedCastFreeVote(
     deviceFingerprint?: string;
   }
 ): Promise<VoteResponse> {
-  // Check if bridge is enabled (gradual rollout support)
+  // Gradual rollout: with the flag off the request is served by the legacy
+  // engine this bridge wraps.
+  //
+  // It previously returned "Bridge not enabled" and served nothing, despite the
+  // comment here promising a fallthrough — castFreeVote was not even imported.
+  // The flag DEFAULTS TO DISABLED (feature-flag.ts) and /api/v2/votes/free is
+  // what the vote modal calls, so any deployment without VOTES_BRIDGE_ENABLED
+  // set had free voting dead rather than merely un-bridged. A rollout flag that
+  // breaks the feature when off is not a rollout flag.
+  //
+  // The legacy path is the PRE-atomic one, so it carries the D-001/D-002/D-003
+  // races claim_free_vote fixes. That is the accepted meaning of "flag off",
+  // not a regression introduced here — turn the bridge on to get the atomic
+  // claim.
   if (!isBridgeEnabled()) {
-    // Fall through to original legacy function
-    // (imported from protected file — never edit directly)
-    return {
-      success: false,
-      error: 'Bridge not enabled'
-    };
+    try {
+      const legacy = await castFreeVote(
+        req,
+        context.ipAddress,
+        context.deviceFingerprint ?? '',
+        context.userAgent,
+        userId,
+      );
+      return {
+        success: true,
+        votesAdded: legacy.votesAdded,
+        totalFreeVotesUsed: legacy.totalFreeVotesUsed,
+        freeVotesRemaining: legacy.freeVotesRemaining,
+        fraudStatus: legacy.fraudStatus,
+        resetAt: legacy.resetAt,
+      };
+    } catch (error) {
+      // The legacy service THROWS ApiError; the bridge's contract is to return.
+      console.error('[VoteBridge] legacy castFreeVote error:', error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error',
+        statusCode: statusOf(error),
+      };
+    }
   }
 
   if (!idempotencyKey) {
@@ -199,11 +236,24 @@ export async function bridgedVerifyPaidVote(
     userAgent: string;
   }
 ): Promise<VoteResponse> {
+  // Same rollout contract as the free path: flag off means legacy, not broken.
   if (!isBridgeEnabled()) {
-    return {
-      success: false,
-      error: 'Bridge not enabled'
-    };
+    try {
+      const legacy = await verifyAndCreditPaidVote(
+        req,
+        userId,
+        context.ipAddress,
+        context.userAgent,
+      );
+      return { success: true, totalVotes: legacy.newTotalVotes };
+    } catch (error) {
+      console.error('[VoteBridge] legacy verifyAndCreditPaidVote error:', error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error',
+        statusCode: statusOf(error),
+      };
+    }
   }
 
   const supabase = createAdminClient();

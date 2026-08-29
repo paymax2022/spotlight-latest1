@@ -155,7 +155,7 @@ export default function ContestDetailsScreen() {
           <View style={styles.ctaRow}>
             <PrimaryButton
               label="Register / Apply to Compete"
-              onPress={() => router.push({ pathname: '/registration', params: { contestTitle: contest.title } } as never)}
+              onPress={() => router.push({ pathname: '/registration', params: { contestId: contest.id, contestTitle: contest.title } } as never)}
             />
             <PrimaryButton
               label="View All Contestants"
