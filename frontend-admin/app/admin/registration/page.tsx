@@ -16,7 +16,7 @@ import {
   type ApplicationStatus,
   type RegistrationDraft,
 } from '@/services/registrationAdminService';
-import { listAdminContests, type AdminContest } from '@/services/contestsAdminService';
+import { listRegistrationContests, type RegistrationContest } from '@/services/registrationAdminService';
 import { Page, PageHeader, Card, Button, Input, Badge, colors, thCell, tdCell } from '@/components/ui/vuexy';
 
 const STATUS_BADGE: Record<string, string> = {
@@ -57,7 +57,7 @@ function field(formData: Record<string, unknown>, ...keys: string[]): string {
 }
 
 export default function RegistrationApplicantsPage() {
-  const [contests, setContests] = useState<AdminContest[]>([]);
+  const [contests, setContests] = useState<RegistrationContest[]>([]);
   const [contestSlug, setContestSlug] = useState('');
   const [applications, setApplications] = useState<RegistrationDraft[]>([]);
   const [loading, setLoading] = useState(true);
@@ -68,11 +68,14 @@ export default function RegistrationApplicantsPage() {
   const [acting, setActing] = useState<string | null>(null);
 
   useEffect(() => {
-    listAdminContests().then((c) => {
-      setContests(c);
-      if (c.length > 0 && !contestSlug) setContestSlug((c[0] as unknown as { slug?: string }).slug ?? '');
-    }).catch(() => { /* contest picker is a convenience; applicants can still load unfiltered */ });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // No auto-select. This used to jump to the first contest in the list, so the
+    // page opened pre-filtered to an arbitrary contest and usually reported
+    // "0 applicants" — with the real ones one dropdown change away and no hint
+    // that a filter was even applied. Default to All contests and let the
+    // operator narrow.
+    listRegistrationContests()
+      .then(setContests)
+      .catch(() => { /* picker is a convenience; applicants still load unfiltered */ });
   }, []);
 
   const load = useCallback(async () => {
@@ -134,7 +137,7 @@ export default function RegistrationApplicantsPage() {
           >
             <option value="">All contests</option>
             {contests.map((c) => (
-              <option key={c.id} value={(c as unknown as { slug?: string }).slug ?? c.name}>{c.name}</option>
+              <option key={c.slug} value={c.slug}>{c.title}</option>
             ))}
           </select>
           <Input
