@@ -91,6 +91,29 @@ async function readJsonOrThrow(res: Response, label: string): Promise<Record<str
   return json;
 }
 
+/** A contest as the REGISTRATION registry knows it — slug matches registrations.contest_slug. */
+export type RegistrationContest = { slug: string; title: string };
+
+/**
+ * The contests an application can actually belong to.
+ *
+ * Deliberately NOT listAdminContests(): that reads the contests/voting registry,
+ * whose slugs are a different set. Filtering applicants by one of those could
+ * never match a registration — 'open-mic-competition' is not in it at all, so
+ * every Open Mic applicant was unreachable through the picker. These two
+ * registries overlap by name in places ("September Open Mic Challenge" vs
+ * "Spotlight Open Mic Competition") which is what made the mismatch look like
+ * missing data rather than a wrong list.
+ */
+export async function listRegistrationContests(): Promise<RegistrationContest[]> {
+  const res = await fetch(`${webBase()}/api/registration/contests`, {
+    cache: 'no-store',
+    headers: authHeaders(),
+  });
+  const json = await readJsonOrThrow(res, 'Loading contests');
+  return (json.contests as RegistrationContest[]) ?? [];
+}
+
 export async function listRegistrationApplications(filters: RegistrationListFilters = {}): Promise<RegistrationDraft[]> {
   const params = new URLSearchParams();
   if (filters.contestSlug) params.set('contestSlug', filters.contestSlug);

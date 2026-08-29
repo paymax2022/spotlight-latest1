@@ -472,6 +472,27 @@ export async function getRegistrationPaymentIntentByReference(
   return data ? rowToPaymentIntent(data) : null;
 }
 
+// `unique_payment_per_app_method` allows only ONE row per (application_id,
+// method) — a second `initiate` call for the same application (page refresh,
+// back button, a retry with a fresh Idempotency-Key) is invisible to the
+// idempotency-key lookup above and previously fell straight into an INSERT,
+// hitting that constraint and 500ing. Callers must check this before
+// inserting: reuse (retry) the existing row for 'initiated'/'failed', or
+// short-circuit entirely for 'completed'/'verified'.
+export async function getRegistrationPaymentIntentByApplicationAndMethod(
+  applicationId: string,
+  method: 'PAYSTACK',
+): Promise<RegistrationPaymentIntent | null> {
+  const { data, error } = await getSupabase()
+    .from('registration_payment_intents')
+    .select('*')
+    .eq('application_id', applicationId)
+    .eq('method', method)
+    .maybeSingle();
+  if (error) throw new Error(`Failed to look up payment intent: ${error.message}`);
+  return data ? rowToPaymentIntent(data) : null;
+}
+
 export async function createRegistrationPaymentIntent(input: {
   applicationId: string;
   amountKobo: number;
@@ -494,6 +515,33 @@ export async function createRegistrationPaymentIntent(input: {
   return rowToPaymentIntent(data);
 }
 
+// Re-issues a fresh Paystack reference onto an existing 'initiated'/'failed'
+// intent row, in place — required because `unique_payment_per_app_method`
+// permits only one row per (application_id, method), so a retry can never be
+// a second INSERT. `reference` and `idempotency_key` both carry their own
+// UNIQUE constraint too; both must be values not already in use, which a
+// freshly generated reference and the caller's new Idempotency-Key satisfy.
+export async function retryRegistrationPaymentIntent(
+  id: string,
+  input: { paymentReference: string; idempotencyKey: string; amountKobo: number },
+): Promise<RegistrationPaymentIntent> {
+  const { data, error } = await getSupabase()
+    .from('registration_payment_intents')
+    .update({
+      reference: input.paymentReference,
+      idempotency_key: input.idempotencyKey,
+      amount_kobo: input.amountKobo,
+      status: 'initiated',
+      failure_reason: null,
+      updated_at: nowIso(),
+    })
+    .eq('id', id)
+    .select('*')
+    .single();
+  if (error) throw new Error(`Failed to retry payment intent: ${error.message}`);
+  return rowToPaymentIntent(data);
+}
+
 export async function markRegistrationPaymentIntentStatus(
   id: string,
   status: 'completed' | 'failed',
@@ -512,6 +560,21 @@ export async function markRegistrationPaymentIntentStatus(
 // Applies a verified Paystack success onto the draft — the same formData
 // shape the (former) mock client wrote, so nothing downstream (submit screen,
 // completion %) needs to change.
+/**
+ * What a Paystack-settled registration fee records in `payment.method`.
+ *
+ * Must stay a verbatim member of that field's `options` in every paid form, or
+ * validation rejects it — see tests/unit/registration/payment-method-value.spec.ts.
+ *
+ * 'Card' rather than the true channel because we cannot read one: Paystack's
+ * verify response does expose `channel` ('card' | 'bank' | 'ussd' | ...), but
+ * verifyPaystackPayment does not surface it and lives in a protected legacy file
+ * (src/server/voting/payment/paystack.ts) that must be wrapped, not edited. Card
+ * is the dominant Paystack channel, so it is the least-wrong default; plumbing
+ * the real channel through an adapter would let this become exact.
+ */
+export const PAYSTACK_METHOD_OPTION = 'Card';
+
 export async function applyRegistrationPaymentSuccess(
   applicationId: string,
   params: { reference: string; method: 'PAYSTACK' },
@@ -523,7 +586,16 @@ export async function applyRegistrationPaymentSuccess(
     ...draft.formData,
     'payment.paymentStatus': 'paid',
     'payment.transactionReference': params.reference,
-    'payment.method': params.method,
+    // NOT params.method. That is the GATEWAY ('PAYSTACK'), while payment.method
+    // is the applicant-facing "how did you pay", whose options are
+    // Card / Bank Transfer / USSD / Wallet. Writing the gateway here meant
+    // validateStepData's select-option check rejected the very value this
+    // function had just recorded, so a successfully PAID application could
+    // never be submitted (submitRegistration validates every step).
+    'payment.method': PAYSTACK_METHOD_OPTION,
+    // The gateway is still worth keeping; it just does not belong in a field
+    // that means something else.
+    'payment.gateway': params.method,
   };
   const updatedAt = nowIso();
 

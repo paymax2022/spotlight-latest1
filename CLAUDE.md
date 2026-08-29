@@ -43,6 +43,15 @@ API source of truth: `contracts/openapi.yaml`.
 - The golden-path regression suite must be green before and after every change:
   `cd frontend-web && npm run test:regression` (9 specs, 120 tests).
 
+### Local dev accounts
+- **Never hand-reset a fixture account's password.** Run
+  `scripts/dev/ensure-dev-login.sh`. Inventing a value is what makes this recur:
+  it fixes your session and breaks everyone else's, and they then invent another.
+- A local login failure has two independent causes — the GoTrue credential and
+  the `platform_users` lockout gate. Check both before concluding it is a code
+  bug; the Go login path folds every cause into one generic 401 by design and
+  will never tell you which.
+
 ### Workflow
 - API changes start in `contracts/openapi.yaml` — spec PR first, then implementation.
 - New module = run `/new-module` command for the scaffold checklist.
@@ -115,3 +124,12 @@ module directory.
 - `supabase db push` — apply pending migrations to the connected Supabase project
 - `supabase migration new <name>` — create timestamped migration in `supabase/migrations/`
 - `supabase db reset` — reset local Supabase instance and replay all migrations (dev only)
+- `scripts/dev/ensure-dev-login.sh` — repair local dev login (password + lockout gate).
+  **Run this instead of resetting a fixture password by hand.** Many concurrent
+  worktree sessions share one local Supabase and one login fixture; each ad-hoc
+  reset picked a different value and invalidated every other session, so the
+  password changed repeatedly and no recorded value stayed true. The script is
+  idempotent and converges on one documented password, which is what stops the
+  loop. It also clears `platform_users.status/failed_login_attempts/locked_until`
+  — a second gate `auth_service.go LoginUser` checks BEFORE GoTrue, so a correct
+  password alone will still 401 while it is set.
