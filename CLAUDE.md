@@ -40,7 +40,9 @@ API source of truth: `contracts/openapi.yaml`.
   review, and the break only surfaces on the base branch after your merge. When it happens,
   the migration that reached the base branch **last** renumbers. Enforced by
   `scripts/ci/check-migration-versions.sh` in the `hygiene` CI lane.
-- The regression suite (`npm run test:regression`) must be green before and after every change.
+- The golden-path regression suite must be green before and after every change:
+  `cd frontend-web && npx vitest run tests/unit/golden-path` (9 specs, 120 tests).
+  There is no `test:regression` script — see Commands below.
 
 ### Workflow
 - API changes start in `contracts/openapi.yaml` — spec PR first, then implementation.
@@ -91,9 +93,15 @@ API source of truth: `contracts/openapi.yaml`.
   `backend/`, `mobile-app/`, `supabase/`, `docs/`.
 
 ## Commands you should know
-- `npm run test:regression` — legacy golden-path suite (must always pass)
-- `npm run test:money` — ledger/idempotency/limits invariant tests
-- `npm run contract:check` — implementation vs openapi.yaml
+There is **no root `package.json`** — every `npm run` below must be run from its own
+module directory. In particular there is no `test:regression` script anywhere in the repo;
+the golden-path suite is invoked by path.
+- `cd frontend-web && npx vitest run tests/unit/golden-path` — golden-path regression
+  suite (must always pass): 9 specs, 120 tests
+- `cd frontend-web && npm run test:money` — money invariants (`tests/unit/estate`,
+  `tests/unit/wallet`, `tests/unit/tiers`)
+- `cd frontend-web && npm run contract:check` — estate implementation vs
+  `contracts/estate.openapi.yaml` (estate only — it does not check `openapi.yaml`)
 - `cd frontend-web && npm run lint` — ESLint via Next.js lint config
 - `cd frontend-admin && npm run type-check` — TypeScript strict check (`tsc --noEmit`)
 - `cd frontend-web && npx tsc --noEmit` — TypeScript check for the web app
