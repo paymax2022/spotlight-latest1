@@ -45,7 +45,7 @@ export async function POST(request: NextRequest) {
 
     // Parse request body
     const body = await request.json();
-    const { contestantId, contestId, shareCode } = body;
+    const { contestantId, contestId, shareCode, voteQuantity, voterIdentifier } = body;
 
     if (!contestantId || !contestId) {
       return NextResponse.json(
@@ -67,6 +67,10 @@ export async function POST(request: NextRequest) {
         contestantId,
         contestId,
         shareCode,
+        // VoteModal has always sent voteQuantity; the route dropped it on the
+        // floor, so every vote was silently a single vote regardless.
+        voteQuantity,
+        voterIdentifier,
       },
       user?.id,
       idempotencyKey,
@@ -84,10 +88,19 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // The allowance fields are the contract VoteModal was written against — it
+    // renders `freeVotesRemaining` directly. The route previously answered with
+    // voteId/totalVotes instead, so the modal rendered "You have undefined free
+    // votes remaining today" after every successful vote. voteId and totalVotes
+    // are dropped rather than sent as undefined: the atomic claim does not
+    // return a vote id, and no caller in the tree reads either field.
     return NextResponse.json({
       success: true,
-      voteId: result.voteId,
-      totalVotes: result.totalVotes,
+      votesAdded: result.votesAdded,
+      totalFreeVotesUsed: result.totalFreeVotesUsed,
+      freeVotesRemaining: result.freeVotesRemaining,
+      fraudStatus: result.fraudStatus,
+      resetAt: result.resetAt,
       timestamp: new Date().toISOString(),
     });
   } catch (error) {
