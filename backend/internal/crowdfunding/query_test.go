@@ -45,6 +45,32 @@ func TestBuildDiscoveryWhere_Collection(t *testing.T) {
 	}
 }
 
+// Regression: an UNFILTERED discovery query (no collection/category/search —
+// "fetch all active campaigns") must still restrict to ACTIVE. It previously
+// fell through with no review_status guard at all, leaking PENDING_REVIEW/
+// DRAFT campaigns to any authenticated caller.
+func TestBuildDiscoveryWhere_Unfiltered(t *testing.T) {
+	where, args := buildDiscoveryWhere(CampaignQuery{}, 1)
+	if !strings.Contains(where, "review_status = 'ACTIVE'") {
+		t.Errorf("unfiltered discovery should restrict to ACTIVE: %q", where)
+	}
+	if len(args) != 0 {
+		t.Errorf("unfiltered query should have no args, got %d", len(args))
+	}
+}
+
+// An explicit status filter (admin/internal use) must still override the
+// public ACTIVE default rather than being ANDed with it.
+func TestBuildDiscoveryWhere_ExplicitStatus(t *testing.T) {
+	where, args := buildDiscoveryWhere(CampaignQuery{Status: "PENDING_REVIEW"}, 1)
+	if strings.Contains(where, "'ACTIVE'") {
+		t.Errorf("explicit status should replace the ACTIVE default, not add to it: %q", where)
+	}
+	if !strings.Contains(where, "c.review_status = $1") || len(args) != 1 || args[0] != "PENDING_REVIEW" {
+		t.Errorf("explicit status predicate/args wrong: where=%q args=%#v", where, args)
+	}
+}
+
 func TestBuildDiscoveryWhere_CategoryAndSearch(t *testing.T) {
 	where, args := buildDiscoveryWhere(CampaignQuery{Category: "medical", Search: "zara"}, 1)
 	if !strings.Contains(where, "c.category = $1") {
