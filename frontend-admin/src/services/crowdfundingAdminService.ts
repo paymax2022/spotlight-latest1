@@ -26,6 +26,9 @@ import type {
   CfDataRequest,
   CfComplianceSummary,
   CfUser,
+  CfFeaturedCampaign,
+  CfCampaignFlags,
+  CfFeaturedReport,
 } from '@/types/crowdfunding';
 
 // Mock is the default. Set NEXT_PUBLIC_CF_USE_MOCK=false to hit the live Go backend
@@ -622,4 +625,87 @@ export async function setUserStatus(id: string, status: 'ACTIVE' | 'SUSPENDED' |
   }
   const res = await fetch(`${adminBase()}/users/${encodeURIComponent(id)}/status`, { method: 'POST', headers: { ...authHeaders(), 'Idempotency-Key': operationKey('crowdfunding:user-status', id) }, body: JSON.stringify({ status, note }) });
   if (!res.ok) throw new Error(`Status update failed: ${res.status}`);
+}
+
+// ─── Featured / promotion management ──────────────────────────────────────────
+//
+// Backed by GET   /api/crowdfunding/admin/featured
+//           PATCH /api/crowdfunding/admin/campaigns/:id/flags
+//           GET   /api/crowdfunding/admin/featured/report
+//
+// Placement rule enforced by the backend: a promotion flag may only be set TRUE on
+// an ACTIVE campaign — anything else is refused with a 4xx. Clearing a flag stays
+// legal at any status (that is how a frozen/completed campaign gets pulled off the
+// home rail), so the UI gates the ON direction only.
+
+const MOCK_FEATURED: CfFeaturedCampaign[] = [
+  { id: 'my1', title: 'Help Baby Zara Get Open-Heart Surgery', status: 'ACTIVE', category: 'Medical', featured: true, trending: true, urgent: true, verified: true, raisedKobo: 1_213_400_000, goalKobo: 1_850_000_000, contributorCount: 842, createdAt: '2026-05-20T09:00:00Z' },
+  { id: 'my2', title: 'New Borehole for Amaeze Community', status: 'ACTIVE', category: 'Community', featured: true, trending: false, urgent: false, verified: true, raisedKobo: 168_300_000, goalKobo: 240_000_000, contributorCount: 311, createdAt: '2026-04-10T00:00:00Z' },
+  { id: 'my3', title: 'Restock My Tailoring Shop After Fire', status: 'ACTIVE', category: 'SME', featured: false, trending: true, urgent: false, verified: false, raisedKobo: 41_200_000, goalKobo: 90_000_000, contributorCount: 74, createdAt: '2026-06-02T00:00:00Z' },
+  { id: 'rv3', title: 'Annual Coding Bootcamp Scholarships', status: 'CHANGES_REQUESTED', category: 'Education', featured: false, trending: false, urgent: false, verified: false, raisedKobo: 0, goalKobo: 150_000_000, contributorCount: 0, createdAt: '2026-06-12T08:00:00Z' },
+  { id: 'rv4', title: 'Flood Relief for Bayelsa Families', status: 'PENDING_REVIEW', category: 'Emergency', featured: false, trending: false, urgent: false, verified: false, raisedKobo: 0, goalKobo: 300_000_000, contributorCount: 0, createdAt: '2026-06-18T06:00:00Z' },
+  { id: 'my7', title: 'Emergency Medical Fund', status: 'FROZEN', category: 'Medical', featured: true, trending: false, urgent: true, verified: false, raisedKobo: 54_000_000, goalKobo: 120_000_000, contributorCount: 96, createdAt: '2026-06-15T00:00:00Z' },
+];
+
+export async function listFeaturedCampaigns(): Promise<CfFeaturedCampaign[]> {
+  if (USE_MOCK) { await delay(); return MOCK_FEATURED.map((c) => ({ ...c })); }
+  const res = await fetch(`${adminBase()}/featured`, { cache: 'no-store', headers: authHeaders() });
+  if (!res.ok) throw new Error(`Featured campaigns failed: ${res.status}`);
+  return (await res.json()).campaigns ?? [];
+}
+
+/**
+ * PATCH a subset of the promotion flags. Only the supplied keys change.
+ *
+ * Returns the campaign AS THE SERVER SEES IT — callers must render that rather
+ * than an optimistic local flip, so a refusal can never look like a success.
+ *
+ * The Idempotency-Key is derived from the campaign plus the DESIRED flag values,
+ * so a double-click dedupes at the backend while a different intent gets its own
+ * key. (These are placement flags, not a money mutation, but the admin API
+ * fail-closes without the header.)
+ */
+export async function setCampaignFlags(id: string, flags: CfCampaignFlags): Promise<CfFeaturedCampaign> {
+  const desired = Object.entries(flags)
+    .filter(([, v]) => typeof v === 'boolean')
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([k, v]) => `${k}=${v ? '1' : '0'}`);
+
+  if (USE_MOCK) {
+    await delay(400);
+    const c = MOCK_FEATURED.find((x) => x.id === id);
+    if (!c) throw new Error('Campaign not found');
+    // Mirror the backend rule, so mock mode cannot teach an operator a workflow
+    // that the live backend refuses.
+    if (c.status !== 'ACTIVE' && Object.values(flags).some(Boolean)) {
+      throw new Error(`only an ACTIVE campaign can be promoted (this one is ${c.status})`);
+    }
+    Object.assign(c, flags);
+    return { ...c };
+  }
+
+  const res = await fetch(`${adminBase()}/campaigns/${encodeURIComponent(id)}/flags`, {
+    method: 'PATCH',
+    headers: { ...authHeaders(), 'Idempotency-Key': operationKey('crowdfunding:campaign-flags', id, ...desired) },
+    body: JSON.stringify(flags),
+  });
+  const body = (await res.json().catch(() => ({}))) as { error?: string } & Partial<CfFeaturedCampaign>;
+  if (!res.ok) throw new Error(body?.error || `Flag update failed (${res.status})`);
+  return body as CfFeaturedCampaign;
+}
+
+export async function getFeaturedReport(): Promise<CfFeaturedReport> {
+  if (USE_MOCK) {
+    await delay();
+    return {
+      featuredCount: MOCK_FEATURED.filter((c) => c.featured).length,
+      trendingCount: MOCK_FEATURED.filter((c) => c.trending).length,
+      urgentCount: MOCK_FEATURED.filter((c) => c.urgent).length,
+      activeCount: MOCK_FEATURED.filter((c) => c.status === 'ACTIVE').length,
+      featured: MOCK_FEATURED.filter((c) => c.featured).map((c) => ({ id: c.id, title: c.title, raisedKobo: c.raisedKobo, contributorCount: c.contributorCount })),
+    };
+  }
+  const res = await fetch(`${adminBase()}/featured/report`, { cache: 'no-store', headers: authHeaders() });
+  if (!res.ok) throw new Error(`Featured report failed: ${res.status}`);
+  return res.json();
 }

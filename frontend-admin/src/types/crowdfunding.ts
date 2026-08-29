@@ -287,3 +287,44 @@ export interface CfUser {
   lastActiveAt: string;
   activity: CfUserActivity[];
 }
+
+// ─── Featured / promotion management ─────────────────────────────────────────
+// Promotion flags are editorial placement, not money — but they are only valid on
+// a LIVE campaign, so the backend refuses (4xx) setting any of them true on a
+// campaign whose status is not ACTIVE. See CfCampaignStatus above.
+
+export interface CfFeaturedCampaign {
+  id: string;
+  title: string;
+  status: CfCampaignStatus;
+  category: string;
+  featured: boolean;
+  trending: boolean;
+  urgent: boolean;
+  verified: boolean;
+  raisedKobo: number;
+  goalKobo: number;
+  contributorCount: number;
+  createdAt: string;
+}
+
+/** The three operator-editable promotion flags (`verified` is set by KYC review, not here). */
+export type CfCampaignFlag = 'featured' | 'trending' | 'urgent';
+
+/** PATCH body: only the supplied keys change. */
+export type CfCampaignFlags = Partial<Record<CfCampaignFlag, boolean>>;
+
+export interface CfFeaturedReportEntry {
+  id: string;
+  title: string;
+  raisedKobo: number;
+  contributorCount: number;
+}
+
+export interface CfFeaturedReport {
+  featuredCount: number;
+  trendingCount: number;
+  urgentCount: number;
+  activeCount: number;
+  featured: CfFeaturedReportEntry[];
+}
