@@ -154,6 +154,10 @@ type CampaignSummary struct {
 	Featured            bool    `json:"featured"`
 	Trending            bool    `json:"trending"`
 	Urgent              bool    `json:"urgent"`
+	// Paused is TRUE while campaigns.paused_at is set — the owner has taken the
+	// campaign out of public discovery (and out of accepting contributions).
+	// Distinct from Status, which carries the ADMIN review_status.
+	Paused              bool    `json:"paused"`
 	Saved               bool    `json:"saved"`
 	Location            *string `json:"location"`
 	CreatorName         string  `json:"creatorName"`
