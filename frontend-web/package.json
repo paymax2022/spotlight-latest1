@@ -11,6 +11,7 @@
     "start": "next start",
     "lint": "eslint app components lib src --ext .js,.jsx,.ts,.tsx",
     "test": "vitest run",
+    "test:regression": "vitest run tests/unit/golden-path",
     "test:money": "vitest run tests/unit/estate tests/unit/wallet tests/unit/tiers",
     "test:estate": "vitest run tests/unit/estate",
     "contract:check": "node scripts/contract-check.mjs",

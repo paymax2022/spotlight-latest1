@@ -41,8 +41,7 @@ API source of truth: `contracts/openapi.yaml`.
   the migration that reached the base branch **last** renumbers. Enforced by
   `scripts/ci/check-migration-versions.sh` in the `hygiene` CI lane.
 - The golden-path regression suite must be green before and after every change:
-  `cd frontend-web && npx vitest run tests/unit/golden-path` (9 specs, 120 tests).
-  There is no `test:regression` script — see Commands below.
+  `cd frontend-web && npm run test:regression` (9 specs, 120 tests).
 
 ### Workflow
 - API changes start in `contracts/openapi.yaml` — spec PR first, then implementation.
@@ -94,10 +93,9 @@ API source of truth: `contracts/openapi.yaml`.
 
 ## Commands you should know
 There is **no root `package.json`** — every `npm run` below must be run from its own
-module directory. In particular there is no `test:regression` script anywhere in the repo;
-the golden-path suite is invoked by path.
-- `cd frontend-web && npx vitest run tests/unit/golden-path` — golden-path regression
-  suite (must always pass): 9 specs, 120 tests
+module directory.
+- `cd frontend-web && npm run test:regression` — golden-path regression suite
+  (must always pass): `tests/unit/golden-path`, 9 specs, 120 tests
 - `cd frontend-web && npm run test:money` — money invariants (`tests/unit/estate`,
   `tests/unit/wallet`, `tests/unit/tiers`)
 - `cd frontend-web && npm run contract:check` — estate implementation vs
