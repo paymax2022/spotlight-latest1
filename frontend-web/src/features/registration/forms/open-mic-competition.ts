@@ -49,15 +49,11 @@ const guardianConsentFields: RegistrationField[] = [
   { key: 'guardian.consentGranted', label: 'I authorize this applicant to perform in the Open Mic Competition', type: 'checkbox', required: true },
 ];
 
-const identityFields: RegistrationField[] = [
-  { key: 'identity.idType', label: 'ID type', type: 'select', options: ['National ID', 'School ID', 'International passport', 'Voter card', 'Birth certificate', 'Other approved ID'], required: true },
-  { key: 'identity.idUpload', label: 'ID upload', type: 'file', required: true, accept: '.jpg,.jpeg,.png,.pdf' },
-];
+const GENRE_STYLE_OPTIONS = ['Afrobeats', 'Hip-Hop', 'R&B', 'Gospel', 'Highlife', 'Fuji', 'Amapiano', 'Pop', 'Reggae/Dancehall', 'Alternative', 'Other'];
 
 const performanceFields: RegistrationField[] = [
   { key: 'category.performanceType', label: 'Performance type', type: 'select', options: ['Singing', 'Rap', 'Spoken Word', 'Comedy', 'Instrumental', 'Other'], required: true },
-  { key: 'category.genre', label: 'Genre / style', type: 'text', required: true },
-  { key: 'category.durationMinutes', label: 'Planned performance length (minutes)', type: 'number' },
+  { key: 'category.genre', label: 'Genre / style', type: 'select', options: [...GENRE_STYLE_OPTIONS], required: true },
   { key: 'category.audioUpload', label: 'Upload audition audio', type: 'file', accept: '.mp3,.wav,.m4a' },
   { key: 'category.sampleLink', label: 'Performance sample link', type: 'url' },
   { key: 'category.ownsRights', label: 'I own or have rights to the material I will perform', type: 'checkbox', required: true },
@@ -90,7 +86,6 @@ const auditionFields: RegistrationField[] = [
 ];
 
 const publicProfileFields: RegistrationField[] = [
-  { key: 'publicProfile.talentSummary', label: 'Talent summary', type: 'textarea' },
   { key: 'publicProfile.publicVotingConsent', label: 'I consent to public voting profile visibility', type: 'checkbox', required: true },
 ];
 
@@ -116,7 +111,6 @@ export function buildOpenMicCompetitionSteps(draft: RegistrationDraft): Registra
   ];
 
   const contestRequirementFields = [
-    ...identityFields,
     ...performanceFields,
     ...mediaFields,
     ...socialFields,
