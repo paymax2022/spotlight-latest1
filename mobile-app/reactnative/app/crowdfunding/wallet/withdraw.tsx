@@ -43,12 +43,12 @@ export default function WithdrawScreen() {
   if (done) {
     return (
       <SafeAreaView style={styles.safe} edges={['top']}>
-        <ScreenHeader title="Withdrawal submitted" showBack={false} />
+        <ScreenHeader title="Withdrawal complete" showBack={false} />
         <StateView
           kind="empty"
-          icon="Clock"
-          title="Request submitted for review"
-          message={`Your withdrawal of ${formatNaira(amountKobo)} is pending admin approval. You'll be notified once it's processed — usually within 24 hours.`}
+          icon="CheckCircle2"
+          title="Withdrawal complete"
+          message={`${formatNaira(amountKobo)} has been sent to your bank account — no approval wait.`}
           actionLabel="Back to wallet"
           onAction={() => router.dismissTo('/crowdfunding/wallet')}
         />
@@ -58,7 +58,7 @@ export default function WithdrawScreen() {
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
-      <ScreenHeader title="Request withdrawal" />
+      <ScreenHeader title="Withdraw funds" />
       <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
         <ScrollView contentContainerStyle={styles.body} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
           <View style={styles.availCard}>
@@ -102,11 +102,11 @@ export default function WithdrawScreen() {
 
           <View style={styles.noteRow}>
             <Clock size={14} color={Colors.onSurfaceVariant} strokeWidth={2} />
-            <Text style={styles.note}>Withdrawals require KYC verification and admin approval before disbursement.</Text>
+            <Text style={styles.note}>Withdrawals require KYC verification and pay out immediately — no approval wait.</Text>
           </View>
         </ScrollView>
         <View style={styles.footer}>
-          <PrimaryButton label={amountKobo > 0 ? `Request ${formatNaira(amountKobo)}` : 'Request withdrawal'} onPress={onSubmit} disabled={!valid} loading={submit.isPending} />
+          <PrimaryButton label={amountKobo > 0 ? `Withdraw ${formatNaira(amountKobo)}` : 'Withdraw funds'} onPress={onSubmit} disabled={!valid} loading={submit.isPending} />
         </View>
       </KeyboardAvoidingView>
     </SafeAreaView>

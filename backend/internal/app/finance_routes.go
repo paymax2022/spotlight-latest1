@@ -1368,7 +1368,7 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 
 		// Domain packages (parallel build) — each registers its routes on the
 		// shared crowdfunding group. All use the ':id' param on /campaigns/:id/*.
-		cfwallet.Register(cfGroup, pool)
+		cfwallet.Register(cfGroup, pool, ledgerSvc)
 		cfengage.Register(cfGroup, pool)
 		cfcreator.Register(cfGroup, pool)
 		cfinvestment.Register(cfGroup, pool)
