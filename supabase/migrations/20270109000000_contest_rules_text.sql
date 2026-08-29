@@ -5,21 +5,26 @@
 -- model field, no mobile mapper field) — the mobile "Voting Rules & Policies" card
 -- (mobile-app/reactnative/src/features/voting/components/VotingRulesCard.tsx) has
 -- always shown the same four hardcoded sections for every contest instead. This
--- adds the mirror column so an admin-authored rules_text actually reaches mobile,
--- following the exact pattern 20270108000000_contest_banner_image.sql established
--- for banner_image_url: no new column on contests (rules_text is already there),
--- just add it to connect_contests (the table Go's /api/v1/connect/contests
--- actually serves) and carry it through the contests -> connect_contests mirror.
+-- adds the mirror column so an admin-authored rules_text actually reaches mobile:
+-- add it to connect_contests (the table Go's /api/v1/connect/contests actually
+-- serves), and carry it through the contests -> connect_contests mirror.
 --
 -- Additive only: no DROP, no renames, no type narrowing.
+--
+-- NOT layered on 20270108000000_contest_banner_image.sql's banner_image_url
+-- column/trigger version — that migration (and the column it added) was
+-- reverted (see the "Revert ..." commits) before this one reached staging or
+-- production, so building on it here would leave a dangling column reference
+-- the moment a fresh migration replay runs this file without that one having
+-- ever applied. This re-creates the trigger from the ORIGINAL pre-banner
+-- version (20261223000000_connect_contests_bridge.sql) plus rules_text only.
 
 ALTER TABLE public.connect_contests
   ADD COLUMN IF NOT EXISTS rules_text TEXT NOT NULL DEFAULT '';
 
 -- Re-create the mirror trigger function (same function name/trigger as
--- 20261223000000_connect_contests_bridge.sql, already re-created once by
--- 20270108000000_contest_banner_image.sql) with rules_text added to both the
--- insert and the ON CONFLICT update column lists.
+-- 20261223000000_connect_contests_bridge.sql) with rules_text added to both
+-- the insert and the ON CONFLICT update column lists.
 CREATE OR REPLACE FUNCTION public.sync_connect_contest()
 RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
@@ -29,7 +34,7 @@ BEGIN
 
   INSERT INTO public.connect_contests AS cc
     (id, title, description, status, paid_vote_kobo, free_votes_per_user,
-     opens_at, closes_at, slug, banner_image_url, rules_text)
+     opens_at, closes_at, slug, rules_text)
   VALUES (
     NEW.id,
     left(btrim(NEW.name), 200),
@@ -41,7 +46,6 @@ BEGIN
     COALESCE(NEW.voting_start_date, NEW.start_date),
     COALESCE(NEW.voting_end_date, NEW.end_date),
     NEW.slug,
-    COALESCE(NEW.banner_image_url, ''),
     COALESCE(NEW.rules_text, '')
   )
   ON CONFLICT (id) DO UPDATE SET
@@ -53,7 +57,6 @@ BEGIN
     opens_at            = EXCLUDED.opens_at,
     closes_at           = EXCLUDED.closes_at,
     slug                = EXCLUDED.slug,
-    banner_image_url    = EXCLUDED.banner_image_url,
     rules_text          = EXCLUDED.rules_text,
     updated_at          = now();
 
@@ -65,7 +68,7 @@ $$;
 -- the mirror (empty string for rows that never had one set, same as default).
 INSERT INTO public.connect_contests AS cc
   (id, title, description, status, paid_vote_kobo, free_votes_per_user,
-   opens_at, closes_at, slug, banner_image_url, rules_text)
+   opens_at, closes_at, slug, rules_text)
 SELECT c.id,
        left(btrim(c.name), 200),
        COALESCE(c.description, ''),
@@ -75,7 +78,6 @@ SELECT c.id,
        COALESCE(c.voting_start_date, c.start_date),
        COALESCE(c.voting_end_date, c.end_date),
        c.slug,
-       COALESCE(c.banner_image_url, ''),
        COALESCE(c.rules_text, '')
 FROM public.contests c
 WHERE c.name IS NOT NULL AND char_length(btrim(c.name)) >= 2
@@ -88,6 +90,5 @@ ON CONFLICT (id) DO UPDATE SET
   opens_at            = EXCLUDED.opens_at,
   closes_at           = EXCLUDED.closes_at,
   slug                = EXCLUDED.slug,
-  banner_image_url    = EXCLUDED.banner_image_url,
   rules_text          = EXCLUDED.rules_text,
   updated_at          = now();
