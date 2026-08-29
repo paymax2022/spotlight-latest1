@@ -175,7 +175,7 @@ func TestRegisterAdmin_FeatureRequestRoutes(t *testing.T) {
 	}()
 
 	r := gin.New()
-	RegisterAdmin(r.Group("/api/crowdfunding/admin"), nil, nil, nil)
+	RegisterAdmin(r.Group("/api/crowdfunding/admin"), nil, nil, nil, &denyAllRBAC{})
 
 	want := map[string]string{
 		"GET /api/crowdfunding/admin/feature-requests":              "queue list",

@@ -236,7 +236,7 @@ func TestFlagColumnsMatchDiscoveryFilters(t *testing.T) {
 func TestRegisterAdmin_FeaturedRoutes(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
-	RegisterAdmin(r.Group("/api/crowdfunding/admin"), nil, nil, nil)
+	RegisterAdmin(r.Group("/api/crowdfunding/admin"), nil, nil, nil, &denyAllRBAC{})
 
 	want := map[string]string{
 		"GET /api/crowdfunding/admin/featured":              "",
