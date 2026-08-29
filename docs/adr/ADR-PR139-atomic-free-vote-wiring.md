@@ -1,4 +1,4 @@
-# ADR-PR&lt;pr-number&gt;: Wire the atomic free-vote claim into the voting bridge
+# ADR-PR139: Wire the atomic free-vote claim into the voting bridge
 
 - Status: Proposed
 - Date: 2026-08-29
