@@ -1,18 +1,48 @@
 // ── Admin — Groups (group savings / contribution pools) ops console ──────────
-// Mock by default. Flip with NEXT_PUBLIC_GROUPS_ADMIN_USE_MOCK=false to hit the
-// live Go backend. NOTE: the groups module has NO dedicated /admin route group —
-// only member endpoints exist under /api/finance/groups (list, get, invite, dues).
-// This console offers read-only oversight of groups + members against those
-// endpoints; balances are projections of the immutable ledger (NL-8).
-// Money is BIGINT kobo (minor units) throughout.
+//
+// ⚠️ THIS CONSOLE RUNS ON FIXTURES. There is no groups ADMIN route group in Go
+// at all — only five MEMBER endpoints exist under /api/finance/groups — so
+// /admin/dashboard and the group list below have nothing behind them. Setting
+// NEXT_PUBLIC_GROUPS_ADMIN_USE_MOCK=false does not produce real data; it
+// produces 404s. The fixtures are kept (they document the intended shape) but
+// the pages now SAY they are samples, via GROUPS_ADMIN_IS_MOCK.
+//
+// This module is NOT the association console. Associations (real members, real
+// dues, a real admin surface) live in associationAdminService + /admin/association/*.
+//
+// Money is BIGINT kobo (minor units) throughout; balances would be projections
+// of the immutable ledger (NL-8).
 
-import { env } from '@/config/env';
+import { apiRoot } from '@/config/env';
+import { resolveUseMock } from '@/config/useMock';
 
-const USE_MOCK = (process.env.NEXT_PUBLIC_GROUPS_ADMIN_USE_MOCK ?? 'true').toLowerCase() !== 'false';
+// Migrated off the inline `?? 'true'` check, which FAILED OPEN: it resolved to
+// MOCK unless someone remembered to set the flag to 'false', in production as
+// much as in dev, so a forgotten flag shipped fabricated pool balances to a
+// fintech operator with nothing on screen to say so. resolveUseMock defaults to
+// mock in dev and LIVE in prod, and this module is on the documented
+// MOCK_ALLOWLIST in scripts/check-mock-flags.mjs precisely because it has no
+// backend yet — an explicit opt-in that CI can see, rather than a silent default.
+const USE_MOCK = resolveUseMock(process.env.NEXT_PUBLIC_GROUPS_ADMIN_USE_MOCK);
+
+/**
+ * True when this console is serving fixtures rather than backend data. Exported
+ * so the pages can SAY so (see MockDataBanner usage in app/admin/groups/*) —
+ * the whole failure mode here was mock data that looked exactly like real data.
+ */
+export const GROUPS_ADMIN_IS_MOCK = USE_MOCK;
 
 // Groups live under the finance member group at /api/finance/groups (no admin group).
+//
+// This used to be `env.apiBaseUrl.replace(/\/api\/v1\/?$/, '/api/finance/groups')`,
+// which was correct only while apiBaseUrl ended in /api/v1. It no longer does —
+// it is the same-origin proxy path (<origin>/api/admin-proxy) — so the regex
+// stopped matching, the replace was a no-op, and every call went to the bare
+// proxy root and 404'd. Flipping the mock flag therefore did not switch this
+// console to live data; it switched it to an empty, broken one. Same shape as
+// apiRoot() usage in associationAdminService.
 function readBase(): string {
-  return env.apiBaseUrl.replace(/\/api\/v1\/?$/, '/api/finance/groups');
+  return `${apiRoot()}/api/finance/groups`;
 }
 function authHeaders(): Record<string, string> {
   if (typeof window === 'undefined') return {};

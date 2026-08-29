@@ -22,6 +22,10 @@ type Tab = { href: string; label: string; key: string };
 export function AssociationTabs({ active }: { active: string }) {
   const tabs: Tab[] = [
     { href: '/admin/association/dashboard', label: 'Overview', key: 'overview' },
+    // The organisation register. Every other tab below is scoped to ONE org via
+    // <OrgPicker/>; this is the only surface that lists them all and the only
+    // place an organisation's own record can be edited.
+    { href: '/admin/association/organisations', label: 'Organisations', key: 'organisations' },
     { href: '/admin/association/approvals', label: 'Approvals', key: 'approvals' },
     { href: '/admin/association/dues', label: 'Dues & finance', key: 'dues' },
     { href: '/admin/association/members', label: 'Members', key: 'members' },

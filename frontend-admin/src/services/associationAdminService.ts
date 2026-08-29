@@ -98,33 +98,61 @@ function withOrg(qs: URLSearchParams): URLSearchParams {
   return qs;
 }
 
+/**
+ * Turn a failed Response into a useful Error.
+ *
+ * Every handler in internal/association answers a failure with
+ * `{"error": "<message>"}` (handler_org_admin.go and friends). The old
+ * `Request failed (409)` swallowed that message, which matters most on the
+ * child-delete routes: the backend refuses a chapter/category delete while
+ * members still reference it and says exactly which — a bare status code
+ * turns that into an unexplained failure the operator cannot act on.
+ */
+async function failure(res: Response): Promise<Error> {
+  let detail = '';
+  try {
+    const body = await res.json();
+    const raw = (body?.error ?? body?.message) as unknown;
+    if (typeof raw === 'string' && raw.trim()) detail = raw.trim();
+  } catch { /* non-JSON body (proxy/gateway error) — status alone is all we have */ }
+  // Backend errors are prefixed "association: " by the service layer; that
+  // prefix is noise in a console that is already inside the module.
+  detail = detail.replace(/^association:\s*/i, '');
+  return new Error(detail ? `${detail} (${res.status})` : `Request failed (${res.status})`);
+}
+
 async function getJson<T>(path: string, base: 'admin' | 'module' = 'admin'): Promise<T> {
   const root = base === 'admin' ? adminBase() : moduleBase();
   const res = await fetch(`${root}${path}`, { headers: authHeaders() });
-  if (!res.ok) throw new Error(`Request failed (${res.status})`);
+  if (!res.ok) throw await failure(res);
   const j = await res.json();
   return (j?.data ?? j) as T;
 }
 async function sendJson<T>(
-  method: 'POST' | 'PATCH' | 'PUT',
+  method: 'POST' | 'PATCH' | 'PUT' | 'DELETE',
   path: string,
   body: unknown,
   opts?: { idempotent?: boolean; base?: 'admin' | 'module' },
 ): Promise<T> {
   const root = (opts?.base ?? 'admin') === 'admin' ? adminBase() : moduleBase();
   const headers = authHeaders();
-  // Money-mutating endpoints (offline payment decision) require an
-  // Idempotency-Key per house doctrine (CLAUDE.md — every money mutation).
+  // Money-mutating endpoints (offline payment decision, dues-tier create/update)
+  // require an Idempotency-Key per house doctrine (CLAUDE.md — every money
+  // mutation). The application decision endpoint declares one in the contract too.
   if (opts?.idempotent) headers['Idempotency-Key'] = newIdempotencyKey();
-  const res = await fetch(`${root}${path}`, { method, headers, body: JSON.stringify(body) });
-  if (!res.ok) throw new Error(`Request failed (${res.status})`);
+  const res = await fetch(`${root}${path}`, {
+    method,
+    headers,
+    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+  });
+  if (!res.ok) throw await failure(res);
   const j = await res.json();
   return (j?.data ?? j) as T;
 }
 async function sendForm<T>(path: string, form: FormData, base: 'admin' | 'module' = 'admin'): Promise<T> {
   const root = base === 'admin' ? adminBase() : moduleBase();
   const res = await fetch(`${root}${path}`, { method: 'POST', headers: authHeadersNoContentType(), body: form });
-  if (!res.ok) throw new Error(`Request failed (${res.status})`);
+  if (!res.ok) throw await failure(res);
   const j = await res.json();
   return (j?.data ?? j) as T;
 }
@@ -143,9 +171,23 @@ const dateStr = (daysAgo: number) => new Date(Date.now() - daysAgo * 86_400_000)
 export interface AdminOrgOption {
   id: string;
   name: string;
+  acronym: string | null;
+  category: string;
+  status: string;
   published: boolean;
   verified: boolean;
   memberCount: number;
+  createdAt: string;
+}
+
+/** Filters accepted by the organisation register. */
+export interface AdminOrgListOpts {
+  limit?: number;
+  offset?: number;
+  category?: string;
+  status?: string;
+  published?: boolean;
+  verified?: boolean;
 }
 
 // Mirrors the real Go AdminKpis struct field-for-field (service.go GetAdminKpis) —
@@ -213,7 +255,38 @@ export async function listApprovals(opts?: { jurisdiction?: string }): Promise<A
 }
 export async function decideApplication(id: string, decision: ApprovalDecision, note?: string): Promise<{ ok: boolean }> {
   if (USE_MOCK) { await delay(); return { ok: true }; }
-  return sendJson<{ ok: boolean }>('POST', `/approvals/${id}/decision`, { decision: decision === 'approve' ? 'APPROVE' : 'REJECT', note });
+  // Idempotency-Key: the contract declares one on this endpoint and approving an
+  // application can settle a registration fee — a double-submitted approval must
+  // not be able to post twice. This console was sending the decision WITHOUT the
+  // header, so every retry (or double-click) was a fresh, unguarded request.
+  return sendJson<{ ok: boolean }>(
+    'POST',
+    `/approvals/${id}/decision`,
+    { decision: decision === 'approve' ? 'APPROVE' : 'REJECT', note },
+    { idempotent: true },
+  );
+}
+
+/**
+ * One application in full (GET /admin/approvals/:id — handler.go GetApproval).
+ * The queue row (ApprovalRecord) carries only the summary; this adds the
+ * applicant's contact details, sponsor and the registration fee they owe.
+ */
+export interface ApprovalDetail extends ApprovalRecord {
+  email: string;
+  phone: string;
+  profession: string;
+  sponsor?: string | null;
+  registrationFeeKobo: number;
+}
+export async function getApproval(id: string): Promise<ApprovalDetail> {
+  if (USE_MOCK) {
+    await delay();
+    const a = APPROVALS.find((x) => x.id === id);
+    if (!a) throw new Error('Application not found');
+    return { ...a, email: 'applicant@example.com', phone: '+234800000000', profession: 'Trader', sponsor: null, registrationFeeKobo: 5_000_00 };
+  }
+  return getJson<ApprovalDetail>(`/approvals/${id}`);
 }
 
 // ── Finance + offline payments ───────────────────────────────────────────────
@@ -463,9 +536,9 @@ export async function listAuditLog(action?: string): Promise<AuditLogEntry[]> {
 
 // ── Org picker ───────────────────────────────────────────────────────────────
 const MOCK_ORGS: AdminOrgOption[] = [
-  { id: 'org_ltu', name: 'Lagos Traders Union', published: true, verified: true, memberCount: 4820 },
-  { id: 'org_tfg', name: 'Tech Founders Guild', published: true, verified: true, memberCount: 1240 },
-  { id: 'org_mwc', name: 'Market Women Co-op', published: true, verified: false, memberCount: 6380 },
+  { id: 'org_ltu', name: 'Lagos Traders Union', acronym: 'LTU', category: 'Trade', status: 'ACTIVE', published: true, verified: true, memberCount: 4820, createdAt: '2025-03-04T09:00:00Z' },
+  { id: 'org_tfg', name: 'Tech Founders Guild', acronym: 'TFG', category: 'Professional', status: 'ACTIVE', published: true, verified: true, memberCount: 1240, createdAt: '2025-06-18T09:00:00Z' },
+  { id: 'org_mwc', name: 'Market Women Co-op', acronym: null, category: 'Cooperative', status: 'SUSPENDED', published: true, verified: false, memberCount: 6380, createdAt: '2024-11-02T09:00:00Z' },
 ];
 /**
  * Feeds the org picker (see the "Org picker" comment above authHeaders).
@@ -473,14 +546,37 @@ const MOCK_ORGS: AdminOrgOption[] = [
  * gets only the org(s) they administer (backend/internal/association
  * service.go ListAdminOrganisations).
  */
-export async function listAdminOrganisations(search?: string): Promise<AdminOrgOption[]> {
+export async function listAdminOrganisations(
+  search?: string,
+  page?: AdminOrgListOpts,
+): Promise<AdminOrgOption[]> {
   if (USE_MOCK) {
     await delay();
     const q = (search || '').toLowerCase();
-    return q ? MOCK_ORGS.filter((o) => o.name.toLowerCase().includes(q)) : [...MOCK_ORGS];
+    let rows = q
+      ? MOCK_ORGS.filter((o) => o.name.toLowerCase().includes(q) || (o.acronym ?? '').toLowerCase().includes(q))
+      : [...MOCK_ORGS];
+    if (page?.published != null) rows = rows.filter((o) => o.published === page.published);
+    if (page?.verified != null) rows = rows.filter((o) => o.verified === page.verified);
+    if (page?.status) rows = rows.filter((o) => o.status === page.status);
+    if (page?.category) rows = rows.filter((o) => o.category === page.category);
+    const off = page?.offset ?? 0;
+    return page?.limit ? rows.slice(off, off + page.limit) : rows.slice(off);
   }
   const qs = new URLSearchParams();
   if (search) qs.set('search', search);
+  // published/verified/status/category are now narrowed by the QUERY, not by
+  // the client after the fact — a client-side filter could empty a page purely
+  // because the matching rows happened to sit on another one.
+  if (page?.published != null) qs.set('published', String(page.published));
+  if (page?.verified != null) qs.set('verified', String(page.verified));
+  if (page?.status) qs.set('status', page.status);
+  if (page?.category) qs.set('category', page.category);
+  // limit/offset are read by pageParams (handler.go) and clamped service-side to
+  // 200; without them the backend serves a fixed first 100 with no way to reach
+  // organisation 101, which is why the picker could only ever see one page.
+  if (page?.limit != null) qs.set('limit', String(page.limit));
+  if (page?.offset) qs.set('offset', String(page.offset));
   return getJson<AdminOrgOption[]>(`/organisations${qs.toString() ? `?${qs}` : ''}`);
 }
 
@@ -621,4 +717,394 @@ export async function handoverElection(id: string): Promise<ElectionHandoverResu
     return { positions: mockPositionResults(e).filter((p) => e.positions.find((pp) => pp.id === p.positionId)?.role).map((p) => ({ positionId: p.positionId, title: p.title, role: e.positions.find((pp) => pp.id === p.positionId)?.role || '', winners: p.results.filter((r) => r.isWinner).map((r) => r.name), revoked: 1 })) };
   }
   return sendJson<ElectionHandoverResult>('POST', `/elections/${id}/handover`, {}, { base: 'module' });
+}
+
+// ── Organisation management (admin) ──────────────────────────────────────────
+// backend/internal/association routes.go "Admin: organisation management".
+// assoc_organisations used to be write-once — no UPDATE/DELETE existed against
+// it or its chapters / committees / dues tiers, so every field was immutable
+// after creation and `verified` was dead schema. These are the routes that
+// changed that, and the console pages under
+// app/admin/association/organisations/* are their only consumer.
+//
+// Money rule: duesKobo and registrationFeeKobo are INTEGER KOBO (minor units).
+// Never floats, never strings for math — render with formatNaira().
+
+export type ChapterLevel = 'REGION' | 'STATE' | 'LOCAL';
+export type DuesCadence = 'MONTHLY' | 'QUARTERLY' | 'ANNUAL' | 'ONE_OFF';
+export type OrgGroupType = 'OPEN' | 'CLOSED' | 'INVITE_ONLY' | 'CODE_BASED' | 'PAID';
+export type OrgApprovalRule = 'AUTO' | 'ADMIN' | 'CHAPTER_THEN_NATIONAL' | 'PAYMENT_FIRST';
+
+export const CHAPTER_LEVELS: ChapterLevel[] = ['REGION', 'STATE', 'LOCAL'];
+export const DUES_CADENCES: DuesCadence[] = ['MONTHLY', 'QUARTERLY', 'ANNUAL', 'ONE_OFF'];
+export const ORG_GROUP_TYPES: OrgGroupType[] = ['OPEN', 'CLOSED', 'INVITE_ONLY', 'CODE_BASED', 'PAID'];
+export const ORG_APPROVAL_RULES: OrgApprovalRule[] = ['AUTO', 'ADMIN', 'CHAPTER_THEN_NATIONAL', 'PAYMENT_FIRST'];
+
+/** Mirrors Go OrgRestrictions (model.go). */
+export interface OrgRestrictions {
+  graceDays: number;
+  disableVoting: boolean;
+  disableEvents: boolean;
+  disableChat: boolean;
+  disableCard: boolean;
+}
+/** Mirrors Go Chapter (model.go). */
+export interface OrgChapter { id: string; name: string; level: string; parentId?: string | null; memberCount: number }
+/** Mirrors Go AdminCommittee (model_org_admin.go). */
+export interface OrgCommittee { id: string; name: string; description?: string | null; memberCount: number }
+/** Mirrors Go MembershipCategory (model.go) — duesKobo is integer kobo. */
+export interface OrgCategory { id: string; label: string; description?: string | null; duesKobo: number; duesCadence: string }
+/** Mirrors Go AdminOrgRule (model_org_admin.go). */
+export interface OrgRule { id: string; body: string; position: number }
+/** Mirrors Go AdminChapterLeader (model_org_admin.go). Read-only in this console. */
+export interface OrgChapterLeader {
+  id: string; chapterId?: string | null; stateName: string;
+  leaderName?: string | null; leaderContact?: string | null; canApproveMembers: boolean;
+}
+
+/** Mirrors Go AdminOrganisationDetail (model_org_admin.go) field-for-field. */
+export interface AdminOrganisationDetail {
+  id: string;
+  name: string;
+  acronym?: string | null;
+  category: string;
+  description?: string | null;
+  logoUrl?: string | null;
+  coverUrl?: string | null;
+  groupType: string;
+  approvalRule: string;
+  registrationFeeKobo: number;
+  requiresPayment: boolean;
+  foundedYear?: number | null;
+  location?: string | null;
+  website?: string | null;
+  verified: boolean;
+  published: boolean;
+  status: string;
+  structureType?: string | null;
+  createdBy?: string | null;
+  createdAt: string;
+  suspendedAt?: string | null;
+
+  restrictions: OrgRestrictions;
+  settings: Record<string, unknown>;
+
+  memberCount: number;
+  activeCount: number;
+  pendingCount: number;
+  chapterCount: number;
+  committeeCount: number;
+  categoryCount: number;
+
+  chapters: OrgChapter[];
+  committees: OrgCommittee[];
+  categories: OrgCategory[];
+  rules: OrgRule[];
+  leaders: OrgChapterLeader[];
+}
+
+/**
+ * Partial patch — EVERY field is optional and an omitted key means "leave
+ * unchanged" (Go UpdateOrganisationRequest uses pointers for exactly this).
+ * Do not send `undefined` keys expecting a blank: JSON.stringify drops them,
+ * which is the behaviour we want.
+ */
+export interface UpdateOrganisationInput {
+  name?: string;
+  acronym?: string;
+  category?: string;
+  description?: string;
+  logoUrl?: string;
+  coverUrl?: string;
+  groupType?: OrgGroupType;
+  approvalRule?: OrgApprovalRule;
+  /** Integer kobo. Never a float. */
+  registrationFeeKobo?: number;
+  foundedYear?: number;
+  location?: string;
+  website?: string;
+  structureType?: string;
+  graceDays?: number;
+  disableVoting?: boolean;
+  disableEvents?: boolean;
+  disableChat?: boolean;
+  disableCard?: boolean;
+}
+
+export interface ChapterInput { name: string; level: ChapterLevel }
+export interface CommitteeInput { name: string; description?: string | null }
+/** duesKobo is integer kobo (minor units) — the page converts naira → kobo. */
+export interface CategoryInput { label: string; description?: string | null; duesKobo: number; cadence: DuesCadence }
+export interface RuleInput { body: string; position: number }
+
+// ── Mock organisation state (USE_MOCK) ──
+// Mutable so the management pages behave sensibly with the backend switched off
+// (add a chapter, see it appear) instead of silently discarding every write.
+function mockDetailFor(o: AdminOrgOption): AdminOrganisationDetail {
+  return {
+    id: o.id, name: o.name, acronym: o.name.split(' ').map((w) => w[0]).join('').toUpperCase(),
+    category: 'TRADE', description: 'Sample organisation (mock mode).', logoUrl: null, coverUrl: null,
+    groupType: 'OPEN', approvalRule: 'ADMIN', registrationFeeKobo: 5_000_00, requiresPayment: true,
+    foundedYear: 2015, location: 'Lagos, Nigeria', website: null,
+    verified: o.verified, published: o.published, status: 'ACTIVE', structureType: 'CHAPTERED',
+    createdBy: null, createdAt: iso(24 * 365), suspendedAt: null,
+    restrictions: { graceDays: 30, disableVoting: false, disableEvents: false, disableChat: false, disableCard: false },
+    settings: { welcomeMessage: 'Welcome to the union.', duesReminderDays: 7 },
+    memberCount: o.memberCount, activeCount: o.memberCount, pendingCount: 3,
+    chapterCount: 2, committeeCount: 1, categoryCount: 2,
+    chapters: [
+      { id: `${o.id}_ch1`, name: 'Lagos Chapter', level: 'STATE', parentId: null, memberCount: 120 },
+      { id: `${o.id}_ch2`, name: 'Abuja Chapter', level: 'STATE', parentId: null, memberCount: 64 },
+    ],
+    committees: [{ id: `${o.id}_cm1`, name: 'Welfare Committee', description: 'Member welfare and hardship.', memberCount: 8 }],
+    categories: [
+      { id: `${o.id}_ct1`, label: 'Standard', description: null, duesKobo: 10_000_00, duesCadence: 'ANNUAL' },
+      { id: `${o.id}_ct2`, label: 'Premium', description: null, duesKobo: 25_000_00, duesCadence: 'ANNUAL' },
+    ],
+    rules: [{ id: `${o.id}_r1`, body: 'Dues are payable by 31 March each year.', position: 1 }],
+    leaders: [{ id: `${o.id}_l1`, chapterId: `${o.id}_ch1`, stateName: 'Lagos', leaderName: 'Chioma Adeyemi', leaderContact: '+234800000000', canApproveMembers: true }],
+  };
+}
+const MOCK_ORG_DETAILS: Record<string, AdminOrganisationDetail> = Object.fromEntries(
+  MOCK_ORGS.map((o) => [o.id, mockDetailFor(o)]),
+);
+function mockOrg(id: string): AdminOrganisationDetail {
+  const d = MOCK_ORG_DETAILS[id];
+  if (!d) throw new Error('Organisation not found');
+  return d;
+}
+function mockId(prefix: string): string { return `${prefix}_${Math.random().toString(36).slice(2, 10)}`; }
+
+export async function getAdminOrganisation(id: string): Promise<AdminOrganisationDetail> {
+  if (USE_MOCK) { await delay(); return structuredClone(mockOrg(id)); }
+  return getJson<AdminOrganisationDetail>(`/organisations/${id}`);
+}
+
+export async function updateAdminOrganisation(id: string, patch: UpdateOrganisationInput): Promise<AdminOrganisationDetail> {
+  if (USE_MOCK) {
+    await delay();
+    const d = mockOrg(id);
+    const { graceDays, disableVoting, disableEvents, disableChat, disableCard, ...rest } = patch;
+    Object.assign(d, rest);
+    if (graceDays !== undefined) d.restrictions.graceDays = graceDays;
+    if (disableVoting !== undefined) d.restrictions.disableVoting = disableVoting;
+    if (disableEvents !== undefined) d.restrictions.disableEvents = disableEvents;
+    if (disableChat !== undefined) d.restrictions.disableChat = disableChat;
+    if (disableCard !== undefined) d.restrictions.disableCard = disableCard;
+    return structuredClone(d);
+  }
+  return sendJson<AdminOrganisationDetail>('PATCH', `/organisations/${id}`, patch);
+}
+
+// ── Lifecycle flags ──
+// Six single-purpose POSTs rather than one flag endpoint (routes.go
+// orgFlagHandler). verify/unverify is PLATFORM-super-admin only; the other two
+// pairs are open to an org admin.
+export type OrgFlagAction = 'verify' | 'unverify' | 'publish' | 'unpublish' | 'suspend' | 'restore';
+export async function setOrganisationFlag(id: string, action: OrgFlagAction): Promise<{ ok: boolean }> {
+  if (USE_MOCK) {
+    await delay();
+    const d = mockOrg(id);
+    if (action === 'verify' || action === 'unverify') d.verified = action === 'verify';
+    if (action === 'publish' || action === 'unpublish') d.published = action === 'publish';
+    if (action === 'suspend' || action === 'restore') {
+      d.status = action === 'suspend' ? 'SUSPENDED' : 'ACTIVE';
+      d.suspendedAt = action === 'suspend' ? new Date().toISOString() : null;
+    }
+    return { ok: true };
+  }
+  return sendJson<{ ok: boolean }>('POST', `/organisations/${id}/${action}`, {});
+}
+
+// ── Per-organisation custom settings ──
+// A free-form jsonb object. PUT takes a PARTIAL object and MERGES it server-side;
+// a null value DELETES that key. Sending the whole object is therefore never
+// required — and a key you omit is never lost.
+export async function getOrganisationSettings(id: string): Promise<Record<string, unknown>> {
+  if (USE_MOCK) { await delay(); return structuredClone(mockOrg(id).settings); }
+  return getJson<Record<string, unknown>>(`/organisations/${id}/settings`);
+}
+export async function updateOrganisationSettings(
+  id: string,
+  patch: Record<string, unknown>,
+): Promise<Record<string, unknown>> {
+  if (USE_MOCK) {
+    await delay();
+    const d = mockOrg(id);
+    for (const [k, v] of Object.entries(patch)) {
+      if (v === null) delete d.settings[k];
+      else d.settings[k] = v;
+    }
+    return structuredClone(d.settings);
+  }
+  return sendJson<Record<string, unknown>>('PUT', `/organisations/${id}/settings`, patch);
+}
+
+// ── Chapters ──
+export async function createChapter(orgId: string, input: ChapterInput): Promise<{ id: string }> {
+  if (USE_MOCK) {
+    await delay();
+    const d = mockOrg(orgId);
+    const id = mockId('ch');
+    d.chapters.push({ id, name: input.name, level: input.level, parentId: null, memberCount: 0 });
+    d.chapterCount = d.chapters.length;
+    return { id };
+  }
+  return sendJson<{ id: string }>('POST', `/organisations/${orgId}/chapters`, input);
+}
+export async function updateChapter(chapterId: string, input: ChapterInput): Promise<{ ok: boolean }> {
+  if (USE_MOCK) {
+    await delay();
+    for (const d of Object.values(MOCK_ORG_DETAILS)) {
+      const c = d.chapters.find((x) => x.id === chapterId);
+      if (c) { c.name = input.name; c.level = input.level; return { ok: true }; }
+    }
+    throw new Error('Chapter not found');
+  }
+  // PATCH sends the FULL body: Go binds ChapterRequest with `binding:"required"`
+  // on name, so a name-less "partial" patch is a 400, not a no-op.
+  return sendJson<{ ok: boolean }>('PATCH', `/chapters/${chapterId}`, input);
+}
+export async function deleteChapter(chapterId: string): Promise<{ ok: boolean }> {
+  if (USE_MOCK) {
+    await delay();
+    for (const d of Object.values(MOCK_ORG_DETAILS)) {
+      const i = d.chapters.findIndex((x) => x.id === chapterId);
+      if (i >= 0) {
+        if (d.chapters[i].memberCount > 0) throw new Error('Chapter still has members assigned to it');
+        d.chapters.splice(i, 1); d.chapterCount = d.chapters.length; return { ok: true };
+      }
+    }
+    throw new Error('Chapter not found');
+  }
+  // The backend refuses while members still reference the chapter and says so —
+  // failure() surfaces that message rather than a bare status code.
+  return sendJson<{ ok: boolean }>('DELETE', `/chapters/${chapterId}`, undefined);
+}
+
+// ── Committees ──
+export async function createCommittee(orgId: string, input: CommitteeInput): Promise<{ id: string }> {
+  if (USE_MOCK) {
+    await delay();
+    const d = mockOrg(orgId);
+    const id = mockId('cm');
+    d.committees.push({ id, name: input.name, description: input.description ?? null, memberCount: 0 });
+    d.committeeCount = d.committees.length;
+    return { id };
+  }
+  return sendJson<{ id: string }>('POST', `/organisations/${orgId}/committees`, input);
+}
+export async function updateCommittee(committeeId: string, input: CommitteeInput): Promise<{ ok: boolean }> {
+  if (USE_MOCK) {
+    await delay();
+    for (const d of Object.values(MOCK_ORG_DETAILS)) {
+      const c = d.committees.find((x) => x.id === committeeId);
+      if (c) { c.name = input.name; c.description = input.description ?? null; return { ok: true }; }
+    }
+    throw new Error('Committee not found');
+  }
+  return sendJson<{ ok: boolean }>('PATCH', `/committees/${committeeId}`, input);
+}
+export async function deleteCommittee(committeeId: string): Promise<{ ok: boolean }> {
+  if (USE_MOCK) {
+    await delay();
+    for (const d of Object.values(MOCK_ORG_DETAILS)) {
+      const i = d.committees.findIndex((x) => x.id === committeeId);
+      if (i >= 0) { d.committees.splice(i, 1); d.committeeCount = d.committees.length; return { ok: true }; }
+    }
+    throw new Error('Committee not found');
+  }
+  return sendJson<{ ok: boolean }>('DELETE', `/committees/${committeeId}`, undefined);
+}
+
+// ── Membership categories (dues tiers) — MONEY PATH ──
+// Both create and update REQUIRE an Idempotency-Key (service_org_admin.go returns
+// ErrIdempotencyRequired without one): a retried create must not silently mint a
+// second tier at the same price, and a retried re-price must not double-apply.
+export async function createCategory(orgId: string, input: CategoryInput): Promise<{ id: string }> {
+  if (USE_MOCK) {
+    await delay();
+    const d = mockOrg(orgId);
+    const id = mockId('ct');
+    d.categories.push({ id, label: input.label, description: input.description ?? null, duesKobo: input.duesKobo, duesCadence: input.cadence });
+    d.categoryCount = d.categories.length;
+    return { id };
+  }
+  return sendJson<{ id: string }>('POST', `/organisations/${orgId}/categories`, input, { idempotent: true });
+}
+export async function updateCategory(categoryId: string, input: CategoryInput): Promise<{ ok: boolean }> {
+  if (USE_MOCK) {
+    await delay();
+    for (const d of Object.values(MOCK_ORG_DETAILS)) {
+      const c = d.categories.find((x) => x.id === categoryId);
+      if (c) { c.label = input.label; c.description = input.description ?? null; c.duesKobo = input.duesKobo; c.duesCadence = input.cadence; return { ok: true }; }
+    }
+    throw new Error('Category not found');
+  }
+  return sendJson<{ ok: boolean }>('PATCH', `/categories/${categoryId}`, input, { idempotent: true });
+}
+export async function deleteCategory(categoryId: string): Promise<{ ok: boolean }> {
+  if (USE_MOCK) {
+    await delay();
+    for (const d of Object.values(MOCK_ORG_DETAILS)) {
+      const i = d.categories.findIndex((x) => x.id === categoryId);
+      if (i >= 0) { d.categories.splice(i, 1); d.categoryCount = d.categories.length; return { ok: true }; }
+    }
+    throw new Error('Category not found');
+  }
+  // Refused by the backend while members are still on this dues tier.
+  return sendJson<{ ok: boolean }>('DELETE', `/categories/${categoryId}`, undefined);
+}
+
+// ── Rules ──
+export async function createRule(orgId: string, input: RuleInput): Promise<{ id: string }> {
+  if (USE_MOCK) {
+    await delay();
+    const d = mockOrg(orgId);
+    const id = mockId('r');
+    d.rules.push({ id, body: input.body, position: input.position });
+    d.rules.sort((a, b) => a.position - b.position);
+    return { id };
+  }
+  return sendJson<{ id: string }>('POST', `/organisations/${orgId}/rules`, input);
+}
+export async function updateRule(ruleId: string, input: RuleInput): Promise<{ ok: boolean }> {
+  if (USE_MOCK) {
+    await delay();
+    for (const d of Object.values(MOCK_ORG_DETAILS)) {
+      const r = d.rules.find((x) => x.id === ruleId);
+      if (r) { r.body = input.body; r.position = input.position; d.rules.sort((a, b) => a.position - b.position); return { ok: true }; }
+    }
+    throw new Error('Rule not found');
+  }
+  return sendJson<{ ok: boolean }>('PATCH', `/rules/${ruleId}`, input);
+}
+export async function deleteRule(ruleId: string): Promise<{ ok: boolean }> {
+  if (USE_MOCK) {
+    await delay();
+    for (const d of Object.values(MOCK_ORG_DETAILS)) {
+      const i = d.rules.findIndex((x) => x.id === ruleId);
+      if (i >= 0) { d.rules.splice(i, 1); return { ok: true }; }
+    }
+    throw new Error('Rule not found');
+  }
+  return sendJson<{ ok: boolean }>('DELETE', `/rules/${ruleId}`, undefined);
+}
+
+// ── Naira ⇄ kobo at the form boundary ────────────────────────────────────────
+// Kobo is the ONLY representation that reaches the API. These two exist so a
+// page never does `parseFloat(x) * 100` inline — that is where the rounding
+// bugs live (0.1 * 100 === 10.000000000000002).
+
+/** Parse an operator-typed naira string into integer kobo. Throws on garbage. */
+export function nairaToKobo(text: string): number {
+  const cleaned = text.replace(/[,\s₦]/g, '');
+  if (!/^\d+(\.\d{1,2})?$/.test(cleaned)) throw new Error('Enter an amount in naira, e.g. 5000 or 5000.50');
+  const [whole, frac = ''] = cleaned.split('.');
+  return Number(whole) * 100 + Number(frac.padEnd(2, '0'));
+}
+/** Render integer kobo as a plain naira string for an <input> (no ₦, no commas). */
+export function koboToNairaInput(kobo: number): string {
+  const k = Math.trunc(kobo ?? 0);
+  return `${Math.trunc(k / 100)}.${String(Math.abs(k % 100)).padStart(2, '0')}`;
 }

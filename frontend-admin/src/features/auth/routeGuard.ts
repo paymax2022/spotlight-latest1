@@ -148,6 +148,14 @@ const routePermissions: Array<{ prefix: string; permissions: string[] }> = [
   // association operator holds, so the route guard redirected them away
   // before the page ever rendered regardless of what the sidebar or the
   // page's own permission check said.
+  // Organisation management (identity, verify/publish/suspend, chapters,
+  // committees, dues tiers, rules, custom settings) is the write-heaviest
+  // surface in the module, so it is listed AHEAD of the catch-all and requires
+  // an operator who can act, not merely one who can read a dashboard. Server
+  // RBAC (requireOrgAdmin, and platform-super-admin for verify) remains the
+  // real boundary; this only avoids showing an operator a page whose every
+  // button will 403.
+  { prefix: '/admin/association/organisations', permissions: ['savings.admin.recon', 'savings.admin.view'] },
   { prefix: '/admin/association', permissions: ['savings.admin.view', 'savings.admin.dashboard', 'savings.admin.recon'] },
   { prefix: '/admin/realtor', permissions: ['realtor.admin.view'] },
   { prefix: '/admin/telemedicine', permissions: ['health.admin.view'] },

@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { getGroupsDashboard, formatNaira, type GroupsDashboard } from '@/services/groupsAdminService';
-import { PageHeader, GroupsTabs, Card, Kpi, Badge, DisclosureNote, StateBlock, btn, th, td, timeAgo } from '../_ui';
+import { PageHeader, GroupsTabs, Card, Kpi, Badge, DisclosureNote, SampleDataBanner, StateBlock, btn, th, td, timeAgo } from '../_ui';
 
 export default function GroupsDashboardPage() {
   const [data, setData] = useState<GroupsDashboard | null>(null);
@@ -26,9 +26,12 @@ export default function GroupsDashboardPage() {
       />
       <GroupsTabs active="overview" />
 
+      <SampleDataBanner />
       <DisclosureNote>
-        Read-only oversight — the groups backend exposes <strong>no admin route group</strong>; surfaces read the
-        member projections at <code>/api/finance/groups</code>. Pooled balances are projections of the immutable
+        Scope: group savings / contribution pools (ajo-style). This is <strong>not</strong> the associations console —
+        association members, dues and approvals live under <code>/admin/association</code>. Read-only oversight; the
+        groups backend exposes <strong>no admin route group</strong>, so once one exists these surfaces will read the
+        member projections at <code>/api/finance/groups</code> and pooled balances will be projections of the immutable
         double-entry ledger (NL-8).
       </DisclosureNote>
 
