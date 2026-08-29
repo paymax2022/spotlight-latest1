@@ -149,7 +149,7 @@ export default function ContestDetailsScreen() {
           )}
 
           {/* Voting rules */}
-          <VotingRulesCard freeVotesPerDay={contest.freeVotesPerDay} />
+          <VotingRulesCard freeVotesPerDay={contest.freeVotesPerDay} rulesText={contest.rulesText} />
 
           {/* CTA */}
           <View style={styles.ctaRow}>

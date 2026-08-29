@@ -11,13 +11,16 @@
  * rather than one file per tab — same data, one place. See
  * openMicAdminService.ts for exactly which read endpoints are wired and which
  * write actions (resolve alert, mark notification sent, generate finalists,
- * announce winner, edit contest, build/lock finale playlist) are not yet
- * ported.
+ * announce winner, build/lock finale playlist) are not yet ported. Editing
+ * contest metadata now IS wired (Edit Contest tab, below) — PATCH
+ * /api/admin/open-mic/contests/:id already existed server-side; this is its
+ * first client wiring.
  */
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState, type CSSProperties } from 'react';
 import { useParams } from 'next/navigation';
 import {
   getOpenMicContest,
+  updateOpenMicContest,
   listOpenMicApplications,
   listOpenMicSubmissions,
   listOpenMicFinalists,
@@ -29,14 +32,63 @@ import {
   getOpenMicFinalePlaylist,
   getOpenMicReportMetrics,
   type OpenMicContest,
+  type OpenMicContestEditInput,
 } from '@/services/openMicAdminService';
-import { Page, PageHeader, Card, Button, Badge, colors, thCell, tdCell } from '@/components/ui/vuexy';
+import { Page, PageHeader, Card, Button, Input, Badge, colors, thCell, tdCell } from '@/components/ui/vuexy';
 
 const TABS = [
-  'Applications', 'Submissions', 'Finalists', 'Winners', 'Payments',
+  'Edit Contest', 'Applications', 'Submissions', 'Finalists', 'Winners', 'Payments',
   'Fraud Alerts', 'Beat Downloads', 'Votes', 'Notifications', 'Finale', 'Reports',
 ] as const;
 type Tab = (typeof TABS)[number];
+
+const CONTEST_STATUSES = [
+  'draft', 'scheduled', 'published', 'registration_open', 'beat_available',
+  'submission_open', 'submission_closed', 'under_review', 'voting_live',
+  'voting_closed', 'finalists_selected', 'grand_finale_scheduled',
+  'grand_finale_live', 'winner_announced', 'completed', 'archived',
+  'suspended', 'cancelled',
+] as const;
+const CONTEST_VISIBILITIES = ['public', 'private_invite_only', 'regional_only', 'hidden'] as const;
+const SELECTION_MODELS = ['votes_only', 'judges_only', 'hybrid', 'admin_curated'] as const;
+const PLAYBACK_MODES = ['all_approved', 'top_20', 'top_10', 'finalists_only'] as const;
+const NIGERIA_STATES = [
+  'Abia', 'Adamawa', 'Akwa Ibom', 'Anambra', 'Bauchi', 'Bayelsa', 'Benue', 'Borno',
+  'Cross River', 'Delta', 'Ebonyi', 'Edo', 'Ekiti', 'Enugu', 'FCT', 'Gombe', 'Imo',
+  'Jigawa', 'Kaduna', 'Kano', 'Katsina', 'Kebbi', 'Kogi', 'Kwara', 'Lagos', 'Nasarawa',
+  'Niger', 'Ogun', 'Ondo', 'Osun', 'Oyo', 'Plateau', 'Rivers', 'Sokoto', 'Taraba',
+  'Yobe', 'Zamfara',
+];
+
+const labelStyle: CSSProperties = { display: 'block', fontSize: 12, fontWeight: 600, color: colors.muted, marginBottom: 4 };
+const fieldWrap: CSSProperties = { marginBottom: 14 };
+const selectStyle: CSSProperties = { width: '100%', padding: '8px 10px', borderRadius: 6, border: `1px solid ${colors.inputBorder}`, fontSize: 13 };
+
+type EditFormState = {
+  title: string; description: string; status: string; visibility: string;
+  registrationFeeNgn: number; entryFeeRequired: boolean;
+  votePrice: number; freeVotesPerDay: number; votingEnabled: boolean;
+  freeVoting: boolean; paidVoting: boolean; leaderboardVisible: boolean; voteCountPublic: boolean;
+  finalistsTarget: number; judgeWeight: number; publicVoteWeight: number; selectionModel: string;
+  venueName: string; venueType: string; address: string; city: string; state: string;
+  date: string; showStartTime: string; playbackMode: string;
+};
+
+function formFromContest(c: OpenMicContest): EditFormState {
+  return {
+    title: c.title, description: c.description ?? '', status: c.status, visibility: c.visibility ?? 'public',
+    registrationFeeNgn: c.registrationFeeNgn, entryFeeRequired: c.entryFeeRequired ?? false,
+    votePrice: c.votingConfig.votePrice, freeVotesPerDay: c.votingConfig.freeVotesPerDay,
+    votingEnabled: c.votingConfig.enabled ?? true, freeVoting: c.votingConfig.freeVoting ?? true,
+    paidVoting: c.votingConfig.paidVoting ?? true, leaderboardVisible: c.votingConfig.leaderboardVisible ?? true,
+    voteCountPublic: c.votingConfig.voteCountPublic ?? true,
+    finalistsTarget: c.finalistsTarget, judgeWeight: c.judgeWeight ?? 30, publicVoteWeight: c.publicVoteWeight ?? 70,
+    selectionModel: c.selectionModel,
+    venueName: c.finale.venueName, venueType: c.finale.venueType, address: c.finale.address,
+    city: c.finale.city, state: c.finale.state, date: c.finale.date ?? '', showStartTime: c.finale.showStartTime ?? '',
+    playbackMode: c.finale.playbackMode ?? 'top_10',
+  };
+}
 
 function StatTile({ label, value, color }: { label: string; value: string | number; color?: string }) {
   return (
@@ -71,7 +123,68 @@ export default function OpenMicContestAdminPage() {
 
   const [contest, setContest] = useState<OpenMicContest | null>(null);
   const [contestError, setContestError] = useState<string | null>(null);
-  const [tab, setTab] = useState<Tab>('Applications');
+  const [tab, setTab] = useState<Tab>('Edit Contest');
+
+  const [editForm, setEditForm] = useState<EditFormState | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [saveMessage, setSaveMessage] = useState('');
+
+  function setEditField<K extends keyof EditFormState>(key: K, value: EditFormState[K]) {
+    setEditForm((prev) => (prev ? { ...prev, [key]: value } : prev));
+  }
+
+  const weightsInvalid = useMemo(
+    () => !!editForm && editForm.judgeWeight + editForm.publicVoteWeight !== 100,
+    [editForm],
+  );
+
+  async function saveContest() {
+    if (!editForm || !contestId) return;
+    if (weightsInvalid) {
+      setSaveError('Judge weight and public vote weight must add up to 100%.');
+      return;
+    }
+    setSaving(true);
+    setSaveError(null);
+    setSaveMessage('');
+    try {
+      const patch: OpenMicContestEditInput = {
+        title: editForm.title,
+        description: editForm.description,
+        status: editForm.status,
+        visibility: editForm.visibility,
+        registrationFeeNgn: editForm.registrationFeeNgn,
+        entryFeeRequired: editForm.entryFeeRequired,
+        votingConfig: {
+          votePrice: editForm.votePrice,
+          freeVotesPerDay: editForm.freeVotesPerDay,
+          enabled: editForm.votingEnabled,
+          freeVoting: editForm.freeVoting,
+          paidVoting: editForm.paidVoting,
+          leaderboardVisible: editForm.leaderboardVisible,
+          voteCountPublic: editForm.voteCountPublic,
+        },
+        finale: {
+          venueName: editForm.venueName, venueType: editForm.venueType, address: editForm.address,
+          city: editForm.city, state: editForm.state, date: editForm.date || undefined,
+          showStartTime: editForm.showStartTime || undefined, playbackMode: editForm.playbackMode,
+        },
+        finalistsTarget: editForm.finalistsTarget,
+        judgeWeight: editForm.judgeWeight,
+        publicVoteWeight: editForm.publicVoteWeight,
+        selectionModel: editForm.selectionModel,
+      };
+      const updated = await updateOpenMicContest(contestId, patch);
+      setContest(updated);
+      setEditForm(formFromContest(updated));
+      setSaveMessage('Contest updated.');
+    } catch (e) {
+      setSaveError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSaving(false);
+    }
+  }
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -88,7 +201,9 @@ export default function OpenMicContestAdminPage() {
 
   useEffect(() => {
     if (!contestId) return;
-    getOpenMicContest(contestId).then(setContest).catch((e) => setContestError(e instanceof Error ? e.message : String(e)));
+    getOpenMicContest(contestId)
+      .then((c) => { setContest(c); if (c) setEditForm(formFromContest(c)); })
+      .catch((e) => setContestError(e instanceof Error ? e.message : String(e)));
   }, [contestId]);
 
   const loadTab = useCallback(async () => {
@@ -97,6 +212,9 @@ export default function OpenMicContestAdminPage() {
     setError(null);
     try {
       switch (tab) {
+        // Edit Contest reads from `contest`/`editForm` (loaded separately,
+        // above) rather than a per-tab endpoint — nothing to fetch here.
+        case 'Edit Contest': break;
         case 'Applications': setRows(await listOpenMicApplications(contestId)); break;
         case 'Submissions': setRows(await listOpenMicSubmissions(contestId)); break;
         case 'Finalists': setRows(await listOpenMicFinalists(contestId)); break;
@@ -139,6 +257,168 @@ export default function OpenMicContestAdminPage() {
           <div style={{ display: 'flex', flexDirection: 'column', gap: 12, alignItems: 'flex-start' }}>
             <p style={{ color: colors.danger, margin: 0 }}>{error}</p>
             <Button onClick={loadTab}>Retry</Button>
+          </div>
+        )}
+
+        {!loading && !error && loadedTab === 'Edit Contest' && editForm && (
+          <div style={{ maxWidth: 780, display: 'flex', flexDirection: 'column', gap: 20 }}>
+            <section>
+              <h3 style={{ fontSize: 13, fontWeight: 700, marginBottom: 10 }}>Contest Identity</h3>
+              <div style={fieldWrap}>
+                <label style={labelStyle}>Title</label>
+                <Input value={editForm.title} onChange={(e) => setEditField('title', e.target.value)} style={{ width: '100%' }} />
+              </div>
+              <div style={fieldWrap}>
+                <label style={labelStyle}>Description</label>
+                <textarea value={editForm.description} onChange={(e) => setEditField('description', e.target.value)} rows={3}
+                  style={{ width: '100%', padding: 8, borderRadius: 6, border: `1px solid ${colors.inputBorder}`, fontSize: 13 }} />
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                <div style={fieldWrap}>
+                  <label style={labelStyle}>Status</label>
+                  <select value={editForm.status} onChange={(e) => setEditField('status', e.target.value)} style={selectStyle}>
+                    {CONTEST_STATUSES.map((s) => <option key={s} value={s}>{s.replace(/_/g, ' ')}</option>)}
+                  </select>
+                </div>
+                <div style={fieldWrap}>
+                  <label style={labelStyle}>Visibility</label>
+                  <select value={editForm.visibility} onChange={(e) => setEditField('visibility', e.target.value)} style={selectStyle}>
+                    {CONTEST_VISIBILITIES.map((v) => <option key={v} value={v}>{v.replace(/_/g, ' ')}</option>)}
+                  </select>
+                </div>
+              </div>
+            </section>
+
+            <section>
+              <h3 style={{ fontSize: 13, fontWeight: 700, marginBottom: 10 }}>Registration</h3>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                <div style={fieldWrap}>
+                  <label style={labelStyle}>Registration Fee (NGN)</label>
+                  <Input type="number" value={editForm.registrationFeeNgn} onChange={(e) => setEditField('registrationFeeNgn', Number(e.target.value))} style={{ width: '100%' }} />
+                </div>
+                <div style={{ display: 'flex', alignItems: 'flex-end', paddingBottom: 10 }}>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13 }}>
+                    <input type="checkbox" checked={editForm.entryFeeRequired} onChange={(e) => setEditField('entryFeeRequired', e.target.checked)} />
+                    Paid registration required
+                  </label>
+                </div>
+              </div>
+            </section>
+
+            <section>
+              <h3 style={{ fontSize: 13, fontWeight: 700, marginBottom: 10 }}>Voting</h3>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                <div style={fieldWrap}>
+                  <label style={labelStyle}>Vote Price (NGN)</label>
+                  <Input type="number" value={editForm.votePrice} onChange={(e) => setEditField('votePrice', Number(e.target.value))} style={{ width: '100%' }} />
+                </div>
+                <div style={fieldWrap}>
+                  <label style={labelStyle}>Free Votes Per Day</label>
+                  <Input type="number" value={editForm.freeVotesPerDay} onChange={(e) => setEditField('freeVotesPerDay', Number(e.target.value))} style={{ width: '100%' }} />
+                </div>
+              </div>
+              <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', fontSize: 13 }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <input type="checkbox" checked={editForm.votingEnabled} onChange={(e) => setEditField('votingEnabled', e.target.checked)} /> Voting enabled
+                </label>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <input type="checkbox" checked={editForm.freeVoting} onChange={(e) => setEditField('freeVoting', e.target.checked)} /> Free voting
+                </label>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <input type="checkbox" checked={editForm.paidVoting} onChange={(e) => setEditField('paidVoting', e.target.checked)} /> Paid voting
+                </label>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <input type="checkbox" checked={editForm.leaderboardVisible} onChange={(e) => setEditField('leaderboardVisible', e.target.checked)} /> Leaderboard visible
+                </label>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <input type="checkbox" checked={editForm.voteCountPublic} onChange={(e) => setEditField('voteCountPublic', e.target.checked)} /> Vote count public
+                </label>
+              </div>
+            </section>
+
+            <section>
+              <h3 style={{ fontSize: 13, fontWeight: 700, marginBottom: 10 }}>Selection & Scoring</h3>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: 12 }}>
+                <div style={fieldWrap}>
+                  <label style={labelStyle}>Selection Model</label>
+                  <select value={editForm.selectionModel} onChange={(e) => setEditField('selectionModel', e.target.value)} style={selectStyle}>
+                    {SELECTION_MODELS.map((m) => <option key={m} value={m}>{m.replace(/_/g, ' ')}</option>)}
+                  </select>
+                </div>
+                <div style={fieldWrap}>
+                  <label style={labelStyle}>Finalists Target</label>
+                  <Input type="number" value={editForm.finalistsTarget} onChange={(e) => setEditField('finalistsTarget', Number(e.target.value))} style={{ width: '100%' }} />
+                </div>
+                <div style={fieldWrap}>
+                  <label style={labelStyle}>Judge Weight (%)</label>
+                  <Input type="number" value={editForm.judgeWeight} onChange={(e) => setEditField('judgeWeight', Number(e.target.value))} style={{ width: '100%' }} />
+                </div>
+                <div style={fieldWrap}>
+                  <label style={labelStyle}>Public Vote Weight (%)</label>
+                  <Input type="number" value={editForm.publicVoteWeight} onChange={(e) => setEditField('publicVoteWeight', Number(e.target.value))} style={{ width: '100%' }} />
+                </div>
+              </div>
+              {weightsInvalid && <p style={{ color: colors.danger, fontSize: 12, margin: 0 }}>Judge weight and public vote weight must add up to 100%.</p>}
+            </section>
+
+            <section>
+              <h3 style={{ fontSize: 13, fontWeight: 700, marginBottom: 10 }}>Finale Venue</h3>
+              <div style={fieldWrap}>
+                <label style={labelStyle}>Venue Name</label>
+                <Input value={editForm.venueName} onChange={(e) => setEditField('venueName', e.target.value)} style={{ width: '100%' }} />
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                <div style={fieldWrap}>
+                  <label style={labelStyle}>Venue Type</label>
+                  <select value={editForm.venueType} onChange={(e) => setEditField('venueType', e.target.value)} style={selectStyle}>
+                    <option value="lounge">Lounge</option>
+                    <option value="club">Club</option>
+                    <option value="event_center">Event Center</option>
+                    <option value="campus_venue">Campus Venue</option>
+                    <option value="virtual">Virtual</option>
+                  </select>
+                </div>
+                <div style={fieldWrap}>
+                  <label style={labelStyle}>Playback Mode</label>
+                  <select value={editForm.playbackMode} onChange={(e) => setEditField('playbackMode', e.target.value)} style={selectStyle}>
+                    {PLAYBACK_MODES.map((m) => <option key={m} value={m}>{m.replace(/_/g, ' ')}</option>)}
+                  </select>
+                </div>
+              </div>
+              <div style={fieldWrap}>
+                <label style={labelStyle}>Address</label>
+                <Input value={editForm.address} onChange={(e) => setEditField('address', e.target.value)} style={{ width: '100%' }} />
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                <div style={fieldWrap}>
+                  <label style={labelStyle}>State</label>
+                  <select value={editForm.state} onChange={(e) => setEditField('state', e.target.value)} style={selectStyle}>
+                    <option value="">Select state</option>
+                    {NIGERIA_STATES.map((s) => <option key={s} value={s}>{s}</option>)}
+                  </select>
+                </div>
+                <div style={fieldWrap}>
+                  <label style={labelStyle}>City</label>
+                  <Input value={editForm.city} onChange={(e) => setEditField('city', e.target.value)} style={{ width: '100%' }} />
+                </div>
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                <div style={fieldWrap}>
+                  <label style={labelStyle}>Finale Date</label>
+                  <Input type="date" value={editForm.date} onChange={(e) => setEditField('date', e.target.value)} style={{ width: '100%' }} />
+                </div>
+                <div style={fieldWrap}>
+                  <label style={labelStyle}>Show Start Time</label>
+                  <Input type="time" value={editForm.showStartTime} onChange={(e) => setEditField('showStartTime', e.target.value)} style={{ width: '100%' }} />
+                </div>
+              </div>
+            </section>
+
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+              <Button variant="primary" onClick={saveContest} disabled={saving}>{saving ? 'Saving…' : 'Save Changes'}</Button>
+              {saveError && <p style={{ color: colors.danger, margin: 0, fontSize: 13 }}>{saveError}</p>}
+              {saveMessage && <p style={{ color: colors.success, margin: 0, fontSize: 13 }}>{saveMessage}</p>}
+            </div>
           </div>
         )}
 

@@ -11,6 +11,7 @@ import { Spacing } from '@/constants/spacing';
 import { Typography } from '@/constants/typography';
 import { shadow1 } from '@/constants/shadows';
 import { useOrders } from '@/features/food/hooks';
+import { useRestaurantQueueRealtime } from '@/features/food/useRestaurantQueueRealtime';
 import { OrderListRow } from '@/features/food/components';
 import { isTerminalStatus } from '@/features/food/utils';
 
@@ -18,7 +19,23 @@ type MenuTab = 'orders' | 'earnings' | 'manage';
 
 export default function RestaurantQueueScreen() {
   const [activeTab, setActiveTab] = useState<MenuTab>('orders');
-  const { data, isLoading, isError, refetch } = useOrders('restaurant', { poll: true });
+
+  // Live order events over the user-scoped socket. A merchant's critical event
+  // is a NEW order, which cannot be subscribed to per-order because the id does
+  // not exist client-side yet — see useRestaurantQueueRealtime.
+  //
+  // Named socketLive, not `live`: `live` below is the ACTIVE-ORDER list, and the
+  // two mean very different things.
+  const { live: socketLive } = useRestaurantQueueRealtime(activeTab === 'orders');
+
+  // Polling becomes the FALLBACK rather than the mechanism: every 6s while the
+  // socket is down (or under mock), backing off to 60s while it is up — kept
+  // non-zero purely as a safety net against a dropped frame, since a merchant
+  // silently missing an order is the worst failure this screen has.
+  const { data, isLoading, isError, refetch } = useOrders('restaurant', {
+    poll: true,
+    pollMs: socketLive ? 60_000 : 6_000,
+  });
 
   const live = (data ?? []).filter((o) => !isTerminalStatus(o.status));
   const past = (data ?? []).filter((o) => isTerminalStatus(o.status));
@@ -29,7 +46,17 @@ export default function RestaurantQueueScreen() {
         <Pressable onPress={() => goBack('/food')} style={s.iconButton} accessibilityLabel="Go back">
           <Icons.ArrowLeft size={22} color={Colors.primary} strokeWidth={2.2} />
         </Pressable>
-        <Text style={s.topTitle}>Restaurant · Orders</Text>
+        <View style={s.titleWrap}>
+          <Text style={s.topTitle}>Restaurant · Orders</Text>
+          {/* Honest indicator: only lit when the socket is actually connected,
+              so a merchant can tell "quiet night" from "not receiving". */}
+          {socketLive ? (
+            <View style={s.livePill}>
+              <View style={s.liveDot} />
+              <Text style={s.liveLabel}>Live</Text>
+            </View>
+          ) : null}
+        </View>
         <Pressable onPress={() => router.push('/food/restaurant/manage')} style={s.iconButton} accessibilityLabel="Manage store">
           <Icons.Store size={22} color={Colors.primary} strokeWidth={2.2} />
         </Pressable>
@@ -126,7 +153,11 @@ const s = StyleSheet.create({
     backgroundColor: 'rgba(248,249,255,0.92)',
   },
   iconButton: { width: 40, height: 40, borderRadius: Radius.full, alignItems: 'center', justifyContent: 'center', backgroundColor: Colors.surfaceContainerLow },
+  titleWrap: { alignItems: 'center', gap: 2 },
   topTitle: { ...Typography.titleLg, color: Colors.primary },
+  livePill: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  liveDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: '#16A34A' },
+  liveLabel: { ...Typography.labelSm, color: '#16A34A' },
   content: { padding: Spacing.containerMargin, paddingBottom: Platform.OS === 'ios' ? 100 : 80 },
   sectionTitle: { ...Typography.titleMd, color: Colors.onSurface, marginBottom: Spacing.md, marginTop: Spacing.xs },
   empty: { ...Typography.bodySm, color: Colors.outline, marginBottom: Spacing.lg },

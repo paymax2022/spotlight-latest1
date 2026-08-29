@@ -1368,7 +1368,7 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 
 		// Domain packages (parallel build) — each registers its routes on the
 		// shared crowdfunding group. All use the ':id' param on /campaigns/:id/*.
-		cfwallet.Register(cfGroup, pool)
+		cfwallet.Register(cfGroup, pool, ledgerSvc)
 		cfengage.Register(cfGroup, pool)
 		cfcreator.Register(cfGroup, pool)
 		cfinvestment.Register(cfGroup, pool)
@@ -1525,6 +1525,11 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		// still enforces order participation. Registered once here only.
 		restPublicWS := r.Group("/api/finance/restaurant")
 		restPublicWS.GET("/orders/:orderId/ws", restaurantHandler.ServeOrderWS)
+		// User-scoped stream (static sibling of the ":id" param on this prefix).
+		// Backs the merchant order queue, which cannot subscribe per-order to an
+		// order it has not been told about yet. See ServeUserWS for why this
+		// exposes nothing new.
+		restPublicWS.GET("/ws", restaurantHandler.ServeUserWS)
 
 		// Ratings.
 		restGroup.POST("/orders/:orderId/rate", restaurantHandler.RateOrder)
@@ -1562,6 +1567,11 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		// Mounted under the static "restaurants" segment so they cannot collide with
 		// the sibling ":id" params on /orders, /onboarding and /payouts.
 		restStore := restAdmin.Group("/restaurants", middleware.RequirePermission(rbac, "restaurant.manage"))
+		// The register itself. The console previously listed restaurants off the
+		// CUSTOMER discovery endpoint, which is is_open=TRUE — so 211 of the 2,227
+		// rows (closed shops, listings awaiting review) were invisible to ops while
+		// the page's total implied it was showing them all.
+		restStore.GET("", restaurantHandler.AdminListRestaurants)
 		restStore.GET("/:id", restaurantHandler.AdminGetRestaurant)
 		restStore.PATCH("/:id", restaurantHandler.AdminUpdateRestaurant)
 		restStore.PATCH("/:id/availability", restaurantHandler.AdminSetAvailability)
@@ -1577,9 +1587,21 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		restAdmin.POST("/listings/:id/decision", middleware.RequirePermission(rbac, "restaurant.admin.onboarding"), restaurantHandler.AdminDecideListing)
 		// Shops with no identifiable merchant (foodhub §5.4).
 		restAdmin.GET("/restaurants/unclaimed", middleware.RequirePermission(rbac, "restaurant.admin.onboarding"), restaurantHandler.AdminUnclaimedRestaurants)
+		// The platform-wide ORDER FEED. Until this existed the console read the
+		// MEMBER route `/api/finance/restaurant/orders?role=restaurant`, which is
+		// scoped to restaurants the CALLER owns — so an operator saw their own
+		// (zero) orders rather than the platform's, and that handler ignored the
+		// ?status filter entirely. Read-only; order mutations stay on the member,
+		// rider and dispatch routes.
+		restAdmin.GET("/orders", middleware.RequirePermission(rbac, "restaurant.manage"), restaurantHandler.AdminListOrders)
 		restAdmin.GET("/riders", middleware.RequirePermission(rbac, "restaurant.admin.dispatch"), restaurantHandler.AdminListRiders)
 		restAdmin.GET("/dispatch/queue", middleware.RequirePermission(rbac, "restaurant.admin.dispatch"), restaurantHandler.AdminDispatchQueue)
 		restAdmin.POST("/orders/:id/assign", middleware.RequirePermission(rbac, "restaurant.admin.dispatch"), restaurantHandler.AdminAssignRider)
+		// Operator re-dispatch. The member route at
+		// /api/finance/restaurant/orders/:orderId/dispatch is owner-gated in its
+		// handler, so the ops console's Re-dispatch button could only ever 403.
+		// Same idempotent DispatchOrder underneath; RBAC is the boundary.
+		restAdmin.POST("/orders/:id/dispatch", middleware.RequirePermission(rbac, "restaurant.admin.dispatch"), restaurantHandler.AdminRedispatch)
 		restAdmin.GET("/onboarding", middleware.RequirePermission(rbac, "restaurant.admin.onboarding"), restaurantHandler.AdminListApplications)
 		// Single wildcard segment handles all three shapes the admin UI may post:
 		//   /onboarding/:id/decision  (body {decision, note})

@@ -133,6 +133,7 @@ export async function POST(request: Request) {
         : [],
       categoryQuestionSet: contestCategory,
       formSchema: sanitizeContestFormSchema(body?.formSchema),
+      rulesText: String(body?.rulesText || '').trim(),
     });
 
     // Write through to Postgres so the contest exists outside this process: the

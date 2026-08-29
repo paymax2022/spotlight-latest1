@@ -88,6 +88,8 @@ export interface FullContest {
   auditionStates: string[];
   applicantCategories: string[];
   status?: string;
+  /** Contest-specific voting rules/policies shown above the platform defaults on mobile. */
+  rulesText?: string;
 }
 
 async function readJsonOrThrow(res: Response, label: string): Promise<Record<string, unknown>> {

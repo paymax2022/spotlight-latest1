@@ -27,17 +27,56 @@ export type OpenMicContest = {
   id: string;
   title: string;
   slug: string;
+  description?: string;
   status: string;
+  visibility?: string;
   month: number;
   year: number;
   season: string;
   registrationFeeNgn: number;
-  votingConfig: { votePrice: number; freeVotesPerDay: number };
-  finale: { venueName: string; venueType: string; address: string; city: string; state: string; date?: string; showStartTime?: string };
+  entryFeeRequired?: boolean;
+  votingConfig: {
+    votePrice: number;
+    freeVotesPerDay: number;
+    enabled?: boolean;
+    freeVoting?: boolean;
+    paidVoting?: boolean;
+    leaderboardVisible?: boolean;
+    voteCountPublic?: boolean;
+  };
+  finale: {
+    venueName: string; venueType: string; address: string; city: string; state: string;
+    date?: string; showStartTime?: string; playbackMode?: string;
+  };
   prizes: Array<{ title: string }>;
   finalistsTarget: number;
+  judgeWeight?: number;
+  publicVoteWeight?: number;
   selectionModel: string;
 };
+
+/**
+ * Fields editable from the admin console's Edit Contest tab. A subset of
+ * OpenMicContest's writable surface — PATCH /api/admin/open-mic/contests/:id
+ * (updateContest) accepts more (recurrence, prizes, beat, playlist), but
+ * those aren't exposed here yet. votingConfig/finale are whole-object
+ * replacements server-side (no deep merge), so the caller must send the
+ * complete sub-object, not a partial one.
+ */
+export type OpenMicContestEditInput = Partial<{
+  title: string;
+  description: string;
+  status: string;
+  visibility: string;
+  registrationFeeNgn: number;
+  entryFeeRequired: boolean;
+  votingConfig: OpenMicContest['votingConfig'];
+  finale: OpenMicContest['finale'];
+  finalistsTarget: number;
+  judgeWeight: number;
+  publicVoteWeight: number;
+  selectionModel: string;
+}>;
 
 export type OpenMicApplicationRow = {
   id: string;
@@ -148,6 +187,28 @@ export async function listOpenMicContests(): Promise<OpenMicContest[]> {
 export async function getOpenMicContest(id: string): Promise<OpenMicContest | null> {
   const json = await getJson<{ contest: OpenMicContest | null }>(`/api/admin/open-mic/contests/${id}`, 'Open Mic contest');
   return json.contest ?? null;
+}
+
+/**
+ * PATCH /api/admin/open-mic/contests/:id (assertOpenMicAdmin — write access,
+ * stricter than the read-only assertOpenMicReadAdmin the GET above uses).
+ * Already existed server-side; this is the first client wiring for it.
+ */
+export async function updateOpenMicContest(
+  id: string,
+  patch: OpenMicContestEditInput,
+): Promise<OpenMicContest> {
+  const res = await fetch(`${webBase()}/api/admin/open-mic/contests/${id}`, {
+    method: 'PATCH',
+    headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+    body: JSON.stringify(patch),
+  });
+  const json = (await res.json().catch(() => ({}))) as { success?: boolean; contest?: OpenMicContest; error?: string };
+  if (res.status === 401) throw new Error('Update contest failed: 401 — sign in again.');
+  if (res.status === 403) throw new Error('Update contest failed: 403 — this account cannot edit Open Mic contests.');
+  if (res.status === 404) throw new Error('Update contest failed: contest not found.');
+  if (!res.ok || !json.contest) throw new Error(`Update contest failed: ${json.error || res.status}`);
+  return json.contest;
 }
 
 export async function listOpenMicApplications(contestId: string): Promise<OpenMicApplicationRow[]> {

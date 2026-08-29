@@ -10,7 +10,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import { goBack } from '@/lib/navigation';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { ChevronLeft, CircleCheck, Circle, Clock } from 'lucide-react-native';
+import { ChevronLeft, ChevronRight, CircleCheck, Circle, Clock, Home } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
 import { Spacing } from '@/constants/spacing';
@@ -32,7 +32,10 @@ export default function FilmAcademyLessonScreen() {
   });
 
   const modules = data?.modules ?? [];
-  const lesson = modules.flatMap((m) => m.lessons).find((l) => l.id === lessonId) ?? null;
+  const flatLessons = modules.flatMap((m) => m.lessons);
+  const lessonIndex = flatLessons.findIndex((l) => l.id === lessonId);
+  const lesson = lessonIndex >= 0 ? flatLessons[lessonIndex] : null;
+  const nextLesson = lessonIndex >= 0 ? flatLessons[lessonIndex + 1] ?? null : null;
   const moduleTitle = modules.find((m) => m.lessons.some((l) => l.id === lessonId))?.title ?? '';
 
   const toggle = async () => {
@@ -131,6 +134,27 @@ export default function FilmAcademyLessonScreen() {
                 </>
               )}
             </Pressable>
+
+            {/* Continue to the next lesson (which may be in the next module —
+                flatLessons is flattened across modules in curriculum order), or
+                once this is the last lesson, back to the academy home. */}
+            {nextLesson ? (
+              <Pressable
+                onPress={() => router.push(`/film-academy/lesson/${nextLesson.id}`)}
+                style={styles.nextBtn}
+              >
+                <Text style={styles.nextBtnText} numberOfLines={1}>Next: {nextLesson.title}</Text>
+                <ChevronRight size={18} color={Colors.onPrimary} />
+              </Pressable>
+            ) : (
+              <Pressable
+                onPress={() => router.replace('/film-academy')}
+                style={styles.nextBtn}
+              >
+                <Home size={18} color={Colors.onPrimary} />
+                <Text style={styles.nextBtnText}>Back to Academy</Text>
+              </Pressable>
+            )}
           </>
         )}
       </ScrollView>
@@ -165,4 +189,9 @@ const styles = StyleSheet.create({
   markBtnDone: { borderColor: Colors.teal },
   markBtnBusy: { opacity: 0.6 },
   markBtnText: { ...Typography.labelLg, color: Colors.onSurface },
+
+  nextBtn:     { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: Spacing.sm,
+                 backgroundColor: Colors.primary, borderRadius: Radius.md, paddingVertical: Spacing.md,
+                 marginTop: Spacing.sm },
+  nextBtnText: { ...Typography.labelLg, color: Colors.onPrimary, flexShrink: 1 },
 });

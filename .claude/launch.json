@@ -75,6 +75,20 @@
       "cwd": "frontend-web",
       "port": 3010,
       "description": "Same app on a side port so a worktree can be verified without stopping the main checkout's :3000 server."
+    },
+    {
+      "name": "admin-worktree",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": [
+        "run",
+        "dev",
+        "--",
+        "--port",
+        "3011"
+      ],
+      "cwd": "frontend-admin",
+      "port": 3011,
+      "description": "Same admin console on a side port so a worktree can be verified without stopping the main checkout's :3001 server."
     }
   ]
 }

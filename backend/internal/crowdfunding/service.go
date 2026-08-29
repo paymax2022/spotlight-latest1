@@ -116,16 +116,29 @@ func (s *Service) Get(ctx context.Context, id string) (*Campaign, error) {
 	)
 }
 
-// Contribute escrows a contributor's funds toward a campaign.
-// If the campaign goal is now met, the campaign transitions to "funded".
+// Contribute escrows a contributor's funds toward a campaign, then immediately
+// settles the 90/10 split (creator/platform) so the contribution is available
+// in the creator's wallet on arrival — no goal-gated escrow hold. This is a
+// deliberate product choice (donation/GoFundMe-style "keep what you raise",
+// not Kickstarter-style all-or-nothing): a campaign that later fails to reach
+// its goal has no refund path for money already settled here. The one
+// remaining checkpoint is admin campaign review — reviewStatus must already be
+// ACTIVE, which is why that's checked here in addition to the funding-cycle
+// status (Publish() can flip status to 'active' without going through review;
+// requiring reviewStatus too closes that gap rather than relying on Publish()
+// alone). If the campaign goal is now met, it also transitions to "funded".
 func (s *Service) Contribute(ctx context.Context, campaignID, contributorID string, req ContributeRequest) (*Contribution, error) {
-	var status string
+	var status, reviewStatus, creatorID string
 	var deadline time.Time
-	if err := s.db.QueryRow(ctx, `SELECT status, deadline FROM campaigns WHERE id=$1`, campaignID).Scan(&status, &deadline); err != nil {
+	if err := s.db.QueryRow(ctx, `SELECT status, review_status, creator_id, deadline FROM campaigns WHERE id=$1`, campaignID).
+		Scan(&status, &reviewStatus, &creatorID, &deadline); err != nil {
 		return nil, fmt.Errorf("crowdfunding: campaign not found")
 	}
 	if status != "active" {
 		return nil, fmt.Errorf("crowdfunding: campaign is not accepting contributions")
+	}
+	if reviewStatus != "ACTIVE" {
+		return nil, fmt.Errorf("crowdfunding: campaign has not passed admin review")
 	}
 	if time.Now().After(deadline) {
 		return nil, fmt.Errorf("crowdfunding: campaign deadline has passed")
@@ -152,6 +165,22 @@ func (s *Service) Contribute(ctx context.Context, campaignID, contributorID stri
 		VALUES ($1,$2,$3,$4,'escrowed',$5,$6)`
 	if _, err := s.db.Exec(ctx, insertC, contrib.ID, contrib.CampaignID, contrib.ContributorID, contrib.AmountKobo, contrib.IdempotencyKey, contrib.SettlementID); err != nil {
 		return nil, fmt.Errorf("crowdfunding: insert contribution: %w", err)
+	}
+
+	// Settle immediately (90% creator / 10% platform) rather than waiting for
+	// Release() at goal-completion. The contribution itself is already recorded
+	// (money is accounted for either way); a settle failure here is logged and
+	// left 'escrowed' rather than failing the whole call — there is no unwind
+	// for money the contributor has already paid.
+	split := settlement.Split{ProviderID: creatorID, ProviderPct: 0.90, PlatformPct: 0.10}
+	if err := s.settlement.Settle(ctx, contrib.SettlementID, split); err != nil {
+		log.Printf("[crowdfunding] instant settle failed for contribution %s (left escrowed, needs manual sweep): %v", contrib.ID, err)
+	} else if _, err := s.db.Exec(ctx, `UPDATE contributions SET status='released' WHERE id=$1`, contrib.ID); err != nil {
+		log.Printf("[crowdfunding] settled contribution %s but failed to flip status to released: %v", contrib.ID, err)
+	} else {
+		contrib.Status = "released"
+		creatorRef := creatorID
+		s.recordCommissionSafe(ctx, "Community", "Crowdfunding", "", contrib.AmountKobo, contrib.ID, &creatorRef)
 	}
 
 	s.checkAndMarkFunded(ctx, campaignID)

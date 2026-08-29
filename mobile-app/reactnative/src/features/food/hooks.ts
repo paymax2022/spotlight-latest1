@@ -3,7 +3,8 @@
 // share caching / loading / error contracts. Money mutations attach
 // Idempotency-Keys (generated here, never reused across retries by the caller).
 
-import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMemo } from 'react';
+import { useInfiniteQuery, useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import * as food from './api';
 import { newIdempotencyKey, toFoodError } from './utils';
 import type { OrderRole, OrderStatus, PlaceOrderRequest, RateOrderRequest, LatLng } from './types';
@@ -11,8 +12,42 @@ import type { OrderRole, OrderStatus, PlaceOrderRequest, RateOrderRequest, LatLn
 const KEY = 'food';
 
 // ─── Discovery ────────────────────────────────────────────────────────────────
-export function useRestaurants() {
-  return useQuery({ queryKey: [KEY, 'restaurants'], queryFn: food.listRestaurants, staleTime: 30_000 });
+
+/**
+ * The paged restaurant list, with search and cuisine applied SERVER-side.
+ *
+ * Discovery is 2,016 open rows; the screens used to hold all of them and filter
+ * locally. Paging without moving the filters too would have been worse than the
+ * original: a search would only ever match the rows already downloaded.
+ *
+ * Returns the flattened list plus `total` (all matches, not just the loaded
+ * ones) so a screen can honestly say "showing 20 of 137".
+ */
+export function useRestaurantSearch(params: food.RestaurantQuery = {}) {
+  const { q = '', cuisine = '', sort, promo = false } = params;
+  const query = useInfiniteQuery({
+    // Every filter is in the key: a page fetched under one set of filters must
+    // never be served for another.
+    queryKey: [KEY, 'restaurants', { q, cuisine, sort: sort ?? 'newest', promo }],
+    queryFn: ({ pageParam }) => food.listRestaurants({ q, cuisine, sort, promo, offset: pageParam }),
+    initialPageParam: 0,
+    // Page by the offset the SERVER reports it served, never by a locally
+    // accumulated count: the two diverge the moment a row is added or removed
+    // between requests, which is how paged lists start skipping items.
+    getNextPageParam: (last) => (last.hasMore ? last.offset + last.items.length : undefined),
+    staleTime: 30_000,
+  });
+
+  const pages = query.data?.pages;
+  const items = useMemo(() => (pages ?? []).flatMap((p) => p.items), [pages]);
+
+  return {
+    ...query,
+    items,
+    // The LAST page's count, not the first's: the total is re-read on every
+    // request, so an older page carries a staler figure.
+    total: pages?.[pages.length - 1]?.total ?? 0,
+  };
 }
 
 export function useRestaurant(id?: string) {
@@ -86,11 +121,19 @@ export function useOrder(orderId?: string, options?: { poll?: boolean }) {
   });
 }
 
-export function useOrders(role: OrderRole, options?: { poll?: boolean }) {
+/**
+ * The caller's orders for one role.
+ *
+ * `pollMs` exists so a screen with a live socket can keep a SLOW poll as a
+ * safety net instead of choosing between 6s-forever and nothing: the merchant
+ * queue backs off to 60s once its socket connects. Defaults to the original 6s,
+ * so every existing caller is unchanged.
+ */
+export function useOrders(role: OrderRole, options?: { poll?: boolean; pollMs?: number }) {
   return useQuery({
     queryKey: [KEY, 'orders', role],
     queryFn: () => food.listOrders(role),
-    refetchInterval: options?.poll ? 6_000 : false,
+    refetchInterval: options?.poll ? (options.pollMs ?? 6_000) : false,
     staleTime: 5_000,
   });
 }

@@ -17,22 +17,36 @@ interface Props {
    * accurately instead of a number that may not apply to it.
    */
   freeVotesPerDay?: number;
+  /**
+   * Contest-specific rules/policies text an admin set for THIS contest
+   * (public.contests.rules_text). When present, shown as its own section
+   * ahead of the platform defaults below — it supplements them, it doesn't
+   * replace them, since the defaults (refund policy, anti-fraud) still apply
+   * to every contest regardless of what a contest-specific note says.
+   */
+  rulesText?: string;
 }
 
-export default function VotingRulesCard({ freeVotesPerDay }: Props) {
+export default function VotingRulesCard({ freeVotesPerDay, rulesText }: Props) {
   const [openIdx, setOpenIdx] = useState<number | null>(0);
 
   const sections = useMemo(() => {
-    if (freeVotesPerDay === undefined) return VOTING_RULES;
-    const freeVoteRule = freeVotesPerDay > 0
-      ? `You get ${freeVotesPerDay} free vote${freeVotesPerDay === 1 ? '' : 's'} per day per contest.`
-      : 'This contest does not offer free votes — all votes are paid.';
-    return VOTING_RULES.map((section) => (
-      section.title === 'Free Voting'
-        ? { ...section, rules: [freeVoteRule, ...section.rules.slice(1)] }
-        : section
-    ));
-  }, [freeVotesPerDay]);
+    let base = VOTING_RULES;
+    if (freeVotesPerDay !== undefined) {
+      const freeVoteRule = freeVotesPerDay > 0
+        ? `You get ${freeVotesPerDay} free vote${freeVotesPerDay === 1 ? '' : 's'} per day per contest.`
+        : 'This contest does not offer free votes — all votes are paid.';
+      base = base.map((section) => (
+        section.title === 'Free Voting'
+          ? { ...section, rules: [freeVoteRule, ...section.rules.slice(1)] }
+          : section
+      ));
+    }
+    if (rulesText?.trim()) {
+      return [{ title: 'Contest Rules', rules: [rulesText.trim()] }, ...base];
+    }
+    return base;
+  }, [freeVotesPerDay, rulesText]);
 
   return (
     <View style={[styles.card, shadow1]}>

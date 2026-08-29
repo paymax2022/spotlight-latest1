@@ -26,7 +26,7 @@ export const MOCK_CONTESTS: Contest[] = [
     paidVotingEnabled: true,
     sponsorName: 'MTN Nigeria',
     prizes: ['₦5,000,000 Grand Prize', '₦2,000,000 Runner Up', '₦500,000 People\'s Choice'],
-    rules: ['18+ only', 'Nigerian citizens only', 'One entry per category'],
+    rulesText: '18+ only. Nigerian citizens only. One entry per category.',
     // Fully visible (admin defaults). Listed explicitly for parity/demo clarity.
     showVoteCount: true,
     showLeaderboard: true,
@@ -48,7 +48,6 @@ export const MOCK_CONTESTS: Contest[] = [
     paidVotingEnabled: true,
     sponsorName: 'House of Tara',
     prizes: ['₦3,000,000 Grand Prize', '₦1,000,000 Runner Up'],
-    rules: [],
   },
   {
     id: 'c3',
@@ -64,7 +63,6 @@ export const MOCK_CONTESTS: Contest[] = [
     freeVotesPerDay: 1,
     paidVotingEnabled: true,
     prizes: ['₦2,000,000 Grand Prize'],
-    rules: [],
   },
   {
     id: 'c4',
@@ -80,7 +78,6 @@ export const MOCK_CONTESTS: Contest[] = [
     freeVotesPerDay: 1,
     paidVotingEnabled: true,
     prizes: ['₦4,000,000 Grand Prize'],
-    rules: [],
   },
   {
     // Demo: admin has HIDDEN the leaderboard and ranks during the audition phase.
@@ -97,7 +94,6 @@ export const MOCK_CONTESTS: Contest[] = [
     freeVotesPerDay: 1,
     paidVotingEnabled: true,
     prizes: ['₦5,000,000 Grand Prize'],
-    rules: [],
     showVoteCount: true,
     showLeaderboard: false,
     showRank: false,
@@ -118,7 +114,6 @@ export const MOCK_CONTESTS: Contest[] = [
     freeVotesPerDay: 1,
     paidVotingEnabled: true,
     prizes: ['₦2,000,000 Grand Prize'],
-    rules: [],
     showVoteCount: false,
     showLeaderboard: true,
     showRank: true,

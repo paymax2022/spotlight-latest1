@@ -56,8 +56,11 @@ func buildDiscoveryWhere(q CampaignQuery, startIdx int) (string, []any) {
 	}
 	if q.Status != "" {
 		add("c.review_status = $%d", q.Status)
-	} else if q.Collection != "" || q.Search != "" || q.Category != "" {
-		// Public discovery only shows live campaigns.
+	} else {
+		// Public discovery only shows live campaigns — unconditionally, so an
+		// unfiltered call (no collection/category/search, i.e. "give me every
+		// active campaign") doesn't fall through with no review_status guard at
+		// all and return PENDING_REVIEW/DRAFT/etc. campaigns to the public.
 		conds = append(conds, "c.review_status = 'ACTIVE'")
 	}
 	if q.Search != "" {

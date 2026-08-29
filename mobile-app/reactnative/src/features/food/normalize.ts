@@ -127,7 +127,11 @@ export function mapRestaurant(input: unknown): Restaurant {
     // fee look like free delivery on both the store page and checkout — leaving
     // it undefined forces callers to treat it as unknown.
 
-    promo: null,
+    // The server sends `has_promo` — a boolean saying an offer is live right now
+    // — not the offer's terms: a discount is validated and priced server-side at
+    // PlaceOrder, and this is only the discovery badge. So the label is generic
+    // rather than a percentage the app would be inventing.
+    promo: pick(raw, 'hasPromo', 'has_promo') === true ? 'Offer' : null,
 
     icon: visual.icon,
     iconColor: visual.color,

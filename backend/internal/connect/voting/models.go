@@ -29,6 +29,7 @@ type Contest struct {
 	OpensAt           *time.Time `json:"opens_at,omitempty"`
 	ClosesAt          *time.Time `json:"closes_at,omitempty"`
 	CreatedAt         time.Time  `json:"created_at"`
+	RulesText         string     `json:"rules_text,omitempty"`
 
 	// Roster/tally summary, populated by the list + detail queries so a client
 	// rendering a contest card does not have to fetch the whole roster to show

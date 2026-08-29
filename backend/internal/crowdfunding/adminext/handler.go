@@ -103,8 +103,9 @@ func (h *Handler) ListWithdrawals(c *gin.Context) {
 
 // ApproveWithdrawal — POST /withdrawals/:id/approve.
 //
-// MONEY-PATH: releases campaign escrow to the payout-clearing account and marks
-// the withdrawal COMPLETED. Requires an Idempotency-Key header (fail-closed).
+// MONEY-PATH: debits the creator's own settled wallet balance to the
+// payout-clearing account and marks the withdrawal COMPLETED. Requires an
+// Idempotency-Key header (fail-closed).
 func (h *Handler) ApproveWithdrawal(c *gin.Context) {
 	idempotencyKey := c.GetHeader("Idempotency-Key")
 	if idempotencyKey == "" {
@@ -116,7 +117,7 @@ func (h *Handler) ApproveWithdrawal(c *gin.Context) {
 		switch {
 		case errors.Is(err, ErrWithdrawalNotFound):
 			c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
-		case errors.Is(err, ErrWithdrawalIllegalState):
+		case errors.Is(err, ErrWithdrawalIllegalState), errors.Is(err, ErrInsufficientBalance):
 			c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
 		default:
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})

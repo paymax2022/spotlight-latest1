@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { View, Text, ScrollView, StyleSheet, Pressable, Platform } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
@@ -12,7 +12,8 @@ import { Radius } from '@/constants/radius';
 import { Spacing } from '@/constants/spacing';
 import { Typography } from '@/constants/typography';
 import { shadow1, shadow2 } from '@/constants/shadows';
-import { useRestaurants } from '@/features/food/hooks';
+import { useRestaurantSearch } from '@/features/food/hooks';
+import { useDebouncedValue } from '@/features/food/useDebouncedValue';
 import { useCartStore, cartItemCount } from '@/features/food/cartStore';
 import { formatNairaWhole } from '@/features/food/utils';
 import { DynamicIcon } from '@/features/food/components';
@@ -32,26 +33,21 @@ type Cuisine = (typeof CUISINE_FILTERS)[number]['key'];
  * Browse views reachable from the "Browse" tiles on /services/food, passed in as
  * ?view=. Each one re-orders or narrows the same restaurant list — they are not
  * separate screens, so the cuisine chips and search keep working on top of them.
+ *
+ * Each view is expressed as SERVER query params. They used to be applied to an
+ * in-memory copy of the whole list, which stopped being possible once the list
+ * was paged: sorting or filtering only the rows already downloaded would have
+ * shown a "Popular" tab of whichever 20 restaurants happened to load first.
  */
 const BROWSE_VIEWS = {
-  nearby:  { label: 'Nearby',  icon: 'MapPin' },
-  popular: { label: 'Popular', icon: 'Flame' },
-  offers:  { label: 'Offers',  icon: 'Tag' },
+  nearby:  { label: 'Nearby',  icon: 'MapPin', params: { sort: 'eta' } },
+  popular: { label: 'Popular', icon: 'Flame',  params: { sort: 'rating' } },
+  offers:  { label: 'Offers',  icon: 'Tag',    params: { promo: true } },
 } as const;
 type BrowseView = keyof typeof BROWSE_VIEWS;
 
 function asBrowseView(v: unknown): BrowseView | null {
   return typeof v === 'string' && v in BROWSE_VIEWS ? (v as BrowseView) : null;
-}
-
-/**
- * Lower bound of an ETA label ("20–30 min" → 20) for the Nearby sort. There is
- * no distance on Restaurant, and ETA is what the cards already show, so sorting
- * by it is the honest proxy for "closest to you". Unparseable labels sort last.
- */
-function etaMinutes(label: string): number {
-  const m = label.match(/\d+/);
-  return m ? Number(m[0]) : Number.MAX_SAFE_INTEGER;
 }
 
 function StarRow({ rating }: { rating: number }) {
@@ -142,7 +138,6 @@ export default function FoodDiscoveryScreen() {
   const [cuisine, setCuisine] = useState<Cuisine>('all');
   const [search, setSearch] = useState('');
   const [view, setView] = useState<BrowseView | null>(() => asBrowseView(params.view));
-  const { data, isLoading, isError, refetch } = useRestaurants();
   const cartPackages = useCartStore((s) => s.packages);
   const cartCount = cartItemCount(cartPackages);
 
@@ -153,28 +148,26 @@ export default function FoodDiscoveryScreen() {
     setView(asBrowseView(params.view));
   }, [params.view]);
 
-  const filtered = useMemo(() => {
-    const list = (data ?? []).filter((r) => {
-      const matchesCuisine = cuisine === 'all' || r.cuisine === cuisine;
-      const q = search.toLowerCase();
-      const matchesSearch =
-        !search || r.name.toLowerCase().includes(q) || r.tags.some((t) => t.toLowerCase().includes(q));
-      const matchesView = view !== 'offers' || Boolean(r.promo);
-      return matchesCuisine && matchesSearch && matchesView;
-    });
-
-    // Open restaurants always outrank closed ones; the view decides the rest.
-    const byView =
-      view === 'nearby'
-        ? (a: Restaurant, b: Restaurant) => etaMinutes(a.etaLabel) - etaMinutes(b.etaLabel)
-        : view === 'popular'
-          ? (a: Restaurant, b: Restaurant) => b.rating - a.rating || (b.ratingCount ?? 0) - (a.ratingCount ?? 0)
-          : null;
-    if (!byView) return list;
-    return [...list].sort((a, b) => Number(b.isOpen) - Number(a.isOpen) || byView(a, b));
-  }, [data, cuisine, search, view]);
-
   const viewMeta = view ? BROWSE_VIEWS[view] : null;
+  const debouncedSearch = useDebouncedValue(search);
+
+  // Every filter is a SERVER param. `restaurants` below is the pages loaded so
+  // far; `total` is every match, which is what the counts must report — saying
+  // "20 open" while 2,016 match would be worse than saying nothing.
+  const {
+    items: restaurants,
+    total,
+    isLoading,
+    isError,
+    refetch,
+    fetchNextPage,
+    hasNextPage,
+    isFetchingNextPage,
+  } = useRestaurantSearch({
+    q: debouncedSearch,
+    cuisine: cuisine === 'all' ? '' : cuisine,
+    ...(viewMeta?.params ?? {}),
+  });
 
   return (
     <SafeAreaView style={s.safe} edges={['top']}>
@@ -183,14 +176,26 @@ export default function FoodDiscoveryScreen() {
           <Icons.ArrowLeft size={22} color={Colors.primary} strokeWidth={2.2} />
         </Pressable>
         <Text style={s.topTitle}>Food & Delivery</Text>
-        <Pressable
-          style={s.iconButton}
-          onPress={() => router.push('/food/orders')}
-          accessibilityRole="button"
-          accessibilityLabel="My orders"
-        >
-          <Icons.ReceiptText size={21} color={Colors.primary} strokeWidth={2} />
-        </Pressable>
+        <View style={s.topActions}>
+          {/* The owner console has always lived at /food/restaurant/* with nothing
+              linking to it from the customer screens. */}
+          <Pressable
+            style={s.iconButton}
+            onPress={() => router.push('/food/restaurant')}
+            accessibilityRole="button"
+            accessibilityLabel="Restaurant owner dashboard"
+          >
+            <Icons.Store size={21} color={Colors.primary} strokeWidth={2} />
+          </Pressable>
+          <Pressable
+            style={s.iconButton}
+            onPress={() => router.push('/food/orders')}
+            accessibilityRole="button"
+            accessibilityLabel="My orders"
+          >
+            <Icons.ReceiptText size={21} color={Colors.primary} strokeWidth={2} />
+          </Pressable>
+        </View>
       </View>
 
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={s.content}>
@@ -234,7 +239,11 @@ export default function FoodDiscoveryScreen() {
                 ? 'All Restaurants'
                 : CUISINE_FILTERS.find((f) => f.key === cuisine)?.label}
           </Text>
-          {!isLoading && !isError ? <Text style={s.sectionMeta}>{filtered.filter((r) => r.isOpen).length} open</Text> : null}
+          {!isLoading && !isError ? (
+            <Text style={s.sectionMeta}>
+              {restaurants.length < total ? `${restaurants.length} of ${total.toLocaleString('en-NG')}` : `${total.toLocaleString('en-NG')} open`}
+            </Text>
+          ) : null}
         </View>
 
         <View style={s.list}>
@@ -242,14 +251,14 @@ export default function FoodDiscoveryScreen() {
             <StateView kind="loading" message="Finding restaurants near you…" />
           ) : isError ? (
             <StateView kind="error" title="Couldn't load restaurants" message="Check your connection and try again." actionLabel="Retry" onAction={() => refetch()} />
-          ) : filtered.length === 0 ? (
+          ) : restaurants.length === 0 ? (
             <StateView
               kind="empty"
               icon="SearchX"
               title="No restaurants found"
               message={
-                search
-                  ? `Nothing matches "${search}".`
+                debouncedSearch
+                  ? `Nothing matches "${debouncedSearch}".`
                   : view === 'offers'
                     ? 'No restaurants are running offers right now.'
                     : 'Try a different cuisine filter.'
@@ -258,9 +267,26 @@ export default function FoodDiscoveryScreen() {
               onAction={viewMeta ? () => setView(null) : undefined}
             />
           ) : (
-            filtered.map((item) => (
-              <RestaurantCard key={item.id} item={item} onPress={() => router.push(`/food/restaurant/${item.id}`)} />
-            ))
+            <>
+              {restaurants.map((item) => (
+                <RestaurantCard key={item.id} item={item} onPress={() => router.push(`/food/restaurant/${item.id}`)} />
+              ))}
+              {hasNextPage ? (
+                <Pressable
+                  onPress={() => fetchNextPage()}
+                  disabled={isFetchingNextPage}
+                  style={({ pressed }) => [s.loadMore, pressed && { opacity: 0.85 }, isFetchingNextPage && { opacity: 0.6 }]}
+                  accessibilityRole="button"
+                  accessibilityLabel="Load more restaurants"
+                >
+                  <Text style={s.loadMoreLabel}>
+                    {isFetchingNextPage ? 'Loading…' : `Load more (${(total - restaurants.length).toLocaleString('en-NG')} left)`}
+                  </Text>
+                </Pressable>
+              ) : (
+                <Text style={s.listEnd}>That's all {total.toLocaleString('en-NG')} of them.</Text>
+              )}
+            </>
           )}
         </View>
       </ScrollView>
@@ -290,6 +316,7 @@ const s = StyleSheet.create({
     borderBottomColor: Colors.surfaceContainerHigh,
   },
   iconButton: { width: 40, height: 40, borderRadius: Radius.full, alignItems: 'center', justifyContent: 'center', backgroundColor: Colors.surfaceContainerLow },
+  topActions: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm },
   topTitle: { ...Typography.titleLg, color: Colors.primary },
   content: { paddingTop: Spacing.lg, paddingBottom: Platform.OS === 'ios' ? 140 : 120 },
   hero: { minHeight: 172, borderRadius: Radius.xl, padding: Spacing.cardPadding, justifyContent: 'flex-end', marginHorizontal: Spacing.containerMargin, marginBottom: Spacing.lg },
@@ -317,6 +344,18 @@ const s = StyleSheet.create({
   sectionTitle: { ...Typography.titleLg, color: Colors.onSurface },
   sectionMeta: { ...Typography.labelMd, color: Colors.secondary },
   list: { paddingHorizontal: Spacing.containerMargin, paddingTop: Spacing.sm, minHeight: 200 },
+  loadMore: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: Spacing.md,
+    borderRadius: Radius.lg,
+    borderWidth: 1,
+    borderColor: Colors.outlineVariant,
+    backgroundColor: Colors.surfaceContainerLowest,
+    marginBottom: Spacing.md,
+  },
+  loadMoreLabel: { ...Typography.labelMd, color: Colors.primary },
+  listEnd: { ...Typography.labelSm, color: Colors.onSurfaceVariant, textAlign: 'center', paddingVertical: Spacing.md },
   cartBar: {
     position: 'absolute',
     left: Spacing.containerMargin,
