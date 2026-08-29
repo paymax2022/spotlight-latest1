@@ -87,7 +87,6 @@ function initialForm(): FormState {
     legalAdultAge: 18, supportsVoting: false, supportsAuditionScheduling: false,
     supportsGroupEntry: false, supportsSchoolEntry: false, requiresGuardianConsentForMinors: false,
     requiresMedical: false, requiresBootcampReadiness: false, auditionStates: [], applicantCategories: [],
-    bannerImageUrl: '',
   };
 }
 
@@ -169,7 +168,6 @@ function CreateCompetitionContent() {
         requiresGuardianConsentForMinors: c.requiresGuardianConsentForMinors,
         requiresMedical: c.requiresMedical, requiresBootcampReadiness: c.requiresBootcampReadiness,
         auditionStates: c.auditionStates ?? [], applicantCategories: c.applicantCategories ?? [],
-        bannerImageUrl: c.bannerImageUrl ?? '',
       });
       if (c.status) setStatusState(c.status as ContestPublishStatus);
       if (c.id) setContestId(c.id);
@@ -450,27 +448,6 @@ function CreateCompetitionContent() {
             <label style={labelStyle}>Season / edition</label>
             <Input style={{ width: '100%' }} value={form.seasonOrEdition} onChange={(e) => setForm((f) => ({ ...f, seasonOrEdition: e.target.value }))} />
           </div>
-        </div>
-
-        <div style={{ marginBottom: 12 }}>
-          <label style={labelStyle}>Banner image URL</label>
-          <Input
-            style={{ width: '100%' }}
-            value={form.bannerImageUrl ?? ''}
-            placeholder="https://…"
-            onChange={(e) => setForm((f) => ({ ...f, bannerImageUrl: e.target.value }))}
-          />
-          <p style={{ margin: '4px 0 0', fontSize: 11, color: colors.muted }}>
-            Shown on the mobile contest list and detail screens. Leave blank for the default placeholder tile.
-          </p>
-          {form.bannerImageUrl ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img
-              src={form.bannerImageUrl}
-              alt=""
-              style={{ marginTop: 8, maxWidth: 320, height: 120, objectFit: 'cover', borderRadius: 8, border: `1px solid ${colors.border}` }}
-            />
-          ) : null}
         </div>
 
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12, marginBottom: 12 }}>

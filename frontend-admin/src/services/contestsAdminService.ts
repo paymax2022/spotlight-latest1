@@ -88,8 +88,6 @@ export interface FullContest {
   auditionStates: string[];
   applicantCategories: string[];
   status?: string;
-  /** URL of the banner image shown on the mobile contest list/detail screens. */
-  bannerImageUrl?: string;
 }
 
 async function readJsonOrThrow(res: Response, label: string): Promise<Record<string, unknown>> {
