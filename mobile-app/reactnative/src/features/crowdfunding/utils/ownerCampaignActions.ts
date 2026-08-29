@@ -18,7 +18,7 @@ import type { Campaign, CampaignStatus } from '../types/crowdfunding.types';
 /** Fields the gates need — a subset so callers can pass a list row. */
 export type OwnerCampaign = Pick<
   Campaign,
-  'status' | 'raisedKobo' | 'contributorCount' | 'featured'
+  'status' | 'paused' | 'raisedKobo' | 'contributorCount' | 'featured'
 > & Partial<Pick<Campaign, 'featureRequestStatus'>>;
 
 export interface ActionGate {
@@ -32,6 +32,13 @@ const deny = (reason: string): ActionGate => ({ allowed: false, reason });
 
 /** Frozen is a moderation lock: only Trust & Safety can lift it. */
 const FROZEN_REASON = 'This campaign is frozen by Trust & Safety. Contact support to have it reviewed.';
+
+/**
+ * Pausing is a BOOLEAN alongside the status, not a status of its own, so every
+ * gate here reads the two independently. The important consequence is in
+ * `canResume`: a campaign that was paused and then frozen stays paused, and its
+ * owner must not be offered a Resume that would amount to lifting the freeze.
+ */
 
 /** Statuses where the campaign's funding run is over for good. */
 const TERMINAL: CampaignStatus[] = ['COMPLETED', 'EXPIRED', 'CANCELLED'];
@@ -69,16 +76,21 @@ export function canEdit(c: OwnerCampaign): ActionGate {
 }
 
 export function canPause(c: OwnerCampaign): ActionGate {
-  if (c.status === 'ACTIVE') return ALLOW;
-  if (c.status === 'PAUSED') return deny('Already paused.');
+  if (c.paused) return deny('Already paused.');
   if (c.status === 'FROZEN') return deny(FROZEN_REASON);
-  return deny('Only a live campaign can be paused.');
+  if (c.status !== 'ACTIVE') return deny('Only a live campaign can be paused.');
+  return ALLOW;
 }
 
 export function canResume(c: OwnerCampaign): ActionGate {
-  if (c.status === 'PAUSED') return ALLOW;
+  if (!c.paused) return deny('This campaign is not paused.');
+  // Frozen FIRST: the freeze is what blocks the resume, and saying anything
+  // else would imply the owner could restore the campaign themselves.
   if (c.status === 'FROZEN') return deny(FROZEN_REASON);
-  return deny('This campaign is not paused.');
+  if (c.status !== 'ACTIVE') {
+    return deny('This campaign is no longer live, so there is nothing to resume it to.');
+  }
+  return ALLOW;
 }
 
 export function canDelete(c: OwnerCampaign): ActionGate {

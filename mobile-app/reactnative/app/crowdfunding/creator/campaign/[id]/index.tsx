@@ -116,7 +116,7 @@ export default function ManageCampaignScreen() {
   const unfeatureGate = canUnfeature(campaign);
   const fundsGate = canWithdrawFunds(campaign);
   const featureState = featureRequestState(campaign);
-  const paused = campaign.status === 'PAUSED';
+  const paused = campaign.paused;
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
@@ -137,7 +137,7 @@ export default function ManageCampaignScreen() {
 
         <Text style={styles.title}>{campaign.title}</Text>
         <View style={styles.badges}>
-          <CampaignStatusBadge status={campaign.status} />
+          <CampaignStatusBadge status={campaign.status} paused={campaign.paused} />
           {campaign.featured ? (
             <View style={styles.featuredChip}>
               <Star size={12} color={Colors.secondary} strokeWidth={2.4} />
@@ -155,6 +155,9 @@ export default function ManageCampaignScreen() {
             <Text style={styles.infoText}>
               This campaign is paused. It is hidden from discovery and search, and is not accepting
               contributions until you resume it. Funds already raised are unaffected.
+              {campaign.status !== 'ACTIVE'
+                ? ` Its review status is also ${campaign.status.replace('_', ' ').toLowerCase()}, which you cannot change from here.`
+                : ''}
             </Text>
           </View>
         ) : null}

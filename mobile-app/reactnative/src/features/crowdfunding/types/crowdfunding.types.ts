@@ -2,9 +2,12 @@
 // Source of truth the screens code against (Backend role owns this file).
 // IRON RULE: all monetary amounts are integers in minor units (kobo). Never floats.
 
+// The MODERATOR's column (`review_status` server-side). Owner-pausing is NOT a
+// value here — see `Campaign.paused`. Overloading this union would have let a
+// creator's Resume clear an admin's FROZEN fraud stop, and would have thrown
+// away whether a paused campaign was ACTIVE or COMPLETED underneath.
 export type CampaignStatus =
   | 'ACTIVE'
-  | 'PAUSED'          // owner-paused: hidden from public discovery, funds untouched
   | 'DRAFT'
   | 'PENDING_REVIEW'
   | 'COMPLETED'
@@ -166,6 +169,17 @@ export interface Campaign {
   saved?: boolean;
 
   /**
+   * Owner-paused: hidden from public discovery and search, taking no new
+   * contributions. Funds already raised are untouched.
+   *
+   * ORTHOGONAL to `status`, deliberately. A campaign can be ACTIVE *and*
+   * paused; pausing does not move the moderator's column, and resuming
+   * re-checks it, so a campaign frozen while paused cannot be walked back onto
+   * a rail by its owner.
+   */
+  paused: boolean;
+
+  /**
    * State of the owner's request to be featured on the discovery rail.
    * OPTIONAL because it is owner-scoped: the public campaign payload does not
    * carry it. When the server omits it we fall back to `featured` alone (see
@@ -191,6 +205,7 @@ export type CampaignSummary = Pick<
   | 'id' | 'title' | 'summary' | 'type' | 'status' | 'category' | 'categoryLabel'
   | 'coverImage' | 'goalKobo' | 'raisedKobo' | 'currency' | 'contributorCount'
   | 'deadline' | 'verified' | 'featured' | 'trending' | 'urgent' | 'saved' | 'location'
+  | 'paused'
 > & { creatorName: string; creatorType: CreatorType; creatorVerification: VerificationLevel };
 
 // ─── Discovery query params ───────────────────────────────────────────────────

@@ -71,6 +71,7 @@ function toSummary(c: Campaign): CampaignSummary {
     trending: c.trending,
     urgent: c.urgent,
     saved: c.saved,
+    paused: c.paused,
     location: c.location,
     creatorName: c.creator.name,
     creatorType: c.creator.type,
@@ -453,6 +454,11 @@ export async function updateCampaign(id: string, patch: CampaignEditInput): Prom
 /**
  * Pause or resume a campaign. A paused campaign is hidden from public discovery
  * and stops accepting contributions; nothing already raised is affected.
+ *
+ * `paused` is a field of its own, NOT a status — the campaign keeps whatever
+ * review status it had. Resume therefore re-checks that status: a campaign
+ * frozen while it was paused must not be resumable by its owner, or Resume
+ * would quietly become a way to lift a fraud stop.
  */
 export async function setCampaignPaused(id: string, paused: boolean): Promise<Campaign> {
   if (USE_MOCK) {
@@ -460,11 +466,14 @@ export async function setCampaignPaused(id: string, paused: boolean): Promise<Ca
     const c = mockOwned(id);
     // Mirror the server's refusals so mock mode cannot teach a workflow the
     // live backend rejects.
-    if (paused && c.status !== 'ACTIVE') throw new Error('Only a live campaign can be paused.');
-    if (!paused && c.status !== 'PAUSED') throw new Error('This campaign is not paused.');
-    c.status = paused ? 'PAUSED' : 'ACTIVE';
-    // A paused campaign cannot hold a featured slot on the discovery rail.
-    if (paused) c.featured = false;
+    if (paused) {
+      if (c.paused) throw new Error('This campaign is already paused.');
+      if (c.status !== 'ACTIVE') throw new Error('Only a live campaign can be paused.');
+    } else {
+      if (!c.paused) throw new Error('This campaign is not paused.');
+      if (c.status !== 'ACTIVE') throw new Error('This campaign is no longer live and cannot be resumed.');
+    }
+    c.paused = paused;
     return { ...c };
   }
   const res = await api.post(`${LIVE}/creator/campaigns/${id}/${paused ? 'pause' : 'resume'}`);
@@ -585,6 +594,7 @@ export async function submitCampaign(
       trending: false,
       urgent: false,
       saved: false,
+      paused: false,
       budget: draft.budget.map((b) => ({ id: b.id, label: b.label, amountKobo: b.amountKobo, note: null })),
       milestones: draft.milestones.map((m, i) => ({ id: m.id, title: m.title, targetKobo: m.targetKobo, status: i === 0 ? 'ACTIVE' : 'LOCKED', dueAt: null, evidenceCount: 0 })),
       updates: [],

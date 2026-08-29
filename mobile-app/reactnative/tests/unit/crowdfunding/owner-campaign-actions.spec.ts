@@ -3,8 +3,13 @@
 //
 // The two refusals the API states outright are the ones worth pinning: a
 // campaign that has ever received funds cannot be deleted (409), and a feature
-// request needs an ACTIVE campaign. Both are easy to regress into a tap that
-// can only ever fail.
+// request needs an ACTIVE campaign.
+//
+// The third thing pinned here is the orthogonality of `paused` and `status`.
+// Pausing is a boolean beside the moderator's review status, NOT a value in it,
+// so a campaign can be ACTIVE and paused at once — and a campaign frozen while
+// paused must not offer its owner a Resume, which would amount to lifting a
+// fraud stop. That is the regression this file exists to catch.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 // `@/` + extensionless, resolved by tests/unit/ts-path-hooks.mjs.
@@ -16,6 +21,7 @@ import {
 
 const campaign = (over: Partial<OwnerCampaign> = {}): OwnerCampaign => ({
   status: 'ACTIVE',
+  paused: false,
   raisedKobo: 0,
   contributorCount: 0,
   featured: false,
@@ -51,23 +57,42 @@ test('a frozen campaign offers no owner action that lifts the freeze', () => {
   assert.equal(canUnfeature(frozen).allowed, true);
 });
 
-test('pause and resume are offered in exactly one direction each', () => {
-  assert.equal(canPause(campaign({ status: 'ACTIVE' })).allowed, true);
-  assert.equal(canResume(campaign({ status: 'ACTIVE' })).allowed, false);
+test('a campaign frozen WHILE PAUSED cannot be resumed by its owner', () => {
+  // The whole reason pausing is not a status: if Resume keyed off the status
+  // token it would have to write ACTIVE back over FROZEN, handing the creator a
+  // one-tap undo of a fraud stop.
+  const frozenWhilePaused = campaign({ status: 'FROZEN', paused: true });
+  const gate = canResume(frozenWhilePaused);
+  assert.equal(gate.allowed, false);
+  assert.match(gate.reason ?? '', /Trust & Safety/i);
+});
 
-  assert.equal(canPause(campaign({ status: 'PAUSED' })).allowed, false);
-  assert.equal(canResume(campaign({ status: 'PAUSED' })).allowed, true);
+test('pause and resume key off the boolean, not the status token', () => {
+  // ACTIVE and unpaused: pausable, nothing to resume.
+  assert.equal(canPause(campaign({ status: 'ACTIVE', paused: false })).allowed, true);
+  assert.equal(canResume(campaign({ status: 'ACTIVE', paused: false })).allowed, false);
 
+  // ACTIVE and paused — both true at once, which is the orthogonal case.
+  assert.equal(canPause(campaign({ status: 'ACTIVE', paused: true })).allowed, false);
+  assert.equal(canResume(campaign({ status: 'ACTIVE', paused: true })).allowed, true);
+
+  // Pausing is meaningless anywhere the campaign is not live.
   for (const status of ['DRAFT', 'PENDING_REVIEW', 'COMPLETED', 'REJECTED'] as const) {
     assert.equal(canPause(campaign({ status })).allowed, false, `pause offered on ${status}`);
     assert.equal(canResume(campaign({ status })).allowed, false, `resume offered on ${status}`);
+    // …and a paused campaign that has since completed has nothing to go back to.
+    assert.equal(
+      canResume(campaign({ status, paused: true })).allowed,
+      false,
+      `resume offered on paused ${status}`,
+    );
   }
 });
 
 test('a feature request is offered only on a live, unfeatured campaign', () => {
   assert.equal(canRequestFeature(campaign({ status: 'ACTIVE' })).allowed, true);
 
-  for (const status of ['DRAFT', 'PAUSED', 'PENDING_REVIEW', 'COMPLETED', 'REJECTED'] as const) {
+  for (const status of ['DRAFT', 'PENDING_REVIEW', 'COMPLETED', 'REJECTED'] as const) {
     const gate = canRequestFeature(campaign({ status }));
     assert.equal(gate.allowed, false, `feature request offered on ${status}`);
     assert.ok(gate.reason, `no reason given for ${status}`);
@@ -99,7 +124,7 @@ test('withdrawing funds needs funds', () => {
 
 test('editing is closed once the funding run is over', () => {
   assert.equal(canEdit(campaign({ status: 'ACTIVE' })).allowed, true);
-  assert.equal(canEdit(campaign({ status: 'PAUSED' })).allowed, true);
+  assert.equal(canEdit(campaign({ status: 'ACTIVE', paused: true })).allowed, true);
   assert.equal(canEdit(campaign({ status: 'DRAFT' })).allowed, true);
   for (const status of ['COMPLETED', 'EXPIRED', 'CANCELLED', 'REJECTED'] as const) {
     assert.equal(canEdit(campaign({ status })).allowed, false, `edit offered on ${status}`);
