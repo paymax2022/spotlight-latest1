@@ -834,7 +834,7 @@ func TestLiveDB_PublishOrganisation_PersistsFullGraphAndAudit(t *testing.T) {
 	}
 
 	// The published org must also be visible via the discovery read path.
-	orgs, err := svc.GetOrganisations(ctx, orgName)
+	orgs, err := svc.GetOrganisations(ctx, orgName, 0, 0)
 	if err != nil {
 		t.Fatalf("GetOrganisations: %v", err)
 	}
