@@ -29,6 +29,9 @@ import type {
   CfFeaturedCampaign,
   CfCampaignFlags,
   CfFeaturedReport,
+  CfFeatureRequest,
+  CfFeatureRequestStatus,
+  CfFeatureRequestCampaignStatus,
 } from '@/types/crowdfunding';
 
 // Mock is the default. Set NEXT_PUBLIC_CF_USE_MOCK=false to hit the live Go backend
@@ -708,4 +711,155 @@ export async function getFeaturedReport(): Promise<CfFeaturedReport> {
   const res = await fetch(`${adminBase()}/featured/report`, { cache: 'no-store', headers: authHeaders() });
   if (!res.ok) throw new Error(`Featured report failed: ${res.status}`);
   return res.json();
+}
+
+// ─── Feature requests (owner-initiated promotion requests) ───────────────────
+//
+// Backed by GET  /api/crowdfunding/admin/feature-requests
+//           POST /api/crowdfunding/admin/feature-requests/:id/approve
+//           POST /api/crowdfunding/admin/feature-requests/:id/reject   { note }
+//
+// Featuring is not self-serve — an owner can only REQUEST the editorial placement.
+// Approving sets the campaign's `featured` flag, so it inherits the placement rule
+// above: only an ACTIVE campaign can be promoted, and the backend refuses anything
+// else with 409 { error }. The UI gates on `campaignStatus` so an operator is never
+// offered an action guaranteed to fail — but it still surfaces a server error when
+// one arrives, because a campaign can leave ACTIVE between load and click.
+//
+// ⚠️ PROVISIONAL CONTRACT. The backend's feature-request storage is being designed
+// in parallel and the field names / id scheme may land differently. Everything that
+// depends on the wire shape is confined to mapFeatureRequest + the two unwrap
+// helpers below — reconciling means editing THIS block and nothing else.
+
+/** Reads the first present alias. Field-name drift degrades to a default, not a crash. */
+function rawStr(r: Record<string, unknown>, ...keys: string[]): string {
+  for (const k of keys) {
+    const v = r[k];
+    if (typeof v === 'string' && v.trim()) return v.trim();
+    if (typeof v === 'number' && Number.isFinite(v)) return String(v);
+  }
+  return '';
+}
+
+/** Money and counts are integers — parsed as integers, never floats. */
+function rawInt(r: Record<string, unknown>, ...keys: string[]): number {
+  for (const k of keys) {
+    const v = r[k];
+    if (typeof v === 'number' && Number.isFinite(v)) return Math.trunc(v);
+    if (typeof v === 'string' && /^-?\d+$/.test(v.trim())) return parseInt(v.trim(), 10);
+  }
+  return 0;
+}
+
+const REQUEST_STATUSES: readonly string[] = ['PENDING', 'APPROVED', 'REJECTED'];
+const CAMPAIGN_STATUSES: readonly string[] = [
+  'PENDING_REVIEW', 'CHANGES_REQUESTED', 'ACTIVE', 'COMPLETED', 'FROZEN', 'REJECTED',
+];
+
+/** The single place the feature-request wire shape is interpreted. */
+function mapFeatureRequest(raw: unknown): CfFeatureRequest {
+  const r = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
+  const status = rawStr(r, 'status', 'requestStatus', 'request_status').toUpperCase();
+  const campaignStatus = rawStr(r, 'campaignStatus', 'campaign_status').toUpperCase();
+  return {
+    id: rawStr(r, 'id', 'requestId', 'request_id'),
+    campaignId: rawStr(r, 'campaignId', 'campaign_id'),
+    campaignTitle: rawStr(r, 'campaignTitle', 'campaign_title', 'title') || '(untitled campaign)',
+    // An unrecognised status defaults to PENDING: a decided row wrongly shown as
+    // pending is corrected by the next refetch, whereas a pending row wrongly shown
+    // as decided hides real work from the queue.
+    status: (REQUEST_STATUSES.includes(status) ? status : 'PENDING') as CfFeatureRequestStatus,
+    // Fail-closed: anything unrecognised becomes UNKNOWN, which gates approval and
+    // says so, rather than silently mis-gating the row.
+    campaignStatus: (CAMPAIGN_STATUSES.includes(campaignStatus) ? campaignStatus : 'UNKNOWN') as CfFeatureRequestCampaignStatus,
+    raisedKobo: rawInt(r, 'raisedKobo', 'raised_kobo'),
+    goalKobo: rawInt(r, 'goalKobo', 'goal_kobo'),
+    contributorCount: rawInt(r, 'contributorCount', 'contributor_count', 'backers'),
+    requestedBy: rawStr(r, 'requestedBy', 'requested_by', 'requesterName', 'requester_name') || 'Unknown',
+    requestedAt: rawStr(r, 'requestedAt', 'requested_at', 'createdAt', 'created_at'),
+    note: rawStr(r, 'note', 'adminNote', 'admin_note', 'reason') || null,
+    decidedAt: rawStr(r, 'decidedAt', 'decided_at', 'reviewedAt', 'reviewed_at') || null,
+  };
+}
+
+/** Accepts { requests }, { data }, { items } or a bare array. */
+function unwrapRequestList(body: unknown): unknown[] {
+  if (Array.isArray(body)) return body;
+  const b = (body && typeof body === 'object' ? body : {}) as Record<string, unknown>;
+  for (const k of ['requests', 'featureRequests', 'feature_requests', 'data', 'items']) {
+    if (Array.isArray(b[k])) return b[k] as unknown[];
+  }
+  return [];
+}
+
+/** Accepts a bare request object or one wrapped in { request } / { data }. */
+function unwrapRequest(body: unknown): unknown {
+  const b = (body && typeof body === 'object' ? body : {}) as Record<string, unknown>;
+  for (const k of ['request', 'featureRequest', 'feature_request', 'data']) {
+    const v = b[k];
+    if (v && typeof v === 'object' && !Array.isArray(v)) return v;
+  }
+  return b;
+}
+
+const MOCK_FEATURE_REQUESTS: CfFeatureRequest[] = [
+  { id: 'fr1', campaignId: 'my2', campaignTitle: 'New Borehole for Amaeze Community', status: 'PENDING', campaignStatus: 'ACTIVE', raisedKobo: 168_300_000, goalKobo: 240_000_000, contributorCount: 311, requestedBy: 'Chinedu Okafor', requestedAt: '2026-06-20T08:15:00Z', note: null, decidedAt: null },
+  { id: 'fr2', campaignId: 'my3', campaignTitle: 'Restock My Tailoring Shop After Fire', status: 'PENDING', campaignStatus: 'ACTIVE', raisedKobo: 41_200_000, goalKobo: 90_000_000, contributorCount: 74, requestedBy: 'Ngozi Eze', requestedAt: '2026-06-21T14:02:00Z', note: null, decidedAt: null },
+  { id: 'fr3', campaignId: 'my7', campaignTitle: 'Emergency Medical Fund', status: 'PENDING', campaignStatus: 'FROZEN', raisedKobo: 54_000_000, goalKobo: 120_000_000, contributorCount: 96, requestedBy: 'Tunde Adeyemi', requestedAt: '2026-06-19T10:40:00Z', note: null, decidedAt: null },
+  { id: 'fr4', campaignId: 'rv4', campaignTitle: 'Flood Relief for Bayelsa Families', status: 'PENDING', campaignStatus: 'PENDING_REVIEW', raisedKobo: 0, goalKobo: 300_000_000, contributorCount: 0, requestedBy: 'Ibiso Amachree', requestedAt: '2026-06-22T06:30:00Z', note: null, decidedAt: null },
+  { id: 'fr5', campaignId: 'my1', campaignTitle: 'Help Baby Zara Get Open-Heart Surgery', status: 'APPROVED', campaignStatus: 'ACTIVE', raisedKobo: 1_213_400_000, goalKobo: 1_850_000_000, contributorCount: 842, requestedBy: 'Aisha Bello', requestedAt: '2026-06-10T09:00:00Z', note: null, decidedAt: '2026-06-11T09:30:00Z' },
+  { id: 'fr6', campaignId: 'my5', campaignTitle: 'Sponsor a Postgraduate Scholarship', status: 'REJECTED', campaignStatus: 'ACTIVE', raisedKobo: 3_100_000, goalKobo: 400_000_000, contributorCount: 12, requestedBy: 'Femi Balogun', requestedAt: '2026-06-08T11:00:00Z', note: 'Below the traction bar for the discovery rail — reapply past 25% of goal.', decidedAt: '2026-06-09T12:15:00Z' },
+];
+
+export async function listFeatureRequests(status?: string): Promise<CfFeatureRequest[]> {
+  if (USE_MOCK) {
+    await delay();
+    return MOCK_FEATURE_REQUESTS.filter((r) => !status || r.status === status).map((r) => ({ ...r }));
+  }
+  const qs = status ? `?status=${encodeURIComponent(status)}` : '';
+  const res = await fetch(`${adminBase()}/feature-requests${qs}`, { cache: 'no-store', headers: authHeaders() });
+  const body = (await res.json().catch(() => ({}))) as { error?: string };
+  if (!res.ok) throw new Error(body?.error || `Feature requests failed: ${res.status}`);
+  return unwrapRequestList(body).map(mapFeatureRequest);
+}
+
+/**
+ * Approve or reject one request. Returns the request AS THE SERVER SEES IT — the
+ * caller renders that and refetches, so a refusal can never look like a success.
+ *
+ * Approving also sets the campaign's `featured` flag server-side, so callers must
+ * reload the featured list and report too, not just the queue.
+ *
+ * The Idempotency-Key is derived from the request id plus the decision, so a
+ * double-click dedupes at the backend while a distinct decision gets a distinct key.
+ */
+export async function decideFeatureRequest(id: string, approve: boolean, note: string): Promise<CfFeatureRequest> {
+  if (USE_MOCK) {
+    await delay(400);
+    const r = MOCK_FEATURE_REQUESTS.find((x) => x.id === id);
+    if (!r) throw new Error('Feature request not found');
+    if (r.status !== 'PENDING') throw new Error(`this request was already ${r.status.toLowerCase()}`);
+    // Mirror the backend's 409 so mock mode cannot teach an operator a workflow the
+    // live backend refuses.
+    if (approve && r.campaignStatus !== 'ACTIVE') {
+      throw new Error(`only an ACTIVE campaign can be featured (this one is ${r.campaignStatus})`);
+    }
+    r.status = approve ? 'APPROVED' : 'REJECTED';
+    r.note = approve ? null : note.trim() || null;
+    r.decidedAt = new Date().toISOString();
+    if (approve) {
+      const c = MOCK_FEATURED.find((x) => x.id === r.campaignId);
+      if (c) c.featured = true;
+    }
+    return { ...r };
+  }
+
+  const res = await fetch(`${adminBase()}/feature-requests/${encodeURIComponent(id)}/${approve ? 'approve' : 'reject'}`, {
+    method: 'POST',
+    headers: { ...authHeaders(), 'Idempotency-Key': operationKey('crowdfunding:feature-request-decision', id, approve ? 'approve' : 'reject') },
+    ...(approve ? {} : { body: JSON.stringify({ note }) }),
+  });
+  const body = (await res.json().catch(() => ({}))) as { error?: string };
+  if (!res.ok) throw new Error(body?.error || `Feature request ${approve ? 'approval' : 'rejection'} failed (${res.status})`);
+  return mapFeatureRequest(unwrapRequest(body));
 }

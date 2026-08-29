@@ -327,4 +327,50 @@ export interface CfFeaturedReport {
   urgentCount: number;
   activeCount: number;
   featured: CfFeaturedReportEntry[];
+  /**
+   * Outstanding owner feature requests. OPTIONAL — the report endpoint predates
+   * the request queue and may not carry it. When absent the console derives the
+   * number from the queue itself, so the stat card is correct either way.
+   */
+  pendingRequestCount?: number;
+}
+
+// ─── Feature requests (owner-initiated) ──────────────────────────────────────
+// Featuring is deliberately NOT self-serve: `featured` is an editorial placement
+// on the public discovery rail, so a campaign owner can only REQUEST it and an
+// admin approves. (Owners can always UNfeature themselves without approval, which
+// is why there is no "un-feature request" in this model.)
+//
+// Approving sets the campaign's `featured` flag, so it inherits the same rule the
+// PATCH .../flags endpoint enforces: only an ACTIVE campaign can be promoted, and
+// anything else is refused with 409. `campaignStatus` is carried on the request so
+// the console can gate the action instead of offering a guaranteed failure.
+
+export type CfFeatureRequestStatus = 'PENDING' | 'APPROVED' | 'REJECTED';
+
+/**
+ * The campaign's status as reported on the request row.
+ *
+ * 'UNKNOWN' is not a backend value — it is what the mapper produces when the wire
+ * payload carries no recognisable campaign status. It exists so a field-name drift
+ * degrades to a visible "cannot confirm this is ACTIVE" (approval gated, reason
+ * shown) rather than silently mis-gating rows.
+ */
+export type CfFeatureRequestCampaignStatus = CfCampaignStatus | 'UNKNOWN';
+
+export interface CfFeatureRequest {
+  id: string;
+  campaignId: string;
+  campaignTitle: string;
+  status: CfFeatureRequestStatus;
+  campaignStatus: CfFeatureRequestCampaignStatus;
+  raisedKobo: number;
+  goalKobo: number;
+  contributorCount: number;
+  requestedBy: string;
+  requestedAt: string;
+  /** Admin note captured on reject. Null while PENDING and on approve. */
+  note: string | null;
+  /** When the request was actioned. Null while PENDING. */
+  decidedAt: string | null;
 }

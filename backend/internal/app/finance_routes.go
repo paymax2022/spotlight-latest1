@@ -1395,7 +1395,7 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		cfAdmin.GET("/campaigns", middleware.RequirePermission(rbac, "crowdfunding.admin.review"), cfHandler.AdminListPending)
 		cfAdmin.GET("/campaigns/:id", middleware.RequirePermission(rbac, "crowdfunding.admin.review"), cfHandler.AdminGetCampaign)
 		cfAdmin.POST("/campaigns/:id/decision", middleware.RequirePermission(rbac, "crowdfunding.admin.decide"), cfHandler.AdminDecide)
-		cfadminext.RegisterAdmin(cfAdmin, pool, ledgerSvc, kycSvc)
+		cfadminext.RegisterAdmin(cfAdmin, pool, ledgerSvc, kycSvc, rbac)
 	}
 
 	// --- Restaurant & Delivery routes ---
@@ -2150,16 +2150,38 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 	}
 
 	// --- Admin finance routes ---
+	//
+	// These five are UNREACHABLE today and have been: requireUserID() reads
+	// c.GetString("user_id"), which is populated by RequireAuthContext — and this
+	// group hangs off the bare engine, not off the authenticated `finance` group,
+	// so nothing ever sets it. Verified against the running server: every route
+	// here answers 401 to a valid admin token, not only to an anonymous caller.
+	//
+	// Nothing calls them. The admin console's KYC screens use the separate, RBAC-gated
+	// /api/finance/admin/kyc group registered above (finance.admin.kyc), which is why
+	// the console works despite these being dead.
+	//
+	// They are left registered rather than deleted because the admin wallet-lookup
+	// work in PR #91 is still open against this surface — deleting it would collide.
+	// But dead-and-open is a trap: the obvious "fix" for a 401 is to attach auth to
+	// the group, and doing that alone would have published KYC APPROVAL and any user's
+	// balance and transaction history to every signed-in caller. That is exactly how
+	// the crowdfunding admin surface came to be readable by campaign owners.
+	//
+	// So the permissions go on NOW, while the routes are dormant: whoever wires the
+	// auth inherits a closed door instead of an open one. No behaviour changes today —
+	// requireUserID() still aborts first, and these still 401 — this only decides what
+	// they become when they wake up.
 	adminFinance := r.Group("/api/finance/admin")
 	adminFinance.Use(requireUserID())
 	if cfg.FeatureKYCEnabled {
-		adminFinance.GET("/kyc/pending", kycHandler.ListPending)
-		adminFinance.POST("/kyc/users/:user_id/approve", kycHandler.Approve)
-		adminFinance.POST("/kyc/users/:user_id/reject", kycHandler.Reject)
+		adminFinance.GET("/kyc/pending", middleware.RequirePermission(rbac, "finance.admin.kyc"), kycHandler.ListPending)
+		adminFinance.POST("/kyc/users/:user_id/approve", middleware.RequirePermission(rbac, "finance.admin.kyc"), kycHandler.Approve)
+		adminFinance.POST("/kyc/users/:user_id/reject", middleware.RequirePermission(rbac, "finance.admin.kyc"), kycHandler.Reject)
 	}
 	if cfg.FeatureWalletEnabled {
-		adminFinance.GET("/wallets/:user_id/balance", walletHandler.AdminGetBalance)
-		adminFinance.GET("/wallets/:user_id/transactions", walletHandler.AdminListTransactions)
+		adminFinance.GET("/wallets/:user_id/balance", middleware.RequirePermission(rbac, "finance.admin.transfers"), walletHandler.AdminGetBalance)
+		adminFinance.GET("/wallets/:user_id/transactions", middleware.RequirePermission(rbac, "finance.admin.transfers"), walletHandler.AdminListTransactions)
 	}
 
 	// --- Merchant Onboarding & Role-Upgrade routes ---

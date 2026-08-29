@@ -33,6 +33,17 @@ import (
 //	GET    /creator/campaigns/:id/analytics     → campaign analytics (derived)
 //	GET    /rewards/backers                      → reward fulfilment queue
 //	PUT    /rewards/fulfilment/:id               → update reward fulfilment status
+//
+// Owner self-management (every one of these verifies campaign ownership under
+// FOR UPDATE inside the writing transaction — see selfmanage.go):
+//
+//	PATCH  /creator/campaigns/:id                  → partial edit
+//	POST   /creator/campaigns/:id/pause            → out of public discovery
+//	POST   /creator/campaigns/:id/resume           → back into public discovery
+//	DELETE /creator/campaigns/:id                  → soft-delete (no funds only)
+//	POST   /creator/campaigns/:id/feature-request  → ask an admin for the rail
+//	DELETE /creator/campaigns/:id/feature-request  → withdraw that request
+//	POST   /creator/campaigns/:id/unfeature        → leave the rail (no approval)
 func Register(rg *gin.RouterGroup, db *pgxpool.Pool) {
 	h := NewHandler(NewService(db))
 
@@ -59,6 +70,16 @@ func Register(rg *gin.RouterGroup, db *pgxpool.Pool) {
 	rg.GET("/creator/withdrawals", h.GetCreatorWithdrawals)
 	rg.GET("/creator/notifications", h.GetCreatorNotifications)
 	rg.GET("/creator/campaigns/:id/analytics", h.GetCampaignAnalytics)
+
+	// Owner self-management. These share the ':id' param with the analytics
+	// route above (Gin requires one param name per path segment position).
+	rg.PATCH("/creator/campaigns/:id", h.UpdateCampaign)
+	rg.DELETE("/creator/campaigns/:id", h.DeleteCampaign)
+	rg.POST("/creator/campaigns/:id/pause", h.PauseCampaign)
+	rg.POST("/creator/campaigns/:id/resume", h.ResumeCampaign)
+	rg.POST("/creator/campaigns/:id/feature-request", h.RequestFeature)
+	rg.DELETE("/creator/campaigns/:id/feature-request", h.WithdrawFeatureRequest)
+	rg.POST("/creator/campaigns/:id/unfeature", h.Unfeature)
 
 	// Reward fulfilment.
 	rg.GET("/rewards/backers", h.GetRewardBackers)

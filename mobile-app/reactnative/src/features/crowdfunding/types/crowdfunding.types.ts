@@ -2,6 +2,10 @@
 // Source of truth the screens code against (Backend role owns this file).
 // IRON RULE: all monetary amounts are integers in minor units (kobo). Never floats.
 
+// The MODERATOR's column (`review_status` server-side). Owner-pausing is NOT a
+// value here — see `Campaign.paused`. Overloading this union would have let a
+// creator's Resume clear an admin's FROZEN fraud stop, and would have thrown
+// away whether a paused campaign was ACTIVE or COMPLETED underneath.
 export type CampaignStatus =
   | 'ACTIVE'
   | 'DRAFT'
@@ -9,7 +13,7 @@ export type CampaignStatus =
   | 'COMPLETED'
   | 'EXPIRED'
   | 'CANCELLED'
-  | 'FROZEN'
+  | 'FROZEN'          // paused by Trust & Safety — the owner cannot resume it
   | 'REJECTED';
 
 export type CampaignType =
@@ -164,6 +168,27 @@ export interface Campaign {
   urgent: boolean;
   saved?: boolean;
 
+  /**
+   * Owner-paused: hidden from public discovery and search, taking no new
+   * contributions. Funds already raised are untouched.
+   *
+   * ORTHOGONAL to `status`, deliberately. A campaign can be ACTIVE *and*
+   * paused; pausing does not move the moderator's column, and resuming
+   * re-checks it, so a campaign frozen while paused cannot be walked back onto
+   * a rail by its owner.
+   */
+  paused: boolean;
+
+  /**
+   * State of the owner's request to be featured on the discovery rail.
+   * OPTIONAL because it is owner-scoped: the public campaign payload does not
+   * carry it. When the server omits it we fall back to `featured` alone (see
+   * `featureRequestState` in crowdfundingFormatters) rather than guessing that
+   * no request is outstanding — an owner must never be shown "Request feature"
+   * for a request that is already sitting in an admin queue.
+   */
+  featureRequestStatus?: 'NONE' | 'PENDING' | 'APPROVED' | 'REJECTED';
+
   budget: BudgetItem[];
   milestones: CampaignMilestone[];
   updates: CampaignUpdate[];
@@ -180,6 +205,7 @@ export type CampaignSummary = Pick<
   | 'id' | 'title' | 'summary' | 'type' | 'status' | 'category' | 'categoryLabel'
   | 'coverImage' | 'goalKobo' | 'raisedKobo' | 'currency' | 'contributorCount'
   | 'deadline' | 'verified' | 'featured' | 'trending' | 'urgent' | 'saved' | 'location'
+  | 'paused'
 > & { creatorName: string; creatorType: CreatorType; creatorVerification: VerificationLevel };
 
 // ─── Discovery query params ───────────────────────────────────────────────────
@@ -400,6 +426,24 @@ export interface SubmitCampaignResult {
   campaignId: string;
   status: Extract<CampaignStatus, 'DRAFT' | 'PENDING_REVIEW'>;
   reference: string;
+}
+
+// ─── Owner self-management (Section G2) ───────────────────────────────────────
+
+/**
+ * Patch body for `PATCH /creator/campaigns/:id`. Every key is OPTIONAL and the
+ * server applies subset semantics: an absent key is left unchanged. That is why
+ * this is not `Partial<CampaignDraftInput>` — the wire contract distinguishes
+ * "not supplied" from "cleared", so the edit screen must send only the fields
+ * the owner actually touched.
+ */
+export interface CampaignEditInput {
+  title?: string;
+  summary?: string;
+  story?: string;
+  category?: string;
+  coverImage?: string | null;
+  goalKobo?: number;
 }
 
 // ─── Wallet, ledger & withdrawal (Section I) ──────────────────────────────────

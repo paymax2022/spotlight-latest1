@@ -45,7 +45,7 @@ export default function CampaignPerformanceScreen() {
           )}
         </View>
 
-        <View style={styles.statusRow}><CampaignStatusBadge status={campaign.status} /></View>
+        <View style={styles.statusRow}><CampaignStatusBadge status={campaign.status} paused={campaign.paused} /></View>
 
         <View style={styles.fundBtn}>
           <PrimaryButton

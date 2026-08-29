@@ -3,11 +3,12 @@ import { View, Text, ScrollView, StyleSheet, Pressable, FlatList, Image } from '
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { goBack } from '@/lib/navigation';
-import { Bookmark, Plus, ArrowLeft, Bell } from 'lucide-react-native';
+import { Bookmark, Plus, ArrowLeft, Bell, LayoutDashboard, HandCoins, Wallet, Settings } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
 import { Spacing } from '@/constants/spacing';
 import { Radius } from '@/constants/radius';
+import { shadow1 } from '@/constants/shadows';
 import SearchBar from '@/components/SearchBar';
 import SectionHeader from '@/components/SectionHeader';
 import StateView from '@/components/StateView';
@@ -90,6 +91,16 @@ export default function CrowdfundingHome() {
               editable={false}
               onPress={() => router.push('/crowdfunding/search')}
             />
+          </View>
+
+          {/* Crowdfunding-only menu — everything a user needs to run their
+              own campaign(s) and track their giving, scoped strictly to this
+              module (never links outside /crowdfunding). */}
+          <View style={styles.menuRow}>
+            <MenuAction icon={LayoutDashboard} label="My Campaigns" onPress={() => router.push('/crowdfunding/creator')} />
+            <MenuAction icon={HandCoins} label="Contributions" onPress={() => router.push('/crowdfunding/contributions')} />
+            <MenuAction icon={Wallet} label="Wallet" onPress={() => router.push('/crowdfunding/wallet')} />
+            <MenuAction icon={Settings} label="Settings" onPress={() => router.push('/crowdfunding/settings')} />
           </View>
 
           {/* Campaign banner, full-bleed at the source's 2:1 aspect (1200x600).
@@ -279,6 +290,15 @@ export default function CrowdfundingHome() {
  * stable; the section is only ever removed once its query has actually
  * come back empty.
  */
+function MenuAction({ icon: Icon, label, onPress }: { icon: typeof Wallet; label: string; onPress: () => void }) {
+  return (
+    <Pressable onPress={onPress} style={({ pressed }) => [styles.menuAction, pressed && { opacity: 0.8 }]}>
+      <View style={styles.menuActionIcon}><Icon size={20} color={Colors.primary} strokeWidth={2} /></View>
+      <Text style={styles.menuActionLabel} numberOfLines={1}>{label}</Text>
+    </Pressable>
+  );
+}
+
 function SectionPlaceholder({ title }: { title: string }) {
   return (
     <>
@@ -300,6 +320,10 @@ const styles = StyleSheet.create({
   headerTitle: { ...Typography.titleLg, color: Colors.onSurface },
   scroll: { paddingBottom: 120 },
   searchWrap: { marginTop: Spacing.sm },
+  menuRow: { flexDirection: 'row', gap: Spacing.sm, marginTop: Spacing.md, paddingHorizontal: Spacing.containerMargin },
+  menuAction: { flex: 1, alignItems: 'center', gap: 6, backgroundColor: Colors.surfaceContainerLowest, borderRadius: Radius.lg, paddingVertical: Spacing.md, ...shadow1 },
+  menuActionIcon: { width: 40, height: 40, borderRadius: Radius.md, backgroundColor: Colors.surfaceContainerLow, alignItems: 'center', justifyContent: 'center' },
+  menuActionLabel: { ...Typography.labelSm, color: Colors.onSurface },
   bannerFrame: {
     width: '100%',
     aspectRatio: BANNER_ASPECT,

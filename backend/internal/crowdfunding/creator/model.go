@@ -154,7 +154,18 @@ type CampaignSummary struct {
 	Featured            bool    `json:"featured"`
 	Trending            bool    `json:"trending"`
 	Urgent              bool    `json:"urgent"`
-	Saved               bool    `json:"saved"`
+	// Paused is TRUE while campaigns.paused_at is set — the owner has taken the
+	// campaign out of public discovery (and out of accepting contributions).
+	// Distinct from Status, which carries the ADMIN review_status.
+	Paused bool `json:"paused"`
+	// FeatureRequestStatus is the LATEST cf_feature_requests.status for this
+	// campaign (PENDING|APPROVED|REJECTED|WITHDRAWN), or null when the owner has
+	// never asked to be featured. It lets the app show that a request is already
+	// pending instead of inviting the owner to ask twice — the second ask would
+	// be refused by the one-open-request partial unique index anyway, so without
+	// this the only feedback would be a 409.
+	FeatureRequestStatus *string `json:"featureRequestStatus"`
+	Saved                bool    `json:"saved"`
 	Location            *string `json:"location"`
 	CreatorName         string  `json:"creatorName"`
 	CreatorType         string  `json:"creatorType"`
