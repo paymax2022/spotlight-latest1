@@ -1,9 +1,13 @@
 import { Stack } from 'expo-router';
 import { Colors } from '@/constants/colors';
+import { View } from 'react-native';
+import ModuleTabBar from '@/components/ModuleTabBar';
+import { CROWDFUNDING_TABS } from '@/constants/moduleTabs';
 
 export default function CrowdfundingLayout() {
   return (
-    <Stack
+    <View style={{ flex: 1 }}>
+      <Stack
       screenOptions={{
         headerShown: false,
         contentStyle: { backgroundColor: Colors.background },
@@ -138,5 +142,7 @@ export default function CrowdfundingLayout() {
       {/* Edge & error states (Q) */}
       <Stack.Screen name="edge/[type]" options={{ animation: 'fade' }} />
     </Stack>
+  <ModuleTabBar tabs={CROWDFUNDING_TABS} />
+  </View>
   );
 }
