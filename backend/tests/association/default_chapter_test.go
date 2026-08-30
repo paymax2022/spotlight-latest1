@@ -53,7 +53,7 @@ func chapterNames(t *testing.T, ctx context.Context, pool *pgxpool.Pool, orgID s
 // draft with no chapters must still yield exactly one, named "Home".
 func TestPublishOrganisation_DefaultsAChapterWhenNoneNamed(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	svc := newLiveAssociationService(pool)
 
@@ -87,7 +87,7 @@ func TestPublishOrganisation_DefaultsAChapterWhenNoneNamed(t *testing.T) {
 // entry neither creates a nameless chapter nor suppresses the default.
 func TestPublishOrganisation_KeepsNamedChaptersAndSkipsBlanks(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	svc := newLiveAssociationService(pool)
 

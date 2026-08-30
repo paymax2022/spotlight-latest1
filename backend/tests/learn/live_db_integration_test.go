@@ -145,7 +145,7 @@ func seedUser(t *testing.T, ctx context.Context, pool *pgxpool.Pool) string {
 
 func TestLiveDB_GetQuiz_AnswerKeyNeverSerialized(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	svc := learn.NewService(pool, nil)
 
@@ -172,7 +172,7 @@ func TestLiveDB_GetQuiz_AnswerKeyNeverSerialized(t *testing.T) {
 // pass (1.0 >= 0.7), and must persist an attempt row + write an audit entry.
 func TestLiveDB_SubmitQuiz_ScoresAuthoritativelyAndPasses(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	auditor := &recordingAuditor{}
 	svc := learn.NewService(pool, auditor)
@@ -210,7 +210,7 @@ func TestLiveDB_SubmitQuiz_ScoresAuthoritativelyAndPasses(t *testing.T) {
 // scores 0/1 and fails.
 func TestLiveDB_SubmitQuiz_WrongAnswerFails(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	svc := learn.NewService(pool, nil)
 
@@ -233,7 +233,7 @@ func TestLiveDB_SubmitQuiz_WrongAnswerFails(t *testing.T) {
 // ErrForbidden }`) fires end-to-end and writes NO attempt row.
 func TestLiveDB_SubmitQuiz_RequiresAuthenticatedUser(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	svc := learn.NewService(pool, nil)
 
@@ -261,7 +261,7 @@ func TestLiveDB_SubmitQuiz_RequiresAuthenticatedUser(t *testing.T) {
 // ProgressPct advances accordingly (progress() — service.go:107-119).
 func TestLiveDB_GetLesson_MarksProgressAndAdvancesPathPercent(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	svc := learn.NewService(pool, nil)
 

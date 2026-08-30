@@ -31,7 +31,7 @@ func TestLiveDB_GrantOpensModuleButNotTheWallet(t *testing.T) {
 	if err != nil {
 		t.Fatalf("connect: %v", err)
 	}
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 
 	uid := uuid.New().String()
 	if _, err := pool.Exec(ctx, `INSERT INTO auth.users (id,email) VALUES ($1,$2) ON CONFLICT DO NOTHING`, uid, uid+"@seed.test"); err != nil {

@@ -60,7 +60,7 @@ func balance(t *testing.T, ctx context.Context, w *wallet.Service, uid string) i
 
 func TestLiveDB_CACFeeDebit_FundedHappyPath(t *testing.T) {
 	pool := liveDB(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 
 	led := ledger.NewService(ledger.NewRepository(pool), (*goredis.Client)(nil))

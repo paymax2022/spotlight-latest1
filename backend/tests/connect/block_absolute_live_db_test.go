@@ -130,7 +130,7 @@ func seedBlock(t *testing.T, ctx context.Context, pool *pgxpool.Pool, blocker, b
 // the professional feed, and professional discovery — in BOTH block directions.
 func TestConnectBlockIsAbsolute(t *testing.T) {
 	pool := blockLiveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 
 	// Three actors: viewer blocks `blocked`; `control` is an unrelated third user
@@ -299,7 +299,7 @@ func TestConnectBlockIsAbsolute(t *testing.T) {
 // blocks them from liking/matching. Before this slice, ban was a no-op log.
 func TestConnectBanIsEnforced(t *testing.T) {
 	pool := blockLiveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 
 	adminUser, _ := seedProfile(t, ctx, pool)
@@ -393,7 +393,7 @@ func TestConnectBanIsEnforced(t *testing.T) {
 // reciprocal likes fired concurrently to maximise interleaving.
 func TestConnectMatchRaceExactlyOnce(t *testing.T) {
 	pool := blockLiveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	m := connectmatching.NewService(pool)
 
@@ -442,7 +442,7 @@ func TestConnectMatchRaceExactlyOnce(t *testing.T) {
 // their partner can't message the banned recipient either. Enforced mid-chat.
 func TestConnectBanSeversActiveChat(t *testing.T) {
 	pool := blockLiveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 
 	uA, pA := seedProfile(t, ctx, pool)
@@ -506,7 +506,7 @@ func TestConnectBanSeversActiveChat(t *testing.T) {
 // erases sensitive data, writes an immutable audit entry, and is idempotent.
 func TestConnectAccountDeletionCascade(t *testing.T) {
 	pool := blockLiveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 
 	subjU, subjP := seedProfile(t, ctx, pool)
@@ -687,7 +687,7 @@ func seedPaidOrder(t *testing.T, ctx context.Context, pool *pgxpool.Pool, userID
 // entitlement, and is idempotent + single under retries AND concurrency.
 func TestConnectRefundSafeAndSingle(t *testing.T) {
 	pool := blockLiveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	led := ledger.NewService(ledger.NewRepository(pool), nil)
 	svc := connectmonetization.NewService(pool, nil, nil, noopMoneyAudit{}, testRefunder{led: led})
@@ -808,7 +808,7 @@ func seedSubscription(t *testing.T, ctx context.Context, pool *pgxpool.Pool, use
 // pro-rata; the renewal batch charges once & extends; and lapses on no funds.
 func TestConnectSubscriptionBillingCycle(t *testing.T) {
 	pool := blockLiveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	led := ledger.NewService(ledger.NewRepository(pool), nil)
 
@@ -915,7 +915,7 @@ func TestConnectSubscriptionBillingCycle(t *testing.T) {
 // concurrent spends exactly the available number succeed.
 func TestConnectCreditsNoDoubleSpend(t *testing.T) {
 	pool := blockLiveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	uid, _ := seedProfile(t, ctx, pool)
 	t.Cleanup(func() {
@@ -998,7 +998,7 @@ func TestConnectCreditsNoDoubleSpend(t *testing.T) {
 // records no like, while a plain like needs no credit.
 func TestConnectSuperLikeRequiresCredit(t *testing.T) {
 	pool := blockLiveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 
 	liker, likerP := seedProfile(t, ctx, pool)

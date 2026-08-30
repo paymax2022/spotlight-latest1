@@ -137,7 +137,7 @@ func checkWalletSeeded(ctx context.Context, pool *pgxpool.Pool, userID string) (
 // different user is forbidden.
 func TestLiveDB_CreateScheduled_ThenGet_OLA_Enforced(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	svc := newLiveSchedulingService(pool)
 	ctx := context.Background()
 
@@ -190,7 +190,7 @@ func TestLiveDB_CreateScheduled_ThenGet_OLA_Enforced(t *testing.T) {
 // s.loadPricingConfig, a DB read).
 func TestLiveDB_EstimateScheduled_ReturnsFareWithoutCreatingBooking(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	svc := newLiveSchedulingService(pool)
 	ctx := context.Background()
 
@@ -227,7 +227,7 @@ func TestLiveDB_EstimateScheduled_ReturnsFareWithoutCreatingBooking(t *testing.T
 // INVALID_MODE guard fires for estimate as for create.
 func TestLiveDB_EstimateScheduled_UnsupportedModeRejected(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	svc := newLiveSchedulingService(pool)
 	ctx := context.Background()
 
@@ -247,7 +247,7 @@ func TestLiveDB_EstimateScheduled_UnsupportedModeRejected(t *testing.T) {
 // byIdempotencyKey fallback).
 func TestLiveDB_CreateScheduled_IdempotentOnRetry(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	svc := newLiveSchedulingService(pool)
 	ctx := context.Background()
 
@@ -287,7 +287,7 @@ func TestLiveDB_CreateScheduled_IdempotentOnRetry(t *testing.T) {
 // (settlement_id was never set).
 func TestLiveDB_CancelScheduled_BeforeDispatch_NoRefundNeeded(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	svc := newLiveSchedulingService(pool)
 	ctx := context.Background()
 
@@ -337,7 +337,7 @@ func TestLiveDB_CancelScheduled_BeforeDispatch_NoRefundNeeded(t *testing.T) {
 // wallet balance for `rider` (see bring-up note); skips cleanly if absent.
 func TestLiveDB_DispatchScheduled_IdempotentSingleCharge(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	svc := newLiveSchedulingService(pool)
 	ctx := context.Background()
 
@@ -413,7 +413,7 @@ func TestLiveDB_DispatchScheduled_IdempotentSingleCharge(t *testing.T) {
 // then asserts DueForDispatch returns the due one and not the far-future one.
 func TestLiveDB_DueForDispatch_OnlySelectsWithinLeadWindow(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	svc := newLiveSchedulingService(pool)
 	ctx := context.Background()
 
@@ -473,7 +473,7 @@ func TestLiveDB_DueForDispatch_OnlySelectsWithinLeadWindow(t *testing.T) {
 // a booking still comfortably in the future is untouched.
 func TestLiveDB_ExpireStale_OnlyExpiresPastDueScheduled(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	svc := newLiveSchedulingService(pool)
 	ctx := context.Background()
 
@@ -538,7 +538,7 @@ func TestLiveDB_ExpireStale_OnlyExpiresPastDueScheduled(t *testing.T) {
 // can see this specific row in its RETURNING set).
 func TestLiveDB_SendDueReminders_FiresOnceUnderConcurrentInvocation(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	svc := newLiveSchedulingService(pool)
 	ctx := context.Background()
 

@@ -29,7 +29,7 @@ import (
 // the invitation reaches the member's own list.
 func TestInviteToEvent_InvitesMembersAndIsAdminOnly(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	svc := newLiveAssociationService(pool)
 
@@ -90,7 +90,7 @@ func TestInviteToEvent_InvitesMembersAndIsAdminOnly(t *testing.T) {
 // one-row design exists for: re-inviting must not reset an RSVP.
 func TestInviteToEvent_DoesNotDisturbAnExistingResponse(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	svc := newLiveAssociationService(pool)
 
@@ -148,7 +148,7 @@ func TestInviteToEvent_DoesNotDisturbAnExistingResponse(t *testing.T) {
 // from another organisation must write nothing.
 func TestInviteToEvent_DropsForeignMemberships(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	svc := newLiveAssociationService(pool)
 

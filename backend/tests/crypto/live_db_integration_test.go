@@ -133,7 +133,7 @@ func seedUser(t *testing.T, ctx context.Context, pool *pgxpool.Pool) string {
 
 func TestLiveDB_Swap_NetWalletDeltaZero_SpreadToRevenue_Idempotent(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	led := newLiveLedgerService(pool)
 	svc := crypto.NewService(pool, led, nil) // nil -> MockPriceProvider (deterministic)
 	ctx := context.Background()
@@ -233,7 +233,7 @@ func TestLiveDB_Swap_NetWalletDeltaZero_SpreadToRevenue_Idempotent(t *testing.T)
 // and leaves both holdings completely untouched.
 func TestLiveDB_Swap_OversellRejected_HoldingsUnchanged(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	led := newLiveLedgerService(pool)
 	svc := crypto.NewService(pool, led, nil)
 	ctx := context.Background()
@@ -300,7 +300,7 @@ func seedWallet(t *testing.T, ctx context.Context, led *ledger.Service, userID s
 // enforcement) and never parks any units.
 func TestLiveDB_Withdraw_RequiresWhitelistedAddress(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	led := newLiveLedgerService(pool)
 	svc := crypto.NewService(pool, led, nil)
 	ctx := context.Background()
@@ -340,7 +340,7 @@ func TestLiveDB_Withdraw_RequiresWhitelistedAddress(t *testing.T) {
 // same code path Withdraw itself uses internally on a provider reject.
 func TestLiveDB_Withdraw_ParksUnitsOnCreate_ReturnsOnProviderFailure(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	led := newLiveLedgerService(pool)
 	svc := crypto.NewService(pool, led, nil)
 	ctx := context.Background()
@@ -419,7 +419,7 @@ func TestLiveDB_Withdraw_ParksUnitsOnCreate_ReturnsOnProviderFailure(t *testing.
 // units exactly once and returns the same withdrawal id.
 func TestLiveDB_Withdraw_IdempotentCreate_ParksUnitsOnce(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	led := newLiveLedgerService(pool)
 	svc := crypto.NewService(pool, led, nil)
 	ctx := context.Background()
@@ -481,7 +481,7 @@ func TestLiveDB_Withdraw_IdempotentCreate_ParksUnitsOnce(t *testing.T) {
 // nothing.
 func TestLiveDB_Withdraw_OverWithdrawalRejected_HoldingUnchanged(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	led := newLiveLedgerService(pool)
 	svc := crypto.NewService(pool, led, nil)
 	ctx := context.Background()

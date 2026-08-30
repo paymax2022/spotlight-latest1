@@ -78,7 +78,7 @@ func fundWallet(t *testing.T, ctx context.Context, led *ledger.Service, userID s
 
 func TestLiveDB_TradingWallet_MoneyPath(t *testing.T) {
 	svc, led, pool := liveFund(t, 2000, 0, true) // 20% perf fee, no hurdle
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	resetFund(t, ctx, pool, led)
 	run := uuid.NewString() + ":"
@@ -188,7 +188,7 @@ func TestLiveDB_TradingWallet_MoneyPath(t *testing.T) {
 // must be rejected as an idem conflict, with no cash movement.
 func TestLiveDB_TradingWallet_IdemConflictNoCashout(t *testing.T) {
 	svc, led, pool := liveFund(t, 2000, 0, true)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	resetFund(t, ctx, pool, led)
 	run := uuid.NewString() + ":"
@@ -224,7 +224,7 @@ func TestLiveDB_TradingWallet_IdemConflictNoCashout(t *testing.T) {
 // debit the wallet again.
 func TestLiveDB_TradingWallet_ReplayPinsUnits(t *testing.T) {
 	svc, led, pool := liveFund(t, 2000, 0, true)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	resetFund(t, ctx, pool, led)
 	run := uuid.NewString() + ":"
@@ -263,7 +263,7 @@ func TestLiveDB_TradingWallet_ReplayPinsUnits(t *testing.T) {
 // normally — units are minted ONLY once the debit is durably posted.
 func TestLiveDB_TradingWallet_NoPhantomMintOnUnpaidReservation(t *testing.T) {
 	svc, led, pool := liveFund(t, 2000, 0, true)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	resetFund(t, ctx, pool, led)
 	repo := NewRepository(pool)
@@ -305,7 +305,7 @@ func TestLiveDB_TradingWallet_NoPhantomMintOnUnpaidReservation(t *testing.T) {
 
 func TestLiveDB_TradingWallet_AccessGate(t *testing.T) {
 	svc, led, pool := liveFund(t, 2000, 0, false) // gate DENIES access
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	resetFund(t, ctx, pool, led)
 	u := seedUser(t, ctx, pool)

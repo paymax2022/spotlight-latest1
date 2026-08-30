@@ -33,7 +33,7 @@ func menuCartPool(t *testing.T) *pgxpool.Pool {
 
 func TestLiveDB_MenuCart(t *testing.T) {
 	pool := menuCartPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	svc := NewService(pool, nil)
 

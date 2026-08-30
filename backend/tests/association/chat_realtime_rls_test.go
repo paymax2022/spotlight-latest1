@@ -111,7 +111,7 @@ func seedThread(t *testing.T, ctx context.Context, pool *pgxpool.Pool, orgID, sc
 // (user, thread) pair, the SQL gate and the API must give the same answer.
 func TestChatRealtimeGate_MatchesTheAPI(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	svc := newLiveAssociationService(pool)
 
@@ -203,7 +203,7 @@ func TestChatRealtimeGate_MatchesTheAPI(t *testing.T) {
 // that resolves to nothing must answer false, not error and not true.
 func TestChatRealtimeGate_RejectsUnknownThread(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 
 	if canReadViaRLS(t, ctx, pool, uuid.NewString(), uuid.NewString()) {

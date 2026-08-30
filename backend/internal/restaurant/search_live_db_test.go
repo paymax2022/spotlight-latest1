@@ -35,7 +35,7 @@ func searchLivePool(t *testing.T) *pgxpool.Pool {
 
 func TestLiveDB_SearchRestaurants(t *testing.T) {
 	pool := searchLivePool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	svc := NewService(pool, nil)
 

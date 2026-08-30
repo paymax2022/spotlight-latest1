@@ -93,7 +93,7 @@ func orgWithAdminAndMember(t *testing.T, ctx context.Context, pool *pgxpool.Pool
 // TestProposeMeeting_AdminSchedulesDirectly: an admin is not asking permission.
 func TestProposeMeeting_AdminSchedulesDirectly(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	svc := newLiveAssociationService(pool)
 
@@ -115,7 +115,7 @@ func TestProposeMeeting_AdminSchedulesDirectly(t *testing.T) {
 // TestProposeMeeting_MemberProposalIsHiddenUntilApproved is the core property.
 func TestProposeMeeting_MemberProposalIsHiddenUntilApproved(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	svc := newLiveAssociationService(pool)
 
@@ -170,7 +170,7 @@ func TestProposeMeeting_MemberProposalIsHiddenUntilApproved(t *testing.T) {
 // TestDecideMeeting_RejectedStaysHidden: rejection is not a soft approval.
 func TestDecideMeeting_RejectedStaysHidden(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	svc := newLiveAssociationService(pool)
 
@@ -206,7 +206,7 @@ func TestDecideMeeting_RejectedStaysHidden(t *testing.T) {
 // TestDecideMeeting_OnlyAdminsAndOnlyOnce pins the authority and the record.
 func TestDecideMeeting_OnlyAdminsAndOnlyOnce(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	svc := newLiveAssociationService(pool)
 
@@ -253,7 +253,7 @@ func TestDecideMeeting_OnlyAdminsAndOnlyOnce(t *testing.T) {
 // approve should not be accepted in the first place.
 func TestProposeMeeting_RejectsPastStart(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	svc := newLiveAssociationService(pool)
 

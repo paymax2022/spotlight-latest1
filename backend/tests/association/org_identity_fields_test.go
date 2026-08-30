@@ -36,7 +36,7 @@ import (
 // reach the row. Before this, three of them were dropped on the floor.
 func TestPublishOrganisation_PersistsIdentityFields(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	svc := newLiveAssociationService(pool)
 
@@ -89,7 +89,7 @@ func TestPublishOrganisation_PersistsIdentityFields(t *testing.T) {
 // an empty string, so a reader can tell "not provided" from "provided as ”".
 func TestPublishOrganisation_OptionalIdentityFieldsMayBeBlank(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	svc := newLiveAssociationService(pool)
 
@@ -130,7 +130,7 @@ func TestPublishOrganisation_OptionalIdentityFieldsMayBeBlank(t *testing.T) {
 // requirement would live in a client the server does not control.
 func TestPublishOrganisation_RejectsMissingRequiredIdentity(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	svc := newLiveAssociationService(pool)
 
@@ -183,7 +183,7 @@ func TestPublishOrganisation_RejectsMissingRequiredIdentity(t *testing.T) {
 // organisation cannot be valid on one surface and rejected on the other.
 func TestPublishOrganisation_AcceptsBoundaryFoundedYears(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	svc := newLiveAssociationService(pool)
 

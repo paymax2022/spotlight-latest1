@@ -35,7 +35,7 @@ func hoursLivePool(t *testing.T) *pgxpool.Pool {
 
 func TestLiveDB_BusinessHours(t *testing.T) {
 	pool := hoursLivePool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	svc := NewService(pool, nil)
 

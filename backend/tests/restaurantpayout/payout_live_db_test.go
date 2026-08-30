@@ -169,7 +169,7 @@ func ledgerEntryCount(t *testing.T, ctx context.Context, pool *pgxpool.Pool, ref
 //     provider is never double-paid) and the run stays PAID.
 func TestLiveDB_Payout_BuildThenProcess_PostsOneBalancedTransfer_ReplaySafe(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	led := newLiveLedgerService(pool)
 	svc := newLiveRestaurantService(pool, led)
 	ctx := context.Background()

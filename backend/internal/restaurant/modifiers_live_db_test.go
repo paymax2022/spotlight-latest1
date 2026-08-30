@@ -37,7 +37,7 @@ func modifiersLivePool(t *testing.T) *pgxpool.Pool {
 
 func TestLiveDB_MenuModifiers(t *testing.T) {
 	pool := modifiersLivePool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	svc := NewService(pool, nil)
 

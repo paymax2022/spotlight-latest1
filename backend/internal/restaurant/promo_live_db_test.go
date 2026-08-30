@@ -37,7 +37,7 @@ func promoLivePool(t *testing.T) *pgxpool.Pool {
 
 func TestLiveDB_Promos(t *testing.T) {
 	pool := promoLivePool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	svc := NewService(pool, nil)
 

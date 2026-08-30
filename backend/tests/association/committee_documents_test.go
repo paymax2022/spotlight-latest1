@@ -31,7 +31,7 @@ import (
 // TestCommitteeRequests_ApproveDeclineAndAuthority covers the whole loop.
 func TestCommitteeRequests_ApproveDeclineAndAuthority(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	svc := newLiveAssociationService(pool)
 
@@ -112,7 +112,7 @@ func TestCommitteeRequests_ApproveDeclineAndAuthority(t *testing.T) {
 // row rather than parking it in a REJECTED state.
 func TestCommitteeRequests_DeclineLetsThemAskAgain(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	svc := newLiveAssociationService(pool)
 
@@ -152,7 +152,7 @@ func TestCommitteeRequests_DeclineLetsThemAskAgain(t *testing.T) {
 // TestAddCommitteeMembers_DropsForeignMemberships closes the cross-org write.
 func TestAddCommitteeMembers_DropsForeignMemberships(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	svc := newLiveAssociationService(pool)
 
@@ -194,7 +194,7 @@ func TestAddCommitteeMembers_DropsForeignMemberships(t *testing.T) {
 // marked restricted.
 func TestResolveDocumentDownload_ScopesToTheOrganisation(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	svc := newLiveAssociationService(pool)
 

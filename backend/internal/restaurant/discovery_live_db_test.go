@@ -33,7 +33,7 @@ func discoveryPool(t *testing.T) *pgxpool.Pool {
 
 func TestLiveDB_Discovery(t *testing.T) {
 	pool := discoveryPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	svc := NewService(pool, nil)
 

@@ -35,7 +35,7 @@ func kybLivePool(t *testing.T) *pgxpool.Pool {
 
 func TestLiveDB_KYBOnboarding(t *testing.T) {
 	pool := kybLivePool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	svc := NewService(pool, nil)
 

@@ -59,7 +59,7 @@ func creditLegKobo(t *testing.T, ctx context.Context, pool *pgxpool.Pool, ref st
 
 func TestLiveDB_OrderTipEscrowAndRiderPayout(t *testing.T) {
 	pool := tipPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	led := ledger.NewService(ledger.NewRepository(pool), (*goredis.Client)(nil))
 	svc := NewService(pool, settlement.NewService(pool, led)).WithLedger(led).WithTiers(tiers.NewService(pool))
@@ -228,7 +228,7 @@ func TestLiveDB_OrderTipEscrowAndRiderPayout(t *testing.T) {
 // the customer — tip included. The tip is the customer's money until a rider earns it.
 func TestLiveDB_OrderTipRefundedOnCancel(t *testing.T) {
 	pool := tipPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	led := ledger.NewService(ledger.NewRepository(pool), (*goredis.Client)(nil))
 	svc := NewService(pool, settlement.NewService(pool, led)).WithLedger(led).WithTiers(tiers.NewService(pool))
@@ -296,7 +296,7 @@ func TestLiveDB_OrderTipRefundedOnCancel(t *testing.T) {
 // rather than paid out of the restaurant's share — and the escrow still fully releases.
 func TestLiveDB_OrderTipDroppedWhenEscrowDiverges(t *testing.T) {
 	pool := tipPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	led := ledger.NewService(ledger.NewRepository(pool), (*goredis.Client)(nil))
 	svc := NewService(pool, settlement.NewService(pool, led)).WithLedger(led).WithTiers(tiers.NewService(pool))

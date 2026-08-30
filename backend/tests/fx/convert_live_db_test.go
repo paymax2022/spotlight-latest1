@@ -183,7 +183,7 @@ func mapleradTestServer(t *testing.T) *httptest.Server {
 //	    currency_wallets balance unchanged, and no extra ledger legs (RISK-FX-2).
 func TestLiveDB_FXConvert_BothLegsPosted_MirrorCredited_ReplayNoDoubleCredit(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	led := newLiveLedger(pool)
 

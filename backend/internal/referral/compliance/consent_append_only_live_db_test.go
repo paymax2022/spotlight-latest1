@@ -80,7 +80,7 @@ func record(t *testing.T, ctx context.Context, repo *compliance.Repository, user
 // on after a user withdrew.
 func TestLiveDB_Consent_AppendOnly(t *testing.T) {
 	pool := liveConsentPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	repo := compliance.NewRepository(pool)
 	userID := seedConsentUser(t, ctx, pool)
@@ -141,7 +141,7 @@ func TestLiveDB_Consent_AppendOnly(t *testing.T) {
 // is how a grant/withdraw pair once read back as the withdrawal.
 func TestLiveDB_Consent_OrdersBySeqNotCreatedAt(t *testing.T) {
 	pool := liveConsentPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	repo := compliance.NewRepository(pool)
 	userID := seedConsentUser(t, ctx, pool)
@@ -191,7 +191,7 @@ func TestLiveDB_Consent_OrdersBySeqNotCreatedAt(t *testing.T) {
 // neither a bug nor a console session can rewrite history.
 func TestLiveDB_Consent_ImmutableByTrigger(t *testing.T) {
 	pool := liveConsentPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	repo := compliance.NewRepository(pool)
 	userID := seedConsentUser(t, ctx, pool)

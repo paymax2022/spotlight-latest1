@@ -44,7 +44,7 @@ func availService(pool *pgxpool.Pool) *Service {
 
 func TestLiveDB_AvailabilityHolidayAndSweep(t *testing.T) {
 	pool := availLivePool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	svc := availService(pool)
 

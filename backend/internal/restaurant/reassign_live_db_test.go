@@ -58,7 +58,7 @@ func hasOpenOffer(t *testing.T, ctx context.Context, pool *pgxpool.Pool, orderID
 
 func TestLiveDB_DispatchReassign(t *testing.T) {
 	pool := reassignPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	svc := NewService(pool, nil)
 

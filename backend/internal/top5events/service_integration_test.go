@@ -93,7 +93,7 @@ func seedUser(t *testing.T, pool *pgxpool.Pool) string {
 func TestIntegration_EventStateMachine_FullLifecycle(t *testing.T) {
 	ctx := context.Background()
 	pool := itestPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	svc := newTestService(t, pool)
 
 	organiser := seedUser(t, pool)
@@ -139,7 +139,7 @@ func TestIntegration_EventStateMachine_FullLifecycle(t *testing.T) {
 func TestIntegration_EventStateMachine_NonOrganiserForbidden(t *testing.T) {
 	ctx := context.Background()
 	pool := itestPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	svc := newTestService(t, pool)
 
 	organiser := seedUser(t, pool)
@@ -167,7 +167,7 @@ func TestIntegration_EventStateMachine_NonOrganiserForbidden(t *testing.T) {
 func TestIntegration_Approve_ServiceLayerHasNoOwnerScopeCheck(t *testing.T) {
 	ctx := context.Background()
 	pool := itestPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	svc := newTestService(t, pool)
 
 	organiser := seedUser(t, pool)
@@ -196,7 +196,7 @@ func TestIntegration_Approve_ServiceLayerHasNoOwnerScopeCheck(t *testing.T) {
 func TestIntegration_GetEvent_DraftIsPubliclyReadable_KnownGap(t *testing.T) {
 	ctx := context.Background()
 	pool := itestPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	svc := newTestService(t, pool)
 
 	organiser := seedUser(t, pool)
@@ -228,7 +228,7 @@ func TestIntegration_GetEvent_DraftIsPubliclyReadable_KnownGap(t *testing.T) {
 func TestIntegration_Purchase_IdempotentDoubleSubmitNoDoubleIssueNoDoubleDebit(t *testing.T) {
 	ctx := context.Background()
 	pool := itestPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	svc := newTestService(t, pool)
 
 	organiser := seedUser(t, pool)
@@ -277,7 +277,7 @@ func TestIntegration_Purchase_IdempotentDoubleSubmitNoDoubleIssueNoDoubleDebit(t
 func TestIntegration_Purchase_RejectsWhenEventNotLive(t *testing.T) {
 	ctx := context.Background()
 	pool := itestPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	svc := newTestService(t, pool)
 
 	organiser := seedUser(t, pool)
@@ -307,7 +307,7 @@ func TestIntegration_Purchase_RejectsWhenEventNotLive(t *testing.T) {
 func TestIntegration_Scan_DoesNotCheckCallerIdentityAgainstTicket_KnownGap(t *testing.T) {
 	ctx := context.Background()
 	pool := itestPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	svc := newTestService(t, pool)
 
 	organiser := seedUser(t, pool)
@@ -348,7 +348,7 @@ func TestIntegration_Scan_DoesNotCheckCallerIdentityAgainstTicket_KnownGap(t *te
 func TestIntegration_WalletClose_PostsExactlyOneBalancedRefund(t *testing.T) {
 	ctx := context.Background()
 	pool := itestPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	svc := newTestService(t, pool)
 
 	organiser := seedUser(t, pool)
@@ -394,7 +394,7 @@ func TestIntegration_WalletClose_PostsExactlyOneBalancedRefund(t *testing.T) {
 func TestIntegration_ClosedWallet_RejectsTopUpAndCharge(t *testing.T) {
 	ctx := context.Background()
 	pool := itestPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	svc := newTestService(t, pool)
 
 	organiser := seedUser(t, pool)

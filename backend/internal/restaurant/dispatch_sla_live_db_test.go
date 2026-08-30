@@ -53,7 +53,7 @@ func seedDriver(t *testing.T, ctx context.Context, pool *pgxpool.Pool, lat, lng 
 
 func TestLiveDB_DispatchFairnessAndSLA(t *testing.T) {
 	pool := dispatchLivePool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	svc := NewService(pool, nil)
 

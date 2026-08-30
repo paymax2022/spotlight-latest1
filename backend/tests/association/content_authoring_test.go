@@ -216,7 +216,7 @@ func TestRegisterEvent_PaidEventRaisesInvoiceInsteadOfFreeTicket(t *testing.T) {
 // most here: a retried dues run must never re-bill an organisation's roster.
 func TestRunDues_RaisesInvoicesAndIsReplaySafe(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	svc := newLiveAssociationService(pool)
 
@@ -292,7 +292,7 @@ func TestRunDues_RaisesInvoicesAndIsReplaySafe(t *testing.T) {
 // be a cross-org write.
 func TestCreateTask_RejectsCrossOrgAssignee(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	svc := newLiveAssociationService(pool)
 
@@ -362,7 +362,7 @@ func TestRegisterDevice_MakesTheDeviceListUsable(t *testing.T) {
 // one → assert the double-entry landed and the invoice settled.
 func TestFullDuesLifecycle_RunThenPayPostsBalancedLedger(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	svc := newLiveAssociationService(pool)
 	led := ledger.NewService(ledger.NewRepository(pool), (*goredis.Client)(nil))
@@ -550,7 +550,7 @@ func TestValidationErrors_Map400NotServerError(t *testing.T) {
 // they could actually do.
 func TestGetAdminAccess_RecognisesPlatformSuperAdmin(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	svc := newLiveAssociationService(pool)
 
@@ -586,7 +586,7 @@ func TestGetAdminAccess_RecognisesPlatformSuperAdmin(t *testing.T) {
 // the admin Members page and every assignee picker built on it.
 func TestDirectoryAndProfile_SurviveNullFullName(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	svc := newLiveAssociationService(pool)
 

@@ -74,7 +74,7 @@ func newTestJoinDraft(orgID string) association.JoinDraft {
 // failed closed and the founder could not administer what they had just made.
 func TestPublishOrganisation_FoundersOwnTheirOrg(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	svc := newLiveAssociationService(pool)
 
@@ -134,7 +134,7 @@ func TestPublishOrganisation_FoundersOwnTheirOrg(t *testing.T) {
 // transport retry created a second organisation with a second uuid.
 func TestPublishOrganisation_IdempotentReplay(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	svc := newLiveAssociationService(pool)
 
@@ -175,7 +175,7 @@ func TestPublishOrganisation_IdempotentReplay(t *testing.T) {
 // Go OrgDraft had no fields for them.
 func TestPublishOrganisation_PersistsWizardConfiguration(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	svc := newLiveAssociationService(pool)
 
@@ -252,7 +252,7 @@ func TestPublishOrganisation_PersistsWizardConfiguration(t *testing.T) {
 // that matched zero rows.
 func TestSubmitApplication_CreatesMembership(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	svc := newLiveAssociationService(pool)
 
@@ -306,7 +306,7 @@ func TestSubmitApplication_CreatesMembership(t *testing.T) {
 // defeated the org filter whenever one admin had acted in two organisations.
 func TestGetAuditLog_DoesNotLeakAcrossOrganisations(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	svc := newLiveAssociationService(pool)
 
@@ -351,7 +351,7 @@ func TestGetAuditLog_DoesNotLeakAcrossOrganisations(t *testing.T) {
 // RSVP to and check into org B's meetings.
 func TestMemberWrites_AreScopedToOwningOrganisation(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	svc := newLiveAssociationService(pool)
 
@@ -389,7 +389,7 @@ func TestMemberWrites_AreScopedToOwningOrganisation(t *testing.T) {
 // could flip any organisation's minutes back to PROCESSING.
 func TestRegenerateAiNoteSummary_RequiresOrgAdmin(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	svc := newLiveAssociationService(pool)
 

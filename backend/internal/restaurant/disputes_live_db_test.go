@@ -50,7 +50,7 @@ func walletBalance(t *testing.T, ctx context.Context, pool *pgxpool.Pool, userID
 
 func TestLiveDB_FoodDisputes(t *testing.T) {
 	pool := disputesLivePool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	led := ledger.NewService(ledger.NewRepository(pool), (*goredis.Client)(nil))
 	svc := NewService(pool, nil).WithLedger(led)

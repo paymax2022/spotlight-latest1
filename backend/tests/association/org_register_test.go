@@ -16,7 +16,7 @@ import (
 // purely because matches sat on another page).
 func TestListAdminOrganisations_ReturnsRegisterColumnsAndFilters(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	svc := newLiveAssociationService(pool)
 

@@ -67,7 +67,7 @@ func seedOrderWithEscrow(t *testing.T, ctx context.Context, pool *pgxpool.Pool, 
 
 func TestLiveDB_OrderFSMExpansion(t *testing.T) {
 	pool := fsmPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	svc := fsmService(pool)
 

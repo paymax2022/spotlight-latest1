@@ -160,7 +160,7 @@ func holdingUnits(t *testing.T, ctx context.Context, svc *crypto.Service, userID
 // tx_hash), and the parked units left the holding.
 func TestLiveDB_Withdraw_ParksAtPendingReview_NoBroadcast(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	led := newLiveLedgerService(pool)
 	svc := newLiveCryptoService(pool, led)
 	ctx := context.Background()
@@ -235,7 +235,7 @@ func TestLiveDB_Withdraw_ParksAtPendingReview_NoBroadcast(t *testing.T) {
 // provider accepts), i.e. money is cleared to leave ONLY after the AML approval.
 func TestLiveDB_AdminApprove_AdvancesPastPendingReview_BroadcastFires(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	led := newLiveLedgerService(pool)
 	svc := newLiveCryptoService(pool, led)
 	ctx := context.Background()
@@ -292,7 +292,7 @@ func TestLiveDB_AdminApprove_AdvancesPastPendingReview_BroadcastFires(t *testing
 // compensating transition), with no broadcast.
 func TestLiveDB_AdminReject_FailsAndReturnsParkedUnits(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	led := newLiveLedgerService(pool)
 	svc := newLiveCryptoService(pool, led)
 	ctx := context.Background()

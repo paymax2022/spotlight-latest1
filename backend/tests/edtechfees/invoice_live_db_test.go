@@ -59,7 +59,7 @@ import (
 // pair a foreign payment with the wrong invoice's derived state.
 func TestLiveDB_Invoice_IdempotencyKeyScopedToInvoice(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	svc := feesinvoice.NewService(pool)
 	ctx := context.Background()
 
@@ -107,7 +107,7 @@ func TestLiveDB_Invoice_IdempotencyKeyScopedToInvoice(t *testing.T) {
 // exact-full payment (bringing balance to 0) is still accepted.
 func TestLiveDB_Invoice_RejectsOverpayment(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	svc := feesinvoice.NewService(pool)
 	ctx := context.Background()
 
@@ -259,7 +259,7 @@ func cleanupInvoice(t *testing.T, pool *pgxpool.Pool, invoiceID string) {
 //	    second payment row and leaves status + derived balance unchanged.
 func TestLiveDB_Invoice_IssueLocksSchedule_PartialThenFull_DerivedBalance_Idempotent(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	svc := feesinvoice.NewService(pool)
 	ctx := context.Background()
 
@@ -376,7 +376,7 @@ func TestLiveDB_Invoice_IssueLocksSchedule_PartialThenFull_DerivedBalance_Idempo
 // academy_invoice_payments row is written.
 func TestLiveDB_Invoice_RecordPayment_RequiresIdempotencyKey(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	svc := feesinvoice.NewService(pool)
 	ctx := context.Background()
 

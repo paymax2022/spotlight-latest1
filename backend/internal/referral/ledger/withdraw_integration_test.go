@@ -78,7 +78,7 @@ func newSvc(pool *pgxpool.Pool) *Service {
 func TestWithdrawEligible_Integration(t *testing.T) {
 	ctx := context.Background()
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	svc := newSvc(pool)
 	fin := financeledger.NewService(financeledger.NewRepository(pool), nil)
 
@@ -139,7 +139,7 @@ func TestWithdrawEligible_Integration(t *testing.T) {
 func TestWithdrawEligible_KYCGate_Integration(t *testing.T) {
 	ctx := context.Background()
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	svc := newSvc(pool)
 
 	// Unverified / tier-0 user with an eligible reward must be rejected fail-closed.

@@ -158,7 +158,7 @@ func newDisputeTipFixture(t *testing.T, ctx context.Context, pool *pgxpool.Pool,
 // and passed to the customer, so the customer still ends up whole.
 func TestLiveDB_DisputeFullRefundCapsPlatformAtNonTipBasis(t *testing.T) {
 	pool := tipPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	led := ledger.NewService(ledger.NewRepository(pool), (*goredis.Client)(nil))
 
@@ -260,7 +260,7 @@ func TestLiveDB_DisputeFullRefundCapsPlatformAtNonTipBasis(t *testing.T) {
 // neither reach into the tip nor be used to refund it a slice at a time.
 func TestLiveDB_DisputePartialRefundInheritsTipCap(t *testing.T) {
 	pool := tipPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	led := ledger.NewService(ledger.NewRepository(pool), (*goredis.Client)(nil))
 
@@ -325,7 +325,7 @@ func TestLiveDB_DisputePartialRefundInheritsTipCap(t *testing.T) {
 // customer is refunded the non-tip basis only.
 func TestLiveDB_DisputeNoClawbackWhenRiderNeverPaidTip(t *testing.T) {
 	pool := tipPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	led := ledger.NewService(ledger.NewRepository(pool), (*goredis.Client)(nil))
 	svc := NewService(pool, settlement.NewService(pool, led)).WithLedger(led).WithTiers(tiers.NewService(pool))
@@ -427,7 +427,7 @@ func TestLiveDB_DisputeNoClawbackWhenRiderNeverPaidTip(t *testing.T) {
 // back at most once per order.
 func TestLiveDB_DisputeTipClawedBackOnlyOncePerOrder(t *testing.T) {
 	pool := tipPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	led := ledger.NewService(ledger.NewRepository(pool), (*goredis.Client)(nil))
 
@@ -495,7 +495,7 @@ func TestLiveDB_DisputeTipClawedBackOnlyOncePerOrder(t *testing.T) {
 // upheld refund_full credited the customer the whole basis again, N times for N disputes.
 func TestLiveDB_DisputeRefundBudgetIsCumulativePerOrder(t *testing.T) {
 	pool := tipPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	led := ledger.NewService(ledger.NewRepository(pool), (*goredis.Client)(nil))
 
@@ -590,7 +590,7 @@ func TestLiveDB_DisputeRefundBudgetIsCumulativePerOrder(t *testing.T) {
 // advisory lock the service does, which is what makes the read-modify-write serial.
 func TestLiveDB_DisputeRefundCapHoldsUnderConcurrency(t *testing.T) {
 	pool := tipPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	led := ledger.NewService(ledger.NewRepository(pool), (*goredis.Client)(nil))
 
@@ -693,7 +693,7 @@ func TestLiveDB_DisputeRefundCapHoldsUnderConcurrency(t *testing.T) {
 // NEXT delivery settlement, crediting the customer at that point.
 func TestLiveDB_DisputeTipClawbackDeferredToNextSettlement(t *testing.T) {
 	pool := tipPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	led := ledger.NewService(ledger.NewRepository(pool), (*goredis.Client)(nil))
 

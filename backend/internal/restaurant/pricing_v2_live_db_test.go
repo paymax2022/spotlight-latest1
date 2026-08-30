@@ -36,7 +36,7 @@ func pricingV2LivePool(t *testing.T) *pgxpool.Pool {
 
 func TestLiveDB_PricingV2(t *testing.T) {
 	pool := pricingV2LivePool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	svc := NewService(pool, nil)
 

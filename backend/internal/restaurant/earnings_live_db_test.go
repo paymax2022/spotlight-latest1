@@ -59,7 +59,7 @@ func seedSettledOrder(t *testing.T, ctx context.Context, pool *pgxpool.Pool, res
 
 func TestLiveDB_PayoutsComplete(t *testing.T) {
 	pool := earningsPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	led := ledger.NewService(ledger.NewRepository(pool), (*goredis.Client)(nil))
 	svc := NewService(pool, settlement.NewService(pool, led)).WithLedger(led)

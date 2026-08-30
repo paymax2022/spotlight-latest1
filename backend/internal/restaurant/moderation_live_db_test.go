@@ -46,7 +46,7 @@ func seedDeliveredOrder(t *testing.T, ctx context.Context, pool *pgxpool.Pool, r
 
 func TestLiveDB_ReviewModeration(t *testing.T) {
 	pool := modPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	svc := NewService(pool, nil)
 

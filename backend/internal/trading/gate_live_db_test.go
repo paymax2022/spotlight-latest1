@@ -33,7 +33,7 @@ func TestLiveDB_KycGatesWallet(t *testing.T) {
 	if err != nil {
 		t.Fatalf("connect: %v", err)
 	}
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 
 	led := ledger.NewService(ledger.NewRepository(pool), (*goredis.Client)(nil))
 	kycSvc := kyc.NewService(pool)

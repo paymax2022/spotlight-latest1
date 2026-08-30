@@ -38,7 +38,7 @@ func itestPool(t *testing.T) *pgxpool.Pool {
 func TestIntegration_NearbyAndZone(t *testing.T) {
 	ctx := context.Background()
 	pool := itestPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 
 	const etype = "itest_merchant"
 	_, _ = pool.Exec(ctx, `DELETE FROM merchant_locations WHERE entity_type=$1`, etype)
@@ -104,7 +104,7 @@ func TestIntegration_NearbyAndZone(t *testing.T) {
 func TestIntegration_GeocodeCache(t *testing.T) {
 	ctx := context.Background()
 	pool := itestPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 
 	cache := NewCache(pool, time.Hour)
 	key := NormalizeQuery("itest 10 Awolowo Road, Ikoyi")
@@ -138,7 +138,7 @@ func TestIntegration_GeocodeCache(t *testing.T) {
 func TestIntegration_UsageCap(t *testing.T) {
 	ctx := context.Background()
 	pool := itestPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 
 	const prov = "itest_prov"
 	month := currentMonth()
@@ -174,7 +174,7 @@ func TestIntegration_UsageCap(t *testing.T) {
 func TestIntegration_TriggerSync(t *testing.T) {
 	ctx := context.Background()
 	pool := itestPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 
 	uid := uuid.New().String()
 	if _, err := pool.Exec(ctx, `INSERT INTO auth.users (id, email) VALUES ($1,$2) ON CONFLICT (id) DO NOTHING`, uid, uid+"@itest.local"); err != nil {

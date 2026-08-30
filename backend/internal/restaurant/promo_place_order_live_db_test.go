@@ -146,7 +146,7 @@ func deliverWithRider(t *testing.T, ctx context.Context, f promoOrderFixture, or
 // settled share — the platform and the rider are paid on the full pre-discount gross.
 func TestLiveDB_OrderPromoRestaurantFunded(t *testing.T) {
 	pool := promoOrderPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	f := newPromoOrderFixture(t, ctx, pool, "Promo Kitchen", 450_000)
 
@@ -293,7 +293,7 @@ func TestLiveDB_OrderPromoRestaurantFunded(t *testing.T) {
 // exactly as if the customer had paid full price.
 func TestLiveDB_OrderPromoPlatformFunded(t *testing.T) {
 	pool := promoOrderPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	f := newPromoOrderFixture(t, ctx, pool, "Platform Promo Kitchen", 450_000)
 
@@ -349,7 +349,7 @@ func TestLiveDB_OrderPromoPlatformFunded(t *testing.T) {
 // customer's money in escrow forever.
 func TestLiveDB_OrderPromoUnfundableRejectedBeforeEscrow(t *testing.T) {
 	pool := promoOrderPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	f := newPromoOrderFixture(t, ctx, pool, "Unfundable Promo Kitchen", 450_000)
 
@@ -387,7 +387,7 @@ func TestLiveDB_OrderPromoUnfundableRejectedBeforeEscrow(t *testing.T) {
 // they submitted with a discount code.
 func TestLiveDB_OrderInvalidPromoFailsOrder(t *testing.T) {
 	pool := promoOrderPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	f := newPromoOrderFixture(t, ctx, pool, "Invalid Promo Kitchen", 450_000)
 
@@ -436,7 +436,7 @@ func TestLiveDB_OrderInvalidPromoFailsOrder(t *testing.T) {
 // redemption row was ever written, so every limit was unenforceable.
 func TestLiveDB_OrderPromoUsageLimitEnforced(t *testing.T) {
 	pool := promoOrderPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	f := newPromoOrderFixture(t, ctx, pool, "Limited Promo Kitchen", 450_000)
 
@@ -480,7 +480,7 @@ func TestLiveDB_OrderPromoUsageLimitEnforced(t *testing.T) {
 // otherwise a client retry would silently consume the customer's per-user allowance.
 func TestLiveDB_OrderPromoIdempotentReplay(t *testing.T) {
 	pool := promoOrderPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	f := newPromoOrderFixture(t, ctx, pool, "Replay Promo Kitchen", 450_000)
 
@@ -522,7 +522,7 @@ func TestLiveDB_OrderPromoIdempotentReplay(t *testing.T) {
 // client that believes that 422 re-submits on a fresh key and is charged twice.
 func TestLiveDB_OrderPromoReplayUnderPerUserLimit(t *testing.T) {
 	pool := promoOrderPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	f := newPromoOrderFixture(t, ctx, pool, "Retry Promo Kitchen", 450_000)
 
@@ -583,7 +583,7 @@ func TestLiveDB_OrderPromoReplayUnderPerUserLimit(t *testing.T) {
 // delivery_code — the proof-of-delivery handoff secret.
 func TestLiveDB_OrderReplayIsScopedToTheCaller(t *testing.T) {
 	pool := promoOrderPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	f := newPromoOrderFixture(t, ctx, pool, "Scoping Kitchen", 400_000)
 
@@ -639,7 +639,7 @@ func TestLiveDB_OrderReplayIsScopedToTheCaller(t *testing.T) {
 // already refunded in full, with nobody paid.
 func TestLiveDB_OrderCancelCompletesAfterAPriorRefund(t *testing.T) {
 	pool := promoOrderPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	f := newPromoOrderFixture(t, ctx, pool, "Refund Retry Kitchen", 400_000)
 
@@ -693,7 +693,7 @@ func TestLiveDB_OrderCancelCompletesAfterAPriorRefund(t *testing.T) {
 // unlocked read-then-insert would let all N through.
 func TestLiveDB_OrderPromoUsageLimitHoldsUnderConcurrency(t *testing.T) {
 	pool := promoOrderPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	f := newPromoOrderFixture(t, ctx, pool, "Race Promo Kitchen", 450_000)
 
@@ -789,7 +789,7 @@ func TestLiveDB_OrderPromoUsageLimitHoldsUnderConcurrency(t *testing.T) {
 // lock is the only thing making the limit real, and this test fails without it.
 func TestLiveDB_PromoReservationSerializesUnderContention(t *testing.T) {
 	pool := promoOrderPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	f := newPromoOrderFixture(t, ctx, pool, "Reservation Race Kitchen", 400_000)
 
@@ -858,7 +858,7 @@ func TestLiveDB_PromoReservationSerializesUnderContention(t *testing.T) {
 // the code, cancel for a full refund, and the cap stays burned forever.
 func TestLiveDB_OrderPromoRedemptionReleasedOnCancel(t *testing.T) {
 	pool := promoOrderPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	f := newPromoOrderFixture(t, ctx, pool, "Release Promo Kitchen", 300_000)
 
@@ -905,7 +905,7 @@ func TestLiveDB_OrderPromoRedemptionReleasedOnCancel(t *testing.T) {
 // never hands back money that was never collected.
 func TestLiveDB_OrderPromoRefundedOnCancel(t *testing.T) {
 	pool := promoOrderPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	f := newPromoOrderFixture(t, ctx, pool, "Refund Promo Kitchen", 300_000)
 
@@ -947,7 +947,7 @@ func TestLiveDB_OrderPromoRefundedOnCancel(t *testing.T) {
 // still fully releases.
 func TestLiveDB_OrderPromoDroppedWhenEscrowDiverges(t *testing.T) {
 	pool := promoOrderPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	f := newPromoOrderFixture(t, ctx, pool, "Divergent Promo Kitchen", 400_000)
 

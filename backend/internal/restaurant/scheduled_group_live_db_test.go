@@ -41,7 +41,7 @@ func schedPool(t *testing.T) *pgxpool.Pool {
 
 func TestLiveDB_ScheduledAndGroup(t *testing.T) {
 	pool := schedPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	led := ledger.NewService(ledger.NewRepository(pool), (*goredis.Client)(nil))
 	svc := NewService(pool, settlement.NewService(pool, led)).WithLedger(led).WithTiers(tiers.NewService(pool))
