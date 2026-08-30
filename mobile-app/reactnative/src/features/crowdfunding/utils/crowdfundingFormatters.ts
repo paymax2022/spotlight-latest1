@@ -1,12 +1,8 @@
 // ── Crowdfunding — Formatters & fee math ─────────────────────────────────────
 // All money is in kobo (integer minor units). Display helpers convert to ₦.
 
-import {
-  PLATFORM_FEE_BPS,
-  PAYMENT_FEE_BPS,
-  PAYMENT_FEE_FLAT_KOBO,
-} from '../constants/crowdfunding.constants';
-import type { FeeBreakdown, PaymentMethod } from '../types/crowdfunding.types';
+import { PLATFORM_FEE_BPS } from '../constants/crowdfunding.constants';
+import type { FeeBreakdown } from '../types/crowdfunding.types';
 
 /** ₦ from kobo, grouped thousands. e.g. 1_250_000 → "₦12,500". */
 export function formatNaira(kobo: number, opts?: { decimals?: boolean }): string {
@@ -63,26 +59,27 @@ export function maskAnonymous(displayName: string, anonymous: boolean): string {
 
 /**
  * Compute the fee breakdown for a contribution.
- * Fees are deducted ON TOP of the contribution so the campaign receives the full
- * amount the contributor intended (transparent-fee model).
+ *
+ * The platform's cut is DEDUCTED from the creator's payout — it is not added to
+ * what the contributor pays. A ₦1,000 contribution debits ₦1,000 and the
+ * campaign receives ₦900.
+ *
+ * This used to implement the opposite ("transparent-fee model": fees on top,
+ * campaign receives the full amount), and the settlement has never worked that
+ * way. The quote it produced was never what got charged — on the wallet rail
+ * the screen showed ₦1,025 against a ₦1,000 debit, and on the card rail it
+ * topped the wallet up by ₦1,025 to spend ₦1,000 and stranded the rest.
+ *
+ * The rate is display-only; the server splits by its own constant. Nothing
+ * here decides what anyone is charged: totalKobo is the contribution itself.
  */
-export function computeFees(
-  contributionKobo: number,
-  method: PaymentMethod,
-  tipKobo = 0,
-): FeeBreakdown {
+export function computeFees(contributionKobo: number, tipKobo = 0): FeeBreakdown {
   const platformFeeKobo = Math.round((contributionKobo * PLATFORM_FEE_BPS) / 10_000);
-  // Wallet payments incur no external processing fee.
-  const paymentFeeKobo =
-    method === 'WALLET'
-      ? 0
-      : Math.round((contributionKobo * PAYMENT_FEE_BPS) / 10_000) + PAYMENT_FEE_FLAT_KOBO;
-
   return {
     contributionKobo,
     platformFeeKobo,
-    paymentFeeKobo,
+    netToCampaignKobo: contributionKobo - platformFeeKobo,
     tipKobo,
-    totalKobo: contributionKobo + platformFeeKobo + paymentFeeKobo + tipKobo,
+    totalKobo: contributionKobo + tipKobo,
   };
 }

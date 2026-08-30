@@ -33,7 +33,15 @@ export default function JoinOrganisation() {
 
   const o = org.data;
   const categoryOptions = useMemo(() => o?.membershipCategories?.map((c) => c.label) ?? [], [o]);
-  const chapterOptions = useMemo(() => o?.chapters?.map((c) => c.name) ?? [], [o]);
+  // Filter out blank/missing names: an unnamed chapter would render as an empty
+  // (or literally "null") row that cannot be chosen meaningfully.
+  const chapterOptions = useMemo(
+    () => (o?.chapters ?? []).map((c) => c.name).filter((n): n is string => Boolean(n && n.trim())),
+    [o],
+  );
+  // Plenty of associations have no chapter structure at all, and this screen is
+  // reached for all of them — so the field is conditional, not always-on.
+  const hasChapters = chapterOptions.length > 0;
   // Every collection below is optional on the live DTO — a partial payload
   // must render an empty section, never crash.
   const requirements = useMemo(() => o?.requirements ?? [], [o]);
@@ -59,7 +67,10 @@ export default function JoinOrganisation() {
     );
   }
 
-  const valid = Boolean(category) && Boolean(chapter) && accepted;
+  // Requiring a chapter unconditionally made a chapter-less association impossible to
+  // join: the field offered nothing to pick, so `chapter` stayed empty, `valid` stayed
+  // false, and Submit never enabled — the error pointed at an empty dropdown.
+  const valid = Boolean(category) && (!hasChapters || Boolean(chapter)) && accepted;
 
   const onSubmit = () => {
     setTouched(true);
@@ -100,14 +111,16 @@ export default function JoinOrganisation() {
           error={touched && !category ? 'Please choose a category' : undefined}
         />
 
-        <SelectField
-          label="Chapter / state"
-          placeholder="Select your chapter"
-          value={chapter}
-          options={chapterOptions}
-          onChange={setChapter}
-          error={touched && !chapter ? 'Please choose a chapter' : undefined}
-        />
+        {hasChapters ? (
+          <SelectField
+            label="Chapter / state"
+            placeholder="Select your chapter"
+            value={chapter}
+            options={chapterOptions}
+            onChange={setChapter}
+            error={touched && !chapter ? 'Please choose a chapter' : undefined}
+          />
+        ) : null}
 
         {branches.length > 0 ? (
           <SelectField

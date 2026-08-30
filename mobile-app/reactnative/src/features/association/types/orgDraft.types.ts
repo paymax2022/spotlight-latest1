@@ -50,9 +50,23 @@ export interface RestrictionConfig {
 
 export interface OrgDraft {
   name:        string;
-  acronym:     string;
+  acronym:     string;          // optional
   category:    string;
   description: string;
+  location:    string;          // optional — e.g. "Lagos, Nigeria"
+  website:     string;          // optional — e.g. "https://nma.org.ng"
+  /**
+   * Founded year, held as the raw text the founder typed so the field can be
+   * partially entered without the store fighting the keyboard. Converted to a
+   * number at publish; the server rejects anything outside 1800→this year.
+   */
+  foundedYear: string;          // REQUIRED
+  /**
+   * Logo, REQUIRED. Set either from a pasted URL or from the image picker —
+   * one value, two ways in. Note the picker yields a device-local file:// URI
+   * and the association module has no upload endpoint behind it, so a logo
+   * added that way will not resolve anywhere but the device that picked it.
+   */
   logoUri:     string | null;
   groupType:   GroupType | null;
   approvalRule: ApprovalRule | null;

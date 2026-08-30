@@ -65,6 +65,21 @@ export function useStatus(id: string) {
   });
 }
 
+/**
+ * Voting context for an application. Polls while the contest is open so the
+ * applicant's vote count moves without a manual refresh; disabled entirely for
+ * an application that is not votable, so a rejected or pending one costs
+ * nothing.
+ */
+export function useRegistrationVoting(id: string) {
+  return useQuery({
+    queryKey: [KEY, 'voting', id],
+    queryFn: () => reg.getRegistrationVoting(id),
+    enabled: !!id,
+    refetchInterval: (query) => (query.state.data?.votable ? 30_000 : false),
+  });
+}
+
 export function useWithdraw(id: string) {
   const qc = useQueryClient();
   return useMutation({

@@ -252,11 +252,20 @@ type OrgDraftRestrictions struct {
 }
 
 type OrgDraft struct {
-	Name                string                `json:"name" binding:"required"`
-	Acronym             string                `json:"acronym"`
-	Category            string                `json:"category" binding:"required"`
-	Description         string                `json:"description"`
-	LogoURL             string                `json:"logoUri"`
+	Name        string `json:"name" binding:"required"`
+	Acronym     string `json:"acronym"`
+	Category    string `json:"category" binding:"required"`
+	Description string `json:"description"`
+	// LogoURL is bound from `logoUri` because that is the wizard draft's field
+	// name. The client sets it either from a pasted URL or from the image
+	// picker; see the note on validateOrgIdentity about what the picker yields.
+	LogoURL  string `json:"logoUri"`
+	Location string `json:"location"`
+	Website  string `json:"website"`
+	// FoundedYear is a pointer so "absent" is distinguishable from year 0 —
+	// PublishOrganisation rejects absent, and 0 would otherwise sail through a
+	// non-zero check as a plausible-looking value.
+	FoundedYear         *int                  `json:"foundedYear"`
 	GroupType           string                `json:"groupType" binding:"required"`
 	ApprovalRule        string                `json:"approvalRule"`
 	RegistrationFeeKobo int64                 `json:"registrationFeeKobo"`

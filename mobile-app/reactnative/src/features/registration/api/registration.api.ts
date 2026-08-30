@@ -7,6 +7,7 @@
 //   PATCH /api/registration/applications/{id}        (save step answers)
 //   POST /api/registration/applications/{id}/submit
 //   GET  /api/registration/applications/{id}/status
+//   GET  /api/registration/applications/{id}/voting
 //   POST /api/registration/applications/{id}/withdraw
 //   POST /api/registration/uploads                   (multipart file)
 
@@ -27,6 +28,8 @@ import type {
   SaveStepResponse,
   SubmitResponse,
   StatusResponse,
+  RegistrationVoting,
+  RegistrationVotingResponse,
   UploadResponse,
   PickedUpload,
   UploadedFileValue,
@@ -229,6 +232,32 @@ export async function getStatus(id: string): Promise<{ draft: RegistrationDraft;
   }
   const res = await regGet<StatusResponse>(`${REG_BASE}/applications/${id}/status`);
   return { draft: res.draft, timeline: res.timeline ?? [] };
+}
+
+/**
+ * Voting context for an application: the contest it runs in, the roster entry it
+ * became, and whether people can vote right now.
+ *
+ * Served by a NEW route rather than extra fields on /status, because the status
+ * route is brownfield-protected. Never throws for a non-votable application —
+ * it returns a `reason` so the screen can explain itself.
+ */
+export async function getRegistrationVoting(id: string): Promise<RegistrationVoting> {
+  if (REGISTRATION_USE_MOCK) {
+    // No roster exists in mock mode; report the honest reason rather than
+    // inventing a votable contest the tester cannot actually vote in.
+    return waitMock<RegistrationVoting>({
+      votable: false,
+      reason: 'not_promoted',
+      applicationStatus: 'submitted',
+      contest: null,
+      contestant: null,
+      sharePath: null,
+      shareText: null,
+    });
+  }
+  const res = await regGet<RegistrationVotingResponse>(`${REG_BASE}/applications/${id}/voting`);
+  return res.voting;
 }
 
 export async function withdrawApplication(id: string, note?: string): Promise<RegistrationDraft> {

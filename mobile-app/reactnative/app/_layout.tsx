@@ -18,6 +18,7 @@ import ConfirmHost from '@/components/ConfirmHost';
 import { Colors } from '@/constants/colors';
 import { useAuthStore } from '@/store/authStore';
 import { getPinStatus } from '@/features/transfers/api';
+import { requiresTransactionPin } from '@/features/security/moneyRoutes';
 import { rememberResume, toParamMap } from '@/lib/resume';
 import { useBrandFonts } from '@/lib/brandFonts';
 import { createSupabaseClient } from '@/lib/supabase';
@@ -126,10 +127,17 @@ function AuthGate({ children }: { children: React.ReactNode }) {
     // must always land on the module-grid home.
     if (user && inPreAuth) router.replace('/(tabs)/home');
 
-    // Transaction-PIN block: keep a PIN-less user on the set-PIN screen. Runs
-    // only for a signed-in user who is not mid-auth and isn't already there.
+    // Transaction-PIN block: send a PIN-less user to the set-PIN screen when —
+    // and only when — they are heading somewhere money moves.
+    //
+    // This used to fire on EVERY route, so a signed-in user could not read their
+    // contest application, an announcement or a lab result without first
+    // creating a payment credential they had no immediate use for. Enforcement
+    // was never the reason: every wallet debit is checked server-side (403
+    // `pin_not_set`), so narrowing this changes when the user is asked, not
+    // whether the PIN is required. See features/security/moneyRoutes.ts.
     const onSetPin = segments[0] === 'security'; // only /security/set-pin lives here
-    if (user && !inAuth && pinMissing && !onSetPin) {
+    if (user && !inAuth && pinMissing && !onSetPin && requiresTransactionPin(segments)) {
       // Remember where the user was so we can return them after they set the PIN.
       rememberResume({ pathname, params: toParamMap(globalParamsRef.current) });
       router.replace('/security/set-pin');

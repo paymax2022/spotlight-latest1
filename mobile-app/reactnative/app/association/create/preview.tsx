@@ -56,6 +56,9 @@ export default function WizardPreview() {
           {draft.description ? <Text style={styles.description}>{draft.description}</Text> : null}
         </View>
 
+        <SummaryRow label="Founded" value={draft.foundedYear || '—'} onEdit={() => router.push('/association/create/basics')} />
+        <SummaryRow label="Location" value={draft.location || 'Not set'} onEdit={() => router.push('/association/create/basics')} />
+        <SummaryRow label="Website" value={draft.website || 'Not set'} onEdit={() => router.push('/association/create/basics')} />
         <SummaryRow label="Group type" value={groupTypeLabel} onEdit={() => router.push('/association/create/branding')} />
         <SummaryRow label="Approval rule" value={approvalLabel} onEdit={() => router.push('/association/create/structure')} />
         <SummaryRow
