@@ -16,7 +16,17 @@ export async function publishOrganisation(draft: OrgDraft): Promise<PublishResul
     addCreatedOrganisation(draftToOrganisation(draft, organisationId));
     return { organisationId, name: draft.name };
   }
-  const { data } = await api.post(`${BASE}`, draft, {
+  // foundedYear is collected as text so the input can be partially typed; the
+  // server's OrgDraft takes a nullable int, where null means "not supplied" and
+  // is refused. Sending the raw string would fail JSON binding outright, and
+  // sending Number('') would send 0 — a value that looks supplied and then
+  // fails the range check with a confusing message.
+  const year = draft.foundedYear.trim();
+  const payload = {
+    ...draft,
+    foundedYear: /^\d{4}$/.test(year) ? Number(year) : null,
+  };
+  const { data } = await api.post(`${BASE}`, payload, {
     headers: { 'Idempotency-Key': generateIdempotencyKey() },
   });
   return data;

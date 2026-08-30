@@ -14,11 +14,22 @@ import { useOrgDraft } from '@/features/association/store/orgDraftStore';
 import { pickDocument } from '@/features/association/utils/docPicker';
 import { GROUP_TYPE_OPTIONS } from '@/features/association/constants/orgWizard.constants';
 import { initials } from '@/features/association/utils/associationFormatters';
+import { logoError, isRemoteLogoUrl } from '@/features/association/utils/orgDraftValidation';
+import TextInputField from '@/components/TextInputField';
 
 export default function WizardBranding() {
   const { draft, patch } = useOrgDraft();
   const [touched, setTouched] = useState(false);
-  const valid = Boolean(draft.groupType);
+
+  // The logo is REQUIRED, and one draft field backs both ways of supplying it:
+  // a pasted URL and the image picker write the same `logoUri`. Whichever the
+  // founder used last is the one that counts, so the two inputs can never hold
+  // conflicting values.
+  const logoIssue = logoError(draft.logoUri);
+  const urlValue = draft.logoUri && isRemoteLogoUrl(draft.logoUri) ? draft.logoUri : '';
+  const pickedLocalFile = Boolean(draft.logoUri) && !urlValue;
+
+  const valid = Boolean(draft.groupType) && !logoIssue;
 
   const onLogo = async () => { const f = await pickDocument(); if (f) patch({ logoUri: f.uri }); };
   const next = () => { setTouched(true); if (valid) router.push('/association/create/structure'); };
@@ -28,10 +39,10 @@ export default function WizardBranding() {
       <ScreenHeader title="Create organisation" />
       <WizardProgress step={1} />
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scroll}>
-        {/* Logo */}
+        {/* Logo — required, by URL or upload */}
         <View style={styles.logoWrap}>
           <Pressable onPress={onLogo} accessibilityRole="button" accessibilityLabel="Upload logo">
-            <View style={styles.logo}>
+            <View style={[styles.logo, touched && logoIssue ? styles.logoErrored : null]}>
               {draft.logoUri ? <Image source={{ uri: draft.logoUri }} style={styles.logoImg} /> : (
                 draft.acronym || draft.name ? <Text style={styles.logoText}>{draft.acronym || initials(draft.name)}</Text> : <ImagePlus size={26} color={Colors.primary} strokeWidth={2} />
               )}
@@ -40,9 +51,29 @@ export default function WizardBranding() {
           <Text style={styles.logoHint}>Tap to upload a logo</Text>
         </View>
 
+        <TextInputField
+          label="Logo URL"
+          placeholder="https://…"
+          value={urlValue}
+          onChangeText={(t) => patch({ logoUri: t.trim() ? t.trim() : null })}
+          autoCapitalize="none"
+          keyboardType="url"
+          error={touched ? logoIssue : undefined}
+        />
+        {pickedLocalFile ? (
+          <Text style={styles.logoNote}>
+            Using the image you picked. It previews here, but it is stored as a file on this device — paste a public URL instead if the logo should appear for other members and in the admin console.
+          </Text>
+        ) : (
+          <Text style={styles.logoNote}>Paste a link to your logo, or tap the badge above to pick an image.</Text>
+        )}
+
         <Text style={styles.label}>Group type</Text>
         <Text style={styles.help}>How do members join your organisation?</Text>
-        {touched && !valid ? <Text style={styles.error}>Choose a group type</Text> : null}
+        {/* Keyed on the group type itself, not on `valid` — `valid` now also
+            covers the logo, so reusing it here would blame a missing logo on
+            the group-type picker. */}
+        {touched && !draft.groupType ? <Text style={styles.error}>Choose a group type</Text> : null}
         <View style={styles.gap}>
           {GROUP_TYPE_OPTIONS.map((opt) => {
             const active = draft.groupType === opt.value;
@@ -73,6 +104,8 @@ const styles = StyleSheet.create({
   logoImg: { width: '100%', height: '100%' },
   logoText: { ...Typography.headlineMd, color: Colors.primary, fontWeight: '800' as const },
   logoHint: { ...Typography.labelSm, color: Colors.secondary },
+  logoErrored: { borderWidth: 1.5, borderColor: Colors.error },
+  logoNote: { ...Typography.labelSm, color: Colors.onSurfaceVariant, marginTop: -Spacing.xs, marginBottom: Spacing.xs },
   label: { ...Typography.titleMd, color: Colors.onSurface },
   help: { ...Typography.labelSm, color: Colors.onSurfaceVariant },
   error: { ...Typography.labelSm, color: Colors.error },

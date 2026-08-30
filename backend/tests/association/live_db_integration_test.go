@@ -770,10 +770,15 @@ func TestLiveDB_PublishOrganisation_PersistsFullGraphAndAudit(t *testing.T) {
 	founderID := uuid.New().String()
 	orgName := "Published Guild " + uuid.New().String()
 
+	foundedYear := 2008
 	draft := association.OrgDraft{
 		Name:                orgName,
 		Category:            "Professional",
 		GroupType:           "OPEN",
+		LogoURL:             "https://cdn.test.invalid/guild.png",
+		FoundedYear:         &foundedYear,
+		Location:            "Abuja, Nigeria",
+		Website:             "https://guild.test.invalid",
 		RegistrationFeeKobo: 0,
 		Chapters:            []association.OrgDraftChapter{{Name: "Lagos", Level: "STATE"}, {Name: "Abuja", Level: "STATE"}},
 		Committees:          []association.OrgDraftCommittee{{Name: "Welfare"}},
