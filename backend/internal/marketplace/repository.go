@@ -1064,9 +1064,14 @@ func (r *Repository) SetSavedSearchAlert(ctx context.Context, id string, enabled
 
 // ListCategories returns active categories for a market.
 func (r *Repository) ListCategories(ctx context.Context, marketID string) ([]Category, error) {
+	// Parents before their own children (parent_id NULLS FIRST), then the admin's
+	// sort_order, then name as a stable tiebreaker. The client builds the tree from
+	// this flat list, so a child arriving before its parent would be dropped.
 	rows, err := r.db.Query(ctx, `
-		SELECT id, market_id, parent_id, slug, name, attribute_schema, risk_tier, commission_bps, is_active
-		FROM public.mkt_categories WHERE market_id=$1 AND is_active=TRUE ORDER BY name`, marketID)
+		SELECT id, market_id, parent_id, slug, name, COALESCE(icon,''), sort_order,
+		       attribute_schema, risk_tier, commission_bps, is_active
+		FROM public.mkt_categories WHERE market_id=$1 AND is_active=TRUE
+		ORDER BY parent_id NULLS FIRST, sort_order, name`, marketID)
 	if err != nil {
 		return nil, wrapInternal("list categories", err)
 	}
@@ -1085,7 +1090,8 @@ func (r *Repository) ListCategories(ctx context.Context, marketID string) ([]Cat
 // GetCategory loads a category by id.
 func (r *Repository) GetCategory(ctx context.Context, id string) (*Category, error) {
 	row := r.db.QueryRow(ctx, `
-		SELECT id, market_id, parent_id, slug, name, attribute_schema, risk_tier, commission_bps, is_active
+		SELECT id, market_id, parent_id, slug, name, COALESCE(icon,''), sort_order,
+		       attribute_schema, risk_tier, commission_bps, is_active
 		FROM public.mkt_categories WHERE id=$1`, id)
 	c, err := scanCategory(row)
 	if err != nil {
@@ -1100,7 +1106,8 @@ func (r *Repository) GetCategory(ctx context.Context, id string) (*Category, err
 func scanCategory(row pgx.Row) (*Category, error) {
 	var c Category
 	var schema []byte
-	if err := row.Scan(&c.ID, &c.MarketID, &c.ParentID, &c.Slug, &c.Name, &schema, &c.RiskTier, &c.CommissionBps, &c.IsActive); err != nil {
+	if err := row.Scan(&c.ID, &c.MarketID, &c.ParentID, &c.Slug, &c.Name, &c.Icon, &c.SortOrder,
+		&schema, &c.RiskTier, &c.CommissionBps, &c.IsActive); err != nil {
 		return nil, err
 	}
 	c.AttributeSchema = schema

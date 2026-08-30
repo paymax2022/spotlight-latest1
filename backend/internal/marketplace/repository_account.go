@@ -219,7 +219,23 @@ func (r *Repository) SearchListingsFallback(ctx context.Context, f SearchFallbac
 		q += " || '%'"
 	}
 	if f.CategoryID != "" {
-		add(" AND category_id = ", f.CategoryID)
+		// Browsing a category includes everything filed UNDER it, not just rows
+		// carrying that exact id. Listings live on leaves — a car is filed in
+		// "Cars", never in "Vehicles" — so an equality match answered every main
+		// category with an empty page while its children held the stock. That
+		// became reachable the moment the flat category list was grouped into
+		// mains with subcategories.
+		//
+		// The recursive walk degrades to a single row for a leaf, so browsing a
+		// subcategory behaves exactly as it did before.
+		add(` AND category_id IN (
+			WITH RECURSIVE sub(id) AS (
+				SELECT id FROM public.mkt_categories WHERE id = `, f.CategoryID)
+		q += `::uuid
+				UNION ALL
+				SELECT c.id FROM public.mkt_categories c JOIN sub s ON c.parent_id = s.id
+			)
+			SELECT id FROM sub)`
 	}
 	if f.Condition != "" {
 		add(" AND condition = ", f.Condition)
