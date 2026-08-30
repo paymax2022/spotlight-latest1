@@ -159,11 +159,11 @@ type Config struct {
 	// Empty outside development is a hard startup failure: the fallback is a
 	// constant compiled into this (public) repo, so anyone could forge a
 	// structurally valid card token for a known membership id.
-	AssocCardSigningSecret string
-	FeatureEventsEnabled          bool
-	FeatureEstateEnabled          bool
-	FeatureCrowdfundingEnabled    bool
-	FeatureRestaurantEnabled      bool
+	AssocCardSigningSecret     string
+	FeatureEventsEnabled       bool
+	FeatureEstateEnabled       bool
+	FeatureCrowdfundingEnabled bool
+	FeatureRestaurantEnabled   bool
 	// FeatureModuleGateEnforce turns the server-side module gate from observe-only
 	// (logs what it would refuse) into enforcing (503s unpublished modules). Default
 	// false: the gate's route map is hand-built and must be validated against real
@@ -741,7 +741,14 @@ func Load() Config {
 		ConnectVerificationPepper: getEnv("CONNECT_VERIFICATION_PEPPER", ""),
 
 		R2AccountEndpoint: getEnv("R2_ACCOUNT_ENDPOINT", ""),
-		R2Bucket:          getEnv("R2_BUCKET", "spotlight-open-mic"),
+		// No default. The previous default was "spotlight-open-mic", a bucket that
+		// does not exist in the R2 account — and because Configured() only checks
+		// that the fields are non-empty, that default made the module look
+		// configured: presign answered 200 and the upload then died at the PUT with
+		// NoSuchBucket, which the client can only report as "couldn't be uploaded".
+		// Empty fails closed at Configured() instead, so an unset bucket says
+		// "uploads are not configured" up front.
+		R2Bucket:          getEnv("R2_BUCKET", ""),
 		R2AccessKeyID:     getEnv("R2_ACCESS_KEY_ID", ""),
 		R2SecretAccessKey: getEnv("R2_SECRET_ACCESS_KEY", ""),
 		R2Region:          getEnv("R2_REGION", "auto"),
@@ -767,8 +774,8 @@ func Load() Config {
 		// Auth throttling. Login/register/password-reset had no limit at all; these
 		// are per-IP-per-route budgets. Deliberately tight — a real person signs in a
 		// handful of times a minute, a credential-stuffer does not.
-		AuthRateLimitPerMin:          getEnvInt("AUTH_RATE_LIMIT_PER_MIN", 10),
-		AuthResetRateLimitPerHour:    getEnvInt("AUTH_RESET_RATE_LIMIT_PER_HOUR", 5),
+		AuthRateLimitPerMin:       getEnvInt("AUTH_RATE_LIMIT_PER_MIN", 10),
+		AuthResetRateLimitPerHour: getEnvInt("AUTH_RESET_RATE_LIMIT_PER_HOUR", 5),
 
 		ResendAPIKey:    getEnv("RESEND_API_KEY", ""),
 		ResendFromEmail: getEnv("RESEND_FROM_EMAIL", "Spotlight <no-reply@spotlightng.com>"),
