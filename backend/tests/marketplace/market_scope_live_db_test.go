@@ -121,3 +121,53 @@ func TestMarketScope_DatabaseRejectsCrossMarketInsert(t *testing.T) {
 		t.Errorf("rejected by %v, want mkt_listings_category_market_fk", err)
 	}
 }
+
+// ─── Price bands ─────────────────────────────────────────────────────────────
+
+// mkt_price_bands carries the same (category_id, market_id) pair as mkt_listings
+// and had the same category-only FK. Nothing writes the table yet — it appears in
+// no Go or TypeScript, only its CREATE TABLE and the RLS lockdown — so the rule
+// was established (20270121000000) before the first row rather than after 210 of
+// them. This test is what keeps that true once a writer does arrive: it is the
+// only thing standing between an empty table and the listings story repeating.
+func TestMarketScope_PriceBandRejectsCrossMarketCategory(t *testing.T) {
+	_, pool := liveConnectService(t)
+	t.Cleanup(pool.Close)
+	ctx := context.Background()
+
+	foreign := seedCategoryInMarket(t, ctx, pool, "KE")
+
+	_, err := pool.Exec(ctx, `
+		INSERT INTO public.mkt_price_bands
+			(id, market_id, category_id, attrs_fingerprint, p25_kobo, p50_kobo, p75_kobo, sample_size)
+		VALUES ($1,'NG',$2,'fp-cross-market',100,200,300,10)`,
+		uuid.NewString(), foreign)
+	if err == nil {
+		t.Fatal("database accepted an NG price band under a KE category")
+	}
+	if !strings.Contains(err.Error(), "mkt_price_band_category_market_fk") {
+		t.Errorf("rejected by %v, want mkt_price_band_category_market_fk", err)
+	}
+}
+
+// The band inserts fine when its category is in the same market — so the test
+// above proves the market rule bites, not merely that the insert was malformed.
+func TestMarketScope_PriceBandAcceptsSameMarketCategory(t *testing.T) {
+	_, pool := liveConnectService(t)
+	t.Cleanup(pool.Close)
+	ctx := context.Background()
+
+	home := seedCategoryInMarket(t, ctx, pool, "NG")
+	id := uuid.NewString()
+
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO public.mkt_price_bands
+			(id, market_id, category_id, attrs_fingerprint, p25_kobo, p50_kobo, p75_kobo, sample_size)
+		VALUES ($1,'NG',$2,'fp-same-market',100,200,300,10)`,
+		id, home); err != nil {
+		t.Fatalf("same-market price band rejected: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(), `DELETE FROM public.mkt_price_bands WHERE id=$1`, id)
+	})
+}
