@@ -103,7 +103,7 @@ export default function CampaignPerformanceScreen() {
         <ActionRow icon={<Megaphone size={18} color={Colors.primary} strokeWidth={2} />} label="Post an update" onPress={() => router.push(`/crowdfunding/campaign/${id}/post-update`)} />
         <ActionRow icon={<MessageSquare size={18} color={Colors.secondary} strokeWidth={2} />} label="Message contributors" onPress={() => router.push(`/crowdfunding/campaign/${id}/broadcast`)} />
         <ActionRow icon={<Target size={18} color={Colors.tertiaryContainer} strokeWidth={2} />} label="Manage milestones" onPress={() => router.push(`/crowdfunding/milestones/${id}`)} />
-        <ActionRow icon={<Wallet size={18} color={Colors.secondary} strokeWidth={2} />} label="Campaign wallet & withdraw" onPress={() => router.push('/crowdfunding/wallet')} />
+        <ActionRow icon={<Wallet size={18} color={Colors.secondary} strokeWidth={2} />} label="Campaign wallet & withdraw" onPress={() => router.push({ pathname: '/crowdfunding/wallet', params: { campaign: id } })} />
         <ActionRow icon={<Share2 size={18} color={Colors.teal} strokeWidth={2} />} label="Share campaign" onPress={() => router.push(`/crowdfunding/campaign/${id}/share`)} />
       </ScrollView>
     </SafeAreaView>
