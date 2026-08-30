@@ -256,3 +256,48 @@ func (h *Handler) ListAdminDuesRuns() gin.HandlerFunc {
 		return h.svc.ListAdminDuesRuns(c.Request.Context(), a, o, l, off)
 	})
 }
+
+// ── Member-proposed meetings ─────────────────────────────────────────────────
+
+// ProposeMeeting — POST /associations/meetings.
+// Any active member may call it; an admin's proposal is approved on insert,
+// everyone else's starts pending. 201 with the resulting approvalStatus so the
+// client can say which of the two happened.
+func (h *Handler) ProposeMeeting(c *gin.Context) {
+	var r MeetingRequest
+	if err := c.ShouldBindJSON(&r); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	id, approval, err := h.svc.ProposeMeeting(c.Request.Context(), c.GetString("user_id"), r)
+	if err != nil {
+		c.JSON(statusFor(err), gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusCreated, gin.H{"id": id, "approvalStatus": approval})
+}
+
+// DecideMeeting — POST /associations/admin/meetings/:childId/decision.
+func (h *Handler) DecideMeeting(c *gin.Context) {
+	var d MeetingApprovalDecision
+	if err := c.ShouldBindJSON(&d); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	status, err := h.svc.DecideMeeting(c.Request.Context(), c.GetString("user_id"), c.Param("childId"), d)
+	if err != nil {
+		c.JSON(statusFor(err), gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"approvalStatus": status})
+}
+
+// ListPendingMeetings — GET /associations/admin/organisations/:id/meetings/pending.
+func (h *Handler) ListPendingMeetings(c *gin.Context) {
+	items, err := h.svc.GetPendingMeetings(c.Request.Context(), c.GetString("user_id"), c.Param("id"))
+	if err != nil {
+		c.JSON(statusFor(err), gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": items})
+}

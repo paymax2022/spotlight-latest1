@@ -142,3 +142,15 @@ type EventRegistrationResult struct {
 	InvoiceID       *string `json:"invoiceId"`
 	AmountKobo      int64   `json:"amountKobo"`
 }
+
+// PendingMeeting is one row of the admin approval queue.
+type PendingMeeting struct {
+	ID             string  `json:"id"`
+	Title          string  `json:"title"`
+	Mode           string  `json:"mode"`
+	StartsAt       string  `json:"startsAt"`
+	EndsAt         *string `json:"endsAt"`
+	Location       *string `json:"location"`
+	ProposedByName string  `json:"proposedByName"`
+	ProposedAt     string  `json:"proposedAt"`
+}

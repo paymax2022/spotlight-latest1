@@ -880,3 +880,193 @@ func nonNilStrings(v []string) []string {
 	}
 	return v
 }
+
+// ── Member-proposed meetings ─────────────────────────────────────────────────
+
+// MeetingApprovalDecision is the outcome an admin records on a proposal.
+type MeetingApprovalDecision struct {
+	Approve bool   `json:"approve"`
+	Note    string `json:"note"`
+}
+
+// ProposeMeeting lets ANY active member put a meeting forward.
+//
+// The caller's standing decides what happens next, and that is the whole point
+// of the endpoint: an admin scheduling a meeting is scheduling it, so it is
+// APPROVED on insert and behaves exactly like one created through the admin
+// route. A member without admin rights is proposing one, so it starts PENDING
+// and stays invisible to the rest of the organisation until an admin decides.
+//
+// The organisation is resolved from the caller's own membership rather than
+// taken from the request. A body-supplied organisation id would let any member
+// of any organisation file proposals into somebody else's calendar, which is
+// the shape of the cross-org write this module has been bitten by before.
+func (s *Service) ProposeMeeting(ctx context.Context, userID string, r MeetingRequest) (string, string, error) {
+	_, orgID, err := s.primaryMembership(ctx, userID)
+	if err != nil {
+		return "", "", err
+	}
+
+	// Admin ⇒ approved on insert. requireOrgAdmin returns an error for a plain
+	// member, which here is not a failure but the answer: they are proposing.
+	approval := "PENDING"
+	if err := s.requireOrgAdmin(ctx, userID, orgID); err == nil {
+		approval = "APPROVED"
+	}
+
+	mode := nz(r.Mode, "PHYSICAL")
+	if !validMeetingModes[mode] {
+		return "", "", fmt.Errorf("%w: association: invalid meeting mode %q", ErrInvalidInput, mode)
+	}
+	startsAt, err := mustParseTime(r.StartsAt, "startsAt")
+	if err != nil {
+		return "", "", err
+	}
+	endsAt, err := parseTime(r.EndsAt, "endsAt")
+	if err != nil {
+		return "", "", err
+	}
+	if endsAt != nil && endsAt.Before(startsAt) {
+		return "", "", fmt.Errorf("%w: association: endsAt is before startsAt", ErrInvalidInput)
+	}
+	// A proposal for a time that has already passed is not something an admin can
+	// meaningfully approve, and it would land in the calendar's past on arrival.
+	if startsAt.Before(time.Now()) {
+		return "", "", fmt.Errorf("%w: association: startsAt is in the past", ErrInvalidInput)
+	}
+	agenda, err := json.Marshal(nonNilStrings(r.Agenda))
+	if err != nil {
+		return "", "", fmt.Errorf("association: agenda: %w", err)
+	}
+
+	id := uuid.New().String()
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return "", "", fmt.Errorf("association: begin tx: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO assoc_meetings
+		  (id, organisation_id, title, description, mode, starts_at, ends_at, location,
+		   state, agenda, created_by, approval_status)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'UPCOMING',$9,$10,$11)`,
+		id, orgID, r.Title, r.Description, mode, startsAt, endsAt, r.Location,
+		agenda, userID, approval); err != nil {
+		return "", "", fmt.Errorf("association: propose meeting: %w", err)
+	}
+
+	// Only an approved meeting is announced. Notifying the organisation about a
+	// proposal would tell everyone about a meeting that may never be approved,
+	// and the proposal is not visible to them yet in any case.
+	if approval == "APPROVED" && r.Notify {
+		if err := s.notifyOrg(ctx, tx, orgID, "MEETING", r.Title, deref(r.Description), "/association/meetings/"+id); err != nil {
+			return "", "", err
+		}
+	}
+
+	action := "MEETING_PROPOSE"
+	if approval == "APPROVED" {
+		action = "MEETING_CREATE"
+	}
+	if err := s.audit(ctx, tx, orgID, userID, action, "meeting", id,
+		map[string]any{"title": r.Title, "startsAt": startsAt, "approvalStatus": approval}); err != nil {
+		return "", "", err
+	}
+	return id, approval, tx.Commit(ctx)
+}
+
+// DecideMeeting records an admin's decision on a proposed meeting.
+//
+// Only a PENDING meeting can be decided. Re-deciding an already-approved or
+// already-rejected meeting is refused rather than silently overwritten: the
+// decision is an audited record of who let a meeting onto the calendar, and
+// letting it be flipped afterwards would make that record unreliable. Removing
+// an approved meeting is what cancel/delete are for.
+func (s *Service) DecideMeeting(ctx context.Context, adminID, meetingID string, d MeetingApprovalDecision) (string, error) {
+	var orgID, current, title string
+	var createdBy *string
+	if err := s.db.QueryRow(ctx,
+		`SELECT organisation_id::text, approval_status, title, created_by::text FROM assoc_meetings WHERE id=$1`,
+		meetingID).Scan(&orgID, &current, &title, &createdBy); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			// This package has no ErrNotFound; statusFor maps pgx.ErrNoRows to 404.
+			return "", pgx.ErrNoRows
+		}
+		return "", fmt.Errorf("association: meeting lookup: %w", err)
+	}
+	if err := s.requireOrgAdmin(ctx, adminID, orgID); err != nil {
+		return "", err
+	}
+	if current != "PENDING" {
+		return "", fmt.Errorf("%w: association: meeting is already %s", ErrInvalidInput, current)
+	}
+
+	next := "REJECTED"
+	if d.Approve {
+		next = "APPROVED"
+	}
+
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return "", fmt.Errorf("association: begin tx: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	// Conditional on still being PENDING so two admins deciding at once cannot
+	// both write a decision — the second finds no row and is told it is decided.
+	tag, err := tx.Exec(ctx, `
+		UPDATE assoc_meetings
+		SET approval_status=$2, decided_by=$3, decided_at=now(), decision_note=NULLIF($4,'')
+		WHERE id=$1 AND approval_status='PENDING'`,
+		meetingID, next, adminID, strings.TrimSpace(d.Note))
+	if err != nil {
+		return "", fmt.Errorf("association: decide meeting: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return "", fmt.Errorf("%w: association: meeting is no longer pending", ErrInvalidInput)
+	}
+
+	// The organisation only hears about it once it is real.
+	if next == "APPROVED" {
+		if err := s.notifyOrg(ctx, tx, orgID, "MEETING", title, "", "/association/meetings/"+meetingID); err != nil {
+			return "", err
+		}
+	}
+	if err := s.audit(ctx, tx, orgID, adminID, "MEETING_DECIDE", "meeting", meetingID,
+		map[string]any{"decision": next, "note": d.Note, "proposedBy": deref(createdBy)}); err != nil {
+		return "", err
+	}
+	return next, tx.Commit(ctx)
+}
+
+// GetPendingMeetings returns the approval queue for one organisation.
+func (s *Service) GetPendingMeetings(ctx context.Context, adminID, orgID string) ([]PendingMeeting, error) {
+	if err := s.requireOrgAdmin(ctx, adminID, orgID); err != nil {
+		return nil, err
+	}
+	rows, err := s.db.Query(ctx, `
+		SELECT mt.id::text, mt.title, mt.mode, mt.starts_at::text, mt.ends_at::text, mt.location,
+		       COALESCE(u.raw_user_meta_data->>'full_name', u.email, 'A member'),
+		       mt.created_at::text
+		FROM assoc_meetings mt
+		LEFT JOIN auth.users u ON u.id = mt.created_by
+		WHERE mt.organisation_id=$1 AND mt.approval_status='PENDING'
+		ORDER BY mt.starts_at ASC
+		LIMIT 100`, orgID)
+	if err != nil {
+		return nil, fmt.Errorf("association: pending meetings: %w", err)
+	}
+	defer rows.Close()
+
+	out := []PendingMeeting{}
+	for rows.Next() {
+		var p PendingMeeting
+		if err := rows.Scan(&p.ID, &p.Title, &p.Mode, &p.StartsAt, &p.EndsAt, &p.Location,
+			&p.ProposedByName, &p.ProposedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}

@@ -1085,10 +1085,17 @@ func (s *Service) GetMeetings(ctx context.Context, userID string) ([]MeetingSumm
 		       CASE WHEN mt.starts_at > now() THEN 'UPCOMING'
 		            WHEN mt.ends_at IS NULL OR mt.ends_at > now() THEN 'LIVE'
 		            ELSE 'PAST' END,
-		       (SELECT count(*) FROM assoc_meeting_attendance ma WHERE ma.meeting_id=mt.id)
+		       (SELECT count(*) FROM assoc_meeting_attendance ma WHERE ma.meeting_id=mt.id),
+		       mt.approval_status
 		FROM assoc_meetings mt
 		JOIN assoc_memberships m ON m.organisation_id=mt.organisation_id
 		WHERE m.user_id=$1 AND m.status='ACTIVE'
+		  -- A member sees the approved calendar, plus their OWN proposals
+		  -- whatever state those are in. Showing everyone's pending proposals
+		  -- would put unapproved meetings on the organisation's calendar, which
+		  -- is the thing approval exists to prevent; hiding the proposer's own
+		  -- would leave them with no way to see what they submitted.
+		  AND (mt.approval_status = 'APPROVED' OR mt.created_by = $1)
 		ORDER BY mt.starts_at DESC LIMIT 50`, userID)
 	if err != nil {
 		return nil, fmt.Errorf("association: meetings: %w", err)
@@ -1098,7 +1105,7 @@ func (s *Service) GetMeetings(ctx context.Context, userID string) ([]MeetingSumm
 	for rows.Next() {
 		var mt MeetingSummary
 		if err := rows.Scan(&mt.ID, &mt.Title, &mt.Mode, &mt.StartsAt, &mt.EndsAt,
-			&mt.Location, &mt.State, &mt.AttendeeCount); err != nil {
+			&mt.Location, &mt.State, &mt.AttendeeCount, &mt.ApprovalStatus); err != nil {
 			continue
 		}
 		out = append(out, mt)

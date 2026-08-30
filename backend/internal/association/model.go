@@ -328,6 +328,10 @@ type MeetingSummary struct {
 	Location      *string `json:"location"`
 	State         string  `json:"state"`
 	AttendeeCount int     `json:"attendeeCount"`
+	// ApprovalStatus is APPROVED for the organisation's calendar. A member's own
+	// proposal appears in their list as PENDING or REJECTED so they can see what
+	// they submitted; nobody else sees it until it is approved.
+	ApprovalStatus string `json:"approvalStatus"`
 }
 
 // ── Tasks ─────────────────────────────────────────────────────────────────────

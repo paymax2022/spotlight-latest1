@@ -59,6 +59,9 @@ func RegisterRoutes(rg *gin.RouterGroup, h *Handler) {
 	// ── Meetings ────────────────────────────────────────────────
 	rg.GET("/meetings", h.ListMeetings)
 	rg.GET("/meetings/:id", h.GetMeeting)
+	// Any active member may propose a meeting; an admin's goes straight onto the
+	// calendar and everyone else's waits for a decision (see ProposeMeeting).
+	rg.POST("/meetings", h.ProposeMeeting)
 	rg.POST("/meetings/:id/rsvp", h.RsvpMeeting)
 	rg.POST("/meetings/:id/attendance", h.CheckInMeeting)
 
@@ -156,6 +159,8 @@ func RegisterRoutes(rg *gin.RouterGroup, h *Handler) {
 	rg.PATCH("/admin/meetings/:childId", h.UpdateMeeting)
 	rg.DELETE("/admin/meetings/:childId", h.DeleteMeeting)
 	rg.POST("/admin/meetings/:childId/minutes", h.PublishMinutes)
+	rg.GET("/admin/organisations/:id/meetings/pending", h.ListPendingMeetings)
+	rg.POST("/admin/meetings/:childId/decision", h.DecideMeeting)
 
 	rg.POST("/admin/organisations/:id/documents", h.CreateDocument)
 	rg.PATCH("/admin/documents/:childId", h.UpdateDocument)
