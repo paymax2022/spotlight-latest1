@@ -48,8 +48,12 @@ func seedRiskTier0Category(t *testing.T, ctx context.Context, pool *pgxpool.Pool
 	t.Helper()
 	id := uuid.New().String()
 	if _, err := pool.Exec(ctx,
+		// market_id must match the market the service stamps on listings
+		// (DefaultMarketID). Seeding 'paymax' here while CreateListing writes 'NG' is
+		// what produced 210 cross-market listings in the local database, and is now
+		// refused by mkt_listings_category_market_fk.
 		`INSERT INTO mkt_categories (id, market_id, slug, name, attribute_schema, risk_tier, commission_bps, is_active)
-		 VALUES ($1::uuid,'paymax','remod-'||$1::text,'Remod Test Cat','{}'::jsonb,0,0,true)`, id); err != nil {
+		 VALUES ($1::uuid,'NG','remod-'||$1::text,'Remod Test Cat','{}'::jsonb,0,0,true)`, id); err != nil {
 		t.Fatalf("seed category: %v", err)
 	}
 	return id
@@ -60,8 +64,9 @@ func seedSchemaCategory(t *testing.T, ctx context.Context, pool *pgxpool.Pool, s
 	t.Helper()
 	id := uuid.New().String()
 	if _, err := pool.Exec(ctx,
+		// Same market as the listings this category will carry — see seedRiskTier0Category.
 		`INSERT INTO mkt_categories (id, market_id, slug, name, attribute_schema, risk_tier, commission_bps, is_active)
-		 VALUES ($1::uuid,'paymax','schema-'||$1::text,'Schema Cat',$2::jsonb,0,0,true)`, id, schema); err != nil {
+		 VALUES ($1::uuid,'NG','schema-'||$1::text,'Schema Cat',$2::jsonb,0,0,true)`, id, schema); err != nil {
 		t.Fatalf("seed schema category: %v", err)
 	}
 	return id
