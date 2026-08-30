@@ -100,7 +100,7 @@ const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: Colors.background },
   scroll: { padding: Spacing.containerMargin, paddingBottom: Spacing.xxl, gap: Spacing.md },
   hero: { borderRadius: Radius.xl, padding: Spacing.lg, alignItems: 'center', gap: 2 },
-  heroNum: { ...Typography.displayLg, color: Colors.onPrimary, fontSize: 52, lineHeight: 58 },
+  heroNum: { ...Typography.displayLg, color: Colors.onPrimary, fontSize: 52, letterSpacing: -1.04, lineHeight: 58 },
   heroLabel: { ...Typography.labelLg, color: Colors.inversePrimary },
   freezeRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: Spacing.sm, paddingHorizontal: Spacing.md },
   freezeText: { ...Typography.labelSm, color: Colors.inversePrimary, flex: 1 },

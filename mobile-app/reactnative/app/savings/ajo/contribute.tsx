@@ -78,7 +78,7 @@ const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: Colors.background },
   body: { padding: Spacing.containerMargin, gap: Spacing.md, alignItems: 'center' },
   circle: { ...Typography.titleMd, color: SavingsColors.muted, marginTop: Spacing.md },
-  amount: { ...Typography.displayLg, color: Colors.primary, fontSize: 44, lineHeight: 50 },
+  amount: { ...Typography.displayLg, color: Colors.primary, fontSize: 44, letterSpacing: -0.88, lineHeight: 50 },
   sub: { ...Typography.bodyMd, color: SavingsColors.muted },
   card: { width: '100%', backgroundColor: SavingsColors.surface, borderRadius: Radius.lg, padding: Spacing.cardPadding, gap: Spacing.sm, ...shadow1 },
   row: { flexDirection: 'row', justifyContent: 'space-between' },

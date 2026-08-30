@@ -61,7 +61,7 @@ const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: Colors.background },
   content: { padding: Spacing.containerMargin, gap: Spacing.md, paddingBottom: 40 },
   summary: { alignItems: 'center', gap: 6, backgroundColor: Colors.surfaceContainerLowest, borderRadius: Radius.lg, padding: Spacing.lg },
-  avg: { ...Typography.displayLg, fontSize: 40, color: Colors.primary },
+  avg: { ...Typography.displayLg, fontSize: 40, letterSpacing: -0.8, color: Colors.primary },
   count: { ...Typography.bodySm, color: Colors.onSurfaceVariant },
   card: { backgroundColor: Colors.surfaceContainerLowest, borderRadius: Radius.lg, padding: Spacing.md, gap: 4 },
   head: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm },

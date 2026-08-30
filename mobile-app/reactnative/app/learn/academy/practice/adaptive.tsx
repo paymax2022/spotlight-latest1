@@ -156,7 +156,7 @@ const styles = StyleSheet.create({
   hintText: { ...Typography.bodySm, color: Colors.onWarning, flex: 1 },
   footer: { padding: Spacing.containerMargin, borderTopWidth: 1, borderTopColor: Colors.outlineVariant },
   scoreCard: { alignItems: 'center', backgroundColor: Colors.surfaceContainerLowest, borderRadius: Radius.lg, padding: Spacing.lg, gap: 4 },
-  scoreNum: { ...Typography.displayLg, color: Colors.onSurface, fontSize: 44, lineHeight: 50 },
+  scoreNum: { ...Typography.displayLg, color: Colors.onSurface, fontSize: 44, letterSpacing: -0.88, lineHeight: 50 },
   scoreSub: { ...Typography.bodyMd, color: Colors.onSurfaceVariant },
   pointsPill: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: Radius.full, marginTop: Spacing.sm },
   pointsText: { ...Typography.labelMd, color: Colors.teal, fontWeight: '700' },

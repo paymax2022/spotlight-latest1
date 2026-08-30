@@ -101,7 +101,7 @@ const styles = StyleSheet.create({
   scroll: { paddingHorizontal: Spacing.containerMargin, paddingBottom: 24, gap: Spacing.md },
   hero: { alignItems: 'center', paddingVertical: Spacing.lg, gap: Spacing.xs },
   heroLabel: { ...Typography.labelMd, color: Colors.onSurfaceVariant },
-  heroAmount: { ...Typography.displayLg, color: InsuranceColors.brand, fontSize: 40, lineHeight: 48 },
+  heroAmount: { ...Typography.displayLg, color: InsuranceColors.brand, fontSize: 40, letterSpacing: -0.8, lineHeight: 48 },
   ttlRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   ttl: { ...Typography.labelSm, color: InsuranceColors.muted },
   card: { backgroundColor: InsuranceColors.surface, borderRadius: Radius.lg, borderWidth: 1, borderColor: InsuranceColors.border, paddingHorizontal: Spacing.md, paddingVertical: Spacing.xs },

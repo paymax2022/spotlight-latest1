@@ -113,7 +113,7 @@ const styles = StyleSheet.create({
   scroll: { padding: Spacing.containerMargin, paddingBottom: Spacing.xxl, gap: Spacing.md },
   hero: { borderRadius: Radius.xl, padding: Spacing.lg },
   heroKicker: { ...Typography.labelSm, color: Colors.gold, letterSpacing: 1, fontWeight: '700' },
-  heroPct: { ...Typography.displayLg, color: Colors.onPrimary, fontSize: 44, lineHeight: 50 },
+  heroPct: { ...Typography.displayLg, color: Colors.onPrimary, fontSize: 44, letterSpacing: -0.88, lineHeight: 50 },
   statsRow: { flexDirection: 'row', gap: Spacing.sm },
   statCard: { flex: 1, backgroundColor: Colors.surfaceContainerLowest, borderRadius: Radius.lg, padding: Spacing.md, alignItems: 'center', gap: 2 },
   statNum: { ...Typography.titleMd, color: Colors.onSurface },

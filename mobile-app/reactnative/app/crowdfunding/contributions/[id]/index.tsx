@@ -92,7 +92,7 @@ const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: Colors.background },
   body: { paddingHorizontal: Spacing.containerMargin, paddingBottom: Spacing.lg, gap: Spacing.md },
   amountHead: { alignItems: 'center', gap: 4, paddingVertical: Spacing.md },
-  amount: { ...Typography.displayLg, fontSize: 40, lineHeight: 48, color: Colors.onSurface },
+  amount: { ...Typography.displayLg, fontSize: 40, letterSpacing: -0.8, lineHeight: 48, color: Colors.onSurface },
   campaign: { ...Typography.bodyMd, color: Colors.onSurfaceVariant, textAlign: 'center' },
   card: { backgroundColor: Colors.surfaceContainerLowest, borderRadius: Radius.lg, borderWidth: 1, borderColor: Colors.surfaceContainerHigh, padding: Spacing.md, gap: Spacing.sm },
   row: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: Spacing.md },

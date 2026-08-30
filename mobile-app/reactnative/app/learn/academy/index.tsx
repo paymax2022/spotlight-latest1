@@ -266,7 +266,7 @@ const styles = StyleSheet.create({
   examTop: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   examKicker: { ...Typography.labelSm, color: Colors.gold, letterSpacing: 1, fontWeight: '700' },
   examTitle: { ...Typography.titleMd, color: Colors.onPrimary, marginTop: Spacing.xs },
-  examPct: { ...Typography.displayLg, color: Colors.onPrimary, fontSize: 40, lineHeight: 46 },
+  examPct: { ...Typography.displayLg, color: Colors.onPrimary, fontSize: 40, letterSpacing: -0.8, lineHeight: 46 },
   examSub: { ...Typography.labelSm, color: Colors.inversePrimary, marginTop: Spacing.sm },
   quickGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.sm },
   quick: { width: '47.5%', flexGrow: 1, backgroundColor: Colors.surfaceContainerLowest, borderRadius: Radius.lg, padding: Spacing.md, gap: Spacing.sm },

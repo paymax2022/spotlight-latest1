@@ -89,7 +89,7 @@ const styles = StyleSheet.create({
   scroll: { paddingHorizontal: Spacing.containerMargin, paddingTop: Spacing.sm },
   balanceCard: { backgroundColor: CreatorsColors.brand, borderRadius: Radius.xl, padding: Spacing.lg, gap: 4 },
   balLabel: { ...Typography.labelMd, color: '#D3BBFF' },
-  balValue: { ...Typography.displayLg, fontSize: 36, lineHeight: 42, color: '#FFFFFF' },
+  balValue: { ...Typography.displayLg, fontSize: 36, letterSpacing: -0.72, lineHeight: 42, color: '#FFFFFF' },
   balMetaRow: { flexDirection: 'row', gap: Spacing.lg, marginTop: 4 },
   balMeta: { ...Typography.labelSm, color: '#EBDCFF' },
   kycWarn: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: Spacing.sm, backgroundColor: CreatorsColors.warnBg, paddingHorizontal: 10, paddingVertical: 6, borderRadius: Radius.md, alignSelf: 'flex-start' },

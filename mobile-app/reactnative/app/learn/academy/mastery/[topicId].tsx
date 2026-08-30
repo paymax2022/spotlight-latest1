@@ -141,7 +141,7 @@ const styles = StyleSheet.create({
   scroll: { padding: Spacing.containerMargin, paddingBottom: Spacing.xxl, gap: Spacing.md },
   footer: { padding: Spacing.containerMargin, borderTopWidth: 1, borderTopColor: Colors.outlineVariant },
   scoreCard: { alignItems: 'center', borderRadius: Radius.lg, padding: Spacing.lg, gap: 4 },
-  scoreNum: { ...Typography.displayLg, color: Colors.onSurface, fontSize: 44, lineHeight: 50 },
+  scoreNum: { ...Typography.displayLg, color: Colors.onSurface, fontSize: 44, letterSpacing: -0.88, lineHeight: 50 },
   scoreSub: { ...Typography.bodyMd, color: Colors.onSurface, textAlign: 'center' },
   reviewCard: { backgroundColor: Colors.surfaceContainerLowest, borderRadius: Radius.lg, padding: Spacing.md, borderLeftWidth: 4 },
   reviewStem: { ...Typography.bodyMd, color: Colors.onSurface },

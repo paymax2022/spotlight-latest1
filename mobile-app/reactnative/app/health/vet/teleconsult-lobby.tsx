@@ -92,7 +92,10 @@ const styles = StyleSheet.create({
   content: { padding: Spacing.containerMargin, gap: Spacing.md, paddingBottom: 40 },
   hero: { alignItems: 'center', gap: 6, paddingVertical: Spacing.lg },
   avatar: { width: 88, height: 88, borderRadius: 44, backgroundColor: Colors.iconBgPurple, alignItems: 'center', justifyContent: 'center' },
-  avatarText: { ...Typography.displayLg, fontSize: 40, color: Colors.primary },
+  // letterSpacing re-stated: displayLg's -0.96 is -0.02em at its own 48px, and
+  // spreading the style while overriding only the size keeps that ABSOLUTE
+  // value, which is tighter than the scale intends at 40px. -0.8 is the same -0.02em.
+  avatarText: { ...Typography.displayLg, fontSize: 40, letterSpacing: -0.8, color: Colors.primary },
   name: { ...Typography.titleLg, color: Colors.onSurface },
   sub: { ...Typography.bodySm, color: Colors.onSurfaceVariant },
   statusChip: { marginTop: Spacing.sm, paddingHorizontal: Spacing.md, paddingVertical: 8, borderRadius: Radius.full },

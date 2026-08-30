@@ -65,7 +65,7 @@ const styles = StyleSheet.create({
   scroll: { paddingHorizontal: Spacing.containerMargin, paddingTop: Spacing.sm, paddingBottom: Spacing.lg, gap: Spacing.md },
   summary: { backgroundColor: Colors.primary, borderRadius: Radius.lg, padding: Spacing.lg, gap: 4 },
   summaryLabel: { ...Typography.labelMd, color: Colors.inversePrimary },
-  summaryValue: { ...Typography.displayLg, color: Colors.onPrimary, fontSize: 36, lineHeight: 42 },
+  summaryValue: { ...Typography.displayLg, color: Colors.onPrimary, fontSize: 36, letterSpacing: -0.72, lineHeight: 42 },
   summaryRow: { flexDirection: 'row', justifyContent: 'space-between', marginTop: Spacing.md },
   summaryCol: { gap: 2 },
   colLabel: { ...Typography.labelSm, color: Colors.inversePrimary },
