@@ -58,6 +58,12 @@ export interface EventSummary {
   registered: boolean;
   rsvp:      EventRsvp;
   coverUrl:  string | null;
+  /**
+   * True when this member was explicitly invited rather than finding the event
+   * in the list. Invitation and RSVP live on the same registration row, so being
+   * invited says nothing about whether they have responded.
+   */
+  invited?:  boolean;
 }
 
 /**

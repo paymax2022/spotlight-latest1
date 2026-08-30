@@ -2,7 +2,7 @@ import React, { useMemo, useState } from 'react';
 import { View, Text, FlatList, Image, Pressable, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
-import { MapPin, CheckCircle2, Ticket } from 'lucide-react-native';
+import { MapPin, CheckCircle2, Ticket, Plus, Share2, Mail } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
 import { Spacing } from '@/constants/spacing';
@@ -12,6 +12,8 @@ import ScreenHeader from '@/components/ScreenHeader';
 import SegmentedControl from '@/components/SegmentedControl';
 import StateView from '@/components/StateView';
 import { useEvents } from '@/features/association/hooks/useCommunity';
+import { useAdminAccess } from '@/features/association/hooks/useAdminMembers';
+import { shareEvent } from '@/features/association/utils/eventShare';
 import { formatDateTime, formatNaira } from '@/features/association/utils/associationFormatters';
 import type { EventSummary } from '@/features/association/types/community.types';
 
@@ -24,6 +26,16 @@ export default function EventsList() {
   const events = useEvents();
   const [tab, setTab] = useState<string>('UPCOMING');
   const list = useMemo(() => (events.data ?? []).filter((e) => e.state === tab), [events.data, tab]);
+  const access = useAdminAccess();
+  const isAdmin = Boolean(access.data?.isAdmin);
+  const [note, setNote] = useState<string | null>(null);
+
+  const onShare = async (e: EventSummary) => {
+    const outcome = await shareEvent(e);
+    // Desktop web has no navigator.share, so this falls back to the clipboard —
+    // and a copy nobody is told about reads as a button that did nothing.
+    setNote(outcome === 'copied' ? 'Event details copied to your clipboard.' : outcome === 'failed' ? "Couldn't share the event." : null);
+  };
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
@@ -44,14 +56,26 @@ export default function EventsList() {
           showsVerticalScrollIndicator={false}
           contentContainerStyle={styles.list}
           ItemSeparatorComponent={() => <View style={{ height: Spacing.md }} />}
-          renderItem={({ item }) => <EventCard event={item} />}
+          renderItem={({ item }) => <EventCard event={item} isAdmin={isAdmin} onShare={onShare} />}
         />
       )}
+      {note ? <Text style={styles.note}>{note}</Text> : null}
+
+      {isAdmin ? (
+        <Pressable
+          style={styles.fab}
+          onPress={() => router.push('/association/events/new')}
+          accessibilityRole="button"
+          accessibilityLabel="New event"
+        >
+          <Plus size={22} color={Colors.onPrimary} strokeWidth={2.6} />
+        </Pressable>
+      ) : null}
     </SafeAreaView>
   );
 }
 
-function EventCard({ event: e }: { event: EventSummary }) {
+function EventCard({ event: e, isAdmin, onShare }: { event: EventSummary; isAdmin: boolean; onShare: (e: EventSummary) => void }) {
   return (
     <Pressable
       onPress={() => router.push(`/association/events/${e.id}`)}
@@ -77,6 +101,40 @@ function EventCard({ event: e }: { event: EventSummary }) {
               <Text style={styles.registeredText}>Registered</Text>
             </View>
           ) : null}
+          {/* Being invited and having responded are independent: the invitation
+              and the RSVP share one row, so a member can be invited and not yet
+              registered, or registered without ever being invited. */}
+          {e.invited && !e.registered ? (
+            <View style={styles.registered}>
+              <Mail size={12} color={Colors.primary} strokeWidth={2.4} />
+              <Text style={[styles.registeredText, { color: Colors.primary }]}>Invited</Text>
+            </View>
+          ) : null}
+        </View>
+
+        <View style={styles.actionRow}>
+          <Pressable
+            onPress={() => onShare(e)}
+            hitSlop={8}
+            style={styles.action}
+            accessibilityRole="button"
+            accessibilityLabel={`Share ${e.title}`}
+          >
+            <Share2 size={15} color={Colors.secondary} strokeWidth={2} />
+            <Text style={styles.actionText}>Share</Text>
+          </Pressable>
+          {isAdmin ? (
+            <Pressable
+              onPress={() => router.push(`/association/events/invite/${e.id}`)}
+              hitSlop={8}
+              style={styles.action}
+              accessibilityRole="button"
+              accessibilityLabel={`Invite members to ${e.title}`}
+            >
+              <Mail size={15} color={Colors.secondary} strokeWidth={2} />
+              <Text style={styles.actionText}>Invite</Text>
+            </Pressable>
+          ) : null}
         </View>
       </View>
     </Pressable>
@@ -85,6 +143,15 @@ function EventCard({ event: e }: { event: EventSummary }) {
 
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: Colors.background },
+  note: { ...Typography.labelSm, color: Colors.onSurfaceVariant, textAlign: 'center', paddingBottom: Spacing.sm },
+  actionRow: { flexDirection: 'row', gap: Spacing.md, marginTop: Spacing.xs },
+  action: { flexDirection: 'row', alignItems: 'center', gap: 5 },
+  actionText: { ...Typography.labelSm, color: Colors.secondary },
+  fab: {
+    position: 'absolute', right: Spacing.containerMargin, bottom: Spacing.xl,
+    width: 52, height: 52, borderRadius: Radius.full, backgroundColor: Colors.primary,
+    alignItems: 'center', justifyContent: 'center',
+  },
   segWrap: { paddingTop: Spacing.sm, paddingBottom: Spacing.sm },
   list: { paddingHorizontal: Spacing.containerMargin, paddingBottom: 120 },
   card: { backgroundColor: Colors.surfaceContainerLowest, borderRadius: Radius.lg, borderWidth: 1, borderColor: Colors.outlineVariant, overflow: 'hidden' },

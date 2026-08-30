@@ -392,6 +392,11 @@ type EventSummary struct {
 	// Rsvp is what the list screen renders; it had no field at all, so a saved
 	// RSVP never showed on the events list.
 	Rsvp *string `json:"rsvp"`
+	// Invited is true when this member was explicitly invited, as opposed to
+	// finding the event in the list themselves. An invitation and an RSVP live on
+	// the same registration row, so being invited says nothing about whether they
+	// have responded.
+	Invited bool `json:"invited"`
 }
 
 // ── Admin ─────────────────────────────────────────────────────────────────────

@@ -1070,3 +1070,66 @@ func (s *Service) GetPendingMeetings(ctx context.Context, adminID, orgID string)
 	}
 	return out, rows.Err()
 }
+
+// ── Event invitations ────────────────────────────────────────────────────────
+
+// InviteToEvent invites members to an event and returns how many invitations
+// were newly recorded.
+//
+// An invitation is a registration row with invited_at set, not a separate
+// record — see the migration. That means a member who was already registered or
+// had already RSVPed keeps that state and simply becomes "invited" as well; the
+// invitation never resets a response somebody has already given.
+//
+// Every membership is checked against the EVENT'S organisation rather than the
+// caller's. They are normally the same, but validating against the event closes
+// the case where an admin of one organisation passes membership ids belonging
+// to another: the ids are silently dropped instead of writing rows that would
+// put a foreign member on this organisation's guest list.
+func (s *Service) InviteToEvent(ctx context.Context, adminID, eventID string, membershipIDs []string) (int, error) {
+	var orgID, title string
+	if err := s.db.QueryRow(ctx,
+		`SELECT organisation_id::text, title FROM assoc_events WHERE id=$1`, eventID).Scan(&orgID, &title); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return 0, pgx.ErrNoRows
+		}
+		return 0, fmt.Errorf("association: event lookup: %w", err)
+	}
+	if err := s.requireOrgAdmin(ctx, adminID, orgID); err != nil {
+		return 0, err
+	}
+	if len(membershipIDs) == 0 {
+		return 0, fmt.Errorf("%w: association: no members selected", ErrInvalidInput)
+	}
+
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("association: begin tx: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	// One statement: the SELECT filters the supplied ids down to memberships that
+	// actually belong to this event's organisation, so a foreign id inserts
+	// nothing rather than being rejected with an error that names it.
+	tag, err := tx.Exec(ctx, `
+		INSERT INTO assoc_event_registrations (event_id, membership_id, invited_by, invited_at)
+		SELECT $1, m.id, $2, now()
+		FROM assoc_memberships m
+		WHERE m.id = ANY($3::uuid[]) AND m.organisation_id = $4 AND m.status = 'ACTIVE'
+		ON CONFLICT (event_id, membership_id) DO UPDATE
+		  SET invited_by = EXCLUDED.invited_by,
+		      invited_at = COALESCE(assoc_event_registrations.invited_at, EXCLUDED.invited_at)`,
+		eventID, adminID, membershipIDs, orgID)
+	if err != nil {
+		return 0, fmt.Errorf("association: invite to event: %w", err)
+	}
+
+	if err := s.audit(ctx, tx, orgID, adminID, "EVENT_INVITE", "event", eventID,
+		map[string]any{"title": title, "requested": len(membershipIDs), "invited": tag.RowsAffected()}); err != nil {
+		return 0, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return 0, err
+	}
+	return int(tag.RowsAffected()), nil
+}

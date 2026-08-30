@@ -161,6 +161,7 @@ func RegisterRoutes(rg *gin.RouterGroup, h *Handler) {
 	rg.POST("/admin/meetings/:childId/minutes", h.PublishMinutes)
 	rg.GET("/admin/organisations/:id/meetings/pending", h.ListPendingMeetings)
 	rg.POST("/admin/meetings/:childId/decision", h.DecideMeeting)
+	rg.POST("/admin/events/:childId/invite", h.InviteToEvent)
 
 	rg.POST("/admin/organisations/:id/documents", h.CreateDocument)
 	rg.PATCH("/admin/documents/:childId", h.UpdateDocument)

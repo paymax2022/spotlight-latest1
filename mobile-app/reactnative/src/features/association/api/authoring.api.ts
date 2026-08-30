@@ -186,6 +186,20 @@ export async function updateEvent(id: string, input: EventInput): Promise<void> 
   await api.patch(`${BASE}/admin/events/${id}`, input);
 }
 
+/**
+ * Invite members to an event.
+ *
+ * Resolves to how many invitations were actually recorded, which can be lower
+ * than the number requested: memberships outside the event's organisation are
+ * dropped server-side rather than erroring, so one stale id cannot fail the
+ * whole invite. Report the returned count, not the count that was sent.
+ */
+export async function inviteToEvent(eventId: string, membershipIds: string[]): Promise<{ invited: number; requested: number }> {
+  if (USE_MOCK) { await delay(300); return { invited: membershipIds.length, requested: membershipIds.length }; }
+  const { data } = await api.post(`${BASE}/admin/events/${eventId}/invite`, { membershipIds });
+  return (data?.data ?? data) as { invited: number; requested: number };
+}
+
 export async function deleteEvent(id: string): Promise<void> {
   if (USE_MOCK) { await delay(260); mockDelete('events', id); return; }
   await api.delete(`${BASE}/admin/events/${id}`);

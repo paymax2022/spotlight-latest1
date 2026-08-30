@@ -1268,7 +1268,10 @@ func (s *Service) GetEvents(ctx context.Context, userID string) ([]EventSummary,
 		              WHERE er.event_id=e.id AND m2.user_id=$1 AND er.registered=true),
 		       (SELECT er.rsvp FROM assoc_event_registrations er
 		         JOIN assoc_memberships m3 ON m3.id=er.membership_id
-		        WHERE er.event_id=e.id AND m3.user_id=$1 LIMIT 1)
+		        WHERE er.event_id=e.id AND m3.user_id=$1 LIMIT 1),
+		       EXISTS(SELECT 1 FROM assoc_event_registrations er
+		              JOIN assoc_memberships m4 ON m4.id=er.membership_id
+		              WHERE er.event_id=e.id AND m4.user_id=$1 AND er.invited_at IS NOT NULL)
 		FROM assoc_events e
 		JOIN assoc_memberships m ON m.organisation_id=e.organisation_id
 		WHERE m.user_id=$1 AND m.status='ACTIVE'
@@ -1282,7 +1285,7 @@ func (s *Service) GetEvents(ctx context.Context, userID string) ([]EventSummary,
 	for rows.Next() {
 		var e EventSummary
 		if err := rows.Scan(&e.ID, &e.Title, &e.StartsAt, &e.Location,
-			&e.State, &e.Paid, &e.FeeKobo, &e.CoverURL, &e.Registered, &e.Rsvp); err != nil {
+			&e.State, &e.Paid, &e.FeeKobo, &e.CoverURL, &e.Registered, &e.Rsvp, &e.Invited); err != nil {
 			// A scan failure here used to be swallowed, which silently dropped the
 			// row from the caller's list; surface it instead.
 			return nil, fmt.Errorf("association: events: scan: %w", err)

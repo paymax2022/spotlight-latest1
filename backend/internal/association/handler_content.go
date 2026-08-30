@@ -301,3 +301,27 @@ func (h *Handler) ListPendingMeetings(c *gin.Context) {
 	}
 	c.JSON(http.StatusOK, gin.H{"data": items})
 }
+
+// InviteToEventRequest is the body for POST /admin/events/:childId/invite.
+type InviteToEventRequest struct {
+	// MembershipIDs in the event's own organisation. Ids from elsewhere are
+	// dropped rather than erroring, so one stale id cannot fail the whole invite.
+	MembershipIDs []string `json:"membershipIds" binding:"required"`
+}
+
+// InviteToEvent — POST /associations/admin/events/:childId/invite.
+func (h *Handler) InviteToEvent(c *gin.Context) {
+	var r InviteToEventRequest
+	if err := c.ShouldBindJSON(&r); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	n, err := h.svc.InviteToEvent(c.Request.Context(), c.GetString("user_id"), c.Param("childId"), r.MembershipIDs)
+	if err != nil {
+		c.JSON(statusFor(err), gin.H{"error": err.Error()})
+		return
+	}
+	// `invited` can be lower than what was requested: ids outside the event's
+	// organisation are dropped. Reporting the real number lets the client say so.
+	c.JSON(http.StatusOK, gin.H{"invited": n, "requested": len(r.MembershipIDs)})
+}
