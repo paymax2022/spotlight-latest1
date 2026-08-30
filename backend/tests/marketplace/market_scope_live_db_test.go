@@ -31,9 +31,9 @@ import (
 )
 
 // seedCategoryInMarket inserts an active category in an explicit market and removes
-// it afterwards. Registered with t.Cleanup rather than defer: the pool is closed by
-// its own Cleanup, and cleanups run last-in-first-out, so a deferred close would
-// shut the pool before this delete could run and the row would leak.
+// it afterwards. Registered with t.Cleanup rather than defer: liveConnectService
+// registers the pool's close FIRST, and cleanups run last-in-first-out, so this
+// delete is guaranteed to run while the pool is still open.
 func seedCategoryInMarket(t *testing.T, ctx context.Context, pool *pgxpool.Pool, market string) string {
 	t.Helper()
 	id := uuid.NewString()
@@ -53,7 +53,6 @@ func seedCategoryInMarket(t *testing.T, ctx context.Context, pool *pgxpool.Pool,
 // violation — the caller is told which field is wrong.
 func TestMarketScope_CreateListingRejectsForeignMarketCategory(t *testing.T) {
 	svc, pool := liveConnectService(t)
-	t.Cleanup(pool.Close)
 	ctx := context.Background()
 
 	foreign := seedCategoryInMarket(t, ctx, pool, "KE")
@@ -77,7 +76,6 @@ func TestMarketScope_CreateListingRejectsForeignMarketCategory(t *testing.T) {
 // the guard rejects the mismatch and not merely every seeded category.
 func TestMarketScope_CreateListingAcceptsSameMarketCategory(t *testing.T) {
 	svc, pool := liveConnectService(t)
-	t.Cleanup(pool.Close)
 	ctx := context.Background()
 
 	home := seedCategoryInMarket(t, ctx, pool, "NG")
@@ -104,7 +102,6 @@ func TestMarketScope_CreateListingAcceptsSameMarketCategory(t *testing.T) {
 // this, the rule would hold only for callers that happen to go through the service.
 func TestMarketScope_DatabaseRejectsCrossMarketInsert(t *testing.T) {
 	_, pool := liveConnectService(t)
-	t.Cleanup(pool.Close)
 	ctx := context.Background()
 
 	foreign := seedCategoryInMarket(t, ctx, pool, "KE")
@@ -132,7 +129,6 @@ func TestMarketScope_DatabaseRejectsCrossMarketInsert(t *testing.T) {
 // only thing standing between an empty table and the listings story repeating.
 func TestMarketScope_PriceBandRejectsCrossMarketCategory(t *testing.T) {
 	_, pool := liveConnectService(t)
-	t.Cleanup(pool.Close)
 	ctx := context.Background()
 
 	foreign := seedCategoryInMarket(t, ctx, pool, "KE")
@@ -154,7 +150,6 @@ func TestMarketScope_PriceBandRejectsCrossMarketCategory(t *testing.T) {
 // above proves the market rule bites, not merely that the insert was malformed.
 func TestMarketScope_PriceBandAcceptsSameMarketCategory(t *testing.T) {
 	_, pool := liveConnectService(t)
-	t.Cleanup(pool.Close)
 	ctx := context.Background()
 
 	home := seedCategoryInMarket(t, ctx, pool, "NG")
