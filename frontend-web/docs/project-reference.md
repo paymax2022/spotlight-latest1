@@ -249,7 +249,17 @@ Core env categories used by the project:
 - Payments: `NEXT_PUBLIC_PAYSTACK_PUBLIC_KEY`, `PAYSTACK_SECRET_KEY`
 - Email: `RESEND_API_KEY`, `EMAIL_FROM`, `EMAIL_REPLY_TO`
 - Site config: `NEXT_PUBLIC_SITE_URL`
-- Media/storage: `STORAGE_*`, Cloudinary keys where applicable
+- Media/storage: **Cloudflare R2** — `R2_ACCOUNT_ENDPOINT`, `R2_BUCKET`,
+  `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_REGION`. Every upload path in
+  the repo uses it (association logos, estate, transport, registration uploads,
+  marketplace media, open-mic audio) via `src/lib/storage/r2.ts` and the Go
+  `internal/platform/r2` presigner. There are no `STORAGE_*` variables and no
+  Cloudinary integration — this line previously implied both, and cost a round
+  of debugging against the wrong provider. Cloudinary is still an open vendor
+  question for the image PIPELINE (background removal, compositing) in
+  docs/qa/voting-contest-test-plan.md; that is unrelated to storage.
+  Browser uploads additionally need a CORS policy on the bucket — see
+  `launch/R2-CORS.md`.
 
 Use `.env.example` as the starting contract and do not commit real secrets.
 
