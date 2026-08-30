@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -938,9 +939,47 @@ func (s *Service) ConfirmImport(ctx context.Context, adminID, batchID string, se
 
 // ─── Organisation publish (founder) ───────────────────────────────────────────
 
+// validateOrgIdentity checks (and normalises in place) the founder-supplied
+// identity fields, and is the SERVER's copy of the wizard's required/optional
+// split rather than a restatement of it — the mobile wizard is currently the
+// only publisher, so client-side validation alone would be the whole contract.
+//
+// Founded year and a logo are required; acronym, location and website are not.
+// The year bounds match the admin console's organisation editor (1800 → this
+// year), so the same organisation cannot be valid on one surface and rejected
+// on the other.
+//
+// NOTE on the logo: the wizard offers a pasted URL or the device image picker,
+// and the picker yields a LOCAL file:// URI with no association upload endpoint
+// behind it. Such a value is stored verbatim and will not resolve for the admin
+// console or for other members. That is a pre-existing gap this validation does
+// not close — it deliberately does not reject file://, because doing so would
+// break the picker path that the wizard still offers.
+func validateOrgIdentity(d *OrgDraft) error {
+	d.Acronym = strings.TrimSpace(d.Acronym)
+	d.Location = strings.TrimSpace(d.Location)
+	d.Website = strings.TrimSpace(d.Website)
+	d.LogoURL = strings.TrimSpace(d.LogoURL)
+
+	if d.LogoURL == "" {
+		return fmt.Errorf("association: a logo is required — provide a logo URL or upload one")
+	}
+	if d.FoundedYear == nil {
+		return fmt.Errorf("association: founded year is required")
+	}
+	thisYear := time.Now().Year()
+	if *d.FoundedYear < 1800 || *d.FoundedYear > thisYear {
+		return fmt.Errorf("association: founded year must be between 1800 and %d", thisYear)
+	}
+	return nil
+}
+
 func (s *Service) PublishOrganisation(ctx context.Context, userID string, d OrgDraft) (*PublishResult, error) {
 	if !d.AcceptedTerms {
 		return nil, fmt.Errorf("association: terms must be accepted")
+	}
+	if err := validateOrgIdentity(&d); err != nil {
+		return nil, err
 	}
 	// Replay short-circuit. The client has always sent an Idempotency-Key on
 	// publish; the handler never read it, so a transport retry created a second
@@ -972,20 +1011,27 @@ func (s *Service) PublishOrganisation(ctx context.Context, userID string, d OrgD
 	// registration fee stored requires_payment=false and contradicted itself.
 	requiresPayment := d.RegistrationFeeKobo > 0 || d.GroupType == "PAID"
 
+	// founded_year / location / website have existed on this table since the
+	// schema was written and the admin console has always edited them, but this
+	// INSERT never wrote them — so every organisation the wizard published had
+	// them NULL and the founder had no way to set them at all.
 	const insOrg = `
 		INSERT INTO assoc_organisations
 		  (id, name, acronym, category, description, logo_url, group_type, approval_rule,
 		   registration_fee_kobo, requires_payment, created_by, published,
 		   structure_type, grace_days, disable_voting, disable_events, disable_chat, disable_card,
+		   founded_year, location, website,
 		   idempotency_key)
 		VALUES ($1,$2,NULLIF($3,''),$4,$5,NULLIF($6,''),$7,$8,$9,$10,$11,true,NULLIF($12,''),$13,$14,$15,$16,$17,
-		        NULLIF($18,''))`
+		        $18,NULLIF($19,''),NULLIF($20,''),
+		        NULLIF($21,''))`
 	if _, err := tx.Exec(ctx, insOrg, orgID, d.Name, d.Acronym, d.Category, d.Description, d.LogoURL,
 		d.GroupType, nz(d.ApprovalRule, "ADMIN"),
 		d.RegistrationFeeKobo, requiresPayment, userID,
 		d.StructureType, graceDays,
 		d.Restrictions.DisableVoting, d.Restrictions.DisableEvents,
 		d.Restrictions.DisableChat, d.Restrictions.DisableCard,
+		d.FoundedYear, d.Location, d.Website,
 		strings.TrimSpace(d.IdempotencyKey)); err != nil {
 		return nil, fmt.Errorf("association: insert organisation: %w", err)
 	}

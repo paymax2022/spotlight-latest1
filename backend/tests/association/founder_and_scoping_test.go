@@ -21,11 +21,19 @@ import (
 // must persist — including the five that used to be silently discarded.
 func newTestDraft(name string) association.OrgDraft {
 	grace := 14
+	founded := 1999
 	return association.OrgDraft{
-		Name:                name,
-		Acronym:             "TST",
-		Category:            "Professional",
-		Description:         "Created by the association regression suite.",
+		Name:        name,
+		Acronym:     "TST",
+		Category:    "Professional",
+		Description: "Created by the association regression suite.",
+		// Required by validateOrgIdentity: the wizard cannot publish without a
+		// logo and a founded year, so a draft that omits them is not a draft the
+		// product can produce.
+		LogoURL:             "https://cdn.test.invalid/logo.png",
+		FoundedYear:         &founded,
+		Location:            "Lagos, Nigeria",
+		Website:             "https://test.invalid",
 		GroupType:           "CLOSED",
 		ApprovalRule:        "ADMIN",
 		RegistrationFeeKobo: 250000,
