@@ -1,5 +1,5 @@
-import React from 'react';
-import { View, Text, ScrollView, StyleSheet, Alert } from 'react-native';
+import React, { useState } from 'react';
+import { View, Text, ScrollView, StyleSheet, Share, Platform, Linking } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLocalSearchParams } from 'expo-router';
 import { FileText, Sparkles, History, CheckCheck, Lock } from 'lucide-react-native';
@@ -14,11 +14,14 @@ import PrimaryButton from '@/components/PrimaryButton';
 import { useDocument, useAcknowledgeDocument } from '@/features/association/hooks/useEngagement';
 import { formatDate } from '@/features/association/utils/associationFormatters';
 import { DOC_CATEGORY_LABEL } from '@/features/association/constants/engagement.constants';
+import { getDocumentDownloadUrl } from '@/features/association/api/authoring.api';
 
 export default function DocumentDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const doc = useDocument(id);
   const ack = useAcknowledgeDocument();
+  const [opening, setOpening] = useState(false);
+  const [note, setNote] = useState<string | null>(null);
 
   if (doc.isLoading) {
     return (
@@ -55,6 +58,51 @@ export default function DocumentDetailScreen() {
   }
 
   const acknowledged = d.acknowledged || ack.isSuccess;
+
+  const onDownload = async () => {
+    if (opening) return;
+    setOpening(true);
+    setNote(null);
+    try {
+      // The vault is private, so the file is fetched through a short-lived
+      // signed URL the server issues only to someone allowed to read it.
+      const url = await getDocumentDownloadUrl(d.id);
+      if (Platform.OS === 'web') {
+        window.open(url, '_blank', 'noopener,noreferrer');
+      } else {
+        await Linking.openURL(url);
+      }
+    } catch {
+      setNote("Couldn't open this document. It may have no file attached.");
+    } finally {
+      setOpening(false);
+    }
+  };
+
+  const onShare = async () => {
+    // DELIBERATELY SHARES NO LINK. The download URL is a signed, bearer
+    // capability: anyone holding it can read the document for the next hour,
+    // including people outside the organisation and past any admins-only flag.
+    // Share what the document IS so a colleague can find it in their own vault,
+    // where their own access is checked.
+    const message = [d.title, DOC_CATEGORY_LABEL[d.category], `Version ${d.version}`, '', "Open it in Spotlight under your association's documents."]
+      .filter(Boolean)
+      .join('\n');
+    try {
+      const res = await Share.share({ message });
+      if (res.action !== Share.dismissedAction) setNote(null);
+    } catch {
+      try {
+        const Clipboard = require('expo-clipboard');
+        if (Clipboard?.setStringAsync) {
+          await Clipboard.setStringAsync(message);
+          setNote('Document details copied to your clipboard.');
+        }
+      } catch {
+        setNote("Couldn't share this document.");
+      }
+    }
+  };
   const versionHistory = d.versionHistory ?? [];
 
   return (
@@ -75,11 +123,12 @@ export default function DocumentDetailScreen() {
 
         {/* Actions */}
         <View style={styles.actions}>
-          <PrimaryButton label="Download" variant="secondary" fullWidth={false} style={styles.actionBtn}
-            onPress={() => Alert.alert('Download', 'Download is not available in this preview build.')} />
+          <PrimaryButton label={opening ? 'Opening…' : 'Download'} variant="secondary" fullWidth={false} style={styles.actionBtn}
+            disabled={opening} onPress={onDownload} />
           <PrimaryButton label="Share" variant="secondary" fullWidth={false} style={styles.actionBtn}
-            onPress={() => Alert.alert('Share', 'Sharing is not available in this preview build.')} />
+            onPress={onShare} />
         </View>
+        {note ? <Text style={styles.note}>{note}</Text> : null}
 
         {/* AI summary */}
         {d.aiSummary ? (
@@ -140,6 +189,7 @@ const styles = StyleSheet.create({
   meta: { ...Typography.labelSm, color: Colors.onSurfaceVariant },
   body: { ...Typography.bodyMd, color: Colors.onSurfaceVariant },
   actions: { flexDirection: 'row', gap: Spacing.sm },
+  note: { ...Typography.labelSm, color: Colors.onSurfaceVariant },
   actionBtn: { flex: 1 },
   aiCard: { backgroundColor: Colors.iconBgPurple, borderRadius: Radius.lg, padding: Spacing.md, gap: 6 },
   aiHead: { flexDirection: 'row', alignItems: 'center', gap: 6 },

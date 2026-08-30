@@ -342,3 +342,97 @@ export async function registerDevice(input: DeviceInput): Promise<CreatedId> {
   const { data } = await api.post(`${BASE}/me/devices`, input);
   return data;
 }
+
+// ── Committee membership management ──────────────────────────────────────────
+
+/**
+ * Add members straight onto a committee, skipping request-and-approve.
+ *
+ * Resolves to how many were actually added, which can be lower than requested:
+ * memberships outside the committee's organisation are dropped server-side so
+ * one stale id cannot fail the batch. Report the returned count.
+ */
+export async function addCommitteeMembers(committeeId: string, membershipIds: string[]): Promise<{ added: number; requested: number }> {
+  if (USE_MOCK) { await delay(300); return { added: membershipIds.length, requested: membershipIds.length }; }
+  const { data } = await api.post(`${BASE}/admin/committees/${committeeId}/members`, { membershipIds });
+  return (data?.data ?? data) as { added: number; requested: number };
+}
+
+/** Accept or decline a pending request to join. Declining lets them ask again. */
+export async function decideCommitteeRequest(committeeId: string, membershipId: string, approve: boolean): Promise<void> {
+  if (USE_MOCK) { await delay(240); return; }
+  await api.post(`${BASE}/admin/committees/${committeeId}/requests`, { membershipId, approve });
+}
+
+export async function removeCommitteeMember(committeeId: string, membershipId: string): Promise<void> {
+  if (USE_MOCK) { await delay(240); return; }
+  await api.delete(`${BASE}/admin/committees/${committeeId}/members/${membershipId}`);
+}
+
+/** MEMBER | CHAIR | SECRETARY | TREASURER. Only an ACTIVE member may hold one. */
+export async function setCommitteeMemberRole(committeeId: string, membershipId: string, role: string): Promise<void> {
+  if (USE_MOCK) { await delay(240); return; }
+  await api.patch(`${BASE}/admin/committees/${committeeId}/members/${membershipId}`, { role });
+}
+
+// ── Document vault uploads ───────────────────────────────────────────────────
+
+export interface DocumentPresign {
+  uploadUrl: string;
+  objectKey: string;
+  contentType: string;
+  expiresIn: number;
+  method: string;
+}
+
+const DOC_CONTENT_TYPE_BY_EXT: Record<string, string> = {
+  pdf: 'application/pdf',
+  png: 'image/png',
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  doc: 'application/msword',
+  docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  xls: 'application/vnd.ms-excel',
+  xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  csv: 'text/csv',
+};
+
+/** Content type for a document file name; unknown extensions are refused server-side. */
+export function documentContentType(fileName: string): string {
+  const ext = fileName.split('.').pop()?.toLowerCase() ?? '';
+  return DOC_CONTENT_TYPE_BY_EXT[ext] ?? 'application/octet-stream';
+}
+
+/**
+ * Upload a document file and return its object key.
+ *
+ * Two steps, and the binary never passes through our API: the backend chooses
+ * the key and signs a PUT, the client PUTs straight to R2. The PUT uses fetch
+ * rather than the axios client, which attaches the user's Supabase bearer token
+ * to every request — sending that to a third-party host would leak the session.
+ * The presigned URL carries its own authorisation.
+ */
+export async function uploadDocumentFile(orgId: string, localUri: string, fileName: string): Promise<string> {
+  if (USE_MOCK) { await delay(400); return `association/document/mock/${Date.now()}-${fileName}`; }
+
+  const contentType = documentContentType(fileName);
+  const { data } = await api.post(`${BASE}/admin/organisations/${orgId}/documents/presign`, { fileName, contentType });
+  const presigned = (data?.data ?? data) as DocumentPresign;
+
+  const fileRes = await fetch(localUri);
+  const blob = await fileRes.blob();
+  const put = await fetch(presigned.uploadUrl, {
+    method: 'PUT',
+    headers: { 'Content-Type': presigned.contentType },
+    body: blob,
+  });
+  if (!put.ok) throw new Error(`Document upload failed (${put.status})`);
+  return presigned.objectKey;
+}
+
+/** A short-lived signed GET for a document's file. */
+export async function getDocumentDownloadUrl(documentId: string): Promise<string> {
+  if (USE_MOCK) { await delay(200); return 'https://example.invalid/mock.pdf'; }
+  const { data } = await api.get(`${BASE}/documents/${documentId}/download-url`);
+  return ((data?.data ?? data) as { downloadUrl: string }).downloadUrl;
+}

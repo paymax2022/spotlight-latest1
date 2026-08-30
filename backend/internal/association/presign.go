@@ -71,6 +71,30 @@ var logoAllowedExt = map[string]bool{
 	".png": true, ".jpg": true, ".jpeg": true, ".webp": true, ".svg": true,
 }
 
+// documentAllowedContentTypes / documentAllowedExt are the document vault's
+// allowlists. Wider than a logo's — a constitution or a set of minutes is a PDF
+// or an office file — but still an allowlist: the content type is bound into the
+// signature, so accepting anything would let a caller store an executable behind
+// a document-shaped key.
+var documentAllowedContentTypes = map[string]bool{
+	"application/pdf":    true,
+	"image/png":          true,
+	"image/jpeg":         true,
+	"application/msword": true,
+	"application/vnd.openxmlformats-officedocument.wordprocessingml.document": true,
+	"application/vnd.ms-excel": true,
+	"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": true,
+	"text/csv": true,
+}
+
+var documentAllowedExt = map[string]bool{
+	".pdf": true, ".png": true, ".jpg": true, ".jpeg": true,
+	".doc": true, ".docx": true, ".xls": true, ".xlsx": true, ".csv": true,
+}
+
+// documentDownloadTTL bounds an issued document download URL.
+const documentDownloadTTL = 60 * time.Minute
+
 // WithPresigner attaches an R2 presigner to the handler so the upload endpoint
 // can mint presigned PUT URLs. A nil or unconfigured presigner makes the
 // endpoint fail closed with 503.
@@ -205,4 +229,105 @@ func logoRandToken() string {
 	b := make([]byte, 16)
 	_, _ = rand.Read(b)
 	return hex.EncodeToString(b)
+}
+
+// ── Document vault uploads ───────────────────────────────────────────────────
+
+// PresignDocumentUpload issues a presigned R2 PUT URL for an organisation's
+// document vault.
+//
+// Unlike the logo endpoint this IS organisation-scoped, and admin-gated: the
+// vault belongs to the organisation rather than to the person uploading, so the
+// key is namespaced by organisation and only somebody who administers it may
+// write there. The document row is created separately, through the existing
+// admin endpoint, with the objectKey returned here.
+// POST /api/finance/associations/admin/organisations/:id/documents/presign
+func (h *Handler) PresignDocumentUpload(c *gin.Context) {
+	userID := c.GetString("user_id")
+	if userID == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
+		return
+	}
+	orgID := c.Param("id")
+	if err := h.svc.requireOrgAdmin(c.Request.Context(), userID, orgID); err != nil {
+		c.JSON(statusFor(err), gin.H{"error": err.Error()})
+		return
+	}
+	if h.presigner == nil || !h.presigner.Configured() {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "document uploads are not configured"})
+		return
+	}
+
+	var req PresignLogoUploadRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	ct := strings.ToLower(strings.TrimSpace(req.ContentType))
+	if !documentAllowedContentTypes[ct] {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "unsupported content type"})
+		return
+	}
+	ext := strings.ToLower(path.Ext(req.FileName))
+	if !documentAllowedExt[ext] {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "unsupported file extension"})
+		return
+	}
+
+	key := fmt.Sprintf("association/document/%s/%s%s", orgID, logoRandToken(), ext)
+	url, err := h.presigner.PresignPut(key, ct, logoPresignTTL)
+	if err != nil {
+		if err == r2.ErrNotConfigured {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "document uploads are not configured"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not issue upload url"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": PresignLogoUploadResponse{
+		UploadURL:   url,
+		ObjectKey:   key,
+		Bucket:      h.presignBucket,
+		ContentType: ct,
+		ExpiresIn:   int(logoPresignTTL.Seconds()),
+		Method:      "PUT",
+	}})
+}
+
+// DocumentDownloadURL returns a short-lived signed GET for a document the caller
+// may read.
+//
+// The bucket is not public, so a stored object key is not fetchable on its own.
+// Authorisation is the SERVICE's, not this handler's: ResolveDocumentDownload
+// checks the caller is an active member of the document's organisation and, for
+// a restricted document, that they are an admin.
+//
+// A document whose storage_key is empty predates uploads. It has no file to
+// serve, and saying so is better than a signed URL for an object that was never
+// written.
+// GET /api/finance/associations/documents/:id/download-url
+func (h *Handler) DocumentDownloadURL(c *gin.Context) {
+	key, err := h.svc.ResolveDocumentDownload(c.Request.Context(), c.GetString("user_id"), c.Param("id"))
+	if err != nil {
+		c.JSON(statusFor(err), gin.H{"error": err.Error()})
+		return
+	}
+	if key == "" {
+		c.JSON(http.StatusNotFound, gin.H{"error": "this document has no file attached"})
+		return
+	}
+	if h.presigner == nil || !h.presigner.Configured() {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "downloads are not configured"})
+		return
+	}
+	url, err := h.presigner.PresignGet(key, documentDownloadTTL)
+	if err != nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "downloads are not configured"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": gin.H{
+		"downloadUrl": url,
+		"expiresIn":   int(documentDownloadTTL.Seconds()),
+		"method":      "GET",
+	}})
 }

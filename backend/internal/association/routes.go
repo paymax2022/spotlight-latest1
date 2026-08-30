@@ -163,6 +163,17 @@ func RegisterRoutes(rg *gin.RouterGroup, h *Handler) {
 	rg.POST("/admin/meetings/:childId/decision", h.DecideMeeting)
 	rg.POST("/admin/events/:childId/invite", h.InviteToEvent)
 
+	// Committee membership: approve/decline requests, add and remove members,
+	// and set a member's position. All org-admin gated on the COMMITTEE's
+	// organisation, not the caller's.
+	rg.GET("/documents/:id/download-url", h.DocumentDownloadURL)
+	rg.POST("/admin/organisations/:id/documents/presign", h.PresignDocumentUpload)
+
+	rg.POST("/admin/committees/:childId/members", h.AddCommitteeMembers)
+	rg.POST("/admin/committees/:childId/requests", h.DecideCommitteeRequest)
+	rg.DELETE("/admin/committees/:childId/members/:membershipId", h.RemoveCommitteeMember)
+	rg.PATCH("/admin/committees/:childId/members/:membershipId", h.SetCommitteeMemberRole)
+
 	rg.POST("/admin/organisations/:id/documents", h.CreateDocument)
 	rg.PATCH("/admin/documents/:childId", h.UpdateDocument)
 	rg.DELETE("/admin/documents/:childId", h.DeleteDocument)
