@@ -8,9 +8,17 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/gin-gonic/gin"
+
+	"spotlight/backend/internal/platform/r2"
 )
 
-type Handler struct{ svc *Service }
+type Handler struct {
+	svc *Service
+	// Presigned R2 uploads for organisation logos; see presign.go. Nil until
+	// WithPresigner is called, which makes the upload endpoint fail closed.
+	presigner     *r2.Presigner
+	presignBucket string
+}
 
 func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
 

@@ -43,20 +43,32 @@ export function websiteError(raw: string): string | undefined {
 }
 
 /**
- * Validate the logo. Required, and satisfied by EITHER a pasted URL or a picked
- * image — the wizard writes both into the same draft field.
+ * Validate the logo. Required, and satisfied by EITHER a pasted URL or an
+ * uploaded image — the wizard writes both into the same draft field.
  *
- * A picked image arrives as a device-local file:// URI, which is accepted here
- * because the wizard still offers the picker, even though the association
- * module has no upload endpoint to turn it into something other devices can
- * load. Rejecting it would remove a path the UI advertises.
+ * A picked image is uploaded to R2 first and stored as its object key, so a
+ * device-local file:// URI must never survive to submission: it would be stored
+ * verbatim and resolve on the founder's phone and nowhere else. Treat one as
+ * "no logo yet" rather than accepting it.
  */
 export function logoError(logoUri: string | null): string | undefined {
-  if (!logoUri || !logoUri.trim()) return 'Add a logo — paste a URL or upload an image';
+  const value = (logoUri ?? '').trim();
+  if (!value) return 'Add a logo — paste a URL or upload an image';
+  if (value.startsWith('file://')) return 'That image has not finished uploading yet';
   return undefined;
 }
 
 /** True when a pasted string is usable as a remote logo URL. */
 export function isRemoteLogoUrl(value: string): boolean {
   return /^https?:\/\/\S+/i.test(value.trim());
+}
+
+/**
+ * True when the stored logo is an uploaded object key rather than a pasted URL.
+ * Mirrors IsStoredObjectKey in backend/internal/association/presign.go — the
+ * key prefix is minted there, and the two must agree on what a key looks like.
+ */
+export function isUploadedLogoKey(value: string | null): boolean {
+  const v = (value ?? '').trim();
+  return Boolean(v) && !v.includes('://') && v.startsWith('association/');
 }

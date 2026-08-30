@@ -448,7 +448,7 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		// (the client contract) — same class of bug documented for savings above.
 		insuranceAdmin := r.Group("/api/insurance/admin")
 		insuranceAdmin.Use(requireUserID())
-		insuranceWebhooks := r.Group("/internal/webhooks")                                // provider-signed, no user auth
+		insuranceWebhooks := r.Group("/internal/webhooks")                              // provider-signed, no user auth
 		RegisterInsurance(finance, insuranceAdmin, pool, rbac)                          // gateway/catalog/policy/quote/saga/consent
 		RegisterInsuranceClaims(finance, insuranceAdmin, insuranceWebhooks, pool, rbac) // claims/embedded/webhooks/reconciliation
 	}
@@ -1014,7 +1014,24 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 			assocSvc.SetCommissionRecorder(commissionRecorderAdapter{svc: commission.NewService(commission.NewRepository(pool), nil)})
 			log.Println("[association] commission recording wired → Community/Group Membership (earning-row only; no ledger re-post)")
 		}
-		assocHandler := association.NewHandler(assocSvc)
+		// Backend-owned presigned R2 uploads for organisation logos. The wizard
+		// used to store the image picker's device-local file:// URI verbatim, so
+		// an uploaded logo rendered only on the founder's own phone. The
+		// presigner is attached to BOTH sides: the handler mints upload URLs, and
+		// the service signs stored object keys back into viewable URLs on read
+		// (the bucket is not public, so a key alone renders nothing). Unconfigured
+		// creds → the upload endpoint fails closed with 503 and reads pass stored
+		// values through unchanged. Bucket default mirrors CLAUDE.md.
+		assocPresigner := r2.New(r2.Config{
+			AccountEndpoint: cfg.R2AccountEndpoint,
+			Bucket:          cfg.R2Bucket,
+			AccessKeyID:     cfg.R2AccessKeyID,
+			SecretAccessKey: cfg.R2SecretAccessKey,
+			Region:          cfg.R2Region,
+		})
+		assocSvc.WithPresigner(assocPresigner)
+		assocHandler := association.NewHandler(assocSvc).
+			WithPresigner(assocPresigner, cfg.R2Bucket)
 		association.RegisterRoutes(finance.Group("/associations"), assocHandler)
 	}
 

@@ -14,6 +14,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"spotlight/backend/internal/finance/ledger"
+	"spotlight/backend/internal/platform/r2"
 )
 
 // ErrIdempotencyRequired is returned when a money mutation arrives without an
@@ -43,6 +44,9 @@ type Service struct {
 	ledger     *ledger.Service
 	commission CommissionRecorder // optional; nil ⇒ realized-profit recording is a no-op
 	cardKey    []byte             // HMAC key for membership card QR signing (set via SetCardSigningSecret)
+	// presigner resolves stored logo object keys to signed GET URLs on read;
+	// nil means stored values are passed through unchanged (see presign.go).
+	presigner *r2.Presigner
 }
 
 func NewService(db *pgxpool.Pool, ledger *ledger.Service) *Service {
@@ -371,6 +375,10 @@ func (s *Service) GetOrganisations(ctx context.Context, search string, limit, of
 			&o.GroupType, &o.Verified, &o.Location, &o.MemberCount, &o.ChapterCount); err != nil {
 			return nil, err
 		}
+		// An uploaded logo is stored as an R2 object key, which renders nothing
+		// on its own — the bucket is not public. Sign it here so the client can
+		// keep treating logoUrl as an image source. Pasted URLs pass through.
+		o.LogoURL = s.resolveLogo(o.LogoURL)
 		out = append(out, o)
 	}
 	return out, rows.Err()
@@ -409,6 +417,7 @@ func (s *Service) GetOrganisation(ctx context.Context, viewerID, orgID string) (
 		return nil, fmt.Errorf("association: org not found: %w", err)
 	}
 	org.ApprovalSummary = approvalSummary(approvalRule, org.GroupType)
+	org.LogoURL = s.resolveLogo(org.LogoURL)
 
 	catRows, err := s.db.Query(ctx, `SELECT id, label, description, dues_kobo, cadence FROM assoc_membership_categories WHERE organisation_id=$1`, orgID)
 	if err == nil {

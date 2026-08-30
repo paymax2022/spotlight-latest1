@@ -211,6 +211,12 @@ func RegisterRoutes(rg *gin.RouterGroup, h *Handler) {
 	rg.POST("/ai-notes/:id/publish", h.PublishAiNote)
 	rg.POST("/ai-notes/:id/action-items/:itemId/convert", h.ConvertActionItem)
 
+	// ── Uploads (logo) ──────────────────────────────────────────
+	// Not scoped to an organisation: a logo is chosen while the org is still a
+	// draft on the founder's phone, so the key is namespaced by the caller's own
+	// user id instead. See presign.go.
+	rg.POST("/uploads/logo/presign", h.PresignLogoUpload)
+
 	// ── Join / publish (B, U) ───────────────────────────────────
 	rg.POST("", h.PublishOrganisation)
 	rg.POST("/apply", h.SubmitApplication)
