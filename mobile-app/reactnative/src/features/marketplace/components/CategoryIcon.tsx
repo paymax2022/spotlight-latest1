@@ -85,13 +85,32 @@ const BY_NAME: Record<string, string> = {
 // unmapped category should look deliberate, not broken.
 const FALLBACK: Spec = { icon: 'Package', from: '#9CA3AF', to: '#4B5563' };
 
-export function specFor(category: { slug?: string; name?: string; icon?: string }): Spec {
+type CategoryLike = { slug?: string; name?: string; icon?: string };
+
+export function specFor(category: CategoryLike, parent?: CategoryLike): Spec {
+  const own = ownSpec(category);
+  if (!parent) return own;
+  // A child keeps its OWN glyph but always takes its parent's hue. Precedence
+  // matters and is not obvious: several curated slugs (motorcycles-scooters,
+  // cars, services…) are subcategories in the live taxonomy, so matching on slug
+  // first put one orange puck among five blue Vehicles siblings and the family
+  // stopped reading as a family. Whoever owns the hue owns the grouping, and one
+  // level down the grouping is the parent's.
+  //
+  // A parent is never itself given a parent, so this recurses at most once.
+  const hue = ownSpec(parent);
+  return { icon: own.icon, from: hue.from, to: hue.to };
+}
+
+// The category's own identity, ignoring any parent: curated first, then the
+// server's icon column, then the neutral fallback.
+function ownSpec(category: CategoryLike): Spec {
   const slug = (category.slug ?? '').toLowerCase();
   if (SPECS[slug]) return SPECS[slug];
   const key = BY_NAME[(category.name ?? '').trim().toLowerCase()];
   if (key && SPECS[key]) return SPECS[key];
-  // An icon name supplied by the API still wins over the fallback glyph, so the
-  // day mkt_categories grows an icon column this keeps honouring it.
+  // mkt_categories carries a lucide name per category (migration 20270123000000);
+  // it supplies the glyph for the 72 subcategories the curated map does not name.
   if (category.icon && (Icons as Record<string, unknown>)[category.icon]) {
     return { ...FALLBACK, icon: category.icon };
   }
@@ -100,12 +119,15 @@ export function specFor(category: { slug?: string; name?: string; icon?: string 
 
 export default function CategoryIcon({
   category,
+  parent,
   size = 56,
 }: {
-  category: { slug?: string; name?: string; icon?: string };
+  category: CategoryLike;
+  /** The category this one sits under; supplies the hue for subcategories. */
+  parent?: CategoryLike;
   size?: number;
 }) {
-  const spec = specFor(category);
+  const spec = specFor(category, parent);
   const Glyph = ((Icons as unknown as Record<string, Icons.LucideIcon>)[spec.icon]
     ?? Icons.Package) as Icons.LucideIcon;
 

@@ -188,7 +188,10 @@ export interface Category {
   parentId: string | null;
   slug: string;
   name: string;
+  /** Lucide icon NAME (e.g. 'Car'), resolved client-side as Icons[icon]. */
   icon?: string;
+  /** Display order within the parent; ties fall back to name. */
+  sortOrder?: number;
   attributeSchema: Record<string, unknown>;
   quickFilters?: CategoryQuickFilter[];
   riskTier?: number;

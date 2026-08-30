@@ -37,6 +37,7 @@ import type { ListingCondition, DeliveryOption } from '@/features/marketplace';
 import { aiPrefill, estimateFairPriceBand, uploadListingImage, isEscrowEligibleCategory } from '@/features/marketplace/api/sell.api';
 import type { AiPrefillResult } from '@/features/marketplace/api/sell.api';
 import { useSellCategories, useSellCategory, useCreateListing, useSubmitListing } from '@/features/marketplace/sell.hooks';
+import { mainCategories, subcategoriesOf } from '@/features/marketplace/categoryTree';
 import PhotoStrip, { type ComposerPhoto } from '@/features/marketplace/components/sell/PhotoStrip';
 import AiPrefillCard from '@/features/marketplace/components/sell/AiPrefillCard';
 import ComposerValidation, { checkBannedPatterns, countWords } from '@/features/marketplace/components/sell/ComposerValidation';
@@ -84,6 +85,14 @@ export default function SellWizard() {
   const [aiDismissed, setAiDismissed] = useState(false);
 
   const categoriesQuery = useSellCategories();
+  // Two-step picker. One flat row of every category was 84 chips deep once the
+  // taxonomy gained subcategories, and — worse — it let a seller file a listing
+  // against a MAIN category. Nothing lives in a main: browsing one searches its
+  // descendants, so a listing parked on the main itself would be invisible in
+  // every subcategory and turn up only on the main's own page.
+  const [mainId, setMainId] = useState('');
+  const mains = mainCategories(categoriesQuery.data);
+  const subs = subcategoriesOf(categoriesQuery.data, mainId);
   const categoryQuery = useSellCategory(categoryId);
   const createListing = useCreateListing();
   const submitListing = useSubmitListing();
@@ -282,12 +291,38 @@ export default function SellWizard() {
 
               <Text style={styles.label}>Category</Text>
               <View style={styles.chipRow}>
-                {(categoriesQuery.data ?? []).map((c) => (
-                  <Pressable key={c.id} style={[styles.chip, categoryId === c.id && styles.chipActive]} onPress={() => setCategoryId(c.id)}>
-                    <Text style={[styles.chipText, categoryId === c.id && styles.chipTextActive]}>{c.name}</Text>
-                  </Pressable>
-                ))}
+                {mains.map((c) => {
+                  const children = subcategoriesOf(categoriesQuery.data, c.id);
+                  const selected = mainId === c.id;
+                  return (
+                    <Pressable
+                      key={c.id}
+                      style={[styles.chip, selected && styles.chipActive]}
+                      onPress={() => {
+                        setMainId(c.id);
+                        // A main with no children IS the leaf, so it is a valid
+                        // choice; one with children is only a step on the way.
+                        setCategoryId(children.length === 0 ? c.id : '');
+                      }}
+                    >
+                      <Text style={[styles.chipText, selected && styles.chipTextActive]}>{c.name}</Text>
+                    </Pressable>
+                  );
+                })}
               </View>
+
+              {subs.length > 0 ? (
+                <>
+                  <Text style={styles.label}>Subcategory</Text>
+                  <View style={styles.chipRow}>
+                    {subs.map((c) => (
+                      <Pressable key={c.id} style={[styles.chip, categoryId === c.id && styles.chipActive]} onPress={() => setCategoryId(c.id)}>
+                        <Text style={[styles.chipText, categoryId === c.id && styles.chipTextActive]}>{c.name}</Text>
+                      </Pressable>
+                    ))}
+                  </View>
+                </>
+              ) : null}
 
               <Text style={styles.label}>Condition</Text>
               <View style={styles.chipRow}>

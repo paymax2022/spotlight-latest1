@@ -17,19 +17,33 @@ import SectionHeader from '@/components/SectionHeader';
 import { MarketColors } from '@/features/marketplace';
 import type { Category, ListingSummary } from '@/features/marketplace';
 import { useCategories, useHomeRails } from '@/features/marketplace/hooks';
+import { mainCategories, subcategoriesOf } from '@/features/marketplace/categoryTree';
 import { useMarketplaceMenu } from '@/features/marketplace/components/MarketplaceMenu';
 import ListingCard from '@/features/marketplace/components/ListingCard';
 import { CategoryGridSkeleton, RailSkeleton } from '@/features/marketplace/components/Skeletons';
 import CategoryIcon from '@/features/marketplace/components/CategoryIcon';
 
-function CategoryTile({ category }: { category: Category }) {
-  // Icon and colour come from CategoryIcon, keyed on slug/name. mkt_categories has
-  // no icon column, so `category.icon` was undefined for every row and the old
-  // `?? 'Package'` fallback rendered all twelve tiles as the same flat glyph.
+function CategoryTile({ category, subCount }: { category: Category; subCount: number }) {
+  // Icon + colour come from CategoryIcon: curated hues for the 12 mains, and the
+  // server's icon column (migration 20270123000000) for the subcategories, which
+  // inherit their parent's hue. Before that column existed `category.icon` was
+  // undefined for every row and the `?? 'Package'` fallback rendered them alike.
   return (
-    <Pressable style={styles.catTile} onPress={() => router.push(`/marketplace/category/${category.id}` as never)} accessibilityRole="button" accessibilityLabel={category.name}>
-      <CategoryIcon category={category} size={56} />
-      <Text style={styles.catLabel} numberOfLines={1}>{category.name}</Text>
+    <Pressable
+      style={styles.catTile}
+      onPress={() => router.push(`/marketplace/category/${category.id}` as never)}
+      accessibilityRole="button"
+      accessibilityLabel={subCount > 0
+        ? `${category.name}, ${subCount} subcategories`
+        : category.name}
+    >
+      <View style={styles.catIconWrap}>
+        <CategoryIcon category={category} size={56} />
+        {subCount > 0 ? (
+          <View style={styles.catBadge}><Text style={styles.catBadgeText}>{subCount}</Text></View>
+        ) : null}
+      </View>
+      <Text style={styles.catLabel} numberOfLines={2}>{category.name}</Text>
     </Pressable>
   );
 }
@@ -92,8 +106,14 @@ export default function MarketplaceHome() {
           <CategoryGridSkeleton />
         ) : (
           <View style={styles.catGrid}>
-            {(categories.data ?? []).map((c) => (
-              <CategoryTile key={c.id} category={c} />
+            {/* The 12 MAINS only. Rendering the flat list here put all 84 rows —
+                every subcategory alongside its own parent — into one grid. */}
+            {mainCategories(categories.data).map((c) => (
+              <CategoryTile
+                key={c.id}
+                category={c}
+                subCount={subcategoriesOf(categories.data, c.id).length}
+              />
             ))}
           </View>
         )}
@@ -127,7 +147,13 @@ const styles = StyleSheet.create({
   scroll: { paddingBottom: Spacing.xxl },
   catGrid: { flexDirection: 'row', flexWrap: 'wrap', paddingHorizontal: Spacing.containerMargin, gap: Spacing.md, marginBottom: Spacing.md },
   catTile: { width: '21%', alignItems: 'center', gap: 6 },
-  catLabel: { ...Typography.labelSm, color: MarketColors.text, textAlign: 'center' },
+  catIconWrap: { width: 56, height: 56 },
+  catBadge: { position: 'absolute', top: -4, right: -4, minWidth: 18, height: 18, paddingHorizontal: 4,
+              borderRadius: 9, backgroundColor: MarketColors.brand, alignItems: 'center', justifyContent: 'center' },
+  catBadgeText: { ...Typography.caption, color: Colors.onPrimary, fontSize: 10, lineHeight: 14 },
+  // Two lines so "Motorcycles & Scooters" is readable at a 4-per-row width;
+  // minHeight keeps one- and two-line tiles on the same baseline.
+  catLabel: { ...Typography.labelSm, color: MarketColors.text, textAlign: 'center', minHeight: 30 },
   railsLoading: { marginTop: Spacing.sm },
   railWrap: { marginTop: Spacing.sm },
   rail: { paddingHorizontal: Spacing.containerMargin, paddingVertical: Spacing.xs },
