@@ -153,9 +153,11 @@ export async function getRegistrationVoting(
     photoUrl: (rosterRow as any).photo_url ?? null,
     category: (rosterRow as any).category ?? null,
     state: (rosterRow as any).state ?? null,
-    // total_votes is a denormalised counter; it is the roster's own number and
-    // is what the app already renders elsewhere.
-    totalVotes: Number((rosterRow as any).total_votes ?? 0),
+    // Filled in below from the live tally, NOT from contestants.total_votes:
+    // that column is a denormalised counter which the connect voting path does
+    // not maintain, so it sits at 0 while real votes exist. Verified live — a
+    // cast vote landed in connect_votes and left the counter untouched.
+    totalVotes: 0,
     ranking: (rosterRow as any).ranking ?? null,
     isActive: Boolean((rosterRow as any).is_active),
     isVerified: Boolean((rosterRow as any).is_verified),
@@ -191,6 +193,22 @@ export async function getRegistrationVoting(
     opensAt: (contestRow as any).opens_at ?? null,
     closesAt: (contestRow as any).closes_at ?? null,
   };
+
+  // Live tally. connect_votes is append-only and holds the contestant UUID in
+  // option_ref (the documented convention that lets the roster join the tally
+  // without altering the vote log), so summing quantity there is the same
+  // number the voting screens show.
+  const { data: voteRows, error: voteErr } = await supabase
+    .from('connect_votes')
+    .select('quantity')
+    .eq('contest_id', contest.id)
+    .eq('option_ref', contestant.id);
+
+  if (voteErr) throw new Error(`Failed to tally votes: ${voteErr.message}`);
+  contestant.totalVotes = (voteRows ?? []).reduce(
+    (sum, row) => sum + Number((row as any).quantity ?? 0),
+    0,
+  );
 
   if (!contestant.isActive) {
     return notVotable(applicationStatus, 'contestant_inactive', contest, contestant);
