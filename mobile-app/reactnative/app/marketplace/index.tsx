@@ -7,7 +7,6 @@ import React from 'react';
 import { View, Text, StyleSheet, Pressable, ScrollView, RefreshControl } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
-import * as Icons from 'lucide-react-native';
 import { WifiOff, Menu } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
@@ -21,12 +20,15 @@ import { useCategories, useHomeRails } from '@/features/marketplace/hooks';
 import { useMarketplaceMenu } from '@/features/marketplace/components/MarketplaceMenu';
 import ListingCard from '@/features/marketplace/components/ListingCard';
 import { CategoryGridSkeleton, RailSkeleton } from '@/features/marketplace/components/Skeletons';
+import CategoryIcon from '@/features/marketplace/components/CategoryIcon';
 
 function CategoryTile({ category }: { category: Category }) {
-  const Icon = (Icons as unknown as Record<string, Icons.LucideIcon>)[category.icon ?? 'Package'] ?? Icons.Package;
+  // Icon and colour come from CategoryIcon, keyed on slug/name. mkt_categories has
+  // no icon column, so `category.icon` was undefined for every row and the old
+  // `?? 'Package'` fallback rendered all twelve tiles as the same flat glyph.
   return (
     <Pressable style={styles.catTile} onPress={() => router.push(`/marketplace/category/${category.id}` as never)} accessibilityRole="button" accessibilityLabel={category.name}>
-      <View style={styles.catIcon}><Icon size={24} color={MarketColors.brand} strokeWidth={1.9} /></View>
+      <CategoryIcon category={category} size={56} />
       <Text style={styles.catLabel} numberOfLines={1}>{category.name}</Text>
     </Pressable>
   );
@@ -125,7 +127,6 @@ const styles = StyleSheet.create({
   scroll: { paddingBottom: Spacing.xxl },
   catGrid: { flexDirection: 'row', flexWrap: 'wrap', paddingHorizontal: Spacing.containerMargin, gap: Spacing.md, marginBottom: Spacing.md },
   catTile: { width: '21%', alignItems: 'center', gap: 6 },
-  catIcon: { width: 56, height: 56, borderRadius: Radius.lg, backgroundColor: Colors.primaryContainer, alignItems: 'center', justifyContent: 'center' },
   catLabel: { ...Typography.labelSm, color: MarketColors.text, textAlign: 'center' },
   railsLoading: { marginTop: Spacing.sm },
   railWrap: { marginTop: Spacing.sm },
