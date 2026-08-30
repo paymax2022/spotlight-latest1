@@ -13,6 +13,8 @@ export interface AdminAccess {
   role:         AdminRole;
   roleLabel:    string;
   jurisdiction: 'CHAPTER' | 'NATIONAL' | 'GLOBAL';
+  /** The organisation this admin administers, when the DTO reports it. */
+  organisationId?: string | null;
   /** Coarse capability flags the UI gates on. */
   can: {
     approveMembers: boolean;

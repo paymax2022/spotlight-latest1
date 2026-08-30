@@ -55,6 +55,18 @@ export async function getEvents(): Promise<EventSummary[]> {
   return data;
 }
 
+/**
+ * The Go event-detail DTO names the caller's own RSVP `myRsvp`; every screen in
+ * this module reads `rsvp`. Normalising here keeps that seam in one place
+ * instead of scattering `rsvp ?? myRsvp` through the UI. List DTOs already
+ * carry `rsvp` and are left alone.
+ */
+function normaliseEvent(dto: (Event & { myRsvp?: EventRsvp }) | null | undefined): Event {
+  const raw = (dto ?? {}) as Event & { myRsvp?: EventRsvp };
+  const { myRsvp, ...rest } = raw;
+  return { ...rest, rsvp: rest.rsvp ?? myRsvp ?? null } as Event;
+}
+
 export async function getEvent(id: string): Promise<Event> {
   if (USE_MOCK) {
     await delay();
@@ -63,7 +75,7 @@ export async function getEvent(id: string): Promise<Event> {
     return found;
   }
   const { data } = await api.get(`${BASE}/events/${id}`);
-  return data;
+  return normaliseEvent(data);
 }
 
 export async function rsvpEvent(id: string, rsvp: EventRsvp): Promise<{ ok: true }> {

@@ -26,9 +26,11 @@ export interface AnnouncementSummary {
 
 export interface Announcement extends AnnouncementSummary {
   body:        string;
-  attachments: AnnouncementAttachment[];
-  readCount:   number;
-  totalRecipients: number;
+  /** Optional: absent from the live DTO until attachments are wired. */
+  attachments?: AnnouncementAttachment[];
+  /** Optional: read receipts are not returned by every deployment. */
+  readCount?:   number;
+  totalRecipients?: number;
 }
 
 // ─── Notifications (X) ────────────────────────────────────────────────────────
@@ -74,11 +76,12 @@ export interface AgendaItem { id: string; order: number; title: string; duration
 
 export interface Meeting extends MeetingSummary {
   description: string;
-  agenda:      AgendaItem[];
-  documents:   { id: string; name: string }[];
+  agenda?:     AgendaItem[];
+  documents?:  { id: string; name: string }[];
   checkedIn:   boolean;
-  minutesPublished: boolean;
-  attendanceCode: string;     // QR payload for check-in
+  minutesPublished?: boolean;
+  /** QR payload for check-in. Absent until the meeting opens for attendance. */
+  attendanceCode?: string;
 }
 
 // ─── Tasks (M) ────────────────────────────────────────────────────────────────
@@ -110,11 +113,11 @@ export interface TaskComment { id: string; author: string; body: string; created
 
 export interface Task extends TaskSummary {
   description: string;
-  checklist:   ChecklistItem[];
-  comments:    TaskComment[];
+  checklist?:  ChecklistItem[];
+  comments?:   TaskComment[];
   createdBy:   string;
   meetingId:   string | null;  // links back to meeting minutes
-  meetingTitle: string | null;
+  meetingTitle?: string | null;
 }
 
 export type TaskScope = 'mine' | 'assigned' | 'overdue' | 'completed';
@@ -142,9 +145,9 @@ export interface DocumentSummary {
 }
 
 export interface DocumentDetail extends DocumentSummary {
-  description:  string | null;
+  description?: string | null;
   version:      string;        // "v3"
-  versionHistory: { version: string; date: string; note: string }[];
-  aiSummary:    string | null;
-  uploadedBy:   string;
+  versionHistory?: { version: string; date: string; note: string }[];
+  aiSummary?:   string | null;
+  uploadedBy?:  string;
 }

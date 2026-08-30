@@ -39,11 +39,12 @@ export default function CommitteeDetail() {
   const c = committee.data;
   const status = join.isSuccess ? 'PENDING' : c.joinStatus;
   const isMember = status === 'MEMBER';
+  const members = c.members ?? [];
 
   const stats = [
-    { icon: CalendarDays, label: 'Meetings', value: c.meetingsCount, to: '/association/meetings' },
-    { icon: ListTodo, label: 'Tasks', value: c.tasksCount, to: '/association/tasks' },
-    { icon: FileText, label: 'Documents', value: c.docsCount, to: '/association/documents' },
+    { icon: CalendarDays, label: 'Meetings', value: c.meetingsCount ?? 0, to: '/association/meetings' },
+    { icon: ListTodo, label: 'Tasks', value: c.tasksCount ?? 0, to: '/association/tasks' },
+    { icon: FileText, label: 'Documents', value: c.docsCount ?? 0, to: '/association/documents' },
   ] as const;
 
   return (
@@ -54,17 +55,17 @@ export default function CommitteeDetail() {
         <Text style={styles.purpose}>{c.purpose} · {formatCount(c.memberCount, 'members')}</Text>
         <Text style={styles.body}>{c.description}</Text>
 
-        {/* Leadership */}
+        {/* Leadership — either office may be vacant / absent from the DTO. */}
         <View style={[styles.card, shadow1]}>
           <View style={styles.leadRow}>
             <Crown size={16} color={Colors.gold} strokeWidth={2} />
             <Text style={styles.leadLabel}>Chairperson</Text>
-            <Text style={styles.leadName}>{c.chair}</Text>
+            <Text style={styles.leadName}>{c.chair || 'Not appointed'}</Text>
           </View>
           <View style={[styles.leadRow, styles.leadDivider]}>
             <Pencil size={16} color={Colors.secondary} strokeWidth={2} />
             <Text style={styles.leadLabel}>Secretary</Text>
-            <Text style={styles.leadName}>{c.secretary}</Text>
+            <Text style={styles.leadName}>{c.secretary || 'Not appointed'}</Text>
           </View>
         </View>
 
@@ -94,15 +95,22 @@ export default function CommitteeDetail() {
         {/* Members */}
         <Text style={styles.sectionTitle}>Members</Text>
         <View style={[styles.card, shadow1]}>
-          {c.members.map((m, i) => (
-            <View key={m.id} style={[styles.memberRow, i > 0 && styles.memberDivider]}>
-              <View style={styles.avatar}>
-                {m.photoUrl ? <Image source={{ uri: m.photoUrl }} style={styles.avatarImg} /> : <Text style={styles.avatarText}>{initials(m.name)}</Text>}
+          {members.length === 0 ? (
+            <Text style={styles.emptyText}>No members listed for this committee yet.</Text>
+          ) : members.map((m, i) => {
+            // The mock fixture sends `name`; the Go DTO sends `fullName`
+            // (+ `membershipId`). Accept either rather than rendering blank.
+            const displayName = m.fullName ?? m.name ?? m.membershipId ?? 'Member';
+            return (
+              <View key={m.id} style={[styles.memberRow, i > 0 && styles.memberDivider]}>
+                <View style={styles.avatar}>
+                  {m.photoUrl ? <Image source={{ uri: m.photoUrl }} style={styles.avatarImg} /> : <Text style={styles.avatarText}>{initials(displayName)}</Text>}
+                </View>
+                <Text style={styles.memberName}>{displayName}</Text>
+                <Text style={styles.memberRole}>{m.role ?? 'Member'}</Text>
               </View>
-              <Text style={styles.memberName}>{m.name}</Text>
-              <Text style={styles.memberRole}>{m.role}</Text>
-            </View>
-          ))}
+            );
+          })}
         </View>
       </ScrollView>
 
@@ -138,6 +146,7 @@ const styles = StyleSheet.create({
   statCard: { flex: 1, alignItems: 'center', gap: 4, backgroundColor: Colors.surfaceContainerLowest, borderRadius: Radius.lg, borderWidth: 1, borderColor: Colors.outlineVariant, paddingVertical: Spacing.md },
   statValue: { ...Typography.titleMd, color: Colors.onSurface },
   statLabel: { ...Typography.labelSm, color: Colors.onSurfaceVariant },
+  emptyText: { ...Typography.bodySm, color: Colors.onSurfaceVariant },
   chatRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm, backgroundColor: Colors.iconBgPurple, borderRadius: Radius.lg, padding: Spacing.md },
   chatText: { ...Typography.labelMd, color: Colors.primary, flex: 1 },
   sectionTitle: { ...Typography.titleMd, color: Colors.onSurface, marginTop: Spacing.xs },
