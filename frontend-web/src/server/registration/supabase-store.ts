@@ -13,6 +13,10 @@ import {
 } from '@/src/features/registration/validation';
 import { ACCOUNT_PROVIDED_KEYS } from '@/src/features/registration/account-prefill';
 import {
+  findLiveRegistrationForContest,
+  RegistrationExistsError,
+} from '@/src/server/registration-v2/registration-for-contest';
+import {
   listRegistrationContests,
   getRegistrationContestBySlug,
 } from '@/src/server/registration/store';
@@ -319,6 +323,22 @@ export async function startRegistrationDraft(params: {
   const contest = await resolveAnyContest(params.contestSlug);
   if (!contest) {
     throw new Error('Contest not found.');
+  }
+
+  // One live application per contest per user.
+  //
+  // The check sits HERE, after resolution, rather than in the route: callers
+  // pass either a slug or a contest id (the mobile contest screen passes an id),
+  // so a check on the raw request value would miss half the duplicates. Migration
+  // 20270125000000 adds a partial unique index as the real authority; this exists
+  // to hand back the existing application instead of a constraint violation.
+  if (params.userId) {
+    const existing = await findLiveRegistrationForContest(params.userId, {
+      contestSlug: contest.slug,
+    });
+    if (existing) {
+      throw new RegistrationExistsError(existing);
+    }
   }
 
   const contests = listRegistrationContests();
@@ -773,32 +793,47 @@ export async function reviewRegistrationApplication(
     'admin.requestedFields': input.requestedFields || current.formData['admin.requestedFields'],
   };
 
-  const { data, error } = await getSupabase()
+  // Review notes first. These are cosmetic, and writing them before the status
+  // transition means a failed transition leaves notes without a false decision —
+  // never the other way round.
+  const { error: notesError } = await getSupabase()
     .from('registrations')
     .update({
-      status: input.status,
       form_data: nextFormData,
       fraud_flags: nextFraudFlags,
       updated_at: now,
     })
-    .eq('id', applicationId)
-    .select('*')
-    .single();
+    .eq('id', applicationId);
 
-  if (error) {
-    throw new Error(`Failed to review registration: ${error.message}`);
+  if (notesError) {
+    throw new Error(`Failed to review registration: ${notesError.message}`);
   }
 
-  await getSupabase().from('registration_status_events').insert({
-    registration_id: applicationId,
-    old_status: current.status,
-    new_status: input.status,
-    note: input.note || 'Admin review action',
-    actor_role: 'admin',
-    created_at: now,
+  // The status transition goes through review_registration_application (migration
+  // 20270125000000), which changes the status, records the audit event AND moves
+  // the voting roster in one transaction.
+  //
+  // This used to be a plain UPDATE here. It looked fine and it was not: approving
+  // from the admin console changed the status but never called
+  // promote_registration_to_contestant, so the applicant never became a
+  // contestant and the mobile app had nothing to show them. The Go path
+  // (RegistrationAdminStore.SetStatus) had always done it correctly — this was a
+  // second implementation of the same operation that had drifted. Both now end up
+  // in the same function, so they cannot drift again.
+  const { error: reviewError } = await getSupabase().rpc('review_registration_application', {
+    p_registration_id: applicationId,
+    p_status: input.status,
+    p_note: input.note || 'Admin review action',
+    p_actor_role: 'admin',
   });
 
-  return rowToDraft(data);
+  if (reviewError) {
+    throw new Error(`Failed to review registration: ${reviewError.message}`);
+  }
+
+  const updated = await getRegistrationDraft(applicationId);
+  if (!updated) throw new Error('Application not found after review.');
+  return updated;
 }
 
 export async function getRegistrationStatusTimeline(
