@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { View, Text, ScrollView, Pressable, StyleSheet, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
@@ -11,18 +11,30 @@ import { shadow1 } from '@/constants/shadows';
 import ScreenHeader from '@/components/ScreenHeader';
 import PrimaryButton from '@/components/PrimaryButton';
 import { useImportPreview } from '@/features/association/hooks/useAdmin';
+import { useAdminAccess } from '@/features/association/hooks/useAdminMembers';
+import { pickSpreadsheet } from '@/features/association/utils/docPicker';
+import type { PickedFile } from '@/features/association/utils/docPicker';
 
 const STEPS = ['Download the template', 'Fill in member rows', 'Upload the file', 'Review & confirm'];
 
 export default function ImportIntro() {
   const preview = useImportPreview();
+  const access = useAdminAccess();
+  const [file, setFile] = useState<PickedFile | null>(null);
 
-  const onUpload = () => {
-    // Mock file selection → preview. (Real build uses a document picker.)
-    preview.mutate(undefined, {
-      onSuccess: () => router.push('/association/admin/import/preview'),
-      onError: () => Alert.alert('Upload failed', 'Could not read the file. Please try again.'),
-    });
+  // Pick a real .xlsx/.csv and upload it as multipart/form-data. The endpoint
+  // requires a `file` part — the previous empty JSON POST always 400'd.
+  const onUpload = async () => {
+    const picked = file ?? (await pickSpreadsheet());
+    if (!picked) return;
+    setFile(picked);
+    preview.mutate(
+      { file: picked, orgId: access.data?.organisationId ?? undefined },
+      {
+        onSuccess: () => router.push('/association/admin/import/preview'),
+        onError: () => Alert.alert('Upload failed', 'Could not read the file. Please check the format and try again.'),
+      },
+    );
   };
 
   return (
@@ -51,6 +63,16 @@ export default function ImportIntro() {
           <Download size={18} color={Colors.secondary} strokeWidth={2} />
         </Pressable>
 
+        {file ? (
+          <Pressable style={[styles.templateRow, shadow1]} onPress={async () => { const p = await pickSpreadsheet(); if (p) setFile(p); }} accessibilityRole="button" accessibilityLabel={`Change selected file, currently ${file.name}`}>
+            <View style={styles.templateIcon}><FileSpreadsheet size={20} color={Colors.teal} strokeWidth={2} /></View>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.templateTitle} numberOfLines={1}>{file.name}</Text>
+              <Text style={styles.templateSub}>{file.sizeLabel} · tap to choose another file</Text>
+            </View>
+          </Pressable>
+        ) : null}
+
         <View style={styles.note}>
           <CheckCircle2 size={14} color={Colors.onSurfaceVariant} strokeWidth={2} />
           <Text style={styles.noteText}>Accepted formats: .xlsx, .csv · up to 5,000 rows per upload.</Text>
@@ -59,7 +81,7 @@ export default function ImportIntro() {
 
       <View style={styles.footer}>
         <PrimaryButton
-          label="Upload file"
+          label={file ? 'Upload file' : 'Choose file'}
           onPress={onUpload}
           loading={preview.isPending}
         />

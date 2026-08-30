@@ -27,14 +27,15 @@ export interface Organisation extends OrganisationSummary {
   foundedYear:       number | null;
   requiresPayment:    boolean;
   registrationFeeKobo: number;     // 0 when free
-  approvalSummary:    string;      // human-readable approval path
+  approvalSummary?:   string;      // human-readable approval path
   membershipCategories: MembershipCategory[];
   chapters:           Chapter[];
-  requirements:       JoinRequirement[];
-  rules:              string[];    // group rules the applicant must accept
+  /** Every collection below is optional — the live DTO returns a subset. */
+  requirements?:      JoinRequirement[];
+  rules?:             string[];    // group rules the applicant must accept
   website:            string | null;
-  branches:           string[];        // local branches under the selected chapter (B12)
-  committeeOptions:   string[];        // committees a joiner can express interest in (B13)
+  branches?:          string[];        // local branches under the selected chapter (B12)
+  committeeOptions?:  string[];        // committees a joiner can express interest in (B13)
 }
 
 export interface MembershipCategory {
@@ -114,7 +115,12 @@ export interface MembershipCard {
   status:        MemberStatus;
   paymentStanding: PaymentStanding;
   verified:      boolean;
-  validThrough:  string;           // ISO date
+  /**
+   * ISO date, and NULLABLE — the live DTO omits it for a card with no expiry.
+   * It was typed non-null, so the card formatted `undefined` as a date and read
+   * "Valid thru 1 Jan 1970". Guard before formatting.
+   */
+  validThrough:  string | null;
   qrPayload:     string;           // opaque verification token
 }
 
@@ -142,7 +148,9 @@ export interface MemberProfileSummary {
   chapterName:   string | null;
   status:        MemberStatus;
   profession:    string | null;
-  committees:    string[];
+  committees?:   string[];
+  /** Present on the live DTO; used to resolve the member's organisation. */
+  organisationId?: string | null;
 }
 
 export interface MemberProfile extends MemberProfileSummary {
@@ -195,8 +203,18 @@ export interface DuesInvoice {
   amountKobo:  number;
   cadence:     DuesCadence;
   status:      InvoiceStatus;
-  dueDate:     string;             // ISO
+  /**
+   * ISO, and NULLABLE: an ad-hoc or open-ended invoice — an event registration,
+   * for one — carries no due date. Never format it without a null guard;
+   * `new Date(null)` is 1 Jan 1970, not an error.
+   */
+  dueDate:     string | null;
   scope:       'NATIONAL' | 'STATE' | 'LOCAL' | 'COMMITTEE';
+  /**
+   * Authoritative revenue split, computed server-side. The client never
+   * invents percentages — when this is absent the breakdown is not shown.
+   */
+  split?:      RevenueSplitLine[];
 }
 
 export interface RevenueSplitLine {

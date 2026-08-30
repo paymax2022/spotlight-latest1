@@ -564,7 +564,7 @@ func (s *Service) SetAiNoteStatus(ctx context.Context, adminID, noteID, status, 
 	if _, err := tx.Exec(ctx, `UPDATE assoc_ai_notes SET status=$2 WHERE id=$1`, noteID, status); err != nil {
 		return fmt.Errorf("association: ai note status: %w", err)
 	}
-	if err := s.audit(ctx, tx, "", adminID, action, "ai_note", noteID, nil); err != nil {
+	if err := s.audit(ctx, tx, noteOrg, adminID, action, "ai_note", noteID, nil); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)
@@ -616,6 +616,52 @@ func (s *Service) ValidateCode(ctx context.Context, kind, code string) (*CodeVal
 	return res, nil
 }
 
+// ensureMembership creates (or re-activates) a membership row for userID in
+// orgID and guarantees the companion assoc_member_profiles row exists, seeding
+// full_name/email from the platform user record.
+//
+// Every read path in this module joins assoc_member_profiles, so a membership
+// without a profile row makes /me/profile, /me/privacy, the directory and all
+// settings endpoints fail or silently no-op. Creating the two together is the
+// only way to keep that invariant. Returns the membership id.
+//
+// Callers pass the tx so membership creation rolls back with its caller
+// (application insert, org publish) rather than leaving a half-joined member.
+func (s *Service) ensureMembership(ctx context.Context, tx pgx.Tx, orgID, userID, status, standing, memberCodePrefix string, categoryID, chapterID *string) (string, error) {
+	memberCode := memberCodePrefix + "-" + strings.ToUpper(uuid.New().String()[:8])
+	var membershipID string
+	const upsert = `
+		INSERT INTO assoc_memberships
+		  (id, organisation_id, user_id, member_code, category_id, chapter_id, status, payment_standing, joined_at)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8, CASE WHEN $7='ACTIVE' THEN now() ELSE NULL END)
+		ON CONFLICT (organisation_id, user_id) DO UPDATE
+		  SET status           = EXCLUDED.status,
+		      payment_standing = EXCLUDED.payment_standing,
+		      category_id      = COALESCE(EXCLUDED.category_id, assoc_memberships.category_id),
+		      chapter_id       = COALESCE(EXCLUDED.chapter_id,  assoc_memberships.chapter_id),
+		      joined_at        = COALESCE(assoc_memberships.joined_at, EXCLUDED.joined_at)
+		RETURNING id`
+	if err := tx.QueryRow(ctx, upsert, uuid.New().String(), orgID, userID, memberCode,
+		categoryID, chapterID, status, standing).Scan(&membershipID); err != nil {
+		return "", fmt.Errorf("association: upsert membership: %w", err)
+	}
+
+	// Seed the profile from the platform user record. Best-effort on the lookup:
+	// a missing platform row must not block joining, so the profile is still
+	// created (with NULL name/email) and can be completed by the member.
+	var fullName, email *string
+	_ = s.db.QueryRow(ctx,
+		`SELECT NULLIF(TRIM(COALESCE(first_name,'') || ' ' || COALESCE(last_name,'')), ''), email
+		   FROM platform_users WHERE id=$1`, userID).Scan(&fullName, &email)
+	if _, err := tx.Exec(ctx,
+		`INSERT INTO assoc_member_profiles (membership_id, full_name, email)
+		 VALUES ($1,$2,$3) ON CONFLICT (membership_id) DO NOTHING`,
+		membershipID, fullName, email); err != nil {
+		return "", fmt.Errorf("association: seed member profile: %w", err)
+	}
+	return membershipID, nil
+}
+
 func (s *Service) SubmitApplication(ctx context.Context, userID string, d JoinDraft) (*ApplicationResult, error) {
 	var groupType, orgName string
 	if err := s.db.QueryRow(ctx, `SELECT group_type, name FROM assoc_organisations WHERE id=$1`, d.OrganisationID).Scan(&groupType, &orgName); err != nil {
@@ -629,10 +675,45 @@ func (s *Service) SubmitApplication(ctx context.Context, userID string, d JoinDr
 		status = "PENDING_PAYMENT"
 	}
 	id := uuid.New().String()
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("association: begin tx: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
 	const q = `INSERT INTO assoc_applications (id, organisation_id, user_id, category_id, chapter_id, sponsor_name, status)
 	           VALUES ($1,$2,$3,$4,$5,$6,$7)`
-	if _, err := s.db.Exec(ctx, q, id, d.OrganisationID, userID, d.CategoryID, d.ChapterID, d.SponsorName, status); err != nil {
+	if _, err := tx.Exec(ctx, q, id, d.OrganisationID, userID, d.CategoryID, d.ChapterID, d.SponsorName, status); err != nil {
 		return nil, fmt.Errorf("association: submit application: %w", err)
+	}
+
+	// Create the membership alongside the application. An OPEN org activates
+	// immediately (its response already claims "You are now a member"); every
+	// other path lands PENDING so DecideApplication has a row to flip — the
+	// approve branch is an UPDATE and was previously a no-op against no row.
+	// Supporting documents. Previously bound to nothing at all, so the entire
+	// upload step of the join flow was decorative.
+	for _, doc := range d.Documents {
+		if strings.TrimSpace(doc.Label) == "" {
+			continue
+		}
+		if _, err := tx.Exec(ctx,
+			`INSERT INTO assoc_application_documents (id, application_id, label, url, kind)
+			 VALUES ($1,$2,$3,$4,$5)`,
+			uuid.New().String(), id, doc.Label, doc.URL, nz(doc.Kind, "OTHER")); err != nil {
+			return nil, fmt.Errorf("association: insert application document: %w", err)
+		}
+	}
+
+	membershipStatus, standing := "PENDING", "DUE"
+	if status == "APPROVED" {
+		membershipStatus = "ACTIVE"
+	}
+	if _, err := s.ensureMembership(ctx, tx, d.OrganisationID, userID, membershipStatus, standing, "MBR", d.CategoryID, d.ChapterID); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("association: submit application: commit: %w", err)
 	}
 	res := &ApplicationResult{
 		ApplicationID: id, Status: status, OrganisationName: orgName,
@@ -655,9 +736,6 @@ func (s *Service) SubmitApplication(ctx context.Context, userID string, d JoinDr
 // ─── Bulk import (admin) ──────────────────────────────────────────────────────
 
 func (s *Service) ImportPreview(ctx context.Context, adminID, orgID, fileName string, r io.Reader) (*ImportPreview, error) {
-	if err := s.requireCap(ctx, adminID, func(c AdminCapabilities) bool { return c.ImportMembers }); err != nil {
-		return nil, err
-	}
 	// Resolve the target organisation: explicit org_id wins, else the caller's
 	// primary membership. Duplicate detection is scoped to this org.
 	if orgID == "" {
@@ -666,6 +744,14 @@ func (s *Service) ImportPreview(ctx context.Context, adminID, orgID, fileName st
 			return nil, err
 		}
 		orgID = oid
+	}
+	// Authorization must be org-SCOPED, not merely "is some kind of admin".
+	// With the org-agnostic requireCap, an admin of org A could pass org_id=B
+	// and the "Already a member" duplicate check below turned into a membership
+	// enumeration oracle against org B's roster. BulkImportMembers was fixed to
+	// requireCapInOrg; this path was missed.
+	if err := s.requireCapInOrg(ctx, adminID, orgID, func(c AdminCapabilities) bool { return c.ImportMembers }); err != nil {
+		return nil, err
 	}
 
 	cr := csv.NewReader(r)
@@ -739,35 +825,109 @@ func (s *Service) ImportPreview(ctx context.Context, adminID, orgID, fileName st
 		preview.Rows = append(preview.Rows, row)
 	}
 	preview.Total = rowNum
+
+	// Stage the batch so Confirm has something to commit.
+	preview.BatchID = uuid.New().String()
+	rowsJSON, err := json.Marshal(preview.Rows)
+	if err != nil {
+		return nil, fmt.Errorf("association: preview: marshal rows: %w", err)
+	}
+	if _, err := s.db.Exec(ctx, `
+		INSERT INTO assoc_import_batches
+		  (id, organisation_id, file_name, total, imported, skipped, invited, uploaded_by, rows, status)
+		VALUES ($1,$2,$3,$4,0,0,0,$5,$6,'PENDING')`,
+		preview.BatchID, orgID, fileName, preview.Total, adminID, rowsJSON); err != nil {
+		return nil, fmt.Errorf("association: preview: stage batch: %w", err)
+	}
 	return preview, nil
 }
 
-func (s *Service) ConfirmImport(ctx context.Context, adminID string, sendInvites bool, preview ImportPreview) (*ImportResult, error) {
-	if err := s.requireAssocAdmin(ctx, adminID); err != nil {
+// ConfirmImport commits a batch staged by ImportPreview. Idempotent: a batch
+// that is already CONFIRMED returns its recorded result without re-importing.
+func (s *Service) ConfirmImport(ctx context.Context, adminID, batchID string, sendInvites bool) (*ImportResult, error) {
+	if strings.TrimSpace(batchID) == "" {
+		return nil, fmt.Errorf("association: batchId is required")
+	}
+	var orgID, status string
+	var rowsJSON []byte
+	var imported, skipped, invited int
+	if err := s.db.QueryRow(ctx,
+		`SELECT organisation_id::text, status, rows, imported, skipped, invited
+		   FROM assoc_import_batches WHERE id=$1`, batchID,
+	).Scan(&orgID, &status, &rowsJSON, &imported, &skipped, &invited); err != nil {
+		return nil, fmt.Errorf("association: import batch not found: %w", err)
+	}
+	// Org-scoped authorization against the batch's OWN org — the previous code
+	// used the caller's primary membership, which both failed for a platform
+	// admin and would have become a cross-org write once import worked.
+	if err := s.requireCapInOrg(ctx, adminID, orgID, func(c AdminCapabilities) bool { return c.ImportMembers }); err != nil {
 		return nil, err
 	}
-	_, orgID, err := s.primaryMembership(ctx, adminID)
-	if err != nil {
-		return nil, err
+	if status == "CONFIRMED" {
+		return &ImportResult{Imported: imported, Skipped: skipped, Invited: invited, BatchID: batchID}, nil
 	}
-	batchID := uuid.New().String()
-	imported := preview.Valid
-	skipped := preview.Duplicates + preview.Invalid
-	invited := 0
-	if sendInvites {
-		invited = imported
+	if status != "PENDING" {
+		return nil, fmt.Errorf("association: import batch is %s", status)
 	}
+
+	var rows []ImportRow
+	if err := json.Unmarshal(rowsJSON, &rows); err != nil {
+		return nil, fmt.Errorf("association: import batch rows: %w", err)
+	}
+
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("association: begin tx: %w", err)
 	}
 	defer tx.Rollback(ctx)
-	const q = `INSERT INTO assoc_import_batches (id, organisation_id, file_name, total, imported, skipped, invited, uploaded_by)
-	           VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`
-	if _, err := tx.Exec(ctx, q, batchID, orgID, preview.FileName, preview.Total, imported, skipped, invited, adminID); err != nil {
+
+	imported, skipped, invited = 0, 0, 0
+	for _, row := range rows {
+		// Rows the preview already flagged are carried through as skipped.
+		if row.Issue != nil {
+			skipped++
+			continue
+		}
+		email := strings.ToLower(strings.TrimSpace(row.Email))
+		if email == "" {
+			skipped++
+			continue
+		}
+		// Only an existing platform user can be made a member; there is no
+		// account-creation path here, so an unknown email is skipped rather than
+		// silently counted as imported.
+		var userID string
+		if err := tx.QueryRow(ctx, `SELECT id::text FROM auth.users WHERE lower(email)=$1 LIMIT 1`, email).Scan(&userID); err != nil {
+			skipped++
+			continue
+		}
+		var chapterID *string
+		if strings.TrimSpace(row.Chapter) != "" {
+			var chID string
+			if err := tx.QueryRow(ctx,
+				`SELECT id::text FROM assoc_chapters WHERE organisation_id=$1 AND name=$2 LIMIT 1`,
+				orgID, row.Chapter).Scan(&chID); err == nil {
+				chapterID = &chID
+			}
+		}
+		if _, err := s.ensureMembership(ctx, tx, orgID, userID, "ACTIVE", "DUE", "IMP", nil, chapterID); err != nil {
+			skipped++
+			continue
+		}
+		imported++
+		if sendInvites {
+			invited++
+		}
+	}
+
+	if _, err := tx.Exec(ctx, `
+		UPDATE assoc_import_batches
+		   SET imported=$2, skipped=$3, invited=$4, status='CONFIRMED', confirmed_at=now()
+		 WHERE id=$1`, batchID, imported, skipped, invited); err != nil {
 		return nil, fmt.Errorf("association: record import: %w", err)
 	}
-	if err := s.audit(ctx, tx, orgID, adminID, "IMPORT", "import_batch", batchID, map[string]any{"imported": imported, "skipped": skipped}); err != nil {
+	if err := s.audit(ctx, tx, orgID, adminID, "IMPORT", "import_batch", batchID,
+		map[string]any{"imported": imported, "skipped": skipped, "invited": invited}); err != nil {
 		return nil, err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -782,6 +942,21 @@ func (s *Service) PublishOrganisation(ctx context.Context, userID string, d OrgD
 	if !d.AcceptedTerms {
 		return nil, fmt.Errorf("association: terms must be accepted")
 	}
+	// Replay short-circuit. The client has always sent an Idempotency-Key on
+	// publish; the handler never read it, so a transport retry created a second
+	// organisation. Returning the original result is the correct replay answer.
+	if key := strings.TrimSpace(d.IdempotencyKey); key != "" {
+		var existingID, existingName string
+		err := s.db.QueryRow(ctx,
+			`SELECT id, name FROM assoc_organisations WHERE idempotency_key=$1`, key,
+		).Scan(&existingID, &existingName)
+		if err == nil {
+			return &PublishResult{OrganisationID: existingID, Name: existingName}, nil
+		}
+		if !errors.Is(err, pgx.ErrNoRows) {
+			return nil, fmt.Errorf("association: publish idempotency lookup: %w", err)
+		}
+	}
 	orgID := uuid.New().String()
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
@@ -789,18 +964,66 @@ func (s *Service) PublishOrganisation(ctx context.Context, userID string, d OrgD
 	}
 	defer tx.Rollback(ctx)
 
+	graceDays := 30
+	if d.Restrictions.GraceDays != nil && *d.Restrictions.GraceDays >= 0 {
+		graceDays = *d.Restrictions.GraceDays
+	}
+	// requires_payment was derived from fee>0 alone, so a PAID group with a zero
+	// registration fee stored requires_payment=false and contradicted itself.
+	requiresPayment := d.RegistrationFeeKobo > 0 || d.GroupType == "PAID"
+
 	const insOrg = `
 		INSERT INTO assoc_organisations
-		  (id, name, acronym, category, description, group_type, approval_rule, registration_fee_kobo, requires_payment, created_by, published)
-		VALUES ($1,$2,NULLIF($3,''),$4,$5,$6,$7,$8,$9,$10,true)`
-	if _, err := tx.Exec(ctx, insOrg, orgID, d.Name, d.Acronym, d.Category, d.Description, d.GroupType, nz(d.ApprovalRule, "ADMIN"),
-		d.RegistrationFeeKobo, d.RegistrationFeeKobo > 0, userID); err != nil {
+		  (id, name, acronym, category, description, logo_url, group_type, approval_rule,
+		   registration_fee_kobo, requires_payment, created_by, published,
+		   structure_type, grace_days, disable_voting, disable_events, disable_chat, disable_card,
+		   idempotency_key)
+		VALUES ($1,$2,NULLIF($3,''),$4,$5,NULLIF($6,''),$7,$8,$9,$10,$11,true,NULLIF($12,''),$13,$14,$15,$16,$17,
+		        NULLIF($18,''))`
+	if _, err := tx.Exec(ctx, insOrg, orgID, d.Name, d.Acronym, d.Category, d.Description, d.LogoURL,
+		d.GroupType, nz(d.ApprovalRule, "ADMIN"),
+		d.RegistrationFeeKobo, requiresPayment, userID,
+		d.StructureType, graceDays,
+		d.Restrictions.DisableVoting, d.Restrictions.DisableEvents,
+		d.Restrictions.DisableChat, d.Restrictions.DisableCard,
+		strings.TrimSpace(d.IdempotencyKey)); err != nil {
 		return nil, fmt.Errorf("association: insert organisation: %w", err)
 	}
+	for i, body := range d.Rules {
+		if strings.TrimSpace(body) == "" {
+			continue
+		}
+		if _, err := tx.Exec(ctx,
+			`INSERT INTO assoc_organisation_rules (id, organisation_id, body, position) VALUES ($1,$2,$3,$4)`,
+			uuid.New().String(), orgID, body, i); err != nil {
+			return nil, fmt.Errorf("association: insert rule: %w", err)
+		}
+	}
+	chapterByName := make(map[string]string, len(d.Chapters))
 	for _, ch := range d.Chapters {
+		chID := uuid.New().String()
 		if _, err := tx.Exec(ctx, `INSERT INTO assoc_chapters (id, organisation_id, name, level) VALUES ($1,$2,$3,$4)`,
-			uuid.New().String(), orgID, ch.Name, nz(ch.Level, "STATE")); err != nil {
+			chID, orgID, ch.Name, nz(ch.Level, "STATE")); err != nil {
 			return nil, fmt.Errorf("association: insert chapter: %w", err)
+		}
+		chapterByName[strings.ToLower(strings.TrimSpace(ch.Name))] = chID
+	}
+	// State leaders. chapter_id is best-effort: the wizard collects leaders by
+	// state name, which may or may not match a chapter the user also created,
+	// so the state name is always retained independently.
+	for _, sl := range d.StateLeaders {
+		if strings.TrimSpace(sl.State) == "" {
+			continue
+		}
+		var chapterID *string
+		if id, ok := chapterByName[strings.ToLower(strings.TrimSpace(sl.State))]; ok {
+			chapterID = &id
+		}
+		if _, err := tx.Exec(ctx,
+			`INSERT INTO assoc_chapter_leaders (id, organisation_id, chapter_id, state_name, leader_name, leader_contact, can_approve_members)
+			 VALUES ($1,$2,$3,$4,NULLIF($5,''),NULLIF($6,''),$7)`,
+			uuid.New().String(), orgID, chapterID, sl.State, sl.LeaderName, sl.LeaderContact, sl.CanApproveMembers); err != nil {
+			return nil, fmt.Errorf("association: insert chapter leader: %w", err)
 		}
 	}
 	for _, cm := range d.Committees {
@@ -809,12 +1032,36 @@ func (s *Service) PublishOrganisation(ctx context.Context, userID string, d OrgD
 			return nil, fmt.Errorf("association: insert committee: %w", err)
 		}
 	}
+	// The first category doubles as the founder's own membership tier, so keep
+	// the id of the first one inserted.
+	var founderCategoryID *string
 	for _, cat := range d.Categories {
+		catID := uuid.New().String()
 		if _, err := tx.Exec(ctx, `INSERT INTO assoc_membership_categories (id, organisation_id, label, dues_kobo, cadence) VALUES ($1,$2,$3,$4,$5)`,
-			uuid.New().String(), orgID, cat.Label, cat.DuesKobo, nz(cat.Cadence, "ANNUAL")); err != nil {
+			catID, orgID, cat.Label, cat.DuesKobo, nz(cat.Cadence, "ANNUAL")); err != nil {
 			return nil, fmt.Errorf("association: insert category: %w", err)
 		}
+		if founderCategoryID == nil {
+			founderCategoryID = &catID
+		}
 	}
+
+	// The founder must own the organisation they just created: without an ACTIVE
+	// membership and a SUPER_ADMIN role, GetAdminAccess / requireAssocAdmin /
+	// resolveOrgID all fail closed and the creator is locked out of their own org.
+	membershipID, err := s.ensureMembership(ctx, tx, orgID, userID, "ACTIVE", "PAID", "FDR", founderCategoryID, nil)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := tx.Exec(ctx, `UPDATE assoc_memberships SET verified=true WHERE id=$1`, membershipID); err != nil {
+		return nil, fmt.Errorf("association: verify founder membership: %w", err)
+	}
+	if _, err := tx.Exec(ctx,
+		`INSERT INTO assoc_member_roles (id, membership_id, role, jurisdiction, granted_by) VALUES ($1,$2,'SUPER_ADMIN','NATIONAL',$3)`,
+		uuid.New().String(), membershipID, userID); err != nil {
+		return nil, fmt.Errorf("association: insert founder role: %w", err)
+	}
+
 	if err := s.audit(ctx, tx, orgID, userID, "ORG_PUBLISH", "organisation", orgID, map[string]any{"name": d.Name}); err != nil {
 		return nil, err
 	}

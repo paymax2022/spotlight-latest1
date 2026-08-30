@@ -3,6 +3,9 @@ package association
 import (
 	"errors"
 	"net/http"
+	"strconv"
+
+	"github.com/jackc/pgx/v5"
 
 	"github.com/gin-gonic/gin"
 )
@@ -70,7 +73,8 @@ func (h *Handler) DecideApplication(c *gin.Context) {
 
 // GET /associations
 func (h *Handler) ListOrganisations(c *gin.Context) {
-	orgs, err := h.svc.GetOrganisations(c.Request.Context(), c.Query("search"))
+	limit, offset := pageParams(c)
+	orgs, err := h.svc.GetOrganisations(c.Request.Context(), c.Query("search"), limit, offset)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -293,7 +297,17 @@ func (h *Handler) ListEvents(c *gin.Context) {
 
 // GET /associations/admin/organisations
 func (h *Handler) GetAdminOrganisations(c *gin.Context) {
-	list, err := h.svc.ListAdminOrganisations(c.Request.Context(), c.GetString("user_id"), c.Query("search"))
+	limit, offset := pageParams(c)
+	f := AdminOrgFilter{
+		Search:    c.Query("search"),
+		Category:  c.Query("category"),
+		Status:    c.Query("status"),
+		Published: boolParam(c, "published"),
+		Verified:  boolParam(c, "verified"),
+		Limit:     limit,
+		Offset:    offset,
+	}
+	list, err := h.svc.ListAdminOrganisations(c.Request.Context(), c.GetString("user_id"), f)
 	if err != nil {
 		c.JSON(statusFor(err), gin.H{"error": err.Error()})
 		return
@@ -354,13 +368,44 @@ func (h *Handler) ListOfflinePayments(c *gin.Context) {
 // statusFor maps domain errors to HTTP codes.
 func statusFor(err error) int {
 	switch {
-	case errors.Is(err, ErrIdempotencyRequired), errors.Is(err, ErrInvalidBallot):
+	case errors.Is(err, ErrIdempotencyRequired), errors.Is(err, ErrInvalidBallot),
+		errors.Is(err, ErrInvalidInput):
 		return http.StatusBadRequest
 	case errors.Is(err, ErrForbidden), errors.Is(err, ErrIneligible), errors.Is(err, ErrVotingClosed):
 		return http.StatusForbidden
 	case errors.Is(err, ErrElectionState):
 		return http.StatusConflict
+	case errors.Is(err, ErrNoMembership), errors.Is(err, pgx.ErrNoRows):
+		return http.StatusNotFound
 	default:
 		return http.StatusInternalServerError
 	}
+}
+
+// pageParams reads the shared ?limit / ?offset pagination pair. Invalid or
+// absent values fall through to the service's own defaults (0 means "unset").
+func pageParams(c *gin.Context) (int, int) {
+	limit, _ := strconv.Atoi(c.Query("limit"))
+	offset, _ := strconv.Atoi(c.Query("offset"))
+	if limit < 0 {
+		limit = 0
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	return limit, offset
+}
+
+// boolParam reads an optional tri-state boolean query param: absent (or
+// unparseable) yields nil, so "unset" stays distinguishable from "false".
+func boolParam(c *gin.Context, name string) *bool {
+	raw, ok := c.GetQuery(name)
+	if !ok || raw == "" {
+		return nil
+	}
+	v, err := strconv.ParseBool(raw)
+	if err != nil {
+		return nil
+	}
+	return &v
 }

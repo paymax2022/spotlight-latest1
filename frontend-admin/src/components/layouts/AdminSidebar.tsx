@@ -434,19 +434,42 @@ const navItemsBase: NavItem[] = [
   { label: 'Telemedicine Overview', href: '/admin/telemedicine/dashboard', section: 'Health', permissions: ['health.doctor.review', 'health.triage.review'] },
   { label: 'Consultations', href: '/admin/telemedicine/consultations', section: 'Health', permissions: ['health.doctor.review', 'health.triage.review'] },
   { label: 'Clinicians', href: '/admin/telemedicine/clinicians', section: 'Health', permissions: ['health.doctor.review', 'health.triage.review'] },
-  // ── Groups (Community group savings — read-only; backend has no admin route group) ──
-  { label: 'Groups Overview', href: '/admin/groups/dashboard', section: 'Community', permissions: ['savings.admin.dashboard', 'savings.admin.view'] },
-  { label: 'Groups & Members', href: '/admin/groups/groups', section: 'Community', permissions: ['savings.admin.view'] },
+  // ── Savings pools (Community group savings — read-only; backend has no admin route group) ──
+  // Labelled "Savings Pools", NOT "Groups". These two rows and the Associations
+  // rows below both sit in Community and both gate on savings.admin.*, so
+  // "Groups Overview" / "Groups & Members" read as the association console's
+  // membership surface — they are not. They are contribution/ajo pools, and
+  // they currently run on FIXTURES (see groupsAdminService: no groups admin
+  // route group exists in Go). Operators looking for association members were
+  // landing here and reading sample data as real.
+  { label: 'Savings Pools Overview', href: '/admin/groups/dashboard', section: 'Community', permissions: ['savings.admin.dashboard', 'savings.admin.view'] },
+  { label: 'Savings Pools & Members', href: '/admin/groups/groups', section: 'Community', permissions: ['savings.admin.view'] },
   // ── Learn Center (Paymax Invest — content admin; RBAC learn.admin.manage) ──
   { label: 'Learn Center', href: '/admin/learn', section: 'Academy', permissions: ['learn.admin.manage'] },
   // ── Spotlight Wealth (education-first Spotlight ⇄ Invest surface; RBAC spotlight.admin.manage) ──
   { label: 'Spotlight Wealth', href: '/admin/spotlight', section: 'Academy', permissions: ['spotlight.admin.manage'] },
   // ── Associations (Community — real admin surface: approvals, dues, member ops) ──
   { label: 'Associations Overview', href: '/admin/association/dashboard', section: 'Community', permissions: ['savings.admin.dashboard', 'savings.admin.view'] },
+  // The organisation register + per-org management (identity, verification,
+  // publication, chapters, committees, dues tiers, rules, custom settings).
+  // Until this landed the only route to an organisation was the <select> in
+  // the org picker, and none of its fields could be changed at all.
+  { label: 'Associations Register', href: '/admin/association/organisations', section: 'Community', permissions: ['savings.admin.view'] },
   { label: 'Membership Approvals', href: '/admin/association/approvals', section: 'Community', permissions: ['savings.admin.view'] },
   { label: 'Dues & Finance', href: '/admin/association/dues', section: 'Community', permissions: ['savings.admin.recon', 'savings.admin.view'] },
   { label: 'Members', href: '/admin/association/members', section: 'Community', permissions: ['savings.admin.view'] },
   { label: 'Elections', href: '/admin/association/elections', section: 'Community', permissions: ['savings.admin.view'] },
+  // Content authoring. assoc_announcements / meetings / documents / events /
+  // tasks each had a member-facing READ endpoint and NO writer anywhere in the
+  // repo, so those member screens rendered an empty state permanently and rows
+  // could only be inserted by hand-written SQL. These five are the writer, and
+  // they gate on savings.admin.recon (authoring, not merely reading) to match
+  // the organisation register.
+  { label: 'Announcements', href: '/admin/association/content/announcements', section: 'Community', permissions: ['savings.admin.recon', 'savings.admin.view'] },
+  { label: 'Meetings', href: '/admin/association/content/meetings', section: 'Community', permissions: ['savings.admin.recon', 'savings.admin.view'] },
+  { label: 'Documents', href: '/admin/association/content/documents', section: 'Community', permissions: ['savings.admin.recon', 'savings.admin.view'] },
+  { label: 'Association Events', href: '/admin/association/content/events', section: 'Community', permissions: ['savings.admin.recon', 'savings.admin.view'] },
+  { label: 'Association Tasks', href: '/admin/association/content/tasks', section: 'Community', permissions: ['savings.admin.recon', 'savings.admin.view'] },
   { label: 'Bulk Import', href: '/admin/association/import', section: 'Community', permissions: ['savings.admin.recon', 'savings.admin.view'] },
   { label: 'Association Audit Log', href: '/admin/association/audit', section: 'Community', permissions: ['savings.admin.view', 'savings.admin.recon'] },
   // ── P2P Marketplace (Social — escrow marketplace; admin = dispute arbitration) ──

@@ -22,9 +22,23 @@ type Tab = { href: string; label: string; key: string };
 export function AssociationTabs({ active }: { active: string }) {
   const tabs: Tab[] = [
     { href: '/admin/association/dashboard', label: 'Overview', key: 'overview' },
+    // The organisation register. Every other tab below is scoped to ONE org via
+    // <OrgPicker/>; this is the only surface that lists them all and the only
+    // place an organisation's own record can be edited.
+    { href: '/admin/association/organisations', label: 'Organisations', key: 'organisations' },
     { href: '/admin/association/approvals', label: 'Approvals', key: 'approvals' },
     { href: '/admin/association/dues', label: 'Dues & finance', key: 'dues' },
     { href: '/admin/association/members', label: 'Members', key: 'members' },
+    // Content authoring. assoc_announcements / meetings / documents / events /
+    // tasks all had member-facing READ endpoints and no writer anywhere in the
+    // repo, so those five member screens rendered an empty state forever and
+    // content could only arrive by hand-written SQL. These five tabs are the
+    // writer; each is scoped to the organisation selected in <OrgPicker/>.
+    { href: '/admin/association/content/announcements', label: 'Announcements', key: 'announcements' },
+    { href: '/admin/association/content/meetings', label: 'Meetings', key: 'meetings' },
+    { href: '/admin/association/content/documents', label: 'Documents', key: 'documents' },
+    { href: '/admin/association/content/events', label: 'Events', key: 'events' },
+    { href: '/admin/association/content/tasks', label: 'Tasks', key: 'tasks' },
     { href: '/admin/association/elections', label: 'Elections', key: 'elections' },
     { href: '/admin/association/import', label: 'Import', key: 'import' },
     { href: '/admin/association/audit', label: 'Audit log', key: 'audit' },

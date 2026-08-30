@@ -29,14 +29,14 @@ func RegisterRoutes(rg *gin.RouterGroup, h *Handler) {
 	// ── Elections & voting (TS-13) ──────────────────────────────
 	rg.GET("/elections", h.ListElections)
 	rg.GET("/elections/:id", h.GetElection)
-	rg.POST("/elections", h.CreateElection)                        // officer
-	rg.POST("/elections/:id/candidates", h.AddElectionCandidate)   // officer
-	rg.POST("/elections/:id/open", h.OpenElection)                 // officer
-	rg.POST("/elections/:id/close", h.CloseElection)               // officer
-	rg.POST("/elections/:id/publish", h.PublishElectionResults)    // officer
-	rg.POST("/elections/:id/handover", h.HandoverElection)         // senior officer
-	rg.GET("/elections/:id/tally", h.GetElectionTally)             // officer
-	rg.POST("/elections/:id/vote", h.CastVote)                     // eligible voter
+	rg.POST("/elections", h.CreateElection)                      // officer
+	rg.POST("/elections/:id/candidates", h.AddElectionCandidate) // officer
+	rg.POST("/elections/:id/open", h.OpenElection)               // officer
+	rg.POST("/elections/:id/close", h.CloseElection)             // officer
+	rg.POST("/elections/:id/publish", h.PublishElectionResults)  // officer
+	rg.POST("/elections/:id/handover", h.HandoverElection)       // senior officer
+	rg.GET("/elections/:id/tally", h.GetElectionTally)           // officer
+	rg.POST("/elections/:id/vote", h.CastVote)                   // eligible voter
 
 	// ── Membership card verification (MC-003/004/005) ───────────
 	rg.POST("/cards/verify", h.VerifyCard)
@@ -103,6 +103,77 @@ func RegisterRoutes(rg *gin.RouterGroup, h *Handler) {
 	// param conflict with /admin/members/:id/*.
 	rg.POST("/admin/import/members", h.BulkImportMembers)
 
+	// ── Admin: organisation management ──────────────────────────
+	// assoc_organisations used to be write-once — no UPDATE or DELETE existed
+	// anywhere against it or its chapters/committees/dues tiers, so every field
+	// was immutable after creation and `verified` was dead schema. Child routes
+	// use :childId (not :id) because gin requires one param name per path
+	// position and :id is already the organisation at that depth.
+	rg.GET("/admin/organisations/:id", h.GetAdminOrganisation)
+	rg.PATCH("/admin/organisations/:id", h.UpdateAdminOrganisation)
+	rg.GET("/admin/organisations/:id/settings", h.GetOrganisationSettings)
+	rg.PUT("/admin/organisations/:id/settings", h.UpdateOrganisationSettings)
+	rg.POST("/admin/organisations/:id/verify", h.orgFlagHandler("verified", true))
+	rg.POST("/admin/organisations/:id/unverify", h.orgFlagHandler("verified", false))
+	rg.POST("/admin/organisations/:id/publish", h.orgFlagHandler("published", true))
+	rg.POST("/admin/organisations/:id/unpublish", h.orgFlagHandler("published", false))
+	rg.POST("/admin/organisations/:id/suspend", h.orgFlagHandler("suspended", true))
+	rg.POST("/admin/organisations/:id/restore", h.orgFlagHandler("suspended", false))
+	rg.POST("/admin/organisations/:id/chapters", h.CreateChapter)
+	rg.POST("/admin/organisations/:id/committees", h.CreateCommittee)
+	rg.POST("/admin/organisations/:id/categories", h.CreateCategory)
+	rg.POST("/admin/organisations/:id/rules", h.CreateRule)
+	rg.PATCH("/admin/chapters/:childId", h.UpdateChapter)
+	rg.DELETE("/admin/chapters/:childId", h.DeleteChapter)
+	rg.PATCH("/admin/committees/:childId", h.UpdateCommittee)
+	rg.DELETE("/admin/committees/:childId", h.DeleteCommittee)
+	rg.PATCH("/admin/categories/:childId", h.UpdateCategory)
+	rg.DELETE("/admin/categories/:childId", h.DeleteCategory)
+	rg.PATCH("/admin/rules/:childId", h.UpdateRule)
+	rg.DELETE("/admin/rules/:childId", h.DeleteRule)
+
+	// ── Admin: content authoring ────────────────────────────────
+	// assoc_announcements / meetings / documents / events / tasks / notifications
+	// / devices / dues_invoices all had READ endpoints and no writer anywhere in
+	// the repo, so they were permanently empty and content could only arrive by
+	// hand-written SQL. Child routes use :childId — gin allows one param name per
+	// path position and :id is already the organisation at that depth.
+	// Org-scoped admin listings. The member-facing reads join through the
+	// CALLER's own memberships, so they return nothing for a platform admin —
+	// the console had no way to see the content it can author.
+	rg.GET("/admin/organisations/:id/announcements", h.ListAdminAnnouncements())
+	rg.GET("/admin/organisations/:id/meetings", h.ListAdminMeetings())
+	rg.GET("/admin/organisations/:id/documents", h.ListAdminDocuments())
+	rg.GET("/admin/organisations/:id/events", h.ListAdminEvents())
+	rg.GET("/admin/organisations/:id/tasks", h.ListAdminTasks())
+	rg.GET("/admin/organisations/:id/dues/runs", h.ListAdminDuesRuns())
+
+	rg.POST("/admin/organisations/:id/announcements", h.CreateAnnouncement)
+	rg.PATCH("/admin/announcements/:childId", h.UpdateAnnouncement)
+	rg.DELETE("/admin/announcements/:childId", h.DeleteAnnouncement)
+
+	rg.POST("/admin/organisations/:id/meetings", h.CreateMeeting)
+	rg.PATCH("/admin/meetings/:childId", h.UpdateMeeting)
+	rg.DELETE("/admin/meetings/:childId", h.DeleteMeeting)
+	rg.POST("/admin/meetings/:childId/minutes", h.PublishMinutes)
+
+	rg.POST("/admin/organisations/:id/documents", h.CreateDocument)
+	rg.PATCH("/admin/documents/:childId", h.UpdateDocument)
+	rg.DELETE("/admin/documents/:childId", h.DeleteDocument)
+
+	rg.POST("/admin/organisations/:id/events", h.CreateEvent)
+	rg.PATCH("/admin/events/:childId", h.UpdateEvent)
+	rg.DELETE("/admin/events/:childId", h.DeleteEvent)
+
+	rg.POST("/admin/organisations/:id/tasks", h.CreateTask)
+	rg.PATCH("/admin/tasks/:childId", h.UpdateTaskAdmin)
+	rg.DELETE("/admin/tasks/:childId", h.DeleteTask)
+
+	// Money path: raises the invoices PayInvoice settles. Both require an
+	// Idempotency-Key — a replayed dues run would re-bill an entire roster.
+	rg.POST("/admin/organisations/:id/dues/run", h.RunDues)
+	rg.POST("/admin/invoices", h.CreateInvoice)
+
 	// ── Settings (V) ────────────────────────────────────────────
 	rg.GET("/me/notification-prefs", h.GetNotificationPrefs)
 	rg.PUT("/me/notification-prefs", h.UpdateNotificationPrefs)
@@ -111,6 +182,9 @@ func RegisterRoutes(rg *gin.RouterGroup, h *Handler) {
 	rg.GET("/me/preferences", h.GetPreferences)
 	rg.PUT("/me/preferences", h.UpdatePreferences)
 	rg.GET("/me/devices", h.GetDevices)
+	// assoc_devices had no writer, so the list was always empty and the revoke
+	// endpoint always 403'd on zero rows affected.
+	rg.POST("/me/devices", h.RegisterDevice)
 	rg.DELETE("/me/devices/:id", h.RevokeDevice)
 
 	// ── Support (W) ─────────────────────────────────────────────

@@ -4,11 +4,30 @@
 
 import { Alert, Platform } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
+import * as DocumentPicker from 'expo-document-picker';
 
 export interface PickedFile {
   uri:       string;
   name:      string;
   sizeLabel: string;
+  /** Present for files picked with `pickSpreadsheet` (needed for multipart). */
+  mimeType?: string;
+}
+
+/** MIME types accepted by the bulk member import (.xlsx / .xls / .csv). */
+const SPREADSHEET_TYPES = [
+  'text/csv',
+  'text/comma-separated-values',
+  'application/csv',
+  'application/vnd.ms-excel',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+];
+
+function mimeFromName(name: string): string {
+  if (/\.csv$/i.test(name)) return 'text/csv';
+  if (/\.xlsx$/i.test(name)) return 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+  if (/\.xls$/i.test(name)) return 'application/vnd.ms-excel';
+  return 'application/octet-stream';
 }
 
 function sizeLabel(bytes?: number): string {
@@ -41,6 +60,33 @@ export async function pickDocument(): Promise<PickedFile | null> {
     };
   } catch {
     Alert.alert('Couldn’t open photos', 'Something went wrong. Please try again.');
+    return null;
+  }
+}
+
+/**
+ * Pick a spreadsheet / CSV for the bulk member import. Uses
+ * expo-document-picker (the photo library cannot surface .xlsx / .csv).
+ * Returns null on cancel or error.
+ */
+export async function pickSpreadsheet(): Promise<PickedFile | null> {
+  try {
+    const result = await DocumentPicker.getDocumentAsync({
+      type: SPREADSHEET_TYPES,
+      copyToCacheDirectory: true,
+      multiple: false,
+    });
+    if (result.canceled || !result.assets?.length) return null;
+    const f = result.assets[0];
+    const name = f.name ?? `members-${Date.now()}.csv`;
+    return {
+      uri: f.uri,
+      name,
+      sizeLabel: sizeLabel(f.size ?? undefined),
+      mimeType: f.mimeType ?? mimeFromName(name),
+    };
+  } catch {
+    Alert.alert('Couldn’t open the file picker', 'Something went wrong. Please try again.');
     return null;
   }
 }

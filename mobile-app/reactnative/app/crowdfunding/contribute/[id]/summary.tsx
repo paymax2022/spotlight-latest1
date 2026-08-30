@@ -53,7 +53,14 @@ export default function ContributeSummaryScreen() {
       domain: 'crowdfunding',
       charge: () => initiate.mutateAsync({ draft, idempotencyKey: generateIdempotencyKey() }),
       onPaid: (res) => {
-        router.replace(`/crowdfunding/contribute/${params.id}/processing?reference=${res.reference}&status=${res.status}`);
+        // Hand the processing screen the contribution ID, not a reference: the
+        // live charge returns no reference, and the confirmation read is keyed
+        // on the id. `status` travels with it so processing knows whether the
+        // charge already came back final (wallet/card) or is genuinely awaiting
+        // an out-of-band payment (bank transfer / USSD).
+        router.replace(
+          `/crowdfunding/contribute/${params.id}/processing?contributionId=${encodeURIComponent(res.contributionId)}&status=${res.status}`,
+        );
       },
     });
   };

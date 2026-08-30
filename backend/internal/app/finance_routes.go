@@ -441,12 +441,16 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 	// under /internal/webhooks/{mycover,octamile} (UNauthenticated — signature
 	// verified inside the gateway). Reuses wallet/ledger/settlement/kyc.
 	if cfg.FeatureInsuranceEnabled && pool != nil {
-		insuranceMember := finance.Group("/insurance")
+		// Pass the bare finance group: RegisterInsurance/RegisterInsuranceClaims
+		// each add the "/insurance" segment themselves (mg := member.Group("/insurance")),
+		// so finance.Group("/insurance") here double-mounted every member route at
+		// /api/finance/insurance/insurance/* instead of /api/finance/insurance/*
+		// (the client contract) — same class of bug documented for savings above.
 		insuranceAdmin := r.Group("/api/insurance/admin")
 		insuranceAdmin.Use(requireUserID())
-		insuranceWebhooks := r.Group("/internal/webhooks")                                      // provider-signed, no user auth
-		RegisterInsurance(insuranceMember, insuranceAdmin, pool, rbac)                          // gateway/catalog/policy/quote/saga/consent
-		RegisterInsuranceClaims(insuranceMember, insuranceAdmin, insuranceWebhooks, pool, rbac) // claims/embedded/webhooks/reconciliation
+		insuranceWebhooks := r.Group("/internal/webhooks")                                // provider-signed, no user auth
+		RegisterInsurance(finance, insuranceAdmin, pool, rbac)                          // gateway/catalog/policy/quote/saga/consent
+		RegisterInsuranceClaims(finance, insuranceAdmin, insuranceWebhooks, pool, rbac) // claims/embedded/webhooks/reconciliation
 	}
 
 	// --- Hotel Booking / Stays (Property Suite, dual-rail supply gateway) ---
@@ -987,6 +991,18 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 	// --- Association (group membership) money-path + approvals ---
 	if cfg.FeatureAssociationsEnabled {
 		assocSvc := association.NewService(pool, ledgerSvc)
+		// Membership-card HMAC key. SetCardSigningSecret existed but was called
+		// from nowhere, so every card in every environment was signed with the
+		// dev constant baked into this repo — forgeable for any known membership
+		// id. Outside development a missing secret must stop the process rather
+		// than silently fall back to that constant.
+		if cfg.AssocCardSigningSecret != "" {
+			assocSvc.SetCardSigningSecret(cfg.AssocCardSigningSecret)
+		} else if cfg.AppEnv != "development" {
+			log.Fatalf("[association] ASSOC_CARD_SIGNING_SECRET is required when APP_ENV=%q — refusing to sign membership cards with the public dev key", cfg.AppEnv)
+		} else {
+			log.Println("[association] WARNING: ASSOC_CARD_SIGNING_SECRET unset — using the public dev card key (development only)")
+		}
 		// Central Commission & Profit recording (§ profit registry). When the
 		// commission feature is on, inject a nil-safe recorder so realized profit on a
 		// settled dues payment (the RevenueSplit's 5% platform fee) lands in

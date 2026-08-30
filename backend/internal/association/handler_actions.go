@@ -126,12 +126,18 @@ func (h *Handler) RsvpEvent(c *gin.Context) {
 
 // POST /associations/events/:id/register
 func (h *Handler) RegisterEvent(c *gin.Context) {
-	ticket, err := h.svc.RegisterEvent(c.Request.Context(), c.GetString("user_id"), c.Param("id"))
+	res, err := h.svc.RegisterEvent(c.Request.Context(), c.GetString("user_id"), c.Param("id"))
 	if err != nil {
 		c.JSON(statusFor(err), gin.H{"error": err.Error()})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"ok": true, "ticketCode": ticket})
+	// ticketCode is kept at the top level for the existing mobile client, which
+	// reads it directly; it is null while payment is outstanding.
+	c.JSON(http.StatusOK, gin.H{
+		"ok": true, "ticketCode": res.TicketCode,
+		"registered": res.Registered, "paymentRequired": res.PaymentRequired,
+		"invoiceId": res.InvoiceID, "amountKobo": res.AmountKobo,
+	})
 }
 
 // POST /associations/events/:id/feedback

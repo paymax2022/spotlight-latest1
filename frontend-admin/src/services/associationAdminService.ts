@@ -98,33 +98,69 @@ function withOrg(qs: URLSearchParams): URLSearchParams {
   return qs;
 }
 
+/**
+ * Turn a failed Response into a useful Error.
+ *
+ * Every handler in internal/association answers a failure with
+ * `{"error": "<message>"}` (handler_org_admin.go and friends). The old
+ * `Request failed (409)` swallowed that message, which matters most on the
+ * child-delete routes: the backend refuses a chapter/category delete while
+ * members still reference it and says exactly which — a bare status code
+ * turns that into an unexplained failure the operator cannot act on.
+ */
+async function failure(res: Response): Promise<Error> {
+  let detail = '';
+  try {
+    const body = await res.json();
+    const raw = (body?.error ?? body?.message) as unknown;
+    if (typeof raw === 'string' && raw.trim()) detail = raw.trim();
+  } catch { /* non-JSON body (proxy/gateway error) — status alone is all we have */ }
+  // Backend errors are prefixed "association: " by the service layer; that
+  // prefix is noise in a console that is already inside the module.
+  detail = detail.replace(/^association:\s*/i, '');
+  return new Error(detail ? `${detail} (${res.status})` : `Request failed (${res.status})`);
+}
+
 async function getJson<T>(path: string, base: 'admin' | 'module' = 'admin'): Promise<T> {
   const root = base === 'admin' ? adminBase() : moduleBase();
   const res = await fetch(`${root}${path}`, { headers: authHeaders() });
-  if (!res.ok) throw new Error(`Request failed (${res.status})`);
+  if (!res.ok) throw await failure(res);
   const j = await res.json();
   return (j?.data ?? j) as T;
 }
 async function sendJson<T>(
-  method: 'POST' | 'PATCH' | 'PUT',
+  method: 'POST' | 'PATCH' | 'PUT' | 'DELETE',
   path: string,
   body: unknown,
-  opts?: { idempotent?: boolean; base?: 'admin' | 'module' },
+  opts?: { idempotent?: boolean; idempotencyKey?: string; base?: 'admin' | 'module' },
 ): Promise<T> {
   const root = (opts?.base ?? 'admin') === 'admin' ? adminBase() : moduleBase();
   const headers = authHeaders();
-  // Money-mutating endpoints (offline payment decision) require an
-  // Idempotency-Key per house doctrine (CLAUDE.md — every money mutation).
-  if (opts?.idempotent) headers['Idempotency-Key'] = newIdempotencyKey();
-  const res = await fetch(`${root}${path}`, { method, headers, body: JSON.stringify(body) });
-  if (!res.ok) throw new Error(`Request failed (${res.status})`);
+  // Money-mutating endpoints (offline payment decision, dues-tier create/update)
+  // require an Idempotency-Key per house doctrine (CLAUDE.md — every money
+  // mutation). The application decision endpoint declares one in the contract too.
+  //
+  // A caller-supplied `idempotencyKey` beats the `idempotent` auto-mint. Minting
+  // a fresh key inside each call is only replay-safe against a double CLICK, not
+  // against a RETRY — retrying with a new key is precisely what double-bills. The
+  // dues run and the ad-hoc invoice therefore own their key in the page and hand
+  // it in, so pressing the button again after a timeout replays the original run
+  // instead of raising a second set of invoices.
+  if (opts?.idempotencyKey) headers['Idempotency-Key'] = opts.idempotencyKey;
+  else if (opts?.idempotent) headers['Idempotency-Key'] = newIdempotencyKey();
+  const res = await fetch(`${root}${path}`, {
+    method,
+    headers,
+    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+  });
+  if (!res.ok) throw await failure(res);
   const j = await res.json();
   return (j?.data ?? j) as T;
 }
 async function sendForm<T>(path: string, form: FormData, base: 'admin' | 'module' = 'admin'): Promise<T> {
   const root = base === 'admin' ? adminBase() : moduleBase();
   const res = await fetch(`${root}${path}`, { method: 'POST', headers: authHeadersNoContentType(), body: form });
-  if (!res.ok) throw new Error(`Request failed (${res.status})`);
+  if (!res.ok) throw await failure(res);
   const j = await res.json();
   return (j?.data ?? j) as T;
 }
@@ -143,9 +179,23 @@ const dateStr = (daysAgo: number) => new Date(Date.now() - daysAgo * 86_400_000)
 export interface AdminOrgOption {
   id: string;
   name: string;
+  acronym: string | null;
+  category: string;
+  status: string;
   published: boolean;
   verified: boolean;
   memberCount: number;
+  createdAt: string;
+}
+
+/** Filters accepted by the organisation register. */
+export interface AdminOrgListOpts {
+  limit?: number;
+  offset?: number;
+  category?: string;
+  status?: string;
+  published?: boolean;
+  verified?: boolean;
 }
 
 // Mirrors the real Go AdminKpis struct field-for-field (service.go GetAdminKpis) —
@@ -213,7 +263,38 @@ export async function listApprovals(opts?: { jurisdiction?: string }): Promise<A
 }
 export async function decideApplication(id: string, decision: ApprovalDecision, note?: string): Promise<{ ok: boolean }> {
   if (USE_MOCK) { await delay(); return { ok: true }; }
-  return sendJson<{ ok: boolean }>('POST', `/approvals/${id}/decision`, { decision: decision === 'approve' ? 'APPROVE' : 'REJECT', note });
+  // Idempotency-Key: the contract declares one on this endpoint and approving an
+  // application can settle a registration fee — a double-submitted approval must
+  // not be able to post twice. This console was sending the decision WITHOUT the
+  // header, so every retry (or double-click) was a fresh, unguarded request.
+  return sendJson<{ ok: boolean }>(
+    'POST',
+    `/approvals/${id}/decision`,
+    { decision: decision === 'approve' ? 'APPROVE' : 'REJECT', note },
+    { idempotent: true },
+  );
+}
+
+/**
+ * One application in full (GET /admin/approvals/:id — handler.go GetApproval).
+ * The queue row (ApprovalRecord) carries only the summary; this adds the
+ * applicant's contact details, sponsor and the registration fee they owe.
+ */
+export interface ApprovalDetail extends ApprovalRecord {
+  email: string;
+  phone: string;
+  profession: string;
+  sponsor?: string | null;
+  registrationFeeKobo: number;
+}
+export async function getApproval(id: string): Promise<ApprovalDetail> {
+  if (USE_MOCK) {
+    await delay();
+    const a = APPROVALS.find((x) => x.id === id);
+    if (!a) throw new Error('Application not found');
+    return { ...a, email: 'applicant@example.com', phone: '+234800000000', profession: 'Trader', sponsor: null, registrationFeeKobo: 5_000_00 };
+  }
+  return getJson<ApprovalDetail>(`/approvals/${id}`);
 }
 
 // ── Finance + offline payments ───────────────────────────────────────────────
@@ -463,9 +544,9 @@ export async function listAuditLog(action?: string): Promise<AuditLogEntry[]> {
 
 // ── Org picker ───────────────────────────────────────────────────────────────
 const MOCK_ORGS: AdminOrgOption[] = [
-  { id: 'org_ltu', name: 'Lagos Traders Union', published: true, verified: true, memberCount: 4820 },
-  { id: 'org_tfg', name: 'Tech Founders Guild', published: true, verified: true, memberCount: 1240 },
-  { id: 'org_mwc', name: 'Market Women Co-op', published: true, verified: false, memberCount: 6380 },
+  { id: 'org_ltu', name: 'Lagos Traders Union', acronym: 'LTU', category: 'Trade', status: 'ACTIVE', published: true, verified: true, memberCount: 4820, createdAt: '2025-03-04T09:00:00Z' },
+  { id: 'org_tfg', name: 'Tech Founders Guild', acronym: 'TFG', category: 'Professional', status: 'ACTIVE', published: true, verified: true, memberCount: 1240, createdAt: '2025-06-18T09:00:00Z' },
+  { id: 'org_mwc', name: 'Market Women Co-op', acronym: null, category: 'Cooperative', status: 'SUSPENDED', published: true, verified: false, memberCount: 6380, createdAt: '2024-11-02T09:00:00Z' },
 ];
 /**
  * Feeds the org picker (see the "Org picker" comment above authHeaders).
@@ -473,14 +554,37 @@ const MOCK_ORGS: AdminOrgOption[] = [
  * gets only the org(s) they administer (backend/internal/association
  * service.go ListAdminOrganisations).
  */
-export async function listAdminOrganisations(search?: string): Promise<AdminOrgOption[]> {
+export async function listAdminOrganisations(
+  search?: string,
+  page?: AdminOrgListOpts,
+): Promise<AdminOrgOption[]> {
   if (USE_MOCK) {
     await delay();
     const q = (search || '').toLowerCase();
-    return q ? MOCK_ORGS.filter((o) => o.name.toLowerCase().includes(q)) : [...MOCK_ORGS];
+    let rows = q
+      ? MOCK_ORGS.filter((o) => o.name.toLowerCase().includes(q) || (o.acronym ?? '').toLowerCase().includes(q))
+      : [...MOCK_ORGS];
+    if (page?.published != null) rows = rows.filter((o) => o.published === page.published);
+    if (page?.verified != null) rows = rows.filter((o) => o.verified === page.verified);
+    if (page?.status) rows = rows.filter((o) => o.status === page.status);
+    if (page?.category) rows = rows.filter((o) => o.category === page.category);
+    const off = page?.offset ?? 0;
+    return page?.limit ? rows.slice(off, off + page.limit) : rows.slice(off);
   }
   const qs = new URLSearchParams();
   if (search) qs.set('search', search);
+  // published/verified/status/category are now narrowed by the QUERY, not by
+  // the client after the fact — a client-side filter could empty a page purely
+  // because the matching rows happened to sit on another one.
+  if (page?.published != null) qs.set('published', String(page.published));
+  if (page?.verified != null) qs.set('verified', String(page.verified));
+  if (page?.status) qs.set('status', page.status);
+  if (page?.category) qs.set('category', page.category);
+  // limit/offset are read by pageParams (handler.go) and clamped service-side to
+  // 200; without them the backend serves a fixed first 100 with no way to reach
+  // organisation 101, which is why the picker could only ever see one page.
+  if (page?.limit != null) qs.set('limit', String(page.limit));
+  if (page?.offset) qs.set('offset', String(page.offset));
   return getJson<AdminOrgOption[]>(`/organisations${qs.toString() ? `?${qs}` : ''}`);
 }
 
@@ -621,4 +725,876 @@ export async function handoverElection(id: string): Promise<ElectionHandoverResu
     return { positions: mockPositionResults(e).filter((p) => e.positions.find((pp) => pp.id === p.positionId)?.role).map((p) => ({ positionId: p.positionId, title: p.title, role: e.positions.find((pp) => pp.id === p.positionId)?.role || '', winners: p.results.filter((r) => r.isWinner).map((r) => r.name), revoked: 1 })) };
   }
   return sendJson<ElectionHandoverResult>('POST', `/elections/${id}/handover`, {}, { base: 'module' });
+}
+
+// ── Organisation management (admin) ──────────────────────────────────────────
+// backend/internal/association routes.go "Admin: organisation management".
+// assoc_organisations used to be write-once — no UPDATE/DELETE existed against
+// it or its chapters / committees / dues tiers, so every field was immutable
+// after creation and `verified` was dead schema. These are the routes that
+// changed that, and the console pages under
+// app/admin/association/organisations/* are their only consumer.
+//
+// Money rule: duesKobo and registrationFeeKobo are INTEGER KOBO (minor units).
+// Never floats, never strings for math — render with formatNaira().
+
+export type ChapterLevel = 'REGION' | 'STATE' | 'LOCAL';
+export type DuesCadence = 'MONTHLY' | 'QUARTERLY' | 'ANNUAL' | 'ONE_OFF';
+export type OrgGroupType = 'OPEN' | 'CLOSED' | 'INVITE_ONLY' | 'CODE_BASED' | 'PAID';
+export type OrgApprovalRule = 'AUTO' | 'ADMIN' | 'CHAPTER_THEN_NATIONAL' | 'PAYMENT_FIRST';
+
+export const CHAPTER_LEVELS: ChapterLevel[] = ['REGION', 'STATE', 'LOCAL'];
+export const DUES_CADENCES: DuesCadence[] = ['MONTHLY', 'QUARTERLY', 'ANNUAL', 'ONE_OFF'];
+export const ORG_GROUP_TYPES: OrgGroupType[] = ['OPEN', 'CLOSED', 'INVITE_ONLY', 'CODE_BASED', 'PAID'];
+export const ORG_APPROVAL_RULES: OrgApprovalRule[] = ['AUTO', 'ADMIN', 'CHAPTER_THEN_NATIONAL', 'PAYMENT_FIRST'];
+
+/** Mirrors Go OrgRestrictions (model.go). */
+export interface OrgRestrictions {
+  graceDays: number;
+  disableVoting: boolean;
+  disableEvents: boolean;
+  disableChat: boolean;
+  disableCard: boolean;
+}
+/** Mirrors Go Chapter (model.go). */
+export interface OrgChapter { id: string; name: string; level: string; parentId?: string | null; memberCount: number }
+/** Mirrors Go AdminCommittee (model_org_admin.go). */
+export interface OrgCommittee { id: string; name: string; description?: string | null; memberCount: number }
+/** Mirrors Go MembershipCategory (model.go) — duesKobo is integer kobo. */
+export interface OrgCategory { id: string; label: string; description?: string | null; duesKobo: number; duesCadence: string }
+/** Mirrors Go AdminOrgRule (model_org_admin.go). */
+export interface OrgRule { id: string; body: string; position: number }
+/** Mirrors Go AdminChapterLeader (model_org_admin.go). Read-only in this console. */
+export interface OrgChapterLeader {
+  id: string; chapterId?: string | null; stateName: string;
+  leaderName?: string | null; leaderContact?: string | null; canApproveMembers: boolean;
+}
+
+/** Mirrors Go AdminOrganisationDetail (model_org_admin.go) field-for-field. */
+export interface AdminOrganisationDetail {
+  id: string;
+  name: string;
+  acronym?: string | null;
+  category: string;
+  description?: string | null;
+  logoUrl?: string | null;
+  coverUrl?: string | null;
+  groupType: string;
+  approvalRule: string;
+  registrationFeeKobo: number;
+  requiresPayment: boolean;
+  foundedYear?: number | null;
+  location?: string | null;
+  website?: string | null;
+  verified: boolean;
+  published: boolean;
+  status: string;
+  structureType?: string | null;
+  createdBy?: string | null;
+  createdAt: string;
+  suspendedAt?: string | null;
+
+  restrictions: OrgRestrictions;
+  settings: Record<string, unknown>;
+
+  memberCount: number;
+  activeCount: number;
+  pendingCount: number;
+  chapterCount: number;
+  committeeCount: number;
+  categoryCount: number;
+
+  chapters: OrgChapter[];
+  committees: OrgCommittee[];
+  categories: OrgCategory[];
+  rules: OrgRule[];
+  leaders: OrgChapterLeader[];
+}
+
+/**
+ * Partial patch — EVERY field is optional and an omitted key means "leave
+ * unchanged" (Go UpdateOrganisationRequest uses pointers for exactly this).
+ * Do not send `undefined` keys expecting a blank: JSON.stringify drops them,
+ * which is the behaviour we want.
+ */
+export interface UpdateOrganisationInput {
+  name?: string;
+  acronym?: string;
+  category?: string;
+  description?: string;
+  logoUrl?: string;
+  coverUrl?: string;
+  groupType?: OrgGroupType;
+  approvalRule?: OrgApprovalRule;
+  /** Integer kobo. Never a float. */
+  registrationFeeKobo?: number;
+  foundedYear?: number;
+  location?: string;
+  website?: string;
+  structureType?: string;
+  graceDays?: number;
+  disableVoting?: boolean;
+  disableEvents?: boolean;
+  disableChat?: boolean;
+  disableCard?: boolean;
+}
+
+export interface ChapterInput { name: string; level: ChapterLevel }
+export interface CommitteeInput { name: string; description?: string | null }
+/** duesKobo is integer kobo (minor units) — the page converts naira → kobo. */
+export interface CategoryInput { label: string; description?: string | null; duesKobo: number; cadence: DuesCadence }
+export interface RuleInput { body: string; position: number }
+
+// ── Mock organisation state (USE_MOCK) ──
+// Mutable so the management pages behave sensibly with the backend switched off
+// (add a chapter, see it appear) instead of silently discarding every write.
+function mockDetailFor(o: AdminOrgOption): AdminOrganisationDetail {
+  return {
+    id: o.id, name: o.name, acronym: o.name.split(' ').map((w) => w[0]).join('').toUpperCase(),
+    category: 'TRADE', description: 'Sample organisation (mock mode).', logoUrl: null, coverUrl: null,
+    groupType: 'OPEN', approvalRule: 'ADMIN', registrationFeeKobo: 5_000_00, requiresPayment: true,
+    foundedYear: 2015, location: 'Lagos, Nigeria', website: null,
+    verified: o.verified, published: o.published, status: 'ACTIVE', structureType: 'CHAPTERED',
+    createdBy: null, createdAt: iso(24 * 365), suspendedAt: null,
+    restrictions: { graceDays: 30, disableVoting: false, disableEvents: false, disableChat: false, disableCard: false },
+    settings: { welcomeMessage: 'Welcome to the union.', duesReminderDays: 7 },
+    memberCount: o.memberCount, activeCount: o.memberCount, pendingCount: 3,
+    chapterCount: 2, committeeCount: 1, categoryCount: 2,
+    chapters: [
+      { id: `${o.id}_ch1`, name: 'Lagos Chapter', level: 'STATE', parentId: null, memberCount: 120 },
+      { id: `${o.id}_ch2`, name: 'Abuja Chapter', level: 'STATE', parentId: null, memberCount: 64 },
+    ],
+    committees: [{ id: `${o.id}_cm1`, name: 'Welfare Committee', description: 'Member welfare and hardship.', memberCount: 8 }],
+    categories: [
+      { id: `${o.id}_ct1`, label: 'Standard', description: null, duesKobo: 10_000_00, duesCadence: 'ANNUAL' },
+      { id: `${o.id}_ct2`, label: 'Premium', description: null, duesKobo: 25_000_00, duesCadence: 'ANNUAL' },
+    ],
+    rules: [{ id: `${o.id}_r1`, body: 'Dues are payable by 31 March each year.', position: 1 }],
+    leaders: [{ id: `${o.id}_l1`, chapterId: `${o.id}_ch1`, stateName: 'Lagos', leaderName: 'Chioma Adeyemi', leaderContact: '+234800000000', canApproveMembers: true }],
+  };
+}
+const MOCK_ORG_DETAILS: Record<string, AdminOrganisationDetail> = Object.fromEntries(
+  MOCK_ORGS.map((o) => [o.id, mockDetailFor(o)]),
+);
+function mockOrg(id: string): AdminOrganisationDetail {
+  const d = MOCK_ORG_DETAILS[id];
+  if (!d) throw new Error('Organisation not found');
+  return d;
+}
+function mockId(prefix: string): string { return `${prefix}_${Math.random().toString(36).slice(2, 10)}`; }
+
+export async function getAdminOrganisation(id: string): Promise<AdminOrganisationDetail> {
+  if (USE_MOCK) { await delay(); return structuredClone(mockOrg(id)); }
+  return getJson<AdminOrganisationDetail>(`/organisations/${id}`);
+}
+
+export async function updateAdminOrganisation(id: string, patch: UpdateOrganisationInput): Promise<AdminOrganisationDetail> {
+  if (USE_MOCK) {
+    await delay();
+    const d = mockOrg(id);
+    const { graceDays, disableVoting, disableEvents, disableChat, disableCard, ...rest } = patch;
+    Object.assign(d, rest);
+    if (graceDays !== undefined) d.restrictions.graceDays = graceDays;
+    if (disableVoting !== undefined) d.restrictions.disableVoting = disableVoting;
+    if (disableEvents !== undefined) d.restrictions.disableEvents = disableEvents;
+    if (disableChat !== undefined) d.restrictions.disableChat = disableChat;
+    if (disableCard !== undefined) d.restrictions.disableCard = disableCard;
+    return structuredClone(d);
+  }
+  return sendJson<AdminOrganisationDetail>('PATCH', `/organisations/${id}`, patch);
+}
+
+// ── Lifecycle flags ──
+// Six single-purpose POSTs rather than one flag endpoint (routes.go
+// orgFlagHandler). verify/unverify is PLATFORM-super-admin only; the other two
+// pairs are open to an org admin.
+export type OrgFlagAction = 'verify' | 'unverify' | 'publish' | 'unpublish' | 'suspend' | 'restore';
+export async function setOrganisationFlag(id: string, action: OrgFlagAction): Promise<{ ok: boolean }> {
+  if (USE_MOCK) {
+    await delay();
+    const d = mockOrg(id);
+    if (action === 'verify' || action === 'unverify') d.verified = action === 'verify';
+    if (action === 'publish' || action === 'unpublish') d.published = action === 'publish';
+    if (action === 'suspend' || action === 'restore') {
+      d.status = action === 'suspend' ? 'SUSPENDED' : 'ACTIVE';
+      d.suspendedAt = action === 'suspend' ? new Date().toISOString() : null;
+    }
+    return { ok: true };
+  }
+  return sendJson<{ ok: boolean }>('POST', `/organisations/${id}/${action}`, {});
+}
+
+// ── Per-organisation custom settings ──
+// A free-form jsonb object. PUT takes a PARTIAL object and MERGES it server-side;
+// a null value DELETES that key. Sending the whole object is therefore never
+// required — and a key you omit is never lost.
+export async function getOrganisationSettings(id: string): Promise<Record<string, unknown>> {
+  if (USE_MOCK) { await delay(); return structuredClone(mockOrg(id).settings); }
+  return getJson<Record<string, unknown>>(`/organisations/${id}/settings`);
+}
+export async function updateOrganisationSettings(
+  id: string,
+  patch: Record<string, unknown>,
+): Promise<Record<string, unknown>> {
+  if (USE_MOCK) {
+    await delay();
+    const d = mockOrg(id);
+    for (const [k, v] of Object.entries(patch)) {
+      if (v === null) delete d.settings[k];
+      else d.settings[k] = v;
+    }
+    return structuredClone(d.settings);
+  }
+  return sendJson<Record<string, unknown>>('PUT', `/organisations/${id}/settings`, patch);
+}
+
+// ── Chapters ──
+export async function createChapter(orgId: string, input: ChapterInput): Promise<{ id: string }> {
+  if (USE_MOCK) {
+    await delay();
+    const d = mockOrg(orgId);
+    const id = mockId('ch');
+    d.chapters.push({ id, name: input.name, level: input.level, parentId: null, memberCount: 0 });
+    d.chapterCount = d.chapters.length;
+    return { id };
+  }
+  return sendJson<{ id: string }>('POST', `/organisations/${orgId}/chapters`, input);
+}
+export async function updateChapter(chapterId: string, input: ChapterInput): Promise<{ ok: boolean }> {
+  if (USE_MOCK) {
+    await delay();
+    for (const d of Object.values(MOCK_ORG_DETAILS)) {
+      const c = d.chapters.find((x) => x.id === chapterId);
+      if (c) { c.name = input.name; c.level = input.level; return { ok: true }; }
+    }
+    throw new Error('Chapter not found');
+  }
+  // PATCH sends the FULL body: Go binds ChapterRequest with `binding:"required"`
+  // on name, so a name-less "partial" patch is a 400, not a no-op.
+  return sendJson<{ ok: boolean }>('PATCH', `/chapters/${chapterId}`, input);
+}
+export async function deleteChapter(chapterId: string): Promise<{ ok: boolean }> {
+  if (USE_MOCK) {
+    await delay();
+    for (const d of Object.values(MOCK_ORG_DETAILS)) {
+      const i = d.chapters.findIndex((x) => x.id === chapterId);
+      if (i >= 0) {
+        if (d.chapters[i].memberCount > 0) throw new Error('Chapter still has members assigned to it');
+        d.chapters.splice(i, 1); d.chapterCount = d.chapters.length; return { ok: true };
+      }
+    }
+    throw new Error('Chapter not found');
+  }
+  // The backend refuses while members still reference the chapter and says so —
+  // failure() surfaces that message rather than a bare status code.
+  return sendJson<{ ok: boolean }>('DELETE', `/chapters/${chapterId}`, undefined);
+}
+
+// ── Committees ──
+export async function createCommittee(orgId: string, input: CommitteeInput): Promise<{ id: string }> {
+  if (USE_MOCK) {
+    await delay();
+    const d = mockOrg(orgId);
+    const id = mockId('cm');
+    d.committees.push({ id, name: input.name, description: input.description ?? null, memberCount: 0 });
+    d.committeeCount = d.committees.length;
+    return { id };
+  }
+  return sendJson<{ id: string }>('POST', `/organisations/${orgId}/committees`, input);
+}
+export async function updateCommittee(committeeId: string, input: CommitteeInput): Promise<{ ok: boolean }> {
+  if (USE_MOCK) {
+    await delay();
+    for (const d of Object.values(MOCK_ORG_DETAILS)) {
+      const c = d.committees.find((x) => x.id === committeeId);
+      if (c) { c.name = input.name; c.description = input.description ?? null; return { ok: true }; }
+    }
+    throw new Error('Committee not found');
+  }
+  return sendJson<{ ok: boolean }>('PATCH', `/committees/${committeeId}`, input);
+}
+export async function deleteCommittee(committeeId: string): Promise<{ ok: boolean }> {
+  if (USE_MOCK) {
+    await delay();
+    for (const d of Object.values(MOCK_ORG_DETAILS)) {
+      const i = d.committees.findIndex((x) => x.id === committeeId);
+      if (i >= 0) { d.committees.splice(i, 1); d.committeeCount = d.committees.length; return { ok: true }; }
+    }
+    throw new Error('Committee not found');
+  }
+  return sendJson<{ ok: boolean }>('DELETE', `/committees/${committeeId}`, undefined);
+}
+
+// ── Membership categories (dues tiers) — MONEY PATH ──
+// Both create and update REQUIRE an Idempotency-Key (service_org_admin.go returns
+// ErrIdempotencyRequired without one): a retried create must not silently mint a
+// second tier at the same price, and a retried re-price must not double-apply.
+export async function createCategory(orgId: string, input: CategoryInput): Promise<{ id: string }> {
+  if (USE_MOCK) {
+    await delay();
+    const d = mockOrg(orgId);
+    const id = mockId('ct');
+    d.categories.push({ id, label: input.label, description: input.description ?? null, duesKobo: input.duesKobo, duesCadence: input.cadence });
+    d.categoryCount = d.categories.length;
+    return { id };
+  }
+  return sendJson<{ id: string }>('POST', `/organisations/${orgId}/categories`, input, { idempotent: true });
+}
+export async function updateCategory(categoryId: string, input: CategoryInput): Promise<{ ok: boolean }> {
+  if (USE_MOCK) {
+    await delay();
+    for (const d of Object.values(MOCK_ORG_DETAILS)) {
+      const c = d.categories.find((x) => x.id === categoryId);
+      if (c) { c.label = input.label; c.description = input.description ?? null; c.duesKobo = input.duesKobo; c.duesCadence = input.cadence; return { ok: true }; }
+    }
+    throw new Error('Category not found');
+  }
+  return sendJson<{ ok: boolean }>('PATCH', `/categories/${categoryId}`, input, { idempotent: true });
+}
+export async function deleteCategory(categoryId: string): Promise<{ ok: boolean }> {
+  if (USE_MOCK) {
+    await delay();
+    for (const d of Object.values(MOCK_ORG_DETAILS)) {
+      const i = d.categories.findIndex((x) => x.id === categoryId);
+      if (i >= 0) { d.categories.splice(i, 1); d.categoryCount = d.categories.length; return { ok: true }; }
+    }
+    throw new Error('Category not found');
+  }
+  // Refused by the backend while members are still on this dues tier.
+  return sendJson<{ ok: boolean }>('DELETE', `/categories/${categoryId}`, undefined);
+}
+
+// ── Rules ──
+export async function createRule(orgId: string, input: RuleInput): Promise<{ id: string }> {
+  if (USE_MOCK) {
+    await delay();
+    const d = mockOrg(orgId);
+    const id = mockId('r');
+    d.rules.push({ id, body: input.body, position: input.position });
+    d.rules.sort((a, b) => a.position - b.position);
+    return { id };
+  }
+  return sendJson<{ id: string }>('POST', `/organisations/${orgId}/rules`, input);
+}
+export async function updateRule(ruleId: string, input: RuleInput): Promise<{ ok: boolean }> {
+  if (USE_MOCK) {
+    await delay();
+    for (const d of Object.values(MOCK_ORG_DETAILS)) {
+      const r = d.rules.find((x) => x.id === ruleId);
+      if (r) { r.body = input.body; r.position = input.position; d.rules.sort((a, b) => a.position - b.position); return { ok: true }; }
+    }
+    throw new Error('Rule not found');
+  }
+  return sendJson<{ ok: boolean }>('PATCH', `/rules/${ruleId}`, input);
+}
+export async function deleteRule(ruleId: string): Promise<{ ok: boolean }> {
+  if (USE_MOCK) {
+    await delay();
+    for (const d of Object.values(MOCK_ORG_DETAILS)) {
+      const i = d.rules.findIndex((x) => x.id === ruleId);
+      if (i >= 0) { d.rules.splice(i, 1); return { ok: true }; }
+    }
+    throw new Error('Rule not found');
+  }
+  return sendJson<{ ok: boolean }>('DELETE', `/rules/${ruleId}`, undefined);
+}
+
+// ── Naira ⇄ kobo at the form boundary ────────────────────────────────────────
+// Kobo is the ONLY representation that reaches the API. These two exist so a
+// page never does `parseFloat(x) * 100` inline — that is where the rounding
+// bugs live (0.1 * 100 === 10.000000000000002).
+
+/** Parse an operator-typed naira string into integer kobo. Throws on garbage. */
+export function nairaToKobo(text: string): number {
+  const cleaned = text.replace(/[,\s₦]/g, '');
+  if (!/^\d+(\.\d{1,2})?$/.test(cleaned)) throw new Error('Enter an amount in naira, e.g. 5000 or 5000.50');
+  const [whole, frac = ''] = cleaned.split('.');
+  return Number(whole) * 100 + Number(frac.padEnd(2, '0'));
+}
+/** Render integer kobo as a plain naira string for an <input> (no ₦, no commas). */
+export function koboToNairaInput(kobo: number): string {
+  const k = Math.trunc(kobo ?? 0);
+  return `${Math.trunc(k / 100)}.${String(Math.abs(k % 100)).padStart(2, '0')}`;
+}
+
+// ── Admin content listings + authoring ───────────────────────────────────────
+//
+// Why a separate ADMIN listing exists at all: the member-facing reads
+// (GET /announcements, /meetings, /documents, /events, /tasks) join through the
+// CALLER's own assoc_memberships, which is right for a member and returns an
+// empty list for a platform admin — they hold no membership of their own. So
+// the console could author content it could never see. The admin listings take
+// an explicit organisation and authorize against it
+// (service_content_list.go listContent → requireOrgAdmin).
+//
+// Every listing answers the SAME row shape so one table renders all six; the
+// type-specific fields ride in `meta`. The typed *Meta interfaces below mirror
+// each jsonb_build_object in service_content_list.go key-for-key.
+//
+// Money rule (CLAUDE.md): feeKobo / amountKobo / totalKobo are INTEGER kobo.
+// Naira only ever exists as text in an <input>; nairaToKobo() converts once at
+// the form boundary and formatNaira() renders on the way out.
+
+/** One row of any admin content listing (Go AdminContentRow). */
+export interface AdminContentRow<M = Record<string, unknown>> {
+  id: string;
+  title: string;
+  subtitle: string;
+  status: string;
+  /** The row's own "when" — posted_at / starts_at / updated_at / due_date. */
+  at: string | null;
+  createdAt: string | null;
+  meta: M;
+}
+
+export interface ContentListOpts { limit?: number; offset?: number }
+
+function contentQuery(opts?: ContentListOpts): string {
+  const qs = new URLSearchParams();
+  if (opts?.limit != null) qs.set('limit', String(opts.limit));
+  if (opts?.offset != null) qs.set('offset', String(opts.offset));
+  const s = qs.toString();
+  return s ? `?${s}` : '';
+}
+
+export interface AnnouncementMeta {
+  body: string | null; audience: string | null; author: string | null;
+  urgent: boolean; requiresAck: boolean; readCount: number; ackCount: number;
+}
+export interface MeetingMeta {
+  description: string | null; mode: string; startsAt: string | null; endsAt: string | null;
+  location: string | null; agenda: string[] | null; minutesPublished: boolean;
+  attendanceCode: string | null; rsvpCount: number; checkedInCount: number;
+}
+export interface DocumentMeta {
+  kind: string; storageKey: string | null; sizeLabel: string | null; version: string;
+  restricted: boolean; requiresAck: boolean; aiSummary: string | null;
+  uploadedBy: string | null; ackCount: number;
+}
+export interface EventMeta {
+  description: string | null; startsAt: string | null; endsAt: string | null;
+  location: string | null; paid: boolean; feeKobo: number; capacity: number | null;
+  organiser: string | null; coverUrl: string | null;
+  registeredCount: number; awaitingPayment: number;
+}
+export interface TaskMeta {
+  description: string | null; priority: string; dueDate: string | null;
+  assigneeId: string | null; assigneeName: string | null;
+  committeeId: string | null; meetingId: string | null; checklist: string[] | null;
+}
+export interface DuesRunMeta {
+  invoiced: number; skipped: number; totalKobo: number;
+  categoryId: string | null; chapterId: string | null;
+  paidCount: number; outstandingKobo: number;
+}
+
+export type AnnouncementRow = AdminContentRow<AnnouncementMeta>;
+export type MeetingRow = AdminContentRow<MeetingMeta>;
+export type DocumentRow = AdminContentRow<DocumentMeta>;
+export type EventRow = AdminContentRow<EventMeta>;
+export type TaskRow = AdminContentRow<TaskMeta>;
+export type DuesRunRow = AdminContentRow<DuesRunMeta>;
+
+// ── Enums, mirrored from service_content.go's validity maps ──
+// Hard-coded here rather than fetched because they are compiled-in Go maps with
+// no endpoint; a value outside them is a 400, so the console only ever offers
+// members of the set.
+export type MeetingMode = 'PHYSICAL' | 'VIRTUAL' | 'HYBRID';
+export type MeetingState = 'UPCOMING' | 'LIVE' | 'PAST' | 'CANCELLED';
+export type DocumentKind = 'pdf' | 'image' | 'doc';
+export type TaskStatus =
+  | 'DRAFT' | 'ASSIGNED' | 'ACCEPTED' | 'IN_PROGRESS' | 'BLOCKED' | 'AWAITING_REVIEW'
+  | 'COMPLETED' | 'REJECTED' | 'REOPENED' | 'CANCELLED' | 'OVERDUE';
+export type TaskPriority = 'LOW' | 'MEDIUM' | 'HIGH';
+export type InvoiceScope = 'NATIONAL' | 'STATE' | 'LOCAL' | 'COMMITTEE';
+
+export const MEETING_MODES: MeetingMode[] = ['PHYSICAL', 'VIRTUAL', 'HYBRID'];
+export const MEETING_STATES: MeetingState[] = ['UPCOMING', 'LIVE', 'PAST', 'CANCELLED'];
+export const DOCUMENT_KINDS: DocumentKind[] = ['pdf', 'image', 'doc'];
+export const TASK_STATUSES: TaskStatus[] = [
+  'DRAFT', 'ASSIGNED', 'ACCEPTED', 'IN_PROGRESS', 'BLOCKED', 'AWAITING_REVIEW',
+  'COMPLETED', 'REJECTED', 'REOPENED', 'CANCELLED', 'OVERDUE',
+];
+export const TASK_PRIORITIES: TaskPriority[] = ['LOW', 'MEDIUM', 'HIGH'];
+export const INVOICE_SCOPES: InvoiceScope[] = ['NATIONAL', 'STATE', 'LOCAL', 'COMMITTEE'];
+
+// ── Request bodies, mirroring model_content.go field-for-field ──
+export interface AnnouncementInput {
+  title: string; body?: string | null; audience?: string | null;
+  urgent: boolean; requiresAck: boolean;
+  /** Only honoured on create — fans out an in-app notification to EVERY active member. */
+  notify?: boolean;
+}
+export interface MeetingInput {
+  title: string; description?: string | null; mode: MeetingMode;
+  /** RFC3339. */ startsAt: string;
+  /** RFC3339 or null. */ endsAt?: string | null;
+  location?: string | null; state: MeetingState; agenda: string[];
+  generateAttendanceCode?: boolean; notify?: boolean;
+}
+export interface DocumentInput {
+  title: string; category: string; kind: DocumentKind;
+  storageKey?: string | null; sizeLabel?: string | null; version?: string;
+  restricted: boolean; requiresAck: boolean; aiSummary?: string | null; notify?: boolean;
+}
+export interface EventInput {
+  title: string; description?: string | null;
+  /** RFC3339. */ startsAt: string; endsAt?: string | null;
+  location?: string | null;
+  paid: boolean;
+  /** INTEGER kobo. Must be > 0 when paid, and 0 when not — the backend 400s otherwise. */
+  feeKobo: number;
+  capacity?: number | null; organiser?: string | null; coverUrl?: string | null; notify?: boolean;
+}
+export interface TaskInput {
+  title: string; description?: string | null; status: TaskStatus; priority: TaskPriority;
+  /** RFC3339 or null. */ dueDate?: string | null;
+  /** A MEMBERSHIP id in the same organisation — a foreign one is a 403. */
+  assigneeId?: string | null;
+  committeeId?: string | null; meetingId?: string | null;
+  checklist: string[]; notify?: boolean;
+}
+export interface DuesRunInput {
+  title: string; scope: InvoiceScope; dueDate?: string | null;
+  categoryId?: string | null; chapterId?: string | null; notify?: boolean;
+}
+export interface DuesRunResult {
+  runId: string; invoiced: number; skipped: number; totalKobo: number;
+  /** True means the key was REPLAYED: the original run is echoed and nothing new was raised. */
+  alreadyRaised: boolean;
+}
+export interface InvoiceInput {
+  membershipId: string; title: string;
+  /** INTEGER kobo, must be > 0. */ amountKobo: number;
+  description?: string | null; cadence: DuesCadence; scope: InvoiceScope;
+  dueDate?: string | null; notify?: boolean;
+}
+
+/**
+ * The paid/fee rule, in one place.
+ *
+ * service_content.go CreateEvent rejects a paid event with feeKobo == 0 and a
+ * free event with feeKobo > 0. Checking it here too is not duplication for its
+ * own sake: without it the operator fills a whole form, submits, and gets the
+ * refusal back as a 400 with the form already cleared of context. Returns null
+ * when the combination is legal.
+ */
+export function eventFeeError(paid: boolean, feeKobo: number): string | null {
+  if (!Number.isInteger(feeKobo) || feeKobo < 0) return 'Fee must be a whole amount of naira, 0 or more.';
+  if (paid && feeKobo === 0) return 'A paid event needs a fee greater than ₦0.00 — set a fee, or untick "paid".';
+  if (!paid && feeKobo > 0) return 'This event is not marked paid, so its fee must be ₦0.00 — tick "paid", or clear the fee.';
+  return null;
+}
+
+// ── datetime-local ⇄ RFC3339 at the form boundary ──
+// Go parses startsAt/endsAt/dueDate with time.Parse(time.RFC3339) and errors on
+// anything else, while <input type="datetime-local"> yields "2026-09-01T10:00"
+// (no zone) and <input type="date"> yields "2026-09-01". Both are rejected
+// verbatim, so neither value may ever be sent as typed.
+
+/** "2026-09-01T10:00" (browser local time) → RFC3339 UTC. Empty → null. */
+export function localInputToRfc3339(v: string): string | null {
+  const s = (v ?? '').trim();
+  if (!s) return null;
+  const d = new Date(s);
+  if (Number.isNaN(d.getTime())) throw new Error(`"${s}" is not a valid date/time`);
+  return d.toISOString();
+}
+/** RFC3339 (or Postgres "2026-09-01 10:00:00+00") → "2026-09-01T10:00" for the input. */
+export function rfc3339ToLocalInput(v: string | null | undefined): string {
+  if (!v) return '';
+  const d = new Date(v.includes('T') ? v : v.replace(' ', 'T'));
+  if (Number.isNaN(d.getTime())) return '';
+  const p = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+/** "2026-09-01" (a date-only input) → RFC3339 at local midnight. Empty → null. */
+export function dateInputToRfc3339(v: string): string | null {
+  const s = (v ?? '').trim();
+  if (!s) return null;
+  return localInputToRfc3339(`${s}T00:00`);
+}
+/** RFC3339 → "2026-09-01" for a date-only input. */
+export function rfc3339ToDateInput(v: string | null | undefined): string {
+  const s = rfc3339ToLocalInput(v);
+  return s ? s.slice(0, 10) : '';
+}
+
+/** Exported so a page can hold ONE key across a retry of the same money action. */
+export { newIdempotencyKey };
+
+// ── Mock content state (USE_MOCK) ──
+// Mutable, like MOCK_ORG_DETAILS above, so the authoring pages behave sensibly
+// with the backend switched off (create a thing, see it in the list) instead of
+// silently discarding every write and rendering a permanent empty state.
+type ContentKind = 'announcements' | 'meetings' | 'documents' | 'events' | 'tasks' | 'duesRuns';
+const MOCK_CONTENT: Record<ContentKind, AdminContentRow[]> = {
+  announcements: [{
+    id: 'ann_mock1', title: 'Annual general meeting notice', subtitle: 'ALL', status: 'POSTED',
+    at: iso(30), createdAt: iso(30),
+    meta: { body: 'The AGM holds on the 14th.', audience: 'ALL', author: 'National Secretary', urgent: false, requiresAck: true, readCount: 84, ackCount: 31 },
+  }],
+  meetings: [{
+    id: 'mtg_mock1', title: 'Executive council', subtitle: 'Secretariat, Lagos', status: 'UPCOMING',
+    at: iso(-72), createdAt: iso(48),
+    meta: { description: 'Quarterly council sitting.', mode: 'HYBRID', startsAt: iso(-72), endsAt: null, location: 'Secretariat, Lagos', agenda: ['Opening prayer', 'Treasurer report'], minutesPublished: false, attendanceCode: 'A1B2C3', rsvpCount: 12, checkedInCount: 0 },
+  }],
+  documents: [{
+    id: 'doc_mock1', title: 'Constitution (2026 revision)', subtitle: 'GOVERNANCE', status: 'OPEN',
+    at: iso(200), createdAt: iso(200),
+    meta: { kind: 'pdf', storageKey: 'assoc/constitution-2026.pdf', sizeLabel: '1.2 MB', version: 'v3', restricted: false, requiresAck: true, aiSummary: null, uploadedBy: 'National Secretary', ackCount: 57 },
+  }],
+  events: [{
+    id: 'evt_mock1', title: 'Members gala night', subtitle: 'Eko Hotel', status: 'UPCOMING',
+    at: iso(-480), createdAt: iso(120),
+    meta: { description: 'Annual gala.', startsAt: iso(-480), endsAt: null, location: 'Eko Hotel', paid: true, feeKobo: 15_000_00, capacity: 400, organiser: 'Social Committee', coverUrl: null, registeredCount: 96, awaitingPayment: 14 },
+  }],
+  tasks: [{
+    id: 'tsk_mock1', title: 'Reconcile chapter remittances', subtitle: 'Chioma Adeyemi', status: 'IN_PROGRESS',
+    at: dateStr(-7), createdAt: iso(96),
+    meta: { description: 'Match chapter transfers to the ledger.', priority: 'HIGH', dueDate: dateStr(-7), assigneeId: 'mem_7742', assigneeName: 'Chioma Adeyemi', committeeId: null, meetingId: null, checklist: ['Pull statements', 'Match to invoices'] },
+  }],
+  duesRuns: [{
+    id: 'run_mock1', title: '2026 annual dues', subtitle: 'NATIONAL', status: 'RAISED',
+    at: iso(720), createdAt: iso(720),
+    meta: { invoiced: 1180, skipped: 42, totalKobo: 118_000_000_00, categoryId: null, chapterId: null, paidCount: 903, outstandingKobo: 27_700_000_00 },
+  }],
+};
+/** Mock replay ledger — mirrors the UNIQUE INDEX on assoc_dues_runs.idempotency_key. */
+const MOCK_DUES_KEYS = new Map<string, DuesRunResult>();
+
+function mockList<M>(kind: ContentKind, opts?: ContentListOpts): AdminContentRow<M>[] {
+  const off = opts?.offset ?? 0;
+  const lim = opts?.limit ?? 100;
+  return structuredClone(MOCK_CONTENT[kind]).slice(off, off + lim) as AdminContentRow<M>[];
+}
+function mockCreate(kind: ContentKind, row: Omit<AdminContentRow, 'id'>): { id: string } {
+  const id = mockId(kind.slice(0, 3));
+  MOCK_CONTENT[kind].unshift({ id, ...row });
+  return { id };
+}
+function mockPatch(kind: ContentKind, id: string, row: Partial<AdminContentRow>): { ok: boolean } {
+  const r = MOCK_CONTENT[kind].find((x) => x.id === id);
+  if (!r) throw new Error('Not found');
+  Object.assign(r, row, { meta: { ...r.meta, ...(row.meta ?? {}) } });
+  return { ok: true };
+}
+function mockRemove(kind: ContentKind, id: string): { ok: boolean } {
+  const i = MOCK_CONTENT[kind].findIndex((x) => x.id === id);
+  if (i < 0) throw new Error('Not found');
+  MOCK_CONTENT[kind].splice(i, 1);
+  return { ok: true };
+}
+
+// ── Announcements ──
+export async function listAdminAnnouncements(orgId: string, opts?: ContentListOpts): Promise<AnnouncementRow[]> {
+  if (USE_MOCK) { await delay(); return mockList<AnnouncementMeta>('announcements', opts); }
+  return getJson<AnnouncementRow[]>(`/organisations/${orgId}/announcements${contentQuery(opts)}`);
+}
+export async function createAnnouncement(orgId: string, input: AnnouncementInput): Promise<{ id: string }> {
+  if (USE_MOCK) {
+    await delay();
+    return mockCreate('announcements', {
+      title: input.title, subtitle: input.audience ?? '', status: input.urgent ? 'URGENT' : 'POSTED',
+      at: new Date().toISOString(), createdAt: new Date().toISOString(),
+      meta: { body: input.body ?? null, audience: input.audience ?? null, author: 'You (mock)', urgent: input.urgent, requiresAck: input.requiresAck, readCount: 0, ackCount: 0 },
+    });
+  }
+  return sendJson<{ id: string }>('POST', `/organisations/${orgId}/announcements`, input);
+}
+export async function updateAnnouncement(id: string, input: AnnouncementInput): Promise<{ ok: boolean }> {
+  if (USE_MOCK) {
+    await delay();
+    return mockPatch('announcements', id, {
+      title: input.title, subtitle: input.audience ?? '', status: input.urgent ? 'URGENT' : 'POSTED',
+      meta: { body: input.body ?? null, audience: input.audience ?? null, urgent: input.urgent, requiresAck: input.requiresAck } as Partial<AnnouncementMeta> as Record<string, unknown>,
+    });
+  }
+  // The PATCH body is the FULL AnnouncementRequest: Go binds `title` as
+  // required, so a partial patch omitting it is a 400, not a no-op.
+  return sendJson<{ ok: boolean }>('PATCH', `/announcements/${id}`, input);
+}
+export async function deleteAnnouncement(id: string): Promise<{ ok: boolean }> {
+  if (USE_MOCK) { await delay(); return mockRemove('announcements', id); }
+  return sendJson<{ ok: boolean }>('DELETE', `/announcements/${id}`, undefined);
+}
+
+// ── Meetings ──
+export async function listAdminMeetings(orgId: string, opts?: ContentListOpts): Promise<MeetingRow[]> {
+  if (USE_MOCK) { await delay(); return mockList<MeetingMeta>('meetings', opts); }
+  return getJson<MeetingRow[]>(`/organisations/${orgId}/meetings${contentQuery(opts)}`);
+}
+export async function createMeeting(orgId: string, input: MeetingInput): Promise<{ id: string }> {
+  if (USE_MOCK) {
+    await delay();
+    return mockCreate('meetings', {
+      title: input.title, subtitle: input.location ?? '', status: input.state,
+      at: input.startsAt, createdAt: new Date().toISOString(),
+      meta: { description: input.description ?? null, mode: input.mode, startsAt: input.startsAt, endsAt: input.endsAt ?? null, location: input.location ?? null, agenda: input.agenda, minutesPublished: false, attendanceCode: input.generateAttendanceCode ? 'MOCK01' : null, rsvpCount: 0, checkedInCount: 0 },
+    });
+  }
+  return sendJson<{ id: string }>('POST', `/organisations/${orgId}/meetings`, input);
+}
+export async function updateMeeting(id: string, input: MeetingInput): Promise<{ ok: boolean }> {
+  if (USE_MOCK) {
+    await delay();
+    return mockPatch('meetings', id, {
+      title: input.title, subtitle: input.location ?? '', status: input.state, at: input.startsAt,
+      meta: { description: input.description ?? null, mode: input.mode, startsAt: input.startsAt, endsAt: input.endsAt ?? null, location: input.location ?? null, agenda: input.agenda } as Partial<MeetingMeta> as Record<string, unknown>,
+    });
+  }
+  return sendJson<{ ok: boolean }>('PATCH', `/meetings/${id}`, input);
+}
+export async function deleteMeeting(id: string): Promise<{ ok: boolean }> {
+  if (USE_MOCK) { await delay(); return mockRemove('meetings', id); }
+  return sendJson<{ ok: boolean }>('DELETE', `/meetings/${id}`, undefined);
+}
+/** Publish or retract the minutes. Separate route because it is a one-field state flip. */
+export async function publishMeetingMinutes(id: string, published: boolean): Promise<{ ok: boolean }> {
+  if (USE_MOCK) { await delay(); return mockPatch('meetings', id, { meta: { minutesPublished: published } }); }
+  return sendJson<{ ok: boolean }>('POST', `/meetings/${id}/minutes`, { published });
+}
+
+// ── Documents ──
+export async function listAdminDocuments(orgId: string, opts?: ContentListOpts): Promise<DocumentRow[]> {
+  if (USE_MOCK) { await delay(); return mockList<DocumentMeta>('documents', opts); }
+  return getJson<DocumentRow[]>(`/organisations/${orgId}/documents${contentQuery(opts)}`);
+}
+export async function createDocument(orgId: string, input: DocumentInput): Promise<{ id: string }> {
+  if (USE_MOCK) {
+    await delay();
+    return mockCreate('documents', {
+      title: input.title, subtitle: input.category, status: input.restricted ? 'RESTRICTED' : 'OPEN',
+      at: new Date().toISOString(), createdAt: new Date().toISOString(),
+      meta: { kind: input.kind, storageKey: input.storageKey ?? null, sizeLabel: input.sizeLabel ?? null, version: input.version ?? 'v1', restricted: input.restricted, requiresAck: input.requiresAck, aiSummary: input.aiSummary ?? null, uploadedBy: 'You (mock)', ackCount: 0 },
+    });
+  }
+  return sendJson<{ id: string }>('POST', `/organisations/${orgId}/documents`, input);
+}
+export async function updateDocument(id: string, input: DocumentInput): Promise<{ ok: boolean }> {
+  if (USE_MOCK) {
+    await delay();
+    return mockPatch('documents', id, {
+      title: input.title, subtitle: input.category, status: input.restricted ? 'RESTRICTED' : 'OPEN',
+      meta: { kind: input.kind, storageKey: input.storageKey ?? null, sizeLabel: input.sizeLabel ?? null, version: input.version ?? 'v1', restricted: input.restricted, requiresAck: input.requiresAck, aiSummary: input.aiSummary ?? null } as Partial<DocumentMeta> as Record<string, unknown>,
+    });
+  }
+  return sendJson<{ ok: boolean }>('PATCH', `/documents/${id}`, input);
+}
+export async function deleteDocument(id: string): Promise<{ ok: boolean }> {
+  if (USE_MOCK) { await delay(); return mockRemove('documents', id); }
+  return sendJson<{ ok: boolean }>('DELETE', `/documents/${id}`, undefined);
+}
+
+// ── Events (MONEY: feeKobo) ──
+export async function listAdminEvents(orgId: string, opts?: ContentListOpts): Promise<EventRow[]> {
+  if (USE_MOCK) { await delay(); return mockList<EventMeta>('events', opts); }
+  return getJson<EventRow[]>(`/organisations/${orgId}/events${contentQuery(opts)}`);
+}
+export async function createEvent(orgId: string, input: EventInput): Promise<{ id: string }> {
+  const bad = eventFeeError(input.paid, input.feeKobo);
+  if (bad) throw new Error(bad);
+  if (USE_MOCK) {
+    await delay();
+    return mockCreate('events', {
+      title: input.title, subtitle: input.location ?? '', status: 'UPCOMING',
+      at: input.startsAt, createdAt: new Date().toISOString(),
+      meta: { description: input.description ?? null, startsAt: input.startsAt, endsAt: input.endsAt ?? null, location: input.location ?? null, paid: input.paid, feeKobo: input.feeKobo, capacity: input.capacity ?? null, organiser: input.organiser ?? null, coverUrl: input.coverUrl ?? null, registeredCount: 0, awaitingPayment: 0 },
+    });
+  }
+  return sendJson<{ id: string }>('POST', `/organisations/${orgId}/events`, input);
+}
+export async function updateEvent(id: string, input: EventInput): Promise<{ ok: boolean }> {
+  const bad = eventFeeError(input.paid, input.feeKobo);
+  if (bad) throw new Error(bad);
+  if (USE_MOCK) {
+    await delay();
+    return mockPatch('events', id, {
+      title: input.title, subtitle: input.location ?? '', at: input.startsAt,
+      meta: { description: input.description ?? null, startsAt: input.startsAt, endsAt: input.endsAt ?? null, location: input.location ?? null, paid: input.paid, feeKobo: input.feeKobo, capacity: input.capacity ?? null, organiser: input.organiser ?? null, coverUrl: input.coverUrl ?? null } as Partial<EventMeta> as Record<string, unknown>,
+    });
+  }
+  return sendJson<{ ok: boolean }>('PATCH', `/events/${id}`, input);
+}
+/** Refused (400) by the backend once paid registrations exist — cancel instead. */
+export async function deleteEvent(id: string): Promise<{ ok: boolean }> {
+  if (USE_MOCK) { await delay(); return mockRemove('events', id); }
+  return sendJson<{ ok: boolean }>('DELETE', `/events/${id}`, undefined);
+}
+
+// ── Tasks ──
+export async function listAdminTasks(orgId: string, opts?: ContentListOpts): Promise<TaskRow[]> {
+  if (USE_MOCK) { await delay(); return mockList<TaskMeta>('tasks', opts); }
+  return getJson<TaskRow[]>(`/organisations/${orgId}/tasks${contentQuery(opts)}`);
+}
+export async function createTask(orgId: string, input: TaskInput): Promise<{ id: string }> {
+  if (USE_MOCK) {
+    await delay();
+    return mockCreate('tasks', {
+      title: input.title, subtitle: '', status: input.status,
+      at: input.dueDate ?? null, createdAt: new Date().toISOString(),
+      meta: { description: input.description ?? null, priority: input.priority, dueDate: input.dueDate ?? null, assigneeId: input.assigneeId ?? null, assigneeName: null, committeeId: input.committeeId ?? null, meetingId: input.meetingId ?? null, checklist: input.checklist },
+    });
+  }
+  return sendJson<{ id: string }>('POST', `/organisations/${orgId}/tasks`, input);
+}
+export async function updateTask(id: string, input: TaskInput): Promise<{ ok: boolean }> {
+  if (USE_MOCK) {
+    await delay();
+    return mockPatch('tasks', id, {
+      title: input.title, status: input.status, at: input.dueDate ?? null,
+      meta: { description: input.description ?? null, priority: input.priority, dueDate: input.dueDate ?? null, assigneeId: input.assigneeId ?? null, committeeId: input.committeeId ?? null, meetingId: input.meetingId ?? null, checklist: input.checklist } as Partial<TaskMeta> as Record<string, unknown>,
+    });
+  }
+  return sendJson<{ ok: boolean }>('PATCH', `/tasks/${id}`, input);
+}
+export async function deleteTask(id: string): Promise<{ ok: boolean }> {
+  if (USE_MOCK) { await delay(); return mockRemove('tasks', id); }
+  return sendJson<{ ok: boolean }>('DELETE', `/tasks/${id}`, undefined);
+}
+
+// ── Dues runs + ad-hoc invoices — MONEY PATH ─────────────────────────────────
+export async function listAdminDuesRuns(orgId: string, opts?: ContentListOpts): Promise<DuesRunRow[]> {
+  if (USE_MOCK) { await delay(); return mockList<DuesRunMeta>('duesRuns', opts); }
+  return getJson<DuesRunRow[]>(`/organisations/${orgId}/dues/runs${contentQuery(opts)}`);
+}
+
+/**
+ * Raise one invoice per ACTIVE member from that member's own dues tier.
+ *
+ * `idempotencyKey` is REQUIRED and belongs to the CALLER, not to this function.
+ * The key is a UNIQUE INDEX on assoc_dues_runs: a replay returns the original
+ * run with `alreadyRaised: true` and bills nothing. That guarantee only holds
+ * if a retry reuses the SAME key — which is why the page mints one key per
+ * intended run and keeps it across retries, rather than letting each call mint
+ * its own. Missing key → 400 (ErrIdempotencyRequired).
+ */
+export async function runDues(orgId: string, input: DuesRunInput, idempotencyKey: string): Promise<DuesRunResult> {
+  if (!idempotencyKey) throw new Error('An Idempotency-Key is required to raise dues.');
+  if (USE_MOCK) {
+    await delay();
+    const prior = MOCK_DUES_KEYS.get(idempotencyKey);
+    if (prior) return { ...prior, alreadyRaised: true };
+    const res: DuesRunResult = { runId: mockId('run'), invoiced: 118, skipped: 4, totalKobo: 11_800_000_00, alreadyRaised: false };
+    MOCK_DUES_KEYS.set(idempotencyKey, res);
+    MOCK_CONTENT.duesRuns.unshift({
+      id: res.runId, title: input.title, subtitle: input.scope, status: 'RAISED',
+      at: new Date().toISOString(), createdAt: new Date().toISOString(),
+      meta: { invoiced: res.invoiced, skipped: res.skipped, totalKobo: res.totalKobo, categoryId: input.categoryId ?? null, chapterId: input.chapterId ?? null, paidCount: 0, outstandingKobo: res.totalKobo },
+    });
+    return res;
+  }
+  return sendJson<DuesRunResult>('POST', `/organisations/${orgId}/dues/run`, input, { idempotencyKey });
+}
+
+/**
+ * Raise ONE invoice against ONE membership. Also key-owned by the caller: the
+ * backend records the key on a single-invoice dues run, so a replay returns the
+ * original invoice id instead of billing the member twice.
+ */
+export async function createInvoice(input: InvoiceInput, idempotencyKey: string): Promise<{ id: string }> {
+  if (!idempotencyKey) throw new Error('An Idempotency-Key is required to raise an invoice.');
+  if (input.amountKobo <= 0) throw new Error('Invoice amount must be greater than ₦0.00.');
+  if (USE_MOCK) { await delay(); return { id: mockId('inv') }; }
+  return sendJson<{ id: string }>('POST', '/invoices', input, { idempotencyKey });
 }

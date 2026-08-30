@@ -96,6 +96,27 @@ export default function AssociationLayout() {
       <Stack.Screen name="admin/members/[id]" />
       <Stack.Screen name="admin/audit" />
 
+      {/* Admin: content authoring — the write side of announcements, meetings,
+          documents, events and tasks, plus the dues run that raises the
+          invoices the member payment path settles. */}
+      <Stack.Screen name="admin/announcements/index" />
+      <Stack.Screen name="admin/announcements/new" />
+      <Stack.Screen name="admin/announcements/[id]" />
+      <Stack.Screen name="admin/meetings/index" />
+      <Stack.Screen name="admin/meetings/new" />
+      <Stack.Screen name="admin/meetings/[id]" />
+      <Stack.Screen name="admin/documents/index" />
+      <Stack.Screen name="admin/documents/new" />
+      <Stack.Screen name="admin/documents/[id]" />
+      <Stack.Screen name="admin/events/index" />
+      <Stack.Screen name="admin/events/new" />
+      <Stack.Screen name="admin/events/[id]" />
+      <Stack.Screen name="admin/tasks/index" />
+      <Stack.Screen name="admin/tasks/new" />
+      <Stack.Screen name="admin/tasks/[id]" />
+      <Stack.Screen name="admin/dues/index" />
+      <Stack.Screen name="admin/dues/run" />
+
       {/* Governance & elections (Y) — integrates the shared election feature */}
       <Stack.Screen name="governance" />
 

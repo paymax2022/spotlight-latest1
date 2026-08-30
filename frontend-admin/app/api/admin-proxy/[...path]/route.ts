@@ -39,6 +39,20 @@ async function forward(request: Request, ctx: { params: Promise<{ path: string[]
   const contentType = request.headers.get('content-type');
   if (contentType) headers['Content-Type'] = contentType;
 
+  // Idempotency-Key MUST survive the hop.
+  //
+  // This proxy builds its outbound headers from an allowlist, and this one was
+  // not on it — so every idempotent admin write was arriving at the backend
+  // with no key at all, no matter how carefully the calling service generated
+  // one. Handlers that merely *prefer* a key (offline-payment decision,
+  // application decision) silently lost their replay protection; handlers that
+  // *require* one (the association dues-tier create/update, which return
+  // ErrIdempotencyRequired) rejected every request with a 400 that looked like
+  // a client bug. Nothing in the browser could fix it: the header was dropped
+  // here, one hop later.
+  const idem = request.headers.get('idempotency-key');
+  if (idem) headers['Idempotency-Key'] = idem;
+
   const method = request.method;
   const body = method === 'GET' || method === 'HEAD' ? undefined : await request.text();
 

@@ -154,6 +154,12 @@ type Config struct {
 	PaymaxWebhookSecret           string
 	FeatureGroupsEnabled          bool
 	FeatureAssociationsEnabled    bool
+
+	// AssocCardSigningSecret is the HMAC secret for digital membership cards.
+	// Empty outside development is a hard startup failure: the fallback is a
+	// constant compiled into this (public) repo, so anyone could forge a
+	// structurally valid card token for a known membership id.
+	AssocCardSigningSecret string
 	FeatureEventsEnabled          bool
 	FeatureEstateEnabled          bool
 	FeatureCrowdfundingEnabled    bool
@@ -620,6 +626,7 @@ func Load() Config {
 		PaymaxWebhookSecret:                   getEnv("PAYMAX_WEBHOOK_SECRET", ""),
 		FeatureGroupsEnabled:                  getEnvBool("FEATURE_GROUPS_ENABLED", false),
 		FeatureAssociationsEnabled:            getEnvBool("FEATURE_ASSOCIATIONS_ENABLED", false),
+		AssocCardSigningSecret:                getEnv("ASSOC_CARD_SIGNING_SECRET", ""),
 		FeatureEventsEnabled:                  getEnvBool("FEATURE_EVENTS_ENABLED", false),
 		FeatureEstateEnabled:                  getEnvBool("FEATURE_ESTATE_ENABLED", false),
 		FeatureCrowdfundingEnabled:            getEnvBool("FEATURE_CROWDFUNDING_ENABLED", false),

@@ -374,7 +374,7 @@ func TestLiveDB_IDOR_Discovery_HidesInviteOnly(t *testing.T) {
 	closedID := seedOrgOfType(t, ctx, pool, "Closed-"+tag, "CLOSED")
 	inviteID := seedOrgOfType(t, ctx, pool, "Invite-"+tag, "INVITE_ONLY")
 
-	list, err := svc.GetOrganisations(ctx, tag) // search term matches both by name
+	list, err := svc.GetOrganisations(ctx, tag, 0, 0) // search term matches both by name
 	if err != nil {
 		t.Fatalf("GetOrganisations: %v", err)
 	}

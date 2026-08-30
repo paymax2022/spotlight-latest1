@@ -13,7 +13,7 @@ import StateView from '@/components/StateView';
 import SelectField from '@/components/SelectField';
 import PrimaryButton from '@/components/PrimaryButton';
 import MembershipStatusBadge, { PaymentStandingBadge } from '@/features/association/components/MembershipStatusBadge';
-import { useMember } from '@/features/association/hooks/useAssociation';
+import { useMember, useOrganisation } from '@/features/association/hooks/useAssociation';
 import {
   useAdminAccess, useSuspendMember, useRestoreMember, useTransferMember, useAssignRole,
 } from '@/features/association/hooks/useAdminMembers';
@@ -22,12 +22,15 @@ import { ASSIGNABLE_ROLES } from '@/features/association/types/adminRole.types';
 import type { AdminRole } from '@/features/association/types/adminRole.types';
 import { confirmAsync, alertAsync } from '@/lib/confirm';
 
-const CHAPTERS = ['Lagos State Chapter', 'FCT Abuja Chapter', 'Rivers State Chapter', 'Kano State Chapter'];
-
 export default function AdminMemberDetail() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const member = useMember(id);
   const access = useAdminAccess();
+  // Transfer destinations come from the organisation's live chapter list.
+  // They used to be four hardcoded strings driving a REAL transfer mutation,
+  // so an admin outside those four chapters could only move members to a
+  // chapter that may not exist.
+  const organisation = useOrganisation(member.data?.organisationId ?? access.data?.organisationId ?? undefined);
   const suspend = useSuspendMember();
   const restore = useRestoreMember();
   const transfer = useTransferMember();
@@ -65,6 +68,9 @@ export default function AdminMemberDetail() {
 
   const m = member.data;
   const suspended = m.status === 'SUSPENDED' || m.status === 'RESTRICTED';
+  const chapterOptions = (organisation.data?.chapters ?? [])
+    .map((c) => c.name)
+    .filter((name) => name !== m.chapterName);
 
   const confirm = async (title: string, msg: string, onYes: () => void, destructive = false) => {
     const ok = await confirmAsync({ title, message: msg, confirmLabel: 'Confirm', destructive });
@@ -128,8 +134,14 @@ export default function AdminMemberDetail() {
         {/* Transfer */}
         <Text style={styles.sectionTitle}>Transfer chapter</Text>
         <View style={styles.actionCard}>
-          <SelectField placeholder="Select destination chapter" value={chapter} options={CHAPTERS} onChange={setChapter} />
-          <PrimaryButton label="Transfer" variant="secondary" onPress={onTransfer} loading={transfer.isPending} disabled={!chapter} />
+          {organisation.isLoading ? (
+            <Text style={styles.roleHintText}>Loading chapters…</Text>
+          ) : chapterOptions.length === 0 ? (
+            <Text style={styles.roleHintText}>No other chapters are available to transfer this member to.</Text>
+          ) : (
+            <SelectField placeholder="Select destination chapter" value={chapter} options={chapterOptions} onChange={setChapter} />
+          )}
+          <PrimaryButton label="Transfer" variant="secondary" onPress={onTransfer} loading={transfer.isPending} disabled={!chapter || chapterOptions.length === 0} />
         </View>
 
         {/* Assign role */}

@@ -38,6 +38,10 @@ export default function AnnouncementDetail() {
 
   const a = ann.data;
   const acknowledged = a.acknowledged || ack.isSuccess;
+  const attachments = a.attachments ?? [];
+  // Read receipts are optional on the live DTO — hide the card rather than
+  // rendering "Read by undefined of undefined members".
+  const hasReadStats = typeof a.readCount === 'number' && typeof a.totalRecipients === 'number';
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
@@ -62,11 +66,11 @@ export default function AnnouncementDetail() {
 
         <Text style={styles.body}>{a.body}</Text>
 
-        {a.attachments.length > 0 ? (
+        {attachments.length > 0 ? (
           <>
             <Text style={styles.sectionTitle}>Attachments</Text>
             <View style={styles.gap8}>
-              {a.attachments.map((att) => (
+              {attachments.map((att) => (
                 <Pressable key={att.id} style={[styles.attRow, shadow1]} accessibilityRole="button" accessibilityLabel={`Open ${att.name}`}>
                   <FileText size={18} color={Colors.secondary} strokeWidth={2} />
                   <View style={{ flex: 1 }}>
@@ -80,12 +84,14 @@ export default function AnnouncementDetail() {
         ) : null}
 
         {/* Read receipt insight */}
-        <View style={[styles.readCard, shadow1]}>
-          <Users size={16} color={Colors.onSurfaceVariant} strokeWidth={2} />
-          <Text style={styles.readText}>
-            Read by {a.readCount.toLocaleString('en-NG')} of {a.totalRecipients.toLocaleString('en-NG')} members
-          </Text>
-        </View>
+        {hasReadStats ? (
+          <View style={[styles.readCard, shadow1]}>
+            <Users size={16} color={Colors.onSurfaceVariant} strokeWidth={2} />
+            <Text style={styles.readText}>
+              Read by {(a.readCount ?? 0).toLocaleString('en-NG')} of {(a.totalRecipients ?? 0).toLocaleString('en-NG')} members
+            </Text>
+          </View>
+        ) : null}
       </ScrollView>
 
       {a.requiresAck ? (

@@ -3,7 +3,10 @@ import { View, Text, ScrollView, Pressable, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { goBack } from '@/lib/navigation';
-import { ArrowLeft, UserCheck, Wallet, UploadCloud, Users, ChevronRight, ScrollText } from 'lucide-react-native';
+import {
+  ArrowLeft, UserCheck, Wallet, UploadCloud, Users, ChevronRight, ScrollText,
+  Megaphone, CalendarClock, FolderOpen, CalendarDays, ListChecks, Receipt,
+} from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
 import { Spacing } from '@/constants/spacing';
@@ -103,6 +106,63 @@ export default function AdminDashboard() {
               onPress={() => router.push('/association/admin/audit')}
             />
           </View>
+
+          {/*
+            Content authoring. Every one of these tables had a read endpoint and
+            no writer, so the member-facing screens were permanently empty and
+            content could only arrive by hand-written SQL. Gated the same way
+            the server gates it: content authoring goes through
+            `requireOrgAdmin`, which is ManageMembers — NOT merely "holds an
+            admin role", so a finance admin or a secretary is not offered a form
+            they would be 403'd on — and the dues run needs ManageFinance.
+          */}
+          {access.data?.can?.manageMembers ? (
+            <>
+              <SectionHeader title="Publish" style={styles.sectionGap} />
+              <View style={styles.gap}>
+                <AdminLink
+                  icon={<Megaphone size={20} color={Colors.primary} strokeWidth={2} />}
+                  label="Announcements"
+                  onPress={() => router.push('/association/admin/announcements')}
+                />
+                <AdminLink
+                  icon={<CalendarClock size={20} color={Colors.primary} strokeWidth={2} />}
+                  label="Meetings"
+                  onPress={() => router.push('/association/admin/meetings')}
+                />
+                <AdminLink
+                  icon={<FolderOpen size={20} color={Colors.primary} strokeWidth={2} />}
+                  label="Documents"
+                  onPress={() => router.push('/association/admin/documents')}
+                />
+                <AdminLink
+                  icon={<CalendarDays size={20} color={Colors.primary} strokeWidth={2} />}
+                  label="Events"
+                  onPress={() => router.push('/association/admin/events')}
+                />
+                <AdminLink
+                  icon={<ListChecks size={20} color={Colors.primary} strokeWidth={2} />}
+                  label="Tasks"
+                  onPress={() => router.push('/association/admin/tasks')}
+                />
+              </View>
+            </>
+          ) : null}
+
+          {/* Raising dues is a separate capability (ManageFinance), so a
+              finance admin who cannot author content still gets this. */}
+          {access.data?.can?.manageFinance ? (
+            <>
+              <SectionHeader title="Billing" style={styles.sectionGap} />
+              <View style={styles.gap}>
+                <AdminLink
+                  icon={<Receipt size={20} color={Colors.primary} strokeWidth={2} />}
+                  label="Dues runs"
+                  onPress={() => router.push('/association/admin/dues')}
+                />
+              </View>
+            </>
+          ) : null}
         </ScrollView>
       )}
     </SafeAreaView>

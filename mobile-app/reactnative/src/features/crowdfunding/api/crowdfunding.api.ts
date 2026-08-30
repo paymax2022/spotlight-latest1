@@ -11,6 +11,7 @@ import type {
   CampaignCategory,
   CampaignQuery,
   Contribution,
+  ContributionStatus,
   ContributionDraft,
   InitiateContributionResult,
   Contributor,
@@ -312,9 +313,11 @@ export async function initiateContribution(
   idempotencyKey: string,
 ): Promise<InitiateContributionResult> {
   if (USE_MOCK) {
+    const ref = `SPL-CF-${Date.now()}`;
     await delay(900);
     return {
-      reference: `SPL-CF-${Date.now()}`,
+      contributionId: ref,
+      reference: ref,
       status: draft.paymentMethod === 'BANK_TRANSFER' || draft.paymentMethod === 'USSD' ? 'PENDING' : 'PROCESSING',
       authorizationUrl: draft.paymentMethod === 'CARD' ? 'https://checkout.paystack.com/mock' : undefined,
     };
@@ -325,15 +328,62 @@ export async function initiateContribution(
     { amount_kobo: draft.amountKobo, idempotency_key: idempotencyKey },
     { headers: { 'Idempotency-Key': idempotencyKey } },
   );
-  return res.data?.data ?? res.data;
+  // The live endpoint is SYNCHRONOUS and FINAL — there is no provider handshake
+  // to come back for. A 2xx means the escrow posted, the contribution row was
+  // written and the 90/10 split settled, so the payment has already happened by
+  // the time this resolves. It answers with the raw snake_case contribution
+  // ({id, status: 'escrowed' | 'released' | 'refunded', …}), NOT the
+  // mock-shaped {reference, status: 'SUCCESSFUL'} envelope. Returning it
+  // unmapped is what left the caller with `reference: undefined` and a `status`
+  // outside the ContributionStatus union, which then drove a paid contribution
+  // onto the "Payment failed" screen. Map it here, at the seam, so every screen
+  // downstream sees one shape.
+  const raw = (res.data?.data ?? res.data) as { id?: string; status?: string };
+  return {
+    contributionId: String(raw?.id ?? ''),
+    status: liveContributionStatus(raw?.status),
+  };
 }
 
-export async function verifyContribution(reference: string): Promise<Contribution> {
+/**
+ * Map the backend's `contributions.status` to the client union. `escrowed` and
+ * `released` are both money-has-moved states — the difference is only whether
+ * the 90/10 split has swept yet, which is not something the contributor either
+ * sees or can act on. Anything unrecognised stays PROCESSING rather than
+ * FAILED: an unknown status is not evidence that a charge which returned 2xx
+ * did not happen, and calling it a failure is exactly the wrong guess to make.
+ */
+function liveContributionStatus(raw?: string): ContributionStatus {
+  switch (raw) {
+    case 'escrowed':
+    case 'released':
+      return 'SUCCESSFUL';
+    case 'refunded':
+      return 'REFUNDED';
+    default:
+      return 'PROCESSING';
+  }
+}
+
+/**
+ * Confirm a contribution by reading it back from the server.
+ *
+ * There is no `POST /contributions/verify` endpoint and there never was — the
+ * client used to call one because mock mode modelled a Paystack-style
+ * verify-after-redirect handshake that the live rail does not have. Next.js
+ * matched that path against the `contributions/[id]` route (id = "verify"),
+ * which only exports GET, so every live contribution ended on a 405 and the
+ * processing screen reported a successful payment as failed.
+ *
+ * The authoritative read is the contribution itself, which is owner-scoped
+ * server-side and carries the derived reference and mapped status.
+ */
+export async function verifyContribution(contributionId: string): Promise<Contribution> {
   if (USE_MOCK) {
     await delay(700);
     return {
-      id: reference,
-      reference,
+      id: contributionId,
+      reference: contributionId,
       campaignId: 'cf1',
       campaignTitle: 'Help Baby Zara Get Open-Heart Surgery',
       campaignCover: null,
@@ -350,8 +400,7 @@ export async function verifyContribution(reference: string): Promise<Contributio
       refundEligible: true,
     };
   }
-  const res = await api.post('/api/v1/crowdfunding/contributions/verify', { reference });
-  return res.data?.data ?? res.data;
+  return getContribution(contributionId);
 }
 
 export async function requestRefund(contributionId: string, reason: string): Promise<{ status: string }> {
