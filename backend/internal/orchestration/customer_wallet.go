@@ -1,6 +1,6 @@
 package orchestration
 
-// ── Where a customer's money actually lives (ADR-PR<pr-number>) ──────────────
+// ── Where a customer's money actually lives (ADR-051) ──────────────
 //
 // FX used to keep EVERY currency, NGN included, in its own `orch_balances` pot.
 // Nothing in production ever credited that pot: its only writers are a

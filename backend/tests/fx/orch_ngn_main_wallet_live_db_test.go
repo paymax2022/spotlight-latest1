@@ -1,7 +1,7 @@
 package fx_test
 
 // ---------------------------------------------------------------------------
-// LIVE-DB suite for the UNIFIED NGN wallet (ADR-PR<pr-number>).
+// LIVE-DB suite for the UNIFIED NGN wallet (ADR-051).
 //
 // Before this, FX kept a private NGN pot in orch_balances. That table has no
 // production writer other than a conversion's own destination leg, so every real
