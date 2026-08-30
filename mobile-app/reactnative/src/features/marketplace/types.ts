@@ -162,6 +162,10 @@ export interface Listing {
 /** Lightweight card shape returned by /search results and seller listings grids. */
 export interface ListingSummary {
   id: string;
+  /** mkt_listings.category_id. The API has always sent it (the client deep-camels
+   *  every response); it was simply never declared, so nothing could use it. The
+   *  card needs it to show what a listing IS while it has no photo. */
+  categoryId?: string;
   title: string;
   priceKobo: number;
   condition: ListingCondition;
