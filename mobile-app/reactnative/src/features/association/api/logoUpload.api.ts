@@ -45,10 +45,33 @@ export function contentTypeForFile(fileName: string): string {
   return CONTENT_TYPE_BY_EXT[ext] ?? `image/${ext || 'unknown'}`;
 }
 
+/**
+ * Thrown when the server has no R2 credentials, so it can never sign an upload.
+ *
+ * This is NOT a transient failure and must not be reported as one. The presign
+ * endpoint fails closed with 503 `logo uploads are not configured` when
+ * R2_ACCOUNT_ENDPOINT / R2_BUCKET / R2_ACCESS_KEY_ID / R2_SECRET_ACCESS_KEY are
+ * unset (see backend/internal/platform/r2 Configured()). Telling the founder to
+ * "try again" there sends them round a loop that cannot succeed — the only way
+ * forward is the logo URL field.
+ */
+export class LogoUploadsUnavailableError extends Error {
+  constructor() {
+    super('Logo uploads are not configured on this server.');
+    this.name = 'LogoUploadsUnavailableError';
+  }
+}
+
 /** Ask the backend to mint a presigned PUT URL for a logo. */
 export async function presignLogoUpload(fileName: string, contentType: string): Promise<LogoPresign> {
-  const res = await api.post(`${BASE}/uploads/logo/presign`, { fileName, contentType });
-  return (res.data?.data ?? res.data) as LogoPresign;
+  try {
+    const res = await api.post(`${BASE}/uploads/logo/presign`, { fileName, contentType });
+    return (res.data?.data ?? res.data) as LogoPresign;
+  } catch (err) {
+    const status = (err as { response?: { status?: number } })?.response?.status;
+    if (status === 503) throw new LogoUploadsUnavailableError();
+    throw err;
+  }
 }
 
 /**

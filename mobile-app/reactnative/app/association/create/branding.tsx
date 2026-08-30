@@ -15,7 +15,7 @@ import { pickDocument } from '@/features/association/utils/docPicker';
 import { GROUP_TYPE_OPTIONS } from '@/features/association/constants/orgWizard.constants';
 import { initials } from '@/features/association/utils/associationFormatters';
 import { logoError, isRemoteLogoUrl, isUploadedLogoKey } from '@/features/association/utils/orgDraftValidation';
-import { uploadLogo } from '@/features/association/api/logoUpload.api';
+import { uploadLogo, LogoUploadsUnavailableError } from '@/features/association/api/logoUpload.api';
 import TextInputField from '@/components/TextInputField';
 
 export default function WizardBranding() {
@@ -24,6 +24,10 @@ export default function WizardBranding() {
 
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
+  // Set when the server has no R2 credentials. Permanent for this deployment,
+  // so the upload affordance is retired rather than left inviting a retry that
+  // can never succeed.
+  const [uploadsUnavailable, setUploadsUnavailable] = useState(false);
 
   // The logo is REQUIRED, and one draft field backs both ways of supplying it:
   // a pasted URL and an uploaded image write the same `logoUri`. Whichever the
@@ -40,6 +44,7 @@ export default function WizardBranding() {
   // kept separately because the uploaded object is not publicly fetchable (the
   // backend signs it on read), so the key alone would render nothing here.
   const onLogo = async () => {
+    if (uploadsUnavailable) return;
     const f = await pickDocument();
     if (!f) return;
     setUploadError(null);
@@ -51,8 +56,15 @@ export default function WizardBranding() {
     try {
       const objectKey = await uploadLogo(f.uri, f.name);
       patch({ logoUri: objectKey });
-    } catch {
-      setUploadError("That image couldn't be uploaded. Try again, or paste a logo URL instead.");
+    } catch (err) {
+      // A server with no R2 credentials can never sign an upload, so "try again"
+      // would be a loop. Say what actually happened and point at the way out.
+      if (err instanceof LogoUploadsUnavailableError) {
+        setUploadsUnavailable(true);
+        setUploadError('Image upload is not available on this server yet — paste a logo URL below instead.');
+      } else {
+        setUploadError("That image couldn't be uploaded. Try again, or paste a logo URL instead.");
+      }
       patch({ logoPreviewUri: null });
     } finally {
       setUploading(false);
@@ -76,7 +88,9 @@ export default function WizardBranding() {
                 )}
             </View>
           </Pressable>
-          <Text style={styles.logoHint}>{uploading ? 'Uploading…' : 'Tap to upload a logo'}</Text>
+          <Text style={styles.logoHint}>
+            {uploading ? 'Uploading…' : uploadsUnavailable ? 'Use the logo URL below' : 'Tap to upload a logo'}
+          </Text>
         </View>
         {uploadError ? <Text style={styles.error}>{uploadError}</Text> : null}
 
@@ -84,15 +98,22 @@ export default function WizardBranding() {
           label="Logo URL"
           placeholder="https://…"
           value={urlValue}
-          onChangeText={(t) => patch({ logoUri: t.trim() ? t.trim() : null })}
+          // Clearing logoPreviewUri is what makes the two inputs mutually
+          // exclusive on screen. logoUri already holds only one value (last
+          // write wins), but the preview is a separate field: without this, a
+          // founder who uploaded an image and then pasted a URL saw the
+          // UPLOADED image in the badge while the URL was what would be saved.
+          onChangeText={(t) => patch({ logoUri: t.trim() ? t.trim() : null, logoPreviewUri: null })}
           autoCapitalize="none"
           keyboardType="url"
           error={touched ? logoIssue : undefined}
         />
         {uploaded ? (
           <Text style={styles.logoNote}>Image uploaded. It will appear for members and in the admin console.</Text>
+        ) : uploadsUnavailable ? (
+          <Text style={styles.logoNote}>Paste a link to your logo. Uploading an image is not available here.</Text>
         ) : (
-          <Text style={styles.logoNote}>Paste a link to your logo, or tap the badge above to upload an image.</Text>
+          <Text style={styles.logoNote}>Paste a link to your logo, or tap the badge above to upload an image — whichever you set last is the one that is used.</Text>
         )}
 
         <Text style={styles.label}>Group type</Text>
