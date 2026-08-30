@@ -174,14 +174,39 @@ type Transfer struct {
 
 // VirtualAccount is an inbound collection account (spec §5.5).
 type VirtualAccount struct {
-	ID         string                 `json:"id"`
-	CustomerID string                 `json:"-"`
-	Currency   string                 `json:"currency"`
-	Type       string                 `json:"type"` // virtual_account | iban
-	Provider   string                 `json:"provider"`
-	Status     string                 `json:"status"`
-	Details    map[string]interface{} `json:"details"`
-	CreatedAt  time.Time              `json:"createdAt"`
+	ID         string `json:"id"`
+	CustomerID string `json:"-"`
+	Currency   string `json:"currency"`
+	Type       string `json:"type"` // virtual_account | iban
+	Provider   string `json:"provider"`
+	Status     string `json:"status"`
+	// ProviderRef is the provider's own handle for this account (Maplerad: the
+	// virtual account number). It is the join key that matches an inbound
+	// collection webhook back to this customer and currency. It was previously
+	// returned by the adapter as CollectionResult.ProviderRef and then thrown
+	// away, leaving `details->>'account_number'` as the only way in — a jsonb key
+	// is not a join key.
+	ProviderRef string                 `json:"-"`
+	Details     map[string]interface{} `json:"details"`
+	CreatedAt   time.Time              `json:"createdAt"`
+}
+
+// CollectionCredit is an inbound deposit into a provisioned virtual account, as
+// normalized from a provider webhook. Amounts are integer MINOR units.
+type CollectionCredit struct {
+	ID               string
+	CustomerID       string
+	VirtualAccountID string
+	Currency         string
+	AmountMinor      int64
+	Provider         string
+	// ProviderEventID is the dedupe key: a redelivered webhook carrying the same
+	// id must credit exactly once.
+	ProviderEventID string
+	ProviderRef     string
+	SenderName      string
+	Reference       string
+	CreatedAt       time.Time
 }
 
 // --- Request bodies (normalized API) ---

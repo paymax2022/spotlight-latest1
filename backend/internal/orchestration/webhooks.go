@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -134,6 +135,13 @@ func (s *Service) HandleProviderEvent(ctx context.Context, providerName string, 
 	if err := json.Unmarshal(payload, &ev); err != nil {
 		return err
 	}
+	// A collection is an inbound DEPOSIT into a virtual account we provisioned —
+	// money arriving, not a status change on something we initiated — so it is
+	// matched and credited before the status branches below.
+	if isCollectionEvent(eventName(ev.Event, ev.Type)) {
+		return s.applyCollectionEvent(ctx, providerName, payload)
+	}
+
 	ref := ev.Data.Reference
 	if ref == "" {
 		return nil // nothing actionable
@@ -163,4 +171,125 @@ func (s *Service) emit(ctx context.Context, eventType string, data interface{}) 
 	if s.emitter != nil {
 		_ = s.emitter.Emit(ctx, eventType, data)
 	}
+}
+
+// ─── Inbound collections (deposits into a provisioned virtual account) ───────
+//
+// This is the last link of the Maplerad/Eversend collections rail. Everything
+// ahead of it already existed — live adapters, credential-gated wiring,
+// Service.CreateCollection provisioning the account, the mobile Receive screen,
+// and the signature-checked webhook endpoint — but HandleProviderEvent only
+// mapped transfer/conversion STATUS. A real deposit was verified, acknowledged
+// 200, and dropped, which is why a customer's FX balance never moved.
+
+// eventName picks the event label out of whichever envelope field carries it.
+func eventName(event, typ string) string {
+	if strings.TrimSpace(event) != "" {
+		return strings.ToLower(strings.TrimSpace(event))
+	}
+	return strings.ToLower(strings.TrimSpace(typ))
+}
+
+// isCollectionEvent recognises an inbound credit. The vocabulary is exactly the
+// set the Maplerad client already maps to Type="collection"
+// (internal/provider/maplerad/maplerad.go ParseWebhook) — kept in sync
+// deliberately rather than invented here.
+func isCollectionEvent(name string) bool {
+	switch name {
+	case "collection.successful", "collection.success", "virtual_account.credit", "collection":
+		return true
+	}
+	return false
+}
+
+// applyCollectionEvent matches a deposit to the account it was paid into and
+// credits the owner.
+//
+// Fail-closed in three places, because every one of them is a way to invent
+// money that nobody sent:
+//   - a non-positive amount is refused;
+//   - an unmatched reference credits NOTHING and is merely acknowledged, so a
+//     stray or spoofed reference cannot mint an orphan credit (QA WH-INT-003);
+//   - a payload currency that disagrees with the account's own currency is
+//     refused rather than resolved by guessing which one is right.
+//
+// The account row — not the payload — is the authority on WHO owns the deposit
+// and in WHICH currency. The payload is only trusted for the amount and the
+// dedupe id.
+func (s *Service) applyCollectionEvent(ctx context.Context, providerName string, payload []byte) error {
+	var ev struct {
+		ID   string `json:"id"`
+		Data struct {
+			ID            string `json:"id"`
+			Reference     string `json:"reference"`
+			AccountNumber string `json:"account_number"`
+			Currency      string `json:"currency"`
+			Amount        int64  `json:"amount"`
+			SenderName    string `json:"sender_name"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(payload, &ev); err != nil {
+		return err
+	}
+
+	if ev.Data.Amount <= 0 {
+		return NewError(ErrInvalidRequest, "invalid_amount", "Collection amount must be a positive minor-unit value.")
+	}
+
+	// Candidate handles, most specific first. All three are fields the provider
+	// adapter itself already reads or writes — no speculative key names.
+	var va *VirtualAccount
+	for _, cand := range []string{ev.Data.AccountNumber, ev.Data.Reference, ev.Data.ID} {
+		found, ok, err := s.store.VirtualAccountByProviderRef(ctx, providerName, cand)
+		if err != nil {
+			return err
+		}
+		if ok {
+			va = found
+			break
+		}
+	}
+	if va == nil {
+		// Acknowledged, never credited: we have no owner for this money.
+		log.Printf("[fx] collection webhook from %s matched no virtual account (ref=%q acct=%q) — acknowledged, not credited",
+			providerName, ev.Data.Reference, ev.Data.AccountNumber)
+		return nil
+	}
+
+	if c := strings.ToUpper(strings.TrimSpace(ev.Data.Currency)); c != "" && !strings.EqualFold(c, va.Currency) {
+		return NewError(ErrInvalidRequest, "currency_mismatch",
+			"Collection currency "+c+" does not match the "+strings.ToUpper(va.Currency)+" account it was paid into.")
+	}
+
+	eventID := ev.Data.ID
+	if eventID == "" {
+		eventID = ev.ID
+	}
+	if eventID == "" {
+		// Without a dedupe id a redelivery would credit twice. Refuse rather than
+		// synthesise a key that a retry could never reproduce.
+		return NewError(ErrInvalidRequest, "missing_event_id", "Collection webhook carries no event id to deduplicate on.")
+	}
+
+	credit := &CollectionCredit{
+		ID:               newID("col"),
+		CustomerID:       va.CustomerID,
+		VirtualAccountID: va.ID,
+		Currency:         strings.ToUpper(va.Currency),
+		AmountMinor:      ev.Data.Amount,
+		Provider:         providerName,
+		ProviderEventID:  eventID,
+		ProviderRef:      va.ProviderRef,
+		SenderName:       ev.Data.SenderName,
+		Reference:        ev.Data.Reference,
+		CreatedAt:        s.now(),
+	}
+	applied, err := s.store.ApplyCollection(ctx, credit)
+	if err != nil {
+		return err
+	}
+	if applied {
+		s.emit(ctx, "collection.received", credit)
+	}
+	return nil
 }
