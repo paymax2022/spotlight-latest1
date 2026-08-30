@@ -180,6 +180,13 @@ func (s *Service) Search(ctx context.Context, req any) (any, error) {
 	if err != nil {
 		return nil, err
 	}
+	// A nil slice marshals to `results: null`, and the client maps over it. That was
+	// survivable while the fallback answered every market and practically never came
+	// back empty; now that it is scoped, an empty market is an ordinary outcome, so
+	// the empty case has to be a well-formed empty list rather than null.
+	if listings == nil {
+		listings = []Listing{}
+	}
 	// Shape a search-response-like envelope the mobile client already understands
 	// (results + empty facets + no cursor). `degraded` flags the reduced mode.
 	return map[string]any{
@@ -195,7 +202,10 @@ func (s *Service) Search(ctx context.Context, req any) (any, error) {
 // provider-agnostic request map (values are the raw query-param strings).
 func parseSearchFallback(req any) SearchFallbackFilter {
 	m, _ := req.(map[string]any)
-	f := SearchFallbackFilter{}
+	// Seeded with the market scope so EVERY return path below carries one. The nil
+	// return used to leave MarketID empty, which is the unscoped-search bug again by
+	// the back door — a caller passing a non-map got every market's listings.
+	f := SearchFallbackFilter{MarketID: DefaultMarketID}
 	if m == nil {
 		return f
 	}
@@ -216,6 +226,14 @@ func parseSearchFallback(req any) SearchFallbackFilter {
 			return &n
 		}
 		return nil
+	}
+	// The handler has always put market_id in this map; nothing read it, so the
+	// Postgres fallback searched every market. Default rather than leave it empty:
+	// an unscoped search is the bug, so a caller that forgets the key gets the
+	// default market, never all of them.
+	f.MarketID = getStr("market_id")
+	if f.MarketID == "" {
+		f.MarketID = DefaultMarketID
 	}
 	f.Q = getStr("q")
 	f.CategoryID = getStr("category_id")

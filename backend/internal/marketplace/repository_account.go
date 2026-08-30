@@ -207,6 +207,13 @@ func (r *Repository) SearchListingsFallback(ctx context.Context, f SearchFallbac
 		args = append(args, val)
 		q += cond + "$" + itoa(len(args))
 	}
+	// Market scope. Every other filter here is optional and caller-supplied; this one
+	// is a boundary. Without it the fallback answered a market-scoped browse with
+	// every market's listings — GET /categories is scoped to one market, so the two
+	// halves of the same screen disagreed about which market the user was shopping in.
+	if f.MarketID != "" {
+		add(" AND market_id = ", f.MarketID)
+	}
 	if f.Q != "" {
 		add(" AND title ILIKE '%' || ", f.Q)
 		q += " || '%'"
@@ -242,6 +249,9 @@ func (r *Repository) SearchListingsFallback(ctx context.Context, f SearchFallbac
 
 // SearchFallbackFilter is the parsed filter set for the Postgres search fallback.
 type SearchFallbackFilter struct {
+	// MarketID scopes the search to one market. It is always set (parseSearchFallback
+	// falls back to DefaultMarketID) so the fallback can never answer across markets.
+	MarketID   string
 	Q          string
 	CategoryID string
 	Condition  string
