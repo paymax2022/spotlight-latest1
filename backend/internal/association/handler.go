@@ -261,7 +261,9 @@ func (h *Handler) ListMeetings(c *gin.Context) {
 func (h *Handler) ListTasks(c *gin.Context) {
 	list, err := h.svc.GetTasks(c.Request.Context(), c.GetString("user_id"), c.Query("scope"))
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		// statusFor, not a blanket 500: scope=org is admin-only, and a member
+		// asking for it is forbidden rather than a server fault.
+		c.JSON(statusFor(err), gin.H{"error": err.Error()})
 		return
 	}
 	c.JSON(http.StatusOK, list)

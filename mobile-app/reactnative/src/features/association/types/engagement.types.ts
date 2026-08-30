@@ -146,6 +146,12 @@ export interface TaskSummary {
   dueDate:   string | null;   // ISO
   assigneeName: string;
   committee: string | null;
+  /**
+   * Derived server-side from dueDate — NOT read from `status`. The backend has
+   * an OVERDUE status value that nothing writes, so a late task still reports
+   * ASSIGNED; this is the field to trust.
+   */
+  overdue?: boolean;
 }
 
 export interface TaskComment { id: string; author: string; body: string; createdAt: string }
@@ -159,7 +165,12 @@ export interface Task extends TaskSummary {
   meetingTitle?: string | null;
 }
 
-export type TaskScope = 'mine' | 'assigned' | 'overdue' | 'completed';
+/**
+ * Which tasks to list. Everything but 'org' is filtered to the caller's own
+ * assignments; 'org' is the admin-only tracking view over the whole
+ * organisation, including tasks assigned to nobody and work already closed.
+ */
+export type TaskScope = 'mine' | 'assigned' | 'overdue' | 'completed' | 'org';
 
 // ─── Documents (P) ────────────────────────────────────────────────────────────
 

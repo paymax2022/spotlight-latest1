@@ -1119,20 +1119,51 @@ func (s *Service) GetMeetings(ctx context.Context, userID string) ([]MeetingSumm
 // ── Tasks ─────────────────────────────────────────────────────────────────────
 
 // GetTasks returns tasks assigned to or created by the caller.
+// GetTasks returns the caller's tasks, or — for scope "org" — every task in
+// their organisation.
+//
+// The "org" scope is what makes tracking possible at all: every other scope is
+// filtered to tasks ASSIGNED to the caller, so nobody could see whether the
+// organisation's work was actually getting done. It is admin-only, because a
+// list of who has been given what and who is late is a management view, not a
+// member one.
+//
+// `overdue` is DERIVED, never read from the status column. assoc_tasks has an
+// OVERDUE status value but nothing ever writes it, so a task past its due date
+// still reads ASSIGNED — trusting the column would report every late task as on
+// track. A task with no due date is never overdue, and a completed one stops
+// being overdue the moment it is done rather than staying flagged forever.
 func (s *Service) GetTasks(ctx context.Context, userID, scope string) ([]TaskSummary, error) {
 	q := `
 		SELECT t.id, t.title, t.status, t.priority, t.due_date::text,
-		       COALESCE(mp.full_name, 'Unassigned'), c.name
+		       COALESCE(mp.full_name, 'Unassigned'), c.name,
+		       (t.due_date IS NOT NULL AND t.due_date < now()
+		        AND t.status NOT IN ('COMPLETED','CANCELLED','REJECTED')) AS overdue
 		FROM assoc_tasks t
 		LEFT JOIN assoc_memberships ma ON ma.id=t.assignee_id
 		LEFT JOIN assoc_member_profiles mp ON mp.membership_id=ma.id
 		LEFT JOIN assoc_committees c ON c.id=t.committee_id
-		WHERE t.assignee_id IN (SELECT id FROM assoc_memberships WHERE user_id=$1)`
+		WHERE `
+	if scope == "org" {
+		_, orgID, err := s.primaryMembership(ctx, userID)
+		if err != nil {
+			return nil, err
+		}
+		if err := s.requireOrgAdmin(ctx, userID, orgID); err != nil {
+			return nil, err
+		}
+		q += `t.organisation_id = (SELECT organisation_id FROM assoc_memberships WHERE user_id=$1 AND status='ACTIVE' LIMIT 1)`
+	} else {
+		q += `t.assignee_id IN (SELECT id FROM assoc_memberships WHERE user_id=$1)`
+	}
 	switch scope {
 	case "overdue":
 		q += ` AND t.due_date < now() AND t.status NOT IN ('COMPLETED')`
 	case "completed":
 		q += ` AND t.status='COMPLETED'`
+	case "org":
+		// No status filter: the point of the tracking view is seeing everything,
+		// including what is already closed.
 	default: // mine
 		q += ` AND t.status NOT IN ('COMPLETED')`
 	}
@@ -1146,7 +1177,7 @@ func (s *Service) GetTasks(ctx context.Context, userID, scope string) ([]TaskSum
 	for rows.Next() {
 		var t TaskSummary
 		if err := rows.Scan(&t.ID, &t.Title, &t.Status, &t.Priority, &t.DueDate,
-			&t.AssigneeName, &t.Committee); err != nil {
+			&t.AssigneeName, &t.Committee, &t.Overdue); err != nil {
 			continue
 		}
 		out = append(out, t)

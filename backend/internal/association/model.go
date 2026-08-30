@@ -344,6 +344,10 @@ type TaskSummary struct {
 	DueDate      *string `json:"dueDate"`
 	AssigneeName string  `json:"assigneeName"`
 	Committee    *string `json:"committee"`
+	// Overdue is derived from due_date on read, not read from `status`. The
+	// OVERDUE status value exists in the schema but nothing writes it, so a late
+	// task still reads ASSIGNED.
+	Overdue bool `json:"overdue"`
 }
 
 // ── Documents ─────────────────────────────────────────────────────────────────
