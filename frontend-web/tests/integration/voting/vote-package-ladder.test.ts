@@ -93,3 +93,72 @@ describe.skipIf(!live)('default vote package ladder', () => {
     expect(rows.some((r) => r.is_active)).toBe(false);
   });
 });
+
+/**
+ * No OPEN contest is a dead end — guards migration 20270128000000.
+ *
+ * The rule deliberately does NOT touch drafts: a draft is allowed to be
+ * half-configured, and silently rewriting an admin's explicit 0 mid-setup would
+ * be a nasty surprise. What must never happen is a PUBLISHED contest nobody can
+ * vote in.
+ */
+describe.skipIf(!live)('open contests are always votable', () => {
+  const openIds: string[] = [];
+
+  afterAll(async () => {
+    for (const id of openIds) {
+      await db().from('connect_contests').delete().eq('id', id);
+    }
+    const { data } = await db().from('connect_contests').select('id').like('slug', 'zz-open-spec%');
+    expect(data ?? [], 'fixture contests must not leak').toHaveLength(0);
+  });
+
+  async function make(status: string, paidVoteKobo: number, freeVotes: number): Promise<Record<string, number | string>> {
+    const { data, error } = await db()
+      .from('connect_contests')
+      .insert({
+        title: 'ZZ Open Spec',
+        slug: `zz-open-spec-${openIds.length}`,
+        status,
+        paid_vote_kobo: paidVoteKobo,
+        free_votes_per_user: freeVotes,
+      })
+      .select('id, status, paid_vote_kobo, free_votes_per_user')
+      .single();
+    expect(error, error?.message).toBeNull();
+    const row = data as Record<string, number | string>;
+    openIds.push(String(row.id));
+    return row;
+  }
+
+  it('leaves an unconfigured draft alone', async () => {
+    const row = await make('draft', 0, 0);
+    expect(row.free_votes_per_user).toBe(0);
+  });
+
+  it('grants the house default when a contest is created open', async () => {
+    const row = await make('open', 0, 0);
+    expect(row.free_votes_per_user).toBe(1);
+  });
+
+  it('grants it at the moment a draft is opened', async () => {
+    const row = await make('draft', 0, 0);
+    const { data } = await db()
+      .from('connect_contests')
+      .update({ status: 'open' })
+      .eq('id', row.id)
+      .select('free_votes_per_user')
+      .single();
+    expect((data as { free_votes_per_user: number }).free_votes_per_user).toBe(1);
+  });
+
+  it('leaves a priced contest on 0 free votes — the price is the route', async () => {
+    const row = await make('open', 10_000, 0);
+    expect(row.free_votes_per_user).toBe(0);
+  });
+
+  it('never overwrites an explicit allowance', async () => {
+    const row = await make('open', 0, 5);
+    expect(row.free_votes_per_user).toBe(5);
+  });
+});

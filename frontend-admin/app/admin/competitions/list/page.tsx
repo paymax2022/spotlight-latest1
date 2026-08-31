@@ -153,9 +153,19 @@ export default function CompetitionsListPage() {
                   <td style={tdCell}>
                     {(c.free_votes_per_user > 0 || (activePackages[c.id] ?? 0) > 0) ? (
                       <Badge text="Votable" color={colors.success} />
-                    ) : (
-                      <Link href={`/admin/competitions/vote-packages`} title="No free votes and no active package — nobody can vote. Click to fix.">
+                    ) : c.status === 'open' ? (
+                      // Migration 20270128000000 grants an open contest the house
+                      // default free allowance, so this should be unreachable. Kept
+                      // as a visible alarm rather than removed: if it ever shows, a
+                      // LIVE contest is taking no votes and that must not be quiet.
+                      <Link href="/admin/competitions/vote-packages" title="Live and nobody can vote — no free votes and no active package. Click to fix.">
                         <Badge text="Not votable" color={colors.danger} />
+                      </Link>
+                    ) : (
+                      // A draft is allowed to be half-configured; that is what draft
+                      // means. Worth flagging before it is published, not alarming.
+                      <Link href="/admin/competitions/vote-packages" title="Not set up for voting yet. It will get the default free vote when opened, or add packages now.">
+                        <Badge text="Not configured" color={colors.muted} />
                       </Link>
                     )}
                   </td>
