@@ -44,7 +44,7 @@ export default function CategoryTile({
       <View style={[styles.icon, { backgroundColor: tone.bg }]}>
         <Icon size={22} color={tone.fg} strokeWidth={2} />
       </View>
-      <Text style={styles.label} numberOfLines={1}>
+      <Text style={styles.label} numberOfLines={2}>
         {meta.label}
       </Text>
       <Text style={styles.blurb} numberOfLines={2}>

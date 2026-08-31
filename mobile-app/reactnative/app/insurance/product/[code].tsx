@@ -207,7 +207,11 @@ export default function ProductDetail() {
       {selected.purchasable ? (
         <View style={styles.footer}>
           <View style={styles.footerPrice}>
-            <Text style={styles.footerLabel}>{price.prefix || 'Premium'}</Text>
+            {/* PriceLabel already prints "from" for a rate-priced plan, so the
+                label above it must not repeat the word. */}
+            <Text style={styles.footerLabel}>
+              {price.kind === 'percentage' ? 'Your rate' : 'Premium'}
+            </Text>
             <PriceLabel product={selected} />
           </View>
           <View style={styles.grow}>

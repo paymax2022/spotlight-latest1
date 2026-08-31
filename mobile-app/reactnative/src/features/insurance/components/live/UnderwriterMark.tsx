@@ -77,7 +77,9 @@ export function UnderwriterRow({
   return (
     <View style={[styles.row, compact && styles.rowCompact]}>
       <UnderwriterMark underwriter={underwriter} logoUrl={logoUrl} size={compact ? 22 : 28} />
-      <Text style={compact ? styles.textCompact : styles.text} numberOfLines={1}>
+      {/* Two lines, not one: a truncated "Sovereign Trust Insuranc…" hides the
+          very fact this row exists to disclose. */}
+      <Text style={compact ? styles.textCompact : styles.text} numberOfLines={compact ? 1 : 2}>
         {compact ? underwriter : `Underwritten by ${underwriter}`}
         {compact ? null : <Text style={styles.via}>{`  ·  via ${aggregator}`}</Text>}
       </Text>
