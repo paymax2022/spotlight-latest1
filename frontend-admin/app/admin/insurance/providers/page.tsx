@@ -4,12 +4,13 @@ import Link from 'next/link';
 import { useCallback, useEffect, useState } from 'react';
 import {
   getProviders,
+  getCatalog,
   resetProviderFloat,
   floatSeverity,
-  FAMILY_PROBES,
-  FAMILY_PROBE_DATE,
+  sellabilityOf,
+  blockedReason,
 } from '@/services/insuranceAdminService';
-import type { ProviderStatus, ProvidersReport } from '@/types/insuranceAdmin';
+import type { InsuranceProduct, ProviderStatus, ProvidersReport } from '@/types/insuranceAdmin';
 import {
   PageHeader,
   InsuranceTabs,
@@ -56,8 +57,9 @@ const codeStyle: React.CSSProperties = {
  *
  * Three independent things can each stop a sale, and the page keeps them
  * separate because they have different fixes:
- *   1. the prefunded float breaker  → a treasury action at the provider,
- *   2. the purchase family's API scope → an account change with MyCover,
+ *   1. the prefunded float breaker → a treasury action at the provider,
+ *   2. per-product purchasability → a provider-side misconfiguration to raise
+ *      with MyCover support,
  *   3. webhook signature verification → a signing secret we do not have.
  *
  * The webhook block is deliberately pessimistic. A green "verified" tick next to
@@ -109,7 +111,7 @@ export default function InsuranceProvidersPage() {
     <div style={{ padding: '0.5rem 0.5rem 2rem' }}>
       <PageHeader
         title="Provider rails"
-        subtitle="Whether we can transact: the prefunded float breaker, credential and environment, which purchase families answer us, and whether inbound webhooks can be verified."
+        subtitle="Whether we can transact: the prefunded float breaker, credential and environment, which products the provider can actually sell, and whether inbound webhooks can be verified."
         action={
           <div style={{ display: 'flex', gap: '0.5rem' }}>
             <Link href="/admin/insurance/providers/webhooks" style={{ ...btn(), textDecoration: 'none' }}>Webhook deliveries</Link>
@@ -358,69 +360,126 @@ function ProviderCard({ p, onChanged }: { p: ProviderStatus; onChanged: () => vo
 }
 
 /**
- * Which purchase families we can actually transact against.
+ * Which products can actually be bought.
  *
- * MyCover exposes one purchase endpoint per product FAMILY, and two of them
- * refuse our credential outright. Those products are unsellable even after the
- * float is funded — a funded wallet and a scoped-out key are separate blockers,
- * and an operator who fixes one will still be stuck on the other.
+ * Read LIVE from the catalog's provider-capability columns, not from a local
+ * table. An earlier version of this card listed v1 "purchase family" paths and
+ * their 403s; MyCover v2 exposes one shared buy endpoint plus a per-product
+ * schema, so that model no longer describes the blocker. A console repeating a
+ * superseded constraint is as misleading as one showing invented numbers, so
+ * the table went rather than being kept as a fallback.
  *
- * This is a record of a live probe with its date, not a live reading, and it is
- * labelled that way. It is deliberately NOT joined to the catalog by inference:
- * a family path cannot be derived from a product's name or route, so the mapping
- * has to come from the buy path the backend stores per product.
+ * `purchasable` is the PROVIDER's capability and is deliberately distinct from
+ * `active`, our own decision to offer something. The dangerous combination —
+ * active but not purchasable — is called out on its own.
  */
 function SellabilityCard() {
-  const blocked = FAMILY_PROBES.filter((f) => !f.sellable);
+  const [products, setProducts] = useState<InsuranceProduct[] | null>(null);
+  const [failure, setFailure] = useState<EndpointFailure | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setFailure(null);
+    try {
+      setProducts((await getCatalog()).products);
+    } catch (e) {
+      setProducts(null);
+      setFailure(toFailure(e));
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  const list = products ?? [];
+  const blocked = list.filter((p) => sellabilityOf(p) === 'blocked');
+  const sellable = list.filter((p) => sellabilityOf(p) === 'sellable');
+  const unknown = list.filter((p) => sellabilityOf(p) === 'unknown');
+  // Active but not purchasable: we are offering something the provider cannot
+  // actually sell. That is the pairing that reaches a customer as a dead end.
+  const offeredButBroken = list.filter((p) => p.active && sellabilityOf(p) !== 'sellable');
+
   return (
-    <Card title="What we can actually sell" right={<span style={{ fontSize: '0.75rem', color: colors.muted }}>probed {FAMILY_PROBE_DATE}</span>}>
-      {blocked.length > 0 ? (
-        <WarningNote title={`${blocked.length} purchase families are scope-blocked for our API key`}>
-          {blocked.map((f) => f.path).join(' and ')} return <strong>403 Forbidden</strong>. Every product in
-          those families is unsellable regardless of the float balance — this needs a scope change on the
-          MyCover account, not a top-up. Both are Life products, so the Life category is effectively closed
-          to us today.
-        </WarningNote>
-      ) : null}
+    <Card
+      title="What we can actually sell"
+      right={<button onClick={load} style={btn()}>Refresh</button>}
+    >
+      {failure ? (
+        <EndpointErrorCard failure={failure} onRetry={load} />
+      ) : loading ? (
+        <p style={{ color: colors.muted, fontSize: '0.9rem' }}>Loading from the live API…</p>
+      ) : (
+        <>
+          {offeredButBroken.length > 0 ? (
+            <WarningNote title={`${offeredButBroken.length} product${offeredButBroken.length === 1 ? ' is' : 's are'} offered but not purchasable`}>
+              These are switched on in our catalog while the provider cannot sell them. A customer who picks
+              one reaches a dead end. Either deactivate them here, or raise the provider-side
+              misconfiguration with MyCover support.
+            </WarningNote>
+          ) : null}
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(190px, 1fr))', gap: '0.75rem', marginBottom: '1rem' }}>
-        <MetricTile label="Families reachable" value={String(FAMILY_PROBES.length - blocked.length)} accent={colors.success} />
-        <MetricTile label="Scope-blocked" value={String(blocked.length)} accent={blocked.length ? colors.danger : undefined} sub="403 for our key" />
-      </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: '0.75rem', marginBottom: '1rem' }}>
+            <MetricTile label="Purchasable" value={sellable.length.toLocaleString('en-NG')} sub="Provider can sell these" accent={colors.success} />
+            <MetricTile label="Blocked at the provider" value={blocked.length.toLocaleString('en-NG')} sub="Misconfigured on their side" accent={blocked.length ? colors.danger : undefined} />
+            <MetricTile label="Not yet verified" value={unknown.length.toLocaleString('en-NG')} sub="Never synced — no verdict either way" accent={unknown.length ? colors.warning : undefined} />
+            <MetricTile label="Offered but broken" value={offeredButBroken.length.toLocaleString('en-NG')} sub="Active here, unsellable there" accent={offeredButBroken.length ? colors.danger : undefined} />
+          </div>
 
-      <div style={{ overflowX: 'auto' }}>
-        <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-          <thead>
-            <tr>
-              <th style={th()}>Purchase family</th>
-              <th style={th()}>Category</th>
-              <th style={th()}>Result</th>
-              <th style={th()}>Detail</th>
-            </tr>
-          </thead>
-          <tbody>
-            {FAMILY_PROBES.map((f) => (
-              <tr key={f.path}>
-                <td style={td()}><code style={{ fontSize: '0.76rem' }}>/products/{f.path}</code></td>
-                <td style={td()}>{f.category}</td>
-                <td style={td()}>
-                  <Badge status={f.sellable ? 'active' : 'rejected'} label={f.sellable ? 'reachable' : 'scope-blocked'} />
-                </td>
-                <td style={{ ...td(), fontSize: '0.78rem', color: colors.muted }}>{f.note}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+          {blocked.length === 0 && unknown.length === 0 ? (
+            <p style={{ color: colors.success, fontSize: '0.85rem', margin: 0 }}>
+              Every product in the catalog is reported purchasable by the provider.
+            </p>
+          ) : (
+            <div style={{ overflowX: 'auto' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                <thead>
+                  <tr>
+                    <th style={th()}>Product</th>
+                    <th style={th()}>Underwriter</th>
+                    <th style={th()}>Offered by us</th>
+                    <th style={th()}>Provider status</th>
+                    <th style={th()}>Why</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {[...blocked, ...unknown].map((p) => (
+                    <tr key={p.code}>
+                      <td style={td()}>
+                        <Link href={`/admin/insurance/catalog/${encodeURIComponent(p.code)}`} style={{ color: colors.primary, fontWeight: 600, textDecoration: 'none' }}>
+                          {p.name || p.code}
+                        </Link>
+                        <div style={{ fontSize: '0.68rem', color: colors.muted }}><code>{p.code}</code></div>
+                      </td>
+                      <td style={td()}>{p.underwriter || <NotReported />}</td>
+                      <td style={td()}>
+                        <Badge status={p.active ? 'active' : 'inactive'} label={p.active ? 'Active' : 'Inactive'} />
+                      </td>
+                      <td style={td()}>
+                        <Badge
+                          status={sellabilityOf(p) === 'blocked' ? 'rejected' : 'pending'}
+                          label={p.provider_config_status || 'unknown'}
+                        />
+                      </td>
+                      <td style={{ ...td(), fontSize: '0.78rem', color: colors.muted, maxWidth: 360 }}>{blockedReason(p)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
 
-      <p style={{ fontSize: '0.78rem', color: colors.muted, marginBottom: 0, marginTop: '0.85rem', lineHeight: 1.55 }}>
-        These are the results of a direct probe on {FAMILY_PROBE_DATE}, not a live reading. Per-product
-        sellability on the catalog screen prefers the backend&rsquo;s own <code style={{ fontSize: '0.72rem' }}>buy_path_verified</code>{' '}
-        flag over this table, and falls back to it only when the product has a stored family path. Products
-        with no stored path show as unknown, because a family cannot be derived from a product&rsquo;s name —{' '}
-        <code style={{ fontSize: '0.72rem' }}>/products/bastion/buy-medisure</code> is live although no catalog
-        product is called &ldquo;MediSure&rdquo;.
-      </p>
+          <p style={{ fontSize: '0.78rem', color: colors.muted, marginBottom: 0, marginTop: '0.85rem', lineHeight: 1.55 }}>
+            <strong>Purchasable</strong> is the provider&rsquo;s capability, recorded per product by the catalog
+            sync; <strong>active</strong> is our own decision to offer it. They are tracked separately on
+            purpose, and a sync may overwrite the first but never the second. Products that have never been
+            synced carry no verdict and are counted as unverified rather than as broken.
+          </p>
+        </>
+      )}
     </Card>
   );
 }

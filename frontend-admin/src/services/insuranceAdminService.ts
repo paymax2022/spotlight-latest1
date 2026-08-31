@@ -372,6 +372,9 @@ function normaliseProduct(raw: unknown): InsuranceProduct {
     provider_product_code: str(pick(o, 'provider_product_code', 'route_name')),
     provider_buy_path: str(pick(o, 'provider_buy_path', 'buy_path')),
     buy_path_verified: bool(pick(o, 'buy_path_verified')),
+    purchasable: bool(pick(o, 'purchasable')),
+    provider_config_status: str(pick(o, 'provider_config_status')),
+    provider_config_error: str(pick(o, 'provider_config_error')),
     base_price_kobo: isPct ? null : num(pick(o, 'base_price_kobo', 'indicative_premium_kobo', 'premium_kobo')),
     is_percentage: isPct,
     rate_bps: isPct ? num(pick(o, 'rate_bps')) : null,
@@ -737,58 +740,6 @@ export function floatSeverity(f: ProviderFloat | null | undefined): FloatSeverit
   return 'unknown';
 }
 
-/**
- * Purchase families probed live against MyCover staging on 2026-08-31.
- *
- * MyCover exposes one purchase endpoint per product FAMILY, not per product, and
- * the family path is not derivable from a product's name or route_name. Two of
- * them return 403 for our credential, which means those products cannot be sold
- * even once the float is funded — a scope problem, not a money problem.
- *
- * This table is a record of a real probe, with its date, not a guess. It is here
- * rather than in a component so that a re-probe updates one place. The moment the
- * backend reports family status per product, prefer that over this constant.
- */
-export const FAMILY_PROBE_DATE = '2026-08-31';
-export const FAMILY_PROBES: { path: string; category: string; sellable: boolean; note: string }[] = [
-  { path: 'bastion/buy-medisure', category: 'Health', sellable: true, note: 'Schema validated' },
-  { path: 'mcg/buy-gadget-cover', category: 'Gadget', sellable: true, note: 'Schema validated' },
-  { path: 'sti/buy-gadget-cover', category: 'Gadget', sellable: true, note: 'Path exists' },
-  { path: 'sti/buy-comprehensive', category: 'Auto', sellable: true, note: 'Path exists' },
-  { path: 'sti/buy-third-party-bike', category: 'Auto', sellable: true, note: 'Schema validated' },
-  { path: 'sti/buy-goods-in-transit', category: 'Package', sellable: true, note: 'Path exists' },
-  { path: 'sti/buy-marine-cover', category: 'Package', sellable: true, note: 'Schema validated' },
-  { path: 'aiico/buy-third-party-auto', category: 'Auto', sellable: true, note: 'Path exists' },
-  { path: 'aiico/buy-comprehensive-auto', category: 'Auto', sellable: true, note: 'Path exists' },
-  { path: 'aiico/buy-home-content-cover', category: 'Content', sellable: true, note: 'Path exists' },
-  { path: 'aiico/buy-office-content-cover', category: 'Content', sellable: true, note: 'Schema validated' },
-  { path: 'sanlam/buy-personal-accident', category: 'Life', sellable: false, note: '403 — our API key lacks the scope' },
-  { path: 'tangerine/buy-life-cover', category: 'Life', sellable: false, note: '403 — our API key lacks the scope' },
-];
-
-export type Sellability = 'sellable' | 'scope_blocked' | 'unknown';
-
-/**
- * Whether a product can actually be bound.
- *
- * Resolves ONLY against the family path the backend stored for the product. It
- * deliberately does not infer a family from the product name, underwriter or
- * route_name: MyCover's family names are their own namespace
- * (`bastion/buy-medisure` is live though no product is called "MediSure"), so any
- * such inference would be a guess presented as a fact. No stored path means
- * 'unknown', and the UI says so.
- */
-export function sellabilityOf(p: InsuranceProduct): Sellability {
-  const path = (p.provider_buy_path ?? '').replace(/^\/?products\//, '').replace(/^\/+/, '');
-  // The backend's own probe result wins over the local table: it is current,
-  // per-product, and does not depend on a family name matching.
-  if (p.buy_path_verified === true) return 'sellable';
-  if (!path) return 'unknown';
-  const hit = FAMILY_PROBES.find((f) => f.path === path);
-  if (!hit) return 'unknown';
-  return hit.sellable ? 'sellable' : 'scope_blocked';
-}
-
 function normaliseSyncRun(raw: unknown): CatalogSyncRun | null {
   if (!raw || typeof raw !== 'object') return null;
   const o = raw as Record<string, unknown>;
@@ -808,14 +759,43 @@ function normaliseSyncRun(raw: unknown): CatalogSyncRun | null {
 }
 
 /**
- * GET /providers.
+ * Why a product cannot be bought, when it cannot.
  *
- * The backend returns adapter health, float breakers and the last catalog sync
- * in ONE object with a top-level `binding_paused`. That top-level flag is the
- * launch gate and is passed through untouched — the console must not recompute
- * it from the per-provider rows, because a disagreement between the two would
- * be resolved silently in favour of whichever the UI happened to prefer.
+ * This replaces an earlier local table of v1 "purchase family" paths. That
+ * model is obsolete: MyCover v2 exposes ONE buy endpoint for all products plus
+ * a publicly readable per-product schema, and the v1 family endpoints are a dead
+ * end MyCover does not document. Keeping the old table would have had this
+ * console reporting a scope problem that is no longer the actual blocker —
+ * stale truth is still untruth, so it is gone rather than left as a fallback.
+ *
+ * Purchasability now comes from the provider itself, recorded per product by the
+ * catalog sync, and nothing here infers it.
  */
+export type Sellability = 'sellable' | 'blocked' | 'unknown';
+
+export function sellabilityOf(p: InsuranceProduct): Sellability {
+  if (p.purchasable === true) return 'sellable';
+  if (p.purchasable === false) {
+    // 'unknown' status with purchasable=false is the column default on a product
+    // that has never been synced — absence of a verdict, not a verdict of broken.
+    return !p.provider_config_status || p.provider_config_status === 'unknown' ? 'unknown' : 'blocked';
+  }
+  return 'unknown';
+}
+
+/** Plain-English reason a product is not purchasable, from the provider's own status. */
+export function blockedReason(p: InsuranceProduct): string {
+  if (p.provider_config_error) return p.provider_config_error;
+  switch (p.provider_config_status) {
+    case 'broken':
+      return 'MyCover reports this product as misconfigured on their side — it cannot be priced or bought.';
+    case 'schema_unavailable':
+      return 'MyCover returns no field schema for this product, so no purchase form can be rendered for it.';
+    default:
+      return 'The provider did not report this product as purchasable.';
+  }
+}
+
 export async function getProviders(): Promise<ProvidersReport> {
   const raw = await request<unknown>('GET', '/providers');
   const o = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;

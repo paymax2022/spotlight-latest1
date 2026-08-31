@@ -10,6 +10,7 @@ import {
   productPrice,
   primaryBand,
   sellabilityOf,
+  blockedReason,
 } from '@/services/insuranceAdminService';
 import type { CatalogResponse, CatalogSyncRun, InsuranceProduct } from '@/types/insuranceAdmin';
 import {
@@ -385,29 +386,35 @@ function ProductRow({ product: p }: { product: InsuranceProduct }) {
 }
 
 /**
- * Whether this product can actually be bound.
+ * Whether this product can actually be bought.
  *
- * Two independent blockers exist and they are not interchangeable: the prefunded
- * MyCover float (a treasury action) and the purchase family's API scope (an
- * account action). This column covers the second. It resolves strictly against
- * the buy path the backend stored — a family cannot be inferred from a product's
- * name or route, so an unstored path shows as unknown rather than as a guess.
+ * `purchasable` is the PROVIDER's capability, recorded per product by the
+ * catalog sync; the Status column beside it is OUR decision to offer it. Seven
+ * products are misconfigured on MyCover's side, and a product that is active
+ * here but blocked there is a dead end for whoever picks it — so the two are
+ * shown side by side rather than merged into one "available" flag.
+ *
+ * A product that has never been synced carries no verdict and shows as
+ * unverified, not as broken.
  */
 function Sellable({ product }: { product: InsuranceProduct }) {
   const s = sellabilityOf(product);
-  if (s === 'scope_blocked') {
+  if (s === 'blocked') {
     return (
-      <span style={{ fontSize: '0.7rem', fontWeight: 700, color: colors.danger, background: '#fef2f2', borderRadius: 9999, padding: '0.1rem 0.45rem' }} title="This product's purchase family returns 403 for our API key — it cannot be sold regardless of float balance.">
-        scope-blocked
+      <span
+        style={{ fontSize: '0.7rem', fontWeight: 700, color: colors.danger, background: '#fef2f2', borderRadius: 9999, padding: '0.1rem 0.45rem' }}
+        title={blockedReason(product)}
+      >
+        blocked
       </span>
     );
   }
   if (s === 'sellable') {
-    return <span style={{ fontSize: '0.7rem', fontWeight: 600, color: colors.success }} title="Purchase family verified reachable. Still requires a funded float.">family reachable</span>;
+    return <span style={{ fontSize: '0.7rem', fontWeight: 600, color: colors.success }} title="The provider reports this product as purchasable. A funded float is still required.">purchasable</span>;
   }
   return (
-    <span style={{ fontSize: '0.7rem', color: colors.muted, fontStyle: 'italic' }} title="No purchase family path is stored for this product, so its sellability is genuinely unknown. It is not being assumed either way.">
-      unknown
+    <span style={{ fontSize: '0.7rem', color: colors.muted, fontStyle: 'italic' }} title="Never synced from the provider, so purchasability is genuinely unknown. It is not being assumed either way.">
+      unverified
     </span>
   );
 }

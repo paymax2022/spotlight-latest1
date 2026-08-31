@@ -74,13 +74,26 @@ export interface InsuranceProduct {
   aggregator: Aggregator;
   /** The aggregator's own identifier for this product. */
   provider_product_code?: string | null;
-  /** The bespoke purchase route, e.g. `bastion/buy-medisure`. Not derivable. */
+  /** Purchase route, where one is stored. v2 uses a single shared buy endpoint. */
   provider_buy_path?: string | null;
-  /**
-   * Whether that route was actually probed and answered. The authoritative
-   * signal for "can this be sold", and always preferred over any local table.
-   */
   buy_path_verified?: boolean | null;
+
+  /**
+   * PROVIDER CAPABILITY — deliberately separate from `active`.
+   *
+   * `active` is our decision ("do we offer this?"). `purchasable` is MyCover's
+   * ("can this be bought at all?"). Seven products are broken on the provider's
+   * side: four have no purchase config and return an empty field schema, and
+   * three have no sharing formula, meaning Paymax would earn nothing even if
+   * pricing were fixed. A product can be active and unpurchasable, which is the
+   * combination worth showing loudly.
+   *
+   * status: ok | broken | schema_unavailable | unknown
+   */
+  purchasable?: boolean | null;
+  provider_config_status?: string | null;
+  /** The provider's own verbatim explanation. Never a credential, never PII. */
+  provider_config_error?: string | null;
 
   /** Flat premium in KOBO. Null when `is_percentage`. */
   base_price_kobo?: number | null;
