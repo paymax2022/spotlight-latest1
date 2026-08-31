@@ -36,6 +36,7 @@ import type {
   Paged,
   PolicyDetail,
   PolicySummary,
+  ProviderFloat,
   ProviderStatus,
   ReconciliationReport,
   SharingFormula,
@@ -686,6 +687,111 @@ export async function getCommission(opts?: {
 
 // ── Providers ────────────────────────────────────────────────────────────────
 
+function normaliseFloat(raw: unknown): ProviderFloat | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const o = raw as Record<string, unknown>;
+  return {
+    balance_kobo: num(pick(o, 'balance_kobo', 'available_kobo')),
+    currency: str(pick(o, 'currency')) ?? 'NGN',
+    burn_per_day_kobo: num(pick(o, 'burn_per_day_kobo', 'daily_burn_kobo')),
+    burn_window_days: num(pick(o, 'burn_window_days', 'window_days')),
+    binds_in_window: num(pick(o, 'binds_in_window')),
+    avg_bind_kobo: num(pick(o, 'avg_bind_kobo', 'average_premium_kobo')),
+    policies_remaining: num(pick(o, 'policies_remaining')),
+    days_remaining: num(pick(o, 'days_remaining')),
+    low_threshold_kobo: num(pick(o, 'low_threshold_kobo')),
+    last_funded_at: str(pick(o, 'last_funded_at')),
+    as_of: str(pick(o, 'as_of', 'updated_at')),
+    unavailable_reason: str(pick(o, 'unavailable_reason', 'reason')),
+  };
+}
+
+/**
+ * How many more policies the float can cover, integer arithmetic on kobo.
+ *
+ * Prefers the backend's own figure. Falls back to balance ÷ average bind cost
+ * ONLY when the backend supplied both — it never guesses an average premium, and
+ * it never treats an unreadable balance as zero, because "we cannot see the
+ * float" and "the float is empty" demand different responses from an operator.
+ */
+export function policiesRemaining(f: ProviderFloat | null | undefined): number | null {
+  if (!f) return null;
+  if (f.policies_remaining !== null && f.policies_remaining !== undefined) return f.policies_remaining;
+  const bal = f.balance_kobo;
+  const avg = f.avg_bind_kobo;
+  if (bal === null || bal === undefined) return null;
+  if (avg === null || avg === undefined || avg <= 0) return null;
+  return Math.floor(bal / avg);
+}
+
+export type FloatSeverity = 'unknown' | 'empty' | 'critical' | 'ok';
+
+/**
+ * Severity of the float position.
+ *
+ * 'unknown' is its own state and is NOT optimistic: an unreadable balance is
+ * reported as unknown, never as healthy. A zero balance is 'empty', which means
+ * every bind attempt will fail at the provider.
+ */
+export function floatSeverity(f: ProviderFloat | null | undefined): FloatSeverity {
+  if (!f || f.balance_kobo === null || f.balance_kobo === undefined) return 'unknown';
+  if (f.balance_kobo <= 0) return 'empty';
+  const threshold = f.low_threshold_kobo ?? null;
+  if (threshold !== null && f.balance_kobo <= threshold) return 'critical';
+  const remaining = policiesRemaining(f);
+  if (remaining !== null && remaining < 10) return 'critical';
+  return 'ok';
+}
+
+/**
+ * Purchase families probed live against MyCover staging on 2026-08-31.
+ *
+ * MyCover exposes one purchase endpoint per product FAMILY, not per product, and
+ * the family path is not derivable from a product's name or route_name. Two of
+ * them return 403 for our credential, which means those products cannot be sold
+ * even once the float is funded — a scope problem, not a money problem.
+ *
+ * This table is a record of a real probe, with its date, not a guess. It is here
+ * rather than in a component so that a re-probe updates one place. The moment the
+ * backend reports family status per product, prefer that over this constant.
+ */
+export const FAMILY_PROBE_DATE = '2026-08-31';
+export const FAMILY_PROBES: { path: string; category: string; sellable: boolean; note: string }[] = [
+  { path: 'bastion/buy-medisure', category: 'Health', sellable: true, note: 'Schema validated' },
+  { path: 'mcg/buy-gadget-cover', category: 'Gadget', sellable: true, note: 'Schema validated' },
+  { path: 'sti/buy-gadget-cover', category: 'Gadget', sellable: true, note: 'Path exists' },
+  { path: 'sti/buy-comprehensive', category: 'Auto', sellable: true, note: 'Path exists' },
+  { path: 'sti/buy-third-party-bike', category: 'Auto', sellable: true, note: 'Schema validated' },
+  { path: 'sti/buy-goods-in-transit', category: 'Package', sellable: true, note: 'Path exists' },
+  { path: 'sti/buy-marine-cover', category: 'Package', sellable: true, note: 'Schema validated' },
+  { path: 'aiico/buy-third-party-auto', category: 'Auto', sellable: true, note: 'Path exists' },
+  { path: 'aiico/buy-comprehensive-auto', category: 'Auto', sellable: true, note: 'Path exists' },
+  { path: 'aiico/buy-home-content-cover', category: 'Content', sellable: true, note: 'Path exists' },
+  { path: 'aiico/buy-office-content-cover', category: 'Content', sellable: true, note: 'Schema validated' },
+  { path: 'sanlam/buy-personal-accident', category: 'Life', sellable: false, note: '403 — our API key lacks the scope' },
+  { path: 'tangerine/buy-life-cover', category: 'Life', sellable: false, note: '403 — our API key lacks the scope' },
+];
+
+export type Sellability = 'sellable' | 'scope_blocked' | 'unknown';
+
+/**
+ * Whether a product can actually be bound.
+ *
+ * Resolves ONLY against the family path the backend stored for the product. It
+ * deliberately does not infer a family from the product name, underwriter or
+ * route_name: MyCover's family names are their own namespace
+ * (`bastion/buy-medisure` is live though no product is called "MediSure"), so any
+ * such inference would be a guess presented as a fact. No stored path means
+ * 'unknown', and the UI says so.
+ */
+export function sellabilityOf(p: InsuranceProduct): Sellability {
+  const path = (p.provider_buy_path ?? '').replace(/^\/?products\//, '').replace(/^\/+/, '');
+  if (!path) return 'unknown';
+  const hit = FAMILY_PROBES.find((f) => f.path === path);
+  if (!hit) return 'unknown';
+  return hit.sellable ? 'sellable' : 'scope_blocked';
+}
+
 export async function getProviders(): Promise<ProviderStatus[]> {
   const raw = await request<unknown>('GET', '/providers');
   return asArray(raw, 'providers').map((r) => {
@@ -704,6 +810,7 @@ export async function getProviders(): Promise<ProviderStatus[]> {
       last_error: str(pick(o, 'last_error')),
       latency_ms: num(pick(o, 'latency_ms')),
       products_synced: num(pick(o, 'products_synced')),
+      float: normaliseFloat(pick(o, 'float', 'wallet')),
       webhook: w
         ? {
             url: str(pick(w, 'url')),
@@ -747,6 +854,11 @@ export async function getReconciliation(): Promise<ReconciliationReport> {
     local_policy_count: num(pick(o, 'local_policy_count', 'local_count')),
     provider_policy_count: num(pick(o, 'provider_policy_count', 'provider_count')),
     matched_count: num(pick(o, 'matched_count', 'matched')),
+    float_balance_kobo: num(pick(o, 'float_balance_kobo')),
+    float_debited_kobo: num(pick(o, 'float_debited_kobo')),
+    bound_premium_kobo: num(pick(o, 'bound_premium_kobo')),
+    bound_policy_count: num(pick(o, 'bound_policy_count')),
+    float_delta_kobo: num(pick(o, 'float_delta_kobo')),
     total_delta_kobo: num(pick(o, 'total_delta_kobo')),
     ran_at: str(pick(o, 'ran_at', 'generated_at')),
   };

@@ -1,6 +1,7 @@
 'use client';
 
 import Link from 'next/link';
+import { useCallback, useEffect, useState } from 'react';
 import type { CSSProperties, PropsWithChildren, ReactNode } from 'react';
 import { colors, tint } from '@/components/ui/vuexy';
 
@@ -309,6 +310,252 @@ export function DisclosureNote({ children }: PropsWithChildren) {
     <div style={{ border: `1px solid ${tint('#7c3aed', 0.4)}`, background: tint('#7c3aed', 0.08), color: '#5b21b6', borderRadius: '0.5rem', padding: '0.6rem 0.8rem', fontSize: '0.78rem', marginBottom: '1rem' }}>
       {children}
     </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Provider float — the prefunded distributor wallet
+//
+// MyCover settles binds against a balance Paymax funds in advance. When it
+// empties, EVERY purchase fails at the provider, and any customer already
+// debited is owed a refund. That makes the float the highest-consequence number
+// in this module, so it gets a page-top alarm rather than a tile in a grid.
+//
+// Verified 2026-08-31 by a live purchase attempt on MyCover staging: a fully
+// valid payload was rejected with "v2 Error: Insufficient wallet fund for
+// purchase". MyCover's own /wallet/balance returns 403 for our credential, so
+// the balance may be unreadable by machine — which is a THIRD state, distinct
+// from funded and from empty, and is rendered as such.
+// ═══════════════════════════════════════════════════════════════════════════
+
+/** The float shape this module renders. Mirrors ProviderFloat structurally. */
+export interface FloatView {
+  balance_kobo?: number | null;
+  burn_per_day_kobo?: number | null;
+  burn_window_days?: number | null;
+  binds_in_window?: number | null;
+  avg_bind_kobo?: number | null;
+  policies_remaining?: number | null;
+  days_remaining?: number | null;
+  low_threshold_kobo?: number | null;
+  last_funded_at?: string | null;
+  as_of?: string | null;
+  unavailable_reason?: string | null;
+}
+
+const FLOAT_UNREADABLE_NOTE =
+  "MyCover's /wallet/balance returns 403 for our API key, so the float may not be machine-readable at all. Fund it and read the balance from the MyCover dashboard.";
+
+/**
+ * Page-top float alarm.
+ *
+ * Three states, three very different messages, and none of them is silent:
+ *   empty    — nothing can be sold right now. Loudest.
+ *   critical — sellable but close to the floor.
+ *   unknown  — we cannot see the balance. NOT treated as healthy: the last
+ *              verified observation was that the float is empty, and that is
+ *              stated with its date and its source rather than assumed away.
+ * A healthy float renders nothing, because an alarm that fires when all is well
+ * teaches people to ignore it.
+ */
+export function FloatAlarm({ severity, balanceLabel, remaining, providerLabel = 'MyCover' }: {
+  severity: 'unknown' | 'empty' | 'critical' | 'ok';
+  balanceLabel?: string | null;
+  remaining?: number | null;
+  providerLabel?: string;
+}) {
+  if (severity === 'ok') return null;
+  const empty = severity === 'empty';
+  const unknown = severity === 'unknown';
+  const accent = empty ? colors.danger : unknown ? colors.warning : colors.warning;
+  return (
+    <div
+      style={{
+        border: `2px solid ${accent}`,
+        background: tint(accent, 0.1),
+        borderRadius: '0.5rem',
+        padding: '0.9rem 1.1rem',
+        marginBottom: '1.25rem',
+      }}
+      role="alert"
+    >
+      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap', marginBottom: '0.35rem' }}>
+        <strong style={{ color: accent, fontSize: '1rem' }}>
+          {empty
+            ? `${providerLabel} float is empty — no policy can be bound`
+            : unknown
+              ? `${providerLabel} float balance is unknown`
+              : `${providerLabel} float is running low`}
+        </strong>
+        {balanceLabel ? (
+          <span style={{ fontSize: '0.8rem', fontWeight: 700, color: accent, background: tint(accent, 0.16), borderRadius: 9999, padding: '0.1rem 0.6rem' }}>
+            {balanceLabel}
+          </span>
+        ) : null}
+      </div>
+      <p style={{ margin: 0, fontSize: '0.85rem', color: colors.text, lineHeight: 1.55 }}>
+        {empty ? (
+          <>
+            Every purchase debits a wallet Paymax prefunds with {providerLabel}, and that wallet is at zero.
+            Binds will fail at the provider even though the payload is valid, so <strong>no customer can be
+            issued cover</strong> until it is topped up. If customers are being debited before the bind is
+            confirmed, each failed bind is a refund we owe.
+          </>
+        ) : unknown ? (
+          <>
+            The float balance could not be read, so this console will not claim it is funded.{' '}
+            {FLOAT_UNREADABLE_NOTE} The last verified check, on 2026-08-31, found the balance empty: a live
+            purchase with a fully valid payload was rejected with &ldquo;Insufficient wallet fund for
+            purchase&rdquo;. Treat the float as unfunded until a balance is actually reported here.
+          </>
+        ) : (
+          <>
+            The prefunded {providerLabel} wallet is close to its floor
+            {remaining !== null && remaining !== undefined ? <> — roughly <strong>{remaining.toLocaleString('en-NG')}</strong> more policies at the current average bind cost</> : null}
+            . When it empties, every bind fails at the provider.
+          </>
+        )}
+      </p>
+    </div>
+  );
+}
+
+/**
+ * Float detail panel. `balance` of null renders "not readable", never ₦0.00 —
+ * the distinction between an empty float and an invisible one is the whole point.
+ */
+export function FloatPanel({ float: f, severity, formatMoney, remaining }: {
+  float: FloatView | null;
+  severity: 'unknown' | 'empty' | 'critical' | 'ok';
+  formatMoney: (kobo: number | null | undefined) => string;
+  remaining: number | null;
+}) {
+  const readable = !!f && f.balance_kobo !== null && f.balance_kobo !== undefined;
+  const accent = severity === 'empty' ? colors.danger : severity === 'critical' ? colors.warning : severity === 'unknown' ? colors.muted : colors.success;
+  return (
+    <>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(190px, 1fr))', gap: '0.75rem' }}>
+        <MetricTile
+          label="Float balance"
+          value={readable ? formatMoney(f!.balance_kobo) : null}
+          sub={readable ? (f?.as_of ? `as of ${fmtDate(f.as_of)}` : 'prefunded with the provider') : 'not readable — see note below'}
+          accent={accent}
+        />
+        <MetricTile
+          label="Burn rate"
+          value={f?.burn_per_day_kobo === null || f?.burn_per_day_kobo === undefined ? null : `${formatMoney(f.burn_per_day_kobo)}/day`}
+          sub={f?.burn_window_days ? `over ${f.burn_window_days} days` : 'drawdown per day'}
+        />
+        <MetricTile
+          label="Policies remaining"
+          value={remaining === null ? null : remaining.toLocaleString('en-NG')}
+          sub={f?.avg_bind_kobo ? `at ${formatMoney(f.avg_bind_kobo)} average bind` : 'needs balance ÷ average bind cost'}
+          accent={remaining !== null && remaining < 10 ? colors.danger : undefined}
+        />
+        <MetricTile
+          label="Days remaining"
+          value={f?.days_remaining === null || f?.days_remaining === undefined ? null : f.days_remaining.toLocaleString('en-NG')}
+          sub="at the current burn rate"
+        />
+        <MetricTile
+          label="Last funded"
+          value={f?.last_funded_at ? fmtDate(f.last_funded_at) : null}
+          sub="last top-up recorded"
+        />
+      </div>
+      {!readable ? (
+        <p style={{ marginTop: '0.85rem', marginBottom: 0, fontSize: '0.82rem', color: colors.text, lineHeight: 1.55 }}>
+          <strong>Balance not available.</strong> {f?.unavailable_reason ? `${f.unavailable_reason} ` : ''}
+          {FLOAT_UNREADABLE_NOTE} Nothing here is being shown as zero on its behalf: a float we cannot see and
+          a float that is empty require different actions, and only one of them is fixed by topping up.
+        </p>
+      ) : null}
+    </>
+  );
+}
+
+/**
+ * A console surface whose backend endpoint does not exist yet.
+ *
+ * Nine screens in this module (premiums, refunds, routing, schema, sweeps,
+ * reports, consent-audit, provider events, webhook deliveries) shipped as fully
+ * populated tables driven entirely by fixtures. They looked like the most
+ * finished part of the console and were the least real part of it.
+ *
+ * Rather than delete the routes — the surfaces are wanted, and the navigation
+ * links to them — each one now:
+ *   1. states plainly that the endpoint is unbuilt,
+ *   2. calls it live anyway on every load, so the page starts working by itself
+ *      the moment the backend adds a handler,
+ *   3. renders the real response, whatever it is: the failure if it failed, or
+ *      the raw payload if it succeeded before this page has a bespoke view for
+ *      it. Raw JSON is ugly; invented rows are dishonest.
+ *
+ * `requires` documents what the screen needs from the backend, so the gap is
+ * legible to whoever builds it rather than living only in a ticket.
+ */
+export function UnbuiltSurface({ endpoint, purpose, requires, note, probeFn }: {
+  endpoint: string;
+  purpose: string;
+  requires: string[];
+  note?: ReactNode;
+  probeFn: () => Promise<unknown>;
+}) {
+  const [payload, setPayload] = useState<unknown>(null);
+  const [failure, setFailure] = useState<EndpointFailure | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setFailure(null);
+    try {
+      setPayload(await probeFn());
+    } catch (e) {
+      setPayload(null);
+      setFailure(toFailure(e));
+    } finally {
+      setLoading(false);
+    }
+  }, [probeFn]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  return (
+    <>
+      <ContractGapNote endpoint={endpoint} />
+      {note}
+      <Card title="What this screen is for">
+        <p style={{ fontSize: '0.88rem', color: colors.text, lineHeight: 1.6, marginTop: 0 }}>{purpose}</p>
+        <div style={{ fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: 0.3, color: colors.muted, fontWeight: 600, marginBottom: '0.4rem' }}>
+          Needs from the backend
+        </div>
+        <ul style={{ margin: 0, paddingLeft: '1.1rem', fontSize: '0.84rem', color: colors.text, lineHeight: 1.6 }}>
+          {requires.map((r) => (
+            <li key={r}>{r}</li>
+          ))}
+        </ul>
+      </Card>
+
+      <Card title="Live response" right={<button onClick={load} style={btn()}>Probe again</button>}>
+        {loading ? (
+          <p style={{ color: colors.muted, fontSize: '0.9rem' }}>Calling the endpoint…</p>
+        ) : failure ? (
+          <EndpointErrorCard failure={failure} onRetry={load} />
+        ) : (
+          <>
+            <p style={{ fontSize: '0.82rem', color: colors.success, marginTop: 0 }}>
+              <strong>The endpoint answered.</strong> Its payload is shown verbatim below. This screen does not
+              have a purpose-built view for it yet — raw is honest, and nothing here is reshaped or filled in.
+            </p>
+            <pre style={{ background: colors.headBg, borderRadius: '0.4rem', padding: '0.75rem', fontSize: '0.75rem', overflowX: 'auto', maxHeight: 480, margin: 0 }}>
+              {JSON.stringify(payload, null, 2)}
+            </pre>
+          </>
+        )}
+      </Card>
+    </>
   );
 }
 

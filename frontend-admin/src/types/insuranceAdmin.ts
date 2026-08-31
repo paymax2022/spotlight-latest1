@@ -312,6 +312,44 @@ export interface ProviderWebhookStatus {
   rejected_24h?: number | null;
 }
 
+/**
+ * The PREFUNDED DISTRIBUTOR FLOAT Paymax holds with the aggregator.
+ *
+ * MyCover does not charge us per transaction. Every policy bind debits a
+ * balance we have funded in advance, so when that balance hits zero EVERY
+ * purchase fails at the provider — after the customer has already been charged
+ * by us, unless the bind is proven before the user debit. That makes this the
+ * single most operationally important number in the module, and the reason the
+ * console alarms on it rather than tucking it into a detail page.
+ *
+ * `available` is deliberately tri-state via `balance_kobo: number | null`:
+ * MyCover's `/wallet/balance` returns 403 for the credential this environment
+ * holds, so the balance may genuinely not be machine-readable. An unreadable
+ * float must never render as ₦0.00 — "we cannot see it" and "it is empty" call
+ * for different actions.
+ */
+export interface ProviderFloat {
+  balance_kobo?: number | null;
+  currency?: string | null;
+  /** Average kobo drawn down per day over the reported window. */
+  burn_per_day_kobo?: number | null;
+  /** Window the burn rate was measured over. */
+  burn_window_days?: number | null;
+  /** Provider-side debits observed in the window. */
+  binds_in_window?: number | null;
+  /** Mean premium per bind, kobo — the divisor for "policies remaining". */
+  avg_bind_kobo?: number | null;
+  /** Backend-computed runway, if it does the arithmetic. */
+  policies_remaining?: number | null;
+  days_remaining?: number | null;
+  /** Threshold below which the float is considered critical, kobo. */
+  low_threshold_kobo?: number | null;
+  last_funded_at?: string | null;
+  as_of?: string | null;
+  /** Why the balance is null, when the backend can say. */
+  unavailable_reason?: string | null;
+}
+
 export interface ProviderStatus {
   provider: Aggregator;
   display_name?: string | null;
@@ -329,6 +367,8 @@ export interface ProviderStatus {
   latency_ms?: number | null;
   products_synced?: number | null;
   webhook?: ProviderWebhookStatus | null;
+  /** Prefunded distributor float held with this aggregator. */
+  float?: ProviderFloat | null;
   updated_at?: string | null;
 }
 
@@ -360,6 +400,17 @@ export interface ReconciliationReport {
   local_policy_count?: number | null;
   provider_policy_count?: number | null;
   matched_count?: number | null;
+  /**
+   * Float reconciliation: what the provider actually debited from our prefunded
+   * wallet against what our own records say we bound. A gap here means either a
+   * bind we were charged for and never recorded, or one we recorded and were
+   * never charged for — both are money.
+   */
+  float_balance_kobo?: number | null;
+  float_debited_kobo?: number | null;
+  bound_premium_kobo?: number | null;
+  bound_policy_count?: number | null;
+  float_delta_kobo?: number | null;
   /** Absolute premium delta across all drifts, kobo. */
   total_delta_kobo?: number | null;
   ran_at?: string | null;
