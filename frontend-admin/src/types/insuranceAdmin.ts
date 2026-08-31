@@ -76,6 +76,11 @@ export interface InsuranceProduct {
   provider_product_code?: string | null;
   /** The bespoke purchase route, e.g. `bastion/buy-medisure`. Not derivable. */
   provider_buy_path?: string | null;
+  /**
+   * Whether that route was actually probed and answered. The authoritative
+   * signal for "can this be sold", and always preferred over any local table.
+   */
+  buy_path_verified?: boolean | null;
 
   /** Flat premium in KOBO. Null when `is_percentage`. */
   base_price_kobo?: number | null;
@@ -131,6 +136,10 @@ export interface CatalogSyncResult {
   created?: number | null;
   updated?: number | null;
   deactivated?: number | null;
+  failed?: number | null;
+  with_schema?: number | null;
+  status?: string | null;
+  error_text?: string | null;
   synced_at?: string | null;
 }
 
@@ -303,6 +312,10 @@ export interface CommissionSummary {
 // ── Providers ────────────────────────────────────────────────────────────────
 export interface ProviderWebhookStatus {
   url?: string | null;
+  /** Whether signature verification is switched on at all. */
+  verification_enabled?: boolean | null;
+  /** The backend's own explanation of the verification posture. */
+  note?: string | null;
   /** FALSE when the shared secret is unset — signature verification cannot pass. */
   secret_configured?: boolean | null;
   signature_scheme?: string | null;
@@ -313,53 +326,83 @@ export interface ProviderWebhookStatus {
 }
 
 /**
- * The PREFUNDED DISTRIBUTOR FLOAT Paymax holds with the aggregator.
+ * The PREFUNDED DISTRIBUTOR FLOAT — modelled as an OBSERVED CIRCUIT BREAKER,
+ * not as a balance.
  *
- * MyCover does not charge us per transaction. Every policy bind debits a
- * balance we have funded in advance, so when that balance hits zero EVERY
- * purchase fails at the provider — after the customer has already been charged
- * by us, unless the bind is proven before the user debit. That makes this the
- * single most operationally important number in the module, and the reason the
- * console alarms on it rather than tucking it into a detail page.
+ * MyCover settles binds from a wallet Paymax funds in advance, and its
+ * `/wallet/balance` returns 403 for our credential. We therefore cannot read the
+ * balance at all, and the backend deliberately does not pretend to: it records
+ * what the provider was OBSERVED to do. The first bind refused for
+ * "Insufficient wallet fund" trips `state: exhausted`, and every later bind is
+ * refused BEFORE the member is debited. An operator tops the wallet up at the
+ * provider and resets the breaker.
  *
- * `available` is deliberately tri-state via `balance_kobo: number | null`:
- * MyCover's `/wallet/balance` returns 403 for the credential this environment
- * holds, so the balance may genuinely not be machine-readable. An unreadable
- * float must never render as ₦0.00 — "we cannot see it" and "it is empty" call
- * for different actions.
+ * This is the right model for the constraint, and the console renders it as
+ * such. `balance_kobo` stays here only for the day the balance becomes
+ * readable; it is expected to be null, and null must never render as ₦0.00.
  */
 export interface ProviderFloat {
+  provider: string;
+  /** ok | exhausted | unknown */
+  state: string;
+  /** TRUE means: do not take the member's money — binds cannot be issued. */
+  binding_paused: boolean | null;
+  consecutive_failures?: number | null;
+  last_failure_at?: string | null;
+  last_failure_text?: string | null;
+  last_success_at?: string | null;
+  /** An operator's human record of a top-up. NOT an authority on the balance. */
+  last_topup_note?: string | null;
+  last_reset_at?: string | null;
+  updated_at?: string | null;
+  /** Null today: the provider will not tell us. See the note above. */
   balance_kobo?: number | null;
-  currency?: string | null;
-  /** Average kobo drawn down per day over the reported window. */
-  burn_per_day_kobo?: number | null;
-  /** Window the burn rate was measured over. */
-  burn_window_days?: number | null;
-  /** Provider-side debits observed in the window. */
-  binds_in_window?: number | null;
-  /** Mean premium per bind, kobo — the divisor for "policies remaining". */
-  avg_bind_kobo?: number | null;
-  /** Backend-computed runway, if it does the arithmetic. */
-  policies_remaining?: number | null;
-  days_remaining?: number | null;
-  /** Threshold below which the float is considered critical, kobo. */
-  low_threshold_kobo?: number | null;
-  last_funded_at?: string | null;
-  as_of?: string | null;
-  /** Why the balance is null, when the backend can say. */
-  unavailable_reason?: string | null;
+}
+
+/** One catalog sync run, as recorded by the backend. */
+export interface CatalogSyncRun {
+  sync_id?: string | null;
+  provider?: string | null;
+  status?: string | null;
+  products_seen?: number | null;
+  products_upserted?: number | null;
+  products_failed?: number | null;
+  products_with_schema?: number | null;
+  started_at?: string | null;
+  finished_at?: string | null;
+  error_text?: string | null;
+  skipped_codes?: string[] | null;
+}
+
+/**
+ * The whole `/providers` payload. Adapter health, float breakers, and the last
+ * catalog sync arrive together, plus a top-level `binding_paused` that is the
+ * launch gate: when it is true, no policy can be issued no matter how healthy
+ * every other indicator looks.
+ */
+export interface ProvidersReport {
+  adapters: ProviderStatus[];
+  floats: ProviderFloat[];
+  binding_paused: boolean | null;
+  binding_paused_reason: string | null;
+  last_sync: CatalogSyncRun | null;
 }
 
 export interface ProviderStatus {
   provider: Aggregator;
   display_name?: string | null;
-  /** The base URL actually in use. */
   base_url?: string | null;
-  /** 'test' | 'live' — derived from the credential, not from a config label. */
+  /**
+   * 'test' | 'live'. The backend does not currently report this — the
+   * environment is determined by the API-KEY PREFIX (MCASECK_T… is staging),
+   * which the API deliberately never exposes. Expect null and render "unknown"
+   * rather than assuming test, since assuming test on a live key is the
+   * dangerous direction of that guess.
+   */
   mode?: 'test' | 'live' | 'unknown' | string | null;
   api_key_configured?: boolean | null;
-  /** Masked fingerprint (e.g. "MCASECK_T…"), NEVER the key. */
-  api_key_hint?: string | null;
+  /** How many purchase families the adapter has routes for. */
+  purchase_families?: number | null;
   reachable?: boolean | null;
   last_success_at?: string | null;
   last_error_at?: string | null;
@@ -367,7 +410,6 @@ export interface ProviderStatus {
   latency_ms?: number | null;
   products_synced?: number | null;
   webhook?: ProviderWebhookStatus | null;
-  /** Prefunded distributor float held with this aggregator. */
   float?: ProviderFloat | null;
   updated_at?: string | null;
 }

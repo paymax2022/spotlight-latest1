@@ -9,9 +9,8 @@ import {
   formatNaira,
   formatPct,
   floatSeverity,
-  policiesRemaining,
 } from '@/services/insuranceAdminService';
-import type { CatalogResponse, DashboardBreakdown, InsuranceDashboard, ProviderStatus } from '@/types/insuranceAdmin';
+import type { CatalogResponse, DashboardBreakdown, InsuranceDashboard, ProvidersReport } from '@/types/insuranceAdmin';
 import {
   PageHeader,
   InsuranceTabs,
@@ -49,7 +48,7 @@ export default function InsuranceDashboardPage() {
   const [kpiFail, setKpiFail] = useState<EndpointFailure | null>(null);
   const [kpiLoading, setKpiLoading] = useState(true);
 
-  const [providers, setProviders] = useState<ProviderStatus[] | null>(null);
+  const [providers, setProviders] = useState<ProvidersReport | null>(null);
   const [provFail, setProvFail] = useState<EndpointFailure | null>(null);
   const [provLoading, setProvLoading] = useState(true);
 
@@ -121,10 +120,11 @@ export default function InsuranceDashboardPage() {
   // The MyCover rail is the one that actually settles binds today. When the
   // providers endpoint is unavailable the float is UNKNOWN, not healthy — and
   // the alarm treats unknown as a warning, not silence.
-  const mycover = (providers ?? []).find((p) => p.provider === 'mycover') ?? (providers ?? [])[0] ?? null;
-  const float = mycover?.float ?? null;
-  const severity = provLoading ? 'ok' : floatSeverity(float);
-  const remaining = policiesRemaining(float);
+  const mycover = (providers?.adapters ?? []).find((p) => p.provider === 'mycover') ?? (providers?.adapters ?? [])[0] ?? null;
+  const float = mycover?.float ?? providers?.floats?.[0] ?? null;
+  // The backend's top-level binding_paused is the launch gate and OVERRIDES the
+  // per-rail derivation: if it says binds are paused, they are paused.
+  const severity = provLoading ? 'ok' : providers?.binding_paused === true ? 'empty' : floatSeverity(float);
 
   const noPolicies = !!kpi && (kpi.policies_total ?? 0) === 0;
   const activeProducts = catalog?.products.filter((p) => p.active).length ?? null;
@@ -150,9 +150,9 @@ export default function InsuranceDashboardPage() {
 
       <FloatAlarm
         severity={severity}
-        balanceLabel={float?.balance_kobo !== null && float?.balance_kobo !== undefined ? formatNaira(float.balance_kobo) : null}
-        remaining={remaining}
-        providerLabel={mycover?.display_name || 'MyCover'}
+        reason={providers?.binding_paused_reason ?? null}
+        failures={float?.consecutive_failures ?? null}
+        providerLabel={mycover?.display_name || mycover?.provider || 'MyCover'}
       />
 
       <Card
@@ -170,7 +170,7 @@ export default function InsuranceDashboardPage() {
               transaction. This balance, not our own wallet, is what decides whether a policy can be issued
               at all.
             </p>
-            <FloatPanel float={float} severity={severity} formatMoney={formatNaira} remaining={remaining} />
+            <FloatPanel float={float} severity={severity} />
           </>
         )}
       </Card>
