@@ -28,6 +28,8 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"spotlight/backend/internal/association"
+
+	"spotlight/backend/internal/testsupport"
 )
 
 // chapterNames returns the chapters of an organisation, for assertions.
@@ -62,6 +64,7 @@ func TestPublishOrganisation_DefaultsAChapterWhenNoneNamed(t *testing.T) {
 		userID, userID+"@chapter.test"); err != nil {
 		t.Fatalf("seed auth.users: %v", err)
 	}
+	testsupport.CleanupUser(t, pool, userID)
 
 	draft := newTestDraft("No Chapters " + uuid.New().String()[:8])
 	draft.Chapters = nil
@@ -96,6 +99,7 @@ func TestPublishOrganisation_KeepsNamedChaptersAndSkipsBlanks(t *testing.T) {
 		userID, userID+"@chapter2.test"); err != nil {
 		t.Fatalf("seed auth.users: %v", err)
 	}
+	testsupport.CleanupUser(t, pool, userID)
 
 	t.Run("a named chapter is kept and not joined by a default", func(t *testing.T) {
 		draft := newTestDraft("Named Chapter " + uuid.New().String()[:8])

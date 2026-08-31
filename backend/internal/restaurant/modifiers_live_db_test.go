@@ -17,6 +17,8 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"spotlight/backend/internal/testsupport"
 )
 
 func modifiersLivePool(t *testing.T) *pgxpool.Pool {
@@ -46,6 +48,7 @@ func TestLiveDB_MenuModifiers(t *testing.T) {
 	if _, err := pool.Exec(ctx, `INSERT INTO auth.users (id, email) VALUES ($1,$2) ON CONFLICT DO NOTHING`, owner, owner+"@seed.test"); err != nil {
 		t.Fatalf("seed user: %v", err)
 	}
+	testsupport.CleanupUser(t, pool, owner)
 	restID := uuid.New().String()
 	if _, err := pool.Exec(ctx, `INSERT INTO restaurants (id, owner_id, name, address, is_open) VALUES ($1,$2,'Mod Kitchen','1 St',TRUE)`, restID, owner); err != nil {
 		t.Fatalf("seed restaurant: %v", err)
@@ -74,6 +77,7 @@ func TestLiveDB_MenuModifiers(t *testing.T) {
 	if _, err := pool.Exec(ctx, `INSERT INTO auth.users (id, email) VALUES ($1,$2) ON CONFLICT DO NOTHING`, stranger, stranger+"@seed.test"); err != nil {
 		t.Fatalf("seed stranger: %v", err)
 	}
+	testsupport.CleanupUser(t, pool, stranger)
 	if _, err := svc.AddModifier(ctx, restID, stranger, size.ID, AddModifierRequest{Name: "Hacked", PriceDeltaKobo: 0}); err == nil {
 		t.Fatal("stranger must not add a modifier to another owner's group")
 	}

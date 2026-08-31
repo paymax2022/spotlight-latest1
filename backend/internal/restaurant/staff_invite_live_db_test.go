@@ -15,6 +15,8 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+
+	"spotlight/backend/internal/testsupport"
 )
 
 func TestLiveDB_InviteIssuesAOneTimeTokenAndStoresOnlyItsHash(t *testing.T) {
@@ -214,5 +216,6 @@ func seedUser(t *testing.T, ctx context.Context, f staffFixture) string {
 		`INSERT INTO auth.users (id,email) VALUES ($1,$2) ON CONFLICT DO NOTHING`, id, id+"@seed.test"); err != nil {
 		t.Fatalf("seed user: %v", err)
 	}
+	testsupport.CleanupUser(t, f.pool, id)
 	return id
 }

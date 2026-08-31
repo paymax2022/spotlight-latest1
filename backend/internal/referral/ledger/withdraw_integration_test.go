@@ -25,6 +25,8 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	financeledger "spotlight/backend/internal/finance/ledger"
+
+	"spotlight/backend/internal/testsupport"
 )
 
 func liveDBPool(t *testing.T) *pgxpool.Pool {
@@ -54,6 +56,7 @@ func seedVerifiedUser(t *testing.T, pool *pgxpool.Pool, tier int, status string)
 	uid := uuid.NewString()
 	email := "wd-" + uid + "@test.local"
 	mustExec(t, pool, `INSERT INTO auth.users (id, email) VALUES ($1,$2)`, uid, email)
+	testsupport.CleanupUser(t, pool, uid)
 	mustExec(t, pool,
 		`INSERT INTO user_profiles (id, email, kyc_tier, kyc_status) VALUES ($1,$2,$3,$4)
 		 ON CONFLICT (id) DO UPDATE SET kyc_tier=EXCLUDED.kyc_tier, kyc_status=EXCLUDED.kyc_status`,

@@ -54,6 +54,8 @@ import (
 	"spotlight/backend/internal/finance/ledger"
 	"spotlight/backend/internal/finance/settlement"
 	"spotlight/backend/internal/finance/tiers"
+
+	"spotlight/backend/internal/testsupport"
 )
 
 func tierPool(t *testing.T) *pgxpool.Pool {
@@ -151,6 +153,7 @@ func tierGateFixture(t *testing.T, ctx context.Context, pool *pgxpool.Pool, name
 		if _, err := pool.Exec(ctx, `INSERT INTO auth.users (id,email) VALUES ($1,$2) ON CONFLICT DO NOTHING`, u, u+"@seed.test"); err != nil {
 			t.Fatalf("seed user: %v", err)
 		}
+		testsupport.CleanupUser(t, pool, u)
 	}
 	restID := uuid.New().String()
 	if _, err := pool.Exec(ctx,
@@ -620,6 +623,7 @@ func TestLiveDB_OrderIdempotencyKeyIsCustomerScoped(t *testing.T) {
 	if _, err := pool.Exec(ctx, `INSERT INTO auth.users (id,email) VALUES ($1,$2) ON CONFLICT DO NOTHING`, stranger, stranger+"@seed.test"); err != nil {
 		t.Fatalf("seed stranger: %v", err)
 	}
+	testsupport.CleanupUser(t, pool, stranger)
 	seedKYCTier(t, ctx, pool, stranger, 3)
 	revAcc, err := led.GetOrCreateStandingAccount(ctx, ledger.AccountPaymaxRevenue)
 	if err != nil {

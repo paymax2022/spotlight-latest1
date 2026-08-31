@@ -8,6 +8,8 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"spotlight/backend/internal/testsupport"
 )
 
 // DP-006 live-DB integration test for proof-of-delivery.
@@ -70,6 +72,7 @@ func TestDeliveryProof_LiveDB(t *testing.T) {
 		pharmacistID, pharmacistID+"@seed.test")
 	seed(`INSERT INTO auth.users (id, email) VALUES ($1,$2) ON CONFLICT DO NOTHING`,
 		driverID, driverID+"@seed.test")
+	testsupport.CleanupUsers(t, pool, patientID, pharmacyID, pharmacistID, driverID)
 
 	// Seed pharmacy provider (HL-2 APPROVED)
 	seed(`INSERT INTO public.health_providers (id, owner_user_id, domain, provider_type, display_name, status)
@@ -192,6 +195,7 @@ func TestDeliveryProof_InvalidProof(t *testing.T) {
 		pharmacistID, pharmacistID+"@seed.test")
 	seed(`INSERT INTO auth.users (id, email) VALUES ($1,$2) ON CONFLICT DO NOTHING`,
 		driverID, driverID+"@seed.test")
+	testsupport.CleanupUsers(t, pool, patientID, pharmacyID, pharmacistID, driverID)
 
 	seed(`INSERT INTO public.health_providers (id, owner_user_id, domain, provider_type, display_name, status)
 	      VALUES ($1,$2,'PHARMACY','pharmacy','Seed Pharmacy','APPROVED') ON CONFLICT DO NOTHING`,

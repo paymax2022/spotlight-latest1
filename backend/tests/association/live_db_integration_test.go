@@ -55,6 +55,8 @@ import (
 
 	"spotlight/backend/internal/association"
 	"spotlight/backend/internal/finance/ledger"
+
+	"spotlight/backend/internal/testsupport"
 )
 
 // liveDBPool connects using TEST_DATABASE_URL, or skips.
@@ -115,6 +117,7 @@ func seedActiveMembership(t *testing.T, ctx context.Context, pool *pgxpool.Pool,
 	if _, err := pool.Exec(ctx, `INSERT INTO auth.users (id, email) VALUES ($1, $2) ON CONFLICT DO NOTHING`, userID, userID+"@seed.test"); err != nil {
 		t.Fatalf("seed auth.users: %v", err)
 	}
+	testsupport.CleanupUser(t, pool, userID)
 	_, err := pool.Exec(ctx, `
 		INSERT INTO assoc_memberships (id, organisation_id, user_id, member_code, status, payment_standing, joined_at)
 		VALUES ($1, $2, $3, $4, 'ACTIVE', 'DUE', now())`,

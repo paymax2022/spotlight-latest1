@@ -37,7 +37,7 @@ import (
 // TestGetTasks_OrgScopeIsAdminOnly pins who may see the tracking view.
 func TestGetTasks_OrgScopeIsAdminOnly(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	svc := newLiveAssociationService(pool)
 
@@ -91,7 +91,7 @@ func TestGetTasks_OrgScopeIsAdminOnly(t *testing.T) {
 // compliance view: nothing writes the OVERDUE status, so it must be computed.
 func TestGetTasks_OverdueIsDerivedNotStored(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	svc := newLiveAssociationService(pool)
 

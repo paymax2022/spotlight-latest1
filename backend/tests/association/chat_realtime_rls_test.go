@@ -35,6 +35,8 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"spotlight/backend/internal/association"
+
+	"spotlight/backend/internal/testsupport"
 )
 
 // canReadViaRLS asks the SQL gate the policy uses.
@@ -122,6 +124,7 @@ func TestChatRealtimeGate_MatchesTheAPI(t *testing.T) {
 		founderID, founderID+"@chatgate.test"); err != nil {
 		t.Fatalf("seed founder: %v", err)
 	}
+	testsupport.CleanupUser(t, pool, founderID)
 	res, err := svc.PublishOrganisation(ctx, founderID, newTestDraft("Chat Gate "+uuid.NewString()[:8]))
 	if err != nil {
 		t.Fatalf("publish: %v", err)
@@ -153,6 +156,7 @@ func TestChatRealtimeGate_MatchesTheAPI(t *testing.T) {
 		outsiderID, outsiderID+"@outsider.test"); err != nil {
 		t.Fatalf("seed outsider: %v", err)
 	}
+	testsupport.CleanupUser(t, pool, outsiderID)
 	t.Cleanup(func() { _, _ = pool.Exec(ctx, `DELETE FROM auth.users WHERE id=$1`, outsiderID) })
 
 	general := seedThread(t, ctx, pool, orgID, "GENERAL", nil)

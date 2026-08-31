@@ -1262,6 +1262,127 @@ type AuditRow struct {
 	CreatedAt   time.Time       `json:"created_at"`
 }
 
+// ─── Admin dashboard ─────────────────────────────────────────────────────────
+//
+// marketplace_metrics / marketplace_activity_stream (the tables the admin
+// dashboard was originally designed against) have no writer anywhere in this
+// codebase — nothing ever populates them. Rather than serve permanently-zero
+// rows from an unpopulated aggregate table, AdminMetrics/AdminActivityFeed
+// compute live from the real source tables (mkt_listings/mkt_offers/
+// mkt_messages/mkt_orders), the same "derive live, never read a stored
+// snapshot" pattern the finance summaries in this codebase already follow.
+
+// AdminMetrics is the live KPI snapshot for the admin dashboard.
+type AdminMetrics struct {
+	TotalActiveListings  int64 `json:"total_active_listings"`
+	ListingsCreatedToday int64 `json:"listings_created_today"`
+	TotalGMVKobo         int64 `json:"total_gmv_kobo"`
+	UniqueSellersToday   int64 `json:"unique_sellers_today"`
+	UniqueBuyersToday    int64 `json:"unique_buyers_today"`
+	MessagesSentToday    int64 `json:"messages_sent_today"`
+	OffersMadeToday      int64 `json:"offers_made_today"`
+	RecentActivityCount  int64 `json:"recent_activity_count"`
+}
+
+// AdminMetrics computes the live KPI snapshot in one round trip.
+//
+// ADR-023 removed escrow/orders entirely (see marketplace_routes.go and
+// service.go:~323) — mkt_orders has no writer left and can only ever read
+// back zero, so a "GMV" built on order totals would be permanently, silently
+// dead rather than merely empty-for-now. Boosts are documented elsewhere in
+// this package as "the SOLE live marketplace money path" (§2.4), so
+// total_gmv_kobo is real retained boost revenue (excludes rejected/refunded
+// boosts) — the true answer to "how much money has this marketplace made,"
+// just not textbook GMV terminology for an escrow-less listings marketplace.
+// "Sellers/buyers today" follow the same shift: scoped to who actually
+// listed/offered today, since there is no order to attribute activity to.
+func (r *Repository) AdminMetrics(ctx context.Context) (*AdminMetrics, error) {
+	var m AdminMetrics
+	err := r.db.QueryRow(ctx, `
+		SELECT
+			(SELECT count(*) FROM public.mkt_listings WHERE status = 'active'),
+			(SELECT count(*) FROM public.mkt_listings WHERE created_at >= date_trunc('day', now())),
+			(SELECT COALESCE(sum(price_kobo), 0) FROM public.mkt_boosts WHERE status IN ('purchased', 'active', 'completed')),
+			(SELECT count(DISTINCT seller_id) FROM public.mkt_listings WHERE created_at >= date_trunc('day', now())),
+			(SELECT count(DISTINCT buyer_id) FROM public.mkt_offers WHERE created_at >= date_trunc('day', now())),
+			(SELECT count(*) FROM public.mkt_messages WHERE created_at >= date_trunc('day', now())),
+			(SELECT count(*) FROM public.mkt_offers WHERE created_at >= date_trunc('day', now())),
+			(SELECT count(*) FROM public.mkt_listings WHERE created_at >= now() - interval '24 hours')
+				+ (SELECT count(*) FROM public.mkt_offers WHERE created_at >= now() - interval '24 hours')
+				+ (SELECT count(*) FROM public.mkt_messages WHERE created_at >= now() - interval '24 hours')
+	`).Scan(
+		&m.TotalActiveListings, &m.ListingsCreatedToday, &m.TotalGMVKobo,
+		&m.UniqueSellersToday, &m.UniqueBuyersToday,
+		&m.MessagesSentToday, &m.OffersMadeToday, &m.RecentActivityCount,
+	)
+	if err != nil {
+		return nil, wrapInternal("admin metrics", err)
+	}
+	return &m, nil
+}
+
+// AdminActivityRow is one synthesized activity-feed entry (matches
+// marketplace_activity_stream's column shape, which the frontend was already
+// built against, even though that table itself has no writer).
+type AdminActivityRow struct {
+	ID               string    `json:"id"`
+	EventType        string    `json:"event_type"`
+	EntityType       string    `json:"entity_type"`
+	EntityID         string    `json:"entity_id"`
+	ActorID          string    `json:"actor_id"`
+	DisplayText      string    `json:"display_text"`
+	ListingTitle     *string   `json:"listing_title,omitempty"`
+	ListingPriceKobo *int64    `json:"listing_price_kobo,omitempty"`
+	ActorName        string    `json:"actor_name"`
+	Severity         string    `json:"severity"`
+	CreatedAt        time.Time `json:"created_at"`
+}
+
+// AdminActivityFeed synthesizes a real activity feed from recent listing/
+// offer/boost rows (there is no dedicated event log — see the AdminMetrics
+// package note above; mkt_orders is excluded for the same ADR-023 reason:
+// it has no writer and would only ever contribute rows that don't exist).
+func (r *Repository) AdminActivityFeed(ctx context.Context, limit int) ([]AdminActivityRow, error) {
+	limit = clampLimit(limit)
+	rows, err := r.db.Query(ctx, `
+		SELECT 'listing.created' AS event_type, 'listing' AS entity_type, l.id::text AS entity_id,
+		       l.seller_id::text AS actor_id, ('New listing: ' || l.title) AS display_text,
+		       l.title AS listing_title, l.price_kobo AS listing_price_kobo, l.created_at
+		FROM public.mkt_listings l
+		UNION ALL
+		SELECT 'offer.made', 'offer', o.id::text, o.buyer_id::text,
+		       ('Offer made: ' || (o.offer_price_kobo / 100)::text || ' NGN'),
+		       lo.title, o.offer_price_kobo, o.created_at
+		FROM public.mkt_offers o LEFT JOIN public.mkt_listings lo ON lo.id = o.listing_id
+		UNION ALL
+		SELECT 'boost.purchased', 'boost', b.id::text, b.seller_id::text,
+		       ('Listing boosted: ' || COALESCE(lb.title, '')),
+		       lb.title, b.price_kobo, b.created_at
+		FROM public.mkt_boosts b LEFT JOIN public.mkt_listings lb ON lb.id = b.listing_id
+		ORDER BY created_at DESC
+		LIMIT $1
+	`, limit)
+	if err != nil {
+		return nil, wrapInternal("admin activity feed", err)
+	}
+	defer rows.Close()
+	out := []AdminActivityRow{}
+	for rows.Next() {
+		var a AdminActivityRow
+		if err := rows.Scan(
+			&a.EventType, &a.EntityType, &a.EntityID, &a.ActorID, &a.DisplayText,
+			&a.ListingTitle, &a.ListingPriceKobo, &a.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		a.ID = a.EntityID
+		a.ActorName = "Member"
+		a.Severity = "info"
+		out = append(out, a)
+	}
+	return out, rows.Err()
+}
+
 // ─── Transactions ────────────────────────────────────────────────────────────
 
 // BeginTx starts a pgx transaction (used where a state change + outbox insert must

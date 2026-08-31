@@ -34,7 +34,7 @@ func liveOnbPool(t *testing.T) *pgxpool.Pool {
 
 func TestLiveDB_CreateApplication_ModuleClosedEnforced(t *testing.T) {
 	pool := liveOnbPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	svc := onboarding.NewService(pool) // no business gate (nil) — isolate the module check
 

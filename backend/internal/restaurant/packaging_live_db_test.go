@@ -20,6 +20,8 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+
+	"spotlight/backend/internal/testsupport"
 )
 
 const testPackFeeKobo = 20_000 // ₦200, the platform default
@@ -270,6 +272,7 @@ func TestLiveDB_PackagingPriceIsOwnerOnly(t *testing.T) {
 		stranger, stranger+"@seed.test"); err != nil {
 		t.Fatalf("seed stranger: %v", err)
 	}
+	testsupport.CleanupUser(t, pool, stranger)
 	if _, err := f.svc.UpdateRestaurant(ctx, f.restID, stranger, UpdateRestaurantRequest{
 		PackagingFeeKobo: ptrInt64(999_000),
 	}); err == nil {

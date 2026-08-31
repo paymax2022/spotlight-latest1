@@ -19,6 +19,8 @@ import (
 
 	"spotlight/backend/internal/association"
 	"spotlight/backend/internal/finance/ledger"
+
+	"spotlight/backend/internal/testsupport"
 )
 
 // seedFounder creates a user who owns a fresh organisation, returning both ids.
@@ -33,6 +35,7 @@ func seedFounder(t *testing.T, ctx context.Context, label string) (userID, orgID
 		pool.Close()
 		t.Fatalf("seed auth.users: %v", err)
 	}
+	testsupport.CleanupUser(t, pool, userID)
 	res, err := svc.PublishOrganisation(ctx, userID, newTestDraft(label+" "+uuid.New().String()[:8]))
 	if err != nil {
 		pool.Close()
@@ -225,6 +228,7 @@ func TestRunDues_RaisesInvoicesAndIsReplaySafe(t *testing.T) {
 		founder, founder+"@dues.test"); err != nil {
 		t.Fatalf("seed auth.users: %v", err)
 	}
+	testsupport.CleanupUser(t, pool, founder)
 	res, err := svc.PublishOrganisation(ctx, founder, newTestDraft("Dues Run "+uuid.New().String()[:8]))
 	if err != nil {
 		t.Fatalf("publish: %v", err)
@@ -301,6 +305,7 @@ func TestCreateTask_RejectsCrossOrgAssignee(t *testing.T) {
 		founder, founder+"@task.test"); err != nil {
 		t.Fatalf("seed auth.users: %v", err)
 	}
+	testsupport.CleanupUser(t, pool, founder)
 	mine, err := svc.PublishOrganisation(ctx, founder, newTestDraft("Task Org "+uuid.New().String()[:8]))
 	if err != nil {
 		t.Fatalf("publish: %v", err)
@@ -372,6 +377,7 @@ func TestFullDuesLifecycle_RunThenPayPostsBalancedLedger(t *testing.T) {
 		founder, founder+"@lifecycle.test"); err != nil {
 		t.Fatalf("seed auth.users: %v", err)
 	}
+	testsupport.CleanupUser(t, pool, founder)
 	org, err := svc.PublishOrganisation(ctx, founder, newTestDraft("Lifecycle "+uuid.New().String()[:8]))
 	if err != nil {
 		t.Fatalf("publish: %v", err)

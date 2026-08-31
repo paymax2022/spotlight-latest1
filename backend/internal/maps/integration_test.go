@@ -17,6 +17,8 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"spotlight/backend/internal/testsupport"
 )
 
 func itestPool(t *testing.T) *pgxpool.Pool {
@@ -180,6 +182,7 @@ func TestIntegration_TriggerSync(t *testing.T) {
 	if _, err := pool.Exec(ctx, `INSERT INTO auth.users (id, email) VALUES ($1,$2) ON CONFLICT (id) DO NOTHING`, uid, uid+"@itest.local"); err != nil {
 		t.Skipf("cannot seed auth.users (%v) — skipping trigger sync test", err)
 	}
+	testsupport.CleanupUser(t, pool, uid)
 	t.Cleanup(func() { _, _ = pool.Exec(ctx, `DELETE FROM auth.users WHERE id=$1`, uid) })
 
 	rid := uuid.New().String()

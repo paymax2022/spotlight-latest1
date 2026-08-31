@@ -27,6 +27,8 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"spotlight/backend/internal/referral/compliance"
+
+	"spotlight/backend/internal/testsupport"
 )
 
 // consentType must be one of the values allowed by referral_consents_consent_type_check.
@@ -57,6 +59,7 @@ func seedConsentUser(t *testing.T, ctx context.Context, pool *pgxpool.Pool) stri
 		id, id+"@consent.seed.test"); err != nil {
 		t.Fatalf("seed user: %v", err)
 	}
+	testsupport.CleanupUser(t, pool, id)
 	return id
 }
 

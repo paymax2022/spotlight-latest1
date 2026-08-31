@@ -30,6 +30,8 @@ import (
 	"github.com/google/uuid"
 
 	"spotlight/backend/internal/association"
+
+	"spotlight/backend/internal/testsupport"
 )
 
 // TestPublishOrganisation_PersistsIdentityFields proves the five identity fields
@@ -45,6 +47,7 @@ func TestPublishOrganisation_PersistsIdentityFields(t *testing.T) {
 		userID, userID+"@identity.test"); err != nil {
 		t.Fatalf("seed auth.users: %v", err)
 	}
+	testsupport.CleanupUser(t, pool, userID)
 
 	draft := newTestDraft("Identity Test " + uuid.New().String()[:8])
 	res, err := svc.PublishOrganisation(ctx, userID, draft)
@@ -98,6 +101,7 @@ func TestPublishOrganisation_OptionalIdentityFieldsMayBeBlank(t *testing.T) {
 		userID, userID+"@blank.test"); err != nil {
 		t.Fatalf("seed auth.users: %v", err)
 	}
+	testsupport.CleanupUser(t, pool, userID)
 
 	draft := newTestDraft("Blank Optional " + uuid.New().String()[:8])
 	draft.Acronym = "   " // whitespace must normalise to absent, not to "   "
@@ -139,6 +143,7 @@ func TestPublishOrganisation_RejectsMissingRequiredIdentity(t *testing.T) {
 		userID, userID+"@required.test"); err != nil {
 		t.Fatalf("seed auth.users: %v", err)
 	}
+	testsupport.CleanupUser(t, pool, userID)
 
 	nextYear := time.Now().Year() + 1
 	tooEarly := 1799
@@ -192,6 +197,7 @@ func TestPublishOrganisation_AcceptsBoundaryFoundedYears(t *testing.T) {
 		userID, userID+"@bounds.test"); err != nil {
 		t.Fatalf("seed auth.users: %v", err)
 	}
+	testsupport.CleanupUser(t, pool, userID)
 
 	for _, year := range []int{1800, time.Now().Year()} {
 		y := year

@@ -41,6 +41,8 @@ import (
 	"spotlight/backend/internal/finance/tiers"
 	"spotlight/backend/internal/finance/wallet"
 	"spotlight/backend/internal/top5events"
+
+	"spotlight/backend/internal/testsupport"
 )
 
 func itestPool(t *testing.T) *pgxpool.Pool {
@@ -82,6 +84,7 @@ func seedUser(t *testing.T, pool *pgxpool.Pool) string {
 		`INSERT INTO auth.users (id, email) VALUES ($1,$2) ON CONFLICT (id) DO NOTHING`, id, id+"@itest.local"); err != nil {
 		t.Skipf("cannot seed auth.users (%v) — skipping", err)
 	}
+	testsupport.CleanupUser(t, pool, id)
 	t.Cleanup(func() { _, _ = pool.Exec(context.Background(), `DELETE FROM auth.users WHERE id=$1`, id) })
 	return id
 }

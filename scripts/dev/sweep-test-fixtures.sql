@@ -1,6 +1,11 @@
 -- ── Sweep synthetic test fixtures from a DEVELOPMENT database ────────────────
 --
--- Live-DB suites seed users as '<uuid>@seed.test' and file real rows under them.
+-- Live-DB suites seed users under IANA reserved-for-testing domains and file real
+-- rows under them. The scope is the reserved TLDs .test (RFC 6761), .local and
+-- .invalid (RFC 2606) — none of which can be a routable address, so no real
+-- account can match. Scoping to '@seed.test' alone, as a first pass did, missed
+-- 2,230 fixtures seeded under @example.test, @founder.test, @test.local and a
+-- couple of dozen other per-suite domains.
 -- Very few clean up, and it is worth being precise about why: auth.users has 183
 -- referencing foreign keys that are NO ACTION rather than CASCADE, so correct
 -- per-test teardown would mean each test knowing its entire write set across the
@@ -18,7 +23,7 @@
 -- every one of the 5,085 is blocked by one of those two guarantees. There is no
 -- deletable residue left for it to find.
 --
--- ⚠️ DEVELOPMENT ONLY. Scoped to the '%@seed.test' email convention, which no
+-- ⚠️ DEVELOPMENT ONLY. Scoped to the '@[^@]*\.(test|local|invalid)$' email convention, which no
 -- real account uses, but it still deletes rows across the whole schema.
 
 \set ON_ERROR_STOP on
@@ -33,7 +38,7 @@ DECLARE
     after_users  bigint;
     ledger_bound bigint;
 BEGIN
-    SELECT count(*) INTO before_users FROM auth.users WHERE email LIKE '%@seed.test';
+    SELECT count(*) INTO before_users FROM auth.users WHERE email ~ '@[^@]*\.(test|local|invalid)$';
 
     -- 1. Marketplace fixture categories. Swept here as well as in the package's
     --    own TestMain so a developer gets a clean marketplace from one command.
@@ -85,8 +90,8 @@ BEGIN
             BEGIN
                 EXECUTE format(
                     'DELETE FROM %s WHERE %I IN (SELECT %I FROM %s WHERE %I IN '
-                    '(SELECT id FROM auth.users WHERE email LIKE %L))',
-                    c.tbl, c.col, c.parent_key, c.parent_tbl, c.parent_col, '%@seed.test');
+                    '(SELECT id FROM auth.users WHERE email ~ %L))',
+                    c.tbl, c.col, c.parent_key, c.parent_tbl, c.parent_col, '@[^@]*\.(test|local|invalid)$');
                 GET DIAGNOSTICS n = ROW_COUNT;
                 removed_rows := removed_rows + n;
             EXCEPTION WHEN others THEN
@@ -108,8 +113,8 @@ BEGIN
         LOOP
             BEGIN
                 EXECUTE format(
-                    'DELETE FROM %s WHERE %I IN (SELECT id FROM auth.users WHERE email LIKE %L)',
-                    c.tbl, c.col, '%@seed.test');
+                    'DELETE FROM %s WHERE %I IN (SELECT id FROM auth.users WHERE email ~ %L)',
+                    c.tbl, c.col, '@[^@]*\.(test|local|invalid)$');
                 GET DIAGNOSTICS n = ROW_COUNT;
                 removed_rows := removed_rows + n;
             EXCEPTION WHEN others THEN
@@ -124,7 +129,7 @@ BEGIN
 
     -- 3. The users themselves. Per-user exception handling so one undeletable
     --    account (ledger-bound) cannot abort the rest.
-    FOR c IN SELECT id FROM auth.users WHERE email LIKE '%@seed.test' LOOP
+    FOR c IN SELECT id FROM auth.users WHERE email ~ '@[^@]*\.(test|local|invalid)$' LOOP
         BEGIN
             DELETE FROM auth.users WHERE id = c.id;
         EXCEPTION WHEN others THEN
@@ -132,10 +137,10 @@ BEGIN
         END;
     END LOOP;
 
-    SELECT count(*) INTO after_users FROM auth.users WHERE email LIKE '%@seed.test';
+    SELECT count(*) INTO after_users FROM auth.users WHERE email ~ '@[^@]*\.(test|local|invalid)$';
     SELECT count(*) INTO ledger_bound
       FROM auth.users u
-     WHERE u.email LIKE '%@seed.test'
+     WHERE u.email ~ '@[^@]*\.(test|local|invalid)$'
        AND EXISTS (SELECT 1 FROM public.ledger_accounts a
                     JOIN public.ledger_entries e ON e.account_id = a.id
                    WHERE a.user_id = u.id);

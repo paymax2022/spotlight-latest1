@@ -34,6 +34,8 @@ import (
 	"spotlight/backend/internal/finance/ledger"
 	"spotlight/backend/internal/finance/settlement"
 	"spotlight/backend/internal/finance/tiers"
+
+	"spotlight/backend/internal/testsupport"
 )
 
 func promoOrderPool(t *testing.T) *pgxpool.Pool {
@@ -75,6 +77,7 @@ func newPromoOrderFixture(t *testing.T, ctx context.Context, pool *pgxpool.Pool,
 		if _, err := pool.Exec(ctx, `INSERT INTO auth.users (id,email) VALUES ($1,$2) ON CONFLICT DO NOTHING`, u, u+"@seed.test"); err != nil {
 			t.Fatalf("seed user: %v", err)
 		}
+		testsupport.CleanupUser(t, pool, u)
 	}
 	f.restID = uuid.New().String()
 	if _, err := pool.Exec(ctx, `INSERT INTO restaurants (id, owner_id, name, address, is_open, packaging_fee_kobo) VALUES ($1,$2,$3,'1 St',TRUE,0)`, f.restID, f.owner, name); err != nil {
@@ -592,6 +595,7 @@ func TestLiveDB_OrderReplayIsScopedToTheCaller(t *testing.T) {
 	if _, err := pool.Exec(ctx, `INSERT INTO auth.users (id,email) VALUES ($1,$2) ON CONFLICT DO NOTHING`, attacker, attacker+"@seed.test"); err != nil {
 		t.Fatalf("seed attacker: %v", err)
 	}
+	testsupport.CleanupUser(t, pool, attacker)
 	revAcc, err := f.led.GetOrCreateStandingAccount(ctx, ledger.AccountPaymaxRevenue)
 	if err != nil {
 		t.Fatalf("standing acct: %v", err)

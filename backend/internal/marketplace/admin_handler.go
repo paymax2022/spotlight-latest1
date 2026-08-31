@@ -101,6 +101,29 @@ func (h *Handler) AdminActionFlag(c *gin.Context) {
 	respond(c, http.StatusOK, gin.H{"ok": true})
 }
 
+// AdminMetrics GET /admin/marketplace/metrics — live KPI snapshot for the
+// admin dashboard.
+func (h *Handler) AdminMetrics(c *gin.Context) {
+	m, err := h.svc.repo.AdminMetrics(c.Request.Context())
+	if err != nil {
+		fail(c, err)
+		return
+	}
+	respond(c, http.StatusOK, m)
+}
+
+// AdminActivityFeed GET /admin/marketplace/activity-feed?limit= — recent
+// marketplace activity, newest first.
+func (h *Handler) AdminActivityFeed(c *gin.Context) {
+	limit, _ := pageParams(c)
+	rows, err := h.svc.repo.AdminActivityFeed(c.Request.Context(), limit)
+	if err != nil {
+		fail(c, err)
+		return
+	}
+	respond(c, http.StatusOK, rows)
+}
+
 // AdminAuditLog GET /admin/audit-log?target_type=&target_id=
 func (h *Handler) AdminAuditLog(c *gin.Context) {
 	limit, offset := pageParams(c)

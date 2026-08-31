@@ -43,6 +43,8 @@ import (
 	"github.com/google/uuid"
 
 	"spotlight/backend/internal/crowdfunding/creator"
+
+	"spotlight/backend/internal/testsupport"
 )
 
 // TestLiveDB_ContributionReadIsOwnerScoped is the regression that closes the
@@ -64,6 +66,7 @@ func TestLiveDB_ContributionReadIsOwnerScoped(t *testing.T) {
 			ON CONFLICT (id) DO NOTHING`, u, "cf-scope-"+u+"@test.local"); err != nil {
 			t.Fatalf("seed user: %v", err)
 		}
+		testsupport.CleanupUser(t, pool, u)
 	}
 
 	contributionID := uuid.NewString()
@@ -132,6 +135,7 @@ func TestLiveDB_RefundRequestIsOwnerScoped(t *testing.T) {
 			ON CONFLICT (id) DO NOTHING`, u, "cf-refundscope-"+u+"@test.local"); err != nil {
 			t.Fatalf("seed user: %v", err)
 		}
+		testsupport.CleanupUser(t, pool, u)
 	}
 
 	contributionID := uuid.NewString()

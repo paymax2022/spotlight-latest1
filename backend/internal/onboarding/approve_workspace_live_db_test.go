@@ -24,6 +24,8 @@ import (
 	"github.com/google/uuid"
 
 	"spotlight/backend/internal/onboarding"
+
+	"spotlight/backend/internal/testsupport"
 )
 
 func TestLiveDB_ApprovalWritesAResolvableWorkspaceRoute(t *testing.T) {
@@ -52,6 +54,7 @@ func TestLiveDB_ApprovalWritesAResolvableWorkspaceRoute(t *testing.T) {
 			`INSERT INTO auth.users (id,email) VALUES ($1,$2) ON CONFLICT DO NOTHING`, u, u+"@seed.test"); err != nil {
 			t.Fatalf("seed user: %v", err)
 		}
+		testsupport.CleanupUser(t, pool, u)
 	}
 
 	if _, err := pool.Exec(ctx,
@@ -78,7 +81,6 @@ func TestLiveDB_ApprovalWritesAResolvableWorkspaceRoute(t *testing.T) {
 		pool.Exec(bg, `DELETE FROM onb_merchant_type WHERE id=$1`, typeID)
 		pool.Exec(bg, `DELETE FROM onb_module WHERE id=$1`, modID)
 	})
-
 
 	// The submit path resolves the type's OWN published schema
 	// (GetPublishedSchemaForType is scoped by merchant_type_id), so seed one.
@@ -159,6 +161,7 @@ func TestLiveDB_ApprovalIsIdempotent(t *testing.T) {
 			`INSERT INTO auth.users (id,email) VALUES ($1,$2) ON CONFLICT DO NOTHING`, u, u+"@seed.test"); err != nil {
 			t.Fatalf("seed user: %v", err)
 		}
+		testsupport.CleanupUser(t, pool, u)
 	}
 
 	if _, err := pool.Exec(ctx,
@@ -185,7 +188,6 @@ func TestLiveDB_ApprovalIsIdempotent(t *testing.T) {
 		pool.Exec(bg, `DELETE FROM onb_merchant_type WHERE id=$1`, typeID)
 		pool.Exec(bg, `DELETE FROM onb_module WHERE id=$1`, modID)
 	})
-
 
 	// The submit path resolves the type's OWN published schema
 	// (GetPublishedSchemaForType is scoped by merchant_type_id), so seed one.

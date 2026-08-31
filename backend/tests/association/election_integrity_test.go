@@ -68,7 +68,7 @@ func buildOpenElection(t *testing.T, ctx context.Context, pool *pgxpool.Pool, sv
 
 func TestLiveDB_Election_FullFlow_TallyWinnerImmutableResults(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	svc := newLiveAssociationService(pool)
 	ctx := context.Background()
 	f := buildOpenElection(t, ctx, pool, svc)
@@ -148,7 +148,7 @@ func TestLiveDB_Election_FullFlow_TallyWinnerImmutableResults(t *testing.T) {
 
 func TestLiveDB_Election_OneMemberOneVote_Idempotent(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	svc := newLiveAssociationService(pool)
 	ctx := context.Background()
 	f := buildOpenElection(t, ctx, pool, svc)
@@ -180,7 +180,7 @@ func TestLiveDB_Election_OneMemberOneVote_Idempotent(t *testing.T) {
 
 func TestLiveDB_Election_ConcurrentDoubleVote_ExactlyOne(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	svc := newLiveAssociationService(pool)
 	ctx := context.Background()
 	f := buildOpenElection(t, ctx, pool, svc)
@@ -211,7 +211,7 @@ func TestLiveDB_Election_ConcurrentDoubleVote_ExactlyOne(t *testing.T) {
 
 func TestLiveDB_Election_BallotSecrecy_NoVoterChoiceLink(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 
 	// The anonymous-choice table must have NO voter/membership reference, and the
@@ -240,7 +240,7 @@ func TestLiveDB_Election_BallotSecrecy_NoVoterChoiceLink(t *testing.T) {
 
 func TestLiveDB_Election_Eligibility_FailClosed(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	svc := newLiveAssociationService(pool)
 	ctx := context.Background()
 	f := buildOpenElection(t, ctx, pool, svc)
@@ -273,7 +273,7 @@ func TestLiveDB_Election_Eligibility_FailClosed(t *testing.T) {
 
 func TestLiveDB_Election_VotingWindow_FailClosed(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	svc := newLiveAssociationService(pool)
 	ctx := context.Background()
 
@@ -312,7 +312,7 @@ func TestLiveDB_Election_VotingWindow_FailClosed(t *testing.T) {
 
 func TestLiveDB_Election_OfficerOnly_Authz(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	svc := newLiveAssociationService(pool)
 	ctx := context.Background()
 	f := buildOpenElection(t, ctx, pool, svc)

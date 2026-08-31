@@ -35,6 +35,8 @@ import (
 
 	"spotlight/backend/internal/config"
 	financeledger "spotlight/backend/internal/finance/ledger"
+
+	"spotlight/backend/internal/testsupport"
 )
 
 const testServiceToken = "test-service-token-abc123"
@@ -61,6 +63,7 @@ func seedAuthUser(t *testing.T, pool *pgxpool.Pool) string {
 		`INSERT INTO auth.users (id, email) VALUES ($1,$2)`, uid, "il-"+uid+"@test.local"); err != nil {
 		t.Fatalf("seed auth user: %v", err)
 	}
+	testsupport.CleanupUser(t, pool, uid)
 	return uid
 }
 

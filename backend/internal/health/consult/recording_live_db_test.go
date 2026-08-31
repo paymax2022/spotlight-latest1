@@ -8,6 +8,8 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"spotlight/backend/internal/testsupport"
 )
 
 // TM-003 live-DB integration test for consent-gated consult recording.
@@ -57,7 +59,9 @@ func TestRecordingConsent_LiveDB(t *testing.T) {
 		}
 	}
 	seed(`INSERT INTO auth.users (id, email) VALUES ($1,$2) ON CONFLICT DO NOTHING`, patientID, patientID+"@seed.test")
+	testsupport.CleanupUser(t, pool, patientID)
 	seed(`INSERT INTO auth.users (id, email) VALUES ($1,$2) ON CONFLICT DO NOTHING`, providerOwnerID, providerOwnerID+"@seed.test")
+	testsupport.CleanupUser(t, pool, providerOwnerID)
 	seed(`INSERT INTO public.health_providers (id, owner_user_id, domain, provider_type, display_name, status)
 	      VALUES ($1,$2,'PHARMACY','pharmacist','Seed Clinic','APPROVED')`, providerID, providerOwnerID)
 	seed(`INSERT INTO public.health_consults (id, provider_id, patient_id, state, recording_enabled)

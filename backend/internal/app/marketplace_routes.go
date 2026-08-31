@@ -378,6 +378,11 @@ func RegisterMarketplace(
 	a.POST("/flags/:id/action", guard("marketplace.admin.flags.action"), h.AdminActionFlag)
 	a.GET("/audit-log", guard("marketplace.admin.audit.read"), h.AdminAuditLog)
 
+	// Admin dashboard — live KPIs + synthesized activity feed (no dedicated
+	// event log table has a writer; see the package note on AdminMetrics).
+	// Read-scoped like the other dashboard-ish admin GETs above.
+	a.GET("/metrics", guard("marketplace.admin.moderation"), h.AdminMetrics)
+	a.GET("/activity-feed", guard("marketplace.admin.moderation"), h.AdminActivityFeed)
 
 	// Boost moderation — the SOLE live marketplace money path (§2.4). GET lists boosts
 	// platform-wide (read-scoped marketplace.admin.moderation); POST rejects+auto-refunds.

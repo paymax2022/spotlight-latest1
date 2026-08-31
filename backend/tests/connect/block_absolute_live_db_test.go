@@ -8,9 +8,9 @@
 // form a match, and their posts + professional profile stayed visible to the blocker.
 //
 // Bring-up (skipped unless a DB is wired):
-//   1. A Postgres with the Connect schema applied (e.g. the local Supabase DB).
-//   2. export TEST_DATABASE_URL=postgres://postgres:postgres@127.0.0.1:54322/postgres
-//   3. cd backend && go test ./tests/connect/ -run TestConnectBlockIsAbsolute -v
+//  1. A Postgres with the Connect schema applied (e.g. the local Supabase DB).
+//  2. export TEST_DATABASE_URL=postgres://postgres:postgres@127.0.0.1:54322/postgres
+//  3. cd backend && go test ./tests/connect/ -run TestConnectBlockIsAbsolute -v
 //
 // The suite seeds throwaway rows under freshly-generated UUIDs and deletes them on
 // cleanup; it never touches real user data.
@@ -28,17 +28,19 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	connectaccount "spotlight/backend/internal/connect/account"
+	connectchat "spotlight/backend/internal/connect/chat"
+	connectcredits "spotlight/backend/internal/connect/credits"
 	connectdiscovery "spotlight/backend/internal/connect/discovery"
-	connectfeed "spotlight/backend/internal/connect/networking/feed"
 	connectmatching "spotlight/backend/internal/connect/matching"
+	connectmonetization "spotlight/backend/internal/connect/monetization"
+	connectfeed "spotlight/backend/internal/connect/networking/feed"
 	connectprofessional "spotlight/backend/internal/connect/professional"
 	connectsafety "spotlight/backend/internal/connect/safety"
 	connecttrust "spotlight/backend/internal/connect/trust"
-	connectchat "spotlight/backend/internal/connect/chat"
-	connectaccount "spotlight/backend/internal/connect/account"
-	connectmonetization "spotlight/backend/internal/connect/monetization"
 	ledger "spotlight/backend/internal/finance/ledger"
-	connectcredits "spotlight/backend/internal/connect/credits"
+
+	"spotlight/backend/internal/testsupport"
 )
 
 func blockLiveDBPool(t *testing.T) *pgxpool.Pool {
@@ -75,6 +77,7 @@ func seedProfile(t *testing.T, ctx context.Context, pool *pgxpool.Pool) (string,
 		userID, "seed-"+userID[:8]+"@example.test"); err != nil {
 		t.Fatalf("seed auth user: %v", err)
 	}
+	testsupport.CleanupUser(t, pool, userID)
 	var profileID string
 	if err := pool.QueryRow(ctx,
 		`INSERT INTO connect_profiles (user_id, display_name) VALUES ($1::uuid, $2) RETURNING id`,

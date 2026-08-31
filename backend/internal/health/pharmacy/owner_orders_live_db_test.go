@@ -28,6 +28,8 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	healthpharmacy "spotlight/backend/internal/health/pharmacy"
+
+	"spotlight/backend/internal/testsupport"
 )
 
 func ownerOrdersPool(t *testing.T) *pgxpool.Pool {
@@ -67,6 +69,7 @@ func newInboxFixture(t *testing.T, ctx context.Context, pool *pgxpool.Pool) inbo
 			`INSERT INTO auth.users (id,email) VALUES ($1,$2) ON CONFLICT DO NOTHING`, u, u+"@seed.test"); err != nil {
 			t.Fatalf("seed user: %v", err)
 		}
+		testsupport.CleanupUser(t, pool, u)
 	}
 	// Two pharmacies with DIFFERENT owners, so the scoping assertion is real.
 	for _, p := range []struct{ id, owner, name string }{

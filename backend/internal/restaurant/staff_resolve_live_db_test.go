@@ -21,6 +21,8 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"spotlight/backend/internal/testsupport"
 )
 
 func staffPool(t *testing.T) *pgxpool.Pool {
@@ -37,12 +39,12 @@ func staffPool(t *testing.T) *pgxpool.Pool {
 }
 
 type staffFixture struct {
-	svc              *Service
-	pool             *pgxpool.Pool
-	owner            string
-	manager          string
-	stranger         string
-	lekki, ikeja     string // two outlets, same owner
+	svc          *Service
+	pool         *pgxpool.Pool
+	owner        string
+	manager      string
+	stranger     string
+	lekki, ikeja string // two outlets, same owner
 }
 
 func newStaffFixture(t *testing.T, ctx context.Context, pool *pgxpool.Pool) staffFixture {
@@ -57,6 +59,7 @@ func newStaffFixture(t *testing.T, ctx context.Context, pool *pgxpool.Pool) staf
 			`INSERT INTO auth.users (id,email) VALUES ($1,$2) ON CONFLICT DO NOTHING`, u, u+"@seed.test"); err != nil {
 			t.Fatalf("seed user: %v", err)
 		}
+		testsupport.CleanupUser(t, pool, u)
 	}
 	for _, r := range []struct{ id, name string }{{f.lekki, "STF Lekki"}, {f.ikeja, "STF Ikeja"}} {
 		if _, err := pool.Exec(ctx,

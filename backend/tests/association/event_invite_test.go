@@ -23,6 +23,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
+	"spotlight/backend/internal/testsupport"
 )
 
 // TestInviteToEvent_InvitesMembersAndIsAdminOnly pins who may invite and that
@@ -159,6 +161,7 @@ func TestInviteToEvent_DropsForeignMemberships(t *testing.T) {
 		otherFounder, otherFounder+"@otherorg.test"); err != nil {
 		t.Fatalf("seed other founder: %v", err)
 	}
+	testsupport.CleanupUser(t, pool, otherFounder)
 	resB, err := svc.PublishOrganisation(ctx, otherFounder, newTestDraft("Other "+uuid.NewString()[:8]))
 	if err != nil {
 		t.Fatalf("publish other org: %v", err)

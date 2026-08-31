@@ -28,6 +28,8 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"spotlight/backend/internal/testsupport"
 )
 
 func readinessPool(t *testing.T) *pgxpool.Pool {
@@ -44,13 +46,13 @@ func readinessPool(t *testing.T) *pgxpool.Pool {
 }
 
 type readinessFixture struct {
-	svc            *Service
-	pool           *pgxpool.Pool
-	owner, other   string
-	approved       string // KYB approved  → payable
-	pending        string // KYB submitted → not payable
-	noKyb          string // no KYB row    → not payable (the 1059 case)
-	rival          string // someone else's
+	svc          *Service
+	pool         *pgxpool.Pool
+	owner, other string
+	approved     string // KYB approved  → payable
+	pending      string // KYB submitted → not payable
+	noKyb        string // no KYB row    → not payable (the 1059 case)
+	rival        string // someone else's
 }
 
 func newReadinessFixture(t *testing.T, ctx context.Context, pool *pgxpool.Pool) readinessFixture {
@@ -66,6 +68,7 @@ func newReadinessFixture(t *testing.T, ctx context.Context, pool *pgxpool.Pool) 
 			`INSERT INTO auth.users (id,email) VALUES ($1,$2) ON CONFLICT DO NOTHING`, u, u+"@seed.test"); err != nil {
 			t.Fatalf("seed user: %v", err)
 		}
+		testsupport.CleanupUser(t, pool, u)
 	}
 	rows := []struct {
 		id, owner, name, kyb string

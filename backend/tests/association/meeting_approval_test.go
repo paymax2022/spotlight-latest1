@@ -31,6 +31,8 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"spotlight/backend/internal/association"
+
+	"spotlight/backend/internal/testsupport"
 )
 
 func ptrString(s string) *string { return &s }
@@ -77,6 +79,7 @@ func orgWithAdminAndMember(t *testing.T, ctx context.Context, pool *pgxpool.Pool
 		adminID, adminID+"@mtgadmin.test"); err != nil {
 		t.Fatalf("seed admin: %v", err)
 	}
+	testsupport.CleanupUser(t, pool, adminID)
 	res, err := svc.PublishOrganisation(ctx, adminID, newTestDraft("Meetings "+uuid.NewString()[:8]))
 	if err != nil {
 		t.Fatalf("publish: %v", err)
@@ -226,6 +229,7 @@ func TestDecideMeeting_OnlyAdminsAndOnlyOnce(t *testing.T) {
 		outsider, outsider+"@mtgoutsider.test"); err != nil {
 		t.Fatalf("seed outsider: %v", err)
 	}
+	testsupport.CleanupUser(t, pool, outsider)
 	t.Cleanup(func() { _, _ = pool.Exec(ctx, `DELETE FROM auth.users WHERE id=$1`, outsider) })
 	if _, err := svc.DecideMeeting(ctx, outsider, id, association.MeetingApprovalDecision{Approve: true}); err == nil {
 		t.Fatal("an outsider must not be able to decide a meeting")

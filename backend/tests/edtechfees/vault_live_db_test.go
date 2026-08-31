@@ -134,7 +134,7 @@ func cleanupVault(t *testing.T, pool *pgxpool.Pool, vaultID string) {
 //	(e) a replay of ApplyToInvoice double-transfers nothing (terminal-state guard).
 func TestLiveDB_Vault_Contribute_Idempotent_SegregatedThenApplyToInvoice(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	led := newLiveLedger(pool)
 	invSvc := feesinvoice.NewService(pool)
@@ -285,7 +285,7 @@ func TestLiveDB_Vault_Contribute_Idempotent_SegregatedThenApplyToInvoice(t *test
 // a keyless Contribute is rejected before any money moves or any row is appended.
 func TestLiveDB_Vault_Contribute_RequiresIdempotencyKey(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	led := newLiveLedger(pool)
 

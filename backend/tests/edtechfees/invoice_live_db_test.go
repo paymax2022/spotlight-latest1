@@ -51,6 +51,8 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	feesinvoice "spotlight/backend/internal/academy/fees/invoice"
+
+	"spotlight/backend/internal/testsupport"
 )
 
 // TestLiveDB_Invoice_IdempotencyKeyScopedToInvoice is the ledger-auditor F1 regression:
@@ -179,6 +181,7 @@ func seedUser(t *testing.T, ctx context.Context, pool *pgxpool.Pool) string {
 	if _, err := pool.Exec(ctx, `INSERT INTO auth.users (id, email) VALUES ($1, $2) ON CONFLICT DO NOTHING`, id, id+"@seed.test"); err != nil {
 		t.Fatalf("seed auth.users: %v", err)
 	}
+	testsupport.CleanupUser(t, pool, id)
 	t.Cleanup(func() {
 		_, _ = pool.Exec(context.Background(), `DELETE FROM auth.users WHERE id=$1`, id)
 	})

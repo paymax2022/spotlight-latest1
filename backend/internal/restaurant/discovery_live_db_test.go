@@ -13,6 +13,8 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"spotlight/backend/internal/testsupport"
 )
 
 func discoveryPool(t *testing.T) *pgxpool.Pool {
@@ -41,6 +43,7 @@ func TestLiveDB_Discovery(t *testing.T) {
 	customer := uuid.New().String()
 	for _, u := range []string{owner, customer} {
 		_, _ = pool.Exec(ctx, `INSERT INTO auth.users (id,email) VALUES ($1,$2) ON CONFLICT DO NOTHING`, u, u+"@seed.test")
+		testsupport.CleanupUser(t, pool, u)
 	}
 	// A restaurant whose name doesn't match, but which serves a dish that does.
 	uniqueDish := "Zebra" + uuid.New().String()[:8] // unique so the search is deterministic

@@ -40,6 +40,8 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"spotlight/backend/internal/crowdfunding/creator"
+
+	"spotlight/backend/internal/testsupport"
 )
 
 func liveDBPool(t *testing.T) *pgxpool.Pool {
@@ -89,6 +91,7 @@ func seedCampaign(t *testing.T, ctx context.Context, pool *pgxpool.Pool) (campai
 		ON CONFLICT (id) DO NOTHING`, creatorID, "cf-analytics-"+creatorID+"@test.local"); err != nil {
 		t.Fatalf("seed creator: %v", err)
 	}
+	testsupport.CleanupUser(t, pool, creatorID)
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO campaigns (id, creator_id, title, goal_kobo, status, deadline)
 		VALUES ($1, $2, 'Analytics fixture', 1000000, 'active', NOW() + INTERVAL '30 days')`,

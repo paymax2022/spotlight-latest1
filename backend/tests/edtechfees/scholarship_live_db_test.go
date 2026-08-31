@@ -101,7 +101,7 @@ func cleanupPledge(t *testing.T, pool *pgxpool.Pool, pledgeID string) {
 //	    and must NOT have recorded an invoice payment when it does.
 func TestLiveDB_Scholarship_PledgeFund_Idempotent_Audited_ThenApplyDocumentsGap(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	led := newLiveLedger(pool)
 	invSvc := feesinvoice.NewService(pool)

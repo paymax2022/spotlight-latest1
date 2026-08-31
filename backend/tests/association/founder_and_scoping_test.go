@@ -15,6 +15,8 @@ import (
 	"github.com/google/uuid"
 
 	"spotlight/backend/internal/association"
+
+	"spotlight/backend/internal/testsupport"
 )
 
 // newTestDraft builds a wizard draft exercising every field the publish path
@@ -83,6 +85,7 @@ func TestPublishOrganisation_FoundersOwnTheirOrg(t *testing.T) {
 		userID, userID+"@founder.test"); err != nil {
 		t.Fatalf("seed auth.users: %v", err)
 	}
+	testsupport.CleanupUser(t, pool, userID)
 
 	draft := newTestDraft("Founder Test " + uuid.New().String()[:8])
 	res, err := svc.PublishOrganisation(ctx, userID, draft)
@@ -143,6 +146,7 @@ func TestPublishOrganisation_IdempotentReplay(t *testing.T) {
 		userID, userID+"@replay.test"); err != nil {
 		t.Fatalf("seed auth.users: %v", err)
 	}
+	testsupport.CleanupUser(t, pool, userID)
 
 	draft := newTestDraft("Replay Test " + uuid.New().String()[:8])
 	draft.IdempotencyKey = newIdemKey(t, "publish")
@@ -184,6 +188,7 @@ func TestPublishOrganisation_PersistsWizardConfiguration(t *testing.T) {
 		userID, userID+"@config.test"); err != nil {
 		t.Fatalf("seed auth.users: %v", err)
 	}
+	testsupport.CleanupUser(t, pool, userID)
 
 	res, err := svc.PublishOrganisation(ctx, userID, newTestDraft("Config Test "+uuid.New().String()[:8]))
 	if err != nil {
@@ -269,6 +274,7 @@ func TestSubmitApplication_CreatesMembership(t *testing.T) {
 		applicant, applicant+"@applicant.test"); err != nil {
 		t.Fatalf("seed auth.users: %v", err)
 	}
+	testsupport.CleanupUser(t, pool, applicant)
 
 	result, err := svc.SubmitApplication(ctx, applicant, newTestJoinDraft(orgID))
 	if err != nil {
@@ -315,6 +321,7 @@ func TestGetAuditLog_DoesNotLeakAcrossOrganisations(t *testing.T) {
 		founder, founder+"@audit.test"); err != nil {
 		t.Fatalf("seed auth.users: %v", err)
 	}
+	testsupport.CleanupUser(t, pool, founder)
 
 	// One admin, two organisations — exactly the shape that leaked.
 	orgA, err := svc.PublishOrganisation(ctx, founder, newTestDraft("Audit A "+uuid.New().String()[:8]))
@@ -406,6 +413,7 @@ func TestRegenerateAiNoteSummary_RequiresOrgAdmin(t *testing.T) {
 		stranger, stranger+"@stranger.test"); err != nil {
 		t.Fatalf("seed auth.users: %v", err)
 	}
+	testsupport.CleanupUser(t, pool, stranger)
 
 	if err := svc.RegenerateAiNoteSummary(ctx, stranger, noteID); err == nil {
 		t.Fatal("a stranger was allowed to regenerate another organisation's minutes")

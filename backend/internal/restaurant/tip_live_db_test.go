@@ -26,6 +26,8 @@ import (
 	"spotlight/backend/internal/finance/ledger"
 	"spotlight/backend/internal/finance/settlement"
 	"spotlight/backend/internal/finance/tiers"
+
+	"spotlight/backend/internal/testsupport"
 )
 
 func tipPool(t *testing.T) *pgxpool.Pool {
@@ -71,6 +73,7 @@ func TestLiveDB_OrderTipEscrowAndRiderPayout(t *testing.T) {
 		if _, err := pool.Exec(ctx, `INSERT INTO auth.users (id,email) VALUES ($1,$2) ON CONFLICT DO NOTHING`, u, u+"@seed.test"); err != nil {
 			t.Fatalf("seed user: %v", err)
 		}
+		testsupport.CleanupUser(t, pool, u)
 	}
 	// PlaceOrder's escrow is tier-gated (fail-closed), so the paying customer needs a
 	// KYC tier. Tier 3 is unlimited — this test is about the tip, not the cap.
@@ -239,6 +242,7 @@ func TestLiveDB_OrderTipRefundedOnCancel(t *testing.T) {
 		if _, err := pool.Exec(ctx, `INSERT INTO auth.users (id,email) VALUES ($1,$2) ON CONFLICT DO NOTHING`, u, u+"@seed.test"); err != nil {
 			t.Fatalf("seed user: %v", err)
 		}
+		testsupport.CleanupUser(t, pool, u)
 	}
 	seedKYCTier(t, ctx, pool, customer, 3) // unlimited — the escrow is tier-gated
 	restID := uuid.New().String()
@@ -308,6 +312,7 @@ func TestLiveDB_OrderTipDroppedWhenEscrowDiverges(t *testing.T) {
 		if _, err := pool.Exec(ctx, `INSERT INTO auth.users (id,email) VALUES ($1,$2) ON CONFLICT DO NOTHING`, u, u+"@seed.test"); err != nil {
 			t.Fatalf("seed user: %v", err)
 		}
+		testsupport.CleanupUser(t, pool, u)
 	}
 	seedKYCTier(t, ctx, pool, customer, 3) // unlimited — the escrow is tier-gated
 	restID := uuid.New().String()

@@ -26,6 +26,8 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+
+	"spotlight/backend/internal/testsupport"
 )
 
 // TestCommitteeRequests_ApproveDeclineAndAuthority covers the whole loop.
@@ -163,6 +165,7 @@ func TestAddCommitteeMembers_DropsForeignMemberships(t *testing.T) {
 		otherFounder, otherFounder+"@cmteother.test"); err != nil {
 		t.Fatalf("seed founder: %v", err)
 	}
+	testsupport.CleanupUser(t, pool, otherFounder)
 	resB, err := svc.PublishOrganisation(ctx, otherFounder, newTestDraft("CmteOther "+uuid.NewString()[:8]))
 	if err != nil {
 		t.Fatalf("publish: %v", err)
@@ -241,6 +244,7 @@ func TestResolveDocumentDownload_ScopesToTheOrganisation(t *testing.T) {
 		outsider, outsider+"@docoutsider.test"); err != nil {
 		t.Fatalf("seed outsider: %v", err)
 	}
+	testsupport.CleanupUser(t, pool, outsider)
 	t.Cleanup(func() { _, _ = pool.Exec(ctx, `DELETE FROM auth.users WHERE id=$1`, outsider) })
 	if _, err := svc.ResolveDocumentDownload(ctx, outsider, openDoc); err == nil {
 		t.Error("an outsider must not get a download URL for another organisation's document")

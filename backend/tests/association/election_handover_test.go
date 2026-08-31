@@ -77,7 +77,7 @@ func buildPublishedRoleElection(t *testing.T, ctx context.Context, pool *pgxpool
 
 func TestLiveDB_Handover_GrantsWinnerRevokesOutgoing(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	svc := newLiveAssociationService(pool)
 	ctx := context.Background()
 
@@ -129,7 +129,7 @@ func TestLiveDB_Handover_GrantsWinnerRevokesOutgoing(t *testing.T) {
 
 func TestLiveDB_Handover_ExactlyOnce(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	svc := newLiveAssociationService(pool)
 	ctx := context.Background()
 
@@ -149,7 +149,7 @@ func TestLiveDB_Handover_ExactlyOnce(t *testing.T) {
 
 func TestLiveDB_Handover_Authz_And_State(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	svc := newLiveAssociationService(pool)
 	ctx := context.Background()
 
