@@ -6,7 +6,7 @@ import Link from 'next/link';
 import { Page, PageHeader, Card, Button, Input, Badge, colors, thCell, tdCell } from '@/components/ui/vuexy';
 import {
   createFullContest, updateFullContest, deleteFullContest, getFullContest, setContestStatus,
-  listAdminContests,
+  listAdminContests, uploadContestBanner,
   listContestStages, createContestStage, deleteContestStage, advanceStageSurvivors,
   type FullContest, type ContestCategory, type ContestType, type RegionScope, type ContestPublishStatus,
   type AdminContest, type ContestStage, type AdvanceStageResult,
@@ -91,7 +91,7 @@ function initialForm(): FormState {
     legalAdultAge: 18, supportsVoting: false, supportsAuditionScheduling: false,
     supportsGroupEntry: false, supportsSchoolEntry: false, requiresGuardianConsentForMinors: false,
     requiresMedical: false, requiresBootcampReadiness: false, auditionStates: [], applicantCategories: [],
-    rulesText: '',
+    rulesText: '', bannerImageUrl: '',
   };
 }
 
@@ -109,6 +109,8 @@ function CreateCompetitionContent() {
   const [error, setError] = useState<string | null>(null);
   const [status, setStatusState] = useState<ContestPublishStatus>('upcoming');
   const [publishing, setPublishing] = useState(false);
+  const [bannerUploading, setBannerUploading] = useState(false);
+  const [bannerError, setBannerError] = useState<string | null>(null);
   const [toast, setToast] = useState('');
 
   const [recent, setRecent] = useState<AdminContest[]>([]);
@@ -186,6 +188,7 @@ function CreateCompetitionContent() {
         requiresMedical: c.requiresMedical, requiresBootcampReadiness: c.requiresBootcampReadiness,
         auditionStates: c.auditionStates ?? [], applicantCategories: c.applicantCategories ?? [],
         rulesText: c.rulesText ?? '',
+        bannerImageUrl: c.bannerImageUrl ?? '',
       });
       if (c.status) setStatusState(c.status as ContestPublishStatus);
       if (c.id) setContestId(c.id);
@@ -527,6 +530,64 @@ function CreateCompetitionContent() {
           <p style={{ margin: '4px 0 0', fontSize: 11, color: colors.muted }}>
             Shown on the mobile contest details screen, above the platform&apos;s default voting rules. Leave blank to show only the defaults.
           </p>
+        </div>
+
+        <div style={{ marginBottom: 12 }}>
+          <label style={labelStyle}>Banner image</label>
+          <input
+            type="file"
+            accept="image/jpeg,image/png,image/webp"
+            disabled={bannerUploading}
+            onChange={async (e) => {
+              const file = e.target.files?.[0];
+              // Clear the input immediately: without this, re-picking the SAME
+              // file after a failure fires no change event and the retry looks
+              // like a dead button.
+              e.target.value = '';
+              if (!file) return;
+              setBannerUploading(true);
+              setBannerError(null);
+              try {
+                const url = await uploadContestBanner(file);
+                setForm((f) => ({ ...f, bannerImageUrl: url }));
+              } catch (err) {
+                setBannerError(err instanceof Error ? err.message : String(err));
+              } finally {
+                setBannerUploading(false);
+              }
+            }}
+            style={{ display: 'block', fontSize: 13 }}
+          />
+          <p style={{ margin: '4px 0 0', fontSize: 11, color: colors.muted }}>
+            JPG, PNG or WebP, up to 8MB. Shown on the mobile contest list and detail screens;
+            leave empty for the default placeholder tile. The image uploads immediately —
+            you still need to save the contest for it to take effect.
+          </p>
+          {bannerUploading && (
+            <p style={{ margin: '6px 0 0', fontSize: 12, color: colors.muted }}>Uploading…</p>
+          )}
+          {bannerError && (
+            <p style={{ margin: '6px 0 0', fontSize: 12, color: colors.danger }}>{bannerError}</p>
+          )}
+          {form.bannerImageUrl ? (
+            <div style={{ marginTop: 8 }}>
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={form.bannerImageUrl}
+                alt="Contest banner preview"
+                style={{ display: 'block', maxWidth: 320, height: 120, objectFit: 'cover', borderRadius: 8, border: `1px solid ${colors.border}` }}
+              />
+              <Button
+                sm
+                variant="danger"
+                type="button"
+                style={{ marginTop: 6 }}
+                onClick={() => setForm((f) => ({ ...f, bannerImageUrl: '' }))}
+              >
+                Remove banner
+              </Button>
+            </div>
+          ) : null}
         </div>
 
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12, marginBottom: 12 }}>
