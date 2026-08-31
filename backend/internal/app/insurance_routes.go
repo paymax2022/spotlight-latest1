@@ -54,6 +54,10 @@ func RegisterInsurance(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pg
 	// --- Insurance domain services ---
 	catalogSvc := catalog.NewService(pool)
 	consentSvc := consent.NewService(pool)
+	// Prefunded-provider-float breaker. MyCover settles binds from a distributor
+	// float, so an empty float fails EVERY bind at once; this stops the queue
+	// before members are debited for cover that cannot be issued.
+	floatSvc := catalog.NewFloatService(pool)
 
 	// --- Provider adapters (sandbox keys from env; empty => sandbox defaults) ---
 	mycoverGW := mycover.New(
@@ -72,6 +76,15 @@ func RegisterInsurance(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pg
 	// Router resolves an adapter from the data-driven catalog (product.provider).
 	router := gateway.NewRouter(catalogSvc, mycoverGW, octamileGW)
 
+	// Purchase-family map: which provider endpoint sells which product, and the
+	// field schema it validates. Pure DATA (embedded JSON, overridable via
+	// INSURANCE_MYCOVER_FAMILIES_FILE) — adding a family is never a code change.
+	families := catalog.LoadFamilyMap(os.Getenv("INSURANCE_MYCOVER_FAMILIES_FILE"))
+	for _, problem := range families.Validate() {
+		log.Printf("[insurance] WARN family map: %s", problem)
+	}
+	catalogSyncer := catalog.NewSyncer(catalogSvc, mycoverGW.Name(), mycoverGW, families)
+
 	// Policy service: lifecycle + thin quote engine + premium-bind saga.
 	policySvc := policy.NewService(policy.Deps{
 		Repo:    policy.NewRepository(pool),
@@ -80,11 +93,33 @@ func RegisterInsurance(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pg
 		Consent: consentSvc,
 		Wallet:  walletSvc,
 		Ledger:  ledgerSvc,
+		Float:   floatSvc,
 		// Notifier / Auditor are optional (nil-safe); IB1/orchestrator may inject
 		// the real notifications + audit sinks.
 	})
 
-	catalogHandler := catalog.NewHandler(catalogSvc, kycSvc)
+	catalogHandler := catalog.NewHandler(catalogSvc, kycSvc).
+		WithAdmin(catalogSyncer, floatSvc, func() any {
+			// PRESENCE and configuration only — never a credential value.
+			return []map[string]any{
+				{
+					"aggregator":             mycoverGW.Name(),
+					"base_url":               mycoverGW.BaseURL(),
+					"api_key_present":        mycoverGW.Configured(),
+					"webhook_secret_present": mycoverGW.WebhookConfigured(),
+					"webhook_verification": map[string]any{
+						"enabled": mycoverGW.WebhookConfigured(),
+						"note": "Signature verification fails CLOSED. With no secret configured " +
+							"every inbound webhook is rejected — a real signing secret is needed from the provider.",
+					},
+					"purchase_families": families.Len(),
+				},
+				{
+					"aggregator":      octamileGW.Name(),
+					"api_key_present": os.Getenv("INSURANCE_OCTAMILE_API_KEY") != "",
+				},
+			}
+		})
 	consentHandler := consent.NewHandler(consentSvc)
 	// signRef is nil for now — the certificate route returns the stored ref until
 	// the orchestrator injects the R2 signer. (TODO: wire r2 presign.)
@@ -94,6 +129,10 @@ func RegisterInsurance(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pg
 	mg := member.Group("/insurance")
 	// Products: KYC-tier + context filtered.
 	mg.GET("/products", catalogHandler.ListProducts)
+	mg.GET("/products/:code", catalogHandler.GetProduct)
+	// Dynamic purchase form. MyCover validates a bespoke field set per purchase
+	// family, so the app renders from this rather than a hardcoded form.
+	mg.GET("/products/:code/schema", catalogHandler.GetProductSchema)
 	// NDPA consent (gate before any provider data-share).
 	mg.GET("/consent", consentHandler.Status)
 	mg.POST("/consent", consentHandler.Grant)
@@ -116,6 +155,12 @@ func RegisterInsurance(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pg
 	ag := admin.Group("")
 	// Catalog management.
 	ag.GET("/catalog", guard("insurance.catalog.view"), catalogHandler.AdminList)
+	// Pull the live provider catalog into the DB. Idempotent; new products land
+	// INACTIVE so a sync never puts an unreviewed product in front of members.
+	ag.POST("/catalog/sync", guard("insurance.catalog.manage"), catalogHandler.AdminSync)
+	// Adapter health, last sync, and the prefunded-float launch gate.
+	ag.GET("/providers", guard("insurance.catalog.view"), catalogHandler.AdminProviders)
+	ag.POST("/providers/:provider/float/reset", guard("insurance.catalog.manage"), catalogHandler.AdminResetFloat)
 	ag.PATCH("/catalog/:code/active", guard("insurance.catalog.manage"), catalogHandler.AdminSetActive)
 	// Routing / provider config (product → aggregator).
 	ag.PATCH("/routing/:code", guard("insurance.routing.manage"), catalogHandler.AdminSetRouting)
