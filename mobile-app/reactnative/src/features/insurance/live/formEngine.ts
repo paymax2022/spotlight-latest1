@@ -128,10 +128,24 @@ function isValidNgPhone(raw: string): boolean {
  */
 export function validateField(field: Field, value: FieldValue | undefined): string | null {
   // Composite fields validate their contents, not themselves.
+  //
+  // An OPTIONAL block nobody has begun filling in is valid as a whole, even when
+  // its children are individually required. MyCover publishes policy_holder as
+  // required:false with seven required:true children on 64 of its 68 products, so
+  // validating children unconditionally would block every one of those forms on a
+  // section the insurer itself says is optional.
+  //
+  // Once any child is answered the block counts as started and becomes
+  // all-or-nothing: a half-filled policy holder is worse than none, because the
+  // insurer would receive a partial identity.
   if (field.type === 'object') {
-    const nested = validateAll(field.children ?? [], asGroup(value));
-    const first = Object.values(nested)[0];
-    return first ?? (field.required && isEmptyValue(value) ? `${field.label} is required` : null);
+    const group = asGroup(value);
+    const children = field.children ?? [];
+    const started = children.some((c) => !isEmptyValue(group[c.name]));
+    if (!field.required && !started) return null;
+    const first = Object.values(validateAll(children, group))[0];
+    if (first) return first;
+    return field.required && !started ? `${field.label} is required` : null;
   }
   if (field.type === 'array') {
     const rows = asRows(value);
@@ -592,12 +606,23 @@ export function buildInputs(fields: Field[], values: FormValues): Record<string,
       case 'multiselect':
         out[f.name] = asList(v);
         break;
-      case 'object':
-        out[f.name] = buildInputs(f.children ?? [], asGroup(v));
+      case 'object': {
+        // Omit an untouched optional block rather than sending {} — the provider
+        // validates what it receives, and an empty object is not the same as an
+        // absent one.
+        const nested = buildInputs(f.children ?? [], asGroup(v));
+        if (Object.keys(nested).length > 0) out[f.name] = nested;
         break;
-      case 'array':
-        out[f.name] = asRows(v).map((row) => buildInputs(f.children ?? [], row));
+      }
+      case 'array': {
+        // Drop rows the user opened but never filled, and omit the field entirely
+        // when nothing survives.
+        const rows = asRows(v)
+          .map((row) => buildInputs(f.children ?? [], row))
+          .filter((row) => Object.keys(row).length > 0);
+        if (rows.length > 0) out[f.name] = rows;
         break;
+      }
       case 'boolean':
         out[f.name] = asText(v) === 'true';
         break;

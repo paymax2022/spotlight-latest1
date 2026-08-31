@@ -123,6 +123,12 @@ type rawSchemaField struct {
 	Description string           `json:"description"`
 	DataSource  json.RawMessage  `json:"data_source"`
 	Validation  json.RawMessage  `json:"validation"`
+	// ChildData is the key MyCover ACTUALLY ships nested shapes under. The three
+	// below are conventional JSON-Schema-ish names that this provider never uses;
+	// they are kept as tolerant fallbacks, but child_data is the live one. 64 of
+	// the 68 live products nest under it (a policy_holder object on 64, plus 17
+	// repeating arrays), so reading only the others dropped every nested field.
+	ChildData   []rawSchemaField `json:"child_data"`
 	Children    []rawSchemaField `json:"children"`
 	Properties  []rawSchemaField `json:"properties"`
 	Items       []rawSchemaField `json:"items"`
@@ -259,8 +265,13 @@ func convertField(rf rawSchemaField) Field {
 		f.Options, f.OptionsURL = parseDataSource(rf.DataSource)
 	}
 
-	// Nested shapes: an object's properties, an array row's items.
-	children := rf.Children
+	// Nested shapes: an object's properties, an array row's items. child_data is
+	// first because it is the only one MyCover actually emits; the rest are
+	// tolerated in case the provider ever normalises its vocabulary.
+	children := rf.ChildData
+	if len(children) == 0 {
+		children = rf.Children
+	}
 	if len(children) == 0 {
 		children = rf.Properties
 	}
