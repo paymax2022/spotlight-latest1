@@ -1,6 +1,7 @@
 package crowdfunding
 
 import (
+	"errors"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -59,6 +60,13 @@ func (h *Handler) SubmitCampaign(c *gin.Context) {
 	}
 	res, err := h.svc.SubmitForReview(c.Request.Context(), userID, req)
 	if err != nil {
+		// A submission the caller can fix is a 400. Returning 500 for a rejected
+		// milestone told the creator the server had failed when in fact their
+		// funding plan needed one field changed.
+		if errors.Is(err, ErrInvalidSubmission) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}

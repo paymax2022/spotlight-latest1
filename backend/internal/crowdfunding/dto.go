@@ -98,6 +98,22 @@ type SubmitCampaignRequest struct {
 	DisbursementModel string  `json:"disbursementModel"`
 	CoverImageURL     *string `json:"coverImageUrl"`
 	SubmitForReview   bool    `json:"submitForReview"`
+	// Milestones the wizard collected. Until now the DTO accepted none of them, so
+	// the creator filled in a funding plan and the server dropped it on the floor —
+	// the client's own comment in crowdfunding.api.ts says exactly that.
+	Milestones []SubmitMilestoneRequest `json:"milestones"`
+}
+
+// SubmitMilestoneRequest is one milestone from the create wizard.
+//
+// Status is accepted but CONSTRAINED: see submitMilestoneStatus. RELEASED and
+// PENDING_REVIEW are states a milestone earns through review and disbursement,
+// never states a creator may declare about their own campaign.
+type SubmitMilestoneRequest struct {
+	Title      string  `json:"title"`
+	TargetKobo int64   `json:"targetKobo"`
+	Status     string  `json:"status"`
+	DueAt      *string `json:"dueAt"`
 }
 
 // ReviewDecisionRequest is the body for admin POST /campaigns/:id/decision.
