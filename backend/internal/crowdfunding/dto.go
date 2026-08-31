@@ -106,6 +106,21 @@ type SubmitCampaignRequest struct {
 	// the server used to discard.
 	Budget      []SubmitBudgetItemRequest `json:"budget"`
 	RewardTiers []SubmitRewardTierRequest `json:"rewardTiers"`
+	// Who the campaign is for. Optional — plenty of campaigns raise for the
+	// creator themselves and the wizard lets them say so explicitly.
+	Beneficiary *SubmitBeneficiaryRequest `json:"beneficiary"`
+}
+
+// SubmitBeneficiaryRequest is the wizard's beneficiary step.
+//
+// `verified` is deliberately NOT a field. A backer reads that badge as "somebody
+// checked who this money is for"; it is granted by review, never asserted by the
+// person asking for the money — the same rule as a self-declared RELEASED
+// milestone or a self-declared reward claim count.
+type SubmitBeneficiaryRequest struct {
+	Name         string  `json:"name"`
+	Relationship string  `json:"relationship"`
+	Description  *string `json:"description"`
 }
 
 // SubmitBudgetItemRequest is one "use of funds" line from the create wizard.
