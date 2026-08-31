@@ -9,7 +9,10 @@
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 export PATH=/usr/local/bin:/usr/bin:/bin
-DB=$(grep -m1 '^DATABASE_URL=' backend/.env | cut -d= -f2-)
+# Target the database given in DATABASE_URL, falling back to the local one.
+# Without the override this script could only ever repair the LOCAL database,
+# which is not where the gap it exists to fix would actually occur.
+DB="${DATABASE_URL:-$(grep -m1 '^DATABASE_URL=' backend/.env | cut -d= -f2-)}"
 
 echo "── credited purchases missing from the connect tally ────"
 psql "$DB" -P pager=off -c "
@@ -39,10 +42,18 @@ where t.vote_credit_status = 'credited'
   and t.voter_user_id is not null
   and t.total_votes_to_credit > 0
   and t.amount_expected > 0
+  and t.payment_status is distinct from 'refunded'
+  -- connect_votes.contest_id FKs connect_contests while vote_transactions.contest_id
+  -- FKs the legacy contests table. One row whose contest exists in only the legacy
+  -- plane raises 23503, and ON CONFLICT does not cover a FK violation, so under
+  -- ON_ERROR_STOP the whole batch aborts and repairs nothing.
+  and exists (select 1 from connect_contests cc where cc.id = t.contest_id)
+  -- ListRoster filters on connect_contest_id alone; matching the legacy
+  -- contest_id would write a row the roster can never display.
   and exists (
     select 1 from contestants ct
      where ct.id = t.contestant_id
-       and (ct.connect_contest_id = t.contest_id or ct.contest_id = t.contest_id))
+       and ct.connect_contest_id = t.contest_id)
   and not exists (
     select 1 from connect_votes v
      where v.idempotency_key = 'connect-tally:' || t.payment_reference)

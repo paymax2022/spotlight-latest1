@@ -471,13 +471,10 @@ export async function verifyPaidVote(args: {
   if (USE_MOCK) {
     return { status: 'SUCCESSFUL', votes: 50 };
   }
-  // Backend: POST /api/v2/votes/paid/verify expects { transactionId, paymentReference }.
-  //
-  // v2, not v1: identical contract and the same protected verify service, but it
-  // also mirrors the credited purchase into connect_votes — the plane this app's
-  // roster and leaderboard are actually served from. On v1 a card purchase
-  // credited votes the app could never display.
-  const res = await api.post('/api/v2/votes/paid/verify', {
+  // Backend: POST /api/votes/paid/verify expects { transactionId, paymentReference }.
+  // The connect tally is projected by a database trigger on vote_transactions,
+  // so it no longer matters which verify route credits the purchase.
+  const res = await api.post('/api/votes/paid/verify', {
     transactionId:    args.transactionId,
     paymentReference: args.reference,
   });
