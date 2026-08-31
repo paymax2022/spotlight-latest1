@@ -244,29 +244,35 @@ export default function InsuranceDashboardPage() {
         title="By category"
         right={<span style={{ fontSize: '0.75rem', color: colors.muted }}>Premium and commission split by product category</span>}
       >
-        <LiveState
-          loading={kpiLoading}
-          failure={kpiFail}
-          empty={!kpi?.by_category || kpi.by_category.length === 0}
-          emptyTitle={kpi ? 'No category split to show' : 'No data'}
-          emptyNote="A split appears once at least one policy exists. The API reported no per-category rows."
-          onRetry={loadKpi}
-        >
-          <BreakdownTable rows={kpi?.by_category ?? []} firstColumn="Category" />
-        </LiveState>
+        {kpiFail ? (
+          <SameFailureNote />
+        ) : (
+          <LiveState
+            loading={kpiLoading}
+            failure={null}
+            empty={!kpi?.by_category || kpi.by_category.length === 0}
+            emptyTitle={kpi ? 'No category split to show' : 'No data'}
+            emptyNote="A split appears once at least one policy exists. The API reported no per-category rows."
+          >
+            <BreakdownTable rows={kpi?.by_category ?? []} firstColumn="Category" />
+          </LiveState>
+        )}
       </Card>
 
       <Card title="By underwriter" right={<span style={{ fontSize: '0.75rem', color: colors.muted }}>Who actually carries the risk</span>}>
-        <LiveState
-          loading={kpiLoading}
-          failure={kpiFail}
-          empty={!kpi?.by_underwriter || kpi.by_underwriter.length === 0}
-          emptyTitle={kpi ? 'No underwriter split to show' : 'No data'}
-          emptyNote="A split appears once at least one policy exists. The API reported no per-underwriter rows."
-          onRetry={loadKpi}
-        >
-          <BreakdownTable rows={kpi?.by_underwriter ?? []} firstColumn="Underwriter" />
-        </LiveState>
+        {kpiFail ? (
+          <SameFailureNote />
+        ) : (
+          <LiveState
+            loading={kpiLoading}
+            failure={null}
+            empty={!kpi?.by_underwriter || kpi.by_underwriter.length === 0}
+            emptyTitle={kpi ? 'No underwriter split to show' : 'No data'}
+            emptyNote="A split appears once at least one policy exists. The API reported no per-underwriter rows."
+          >
+            <BreakdownTable rows={kpi?.by_underwriter ?? []} firstColumn="Underwriter" />
+          </LiveState>
+        )}
       </Card>
 
       <Card
@@ -300,6 +306,22 @@ export default function InsuranceDashboardPage() {
         )}
       </Card>
     </div>
+  );
+}
+
+/**
+ * The category and underwriter splits come from the SAME /dashboard call as the
+ * Book card, so when that call fails all three cards would otherwise render the
+ * identical error box three times. Three copies of one failure reads as three
+ * problems and buries the one real message, so the dependent cards point at it
+ * instead — while still saying plainly that nothing is being substituted.
+ */
+function SameFailureNote() {
+  return (
+    <p style={{ color: colors.muted, fontSize: '0.85rem', margin: 0, lineHeight: 1.5 }}>
+      Unavailable for the same reason as <strong>Book</strong> above — this split comes from the same
+      request. Nothing is shown in its place.
+    </p>
   );
 }
 

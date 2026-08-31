@@ -170,12 +170,6 @@ healthVetAdminService.ts::decideVcn
 healthVetAdminService.ts::governService
 healthVetAdminService.ts::moderate
 healthVetVerificationService.ts::decideVerification
-insuranceAdminService.ts::decideRefund
-insuranceAdminService.ts::replayWebhook
-insuranceAdminService.ts::resolveBreak
-insuranceAdminService.ts::updateRouting
-insuranceAdminService.ts::updateSchema
-insuranceAdminService.ts::upsertProduct
 intakeAdminService.ts::postAction
 investAdminService.ts::createAsset
 investAdminService.ts::createCorporateAction
