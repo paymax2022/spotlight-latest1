@@ -120,12 +120,40 @@ func productLineFor(category string) string {
 	}
 }
 
-// paymaxCode derives the stable Paymax product code from the provider's
-// route_name. Provider codes are already stable, unique and human-readable, so
-// the Paymax code is the provider code namespaced by aggregator — which keeps
-// codes unique if a second aggregator ever ships a product with the same slug.
-func paymaxCode(provider, providerCode string) string {
-	return provider + ":" + providerCode
+// paymaxCode derives the Paymax product code.
+//
+// route_name is readable and usually unique, so it makes the better code — but
+// it is NOT an identifier. Verified live: two distinct MyCover products both
+// call themselves "aiico-comprehensive" (Comprehensive Auto and Comprehensive
+// Auto (AAS)). They collided on one catalog row and each sync silently
+// overwrote the other; 69 went in and 68 came out with nothing reported.
+//
+// So when a route_name is ambiguous WITHIN THE BATCH, every product sharing it
+// is suffixed with its provider UUID — the real identity. Suffixing all of them
+// rather than "the second one" keeps codes independent of iteration order, so
+// they are stable across runs. Unambiguous products keep the clean code.
+func paymaxCode(provider, providerCode, providerProductID string, ambiguous bool) string {
+	base := provider + ":" + providerCode
+	if ambiguous && providerProductID != "" {
+		return base + ":" + providerProductID
+	}
+	return base
+}
+
+// ambiguousCodes returns the provider route_names that appear more than once in
+// a batch, i.e. the ones that cannot serve as identifiers.
+func ambiguousCodes(products []mycover.CatalogProduct) map[string]bool {
+	seen := map[string]int{}
+	for _, p := range products {
+		seen[p.Code]++
+	}
+	out := map[string]bool{}
+	for code, n := range seen {
+		if n > 1 {
+			out[code] = true
+		}
+	}
+	return out
 }
 
 // Run executes a full catalog sync. It pages through the provider catalog,
@@ -159,9 +187,13 @@ func (s *Syncer) Run(ctx context.Context, triggeredBy string) (*SyncResult, erro
 		return res, err
 	}
 
-	// Every provider code this run saw. Anything for this provider NOT in here
-	// is no longer offered and gets retired below.
-	seenCodes := make([]string, 0, 128)
+	// Every provider product UUID this run saw. Anything for this provider NOT in
+	// here is no longer offered and gets retired below.
+	//
+	// Keyed on the UUID, not route_name: route_name is not unique (see
+	// paymaxCode), so retiring by it would spare a stale row whose route_name
+	// happens to match a live product.
+	seenIDs := make([]string, 0, 128)
 
 	// Page through until we have everything the provider says exists.
 	//
@@ -190,8 +222,12 @@ func (s *Syncer) Run(ctx context.Context, triggeredBy string) (*SyncResult, erro
 			break
 		}
 		res.Seen += len(products)
+		ambiguous := ambiguousCodes(products)
+		for code := range ambiguous {
+			log.Printf("[insurance] catalog sync: route_name %q is shared by multiple products — disambiguating by provider uuid", code)
+		}
 		for _, p := range products {
-			hadSchema, sellable, uErr := s.upsert(ctx, p)
+			hadSchema, sellable, uErr := s.upsert(ctx, p, ambiguous[p.Code])
 			if uErr != nil {
 				res.Failed++
 				res.SkippedCodes = append(res.SkippedCodes, p.Code)
@@ -199,7 +235,7 @@ func (s *Syncer) Run(ctx context.Context, triggeredBy string) (*SyncResult, erro
 				continue
 			}
 			res.Upserted++
-			seenCodes = append(seenCodes, p.Code)
+			seenIDs = append(seenIDs, p.ProviderProductID)
 			if hadSchema {
 				res.WithSchema++
 			}
@@ -231,7 +267,7 @@ func (s *Syncer) Run(ctx context.Context, triggeredBy string) (*SyncResult, erro
 	// would dark the catalog on a transient network fault — the reconcile must
 	// never be the thing that takes the module down.
 	if res.Failed == 0 && res.Upserted > 0 {
-		retired, rErr := s.retireMissing(ctx, seenCodes)
+		retired, rErr := s.retireMissing(ctx, seenIDs)
 		if rErr != nil {
 			log.Printf("[insurance] WARN catalog reconcile failed: %v", rErr)
 		} else if retired > 0 {
@@ -307,8 +343,23 @@ func (s *Syncer) closeRun(ctx context.Context, res *SyncResult) {
 //	  candidate — COALESCE/NULLIF keep the better value.
 //
 // Returns whether the row ended up with a usable form schema.
-func (s *Syncer) upsert(ctx context.Context, p mycover.CatalogProduct) (hadSchema, sellable bool, err error) {
-	code := paymaxCode(s.provider, p.Code)
+func (s *Syncer) upsert(ctx context.Context, p mycover.CatalogProduct, ambiguousCode bool) (hadSchema, sellable bool, err error) {
+	code := paymaxCode(s.provider, p.Code, p.ProviderProductID, ambiguousCode)
+
+	// IDENTITY REALIGNMENT. The provider UUID is what identifies a product; the
+	// code is a label that can change (e.g. when a route_name turns out to be
+	// shared and has to be disambiguated). Move any existing row for this UUID
+	// onto the canonical code FIRST, so the upsert below updates that row
+	// instead of trying to insert a second one for the same product.
+	if p.ProviderProductID != "" {
+		if _, mErr := s.svc.db.Exec(ctx, `
+			UPDATE public.insurance_products
+			SET code = $3, updated_at = now()
+			WHERE provider = $1 AND provider_product_id = $2 AND code <> $3`,
+			s.provider, p.ProviderProductID, code); mErr != nil {
+			return false, false, fmt.Errorf("realign product code: %w", mErr)
+		}
+	}
 	line := productLineFor(p.Category)
 
 	// v2 has ONE purchase endpoint for every product; the product is selected by
@@ -560,11 +611,11 @@ func percentStringToBps(percent string) int64 {
 //
 // `purchasable` is cleared too: a product the provider no longer lists cannot be
 // bought, so leaving it sellable would let an admin re-activate a dead product.
-func (s *Syncer) retireMissing(ctx context.Context, seenCodes []string) (int, error) {
+func (s *Syncer) retireMissing(ctx context.Context, seenIDs []string) (int, error) {
 	if s.svc == nil || s.svc.db == nil {
 		return 0, fmt.Errorf("catalog reconcile: nil pool")
 	}
-	if len(seenCodes) == 0 {
+	if len(seenIDs) == 0 {
 		// Refuse to retire the entire catalog off an empty listing. An empty
 		// result is far more likely to be a broken call than a provider that
 		// genuinely discontinued every product at once.
@@ -580,9 +631,11 @@ func (s *Syncer) retireMissing(ctx context.Context, seenCodes []string) (int, er
 		                         'Retired automatically by the catalog sync.',
 		    updated_at         = now()
 		WHERE provider = $1
-		  AND provider_product_code <> ALL($2::text[])
+		  AND (provider_product_id IS NULL
+		       OR provider_product_id = ''
+		       OR provider_product_id <> ALL($2::text[]))
 		  AND (active OR purchasable OR NOT provider_missing)`,
-		s.provider, seenCodes)
+		s.provider, seenIDs)
 	if err != nil {
 		return 0, err
 	}
