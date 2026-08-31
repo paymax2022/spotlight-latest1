@@ -2,8 +2,16 @@
 
 import Link from 'next/link';
 import { useCallback, useEffect, useState } from 'react';
-import { getDashboard, getCatalog, formatNaira, formatPct } from '@/services/insuranceAdminService';
-import type { CatalogResponse, DashboardBreakdown, InsuranceDashboard } from '@/types/insuranceAdmin';
+import {
+  getDashboard,
+  getCatalog,
+  getProviders,
+  formatNaira,
+  formatPct,
+  floatSeverity,
+  policiesRemaining,
+} from '@/services/insuranceAdminService';
+import type { CatalogResponse, DashboardBreakdown, InsuranceDashboard, ProviderStatus } from '@/types/insuranceAdmin';
 import {
   PageHeader,
   InsuranceTabs,
@@ -12,6 +20,8 @@ import {
   NotReported,
   DisclosureNote,
   LiveState,
+  FloatAlarm,
+  FloatPanel,
   EndpointErrorCard,
   toFailure,
   type EndpointFailure,
@@ -38,6 +48,10 @@ export default function InsuranceDashboardPage() {
   const [kpi, setKpi] = useState<InsuranceDashboard | null>(null);
   const [kpiFail, setKpiFail] = useState<EndpointFailure | null>(null);
   const [kpiLoading, setKpiLoading] = useState(true);
+
+  const [providers, setProviders] = useState<ProviderStatus[] | null>(null);
+  const [provFail, setProvFail] = useState<EndpointFailure | null>(null);
+  const [provLoading, setProvLoading] = useState(true);
 
   const [catalog, setCatalog] = useState<CatalogResponse | null>(null);
   const [catFail, setCatFail] = useState<EndpointFailure | null>(null);
@@ -69,10 +83,24 @@ export default function InsuranceDashboardPage() {
     }
   }, []);
 
+  const loadProviders = useCallback(async () => {
+    setProvLoading(true);
+    setProvFail(null);
+    try {
+      setProviders(await getProviders());
+    } catch (e) {
+      setProviders(null);
+      setProvFail(toFailure(e));
+    } finally {
+      setProvLoading(false);
+    }
+  }, []);
+
   const loadAll = useCallback(() => {
     void loadKpi();
     void loadCatalog();
-  }, [loadKpi, loadCatalog]);
+    void loadProviders();
+  }, [loadKpi, loadCatalog, loadProviders]);
 
   useEffect(() => {
     loadAll();
@@ -89,6 +117,14 @@ export default function InsuranceDashboardPage() {
       : (kpi.gross_premium_kobo ?? 0) === 0
         ? null
         : formatPct(kpi.loss_ratio * 100);
+
+  // The MyCover rail is the one that actually settles binds today. When the
+  // providers endpoint is unavailable the float is UNKNOWN, not healthy — and
+  // the alarm treats unknown as a warning, not silence.
+  const mycover = (providers ?? []).find((p) => p.provider === 'mycover') ?? (providers ?? [])[0] ?? null;
+  const float = mycover?.float ?? null;
+  const severity = provLoading ? 'ok' : floatSeverity(float);
+  const remaining = policiesRemaining(float);
 
   const noPolicies = !!kpi && (kpi.policies_total ?? 0) === 0;
   const activeProducts = catalog?.products.filter((p) => p.active).length ?? null;
@@ -111,6 +147,33 @@ export default function InsuranceDashboardPage() {
         insurers, sourced through the MyCover.ai aggregator. Premium is a pass-through liability; only
         the <strong>distributor commission</strong> below is Paymax revenue.
       </DisclosureNote>
+
+      <FloatAlarm
+        severity={severity}
+        balanceLabel={float?.balance_kobo !== null && float?.balance_kobo !== undefined ? formatNaira(float.balance_kobo) : null}
+        remaining={remaining}
+        providerLabel={mycover?.display_name || 'MyCover'}
+      />
+
+      <Card
+        title="Provider float (prefunded wallet)"
+        right={<Link href="/admin/insurance/providers" style={{ fontSize: '0.8rem', color: colors.primary, textDecoration: 'none', fontWeight: 600 }}>Provider rails →</Link>}
+      >
+        {provFail ? (
+          <EndpointErrorCard failure={provFail} onRetry={loadProviders} />
+        ) : provLoading ? (
+          <p style={{ color: colors.muted, fontSize: '0.9rem' }}>Loading from the live API…</p>
+        ) : (
+          <>
+            <p style={{ fontSize: '0.82rem', color: colors.text, marginTop: 0, lineHeight: 1.55 }}>
+              Every bind debits a wallet Paymax funds in advance with the aggregator — it is not charged per
+              transaction. This balance, not our own wallet, is what decides whether a policy can be issued
+              at all.
+            </p>
+            <FloatPanel float={float} severity={severity} formatMoney={formatNaira} remaining={remaining} />
+          </>
+        )}
+      </Card>
 
       <Card title="Book" right={<span style={{ fontSize: '0.75rem', color: colors.muted }}>{kpi?.generated_at ? `as of ${fmtDate(kpi.generated_at)}` : null}</span>}>
         <LiveState loading={kpiLoading} failure={kpiFail} empty={false} onRetry={loadKpi}>

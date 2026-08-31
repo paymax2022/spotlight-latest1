@@ -8,6 +8,7 @@ import {
   formatPct,
   productPrice,
   primaryBand,
+  sellabilityOf,
 } from '@/services/insuranceAdminService';
 import type { CatalogResponse, InsuranceProduct } from '@/types/insuranceAdmin';
 import {
@@ -264,6 +265,7 @@ export default function InsuranceCatalogPage() {
                   <th style={th()}>Cover period</th>
                   <th style={th()}>Capabilities</th>
                   <th style={th()}>Our share</th>
+                  <th style={th()}>Sellable</th>
                   <th style={th()}>Status</th>
                 </tr>
               </thead>
@@ -330,9 +332,40 @@ function ProductRow({ product: p }: { product: InsuranceProduct }) {
         ) : null}
       </td>
       <td style={td()}>
+        <Sellable product={p} />
+      </td>
+      <td style={td()}>
         <Badge status={p.active ? 'active' : 'inactive'} label={p.active ? 'Active' : 'Inactive'} />
       </td>
     </tr>
+  );
+}
+
+/**
+ * Whether this product can actually be bound.
+ *
+ * Two independent blockers exist and they are not interchangeable: the prefunded
+ * MyCover float (a treasury action) and the purchase family's API scope (an
+ * account action). This column covers the second. It resolves strictly against
+ * the buy path the backend stored — a family cannot be inferred from a product's
+ * name or route, so an unstored path shows as unknown rather than as a guess.
+ */
+function Sellable({ product }: { product: InsuranceProduct }) {
+  const s = sellabilityOf(product);
+  if (s === 'scope_blocked') {
+    return (
+      <span style={{ fontSize: '0.7rem', fontWeight: 700, color: colors.danger, background: '#fef2f2', borderRadius: 9999, padding: '0.1rem 0.45rem' }} title="This product's purchase family returns 403 for our API key — it cannot be sold regardless of float balance.">
+        scope-blocked
+      </span>
+    );
+  }
+  if (s === 'sellable') {
+    return <span style={{ fontSize: '0.7rem', fontWeight: 600, color: colors.success }} title="Purchase family verified reachable. Still requires a funded float.">family reachable</span>;
+  }
+  return (
+    <span style={{ fontSize: '0.7rem', color: colors.muted, fontStyle: 'italic' }} title="No purchase family path is stored for this product, so its sellability is genuinely unknown. It is not being assumed either way.">
+      unknown
+    </span>
   );
 }
 
