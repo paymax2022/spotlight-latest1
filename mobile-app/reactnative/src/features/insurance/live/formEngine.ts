@@ -24,7 +24,7 @@
 // endless scroll, whether a value passes the provider's own rules before we
 // spend a network round trip on it, and what to send over the wire.
 
-import type { Field, FieldValue, FormSchema, FormValues } from './types';
+import type { Field, FieldOption, FieldValue, FormSchema, FormValues } from './types';
 
 // ── Visibility (dependent fields) ───────────────────────────────────────────
 /**
@@ -614,6 +614,42 @@ export function declaredValueKobo(fields: Field[], values: FormValues): number {
   if (!candidate) return 0;
   const kobo = numericValue(candidate, asText(values[candidate.name]));
   return kobo && kobo > 0 ? kobo : 0;
+}
+
+// ── Price-driving inputs ────────────────────────────────────────────────────
+/**
+ * Fields the PREMIUM moves with, so the review screen can offer them as live
+ * choices and re-price against the insurer on each change.
+ *
+ * Verified: for FlexiCare Mini the provider returns ₦4,000 at payment_plan 1 and
+ * ₦48,000 at payment_plan 12. That is a real decision a person should be able to
+ * make while looking at the price, not one buried mid-form.
+ *
+ * This matches on names shared across the whole aggregator, never on a single
+ * product, and returns nothing when a schema has no such field — a plan with a
+ * fixed premium simply shows no selector.
+ */
+const PRICE_DRIVING = /^(payment_plan|repayment_plan|cover_period|duration|plan_period|tenure)$/i;
+
+export function priceDrivingFields(fields: Field[]): Field[] {
+  return fields.filter((f) => !f.hidden && PRICE_DRIVING.test(f.name));
+}
+
+/**
+ * Options for a price-driving field when the schema did not enumerate them.
+ * `payment_plan` is a number 1..12 (instalment months) whose options come from a
+ * lookup; offering the common intervals is better than a bare number input
+ * where every value silently changes what the user pays.
+ */
+export function fallbackPlanOptions(field: Field): FieldOption[] {
+  if (field.options?.length) return field.options;
+  const min = Math.max(1, field.min ?? 1);
+  const max = Math.min(12, field.max ?? 12);
+  const months = [1, 3, 6, 12].filter((m) => m >= min && m <= max);
+  return months.map((m) => ({
+    value: String(m),
+    label: m === 1 ? 'Pay in full' : `${m} monthly payments`,
+  }));
 }
 
 // ── Plan families ───────────────────────────────────────────────────────────

@@ -13,7 +13,7 @@
 // "success" means we are holding a confirmed policy and nothing less.
 
 import React, { useMemo, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import { Pencil, ShieldCheck } from 'lucide-react-native';
@@ -29,9 +29,19 @@ import {
   UnderwriterRow,
 } from '@/features/insurance/components/live';
 import { InsuranceColors } from '@/features/insurance/constants/insurance.constants';
-import { discardDraft, getDraft } from '@/features/insurance/live/draft';
-import { asText, buildInputs, isVisible } from '@/features/insurance/live/formEngine';
-import { useProductSchema, usePurchasePolicy } from '@/features/insurance/live/hooks';
+import { discardDraft, getDraft, updateDraft } from '@/features/insurance/live/draft';
+import {
+  asText,
+  buildInputs,
+  fallbackPlanOptions,
+  isVisible,
+  priceDrivingFields,
+} from '@/features/insurance/live/formEngine';
+import {
+  useCreateLiveQuote,
+  useProductSchema,
+  usePurchasePolicy,
+} from '@/features/insurance/live/hooks';
 import { coverPeriodLabel, nairaFromKobo } from '@/features/insurance/live/money';
 import type { Field, InsuranceError } from '@/features/insurance/live/types';
 
@@ -40,12 +50,17 @@ export default function ReviewAndConfirm() {
   const draft = getDraft(draftId);
   const schema = useProductSchema(draft?.product.code ?? '', !!draft);
   const purchase = usePurchasePolicy();
+  const requote = useCreateLiveQuote();
   const [confirmed, setConfirmed] = useState(false);
+  // Local mirror of the draft so a re-quote re-renders this screen.
+  const [tick, setTick] = useState(0);
 
   const fields: Field[] = useMemo(
     () => schema.data?.fields ?? draft?.product.formSchema?.fields ?? [],
     [schema.data, draft],
   );
+
+  const priceLevers = useMemo(() => priceDrivingFields(fields), [fields]);
 
   // A draft lives in memory for the length of one attempt. Coming back to this
   // route later (deep link, app restart) finds nothing, and inventing a summary
@@ -67,6 +82,26 @@ export default function ReviewAndConfirm() {
   }
 
   const { product, quote, values } = draft;
+  void tick; // re-render key after a re-quote mutates the draft in place.
+
+  /**
+   * Change a price-driving answer and ask the insurer to re-price. The premium
+   * shown is always the one that came back — we never scale the old number.
+   */
+  const reprice = async (name: string, next: string) => {
+    const nextValues = { ...values, [name]: next };
+    updateDraft(draft.id, { values: nextValues });
+    setTick((t) => t + 1);
+    try {
+      const priced = await requote.mutateAsync({
+        productCode: product.code,
+        inputs: buildInputs(fields, nextValues),
+      });
+      updateDraft(draft.id, { quote: priced });
+    } finally {
+      setTick((t) => t + 1);
+    }
+  };
 
   const answers = fields
     .filter((f) => !f.hidden && isVisible(f, values))
@@ -123,6 +158,49 @@ export default function ReviewAndConfirm() {
             <Text style={styles.priceExpiry}>This price holds until {formatWhen(quote.expiresAt)}.</Text>
           ) : null}
         </View>
+
+        {/* Price levers. The premium genuinely moves with these — the insurer
+            returns ₦4,000 for one payment and ₦48,000 for twelve — so they
+            belong beside the price, and every change is re-priced by the
+            insurer rather than scaled here. */}
+        {priceLevers.map((lever) => {
+          const options = fallbackPlanOptions(lever);
+          if (options.length < 2) return null;
+          const current = asText(values[lever.name]);
+          return (
+            <View key={lever.name} style={styles.leverBlock}>
+              <View style={styles.leverHead}>
+                <Text style={styles.leverTitle}>{lever.label}</Text>
+                {requote.isPending ? (
+                  <View style={styles.leverBusy}>
+                    <ActivityIndicator size="small" color={InsuranceColors.brand} />
+                    <Text style={styles.leverBusyText}>Re-pricing…</Text>
+                  </View>
+                ) : null}
+              </View>
+              <View style={styles.leverRow}>
+                {options.map((o) => {
+                  const active = o.value === current;
+                  return (
+                    <Pressable
+                      key={o.value}
+                      onPress={() => (active ? undefined : reprice(lever.name, o.value))}
+                      disabled={requote.isPending}
+                      accessibilityRole="radio"
+                      accessibilityState={{ selected: active }}
+                      style={[styles.lever, active && styles.leverActive]}
+                    >
+                      <Text style={[styles.leverLabel, active && styles.leverLabelActive]}>
+                        {o.label}
+                      </Text>
+                    </Pressable>
+                  );
+                })}
+              </View>
+            </View>
+          );
+        })}
+        {requote.isError ? <InsuranceErrorBanner error={requote.error} /> : null}
 
         <UnderwriterRow
           underwriter={quote.underwriter || product.underwriter}
@@ -272,6 +350,26 @@ const styles = StyleSheet.create({
   answerLabel: { ...Typography.labelSm, color: Colors.onSurfaceVariant, flex: 1 },
   answerValue: { ...Typography.labelMd, color: Colors.onSurface, flex: 1, textAlign: 'right' },
   terms: { ...Typography.bodySm, color: Colors.onSurfaceVariant, lineHeight: 20 },
+
+  leverBlock: { gap: Spacing.sm },
+  leverHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  leverTitle: { ...Typography.labelLg, color: Colors.onSurface },
+  leverBusy: { flexDirection: 'row', alignItems: 'center', gap: Spacing.xs },
+  leverBusyText: { ...Typography.labelSm, color: Colors.onSurfaceVariant },
+  leverRow: { flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.sm },
+  lever: {
+    flexGrow: 1,
+    alignItems: 'center',
+    paddingVertical: Spacing.sm,
+    paddingHorizontal: Spacing.md,
+    borderRadius: Radius.md,
+    borderWidth: 1,
+    borderColor: InsuranceColors.border,
+    backgroundColor: Colors.surfaceContainerLowest,
+  },
+  leverActive: { borderColor: InsuranceColors.brand, backgroundColor: Colors.iconBgPurple },
+  leverLabel: { ...Typography.labelMd, color: Colors.onSurfaceVariant },
+  leverLabelActive: { color: InsuranceColors.brand, fontWeight: '700' as const },
 
   consentRow: { flexDirection: 'row', alignItems: 'flex-start', gap: Spacing.sm },
   checkbox: {
