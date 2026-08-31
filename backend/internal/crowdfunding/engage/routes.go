@@ -23,6 +23,9 @@ import (
 //	POST /campaigns/:id/comments     → post a comment or question
 //	POST /comments/:commentId/reply  → creator reply to a comment
 //	POST /comments/:commentId/report → flag a comment (idempotent)
+//	GET  /campaigns/:id/updates      → campaign updates, newest first
+//	POST /campaigns/:id/updates      → publish an update (creator only)
+//	POST /updates/:updateId/like     → like an update (idempotent)
 //	GET  /settings/notifications     → notification preferences
 //	PUT  /settings/notifications     → upsert notification preferences
 func Register(rg *gin.RouterGroup, db *pgxpool.Pool) {
@@ -53,6 +56,13 @@ func Register(rg *gin.RouterGroup, db *pgxpool.Pool) {
 	rg.POST("/campaigns/:id/comments", h.PostComment)
 	rg.POST("/comments/:commentId/reply", h.ReplyComment)
 	rg.POST("/comments/:commentId/report", h.ReportComment)
+
+	// Campaign updates. Same :commentId reasoning applies to :updateId — gin panics
+	// at boot on two wildcard names in the same position, and /campaigns/:id/*
+	// already owns :id on this group.
+	rg.GET("/campaigns/:id/updates", h.ListUpdates)
+	rg.POST("/campaigns/:id/updates", h.PostUpdate)
+	rg.POST("/updates/:updateId/like", h.LikeUpdate)
 
 	rg.GET("/settings/notifications", h.GetNotificationPrefs)
 	rg.PUT("/settings/notifications", h.UpdateNotificationPrefs)

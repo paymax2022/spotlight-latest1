@@ -8,9 +8,11 @@ import { errorResponse, handleApiError } from '@/src/lib/api/responses';
 // The mobile client has called these paths since the screen was written; nothing
 // served them, so the comments page 404'd on load. This is the missing hop.
 
-// GET — public. A campaign page shows its comments to anyone, so this does NOT
-// require a user; proxyToGoBackend still forwards the Authorization header when
-// present, which is what lets the backend mark a comment as reported BY YOU.
+// GET — no user is required AT THIS HOP. Go's finance group demands a bearer
+// token regardless (as it does for the campaign detail), so an anonymous request
+// still gets a 401; not re-checking here keeps one owner for that rule.
+// proxyToGoBackend forwards the Authorization header, which is what lets the
+// backend mark a comment as reported BY YOU.
 export async function GET(request: Request, ctx: { params: Promise<{ id: string }> }) {
   if (!featureFlags.crowdfunding()) return errorResponse('Crowdfunding is not available.', 503);
   try {

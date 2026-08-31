@@ -194,10 +194,13 @@ func TestLiveDB_CommentReportIsIdempotentAndPerViewer(t *testing.T) {
 		t.Error("reported must be per-viewer; another user's report must not show as yours")
 	}
 
-	// An anonymous reader gets the feed with nothing flagged, and no error.
+	// The SERVICE tolerates an empty viewer id and returns the feed unflagged. This
+	// is not a claim that the endpoint is anonymous — the route sits behind the
+	// finance group's auth, same as the campaign detail — only that the viewer-less
+	// shape is well defined.
 	anon, err := svc.ListComments(ctx, campaignID, "")
 	if err != nil {
-		t.Fatalf("anonymous list: %v — comments are public and must read without a user", err)
+		t.Fatalf("viewer-less list: %v", err)
 	}
 	if len(anon) != 1 || anon[0].Reported {
 		t.Error("anonymous feed must render, with reported false")
@@ -223,5 +226,127 @@ func TestLiveDB_CommentRejectsEmptyAndUnknown(t *testing.T) {
 	}
 	if err := svc.ReportComment(ctx, uuid.NewString(), creatorID); !errors.Is(err, engage.ErrCommentNotFound) {
 		t.Errorf("report unknown comment err = %v, want ErrCommentNotFound", err)
+	}
+}
+
+// ─── Campaign updates ────────────────────────────────────────────────────────
+
+// TestLiveDB_UpdatePublishIsCreatorOnly: an update is the campaign speaking to
+// the people who funded it, and the timeline shows no author name — so anyone
+// else publishing would put words in the creator's mouth.
+func TestLiveDB_UpdatePublishIsCreatorOnly(t *testing.T) {
+	ctx := context.Background()
+	pool := liveDBPool(t)
+	campaignID, creatorID, trackUser := seedCampaign(t, ctx, pool)
+	svc := engage.NewService(pool)
+
+	stranger := uuid.NewString()
+	trackUser(stranger)
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO auth.users (id, email, aud, role)
+		VALUES ($1, $2, 'authenticated', 'authenticated')
+		ON CONFLICT (id) DO NOTHING`, stranger, "cf-upd-"+stranger+"@test.local"); err != nil {
+		t.Fatalf("seed stranger: %v", err)
+	}
+	testsupport.CleanupUser(t, pool, stranger)
+
+	in := engage.PostUpdateInput{Title: "Week 3: prototypes shipped", Body: "All forty units left the workshop this morning."}
+	if _, err := svc.PostUpdate(ctx, campaignID, stranger, in); !errors.Is(err, engage.ErrCannotPublishUpdate) {
+		t.Errorf("stranger publish err = %v, want ErrCannotPublishUpdate", err)
+	}
+
+	got, err := svc.PostUpdate(ctx, campaignID, creatorID, in)
+	if err != nil {
+		t.Fatalf("creator publish: %v", err)
+	}
+	if got.LikeCount != 0 {
+		t.Errorf("a fresh update starts at %d likes, want 0", got.LikeCount)
+	}
+	if got.ImageURL != nil {
+		t.Errorf("imageUrl = %v, want nil when none was sent", got.ImageURL)
+	}
+
+	list, err := svc.ListUpdates(ctx, campaignID)
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(list) != 1 || list[0].ID != got.ID {
+		t.Fatalf("timeline has %d updates, want the one just published", len(list))
+	}
+}
+
+// TestLiveDB_UpdateLikeIsIdempotentAndCounts: likeCount is a COUNT over rows, so
+// a second tap by the same person cannot inflate it, and a different person can.
+func TestLiveDB_UpdateLikeIsIdempotentAndCounts(t *testing.T) {
+	ctx := context.Background()
+	pool := liveDBPool(t)
+	campaignID, creatorID, trackUser := seedCampaign(t, ctx, pool)
+	svc := engage.NewService(pool)
+
+	backer := uuid.NewString()
+	trackUser(backer)
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO auth.users (id, email, aud, role)
+		VALUES ($1, $2, 'authenticated', 'authenticated')
+		ON CONFLICT (id) DO NOTHING`, backer, "cf-like-"+backer+"@test.local"); err != nil {
+		t.Fatalf("seed backer: %v", err)
+	}
+	testsupport.CleanupUser(t, pool, backer)
+
+	up, err := svc.PostUpdate(ctx, campaignID, creatorID, engage.PostUpdateInput{
+		Title: "Thank you", Body: "We passed the halfway mark this week.",
+	})
+	if err != nil {
+		t.Fatalf("publish: %v", err)
+	}
+
+	first, err := svc.LikeUpdate(ctx, up.ID, backer)
+	if err != nil {
+		t.Fatalf("like: %v", err)
+	}
+	second, err := svc.LikeUpdate(ctx, up.ID, backer)
+	if err != nil {
+		t.Fatalf("like twice: %v — a second tap must not be an error", err)
+	}
+	if first != 1 || second != 1 {
+		t.Errorf("counts = %d then %d, want 1 then 1 — the unique index makes this idempotent", first, second)
+	}
+
+	third, err := svc.LikeUpdate(ctx, up.ID, creatorID)
+	if err != nil {
+		t.Fatalf("second user like: %v", err)
+	}
+	if third != 2 {
+		t.Errorf("count after a different user = %d, want 2", third)
+	}
+
+	list, err := svc.ListUpdates(ctx, campaignID)
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if list[0].LikeCount != 2 {
+		t.Errorf("timeline likeCount = %d, want 2 — the feed must read the same count the like call returned", list[0].LikeCount)
+	}
+}
+
+// TestLiveDB_UpdateRejectsEmptyFields covers the guards that would otherwise land
+// as constraint violations.
+func TestLiveDB_UpdateRejectsEmptyFields(t *testing.T) {
+	ctx := context.Background()
+	pool := liveDBPool(t)
+	campaignID, creatorID, _ := seedCampaign(t, ctx, pool)
+	svc := engage.NewService(pool)
+
+	if _, err := svc.PostUpdate(ctx, campaignID, creatorID, engage.PostUpdateInput{Title: "  ", Body: "fine body"}); !errors.Is(err, engage.ErrEmptyTitle) {
+		t.Errorf("blank title err = %v, want ErrEmptyTitle", err)
+	}
+	if _, err := svc.PostUpdate(ctx, campaignID, creatorID, engage.PostUpdateInput{Title: "Fine title", Body: "   "}); !errors.Is(err, engage.ErrEmptyUpdateBody) {
+		t.Errorf("blank body err = %v, want ErrEmptyUpdateBody", err)
+	}
+	if _, err := svc.PostUpdate(ctx, campaignID, "", engage.PostUpdateInput{Title: "t", Body: "b"}); !errors.Is(err, engage.ErrUnauthenticated) {
+		t.Errorf("anonymous publish err = %v, want ErrUnauthenticated", err)
+	}
+	if _, err := svc.LikeUpdate(ctx, uuid.NewString(), creatorID); !errors.Is(err, engage.ErrUpdateNotFound) {
+		t.Errorf("like unknown update err = %v, want ErrUpdateNotFound", err)
 	}
 }

@@ -93,10 +93,16 @@ func cleanBody(s string) (string, error) {
 // ListComments returns a campaign's top-level comments, newest first, each with
 // its replies oldest-first (a conversation reads down).
 //
-// viewerID may be empty: comments are public, so an anonymous reader gets the
-// same feed with `reported` false throughout. `reported` means "YOU reported
-// this", not "somebody did" — the screen uses it to show the flag as already
-// pulled, and a global flag would leak one user's moderation action to everyone.
+// viewerID may be empty — the service tolerates it and returns the feed with
+// `reported` false throughout. Note this is NOT the same as the endpoint being
+// anonymous: these routes hang off the authenticated finance group, which rejects
+// a request with no bearer token before the handler runs, exactly as the campaign
+// detail does. The tolerance is here so the service stays usable if that ever
+// changes, and so tests can exercise the viewer-less shape.
+//
+// `reported` means "YOU reported this", not "somebody did" — the screen uses it to
+// show the flag as already pulled, and a global flag would leak one user's
+// moderation action to everyone.
 func (s *Service) ListComments(ctx context.Context, campaignID, viewerID string) ([]CampaignComment, error) {
 	if _, err := uuid.Parse(campaignID); err != nil {
 		return nil, ErrCampaignNotFound

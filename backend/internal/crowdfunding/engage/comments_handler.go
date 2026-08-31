@@ -27,8 +27,9 @@ func commentStatus(err error) int {
 
 // ListComments GET /campaigns/:id/comments
 //
-// Deliberately readable without a user: a campaign page shows its comments to
-// anyone. user_id is passed only so `reported` can mean "you reported this".
+// The finance group this hangs off requires a bearer token, so a caller is always
+// present in practice — the same bar the campaign detail sets. user_id is passed
+// through so `reported` can mean "you reported this" rather than "somebody did".
 func (h *Handler) ListComments(c *gin.Context) {
 	out, err := h.svc.ListComments(c.Request.Context(), c.Param("id"), c.GetString("user_id"))
 	if err != nil {
