@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { Page, PageHeader, Card, Button, Input, Badge, colors, tint, thCell, tdCell } from '@/components/ui/vuexy';
 import { listVotingContests } from '@/services/competitionsService';
 import { getContestStageCounts } from '@/services/contestsAdminService';
+import { listVotePackages } from '@/services/votePackagesService';
 import type { VotingContest } from '@/types/competitions';
 
 // Real contests as seen by the mobile app — GET /api/v1/connect/contests, the
@@ -36,6 +37,11 @@ export default function CompetitionsListPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [stageCounts, setStageCounts] = useState<Record<string, number>>({});
+  // Active package count per contest. A contest with no free votes AND no active
+  // package cannot be voted in at all — paid-vote.service.ts prices every purchase
+  // from a package — so this is the difference between a live contest and a dead
+  // one, and it belongs in the list rather than being discovered by a voter.
+  const [activePackages, setActivePackages] = useState<Record<string, number>>({});
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -43,6 +49,20 @@ export default function CompetitionsListPage() {
     try {
       const rows = await listVotingContests();
       setContests(rows);
+
+      // One call for every contest, then grouped — cheaper than one per row.
+      // A failure here must not blank the contests list, so it degrades to
+      // "unknown" rather than throwing.
+      try {
+        const packages = await listVotePackages();
+        const counts: Record<string, number> = {};
+        for (const pkg of packages) {
+          if (pkg.isActive) counts[pkg.contestId] = (counts[pkg.contestId] ?? 0) + 1;
+        }
+        setActivePackages(counts);
+      } catch {
+        setActivePackages({});
+      }
       // Best-effort: a stage-count failure shouldn't block the contest list itself.
       getContestStageCounts(rows.map((c) => c.id))
         .then(setStageCounts)
@@ -104,15 +124,16 @@ export default function CompetitionsListPage() {
               <th style={thCell}>Contestants</th>
               <th style={thCell}>Total Votes</th>
               <th style={thCell}>Paid Vote Price</th>
+              <th style={thCell}>Votable</th>
               <th style={thCell}>Opens / Closes</th>
               <th style={thCell}>Actions</th>
             </tr>
           </thead>
           <tbody>
             {loading ? (
-              <tr><td style={{ ...tdCell, color: colors.muted }} colSpan={8}>Loading…</td></tr>
+              <tr><td style={{ ...tdCell, color: colors.muted }} colSpan={9}>Loading…</td></tr>
             ) : filtered.length === 0 ? (
-              <tr><td style={{ ...tdCell, color: colors.muted }} colSpan={8}>No contests found.</td></tr>
+              <tr><td style={{ ...tdCell, color: colors.muted }} colSpan={9}>No contests found.</td></tr>
             ) : (
               filtered.map((c) => {
                 const stageCount = stageCounts[c.id] ?? 0;
@@ -129,6 +150,15 @@ export default function CompetitionsListPage() {
                   <td style={tdCell}>{c.contestant_count.toLocaleString()}</td>
                   <td style={tdCell}>{c.total_votes.toLocaleString()}</td>
                   <td style={tdCell}>{c.paid_vote_kobo > 0 ? formatNaira(c.paid_vote_kobo) : 'Free only'}</td>
+                  <td style={tdCell}>
+                    {(c.free_votes_per_user > 0 || (activePackages[c.id] ?? 0) > 0) ? (
+                      <Badge text="Votable" color={colors.success} />
+                    ) : (
+                      <Link href={`/admin/competitions/vote-packages`} title="No free votes and no active package — nobody can vote. Click to fix.">
+                        <Badge text="Not votable" color={colors.danger} />
+                      </Link>
+                    )}
+                  </td>
                   <td style={tdCell}>{fmtDate(c.opens_at)} – {fmtDate(c.closes_at)}</td>
                   <td style={tdCell}>
                     <Link href={`/admin/competitions/results?contestId=${c.id}`}>
