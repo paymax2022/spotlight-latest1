@@ -190,4 +190,11 @@ type ProviderProduct struct {
 	IsRenewable       bool
 	IsClaimable       bool
 	IsCertificateable bool
+
+	// NotPurchasable marks a product the AGGREGATOR's own configuration is
+	// broken for — no purchase config, or no commission-sharing formula. Such a
+	// product can be listed and described but must never be sold: taking a
+	// member's money for cover the provider cannot issue is the worst failure
+	// this module has. Adapters refuse both quote and bind on it.
+	NotPurchasable bool
 }

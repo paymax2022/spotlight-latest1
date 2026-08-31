@@ -3,11 +3,12 @@ package mycover
 import (
 	"bufio"
 	"context"
-	"errors"
 	"os"
 	"strings"
 	"testing"
 	"time"
+
+	"spotlight/backend/internal/insurance/gateway"
 )
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -167,22 +168,146 @@ func TestLive_ListPolicies(t *testing.T) {
 	}
 }
 
-// TestLive_ClaimsScopeIsReportedHonestly pins the entitlement gap: /claims
-// exists but our key lacks the scope, and the adapter must say exactly that
-// rather than degrade into fabricated data.
-func TestLive_ClaimsScopeIsReportedHonestly(t *testing.T) {
+// TestLive_ListClaims proves v2's claims read path works. The v1 403 was a scope
+// limit on the LEGACY api, not a wrong path — the same key gets 200 here.
+func TestLive_ListClaims(t *testing.T) {
 	c := liveClient(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 	defer cancel()
 
-	_, err := c.GetClaim(ctx, "00000000-0000-0000-0000-000000000000")
-	if err == nil {
-		t.Log("claims scope appears to have been GRANTED — re-probe and enable the claims path")
-		return
+	claims, total, err := c.ListClaims(ctx, 1, 50)
+	if err != nil {
+		t.Fatalf("live ListClaims: %v", err)
 	}
-	if errors.Is(err, ErrProviderScope) {
-		t.Logf("claims remain scope-blocked as expected: %v", err)
-		return
+	t.Logf("live claims: %d returned, provider total_count %d", len(claims), total)
+}
+
+// TestLive_ComputePrice is the anchor live assertion for the money path: a real,
+// deterministic, server-computed premium that needs no wallet funding.
+//
+// Verified live on Bastion FlexiCare Mini Retail:
+//
+//	payment_plan  1 -> NGN 4,000   ->    400,000 kobo
+//	payment_plan 12 -> NGN 48,000  ->  4,800,000 kobo
+//
+// This proves three things at once: the adapter reaches v2's quote endpoint, the
+// premium is the PROVIDER's figure rather than one we computed, and the
+// naira->kobo crossing is exact.
+func TestLive_ComputePrice(t *testing.T) {
+	c := liveClient(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+	defer cancel()
+
+	product := gateway.ProviderProduct{
+		Code:              "bastion-flexicare-mini",
+		ProviderProductID: "f7b4bca1-b870-4648-8704-11c1802a51d0",
+		CommissionBps:     1000, // 10%, for the commission assertion below
+		Underwriter:       "Bastion Health Ltd",
 	}
-	t.Logf("claims returned a non-scope error (acceptable — the ref is a dummy): %v", err)
+	base := map[string]any{
+		"first_name":   "Q",
+		"last_name":    "A",
+		"email":        "q@a.com",
+		"phone_number": "2348012345678",
+	}
+
+	for _, tc := range []struct {
+		plan     int
+		wantKobo int64
+	}{
+		{1, 400_000},
+		{12, 4_800_000},
+	} {
+		inputs := map[string]any{}
+		for k, v := range base {
+			inputs[k] = v
+		}
+		inputs[FieldPaymentPlan] = tc.plan
+
+		q, err := c.GetQuote(ctx, gateway.QuoteRequest{Product: product, Inputs: inputs})
+		if err != nil {
+			t.Fatalf("live compute-price (plan %d): %v", tc.plan, err)
+		}
+		t.Logf("plan %2d -> premium %d kobo, commission %d kobo", tc.plan, q.PremiumKobo, q.CommissionKobo)
+		if q.PremiumKobo != tc.wantKobo {
+			t.Fatalf("plan %d: premium = %d kobo, want %d", tc.plan, q.PremiumKobo, tc.wantKobo)
+		}
+		if q.Terms["priced_by"] != "provider" {
+			t.Fatalf("a live quote must be disclosed as provider-priced: %v", q.Terms)
+		}
+		// 10% of the provider's own premium, integer math.
+		if want := tc.wantKobo / 10; q.CommissionKobo != want {
+			t.Fatalf("plan %d: commission = %d kobo, want %d", tc.plan, q.CommissionKobo, want)
+		}
+	}
+}
+
+// TestLive_ProductSchema proves form schemas are FETCHED from the provider — no
+// hand-maintained field table exists in this repo to drift out of date.
+func TestLive_ProductSchema(t *testing.T) {
+	c := liveClient(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+	defer cancel()
+
+	schema, err := c.ProductSchemaFor(ctx, "f7b4bca1-b870-4648-8704-11c1802a51d0")
+	if err != nil {
+		t.Fatalf("live ProductSchemaFor: %v", err)
+	}
+	if len(schema.Fields) == 0 {
+		t.Fatal("live schema came back with no fields")
+	}
+	t.Logf("live schema: %d fields", len(schema.Fields))
+
+	var sawProductID, sawMemberField bool
+	for _, f := range schema.Fields {
+		if f.Name == FieldProductID {
+			sawProductID = true
+			if f.Type != "hidden" || !f.System {
+				t.Fatalf("product_id must be hidden+system so no form renders it: %+v", f)
+			}
+		} else {
+			sawMemberField = true
+		}
+		if f.Label == "" {
+			t.Fatalf("field %q has no label — the app cannot render it", f.Name)
+		}
+		if f.Type == "" {
+			t.Fatalf("field %q has no type", f.Name)
+		}
+	}
+	if !sawProductID {
+		t.Fatal("every product schema carries product_id")
+	}
+	if !sawMemberField || !schema.Purchasable() {
+		t.Fatal("this product should be purchasable (it has member-fillable fields)")
+	}
+}
+
+// TestLive_BrokenProductsAreDetected pins the 7 products MyCover's own
+// configuration is broken for. Four return a schema containing NOTHING but
+// product_id — nothing to collect, so nothing to sell.
+func TestLive_BrokenProductsAreDetected(t *testing.T) {
+	c := liveClient(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	// The four "no purchase config" products.
+	broken := map[string]string{
+		"58a6df7e-87f4-40e8-bf78-5b1f85c6d87f": "aiico-shop-content-cover",
+		"cfee22e7-5aa1-4413-ba66-8ac5d550c69e": "aiico-hospital-cash",
+		"fab6bda1-b870-4648-8704-11c0102a41c0": "leadway-home-content",
+		"b0d0f39c-0b8a-452f-a876-78bef8dde1d9": "sti-goods-in-transit",
+	}
+	for id, code := range broken {
+		schema, err := c.ProductSchemaFor(ctx, id)
+		if err != nil {
+			t.Logf("%s: schema unavailable (%v) — still not sellable", code, err)
+			continue
+		}
+		if schema.Purchasable() {
+			t.Errorf("%s was reported PURCHASABLE but its provider config is broken — it must not be sellable", code)
+			continue
+		}
+		t.Logf("%s: correctly detected as not purchasable (%d fields, all system)", code, len(schema.Fields))
+	}
 }
