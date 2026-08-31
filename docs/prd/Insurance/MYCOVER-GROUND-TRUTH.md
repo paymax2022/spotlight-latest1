@@ -185,3 +185,78 @@ Every field below was ACCEPTED; the request failed only at the wallet-funding st
   "payment_plan": 1 }
 ```
 `payment_plan` is an integer 1..12 (instalment months) and affects premium — do not hardcode it.
+
+---
+
+# ADDENDUM 2 — ⚠️ v2 API SUPERSEDES EVERYTHING ABOVE (independently verified)
+
+Everything above describes MyCover's **v1** API. There is a **v2** API that is strictly better and
+supersedes it. The v1 family-path table in Addendum 1 is now HISTORICAL — do not route on it.
+
+## Base URL (test AND live)
+`https://v2.api.mycover.ai/v2`   — same `Authorization: Bearer <MCASECK_*>` key.
+
+## Verified endpoints (probed live, this session)
+| Method | Path | Result |
+|---|---|---|
+| GET | `/v2/products?limit=100` | 200 — full catalog, `data.total_count` 68 |
+| POST | `/v2/products/buy` | **ONE endpoint for ALL products.** Flat body; `product_id` selects the product. Empty body → `["Product ID is required"]` |
+| POST | `/v2/products/compute-price` | **The quote endpoint v1 never had.** Body `{"product_id":"<uuid>","body":{...}}` |
+| GET | `/v2/public-product-details/{product_id}` | 200 **with NO AUTH** — full machine-readable field schema |
+| POST | `/v2/utilities/files/upload` | 201, multipart field `file` → `{"upload_id":"<uuid>"}` |
+| GET | `/v2/claims` | 200 (v1 `/claims` was 403 for the same key) |
+
+## Live quote — PROVEN WORKING
+`POST /v2/products/compute-price` for FlexiCare Mini:
+- `payment_plan: 1`  → `{"responseCode":1,"data":{"price":4000}}`
+- `payment_plan: 12` → `{"responseCode":1,"data":{"price":48000}}`
+
+Premium is **server-computed and must never be calculated or estimated on our side** — we render what
+compute-price returns. Price varies with inputs (here, instalment months), so input changes must re-quote.
+This path needs no wallet funding, so it is fully demonstrable today.
+
+## Form schemas are FETCHABLE — no hand-maintained field tables
+`GET /v2/public-product-details/{id}` returns `product_table_data` (the field table), `sample_payload`,
+`compute_price_payload`, and the benefits/how-it-works HTML. Each field carries
+`{name, label, type, required, description, data_source, validation{type, enum, minimum, maximum}}`.
+`data_source` is either a literal enum (e.g. `"[Male, Female]"`) or a **utility URL** to fetch options from.
+
+Renderer requirements this imposes (beyond the base Field contract):
+- `options_url` — fetch options when data_source is a URL. Dependent dropdowns pass
+  `?query=<parent value>` (state→lga, bike make→model). ⚠️ `vehicle_model` returns `[]` without a
+  query, so a naive renderer shows a permanently empty dropdown.
+- `children` — 65 products nest a `policy_holder` object; 17 have array fields that are repeating groups.
+- `hidden` — `product_id` is injected, never shown.
+- The hospital-list utility returns an **object**, not the usual `[{label,value}]` array.
+
+## ⚠️ Image fields take an UPLOAD ID, not a URL (v1 guidance reversed)
+Upload to `POST /v2/utilities/files/upload` and send the returned `upload_id` UUID as the value of
+`image_url` / `id_image_url` / `device_about_image_url`. Confirmed by the provider's own
+`sample_payload`, where `image_url` is `"00157dbf-aee8-4fb3-94c4-041f971b7c5b"`.
+**No public R2 bucket is needed for MyCover.** (Addendum 1 §3 described v1 behaviour and is superseded.)
+
+## Webhook signature — NOT a blocker after all
+MyCover issues no separate webhook secret. The signature is **HMAC-SHA512 of the raw request body
+keyed on the `MCASECK_*` API key itself**, header `x-mycoverai-signature`. So
+`INSURANCE_MYCOVER_WEBHOOK_SECRET` being empty is not a gap — key the HMAC off the API key.
+(Addendum 1 and the original doc called this a blocker; that was wrong.)
+
+## No provider-side idempotency
+MyCover documents no idempotency mechanism, so idempotency must be enforced **entirely on our side**.
+A retried bind must not create a second policy at the provider.
+
+## Claims are a hosted link, not an API
+There is no claim-filing endpoint (`POST /v2/claims` → 404). Claims go through a hosted link
+(`sdk.claim_link`) delivered on the purchase webhook. `GET /v2/claims` (200) reads them back.
+
+## 7 products are broken PROVIDER-SIDE — must not be sellable
+`compute-price` refuses them: 4 with `Product purchase config doesn't exist` (these also publish an
+empty schema), and 3 with `Product sharing formula doesn't exist` (`sharing_formula: null`, so Paymax
+would earn **zero commission**). Flagged `purchasable: false` in `SCRATCHPAD/mycover-schemas.json`.
+
+## Still true from Addendum 1
+The **prefunded-wallet blocker stands**: bind fails with "Insufficient wallet fund for purchase" until
+the MyCover float is funded, and all the ledger guidance (three separate movements; never debit the
+user before a confirmed bind; typed insufficient-float error; low-float alarm) applies unchanged.
+
+Full per-product schemas: `SCRATCHPAD/mycover-schemas.json`; map: `docs/prd/Insurance/MYCOVER-API-MAP.md`.
