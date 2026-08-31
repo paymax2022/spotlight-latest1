@@ -108,11 +108,20 @@ CREATE POLICY assoc_chat_threads_select_member
 -- future one) already added it.
 DO $$
 BEGIN
-  IF NOT EXISTS (
-    SELECT 1 FROM pg_publication_tables
-    WHERE pubname = 'supabase_realtime' AND schemaname = 'public' AND tablename = 'assoc_chat_messages'
-  ) THEN
-    ALTER PUBLICATION supabase_realtime ADD TABLE public.assoc_chat_messages;
+  -- The OUTER guard is the load-bearing one: supabase_realtime is created by the
+  -- Supabase platform, not by these migrations, so on a plain Postgres (the CI
+  -- fresh-replay container) it does not exist at all. Checking only
+  -- pg_publication_tables is not enough — with no publication that query simply
+  -- returns no rows, NOT EXISTS is true, and the ALTER then fails with
+  -- "publication \"supabase_realtime\" does not exist". This mirrors the guard in
+  -- 20260812010000_registration_contestant_seam.sql, which gets it right.
+  IF EXISTS (SELECT 1 FROM pg_publication WHERE pubname = 'supabase_realtime') THEN
+    IF NOT EXISTS (
+      SELECT 1 FROM pg_publication_tables
+      WHERE pubname = 'supabase_realtime' AND schemaname = 'public' AND tablename = 'assoc_chat_messages'
+    ) THEN
+      ALTER PUBLICATION supabase_realtime ADD TABLE public.assoc_chat_messages;
+    END IF;
   END IF;
 END $$;
 
