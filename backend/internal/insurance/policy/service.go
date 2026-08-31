@@ -95,6 +95,11 @@ type QuoteResult struct {
 	ProviderQuoteRef string         `json:"provider_quote_ref"`
 	ExpiresAt        time.Time      `json:"expires_at"`
 	Terms            map[string]any `json:"terms,omitempty"`
+	// Inputs are the product-specific answers captured at quote time. They are
+	// replayed verbatim on bind because per-product provider purchase endpoints
+	// validate the full field set. They contain member PII and are NEVER
+	// serialised to the client — the json tag is "-" deliberately.
+	Inputs map[string]any `json:"-"`
 }
 
 // CreateQuote is the thin quote engine: route → provider quote → normalise →
@@ -113,14 +118,15 @@ func (s *Service) CreateQuote(ctx context.Context, userID, productCode string, s
 	if err != nil {
 		return nil, err
 	}
-	gw, providerProductCode, err := s.router.Resolve(ctx, productCode)
+	gw, providerProduct, err := s.router.Resolve(ctx, productCode)
 	if err != nil {
 		return nil, err
 	}
 
 	currency := "NGN"
 	q, err := gw.GetQuote(ctx, gateway.QuoteRequest{
-		ProviderProductCode: providerProductCode,
+		ProviderProductCode: providerProduct.Code,
+		Product:             providerProduct,
 		Currency:            currency,
 		SumInsuredKobo:      sumInsuredKobo,
 		Inputs:              inputs,
@@ -138,7 +144,7 @@ func (s *Service) CreateQuote(ctx context.Context, userID, productCode string, s
 		underwriter = prod.UnderwriterDisplay // provider-sourced display fallback
 	}
 
-	quoteID, err := s.repo.insertQuote(ctx, userID, productCode, prod.Provider, q, expires)
+	quoteID, err := s.repo.insertQuote(ctx, userID, productCode, prod.Provider, q, inputs, expires)
 	if err != nil {
 		return nil, err
 	}
@@ -256,18 +262,22 @@ func (s *Service) BindFromQuote(ctx context.Context, userID, quoteID, idempotenc
 	}
 
 	// (4) Bind at the provider (idempotent on idempotencyKey).
-	gw, providerProductCode, err := s.router.Resolve(ctx, qr.ProductCode)
+	gw, providerProduct, err := s.router.Resolve(ctx, qr.ProductCode)
 	if err != nil {
 		return s.autoReverse(ctx, p, idempotencyKey, premiumRef, clearing.ID, err)
 	}
 	bound, bindErr := gw.BindPolicy(ctx, gateway.BindRequest{
-		ProviderProductCode: providerProductCode,
+		ProviderProductCode: providerProduct.Code,
+		Product:             providerProduct,
 		ProviderQuoteRef:    qr.ProviderQuoteRef,
 		Currency:            qr.Currency,
 		SumInsuredKobo:      qr.SumInsuredKobo,
 		PremiumKobo:         qr.PremiumKobo,
 		PolicyholderRef:     "ph:" + p.ID, // opaque ref, NOT the auth user id
 		IdempotencyKey:      idempotencyKey,
+		// Replay the quote-time answers: per-product provider purchase endpoints
+		// validate the FULL field set, so a bind with no inputs is rejected.
+		Inputs: qr.Inputs,
 	})
 	if bindErr != nil {
 		return s.autoReverse(ctx, p, idempotencyKey, premiumRef, clearing.ID, bindErr)
