@@ -673,16 +673,31 @@ interface Listing {
 }
 
 class MarketplaceAdminService {
-  private getHeaders(): HeadersInit {
-    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-    // Same key every other admin service reads (adminAuth.ts on sign-in) —
-    // this class used to read a 'auth_token' key nothing in this app ever
-    // writes, so every request here went out with no Authorization header
-    // at all and 401'd (or, once the route existed, still 401'd) silently.
+  private token: string | null = null;
+
+  constructor() {
+    this.loadToken();
+  }
+
+  private loadToken() {
+    // Load from localStorage or auth context
     if (typeof window !== 'undefined') {
-      const token = localStorage.getItem('spotlight_admin_access_token');
-      if (token) headers.Authorization = `Bearer ${token}`;
+      const stored = localStorage.getItem('auth_token');
+      if (stored) {
+        this.token = stored;
+      }
     }
+  }
+
+  private getHeaders() {
+    const headers: HeadersInit = {
+      'Content-Type': 'application/json',
+    };
+
+    if (this.token) {
+      headers['Authorization'] = `Bearer ${this.token}`;
+    }
+
     return headers;
   }
 
@@ -690,13 +705,8 @@ class MarketplaceAdminService {
    * Get real-time metrics for the marketplace
    */
   async getMetrics(): Promise<Metrics> {
-    // NOT API_BASE_URL + '/admin/marketplace/metrics' — that's the
-    // /api/v1-prefixed shape almost every other module uses, but
-    // RegisterMarketplace mounts this module straight off the engine root
-    // at /v1/marketplace/admin/* with no /api prefix (see marketplaceAdminBase's
-    // own doc comment above). That mismatch 404'd even after the route existed.
     const response = await fetch(
-      `${marketplaceAdminBase()}/metrics`,
+      `${API_BASE_URL}/admin/marketplace/metrics`,
       {
         method: 'GET',
         headers: this.getHeaders(),
@@ -707,11 +717,7 @@ class MarketplaceAdminService {
       throw new Error(`Failed to fetch metrics: ${response.statusText}`);
     }
 
-    // Every marketplace admin route replies {"data": ...} (respond() in
-    // admin_handler.go) — this class used to return the envelope itself as
-    // if it were the payload.
-    const json = await response.json();
-    return (json?.data ?? json) as Metrics;
+    return response.json();
   }
 
   /**
@@ -719,7 +725,7 @@ class MarketplaceAdminService {
    */
   async getActivityFeed(): Promise<ActivityEvent[]> {
     const response = await fetch(
-      `${marketplaceAdminBase()}/activity-feed`,
+      `${API_BASE_URL}/admin/marketplace/activity-feed`,
       {
         method: 'GET',
         headers: this.getHeaders(),
@@ -730,8 +736,7 @@ class MarketplaceAdminService {
       throw new Error(`Failed to fetch activity feed: ${response.statusText}`);
     }
 
-    const json = await response.json();
-    return (json?.data ?? json ?? []) as ActivityEvent[];
+    return response.json();
   }
 
   /**
