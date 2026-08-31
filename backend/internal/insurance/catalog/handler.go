@@ -83,8 +83,10 @@ func (h *Handler) AdminSetActive(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	if err := h.svc.SetActive(c.Request.Context(), code, body.Active); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+	if err := h.svc.SetActive(c.Request.Context(), code, body.Active, c.GetString("user_id")); err != nil {
+		// A refusal here is usually "the provider cannot sell this", which is a
+		// 409, not a server fault.
+		c.JSON(http.StatusConflict, gin.H{"error": gin.H{"code": "not_activatable", "message": err.Error()}})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": gin.H{"code": code, "active": body.Active}})
@@ -262,4 +264,27 @@ func (h *Handler) AdminResetFloat(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": gin.H{"provider": provider, "state": "ok"}})
+}
+
+// AdminActivateAllPurchasable (admin): POST /catalog/activate-purchasable
+//
+// Turns on every product the provider CAN sell, skipping any an admin has
+// explicitly ruled on. It exists for a catalog synced before visibility became
+// sync-managed — without it those products stay dark forever and members see an
+// empty (or, worse, a fictional) catalog.
+//
+// It cannot activate an unsellable or provider-missing product.
+func (h *Handler) AdminActivateAllPurchasable(c *gin.Context) {
+	var body struct {
+		Provider string `json:"provider"`
+	}
+	_ = c.ShouldBindJSON(&body)
+	n, err := h.svc.ActivateAllPurchasable(c.Request.Context(), body.Provider)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": gin.H{
+			"code": "activate_failed", "message": err.Error(),
+		}})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": gin.H{"activated": n, "provider": body.Provider}})
 }

@@ -63,7 +63,9 @@ type SyncResult struct {
 	// be bought is a success with a caveat, and the caveat must be visible.
 	// ProviderTotal is what the PROVIDER says its catalog holds. Reported
 	// separately from Seen so a shortfall is visible rather than inferred.
-	ProviderTotal  int       `json:"provider_total"`
+	ProviderTotal int `json:"provider_total"`
+	// Retired counts rows deactivated because the provider stopped listing them.
+	Retired        int       `json:"products_retired"`
 	Purchasable    int       `json:"products_purchasable"`
 	NotPurchasable int       `json:"products_not_purchasable"`
 	BrokenCodes    []string  `json:"broken_codes,omitempty"`
@@ -157,12 +159,23 @@ func (s *Syncer) Run(ctx context.Context, triggeredBy string) (*SyncResult, erro
 		return res, err
 	}
 
+	// Every provider code this run saw. Anything for this provider NOT in here
+	// is no longer offered and gets retired below.
+	seenCodes := make([]string, 0, 128)
+
 	// Page through until we have everything the provider says exists.
 	//
 	// NOTE the explicit limit: GET /products/all defaults to a page size of 25,
 	// so an unparameterised call quietly returns a THIRD of the catalog and looks
 	// like a complete answer. limit=100 returns all 69 in one page today; the
 	// loop stays for when it does not.
+	//
+	// ⚠️ DO NOT "simplify" this to GET /v2/products?limit=100. That endpoint
+	// returns 68 and silently omits Comprehensive Auto (AAS)
+	// (24140c74-fc6f-42f5-a0d2-24800b22d81b, AIICO, route_name null) — a real,
+	// sellable product. /products/all is the correct source; both figures were
+	// checked live, and the completeness guard below exists to catch exactly this
+	// kind of quiet shortfall.
 	const pageSize = 100
 	providerTotal := 0
 	for page := 1; page <= 20; page++ {
@@ -186,6 +199,7 @@ func (s *Syncer) Run(ctx context.Context, triggeredBy string) (*SyncResult, erro
 				continue
 			}
 			res.Upserted++
+			seenCodes = append(seenCodes, p.Code)
 			if hadSchema {
 				res.WithSchema++
 			}
@@ -201,6 +215,29 @@ func (s *Syncer) Run(ctx context.Context, triggeredBy string) (*SyncResult, erro
 		}
 		if len(products) < pageSize {
 			break
+		}
+	}
+
+	// ── RECONCILE ──────────────────────────────────────────────────────────
+	// Retire every row for THIS provider the live catalog did not return.
+	//
+	// An upsert-only sync leaves stale rows alive forever, and a stale row is
+	// indistinguishable from a real one. That is not hypothetical: nine
+	// fictional scaffolding products outlived every sync and became the only
+	// cover members could see, complete with underwriters that do not exist.
+	//
+	// Only runs on a sync that completed WITHOUT a page failing. A partial
+	// listing would look exactly like "the provider dropped these products" and
+	// would dark the catalog on a transient network fault — the reconcile must
+	// never be the thing that takes the module down.
+	if res.Failed == 0 && res.Upserted > 0 {
+		retired, rErr := s.retireMissing(ctx, seenCodes)
+		if rErr != nil {
+			log.Printf("[insurance] WARN catalog reconcile failed: %v", rErr)
+		} else if retired > 0 {
+			res.Retired = retired
+			log.Printf("[insurance] catalog reconcile: deactivated %d %s product(s) the provider no longer lists",
+				retired, s.provider)
 		}
 	}
 
@@ -248,10 +285,22 @@ func (s *Syncer) closeRun(ctx context.Context, res *SyncResult) {
 //	  These are facts about the product; the provider is authoritative and a
 //	  stale copy is a mispriced quote.
 //
-//	OPERATOR-OWNED (never clobbered): active, required_kyc_tier, binding_mode.
-//	  A sync must not silently re-enable a product an admin switched off, nor
-//	  drop a KYC gate. New products therefore land INACTIVE and are turned on
-//	  deliberately.
+//	OPERATOR-GOVERNED (respected once ruled on): active.
+//	  `active` is sync-managed by DEFAULT and operator-owned ONCE AN ADMIN HAS
+//	  RULED. An admin flip stamps active_overridden_at; after that a sync leaves
+//	  visibility alone.
+//
+//	  The earlier "never clobber active" rule produced the exact failure it was
+//	  meant to prevent: all 69 real products landed inactive and stayed inactive,
+//	  while nine fictional scaffolding rows were already active — so the member
+//	  catalog served invented cover and none of the real cover. Safe-by-default
+//	  is only safe if something eventually turns the real products on.
+//
+//	  One thing overrides everything, including an admin: a product that is not
+//	  PURCHASABLE is forced inactive. Nobody may offer cover the provider cannot
+//	  issue.
+//
+//	OPERATOR-OWNED (never clobbered): required_kyc_tier, binding_mode.
 //
 //	DISCOVERED (upgraded, never downgraded): provider_buy_path, form_schema.
 //	  A verified path or a discovered schema is never overwritten with a weaker
@@ -282,6 +331,7 @@ func (s *Syncer) upsert(ctx context.Context, p mycover.CatalogProduct) (hadSchem
 	purchasable := false
 	configStatus := "unknown"
 	configError := ""
+	deactivatedReason := ""
 
 	if s.schemas != nil {
 		schema, sErr := s.schemas.ProductSchemaFor(ctx, p.ProviderProductID)
@@ -289,12 +339,14 @@ func (s *Syncer) upsert(ctx context.Context, p mycover.CatalogProduct) (hadSchem
 		case sErr != nil:
 			configStatus = "schema_unavailable"
 			configError = sErr.Error()
+			deactivatedReason = "The provider's form schema for this product could not be fetched."
 			log.Printf("[insurance] catalog sync: no schema for %q: %v", p.Code, sErr)
 		case !schema.Purchasable():
 			// A form with no member-fillable field means there is nothing to
 			// collect and therefore nothing to sell.
 			configStatus = "broken"
 			configError = "provider returned an empty form schema (no purchase config)"
+			deactivatedReason = "The provider has no purchase configuration for this product."
 		default:
 			if b, mErr := json.Marshal(schema.AsMap()); mErr == nil {
 				schemaJSON = b
@@ -305,6 +357,7 @@ func (s *Syncer) upsert(ctx context.Context, p mycover.CatalogProduct) (hadSchem
 				// pricing call refuses the product.
 				configStatus = "broken"
 				configError = "provider has no sharing formula for this product (zero distributor commission)"
+				deactivatedReason = "The provider has no commission-sharing formula for this product, so it cannot be priced."
 			} else {
 				configStatus = "ok"
 				purchasable = true
@@ -349,6 +402,7 @@ func (s *Syncer) upsert(ctx context.Context, p mycover.CatalogProduct) (hadSchem
 			form_schema, form_schema_source, provider_raw,
 			indicative_premium_kobo, premium_cadence,
 			purchasable, provider_config_status, provider_config_error,
+			provider_missing, deactivated_reason,
 			last_synced_at, active
 		) VALUES (
 			$1,$2,$3,$4,$5,
@@ -367,7 +421,9 @@ func (s *Syncer) upsert(ctx context.Context, p mycover.CatalogProduct) (hadSchem
 			$35::jsonb,NULLIF($36,''),$37::jsonb,
 			$38,$39,
 			$40,$41,NULLIF($42,''),
-			now(), false
+			false, NULLIF($43,''),
+			-- A NEW product is visible iff the provider can actually sell it.
+			now(), $40
 		)
 		ON CONFLICT (code) DO UPDATE SET
 			-- PROVIDER-OWNED: always refreshed.
@@ -406,6 +462,19 @@ func (s *Syncer) upsert(ctx context.Context, p mycover.CatalogProduct) (hadSchem
 			purchasable               = EXCLUDED.purchasable,
 			provider_config_status    = EXCLUDED.provider_config_status,
 			provider_config_error     = EXCLUDED.provider_config_error,
+			-- Seen in this sync, so it is no longer missing from the provider.
+			provider_missing          = false,
+			deactivated_reason        = EXCLUDED.deactivated_reason,
+			-- VISIBILITY. Unsellable always wins, over sync and admin alike: no
+			-- one may offer cover the provider cannot issue. Otherwise an admin
+			-- ruling (active_overridden_at) stands, and failing that the sync
+			-- follows purchasability.
+			active = CASE
+				WHEN NOT EXCLUDED.purchasable THEN false
+				WHEN public.insurance_products.active_overridden_at IS NOT NULL
+					THEN public.insurance_products.active
+				ELSE EXCLUDED.purchasable
+			END,
 			last_synced_at            = now(),
 			version                   = public.insurance_products.version + 1,
 			-- DISCOVERED: upgrade only. A verified path or a real schema is never
@@ -434,7 +503,7 @@ func (s *Syncer) upsert(ctx context.Context, p mycover.CatalogProduct) (hadSchem
 		p.DocumentURL,
 		string(schemaJSON), schemaSource, string(raw),
 		indicative, cadenceFor(p.CoverPeriodDays),
-		purchasable, configStatus, configError,
+		purchasable, configStatus, configError, deactivatedReason,
 	)
 	if execErr != nil {
 		return false, false, execErr
@@ -479,4 +548,43 @@ func percentStringToBps(percent string) int64 {
 		return 0
 	}
 	return bps
+}
+
+// retireMissing deactivates every product for this provider that the live
+// catalog did not return.
+//
+// Rows are NEVER deleted. An insurance_policy may reference the product code,
+// and destroying the product a policy points at makes that policy unreadable —
+// a member's record of their own cover. Deactivating stops new sales and keeps
+// the history whole.
+//
+// `purchasable` is cleared too: a product the provider no longer lists cannot be
+// bought, so leaving it sellable would let an admin re-activate a dead product.
+func (s *Syncer) retireMissing(ctx context.Context, seenCodes []string) (int, error) {
+	if s.svc == nil || s.svc.db == nil {
+		return 0, fmt.Errorf("catalog reconcile: nil pool")
+	}
+	if len(seenCodes) == 0 {
+		// Refuse to retire the entire catalog off an empty listing. An empty
+		// result is far more likely to be a broken call than a provider that
+		// genuinely discontinued every product at once.
+		return 0, fmt.Errorf("catalog reconcile: refusing to retire against an empty listing")
+	}
+
+	ct, err := s.svc.db.Exec(ctx, `
+		UPDATE public.insurance_products
+		SET active             = false,
+		    purchasable        = false,
+		    provider_missing   = true,
+		    deactivated_reason = 'The provider no longer lists this product. '
+		                         'Retired automatically by the catalog sync.',
+		    updated_at         = now()
+		WHERE provider = $1
+		  AND provider_product_code <> ALL($2::text[])
+		  AND (active OR purchasable OR NOT provider_missing)`,
+		s.provider, seenCodes)
+	if err != nil {
+		return 0, err
+	}
+	return int(ct.RowsAffected()), nil
 }

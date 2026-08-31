@@ -154,10 +154,17 @@ func RegisterInsurance(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pg
 	}
 	ag := admin.Group("")
 	// Catalog management.
+	// KPI dashboard. Figures we do not compute come back as null, never 0 — the
+	// console renders them differently and a confident zero on a money screen is
+	// worse than an honest gap.
+	ag.GET("/dashboard", guard("insurance.catalog.view"), catalogHandler.AdminDashboard)
 	ag.GET("/catalog", guard("insurance.catalog.view"), catalogHandler.AdminList)
 	// Pull the live provider catalog into the DB. Idempotent; new products land
 	// INACTIVE so a sync never puts an unreviewed product in front of members.
 	ag.POST("/catalog/sync", guard("insurance.catalog.manage"), catalogHandler.AdminSync)
+	// Bulk-activate everything the provider can actually sell. Never activates an
+	// unsellable product, and skips any an admin has already ruled on.
+	ag.POST("/catalog/activate-purchasable", guard("insurance.catalog.manage"), catalogHandler.AdminActivateAllPurchasable)
 	// Adapter health, last sync, and the prefunded-float launch gate.
 	ag.GET("/providers", guard("insurance.catalog.view"), catalogHandler.AdminProviders)
 	ag.POST("/providers/:provider/float/reset", guard("insurance.catalog.manage"), catalogHandler.AdminResetFloat)
