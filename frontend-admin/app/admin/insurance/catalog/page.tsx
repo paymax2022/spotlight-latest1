@@ -1,63 +1,232 @@
 'use client';
 
-import { useEffect, useState } from 'react';
 import Link from 'next/link';
-import { listProducts, formatNaira } from '@/services/insuranceAdminService';
-import type { InsuranceProduct } from '@/types/insuranceAdmin';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  PageHeader, InsuranceTabs, Card, Badge, StateBlock, DisclosureNote,
-  btnPrimary, th, td, label, select, input, timeAgo,
+  getCatalog,
+  syncCatalog,
+  formatPct,
+  productPrice,
+  primaryBand,
+} from '@/services/insuranceAdminService';
+import type { CatalogResponse, InsuranceProduct } from '@/types/insuranceAdmin';
+import {
+  PageHeader,
+  InsuranceTabs,
+  Card,
+  Badge,
+  MetricTile,
+  NotReported,
+  DisclosureNote,
+  LiveState,
+  EndpointErrorCard,
+  toFailure,
+  type EndpointFailure,
+  btn,
+  btnPrimary,
+  th,
+  td,
+  label,
+  select,
+  input,
+  fmtDate,
+  timeAgo,
 } from '../_ui';
 import { colors } from '@/components/ui/vuexy';
 
+/**
+ * Product catalog.
+ *
+ * Filtering and sorting happen CLIENT-side over the full catalog the API
+ * returned. That is deliberate: the catalog is a bounded ~68-row list, and
+ * filtering locally means the counts shown ("12 of 68") are always counts of
+ * real rows we hold, never a guess at what a server-side filter would return.
+ */
 export default function InsuranceCatalogPage() {
-  const [rows, setRows] = useState<InsuranceProduct[]>([]);
+  const [data, setData] = useState<CatalogResponse | null>(null);
+  const [failure, setFailure] = useState<EndpointFailure | null>(null);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
 
-  const [provider, setProvider] = useState<'all' | 'mycover' | 'octamile'>('all');
-  const [activeFilter, setActiveFilter] = useState<'all' | 'active' | 'inactive'>('all');
+  const [syncing, setSyncing] = useState(false);
+  const [syncFail, setSyncFail] = useState<EndpointFailure | null>(null);
+  const [syncOk, setSyncOk] = useState<string | null>(null);
+
+  const [underwriter, setUnderwriter] = useState('all');
+  const [line, setLine] = useState('all');
+  const [status, setStatus] = useState<'all' | 'active' | 'inactive'>('all');
   const [q, setQ] = useState('');
 
-  async function load() {
-    setLoading(true); setError(null);
+  const load = useCallback(async () => {
+    setLoading(true);
+    setFailure(null);
     try {
-      const opts: { provider?: string; active?: boolean; q?: string } = {};
-      if (provider !== 'all') opts.provider = provider;
-      if (activeFilter !== 'all') opts.active = activeFilter === 'active';
-      if (q.trim()) opts.q = q.trim();
-      setRows(await listProducts(opts));
-    } catch (e) { setError(String(e)); }
-    finally { setLoading(false); }
+      setData(await getCatalog());
+    } catch (e) {
+      setData(null);
+      setFailure(toFailure(e));
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  /**
+   * Real write against POST /catalog/sync. There is no simulated branch: if the
+   * endpoint is absent or fails, the failure is displayed and NOTHING claims a
+   * sync happened. A console that reports a sync it never performed is how a
+   * stale catalog goes unnoticed for weeks.
+   */
+  async function runSync() {
+    setSyncing(true);
+    setSyncFail(null);
+    setSyncOk(null);
+    try {
+      const r = await syncCatalog();
+      const parts = [
+        r.synced !== null && r.synced !== undefined ? `${r.synced} products synced` : null,
+        r.created ? `${r.created} new` : null,
+        r.updated ? `${r.updated} updated` : null,
+        r.deactivated ? `${r.deactivated} deactivated` : null,
+      ].filter(Boolean);
+      setSyncOk(parts.length ? parts.join(' · ') : 'Sync completed.');
+      await load();
+    } catch (e) {
+      setSyncFail(toFailure(e));
+    } finally {
+      setSyncing(false);
+    }
   }
-  useEffect(() => { load(); }, [provider, activeFilter, q]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const products = useMemo(() => data?.products ?? [], [data]);
+
+  const underwriters = useMemo(
+    () => Array.from(new Set(products.map((p) => p.underwriter).filter(Boolean))).sort(),
+    [products],
+  );
+  const lines = useMemo(
+    () => Array.from(new Set(products.map((p) => p.product_line).filter(Boolean))).sort(),
+    [products],
+  );
+
+  const rows = useMemo(() => {
+    const needle = q.trim().toLowerCase();
+    return products.filter((p) => {
+      if (underwriter !== 'all' && p.underwriter !== underwriter) return false;
+      if (line !== 'all' && p.product_line !== line) return false;
+      if (status !== 'all' && p.active !== (status === 'active')) return false;
+      if (needle && !`${p.code} ${p.name} ${p.underwriter} ${p.product_line}`.toLowerCase().includes(needle)) return false;
+      return true;
+    });
+  }, [products, underwriter, line, status, q]);
+
+  const sync = data?.sync ?? null;
+  // Drift the API reported explicitly, plus the count gap it implies. Both are
+  // shown; neither is inferred when the API stayed silent.
+  const driftMissing = sync?.missing_locally?.length ?? null;
+  const driftStale = sync?.stale_locally?.length ?? null;
 
   return (
     <div style={{ padding: '0.5rem 0.5rem 2rem' }}>
       <PageHeader
         title="Insurance catalog"
-        subtitle="Micro-insurance products, each routed to a NAICOM-licensed underwriter via an aggregator. Versioned & feature-flagged."
-        action={<Link href="/admin/insurance/catalog/new" style={{ ...btnPrimary(), textDecoration: 'none' }}>New product</Link>}
+        subtitle="Every product we can sell, as stored from the MyCover.ai catalog. Underwriter, category, price or rate, cover period and the claim/renew/certificate capabilities that drive what the mobile app may offer."
+        action={
+          <button onClick={runSync} disabled={syncing} style={{ ...btnPrimary(), opacity: syncing ? 0.6 : 1 }}>
+            {syncing ? 'Syncing…' : 'Sync from MyCover'}
+          </button>
+        }
       />
       <InsuranceTabs active="catalog" />
 
       <DisclosureNote>
-        The underwriter (NAICOM-licensed insurer) is disclosed per product below — every quote, policy and document must surface the same underwriter and aggregator.
+        The <strong>underwriter</strong> column is the NAICOM-licensed insurer carrying the risk.
+        MyCover.ai is the aggregator, not the insurer, and every quote, policy and certificate must
+        disclose the same underwriter shown here.
       </DisclosureNote>
 
-      <Card title="Products" right={<span style={{ fontSize: '0.75rem', color: colors.muted }}>{rows.length} shown</span>}>
+      {syncOk ? (
+        <div style={{ border: `1px solid ${colors.success}`, background: '#f0fdf4', color: '#166534', borderRadius: '0.5rem', padding: '0.6rem 0.85rem', fontSize: '0.82rem', marginBottom: '1rem' }}>
+          <strong>Sync completed.</strong> {syncOk}
+        </div>
+      ) : null}
+      {syncFail ? (
+        <div style={{ marginBottom: '1rem' }}>
+          <EndpointErrorCard failure={syncFail} onRetry={runSync} />
+        </div>
+      ) : null}
+
+      <Card title="Sync status">
+        {failure ? (
+          <EndpointErrorCard failure={failure} onRetry={load} />
+        ) : (
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(190px, 1fr))', gap: '0.75rem' }}>
+            <MetricTile label="Stored locally" value={loading ? '…' : products.length.toLocaleString('en-NG')} sub="Rows in our catalog" accent={colors.primary} />
+            <MetricTile
+              label="At MyCover"
+              value={sync?.provider_count === null || sync?.provider_count === undefined ? null : sync.provider_count.toLocaleString('en-NG')}
+              sub="Reported by the provider"
+            />
+            <MetricTile
+              label="Last sync"
+              value={sync?.last_synced_at ? timeAgo(sync.last_synced_at) : null}
+              sub={sync?.last_synced_at ? fmtDate(sync.last_synced_at) : 'Never synced, or not reported'}
+            />
+            <MetricTile
+              label="Missing locally"
+              value={driftMissing === null ? null : driftMissing.toLocaleString('en-NG')}
+              sub="At the provider, not in our DB"
+              accent={driftMissing ? colors.danger : undefined}
+            />
+            <MetricTile
+              label="Stale locally"
+              value={driftStale === null ? null : driftStale.toLocaleString('en-NG')}
+              sub="In our DB, gone at the provider"
+              accent={driftStale ? colors.warning : undefined}
+            />
+          </div>
+        )}
+        {sync?.last_sync_error ? (
+          <p style={{ marginTop: '0.75rem', marginBottom: 0, fontSize: '0.8rem', color: colors.danger }}>
+            Last sync error: <code style={{ fontSize: '0.75rem' }}>{sync.last_sync_error}</code>
+          </p>
+        ) : null}
+        {sync?.missing_locally?.length ? (
+          <p style={{ marginTop: '0.6rem', marginBottom: 0, fontSize: '0.78rem', color: colors.muted }}>
+            Missing: <code style={{ fontSize: '0.74rem' }}>{sync.missing_locally.slice(0, 20).join(', ')}</code>
+            {sync.missing_locally.length > 20 ? ` … +${sync.missing_locally.length - 20} more` : ''}
+          </p>
+        ) : null}
+      </Card>
+
+      <Card
+        title="Products"
+        right={<span style={{ fontSize: '0.75rem', color: colors.muted }}>{rows.length.toLocaleString('en-NG')} of {products.length.toLocaleString('en-NG')} shown</span>}
+      >
         <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap', marginBottom: '0.9rem' }}>
-          <div style={{ minWidth: 160 }}>
-            <label style={label()}>Provider</label>
-            <select style={select()} value={provider} onChange={(e) => setProvider(e.target.value as typeof provider)}>
-              <option value="all">All providers</option>
-              <option value="mycover">MyCover.ai</option>
-              <option value="octamile">Octamile</option>
+          <div style={{ minWidth: 190 }}>
+            <label style={label()}>Underwriter</label>
+            <select style={select()} value={underwriter} onChange={(e) => setUnderwriter(e.target.value)}>
+              <option value="all">All underwriters</option>
+              {underwriters.map((u) => (
+                <option key={u} value={u}>{u}</option>
+              ))}
             </select>
           </div>
-          <div style={{ minWidth: 160 }}>
+          <div style={{ minWidth: 150 }}>
+            <label style={label()}>Category</label>
+            <select style={select()} value={line} onChange={(e) => setLine(e.target.value)}>
+              <option value="all">All categories</option>
+              {lines.map((l) => (
+                <option key={l} value={l}>{l}</option>
+              ))}
+            </select>
+          </div>
+          <div style={{ minWidth: 130 }}>
             <label style={label()}>Status</label>
-            <select style={select()} value={activeFilter} onChange={(e) => setActiveFilter(e.target.value as typeof activeFilter)}>
+            <select style={select()} value={status} onChange={(e) => setStatus(e.target.value as typeof status)}>
               <option value="all">All</option>
               <option value="active">Active</option>
               <option value="inactive">Inactive</option>
@@ -65,59 +234,126 @@ export default function InsuranceCatalogPage() {
           </div>
           <div style={{ flex: 1, minWidth: 200 }}>
             <label style={label()}>Search</label>
-            <input style={input()} placeholder="Code, name or product line…" value={q} onChange={(e) => setQ(e.target.value)} />
+            <input style={input()} placeholder="Code, name or underwriter…" value={q} onChange={(e) => setQ(e.target.value)} />
+          </div>
+          <div style={{ display: 'flex', alignItems: 'end' }}>
+            <button onClick={load} style={btn()}>Refresh</button>
           </div>
         </div>
 
-        <StateBlock loading={loading} error={error} empty={rows.length === 0} emptyText="No products match these filters.">
+        <LiveState
+          loading={loading}
+          failure={failure}
+          empty={rows.length === 0}
+          emptyTitle={products.length === 0 ? 'The catalog is empty' : 'No products match these filters'}
+          emptyNote={
+            products.length === 0
+              ? 'The API returned no products. Run "Sync from MyCover" above to pull the live catalog in — until that runs, there is genuinely nothing stored.'
+              : 'Clear a filter to see the rest of the catalog.'
+          }
+          onRetry={load}
+        >
           <div style={{ overflowX: 'auto' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
               <thead>
                 <tr>
-                  <th style={th()}>Code</th>
-                  <th style={th()}>Name</th>
-                  <th style={th()}>Line</th>
-                  <th style={th()}>Provider</th>
+                  <th style={th()}>Product</th>
                   <th style={th()}>Underwriter</th>
-                  <th style={th()}>Binding</th>
-                  <th style={th()}>Premium model</th>
-                  <th style={th()}>KYC</th>
-                  <th style={th()}>Base premium</th>
-                  <th style={th()}>Commission</th>
+                  <th style={th()}>Category</th>
+                  <th style={th()}>Price</th>
+                  <th style={th()}>Cover period</th>
+                  <th style={th()}>Capabilities</th>
+                  <th style={th()}>Our share</th>
                   <th style={th()}>Status</th>
-                  <th style={th()}>Ver</th>
-                  <th style={th()}>Policies</th>
-                  <th style={th()}>Updated</th>
                 </tr>
               </thead>
               <tbody>
                 {rows.map((p) => (
-                  <tr key={p.code}>
-                    <td style={td()}>
-                      <Link href={`/admin/insurance/catalog/${encodeURIComponent(p.code)}`} style={{ color: colors.primary, fontWeight: 600, textDecoration: 'none' }}>
-                        <code style={{ fontSize: '0.8rem' }}>{p.code}</code>
-                      </Link>
-                    </td>
-                    <td style={td()}>{p.name}</td>
-                    <td style={td()}>{p.product_line.replace(/_/g, ' ')}</td>
-                    <td style={td()}><Badge status={p.provider} label={p.provider} /></td>
-                    <td style={td()}>{p.underwriter}</td>
-                    <td style={td()}><Badge status={p.binding_mode} /></td>
-                    <td style={td()}>{p.premium_model.replace(/_/g, ' ')}</td>
-                    <td style={td()}>Tier {p.required_kyc_tier}</td>
-                    <td style={td()}>{formatNaira(p.base_premium_kobo)}</td>
-                    <td style={td()}>{p.commission_basis_pct}%</td>
-                    <td style={td()}><Badge status={p.active ? 'active' : 'inactive'} label={p.active ? 'Active' : 'Inactive'} /></td>
-                    <td style={td()}>v{p.version}</td>
-                    <td style={td()}>{p.policies_active.toLocaleString('en-NG')}</td>
-                    <td style={td()}>{timeAgo(p.updated_at)}</td>
-                  </tr>
+                  <ProductRow key={p.code || p.name} product={p} />
                 ))}
               </tbody>
             </table>
           </div>
-        </StateBlock>
+        </LiveState>
       </Card>
     </div>
+  );
+}
+
+function ProductRow({ product: p }: { product: InsuranceProduct }) {
+  // productPrice() is the single place that decides amount-vs-rate. Calling
+  // formatNaira on a percentage product's base_price would print "₦0.50" for a
+  // 0.5% rate.
+  const price = productPrice(p);
+  const band = primaryBand(p);
+  const share = band?.distributor_commission_pct ?? null;
+  return (
+    <tr>
+      <td style={td()}>
+        <Link
+          href={`/admin/insurance/catalog/${encodeURIComponent(p.code)}`}
+          style={{ color: colors.primary, fontWeight: 600, textDecoration: 'none' }}
+        >
+          {p.name || p.code}
+        </Link>
+        <div style={{ fontSize: '0.72rem', color: colors.muted, marginTop: 2 }}>
+          <code>{p.code}</code>
+          {p.provider_product_code ? <> · {p.provider_product_code}</> : null}
+        </div>
+      </td>
+      <td style={td()}>{p.underwriter || <NotReported />}</td>
+      <td style={td()}>{p.category || p.product_line}</td>
+      <td style={td()}>
+        <span style={{ fontWeight: 600 }}>{price.text}</span>
+        {price.kind === 'rate' ? (
+          <div style={{ fontSize: '0.7rem', color: colors.muted }}>rate, not an amount</div>
+        ) : null}
+      </td>
+      <td style={td()}>
+        {p.cover_period_days === null || p.cover_period_days === undefined ? <NotReported /> : `${p.cover_period_days.toLocaleString('en-NG')} days`}
+      </td>
+      <td style={td()}>
+        <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+          <Cap on={p.is_claimable} label="claimable" />
+          <Cap on={p.is_renewable} label="renewable" />
+          <Cap on={p.is_certificateable} label="certificate" />
+        </div>
+      </td>
+      <td style={td()}>
+        {share === null ? (
+          <NotReported hint="The API did not report a sharing formula for this product." />
+        ) : (
+          <span style={{ fontWeight: 700, color: share > 0 ? colors.success : colors.muted }}>{formatPct(share)}</span>
+        )}
+        {band?.distributor_commission_from ? (
+          <div style={{ fontSize: '0.68rem', color: colors.muted }}>of {band.distributor_commission_from.replace('_', ' ')}</div>
+        ) : null}
+      </td>
+      <td style={td()}>
+        <Badge status={p.active ? 'active' : 'inactive'} label={p.active ? 'Active' : 'Inactive'} />
+      </td>
+    </tr>
+  );
+}
+
+/** Tri-state capability chip: on, off, or genuinely unknown. */
+function Cap({ on, label: lbl }: { on: boolean | null | undefined; label: string }) {
+  if (on === null || on === undefined) {
+    return <span style={{ fontSize: '0.68rem', color: colors.muted, border: `1px dashed ${colors.border}`, borderRadius: 9999, padding: '0.05rem 0.4rem' }} title="Not reported by the API">{lbl}?</span>;
+  }
+  return (
+    <span
+      style={{
+        fontSize: '0.68rem',
+        fontWeight: 600,
+        borderRadius: 9999,
+        padding: '0.05rem 0.4rem',
+        color: on ? colors.success : colors.muted,
+        background: on ? '#f0fdf4' : colors.headBg,
+        textDecoration: on ? 'none' : 'line-through',
+      }}
+    >
+      {lbl}
+    </span>
   );
 }
