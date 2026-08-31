@@ -117,3 +117,71 @@ Getting this wrong is a money bug, not a display bug.
 - ADRs: name the file `ADR-PR<pr-number>-<slug>.md`, never hand-pick an ADR number.
 - Never hand-reset a dev fixture password; run `scripts/dev/ensure-dev-login.sh`.
 - NEVER print a secret value. Report presence/length only. A leaked key in a log is an incident.
+
+---
+
+# ADDENDUM — verified by live purchase attempt (same session)
+
+## 1. Buy endpoints are per product FAMILY, not per product
+Every buy endpoint requires a body field `product_id` ("must be a UUID") — the `id` from
+get-all-products. One family endpoint therefore serves many plans; the plan is chosen in the BODY.
+This is why deriving a path per product from `route_name` always 404s.
+Family names are their OWN namespace and need not match any catalog product name:
+`/products/bastion/buy-medisure` is live even though no product called "MediSure" exists in the catalog.
+
+Probe signal: `404 "Cannot POST ..."` = path absent. `400` (validation array) or `403` = path EXISTS.
+
+### Family paths VERIFIED to exist
+| Path | Category | Status |
+|---|---|---|
+| `/products/bastion/buy-medisure` | Health | 400 schema (usable) |
+| `/products/mcg/buy-gadget-cover` | Gadget | 400 schema |
+| `/products/sti/buy-gadget-cover` | Gadget | exists |
+| `/products/sti/buy-comprehensive` | Auto | exists |
+| `/products/sti/buy-third-party-bike` | Auto | 400 schema |
+| `/products/sti/buy-goods-in-transit` | Package | exists |
+| `/products/sti/buy-marine-cover` | Package | 400 schema |
+| `/products/aiico/buy-third-party-auto` | Auto | exists |
+| `/products/aiico/buy-comprehensive-auto` | Auto | exists |
+| `/products/aiico/buy-home-content-cover` | Content | exists |
+| `/products/aiico/buy-office-content-cover` | Content | 400 schema |
+| `/products/sanlam/buy-personal-accident` | Life | **403 scope-blocked** |
+| `/products/tangerine/buy-life-cover` | Life | **403 scope-blocked** |
+
+## 2. ⛔ BLOCKER — MyCover uses a PREFUNDED DISTRIBUTOR WALLET
+A fully-valid purchase payload (every field accepted) returns:
+`{"responseCode":0,"responseText":"v2 Error: Insufficient wallet fund for purchase"}`
+
+MyCover does not charge per transaction against a card. The distributor (Paymax) must hold a
+prefunded wallet balance with MyCover, and **each policy purchase debits that wallet**.
+Our staging wallet balance is zero, so **no policy can be bound today** — this is an account/treasury
+action, not a code fix. `/wallet/balance` and `/wallet/transactions` exist but return 403 for our key,
+so the balance must be funded and read from the MyCover dashboard.
+
+### Architectural consequence (money path — design for this now)
+Three distinct movements, and they must not be conflated:
+1. User pays Paymax the premium (wallet or card debit) — user ledger.
+2. Paymax's MyCover float is debited by the provider at bind time — a Paymax ASSET account
+   drawdown, asynchronous to (1) and invisible to the user.
+3. Paymax earns `sharing_formula[].distributor_commission` (0–25%) — revenue recognition.
+Reconciliation must watch float balance vs bound policies, and there must be a low-float alarm:
+if the MyCover wallet empties, every bind fails and users are charged with no policy issued.
+**Therefore: never debit the user before the provider bind succeeds, or fully reverse on failure.**
+This is the same reserve-before-move inversion that caused prior money bugs in this repo.
+
+## 3. image_url fields are FETCHED and content-checked by the provider
+`image_url` / `id_image_url` / `device_about_image_url` must be publicly reachable image URLs, and
+MyCover actually retrieves them. Verified: cloudinary `.webp` and `aiicoplc.com/.png` PASS;
+`picsum.photos/*.jpg`, `upload.wikimedia.org/*.jpg` and a non-existent S3 key all FAIL with
+"image_url is not a valid image url". So uploads must go to our own reachable storage (Cloudflare R2,
+bucket from `R2_BUCKET`) and the resulting PUBLIC url is what we send — a presigned/private URL will fail.
+
+## 4. Confirmed-good purchase payload shape (Bastion health family)
+Every field below was ACCEPTED; the request failed only at the wallet-funding step.
+```json
+{ "product_id": "<catalog uuid>", "gender": "Male", "nin": "12345678901",
+  "image_url": "<publicly fetchable image url>", "first_name": "...", "last_name": "...",
+  "email": "...", "date_of_birth": "1990-04-12", "phone_number": "+2348012345678",
+  "payment_plan": 1 }
+```
+`payment_plan` is an integer 1..12 (instalment months) and affects premium — do not hardcode it.
