@@ -3,7 +3,7 @@
 //
 // Two things this file exists to stop:
 //   1. Rendering a PERCENTAGE product as if it were a flat naira price. MyCover's
-//      `base_price` is a RATE for 27 of 68 products (0.5 → 0.5% of sum insured).
+//      `base_price` is a RATE for 27 of the 69 products (0.5 → 0.5% of sum insured).
 //      Printing "₦0.50" for a goods-in-transit cover misprices it by six orders
 //      of magnitude to the user's eye. FLAT and PERCENTAGE render differently.
 //   2. Inline `kobo / 100` arithmetic in components. Every naira string in the
@@ -68,7 +68,13 @@ export function coverPeriodLabel(coverPeriodDays: number): string {
   if (d === 0) return 'Cover period varies';
   if (d >= 360) return '1 year cover';
   if (d >= 170) return '6 months cover';
-  if (d >= 28) return `${Math.round(d / 30)} month${d >= 56 ? 's' : ''} cover`;
+  if (d >= 28) {
+    // Pluralise on the number we PRINT, not on the raw day count. Rounding
+    // reaches 2 months at 45 days, so testing `d >= 56` rendered every cover of
+    // 45-55 days as "2 month cover" — a plural count with a singular noun.
+    const months = Math.round(d / 30);
+    return `${months} month${months === 1 ? '' : 's'} cover`;
+  }
   if (d === 1) return '1 day cover';
   return `${d} days cover`;
 }

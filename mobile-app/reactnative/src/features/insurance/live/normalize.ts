@@ -246,7 +246,23 @@ export function mapField(raw: Raw): Field {
   // arrives one layer deeper should degrade to a working form rather than a
   // form with no rules on it at all.
   const validation = (raw?.validation ?? {}) as Raw;
-  const type = toFieldType(raw?.type ?? validation?.type);
+  const options = toOptions(raw?.options ?? validation?.enum ?? literalEnum(raw?.data_source));
+  const lookup =
+    !options &&
+    (bool(raw?.remote_options ?? raw?.remoteOptions) ||
+      isUrl(raw?.data_source) ||
+      isUrl(raw?.options_url));
+
+  // The provider's `type` describes the WIRE type, not the control: `gender`
+  // arrives as `type: "string"` with its two allowed values in
+  // `validation.enum`. Rendering that as a free-text box would let a person type
+  // anything and be refused by the insurer for it, so a declared or fetched set
+  // of options promotes the field to a picker.
+  const declared = toFieldType(raw?.type ?? validation?.type);
+  const type: FieldType =
+    (options || lookup) && (declared === 'text' || declared === 'number')
+      ? 'select'
+      : declared;
   const field: Field = {
     name,
     label: str(raw?.label) || humanizeName(name),
@@ -262,15 +278,12 @@ export function mapField(raw: Raw): Field {
   if (minLength !== undefined) field.minLength = minLength;
   if (maxLength !== undefined) field.maxLength = maxLength;
 
-  const options = toOptions(raw?.options ?? validation?.enum ?? literalEnum(raw?.data_source));
   if (options) field.options = options;
 
   // A `data_source` that is a URL means the options are fetched. The client
   // never sees or follows that URL — it asks OUR backend by product + field —
   // so all we keep is the fact that a lookup is needed.
-  if (!options && (bool(raw?.remote_options ?? raw?.remoteOptions) || isUrl(raw?.data_source) || isUrl(raw?.options_url))) {
-    field.remoteOptions = true;
-  }
+  if (lookup) field.remoteOptions = true;
 
   const pattern = strOrNull(raw?.pattern ?? validation?.pattern);
   if (pattern) field.pattern = pattern;
