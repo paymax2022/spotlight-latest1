@@ -13,6 +13,7 @@ import type {
   VotePaidVerifyResult,
   RankChange,
   LeaderboardState,
+  VotingNotification,
 } from '../types/voting.types';
 import {
   mapContest,
@@ -501,8 +502,91 @@ export async function getMyVotes(params?: {
     if (params?.status)    list = list.filter((t) => t.status === params.status);
     return list;
   }
-  const res = await api.get('/voting/my-votes', { params });
-  return (res.data?.data ?? res.data) as VoteTransaction[];
+  // GET /voting/my-votes was never served by anything — it answered 404 with an
+  // HTML body, so with mock mode off this screen could not render a single row.
+  // The votes live in connect_votes and reach us through the Go connect module.
+  const res = await api.get('/api/v1/connect/votes/mine', {
+    params: {
+      contestId: params?.contestId,
+      voteType: params?.voteType,
+    },
+  });
+  const rows = (res.data?.data ?? res.data ?? []) as ConnectVoteRow[];
+  return rows.map(toVoteTransaction);
+}
+
+/** A row of connect_votes as the Go connect module returns it. */
+interface ConnectVoteRow {
+  id: string;
+  contest_id: string;
+  contest_title: string;
+  contestant_id: string;
+  contestant_name: string;
+  photo_url: string;
+  paid: boolean;
+  quantity: number;
+  amount_kobo: number;
+  created_at: string;
+}
+
+/**
+ * connect_votes is an immutable log of votes that HAPPENED, so there is no
+ * pending or failed row to represent: anything the caller can see already
+ * counted. Mapping every row to SUCCESSFUL is the honest translation, not a
+ * default — a status field that could only ever hold one value would invite the
+ * screen to render a filter that never changes anything.
+ *
+ * amount_kobo is kobo; the screen's `amount` is naira, which is the conversion
+ * this seam exists to do.
+ */
+function toVoteTransaction(r: ConnectVoteRow): VoteTransaction {
+  return {
+    id: r.id,
+    contestId: r.contest_id,
+    contestantId: r.contestant_id,
+    contestantName: r.contestant_name,
+    contestTitle: r.contest_title,
+    voteType: r.paid ? 'PAID' : 'FREE',
+    votes: r.quantity,
+    amount: r.paid ? r.amount_kobo / 100 : undefined,
+    currency: 'NGN',
+    status: 'SUCCESSFUL',
+    reference: r.id,
+    createdAt: r.created_at,
+  };
+}
+
+/** One person who voted for a contestant. Contestant-only; see the Go service. */
+export interface Supporter {
+  voterName: string;
+  anonymous: boolean;
+  paid: boolean;
+  quantity: number;
+  amountKobo: number;
+  createdAt: string;
+}
+
+/**
+ * Who voted for a contestant. The server refuses anyone who is not that
+ * contestant, and blanks the name on votes cast under the contest's
+ * allow_anonymous_free_vote setting — the client never receives an identity it
+ * is not allowed to show.
+ */
+export async function getContestantSupporters(contestantId: string): Promise<Supporter[]> {
+  if (USE_MOCK) return [];
+  const res = await api.get(`/api/v1/connect/contestants/${contestantId}/supporters`);
+  const rows = (res.data?.data ?? res.data ?? []) as Array<{
+    voter_name: string; anonymous: boolean; paid: boolean;
+    quantity: number; amount_kobo: number; created_at: string;
+  }>;
+  return rows.map((r) => ({
+    voterName: r.voter_name,
+    anonymous: r.anonymous,
+    paid: r.paid,
+    quantity: r.quantity,
+    amountKobo: r.amount_kobo,
+    createdAt: r.created_at,
+  }));
 }
 
 export async function getVoteReceipt(transactionId: string): Promise<VoteTransaction> {
@@ -511,14 +595,40 @@ export async function getVoteReceipt(transactionId: string): Promise<VoteTransac
     if (!found) throw new Error('Transaction not found');
     return found;
   }
-  const res = await api.get(`/voting/transactions/${transactionId}/receipt`);
-  return (res.data?.data ?? res.data) as VoteTransaction;
+  // /voting/transactions/:id/receipt was never served either — and My Votes
+  // rows push straight here, so a working list would have led to a dead screen.
+  const res = await api.get(`/api/v1/connect/votes/${transactionId}`);
+  return toVoteTransaction((res.data?.data ?? res.data) as ConnectVoteRow);
 }
 
 // ─── Notifications ────────────────────────────────────────────────────────────
 
-export async function getVotingNotifications() {
+/**
+ * The voting activity feed.
+ *
+ * DERIVED, not stored: nothing in this module has ever written a voting
+ * notification, so the server computes the feed from the caller's votes and the
+ * deadlines of contests they voted in. It reports VOTE_SUCCESS and
+ * CONTEST_ENDING; the other five kinds the VotingNotification union names have
+ * no source to derive from and would need an events table written at the moment
+ * each happens. `read` is always true — a derived feed has nowhere to keep
+ * per-user read state, and false would give every row a dot that never clears.
+ */
+export async function getVotingNotifications(): Promise<VotingNotification[]> {
   if (USE_MOCK) return MOCK_VOTING_NOTIFICATIONS;
-  const res = await api.get('/voting/notifications');
-  return res.data?.data ?? res.data;
+  const res = await api.get('/api/v1/connect/notifications');
+  const rows = (res.data?.data ?? res.data ?? []) as Array<{
+    id: string; type: string; title: string; message: string;
+    contest_id?: string; contestant_id?: string; created_at: string; read: boolean;
+  }>;
+  return rows.map((r) => ({
+    id: r.id,
+    type: r.type as VotingNotification['type'],
+    title: r.title,
+    message: r.message,
+    contestId: r.contest_id || undefined,
+    contestantId: r.contestant_id || undefined,
+    createdAt: r.created_at,
+    read: r.read,
+  }));
 }

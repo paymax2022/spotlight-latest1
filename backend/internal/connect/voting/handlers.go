@@ -36,6 +36,8 @@ func mapError(c *gin.Context, err error) {
 		c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
 	case errors.Is(err, ErrVelocity):
 		c.JSON(http.StatusTooManyRequests, gin.H{"error": err.Error()})
+	case errors.Is(err, ErrNotContestant):
+		c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
 	default:
 		msg := err.Error()
 		switch {
@@ -207,6 +209,13 @@ func Register(member gin.IRouter, svc *Service, cfg config.Config) {
 	member.GET("/contests/:id/contestants", h.ListRoster)
 	member.GET("/contests/:id/free-vote-allowance", h.FreeVoteAllowance)
 	member.GET("/contestants/:id", h.GetContestant)
+	// The caller's own voting history, and — for a contestant — who voted for
+	// them. Both are member-group routes: authorisation is per-row inside the
+	// service (own votes; own contestant), not per-route.
+	member.GET("/votes/mine", h.MyVotes)
+	member.GET("/votes/:id", h.VoteReceipt)
+	member.GET("/notifications", h.Notifications)
+	member.GET("/contestants/:id/supporters", h.Supporters)
 	member.GET("/contests/:id/stages", h.GetStages)
 
 	// Stage eviction routes — gated behind FEATURE_CONTEST_STAGE_EVICTION_ENABLED.
@@ -265,4 +274,63 @@ func RegisterAdmin(admin gin.IRouter, svc *Service, guard PermissionGuard, cfg c
 	g.GET("/:id/stages/:stageNum/contestants",
 		guard("connect.contests.view"),
 		h.GetContestantsByStage)
+}
+
+// ─── My votes / contestant supporters ────────────────────────────────────────
+
+// MyVotes — GET /connect/votes/mine?contestId=&voteType=FREE|PAID
+//
+// The screen that reads this used to call GET /voting/my-votes, a path nothing
+// served: it answered 404 with an HTML body, and with mock mode off the list
+// could never render a single row.
+func (h *Handler) MyVotes(c *gin.Context) {
+	vt := strings.ToUpper(strings.TrimSpace(c.Query("voteType")))
+	list, err := h.svc.MyVotes(c.Request.Context(), userID(c), c.Query("contestId"),
+		vt == "PAID", vt == "FREE")
+	if err != nil {
+		mapError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": list})
+}
+
+// Supporters — GET /connect/contestants/:id/supporters
+//
+// Contestant-only: the service refuses anyone who does not own the contestant.
+// Votes cast under allow_anonymous_free_vote come back flagged with no name.
+func (h *Handler) Supporters(c *gin.Context) {
+	list, err := h.svc.Supporters(c.Request.Context(), userID(c), c.Param("id"))
+	if err != nil {
+		mapError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": list})
+}
+
+// VoteReceipt — GET /connect/votes/:id
+//
+// The receipt screen called GET /voting/transactions/:id/receipt, another path
+// nothing served. My Votes rows are tappable and push straight here, so a
+// working list would otherwise have led to a dead screen.
+func (h *Handler) VoteReceipt(c *gin.Context) {
+	v, err := h.svc.MyVote(c.Request.Context(), userID(c), c.Param("id"))
+	if err != nil {
+		mapError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": v})
+}
+
+// Notifications — GET /connect/notifications
+//
+// The screen called GET /voting/notifications, which nothing served. The feed is
+// DERIVED: there is no notifications store in this module, so it reports the two
+// kinds the database can actually evidence. See Repository.Notifications.
+func (h *Handler) Notifications(c *gin.Context) {
+	list, err := h.svc.Notifications(c.Request.Context(), userID(c))
+	if err != nil {
+		mapError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": list})
 }

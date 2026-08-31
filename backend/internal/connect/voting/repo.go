@@ -334,3 +334,268 @@ func (r *Repository) GetRosterEntry(ctx context.Context, contestantID string) (*
 	}
 	return &e, nil
 }
+
+// ─── My votes / contestant supporters ────────────────────────────────────────
+
+// MyVote is one vote the caller cast, resolved to the contest and contestant it
+// was for. connect_votes stores option_ref as the contestant id, so the name and
+// photo come from a join rather than being duplicated onto the immutable log.
+type MyVote struct {
+	ID             string    `json:"id"`
+	ContestID      string    `json:"contest_id"`
+	ContestTitle   string    `json:"contest_title"`
+	ContestantID   string    `json:"contestant_id"`
+	ContestantName string    `json:"contestant_name"`
+	PhotoURL       string    `json:"photo_url"`
+	Paid           bool      `json:"paid"`
+	Quantity       int       `json:"quantity"`
+	AmountKobo     int64     `json:"amount_kobo"`
+	CreatedAt      time.Time `json:"created_at"`
+}
+
+// MyVotes returns the caller's own votes, newest first.
+//
+// Scoped on voter_id and nothing else: this is the one read where a user is
+// entitled to the identities involved, because every row is their own action.
+// The (contest_id, voter_id, created_at DESC) index does not cover a voter-only
+// scan, so the contest filter is worth passing when the caller has one.
+func (r *Repository) MyVotes(ctx context.Context, voterID, contestID string, paidOnly, freeOnly bool) ([]MyVote, error) {
+	q := `
+		SELECT v.id::text, v.contest_id::text, COALESCE(ct.title, ''),
+		       v.option_ref, COALESCE(NULLIF(c.name, ''), NULLIF(c.stage_name, ''), 'Contestant'),
+		       COALESCE(c.photo_url, ''),
+		       v.paid, v.quantity, v.amount_kobo, v.created_at
+		FROM connect_votes v
+		LEFT JOIN connect_contests ct ON ct.id = v.contest_id
+		LEFT JOIN contestants c ON c.id::text = v.option_ref
+		WHERE v.voter_id = $1`
+	args := []any{voterID}
+	if contestID != "" {
+		args = append(args, contestID)
+		q += fmt.Sprintf(" AND v.contest_id = $%d", len(args))
+	}
+	// paidOnly and freeOnly are mutually exclusive by construction in the
+	// handler; both false means no filter.
+	if paidOnly {
+		q += " AND v.paid = true"
+	} else if freeOnly {
+		q += " AND v.paid = false"
+	}
+	q += " ORDER BY v.created_at DESC LIMIT 200"
+
+	rows, err := r.db.Query(ctx, q, args...)
+	if err != nil {
+		return nil, fmt.Errorf("voting: my votes: %w", err)
+	}
+	defer rows.Close()
+
+	out := []MyVote{}
+	for rows.Next() {
+		var m MyVote
+		if err := rows.Scan(&m.ID, &m.ContestID, &m.ContestTitle, &m.ContestantID,
+			&m.ContestantName, &m.PhotoURL, &m.Paid, &m.Quantity, &m.AmountKobo, &m.CreatedAt); err != nil {
+			return nil, fmt.Errorf("voting: scan my vote: %w", err)
+		}
+		out = append(out, m)
+	}
+	return out, rows.Err()
+}
+
+// Supporter is one person who voted for a contestant.
+type Supporter struct {
+	VoterName  string    `json:"voter_name"`
+	Anonymous  bool      `json:"anonymous"`
+	Paid       bool      `json:"paid"`
+	Quantity   int       `json:"quantity"`
+	AmountKobo int64     `json:"amount_kobo"`
+	CreatedAt  time.Time `json:"created_at"`
+}
+
+// ContestantOwner returns the user id that owns a contestant, and the contest it
+// belongs to. Used to decide whether the caller may see that contestant's
+// supporters — the answer is "only if it is them".
+func (r *Repository) ContestantOwner(ctx context.Context, contestantID string) (userID, contestID string, err error) {
+	var uid, cid *string
+	if err := r.db.QueryRow(ctx,
+		`SELECT user_id::text, connect_contest_id::text FROM contestants WHERE id::text = $1`,
+		contestantID).Scan(&uid, &cid); err != nil {
+		return "", "", err
+	}
+	if uid != nil {
+		userID = *uid
+	}
+	if cid != nil {
+		contestID = *cid
+	}
+	return userID, contestID, nil
+}
+
+// Supporters lists who voted for one contestant, newest first.
+//
+// ANONYMITY IS RESOLVED HERE, NOT IN THE CLIENT. When the contest sets
+// allow_anonymous_free_vote, a FREE vote was cast under a promise of anonymity
+// and its voter must never be named — so the name is dropped at the query and
+// the row comes back flagged instead. Returning the id and letting the client
+// decide would ship the identity to a device and rely on it to look away.
+//
+// Paid votes are always attributed: they are a transaction with a receipt, and
+// the anonymity setting covers free voting only.
+func (r *Repository) Supporters(ctx context.Context, contestantID, contestID string) ([]Supporter, error) {
+	const q = `
+		WITH anon AS (
+			-- "on" is a reserved word: aliasing to it parses inside the CTE and
+			-- then fails at the first reference. Named explicitly instead.
+			SELECT COALESCE(BOOL_OR(allow_anonymous_free_vote), false) AS anon_enabled
+			FROM voting_settings WHERE contest_id = $2
+		)
+		SELECT
+			CASE WHEN (SELECT anon_enabled FROM anon) AND v.paid = false THEN ''
+			     ELSE COALESCE(NULLIF(u.raw_user_meta_data->>'full_name', ''), u.email, 'A voter')
+			END,
+			((SELECT anon_enabled FROM anon) AND v.paid = false),
+			v.paid, v.quantity, v.amount_kobo, v.created_at
+		FROM connect_votes v
+		LEFT JOIN auth.users u ON u.id = v.voter_id
+		WHERE v.option_ref = $1 AND v.contest_id = $2
+		ORDER BY v.created_at DESC
+		LIMIT 500`
+	rows, err := r.db.Query(ctx, q, contestantID, contestID)
+	if err != nil {
+		return nil, fmt.Errorf("voting: supporters: %w", err)
+	}
+	defer rows.Close()
+
+	out := []Supporter{}
+	for rows.Next() {
+		var s Supporter
+		if err := rows.Scan(&s.VoterName, &s.Anonymous, &s.Paid, &s.Quantity, &s.AmountKobo, &s.CreatedAt); err != nil {
+			return nil, fmt.Errorf("voting: scan supporter: %w", err)
+		}
+		out = append(out, s)
+	}
+	return out, rows.Err()
+}
+
+// MyVote returns one of the caller's own votes, or pgx.ErrNoRows.
+//
+// Scoped on voter_id as well as id: a vote id is a bare uuid, and a receipt is
+// the voter's own record. Someone else's vote answers the same as a vote that
+// does not exist, so the endpoint never confirms an id it will not serve.
+func (r *Repository) MyVote(ctx context.Context, voterID, voteID string) (*MyVote, error) {
+	const q = `
+		SELECT v.id::text, v.contest_id::text, COALESCE(ct.title, ''),
+		       v.option_ref, COALESCE(NULLIF(c.name, ''), NULLIF(c.stage_name, ''), 'Contestant'),
+		       COALESCE(c.photo_url, ''),
+		       v.paid, v.quantity, v.amount_kobo, v.created_at
+		FROM connect_votes v
+		LEFT JOIN connect_contests ct ON ct.id = v.contest_id
+		LEFT JOIN contestants c ON c.id::text = v.option_ref
+		WHERE v.id::text = $1 AND v.voter_id = $2`
+	var m MyVote
+	if err := r.db.QueryRow(ctx, q, voteID, voterID).Scan(&m.ID, &m.ContestID, &m.ContestTitle,
+		&m.ContestantID, &m.ContestantName, &m.PhotoURL, &m.Paid, &m.Quantity,
+		&m.AmountKobo, &m.CreatedAt); err != nil {
+		return nil, err
+	}
+	return &m, nil
+}
+
+// Notification is one entry in the voting activity feed.
+type Notification struct {
+	ID           string    `json:"id"`
+	Type         string    `json:"type"`
+	Title        string    `json:"title"`
+	Message      string    `json:"message"`
+	ContestID    string    `json:"contest_id,omitempty"`
+	ContestantID string    `json:"contestant_id,omitempty"`
+	CreatedAt    time.Time `json:"created_at"`
+	Read         bool      `json:"read"`
+}
+
+// Notifications derives the caller's voting activity feed.
+//
+// THERE IS NO NOTIFICATIONS STORE. Nothing in this module has ever written a
+// voting notification anywhere, so this feed is COMPUTED from the two things the
+// database actually records: the caller's votes, and the deadline of contests
+// they voted in.
+//
+// The client's VotingNotification union names seven kinds. Two are derivable and
+// are produced here. The other five are not, and it is worth being exact about
+// why, because "not implemented" and "impossible from this data" are different
+// problems:
+//
+//	VOTE_SUCCESS      ✔ every row of connect_votes is a vote that succeeded
+//	CONTEST_ENDING    ✔ connect_contests.closes_at
+//	PAYMENT_FAILED    ✘ connect_votes records successes only; a failed payment
+//	                    leaves no row, so there is nothing to report
+//	RANK_CHANGED      ✘ needs a history of past standings; only the current
+//	                    tally is stored
+//	RESULTS_PUBLISHED ✘ no publication event is recorded
+//	FREE_VOTES_RESET  ✘ the reset is a time-of-day rule, not an event
+//	VOTING_LIVE       ✘ would need a follow/subscribe relationship to know
+//	                    which contests a user wants to hear about
+//
+// Emitting those five needs an events table written at the moment each happens,
+// which is a different change from this one.
+//
+// `read` is always true. Read state is per-user, per-notification durable state,
+// and a derived feed has nowhere to keep it — returning false would give every
+// row a permanent unread dot that no amount of reading could clear.
+func (r *Repository) Notifications(ctx context.Context, userID string) ([]Notification, error) {
+	const q = `
+		-- Each of the caller's votes, as a "your vote counted" entry.
+		SELECT 'vote:' || v.id::text,
+		       'VOTE_SUCCESS',
+		       'Vote confirmed',
+		       'Your ' || v.quantity || CASE WHEN v.quantity = 1 THEN ' vote for ' ELSE ' votes for ' END
+		         || COALESCE(NULLIF(c.name, ''), 'a contestant')
+		         || COALESCE(' in ' || NULLIF(ct.title, ''), '') || ' was counted.',
+		       v.contest_id::text,
+		       v.option_ref,
+		       v.created_at
+		FROM connect_votes v
+		LEFT JOIN contestants c ON c.id::text = v.option_ref
+		LEFT JOIN connect_contests ct ON ct.id = v.contest_id
+		WHERE v.voter_id = $1
+
+		UNION ALL
+
+		-- Contests the caller has voted in that are closing soon and still open.
+		-- DISTINCT because they may have voted many times in the same contest,
+		-- and one deadline is one notification.
+		SELECT DISTINCT ON (ct.id)
+		       'closing:' || ct.id::text,
+		       'CONTEST_ENDING',
+		       'Voting closes soon',
+		       COALESCE(NULLIF(ct.title, ''), 'A contest') || ' closes on '
+		         || to_char(ct.closes_at, 'DD Mon'),
+		       ct.id::text,
+		       '',
+		       ct.closes_at
+		FROM connect_contests ct
+		WHERE ct.closes_at IS NOT NULL
+		  AND ct.closes_at > now()
+		  AND ct.closes_at < now() + interval '7 days'
+		  AND EXISTS (SELECT 1 FROM connect_votes v2
+		              WHERE v2.contest_id = ct.id AND v2.voter_id = $1)
+
+		ORDER BY 7 DESC
+		LIMIT 50`
+	rows, err := r.db.Query(ctx, q, userID)
+	if err != nil {
+		return nil, fmt.Errorf("voting: notifications: %w", err)
+	}
+	defer rows.Close()
+
+	out := []Notification{}
+	for rows.Next() {
+		var n Notification
+		if err := rows.Scan(&n.ID, &n.Type, &n.Title, &n.Message,
+			&n.ContestID, &n.ContestantID, &n.CreatedAt); err != nil {
+			return nil, fmt.Errorf("voting: scan notification: %w", err)
+		}
+		n.Read = true
+		out = append(out, n)
+	}
+	return out, rows.Err()
+}
