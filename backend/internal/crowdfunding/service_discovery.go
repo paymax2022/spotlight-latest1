@@ -92,8 +92,10 @@ func (s *Service) ListCampaigns(ctx context.Context, q CampaignQuery) ([]Campaig
 	return out, rows.Err()
 }
 
-// GetDetail returns a single campaign's core fields (nested arrays are served by
-// dedicated endpoints / remain empty until their tables are populated).
+// GetDetail returns a single campaign's core fields. Most nested arrays are still
+// served by dedicated endpoints and stay empty here; `updates` is real, because
+// the updates timeline and the campaign page's Updates block both read it from
+// this payload and nowhere else.
 func (s *Service) GetDetail(ctx context.Context, id string) (map[string]any, error) {
 	sql := fmt.Sprintf(`SELECT %s FROM campaigns c WHERE c.id = $1`, selectCols)
 	r, err := scanRow(s.db.QueryRow(ctx, sql, id).Scan)
@@ -118,9 +120,45 @@ func (s *Service) GetDetail(ctx context.Context, id string) (map[string]any, err
 		"beneficiary": nil, "disbursementModel": r.disbursementModel, "refundPolicy": r.refundPolicy,
 		"riskDisclosure": nil, "verified": sum.Verified, "featured": sum.Featured, "trending": sum.Trending,
 		"urgent": sum.Urgent, "saved": false,
-		"budget": []any{}, "milestones": []any{}, "updates": []any{}, "rewardTiers": []any{},
+		"budget": []any{}, "milestones": []any{}, "updates": s.campaignUpdates(ctx, id), "rewardTiers": []any{},
 		"documents": []any{}, "faqs": []any{}, "tags": []any{}, "location": sum.Location,
 	}, nil
+}
+
+// campaignUpdates returns the campaign's updates newest-first for the detail
+// payload. This used to be a literal empty array, which is why a published update
+// never appeared: the timeline and the detail block both read it from here.
+//
+// Read failures degrade to an empty list rather than failing the whole campaign
+// page — a campaign with an unreadable update feed should still render its story,
+// goal and Contribute button.
+func (s *Service) campaignUpdates(ctx context.Context, campaignID string) []map[string]any {
+	const q = `
+		SELECT u.id::text, u.title, u.body, u.image_url, u.created_at,
+		       (SELECT count(*) FROM cf_update_likes l WHERE l.update_id = u.id)::int
+		  FROM cf_campaign_updates u
+		 WHERE u.campaign_id = $1 AND u.deleted_at IS NULL
+		 ORDER BY u.created_at DESC, u.id DESC`
+	out := []map[string]any{}
+	rows, err := s.db.Query(ctx, q, campaignID)
+	if err != nil {
+		return out
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id, title, body string
+		var image *string
+		var created time.Time
+		var likes int
+		if err := rows.Scan(&id, &title, &body, &image, &created, &likes); err != nil {
+			return out
+		}
+		out = append(out, map[string]any{
+			"id": id, "title": title, "body": body, "imageUrl": image,
+			"createdAt": created.UTC().Format(time.RFC3339), "likeCount": likes,
+		})
+	}
+	return out
 }
 
 // creatorMeta resolves a creator's display fields. Falls back gracefully.

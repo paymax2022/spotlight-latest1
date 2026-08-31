@@ -130,6 +130,69 @@ func (r *Repository) DeleteBlock(ctx context.Context, id string) error {
 	return nil
 }
 
+// InsertFollow creates a follow row. followSelf is rejected by the CHECK
+// constraint (belt-and-braces — the service layer already rejects it first).
+func (r *Repository) InsertFollow(ctx context.Context, followerID, sellerID string) error {
+	_, err := r.db.Exec(ctx, `
+		INSERT INTO public.mkt_seller_follows (follower_id, seller_id)
+		VALUES ($1,$2)`, followerID, sellerID)
+	if err != nil {
+		if isUniqueViolation(err) {
+			return nil // already following — idempotent, not an error
+		}
+		return wrapInternal("insert follow", err)
+	}
+	return nil
+}
+
+// DeleteFollow removes a follow row. Keyed by (follower_id, seller_id) rather
+// than a row id — the frontend only ever holds the seller's id (unfollowing
+// from a seller's profile), so this avoids a round trip to look one up first.
+// Deleting a row that doesn't exist is a no-op, matching InsertFollow's
+// idempotency the other direction.
+func (r *Repository) DeleteFollow(ctx context.Context, followerID, sellerID string) error {
+	_, err := r.db.Exec(ctx, `
+		DELETE FROM public.mkt_seller_follows WHERE follower_id=$1 AND seller_id=$2`,
+		followerID, sellerID)
+	if err != nil {
+		return wrapInternal("delete follow", err)
+	}
+	return nil
+}
+
+// ListFollows returns the caller's followed sellers, newest-first, each
+// enriched with the seller's live name/avatar (public.user_profiles) and
+// trust signals (public.mkt_trust_scores / a live active-listings count) —
+// never a stored snapshot.
+func (r *Repository) ListFollows(ctx context.Context, followerID string) ([]FollowedSeller, error) {
+	rows, err := r.db.Query(ctx, `
+		SELECT
+			f.id, f.seller_id,
+			COALESCE(up.full_name, '') AS seller_name,
+			up.avatar_url,
+			COALESCE(ts.trust_score, 0.5) AS trust_score,
+			(SELECT count(*) FROM public.mkt_listings l WHERE l.seller_id = f.seller_id AND l.status = 'active') AS active_listings,
+			f.created_at
+		FROM public.mkt_seller_follows f
+		LEFT JOIN public.user_profiles up ON up.id = f.seller_id
+		LEFT JOIN public.mkt_trust_scores ts ON ts.user_id = f.seller_id
+		WHERE f.follower_id = $1
+		ORDER BY f.created_at DESC`, followerID)
+	if err != nil {
+		return nil, wrapInternal("list follows", err)
+	}
+	defer rows.Close()
+	out := []FollowedSeller{}
+	for rows.Next() {
+		var f FollowedSeller
+		if err := rows.Scan(&f.ID, &f.SellerID, &f.SellerName, &f.AvatarURL, &f.TrustScore, &f.ActiveListings, &f.FollowedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, f)
+	}
+	return out, rows.Err()
+}
+
 // ListBlocks returns the caller's blocked users newest-first.
 func (r *Repository) ListBlocks(ctx context.Context, userID string) ([]Block, error) {
 	rows, err := r.db.Query(ctx, `

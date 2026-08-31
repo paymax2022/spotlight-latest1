@@ -66,7 +66,11 @@ afterAll(async () => {
     await db().from('contests').delete().eq('id', id);
   }
   const { data: connect } = await db().from('connect_contests').select('id').like('slug', `${PREFIX}%`);
-  const { data: legacy } = await db().from('contests').select('id').like('slug', `${PREFIX}%`);
+  // A mirrored row whose slug collided was written with slug = NULL, so a
+  // slug-only sweep leaves it behind. Match the fixture name too.
+  await db().from('contests').delete().eq('name', 'ZZ Ladder Spec');
+  await db().from('contests').delete().eq('name', 'ZZ Tally Other');
+  const { data: legacy } = await db().from('contests').select('id').or(`slug.like.${PREFIX}%,name.eq.ZZ Ladder Spec`);
   expect(connect ?? [], 'connect fixtures must not leak').toHaveLength(0);
   expect(legacy ?? [], 'legacy mirror fixtures must not leak').toHaveLength(0);
 });

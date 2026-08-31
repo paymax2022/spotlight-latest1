@@ -1097,12 +1097,37 @@ func (c *Client) VerifyWebhook(ctx context.Context, payload []byte, signature st
 	}
 	return gateway.WebhookEvent{
 		Provider:          c.Name(),
-		EventType:         firstNonEmpty(w.Event, w.EventName),
+		EventType:         normaliseEventType(firstNonEmpty(w.Event, w.EventName)),
 		ExternalEventID:   firstNonEmpty(w.ID, w.EventID, w.Reference),
 		ProviderPolicyRef: firstNonEmpty(w.Data.Essential.PolicyID, w.Data.PolicyID, w.Data.PolicyRef, w.Data.ID),
 		ProviderClaimRef:  firstNonEmpty(w.Data.Essential.ClaimID, w.Data.ClaimID, w.Data.ClaimRef),
 		SignatureValid:    true,
 	}, nil
+}
+
+// normaliseEventType translates MyCover's callback vocabulary into the internal
+// contract's.
+//
+// MyCover names events <resource>.<action> ("purchase.successful"), while the
+// webhook service speaks policy.bound / policy.cancelled / policy.lapsed /
+// policy.expired. Nothing translated between them, so a real delivery verified
+// its signature and was then dropped as an "unhandled event type" — the webhook
+// worked and did nothing.
+//
+// ⚠️ Only UNAMBIGUOUS events are translated. webhooks.policyTargetState turns
+// policy.bound into ACTIVE, so mapping a vague "policy.updated" onto it would
+// reactivate a policy the provider had just cancelled. An unrecognised event is
+// passed through unchanged and logged as unhandled, which is the safe failure;
+// silently marking cover active is not. The event vocabulary is still DOCS ONLY
+// (no delivery has ever reached this account), so err toward passing through.
+func normaliseEventType(s string) string {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "purchase.successful":
+		// The event a real MyCover purchase emits. A successful purchase IS a bind.
+		return "policy.bound"
+	default:
+		return strings.TrimSpace(s)
+	}
 }
 
 // webhookPayload mirrors MyCover's v2 callback envelope:

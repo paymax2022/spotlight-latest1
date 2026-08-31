@@ -5,6 +5,8 @@ import (
 	"errors"
 	"log"
 	"time"
+
+	"github.com/jackc/pgx/v5"
 )
 
 // WalletDebiter debits the voter's wallet and credits the given standing account
@@ -375,4 +377,61 @@ func (s *Service) GetContestant(ctx context.Context, contestantID string) (*Rost
 		return nil, ErrNotFound
 	}
 	return e, nil
+}
+
+// ─── My votes / contestant supporters ────────────────────────────────────────
+
+// ErrNotContestant is returned when a caller asks for a contestant's supporters
+// and is not that contestant.
+var ErrNotContestant = errors.New("voting: only the contestant can see who voted for them")
+
+// MyVotes returns the caller's own voting history.
+func (s *Service) MyVotes(ctx context.Context, voterID, contestID string, paidOnly, freeOnly bool) ([]MyVote, error) {
+	if voterID == "" {
+		return nil, ErrNotContestant
+	}
+	return s.repo.MyVotes(ctx, voterID, contestID, paidOnly, freeOnly)
+}
+
+// Supporters returns who voted for a contestant — to that contestant only.
+//
+// The check is ownership, not membership or admin: a contestant may see their
+// own supporters and nobody else's. A contestant row with no user_id (imported,
+// or promoted from a registration that never linked an account) belongs to
+// nobody, so nobody passes the check — which is the right answer rather than a
+// list everybody can read.
+func (s *Service) Supporters(ctx context.Context, callerID, contestantID string) ([]Supporter, error) {
+	ownerID, contestID, err := s.repo.ContestantOwner(ctx, contestantID)
+	if err != nil {
+		return nil, err
+	}
+	if callerID == "" || ownerID == "" || ownerID != callerID {
+		return nil, ErrNotContestant
+	}
+	return s.repo.Supporters(ctx, contestantID, contestID)
+}
+
+// MyVote returns a single vote receipt belonging to the caller.
+func (s *Service) MyVote(ctx context.Context, voterID, voteID string) (*MyVote, error) {
+	if voterID == "" {
+		return nil, ErrNotFound
+	}
+	v, err := s.repo.MyVote(ctx, voterID, voteID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			// Not yours, or not a vote — the same answer either way.
+			return nil, ErrNotFound
+		}
+		return nil, err
+	}
+	return v, nil
+}
+
+// Notifications returns the caller's derived voting activity feed. See the
+// repository method for what this feed can and cannot report, and why.
+func (s *Service) Notifications(ctx context.Context, userID string) ([]Notification, error) {
+	if userID == "" {
+		return []Notification{}, nil
+	}
+	return s.repo.Notifications(ctx, userID)
 }
