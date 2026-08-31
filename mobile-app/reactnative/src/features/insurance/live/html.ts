@@ -81,8 +81,16 @@ export function stripTags(input: string): string {
  * Empty blocks and duplicate consecutive blocks are dropped — the live catalog
  * is full of copy repeated three times in one field.
  */
+const SENTINEL = String.fromCharCode(0xe000);
+
 export function parseHtmlBlocks(input: string, opts?: { maxBlocks?: number }): HtmlBlock[] {
-  const raw = String(input ?? '');
+  // Strip the sentinel from provider copy BEFORE marking. The sentinel is a
+  // private-use codepoint, so unlike a NUL it IS reachable by any provider that
+  // emits PUA characters: without this, copy containing the sentinel could forge
+  // a boundary (splitting a block) or hijack a block kind, and a bare sentinel
+  // survived into the rendered <Text> as an invisible glyph. Provider copy has no
+  // legitimate use for it, so dropping it is lossless.
+  const raw = String(input ?? '').split(SENTINEL).join('');
   if (!raw.trim()) return [];
 
   // Drop anything executable or presentational outright.
@@ -92,25 +100,25 @@ export function parseHtmlBlocks(input: string, opts?: { maxBlocks?: number }): H
 
   // Mark the boundaries we care about, tagging list items and headings.
   const marked = cleaned
-    .replace(/<\s*li[^>]*>/gi, 'BULLET')
-    .replace(/<\s*h[1-6][^>]*>/gi, 'HEAD')
-    .replace(/<\s*br\s*\/?\s*>/gi, 'PARA')
-    .replace(/<\s*\/\s*(p|li|div|h[1-6]|ul|ol|tr)\s*>/gi, 'PARA')
-    .replace(/<\s*p[^>]*>/gi, 'PARA');
+    .replace(/<\s*li[^>]*>/gi, `${SENTINEL}BULLET${SENTINEL}`)
+    .replace(/<\s*h[1-6][^>]*>/gi, `${SENTINEL}HEAD${SENTINEL}`)
+    .replace(/<\s*br\s*\/?\s*>/gi, `${SENTINEL}PARA${SENTINEL}`)
+    .replace(/<\s*\/\s*(p|li|div|h[1-6]|ul|ol|tr)\s*>/gi, `${SENTINEL}PARA${SENTINEL}`)
+    .replace(/<\s*p[^>]*>/gi, `${SENTINEL}PARA${SENTINEL}`);
 
   const blocks: HtmlBlock[] = [];
   const seen = new Set<string>();
 
-  for (const chunk of marked.split('PARA')) {
+  for (const chunk of marked.split(`${SENTINEL}PARA${SENTINEL}`)) {
     let kind: HtmlBlock['kind'] = 'paragraph';
     let body = chunk;
-    if (body.includes('BULLET')) {
+    if (body.includes(`${SENTINEL}BULLET${SENTINEL}`)) {
       kind = 'bullet';
-      body = body.replace(/BULLET/g, ' ');
+      body = body.replace(new RegExp(`${SENTINEL}BULLET${SENTINEL}`,'g'), ' ');
     }
-    if (body.includes('HEAD')) {
+    if (body.includes(`${SENTINEL}HEAD${SENTINEL}`)) {
       kind = 'heading';
-      body = body.replace(/HEAD/g, ' ');
+      body = body.replace(new RegExp(`${SENTINEL}HEAD${SENTINEL}`,'g'), ' ');
     }
     const text = stripTags(body).replace(/^[••\-–—]\s*/, '').trim();
     if (!text) continue;
