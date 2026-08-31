@@ -158,13 +158,13 @@ export default function CompetitionsListPage() {
                       // default free allowance, so this should be unreachable. Kept
                       // as a visible alarm rather than removed: if it ever shows, a
                       // LIVE contest is taking no votes and that must not be quiet.
-                      <Link href="/admin/competitions/vote-packages" title="Live and nobody can vote — no free votes and no active package. Click to fix.">
+                      <Link href={`/admin/voting/packages?contestId=${c.id}`} title="Live and nobody can vote — no free votes and no active package. Click to fix.">
                         <Badge text="Not votable" color={colors.danger} />
                       </Link>
                     ) : (
                       // A draft is allowed to be half-configured; that is what draft
                       // means. Worth flagging before it is published, not alarming.
-                      <Link href="/admin/competitions/vote-packages" title="Not set up for voting yet. It will get the default free vote when opened, or add packages now.">
+                      <Link href={`/admin/voting/packages?contestId=${c.id}`} title="Not set up for voting yet. It will get the default free vote when opened, or add packages now.">
                         <Badge text="Not configured" color={colors.muted} />
                       </Link>
                     )}

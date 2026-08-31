@@ -31,6 +31,8 @@ export type VotePackage = {
   isRecommended: boolean;
   promoLabel: string | null;
   displayOrder: number;
+  /** Template this package was cloned from, when it was. NULL if authored directly. */
+  templateId: string | null;
 };
 
 export type VotePackageInput = {
@@ -90,6 +92,7 @@ function toPackage(row: Record<string, unknown>): VotePackage {
     isRecommended: Boolean(pick(row, 'isRecommended', 'is_recommended')),
     promoLabel: (pick(row, 'promoLabel', 'promo_label') as string | null) || null,
     displayOrder: Number(pick(row, 'displayOrder', 'display_order') ?? 0),
+    templateId: (pick(row, 'templateId', 'template_id') as string | null) ?? null,
   };
 }
 
@@ -132,4 +135,148 @@ export async function deactivateVotePackage(id: string): Promise<void> {
     headers: authHeaders(),
   });
   await readJsonOrThrow(res, 'Deactivating vote package');
+}
+
+// ── Reusable templates ──────────────────────────────────────────────────────
+//
+// A vote_packages row belongs to exactly one contest (contest_id is NOT NULL),
+// so there is no such thing as a reusable package: every contest meant retyping
+// the same tiers, and they drifted apart. Templates are the catalog authored
+// once; attaching one CLONES it into an ordinary vote_packages row for the
+// contest, carrying template_id for provenance.
+//
+// Cloning rather than referencing is deliberate. A contest that is selling votes
+// must not have its prices change underneath it because a template was edited
+// later, and must not lose its packages because one was deleted.
+//
+// ⚠️ Template `amount` is NAIRA too, mirroring vote_packages.amount exactly, so
+// the clone is a straight copy with no scaling.
+
+export type VotePackageTemplate = {
+  id: string;
+  name: string;
+  description: string;
+  votes: number;
+  bonusVotes: number;
+  /** NAIRA, not kobo. */
+  amount: number;
+  currency: string;
+  isActive: boolean;
+  isRecommended: boolean;
+  promoLabel: string;
+  displayOrder: number;
+  createdAt: string | null;
+  updatedAt: string | null;
+};
+
+export type VotePackageTemplateInput = {
+  name: string;
+  description?: string;
+  votes: number;
+  bonusVotes?: number;
+  amount: number;
+  currency?: string;
+  isActive?: boolean;
+  isRecommended?: boolean;
+  promoLabel?: string;
+  displayOrder?: number;
+};
+
+export type ApplyTemplatesResult = {
+  applied: number;
+  skipped: number;
+  missing: string[];
+  message?: string;
+};
+
+const TEMPLATES = '/api/admin/voting/package-templates';
+
+function toTemplate(r: Record<string, any>): VotePackageTemplate {
+  return {
+    id: String(r.id ?? ''),
+    name: String(r.name ?? ''),
+    description: r.description ?? '',
+    votes: Number(r.votes ?? 0),
+    bonusVotes: Number(pick(r, 'bonusVotes', 'bonus_votes') ?? 0),
+    amount: Number(r.amount ?? 0),
+    currency: String(r.currency ?? 'NGN'),
+    isActive: pick(r, 'isActive', 'is_active') !== false,
+    isRecommended: Boolean(pick(r, 'isRecommended', 'is_recommended')),
+    promoLabel: (pick(r, 'promoLabel', 'promo_label') as string) ?? '',
+    displayOrder: Number(pick(r, 'displayOrder', 'display_order') ?? 0),
+    createdAt: (pick(r, 'createdAt', 'created_at') as string | null) ?? null,
+    updatedAt: (pick(r, 'updatedAt', 'updated_at') as string | null) ?? null,
+  };
+}
+
+export async function listVotePackageTemplates(activeOnly = false): Promise<VotePackageTemplate[]> {
+  const qs = activeOnly ? '?activeOnly=true' : '';
+  const res = await fetch(`${webProxyBase()}${TEMPLATES}${qs}`, {
+    cache: 'no-store',
+    headers: authHeaders(),
+  });
+  const json = await readJsonOrThrow(res, 'Loading package templates');
+  return ((json.templates ?? []) as Array<Record<string, any>>).map(toTemplate);
+}
+
+export async function createVotePackageTemplate(
+  input: VotePackageTemplateInput,
+): Promise<VotePackageTemplate> {
+  const res = await fetch(`${webProxyBase()}${TEMPLATES}`, {
+    method: 'POST',
+    headers: authHeaders(),
+    body: JSON.stringify(input),
+  });
+  const json = await readJsonOrThrow(res, 'Creating package template');
+  return toTemplate((json.template ?? {}) as Record<string, any>);
+}
+
+export async function updateVotePackageTemplate(
+  id: string,
+  input: Partial<VotePackageTemplateInput>,
+): Promise<VotePackageTemplate> {
+  const res = await fetch(`${webProxyBase()}${TEMPLATES}`, {
+    method: 'PATCH',
+    headers: authHeaders(),
+    body: JSON.stringify({ id, ...input }),
+  });
+  const json = await readJsonOrThrow(res, 'Updating package template');
+  return toTemplate((json.template ?? {}) as Record<string, any>);
+}
+
+/** Removing a template never touches packages already cloned onto a contest. */
+export async function deleteVotePackageTemplate(id: string): Promise<void> {
+  const res = await fetch(`${webProxyBase()}${TEMPLATES}?id=${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+    headers: authHeaders(),
+  });
+  await readJsonOrThrow(res, 'Deleting package template');
+}
+
+/** Clone templates onto a contest. Safe to repeat — already-attached ones are skipped. */
+export async function applyTemplatesToContest(
+  contestId: string,
+  templateIds: string[],
+): Promise<ApplyTemplatesResult> {
+  const res = await fetch(`${webProxyBase()}${TEMPLATES}/apply`, {
+    method: 'POST',
+    headers: authHeaders(),
+    body: JSON.stringify({ contestId, templateIds }),
+  });
+  const json = await readJsonOrThrow(res, 'Attaching packages to contest') as Record<string, any>;
+  return {
+    applied: Number(json.applied ?? 0),
+    skipped: Number(json.skipped ?? 0),
+    missing: (json.missing ?? []) as string[],
+    message: json.message as string | undefined,
+  };
+}
+
+/** Shared naira formatter, so the two halves of this console agree. */
+export function formatNaira(amount: number): string {
+  return new Intl.NumberFormat('en-NG', {
+    style: 'currency',
+    currency: 'NGN',
+    maximumFractionDigits: 0,
+  }).format(Number(amount || 0));
 }

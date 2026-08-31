@@ -13,9 +13,9 @@ import {
 } from '@/services/contestsAdminService';
 import { triggerStageEviction, finalizeStageEvictions, getContestEvictions, saveContestantFromEviction, extendGracePeriod } from '@/services/competitionsService';
 import {
-  listVotePackageTemplates, applyTemplatesToContest, listContestPackages, formatNaira,
+  listVotePackageTemplates, applyTemplatesToContest, listVotePackages, formatNaira,
   type VotePackageTemplate,
-} from '@/services/votePackagesAdminService';
+} from '@/services/votePackagesService';
 import type { StageEvictionInfo } from '@/types/competitions';
 
 // Real contest create/edit — POST/PATCH /api/admin/contests[/[slug]], the
@@ -133,7 +133,7 @@ function CreateCompetitionContent() {
   // flushed on save, because vote_packages.contest_id is NOT NULL.
   const [pkgTemplates, setPkgTemplates] = useState<VotePackageTemplate[]>([]);
   const [pkgSelected, setPkgSelected] = useState<string[]>([]);
-  const [pkgAttached, setPkgAttached] = useState<Awaited<ReturnType<typeof listContestPackages>>>([]);
+  const [pkgAttached, setPkgAttached] = useState<Awaited<ReturnType<typeof listVotePackages>>>([]);
   const [pkgLoading, setPkgLoading] = useState(false);
   const [pkgError, setPkgError] = useState<string | null>(null);
   const [pkgNotice, setPkgNotice] = useState<string | null>(null);
@@ -219,7 +219,7 @@ function CreateCompetitionContent() {
     try {
       const [tpl, attached] = await Promise.all([
         listVotePackageTemplates(true),
-        contestId ? listContestPackages(contestId) : Promise.resolve([]),
+        contestId ? listVotePackages(contestId) : Promise.resolve([]),
       ]);
       setPkgTemplates(tpl);
       setPkgAttached(attached);
