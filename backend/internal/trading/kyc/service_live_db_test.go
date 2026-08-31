@@ -42,7 +42,7 @@ func access(t *testing.T, ctx context.Context, s *Service, u string) bool {
 
 func TestLiveDB_KYC_HappyPathAndGate(t *testing.T) {
 	svc, pool := liveKyc(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	u := uuid.NewString()
 
@@ -77,7 +77,7 @@ func TestLiveDB_KYC_HappyPathAndGate(t *testing.T) {
 
 func TestLiveDB_KYC_RejectRequiresReasonAndResubmit(t *testing.T) {
 	svc, pool := liveKyc(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	u := uuid.NewString()
 	reviewer := uuid.NewString()
@@ -103,7 +103,7 @@ func TestLiveDB_KYC_RejectRequiresReasonAndResubmit(t *testing.T) {
 
 func TestLiveDB_KYC_BypassPolicyAndRegister(t *testing.T) {
 	svc, pool := liveKyc(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	u := uuid.NewString()
 	maker := uuid.NewString()
@@ -140,7 +140,7 @@ func TestLiveDB_KYC_BypassPolicyAndRegister(t *testing.T) {
 
 func TestLiveDB_KYC_BypassExpirySweep(t *testing.T) {
 	svc, pool := liveKyc(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	u := uuid.NewString()
 	if err := svc.Bypass(ctx, uuid.NewString(), uuid.NewString(), u, "temp", 7*24*time.Hour, nil); err != nil {

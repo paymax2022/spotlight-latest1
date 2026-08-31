@@ -117,10 +117,18 @@ export default function DatePickerField({
 }: DatePickerFieldProps) {
   const [open, setOpen] = useState(false);
 
+  // With no value yet, the wheels must default to something INSIDE
+  // [minYear, maxYear] — a caller whose range doesn't cover a fixed arbitrary
+  // year (this used to be 1990 unconditionally) got a wheel that visually
+  // clamped to the top of its list while the year state silently stayed on
+  // the out-of-range default. Confirming without ever touching the year
+  // wheel then submitted a value outside the very range the caller asked
+  // for. Defaulting to today, clamped into range, is always a valid pick.
   const parsed = value ? new Date(value) : null;
-  const initYear  = parsed ? parsed.getUTCFullYear()  : 1990;
-  const initMonth = parsed ? parsed.getUTCMonth() + 1 : 6;
-  const initDay   = parsed ? parsed.getUTCDate()      : 15;
+  const today = new Date();
+  const initYear  = parsed ? parsed.getUTCFullYear()  : Math.min(Math.max(today.getFullYear(), minYear), maxYear);
+  const initMonth = parsed ? parsed.getUTCMonth() + 1 : today.getMonth() + 1;
+  const initDay   = parsed ? parsed.getUTCDate()      : today.getDate();
 
   const [selYear,  setSelYear]  = useState(initYear);
   const [selMonth, setSelMonth] = useState(initMonth);

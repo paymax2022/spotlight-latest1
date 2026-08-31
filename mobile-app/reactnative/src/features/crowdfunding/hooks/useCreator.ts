@@ -84,6 +84,22 @@ export function useMyCampaign(id?: string) {
 }
 
 /**
+ * Fall back to the creator's own most-recently-created campaign when a
+ * screen has no campaign in its route (e.g. a bare wallet/ledger entry
+ * point). `getMyCampaigns` is server-ordered newest-first, so `[0]` is that
+ * campaign — never a guess made client-side.
+ *
+ * `isLoading` distinguishes "still resolving" (list not back yet) from a
+ * genuinely campaign-less creator (`id` stays undefined once loaded) — a
+ * caller that only checked `id` couldn't tell those apart and would flash an
+ * error state during the resolve.
+ */
+export function useDefaultCampaignId(): { id: string | undefined; isLoading: boolean } {
+  const query = useMyCampaigns();
+  return { id: query.data?.[0]?.id, isLoading: query.isLoading };
+}
+
+/**
  * Write the campaign the SERVER returned into the creator caches, then mark
  * them stale.
  *

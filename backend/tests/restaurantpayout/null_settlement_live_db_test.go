@@ -26,7 +26,7 @@ import (
 
 func TestLiveDB_NullSettlement_TransitionAndCancel(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	svc := newLiveRestaurantService(pool, newLiveLedgerService(pool))
 

@@ -7,6 +7,7 @@
 //   PATCH /api/registration/applications/{id}        (save step answers)
 //   POST /api/registration/applications/{id}/submit
 //   GET  /api/registration/applications/{id}/status
+//   GET  /api/registration/applications/{id}/voting
 //   POST /api/registration/applications/{id}/withdraw
 //   POST /api/registration/uploads                   (multipart file)
 
@@ -27,6 +28,8 @@ import type {
   SaveStepResponse,
   SubmitResponse,
   StatusResponse,
+  RegistrationVoting,
+  RegistrationVotingResponse,
   UploadResponse,
   PickedUpload,
   UploadedFileValue,
@@ -152,8 +155,31 @@ export async function startDraft(contestSlug: string): Promise<RegistrationDraft
     saveMockDrafts();
     return waitMock(draft);
   }
-  const res = await regPost<DraftResponse>(`${REG_BASE}/applications`, { contestSlug });
-  return res.draft;
+  try {
+    const res = await regPost<DraftResponse>(`${REG_BASE}/applications`, { contestSlug });
+    return res.draft;
+  } catch (error) {
+    // 409 means the applicant already has a live application for this contest.
+    // That is not a retryable failure, so it is surfaced as its own type and the
+    // screen sends them into the application they already have.
+    const response = (error as { response?: { status?: number; data?: { registration?: ExistingRegistrationSummary } } })
+      .response;
+    if (response?.status === 409 && response.data?.registration) {
+      throw new RegistrationExistsError(response.data.registration);
+    }
+    throw error;
+  }
+}
+
+/** Thrown by `startDraft` when the user already has a live application here. */
+export class RegistrationExistsError extends Error {
+  readonly registration: ExistingRegistrationSummary;
+
+  constructor(registration: ExistingRegistrationSummary) {
+    super('You have already applied to this contest.');
+    this.name = 'RegistrationExistsError';
+    this.registration = registration;
+  }
 }
 
 export async function getDraft(id: string): Promise<{ draft: RegistrationDraft; steps: RegistrationStep[] }> {
@@ -229,6 +255,32 @@ export async function getStatus(id: string): Promise<{ draft: RegistrationDraft;
   }
   const res = await regGet<StatusResponse>(`${REG_BASE}/applications/${id}/status`);
   return { draft: res.draft, timeline: res.timeline ?? [] };
+}
+
+/**
+ * Voting context for an application: the contest it runs in, the roster entry it
+ * became, and whether people can vote right now.
+ *
+ * Served by a NEW route rather than extra fields on /status, because the status
+ * route is brownfield-protected. Never throws for a non-votable application —
+ * it returns a `reason` so the screen can explain itself.
+ */
+export async function getRegistrationVoting(id: string): Promise<RegistrationVoting> {
+  if (REGISTRATION_USE_MOCK) {
+    // No roster exists in mock mode; report the honest reason rather than
+    // inventing a votable contest the tester cannot actually vote in.
+    return waitMock<RegistrationVoting>({
+      votable: false,
+      reason: 'not_promoted',
+      applicationStatus: 'submitted',
+      contest: null,
+      contestant: null,
+      sharePath: null,
+      shareText: null,
+    });
+  }
+  const res = await regGet<RegistrationVotingResponse>(`${REG_BASE}/applications/${id}/voting`);
+  return res.voting;
 }
 
 export async function withdrawApplication(id: string, note?: string): Promise<RegistrationDraft> {
@@ -346,4 +398,40 @@ export async function uploadFile(file: PickedUpload): Promise<UploadedFileValue>
   }
   const res = await regUpload<UploadResponse>(`${REG_BASE}/uploads`, file);
   return { previewUrl: res.upload.previewUrl, fileName: res.upload.fileName, storageKey: res.upload.storageKey };
+}
+
+// ── "Have I already applied here?" ───────────────────────────────────────────
+// Backs the contest screen's decision between "Apply" and "Manage application".
+// The voting app knows a contest by its connect_contests id; registrations key
+// on contest_slug, so the resolution happens server-side
+// (GET /api/registration/for-contest).
+//
+// Returns null for "no live application", which includes a withdrawn or rejected
+// one — those free the user to apply again.
+
+export interface ExistingRegistrationSummary {
+  id: string;
+  status: ApplicationStatus;
+  contestSlug: string;
+  reference: string | null;
+  currentStep: string | null;
+  createdAt: string | null;
+  submittedAt: string | null;
+  submitted: boolean;
+}
+
+export async function getMyRegistrationForContest(
+  target: { contestId?: string; contestSlug?: string },
+): Promise<ExistingRegistrationSummary | null> {
+  if (!target.contestId && !target.contestSlug) return null;
+
+  if (REGISTRATION_USE_MOCK) {
+    return waitMock(null);
+  }
+
+  const res = await regGet<{ success: boolean; registration: ExistingRegistrationSummary | null }>(
+    `${REG_BASE}/for-contest`,
+    target.contestId ? { contestId: target.contestId } : { contestSlug: target.contestSlug },
+  );
+  return res.registration ?? null;
 }

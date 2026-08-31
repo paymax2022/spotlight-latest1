@@ -56,11 +56,19 @@ export default function WizardPreview() {
           {draft.description ? <Text style={styles.description}>{draft.description}</Text> : null}
         </View>
 
+        <SummaryRow label="Founded" value={draft.foundedYear || '—'} onEdit={() => router.push('/association/create/basics')} />
+        <SummaryRow label="Location" value={draft.location || 'Not set'} onEdit={() => router.push('/association/create/basics')} />
+        <SummaryRow label="Website" value={draft.website || 'Not set'} onEdit={() => router.push('/association/create/basics')} />
         <SummaryRow label="Group type" value={groupTypeLabel} onEdit={() => router.push('/association/create/branding')} />
         <SummaryRow label="Approval rule" value={approvalLabel} onEdit={() => router.push('/association/create/structure')} />
         <SummaryRow
           label="Structure"
-          value={draft.structureType === 'STATEWIDE' ? `State chapters · ${draft.stateLeaders.length} state${draft.stateLeaders.length === 1 ? '' : 's'}` : 'Single structure'}
+          value={draft.structureType === 'STATEWIDE'
+            ? `State chapters · ${draft.stateLeaders.length} state${draft.stateLeaders.length === 1 ? '' : 's'}`
+            // Name the chapter that will actually be created, including the
+            // default, so the founder can see it before publishing rather than
+            // discovering it afterwards.
+            : `Single structure · chapter "${draft.chapters[0]?.name?.trim() || 'Home'}"`}
           onEdit={() => router.push('/association/create/structure')}
         />
         <SummaryRow label="Registration fee" value={draft.registrationFeeKobo ? formatNaira(draft.registrationFeeKobo) : 'Free'} onEdit={() => router.push('/association/create/access')} />

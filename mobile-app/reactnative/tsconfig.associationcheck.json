@@ -2,6 +2,7 @@
   "extends": "./tsconfig.json",
   "compilerOptions": { "skipLibCheck": true },
   "include": [
+    "app/association/**/*",
     "src/features/association/**/*",
     "src/api/**/*",
     "src/constants/**/*",

@@ -55,6 +55,8 @@ import (
 
 	"spotlight/backend/internal/association"
 	"spotlight/backend/internal/finance/ledger"
+
+	"spotlight/backend/internal/testsupport"
 )
 
 // liveDBPool connects using TEST_DATABASE_URL, or skips.
@@ -115,6 +117,7 @@ func seedActiveMembership(t *testing.T, ctx context.Context, pool *pgxpool.Pool,
 	if _, err := pool.Exec(ctx, `INSERT INTO auth.users (id, email) VALUES ($1, $2) ON CONFLICT DO NOTHING`, userID, userID+"@seed.test"); err != nil {
 		t.Fatalf("seed auth.users: %v", err)
 	}
+	testsupport.CleanupUser(t, pool, userID)
 	_, err := pool.Exec(ctx, `
 		INSERT INTO assoc_memberships (id, organisation_id, user_id, member_code, status, payment_standing, joined_at)
 		VALUES ($1, $2, $3, $4, 'ACTIVE', 'DUE', now())`,
@@ -179,7 +182,7 @@ func seedWallet(t *testing.T, ctx context.Context, led *ledger.Service, userID s
 // DUES_PAY audit row is written.
 func TestLiveDB_PayInvoice_IdempotentSamePostingSameReceipt(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	svc := newLiveAssociationService(pool)
 	ledRepo := ledger.NewRepository(pool)
 	led := ledger.NewService(ledRepo, (*goredis.Client)(nil))
@@ -256,7 +259,7 @@ func TestLiveDB_PayInvoice_IdempotentSamePostingSameReceipt(t *testing.T) {
 // the low-level balance mechanics; this test proves association wires it in).
 func TestLiveDB_PayInvoice_PostsBalancedDoubleEntry(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	svc := newLiveAssociationService(pool)
 	ledRepo := ledger.NewRepository(pool)
 	led := ledger.NewService(ledRepo, (*goredis.Client)(nil))
@@ -294,7 +297,7 @@ func TestLiveDB_PayInvoice_PostsBalancedDoubleEntry(t *testing.T) {
 // ErrForbidden.
 func TestLiveDB_PayInvoice_ForbidsPayingSomeoneElsesInvoice(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	svc := newLiveAssociationService(pool)
 	ctx := context.Background()
 
@@ -315,7 +318,7 @@ func TestLiveDB_PayInvoice_ForbidsPayingSomeoneElsesInvoice(t *testing.T) {
 // end-to-end: an empty Idempotency-Key is rejected before any DB write.
 func TestLiveDB_PayInvoice_RequiresIdempotencyKey(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	svc := newLiveAssociationService(pool)
 	ctx := context.Background()
 
@@ -347,7 +350,7 @@ func TestLiveDB_PayInvoice_RequiresIdempotencyKey(t *testing.T) {
 // activates, and an APPROVAL_DECISION audit row is written.
 func TestLiveDB_DecideApplication_ApprovePersistsAndActivatesMembership(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	svc := newLiveAssociationService(pool)
 	ctx := context.Background()
 
@@ -407,7 +410,7 @@ func TestLiveDB_DecideApplication_ApprovePersistsAndActivatesMembership(t *testi
 // flips application status without touching the membership row.
 func TestLiveDB_DecideApplication_RejectDoesNotActivateMembership(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	svc := newLiveAssociationService(pool)
 	ctx := context.Background()
 
@@ -459,7 +462,7 @@ func TestLiveDB_DecideApplication_RejectDoesNotActivateMembership(t *testing.T) 
 // provider_clearing -> settlement journal entry pair exists for the amount.
 func TestLiveDB_DecideOfflinePayment_ApprovePostsBalancedJournal(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	svc := newLiveAssociationService(pool)
 	ctx := context.Background()
 
@@ -523,7 +526,7 @@ func TestLiveDB_DecideOfflinePayment_ApprovePostsBalancedJournal(t *testing.T) {
 // posting.
 func TestLiveDB_DecideOfflinePayment_RejectNoLedgerMovement(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	svc := newLiveAssociationService(pool)
 	ctx := context.Background()
 
@@ -571,7 +574,7 @@ func TestLiveDB_DecideOfflinePayment_RejectNoLedgerMovement(t *testing.T) {
 // payment.
 func TestLiveDB_DecideOfflinePayment_NonFinanceAdminForbidden(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	svc := newLiveAssociationService(pool)
 	ctx := context.Background()
 
@@ -603,7 +606,7 @@ func TestLiveDB_DecideOfflinePayment_NonFinanceAdminForbidden(t *testing.T) {
 // audited.
 func TestLiveDB_SuspendThenRestoreMember_PersistsStatusAndAudit(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	svc := newLiveAssociationService(pool)
 	ctx := context.Background()
 
@@ -651,7 +654,7 @@ func TestLiveDB_SuspendThenRestoreMember_PersistsStatusAndAudit(t *testing.T) {
 // assoc_member_roles row) cannot suspend another member.
 func TestLiveDB_SuspendMember_NonAdminForbidden(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	svc := newLiveAssociationService(pool)
 	ctx := context.Background()
 
@@ -677,7 +680,7 @@ func TestLiveDB_SuspendMember_NonAdminForbidden(t *testing.T) {
 // member from none to a named chapter, and verifies persistence + audit.
 func TestLiveDB_TransferMember_PersistsChapterAndAudit(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	svc := newLiveAssociationService(pool)
 	ctx := context.Background()
 
@@ -717,7 +720,7 @@ func TestLiveDB_TransferMember_PersistsChapterAndAudit(t *testing.T) {
 // ManageFinance and therefore cannot self-escalate or delegate).
 func TestLiveDB_AssignRole_PersistsRoleAndAudit_ChapterAdminForbidden(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	svc := newLiveAssociationService(pool)
 	ctx := context.Background()
 
@@ -763,17 +766,22 @@ func TestLiveDB_AssignRole_PersistsRoleAndAudit_ChapterAdminForbidden(t *testing
 // verifies every child row persisted and an ORG_PUBLISH audit row was written.
 func TestLiveDB_PublishOrganisation_PersistsFullGraphAndAudit(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	svc := newLiveAssociationService(pool)
 	ctx := context.Background()
 
 	founderID := uuid.New().String()
 	orgName := "Published Guild " + uuid.New().String()
 
+	foundedYear := 2008
 	draft := association.OrgDraft{
 		Name:                orgName,
 		Category:            "Professional",
 		GroupType:           "OPEN",
+		LogoURL:             "https://cdn.test.invalid/guild.png",
+		FoundedYear:         &foundedYear,
+		Location:            "Abuja, Nigeria",
+		Website:             "https://guild.test.invalid",
 		RegistrationFeeKobo: 0,
 		Chapters:            []association.OrgDraftChapter{{Name: "Lagos", Level: "STATE"}, {Name: "Abuja", Level: "STATE"}},
 		Committees:          []association.OrgDraftCommittee{{Name: "Welfare"}},
@@ -834,7 +842,7 @@ func TestLiveDB_PublishOrganisation_PersistsFullGraphAndAudit(t *testing.T) {
 	}
 
 	// The published org must also be visible via the discovery read path.
-	orgs, err := svc.GetOrganisations(ctx, orgName)
+	orgs, err := svc.GetOrganisations(ctx, orgName, 0, 0)
 	if err != nil {
 		t.Fatalf("GetOrganisations: %v", err)
 	}
@@ -853,7 +861,7 @@ func TestLiveDB_PublishOrganisation_PersistsFullGraphAndAudit(t *testing.T) {
 // AcceptedTerms guard fires before any row is written.
 func TestLiveDB_PublishOrganisation_RejectsWithoutAcceptedTerms(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	svc := newLiveAssociationService(pool)
 	ctx := context.Background()
 
@@ -901,7 +909,7 @@ func seedAiNote(t *testing.T, ctx context.Context, pool *pgxpool.Pool, orgID str
 // one audit row per transition.
 func TestLiveDB_AiNote_ApproveThenPublish_PersistsStatusAndAudit(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	svc := newLiveAssociationService(pool)
 	ctx := context.Background()
 
@@ -978,7 +986,7 @@ func TestLiveDB_AiNote_ApproveThenPublish_PersistsStatusAndAudit(t *testing.T) {
 // CURRENT no-op-vs-error behavior for a future reviewer.
 func TestLiveDB_AiNote_SetStatus_NotFoundIsReported(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	svc := newLiveAssociationService(pool)
 	ctx := context.Background()
 

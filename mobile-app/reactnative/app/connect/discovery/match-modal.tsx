@@ -79,7 +79,7 @@ const styles = StyleSheet.create({
   },
   avatarLeft: { marginRight: -16, zIndex: 2 },
   avatarRight: { marginLeft: -16, borderColor: Colors.gold },
-  title: { ...Typography.displayLg, color: ConnectColors.brand, textAlign: 'center', fontSize: 36 },
+  title: { ...Typography.displayLg, color: ConnectColors.brand, textAlign: 'center', fontSize: 36, letterSpacing: -0.72 },
   subtitle: { ...Typography.bodyLg, color: ConnectColors.muted, textAlign: 'center' },
   actions: { width: '100%', gap: Spacing.sm, marginTop: Spacing.lg },
 });

@@ -19,7 +19,7 @@ import (
 
 func TestLiveDB_MerchantEarnings(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	svc := newLiveRestaurantService(pool, newLiveLedgerService(pool))
 

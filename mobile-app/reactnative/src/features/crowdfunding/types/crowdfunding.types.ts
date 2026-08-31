@@ -241,11 +241,11 @@ export interface CampaignQuery extends CampaignFilter {
 export type PaymentMethod = 'WALLET' | 'CARD' | 'BANK_TRANSFER' | 'USSD';
 
 export interface FeeBreakdown {
-  contributionKobo: number;   // amount that reaches the campaign
-  platformFeeKobo: number;
-  paymentFeeKobo: number;
-  tipKobo: number;            // optional creator/platform tip
-  totalKobo: number;          // total debited from contributor
+  contributionKobo: number;     // what the contributor gives
+  platformFeeKobo: number;      // deducted from the creator's payout, NOT added to the charge
+  netToCampaignKobo: number;    // what the campaign actually receives
+  tipKobo: number;              // optional creator/platform tip
+  totalKobo: number;            // total debited from contributor
 }
 
 export interface ShippingAddress {
@@ -282,7 +282,11 @@ export interface Contribution {
   campaignTitle: string;
   campaignCover: string | null;
   amountKobo: number;
+  /** Platform cut, deducted from the creator's payout — not part of what you paid. */
   feeKobo: number;
+  /** What actually reaches the campaign: amountKobo - feeKobo. */
+  netToCampaignKobo: number;
+  /** What the contributor was debited. Equals amountKobo under the deducted model. */
   totalKobo: number;
   currency: 'NGN';
   status: ContributionStatus;
@@ -295,7 +299,15 @@ export interface Contribution {
 }
 
 export interface InitiateContributionResult {
-  reference: string;
+  /**
+   * The server-assigned contribution id. This is the handle every follow-up
+   * read uses, because it is the only identifier the contribute endpoint
+   * actually returns — the human `reference` is derived server-side and comes
+   * back on the contribution read, not on the charge.
+   */
+  contributionId: string;
+  /** Human-facing reference, only when the server already minted one. */
+  reference?: string;
   status: ContributionStatus;
   authorizationUrl?: string;   // for card/bank redirect
 }

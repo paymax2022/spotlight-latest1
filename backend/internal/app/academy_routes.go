@@ -9,7 +9,6 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"spotlight/backend/internal/academy/assessment"
-	"spotlight/backend/internal/academy/placement"
 	"spotlight/backend/internal/academy/commerce"
 	"spotlight/backend/internal/academy/content"
 	"spotlight/backend/internal/academy/credentials"
@@ -37,6 +36,7 @@ import (
 	academylive "spotlight/backend/internal/academy/live"
 	"spotlight/backend/internal/academy/offlinesync"
 	"spotlight/backend/internal/academy/parent"
+	"spotlight/backend/internal/academy/placement"
 	academyplatform "spotlight/backend/internal/academy/platform"
 	"spotlight/backend/internal/academy/progression"
 	"spotlight/backend/internal/academy/rewards"

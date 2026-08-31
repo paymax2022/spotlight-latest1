@@ -167,7 +167,7 @@ const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: Colors.background },
   amountBlock: { paddingHorizontal: Spacing.containerMargin, marginTop: Spacing.md, alignItems: 'center' },
   amountLabel: { ...Typography.labelMd, color: Colors.onSurfaceVariant },
-  amountInput: { ...Typography.displayLg, fontSize: 44, color: Colors.onSurface, minWidth: 120, textAlign: 'center', padding: 0, marginTop: Spacing.sm },
+  amountInput: { ...Typography.displayLg, fontSize: 44, letterSpacing: -0.88, color: Colors.onSurface, minWidth: 120, textAlign: 'center', padding: 0, marginTop: Spacing.sm },
   cashHint: { ...Typography.labelSm, color: Colors.onSurfaceVariant, marginTop: Spacing.xs },
   err: { ...Typography.labelSm, color: Colors.error, marginTop: Spacing.xs },
   reviewCard: {

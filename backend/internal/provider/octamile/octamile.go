@@ -52,6 +52,13 @@ func New(apiKey, publicKey, webhookSecret, baseURL string) *Client {
 // Name returns the stable aggregator id.
 func (c *Client) Name() string { return "octamile" }
 
+// WebhookSignatureHeader implements gateway.UnderwriterGateway. Octamile's
+// header has not been confirmed against live traffic (the keys here are
+// placeholders), so no provider-specific name is claimed and the ingestion
+// handler falls back to the generic ones. Declaring a guessed header would be
+// worse than declaring none: it would look verified while never matching.
+func (c *Client) WebhookSignatureHeader() string { return "" }
+
 // --- gateway.UnderwriterGateway ---
 
 func (c *Client) GetQuote(ctx context.Context, req gateway.QuoteRequest) (gateway.Quote, error) {

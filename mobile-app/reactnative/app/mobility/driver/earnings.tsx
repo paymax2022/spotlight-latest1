@@ -106,7 +106,7 @@ const styles = StyleSheet.create({
   scroll: { padding: Spacing.containerMargin, gap: Spacing.md },
   hero: { backgroundColor: Colors.primary, borderRadius: Radius.xl, padding: Spacing.cardPadding },
   heroLabel: { ...Typography.labelSm, color: Colors.inversePrimary },
-  heroValue: { ...Typography.displayLg, fontSize: 40, lineHeight: 46, color: Colors.onPrimary, fontWeight: '800' as const, marginTop: 4 },
+  heroValue: { ...Typography.displayLg, fontSize: 40, letterSpacing: -0.8, lineHeight: 46, color: Colors.onPrimary, fontWeight: '800' as const, marginTop: 4 },
   heroSplit: { flexDirection: 'row', gap: Spacing.lg, marginTop: Spacing.md },
   splitItem: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   splitText: { ...Typography.labelSm, color: Colors.inverseOnSurface },

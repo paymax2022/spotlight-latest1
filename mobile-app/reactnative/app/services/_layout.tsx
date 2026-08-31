@@ -1,8 +1,12 @@
 import { Stack } from 'expo-router';
+import { View } from 'react-native';
+import ModuleTabBar from '@/components/ModuleTabBar';
+import { UTILITY_TABS } from '@/constants/moduleTabs';
 
 export default function ServicesLayout() {
   return (
-    <Stack screenOptions={{ headerShown: false }}>
+    <View style={{ flex: 1 }}>
+      <Stack screenOptions={{ headerShown: false }}>
       <Stack.Screen name="airtime" />
       <Stack.Screen name="data" />
       <Stack.Screen name="electricity" />
@@ -21,5 +25,7 @@ export default function ServicesLayout() {
       <Stack.Screen name="transactions/[id]" />
       <Stack.Screen name="paystack/[reference]" />
     </Stack>
+  <ModuleTabBar tabs={UTILITY_TABS} />
+  </View>
   );
 }

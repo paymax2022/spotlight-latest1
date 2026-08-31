@@ -28,7 +28,7 @@ import (
 // platform.
 func TestLiveDB_OrderSurgeAndServiceFee(t *testing.T) {
 	pool := promoOrderPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	f := newPromoOrderFixture(t, ctx, pool, "Surge Kitchen", 450_000)
 
@@ -170,7 +170,7 @@ func TestLiveDB_OrderSurgeAndServiceFee(t *testing.T) {
 // returned a materially different payload than the original.
 func TestLiveDB_OrderReadsExposeEveryPricingComponent(t *testing.T) {
 	pool := promoOrderPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	f := newPromoOrderFixture(t, ctx, pool, "Readback Kitchen", 450_000)
 
@@ -257,7 +257,7 @@ func TestLiveDB_OrderReadsExposeEveryPricingComponent(t *testing.T) {
 // Both bounds must reject BEFORE the escrow.
 func TestLiveDB_OrderCartIsSanityBounded(t *testing.T) {
 	pool := promoOrderPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	f := newPromoOrderFixture(t, ctx, pool, "Bounds Kitchen", 100_000_000) // max item price
 
@@ -330,7 +330,7 @@ func TestLiveDB_OrderCartIsSanityBounded(t *testing.T) {
 // back INTO the gross, and the escrow must still release exactly.
 func TestLiveDB_OrderSurgeServiceFeeWithTipAndPromo(t *testing.T) {
 	pool := promoOrderPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	f := newPromoOrderFixture(t, ctx, pool, "Everything Kitchen", 500_000)
 
@@ -408,7 +408,7 @@ func TestLiveDB_OrderSurgeServiceFeeWithTipAndPromo(t *testing.T) {
 // delivery.
 func TestLiveDB_OrderServiceFeeRefundedOnCancel(t *testing.T) {
 	pool := promoOrderPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	f := newPromoOrderFixture(t, ctx, pool, "Fee Refund Kitchen", 400_000)
 
@@ -448,7 +448,7 @@ func TestLiveDB_OrderServiceFeeRefundedOnCancel(t *testing.T) {
 // at settlement would break conservation.
 func TestLiveDB_OrderPricingConfigIsSnapshotAtPlacement(t *testing.T) {
 	pool := promoOrderPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	f := newPromoOrderFixture(t, ctx, pool, "Repricing Kitchen", 400_000)
 

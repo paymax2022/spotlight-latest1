@@ -133,6 +133,49 @@ func (h *Handler) ListBlocks(c *gin.Context) {
 	respond(c, http.StatusOK, blocks)
 }
 
+// ─── Followed sellers ────────────────────────────────────────────────────────
+
+// FollowSeller POST /sellers/:id/follow.
+func (h *Handler) FollowSeller(c *gin.Context) {
+	uid, ok := requireUser(c)
+	if !ok {
+		return
+	}
+	if err := h.svc.FollowSeller(c.Request.Context(), uid, c.Param("id")); err != nil {
+		fail(c, err)
+		return
+	}
+	respond(c, http.StatusCreated, gin.H{"ok": true})
+}
+
+// UnfollowSeller DELETE /sellers/:id/follow.
+func (h *Handler) UnfollowSeller(c *gin.Context) {
+	uid, ok := requireUser(c)
+	if !ok {
+		return
+	}
+	if err := h.svc.UnfollowSeller(c.Request.Context(), uid, c.Param("id")); err != nil {
+		fail(c, err)
+		return
+	}
+	respond(c, http.StatusOK, gin.H{"ok": true})
+}
+
+// ListFollowedSellers GET /followed-sellers — the caller's followed sellers,
+// newest-first.
+func (h *Handler) ListFollowedSellers(c *gin.Context) {
+	uid, ok := requireUser(c)
+	if !ok {
+		return
+	}
+	sellers, err := h.svc.ListFollowedSellers(c.Request.Context(), uid)
+	if err != nil {
+		fail(c, err)
+		return
+	}
+	respond(c, http.StatusOK, sellers)
+}
+
 // ─── Notification preferences ────────────────────────────────────────────────
 
 // GetNotificationPrefs GET /notification-prefs — the caller's per-category toggles

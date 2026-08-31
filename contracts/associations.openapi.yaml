@@ -138,6 +138,15 @@ paths:
       responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/SecuritySettings' } } } } }
   /associations/me/devices:
     get: { tags: [Settings], summary: Active sessions/devices, responses: { '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Device' } } } } } } }
+    post:
+      tags: [Settings]
+      summary: Register the caller's device
+      description: >-
+        assoc_devices had no writer, so GET /me/devices always returned an empty
+        list and DELETE always failed on zero rows affected. Idempotent on
+        (user, name, platform).
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/DeviceRequest' } } } }
+      responses: { '201': { $ref: '#/components/responses/CreatedId' } }
   /associations/me/devices/{id}:
     delete:
       tags: [Settings]
@@ -397,6 +406,369 @@ paths:
       responses: { '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/TicketMessage' } } } } }
 
   # ── Admin (Q, R, S) ───────────────────────────────────────────────────────
+  # Organisation management. assoc_organisations was previously write-once —
+  # PublishOrganisation was the only writer in the repo, so every field was
+  # immutable after creation and `verified` was unreachable schema.
+  /associations/admin/organisations:
+    get:
+      tags: [Admin]
+      summary: List organisations the caller may administer
+      parameters:
+        - { name: search,    in: query, schema: { type: string } }
+        - { name: category,  in: query, schema: { type: string } }
+        - { name: status,    in: query, schema: { type: string, enum: [ACTIVE, SUSPENDED, ARCHIVED] } }
+        - { name: published, in: query, schema: { type: boolean } }
+        - { name: verified,  in: query, schema: { type: boolean } }
+        - { name: limit,     in: query, schema: { type: integer, minimum: 1, maximum: 200 } }
+        - { name: offset,    in: query, schema: { type: integer, minimum: 0 } }
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/AdminOrgOption' } } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /associations/admin/organisations/{id}:
+    get:
+      tags: [Admin]
+      summary: Full organisation detail for administration
+      parameters: [ { $ref: '#/components/parameters/Id' } ]
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/AdminOrganisationDetail' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { description: 'Not found' }
+    patch:
+      tags: [Admin]
+      summary: Update organisation details (partial; omitted fields are unchanged)
+      parameters: [ { $ref: '#/components/parameters/Id' } ]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/UpdateOrganisationRequest' } } } }
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/AdminOrganisationDetail' } } } }
+        '400': { description: 'Invalid field value' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /associations/admin/organisations/{id}/settings:
+    get:
+      tags: [Admin]
+      summary: Per-association custom settings
+      parameters: [ { $ref: '#/components/parameters/Id' } ]
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { type: object, additionalProperties: true } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    put:
+      tags: [Admin]
+      summary: Merge into per-association settings (a null value deletes its key)
+      parameters: [ { $ref: '#/components/parameters/Id' } ]
+      requestBody: { required: true, content: { application/json: { schema: { type: object, additionalProperties: true } } } }
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { type: object, additionalProperties: true } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /associations/admin/organisations/{id}/verify:
+    post:
+      tags: [Admin]
+      summary: Mark an organisation verified (platform super-admin only)
+      parameters: [ { $ref: '#/components/parameters/Id' } ]
+      responses: { '200': { $ref: '#/components/responses/Ok' }, '403': { $ref: '#/components/responses/Forbidden' } }
+  /associations/admin/organisations/{id}/unverify:
+    post:
+      tags: [Admin]
+      summary: Remove an organisation's verified badge (platform super-admin only)
+      parameters: [ { $ref: '#/components/parameters/Id' } ]
+      responses: { '200': { $ref: '#/components/responses/Ok' }, '403': { $ref: '#/components/responses/Forbidden' } }
+  /associations/admin/organisations/{id}/publish:
+    post:
+      tags: [Admin]
+      summary: Publish an organisation to discovery
+      parameters: [ { $ref: '#/components/parameters/Id' } ]
+      responses: { '200': { $ref: '#/components/responses/Ok' }, '403': { $ref: '#/components/responses/Forbidden' } }
+  /associations/admin/organisations/{id}/unpublish:
+    post:
+      tags: [Admin]
+      summary: Remove an organisation from discovery
+      parameters: [ { $ref: '#/components/parameters/Id' } ]
+      responses: { '200': { $ref: '#/components/responses/Ok' }, '403': { $ref: '#/components/responses/Forbidden' } }
+  /associations/admin/organisations/{id}/suspend:
+    post:
+      tags: [Admin]
+      summary: Suspend an organisation
+      parameters: [ { $ref: '#/components/parameters/Id' } ]
+      responses: { '200': { $ref: '#/components/responses/Ok' }, '403': { $ref: '#/components/responses/Forbidden' } }
+  /associations/admin/organisations/{id}/restore:
+    post:
+      tags: [Admin]
+      summary: Lift an organisation suspension
+      parameters: [ { $ref: '#/components/parameters/Id' } ]
+      responses: { '200': { $ref: '#/components/responses/Ok' }, '403': { $ref: '#/components/responses/Forbidden' } }
+  /associations/admin/organisations/{id}/chapters:
+    post:
+      tags: [Admin]
+      summary: Add a chapter
+      parameters: [ { $ref: '#/components/parameters/Id' } ]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/ChapterRequest' } } } }
+      responses: { '201': { $ref: '#/components/responses/CreatedId' }, '403': { $ref: '#/components/responses/Forbidden' } }
+  /associations/admin/organisations/{id}/committees:
+    post:
+      tags: [Admin]
+      summary: Add a committee
+      parameters: [ { $ref: '#/components/parameters/Id' } ]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/CommitteeRequest' } } } }
+      responses: { '201': { $ref: '#/components/responses/CreatedId' }, '403': { $ref: '#/components/responses/Forbidden' } }
+  /associations/admin/organisations/{id}/categories:
+    post:
+      tags: [Admin]
+      summary: Add a membership category (dues tier). Amounts are integer kobo.
+      parameters: [ { $ref: '#/components/parameters/Id' }, { $ref: '#/components/parameters/IdempotencyKey' } ]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/CategoryRequest' } } } }
+      responses: { '201': { $ref: '#/components/responses/CreatedId' }, '400': { description: 'Missing Idempotency-Key or invalid amount' }, '403': { $ref: '#/components/responses/Forbidden' } }
+  /associations/admin/organisations/{id}/rules:
+    post:
+      tags: [Admin]
+      summary: Add a group rule
+      parameters: [ { $ref: '#/components/parameters/Id' } ]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/RuleRequest' } } } }
+      responses: { '201': { $ref: '#/components/responses/CreatedId' }, '403': { $ref: '#/components/responses/Forbidden' } }
+  /associations/admin/chapters/{childId}:
+    patch:
+      tags: [Admin]
+      summary: Update a chapter
+      parameters: [ { $ref: '#/components/parameters/ChildId' } ]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/ChapterRequest' } } } }
+      responses: { '200': { $ref: '#/components/responses/Ok' }, '403': { $ref: '#/components/responses/Forbidden' } }
+    delete:
+      tags: [Admin]
+      summary: Delete a chapter (refused while members are still assigned to it)
+      parameters: [ { $ref: '#/components/parameters/ChildId' } ]
+      responses: { '200': { $ref: '#/components/responses/Ok' }, '400': { description: 'Chapter still in use' }, '403': { $ref: '#/components/responses/Forbidden' } }
+  /associations/admin/committees/{childId}:
+    patch:
+      tags: [Admin]
+      summary: Update a committee
+      parameters: [ { $ref: '#/components/parameters/ChildId' } ]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/CommitteeRequest' } } } }
+      responses: { '200': { $ref: '#/components/responses/Ok' }, '403': { $ref: '#/components/responses/Forbidden' } }
+    delete:
+      tags: [Admin]
+      summary: Delete a committee
+      parameters: [ { $ref: '#/components/parameters/ChildId' } ]
+      responses: { '200': { $ref: '#/components/responses/Ok' }, '403': { $ref: '#/components/responses/Forbidden' } }
+  /associations/admin/categories/{childId}:
+    patch:
+      tags: [Admin]
+      summary: Re-price a dues tier. Existing unpaid invoices keep their issued amount.
+      parameters: [ { $ref: '#/components/parameters/ChildId' }, { $ref: '#/components/parameters/IdempotencyKey' } ]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/CategoryRequest' } } } }
+      responses: { '200': { $ref: '#/components/responses/Ok' }, '400': { description: 'Missing Idempotency-Key or invalid amount' }, '403': { $ref: '#/components/responses/Forbidden' } }
+    delete:
+      tags: [Admin]
+      summary: Delete a dues tier (refused while members are still on it)
+      parameters: [ { $ref: '#/components/parameters/ChildId' } ]
+      responses: { '200': { $ref: '#/components/responses/Ok' }, '400': { description: 'Category still in use' }, '403': { $ref: '#/components/responses/Forbidden' } }
+  /associations/admin/rules/{childId}:
+    patch:
+      tags: [Admin]
+      summary: Update a group rule
+      parameters: [ { $ref: '#/components/parameters/ChildId' } ]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/RuleRequest' } } } }
+      responses: { '200': { $ref: '#/components/responses/Ok' }, '403': { $ref: '#/components/responses/Forbidden' } }
+    delete:
+      tags: [Admin]
+      summary: Remove a group rule
+      parameters: [ { $ref: '#/components/parameters/ChildId' } ]
+      responses: { '200': { $ref: '#/components/responses/Ok' }, '403': { $ref: '#/components/responses/Forbidden' } }
+  # ── Content authoring ─────────────────────────────────────────────────────
+  /associations/admin/organisations/{id}/announcements:
+    get:
+      tags: [Admin]
+      summary: List an organisation's announcements
+      parameters:
+        - { $ref: '#/components/parameters/Id' }
+        - { name: limit,  in: query, schema: { type: integer, minimum: 1, maximum: 200 } }
+        - { name: offset, in: query, schema: { type: integer, minimum: 0 } }
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/AdminContentRow' } } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    post:
+      tags: [Admin]
+      summary: Post an announcement (optionally notifying every active member)
+      parameters: [ { $ref: '#/components/parameters/Id' } ]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/AnnouncementRequest' } } } }
+      responses: { '201': { $ref: '#/components/responses/CreatedId' }, '403': { $ref: '#/components/responses/Forbidden' } }
+  /associations/admin/announcements/{childId}:
+    patch:
+      tags: [Admin]
+      summary: Update an announcement
+      parameters: [ { $ref: '#/components/parameters/ChildId' } ]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/AnnouncementRequest' } } } }
+      responses: { '200': { $ref: '#/components/responses/Ok' }, '403': { $ref: '#/components/responses/Forbidden' } }
+    delete:
+      tags: [Admin]
+      summary: Delete an announcement
+      parameters: [ { $ref: '#/components/parameters/ChildId' } ]
+      responses: { '200': { $ref: '#/components/responses/Ok' }, '403': { $ref: '#/components/responses/Forbidden' } }
+  /associations/admin/organisations/{id}/meetings:
+    get:
+      tags: [Admin]
+      summary: List an organisation's meetings
+      parameters:
+        - { $ref: '#/components/parameters/Id' }
+        - { name: limit,  in: query, schema: { type: integer, minimum: 1, maximum: 200 } }
+        - { name: offset, in: query, schema: { type: integer, minimum: 0 } }
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/AdminContentRow' } } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    post:
+      tags: [Admin]
+      summary: Schedule a meeting
+      parameters: [ { $ref: '#/components/parameters/Id' } ]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/MeetingRequest' } } } }
+      responses: { '201': { $ref: '#/components/responses/CreatedId' }, '400': { description: 'Invalid mode, state or timestamp' }, '403': { $ref: '#/components/responses/Forbidden' } }
+  /associations/admin/meetings/{childId}:
+    patch:
+      tags: [Admin]
+      summary: Update a meeting
+      parameters: [ { $ref: '#/components/parameters/ChildId' } ]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/MeetingRequest' } } } }
+      responses: { '200': { $ref: '#/components/responses/Ok' }, '403': { $ref: '#/components/responses/Forbidden' } }
+    delete:
+      tags: [Admin]
+      summary: Delete a meeting
+      parameters: [ { $ref: '#/components/parameters/ChildId' } ]
+      responses: { '200': { $ref: '#/components/responses/Ok' }, '403': { $ref: '#/components/responses/Forbidden' } }
+  /associations/admin/meetings/{childId}/minutes:
+    post:
+      tags: [Admin]
+      summary: Publish or unpublish meeting minutes
+      parameters: [ { $ref: '#/components/parameters/ChildId' } ]
+      requestBody: { required: true, content: { application/json: { schema: { type: object, properties: { published: { type: boolean } }, required: [published] } } } }
+      responses: { '200': { $ref: '#/components/responses/Ok' }, '403': { $ref: '#/components/responses/Forbidden' } }
+  /associations/admin/organisations/{id}/documents:
+    get:
+      tags: [Admin]
+      summary: List an organisation's documents
+      parameters:
+        - { $ref: '#/components/parameters/Id' }
+        - { name: limit,  in: query, schema: { type: integer, minimum: 1, maximum: 200 } }
+        - { name: offset, in: query, schema: { type: integer, minimum: 0 } }
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/AdminContentRow' } } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    post:
+      tags: [Admin]
+      summary: Add a document to the vault
+      parameters: [ { $ref: '#/components/parameters/Id' } ]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/DocumentRequest' } } } }
+      responses: { '201': { $ref: '#/components/responses/CreatedId' }, '403': { $ref: '#/components/responses/Forbidden' } }
+  /associations/admin/documents/{childId}:
+    patch:
+      tags: [Admin]
+      summary: Update a document
+      parameters: [ { $ref: '#/components/parameters/ChildId' } ]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/DocumentRequest' } } } }
+      responses: { '200': { $ref: '#/components/responses/Ok' }, '403': { $ref: '#/components/responses/Forbidden' } }
+    delete:
+      tags: [Admin]
+      summary: Delete a document
+      parameters: [ { $ref: '#/components/parameters/ChildId' } ]
+      responses: { '200': { $ref: '#/components/responses/Ok' }, '403': { $ref: '#/components/responses/Forbidden' } }
+  /associations/admin/organisations/{id}/events:
+    get:
+      tags: [Admin]
+      summary: List an organisation's events
+      parameters:
+        - { $ref: '#/components/parameters/Id' }
+        - { name: limit,  in: query, schema: { type: integer, minimum: 1, maximum: 200 } }
+        - { name: offset, in: query, schema: { type: integer, minimum: 0 } }
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/AdminContentRow' } } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    post:
+      tags: [Admin]
+      summary: Create an event. A paid event must carry a positive feeKobo.
+      parameters: [ { $ref: '#/components/parameters/Id' } ]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/EventRequest' } } } }
+      responses: { '201': { $ref: '#/components/responses/CreatedId' }, '400': { description: 'Incoherent pricing or timestamp' }, '403': { $ref: '#/components/responses/Forbidden' } }
+  /associations/admin/events/{childId}:
+    patch:
+      tags: [Admin]
+      summary: Update an event
+      parameters: [ { $ref: '#/components/parameters/ChildId' } ]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/EventRequest' } } } }
+      responses: { '200': { $ref: '#/components/responses/Ok' }, '403': { $ref: '#/components/responses/Forbidden' } }
+    delete:
+      tags: [Admin]
+      summary: Delete an event (refused once paid registrations exist)
+      parameters: [ { $ref: '#/components/parameters/ChildId' } ]
+      responses: { '200': { $ref: '#/components/responses/Ok' }, '400': { description: 'Event has paid registrations' }, '403': { $ref: '#/components/responses/Forbidden' } }
+  /associations/admin/organisations/{id}/tasks:
+    get:
+      tags: [Admin]
+      summary: List an organisation's tasks
+      parameters:
+        - { $ref: '#/components/parameters/Id' }
+        - { name: limit,  in: query, schema: { type: integer, minimum: 1, maximum: 200 } }
+        - { name: offset, in: query, schema: { type: integer, minimum: 0 } }
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/AdminContentRow' } } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    post:
+      tags: [Admin]
+      summary: Create and assign a task
+      parameters: [ { $ref: '#/components/parameters/Id' } ]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/TaskRequest' } } } }
+      responses: { '201': { $ref: '#/components/responses/CreatedId' }, '403': { $ref: '#/components/responses/Forbidden' } }
+  /associations/admin/tasks/{childId}:
+    patch:
+      tags: [Admin]
+      summary: Update a task
+      parameters: [ { $ref: '#/components/parameters/ChildId' } ]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/TaskRequest' } } } }
+      responses: { '200': { $ref: '#/components/responses/Ok' }, '403': { $ref: '#/components/responses/Forbidden' } }
+    delete:
+      tags: [Admin]
+      summary: Delete a task
+      parameters: [ { $ref: '#/components/parameters/ChildId' } ]
+      responses: { '200': { $ref: '#/components/responses/Ok' }, '403': { $ref: '#/components/responses/Forbidden' } }
+  /associations/admin/organisations/{id}/dues/runs:
+    get:
+      tags: [Admin]
+      summary: List the dues runs raised for an organisation
+      parameters:
+        - { $ref: '#/components/parameters/Id' }
+        - { name: limit,  in: query, schema: { type: integer, minimum: 1, maximum: 200 } }
+        - { name: offset, in: query, schema: { type: integer, minimum: 0 } }
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/AdminContentRow' } } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /associations/admin/organisations/{id}/dues/run:
+    post:
+      tags: [Admin]
+      summary: >-
+        Raise one dues invoice per active member, priced from each member's own
+        membership category. This is the input to the money path — PayInvoice
+        had nothing it could settle until a run existed.
+      description: >-
+        Replay-safe by construction: the Idempotency-Key is a unique index on
+        assoc_dues_runs and each invoice is uniquely indexed on
+        (run_id, membership_id), so a retried run raises nothing and returns the
+        original result with alreadyRaised = true.
+      parameters: [ { $ref: '#/components/parameters/Id' }, { $ref: '#/components/parameters/IdempotencyKey' } ]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/DuesRunRequest' } } } }
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/DuesRunResult' } } } }
+        '400': { description: 'Missing Idempotency-Key or invalid scope' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /associations/admin/invoices:
+    post:
+      tags: [Admin]
+      summary: Raise a single ad-hoc invoice against one membership
+      parameters: [ { $ref: '#/components/parameters/IdempotencyKey' } ]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/InvoiceRequest' } } } }
+      responses: { '201': { $ref: '#/components/responses/CreatedId' }, '400': { description: 'Missing Idempotency-Key or invalid amount' }, '403': { $ref: '#/components/responses/Forbidden' } }
+  /associations/admin/audit-log:
+    get:
+      tags: [Admin]
+      summary: Organisation audit log (strictly scoped to one organisation)
+      parameters:
+        - { name: org_id, in: query, schema: { type: string, format: uuid } }
+        - { name: action, in: query, schema: { type: string } }
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/AuditLogEntry' } } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
   /associations/admin/kpis:
     get: { tags: [Admin], summary: Admin dashboard KPIs, responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/AdminKpis' } } } } } }
   /associations/admin/approvals:
@@ -489,6 +861,9 @@ components:
     bearerAuth: { type: http, scheme: bearer, bearerFormat: JWT }
   parameters:
     Id: { name: id, in: path, required: true, schema: { type: string } }
+    # Sub-entity id. Named childId rather than id because gin allows only one
+    # parameter name per path position and :id is already the organisation.
+    ChildId: { name: childId, in: path, required: true, schema: { type: string } }
     IdempotencyKey:
       name: Idempotency-Key
       in: header
@@ -505,8 +880,279 @@ components:
     Forbidden:
       description: Access restricted (role or payment-gated)
       content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+    CreatedId:
+      description: Created
+      content: { application/json: { schema: { type: object, properties: { id: { type: string } } } } }
   schemas:
     Error: { type: object, properties: { code: { type: string }, message: { type: string } } }
+    OrgRestrictions:
+      type: object
+      description: Feature gates applied to members in arrears, plus the grace period.
+      properties:
+        graceDays:     { type: integer, minimum: 0 }
+        disableVoting: { type: boolean }
+        disableEvents: { type: boolean }
+        disableChat:   { type: boolean }
+        disableCard:   { type: boolean }
+    AdminOrgOption:
+      type: object
+      description: One row of the admin organisation register.
+      properties:
+        id:          { type: string }
+        name:        { type: string }
+        acronym:     { type: [string, 'null'] }
+        category:    { type: string }
+        status:      { type: string, enum: [ACTIVE, SUSPENDED, ARCHIVED] }
+        published:   { type: boolean }
+        verified:    { type: boolean }
+        memberCount: { type: integer }
+        createdAt:   { type: string }
+    AdminOrgRule:
+      type: object
+      properties:
+        id:       { type: string }
+        body:     { type: string }
+        position: { type: integer }
+    AdminCommittee:
+      type: object
+      properties:
+        id:          { type: string }
+        name:        { type: string }
+        description: { type: [string, 'null'] }
+        memberCount: { type: integer }
+    AdminChapterLeader:
+      type: object
+      properties:
+        id:                { type: string }
+        chapterId:         { type: [string, 'null'] }
+        stateName:         { type: string }
+        leaderName:        { type: [string, 'null'] }
+        leaderContact:     { type: [string, 'null'] }
+        canApproveMembers: { type: boolean }
+    AdminOrganisationDetail:
+      type: object
+      description: Full admin view of one organisation and its sub-entities.
+      properties:
+        id:                  { type: string }
+        name:                { type: string }
+        acronym:             { type: [string, 'null'] }
+        category:            { type: string }
+        description:         { type: [string, 'null'] }
+        logoUrl:             { type: [string, 'null'] }
+        coverUrl:            { type: [string, 'null'] }
+        groupType:           { $ref: '#/components/schemas/GroupType' }
+        approvalRule:        { type: string, enum: [AUTO, ADMIN, CHAPTER_THEN_NATIONAL, PAYMENT_FIRST] }
+        registrationFeeKobo: { $ref: '#/components/schemas/Kobo' }
+        requiresPayment:     { type: boolean }
+        foundedYear:         { type: [integer, 'null'] }
+        location:            { type: [string, 'null'] }
+        website:             { type: [string, 'null'] }
+        verified:            { type: boolean }
+        published:           { type: boolean }
+        status:              { type: string, enum: [ACTIVE, SUSPENDED, ARCHIVED] }
+        structureType:       { type: [string, 'null'] }
+        createdBy:           { type: [string, 'null'] }
+        createdAt:           { type: string }
+        suspendedAt:         { type: [string, 'null'] }
+        restrictions:        { $ref: '#/components/schemas/OrgRestrictions' }
+        settings:            { type: object, additionalProperties: true }
+        memberCount:         { type: integer }
+        activeCount:         { type: integer }
+        pendingCount:        { type: integer }
+        chapterCount:        { type: integer }
+        committeeCount:      { type: integer }
+        categoryCount:       { type: integer }
+        chapters:            { type: array, items: { $ref: '#/components/schemas/Chapter' } }
+        committees:          { type: array, items: { $ref: '#/components/schemas/AdminCommittee' } }
+        categories:          { type: array, items: { $ref: '#/components/schemas/MembershipCategory' } }
+        rules:               { type: array, items: { $ref: '#/components/schemas/AdminOrgRule' } }
+        leaders:             { type: array, items: { $ref: '#/components/schemas/AdminChapterLeader' } }
+    UpdateOrganisationRequest:
+      type: object
+      description: >-
+        Partial patch. Every property is optional; an omitted property leaves the
+        stored value unchanged rather than blanking it.
+      properties:
+        name:                { type: string }
+        acronym:             { type: string }
+        category:            { type: string }
+        description:         { type: string }
+        logoUrl:             { type: string }
+        coverUrl:            { type: string }
+        groupType:           { $ref: '#/components/schemas/GroupType' }
+        approvalRule:        { type: string, enum: [AUTO, ADMIN, CHAPTER_THEN_NATIONAL, PAYMENT_FIRST] }
+        registrationFeeKobo: { $ref: '#/components/schemas/Kobo' }
+        foundedYear:         { type: integer }
+        location:            { type: string }
+        website:             { type: string }
+        structureType:       { type: string }
+        graceDays:           { type: integer, minimum: 0 }
+        disableVoting:       { type: boolean }
+        disableEvents:       { type: boolean }
+        disableChat:         { type: boolean }
+        disableCard:         { type: boolean }
+    ChapterRequest:
+      type: object
+      required: [name]
+      properties:
+        name:  { type: string }
+        level: { type: string, enum: [REGION, STATE, LOCAL] }
+    CommitteeRequest:
+      type: object
+      required: [name]
+      properties:
+        name:        { type: string }
+        description: { type: [string, 'null'] }
+    CategoryRequest:
+      type: object
+      required: [label]
+      properties:
+        label:       { type: string }
+        description: { type: [string, 'null'] }
+        duesKobo:    { $ref: '#/components/schemas/Kobo' }
+        cadence:     { type: string, enum: [MONTHLY, QUARTERLY, ANNUAL, ONE_OFF] }
+    AuditLogEntry:
+      type: object
+      description: >-
+        One audit row. actorName/summary/subject/at are the rendered forms the
+        consoles display; the raw actorId/action/subjectType/subjectId/createdAt
+        fields are retained alongside them.
+      properties:
+        id:          { type: string }
+        actorId:     { type: string }
+        actorName:   { type: string }
+        action:      { type: string }
+        summary:     { type: string }
+        subject:     { type: string }
+        subjectType: { type: string }
+        subjectId:   { type: string }
+        metadata:    { type: object, additionalProperties: true }
+        createdAt:   { type: string }
+        at:          { type: string }
+    AdminContentRow:
+      type: object
+      description: >-
+        One row of any admin content listing. The shape is uniform across the
+        content types so one table component can render them all; type-specific
+        fields live in `meta`.
+      properties:
+        id:        { type: string }
+        title:     { type: string }
+        subtitle:  { type: string }
+        status:    { type: string }
+        at:        { type: [string, 'null'] }
+        createdAt: { type: [string, 'null'] }
+        meta:      { type: object, additionalProperties: true }
+    AnnouncementRequest:
+      type: object
+      required: [title]
+      properties:
+        title:       { type: string }
+        body:        { type: [string, 'null'] }
+        audience:    { type: [string, 'null'] }
+        urgent:      { type: boolean }
+        requiresAck: { type: boolean }
+        notify:      { type: boolean, description: Fan out to every active member (create only). }
+    MeetingRequest:
+      type: object
+      required: [title, startsAt]
+      properties:
+        title:       { type: string }
+        description: { type: [string, 'null'] }
+        mode:        { type: string, enum: [PHYSICAL, VIRTUAL, HYBRID] }
+        startsAt:    { type: string, format: date-time }
+        endsAt:      { type: [string, 'null'], format: date-time }
+        location:    { type: [string, 'null'] }
+        state:       { type: string, enum: [UPCOMING, LIVE, PAST, CANCELLED] }
+        agenda:      { type: array, items: { type: string } }
+        generateAttendanceCode: { type: boolean }
+        notify:      { type: boolean }
+    DocumentRequest:
+      type: object
+      required: [title, category]
+      properties:
+        title:       { type: string }
+        category:    { type: string }
+        kind:        { type: string, enum: [pdf, image, doc] }
+        storageKey:  { type: [string, 'null'] }
+        sizeLabel:   { type: [string, 'null'] }
+        version:     { type: string }
+        restricted:  { type: boolean }
+        requiresAck: { type: boolean }
+        aiSummary:   { type: [string, 'null'] }
+        notify:      { type: boolean }
+    EventRequest:
+      type: object
+      required: [title, startsAt]
+      properties:
+        title:       { type: string }
+        description: { type: [string, 'null'] }
+        startsAt:    { type: string, format: date-time }
+        endsAt:      { type: [string, 'null'], format: date-time }
+        location:    { type: [string, 'null'] }
+        paid:        { type: boolean }
+        feeKobo:     { $ref: '#/components/schemas/Kobo' }
+        capacity:    { type: [integer, 'null'] }
+        organiser:   { type: [string, 'null'] }
+        coverUrl:    { type: [string, 'null'] }
+        notify:      { type: boolean }
+    TaskRequest:
+      type: object
+      required: [title]
+      properties:
+        title:       { type: string }
+        description: { type: [string, 'null'] }
+        status:      { type: string, enum: [DRAFT, ASSIGNED, ACCEPTED, IN_PROGRESS, BLOCKED, AWAITING_REVIEW, COMPLETED, REJECTED, REOPENED, CANCELLED, OVERDUE] }
+        priority:    { type: string, enum: [LOW, MEDIUM, HIGH] }
+        dueDate:     { type: [string, 'null'], format: date-time }
+        assigneeId:  { type: [string, 'null'], description: Membership id; must belong to the same organisation. }
+        committeeId: { type: [string, 'null'] }
+        meetingId:   { type: [string, 'null'] }
+        checklist:   { type: array, items: { type: string } }
+        notify:      { type: boolean }
+    DuesRunRequest:
+      type: object
+      required: [title]
+      properties:
+        title:      { type: string }
+        scope:      { type: string, enum: [NATIONAL, STATE, LOCAL, COMMITTEE] }
+        dueDate:    { type: [string, 'null'], format: date-time }
+        categoryId: { type: [string, 'null'], description: Restrict the run to one dues tier. }
+        chapterId:  { type: [string, 'null'], description: Restrict the run to one chapter. }
+        notify:     { type: boolean }
+    DuesRunResult:
+      type: object
+      properties:
+        runId:         { type: string }
+        invoiced:      { type: integer }
+        skipped:       { type: integer }
+        totalKobo:     { $ref: '#/components/schemas/Kobo' }
+        alreadyRaised: { type: boolean, description: True when this was a replay; nothing was raised. }
+    InvoiceRequest:
+      type: object
+      required: [membershipId, title, amountKobo]
+      properties:
+        membershipId: { type: string }
+        title:        { type: string }
+        description:  { type: [string, 'null'] }
+        amountKobo:   { $ref: '#/components/schemas/Kobo' }
+        cadence:      { type: string }
+        scope:        { type: string, enum: [NATIONAL, STATE, LOCAL, COMMITTEE] }
+        dueDate:      { type: [string, 'null'], format: date-time }
+        notify:       { type: boolean }
+    DeviceRequest:
+      type: object
+      required: [name]
+      properties:
+        name:     { type: string }
+        platform: { type: string }
+        location: { type: [string, 'null'] }
+    RuleRequest:
+      type: object
+      required: [body]
+      properties:
+        body:     { type: string }
+        position: { type: integer }
     Kobo: { type: integer, description: Amount in minor units (kobo), minimum: 0 }
     GroupType: { type: string, enum: [OPEN, CLOSED, INVITE_ONLY, CODE_BASED, PAID] }
     MemberStatus: { type: string, enum: [ACTIVE, PENDING, INACTIVE, SUSPENDED, EXPIRED, RESTRICTED] }

@@ -28,7 +28,7 @@ export default function ContributeSummaryScreen() {
   const [method, setMethod] = useState<PaymentMethod>('WALLET');
   const [accepted, setAccepted] = useState(false);
 
-  const fees = computeFees(amountKobo, method);
+  const fees = computeFees(amountKobo);
   const tier = c?.rewardTiers.find((t) => t.id === params.rewardTierId) ?? null;
 
   const pay = () => {
@@ -53,7 +53,14 @@ export default function ContributeSummaryScreen() {
       domain: 'crowdfunding',
       charge: () => initiate.mutateAsync({ draft, idempotencyKey: generateIdempotencyKey() }),
       onPaid: (res) => {
-        router.replace(`/crowdfunding/contribute/${params.id}/processing?reference=${res.reference}&status=${res.status}`);
+        // Hand the processing screen the contribution ID, not a reference: the
+        // live charge returns no reference, and the confirmation read is keyed
+        // on the id. `status` travels with it so processing knows whether the
+        // charge already came back final (wallet/card) or is genuinely awaiting
+        // an out-of-band payment (bank transfer / USSD).
+        router.replace(
+          `/crowdfunding/contribute/${params.id}/processing?contributionId=${encodeURIComponent(res.contributionId)}&status=${res.status}`,
+        );
       },
     });
   };
@@ -96,17 +103,19 @@ export default function ContributeSummaryScreen() {
           );
         })}
 
-        {/* Fee breakdown */}
+        {/* Fee breakdown. The platform's cut comes OUT of what the campaign
+            receives — it is not added to what the contributor pays, so the
+            total below is the contribution itself. */}
         <Text style={styles.sectionTitle}>Summary</Text>
         <View style={styles.feeCard}>
           <FeeRow label="Your contribution" value={formatNaira(fees.contributionKobo)} />
-          <FeeRow label="Platform fee (2.5%)" value={formatNaira(fees.platformFeeKobo)} />
-          <FeeRow label={method === 'WALLET' ? 'Payment fee' : 'Payment processing'} value={fees.paymentFeeKobo === 0 ? 'Free' : formatNaira(fees.paymentFeeKobo)} />
+          <FeeRow label="Platform fee (10%)" value={`− ${formatNaira(fees.platformFeeKobo)}`} />
+          <FeeRow label="Campaign receives" value={formatNaira(fees.netToCampaignKobo)} />
           <View style={styles.feeDivider} />
           <FeeRow label="Total to pay" value={formatNaira(fees.totalKobo)} bold />
           <View style={styles.infoRow}>
             <Info size={13} color={Colors.onSurfaceVariant} strokeWidth={2} />
-            <Text style={styles.infoText}>The campaign receives the full {formatNaira(fees.contributionKobo)}. Fees are added on top.</Text>
+            <Text style={styles.infoText}>You pay {formatNaira(fees.totalKobo)}. The platform fee is deducted from the campaign's payout, so the campaign receives {formatNaira(fees.netToCampaignKobo)}.</Text>
           </View>
         </View>
 

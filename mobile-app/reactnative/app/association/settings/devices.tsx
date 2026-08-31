@@ -10,11 +10,18 @@ import { shadow1 } from '@/constants/shadows';
 import ScreenHeader from '@/components/ScreenHeader';
 import StateView from '@/components/StateView';
 import { useDevices, useRevokeDevice } from '@/features/association/hooks/useSettings';
+import { useRegisterThisDevice } from '@/features/association/hooks/useAuthoring';
 import { relativeTime } from '@/features/association/utils/associationFormatters';
 import type { Device } from '@/features/association/types/settings.types';
 import { confirmAsync } from '@/lib/confirm';
 
 export default function DevicesScreen() {
+  // `assoc_devices` had no writer anywhere in the repo, so this list was always
+  // empty and the revoke endpoint had no row to act on. Registering on open
+  // gives the screen a real device to show; the call is idempotent on
+  // (user, name, platform), so revisiting only touches `last_active`.
+  useRegisterThisDevice();
+
   const devices = useDevices();
   const revoke = useRevokeDevice();
 
@@ -39,7 +46,10 @@ export default function DevicesScreen() {
           contentContainerStyle={styles.list}
           ItemSeparatorComponent={() => <View style={{ height: Spacing.md }} />}
           renderItem={({ item }) => {
-            const Icon = item.platform === 'Web' ? Monitor : Smartphone;
+            // Live rows carry the platform the client reported ("Web",
+            // "iOS 18.2", "Android 15"), so match loosely rather than on the
+            // one exact string the fixtures happened to use.
+            const Icon = /web|mac|windows|linux/i.test(item.platform ?? '') ? Monitor : Smartphone;
             return (
               <View style={[styles.card, shadow1]}>
                 <View style={styles.iconBox}><Icon size={20} color={Colors.primary} strokeWidth={2} /></View>

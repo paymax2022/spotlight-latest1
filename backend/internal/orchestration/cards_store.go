@@ -10,11 +10,13 @@ package orchestration
 // A nil store makes the handlers fall back to the existing stubs so a DB-less dev
 // setup still renders.
 //
-// Card FUNDING is a money path: it debits the customer's orch_balances wallet and
-// credits the card balance atomically (single tx, row locks, fail-closed on
+// Card FUNDING is a money path: it debits the customer's wallet and credits the
+// card balance atomically (single tx, wallet lock then row locks, fail-closed on
 // insufficient funds) and is deduped on (business_id, idempotency_key) via
-// orch_fx_card_txns. Because business_id == customer id for FX, the same id is
-// used to scope the card and to key orch_balances.
+// orch_fx_card_txns. Because business_id == customer id for FX, the same id
+// scopes the card and keys the wallet. Which pot that wallet debit lands in is
+// decided in ONE place — customer_wallet.go: NGN in the main platform ledger,
+// every other currency in orch_balances.
 //
 // Requires migration 20261003000000_fx_cards_collections.sql.
 
@@ -28,6 +30,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -283,7 +286,19 @@ func (s *sqlCardStore) CreateCard(ctx context.Context, business string, draft Ca
 
 // ─── Fund (money path) ────────────────────────────────────────────────────────
 
-// FundCard atomically moves value from the customer's wallet (orch_balances) into
+// cardFundIdem derives the main-ledger idempotency key for a card-funding leg.
+// When the caller supplied an Idempotency-Key the derived key is stable, so a
+// replayed funding request replays the SAME ledger key and cannot post twice.
+// Without one (the existing contract permits it) we fall back to a fresh key and
+// the orch_fx_card_txns row remains the only dedupe — exactly as before.
+func cardFundIdem(business, cardID, idemKey string) string {
+	if strings.TrimSpace(idemKey) == "" {
+		return "cardfund:" + business + ":" + cardID + ":" + uuid.NewString()
+	}
+	return "cardfund:" + business + ":" + idemKey
+}
+
+// FundCard atomically moves value from the customer's wallet into
 // the card balance. Idempotent on (business, idemKey): a retried key returns the
 // current card without re-funding. Fail-closed: short wallet → ErrInsufficientCardBalance.
 func (s *sqlCardStore) FundCard(ctx context.Context, business, id string, amountMinor int64, idemKey string) (Card, error) {
@@ -295,6 +310,12 @@ func (s *sqlCardStore) FundCard(ctx context.Context, business, id string, amount
 		return Card{}, err
 	}
 	defer tx.Rollback(ctx)
+
+	// Wallet lock FIRST, before the card row lock, so card funding orders its
+	// locks the same way conversions and payouts do and no cycle can form.
+	if err = lockCustomerWallet(ctx, tx, business); err != nil {
+		return Card{}, err
+	}
 
 	// Idempotency: if a funding txn with this key already applied, return the card as-is.
 	if idemKey != "" {
@@ -324,18 +345,15 @@ func (s *sqlCardStore) FundCard(ctx context.Context, business, id string, amount
 		return Card{}, err
 	}
 
-	// Lock the funding wallet (business == customer id for FX). Missing/short → fail-closed.
-	var wallet int64
-	err = tx.QueryRow(ctx, `SELECT balance_minor FROM orch_balances WHERE customer_id=$1 AND currency=$2 FOR UPDATE`, business, currency).Scan(&wallet)
-	if errors.Is(err, pgx.ErrNoRows) || (err == nil && wallet < amountMinor) {
-		return Card{}, ErrInsufficientCardBalance
-	}
-	if err != nil {
-		return Card{}, err
-	}
-
-	// Balanced move: debit wallet, credit card balance.
-	if _, err = tx.Exec(ctx, `UPDATE orch_balances SET balance_minor = balance_minor - $3, updated_at=now() WHERE customer_id=$1 AND currency=$2`, business, currency, amountMinor); err != nil {
+	// Debit the funding wallet (business == customer id for FX) through the same
+	// pot selector as conversions and payouts, so an NGN card top-up draws down
+	// the main-ledger wallet rather than a private FX pot that is always empty.
+	// Missing/short → fail-closed.
+	if err = debitCustomerWallet(ctx, tx, business, currency, amountMinor, "card-funding:"+id, cardFundIdem(business, id, idemKey)); err != nil {
+		var apiErr *APIError
+		if errors.As(err, &apiErr) && apiErr.Type == ErrInsufficientBalance {
+			return Card{}, ErrInsufficientCardBalance
+		}
 		return Card{}, err
 	}
 	if _, err = tx.Exec(ctx, `UPDATE orch_fx_cards SET balance_minor = balance_minor + $3, updated_at=now() WHERE id=$1 AND business_id=$2`, id, business, amountMinor); err != nil {
@@ -443,6 +461,11 @@ func (s *sqlCardStore) TerminateCard(ctx context.Context, business, id string) e
 	}
 	defer tx.Rollback(ctx)
 
+	// Same lock ordering as FundCard: wallet first, then the card row.
+	if err = lockCustomerWallet(ctx, tx, business); err != nil {
+		return err
+	}
+
 	var currency string
 	var balance int64
 	var providerCardID *string
@@ -455,14 +478,13 @@ func (s *sqlCardStore) TerminateCard(ctx context.Context, business, id string) e
 	}
 
 	if balance > 0 {
-		// Refund the residual card balance back into the wallet.
-		if _, err = tx.Exec(ctx, `
-			INSERT INTO orch_balances (customer_id, currency, balance_minor) VALUES ($1,$2,$3)
-			ON CONFLICT (customer_id, currency) DO UPDATE SET balance_minor = orch_balances.balance_minor + EXCLUDED.balance_minor, updated_at=now()`,
-			business, currency, balance); err != nil {
+		refundTxn := stubID("ctxn")
+		// Refund the residual card balance into whichever pot holds this currency
+		// (main ledger for NGN). Refunding into orch_balances while the customer
+		// spends the main wallet would strand the money where nothing reads it.
+		if err = creditCustomerWallet(ctx, tx, business, currency, balance, "card-termination-refund:"+id, refundTxn); err != nil {
 			return err
 		}
-		refundTxn := stubID("ctxn")
 		if _, err = tx.Exec(ctx, `
 			INSERT INTO orch_fx_card_txns (id, card_id, business_id, merchant, category, icon, amount_minor, currency, status)
 			VALUES ($1,$2,$3,'Card termination refund','Refund','wallet',$4,$5,'refunded')`,

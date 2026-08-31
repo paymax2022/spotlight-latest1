@@ -11,6 +11,7 @@ import ScreenHeader from '@/components/ScreenHeader';
 import PrimaryButton from '@/components/PrimaryButton';
 import StateView from '@/components/StateView';
 import { useCampaignWallet, useBankAccounts, useSubmitWithdrawal } from '@/features/crowdfunding/hooks/useExtras';
+import { useDefaultCampaignId } from '@/features/crowdfunding/hooks/useCreator';
 import { formatNaira } from '@/features/crowdfunding/utils/crowdfundingFormatters';
 import { sanitizeMoneyInput, nairaStringToKobo } from '@/utils/money';
 import { resolveWithdrawalCampaignId } from '@/features/crowdfunding/utils/withdrawalTarget';
@@ -22,7 +23,14 @@ export default function WithdrawScreen() {
   // from a specific campaign could be shown — and could withdraw against — a
   // balance belonging to a different campaign.
   const { campaign } = useLocalSearchParams<{ campaign?: string }>();
-  const wallet = useCampaignWallet(campaign);
+  // Opened bare (no route campaign) — resolve a real campaign to FETCH the
+  // wallet against, same fallback the wallet screen uses. This only feeds the
+  // wallet lookup; resolveWithdrawalCampaignId below still decides the
+  // SUBMISSION target on its own terms (route, else the wallet's own echoed
+  // campaignId — never this default directly), so the money-safety guarantee
+  // that a withdrawal never fires against a client-invented id is unchanged.
+  const defaultCampaign = useDefaultCampaignId();
+  const wallet = useCampaignWallet(campaign ?? defaultCampaign.id);
   const banks = useBankAccounts();
   const submit = useSubmitWithdrawal();
 

@@ -12,6 +12,7 @@ import { shadow1 } from '@/constants/shadows';
 import ScreenHeader from '@/components/ScreenHeader';
 import StateView from '@/components/StateView';
 import { useContests, useStartDraft } from '@/features/registration/hooks/useRegistration';
+import { RegistrationExistsError } from '@/features/registration/api/registration.api';
 import type { ContestRegistrationDefinition } from '@/features/registration/types/registration.types';
 
 export default function RegistrationHomeScreen() {
@@ -23,10 +24,22 @@ export default function RegistrationHomeScreen() {
     contestId || contestTitle ? 'checking' : null,
   );
 
+  // Already applied? Go to that application rather than reporting a failure —
+  // the applicant asked to apply, and the useful answer is their existing entry.
+  const routeToExisting = (error: unknown): boolean => {
+    if (!(error instanceof RegistrationExistsError)) return false;
+    const { id, submitted } = error.registration;
+    router.replace((submitted ? `/registration/${id}/status` : `/registration/${id}/wizard`) as never);
+    return true;
+  };
+
   const onStart = (slug: string) => {
     startDraft.mutate(slug, {
       onSuccess: (draft) => router.push(`/registration/${draft.id}/wizard` as never),
-      onError: () => Alert.alert('Could not start', 'We could not start your application. Please try again.'),
+      onError: (error) => {
+        if (routeToExisting(error)) return;
+        Alert.alert('Could not start', 'We could not start your application. Please try again.');
+      },
     });
   };
 
@@ -51,7 +64,10 @@ export default function RegistrationHomeScreen() {
       autoStartAttempted.current = true;
       startDraft.mutate(contestId, {
         onSuccess: (draft) => router.push(`/registration/${draft.id}/wizard` as never),
-        onError: () => setAutoMatchState('not-found'),
+        onError: (error) => {
+          if (routeToExisting(error)) return;
+          setAutoMatchState('not-found');
+        },
       });
       return;
     }

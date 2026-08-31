@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 )
 
 // Gap-fill service methods: single-record detail reads, partial profile update,
@@ -266,17 +267,24 @@ func (s *Service) GetAuditLog(ctx context.Context, adminID, action, orgIDOverrid
 	if err != nil {
 		return nil, err
 	}
+	// Strictly org-scoped. The `OR actor_id=$2` disjunction that used to be here
+	// defeated the org filter entirely: selecting org A returned org B's rows
+	// whenever the same admin had acted in both. It existed only because eight
+	// audit call sites wrote a NULL organisation_id; those now pass their real
+	// org, so the filter can be exact.
 	q := `
-		SELECT id, COALESCE(actor_id::text,''), action, COALESCE(subject_type,''),
-		       COALESCE(subject_id,''), metadata, created_at::text
-		FROM assoc_audit_log
-		WHERE (organisation_id=$1 OR actor_id=$2)`
-	args := []any{orgID, adminID}
+		SELECT a.id, COALESCE(a.actor_id::text,''), a.action, COALESCE(a.subject_type,''),
+		       COALESCE(a.subject_id,''), a.metadata, a.created_at::text,
+		       COALESCE(NULLIF(TRIM(COALESCE(u.first_name,'') || ' ' || COALESCE(u.last_name,'')), ''), u.email, 'System')
+		FROM assoc_audit_log a
+		LEFT JOIN platform_users u ON u.id = a.actor_id
+		WHERE a.organisation_id=$1`
+	args := []any{orgID}
 	if action != "" && action != "all" && action != "ALL" {
 		args = append(args, action)
-		q += fmt.Sprintf(` AND action=$%d`, len(args))
+		q += fmt.Sprintf(` AND a.action=$%d`, len(args))
 	}
-	q += ` ORDER BY created_at DESC LIMIT 200`
+	q += ` ORDER BY a.created_at DESC LIMIT 200`
 	rows, err := s.db.Query(ctx, q, args...)
 	if err != nil {
 		return nil, fmt.Errorf("association: audit log: %w", err)
@@ -286,9 +294,12 @@ func (s *Service) GetAuditLog(ctx context.Context, adminID, action, orgIDOverrid
 	for rows.Next() {
 		var e AuditLogEntry
 		var meta []byte
-		if err := rows.Scan(&e.ID, &e.ActorID, &e.Action, &e.SubjectType, &e.SubjectID, &meta, &e.CreatedAt); err != nil {
+		if err := rows.Scan(&e.ID, &e.ActorID, &e.Action, &e.SubjectType, &e.SubjectID, &meta, &e.CreatedAt, &e.ActorName); err != nil {
 			continue
 		}
+		e.At = e.CreatedAt
+		e.Summary = auditActionLabel(e.Action)
+		e.Subject = strings.TrimSpace(e.SubjectType + " " + e.SubjectID)
 		scanJSONB(meta, &e.Metadata)
 		if e.Metadata == nil {
 			e.Metadata = map[string]any{}
@@ -303,6 +314,17 @@ func (s *Service) GetAuditLog(ctx context.Context, adminID, action, orgIDOverrid
 // RegenerateAiNoteSummary re-queues a note for summary generation (PROCESSING)
 // and audits the request. Idempotent: safe to call repeatedly.
 func (s *Service) RegenerateAiNoteSummary(ctx context.Context, adminID, noteID string) error {
+	// Authorization (was previously ABSENT — any authenticated user could flip
+	// any organisation's minutes back to PROCESSING and write an audit row in
+	// their own name). Mirrors SetAiNoteStatus: resolve the note's org, then
+	// require an admin OF THAT ORG. Fail-closed; a missing note is "not found".
+	var noteOrg string
+	if err := s.db.QueryRow(ctx, `SELECT organisation_id FROM assoc_ai_notes WHERE id=$1`, noteID).Scan(&noteOrg); err != nil {
+		return fmt.Errorf("association: ai note not found: %w", err)
+	}
+	if err := s.requireAdminInOrg(ctx, adminID, noteOrg); err != nil {
+		return err
+	}
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("association: begin tx: %w", err)
@@ -315,7 +337,7 @@ func (s *Service) RegenerateAiNoteSummary(ctx context.Context, adminID, noteID s
 	if tag.RowsAffected() == 0 {
 		return fmt.Errorf("association: ai note not found")
 	}
-	if err := s.audit(ctx, tx, "", adminID, "MINUTES_REGENERATE", "ai_note", noteID, nil); err != nil {
+	if err := s.audit(ctx, tx, noteOrg, adminID, "MINUTES_REGENERATE", "ai_note", noteID, nil); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)

@@ -10,7 +10,7 @@ import { Radius } from '@/constants/radius';
 import { useVerifyContribution } from '@/features/crowdfunding/hooks/useCrowdfunding';
 
 export default function ProcessingScreen() {
-  const { id, reference, status } = useLocalSearchParams<{ id: string; reference: string; status?: string }>();
+  const { id, contributionId, status } = useLocalSearchParams<{ id: string; contributionId: string; status?: string }>();
   const verify = useVerifyContribution();
   const pulse = useRef(new Animated.Value(0.6)).current;
 
@@ -24,23 +24,42 @@ export default function ProcessingScreen() {
   }, [pulse]);
 
   useEffect(() => {
-    // Bank transfer / USSD stay pending; card & wallet verify to a result.
+    // Bank transfer / USSD stay pending; card & wallet confirm to a result.
     if (status === 'PENDING') {
-      const t = setTimeout(() => router.replace(`/crowdfunding/contribute/${id}/receipt?reference=${reference}&pending=1`), 1500);
+      const t = setTimeout(() => router.replace(`/crowdfunding/contribute/${id}/receipt?reference=${contributionId}&pending=1`), 1500);
       return () => clearTimeout(t);
     }
     const t = setTimeout(() => {
-      verify.mutate(reference as string, {
+      verify.mutate(contributionId as string, {
         onSuccess: (res) => {
-          if (res.status === 'SUCCESSFUL') router.replace(`/crowdfunding/contribute/${id}/success?reference=${res.reference}`);
-          else router.replace(`/crowdfunding/contribute/${id}/failed?reason=declined`);
+          if (res.status === 'SUCCESSFUL' || res.status === 'REFUND_REQUESTED') {
+            router.replace(`/crowdfunding/contribute/${id}/success?reference=${encodeURIComponent(res.reference)}`);
+          } else if (res.status === 'FAILED') {
+            router.replace(`/crowdfunding/contribute/${id}/failed?reason=declined`);
+          } else {
+            // PROCESSING / REFUNDED — real, but not a failure. Show the receipt
+            // in its unconfirmed state instead of accusing the rail.
+            router.replace(`/crowdfunding/contribute/${id}/receipt?reference=${encodeURIComponent(res.reference)}&pending=1`);
+          }
         },
-        onError: () => router.replace(`/crowdfunding/contribute/${id}/failed?reason=network`),
+        onError: () => {
+          // This screen only ever mounts AFTER the charge resolved, so a failed
+          // read here is a failed *read*, not a failed payment. When the charge
+          // already came back final, the money has moved — reporting "payment
+          // failed" would send someone who has been debited to pay a second
+          // time under a fresh idempotency key. Confirm on what we know and let
+          // the receipt reconcile the details.
+          if (status === 'SUCCESSFUL') {
+            router.replace(`/crowdfunding/contribute/${id}/success?reference=${encodeURIComponent(contributionId ?? '')}`);
+          } else {
+            router.replace(`/crowdfunding/contribute/${id}/failed?reason=network`);
+          }
+        },
       });
     }, 1400);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [reference, status]);
+  }, [contributionId, status]);
 
   return (
     <SafeAreaView style={styles.safe}>
@@ -52,7 +71,7 @@ export default function ProcessingScreen() {
         <Text style={styles.sub}>Please don't close this screen.</Text>
         <View style={styles.secureRow}>
           <ShieldCheck size={14} color={Colors.tertiaryContainer} strokeWidth={2} />
-          <Text style={styles.secureText}>Secured · {reference}</Text>
+          <Text style={styles.secureText}>Secured payment</Text>
         </View>
       </View>
     </SafeAreaView>

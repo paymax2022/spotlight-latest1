@@ -41,6 +41,7 @@ jobs:
             contracts/estate.openapi.yaml
             contracts/restaurant.openapi.yaml
             contracts/doctor.openapi.yaml
+            contracts/associations.openapi.yaml
           )
           fail=0
           for f in "${files[@]}"; do

@@ -50,7 +50,8 @@ export interface ChatMessage {
   mine:      boolean;
   system:    boolean;         // system/notice line, centered
   pinned:    boolean;
-  reactions: MessageReaction[];
+  /** Optional: the live DTO omits the array entirely when there are none. */
+  reactions?: MessageReaction[];
 }
 
 export interface ChatThread extends ChatThreadSummary {

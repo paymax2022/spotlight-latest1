@@ -1,178 +1,209 @@
 'use client';
 
-import { useEffect, useState } from 'react';
 import Link from 'next/link';
+import { useCallback, useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
 import { getPolicy, formatNaira } from '@/services/insuranceAdminService';
 import type { PolicyDetail } from '@/types/insuranceAdmin';
-import { PageHeader, InsuranceTabs, Card, Badge, btn, th, td, fmtDate, timeAgo, StateBlock, DisclosureNote } from '../../_ui';
+import {
+  PageHeader,
+  InsuranceTabs,
+  Card,
+  Badge,
+  NotReported,
+  LiveState,
+  toFailure,
+  type EndpointFailure,
+  btn,
+  th,
+  td,
+  fmtDate,
+} from '../../_ui';
 import { colors } from '@/components/ui/vuexy';
 
-function Fact({ k, v }: { k: string; v: React.ReactNode }) {
-  return (
-    <div>
-      <div style={{ fontSize: '0.72rem', textTransform: 'uppercase', letterSpacing: 0.3, color: colors.muted, fontWeight: 600 }}>{k}</div>
-      <div style={{ fontSize: '0.9rem', color: colors.text, marginTop: '0.15rem' }}>{v}</div>
-    </div>
-  );
-}
+const dt: React.CSSProperties = {
+  fontSize: 11,
+  textTransform: 'uppercase',
+  letterSpacing: 0.3,
+  color: colors.muted,
+  fontWeight: 600,
+  marginBottom: 3,
+};
 
-const code: React.CSSProperties = { fontSize: '0.78rem', background: colors.border, padding: '0.1rem 0.35rem', borderRadius: '0.25rem' };
+/** One policy, with its lifecycle, the money on it, and any claims against it. */
+export default function InsurancePolicyDetailPage() {
+  const params = useParams<{ id: string }>();
+  const id = decodeURIComponent(String(params?.id ?? ''));
 
-export default function PolicyDetailPage() {
-  const params = useParams();
-  const id = params.id as string;
-
-  const [data, setData] = useState<PolicyDetail | null>(null);
+  const [policy, setPolicy] = useState<PolicyDetail | null>(null);
+  const [failure, setFailure] = useState<EndpointFailure | null>(null);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
 
-  async function load() {
-    setLoading(true); setError(null);
-    try { setData(await getPolicy(id)); }
-    catch (e) { setError(String(e)); }
-    finally { setLoading(false); }
-  }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => { load(); }, [id]);
+  const load = useCallback(async () => {
+    setLoading(true);
+    setFailure(null);
+    try {
+      setPolicy(await getPolicy(id));
+    } catch (e) {
+      setPolicy(null);
+      setFailure(toFailure(e));
+    } finally {
+      setLoading(false);
+    }
+  }, [id]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  const money = (v: number | null | undefined) => (v === null || v === undefined ? <NotReported /> : formatNaira(v));
 
   return (
     <div style={{ padding: '0.5rem 0.5rem 2rem' }}>
       <PageHeader
-        title="Policy detail"
-        subtitle="Lifecycle, premium ledger, commission and consent for a single policy. PII is masked."
-        action={<Link href="/admin/insurance/policies" style={btn()}>&larr; Back to policies</Link>}
+        title={policy?.policy_ref || id}
+        subtitle={policy ? `${policy.product_name || policy.product_code} · underwritten by ${policy.underwriter || 'an undisclosed insurer'}` : 'Policy detail'}
+        action={
+          <div style={{ display: 'flex', gap: '0.5rem' }}>
+            <Link href="/admin/insurance/policies" style={{ ...btn(), textDecoration: 'none' }}>Back</Link>
+            <button onClick={load} style={btn()}>Refresh</button>
+          </div>
+        }
       />
       <InsuranceTabs active="policies" />
 
-      <StateBlock loading={loading} error={error} empty={!data} emptyText="Policy not found.">
-        {data && (
+      <LiveState loading={loading} failure={failure} empty={!policy} emptyTitle="Policy not found" onRetry={load}>
+        {policy && (
           <>
-            <DisclosureNote>
-              Underwritten by <strong>{data.underwriter}</strong>, distributed via aggregator <strong>{data.provider}</strong> (NAICOM-licensed insurer disclosed per PRD §13/§18).
-            </DisclosureNote>
-
-            <Card title="Key facts" right={<Badge status={data.state} />}>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: '1rem' }}>
-                <Fact k="Policy ref" v={<code style={code}>{data.provider_policy_ref}</code>} />
-                <Fact k="Policyholder" v={data.policyholder_masked} />
-                <Fact k="Product" v={`${data.product_name} (${data.product_code})`} />
-                <Fact k="Provider" v={<Badge status={data.provider} />} />
-                <Fact k="Underwriter" v={data.underwriter} />
-                <Fact k="Binding mode" v={<Badge status={data.binding_mode} />} />
-                <Fact k="Sum insured" v={formatNaira(data.sum_insured_kobo)} />
-                <Fact k="Premium" v={`${formatNaira(data.premium_kobo)} ${data.currency}`} />
-                <Fact k="Effective" v={fmtDate(data.effective_at)} />
-                <Fact k="Expires" v={fmtDate(data.expires_at)} />
-                <Fact k="Version" v={`v${data.version}`} />
-                <Fact k="Source event" v={data.source_event_id ? <code style={code}>{data.source_event_id}</code> : '—'} />
-                <Fact k="Capability" v={<code style={code}>{data.capability_id}</code>} />
+            <Card title="Policy">
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 14 }}>
+                <Field label="Status"><Badge status={policy.status} /></Field>
+                <Field label="Product">
+                  <Link href={`/admin/insurance/catalog/${encodeURIComponent(policy.product_code)}`} style={{ color: colors.primary, textDecoration: 'none' }}>
+                    {policy.product_name || policy.product_code}
+                  </Link>
+                </Field>
+                <Field label="Underwriter">{policy.underwriter || <NotReported />}</Field>
+                <Field label="Aggregator">{policy.aggregator || <NotReported />}</Field>
+                <Field label="Policyholder">{policy.policyholder_masked || <NotReported hint="PII is masked by the API." />}</Field>
+                <Field label="Provider reference">
+                  {policy.provider_policy_ref ? <code style={{ fontSize: 12 }}>{policy.provider_policy_ref}</code> : <NotReported />}
+                </Field>
+                <Field label="Premium">{money(policy.premium_kobo)}</Field>
+                <Field label="Sum insured">{money(policy.sum_insured_kobo)}</Field>
+                <Field label="Our commission">
+                  <span style={{ color: colors.success, fontWeight: 700 }}>{money(policy.commission_kobo)}</span>
+                </Field>
+                <Field label="Cover starts">{policy.starts_at ? fmtDate(policy.starts_at) : <NotReported />}</Field>
+                <Field label="Cover ends">{policy.ends_at ? fmtDate(policy.ends_at) : <NotReported />}</Field>
+                <Field label="Certificate">
+                  {policy.certificate_url ? (
+                    <a href={policy.certificate_url} target="_blank" rel="noopener noreferrer" style={{ color: colors.primary }}>
+                      Open certificate
+                    </a>
+                  ) : (
+                    <NotReported hint="No certificate URL was returned for this policy." />
+                  )}
+                </Field>
               </div>
             </Card>
 
-            <Card title="Premium transactions">
-              {data.premium_transactions.length === 0 ? (
-                <p style={{ color: colors.muted }}>No premium transactions recorded.</p>
-              ) : (
-                <div style={{ overflowX: 'auto' }}>
-                  <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                    <thead>
-                      <tr>
-                        <th style={th()}>Reference</th>
-                        <th style={th()}>Amount</th>
-                        <th style={th()}>Direction</th>
-                        <th style={th()}>Status</th>
-                        <th style={th()}>Wallet ledger</th>
-                        <th style={th()}>When</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {data.premium_transactions.map((t) => (
-                        <tr key={t.id}>
-                          <td style={td()}><code style={code}>{t.reference}</code></td>
-                          <td style={td()}>{formatNaira(t.amount_kobo)}</td>
-                          <td style={td()}><Badge status={t.direction.toLowerCase()} label={t.direction} /></td>
-                          <td style={td()}><Badge status={t.status} /></td>
-                          <td style={td()}><code style={code}>{t.wallet_ledger_ref}</code></td>
-                          <td style={td()}>{fmtDate(t.created_at)}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-            </Card>
-
-            <Card title="Commission">
-              {data.commission ? (
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: '1rem' }}>
-                  <Fact k="Amount" v={formatNaira(data.commission.amount_kobo)} />
-                  <Fact k="Basis" v={data.commission.basis} />
-                  <Fact k="Revenue ledger" v={<code style={code}>{data.commission.revenue_ledger_ref}</code>} />
-                  <Fact k="Reconciled" v={<Badge status={data.commission.reconciled ? 'reconciled' : 'open'} label={data.commission.reconciled ? 'Reconciled' : 'Unreconciled'} />} />
-                </div>
-              ) : (
-                <p style={{ color: colors.muted }}>No commission recorded.</p>
-              )}
-            </Card>
-
-            <Card title="Beneficiaries">
-              {data.beneficiaries.length === 0 ? (
-                <p style={{ color: colors.muted }}>No beneficiaries on this policy.</p>
-              ) : (
+            <Card title="Lifecycle">
+              {policy.timeline && policy.timeline.length > 0 ? (
                 <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                   <thead>
                     <tr>
-                      <th style={th()}>Name</th>
-                      <th style={th()}>Relationship</th>
-                      <th style={th()}>Share</th>
+                      <th style={th()}>When</th>
+                      <th style={th()}>Status</th>
+                      <th style={th()}>Actor</th>
+                      <th style={th()}>Note</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {data.beneficiaries.map((b) => (
-                      <tr key={b.id}>
-                        <td style={td()}>{b.name_masked}</td>
-                        <td style={td()}>{b.relationship}</td>
-                        <td style={td()}>{b.share_pct}%</td>
+                    {policy.timeline.map((t, i) => (
+                      <tr key={`${t.at}-${i}`}>
+                        <td style={td()}>{fmtDate(t.at)}</td>
+                        <td style={td()}><Badge status={t.status} /></td>
+                        <td style={td()}>{t.actor || '—'}</td>
+                        <td style={td()}>{t.note || '—'}</td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
-              )}
-            </Card>
-
-            <Card title="Consent">
-              {data.consent ? (
-                <p style={{ color: colors.text, fontSize: '0.85rem', margin: 0 }}>
-                  Version <strong>{data.consent.version}</strong> &middot; scope <code style={code}>{data.consent.scope}</code> &middot; granted {fmtDate(data.consent.granted_at)}
+              ) : (
+                <p style={{ color: colors.muted, fontSize: '0.85rem', margin: 0 }}>
+                  The API returned no lifecycle entries for this policy.
                 </p>
-              ) : (
-                <p style={{ color: colors.muted, margin: 0 }}>No consent record on file.</p>
               )}
             </Card>
 
-            <Card title="State timeline">
-              {data.timeline.length === 0 ? (
-                <p style={{ color: colors.muted }}>No timeline entries.</p>
+            <Card title="Claims against this policy">
+              {policy.claims && policy.claims.length > 0 ? (
+                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                  <thead>
+                    <tr>
+                      <th style={th()}>Claim</th>
+                      <th style={th()}>Status</th>
+                      <th style={th()}>Claimed</th>
+                      <th style={th()}>Approved</th>
+                      <th style={th()}>Loss event</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {policy.claims.map((c) => (
+                      <tr key={c.id}>
+                        <td style={td()}>
+                          <Link href={`/admin/insurance/claims/${encodeURIComponent(c.id)}`} style={{ color: colors.primary, textDecoration: 'none' }}>
+                            <code style={{ fontSize: '0.78rem' }}>{c.claim_ref || c.id}</code>
+                          </Link>
+                        </td>
+                        <td style={td()}><Badge status={c.status} /></td>
+                        <td style={td()}>{money(c.claimed_amount_kobo)}</td>
+                        <td style={td()}>{money(c.approved_amount_kobo)}</td>
+                        <td style={td()}>{c.loss_event_at ? fmtDate(c.loss_event_at) : '—'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               ) : (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.85rem' }}>
-                  {data.timeline.map((t, i) => (
-                    <div key={`${t.at}-${i}`} style={{ display: 'flex', gap: '0.75rem', alignItems: 'flex-start' }}>
-                      <div style={{ minWidth: 130 }}><Badge status={t.state} /></div>
-                      <div>
-                        <div style={{ fontSize: '0.85rem', color: colors.text }}>
-                          <strong>{t.actor}</strong>{t.note ? ` — ${t.note}` : ''}
-                        </div>
-                        <div style={{ fontSize: '0.75rem', color: colors.muted, marginTop: '0.1rem' }}>{timeAgo(t.at)}</div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
+                <p style={{ color: colors.muted, fontSize: '0.85rem', margin: 0 }}>No claims have been made against this policy.</p>
               )}
             </Card>
+
+            {policy.inputs && Object.keys(policy.inputs).length > 0 ? (
+              <Card title="Submitted application">
+                <p style={{ fontSize: '0.75rem', color: colors.muted, marginTop: 0 }}>
+                  The per-product fields MyCover required for this purchase. Field names and values are shown
+                  exactly as stored; sensitive identifiers are masked upstream by the API, not here.
+                </p>
+                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                  <tbody>
+                    {Object.entries(policy.inputs).map(([k, v]) => (
+                      <tr key={k}>
+                        <td style={{ ...td(), width: 220, color: colors.muted, fontSize: '0.78rem' }}>{k}</td>
+                        <td style={td()}>
+                          <code style={{ fontSize: '0.78rem', wordBreak: 'break-all' }}>
+                            {typeof v === 'object' ? JSON.stringify(v) : String(v)}
+                          </code>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </Card>
+            ) : null}
           </>
         )}
-      </StateBlock>
+      </LiveState>
+    </div>
+  );
+}
+
+function Field({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div>
+      <div style={dt}>{label}</div>
+      <div style={{ fontSize: 13, color: colors.text }}>{children}</div>
     </div>
   );
 }

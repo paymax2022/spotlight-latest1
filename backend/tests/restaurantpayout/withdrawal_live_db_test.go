@@ -170,7 +170,7 @@ func withdrawalRowCount(t *testing.T, ctx context.Context, pool *pgxpool.Pool, o
 // no real money (Executed=false, no provider reference).
 func TestLiveDB_Withdrawal_RequestPostsOneBalancedReserve_NoopExecutesNothing(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	led := newLiveLedgerService(pool)
 	svc := newLiveWithdrawalService(pool, led)
 	ctx := context.Background()
@@ -237,7 +237,7 @@ func TestLiveDB_Withdrawal_RequestPostsOneBalancedReserve_NoopExecutesNothing(t 
 
 func TestLiveDB_Withdrawal_IdempotentReplay_NoSecondMove(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	led := newLiveLedgerService(pool)
 	svc := newLiveWithdrawalService(pool, led)
 	ctx := context.Background()
@@ -285,7 +285,7 @@ func TestLiveDB_Withdrawal_IdempotentReplay_NoSecondMove(t *testing.T) {
 
 func TestLiveDB_Withdrawal_InsufficientBalance_FailsClosed(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	led := newLiveLedgerService(pool)
 	svc := newLiveWithdrawalService(pool, led)
 	ctx := context.Background()
@@ -320,7 +320,7 @@ func TestLiveDB_Withdrawal_InsufficientBalance_FailsClosed(t *testing.T) {
 
 func TestLiveDB_Withdrawal_OwnerScoped_ForeignBankAccountRejected(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	led := newLiveLedgerService(pool)
 	svc := newLiveWithdrawalService(pool, led)
 	ctx := context.Background()
@@ -361,7 +361,7 @@ func TestLiveDB_Withdrawal_OwnerScoped_ForeignBankAccountRejected(t *testing.T) 
 
 func TestLiveDB_Withdrawal_TierLimit_FailsClosed(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	led := newLiveLedgerService(pool)
 	svc := newLiveWithdrawalService(pool, led)
 	ctx := context.Background()
@@ -400,7 +400,7 @@ func TestLiveDB_Withdrawal_TierLimit_FailsClosed(t *testing.T) {
 
 func TestLiveDB_Withdrawal_WebhookPaid_DrainsSuspenseToClearing(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	led := newLiveLedgerService(pool)
 	svc := newLiveWithdrawalService(pool, led)
 	ctx := context.Background()
@@ -447,7 +447,7 @@ func TestLiveDB_Withdrawal_WebhookPaid_DrainsSuspenseToClearing(t *testing.T) {
 // balanced legs is posted, and the wallet ends in exactly one consistent state.
 func TestLiveDB_Withdrawal_ConcurrentPaidAndFailed_MutuallyExclusive(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	led := newLiveLedgerService(pool)
 	svc := newLiveWithdrawalService(pool, led)
 	ctx := context.Background()
@@ -468,8 +468,14 @@ func TestLiveDB_Withdrawal_ConcurrentPaidAndFailed_MutuallyExclusive(t *testing.
 	// Fire paid and failed at the same time on the same withdrawal.
 	var wg sync.WaitGroup
 	wg.Add(2)
-	go func() { defer wg.Done(); _, _ = svc.MarkWithdrawalPaid(ctx, w.ID, "prov_race", newIdemKey(t, "hook-paid")) }()
-	go func() { defer wg.Done(); _, _ = svc.MarkWithdrawalFailed(ctx, w.ID, "race", newIdemKey(t, "hook-fail")) }()
+	go func() {
+		defer wg.Done()
+		_, _ = svc.MarkWithdrawalPaid(ctx, w.ID, "prov_race", newIdemKey(t, "hook-paid"))
+	}()
+	go func() {
+		defer wg.Done()
+		_, _ = svc.MarkWithdrawalFailed(ctx, w.ID, "race", newIdemKey(t, "hook-fail"))
+	}()
 	wg.Wait()
 
 	// Exactly ONE terminal leg posted (2 rows for the winner's reference, 0 for the loser).
@@ -505,7 +511,7 @@ func TestLiveDB_Withdrawal_ConcurrentPaidAndFailed_MutuallyExclusive(t *testing.
 
 func TestLiveDB_Withdrawal_WebhookFailed_ReversesFundsToWallet(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	led := newLiveLedgerService(pool)
 	svc := newLiveWithdrawalService(pool, led)
 	ctx := context.Background()

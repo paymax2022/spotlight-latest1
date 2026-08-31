@@ -21,6 +21,8 @@ import (
 	"spotlight/backend/internal/finance/ledger"
 	"spotlight/backend/internal/trading/kyc"
 	"spotlight/backend/internal/trading/wallet"
+
+	"spotlight/backend/internal/testsupport"
 )
 
 func TestLiveDB_KycGatesWallet(t *testing.T) {
@@ -33,7 +35,7 @@ func TestLiveDB_KycGatesWallet(t *testing.T) {
 	if err != nil {
 		t.Fatalf("connect: %v", err)
 	}
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 
 	led := ledger.NewService(ledger.NewRepository(pool), (*goredis.Client)(nil))
 	kycSvc := kyc.NewService(pool)
@@ -45,6 +47,7 @@ func TestLiveDB_KycGatesWallet(t *testing.T) {
 	if _, err := pool.Exec(ctx, `INSERT INTO auth.users (id, email) VALUES ($1,$2) ON CONFLICT DO NOTHING`, u, u+"@seed.test"); err != nil {
 		t.Fatalf("seed user: %v", err)
 	}
+	testsupport.CleanupUser(t, pool, u)
 	src, _ := led.GetOrCreateStandingAccount(ctx, ledger.AccountProviderClearing)
 	if err := led.Credit(ctx, u, "seed", "seed:"+u+":"+uuid.NewString(), src.ID, 5_000_000); err != nil {
 		t.Fatalf("fund wallet: %v", err)

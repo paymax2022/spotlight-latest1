@@ -159,7 +159,7 @@ const styles = StyleSheet.create({
   },
   heroHead: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm },
   heroLabel: { ...Typography.labelMd, color: Colors.onPrimary, opacity: 0.85 },
-  heroAmount: { ...Typography.displayLg, fontSize: 40, lineHeight: 48, color: Colors.onPrimary },
+  heroAmount: { ...Typography.displayLg, fontSize: 40, letterSpacing: -0.8, lineHeight: 48, color: Colors.onPrimary },
   heroPending: { ...Typography.bodySm, color: Colors.onPrimary, opacity: 0.85 },
   successNote: {
     flexDirection: 'row',

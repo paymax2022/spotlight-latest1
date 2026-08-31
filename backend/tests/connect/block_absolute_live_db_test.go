@@ -8,9 +8,9 @@
 // form a match, and their posts + professional profile stayed visible to the blocker.
 //
 // Bring-up (skipped unless a DB is wired):
-//   1. A Postgres with the Connect schema applied (e.g. the local Supabase DB).
-//   2. export TEST_DATABASE_URL=postgres://postgres:postgres@127.0.0.1:54322/postgres
-//   3. cd backend && go test ./tests/connect/ -run TestConnectBlockIsAbsolute -v
+//  1. A Postgres with the Connect schema applied (e.g. the local Supabase DB).
+//  2. export TEST_DATABASE_URL=postgres://postgres:postgres@127.0.0.1:54322/postgres
+//  3. cd backend && go test ./tests/connect/ -run TestConnectBlockIsAbsolute -v
 //
 // The suite seeds throwaway rows under freshly-generated UUIDs and deletes them on
 // cleanup; it never touches real user data.
@@ -28,17 +28,19 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	connectaccount "spotlight/backend/internal/connect/account"
+	connectchat "spotlight/backend/internal/connect/chat"
+	connectcredits "spotlight/backend/internal/connect/credits"
 	connectdiscovery "spotlight/backend/internal/connect/discovery"
-	connectfeed "spotlight/backend/internal/connect/networking/feed"
 	connectmatching "spotlight/backend/internal/connect/matching"
+	connectmonetization "spotlight/backend/internal/connect/monetization"
+	connectfeed "spotlight/backend/internal/connect/networking/feed"
 	connectprofessional "spotlight/backend/internal/connect/professional"
 	connectsafety "spotlight/backend/internal/connect/safety"
 	connecttrust "spotlight/backend/internal/connect/trust"
-	connectchat "spotlight/backend/internal/connect/chat"
-	connectaccount "spotlight/backend/internal/connect/account"
-	connectmonetization "spotlight/backend/internal/connect/monetization"
 	ledger "spotlight/backend/internal/finance/ledger"
-	connectcredits "spotlight/backend/internal/connect/credits"
+
+	"spotlight/backend/internal/testsupport"
 )
 
 func blockLiveDBPool(t *testing.T) *pgxpool.Pool {
@@ -75,6 +77,7 @@ func seedProfile(t *testing.T, ctx context.Context, pool *pgxpool.Pool) (string,
 		userID, "seed-"+userID[:8]+"@example.test"); err != nil {
 		t.Fatalf("seed auth user: %v", err)
 	}
+	testsupport.CleanupUser(t, pool, userID)
 	var profileID string
 	if err := pool.QueryRow(ctx,
 		`INSERT INTO connect_profiles (user_id, display_name) VALUES ($1::uuid, $2) RETURNING id`,
@@ -130,7 +133,7 @@ func seedBlock(t *testing.T, ctx context.Context, pool *pgxpool.Pool, blocker, b
 // the professional feed, and professional discovery — in BOTH block directions.
 func TestConnectBlockIsAbsolute(t *testing.T) {
 	pool := blockLiveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 
 	// Three actors: viewer blocks `blocked`; `control` is an unrelated third user
@@ -299,7 +302,7 @@ func TestConnectBlockIsAbsolute(t *testing.T) {
 // blocks them from liking/matching. Before this slice, ban was a no-op log.
 func TestConnectBanIsEnforced(t *testing.T) {
 	pool := blockLiveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 
 	adminUser, _ := seedProfile(t, ctx, pool)
@@ -393,7 +396,7 @@ func TestConnectBanIsEnforced(t *testing.T) {
 // reciprocal likes fired concurrently to maximise interleaving.
 func TestConnectMatchRaceExactlyOnce(t *testing.T) {
 	pool := blockLiveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	m := connectmatching.NewService(pool)
 
@@ -442,7 +445,7 @@ func TestConnectMatchRaceExactlyOnce(t *testing.T) {
 // their partner can't message the banned recipient either. Enforced mid-chat.
 func TestConnectBanSeversActiveChat(t *testing.T) {
 	pool := blockLiveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 
 	uA, pA := seedProfile(t, ctx, pool)
@@ -506,7 +509,7 @@ func TestConnectBanSeversActiveChat(t *testing.T) {
 // erases sensitive data, writes an immutable audit entry, and is idempotent.
 func TestConnectAccountDeletionCascade(t *testing.T) {
 	pool := blockLiveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 
 	subjU, subjP := seedProfile(t, ctx, pool)
@@ -687,7 +690,7 @@ func seedPaidOrder(t *testing.T, ctx context.Context, pool *pgxpool.Pool, userID
 // entitlement, and is idempotent + single under retries AND concurrency.
 func TestConnectRefundSafeAndSingle(t *testing.T) {
 	pool := blockLiveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	led := ledger.NewService(ledger.NewRepository(pool), nil)
 	svc := connectmonetization.NewService(pool, nil, nil, noopMoneyAudit{}, testRefunder{led: led})
@@ -808,7 +811,7 @@ func seedSubscription(t *testing.T, ctx context.Context, pool *pgxpool.Pool, use
 // pro-rata; the renewal batch charges once & extends; and lapses on no funds.
 func TestConnectSubscriptionBillingCycle(t *testing.T) {
 	pool := blockLiveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	led := ledger.NewService(ledger.NewRepository(pool), nil)
 
@@ -915,7 +918,7 @@ func TestConnectSubscriptionBillingCycle(t *testing.T) {
 // concurrent spends exactly the available number succeed.
 func TestConnectCreditsNoDoubleSpend(t *testing.T) {
 	pool := blockLiveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	uid, _ := seedProfile(t, ctx, pool)
 	t.Cleanup(func() {
@@ -998,7 +1001,7 @@ func TestConnectCreditsNoDoubleSpend(t *testing.T) {
 // records no like, while a plain like needs no credit.
 func TestConnectSuperLikeRequiresCredit(t *testing.T) {
 	pool := blockLiveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 
 	liker, likerP := seedProfile(t, ctx, pool)

@@ -441,12 +441,28 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 	// under /internal/webhooks/{mycover,octamile} (UNauthenticated — signature
 	// verified inside the gateway). Reuses wallet/ledger/settlement/kyc.
 	if cfg.FeatureInsuranceEnabled && pool != nil {
-		insuranceMember := finance.Group("/insurance")
+		// Pass the bare finance group: RegisterInsurance/RegisterInsuranceClaims
+		// each add the "/insurance" segment themselves (mg := member.Group("/insurance")),
+		// so finance.Group("/insurance") here double-mounted every member route at
+		// /api/finance/insurance/insurance/* instead of /api/finance/insurance/*
+		// (the client contract) — same class of bug documented for savings above.
 		insuranceAdmin := r.Group("/api/insurance/admin")
+		// RequireAuthContext MUST come before requireUserID: requireUserID only
+		// reads the user_id that RequireAuthContext populates, so without it every
+		// admin route 401s even with a valid token. Same bug as referral (line ~414)
+		// and the finance group before it — see the note above line 284.
+		insuranceAdmin.Use(middleware.RequireAuthContext(supabase, rbac))
 		insuranceAdmin.Use(requireUserID())
-		insuranceWebhooks := r.Group("/internal/webhooks")                                      // provider-signed, no user auth
-		RegisterInsurance(insuranceMember, insuranceAdmin, pool, rbac)                          // gateway/catalog/policy/quote/saga/consent
-		RegisterInsuranceClaims(insuranceMember, insuranceAdmin, insuranceWebhooks, pool, rbac) // claims/embedded/webhooks/reconciliation
+		// Pass the ROOT group, for the same reason the member group is passed bare:
+		// webhooks.Register adds "/internal/webhooks" itself (g := webhooks.Group(
+		// "/internal/webhooks")), so naming the segment here too mounted every
+		// provider callback at /internal/webhooks/internal/webhooks/* — the
+		// documented path 404'd and only the doubled one answered. A provider
+		// cannot discover that, so every real MyCover delivery would have been
+		// lost, and silently: the provider sees a 404 and we see nothing at all.
+		insuranceWebhooks := r.Group("") // provider-signed, no user auth
+		RegisterInsurance(finance, insuranceAdmin, pool, rbac)                          // gateway/catalog/policy/quote/saga/consent
+		RegisterInsuranceClaims(finance, insuranceAdmin, insuranceWebhooks, pool, rbac) // claims/embedded/webhooks/reconciliation
 	}
 
 	// --- Hotel Booking / Stays (Property Suite, dual-rail supply gateway) ---
@@ -987,6 +1003,18 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 	// --- Association (group membership) money-path + approvals ---
 	if cfg.FeatureAssociationsEnabled {
 		assocSvc := association.NewService(pool, ledgerSvc)
+		// Membership-card HMAC key. SetCardSigningSecret existed but was called
+		// from nowhere, so every card in every environment was signed with the
+		// dev constant baked into this repo — forgeable for any known membership
+		// id. Outside development a missing secret must stop the process rather
+		// than silently fall back to that constant.
+		if cfg.AssocCardSigningSecret != "" {
+			assocSvc.SetCardSigningSecret(cfg.AssocCardSigningSecret)
+		} else if cfg.AppEnv != "development" {
+			log.Fatalf("[association] ASSOC_CARD_SIGNING_SECRET is required when APP_ENV=%q — refusing to sign membership cards with the public dev key", cfg.AppEnv)
+		} else {
+			log.Println("[association] WARNING: ASSOC_CARD_SIGNING_SECRET unset — using the public dev card key (development only)")
+		}
 		// Central Commission & Profit recording (§ profit registry). When the
 		// commission feature is on, inject a nil-safe recorder so realized profit on a
 		// settled dues payment (the RevenueSplit's 5% platform fee) lands in
@@ -998,7 +1026,24 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 			assocSvc.SetCommissionRecorder(commissionRecorderAdapter{svc: commission.NewService(commission.NewRepository(pool), nil)})
 			log.Println("[association] commission recording wired → Community/Group Membership (earning-row only; no ledger re-post)")
 		}
-		assocHandler := association.NewHandler(assocSvc)
+		// Backend-owned presigned R2 uploads for organisation logos. The wizard
+		// used to store the image picker's device-local file:// URI verbatim, so
+		// an uploaded logo rendered only on the founder's own phone. The
+		// presigner is attached to BOTH sides: the handler mints upload URLs, and
+		// the service signs stored object keys back into viewable URLs on read
+		// (the bucket is not public, so a key alone renders nothing). Unconfigured
+		// creds → the upload endpoint fails closed with 503 and reads pass stored
+		// values through unchanged. Bucket default mirrors CLAUDE.md.
+		assocPresigner := r2.New(r2.Config{
+			AccountEndpoint: cfg.R2AccountEndpoint,
+			Bucket:          cfg.R2Bucket,
+			AccessKeyID:     cfg.R2AccessKeyID,
+			SecretAccessKey: cfg.R2SecretAccessKey,
+			Region:          cfg.R2Region,
+		})
+		assocSvc.WithPresigner(assocPresigner)
+		assocHandler := association.NewHandler(assocSvc).
+			WithPresigner(assocPresigner, cfg.R2Bucket)
 		association.RegisterRoutes(finance.Group("/associations"), assocHandler)
 	}
 
@@ -1395,7 +1440,7 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		cfAdmin.GET("/campaigns", middleware.RequirePermission(rbac, "crowdfunding.admin.review"), cfHandler.AdminListPending)
 		cfAdmin.GET("/campaigns/:id", middleware.RequirePermission(rbac, "crowdfunding.admin.review"), cfHandler.AdminGetCampaign)
 		cfAdmin.POST("/campaigns/:id/decision", middleware.RequirePermission(rbac, "crowdfunding.admin.decide"), cfHandler.AdminDecide)
-		cfadminext.RegisterAdmin(cfAdmin, pool, ledgerSvc, kycSvc)
+		cfadminext.RegisterAdmin(cfAdmin, pool, ledgerSvc, kycSvc, rbac)
 	}
 
 	// --- Restaurant & Delivery routes ---
@@ -2150,16 +2195,38 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 	}
 
 	// --- Admin finance routes ---
+	//
+	// These five are UNREACHABLE today and have been: requireUserID() reads
+	// c.GetString("user_id"), which is populated by RequireAuthContext — and this
+	// group hangs off the bare engine, not off the authenticated `finance` group,
+	// so nothing ever sets it. Verified against the running server: every route
+	// here answers 401 to a valid admin token, not only to an anonymous caller.
+	//
+	// Nothing calls them. The admin console's KYC screens use the separate, RBAC-gated
+	// /api/finance/admin/kyc group registered above (finance.admin.kyc), which is why
+	// the console works despite these being dead.
+	//
+	// They are left registered rather than deleted because the admin wallet-lookup
+	// work in PR #91 is still open against this surface — deleting it would collide.
+	// But dead-and-open is a trap: the obvious "fix" for a 401 is to attach auth to
+	// the group, and doing that alone would have published KYC APPROVAL and any user's
+	// balance and transaction history to every signed-in caller. That is exactly how
+	// the crowdfunding admin surface came to be readable by campaign owners.
+	//
+	// So the permissions go on NOW, while the routes are dormant: whoever wires the
+	// auth inherits a closed door instead of an open one. No behaviour changes today —
+	// requireUserID() still aborts first, and these still 401 — this only decides what
+	// they become when they wake up.
 	adminFinance := r.Group("/api/finance/admin")
 	adminFinance.Use(requireUserID())
 	if cfg.FeatureKYCEnabled {
-		adminFinance.GET("/kyc/pending", kycHandler.ListPending)
-		adminFinance.POST("/kyc/users/:user_id/approve", kycHandler.Approve)
-		adminFinance.POST("/kyc/users/:user_id/reject", kycHandler.Reject)
+		adminFinance.GET("/kyc/pending", middleware.RequirePermission(rbac, "finance.admin.kyc"), kycHandler.ListPending)
+		adminFinance.POST("/kyc/users/:user_id/approve", middleware.RequirePermission(rbac, "finance.admin.kyc"), kycHandler.Approve)
+		adminFinance.POST("/kyc/users/:user_id/reject", middleware.RequirePermission(rbac, "finance.admin.kyc"), kycHandler.Reject)
 	}
 	if cfg.FeatureWalletEnabled {
-		adminFinance.GET("/wallets/:user_id/balance", walletHandler.AdminGetBalance)
-		adminFinance.GET("/wallets/:user_id/transactions", walletHandler.AdminListTransactions)
+		adminFinance.GET("/wallets/:user_id/balance", middleware.RequirePermission(rbac, "finance.admin.transfers"), walletHandler.AdminGetBalance)
+		adminFinance.GET("/wallets/:user_id/transactions", middleware.RequirePermission(rbac, "finance.admin.transfers"), walletHandler.AdminListTransactions)
 	}
 
 	// --- Merchant Onboarding & Role-Upgrade routes ---

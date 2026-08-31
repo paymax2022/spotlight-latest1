@@ -9,10 +9,11 @@ package orchestration
 // created for virtual accounts — we reuse orch_collections, which keys on
 // customer_id (= the business/tenant id, the authenticated customer).
 //
-// Collection EVENTS (inbound credits into a virtual account) have no persistence
-// yet — no provider collection feed is wired — so ListCollectionEvents returns an
-// empty (non-nil) slice. When the inbound webhook lands, back this with a table
-// and normalize provider events into it.
+// Collection EVENTS (inbound credits into a virtual account) persist to
+// orch_collection_events, written inside the crediting transaction by
+// Store.ApplyCollection (webhooks.go applyCollectionEvent). A row here therefore
+// always corresponds to money that actually moved — the feed cannot show a
+// deposit the balance does not reflect, or vice versa.
 //
 // A nil store makes the handlers fall back to the empty-slice stubs.
 
@@ -89,5 +90,28 @@ func (s *sqlCollectionStore) ListVirtualAccounts(ctx context.Context, business s
 // ListCollectionEvents returns inbound collection credits. Not yet persisted (no
 // provider collection feed wired) → empty non-nil slice so the screen renders.
 func (s *sqlCollectionStore) ListCollectionEvents(ctx context.Context, business string) ([]CollectionEvent, error) {
-	return make([]CollectionEvent, 0), nil
+	// id breaks created_at ties so the ordering is total — two deposits landing in
+	// the same millisecond must not be able to swap places between reads.
+	rows, err := s.db.Query(ctx, `
+		SELECT id, virtual_account_id, amount_minor, currency, sender_name, reference, created_at
+		FROM orch_collection_events
+		WHERE customer_id=$1
+		ORDER BY created_at DESC, id DESC`, business)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := make([]CollectionEvent, 0)
+	for rows.Next() {
+		var e CollectionEvent
+		var created time.Time
+		if err := rows.Scan(&e.ID, &e.VirtualAccountID, &e.Amount.Amount, &e.Amount.Currency,
+			&e.SenderName, &e.Reference, &created); err != nil {
+			return nil, err
+		}
+		e.CreatedAt = created.UTC().Format(time.RFC3339)
+		out = append(out, e)
+	}
+	return out, rows.Err()
 }

@@ -95,6 +95,7 @@ function normalizeContestPayload(body: Record<string, unknown>): Partial<Contest
       : [],
     categoryQuestionSet: contestCategory,
     rulesText: String(body.rulesText || '').trim(),
+    bannerImageUrl: String(body.bannerImageUrl || '').trim(),
   };
 
   // Only touch the form schema when the caller actually sends one, so a partial

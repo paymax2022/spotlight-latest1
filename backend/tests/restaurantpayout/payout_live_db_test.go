@@ -45,6 +45,8 @@ import (
 
 	"spotlight/backend/internal/finance/ledger"
 	"spotlight/backend/internal/restaurant"
+
+	"spotlight/backend/internal/testsupport"
 )
 
 // liveDBPool connects using TEST_DATABASE_URL, or skips.
@@ -93,6 +95,7 @@ func seedUser(t *testing.T, ctx context.Context, pool *pgxpool.Pool) string {
 	if _, err := pool.Exec(ctx, `INSERT INTO auth.users (id, email) VALUES ($1, $2) ON CONFLICT DO NOTHING`, id, id+"@seed.test"); err != nil {
 		t.Fatalf("seed auth.users: %v", err)
 	}
+	testsupport.CleanupUser(t, pool, id)
 	return id
 }
 
@@ -169,7 +172,7 @@ func ledgerEntryCount(t *testing.T, ctx context.Context, pool *pgxpool.Pool, ref
 //     provider is never double-paid) and the run stays PAID.
 func TestLiveDB_Payout_BuildThenProcess_PostsOneBalancedTransfer_ReplaySafe(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	led := newLiveLedgerService(pool)
 	svc := newLiveRestaurantService(pool, led)
 	ctx := context.Background()
@@ -310,4 +313,3 @@ func TestLiveDB_Payout_BuildThenProcess_PostsOneBalancedTransfer_ReplaySafe(t *t
 		}
 	}
 }
-

@@ -43,6 +43,7 @@ export interface BackendContest {
   contestant_count?: number;
   total_votes?: number;
   rules_text?: string;
+  banner_image_url?: string;
 }
 
 /**
@@ -80,6 +81,7 @@ export function mapContest(
     freeVotesPerDay: raw.free_votes_per_user ?? 0,
     paidVotingEnabled: (raw.paid_vote_kobo ?? 0) > 0,
     rulesText: raw.rules_text || undefined,
+    bannerImage: raw.banner_image_url || undefined,
   };
 }
 

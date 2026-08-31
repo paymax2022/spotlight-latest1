@@ -1,13 +1,19 @@
 // ── Insurance / "Protection" — Constants & module tokens ─────────────────────
-// Mock-first convention (mirrors connect/crowdfunding). Flip to false (or set
-// EXPO_PUBLIC_INSURANCE_USE_MOCK=false) once the live Go-backend insurance
-// endpoints are reachable via the frontend-web proxy.
+// LIVE-first. The member surface (catalog, product detail, buy, policies,
+// claims) talks to the real MyCover-backed endpoints through
+// `src/features/insurance/live/*`, which has NO mock fallback at all.
+//
+// `USE_MOCK` now defaults to FALSE and survives only for the fixture-backed
+// side surfaces that still have no live endpoint (agent, partner, embedded) and
+// for the unit tests. It must never again decide what a real user is shown: a
+// screen that silently serves invented data is worse than an error, because
+// nobody goes looking for a bug they cannot see.
 
 import { mockAllowed } from '@/config/mockPolicy';
 import { Colors } from '@/constants/colors';
 import type { KycTier, ProductLineGroup } from '../types';
 
-export const USE_MOCK = mockAllowed(process.env.EXPO_PUBLIC_INSURANCE_USE_MOCK, true);
+export const USE_MOCK = mockAllowed(process.env.EXPO_PUBLIC_INSURANCE_USE_MOCK, false);
 
 // Insurance REST namespace (frontend-web proxy → Go /api/finance/insurance/*).
 export const INSURANCE_API_BASE = '/api/v1/insurance';

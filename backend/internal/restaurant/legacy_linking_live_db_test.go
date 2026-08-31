@@ -25,6 +25,8 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+
+	"spotlight/backend/internal/testsupport"
 )
 
 func TestLiveDB_LinkingGrandfathersAnUnlinkedOwner(t *testing.T) {
@@ -44,6 +46,7 @@ func TestLiveDB_LinkingGrandfathersAnUnlinkedOwner(t *testing.T) {
 		`INSERT INTO auth.users (id,email) VALUES ($1,$2) ON CONFLICT DO NOTHING`, owner, owner+"@seed.test"); err != nil {
 		t.Fatalf("seed user: %v", err)
 	}
+	testsupport.CleanupUser(t, pool, owner)
 	if _, err := pool.Exec(ctx,
 		`INSERT INTO restaurants (id, owner_id, name, address, is_open) VALUES ($1,$2,'Legacy Kitchen','1 St',TRUE)`,
 		shop, owner); err != nil {
@@ -108,6 +111,7 @@ func TestLiveDB_LinkingIsIdempotent(t *testing.T) {
 		`INSERT INTO auth.users (id,email) VALUES ($1,$2) ON CONFLICT DO NOTHING`, owner, owner+"@seed.test"); err != nil {
 		t.Fatalf("seed user: %v", err)
 	}
+	testsupport.CleanupUser(t, pool, owner)
 	if _, err := pool.Exec(ctx,
 		`INSERT INTO restaurants (id, owner_id, name, address, is_open) VALUES ($1,$2,'Idem Legacy','1 St',TRUE)`,
 		shop, owner); err != nil {
@@ -241,6 +245,7 @@ func TestLiveDB_UnclaimedRestaurantsAreDetectable(t *testing.T) {
 		orphanOwner, orphanOwner+"@seed.test"); err != nil {
 		t.Fatalf("seed user: %v", err)
 	}
+	testsupport.CleanupUser(t, pool, orphanOwner)
 	if _, err := pool.Exec(ctx,
 		`INSERT INTO restaurants (id, owner_id, name, address, is_open) VALUES ($1,$2,'Unclaimed Kitchen','1 St',FALSE)`,
 		orphanShop, orphanOwner); err != nil {

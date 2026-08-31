@@ -57,6 +57,20 @@ export default function BuyVotesScreen() {
           </View>
         )}
 
+        {/* Paid voting can be "available" because the contest sets a per-vote
+            price (paid_vote_kobo > 0) while having no packages on sale. That
+            combination suppressed the closed banner AND rendered an empty grid,
+            so the screen came up blank with a "Select a package" button that did
+            nothing. Say what is actually true instead. */}
+        {!votingClosed && pkgs.length === 0 && (
+          <View style={styles.closedBanner}>
+            <Lock size={16} color={Colors.error} strokeWidth={2} />
+            <Text style={styles.closedText}>
+              No vote packages are on sale for this contest yet. Please check back later.
+            </Text>
+          </View>
+        )}
+
         <View style={styles.grid}>
           {pkgs.map((pkg) => (
             <VotePackageCard
@@ -89,9 +103,11 @@ export default function BuyVotesScreen() {
           label={
             votingClosed
               ? 'Voting is closed'
-              : selected
-                ? `Continue · ${formatAmount(selected.amount)}`
-                : 'Select a package'
+              : pkgs.length === 0
+                ? 'No packages available'
+                : selected
+                  ? `Continue · ${formatAmount(selected.amount)}`
+                  : 'Select a package'
           }
           onPress={() => {
             if (!selected || votingClosed) return;

@@ -19,6 +19,8 @@ import (
 	goredis "github.com/redis/go-redis/v9"
 
 	"spotlight/backend/internal/finance/ledger"
+
+	"spotlight/backend/internal/testsupport"
 )
 
 func disputesLivePool(t *testing.T) *pgxpool.Pool {
@@ -50,7 +52,7 @@ func walletBalance(t *testing.T, ctx context.Context, pool *pgxpool.Pool, userID
 
 func TestLiveDB_FoodDisputes(t *testing.T) {
 	pool := disputesLivePool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	led := ledger.NewService(ledger.NewRepository(pool), (*goredis.Client)(nil))
 	svc := NewService(pool, nil).WithLedger(led)
@@ -63,6 +65,7 @@ func TestLiveDB_FoodDisputes(t *testing.T) {
 		if _, err := pool.Exec(ctx, `INSERT INTO auth.users (id,email) VALUES ($1,$2) ON CONFLICT DO NOTHING`, u, u+"@seed.test"); err != nil {
 			t.Fatalf("seed user: %v", err)
 		}
+		testsupport.CleanupUser(t, pool, u)
 	}
 	restID := uuid.New().String()
 	if _, err := pool.Exec(ctx, `INSERT INTO restaurants (id, owner_id, name, address, is_open) VALUES ($1,$2,'Dispute Kitchen','1 St',TRUE)`, restID, owner); err != nil {

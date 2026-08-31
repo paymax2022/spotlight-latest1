@@ -20,6 +20,8 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+
+	"spotlight/backend/internal/testsupport"
 )
 
 const testPackFeeKobo = 20_000 // ₦200, the platform default
@@ -29,7 +31,7 @@ const testPackFeeKobo = 20_000 // ₦200, the platform default
 // without the platform or the rider taking a cut.
 func TestLiveDB_PackagingChargedAndPaidWholeToRestaurant(t *testing.T) {
 	pool := promoOrderPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	f := newPromoOrderFixture(t, ctx, pool, "Packaging Kitchen", 450_000)
 
@@ -136,7 +138,7 @@ func TestLiveDB_PackagingChargedAndPaidWholeToRestaurant(t *testing.T) {
 // is charged as 2, not 99.
 func TestLiveDB_PackagingPackCountIsClampedServerSide(t *testing.T) {
 	pool := promoOrderPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	f := newPromoOrderFixture(t, ctx, pool, "Clamp Kitchen", 300_000)
 
@@ -167,7 +169,7 @@ func TestLiveDB_PackagingPackCountIsClampedServerSide(t *testing.T) {
 // a client that sends no count is charged for one pack rather than nothing.
 func TestLiveDB_PackagingOmittedCountStillChargesOnePack(t *testing.T) {
 	pool := promoOrderPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	f := newPromoOrderFixture(t, ctx, pool, "Default Pack Kitchen", 300_000)
 
@@ -193,7 +195,7 @@ func TestLiveDB_PackagingOmittedCountStillChargesOnePack(t *testing.T) {
 // legitimate choice that must cost the customer nothing.
 func TestLiveDB_PackagingFreeWhenOwnerSetsZero(t *testing.T) {
 	pool := promoOrderPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	f := newPromoOrderFixture(t, ctx, pool, "Free Pack Kitchen", 300_000)
 
@@ -224,7 +226,7 @@ func TestLiveDB_PackagingFreeWhenOwnerSetsZero(t *testing.T) {
 // rate — the owner sets their own price, and the next order is charged at it.
 func TestLiveDB_OwnerSetsPackagingPrice(t *testing.T) {
 	pool := promoOrderPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	f := newPromoOrderFixture(t, ctx, pool, "Owner Priced Kitchen", 300_000)
 
@@ -261,7 +263,7 @@ func TestLiveDB_OwnerSetsPackagingPrice(t *testing.T) {
 // is object-level authorized — not merely route-level.
 func TestLiveDB_PackagingPriceIsOwnerOnly(t *testing.T) {
 	pool := promoOrderPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	f := newPromoOrderFixture(t, ctx, pool, "Guarded Kitchen", 300_000)
 
@@ -270,6 +272,7 @@ func TestLiveDB_PackagingPriceIsOwnerOnly(t *testing.T) {
 		stranger, stranger+"@seed.test"); err != nil {
 		t.Fatalf("seed stranger: %v", err)
 	}
+	testsupport.CleanupUser(t, pool, stranger)
 	if _, err := f.svc.UpdateRestaurant(ctx, f.restID, stranger, UpdateRestaurantRequest{
 		PackagingFeeKobo: ptrInt64(999_000),
 	}); err == nil {
@@ -282,7 +285,7 @@ func TestLiveDB_PackagingPriceIsOwnerOnly(t *testing.T) {
 // charged to real customers.
 func TestLiveDB_PackagingPriceRejectsNonsense(t *testing.T) {
 	pool := promoOrderPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	f := newPromoOrderFixture(t, ctx, pool, "Nonsense Kitchen", 300_000)
 

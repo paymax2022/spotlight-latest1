@@ -240,11 +240,17 @@ type SavedSearch struct {
 
 // Category mirrors mkt_categories (subset consumed by the API).
 type Category struct {
-	ID              string          `json:"id"`
-	MarketID        string          `json:"market_id"`
-	ParentID        *string         `json:"parent_id,omitempty"`
-	Slug            string          `json:"slug"`
-	Name            string          `json:"name"`
+	ID       string  `json:"id"`
+	MarketID string  `json:"market_id"`
+	ParentID *string `json:"parent_id,omitempty"`
+	Slug     string  `json:"slug"`
+	Name     string  `json:"name"`
+	// Icon is a LUCIDE ICON NAME (e.g. "Car"), not a URL or a glyph: the client
+	// renders it as Icons[icon]. Empty means the client's Package fallback.
+	Icon string `json:"icon,omitempty"`
+	// SortOrder places a category within its parent. Ordering by name alone put
+	// Agriculture first and buried Vehicles and Property mid-alphabet.
+	SortOrder       int             `json:"sort_order"`
 	AttributeSchema json.RawMessage `json:"attribute_schema"`
 	RiskTier        int             `json:"risk_tier"`
 	CommissionBps   int             `json:"commission_bps"`

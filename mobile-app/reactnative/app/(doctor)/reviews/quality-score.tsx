@@ -57,7 +57,7 @@ const styles = StyleSheet.create({
   safe:        { flex: 1, backgroundColor: Colors.background },
   content:     { paddingHorizontal: Spacing.containerMargin, paddingTop: Spacing.md, paddingBottom: Platform.OS === 'ios' ? 40 : 24, gap: Spacing.md, flexGrow: 1 },
   hero:        { alignItems: 'center', gap: Spacing.xs, padding: Spacing.cardPadding, borderRadius: Radius.xl, backgroundColor: Colors.surfaceContainerLowest, borderWidth: 1 },
-  score:       { ...Typography.displayLg, fontSize: 52, lineHeight: 56 },
+  score:       { ...Typography.displayLg, fontSize: 52, letterSpacing: -1.04, lineHeight: 56 },
   scoreSuffix: { ...Typography.titleMd, color: Colors.onSurfaceVariant },
   grade:       { ...Typography.titleMd, color: Colors.onSurface },
   updated:     { ...Typography.caption, color: Colors.onSurfaceVariant },

@@ -130,6 +130,69 @@ func (r *Repository) DeleteBlock(ctx context.Context, id string) error {
 	return nil
 }
 
+// InsertFollow creates a follow row. followSelf is rejected by the CHECK
+// constraint (belt-and-braces — the service layer already rejects it first).
+func (r *Repository) InsertFollow(ctx context.Context, followerID, sellerID string) error {
+	_, err := r.db.Exec(ctx, `
+		INSERT INTO public.mkt_seller_follows (follower_id, seller_id)
+		VALUES ($1,$2)`, followerID, sellerID)
+	if err != nil {
+		if isUniqueViolation(err) {
+			return nil // already following — idempotent, not an error
+		}
+		return wrapInternal("insert follow", err)
+	}
+	return nil
+}
+
+// DeleteFollow removes a follow row. Keyed by (follower_id, seller_id) rather
+// than a row id — the frontend only ever holds the seller's id (unfollowing
+// from a seller's profile), so this avoids a round trip to look one up first.
+// Deleting a row that doesn't exist is a no-op, matching InsertFollow's
+// idempotency the other direction.
+func (r *Repository) DeleteFollow(ctx context.Context, followerID, sellerID string) error {
+	_, err := r.db.Exec(ctx, `
+		DELETE FROM public.mkt_seller_follows WHERE follower_id=$1 AND seller_id=$2`,
+		followerID, sellerID)
+	if err != nil {
+		return wrapInternal("delete follow", err)
+	}
+	return nil
+}
+
+// ListFollows returns the caller's followed sellers, newest-first, each
+// enriched with the seller's live name/avatar (public.user_profiles) and
+// trust signals (public.mkt_trust_scores / a live active-listings count) —
+// never a stored snapshot.
+func (r *Repository) ListFollows(ctx context.Context, followerID string) ([]FollowedSeller, error) {
+	rows, err := r.db.Query(ctx, `
+		SELECT
+			f.id, f.seller_id,
+			COALESCE(up.full_name, '') AS seller_name,
+			up.avatar_url,
+			COALESCE(ts.trust_score, 0.5) AS trust_score,
+			(SELECT count(*) FROM public.mkt_listings l WHERE l.seller_id = f.seller_id AND l.status = 'active') AS active_listings,
+			f.created_at
+		FROM public.mkt_seller_follows f
+		LEFT JOIN public.user_profiles up ON up.id = f.seller_id
+		LEFT JOIN public.mkt_trust_scores ts ON ts.user_id = f.seller_id
+		WHERE f.follower_id = $1
+		ORDER BY f.created_at DESC`, followerID)
+	if err != nil {
+		return nil, wrapInternal("list follows", err)
+	}
+	defer rows.Close()
+	out := []FollowedSeller{}
+	for rows.Next() {
+		var f FollowedSeller
+		if err := rows.Scan(&f.ID, &f.SellerID, &f.SellerName, &f.AvatarURL, &f.TrustScore, &f.ActiveListings, &f.FollowedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, f)
+	}
+	return out, rows.Err()
+}
+
 // ListBlocks returns the caller's blocked users newest-first.
 func (r *Repository) ListBlocks(ctx context.Context, userID string) ([]Block, error) {
 	rows, err := r.db.Query(ctx, `
@@ -207,12 +270,35 @@ func (r *Repository) SearchListingsFallback(ctx context.Context, f SearchFallbac
 		args = append(args, val)
 		q += cond + "$" + itoa(len(args))
 	}
+	// Market scope. Every other filter here is optional and caller-supplied; this one
+	// is a boundary. Without it the fallback answered a market-scoped browse with
+	// every market's listings — GET /categories is scoped to one market, so the two
+	// halves of the same screen disagreed about which market the user was shopping in.
+	if f.MarketID != "" {
+		add(" AND market_id = ", f.MarketID)
+	}
 	if f.Q != "" {
 		add(" AND title ILIKE '%' || ", f.Q)
 		q += " || '%'"
 	}
 	if f.CategoryID != "" {
-		add(" AND category_id = ", f.CategoryID)
+		// Browsing a category includes everything filed UNDER it, not just rows
+		// carrying that exact id. Listings live on leaves — a car is filed in
+		// "Cars", never in "Vehicles" — so an equality match answered every main
+		// category with an empty page while its children held the stock. That
+		// became reachable the moment the flat category list was grouped into
+		// mains with subcategories.
+		//
+		// The recursive walk degrades to a single row for a leaf, so browsing a
+		// subcategory behaves exactly as it did before.
+		add(` AND category_id IN (
+			WITH RECURSIVE sub(id) AS (
+				SELECT id FROM public.mkt_categories WHERE id = `, f.CategoryID)
+		q += `::uuid
+				UNION ALL
+				SELECT c.id FROM public.mkt_categories c JOIN sub s ON c.parent_id = s.id
+			)
+			SELECT id FROM sub)`
 	}
 	if f.Condition != "" {
 		add(" AND condition = ", f.Condition)
@@ -242,6 +328,9 @@ func (r *Repository) SearchListingsFallback(ctx context.Context, f SearchFallbac
 
 // SearchFallbackFilter is the parsed filter set for the Postgres search fallback.
 type SearchFallbackFilter struct {
+	// MarketID scopes the search to one market. It is always set (parseSearchFallback
+	// falls back to DefaultMarketID) so the fallback can never answer across markets.
+	MarketID   string
 	Q          string
 	CategoryID string
 	Condition  string

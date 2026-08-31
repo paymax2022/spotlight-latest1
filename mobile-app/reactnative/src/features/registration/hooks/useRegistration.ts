@@ -65,6 +65,21 @@ export function useStatus(id: string) {
   });
 }
 
+/**
+ * Voting context for an application. Polls while the contest is open so the
+ * applicant's vote count moves without a manual refresh; disabled entirely for
+ * an application that is not votable, so a rejected or pending one costs
+ * nothing.
+ */
+export function useRegistrationVoting(id: string) {
+  return useQuery({
+    queryKey: [KEY, 'voting', id],
+    queryFn: () => reg.getRegistrationVoting(id),
+    enabled: !!id,
+    refetchInterval: (query) => (query.state.data?.votable ? 30_000 : false),
+  });
+}
+
 export function useWithdraw(id: string) {
   const qc = useQueryClient();
   return useMutation({
@@ -107,4 +122,20 @@ export function useVerifyRegistrationPayment(id: string) {
 
 export function useUploadFile() {
   return useMutation({ mutationFn: (file: PickedUpload) => reg.uploadFile(file) });
+}
+
+/**
+ * The signed-in user's live application for a contest, or null. Used by the
+ * contest screen to offer "Manage your application" instead of a second apply
+ * button — the gap that let one account accumulate five applications to the
+ * same contest.
+ */
+export function useMyRegistrationForContest(target: { contestId?: string; contestSlug?: string }) {
+  const key = target.contestId ?? target.contestSlug ?? '';
+  return useQuery({
+    queryKey: [KEY, 'for-contest', key],
+    queryFn: () => reg.getMyRegistrationForContest(target),
+    enabled: !!key,
+    staleTime: 15_000,
+  });
 }

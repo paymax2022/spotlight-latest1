@@ -43,7 +43,7 @@ const fixtureCampaigns: Campaign[] = [
     duration_days: 7,
     creative: {
       headline: 'Jollof Friday — 20% off all combos',
-      image_ref: 'r2://spotlight-open-mic/placement/lagos_eats_jollof.jpg',
+      image_ref: 'r2://example-bucket/placement/lagos_eats_jollof.jpg',
       cta: 'Order now',
       deep_link: 'spotlight://restaurant/rst_889',
     },
@@ -68,7 +68,7 @@ const fixtureCampaigns: Campaign[] = [
     duration_days: 14,
     creative: {
       headline: 'Airport runs from ₦8,000 — book in 30s',
-      image_ref: 'r2://spotlight-open-mic/placement/glam_rides_airport.jpg',
+      image_ref: 'r2://example-bucket/placement/glam_rides_airport.jpg',
       cta: 'Book a ride',
       deep_link: 'spotlight://mobility/operator/opr_204',
     },
@@ -93,7 +93,7 @@ const fixtureCampaigns: Campaign[] = [
     duration_days: 7,
     creative: {
       headline: 'Free first telemedicine consult this week',
-      image_ref: 'r2://spotlight-open-mic/placement/med_plus_consult.jpg',
+      image_ref: 'r2://example-bucket/placement/med_plus_consult.jpg',
       cta: 'Start consult',
       deep_link: 'spotlight://telemedicine/provider/hp_551',
     },
@@ -118,7 +118,7 @@ const fixtureCampaigns: Campaign[] = [
     duration_days: 14,
     creative: {
       headline: 'Lekki Gardens — last 4 units, move-in ready',
-      image_ref: 'r2://spotlight-open-mic/placement/estate_pro_lekki.jpg',
+      image_ref: 'r2://example-bucket/placement/estate_pro_lekki.jpg',
       cta: 'View listing',
       deep_link: 'spotlight://estate/est_119',
     },

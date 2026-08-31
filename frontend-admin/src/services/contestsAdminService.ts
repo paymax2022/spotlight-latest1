@@ -90,6 +90,12 @@ export interface FullContest {
   status?: string;
   /** Contest-specific voting rules/policies shown above the platform defaults on mobile. */
   rulesText?: string;
+  /**
+   * Banner image shown on the mobile contest list and detail screens.
+   * Set by uploadContestBanner(); mobile's ContestCard/ContestHero already
+   * render it and fall back to a placeholder tile when it is empty.
+   */
+  bannerImageUrl?: string;
 }
 
 async function readJsonOrThrow(res: Response, label: string): Promise<Record<string, unknown>> {
@@ -249,4 +255,35 @@ export async function advanceStageSurvivors(slug: string, stageNumber: number): 
   });
   const json = await readJsonOrThrow(res, 'Advancing stage survivors');
   return json.result as AdvanceStageResult;
+}
+
+// ── Contest banner upload ────────────────────────────────────────────────────
+
+/**
+ * Upload a contest banner and return the URL to store in `bannerImageUrl`.
+ *
+ * Deliberately does NOT go through authHeaders(): that sets
+ * `Content-Type: application/json`, and a multipart body must carry the
+ * browser-generated boundary instead. Setting it by hand produces a body the
+ * server cannot parse, with a 400 that looks like a bad file rather than a bad
+ * header.
+ */
+export async function uploadContestBanner(file: File): Promise<string> {
+  const token = typeof window !== 'undefined'
+    ? localStorage.getItem('spotlight_admin_access_token') || ''
+    : '';
+  const form = new FormData();
+  form.append('file', file);
+
+  const res = await fetch(`${webBase()}/api/admin/contests/banner`, {
+    method: 'POST',
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+    body: form,
+  });
+  const json = await readJsonOrThrow(res, 'Uploading banner');
+  const upload = (json.upload ?? (json.data as Record<string, unknown> | undefined)?.upload) as
+    { url?: string } | undefined;
+  const url = upload?.url;
+  if (!url) throw new Error('Uploading banner failed: the server returned no URL');
+  return url;
 }

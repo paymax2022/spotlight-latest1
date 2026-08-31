@@ -13,6 +13,8 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"spotlight/backend/internal/testsupport"
 )
 
 func menuCartPool(t *testing.T) *pgxpool.Pool {
@@ -33,7 +35,7 @@ func menuCartPool(t *testing.T) *pgxpool.Pool {
 
 func TestLiveDB_MenuCart(t *testing.T) {
 	pool := menuCartPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	svc := NewService(pool, nil)
 
@@ -41,6 +43,7 @@ func TestLiveDB_MenuCart(t *testing.T) {
 	if _, err := pool.Exec(ctx, `INSERT INTO auth.users (id,email) VALUES ($1,$2) ON CONFLICT DO NOTHING`, owner, owner+"@seed.test"); err != nil {
 		t.Fatalf("seed user: %v", err)
 	}
+	testsupport.CleanupUser(t, pool, owner)
 	restID := uuid.New().String()
 	if _, err := pool.Exec(ctx, `INSERT INTO restaurants (id, owner_id, name, address, is_open) VALUES ($1,$2,'MenuCart Kitchen','1 St',TRUE)`, restID, owner); err != nil {
 		t.Fatalf("seed restaurant: %v", err)
@@ -83,6 +86,7 @@ func TestLiveDB_MenuCart(t *testing.T) {
 	// A ₦2,500 cart (below the ₦5,000 minimum) is rejected before escrow.
 	customer := uuid.New().String()
 	_, _ = pool.Exec(ctx, `INSERT INTO auth.users (id,email) VALUES ($1,$2) ON CONFLICT DO NOTHING`, customer, customer+"@seed.test")
+	testsupport.CleanupUser(t, pool, customer)
 	_, err = svc.PlaceOrder(ctx, restID, customer, PlaceOrderRequest{
 		Items:           []OrderItemInput{{MenuItemID: it.ID, Quantity: 1}},
 		DeliveryAddress: "1 Test St", IdempotencyKey: "mincart-" + uuid.New().String(),

@@ -10,16 +10,21 @@ import { Spacing } from '@/constants/spacing';
 import { Radius } from '@/constants/radius';
 import { shadow1 } from '@/constants/shadows';
 import PrimaryButton from '@/components/PrimaryButton';
+import { VotingColors } from '@/features/voting/constants/voting.constants';
 import { useContestantProfile } from '@/features/voting/hooks/useContestantProfile';
+import { useContestantSupporters } from '@/features/voting/hooks/useContestantSupporters';
 import ContestantStatsCard from '@/features/voting/components/ContestantStatsCard';
 import ShareBottomSheet from '@/features/voting/components/ShareBottomSheet';
 import RankBadge from '@/features/voting/components/RankBadge';
-import { formatVoteCount } from '@/features/voting/utils/voteFormatters';
+import { formatVoteCount, formatDate } from '@/features/voting/utils/voteFormatters';
 
 export default function ContestantDashboardScreen() {
   const { contestantId } = useLocalSearchParams<{ contestantId: string }>();
   const [shareOpen, setShareOpen] = React.useState(false);
   const { data: contestant } = useContestantProfile(contestantId ?? '');
+  // Contestant-private: the server refuses anyone else, so an error here just
+  // means "not your campaign" and the section stays hidden.
+  const supporters = useContestantSupporters(contestantId);
 
   if (!contestant) {
     return (
@@ -64,6 +69,40 @@ export default function ContestantDashboardScreen() {
 
         {/* Stats */}
         <ContestantStatsCard contestant={contestant} />
+
+        {/* Who voted for you. Rendered only when the server actually returned a
+            list — for any other viewer it answers 403 and this stays hidden,
+            so the section is its own authorisation signal. */}
+        {supporters.data && supporters.data.length > 0 ? (
+          <View style={[styles.supportersCard, shadow1]}>
+            <Text style={styles.supportersTitle}>
+              Who voted for you ({supporters.data.length})
+            </Text>
+            {supporters.data.slice(0, 25).map((s, i) => (
+              <View key={`${s.createdAt}-${i}`} style={[styles.supporterRow, i > 0 && styles.supporterDivider]}>
+                <View style={{ flex: 1 }}>
+                  {/* An anonymous free vote arrives with no name at all — the
+                      server blanks it rather than trusting this screen to. */}
+                  <Text style={[styles.supporterName, s.anonymous && styles.supporterAnon]} numberOfLines={1}>
+                    {s.anonymous ? 'Anonymous voter' : s.voterName}
+                  </Text>
+                  <Text style={styles.supporterMeta}>{formatDate(s.createdAt)}</Text>
+                </View>
+                <View style={styles.supporterRight}>
+                  <Text style={styles.supporterVotes}>+{s.quantity}</Text>
+                  <Text style={[styles.supporterType, s.paid ? { color: Colors.secondary } : { color: VotingColors.freeVote }]}>
+                    {s.paid ? 'Paid' : 'Free'}
+                  </Text>
+                </View>
+              </View>
+            ))}
+            {supporters.data.length > 25 ? (
+              <Text style={styles.supporterMore}>
+                Showing the 25 most recent of {supporters.data.length}.
+              </Text>
+            ) : null}
+          </View>
+        ) : null}
 
         {/* Share profile */}
         <View style={[styles.shareCard, shadow1]}>
@@ -110,6 +149,20 @@ const styles = StyleSheet.create({
   heroInfo:  { flex: 1 },
   heroName:  { ...Typography.titleLg, color: Colors.onSurface },
   heroVotes: { ...Typography.bodyMd, color: Colors.primary, fontWeight: '600' as const },
+  supportersCard: {
+    backgroundColor: Colors.surface, borderRadius: Radius.lg,
+    padding: Spacing.md, marginBottom: Spacing.md, gap: 2,
+  },
+  supportersTitle: { ...Typography.titleMd, color: Colors.onSurface, marginBottom: Spacing.xs },
+  supporterRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm, paddingVertical: Spacing.sm },
+  supporterDivider: { borderTopWidth: 1, borderTopColor: Colors.outlineVariant },
+  supporterName: { ...Typography.labelMd, color: Colors.onSurface },
+  supporterAnon: { color: Colors.onSurfaceVariant, fontStyle: 'italic' as const },
+  supporterMeta: { ...Typography.labelSm, color: Colors.onSurfaceVariant },
+  supporterRight: { alignItems: 'flex-end' },
+  supporterVotes: { ...Typography.labelMd, color: Colors.onSurface, fontWeight: '700' as const },
+  supporterType: { ...Typography.labelSm },
+  supporterMore: { ...Typography.labelSm, color: Colors.onSurfaceVariant, paddingTop: Spacing.xs },
   progressHint: { backgroundColor: Colors.surfaceContainerLow, borderRadius: Radius.md, padding: Spacing.sm },
   progressText: { ...Typography.labelSm, color: Colors.primary, textAlign: 'center' },
   shareCard: { backgroundColor: Colors.surfaceContainerLowest, borderRadius: Radius.xl, padding: Spacing.lg, borderWidth: 1, borderColor: Colors.surfaceContainerHigh, gap: Spacing.sm },

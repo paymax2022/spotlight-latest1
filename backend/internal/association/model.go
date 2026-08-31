@@ -16,14 +16,18 @@ import "time"
 // ── Dues & payments ──────────────────────────────────────────────────────────
 
 type Invoice struct {
-	ID          string    `json:"id"`
-	Title       string    `json:"title"`
-	Description *string   `json:"description"`
-	AmountKobo  int64     `json:"amountKobo"`
-	Cadence     string    `json:"cadence"`
-	Status      string    `json:"status"`
-	Scope       string    `json:"scope"`
-	DueDate     time.Time `json:"dueDate"`
+	ID          string  `json:"id"`
+	Title       string  `json:"title"`
+	Description *string `json:"description"`
+	AmountKobo  int64   `json:"amountKobo"`
+	Cadence     string  `json:"cadence"`
+	Status      string  `json:"status"`
+	Scope       string  `json:"scope"`
+	// DueDate is nullable in the schema: an ad-hoc or open-ended invoice has no
+	// due date. It was a non-pointer time.Time, so the first invoice ever
+	// created with a NULL due_date failed the row scan — invisible only because
+	// nothing in the repo could create an invoice at all.
+	DueDate *time.Time `json:"dueDate"`
 }
 
 type DuesSummary struct {
@@ -102,6 +106,24 @@ type Chapter struct {
 	MemberCount int     `json:"memberCount"`
 }
 
+// JoinRequirement is one item an applicant must satisfy to join.
+type JoinRequirement struct {
+	ID       string `json:"id"`
+	Label    string `json:"label"`
+	Kind     string `json:"kind"`
+	Required bool   `json:"required"`
+}
+
+// OrgRestrictions are the founder-configured feature gates for members in
+// arrears. GraceDays is the number of days past due before they apply.
+type OrgRestrictions struct {
+	GraceDays     int  `json:"graceDays"`
+	DisableVoting bool `json:"disableVoting"`
+	DisableEvents bool `json:"disableEvents"`
+	DisableChat   bool `json:"disableChat"`
+	DisableCard   bool `json:"disableCard"`
+}
+
 type Organisation struct {
 	OrganisationSummary
 	Description          string               `json:"description"`
@@ -110,6 +132,38 @@ type Organisation struct {
 	RegistrationFeeKobo  int64                `json:"registrationFeeKobo"`
 	MembershipCategories []MembershipCategory `json:"membershipCategories"`
 	Chapters             []Chapter            `json:"chapters"`
+
+	// The client renders all of the following; every one of them was previously
+	// absent from this DTO and present only in the mobile mock fixtures, so the
+	// join and organisation-detail screens dereferenced undefined and crashed as
+	// soon as the module went live.
+	ApprovalSummary  string            `json:"approvalSummary"`
+	Requirements     []JoinRequirement `json:"requirements"`
+	Rules            []string          `json:"rules"`
+	Website          *string           `json:"website"`
+	Branches         []string          `json:"branches"`
+	CommitteeOptions []string          `json:"committeeOptions"`
+	Restrictions     OrgRestrictions   `json:"restrictions"`
+}
+
+// approvalSummary renders the human-readable join path shown on the
+// organisation detail and join screens. Wording matches what the mobile mock
+// previously synthesised client-side, so the copy is unchanged for users.
+func approvalSummary(approvalRule, groupType string) string {
+	switch approvalRule {
+	case "AUTO":
+		return "Members are active immediately — no review required."
+	case "ADMIN":
+		return "An admin reviews each application before activation."
+	case "CHAPTER_THEN_NATIONAL":
+		return "Your chapter admin approves, then national validates."
+	case "PAYMENT_FIRST":
+		return "Membership activates once the registration fee is confirmed."
+	}
+	if groupType == "OPEN" {
+		return "Open group — anyone can join instantly."
+	}
+	return "Membership requires admin approval."
 }
 
 // ── Member identity ───────────────────────────────────────────────────────────
@@ -204,6 +258,11 @@ type AdminAccess struct {
 	RoleLabel    string            `json:"roleLabel"`
 	Jurisdiction string            `json:"jurisdiction"`
 	Can          AdminCapabilities `json:"can"`
+	// OrganisationID is the org the role is held in. The client needs it to
+	// scope admin calls (bulk import's org_id, the chapter list for a member
+	// transfer); without it those flows had no source for the org id at all.
+	OrganisationID   *string `json:"organisationId"`
+	OrganisationName *string `json:"organisationName"`
 }
 
 // ── Directory ─────────────────────────────────────────────────────────────────
@@ -217,6 +276,9 @@ type MemberProfileSummary struct {
 	ChapterName   *string `json:"chapterName"`
 	Status        string  `json:"status"`
 	Profession    *string `json:"profession"`
+	// OrganisationID lets the client scope org-specific lookups (e.g. the
+	// chapter list offered when transferring this member) without guessing.
+	OrganisationID *string `json:"organisationId"`
 }
 
 type MemberProfile struct {
@@ -266,6 +328,10 @@ type MeetingSummary struct {
 	Location      *string `json:"location"`
 	State         string  `json:"state"`
 	AttendeeCount int     `json:"attendeeCount"`
+	// ApprovalStatus is APPROVED for the organisation's calendar. A member's own
+	// proposal appears in their list as PENDING or REJECTED so they can see what
+	// they submitted; nobody else sees it until it is approved.
+	ApprovalStatus string `json:"approvalStatus"`
 }
 
 // ── Tasks ─────────────────────────────────────────────────────────────────────
@@ -278,6 +344,10 @@ type TaskSummary struct {
 	DueDate      *string `json:"dueDate"`
 	AssigneeName string  `json:"assigneeName"`
 	Committee    *string `json:"committee"`
+	// Overdue is derived from due_date on read, not read from `status`. The
+	// OVERDUE status value exists in the schema but nothing writes it, so a late
+	// task still reads ASSIGNED.
+	Overdue bool `json:"overdue"`
 }
 
 // ── Documents ─────────────────────────────────────────────────────────────────
@@ -306,26 +376,59 @@ type CommitteeSummary struct {
 }
 
 type EventSummary struct {
-	ID         string  `json:"id"`
-	Title      string  `json:"title"`
-	StartsAt   string  `json:"startsAt"`
+	ID       string `json:"id"`
+	Title    string `json:"title"`
+	StartsAt string `json:"startsAt"`
+	// Location is COALESCEd to '' in the query: the column is nullable and this
+	// field is not, so a location-less event failed the row scan. The scan error
+	// was swallowed by a `continue`, so in production it would have silently
+	// dropped the event from the list rather than surfacing anything.
 	Location   string  `json:"location"`
 	State      string  `json:"state"`
 	Paid       bool    `json:"paid"`
 	FeeKobo    int64   `json:"feeKobo"`
 	Registered bool    `json:"registered"`
 	CoverURL   *string `json:"coverUrl"`
+	// Rsvp is what the list screen renders; it had no field at all, so a saved
+	// RSVP never showed on the events list.
+	Rsvp *string `json:"rsvp"`
+	// Invited is true when this member was explicitly invited, as opposed to
+	// finding the event in the list themselves. An invitation and an RSVP live on
+	// the same registration row, so being invited says nothing about whether they
+	// have responded.
+	Invited bool `json:"invited"`
 }
 
 // ── Admin ─────────────────────────────────────────────────────────────────────
 
 // AdminOrgOption is one entry in the admin console's org picker.
+// AdminOrgFilter narrows the admin organisation register. Published/Verified are
+// pointers so "unset" is distinguishable from "false".
+type AdminOrgFilter struct {
+	Search    string
+	Category  string
+	Status    string
+	Published *bool
+	Verified  *bool
+	Limit     int
+	Offset    int
+}
+
+// AdminOrgOption is one row of the admin organisation register. It began as a
+// bare picker option (id/name/published/verified/memberCount); the console's
+// register table needed acronym, category, status and createdAt too and was
+// issuing one extra GET /admin/organisations/:id per visible row to get them.
+// Returning them here collapses that back to a single query.
 type AdminOrgOption struct {
-	ID          string `json:"id"`
-	Name        string `json:"name"`
-	Published   bool   `json:"published"`
-	Verified    bool   `json:"verified"`
-	MemberCount int    `json:"memberCount"`
+	ID          string  `json:"id"`
+	Name        string  `json:"name"`
+	Acronym     *string `json:"acronym"`
+	Category    string  `json:"category"`
+	Status      string  `json:"status"`
+	Published   bool    `json:"published"`
+	Verified    bool    `json:"verified"`
+	MemberCount int     `json:"memberCount"`
+	CreatedAt   string  `json:"createdAt"`
 }
 
 type AdminKpis struct {
@@ -348,6 +451,14 @@ type AdminApplicationSummary struct {
 	Paid          bool   `json:"paid"`
 }
 
+// ApplicationDocument is a document submitted with a membership application.
+type ApplicationDocument struct {
+	ID    string  `json:"id"`
+	Label string  `json:"label"`
+	URL   *string `json:"url"`
+	Kind  string  `json:"kind"`
+}
+
 type AdminApplication struct {
 	AdminApplicationSummary
 	Email               string  `json:"email"`
@@ -355,6 +466,20 @@ type AdminApplication struct {
 	Profession          string  `json:"profession"`
 	Sponsor             *string `json:"sponsor"`
 	RegistrationFeeKobo int64   `json:"registrationFeeKobo"`
+
+	// Rendered by the approvals detail screen; both were absent, so the page
+	// crashed on documents.map and printed NaN for the SLA countdown.
+	Documents    []ApplicationDocument `json:"documents"`
+	SLAHoursLeft *int                  `json:"slaHoursLeft"`
+}
+
+// FinanceBreakdownLine is one row of the collected-vs-outstanding split by
+// chapter or by membership category. Amounts are integer kobo.
+type FinanceBreakdownLine struct {
+	Label           string `json:"label"`
+	CollectedKobo   int64  `json:"collectedKobo"`
+	OutstandingKobo int64  `json:"outstandingKobo"`
+	MemberCount     int    `json:"memberCount"`
 }
 
 type FinanceSummary struct {
@@ -363,6 +488,11 @@ type FinanceSummary struct {
 	PaidMembers     int   `json:"paidMembers"`
 	UnpaidMembers   int   `json:"unpaidMembers"`
 	OfflinePending  int   `json:"offlinePending"`
+
+	// The admin finance screen renders both breakdowns; neither existed on the
+	// DTO, so the page crashed on `.map` of undefined as soon as it went live.
+	ByChapter  []FinanceBreakdownLine `json:"byChapter"`
+	ByCategory []FinanceBreakdownLine `json:"byCategory"`
 }
 
 type OfflinePayment struct {

@@ -19,6 +19,8 @@ import (
 
 	"spotlight/backend/internal/finance/ledger"
 	"spotlight/backend/internal/finance/settlement"
+
+	"spotlight/backend/internal/testsupport"
 )
 
 func earningsPool(t *testing.T) *pgxpool.Pool {
@@ -59,7 +61,7 @@ func seedSettledOrder(t *testing.T, ctx context.Context, pool *pgxpool.Pool, res
 
 func TestLiveDB_PayoutsComplete(t *testing.T) {
 	pool := earningsPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	led := ledger.NewService(ledger.NewRepository(pool), (*goredis.Client)(nil))
 	svc := NewService(pool, settlement.NewService(pool, led)).WithLedger(led)
@@ -68,6 +70,7 @@ func TestLiveDB_PayoutsComplete(t *testing.T) {
 	customer := uuid.New().String()
 	for _, u := range []string{owner, customer} {
 		_, _ = pool.Exec(ctx, `INSERT INTO auth.users (id,email) VALUES ($1,$2) ON CONFLICT DO NOTHING`, u, u+"@seed.test")
+		testsupport.CleanupUser(t, pool, u)
 	}
 	// A KYB-approved restaurant is payable; an unverified one is not (PY-007).
 	verified := uuid.New().String()

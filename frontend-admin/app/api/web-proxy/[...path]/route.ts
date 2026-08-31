@@ -57,7 +57,14 @@ async function forward(request: Request, ctx: { params: Promise<{ path: string[]
   if (idempotencyKey) headers['Idempotency-Key'] = idempotencyKey;
 
   const method = request.method;
-  const body = method === 'GET' || method === 'HEAD' ? undefined : await request.text();
+  // Read as BYTES, not text. request.text() decodes as UTF-8, which silently
+  // corrupts any binary body — a multipart image upload arrives with its bytes
+  // replaced by U+FFFD and the file lands unopenable. Every route proxied here
+  // was JSON until contest banner uploads, so text() was harmless; it is not
+  // harmless now. An ArrayBuffer forwards JSON and multipart alike, verbatim,
+  // and the Content-Type (including the multipart boundary) is already
+  // forwarded above.
+  const body = method === 'GET' || method === 'HEAD' ? undefined : await request.arrayBuffer();
 
   try {
     const upstream = await fetch(target, {

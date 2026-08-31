@@ -19,6 +19,8 @@ import (
 
 	"spotlight/backend/internal/finance/tiers"
 	"spotlight/backend/internal/modules"
+
+	"spotlight/backend/internal/testsupport"
 )
 
 func TestLiveDB_GrantOpensModuleButNotTheWallet(t *testing.T) {
@@ -31,12 +33,13 @@ func TestLiveDB_GrantOpensModuleButNotTheWallet(t *testing.T) {
 	if err != nil {
 		t.Fatalf("connect: %v", err)
 	}
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 
 	uid := uuid.New().String()
 	if _, err := pool.Exec(ctx, `INSERT INTO auth.users (id,email) VALUES ($1,$2) ON CONFLICT DO NOTHING`, uid, uid+"@seed.test"); err != nil {
 		t.Fatalf("seed user: %v", err)
 	}
+	testsupport.CleanupUser(t, pool, uid)
 	// Tier 0 — registered, no KYC. This is ~94% of real profiles.
 	if _, err := pool.Exec(ctx,
 		`INSERT INTO user_profiles (id,email,kyc_tier) VALUES ($1,$2,0)

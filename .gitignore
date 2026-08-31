@@ -86,3 +86,7 @@ launch/master.env
 # Python bytecode (scripts/ci/*.py are run directly by CI)
 __pycache__/
 *.pyc
+
+# Agent working dumps (provider schema probes). Schemas are fetchable live from
+# MyCover /v2/public-product-details, so these are scratch, not source of truth.
+/SCRATCHPAD/

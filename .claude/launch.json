@@ -89,6 +89,19 @@
       "cwd": "frontend-admin",
       "port": 3011,
       "description": "Same admin console on a side port so a worktree can be verified without stopping the main checkout's :3001 server."
+    },
+    {
+      "name": "web-worktree-direct",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": [
+        "next",
+        "dev",
+        "--port",
+        "3010"
+      ],
+      "cwd": "frontend-web",
+      "port": 3010,
+      "description": "Worktree frontend-web on :3010, invoking next directly (npm run dev -- --port exits immediately here)."
     }
   ]
 }

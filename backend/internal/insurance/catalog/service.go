@@ -1,35 +1,104 @@
 package catalog
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"spotlight/backend/internal/insurance/gateway"
 )
 
 // Product is the normalised catalog row. The catalog is the SINGLE source of
-// truth for product → provider routing: no product is hard-coded in logic. The
-// routing table is derived from products.provider (single source of truth), which
-// keeps the routing data-driven per the build plan §3.
+// truth for product → provider routing AND for the per-product provider route,
+// pricing model and form schema: no product is hard-coded in logic anywhere.
+//
+// MONEY: every *_kobo field is INTEGER MINOR UNITS. The naira→kobo conversion
+// happens once, in the provider adapter, before a value ever reaches this
+// struct. RateBps is basis points (0.5% = 50).
+//
+// Field names carry BOTH the historical admin shape (display_name, provider)
+// and the member contract shape (name, aggregator) so the admin console keeps
+// working while mobile codes to the published contract.
 type Product struct {
-	Code                string         `json:"code"`
-	DisplayName         string         `json:"display_name"`
-	ProductLine         string         `json:"product_line"`
-	Provider            string         `json:"provider"` // aggregator key: mycover | octamile
-	ProviderProductCode string         `json:"provider_product_code"`
-	BindingMode         string         `json:"binding_mode"` // direct | embedded
-	UnderwriterDisplay  string         `json:"underwriter_display"`
-	PremiumModel        string         `json:"premium_model"`
-	RequiredKYCTier     int            `json:"required_kyc_tier"`
-	RequiredFields      map[string]any `json:"required_fields_schema_ref"`
-	SumInsuredRules     map[string]any `json:"sum_insured_rules"`
-	CancellationRef     string         `json:"cancellation_policy_ref"`
-	// Indicative "from" premium (kobo) + cadence for browse cards. The REAL
-	// premium is computed at quote time by the provider adapter — these are
-	// display hints only.
+	Code        string `json:"code"`
+	DisplayName string `json:"display_name"`
+	Name        string `json:"name"` // contract alias of display_name
+	Description string `json:"description"`
+	ProductLine string `json:"product_line"`
+	Category    string `json:"category"`
+	Provider    string `json:"provider"`   // aggregator key: mycover | octamile
+	Aggregator  string `json:"aggregator"` // contract alias of provider
+
+	ProviderProductCode string `json:"provider_product_code"`
+	ProviderProductID   string `json:"provider_product_id,omitempty"`
+	ProviderBuyPath     string `json:"provider_buy_path,omitempty"`
+	BuyPathVerified     bool   `json:"buy_path_verified"`
+
+	BindingMode        string `json:"binding_mode"` // direct | embedded
+	UnderwriterDisplay string `json:"underwriter_display"`
+	Underwriter        string `json:"underwriter"` // contract alias
+	UnderwriterLogoURL string `json:"underwriter_logo_url,omitempty"`
+	PremiumModel       string `json:"premium_model"`
+	RequiredKYCTier    int    `json:"required_kyc_tier"`
+
+	// --- Pricing, integer minor units ---
+	IsPercentage          bool   `json:"is_percentage"`
+	BasePriceKobo         int64  `json:"base_price_kobo"`
+	RateBps               int64  `json:"rate_bps"`
+	SumInsuredKobo        int64  `json:"sum_insured_kobo"`
+	ProviderBasePriceRaw  string `json:"provider_base_price_raw,omitempty"`
+	DistributorCommission int64  `json:"distributor_commission_bps"`
+	MCACommissionBps      int64  `json:"mca_commission_bps"`
+	ProviderCommissionBps int64  `json:"provider_commission_bps"`
+	CommissionFrom        string `json:"commission_from,omitempty"`
+
+	// --- Cover terms ---
+	CoverPeriodDays   int    `json:"cover_period_days"`
+	IsRenewable       bool   `json:"is_renewable"`
+	IsClaimable       bool   `json:"is_claimable"`
+	IsCertificateable bool   `json:"is_certificateable"`
+	IsInspectable     bool   `json:"is_inspectable"`
+	Currency          string `json:"currency"`
+
+	// --- Provider copy (HTML — render SANITISED, it is third-party markup) ---
+	KeyBenefitsHTML  string `json:"key_benefits_html,omitempty"`
+	FullBenefitsHTML string `json:"full_benefits_html,omitempty"`
+	HowItWorksHTML   string `json:"how_it_works_html,omitempty"`
+	HowToClaimHTML   string `json:"how_to_claim_html,omitempty"`
+	DocumentURL      string `json:"document_url,omitempty"`
+
+	// --- Dynamic form ---
+	FormSchema       map[string]any `json:"form_schema"`
+	FormSchemaSource string         `json:"form_schema_source,omitempty"`
+
+	// --- Sellability (provider capability, NOT operator choice) ---
+	// Purchasable is whether the AGGREGATOR can actually sell this. It is
+	// separate from Active, which is whether Paymax offers it. The dangerous
+	// pairing the admin console must warn on is active && !purchasable: offered
+	// here, unsellable there.
+	Purchasable          bool   `json:"purchasable"`
+	ProviderConfigStatus string `json:"provider_config_status"`
+	ProviderConfigError  string `json:"provider_config_error,omitempty"`
+	// ProviderMissing marks a row the provider stopped listing. Kept for audit
+	// and for policies that reference it; never sellable.
+	ProviderMissing   bool   `json:"provider_missing"`
+	DeactivatedReason string `json:"deactivated_reason,omitempty"`
+	// ActiveOverridden records that an ADMIN ruled on visibility, so the sync
+	// leaves it alone.
+	ActiveOverridden bool `json:"active_overridden"`
+
+	RequiredFields  map[string]any `json:"required_fields_schema_ref"`
+	SumInsuredRules map[string]any `json:"sum_insured_rules"`
+	CancellationRef string         `json:"cancellation_policy_ref"`
+
+	// Indicative "from" premium (kobo) + cadence for browse cards.
 	IndicativePremiumKobo int64  `json:"indicative_premium_kobo"`
 	PremiumCadence        string `json:"premium_cadence"`
+	LastSyncedAt          string `json:"last_synced_at,omitempty"`
 	Version               int    `json:"version"`
 	Active                bool   `json:"active"`
 }
@@ -44,21 +113,84 @@ type Service struct {
 func NewService(db *pgxpool.Pool) *Service { return &Service{db: db} }
 
 // ResolveProduct implements gateway.ProductResolver: maps a Paymax product_code
-// to (aggregator, provider_product_code). Only ACTIVE products resolve.
-func (s *Service) ResolveProduct(ctx context.Context, productCode string) (string, string, bool) {
+// to (aggregator, per-product routing descriptor). Only ACTIVE products resolve.
+//
+// The descriptor carries everything an adapter needs to reach the product — the
+// buy path, the pricing model, the cover terms — straight off the catalog row.
+// That is what keeps "add a product" a data change: nothing in the adapter or
+// the router branches on which product this is.
+func (s *Service) ResolveProduct(ctx context.Context, productCode string) (string, gateway.ProviderProduct, bool) {
 	if s.db == nil {
-		return "", "", false
+		return "", gateway.ProviderProduct{}, false
 	}
-	var provider, providerProductCode string
+	var (
+		provider    string
+		pp          gateway.ProviderProduct
+		buyPath     *string
+		providerID  *string
+		underwriter string
+		schemaJSON  []byte
+	)
 	err := s.db.QueryRow(ctx, `
-		SELECT provider, provider_product_code
+		SELECT provider, provider_product_code, provider_product_id, provider_buy_path,
+		       is_percentage, base_price_kobo, rate_bps, default_sum_insured_kobo,
+		       distributor_commission_bps, cover_period_days,
+		       underwriter_display, is_renewable, is_claimable, is_certificateable,
+		       (NOT purchasable OR provider_missing),
+		       form_schema
 		FROM public.insurance_products
 		WHERE code = $1 AND active = true
-		LIMIT 1`, productCode).Scan(&provider, &providerProductCode)
+		LIMIT 1`, productCode).Scan(
+		&provider, &pp.Code, &providerID, &buyPath,
+		&pp.IsPercentage, &pp.BasePriceKobo, &pp.RateBps, &pp.DefaultSumInsuredKobo,
+		&pp.CommissionBps, &pp.CoverPeriodDays,
+		&underwriter, &pp.IsRenewable, &pp.IsClaimable, &pp.IsCertificateable,
+		&pp.NotPurchasable, &schemaJSON,
+	)
 	if err != nil {
-		return "", "", false
+		return "", gateway.ProviderProduct{}, false
 	}
-	return provider, providerProductCode, true
+	pp.Underwriter = underwriter
+	if providerID != nil {
+		pp.ProviderProductID = *providerID
+	}
+	if buyPath != nil {
+		pp.BuyPath = *buyPath
+	}
+
+	// MONEY-UNIT SEAM. The adapter has to know WHICH answers are monetary before
+	// it can cross them into a provider that speaks a different unit, and the
+	// only safe source for that is the very schema the client rendered the form
+	// from. Deriving it from the same catalog row is what keeps the client's
+	// scaling and the adapter's unscaling symmetric — see gateway/form_money.go.
+	if schema := decodeStoredSchema(schemaJSON); schema != nil {
+		gateway.NormalizeMoneyBounds(schema)
+		pp.MoneyInputPaths = gateway.MoneyInputPaths(schema)
+		pp.FormSchemaKnown = hasSchemaFields(schema)
+	}
+	return provider, pp, true
+}
+
+// decodeStoredSchema reads a stored form_schema jsonb.
+//
+// UseNumber is NOT optional here: a money bound decoded as float64 could not be
+// scaled exactly, and float64 is banned from every money path.
+func decodeStoredSchema(raw []byte) map[string]any {
+	if len(raw) == 0 {
+		return nil
+	}
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.UseNumber()
+	var m map[string]any
+	if err := dec.Decode(&m); err != nil || m == nil {
+		return nil
+	}
+	return m
+}
+
+func hasSchemaFields(schema map[string]any) bool {
+	fields, _ := schema["fields"].([]any)
+	return len(fields) > 0
 }
 
 // Get returns a single active product by code.
@@ -78,10 +210,11 @@ func (s *Service) Get(ctx context.Context, productCode string) (*Product, error)
 // product_line "context". Direct-only here; embedded products are bound by events.
 func (s *Service) ListForMember(ctx context.Context, kycTier int, line string) ([]Product, error) {
 	return s.list(ctx, listFilter{
-		onlyActive:  true,
-		maxKYCTier:  &kycTier,
-		line:        line,
-		bindingMode: "direct",
+		onlyActive:   true,
+		onlySellable: true,
+		maxKYCTier:   &kycTier,
+		line:         strings.ToLower(strings.TrimSpace(line)),
+		bindingMode:  "direct",
 	})
 }
 
@@ -91,23 +224,44 @@ func (s *Service) ListAdmin(ctx context.Context) ([]Product, error) {
 }
 
 type listFilter struct {
-	code        string
-	line        string
-	bindingMode string
-	onlyActive  bool
-	maxKYCTier  *int
+	code         string
+	line         string
+	bindingMode  string
+	onlyActive   bool
+	onlySellable bool
+	maxKYCTier   *int
 }
+
+// selectColumns is shared by every read so a new column is added in ONE place.
+const selectColumns = `
+		code, display_name, COALESCE(description,''), product_line,
+		COALESCE(provider_category,''), provider, provider_product_code,
+		COALESCE(provider_product_id,''), COALESCE(provider_buy_path,''), buy_path_verified,
+		binding_mode, underwriter_display, COALESCE(underwriter_logo_url,''),
+		premium_model, required_kyc_tier,
+		is_percentage, base_price_kobo, rate_bps, default_sum_insured_kobo,
+		COALESCE(provider_base_price_raw,''),
+		distributor_commission_bps, mca_commission_bps, provider_commission_bps,
+		COALESCE(commission_from,''),
+		cover_period_days, is_renewable, is_claimable, is_certificateable, is_inspectable,
+		currency,
+		COALESCE(key_benefits_html,''), COALESCE(full_benefits_html,''),
+		COALESCE(how_it_works_html,''), COALESCE(how_to_claim_html,''),
+		COALESCE(document_url,''),
+		form_schema, COALESCE(form_schema_source,''),
+		required_fields_schema_ref, sum_insured_rules, cancellation_policy_ref,
+		indicative_premium_kobo, premium_cadence,
+		COALESCE(to_char(last_synced_at, 'YYYY-MM-DD"T"HH24:MI:SSOF'),''),
+		purchasable, provider_config_status, COALESCE(provider_config_error,''),
+		provider_missing, COALESCE(deactivated_reason,''),
+		(active_overridden_at IS NOT NULL),
+		version, active`
 
 func (s *Service) list(ctx context.Context, f listFilter) ([]Product, error) {
 	if s.db == nil {
 		return nil, fmt.Errorf("catalog: nil pool")
 	}
-	q := `
-		SELECT code, display_name, product_line, provider, provider_product_code,
-		       binding_mode, underwriter_display, premium_model, required_kyc_tier,
-		       required_fields_schema_ref, sum_insured_rules, cancellation_policy_ref,
-		       indicative_premium_kobo, premium_cadence,
-		       version, active
+	q := `SELECT ` + selectColumns + `
 		FROM public.insurance_products
 		WHERE 1=1`
 	args := []any{}
@@ -129,6 +283,13 @@ func (s *Service) list(ctx context.Context, f listFilter) ([]Product, error) {
 	if f.onlyActive {
 		q += " AND active = true"
 	}
+	if f.onlySellable {
+		// Members never see cover the provider cannot issue, whatever `active`
+		// says. This is belt-and-braces over the sync's own rule: two independent
+		// guards, because showing a member a product that cannot be bought wastes
+		// their time at best and takes their money at worst.
+		q += " AND purchasable = true AND provider_missing = false"
+	}
 	if f.maxKYCTier != nil {
 		add("required_kyc_tier <= ", *f.maxKYCTier)
 	}
@@ -143,31 +304,142 @@ func (s *Service) list(ctx context.Context, f listFilter) ([]Product, error) {
 	var out []Product
 	for rows.Next() {
 		var p Product
-		var reqFields, sumRules []byte
+		var formSchema, reqFields, sumRules []byte
 		if err := rows.Scan(
-			&p.Code, &p.DisplayName, &p.ProductLine, &p.Provider, &p.ProviderProductCode,
-			&p.BindingMode, &p.UnderwriterDisplay, &p.PremiumModel, &p.RequiredKYCTier,
+			&p.Code, &p.DisplayName, &p.Description, &p.ProductLine,
+			&p.Category, &p.Provider, &p.ProviderProductCode,
+			&p.ProviderProductID, &p.ProviderBuyPath, &p.BuyPathVerified,
+			&p.BindingMode, &p.UnderwriterDisplay, &p.UnderwriterLogoURL,
+			&p.PremiumModel, &p.RequiredKYCTier,
+			&p.IsPercentage, &p.BasePriceKobo, &p.RateBps, &p.SumInsuredKobo,
+			&p.ProviderBasePriceRaw,
+			&p.DistributorCommission, &p.MCACommissionBps, &p.ProviderCommissionBps,
+			&p.CommissionFrom,
+			&p.CoverPeriodDays, &p.IsRenewable, &p.IsClaimable, &p.IsCertificateable, &p.IsInspectable,
+			&p.Currency,
+			&p.KeyBenefitsHTML, &p.FullBenefitsHTML,
+			&p.HowItWorksHTML, &p.HowToClaimHTML,
+			&p.DocumentURL,
+			&formSchema, &p.FormSchemaSource,
 			&reqFields, &sumRules, &p.CancellationRef,
-			&p.IndicativePremiumKobo, &p.PremiumCadence, &p.Version, &p.Active,
+			&p.IndicativePremiumKobo, &p.PremiumCadence,
+			&p.LastSyncedAt,
+			&p.Purchasable, &p.ProviderConfigStatus, &p.ProviderConfigError,
+			&p.ProviderMissing, &p.DeactivatedReason,
+			&p.ActiveOverridden,
+			&p.Version, &p.Active,
 		); err != nil {
 			return nil, fmt.Errorf("catalog: scan: %w", err)
 		}
+		p.FormSchema = decodeStoredSchema(formSchema)
+		gateway.NormalizeMoneyBounds(p.FormSchema)
 		_ = json.Unmarshal(reqFields, &p.RequiredFields)
 		_ = json.Unmarshal(sumRules, &p.SumInsuredRules)
+		if p.FormSchema == nil {
+			p.FormSchema = map[string]any{}
+		}
+		// Contract aliases — one row, two vocabularies.
+		p.Name = p.DisplayName
+		p.Aggregator = p.Provider
+		p.Underwriter = p.UnderwriterDisplay
 		out = append(out, p)
 	}
 	return out, rows.Err()
 }
 
-// SetActive flips a product's active flag (admin catalog management).
-func (s *Service) SetActive(ctx context.Context, productCode string, active bool) error {
+// FormSchema returns just the dynamic form schema for a product, plus whether it
+// has actually been discovered. ok=false means "no schema known yet" — the
+// caller must say so rather than render an empty form that can never validate.
+func (s *Service) FormSchema(ctx context.Context, productCode string) (map[string]any, bool, error) {
+	if s.db == nil {
+		return nil, false, fmt.Errorf("catalog: nil pool")
+	}
+	var raw []byte
+	var source string
+	err := s.db.QueryRow(ctx, `
+		SELECT form_schema, COALESCE(form_schema_source,'')
+		FROM public.insurance_products
+		WHERE code = $1 AND active = true
+		LIMIT 1`, productCode).Scan(&raw, &source)
+	if err != nil {
+		return nil, false, fmt.Errorf("catalog: product %q not found", productCode)
+	}
+	schema := decodeStoredSchema(raw)
+	if schema == nil {
+		return map[string]any{"fields": []any{}}, false, nil
+	}
+	// Publish money bounds in the unit the contract says they are in. Rows synced
+	// before the sync learned to do this still carry the provider's naira
+	// figures, and an unscaled bound makes a NGN 100,000 minimum bite at
+	// NGN 1,000. The normaliser is idempotent, so a row that already carries
+	// `unit` is left exactly as stored.
+	gateway.NormalizeMoneyBounds(schema)
+	fields, _ := schema["fields"].([]any)
+	if len(fields) == 0 {
+		if schema["fields"] == nil {
+			schema["fields"] = []any{}
+		}
+		return schema, false, nil
+	}
+	schema["source"] = source
+	return schema, true, nil
+}
+
+// SetActive flips a product's visibility (admin catalog management) and stamps
+// active_overridden_at, which tells the sync a human has ruled and it should stop
+// managing visibility for this product.
+//
+// It CANNOT activate a product the provider cannot sell. That guard is not
+// negotiable by role: an unsellable product offered to members either wastes
+// their time or takes their money for cover that will never be issued, and no
+// admin has a legitimate reason to override the provider on that.
+func (s *Service) SetActive(ctx context.Context, productCode string, active bool, byUserID string) error {
 	if s.db == nil {
 		return fmt.Errorf("catalog: nil pool")
 	}
-	_, err := s.db.Exec(ctx, `
-		UPDATE public.insurance_products SET active = $2, updated_at = now()
-		WHERE code = $1`, productCode, active)
-	return err
+	var by any
+	if byUserID != "" {
+		by = byUserID
+	}
+	ct, err := s.db.Exec(ctx, `
+		UPDATE public.insurance_products
+		SET active = $2,
+		    active_overridden_at = now(),
+		    active_overridden_by = $3,
+		    updated_at = now()
+		WHERE code = $1
+		  AND ($2 = false OR (purchasable AND NOT provider_missing))`,
+		productCode, active, by)
+	if err != nil {
+		return err
+	}
+	if ct.RowsAffected() == 0 {
+		return fmt.Errorf("catalog: %q cannot be activated — the provider cannot sell it", productCode)
+	}
+	return nil
+}
+
+// ActivateAllPurchasable turns on every product the provider CAN sell, skipping
+// any an admin has explicitly ruled on. It is the bulk counterpart to a sync's
+// own default, for a catalog that was synced before visibility was sync-managed.
+//
+// It never activates an unsellable or provider-missing product.
+func (s *Service) ActivateAllPurchasable(ctx context.Context, provider string) (int, error) {
+	if s.db == nil {
+		return 0, fmt.Errorf("catalog: nil pool")
+	}
+	ct, err := s.db.Exec(ctx, `
+		UPDATE public.insurance_products
+		SET active = true, updated_at = now()
+		WHERE purchasable
+		  AND NOT provider_missing
+		  AND NOT active
+		  AND active_overridden_at IS NULL
+		  AND ($1 = '' OR provider = $1)`, provider)
+	if err != nil {
+		return 0, err
+	}
+	return int(ct.RowsAffected()), nil
 }
 
 // SetProvider re-routes a product to a different aggregator (routing edit, not a
