@@ -60,11 +60,16 @@ where t.vote_credit_status = 'credited'
 on conflict (idempotency_key) where idempotency_key is not null do nothing;"
 
 echo "── remaining gaps (expect 0) ───────────────────────────"
+# Must use the SAME predicate as the INSERT above. It previously did not, so a
+# correct run counted rows the INSERT deliberately skips and reported a non-zero
+# remainder — a successful repair that read as a failed one.
 psql "$DB" -t -A -c "
 select count(*) from vote_transactions t
 where t.vote_credit_status='credited' and t.voter_user_id is not null
   and t.total_votes_to_credit > 0 and t.amount_expected > 0
+  and t.payment_status is distinct from 'refunded'
+  and exists (select 1 from connect_contests cc where cc.id = t.contest_id)
   and exists (select 1 from contestants ct where ct.id=t.contestant_id
-              and (ct.connect_contest_id=t.contest_id or ct.contest_id=t.contest_id))
+              and ct.connect_contest_id = t.contest_id)
   and not exists (select 1 from connect_votes v
                   where v.idempotency_key='connect-tally:'||t.payment_reference);"

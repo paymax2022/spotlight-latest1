@@ -27,6 +27,8 @@ let contestId = '';
 let contestantId = '';
 let voterId = '';
 const txIds: string[] = [];
+/** Contestants made inside a test; cleaned in afterAll so a failed assertion cannot leak one. */
+const extraContestants: string[] = [];
 
 async function credit(reference: string, opts: {
   contestantId?: string; votes?: number; naira?: number; status?: string;
@@ -73,6 +75,7 @@ describe.skipIf(!live)('connect tally follows the credit', () => {
 
   afterAll(async () => {
     for (const id of txIds) await db().from('vote_transactions').delete().eq('id', id);
+    for (const id of extraContestants) await db().from('contestants').delete().eq('id', id);
     await db().from('connect_votes').delete().eq('contest_id', contestId);
     await db().from('bridge_outbox').delete().eq('event_type', 'votes.paid.tally_skipped');
     await db().from('contestants').delete().eq('id', contestantId);
@@ -80,8 +83,12 @@ describe.skipIf(!live)('connect tally follows the credit', () => {
     await db().from('voting_settings').delete().eq('contest_id', contestId);
     await db().from('contests').delete().eq('id', contestId);
     await db().from('connect_contests').delete().eq('id', contestId);
-    const { data } = await db().from('connect_contests').select('id').like('slug', `${SLUG}%`);
-    expect(data ?? [], 'fixtures must not leak').toHaveLength(0);
+    const { data: connect } = await db().from('connect_contests').select('id').like('slug', `${SLUG}%`);
+    const { data: legacy } = await db().from('contests').select('id').like('slug', `${SLUG}%`);
+    expect(connect ?? [], 'connect fixtures must not leak').toHaveLength(0);
+    // The mirror trigger means one fixture touches BOTH planes; an earlier spec
+    // checked only connect_contests and leaked a legacy row into the shared DB.
+    expect(legacy ?? [], 'legacy mirror fixtures must not leak').toHaveLength(0);
   });
 
   it('does not count a purchase that has not been credited', async () => {
@@ -124,12 +131,42 @@ describe.skipIf(!live)('connect tally follows the credit', () => {
     expect(await mirrorRows(ref)).toHaveLength(0);
   });
 
+  // A refunded purchase is terminal — guards migration 20270143000000. Found by
+  // re-audit: 'reversed' deleted the mirror and a later 'credited' re-created it.
+  // Reachable because paid-vote.service short-circuits only on 'credited' and
+  // bails only on payment_status failed/abandoned — not 'refunded' — a refunded
+  // Paystack charge still verifies as success, and /vote-callback sits in the
+  // buyer's browser history.
+  it('refuses to re-credit after a refund, and records why', async () => {
+    const ref = `ZZTRG-${Date.now()}-REFUND`;
+    const id = await credit(ref, { votes: 120, naira: 10_000 });
+
+    await db().from('vote_transactions').update({ vote_credit_status: 'credited' }).eq('id', id);
+    expect(await mirrorRows(ref)).toHaveLength(1);
+
+    await db().from('vote_transactions')
+      .update({ payment_status: 'refunded', vote_credit_status: 'reversed' }).eq('id', id);
+    expect(await mirrorRows(ref)).toHaveLength(0);
+
+    // The buyer re-opens the callback URL and the transaction is credited again.
+    await db().from('vote_transactions').update({ vote_credit_status: 'credited' }).eq('id', id);
+    expect(await mirrorRows(ref), 'refunded votes must not return').toHaveLength(0);
+
+    const { data: outbox } = await db().from('bridge_outbox')
+      .select('status, last_error').filter('payload->>paymentReference', 'eq', ref);
+    const rows = (outbox ?? []) as Array<{ status: string; last_error: string }>;
+    expect(rows.map((r) => r.last_error)).toContain('recredit_after_refund');
+    // 'pending', not 'failed': processPendingOutboxEvents only selects 'pending'.
+    expect(rows[0].status).toBe('pending');
+  });
+
   it('refuses a contestant not on the contest and records why', async () => {
     const ref = `ZZTRG-${Date.now()}-STRANGER`;
     const { data: stranger } = await db().from('contestants')
       .insert({ name: 'ZZ Stranger', connect_contest_id: null, status: 'approved', is_active: true })
       .select('id').single();
     const strangerId = (stranger as { id: string }).id;
+    extraContestants.push(strangerId);
 
     const id = await credit(ref, { contestantId: strangerId });
     await db().from('vote_transactions').update({ vote_credit_status: 'credited' }).eq('id', id);
@@ -142,6 +179,5 @@ describe.skipIf(!live)('connect tally follows the credit', () => {
     expect((outbox ?? []).map((r) => (r as { last_error: string }).last_error))
       .toContain('contestant_not_in_contest');
 
-    await db().from('contestants').delete().eq('id', strangerId);
   });
 });

@@ -141,11 +141,21 @@ export async function POST(request: Request) {
     // votes for anyone who could resend one HTTP request, or double-tap with a
     // stable key.
     if (txErr?.code === '23505') {
-      const { data: prior } = await supabase
+      const { data: prior, error: priorErr } = await supabase
         .from('vote_transactions')
         .select('id, payment_reference, total_votes_to_credit, amount_expected')
         .eq('idempotency_key', idempotencyKey)
         .maybeSingle();
+
+      // If the READ failed we cannot tell a replay from a genuine failure, and
+      // falling through would reverse a debit whose purchase may well have been
+      // recorded — reinstating the very hole this branch closes. Fail loudly and
+      // leave the money where it is; the caller can retry the same key safely.
+      if (priorErr) {
+        console.error('[votes/paid/wallet] idempotent replay detected but the prior transaction could not be read',
+          { idempotencyKey, error: priorErr.message });
+        return errorResponse('Could not confirm the existing transaction. Retry with the same Idempotency-Key.', 503);
+      }
 
       if (prior) {
         const p = prior as {
