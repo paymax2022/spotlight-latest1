@@ -358,6 +358,10 @@ func RegisterMarketplace(
 	m.PATCH("/notification-prefs", h.UpdateNotificationPrefs)
 	// Meetup safe-spots (Transact agent's Meetup Mode).
 	m.GET("/meetup/safe-spots", h.MeetupSafeSpots)
+	// Followed sellers (§ Mobile-UX-Flows LD-005) — mkt_seller_follows.
+	m.POST("/sellers/:id/follow", h.FollowSeller)
+	m.DELETE("/sellers/:id/follow", h.UnfollowSeller)
+	m.GET("/followed-sellers", h.ListFollowedSellers)
 
 	// ── Admin group (auth + per-route RBAC guard) ──
 	a := base.Group("/admin")

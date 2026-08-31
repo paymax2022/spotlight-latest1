@@ -94,6 +94,31 @@ func (s *Service) ListBlocks(ctx context.Context, userID string) ([]Block, error
 	return s.repo.ListBlocks(ctx, userID)
 }
 
+// ─── Followed sellers ────────────────────────────────────────────────────────
+
+// FollowSeller follows a seller. Idempotent (see InsertFollow).
+func (s *Service) FollowSeller(ctx context.Context, followerID, sellerID string) error {
+	sellerID = strings.TrimSpace(sellerID)
+	if sellerID == "" {
+		return fieldErr(CodeValidation, "seller_id is required", "seller_id")
+	}
+	if sellerID == followerID {
+		return ErrCannotFollowSelf
+	}
+	return s.repo.InsertFollow(ctx, followerID, sellerID)
+}
+
+// UnfollowSeller removes a follow. Idempotent (see DeleteFollow) — no OLA
+// lookup needed since the delete is already scoped to the caller's own id.
+func (s *Service) UnfollowSeller(ctx context.Context, followerID, sellerID string) error {
+	return s.repo.DeleteFollow(ctx, followerID, sellerID)
+}
+
+// ListFollowedSellers returns the caller's followed sellers.
+func (s *Service) ListFollowedSellers(ctx context.Context, followerID string) ([]FollowedSeller, error) {
+	return s.repo.ListFollows(ctx, followerID)
+}
+
 // ─── Notification preferences ────────────────────────────────────────────────
 
 // GetNotificationPrefs returns the caller's toggles, defaulting to all-on (except

@@ -140,6 +140,7 @@ const (
 	CodeBlockNotFound        = "BLOCK_NOT_FOUND"
 	CodeCannotBlockSelf      = "CANNOT_BLOCK_SELF"
 	CodeInvalidReportTarget  = "INVALID_REPORT_TARGET"
+	CodeCannotFollowSelf     = "CANNOT_FOLLOW_SELF"
 )
 
 // Constructor helpers for the most common coded errors.
@@ -154,6 +155,7 @@ var (
 	ErrThreadNotFound    = newErr(http.StatusNotFound, CodeThreadNotFound, "thread not found")
 	ErrReviewExists      = newErr(http.StatusConflict, CodeReviewExists, "you have already reviewed this deal")
 	ErrCannotMessageSelf = newErr(422, CodeCannotMessageSelf, "you cannot start a conversation with yourself")
+	ErrCannotFollowSelf  = newErr(422, CodeCannotFollowSelf, "you cannot follow yourself")
 	ErrReasonRequired    = newErr(http.StatusBadRequest, CodeReasonCodeRequired, "reason_code is required")
 	ErrIdemMissing       = newErr(http.StatusBadRequest, CodeIdempotencyMissing, "Idempotency-Key header required")
 	ErrConflict          = newErr(http.StatusConflict, CodeConflict, "conflicting concurrent write")
