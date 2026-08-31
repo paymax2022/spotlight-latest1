@@ -38,7 +38,11 @@ export default function LiveProductCard({
       onPress={onPress}
       accessibilityRole="button"
       accessibilityLabel={`${product.name}, underwritten by ${product.underwriter}`}
-      style={({ pressed }) => [styles.card, pressed && styles.pressed]}
+      style={({ pressed }) => [
+        styles.card,
+        pressed && styles.pressed,
+        !product.purchasable && styles.cardClosed,
+      ]}
     >
       <View style={styles.topRow}>
         <View style={[styles.iconBox, { backgroundColor: tone.bg }]}>
@@ -77,7 +81,9 @@ export default function LiveProductCard({
       <View style={styles.priceRow}>
         <PriceLabel product={product} />
         <View style={styles.grow} />
-        {product.sumInsuredKobo > 0 ? (
+        {!product.purchasable ? (
+          <Text style={styles.unavailable}>Not available</Text>
+        ) : product.sumInsuredKobo > 0 ? (
           <Text style={styles.sumInsured}>
             up to {nairaCompact(product.sumInsuredKobo)}
           </Text>
@@ -99,6 +105,8 @@ const styles = StyleSheet.create({
     gap: Spacing.sm,
   },
   pressed: { opacity: 0.9 },
+  // Listed but not currently issuable by the insurer — visible, visibly muted.
+  cardClosed: { opacity: 0.62 },
   grow: { flex: 1 },
   topRow: { flexDirection: 'row', alignItems: 'flex-start', gap: Spacing.md },
   iconBox: {
@@ -116,4 +124,5 @@ const styles = StyleSheet.create({
   divider: { height: 1, backgroundColor: InsuranceColors.border },
   priceRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm },
   sumInsured: { ...Typography.labelSm, color: Colors.onSurfaceVariant },
+  unavailable: { ...Typography.labelSm, color: Colors.onSurfaceVariant, fontStyle: 'italic' },
 });

@@ -4,10 +4,11 @@
 // it works and how to claim — the last four arriving as provider HTML, rendered
 // as readable blocks rather than raw markup.
 //
-// It also carries the PLAN PICKER. MyCover's buy endpoints are per product
-// family, so several plans (FlexiCare, FlexiCare Mini, PrimeCare…) share one
-// purchase form and differ only by the `product_id` in the body. Choosing among
-// them belongs here, before the form, not buried inside it.
+// It also carries the PLAN PICKER. Insurers sell several tiers of one thing as
+// separate products (FlexiCare, FlexiCare Mini, PrimeCare, Seniors and ZenCare
+// are all Bastion health), and someone shopping for health cover wants to
+// compare those side by side — not meet them as five unrelated rows in a list.
+// Choosing a tier belongs here, before the form, not buried inside it.
 
 import React, { useMemo, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
@@ -119,7 +120,7 @@ export default function ProductDetail() {
           <View style={styles.planBlock}>
             <Text style={styles.sectionTitle}>Choose your plan</Text>
             <Text style={styles.sectionSub}>
-              {plans.length} plans from {selected.underwriter}. They share one application form.
+              {plans.length} tiers from {selected.underwriter}. Prices and cover differ.
             </Text>
             <View style={styles.planList}>
               {plans.map((plan) => (
@@ -200,22 +201,38 @@ export default function ProductDetail() {
         </Text>
       </ScrollView>
 
-      <View style={styles.footer}>
-        <View style={styles.footerPrice}>
-          <Text style={styles.footerLabel}>{price.prefix || 'Premium'}</Text>
-          <PriceLabel product={selected} />
+      {/* A plan the insurer cannot currently sell gets an honest closed state
+          rather than a button that walks a person through a full application
+          and refuses them at pricing. */}
+      {selected.purchasable ? (
+        <View style={styles.footer}>
+          <View style={styles.footerPrice}>
+            <Text style={styles.footerLabel}>{price.prefix || 'Premium'}</Text>
+            <PriceLabel product={selected} />
+          </View>
+          <View style={styles.grow}>
+            <PrimaryButton
+              label="Get covered"
+              onPress={() =>
+                router.push(`/insurance/quote/form?code=${encodeURIComponent(selected.code)}`)
+              }
+            />
+          </View>
         </View>
-        <View style={styles.grow}>
+      ) : (
+        <View style={styles.footerClosed}>
+          <Text style={styles.closedTitle}>Not available right now</Text>
+          <Text style={styles.closedText}>
+            {selected.underwriter || 'The insurer'} has this plan listed but isn&apos;t issuing it
+            at the moment. Nothing you did — try another plan in {meta.label.toLowerCase()}.
+          </Text>
           <PrimaryButton
-            label="Get covered"
-            onPress={() =>
-              router.push(
-                `/insurance/quote/form?code=${encodeURIComponent(selected.code)}&family=${encodeURIComponent(selected.familyCode)}`,
-              )
-            }
+            label={`See other ${meta.label.toLowerCase()} plans`}
+            variant="secondary"
+            onPress={() => router.replace(`/insurance/browse?line=${selected.productLine}`)}
           />
         </View>
-      </View>
+      )}
     </SafeAreaView>
   );
 }
@@ -383,4 +400,13 @@ const styles = StyleSheet.create({
   },
   footerPrice: { minWidth: 96 },
   footerLabel: { ...Typography.labelSm, color: Colors.onSurfaceVariant },
+  footerClosed: {
+    padding: Spacing.containerMargin,
+    borderTopWidth: 1,
+    borderTopColor: Colors.outlineVariant,
+    backgroundColor: Colors.background,
+    gap: Spacing.sm,
+  },
+  closedTitle: { ...Typography.titleMd, color: Colors.onSurface },
+  closedText: { ...Typography.bodySm, color: Colors.onSurfaceVariant, lineHeight: 20 },
 });
