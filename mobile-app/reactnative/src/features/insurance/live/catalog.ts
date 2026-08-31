@@ -2,7 +2,7 @@
 // PURE (icon *names* only, no component imports) so it loads under `node --test`.
 //
 // These are the SEVEN real MyCover categories, verified against the live catalog
-// (68 products: Life 15, Auto 14, Health 12, Content 10, Gadget 10, Package 6,
+// (69 products: Life 15, Auto 15, Health 12, Content 10, Gadget 10, Package 6,
 // Travel 1). Counts are NOT hardcoded anywhere in the UI — they are computed
 // from whatever the live catalog returns, so the browse screen stays honest if
 // the aggregator adds or retires a product. The metadata below is presentation
