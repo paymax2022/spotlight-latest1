@@ -322,10 +322,14 @@ type rawProduct struct {
 	IsInspect    bool            `json:"is_inspectable"`
 	IsCertable   bool            `json:"is_certificateable"`
 	IsActive     bool            `json:"is_active"`
-	KeyBenefits  string          `json:"key_benefits"`
-	FullBenefits string          `json:"full_benefits"`
-	HowItWorks   string          `json:"how_it_works"`
-	HowToClaim   string          `json:"how_to_claim"`
+	// The copy fields are NOT consistently typed on the live API: most products
+	// send an HTML string, but some send an ARRAY of strings (found by calling
+	// the real catalog — a fixture built from one product will not show it).
+	// flexText accepts either.
+	KeyBenefits  flexText        `json:"key_benefits"`
+	FullBenefits flexText        `json:"full_benefits"`
+	HowItWorks   flexText        `json:"how_it_works"`
+	HowToClaim   flexText        `json:"how_to_claim"`
 	DocumentURL  string          `json:"document_url"`
 	Meta         json.RawMessage `json:"meta"`
 	Category     struct {
@@ -429,10 +433,10 @@ func normaliseProduct(rp rawProduct) (CatalogProduct, error) {
 		IsInspectable:     rp.IsInspect,
 		IsCertificateable: rp.IsCertable,
 		Active:            rp.IsActive,
-		KeyBenefitsHTML:   rp.KeyBenefits,
-		FullBenefitsHTML:  rp.FullBenefits,
-		HowItWorksHTML:    rp.HowItWorks,
-		HowToClaimHTML:    rp.HowToClaim,
+		KeyBenefitsHTML:   rp.KeyBenefits.String(),
+		FullBenefitsHTML:  rp.FullBenefits.String(),
+		HowItWorksHTML:    rp.HowItWorks.String(),
+		HowToClaimHTML:    rp.HowToClaim.String(),
 		DocumentURL:       rp.DocumentURL,
 	}
 
@@ -468,6 +472,39 @@ func normaliseProduct(rp rawProduct) (CatalogProduct, error) {
 		p.CommissionFrom = sf.CommissionFrom
 	}
 	return p, nil
+}
+
+// flexText holds a provider copy field that arrives as either a string or an
+// array of strings. Decoding it as a plain string fails the WHOLE catalog sync
+// on the first product that uses the array form — which is how the live API
+// differs from any single-product fixture.
+type flexText struct{ v string }
+
+// String returns the flattened text.
+func (f flexText) String() string { return f.v }
+
+// UnmarshalJSON accepts a string, an array of strings, or null.
+func (f *flexText) UnmarshalJSON(b []byte) error {
+	if len(b) == 0 || string(b) == "null" {
+		f.v = ""
+		return nil
+	}
+	var s string
+	if err := json.Unmarshal(b, &s); err == nil {
+		f.v = s
+		return nil
+	}
+	var list []string
+	if err := json.Unmarshal(b, &list); err == nil {
+		// Each element is a self-contained HTML fragment; concatenating keeps the
+		// markup renderable as one block.
+		f.v = strings.Join(list, "")
+		return nil
+	}
+	// An unexpected shape (object, number) must not sink the sync — the field is
+	// display copy, not money. Keep it empty and carry on.
+	f.v = ""
+	return nil
 }
 
 // jsonNumberOrString renders a JSON value that MyCover sends inconsistently as
