@@ -1148,7 +1148,7 @@ func (c *Client) policyFromData(data json.RawMessage, p gateway.ProviderProduct)
 	pol := gateway.Policy{
 		ProviderPolicyRef:   pickString(m, "policy_id", "id", "policy_no", "policy_number", "reference", "policy_reference"),
 		ProviderProductCode: firstNonEmpty(pickString(m, "product_route_name", "product_code", "route_name"), p.Code),
-		Status:              normaliseStatus(pickString(m, "status", "policy_status", "state")),
+		Status:              "", // set below, once ExpiresAt is known
 		Currency:            "NGN",
 		Underwriter:         firstNonEmpty(pickString(m, "provider_name", "underwriter", "organization_name"), p.Underwriter),
 		Aggregator:          c.Name(),
@@ -1162,7 +1162,57 @@ func (c *Client) policyFromData(data json.RawMessage, p gateway.ProviderProduct)
 	if v := pickMoney(m, "sum_insured", "sum_assured", "cover_amount", "insured_value"); v > 0 {
 		pol.SumInsuredKobo = v
 	}
+	pol.Status = policyStatus(m, pol.ExpiresAt)
 	return pol
+}
+
+// policyStatus derives a policy's state.
+//
+// ⚠️ MyCover sends NO status field on a policy. Not status, not policy_status,
+// not state — verified against every real policy on the account. Liveness is the
+// boolean `is_active`, which the catalog path already reads and the policy path
+// did not, so every policy we bound was stored with an EMPTY status.
+//
+// An explicit status still wins where a provider sends one, so this stays
+// correct for Octamile or any future aggregator.
+func policyStatus(m map[string]json.RawMessage, expiresAt time.Time) string {
+	if s := normaliseStatus(pickString(m, "status", "policy_status", "state")); s != "" {
+		return s
+	}
+	active, ok := pickBool(m, "is_active", "active")
+	if !ok {
+		// No signal at all. Empty, never a guessed "active": reporting a policy
+		// as live when we do not know is the dangerous direction — it is the
+		// answer a member would be told when they try to claim.
+		return ""
+	}
+	if active {
+		return "active"
+	}
+	// Inactive. If the cover window has closed we can say expired from the dates.
+	// Otherwise MyCover does not distinguish cancelled from lapsed, and naming
+	// either would be inventing a fact about someone's cover.
+	if !expiresAt.IsZero() && expiresAt.Before(time.Now()) {
+		return "expired"
+	}
+	return "inactive"
+}
+
+// pickBool returns the first key present as a JSON boolean, and whether one was
+// found. Absent and "present but not a bool" are both reported as not-found, so
+// a caller can tell "false" apart from "no signal".
+func pickBool(m map[string]json.RawMessage, keys ...string) (bool, bool) {
+	for _, k := range keys {
+		raw, ok := m[k]
+		if !ok || len(raw) == 0 {
+			continue
+		}
+		var b bool
+		if err := json.Unmarshal(raw, &b); err == nil {
+			return b, true
+		}
+	}
+	return false, false
 }
 
 func (c *Client) claimFromData(data json.RawMessage, policyRef string) gateway.Claim {
