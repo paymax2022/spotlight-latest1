@@ -34,6 +34,21 @@ type UnderwriterGateway interface {
 	// normalised event. SignatureValid is false (and err nil) when the signature
 	// does not match — callers MUST reject unverified events.
 	VerifyWebhook(ctx context.Context, payload []byte, signature string) (WebhookEvent, error)
+
+	// WebhookSignatureHeader returns the HTTP header this provider delivers its
+	// signature in, e.g. "x-mycoverai-signature".
+	//
+	// The adapter declares it because only the adapter knows it. The alternative
+	// — the ingestion handler guessing a header from the URL slug — silently
+	// fails: MyCover's slug is "mycover" but its header says "mycoverai", so a
+	// guessed "X-mycover-Signature" never matches, the signature arrives empty,
+	// and every genuine delivery is rejected before the HMAC even runs. That is
+	// a 401 with no bad actor anywhere in it, and nothing in the logs pointing at
+	// a header name.
+	//
+	// An empty return means "no provider-specific header"; the handler then falls
+	// back to the generic ones.
+	WebhookSignatureHeader() string
 }
 
 // ProductResolver is the slice of the catalog the Router needs to map a Paymax
@@ -87,6 +102,17 @@ var ErrNoProvider = fmt.Errorf("insurance gateway: no provider for product")
 // treasury outage that fails every bind at once and must pause the queue before
 // more members are debited.
 var ErrProviderFloatExhausted = fmt.Errorf("insurance gateway: provider prefunded float exhausted")
+
+// ErrProviderRejected marks a DEFINITE negative: the provider (or our own
+// pre-flight check) answered and refused, so nothing was created on their side.
+//
+// This exists to separate "the provider said no" from "we never found out". It
+// is the difference between a retry that is safe and a retry that might buy a
+// second policy with real money, and no aggregator reports it as a distinct
+// code — so every adapter must wrap this sentinel around the errors it KNOWS
+// were replies. Anything not wrapping it is treated as an unknown outcome and
+// is never auto-retried, which is the safe default for silence.
+var ErrProviderRejected = fmt.Errorf("insurance gateway: provider rejected the request")
 
 // Resolve returns the UnderwriterGateway and the per-product routing descriptor
 // for a Paymax product_code. The product → provider mapping AND the per-product

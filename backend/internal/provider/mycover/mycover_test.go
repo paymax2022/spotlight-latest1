@@ -4,9 +4,11 @@ import (
 	"context"
 	"crypto/hmac"
 	"crypto/sha256"
+	"crypto/sha512"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -91,11 +93,8 @@ func TestDo_ValidationErrorCarriesFieldMessages(t *testing.T) {
 
 	c := New("test-key", "", "", srv.URL)
 	_, err := c.BindPolicy(context.Background(), gateway.BindRequest{
-		Product: gateway.ProviderProduct{
-			Code: "bastion-medisure", ProviderProductID: "uuid-1",
-			BuyPath: "/products/bastion/buy-medisure",
-		},
-		Inputs: map[string]any{"first_name": "A"},
+		Product: gateway.ProviderProduct{Code: "bastion-medisure", ProviderProductID: "uuid-1"},
+		Inputs:  map[string]any{"first_name": "A"},
 	})
 	var apiErr *APIError
 	if !errors.As(err, &apiErr) {
@@ -139,10 +138,10 @@ func TestDo_NoAPIKeyFailsClosed(t *testing.T) {
 // PER-PRODUCT ROUTING
 // ════════════════════════════════════════════════════════════════════════════
 
-// TestBindPolicy_PostsToStoredBuyPath proves the dispatch is data-driven: the
-// request goes to whatever path the catalog row carries, with the product's own
-// fields sent flat. No product identity is branched on in code.
-func TestBindPolicy_PostsToStoredBuyPath(t *testing.T) {
+// TestBindPolicy_PostsToTheSingleV2Endpoint proves the v2 model: ONE purchase
+// endpoint for every product, with the product selected by product_id in a flat
+// body. No product identity is branched on in code.
+func TestBindPolicy_PostsToTheSingleV2Endpoint(t *testing.T) {
 	var gotPath string
 	var gotBody map[string]any
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -157,7 +156,6 @@ func TestBindPolicy_PostsToStoredBuyPath(t *testing.T) {
 		Product: gateway.ProviderProduct{
 			Code:              "sti-marine-cover",
 			ProviderProductID: "uuid-marine",
-			BuyPath:           "/products/sti/buy-marine-cover",
 			CommissionBps:     1000, // 10%
 			Underwriter:       "Sovereign Trust Insurance Plc",
 		},
@@ -171,8 +169,11 @@ func TestBindPolicy_PostsToStoredBuyPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BindPolicy: %v", err)
 	}
-	if gotPath != "/products/sti/buy-marine-cover" {
-		t.Fatalf("posted to %q, want the stored buy path", gotPath)
+	if gotPath != BuyPath {
+		t.Fatalf("posted to %q, want the single v2 purchase endpoint %q", gotPath, BuyPath)
+	}
+	if gotBody[FieldProductID] != "uuid-marine" {
+		t.Fatalf("product_id must select the product: %v", gotBody)
 	}
 	if gotBody["first_name"] != "Ada" {
 		t.Fatalf("product fields must be sent FLAT, got %v", gotBody)
@@ -196,14 +197,37 @@ func TestBindPolicy_PostsToStoredBuyPath(t *testing.T) {
 	}
 }
 
-// TestBindPolicy_NoBuyPathFailsClosed — never guess a purchase URL.
-func TestBindPolicy_NoBuyPathFailsClosed(t *testing.T) {
+// TestBindPolicy_NoProductIDFailsClosed — product_id is the ONLY thing that
+// selects which cover is bought on v2's shared endpoint. Without it we would buy
+// an unknown product with a member's money.
+func TestBindPolicy_NoProductIDFailsClosed(t *testing.T) {
 	c := New("k", "", "", "http://127.0.0.1:1")
 	_, err := c.BindPolicy(context.Background(), gateway.BindRequest{
 		Product: gateway.ProviderProduct{Code: "some-product"},
 	})
-	if !errors.Is(err, ErrNoBuyPath) {
-		t.Fatalf("want ErrNoBuyPath, got %v", err)
+	if !errors.Is(err, ErrNoProductID) {
+		t.Fatalf("want ErrNoProductID, got %v", err)
+	}
+	// It must also read as a DEFINITE rejection: nothing reached the provider, so
+	// a retry is safe and must not be locked for reconciliation.
+	if !errors.Is(err, gateway.ErrProviderRejected) {
+		t.Fatal("a pre-flight refusal must wrap ErrProviderRejected — nothing was created")
+	}
+}
+
+// TestBindPolicy_RefusesBrokenProduct — 7 of MyCover's 69 products have broken
+// provider configuration. Selling one takes a member's money for cover that
+// cannot be issued.
+func TestBindPolicy_RefusesBrokenProduct(t *testing.T) {
+	c := New("k", "", "", "http://127.0.0.1:1")
+	prod := gateway.ProviderProduct{Code: "aiico-hospital-cash", ProviderProductID: "uuid", NotPurchasable: true}
+
+	if _, err := c.BindPolicy(context.Background(), gateway.BindRequest{Product: prod}); !errors.Is(err, ErrProductNotPurchasable) {
+		t.Fatalf("bind on a broken product must refuse, got %v", err)
+	}
+	// It must not even be quotable — a price for something unbuyable is a lie.
+	if _, err := c.GetQuote(context.Background(), gateway.QuoteRequest{Product: prod}); !errors.Is(err, ErrProductNotPurchasable) {
+		t.Fatalf("quote on a broken product must refuse, got %v", err)
 	}
 }
 
@@ -216,7 +240,7 @@ func TestBindPolicy_MissingPolicyRefIsAnError(t *testing.T) {
 	defer srv.Close()
 	c := New("k", "", "", srv.URL)
 	_, err := c.BindPolicy(context.Background(), gateway.BindRequest{
-		Product: gateway.ProviderProduct{Code: "p", ProviderProductID: "uuid-p", BuyPath: "/products/x/buy-y"},
+		Product: gateway.ProviderProduct{Code: "p", ProviderProductID: "uuid-p"},
 	})
 	if err == nil || !strings.Contains(err.Error(), "no policy reference") {
 		t.Fatalf("want a missing-reference error, got %v", err)
@@ -234,96 +258,122 @@ func TestCancelPolicy_IsHonestlyUnsupported(t *testing.T) {
 // QUOTING — the money path
 // ════════════════════════════════════════════════════════════════════════════
 
-func TestGetQuote_FlatProduct(t *testing.T) {
-	c := New("k", "", "", "http://127.0.0.1:1")
+// TestGetQuote_UsesProviderComputePrice is the v2 correctness win: the premium
+// is the PROVIDER's own figure from POST /products/compute-price, not something
+// Paymax computed and then charged.
+func TestGetQuote_UsesProviderComputePrice(t *testing.T) {
+	var gotPath string
+	var gotBody map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		_ = json.NewDecoder(r.Body).Decode(&gotBody)
+		// Verbatim live shape: data.price is a bare NAIRA number.
+		_, _ = w.Write([]byte(`{"responseCode":1,"responseText":"Price computed successfully","data":{"price":4000}}`))
+	}))
+	defer srv.Close()
+
+	c := New("k", "", "", srv.URL)
 	q, err := c.GetQuote(context.Background(), gateway.QuoteRequest{
 		Product: gateway.ProviderProduct{
-			Code:            "bastion-medisure",
-			BasePriceKobo:   600_000, // ₦6,000
-			CommissionBps:   1000,    // 10%
-			CoverPeriodDays: 365,
-			Underwriter:     "Bastion Health",
+			Code:              "bastion-flexicare-mini",
+			ProviderProductID: "f7b4bca1-b870-4648-8704-11c1802a51d0",
+			CommissionBps:     1000, // 10%
+			CoverPeriodDays:   365,
+			Underwriter:       "Bastion Health Ltd",
 		},
+		Inputs: map[string]any{"first_name": "Q", "payment_plan": 1},
 	})
 	if err != nil {
 		t.Fatalf("GetQuote: %v", err)
 	}
-	if q.PremiumKobo != 600_000 {
-		t.Fatalf("premium = %d, want 600000", q.PremiumKobo)
+	if gotPath != QuotePath {
+		t.Fatalf("quoted at %q, want %q", gotPath, QuotePath)
 	}
-	if q.CommissionKobo != 60_000 {
-		t.Fatalf("commission = %d, want 60000", q.CommissionKobo)
+	// The envelope carries product_id; the answers go in `body`.
+	if gotBody[FieldProductID] != "f7b4bca1-b870-4648-8704-11c1802a51d0" {
+		t.Fatalf("product_id must select the product: %v", gotBody)
 	}
-	if q.Terms["pricing_model"] != "flat" {
-		t.Fatalf("terms must disclose the pricing model, got %v", q.Terms)
+	body, _ := gotBody["body"].(map[string]any)
+	if body == nil || body["first_name"] != "Q" {
+		t.Fatalf("member answers must travel in `body`: %v", gotBody)
 	}
-	if q.Terms["priced_by"] != "catalog" {
-		t.Fatal("a locally-computed quote must say so in its terms")
+	if _, leaked := body[FieldProductID]; leaked {
+		t.Fatal("product_id belongs in the envelope, not duplicated into body")
+	}
+
+	// ₦4,000 must arrive as 400,000 kobo — never 4000, never a float.
+	if q.PremiumKobo != 400_000 {
+		t.Fatalf("premium = %d kobo, want 400000", q.PremiumKobo)
+	}
+	if q.CommissionKobo != 40_000 { // 10% of the provider's premium
+		t.Fatalf("commission = %d kobo, want 40000", q.CommissionKobo)
+	}
+	if q.Terms["priced_by"] != "provider" {
+		t.Fatalf("the quote must disclose that the PROVIDER priced it: %v", q.Terms)
+	}
+	if q.Underwriter != "Bastion Health Ltd" {
+		t.Fatalf("underwriter disclosure lost: %q", q.Underwriter)
 	}
 }
 
-func TestGetQuote_PercentageProduct(t *testing.T) {
-	c := New("k", "", "", "http://127.0.0.1:1")
-	// sti-marine-cover: 0.46% of the sum insured.
-	q, err := c.GetQuote(context.Background(), gateway.QuoteRequest{
-		Product: gateway.ProviderProduct{
-			Code:         "sti-marine-cover",
-			IsPercentage: true,
-			RateBps:      46,
-		},
-		SumInsuredKobo: 100_000_000, // ₦1,000,000
-	})
-	if err != nil {
-		t.Fatalf("GetQuote: %v", err)
-	}
-	if q.PremiumKobo != 460_000 { // ₦4,600
-		t.Fatalf("premium = %d kobo, want 460000", q.PremiumKobo)
-	}
-	if q.SumInsuredKobo != 100_000_000 {
-		t.Fatalf("sum insured = %d", q.SumInsuredKobo)
+// TestGetQuote_ForwardsPaymentPlanToTheProvider — payment_plan is an instalment
+// count that changes the premium (live: 1 => NGN4,000, 12 => NGN48,000). Under v2
+// it is simply forwarded and the PROVIDER returns the resulting price, so there
+// is nothing for us to compute and nothing to get wrong.
+func TestGetQuote_ForwardsPaymentPlanToTheProvider(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var in struct {
+			Body map[string]any `json:"body"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&in)
+		// Mirror the live provider behaviour: the price scales with the plan.
+		plan := 1
+		if f, ok := in.Body["payment_plan"].(float64); ok {
+			plan = int(f)
+		}
+		fmt.Fprintf(w, `{"responseCode":1,"responseText":"ok","data":{"price":%d}}`, 4000*plan)
+	}))
+	defer srv.Close()
+
+	c := New("k", "", "", srv.URL)
+	prod := gateway.ProviderProduct{Code: "bastion-flexicare-mini", ProviderProductID: "uuid"}
+
+	for _, tc := range []struct{ plan, wantKobo int }{{1, 400_000}, {12, 4_800_000}} {
+		q, err := c.GetQuote(context.Background(), gateway.QuoteRequest{
+			Product: prod,
+			Inputs:  map[string]any{FieldPaymentPlan: tc.plan},
+		})
+		if err != nil {
+			t.Fatalf("plan %d: %v", tc.plan, err)
+		}
+		if q.PremiumKobo != int64(tc.wantKobo) {
+			t.Fatalf("plan %d: premium = %d kobo, want %d", tc.plan, q.PremiumKobo, tc.wantKobo)
+		}
 	}
 }
 
-func TestGetQuote_PercentageFallsBackToDeclaredSumInsured(t *testing.T) {
-	c := New("k", "", "", "http://127.0.0.1:1")
-	// sti-laptop-cover-standard: 7% of a declared ₦400,000 cover.
-	q, err := c.GetQuote(context.Background(), gateway.QuoteRequest{
-		Product: gateway.ProviderProduct{
-			Code:                  "sti-laptop-cover-standard",
-			IsPercentage:          true,
-			RateBps:               700,
-			DefaultSumInsuredKobo: 40_000_000,
-		},
-	})
-	if err != nil {
-		t.Fatalf("GetQuote: %v", err)
-	}
-	if q.PremiumKobo != 2_800_000 { // ₦28,000
-		t.Fatalf("premium = %d kobo, want 2800000", q.PremiumKobo)
-	}
-}
-
-// TestGetQuote_RefusesToPriceWithoutTerms — an unpriced product must error, not
-// quote zero. A ₦0 premium would debit nothing and bind cover we never paid for.
-func TestGetQuote_RefusesToPriceWithoutTerms(t *testing.T) {
-	c := New("k", "", "", "http://127.0.0.1:1")
-
+// TestGetQuote_RefusesZeroPremium — a zero premium would debit nothing and bind
+// cover nobody paid for. Refuse rather than pass it on.
+func TestGetQuote_RefusesZeroPremium(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"responseCode":1,"responseText":"ok","data":{}}`))
+	}))
+	defer srv.Close()
+	c := New("k", "", "", srv.URL)
 	if _, err := c.GetQuote(context.Background(), gateway.QuoteRequest{
-		Product: gateway.ProviderProduct{Code: "x", IsPercentage: true, RateBps: 50},
+		Product: gateway.ProviderProduct{Code: "x", ProviderProductID: "uuid"},
 	}); err == nil {
-		t.Fatal("rate-priced product with no sum insured must not quote")
+		t.Fatal("a quote with no usable premium must fail, not return zero")
 	}
-	if _, err := c.GetQuote(context.Background(), gateway.QuoteRequest{
-		// Rate-priced, sum insured supplied, but the catalog carries NO rate.
-		Product:        gateway.ProviderProduct{Code: "x", IsPercentage: true},
-		SumInsuredKobo: 100_000_000,
-	}); err == nil {
-		t.Fatal("rate-priced product with no rate must not quote")
-	}
+}
+
+// TestGetQuote_RefusesWithoutProductID — nothing selects the product without it.
+func TestGetQuote_RefusesWithoutProductID(t *testing.T) {
+	c := New("k", "", "", "http://127.0.0.1:1")
 	if _, err := c.GetQuote(context.Background(), gateway.QuoteRequest{
 		Product: gateway.ProviderProduct{Code: "x"},
-	}); err == nil {
-		t.Fatal("flat product with no base price must not quote")
+	}); !errors.Is(err, ErrNoProductID) {
+		t.Fatalf("want ErrNoProductID, got %v", err)
 	}
 }
 
@@ -331,28 +381,46 @@ func TestGetQuote_RefusesToPriceWithoutTerms(t *testing.T) {
 // CATALOG NORMALISATION
 // ════════════════════════════════════════════════════════════════════════════
 
-// TestListProducts_NormalisesLiveShape feeds the adapter the verbatim shape of a
-// live product and checks every value that crosses the money boundary.
+// TestListProducts_NormalisesLiveShape feeds the adapter the verbatim v2 shapes
+// — a LIGHT list plus a full record per id — and checks every value that crosses
+// the money boundary.
 func TestListProducts_NormalisesLiveShape(t *testing.T) {
-	body := `{"responseCode":1,"responseText":"Products fetched successfully","data":{"total_count":2,"products":[
-	  {"id":"6e417faa-e042-4768-8d5d-916fd531a478","name":"Annual Goods In Transit","route_name":"sti-git-annual","prefix":"sti",
-	   "base_price":"0.5","is_percentage":true,"cover_period":"365","is_active":true,"is_renewable":true,"is_claimable":true,
-	   "is_certificateable":true,"key_benefits":"<p>b</p>","meta":{"certificate_template":"x"},
-	   "category":{"id":"c","name":"Package"},"provider":{"id":"p","organization_name":"Sovereign Trust Insurance Plc"},
-	   "currency":{"name":"Nigerian Naira"},"country":{"name":"Nigeria"},
-	   "sharing_formula":[{"mca_commission":25,"provider_commission":65,"distributor_commission":10,"provider_commission_from":"original_premium"}]},
-	  {"id":"abc","name":"Laptop Standard","route_name":"sti-laptop-cover-standard","prefix":"sti",
-	   "base_price":"7.0000","is_percentage":true,"cover_period":"365","is_active":true,
-	   "meta":{"sum_insured":400000},
-	   "category":{"id":"g","name":"Gadget"},"provider":{"organization_name":"Sovereign Trust Insurance Plc"},
-	   "sharing_formula":[{"distributor_commission":"12.5"}]}
+	list := `{"responseCode":1,"responseText":"ok","data":{"total_count":2,"products":[
+	  {"id":"6e417faa-e042-4768-8d5d-916fd531a478","name":"Annual Goods In Transit"},
+	  {"id":"5886bfc5-a387-4980-8ca4-708c0f083325","name":"Laptop Standard"}
 	]}}`
+	details := map[string]string{
+		"6e417faa-e042-4768-8d5d-916fd531a478": `{"responseCode":1,"responseText":"ok","data":{
+		   "id":"6e417faa-e042-4768-8d5d-916fd531a478","name":"Annual Goods In Transit","route_name":"sti-git-annual","prefix":"sti",
+		   "base_price":"0.5","is_percentage":true,"cover_period":"365","is_active":true,"is_renewable":true,"is_claimable":true,
+		   "is_certificateable":true,"key_benefits":"<p>b</p>","full_benefits":["<p>one</p>","<p>two</p>"],
+		   "meta":{"certificate_template":"x"},
+		   "category":{"id":"c","name":"Package"},"provider":{"id":"p","organization_name":"Sovereign Trust Insurance Plc"},
+		   "currency":{"name":"Nigerian Naira"},"country":{"name":"Nigeria"},
+		   "sharing_formula":[{"mca_commission":25,"provider_commission":65,"distributor_commission":10,"provider_commission_from":"original_premium"}]}}`,
+		"5886bfc5-a387-4980-8ca4-708c0f083325": `{"responseCode":1,"responseText":"ok","data":{
+		   "id":"5886bfc5-a387-4980-8ca4-708c0f083325","name":"Laptop Standard","route_name":"sti-laptop-cover-standard","prefix":"sti",
+		   "base_price":"7.0000","is_percentage":true,"cover_period":"365","is_active":true,
+		   "meta":{"sum_insured":400000},
+		   "category":{"id":"g","name":"Gadget"},"provider":{"organization_name":"Sovereign Trust Insurance Plc"},
+		   "sharing_formula":[{"distributor_commission":"12.5"}]}}`,
+	}
+
+	var sawList bool
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/products/get-all-products" {
-			t.Errorf("wrong catalog path %q", r.URL.Path)
+		if r.URL.Path == "/products/all" {
+			sawList = true
+			if r.URL.Query().Get("limit") != "100" {
+				t.Errorf("limit not forwarded: %q", r.URL.RawQuery)
+			}
+			_, _ = w.Write([]byte(list))
+			return
 		}
-		if r.URL.Query().Get("limit") != "100" {
-			t.Errorf("limit not forwarded: %q", r.URL.RawQuery)
+		id := strings.TrimPrefix(r.URL.Path, "/products/")
+		body, ok := details[id]
+		if !ok {
+			w.WriteHeader(http.StatusNotFound)
+			return
 		}
 		_, _ = w.Write([]byte(body))
 	}))
@@ -363,13 +431,24 @@ func TestListProducts_NormalisesLiveShape(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListProducts: %v", err)
 	}
+	if !sawList {
+		t.Fatal("the v2 light list endpoint was never called")
+	}
 	if total != 2 || len(products) != 2 {
 		t.Fatalf("got %d products (total %d)", len(products), total)
 	}
 
-	git := products[0]
-	if git.Code != "sti-git-annual" || git.Prefix != "sti" {
-		t.Fatalf("identity wrong: %+v", git.Code)
+	byCode := map[string]CatalogProduct{}
+	for _, p := range products {
+		byCode[p.Code] = p
+	}
+
+	git, ok := byCode["sti-git-annual"]
+	if !ok {
+		t.Fatalf("sti-git-annual missing; got %v", byCode)
+	}
+	if git.ProviderProductID != "6e417faa-e042-4768-8d5d-916fd531a478" {
+		t.Fatalf("product uuid lost: %q — nothing can be bought without it", git.ProviderProductID)
 	}
 	if !git.IsPercentage || git.RateBps != 50 { // 0.5% => 50 bps
 		t.Fatalf("rate = %d bps, want 50", git.RateBps)
@@ -389,6 +468,11 @@ func TestListProducts_NormalisesLiveShape(t *testing.T) {
 	if git.Category != "Package" {
 		t.Fatalf("category = %q", git.Category)
 	}
+	// full_benefits arrives as an ARRAY on some products — found live, and it
+	// used to fail the entire sync on the first one.
+	if git.FullBenefitsHTML != "<p>one</p><p>two</p>" {
+		t.Fatalf("array-shaped copy field mishandled: %q", git.FullBenefitsHTML)
+	}
 	// distributor_commission arrives as a bare JSON NUMBER here, not a string.
 	if git.DistributorCommissionPercent != "10" {
 		t.Fatalf("distributor commission = %q, want \"10\"", git.DistributorCommissionPercent)
@@ -397,7 +481,7 @@ func TestListProducts_NormalisesLiveShape(t *testing.T) {
 		t.Fatal("verbatim provider JSON must be retained for reconciliation")
 	}
 
-	laptop := products[1]
+	laptop := byCode["sti-laptop-cover-standard"]
 	if laptop.RateBps != 700 {
 		t.Fatalf("rate = %d bps, want 700", laptop.RateBps)
 	}
@@ -410,14 +494,23 @@ func TestListProducts_NormalisesLiveShape(t *testing.T) {
 	}
 }
 
-// TestListProducts_SkipsMalformedProductWithoutSinkingTheSync
-func TestListProducts_SkipsMalformedProductWithoutSinkingTheSync(t *testing.T) {
-	body := `{"responseCode":1,"responseText":"ok","data":{"total_count":2,"products":[
-	  {"route_name":"","name":"no route name"},
-	  {"route_name":"good-product","name":"Good","base_price":"1000","is_percentage":false,"prefix":"x"}
+// TestListProducts_SkipsUnreadableProductWithoutSinkingTheSync — one bad product
+// must not cost us the other 68.
+func TestListProducts_SkipsUnreadableProductWithoutSinkingTheSync(t *testing.T) {
+	list := `{"responseCode":1,"responseText":"ok","data":{"total_count":2,"products":[
+	  {"id":"bad","name":"Explodes"},
+	  {"id":"good","name":"Good"}
 	]}}`
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write([]byte(body))
+		switch r.URL.Path {
+		case "/products/all":
+			_, _ = w.Write([]byte(list))
+		case "/products/bad":
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = w.Write([]byte(`{"responseCode":0,"responseText":"boom"}`))
+		case "/products/good":
+			_, _ = w.Write([]byte(`{"responseCode":1,"responseText":"ok","data":{"id":"good","route_name":"good-product","name":"Good","base_price":"1000","is_percentage":false,"prefix":"x"}}`))
+		}
 	}))
 	defer srv.Close()
 
@@ -431,6 +524,28 @@ func TestListProducts_SkipsMalformedProductWithoutSinkingTheSync(t *testing.T) {
 	}
 	if products[0].BasePriceKobo != 100_000 {
 		t.Fatalf("flat price = %d kobo, want 100000", products[0].BasePriceKobo)
+	}
+}
+
+// TestGetProduct_FallsBackToUUIDWhenRouteNameIsNull — the v2-only
+// "Comprehensive Auto (AAS)" product has route_name null. Dropping it would
+// silently lose a sellable product, which is exactly what the old model did.
+func TestGetProduct_FallsBackToUUIDWhenRouteNameIsNull(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"responseCode":1,"responseText":"ok","data":{"id":"24140c74-fc6f-42f5-a0d2-24800b22d81b","name":"Comprehensive Auto (AAS)","route_name":null,"base_price":"25000","prefix":"aiico"}}`))
+	}))
+	defer srv.Close()
+
+	c := New("k", "", "", srv.URL)
+	p, err := c.GetProduct(context.Background(), "24140c74-fc6f-42f5-a0d2-24800b22d81b")
+	if err != nil {
+		t.Fatalf("a product with no route_name must still be catalogued: %v", err)
+	}
+	if p.Code != "24140c74-fc6f-42f5-a0d2-24800b22d81b" {
+		t.Fatalf("code = %q, want the uuid fallback", p.Code)
+	}
+	if p.BasePriceKobo != 2_500_000 {
+		t.Fatalf("price = %d kobo, want 2500000", p.BasePriceKobo)
 	}
 }
 
@@ -457,14 +572,16 @@ func TestJSONNumberOrString_NeverGoesThroughFloat(t *testing.T) {
 // WEBHOOKS — must fail CLOSED
 // ════════════════════════════════════════════════════════════════════════════
 
-// TestVerifyWebhook_FailsClosedWithoutSecret is the security invariant.
-// INSURANCE_MYCOVER_WEBHOOK_SECRET is EMPTY in this environment. An adapter that
-// treated "no secret" as "no verification needed" would let anyone who can reach
-// the endpoint activate policies and approve claims.
-func TestVerifyWebhook_FailsClosedWithoutSecret(t *testing.T) {
-	c := New("k", "", "", "http://127.0.0.1:1") // no webhook secret
+// TestVerifyWebhook_FailsClosedWithoutAnyKey is the security invariant. An
+// adapter that treated "no key" as "no verification needed" would let anyone who
+// can reach the endpoint activate policies and approve claims.
+//
+// MyCover issues no separate webhook secret — the signature is keyed on the
+// secret API key — so "no key" means BOTH are empty.
+func TestVerifyWebhook_FailsClosedWithoutAnyKey(t *testing.T) {
+	c := New("", "", "", "http://127.0.0.1:1") // no API key, no webhook secret
 	if c.WebhookConfigured() {
-		t.Fatal("adapter must report the secret as absent")
+		t.Fatal("adapter must report webhook verification as unavailable")
 	}
 	payload := []byte(`{"id":"evt_1","event":"policy.bound","data":{"policy_id":"p1"}}`)
 
@@ -482,6 +599,9 @@ func TestVerifyWebhook_FailsClosedWithoutSecret(t *testing.T) {
 func TestVerifyWebhook_ValidSignature(t *testing.T) {
 	const secret = "test-secret"
 	c := New("k", "", secret, "http://127.0.0.1:1")
+	if !c.WebhookConfigured() {
+		t.Fatal("a configured secret must enable verification")
+	}
 	payload := []byte(`{"id":"evt_1","event":"policy.bound","data":{"policy_id":"p1","claim_id":"c1"}}`)
 
 	sig := hmacHexForTest(secret, payload)
@@ -505,6 +625,38 @@ func TestVerifyWebhook_ValidSignature(t *testing.T) {
 	}
 }
 
+// TestVerifyWebhook_FallsBackToTheAPIKey — MyCover issues NO separate webhook
+// secret; the HMAC is keyed on the distributor's own secret API key. So an empty
+// INSURANCE_MYCOVER_WEBHOOK_SECRET was never a missing credential.
+func TestVerifyWebhook_FallsBackToTheAPIKey(t *testing.T) {
+	const apiKey = "MCASECK_TEST_KEY"
+	c := New(apiKey, "", "", "http://127.0.0.1:1") // no explicit webhook secret
+	if !c.WebhookConfigured() {
+		t.Fatal("the API key must serve as the webhook key")
+	}
+	payload := []byte(`{"event":"purchase.successful","event_id":"evt_9","data":{"essential":{"policy_id":"pol-9"}}}`)
+
+	ev, err := c.VerifyWebhook(context.Background(), payload, hmacHexForTest(apiKey, payload))
+	if err != nil {
+		t.Fatalf("VerifyWebhook: %v", err)
+	}
+	if !ev.SignatureValid {
+		t.Fatal("a payload signed with the API key must verify")
+	}
+	if ev.ProviderPolicyRef != "pol-9" {
+		t.Fatalf("v2 nests the refs under data.essential; got %+v", ev)
+	}
+	if ev.ExternalEventID != "evt_9" {
+		t.Fatalf("event_id is the webhook idempotency key; got %q", ev.ExternalEventID)
+	}
+	// A SHA-256 digest must NOT pass — the scheme is SHA-512.
+	mac256 := hmac.New(sha256.New, []byte(apiKey))
+	mac256.Write(payload)
+	if ev2, _ := c.VerifyWebhook(context.Background(), payload, hex.EncodeToString(mac256.Sum(nil))); ev2.SignatureValid {
+		t.Fatal("a SHA-256 digest verified — the algorithm is HMAC-SHA512")
+	}
+}
+
 func TestNormaliseStatus_UnknownNeverReadsAsCover(t *testing.T) {
 	if got := normaliseStatus("some_new_provider_state"); got == "active" {
 		t.Fatal("an unrecognised provider status must never normalise to active")
@@ -517,46 +669,6 @@ func TestNormaliseStatus_UnknownNeverReadsAsCover(t *testing.T) {
 	}
 }
 
-// TestProbePathExists pins the discovery signal: 404 "Cannot POST ..." means the
-// family path is absent; a 400 validation array or a 403 means it exists.
-func TestProbePathExists(t *testing.T) {
-	if ProbePathExists(http.StatusNotFound) {
-		t.Fatal("404 must read as path-absent")
-	}
-	for _, code := range []int{http.StatusBadRequest, http.StatusForbidden, http.StatusOK} {
-		if !ProbePathExists(code) {
-			t.Fatalf("http %d must read as path-present", code)
-		}
-	}
-}
-
-// TestPaymentPlan_ParsesFormShapes — a form can send the instalment count as a
-// number or a string.
-func TestPaymentPlan_ParsesFormShapes(t *testing.T) {
-	cases := []struct {
-		in   any
-		want int
-		ok   bool
-	}{
-		{float64(12), 12, true}, // JSON decode shape
-		{1, 1, true},
-		{"6", 6, true},
-		{" 3 ", 3, true},
-		{"", 0, false},
-		{nil, 0, false},
-		{"abc", 0, false},
-	}
-	for _, tc := range cases {
-		got, ok := paymentPlan(map[string]any{FieldPaymentPlan: tc.in})
-		if ok != tc.ok || (ok && got != tc.want) {
-			t.Fatalf("paymentPlan(%#v) = (%d,%v), want (%d,%v)", tc.in, got, ok, tc.want, tc.ok)
-		}
-	}
-	if _, ok := paymentPlan(map[string]any{}); ok {
-		t.Fatal("absent payment_plan must report ok=false")
-	}
-}
-
 // Compile-time proof the adapter still satisfies the provider-agnostic gateway.
 var _ gateway.UnderwriterGateway = (*Client)(nil)
 
@@ -564,7 +676,7 @@ var _ gateway.UnderwriterGateway = (*Client)(nil)
 // exercised. It is test-only; production verification lives in
 // verifyHMACSHA256.
 func hmacHexForTest(secret string, payload []byte) string {
-	mac := hmac.New(sha256.New, []byte(secret))
+	mac := hmac.New(sha512.New, []byte(secret))
 	mac.Write(payload)
 	return hex.EncodeToString(mac.Sum(nil))
 }
@@ -588,7 +700,6 @@ func TestBindPolicy_InjectsProductID(t *testing.T) {
 		Product: gateway.ProviderProduct{
 			Code:              "bastion-flexicare-mini",
 			ProviderProductID: "6e417faa-e042-4768-8d5d-916fd531a478",
-			BuyPath:           "/products/bastion/buy-medisure",
 		},
 		Inputs: map[string]any{"first_name": "Ada", "nin": "12345678901"},
 	})
@@ -600,22 +711,10 @@ func TestBindPolicy_InjectsProductID(t *testing.T) {
 	}
 }
 
-// TestBindPolicy_NoProductIDFailsClosed — a family endpoint with no product_id
-// would sell whichever product the family defaults to. That is the wrong cover,
-// paid for. Refuse.
-func TestBindPolicy_NoProductIDFailsClosed(t *testing.T) {
-	c := New("k", "", "", "http://127.0.0.1:1")
-	_, err := c.BindPolicy(context.Background(), gateway.BindRequest{
-		Product: gateway.ProviderProduct{Code: "p", BuyPath: "/products/bastion/buy-medisure"},
-	})
-	if !errors.Is(err, ErrNoProductID) {
-		t.Fatalf("missing provider product id must fail closed, got %v", err)
-	}
-}
-
-// TestBindPolicy_CallerSuppliedProductIDWins lets a curated schema override the
-// catalog value without the adapter fighting it.
-func TestBindPolicy_CallerSuppliedProductIDWins(t *testing.T) {
+// TestBindPolicy_CatalogProductIDWinsOverInput — product_id is authorisation,
+// not data. It selects what is bought, so it comes from the catalog row and
+// never from whatever the member's form posted.
+func TestBindPolicy_CatalogProductIDWinsOverInput(t *testing.T) {
 	var gotBody map[string]any
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewDecoder(r.Body).Decode(&gotBody)
@@ -624,49 +723,16 @@ func TestBindPolicy_CallerSuppliedProductIDWins(t *testing.T) {
 	defer srv.Close()
 	c := New("k", "", "", srv.URL)
 	_, err := c.BindPolicy(context.Background(), gateway.BindRequest{
-		Product: gateway.ProviderProduct{Code: "p", ProviderProductID: "from-catalog", BuyPath: "/products/x/buy-y"},
+		Product: gateway.ProviderProduct{Code: "p", ProviderProductID: "from-catalog"},
 		Inputs:  map[string]any{FieldProductID: "from-caller"},
 	})
 	if err != nil {
 		t.Fatalf("BindPolicy: %v", err)
 	}
-	if gotBody[FieldProductID] != "from-caller" {
-		t.Fatalf("caller-supplied product_id must win, got %v", gotBody[FieldProductID])
-	}
-}
-
-// TestGetQuote_RefusesUnverifiedInstalmentPricing — payment_plan is an
-// instalment COUNT (1..12) on health families and it changes what the member is
-// charged. MyCover's instalment pricing rule is unverified, so anything other
-// than "pay in full" must refuse to quote rather than guess a premium.
-func TestGetQuote_RefusesUnverifiedInstalmentPricing(t *testing.T) {
-	c := New("k", "", "", "http://127.0.0.1:1")
-	prod := gateway.ProviderProduct{Code: "bastion-medisure", BasePriceKobo: 600_000}
-
-	// payment_plan 1 (pay in full) is unambiguous and must work.
-	q, err := c.GetQuote(context.Background(), gateway.QuoteRequest{
-		Product: prod,
-		Inputs:  map[string]any{FieldPaymentPlan: float64(1)},
-	})
-	if err != nil {
-		t.Fatalf("payment_plan 1 must quote: %v", err)
-	}
-	if q.PremiumKobo != 600_000 {
-		t.Fatalf("premium = %d", q.PremiumKobo)
-	}
-
-	// Absent payment_plan behaves as pay-in-full.
-	if _, err := c.GetQuote(context.Background(), gateway.QuoteRequest{Product: prod}); err != nil {
-		t.Fatalf("absent payment_plan must quote: %v", err)
-	}
-
-	// Any instalment plan must REFUSE — never quote a premium that may be wrong.
-	for _, plan := range []any{float64(3), 12, "6"} {
-		if _, err := c.GetQuote(context.Background(), gateway.QuoteRequest{
-			Product: prod,
-			Inputs:  map[string]any{FieldPaymentPlan: plan},
-		}); err == nil {
-			t.Fatalf("payment_plan %v quoted a premium despite the pricing rule being unverified", plan)
-		}
+	// The CATALOG wins: product_id decides which cover is bought, and the catalog
+	// row is the trusted source. A member-supplied value must never be able to
+	// redirect a purchase to a different, cheaper or costlier, product.
+	if gotBody[FieldProductID] != "from-catalog" {
+		t.Fatalf("the catalog product_id must win over member input, got %v", gotBody[FieldProductID])
 	}
 }

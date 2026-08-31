@@ -25,18 +25,28 @@ func (h *Handler) MyCover(c *gin.Context) { h.ingest(c, "mycover") }
 func (h *Handler) Octamile(c *gin.Context) { h.ingest(c, "octamile") }
 
 // ingest reads the raw body, pulls the signature header and hands off to the
-// service. The signature header name varies per provider; both common header
-// names are checked. The raw body is never logged.
+// service. The raw body is never logged.
+//
+// The signature header name comes from the ADAPTER, not from the URL slug.
+// Deriving it from the slug is what broke this before: MyCover is mounted at
+// /internal/webhooks/mycover but signs with "x-mycoverai-signature", so a
+// derived "X-mycover-Signature" never matched, the signature arrived empty, and
+// every genuine delivery was rejected with a 401 that named no cause. Generic
+// header names remain as fallbacks for adapters that declare none.
 func (h *Handler) ingest(c *gin.Context, provider string) {
 	payload, err := io.ReadAll(c.Request.Body)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "cannot read body"})
 		return
 	}
-	signature := firstNonEmpty(
+	signature := ""
+	if hdr := h.svc.SignatureHeaderFor(provider); hdr != "" {
+		signature = c.GetHeader(hdr)
+	}
+	signature = firstNonEmpty(
+		signature,
 		c.GetHeader("X-Signature"),
 		c.GetHeader("X-Webhook-Signature"),
-		c.GetHeader("X-"+provider+"-Signature"),
 	)
 	out, err := h.svc.Ingest(c.Request.Context(), provider, payload, signature)
 	if err != nil {

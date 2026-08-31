@@ -76,14 +76,10 @@ func RegisterInsurance(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pg
 	// Router resolves an adapter from the data-driven catalog (product.provider).
 	router := gateway.NewRouter(catalogSvc, mycoverGW, octamileGW)
 
-	// Purchase-family map: which provider endpoint sells which product, and the
-	// field schema it validates. Pure DATA (embedded JSON, overridable via
-	// INSURANCE_MYCOVER_FAMILIES_FILE) — adding a family is never a code change.
-	families := catalog.LoadFamilyMap(os.Getenv("INSURANCE_MYCOVER_FAMILIES_FILE"))
-	for _, problem := range families.Validate() {
-		log.Printf("[insurance] WARN family map: %s", problem)
-	}
-	catalogSyncer := catalog.NewSyncer(catalogSvc, mycoverGW.Name(), mycoverGW, families)
+	// Catalog sync. Form schemas are FETCHED from the provider's public
+	// per-product schema endpoint rather than maintained here, so adding a
+	// product is a sync run and nothing in this repo needs editing.
+	catalogSyncer := catalog.NewSyncer(catalogSvc, mycoverGW.Name(), mycoverGW, mycoverGW)
 
 	// Policy service: lifecycle + thin quote engine + premium-bind saga.
 	policySvc := policy.NewService(policy.Deps{
@@ -94,6 +90,9 @@ func RegisterInsurance(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pg
 		Wallet:  walletSvc,
 		Ledger:  ledgerSvc,
 		Float:   floatSvc,
+		// Outbound purchase idempotency. MyCover has none of its own, so this is
+		// what stops a retried bind buying a second policy with real money.
+		Binds: policy.NewBindRegistry(pool),
 		// Notifier / Auditor are optional (nil-safe); IB1/orchestrator may inject
 		// the real notifications + audit sinks.
 	})
@@ -112,7 +111,8 @@ func RegisterInsurance(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pg
 						"note": "Signature verification fails CLOSED. With no secret configured " +
 							"every inbound webhook is rejected — a real signing secret is needed from the provider.",
 					},
-					"purchase_families": families.Len(),
+					"quote_path": mycover.QuotePath,
+					"buy_path":   mycover.BuyPath,
 				},
 				{
 					"aggregator":      octamileGW.Name(),

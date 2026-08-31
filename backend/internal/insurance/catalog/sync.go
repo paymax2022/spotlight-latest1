@@ -34,33 +34,44 @@ type CatalogSource interface {
 	ListProducts(ctx context.Context, page, limit int) ([]mycover.CatalogProduct, int, error)
 }
 
-// SchemaSource supplies the VERIFIED family purchase path and form schema for a
-// provider product. FamilyMap implements it from mycover_families.json; a
-// cartographer job can supply a richer file through the same interface.
+// SchemaSource supplies a product's dynamic form schema. The MyCover adapter
+// implements it by fetching GET /public-product-details/{id} — a PUBLIC,
+// machine-readable field table published by the provider itself.
 //
-// It is optional. With no SchemaSource — or for a product no family claims —
-// the product still lands in the catalog with its pricing, copy and cover
-// terms, but with NO buy path, so it is browsable and quotable and bind fails
-// closed. Schemas drop in later as pure data.
+// Fetching beats maintaining. There is no table of fields in this repo to drift
+// out of date, and a product MyCover adds tomorrow arrives with its own form:
+// that is "adding a product is a data change" in the strong sense.
+//
+// It is optional. Without it a product still lands with its pricing, copy and
+// cover terms — browsable and listable — but with no form, so it cannot be
+// purchased and the member-facing schema endpoint says exactly that.
 type SchemaSource interface {
-	// SchemaFor returns the verified family buy path and the form schema for a
-	// provider product. ok=false means "no verified family for this product".
-	SchemaFor(providerProductCode, prefix, category string) (buyPath string, schema map[string]any, ok bool)
+	// ProductSchemaFor returns the form schema for a provider product uuid.
+	ProductSchemaFor(ctx context.Context, providerProductID string) (*mycover.ProductSchema, error)
 }
 
 // SyncResult reports one sync run.
 type SyncResult struct {
-	SyncID       string    `json:"sync_id"`
-	Provider     string    `json:"provider"`
-	Seen         int       `json:"products_seen"`
-	Upserted     int       `json:"products_upserted"`
-	Failed       int       `json:"products_failed"`
-	WithSchema   int       `json:"products_with_schema"`
-	StartedAt    time.Time `json:"started_at"`
-	FinishedAt   time.Time `json:"finished_at"`
-	Status       string    `json:"status"`
-	ErrorText    string    `json:"error_text,omitempty"`
-	SkippedCodes []string  `json:"skipped_codes,omitempty"`
+	SyncID     string `json:"sync_id"`
+	Provider   string `json:"provider"`
+	Seen       int    `json:"products_seen"`
+	Upserted   int    `json:"products_upserted"`
+	Failed     int    `json:"products_failed"`
+	WithSchema int    `json:"products_with_schema"`
+	// Purchasable counts products that can actually be SOLD. It is deliberately
+	// separate from Upserted: a sync that lands 69 products of which only 62 can
+	// be bought is a success with a caveat, and the caveat must be visible.
+	// ProviderTotal is what the PROVIDER says its catalog holds. Reported
+	// separately from Seen so a shortfall is visible rather than inferred.
+	ProviderTotal  int       `json:"provider_total"`
+	Purchasable    int       `json:"products_purchasable"`
+	NotPurchasable int       `json:"products_not_purchasable"`
+	BrokenCodes    []string  `json:"broken_codes,omitempty"`
+	StartedAt      time.Time `json:"started_at"`
+	FinishedAt     time.Time `json:"finished_at"`
+	Status         string    `json:"status"`
+	ErrorText      string    `json:"error_text,omitempty"`
+	SkippedCodes   []string  `json:"skipped_codes,omitempty"`
 }
 
 // Syncer pulls a live provider catalog into the DB catalog.
@@ -147,9 +158,18 @@ func (s *Syncer) Run(ctx context.Context, triggeredBy string) (*SyncResult, erro
 	}
 
 	// Page through until we have everything the provider says exists.
+	//
+	// NOTE the explicit limit: GET /products/all defaults to a page size of 25,
+	// so an unparameterised call quietly returns a THIRD of the catalog and looks
+	// like a complete answer. limit=100 returns all 69 in one page today; the
+	// loop stays for when it does not.
 	const pageSize = 100
+	providerTotal := 0
 	for page := 1; page <= 20; page++ {
 		products, total, err := s.src.ListProducts(ctx, page, pageSize)
+		if total > providerTotal {
+			providerTotal = total
+		}
 		if err != nil {
 			return fail(fmt.Errorf("catalog sync: list products page %d: %w", page, err))
 		}
@@ -158,7 +178,7 @@ func (s *Syncer) Run(ctx context.Context, triggeredBy string) (*SyncResult, erro
 		}
 		res.Seen += len(products)
 		for _, p := range products {
-			hadSchema, uErr := s.upsert(ctx, p)
+			hadSchema, sellable, uErr := s.upsert(ctx, p)
 			if uErr != nil {
 				res.Failed++
 				res.SkippedCodes = append(res.SkippedCodes, p.Code)
@@ -169,6 +189,12 @@ func (s *Syncer) Run(ctx context.Context, triggeredBy string) (*SyncResult, erro
 			if hadSchema {
 				res.WithSchema++
 			}
+			if sellable {
+				res.Purchasable++
+			} else {
+				res.NotPurchasable++
+				res.BrokenCodes = append(res.BrokenCodes, p.Code)
+			}
 		}
 		if total > 0 && res.Seen >= total {
 			break
@@ -177,6 +203,23 @@ func (s *Syncer) Run(ctx context.Context, triggeredBy string) (*SyncResult, erro
 			break
 		}
 	}
+
+	// COMPLETENESS GUARD. Silently dropping a product is exactly what the old
+	// per-product routing model got wrong, and it is invisible: the catalog just
+	// looks slightly smaller than it should. So compare what we landed against
+	// what the provider says exists and say so loudly when they disagree.
+	//
+	// A shortfall does NOT fail the sync — the products that did land are real
+	// and useful — but it is recorded on the run so admin sees "66 of 69" rather
+	// than an unqualified success.
+	if providerTotal > 0 && res.Upserted+res.Failed < providerTotal {
+		missing := providerTotal - (res.Upserted + res.Failed)
+		res.ErrorText = fmt.Sprintf(
+			"incomplete: provider reports %d products, %d were reached (%d never returned)",
+			providerTotal, res.Upserted+res.Failed, missing)
+		log.Printf("[insurance] WARN catalog sync incomplete: %s", res.ErrorText)
+	}
+	res.ProviderTotal = providerTotal
 
 	res.Status = "succeeded"
 	res.FinishedAt = time.Now()
@@ -215,34 +258,61 @@ func (s *Syncer) closeRun(ctx context.Context, res *SyncResult) {
 //	  candidate — COALESCE/NULLIF keep the better value.
 //
 // Returns whether the row ended up with a usable form schema.
-func (s *Syncer) upsert(ctx context.Context, p mycover.CatalogProduct) (bool, error) {
+func (s *Syncer) upsert(ctx context.Context, p mycover.CatalogProduct) (hadSchema, sellable bool, err error) {
 	code := paymaxCode(s.provider, p.Code)
 	line := productLineFor(p.Category)
 
-	// Buy path: ONLY a verified family path is ever stored.
-	//
-	// There is deliberately no derived fallback. Guessing a path from the
-	// product code was tried against the live API and 404s, and a guess that
-	// happened to hit another family's endpoint would sell the WRONG cover.
-	// A product with no family lands with an empty buy path: browsable,
-	// quotable, and unable to bind — which is the correct failure.
-	buyPath := ""
+	// v2 has ONE purchase endpoint for every product; the product is selected by
+	// product_id in the body. There is no per-product path to discover, so the
+	// buy path is a constant and the interesting per-product data is the SCHEMA,
+	// fetched from the provider.
+	buyPath := mycover.BuyPath
 	family := ""
-	verified := false
+	verified := true
 	schemaJSON := []byte(`{}`)
 	schemaSource := ""
+
+	// purchasable defaults to FALSE and is only granted by evidence. MyCover
+	// ships 7 products (of 69) whose own purchase configuration is broken —
+	// four with no purchase config (their schema contains nothing but
+	// product_id) and three with a null sharing_formula, on which Paymax would
+	// earn zero commission. Selling either takes a member's money for cover the
+	// provider cannot issue, so a product is sellable only once we have SEEN a
+	// usable schema and a commission split.
+	purchasable := false
+	configStatus := "unknown"
+	configError := ""
+
 	if s.schemas != nil {
-		if vPath, schema, ok := s.schemas.SchemaFor(p.Code, p.Prefix, p.Category); ok {
-			buyPath = vPath
-			verified = true
-			family = familySegment(vPath)
-			if len(schema) > 0 {
-				if b, err := json.Marshal(schema); err == nil {
-					schemaJSON = b
-					schemaSource = "probe"
-				}
+		schema, sErr := s.schemas.ProductSchemaFor(ctx, p.ProviderProductID)
+		switch {
+		case sErr != nil:
+			configStatus = "schema_unavailable"
+			configError = sErr.Error()
+			log.Printf("[insurance] catalog sync: no schema for %q: %v", p.Code, sErr)
+		case !schema.Purchasable():
+			// A form with no member-fillable field means there is nothing to
+			// collect and therefore nothing to sell.
+			configStatus = "broken"
+			configError = "provider returned an empty form schema (no purchase config)"
+		default:
+			if b, mErr := json.Marshal(schema.AsMap()); mErr == nil {
+				schemaJSON = b
+				schemaSource = "provider"
+			}
+			if p.DistributorCommissionPercent == "" {
+				// sharing_formula is null: Paymax earns nothing and MyCover's own
+				// pricing call refuses the product.
+				configStatus = "broken"
+				configError = "provider has no sharing formula for this product (zero distributor commission)"
+			} else {
+				configStatus = "ok"
+				purchasable = true
 			}
 		}
+	}
+	if !purchasable {
+		verified = false
 	}
 
 	// Commission: MyCover states WHOLE PERCENTS in sharing_formula; store basis
@@ -261,7 +331,7 @@ func (s *Syncer) upsert(ctx context.Context, p mycover.CatalogProduct) (bool, er
 		raw = []byte(`{}`)
 	}
 
-	_, err := s.svc.db.Exec(ctx, `
+	_, execErr := s.svc.db.Exec(ctx, `
 		INSERT INTO public.insurance_products (
 			code, display_name, description, product_line, provider_category,
 			provider, provider_product_code, provider_product_id, provider_prefix,
@@ -278,6 +348,7 @@ func (s *Syncer) upsert(ctx context.Context, p mycover.CatalogProduct) (bool, er
 			document_url,
 			form_schema, form_schema_source, provider_raw,
 			indicative_premium_kobo, premium_cadence,
+			purchasable, provider_config_status, provider_config_error,
 			last_synced_at, active
 		) VALUES (
 			$1,$2,$3,$4,$5,
@@ -295,6 +366,7 @@ func (s *Syncer) upsert(ctx context.Context, p mycover.CatalogProduct) (bool, er
 			$34,
 			$35::jsonb,NULLIF($36,''),$37::jsonb,
 			$38,$39,
+			$40,$41,NULLIF($42,''),
 			now(), false
 		)
 		ON CONFLICT (code) DO UPDATE SET
@@ -331,6 +403,9 @@ func (s *Syncer) upsert(ctx context.Context, p mycover.CatalogProduct) (bool, er
 			provider_raw              = EXCLUDED.provider_raw,
 			indicative_premium_kobo   = EXCLUDED.indicative_premium_kobo,
 			premium_cadence           = EXCLUDED.premium_cadence,
+			purchasable               = EXCLUDED.purchasable,
+			provider_config_status    = EXCLUDED.provider_config_status,
+			provider_config_error     = EXCLUDED.provider_config_error,
 			last_synced_at            = now(),
 			version                   = public.insurance_products.version + 1,
 			-- DISCOVERED: upgrade only. A verified path or a real schema is never
@@ -359,11 +434,12 @@ func (s *Syncer) upsert(ctx context.Context, p mycover.CatalogProduct) (bool, er
 		p.DocumentURL,
 		string(schemaJSON), schemaSource, string(raw),
 		indicative, cadenceFor(p.CoverPeriodDays),
+		purchasable, configStatus, configError,
 	)
-	if err != nil {
-		return false, err
+	if execErr != nil {
+		return false, false, execErr
 	}
-	return schemaSource != "", nil
+	return schemaSource != "", purchasable, nil
 }
 
 func premiumModel(isPct bool) string {
@@ -403,19 +479,4 @@ func percentStringToBps(percent string) int64 {
 		return 0
 	}
 	return bps
-}
-
-// familySegment extracts the {family} path segment from a family buy path
-// (`/products/{family}/buy-{slug}`), for admin display and grouping. It parses
-// what is already stored; it never constructs a path.
-func familySegment(buyPath string) string {
-	const prefix = "/products/"
-	if !strings.HasPrefix(buyPath, prefix) {
-		return ""
-	}
-	rest := buyPath[len(prefix):]
-	if i := strings.IndexByte(rest, '/'); i > 0 {
-		return rest[:i]
-	}
-	return ""
 }
