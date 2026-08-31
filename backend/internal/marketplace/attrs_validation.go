@@ -9,9 +9,16 @@ import (
 // Attribute-schema validation (§1: "attrs validated against category.attribute_schema
 // at write time"). The migration calls the schema "draft-07 JSON-schema", but the
 // marketplace only ever uses a small, well-defined subset — required, per-property
-// type, enum, numeric minimum/maximum, and additionalProperties:false. We validate
-// exactly that subset with no external dependency. An empty schema ({}) accepts any
-// attrs, so every currently-seeded category stays backward-compatible.
+// type (string/boolean/number/integer/array), enum, numeric minimum/maximum, array
+// items/minItems/maxItems, and additionalProperties:false. We validate exactly that
+// subset with no external dependency. An empty schema ({}) accepts any attrs, so
+// every currently-seeded category stays backward-compatible.
+//
+// A category's attribute_schema JSONB may also carry a sibling top-level "fields"
+// array consumed only by the mobile client (form rendering: widget type, label,
+// group, options, unit, placeholder — see mobile-app/reactnative/src/features/
+// marketplace/api/sell.mock.ts AttributeField). This validator ignores "fields"
+// entirely; it only reads required/properties/additionalProperties.
 
 // attrSchema is the supported subset of a category's attribute_schema.
 type attrSchema struct {
@@ -21,10 +28,13 @@ type attrSchema struct {
 }
 
 type attrPropSchema struct {
-	Type    string        `json:"type"` // string | number | integer | boolean
-	Enum    []interface{} `json:"enum"`
-	Minimum *float64      `json:"minimum"`
-	Maximum *float64      `json:"maximum"`
+	Type     string          `json:"type"` // string | number | integer | boolean | array
+	Enum     []interface{}   `json:"enum"`
+	Minimum  *float64        `json:"minimum"`
+	Maximum  *float64        `json:"maximum"`
+	Items    *attrPropSchema `json:"items"`    // element schema, only consulted when Type == "array"
+	MinItems *int            `json:"minItems"` // only consulted when Type == "array"
+	MaxItems *int            `json:"maxItems"` // only consulted when Type == "array"
 }
 
 // validateAttrs checks attrs against a category's attribute_schema. A nil/empty
@@ -100,6 +110,24 @@ func checkProp(key string, prop attrPropSchema, v any) error {
 		}
 		if prop.Maximum != nil && f > *prop.Maximum {
 			return fieldErr(CodeValidation, fmt.Sprintf("attribute %s must be ≤ %v", key, *prop.Maximum), "attrs."+key)
+		}
+	case "array":
+		arr, ok := v.([]interface{})
+		if !ok {
+			return typeErr(key, "array")
+		}
+		if prop.MinItems != nil && len(arr) < *prop.MinItems {
+			return fieldErr(CodeValidation, fmt.Sprintf("attribute %s must have at least %d item(s)", key, *prop.MinItems), "attrs."+key)
+		}
+		if prop.MaxItems != nil && len(arr) > *prop.MaxItems {
+			return fieldErr(CodeValidation, fmt.Sprintf("attribute %s must have at most %d item(s)", key, *prop.MaxItems), "attrs."+key)
+		}
+		if prop.Items != nil {
+			for _, elem := range arr {
+				if err := checkProp(key, *prop.Items, elem); err != nil {
+					return err
+				}
+			}
 		}
 	case "":
 		// no declared type: only enum (if any) constrains it
