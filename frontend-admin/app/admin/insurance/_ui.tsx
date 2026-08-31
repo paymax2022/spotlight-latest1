@@ -251,6 +251,31 @@ export function MetricTile({ label: lbl, value, sub, accent, hint }: { label: st
   );
 }
 
+/**
+ * Server-side pager.
+ *
+ * `total` is nullable and `hasMore` comes from the API, not from arithmetic on
+ * the page length. A pager that computes "page 3 of 7" from a total it never
+ * received will confidently hide rows once the guess is wrong, so when the API
+ * does not report a total this simply does not show one.
+ */
+export function Pager({ page, hasMore, onChange, count, total }: { page: number; hasMore: boolean; onChange: (p: number) => void; count: number; total: number | null }) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', marginTop: '0.9rem', flexWrap: 'wrap' }}>
+      <button style={{ ...btn(), opacity: page <= 1 ? 0.5 : 1 }} disabled={page <= 1} onClick={() => onChange(page - 1)}>
+        ← Previous
+      </button>
+      <span style={{ fontSize: '0.8rem', color: colors.muted }}>
+        Page {page} · {count.toLocaleString('en-NG')} row{count === 1 ? '' : 's'}
+        {total !== null ? ` of ${total.toLocaleString('en-NG')}` : ''}
+      </span>
+      <button style={{ ...btn(), opacity: hasMore ? 1 : 0.5 }} disabled={!hasMore} onClick={() => onChange(page + 1)}>
+        Next →
+      </button>
+    </div>
+  );
+}
+
 /** Amber warning strip for a known, real gap (e.g. an unset webhook secret). */
 export function WarningNote({ title, children }: PropsWithChildren<{ title: string }>) {
   return (
