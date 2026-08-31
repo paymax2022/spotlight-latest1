@@ -48,9 +48,12 @@ const MoneyUnitKobo = "kobo"
 // across the internal API — client → backend → adapter. The adapter converts out
 // of it; nothing else may.
 //
-// Clients declare the same constant on their side and a regression test compares
-// the two, so the two halves of this seam cannot drift apart silently again.
-const MoneyInputWireUnit = MoneyUnitKobo
+// Clients declare the same constant on their side and a regression test in each
+// lane compares the two, so the two halves of this seam cannot drift apart
+// silently again. It is spelled out as a LITERAL rather than aliasing
+// MoneyUnitKobo so those tests can read it out of this file without evaluating
+// Go; a unit test asserts the two stay equal.
+const MoneyInputWireUnit = "kobo"
 
 // schemaFieldsKey / schemaChildrenKey are the published contract's own keys.
 const (

@@ -20,6 +20,18 @@ func decodeSchema(t *testing.T, raw string) map[string]any {
 	return m
 }
 
+// TestMoneySeamConstantsAgree — MoneyInputWireUnit is written as a literal so
+// the cross-lane seam tests can read it out of the source, which means nothing
+// but this test stops it drifting away from the unit money bounds are published
+// in.
+func TestMoneySeamConstantsAgree(t *testing.T) {
+	if MoneyInputWireUnit != MoneyUnitKobo {
+		t.Fatalf("money inputs cross the wire in %q but bounds are published in %q — "+
+			"a value and its own minimum must be in the same unit",
+			MoneyInputWireUnit, MoneyUnitKobo)
+	}
+}
+
 // TestMoneyInputPaths_FindsEveryMoneyField — the adapter converts EXACTLY the
 // fields the published schema labelled `money`. That set is what makes the
 // conversion symmetric with what the client scaled, so it must come from the
