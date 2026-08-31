@@ -132,6 +132,17 @@ var (
 	ErrProductNotPurchasable = fmt.Errorf(
 		"%w: mycover product is not purchasable — the provider's configuration for it is broken",
 		gateway.ErrProviderRejected)
+	// ErrNoFormSchema means the catalog row carries no published form schema, so
+	// we cannot tell WHICH of the member's answers are monetary.
+	//
+	// MyCover's form inputs are naira and every client submits kobo, so an
+	// unconverted answer reaches the insurer 100x too large — a ₦200,000 phone
+	// declared as ₦20,000,000. The conversion is only safe because it keys off
+	// the same schema the client rendered; with no schema there is nothing to key
+	// off, and guessing is what caused the bug. Quote and bind fail CLOSED.
+	ErrNoFormSchema = fmt.Errorf(
+		"%w: mycover product has no published form schema, so its money inputs cannot be converted (run the catalog sync)",
+		gateway.ErrProviderRejected)
 	// ErrWebhookSecretMissing is returned when webhook verification is attempted
 	// with no configured secret. Verification then fails CLOSED.
 	ErrWebhookSecretMissing = errors.New("mycover: webhook secret not configured")
@@ -704,6 +715,31 @@ const FieldPaymentPlan = "payment_plan"
 // gateway.UnderwriterGateway
 // ════════════════════════════════════════════════════════════════════════════
 
+// providerBody turns the member's stored answers into the body MyCover expects.
+//
+// It is the OUTBOUND MONEY BOUNDARY for form inputs. Every value the internal
+// contract carries — including every money field — is INTEGER KOBO; MyCover's
+// form fields are NAIRA. Exactly the paths the product's PUBLISHED schema
+// classified as `money` are rescaled, once, here. Everything else is copied
+// verbatim, and the caller's map is never mutated (quote answers are persisted
+// and replayed at bind time).
+//
+// It fails CLOSED when the schema is unknown: without it we cannot tell which
+// answers are money, and forwarding them unscaled is the 100x bug itself.
+func providerBody(p gateway.ProviderProduct, inputs map[string]any) (map[string]any, error) {
+	if !p.FormSchemaKnown {
+		return nil, fmt.Errorf("%w: %s", ErrNoFormSchema, p.Code)
+	}
+	body, err := ConvertMoneyInputsToNaira(inputs, p.MoneyInputPaths)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %s: %s", gateway.ErrProviderRejected, p.Code, err)
+	}
+	if body == nil {
+		body = map[string]any{}
+	}
+	return body, nil
+}
+
 // GetQuote prices a product by calling MyCover's REAL quote endpoint,
 // POST /products/compute-price with {"product_id": …, "body": {…fields…}}.
 //
@@ -726,12 +762,14 @@ func (c *Client) GetQuote(ctx context.Context, req gateway.QuoteRequest) (gatewa
 		return gateway.Quote{}, fmt.Errorf("%w: %s", ErrProductNotPurchasable, p.Code)
 	}
 
-	// The body is the product's own schema-validated answers, verbatim. We add
-	// nothing MyCover's schema does not declare — unknown fields are a validation
-	// risk, and mapping is the schema's job, upstream.
-	fields := map[string]any{}
-	for k, v := range req.Inputs {
-		fields[k] = v
+	// The body is the product's own schema-validated answers. We add nothing
+	// MyCover's schema does not declare — unknown fields are a validation risk,
+	// and mapping is the schema's job, upstream — but the MONEY answers are
+	// rescaled here, exactly once, from the kobo the internal contract carries to
+	// the naira the provider's form fields are denominated in.
+	fields, err := providerBody(p, req.Inputs)
+	if err != nil {
+		return gateway.Quote{}, err
 	}
 	delete(fields, FieldProductID) // it travels in the envelope, not the body
 
@@ -826,9 +864,9 @@ func (c *Client) BindPolicy(ctx context.Context, req gateway.BindRequest) (gatew
 		return gateway.Policy{}, fmt.Errorf("%w: %s", ErrProductNotPurchasable, p.Code)
 	}
 
-	body := map[string]any{}
-	for k, v := range req.Inputs {
-		body[k] = v
+	body, err := providerBody(p, req.Inputs)
+	if err != nil {
+		return gateway.Policy{}, err
 	}
 	body[FieldProductID] = p.ProviderProductID
 

@@ -191,6 +191,18 @@ type ProviderProduct struct {
 	IsClaimable       bool
 	IsCertificateable bool
 
+	// --- Money-unit seam (see form_money.go) ---
+	// FormSchemaKnown is true when the catalog row carries the product's
+	// published form schema. Without it we cannot tell which inputs are money,
+	// and an adapter whose provider speaks a different unit MUST refuse rather
+	// than forward the answers at the wrong scale.
+	FormSchemaKnown bool
+	// MoneyInputPaths are the dot-separated paths of every input the PUBLISHED
+	// schema classified as `money`, in the shape MoneyInputPaths returns. An
+	// adapter converts exactly these and nothing else, which is what keeps the
+	// client's scaling and the adapter's unscaling symmetric.
+	MoneyInputPaths []string
+
 	// NotPurchasable marks a product the AGGREGATOR's own configuration is
 	// broken for — no purchase config, or no commission-sharing formula. Such a
 	// product can be listed and described but must never be sold: taking a

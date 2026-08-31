@@ -6,7 +6,10 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
+
+	"spotlight/backend/internal/insurance/gateway"
 )
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -46,10 +49,17 @@ type Field struct {
 	Required bool   `json:"required"`
 	Help     string `json:"help,omitempty"`
 
-	MinLength int      `json:"min_length,omitempty"`
-	MaxLength int      `json:"max_length,omitempty"`
-	Min       *float64 `json:"min,omitempty"`
-	Max       *float64 `json:"max,omitempty"`
+	MinLength int          `json:"min_length,omitempty"`
+	MaxLength int          `json:"max_length,omitempty"`
+	Min       *json.Number `json:"min,omitempty"`
+	Max       *json.Number `json:"max,omitempty"`
+
+	// Unit qualifies Min/Max on a `money` field. It is always
+	// gateway.MoneyUnitKobo: the provider states its minimums in naira, but the
+	// internal contract is kobo end to end, so the bound is scaled here and
+	// LABELLED so a client that ignores `unit` still enforces it at the right
+	// magnitude. Empty on every non-money field.
+	Unit string `json:"unit,omitempty"`
 
 	Options []Option `json:"options,omitempty"`
 	// OptionsURL is a provider utility endpoint supplying the options. When the
@@ -119,17 +129,20 @@ type rawSchemaField struct {
 }
 
 type rawValidation struct {
-	Type      string          `json:"type"`
-	MinLength *int            `json:"min_length"`
-	MaxLength *int            `json:"max_length"`
-	Min       *float64        `json:"min"`
-	Max       *float64        `json:"max"`
-	Minimum   *float64        `json:"minimum"`
-	Maximum   *float64        `json:"maximum"`
-	Enum      json.RawMessage `json:"enum"`
-	Options   json.RawMessage `json:"options"`
-	Format    string          `json:"format"`
-	Pattern   string          `json:"pattern"`
+	Type      string `json:"type"`
+	MinLength *int   `json:"min_length"`
+	MaxLength *int   `json:"max_length"`
+	// Bounds are decoded as json.Number, never float64: a money bound is scaled
+	// by 100 on its way into the published contract and float64 arithmetic is
+	// banned from every money path.
+	Min     *json.Number    `json:"min"`
+	Max     *json.Number    `json:"max"`
+	Minimum *json.Number    `json:"minimum"`
+	Maximum *json.Number    `json:"maximum"`
+	Enum    json.RawMessage `json:"enum"`
+	Options json.RawMessage `json:"options"`
+	Format  string          `json:"format"`
+	Pattern string          `json:"pattern"`
 }
 
 // ProductSchemaFor fetches and normalises one product's form schema.
@@ -238,8 +251,8 @@ func convertField(rf rawSchemaField) Field {
 		if v.MaxLength != nil {
 			f.MaxLength = *v.MaxLength
 		}
-		f.Min = firstNonNilFloat(v.Min, v.Minimum)
-		f.Max = firstNonNilFloat(v.Max, v.Maximum)
+		f.Min = firstNonNilNumber(v.Min, v.Minimum)
+		f.Max = firstNonNilNumber(v.Max, v.Maximum)
 		f.Options = parseOptions(v.Enum, v.Options)
 	}
 	if len(f.Options) == 0 {
@@ -260,6 +273,17 @@ func convertField(rf rawSchemaField) Field {
 
 	f.Type = mapFieldType(rf, v, f)
 
+	// MONEY BOUNDARY (bounds). The provider states its minimums in NAIRA —
+	// `value >= 100000` means ₦100,000 — while the internal contract carries
+	// money in KOBO. Publishing the bound unscaled made the minimum 100x too
+	// lenient: a client reading the contract's kobo default validated ₦100,000
+	// as ₦1,000. Scale it exactly once, here, and say which unit it is in.
+	if f.Type == gateway.FieldTypeMoney {
+		f.Min = boundToKobo(f.Min)
+		f.Max = boundToKobo(f.Max)
+		f.Unit = gateway.MoneyUnitKobo
+	}
+
 	// product_id is on every schema and must never be rendered — the adapter
 	// fills it from the catalog row.
 	if rf.Name == FieldProductID {
@@ -273,11 +297,22 @@ func convertField(rf rawSchemaField) Field {
 // boolean, object, array, integer) into the richer internal contract type the
 // app renders a widget from.
 //
-// This mapping is PRESENTATIONAL. It chooses a keyboard and a control; it never
-// changes what is sent or what anything costs, and the provider validates the
-// payload authoritatively either way. So a wrong guess here degrades the form,
-// it does not create a money bug — which is why name-based heuristics are
-// acceptable at all.
+// ⚠️ ONE OF THESE LABELS IS LOAD-BEARING, NOT PRESENTATIONAL.
+//
+// This comment used to claim the whole mapping "never changes what is sent or
+// what anything costs". That was false, and the falsehood was the root cause of
+// a live 100x pricing bug. `money` is the label that says a value is DENOMINATED:
+// clients submit money fields in kobo because of it, and the adapter rescales
+// exactly those fields to the provider's naira because of it (see
+// gateway/form_money.go and money.go). Every other label here really is just a
+// keyboard and a control.
+//
+// A name-based heuristic remains acceptable for `money` for one reason only:
+// SYMMETRY. Both sides key off the SAME emitted label, so a field this function
+// misclassifies is multiplied by 100 by the client and divided by 100 by the
+// adapter and round-trips to identity. If you ever make one side decide for
+// itself which fields are money, that property is gone and a wrong guess here
+// becomes a money bug. Do not.
 func mapFieldType(rf rawSchemaField, v *rawValidation, f Field) string {
 	name := strings.ToLower(rf.Name)
 	base := strings.ToLower(rf.Type)
@@ -437,7 +472,7 @@ func parseDataSource(raw json.RawMessage) ([]Option, string) {
 	return nil, ""
 }
 
-func firstNonNilFloat(vals ...*float64) *float64 {
+func firstNonNilNumber(vals ...*json.Number) *json.Number {
 	for _, v := range vals {
 		if v != nil {
 			return v
@@ -457,4 +492,22 @@ func humanise(name string) string {
 		parts[i] = strings.ToUpper(p[:1]) + p[1:]
 	}
 	return strings.Join(parts, " ")
+}
+
+// boundToKobo rescales a money field's naira bound to the kobo the internal
+// contract publishes. Exact decimal arithmetic (NairaToKobo) — never float64.
+//
+// A bound we cannot scale exactly is DROPPED rather than published at the wrong
+// magnitude: no minimum is honest, and a 100x-lenient one is a money bug wearing
+// a validation rule's clothes.
+func boundToKobo(n *json.Number) *json.Number {
+	if n == nil {
+		return nil
+	}
+	kobo, err := NairaToKobo(n.String())
+	if err != nil {
+		return nil
+	}
+	out := json.Number(strconv.FormatInt(kobo, 10))
+	return &out
 }

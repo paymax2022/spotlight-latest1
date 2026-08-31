@@ -1,18 +1,31 @@
 package mycover
 
 import (
+	"encoding/json"
 	"fmt"
 	"math/big"
 	"regexp"
+	"strconv"
+	"strings"
 )
 
 // ════════════════════════════════════════════════════════════════════════════
-// MONEY BOUNDARY — naira (provider) → kobo (Paymax)
+// MONEY BOUNDARY — naira (provider) ⇄ kobo (Paymax)
 // ════════════════════════════════════════════════════════════════════════════
 //
 // MyCover speaks NAIRA as decimal STRINGS ("6000.0000", "0.5", "10817.0000").
 // Paymax's iron rule is INTEGER KOBO. This file is the ONLY place that crossing
-// happens, and it happens exactly once per value, on the way in.
+// happens, and it happens exactly once per value, in EACH direction:
+//
+//	INBOUND   premiums and sums the provider quotes  → NairaToKobo
+//	OUTBOUND  declared values the member submitted   → ConvertMoneyInputsToNaira
+//
+// The outbound half was missing for a long time. MyCover's FORM INPUTS are also
+// naira, but every client submits kobo, and the adapter forwarded the answers
+// verbatim — so a ₦200,000 phone was declared to the insurer as 20,000,000 and
+// priced at ₦1,000,000 instead of ₦10,000 (verified live on the 5%-rated gadget
+// product). Both halves now live here, side by side, so the asymmetry cannot
+// recur unnoticed.
 //
 // Implementation rule: exact decimal arithmetic via math/big (big.Rat / big.Int).
 // A float64 is NEVER used as an intermediate — float64(0.46)*100 is
@@ -159,4 +172,157 @@ func CommissionFromPercent(baseKobo int64, percent string) int64 {
 		return 0
 	}
 	return k.Int64()
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// OUTBOUND: kobo (Paymax) → naira (MyCover form inputs)
+// ════════════════════════════════════════════════════════════════════════════
+
+// KoboToNaira converts an integer kobo amount to the exact naira value MyCover's
+// form fields are denominated in, as a json.Number so it marshals as a BARE JSON
+// number (the provider's `value` is numeric; a quoted string is rejected).
+//
+// Integer arithmetic only — the naira value is built from the quotient and the
+// remainder, never from a division in floating point. 20_000_000 kobo becomes
+// exactly 200000, and 1_250 kobo becomes exactly 12.5.
+func KoboToNaira(kobo int64) json.Number {
+	neg := kobo < 0
+	abs := kobo
+	if neg {
+		abs = -abs
+	}
+	whole := abs / 100
+	rem := abs % 100
+
+	s := strconv.FormatInt(whole, 10)
+	if rem != 0 {
+		frac := strings.TrimRight(fmt.Sprintf("%02d", rem), "0")
+		s += "." + frac
+	}
+	if neg {
+		s = "-" + s
+	}
+	return json.Number(s)
+}
+
+// ConvertMoneyInputsToNaira returns a COPY of the member's schema-validated
+// answers with exactly the given paths converted from kobo to the provider's
+// naira. Everything else travels verbatim.
+//
+// `paths` comes from gateway.MoneyInputPaths over the very schema the client
+// rendered, so the client's ×100 and this ÷100 always apply to the same fields.
+// That symmetry is what makes the schema's name-based `money` heuristic safe: a
+// misclassified field is scaled up and back down and lands on the value the
+// member typed.
+//
+// A COPY is essential. Quote answers are persisted and REPLAYED verbatim at bind
+// time; converting in place would store naira in a kobo column and the bind
+// would divide an already-divided value again.
+//
+// It FAILS CLOSED. A money answer we cannot convert exactly stops the call —
+// forwarding it raw is precisely the defect this function exists to remove.
+func ConvertMoneyInputsToNaira(inputs map[string]any, paths []string) (map[string]any, error) {
+	if inputs == nil {
+		return nil, nil
+	}
+	money := make(map[string]struct{}, len(paths))
+	for _, p := range paths {
+		if p != "" {
+			money[p] = struct{}{}
+		}
+	}
+	return convertMoneyMap(inputs, "", money)
+}
+
+func convertMoneyMap(in map[string]any, prefix string, money map[string]struct{}) (map[string]any, error) {
+	out := make(map[string]any, len(in))
+	for k, v := range in {
+		path := k
+		if prefix != "" {
+			path = prefix + "." + k
+		}
+		if _, isMoney := money[path]; isMoney {
+			kobo, err := koboFromInput(v)
+			if err != nil {
+				return nil, fmt.Errorf("mycover: money field %q: %w", path, err)
+			}
+			out[k] = KoboToNaira(kobo)
+			continue
+		}
+		converted, err := convertMoneyValue(v, path, money)
+		if err != nil {
+			return nil, err
+		}
+		out[k] = converted
+	}
+	return out, nil
+}
+
+// convertMoneyValue recurses into the nested shapes MyCover schemas actually
+// use: a `policy_holder` object (~65 products) and repeating rows such as
+// office_items[] (17 products). Every row of one array shares one shape, so a
+// row's children carry the array's own path with no index segment.
+func convertMoneyValue(v any, path string, money map[string]struct{}) (any, error) {
+	switch t := v.(type) {
+	case map[string]any:
+		return convertMoneyMap(t, path, money)
+	case []any:
+		rows := make([]any, len(t))
+		for i, row := range t {
+			converted, err := convertMoneyValue(row, path, money)
+			if err != nil {
+				return nil, err
+			}
+			rows[i] = converted
+		}
+		return rows, nil
+	default:
+		return v, nil
+	}
+}
+
+// koboFromInput reads an integer kobo amount out of whatever shape the value
+// arrived in. A money answer reaches this adapter as json.Number (a decoder
+// configured with UseNumber), float64 (a map round-tripped through
+// encoding/json), int/int64 (in process) or a decimal string.
+//
+// Every branch resolves through exact decimal arithmetic and every branch
+// requires a WHOLE number of kobo: a fractional kobo is not an amount this
+// system can hold, so it is refused rather than rounded silently.
+func koboFromInput(v any) (int64, error) {
+	var lit string
+	switch t := v.(type) {
+	case json.Number:
+		lit = t.String()
+	case string:
+		lit = strings.TrimSpace(t)
+	case int:
+		return int64(t), nil
+	case int32:
+		return int64(t), nil
+	case int64:
+		return t, nil
+	case float64:
+		// FormatFloat with precision -1 yields the shortest decimal that round
+		// trips, which for an integral float64 is the exact integer. The value is
+		// then re-validated as a decimal literal below — no float arithmetic.
+		lit = strconv.FormatFloat(t, 'f', -1, 64)
+	case float32:
+		lit = strconv.FormatFloat(float64(t), 'f', -1, 64)
+	default:
+		return 0, fmt.Errorf("%T is not a monetary amount", v)
+	}
+
+	r, err := parseDecimal(lit)
+	if err != nil {
+		return 0, err
+	}
+	if !r.IsInt() {
+		return 0, fmt.Errorf("%q is not a whole number of kobo", lit)
+	}
+	n := r.Num()
+	if !n.IsInt64() {
+		return 0, fmt.Errorf("%q overflows int64 kobo", lit)
+	}
+	return n.Int64(), nil
 }
