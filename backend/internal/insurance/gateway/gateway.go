@@ -73,6 +73,21 @@ func NewRouter(resolver ProductResolver, adapters ...UnderwriterGateway) *Router
 // the product is unknown/inactive.
 var ErrNoProvider = fmt.Errorf("insurance gateway: no provider for product")
 
+// ErrProviderFloatExhausted is the provider-agnostic signal that an aggregator
+// refused a bind because PAYMAX'S PREFUNDED BALANCE WITH THAT AGGREGATOR is
+// empty — not because anything about the member or the product was wrong.
+//
+// Aggregators that settle from a distributor float (MyCover does; it does not
+// charge per transaction) wrap this sentinel around their own error, so feature
+// code branches on the CONDITION without importing a provider package. Keeping
+// it here is what stops the money path from growing a per-provider import.
+//
+// It is called out separately from a generic bind failure because the two need
+// opposite responses: a generic failure is one member's problem, while this is a
+// treasury outage that fails every bind at once and must pause the queue before
+// more members are debited.
+var ErrProviderFloatExhausted = fmt.Errorf("insurance gateway: provider prefunded float exhausted")
+
 // Resolve returns the UnderwriterGateway and the per-product routing descriptor
 // for a Paymax product_code. The product → provider mapping AND the per-product
 // buy path / pricing model live entirely in the catalog data; this function

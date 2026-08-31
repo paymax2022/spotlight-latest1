@@ -40,6 +40,8 @@ type Service struct {
 
 	// quoteTTL caps how long a cached/issued quote is valid.
 	quoteTTL time.Duration
+	// float is the provider prefunded-wallet breaker. Optional (nil-safe).
+	float *catalog.FloatService
 }
 
 // Deps bundles the service dependencies.
@@ -53,6 +55,9 @@ type Deps struct {
 	Notifier Notifier
 	Auditor  Auditor
 	QuoteTTL time.Duration
+	// Float is the provider prefunded-wallet breaker. Optional: when nil the
+	// saga still auto-reverses, it just loses the stampede brake.
+	Float *catalog.FloatService
 }
 
 // NewService constructs the policy service.
@@ -71,6 +76,7 @@ func NewService(d Deps) *Service {
 		notify:   d.Notifier,
 		audit:    d.Auditor,
 		quoteTTL: ttl,
+		float:    d.Float,
 	}
 }
 
@@ -234,6 +240,29 @@ func (s *Service) BindFromQuote(ctx context.Context, userID, quoteID, idempotenc
 		return nil, err
 	}
 
+	// (2b) PROVIDER FLOAT BREAKER — checked BEFORE any money moves.
+	//
+	// MyCover settles binds against a PREFUNDED distributor wallet, not a
+	// per-transaction charge. When that float empties, every bind fails at once.
+	// The auto-reverse below would still make each individual member whole, but
+	// debiting and reversing every member in the queue is an incident, not a
+	// recovery — each one watches money leave their wallet for cover that was
+	// never going to be issued.
+	//
+	// So once the provider has told us the float is empty, refuse here, before
+	// the debit, until an operator tops it up. No money moves and the member gets
+	// a truthful "temporarily unavailable" instead of a debit-and-refund.
+	if s.float != nil {
+		if fErr := s.float.Guard(ctx, qr.Provider); fErr != nil {
+			_ = s.transition(ctx, p, StatePaymentFailed)
+			_ = s.transition(ctx, p, StateVoid)
+			s.auditSafe(ctx, userID, "insurance.bind_blocked_provider_float", map[string]any{
+				"policy_id": p.ID, "provider": qr.Provider,
+			})
+			return p, fErr
+		}
+	}
+
 	// (3) Idempotent premium debit → AccountProviderClearing (pass-through).
 	clearing, err := s.ledger.GetOrCreateStandingAccount(ctx, ledger.AccountProviderClearing)
 	if err != nil {
@@ -280,7 +309,22 @@ func (s *Service) BindFromQuote(ctx context.Context, userID, quoteID, idempotenc
 		Inputs: qr.Inputs,
 	})
 	if bindErr != nil {
+		// An empty provider float is a TREASURY outage, not this member's fault.
+		// Trip the breaker so the next member is refused before their money moves,
+		// then auto-reverse this one — they are already debited and must be made
+		// whole regardless.
+		if s.float != nil && errors.Is(bindErr, gateway.ErrProviderFloatExhausted) {
+			s.float.RecordFloatExhausted(ctx, qr.Provider, bindErr.Error())
+			s.auditSafe(ctx, userID, "insurance.provider_float_exhausted", map[string]any{
+				"policy_id": p.ID, "provider": qr.Provider,
+			})
+		}
 		return s.autoReverse(ctx, p, idempotencyKey, premiumRef, clearing.ID, bindErr)
+	}
+	// A bind that went through is PROOF the float has money in it — the only
+	// evidence-based way back to "ok".
+	if s.float != nil {
+		s.float.RecordBindSucceeded(ctx, qr.Provider)
 	}
 
 	// SUCCESS: record provider ref + disclosure + cert; move to ACTIVE.

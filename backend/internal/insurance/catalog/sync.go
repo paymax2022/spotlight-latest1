@@ -34,15 +34,18 @@ type CatalogSource interface {
 	ListProducts(ctx context.Context, page, limit int) ([]mycover.CatalogProduct, int, error)
 }
 
-// SchemaSource supplies a discovered form schema + verified buy path for a
-// provider product code. A cartographer job (or a curated JSON map) implements
-// it. It is optional: with no SchemaSource the sync still lands every product,
-// with an empty schema and an UNVERIFIED candidate buy path, and the schemas
-// drop in later as pure data.
+// SchemaSource supplies the VERIFIED family purchase path and form schema for a
+// provider product. FamilyMap implements it from mycover_families.json; a
+// cartographer job can supply a richer file through the same interface.
+//
+// It is optional. With no SchemaSource — or for a product no family claims —
+// the product still lands in the catalog with its pricing, copy and cover
+// terms, but with NO buy path, so it is browsable and quotable and bind fails
+// closed. Schemas drop in later as pure data.
 type SchemaSource interface {
-	// SchemaFor returns the verified buy path and the form schema for a provider
-	// product code. ok=false means "not known yet".
-	SchemaFor(providerProductCode string) (buyPath string, schema map[string]any, ok bool)
+	// SchemaFor returns the verified family buy path and the form schema for a
+	// provider product. ok=false means "no verified family for this product".
+	SchemaFor(providerProductCode, prefix, category string) (buyPath string, schema map[string]any, ok bool)
 }
 
 // SyncResult reports one sync run.
@@ -216,22 +219,24 @@ func (s *Syncer) upsert(ctx context.Context, p mycover.CatalogProduct) (bool, er
 	code := paymaxCode(s.provider, p.Code)
 	line := productLineFor(p.Category)
 
-	// Buy path: prefer a discovered/verified path; otherwise seed the
-	// conventional candidate, flagged UNVERIFIED. The candidate is a starting
-	// point for the cartographer, never something bind trusts blindly — an
-	// unverified path that 404s surfaces as a provider error, not a silent
-	// wrong-product purchase.
-	buyPath := mycover.BuyPath(p.Prefix, p.Code)
+	// Buy path: ONLY a verified family path is ever stored.
+	//
+	// There is deliberately no derived fallback. Guessing a path from the
+	// product code was tried against the live API and 404s, and a guess that
+	// happened to hit another family's endpoint would sell the WRONG cover.
+	// A product with no family lands with an empty buy path: browsable,
+	// quotable, and unable to bind — which is the correct failure.
+	buyPath := ""
+	family := ""
 	verified := false
 	schemaJSON := []byte(`{}`)
 	schemaSource := ""
 	if s.schemas != nil {
-		if vPath, schema, ok := s.schemas.SchemaFor(p.Code); ok {
-			if vPath != "" {
-				buyPath = vPath
-				verified = true
-			}
-			if schema != nil {
+		if vPath, schema, ok := s.schemas.SchemaFor(p.Code, p.Prefix, p.Category); ok {
+			buyPath = vPath
+			verified = true
+			family = familySegment(vPath)
+			if len(schema) > 0 {
 				if b, err := json.Marshal(schema); err == nil {
 					schemaJSON = b
 					schemaSource = "probe"
@@ -260,7 +265,7 @@ func (s *Syncer) upsert(ctx context.Context, p mycover.CatalogProduct) (bool, er
 		INSERT INTO public.insurance_products (
 			code, display_name, description, product_line, provider_category,
 			provider, provider_product_code, provider_product_id, provider_prefix,
-			provider_buy_path, buy_path_verified,
+			provider_buy_path, provider_buy_family, buy_path_verified,
 			binding_mode, underwriter_display, underwriter_logo_url,
 			premium_model, required_kyc_tier,
 			is_percentage, base_price_kobo, rate_bps, default_sum_insured_kobo,
@@ -277,19 +282,19 @@ func (s *Syncer) upsert(ctx context.Context, p mycover.CatalogProduct) (bool, er
 		) VALUES (
 			$1,$2,$3,$4,$5,
 			$6,$7,$8,$9,
-			$10,$11,
-			'direct',$12,$13,
-			$14,0,
-			$15,$16,$17,$18,
-			$19,
-			$20,$21,$22,
-			$23,
-			$24,$25,$26,$27,$28,
+			$10,NULLIF($11,''),$12,
+			'direct',$13,$14,
+			$15,0,
+			$16,$17,$18,$19,
+			$20,
+			$21,$22,$23,
+			$24,
+			$25,$26,$27,$28,$29,
 			'NGN',
-			$29,$30,$31,$32,
-			$33,
-			$34::jsonb,NULLIF($35,''),$36::jsonb,
-			$37,$38,
+			$30,$31,$32,$33,
+			$34,
+			$35::jsonb,NULLIF($36,''),$37::jsonb,
+			$38,$39,
 			now(), false
 		)
 		ON CONFLICT (code) DO UPDATE SET
@@ -330,9 +335,8 @@ func (s *Syncer) upsert(ctx context.Context, p mycover.CatalogProduct) (bool, er
 			version                   = public.insurance_products.version + 1,
 			-- DISCOVERED: upgrade only. A verified path or a real schema is never
 			-- replaced by a weaker candidate on a later sync.
-			provider_buy_path = CASE
-				WHEN public.insurance_products.buy_path_verified THEN public.insurance_products.provider_buy_path
-				ELSE EXCLUDED.provider_buy_path END,
+			provider_buy_path = COALESCE(EXCLUDED.provider_buy_path, public.insurance_products.provider_buy_path),
+			provider_buy_family = COALESCE(EXCLUDED.provider_buy_family, public.insurance_products.provider_buy_family),
 			buy_path_verified = public.insurance_products.buy_path_verified OR EXCLUDED.buy_path_verified,
 			form_schema = CASE
 				WHEN EXCLUDED.form_schema ? 'fields' THEN EXCLUDED.form_schema
@@ -343,7 +347,7 @@ func (s *Syncer) upsert(ctx context.Context, p mycover.CatalogProduct) (bool, er
 		`,
 		code, p.Name, p.Description, line, p.Category,
 		s.provider, p.Code, p.ProviderProductID, p.Prefix,
-		buyPath, verified,
+		buyPath, family, verified,
 		p.Underwriter, p.UnderwriterLogo,
 		premiumModel(p.IsPercentage),
 		p.IsPercentage, p.BasePriceKobo, p.RateBps, p.DefaultSumInsuredKobo,
@@ -399,4 +403,19 @@ func percentStringToBps(percent string) int64 {
 		return 0
 	}
 	return bps
+}
+
+// familySegment extracts the {family} path segment from a family buy path
+// (`/products/{family}/buy-{slug}`), for admin display and grouping. It parses
+// what is already stored; it never constructs a path.
+func familySegment(buyPath string) string {
+	const prefix = "/products/"
+	if !strings.HasPrefix(buyPath, prefix) {
+		return ""
+	}
+	rest := buyPath[len(prefix):]
+	if i := strings.IndexByte(rest, '/'); i > 0 {
+		return rest[:i]
+	}
+	return ""
 }

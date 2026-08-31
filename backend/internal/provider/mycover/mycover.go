@@ -33,17 +33,23 @@ import (
 // THE CENTRAL FACT ABOUT THIS PROVIDER
 // ════════════════════════════════════════════════════════════════════════════
 // MyCover is NOT a generic quote→bind API. There is no POST /quotes and no
-// generic POST /policies. Instead every product has:
+// generic POST /policies. Instead:
 //
-//   - its OWN purchase endpoint, `POST /products/{prefix}/buy-{slug}`, where the
-//     slug is NOT derivable from the product's route_name and must be discovered
-//     and stored per product;
-//   - its OWN required-field schema (gender/nin/image_url for one product,
-//     cargo_details/country_of_origin for another);
-//   - its OWN pricing model — a flat naira price, or a percentage RATE applied
-//     to the sum insured.
+//   - Purchase endpoints are per product FAMILY:
+//     `POST /products/{family}/buy-{family-slug}`. One family path serves MANY
+//     products, and the specific product is selected by a `product_id` UUID in
+//     the request BODY.
+//   - Family names are their OWN namespace. `/products/bastion/buy-medisure` is
+//     live although no product is named "MediSure", while route_name-derived
+//     guesses (bastion-flexicare-mini, goxi-artisan-basic, allianz-travel-cover,
+//     sti-flexi-guard) all 404. Deriving a path is a confirmed dead end: the
+//     family path must be discovered and stored.
+//   - Each family has its OWN required-field schema (gender/nin/image_url for
+//     health, device_make/device_serial_number for gadget).
+//   - Each product has its OWN pricing model — a flat naira price, or a
+//     percentage RATE applied to the sum insured.
 //
-// All three live as DATA in the insurance_products catalog row and reach this
+// All of it lives as DATA on the insurance_products catalog row and reaches this
 // adapter inside gateway.ProviderProduct. Consequently this file contains ZERO
 // per-product branching: adding a 69th product is a catalog sync, not a code
 // change.
@@ -80,13 +86,57 @@ var (
 	// ErrUnsupported means MyCover exposes no endpoint for the operation at all.
 	// We return it rather than inventing a call that would 404.
 	ErrUnsupported = errors.New("mycover: operation not supported by the provider API")
-	// ErrNoBuyPath means the catalog row is missing its per-product purchase
-	// path. Bind fails CLOSED — we never guess a buy URL.
-	ErrNoBuyPath = errors.New("mycover: product has no stored buy path (run the catalog sync)")
+	// ErrNoBuyPath means the catalog row is missing its family purchase path.
+	// Bind fails CLOSED — we never guess a buy URL.
+	ErrNoBuyPath = errors.New("mycover: product has no stored family buy path (run the catalog sync)")
+	// ErrNoProductID means the catalog row is missing the MyCover product uuid.
+	// A family endpoint selects the product from that uuid, so without it the
+	// purchase would bind whichever cover the family defaults to — the wrong
+	// product, paid for. Bind fails CLOSED.
+	ErrNoProductID = errors.New("mycover: product has no provider product id (run the catalog sync)")
 	// ErrWebhookSecretMissing is returned when webhook verification is attempted
 	// with no configured secret. Verification then fails CLOSED.
 	ErrWebhookSecretMissing = errors.New("mycover: webhook secret not configured")
+
+	// ErrInsufficientProviderFloat means MyCover accepted the whole payload and
+	// then refused at settlement because PAYMAX'S PREFUNDED DISTRIBUTOR WALLET
+	// with MyCover has no money in it.
+	//
+	// ⛔ This is the single most important error in this adapter, and it is NOT a
+	// rare edge case. MyCover does not charge per transaction: the distributor
+	// holds a prefunded balance and every policy purchase debits it. When that
+	// float runs dry EVERY bind fails, all at once — so if members have already
+	// been debited by then, we owe refunds at scale.
+	//
+	// It is deliberately its own type, distinct from a generic bind failure,
+	// because the two demand opposite responses: a generic failure is a per-member
+	// problem, while this one is a treasury problem that must stop the queue and
+	// page an operator. Verified live: a fully valid purchase payload returns
+	// {"responseCode":0,"responseText":"v2 Error: Insufficient wallet fund for purchase"}.
+	// It WRAPS gateway.ErrProviderFloatExhausted so feature code can branch on
+	// the condition without importing this provider package.
+	ErrInsufficientProviderFloat = fmt.Errorf(
+		"%w: mycover prefunded distributor wallet is empty — no policy can be bound until it is topped up",
+		gateway.ErrProviderFloatExhausted)
 )
+
+// isInsufficientFloat detects the provider's prefunded-wallet refusal. MyCover
+// reports it as a plain message with no distinct code, so the message is the only
+// available signal. Matching is narrow and case-insensitive; a false negative
+// merely degrades to a generic bind failure (safe), whereas a false positive
+// would wrongly trip the treasury alarm.
+func isInsufficientFloat(messages []string) bool {
+	for _, m := range messages {
+		l := strings.ToLower(m)
+		if strings.Contains(l, "insufficient wallet fund") {
+			return true
+		}
+		if strings.Contains(l, "insufficient") && strings.Contains(l, "wallet") && strings.Contains(l, "fund") {
+			return true
+		}
+	}
+	return false
+}
 
 // New constructs a MyCover adapter. baseURL may be empty to use the verified
 // default host. apiKey = secret key (server auth); publicKey = publishable key.
@@ -473,24 +523,26 @@ func atoiSafe(s string) int {
 	return n
 }
 
-// BuyPath returns the conventional purchase path for a product. The convention
-// is `/products/{prefix}/buy-{route_name minus the prefix}` — but it is only a
-// CANDIDATE: MyCover 404s several products that follow it (verified live:
-// `bastion-flexicare-mini` → `/products/bastion/buy-flexicare-mini` is a 404).
-// The authoritative path is the one stored on the catalog row; this function
-// exists solely to seed a first guess for the catalog sync, which records it as
-// UNVERIFIED until a probe or the schema map confirms it.
-func BuyPath(prefix, routeName string) string {
-	if prefix == "" || routeName == "" {
-		return ""
-	}
-	slug := strings.TrimPrefix(routeName, prefix+"-")
-	if slug == routeName {
-		// route_name does not carry the prefix (e.g. prefix "sti", route
-		// "homeowners-content"); use it whole.
-		slug = routeName
-	}
-	return "/products/" + prefix + "/buy-" + slug
+// FieldProductID is the body field every MyCover buy endpoint uses to select
+// which product in the family is being purchased. Its value is the product's
+// MyCover uuid ("product_id must be a UUID").
+const FieldProductID = "product_id"
+
+// FieldPaymentPlan is the instalment count (1..12 months) some family schemas
+// accept. It changes what the member is charged, so it is never defaulted
+// silently — see GetQuote.
+const FieldPaymentPlan = "payment_plan"
+
+// ProbePathExists interprets a discovery probe of a candidate family path: POST
+// the path with an empty body and read the answer. 404 ("Cannot POST …") means
+// the path is absent; a 400 validation array or a 403 means it exists. Probing
+// is safe — validation rejects before anything is created.
+//
+// There is deliberately NO function here that DERIVES a buy path from a product
+// code. That was tried and is a confirmed dead end; a derived path either 404s
+// or, far worse, could reach the wrong family. Paths are data.
+func ProbePathExists(statusCode int) bool {
+	return statusCode != http.StatusNotFound
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -539,6 +591,25 @@ func (c *Client) GetQuote(ctx context.Context, req gateway.QuoteRequest) (gatewa
 		premium = p.BasePriceKobo
 	}
 
+	// INSTALMENTS — deliberately fail closed.
+	//
+	// Some family schemas (health, e.g. /products/bastion/buy-medisure) accept a
+	// `payment_plan` of 1..12 months. It changes what the member is charged, and
+	// MyCover's instalment pricing rule is NOT verified: we do not know whether
+	// base_price is the full cover price to be split, or a per-instalment
+	// amount to be multiplied. Guessing is a money bug in one direction or the
+	// other — either we over-charge the member or we under-collect and owe the
+	// underwriter.
+	//
+	// So: payment_plan 1 (or absent) prices normally; anything else refuses to
+	// quote until the rule is confirmed with MyCover. The single-payment path is
+	// unambiguous and stays open.
+	if plan, ok := paymentPlan(req.Inputs); ok && plan != 1 {
+		return gateway.Quote{}, fmt.Errorf(
+			"mycover: product %q requested a %d-month payment_plan, but MyCover's instalment "+
+				"pricing rule is unverified — refusing to quote a premium that may be wrong", p.Code, plan)
+	}
+
 	currency := req.Currency
 	if currency == "" {
 		currency = "NGN"
@@ -568,6 +639,7 @@ func (c *Client) GetQuote(ctx context.Context, req gateway.QuoteRequest) (gatewa
 		ExpiresAt:           expires,
 		Terms: map[string]any{
 			"priced_by":         "catalog",
+			"payment_plan":      1,
 			"pricing_model":     pricingModel(p.IsPercentage),
 			"rate_bps":          p.RateBps,
 			"cover_period_days": p.CoverPeriodDays,
@@ -576,6 +648,40 @@ func (c *Client) GetQuote(ctx context.Context, req gateway.QuoteRequest) (gatewa
 			"certificateable":   p.IsCertificateable,
 		},
 	}, nil
+}
+
+// paymentPlan reads the instalment count from the member's answers. It accepts
+// the JSON shapes a form can produce (number or numeric string) and reports
+// ok=false when the field is absent or unreadable.
+func paymentPlan(inputs map[string]any) (int, bool) {
+	v, ok := inputs[FieldPaymentPlan]
+	if !ok || v == nil {
+		return 0, false
+	}
+	switch t := v.(type) {
+	case int:
+		return t, true
+	case int64:
+		return int(t), true
+	case float64:
+		// JSON numbers decode to float64; an instalment count is a small integer
+		// so the conversion is exact. This is a COUNT, never money.
+		return int(t), true
+	case json.Number:
+		n, err := t.Int64()
+		if err != nil {
+			return 0, false
+		}
+		return int(n), true
+	case string:
+		n, err := strconv.Atoi(strings.TrimSpace(t))
+		if err != nil {
+			return 0, false
+		}
+		return n, true
+	default:
+		return 0, false
+	}
 }
 
 func pricingModel(isPct bool) string {
@@ -603,13 +709,23 @@ func (c *Client) BindPolicy(ctx context.Context, req gateway.BindRequest) (gatew
 		return gateway.Policy{}, fmt.Errorf("%w: product %q", ErrNoBuyPath, p.Code)
 	}
 
-	// The body is exactly the product's own fields. We do not inject Paymax
-	// concepts (policyholder_ref, quote_ref) that no MyCover schema declares —
-	// unknown fields are a validation risk, and the mapping is the form schema's
-	// job, upstream.
+	// The body is the family schema's own fields PLUS product_id, which is how a
+	// family endpoint is told which product to sell. Everything else the member
+	// answered is forwarded flat; we inject no Paymax concepts (policyholder_ref,
+	// quote_ref) that no MyCover schema declares, because unknown fields are a
+	// validation risk.
 	body := map[string]any{}
 	for k, v := range req.Inputs {
 		body[k] = v
+	}
+	if _, supplied := body[FieldProductID]; !supplied {
+		if p.ProviderProductID == "" {
+			// Without the uuid the family endpoint cannot know which product to
+			// sell, and a family default would sell the WRONG cover. Fail closed.
+			return gateway.Policy{}, fmt.Errorf(
+				"%w: the family endpoint %q cannot select product %q", ErrNoProductID, p.BuyPath, p.Code)
+		}
+		body[FieldProductID] = p.ProviderProductID
 	}
 
 	env, err := c.postIdem(ctx, p.BuyPath, req.IdempotencyKey, body)
@@ -1008,12 +1124,19 @@ func (c *Client) do(req *http.Request) (envelope, error) {
 		return envelope{}, fmt.Errorf("mycover: unreadable response (http %d)", resp.StatusCode)
 	}
 	if resp.StatusCode >= 400 || !env.OK() {
-		return envelope{}, &APIError{
+		apiErr := &APIError{
 			StatusCode:   resp.StatusCode,
 			ResponseCode: env.ResponseCode,
 			Path:         env.Path,
 			Messages:     env.Messages(),
 		}
+		// The prefunded-wallet refusal arrives as an ordinary failure envelope.
+		// Wrap it so callers can branch with errors.Is and stop the queue rather
+		// than treating a treasury outage as one member's bad luck.
+		if isInsufficientFloat(apiErr.Messages) {
+			return envelope{}, fmt.Errorf("%w: %s", ErrInsufficientProviderFloat, apiErr.Error())
+		}
+		return envelope{}, apiErr
 	}
 	return env, nil
 }

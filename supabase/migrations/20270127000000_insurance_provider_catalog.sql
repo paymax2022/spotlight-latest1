@@ -1,11 +1,17 @@
 -- Insurance — provider catalog columns for live MyCover.ai integration.
 --
--- WHY: MyCover exposes NO generic bind endpoint. Every product has its own
--- purchase path (`POST /products/{prefix}/buy-{slug}`), its own required-field
--- schema, and its own pricing model (flat naira price vs a percentage RATE of
--- the sum insured). The buy slug is NOT derivable from the product's route_name
--- — verified live, `bastion-flexicare-mini` → `/products/bastion/buy-flexicare-mini`
--- returns 404 — so it must be DISCOVERED and STORED per product.
+-- WHY: MyCover exposes NO generic bind endpoint. Purchase endpoints are per
+-- product FAMILY (`POST /products/{family}/buy-{family-slug}`), and the specific
+-- product is chosen by a `product_id` UUID in the request BODY — the MyCover
+-- `id` from get-all-products. One family path therefore serves many products.
+--
+-- Family names are their OWN namespace and match nothing in the catalog:
+-- `/products/bastion/buy-medisure` is live although no product is named
+-- "MediSure", while `bastion-flexicare-mini`, `goxi-artisan-basic`,
+-- `allianz-travel-cover` and `sti-flexi-guard` all 404 when treated as slugs.
+-- Deriving a path from route_name is a confirmed dead end. The family path must
+-- be DISCOVERED (404 "Cannot POST" = absent; 400 validation array or 403 =
+-- present) and STORED, alongside each product's own UUID.
 --
 -- These columns make that per-product knowledge DATA. Adding a 69th product is a
 -- catalog sync (a row), never a code change: no adapter method branches on a
@@ -29,12 +35,18 @@ BEGIN;
 ALTER TABLE public.insurance_products
   -- MyCover's own product uuid (endpoints that key on the uuid, not route_name).
   ADD COLUMN IF NOT EXISTS provider_product_id   text,
-  -- The FULL provider-relative purchase path, e.g. /products/sti/buy-marine-cover.
-  -- Discovered per product; NEVER computed at call time.
+  -- The FULL provider-relative FAMILY purchase path, e.g.
+  -- /products/bastion/buy-medisure. Shared by every product in the family; the
+  -- product is selected by provider_product_id in the request body. Discovered,
+  -- NEVER computed at call time.
   ADD COLUMN IF NOT EXISTS provider_buy_path     text,
-  -- Whether provider_buy_path has been confirmed against the live API (a POST
-  -- with an empty body returning 400 validation errors rather than 404 proves
-  -- the path exists). Unverified paths are usable but flagged in admin.
+  -- The family key (the {family} path segment). Its own namespace — it need not
+  -- match any product name, prefix or route_name.
+  ADD COLUMN IF NOT EXISTS provider_buy_family   text,
+  -- Whether provider_buy_path has been confirmed against the live API: a POST
+  -- with an empty body answering 400 (validation array) or 403 proves the path
+  -- exists; 404 "Cannot POST" proves it does not. A product with no verified
+  -- family path cannot bind — the adapter fails closed rather than guessing.
   ADD COLUMN IF NOT EXISTS buy_path_verified     boolean NOT NULL DEFAULT false,
   -- Underwriter prefix segment of the buy path.
   ADD COLUMN IF NOT EXISTS provider_prefix       text;
