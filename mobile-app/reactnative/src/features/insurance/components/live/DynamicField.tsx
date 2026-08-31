@@ -9,7 +9,7 @@ import React, { useState } from 'react';
 import { ActivityIndicator, Image, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import * as DocumentPicker from 'expo-document-picker';
 import * as ImagePicker from 'expo-image-picker';
-import { Camera, FileUp, ImagePlus, Paperclip, X } from 'lucide-react-native';
+import { Camera, FileUp, ImagePlus, Paperclip, Plus, Trash2, X } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Radius } from '@/constants/radius';
 import { Spacing } from '@/constants/spacing';
@@ -22,24 +22,92 @@ import { alertAsync } from '@/lib/confirm';
 import { sanitizeMoneyInput } from '@/utils/money';
 import { InsuranceColors } from '../../constants/insurance.constants';
 import { uploadInsuranceFile } from '../../live/api';
-import { asList, asText, boundInFieldUnits } from '../../live/formEngine';
+import {
+  asGroup,
+  asList,
+  asRows,
+  asText,
+  boundInFieldUnits,
+  optionsQueryFor,
+} from '../../live/formEngine';
+import { useFieldOptions } from '../../live/hooks';
 import { nairaFromKobo } from '../../live/money';
-import type { Field, FieldValue, InsuranceError } from '../../live/types';
+import type { Field, FieldValue, FormValues, InsuranceError } from '../../live/types';
+
+const YES_NO: Field['options'] = [
+  { value: 'true', label: 'Yes' },
+  { value: 'false', label: 'No' },
+];
 
 export default function DynamicField({
   field,
   value,
   error,
   onChange,
+  productCode,
+  values,
 }: {
   field: Field;
   value: FieldValue | undefined;
   error?: string;
   onChange: (v: FieldValue) => void;
+  /** Needed to resolve utility-backed dropdown options server-side. */
+  productCode: string;
+  /** The sibling answers — dependent dropdowns are filtered by their parent. */
+  values: FormValues;
 }) {
   const label = field.required ? field.label : `${field.label} (optional)`;
 
+  // Options fetched from a lookup rather than declared inline (109 vehicle
+  // makes, 193 nationalities, the LGAs of one state).
+  if (field.remoteOptions && (field.type === 'select' || field.type === 'multiselect')) {
+    return (
+      <RemoteOptionsControl
+        field={field}
+        label={label}
+        value={value}
+        error={error}
+        onChange={onChange}
+        productCode={productCode}
+        values={values}
+      />
+    );
+  }
+
   switch (field.type) {
+    case 'object':
+      return (
+        <GroupControl
+          field={field}
+          value={asGroup(value)}
+          error={error}
+          onChange={onChange}
+          productCode={productCode}
+        />
+      );
+
+    case 'array':
+      return (
+        <RepeatingControl
+          field={field}
+          rows={asRows(value)}
+          error={error}
+          onChange={onChange}
+          productCode={productCode}
+        />
+      );
+
+    case 'boolean':
+      return (
+        <ChoiceRow
+          field={{ ...field, options: YES_NO }}
+          label={label}
+          value={asText(value)}
+          error={error}
+          onChange={onChange}
+        />
+      );
+
     case 'select': {
       const options = field.options ?? [];
       // A short enum (Male|Female, Laptop|Phone|Tablet|Others) reads better as
@@ -294,6 +362,249 @@ function FreeTextList({
       <Help field={field} fallback="Separate each item with a comma." />
     </View>
   );
+}
+
+
+// ── Remote-option dropdowns ─────────────────────────────────────────────────
+/**
+ * A dropdown whose options come from a lookup, including the dependent ones.
+ *
+ * The dependency is the whole point. `vehicle_model` returns an EMPTY list when
+ * fetched without its parent make, and `lga` shares one lookup with `state`
+ * (no query = the 36 states; `?query=Abia` = that state's LGAs). Fetching
+ * eagerly therefore produces a dropdown that opens onto nothing and cannot be
+ * completed — so until the parent is answered we do not fetch at all, and say
+ * what is needed instead.
+ */
+function RemoteOptionsControl({
+  field,
+  label,
+  value,
+  error,
+  onChange,
+  productCode,
+  values,
+}: {
+  field: Field;
+  label: string;
+  value: FieldValue | undefined;
+  error?: string;
+  onChange: (v: FieldValue) => void;
+  productCode: string;
+  values: FormValues;
+}) {
+  const query = optionsQueryFor(field, values);
+  const waitingOnParent = query === '';
+  const options = useFieldOptions({
+    productCode,
+    field: field.name,
+    enabled: !waitingOnParent,
+    query,
+  });
+
+  const parentLabel = field.dependsOn?.field
+    ? humanizeFieldName(field.dependsOn.field)
+    : 'the previous answer';
+
+  if (waitingOnParent) {
+    return (
+      <View style={styles.lockedWrap}>
+        <Text style={styles.uploadLabel}>{label}</Text>
+        <View style={styles.locked}>
+          <Text style={styles.lockedText}>Choose {parentLabel} first</Text>
+        </View>
+      </View>
+    );
+  }
+
+  if (options.isLoading) {
+    return (
+      <View style={styles.lockedWrap}>
+        <Text style={styles.uploadLabel}>{label}</Text>
+        <View style={styles.locked}>
+          <ActivityIndicator size="small" color={InsuranceColors.brand} />
+          <Text style={styles.lockedText}>Loading options…</Text>
+        </View>
+      </View>
+    );
+  }
+
+  if (options.isError) {
+    return (
+      <View style={styles.lockedWrap}>
+        <Text style={styles.uploadLabel}>{label}</Text>
+        <Pressable style={[styles.locked, styles.lockedError]} onPress={() => options.refetch()}>
+          <Text style={styles.lockedErrorText}>Couldn&apos;t load the options — tap to retry</Text>
+        </Pressable>
+      </View>
+    );
+  }
+
+  const loaded = options.data ?? [];
+  if (loaded.length === 0) {
+    return (
+      <View style={styles.lockedWrap}>
+        <Text style={styles.uploadLabel}>{label}</Text>
+        <View style={styles.locked}>
+          <Text style={styles.lockedText}>
+            The insurer has no options here for {query ? `“${query}”` : 'this plan'} yet.
+          </Text>
+        </View>
+      </View>
+    );
+  }
+
+  const resolved: Field = { ...field, options: loaded, remoteOptions: false };
+  return field.type === 'multiselect' ? (
+    <MultiSelectControl
+      field={resolved}
+      label={label}
+      value={asList(value)}
+      error={error}
+      onChange={onChange}
+    />
+  ) : (
+    <SelectControl
+      field={resolved}
+      label={label}
+      value={asText(value)}
+      error={error}
+      onChange={onChange}
+    />
+  );
+}
+
+function humanizeFieldName(name: string): string {
+  return String(name).replace(/[_-]+/g, ' ').replace(/([a-z0-9])([A-Z])/g, '$1 $2').toLowerCase();
+}
+
+// ── Nested object block ─────────────────────────────────────────────────────
+/**
+ * A nested block of fields — `policy_holder` appears on roughly 65 of the 69
+ * products. It is drawn as a titled card of its own children so a person can
+ * see that these answers are about one subject, and its value stays a nested
+ * object so the payload keeps the shape the insurer expects.
+ */
+function GroupControl({
+  field,
+  value,
+  error,
+  onChange,
+  productCode,
+}: {
+  field: Field;
+  value: FormValues;
+  error?: string;
+  onChange: (v: FieldValue) => void;
+  productCode: string;
+}) {
+  const children = field.children ?? [];
+  return (
+    <View style={styles.group}>
+      <Text style={styles.groupTitle}>{field.label}</Text>
+      {field.help ? <Text style={styles.groupHelp}>{field.help}</Text> : null}
+      {children.map((child) => (
+        <DynamicField
+          key={child.name}
+          field={child}
+          value={value[child.name]}
+          error={error && children.length === 1 ? error : undefined}
+          productCode={productCode}
+          values={value}
+          onChange={(v) => onChange({ ...value, [child.name]: v })}
+        />
+      ))}
+      {error && children.length !== 1 ? <Text style={styles.error}>{error}</Text> : null}
+    </View>
+  );
+}
+
+// ── Repeating group ─────────────────────────────────────────────────────────
+/**
+ * A repeating group — `office_items[]`, `cargo_details[]`, `beneficiaries[]`.
+ * 17 products carry one.
+ *
+ * Each row is the child schema rendered again, and rows can be added and
+ * removed. The first row is created automatically for a required field: an
+ * empty list with an "Add" button reads as optional, and the user finds out
+ * otherwise only when the step refuses to advance.
+ */
+function RepeatingControl({
+  field,
+  rows,
+  error,
+  onChange,
+  productCode,
+}: {
+  field: Field;
+  rows: FormValues[];
+  error?: string;
+  onChange: (v: FieldValue) => void;
+  productCode: string;
+}) {
+  const children = field.children ?? [];
+  const minRows = field.minRows ?? (field.required ? 1 : 0);
+  const effective = rows.length === 0 && minRows > 0 ? [{}] : rows;
+  const atMax = field.maxRows != null && effective.length >= field.maxRows;
+
+  const setRow = (index: number, next: FormValues) =>
+    onChange(effective.map((r, i) => (i === index ? next : r)));
+
+  return (
+    <View style={styles.group}>
+      <Text style={styles.groupTitle}>{field.label}</Text>
+      {field.help ? <Text style={styles.groupHelp}>{field.help}</Text> : null}
+
+      {effective.map((row, index) => (
+        <View key={index} style={styles.row}>
+          <View style={styles.rowHead}>
+            <Text style={styles.rowTitle}>
+              {singularLabel(field.label)} {index + 1}
+            </Text>
+            {effective.length > minRows ? (
+              <Pressable
+                onPress={() => onChange(effective.filter((_, i) => i !== index))}
+                hitSlop={10}
+                accessibilityLabel={`Remove ${singularLabel(field.label)} ${index + 1}`}
+              >
+                <Trash2 size={16} color={Colors.error} />
+              </Pressable>
+            ) : null}
+          </View>
+          {children.map((child) => (
+            <DynamicField
+              key={child.name}
+              field={child}
+              value={row[child.name]}
+              productCode={productCode}
+              values={row}
+              onChange={(v) => setRow(index, { ...row, [child.name]: v })}
+            />
+          ))}
+        </View>
+      ))}
+
+      {atMax ? null : (
+        <Pressable
+          style={styles.addRow}
+          onPress={() => onChange([...effective, {}])}
+          accessibilityRole="button"
+        >
+          <Plus size={16} color={InsuranceColors.brand} />
+          <Text style={styles.addRowLabel}>Add another {singularLabel(field.label).toLowerCase()}</Text>
+        </Pressable>
+      )}
+
+      {error ? <Text style={styles.error}>{error}</Text> : null}
+    </View>
+  );
+}
+
+function singularLabel(label: string): string {
+  const l = String(label).trim();
+  if (/ies$/i.test(l)) return `${l.slice(0, -3)}y`;
+  if (/s$/i.test(l) && !/ss$/i.test(l)) return l.slice(0, -1);
+  return l;
 }
 
 // ── File / image upload ─────────────────────────────────────────────────────
@@ -664,4 +975,60 @@ const styles = StyleSheet.create({
   choiceError: { borderColor: Colors.error },
   choiceLabel: { ...Typography.labelMd, color: Colors.onSurfaceVariant },
   choiceLabelActive: { color: InsuranceColors.brand, fontWeight: '700' },
+
+  lockedWrap: { marginBottom: Spacing.md, gap: Spacing.sm },
+  locked: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.sm,
+    borderWidth: 1,
+    borderColor: InsuranceColors.border,
+    borderRadius: Radius.md,
+    paddingHorizontal: Spacing.md,
+    paddingVertical: Spacing.md,
+    backgroundColor: Colors.surfaceContainerLow,
+  },
+  lockedError: { borderColor: Colors.error, backgroundColor: Colors.errorContainer },
+  lockedText: { ...Typography.labelMd, color: Colors.onSurfaceVariant },
+  lockedErrorText: { ...Typography.labelMd, color: Colors.error },
+
+  group: {
+    marginBottom: Spacing.md,
+    padding: Spacing.md,
+    borderRadius: Radius.lg,
+    backgroundColor: Colors.surfaceContainerLow,
+    gap: Spacing.xs,
+  },
+  groupTitle: { ...Typography.titleMd, color: Colors.onSurface, marginBottom: Spacing.xs },
+  groupHelp: {
+    ...Typography.labelSm,
+    color: Colors.onSurfaceVariant,
+    marginTop: -Spacing.xs,
+    marginBottom: Spacing.sm,
+  },
+  row: {
+    borderRadius: Radius.md,
+    backgroundColor: Colors.surfaceContainerLowest,
+    padding: Spacing.md,
+    marginBottom: Spacing.sm,
+  },
+  rowHead: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: Spacing.sm,
+  },
+  rowTitle: { ...Typography.labelLg, color: Colors.onSurface },
+  addRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: Spacing.sm,
+    borderWidth: 1,
+    borderStyle: 'dashed',
+    borderColor: InsuranceColors.border,
+    borderRadius: Radius.md,
+    paddingVertical: Spacing.md,
+  },
+  addRowLabel: { ...Typography.labelMd, color: InsuranceColors.brand },
 });

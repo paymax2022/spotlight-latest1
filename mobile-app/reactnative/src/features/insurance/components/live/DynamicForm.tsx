@@ -1,25 +1,29 @@
 // ── Insurance (live) — the schema-driven purchase form ──────────────────────
 // THE central piece of this module.
 //
-// MyCover exposes one bespoke purchase endpoint per product, each with its own
-// required-field schema. There is no shared quote form to hardcode: a medisure
-// purchase wants gender + an 11-digit NIN + a photo, a marine-cover purchase
-// wants cargo details + a country-of-origin enum + a cargo value ≥ ₦5,000, and
-// an office-content purchase wants tenancy, a Nigerian LGA and an item list.
+// Every MyCover product publishes its OWN required-field table, and no two are
+// alike. A Bastion health application wants gender, an 11-digit NIN, a passport
+// photo and a past date of birth; an STI comprehensive motor application wants
+// 23 fields including four utility-backed dropdowns, one of which is empty until
+// its parent is chosen; an office-content application wants tenancy, a Nigerian
+// LGA and a repeating list of items. Most also nest a `policy_holder` block.
 //
-// So this renders whatever `FormSchema` it is handed:
-//   · chunks the fields into steps (`buildSteps`) so a 12-field motor form is a
+// So there is no shared quote form to hardcode. This renders whatever
+// `FormSchema` it is handed:
+//   · chunks fields into steps (`buildSteps`) so a 23-field motor form is a
 //     short sequence rather than one endless scroll — and keeps a small form on
 //     a single page, because splitting four fields across three screens is worse
+//   · gives nested blocks and repeating groups a step of their own
 //   · validates each step against the provider's own rules before advancing, so
-//     a person is told about the ₦5,000 minimum here rather than by a 400
+//     a person is told about the ₦50,000 minimum here rather than by a 400
 //   · hides, skips validating, and never submits dependent fields whose
-//     controller is unset (`dependsOn`)
+//     controller is unset, and refuses to fetch a dependent dropdown's options
+//     before its parent is answered
 //   · takes server-side field errors back and jumps to the step that owns the
 //     first one, so a rejection lands under the input that caused it
 //
-// It holds NO product knowledge whatsoever. Adding a 69th product with a schema
-// nobody has seen requires no change here.
+// It holds NO product knowledge whatsoever. A product with a schema nobody has
+// seen requires no change here.
 
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { ScrollView, StyleSheet, Text, View } from 'react-native';
@@ -48,6 +52,7 @@ export interface DynamicFormHandle {
 
 export default function DynamicForm({
   schema,
+  productCode,
   values,
   onChange,
   onSubmit,
@@ -61,6 +66,8 @@ export default function DynamicForm({
   footer,
 }: {
   schema: FormSchema | null;
+  /** Utility-backed dropdowns are resolved server-side by product + field. */
+  productCode: string;
   values: FormValues;
   onChange: (next: FormValues) => void;
   onSubmit: (values: FormValues) => void;
@@ -189,6 +196,8 @@ export default function DynamicForm({
                 field={field}
                 value={values[field.name]}
                 error={showErrors ? errors[field.name] || undefined : undefined}
+                productCode={productCode}
+                values={values}
                 onChange={(v) => setField(field.name, v)}
               />
             ))}
