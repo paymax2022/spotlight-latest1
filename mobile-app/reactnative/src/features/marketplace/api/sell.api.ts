@@ -35,7 +35,7 @@ import type {
   UpdateListingInput,
 } from '../types';
 
-export type { AiPrefillResult, AttributeField, AttributeSchema } from './sell.mock';
+export type { AiPrefillResult, AttributeField, AttributeFieldOption, AttributeSchema } from './sell.mock';
 export { mockIsEscrowEligibleCategory as isEscrowEligibleCategory, MOCK_SELF_SELLER_ID } from './sell.mock';
 
 // ─── Categories (attribute schema for the Attribute form) ────────────────────

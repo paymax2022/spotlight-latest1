@@ -662,9 +662,11 @@ export async function submitCampaign(
   // draft looked equivalent but was not: the server field is `coverImageUrl`
   // while the draft carries `coverImageUri`, so every cover image was silently
   // dropped, and the spread hid that the DTO accepts none of the wizard's
-  // budget/milestone/reward/document/beneficiary data either — the wizard
-  // collects all of it and the server discards it. Keep this list explicit so
-  // the next field that stops being persisted is visible in review.
+  // document/beneficiary data either — the wizard collects it and the server
+  // discards it. MILESTONES, BUDGET and REWARD TIERS are no longer in that list:
+  // the DTO accepts them and SubmitForReview stores them in the same transaction
+  // as the campaign. Documents and beneficiary still go nowhere. Keep this list
+  // explicit so the next field that stops being persisted is visible in review.
   const res = await api.post(
     `${LIVE}/campaigns`,
     {
@@ -684,6 +686,35 @@ export async function submitCampaign(
       // with a stored path that renders broken for every other viewer. Send it
       // only once it is an http(s) URL — which is what an R2 upload will yield.
       coverImageUrl: /^https?:\/\//i.test(draft.coverImageUri ?? '') ? draft.coverImageUri : null,
+        // The wizard's funding plan, now that the server accepts and stores it. The
+        // first milestone is what the campaign is working on and the rest are locked
+        // behind it — the same labelling the wizard uses while collecting them.
+        // RELEASED and PENDING_REVIEW are deliberately not sendable: the server
+        // refuses them, because a campaign must not be able to tell backers money
+        // reached a milestone it never reached.
+        milestones: draft.milestones.map((m, i) => ({
+          title: m.title,
+          targetKobo: m.targetKobo,
+          status: i === 0 ? 'ACTIVE' : 'LOCKED',
+          dueAt: null,
+        })),
+        // The other two things the wizard collected and the server used to drop.
+        // Reward tiers deliberately send no `claimed`: how many backers took a tier
+        // is a fact the server counts from who actually did, not a number a campaign
+        // may assert about itself.
+        budget: draft.budget.map((b) => ({
+          label: b.label,
+          amountKobo: b.amountKobo,
+          note: null,
+        })),
+        rewardTiers: draft.rewardTiers.map((r) => ({
+          title: r.title,
+          amountKobo: r.amountKobo,
+          description: r.description,
+          estimatedDelivery: null,
+          limit: null,
+          requiresShipping: r.requiresShipping,
+        })),
       submitForReview,
     },
     { headers: { 'Idempotency-Key': idempotencyKey } },
