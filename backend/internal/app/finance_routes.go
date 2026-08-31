@@ -447,6 +447,11 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		// /api/finance/insurance/insurance/* instead of /api/finance/insurance/*
 		// (the client contract) — same class of bug documented for savings above.
 		insuranceAdmin := r.Group("/api/insurance/admin")
+		// RequireAuthContext MUST come before requireUserID: requireUserID only
+		// reads the user_id that RequireAuthContext populates, so without it every
+		// admin route 401s even with a valid token. Same bug as referral (line ~414)
+		// and the finance group before it — see the note above line 284.
+		insuranceAdmin.Use(middleware.RequireAuthContext(supabase, rbac))
 		insuranceAdmin.Use(requireUserID())
 		insuranceWebhooks := r.Group("/internal/webhooks")                              // provider-signed, no user auth
 		RegisterInsurance(finance, insuranceAdmin, pool, rbac)                          // gateway/catalog/policy/quote/saga/consent
