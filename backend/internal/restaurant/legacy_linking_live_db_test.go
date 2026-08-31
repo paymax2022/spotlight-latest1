@@ -190,17 +190,122 @@ func TestLiveDB_LegacyProfilesAreDistinguishableFromReviewedOnes(t *testing.T) {
 	pool := staffPool(t)
 	t.Cleanup(func() { pool.Close() })
 	ctx := context.Background()
+	svc := NewService(pool, nil)
 
-	// Grandfathered owners were never reviewed. If they were indistinguishable
-	// from approved applicants, "who did we actually vet?" becomes unanswerable.
-	var legacy int
-	if err := pool.QueryRow(ctx, `
-		SELECT count(*) FROM onb_merchant_profile
-		WHERE merchant_type_id='mt-restaurant' AND application_id IS NULL`).Scan(&legacy); err != nil {
-		t.Fatalf("count legacy: %v", err)
+	// Deterministic by construction, for exactly the reason the first test in this
+	// file spells out. The previous version asserted the GLOBAL condition "some
+	// legacy profile exists somewhere":
+	//
+	//	SELECT count(*) FROM onb_merchant_profile
+	//	 WHERE merchant_type_id='mt-restaurant' AND application_id IS NULL   -- > 0
+	//
+	// which CANNOT hold on a fresh database. Grandfathering comes from
+	// 20261213000000_foodhub_legacy_owner_linking.sql, which backfills
+	// INSERT … SELECT FROM public.restaurants; nothing seeds that table, so a
+	// fresh replay links zero owners and the count is legitimately 0. The
+	// assertion was measuring whether the environment happened to carry history,
+	// not whether the code keeps grandfathered owners distinguishable — and it
+	// failed the integration-verify lane on main for precisely that reason.
+	//
+	// So seed BOTH kinds and assert the distinction itself.
+
+	// ── 1. Grandfathered: a restaurant predating onboarding, linked by the same
+	//       service call the migration's backfill mirrors. No application exists.
+	legacyOwner := uuid.New().String()
+	shop := uuid.New().String()
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO auth.users (id,email) VALUES ($1,$2) ON CONFLICT DO NOTHING`,
+		legacyOwner, legacyOwner+"@seed.test"); err != nil {
+		t.Fatalf("seed legacy user: %v", err)
 	}
-	if legacy == 0 {
-		t.Error("no legacy profiles found — linking did not run, or it invented applications")
+	testsupport.CleanupUser(t, pool, legacyOwner)
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO restaurants (id, owner_id, name, address, is_open) VALUES ($1,$2,'Grandfathered Kitchen','1 St',TRUE)`,
+		shop, legacyOwner); err != nil {
+		t.Fatalf("seed restaurant: %v", err)
+	}
+	t.Cleanup(func() {
+		bg := context.Background()
+		pool.Exec(bg, `DELETE FROM restaurant_staff WHERE restaurant_id=$1`, shop)
+		pool.Exec(bg, `DELETE FROM restaurants WHERE id=$1`, shop)
+		pool.Exec(bg, `DELETE FROM onb_merchant_profile WHERE user_id=$1`, legacyOwner)
+	})
+	if _, err := svc.LinkLegacyOwners(ctx); err != nil {
+		t.Fatalf("LinkLegacyOwners: %v", err)
+	}
+
+	// ── 2. Reviewed: applied, was approved, and carries the application that
+	//       records the review.
+	reviewedOwner := uuid.New().String()
+	appID := uuid.New().String()
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO auth.users (id,email) VALUES ($1,$2) ON CONFLICT DO NOTHING`,
+		reviewedOwner, reviewedOwner+"@seed.test"); err != nil {
+		t.Fatalf("seed reviewed user: %v", err)
+	}
+	testsupport.CleanupUser(t, pool, reviewedOwner)
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO onb_application (id, user_id, merchant_type_id, status, decided_at)
+		 VALUES ($1,$2,'mt-restaurant','APPROVED',now())`, appID, reviewedOwner); err != nil {
+		t.Fatalf("seed application: %v", err)
+	}
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO onb_merchant_profile
+		   (user_id, module_id, merchant_type_id, application_id, role_granted, status, workspace_route, activated_at)
+		 VALUES ($1,'mod-food','mt-restaurant',$2,'restaurant_merchant','ACTIVE','/merchant/restaurant',now())
+		 ON CONFLICT (user_id, merchant_type_id) DO NOTHING`, reviewedOwner, appID); err != nil {
+		t.Fatalf("seed reviewed profile: %v", err)
+	}
+	t.Cleanup(func() {
+		bg := context.Background()
+		pool.Exec(bg, `DELETE FROM onb_merchant_profile WHERE user_id=$1`, reviewedOwner)
+		pool.Exec(bg, `DELETE FROM onb_application WHERE id=$1`, appID)
+	})
+
+	// ── The distinction itself: application_id IS NULL is what separates
+	//       "grandfathered in" from "we vetted this one". If grandfathering ever
+	//       invented an application, the operator question "who did we actually
+	//       review?" becomes unanswerable — and it answers wrong silently.
+	var legacyAppID *string
+	if err := pool.QueryRow(ctx,
+		`SELECT application_id FROM onb_merchant_profile
+		  WHERE user_id=$1 AND merchant_type_id='mt-restaurant'`, legacyOwner).Scan(&legacyAppID); err != nil {
+		t.Fatalf("the grandfathered owner was not linked: %v", err)
+	}
+	if legacyAppID != nil {
+		t.Errorf("grandfathered profile carries application_id %q — that fabricates a review that never happened", *legacyAppID)
+	}
+
+	var reviewedAppID *string
+	if err := pool.QueryRow(ctx,
+		`SELECT application_id FROM onb_merchant_profile
+		  WHERE user_id=$1 AND merchant_type_id='mt-restaurant'`, reviewedOwner).Scan(&reviewedAppID); err != nil {
+		t.Fatalf("the reviewed owner has no profile: %v", err)
+	}
+	if reviewedAppID == nil || *reviewedAppID != appID {
+		t.Errorf("reviewed profile application_id = %v, want %s — a real review must stay attributable", reviewedAppID, appID)
+	}
+
+	// And the query an operator would actually run must separate the two.
+	var isLegacy bool
+	if err := pool.QueryRow(ctx,
+		`SELECT EXISTS (SELECT 1 FROM onb_merchant_profile
+		   WHERE merchant_type_id='mt-restaurant' AND application_id IS NULL AND user_id=$1)`,
+		legacyOwner).Scan(&isLegacy); err != nil {
+		t.Fatalf("legacy query: %v", err)
+	}
+	if !isLegacy {
+		t.Error(`the "never reviewed" query did not return the grandfathered owner`)
+	}
+	var reviewedLooksLegacy bool
+	if err := pool.QueryRow(ctx,
+		`SELECT EXISTS (SELECT 1 FROM onb_merchant_profile
+		   WHERE merchant_type_id='mt-restaurant' AND application_id IS NULL AND user_id=$1)`,
+		reviewedOwner).Scan(&reviewedLooksLegacy); err != nil {
+		t.Fatalf("legacy query (reviewed): %v", err)
+	}
+	if reviewedLooksLegacy {
+		t.Error(`the "never reviewed" query returned a REVIEWED owner — the two are not distinguishable`)
 	}
 }
 
