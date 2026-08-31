@@ -30,7 +30,8 @@ import {
   listVotePackages, createVotePackage, updateVotePackage, deactivateVotePackage,
   listVotePackageTemplates, createVotePackageTemplate, updateVotePackageTemplate,
   deleteVotePackageTemplate, applyTemplatesToContest, formatNaira as naira,
-  type VotePackage, type VotePackageTemplate,
+  getContestVotingSettings, saveContestVotingSettings,
+  type VotePackage, type VotePackageTemplate, type ContestVotingSettings,
 } from '@/services/votePackagesService';
 import type { VotingContest } from '@/types/competitions';
 
@@ -68,6 +69,12 @@ function VotePackagesInner() {
   const [tplEditingId, setTplEditingId] = useState<string | null>(null);
   const [showCatalog, setShowCatalog] = useState(false);
 
+  // Voting settings for the selected contest. /api/admin/voting/settings has had
+  // read and write all along and nothing called it, so "what does a vote cost"
+  // and "how many free votes" had no answer in the console at all.
+  const [settings, setSettings] = useState<ContestVotingSettings | null>(null);
+  const [vs, setVs] = useState({ votingEnabled: false, freeVotingEnabled: true, freeVotesPerDay: '1', paidVotingEnabled: false, pricePerVoteNgn: '' });
+
   const contest = useMemo(() => contests.find((c) => c.id === contestId), [contests, contestId]);
 
   // The per-vote price the contest itself advertises, so an admin pricing a tier
@@ -104,7 +111,51 @@ function VotePackagesInner() {
     }
   }, []);
 
+  const loadSettings = useCallback(async () => {
+    if (!contestId) return;
+    try {
+      const row = await getContestVotingSettings(contestId);
+      setSettings(row);
+      if (row) {
+        setVs({
+          votingEnabled: row.votingEnabled,
+          freeVotingEnabled: row.freeVotingEnabled,
+          freeVotesPerDay: String(row.freeVotesPerDay ?? 0),
+          paidVotingEnabled: row.paidVotingEnabled || row.votePriceNgn > 0,
+          pricePerVoteNgn: row.votePriceNgn ? String(row.votePriceNgn) : '',
+        });
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to load voting settings');
+    }
+  }, [contestId]);
+
+  async function saveSettings() {
+    const price = Number(vs.pricePerVoteNgn || 0);
+    if (vs.paidVotingEnabled && (!Number.isFinite(price) || price <= 0)) {
+      return setError('Paid voting needs a price above zero, in naira.');
+    }
+    setBusy(true); setError(null); setNotice(null);
+    try {
+      await saveContestVotingSettings({
+        contestId,
+        votingEnabled: vs.votingEnabled,
+        freeVotingEnabled: vs.freeVotingEnabled,
+        freeVotesPerDay: Number(vs.freeVotesPerDay || 0),
+        paidVotingEnabled: vs.paidVotingEnabled,
+        pricePerVoteNgn: vs.paidVotingEnabled ? price : 0,
+      });
+      setNotice('Voting settings saved.');
+      await Promise.all([loadSettings(), loadContests(), loadPackages()]);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not save voting settings');
+    } finally {
+      setBusy(false);
+    }
+  }
+
   useEffect(() => { void loadContests(); }, [loadContests]);
+  useEffect(() => { void loadSettings(); }, [loadSettings]);
   useEffect(() => { void loadPackages(); }, [loadPackages]);
   useEffect(() => { void loadTemplates(); }, [loadTemplates]);
 
@@ -333,6 +384,58 @@ function VotePackagesInner() {
             ))}
           </tbody>
         </table>
+      </Card>
+
+      <Card title="Voting settings" style={{ marginTop: 16 }}>
+        <div style={{ padding: 16 }}>
+          <p style={{ margin: '0 0 14px', fontSize: 12, color: colors.muted }}>
+            What it takes to vote at all. Free votes are the allowance every user gets; paid voting sets
+            the per-vote price the packages below are measured against. Price is in <strong>naira</strong>.
+            {settings && !settings.configured && ' This contest has no voting configuration yet.'}
+          </p>
+
+          <div style={{ display: 'flex', gap: 22, flexWrap: 'wrap', alignItems: 'flex-end' }}>
+            <label style={{ fontSize: 13, display: 'flex', alignItems: 'center', gap: 6 }}>
+              <input type="checkbox" checked={vs.votingEnabled}
+                onChange={(e) => setVs({ ...vs, votingEnabled: e.target.checked })} />
+              Voting enabled
+            </label>
+
+            <label style={{ fontSize: 13, display: 'flex', alignItems: 'center', gap: 6 }}>
+              <input type="checkbox" checked={vs.freeVotingEnabled}
+                onChange={(e) => setVs({ ...vs, freeVotingEnabled: e.target.checked })} />
+              Free votes
+            </label>
+            <div>
+              <label style={{ display: 'block', fontSize: 12, color: colors.muted, marginBottom: 4 }}>Free votes / day</label>
+              <Input type="number" min={0} style={{ width: 130 }} disabled={!vs.freeVotingEnabled}
+                value={vs.freeVotesPerDay}
+                onChange={(e) => setVs({ ...vs, freeVotesPerDay: e.target.value })} />
+            </div>
+
+            <label style={{ fontSize: 13, display: 'flex', alignItems: 'center', gap: 6 }}>
+              <input type="checkbox" checked={vs.paidVotingEnabled}
+                onChange={(e) => setVs({ ...vs, paidVotingEnabled: e.target.checked })} />
+              Paid voting
+            </label>
+            <div>
+              <label style={{ display: 'block', fontSize: 12, color: colors.muted, marginBottom: 4 }}>Price per vote (₦)</label>
+              <Input type="number" min={0} style={{ width: 150 }} disabled={!vs.paidVotingEnabled}
+                value={vs.pricePerVoteNgn} placeholder="100"
+                onChange={(e) => setVs({ ...vs, pricePerVoteNgn: e.target.value })} />
+            </div>
+
+            <Button variant="primary" disabled={busy || !contestId} onClick={() => void saveSettings()}>
+              {busy ? 'Saving…' : 'Save voting settings'}
+            </Button>
+          </div>
+
+          {vs.paidVotingEnabled && !vs.votingEnabled && (
+            <p style={{ margin: '12px 0 0', fontSize: 12, color: colors.warning }}>
+              Paid voting is on but voting itself is off — nobody can buy. Turn on “Voting enabled” too.
+            </p>
+          )}
+        </div>
       </Card>
 
       <Card title="Attach from the catalog" style={{ marginTop: 16 }}>

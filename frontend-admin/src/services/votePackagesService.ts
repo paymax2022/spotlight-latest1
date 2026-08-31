@@ -280,3 +280,84 @@ export function formatNaira(amount: number): string {
     maximumFractionDigits: 0,
   }).format(Number(amount || 0));
 }
+
+// ── Contest voting settings ─────────────────────────────────────────────────
+//
+// /api/admin/voting/settings has had read AND write since long before this, and
+// nothing in the console ever called it — the same gap the package CRUD had.
+// The consequence: an operator could not set what a vote costs or how many free
+// votes a contest grants, so "make this contest votable" had no answer in the UI
+// even though the endpoint was sitting there.
+//
+// The contest row is the authority for whether voting is on and what a vote
+// costs; voting_settings carries the rest. Saving writes both, and a trigger
+// mirrors contests.vote_price_ngn * 100 into connect_contests.paid_vote_kobo,
+// which is what the voting paths actually gate on.
+//
+// ⚠️ pricePerVoteNgn is NAIRA. The trigger does the ×100. Sending kobo here
+// would price every vote at 100x.
+
+export type ContestVotingSettings = {
+  contestId: string;
+  contestName: string;
+  contestSlug: string;
+  status: string;
+  /** false when the contest has no voting_settings row yet. */
+  configured: boolean;
+  votingEnabled: boolean;
+  votingType: string;
+  /** NAIRA per vote. 0 means paid voting is off. */
+  votePriceNgn: number;
+  freeVotingEnabled: boolean;
+  freeVotesPerDay: number;
+  paidVotingEnabled: boolean;
+};
+
+export type ContestVotingSettingsInput = {
+  contestId: string;
+  votingEnabled: boolean;
+  freeVotingEnabled: boolean;
+  freeVotesPerDay: number;
+  paidVotingEnabled: boolean;
+  /** NAIRA, never kobo. */
+  pricePerVoteNgn: number;
+};
+
+const SETTINGS = '/api/admin/voting/settings';
+
+export async function getContestVotingSettings(contestId: string): Promise<ContestVotingSettings | null> {
+  const res = await fetch(`${webProxyBase()}${SETTINGS}?contestId=${encodeURIComponent(contestId)}`, {
+    cache: 'no-store',
+    headers: authHeaders(),
+  });
+  const json = await readJsonOrThrow(res, 'Loading voting settings');
+  const rows = (json.settings ?? []) as Array<Record<string, any>>;
+  const r = rows[0];
+  if (!r) return null;
+  return {
+    contestId: String(r.contestId ?? contestId),
+    contestName: String(r.contestName ?? ''),
+    contestSlug: String(r.contestSlug ?? ''),
+    status: String(r.status ?? 'draft'),
+    configured: Boolean(r.configured),
+    votingEnabled: Boolean(r.votingEnabled),
+    votingType: String(r.votingType ?? 'free'),
+    votePriceNgn: Number(r.votePriceNgn ?? 0),
+    // These live on the settings row, which comes back snake_cased under the spread.
+    freeVotingEnabled: pick(r, 'freeVotingEnabled', 'free_voting_enabled') !== false,
+    freeVotesPerDay: Number(pick(r, 'freeVotesPerDay', 'free_votes_per_day') ?? 0),
+    paidVotingEnabled: Boolean(pick(r, 'paidVotingEnabled', 'paid_voting_enabled')) || Number(r.votePriceNgn ?? 0) > 0,
+  };
+}
+
+export async function saveContestVotingSettings(input: ContestVotingSettingsInput): Promise<void> {
+  const res = await fetch(`${webProxyBase()}${SETTINGS}`, {
+    method: 'POST',
+    headers: authHeaders(),
+    body: JSON.stringify({
+      ...input,
+      votingType: input.paidVotingEnabled && input.pricePerVoteNgn > 0 ? 'paid' : 'free',
+    }),
+  });
+  await readJsonOrThrow(res, 'Saving voting settings');
+}
