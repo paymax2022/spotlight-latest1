@@ -36,7 +36,9 @@ import type {
   Paged,
   PolicyDetail,
   PolicySummary,
+  CatalogSyncRun,
   ProviderFloat,
+  ProvidersReport,
   ProviderStatus,
   ReconciliationReport,
   SharingFormula,
@@ -337,6 +339,27 @@ function normaliseProduct(raw: unknown): InsuranceProduct {
   const o = (raw ?? {}) as Record<string, unknown>;
   const isPct = pick(o, 'is_percentage') === true;
   const bandsRaw = pick(o, 'sharing_formula');
+  // The backend flattens the sharing formula into basis-point columns rather
+  // than echoing MyCover's array. Rebuild a single band from them so the UI has
+  // one shape to render. bps → percent is /100 (1000 bps = 10%); this is a
+  // rate, not money, so plain division is correct here.
+  const bpsBand = ((): SharingFormula | null => {
+    const dist = num(pick(o, 'distributor_commission_bps'));
+    const mca = num(pick(o, 'mca_commission_bps'));
+    const prov = num(pick(o, 'provider_commission_bps'));
+    if (dist === null && mca === null && prov === null) return null;
+    const from = ((v: unknown) => (v === 'original_premium' || v === 'final_premium' ? v : null))(pick(o, 'commission_from'));
+    return {
+      distributor_commission_pct: dist === null ? null : dist / 100,
+      mca_commission_pct: mca === null ? null : mca / 100,
+      provider_commission_pct: prov === null ? null : prov / 100,
+      provider_commission_from: from,
+      distributor_commission_from: from,
+      min: null,
+      max: null,
+      band_key: null,
+    };
+  })();
   return {
     code: String(pick(o, 'code', 'product_code', 'id') ?? ''),
     name: String(pick(o, 'name', 'display_name') ?? ''),
@@ -348,6 +371,7 @@ function normaliseProduct(raw: unknown): InsuranceProduct {
     aggregator: String(pick(o, 'aggregator', 'provider') ?? 'mycover'),
     provider_product_code: str(pick(o, 'provider_product_code', 'route_name')),
     provider_buy_path: str(pick(o, 'provider_buy_path', 'buy_path')),
+    buy_path_verified: bool(pick(o, 'buy_path_verified')),
     base_price_kobo: isPct ? null : num(pick(o, 'base_price_kobo', 'indicative_premium_kobo', 'premium_kobo')),
     is_percentage: isPct,
     rate_bps: isPct ? num(pick(o, 'rate_bps')) : null,
@@ -359,7 +383,7 @@ function normaliseProduct(raw: unknown): InsuranceProduct {
     is_certificateable: bool(pick(o, 'is_certificateable')),
     is_inspectable: bool(pick(o, 'is_inspectable')),
     active: pick(o, 'active', 'is_active') === true,
-    sharing_formula: Array.isArray(bandsRaw) ? bandsRaw.map(normaliseBand) : null,
+    sharing_formula: Array.isArray(bandsRaw) && bandsRaw.length > 0 ? bandsRaw.map(normaliseBand) : bpsBand ? [bpsBand] : null,
     key_benefits_html: str(pick(o, 'key_benefits_html', 'key_benefits')),
     full_benefits_html: str(pick(o, 'full_benefits_html', 'full_benefits')),
     how_it_works_html: str(pick(o, 'how_it_works_html', 'how_it_works')),
@@ -488,11 +512,15 @@ export async function syncCatalog(): Promise<CatalogSyncResult> {
   const raw = await request<unknown>('POST', '/catalog/sync', { body: {}, idempotencyPrefix: 'catalog-sync' });
   const o = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
   return {
-    synced: num(pick(o, 'synced', 'count', 'total')),
-    created: num(pick(o, 'created')),
-    updated: num(pick(o, 'updated')),
-    deactivated: num(pick(o, 'deactivated')),
-    synced_at: str(pick(o, 'synced_at', 'last_synced_at')),
+    synced: num(pick(o, 'products_seen', 'synced', 'count', 'total')),
+    created: null,
+    updated: num(pick(o, 'products_upserted', 'updated')),
+    deactivated: null,
+    failed: num(pick(o, 'products_failed')),
+    with_schema: num(pick(o, 'products_with_schema')),
+    status: str(pick(o, 'status')),
+    error_text: str(pick(o, 'error_text')),
+    synced_at: str(pick(o, 'finished_at', 'synced_at', 'last_synced_at')),
   };
 }
 
@@ -687,60 +715,26 @@ export async function getCommission(opts?: {
 
 // ── Providers ────────────────────────────────────────────────────────────────
 
-function normaliseFloat(raw: unknown): ProviderFloat | null {
-  if (!raw || typeof raw !== 'object') return null;
-  const o = raw as Record<string, unknown>;
-  return {
-    balance_kobo: num(pick(o, 'balance_kobo', 'available_kobo')),
-    currency: str(pick(o, 'currency')) ?? 'NGN',
-    burn_per_day_kobo: num(pick(o, 'burn_per_day_kobo', 'daily_burn_kobo')),
-    burn_window_days: num(pick(o, 'burn_window_days', 'window_days')),
-    binds_in_window: num(pick(o, 'binds_in_window')),
-    avg_bind_kobo: num(pick(o, 'avg_bind_kobo', 'average_premium_kobo')),
-    policies_remaining: num(pick(o, 'policies_remaining')),
-    days_remaining: num(pick(o, 'days_remaining')),
-    low_threshold_kobo: num(pick(o, 'low_threshold_kobo')),
-    last_funded_at: str(pick(o, 'last_funded_at')),
-    as_of: str(pick(o, 'as_of', 'updated_at')),
-    unavailable_reason: str(pick(o, 'unavailable_reason', 'reason')),
-  };
-}
-
-/**
- * How many more policies the float can cover, integer arithmetic on kobo.
- *
- * Prefers the backend's own figure. Falls back to balance ÷ average bind cost
- * ONLY when the backend supplied both — it never guesses an average premium, and
- * it never treats an unreadable balance as zero, because "we cannot see the
- * float" and "the float is empty" demand different responses from an operator.
- */
-export function policiesRemaining(f: ProviderFloat | null | undefined): number | null {
-  if (!f) return null;
-  if (f.policies_remaining !== null && f.policies_remaining !== undefined) return f.policies_remaining;
-  const bal = f.balance_kobo;
-  const avg = f.avg_bind_kobo;
-  if (bal === null || bal === undefined) return null;
-  if (avg === null || avg === undefined || avg <= 0) return null;
-  return Math.floor(bal / avg);
-}
 
 export type FloatSeverity = 'unknown' | 'empty' | 'critical' | 'ok';
 
 /**
- * Severity of the float position.
+ * Severity of the float position, derived from the observed breaker.
  *
- * 'unknown' is its own state and is NOT optimistic: an unreadable balance is
- * reported as unknown, never as healthy. A zero balance is 'empty', which means
- * every bind attempt will fail at the provider.
+ * There is no balance to threshold against — the provider will not tell us — so
+ * this reads the state the backend recorded from real bind attempts:
+ *   exhausted / binding_paused  -> 'empty'  (nothing can be sold right now)
+ *   repeated failures, not yet tripped -> 'critical'
+ *   no float record at all      -> 'unknown' (NEVER 'ok': absence of a record is
+ *                                  absence of evidence, and the last verified
+ *                                  observation was that the wallet was empty)
  */
 export function floatSeverity(f: ProviderFloat | null | undefined): FloatSeverity {
-  if (!f || f.balance_kobo === null || f.balance_kobo === undefined) return 'unknown';
-  if (f.balance_kobo <= 0) return 'empty';
-  const threshold = f.low_threshold_kobo ?? null;
-  if (threshold !== null && f.balance_kobo <= threshold) return 'critical';
-  const remaining = policiesRemaining(f);
-  if (remaining !== null && remaining < 10) return 'critical';
-  return 'ok';
+  if (!f) return 'unknown';
+  if (f.binding_paused === true || f.state === 'exhausted') return 'empty';
+  if ((f.consecutive_failures ?? 0) > 0) return 'critical';
+  if (f.state === 'ok') return 'ok';
+  return 'unknown';
 }
 
 /**
@@ -786,44 +780,129 @@ export type Sellability = 'sellable' | 'scope_blocked' | 'unknown';
  */
 export function sellabilityOf(p: InsuranceProduct): Sellability {
   const path = (p.provider_buy_path ?? '').replace(/^\/?products\//, '').replace(/^\/+/, '');
+  // The backend's own probe result wins over the local table: it is current,
+  // per-product, and does not depend on a family name matching.
+  if (p.buy_path_verified === true) return 'sellable';
   if (!path) return 'unknown';
   const hit = FAMILY_PROBES.find((f) => f.path === path);
   if (!hit) return 'unknown';
   return hit.sellable ? 'sellable' : 'scope_blocked';
 }
 
-export async function getProviders(): Promise<ProviderStatus[]> {
+function normaliseSyncRun(raw: unknown): CatalogSyncRun | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const o = raw as Record<string, unknown>;
+  return {
+    sync_id: str(pick(o, 'sync_id')),
+    provider: str(pick(o, 'provider')),
+    status: str(pick(o, 'status')),
+    products_seen: num(pick(o, 'products_seen')),
+    products_upserted: num(pick(o, 'products_upserted')),
+    products_failed: num(pick(o, 'products_failed')),
+    products_with_schema: num(pick(o, 'products_with_schema')),
+    started_at: str(pick(o, 'started_at')),
+    finished_at: str(pick(o, 'finished_at')),
+    error_text: str(pick(o, 'error_text')),
+    skipped_codes: Array.isArray(o.skipped_codes) ? (o.skipped_codes as string[]) : null,
+  };
+}
+
+/**
+ * GET /providers.
+ *
+ * The backend returns adapter health, float breakers and the last catalog sync
+ * in ONE object with a top-level `binding_paused`. That top-level flag is the
+ * launch gate and is passed through untouched — the console must not recompute
+ * it from the per-provider rows, because a disagreement between the two would
+ * be resolved silently in favour of whichever the UI happened to prefer.
+ */
+export async function getProviders(): Promise<ProvidersReport> {
   const raw = await request<unknown>('GET', '/providers');
-  return asArray(raw, 'providers').map((r) => {
-    const o = (r ?? {}) as Record<string, unknown>;
-    const w = (pick(o, 'webhook', 'webhooks') ?? null) as Record<string, unknown> | null;
-    return {
-      provider: String(pick(o, 'provider', 'key') ?? ''),
-      display_name: str(pick(o, 'display_name', 'name')),
-      base_url: str(pick(o, 'base_url')),
-      mode: str(pick(o, 'mode', 'environment')) ?? 'unknown',
-      api_key_configured: bool(pick(o, 'api_key_configured')),
-      api_key_hint: str(pick(o, 'api_key_hint', 'api_key_masked')),
-      reachable: bool(pick(o, 'reachable', 'healthy')),
-      last_success_at: str(pick(o, 'last_success_at')),
-      last_error_at: str(pick(o, 'last_error_at')),
-      last_error: str(pick(o, 'last_error')),
-      latency_ms: num(pick(o, 'latency_ms')),
-      products_synced: num(pick(o, 'products_synced')),
-      float: normaliseFloat(pick(o, 'float', 'wallet')),
-      webhook: w
-        ? {
-            url: str(pick(w, 'url')),
-            secret_configured: bool(pick(w, 'secret_configured')),
-            signature_scheme: str(pick(w, 'signature_scheme', 'scheme')),
-            last_received_at: str(pick(w, 'last_received_at')),
-            last_verified_at: str(pick(w, 'last_verified_at')),
-            received_24h: num(pick(w, 'received_24h')),
-            rejected_24h: num(pick(w, 'rejected_24h')),
-          }
-        : null,
-      updated_at: str(pick(o, 'updated_at')),
-    };
+  const o = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
+
+  const floats: ProviderFloat[] = (Array.isArray(o.float) ? o.float : Array.isArray(o.floats) ? o.floats : []).map(
+    (r) => {
+      const f = (r ?? {}) as Record<string, unknown>;
+      return {
+        provider: String(pick(f, 'provider') ?? ''),
+        state: String(pick(f, 'state') ?? 'unknown'),
+        binding_paused: bool(pick(f, 'binding_paused')),
+        consecutive_failures: num(pick(f, 'consecutive_failures')),
+        last_failure_at: str(pick(f, 'last_failure_at')),
+        last_failure_text: str(pick(f, 'last_failure_text')),
+        last_success_at: str(pick(f, 'last_success_at')),
+        last_topup_note: str(pick(f, 'last_topup_note')),
+        last_reset_at: str(pick(f, 'last_reset_at')),
+        updated_at: str(pick(f, 'updated_at')),
+        balance_kobo: num(pick(f, 'balance_kobo')),
+      };
+    },
+  );
+
+  const adapters: ProviderStatus[] = (Array.isArray(o.adapters) ? o.adapters : Array.isArray(o.providers) ? o.providers : []).map(
+    (r) => {
+      const a = (r ?? {}) as Record<string, unknown>;
+      const key = String(pick(a, 'aggregator', 'provider', 'key') ?? '');
+      const wv = (pick(a, 'webhook_verification') ?? null) as Record<string, unknown> | null;
+      const secretPresent = bool(pick(a, 'webhook_secret_present'));
+      return {
+        provider: key,
+        display_name: str(pick(a, 'display_name', 'name')),
+        base_url: str(pick(a, 'base_url')),
+        // The backend does not report test-vs-live: the environment lives in the
+        // API-key prefix, which it (correctly) never exposes. Left null so the UI
+        // says "unknown" instead of guessing "test" on what may be a live key.
+        mode: str(pick(a, 'mode', 'environment')),
+        api_key_configured: bool(pick(a, 'api_key_present', 'api_key_configured')),
+        purchase_families: num(pick(a, 'purchase_families')),
+        reachable: bool(pick(a, 'reachable', 'healthy')),
+        last_success_at: str(pick(a, 'last_success_at')),
+        last_error_at: str(pick(a, 'last_error_at')),
+        last_error: str(pick(a, 'last_error')),
+        latency_ms: num(pick(a, 'latency_ms')),
+        products_synced: num(pick(a, 'products_synced')),
+        webhook:
+          secretPresent !== null || wv
+            ? {
+                url: str(pick(a, 'webhook_url')),
+                secret_configured: secretPresent,
+                verification_enabled: wv ? bool(pick(wv, 'enabled')) : null,
+                note: wv ? str(pick(wv, 'note')) : null,
+                signature_scheme: str(pick(a, 'signature_scheme')),
+                last_received_at: str(pick(a, 'webhook_last_received_at')),
+                last_verified_at: str(pick(a, 'webhook_last_verified_at')),
+                received_24h: num(pick(a, 'webhook_received_24h')),
+                rejected_24h: num(pick(a, 'webhook_rejected_24h')),
+              }
+            : null,
+        float: floats.find((f) => f.provider === key) ?? null,
+        updated_at: str(pick(a, 'updated_at')),
+      };
+    },
+  );
+
+  return {
+    adapters,
+    floats,
+    binding_paused: bool(pick(o, 'binding_paused')),
+    binding_paused_reason: str(pick(o, 'binding_paused_reason')),
+    last_sync: normaliseSyncRun(pick(o, 'last_sync')),
+  };
+}
+
+/**
+ * Re-arm the float breaker after an operator has funded the provider wallet.
+ *
+ * A REAL write. `note` is a human record of what was funded and is explicitly
+ * NOT an authority on the balance — we cannot read the balance, so resetting
+ * without actually funding just means the next bind trips the breaker again.
+ * That is the safe failure, and the UI says so rather than implying the reset
+ * itself put money anywhere.
+ */
+export async function resetProviderFloat(provider: string, note: string): Promise<unknown> {
+  return request('POST', `/providers/${encodeURIComponent(provider)}/float/reset`, {
+    body: { note },
+    idempotencyPrefix: 'float-reset',
   });
 }
 

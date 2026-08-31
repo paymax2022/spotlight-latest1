@@ -4,13 +4,14 @@ import Link from 'next/link';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   getCatalog,
+  getProviders,
   syncCatalog,
   formatPct,
   productPrice,
   primaryBand,
   sellabilityOf,
 } from '@/services/insuranceAdminService';
-import type { CatalogResponse, InsuranceProduct } from '@/types/insuranceAdmin';
+import type { CatalogResponse, CatalogSyncRun, InsuranceProduct } from '@/types/insuranceAdmin';
 import {
   PageHeader,
   InsuranceTabs,
@@ -48,6 +49,12 @@ export default function InsuranceCatalogPage() {
   const [failure, setFailure] = useState<EndpointFailure | null>(null);
   const [loading, setLoading] = useState(true);
 
+  // The catalog endpoint returns products only; the sync RUN record lives on
+  // /providers. Loaded separately so a missing sync record never blanks the
+  // product table, and vice versa.
+  const [lastSync, setLastSync] = useState<CatalogSyncRun | null>(null);
+  const [syncRunFail, setSyncRunFail] = useState<EndpointFailure | null>(null);
+
   const [syncing, setSyncing] = useState(false);
   const [syncFail, setSyncFail] = useState<EndpointFailure | null>(null);
   const [syncOk, setSyncOk] = useState<string | null>(null);
@@ -70,9 +77,20 @@ export default function InsuranceCatalogPage() {
     }
   }, []);
 
+  const loadSyncRun = useCallback(async () => {
+    setSyncRunFail(null);
+    try {
+      setLastSync((await getProviders()).last_sync);
+    } catch (e) {
+      setLastSync(null);
+      setSyncRunFail(toFailure(e));
+    }
+  }, []);
+
   useEffect(() => {
     void load();
-  }, [load]);
+    void loadSyncRun();
+  }, [load, loadSyncRun]);
 
   /**
    * Real write against POST /catalog/sync. There is no simulated branch: if the
@@ -87,13 +105,14 @@ export default function InsuranceCatalogPage() {
     try {
       const r = await syncCatalog();
       const parts = [
-        r.synced !== null && r.synced !== undefined ? `${r.synced} products synced` : null,
-        r.created ? `${r.created} new` : null,
-        r.updated ? `${r.updated} updated` : null,
-        r.deactivated ? `${r.deactivated} deactivated` : null,
+        r.synced !== null && r.synced !== undefined ? `${r.synced} seen at the provider` : null,
+        r.updated !== null && r.updated !== undefined ? `${r.updated} stored` : null,
+        r.with_schema !== null && r.with_schema !== undefined ? `${r.with_schema} with a form schema` : null,
+        r.failed ? `${r.failed} failed` : null,
       ].filter(Boolean);
       setSyncOk(parts.length ? parts.join(' · ') : 'Sync completed.');
       await load();
+      await loadSyncRun();
     } catch (e) {
       setSyncFail(toFailure(e));
     } finally {
@@ -122,12 +141,6 @@ export default function InsuranceCatalogPage() {
       return true;
     });
   }, [products, underwriter, line, status, q]);
-
-  const sync = data?.sync ?? null;
-  // Drift the API reported explicitly, plus the count gap it implies. Both are
-  // shown; neither is inferred when the API stayed silent.
-  const driftMissing = sync?.missing_locally?.length ?? null;
-  const driftStale = sync?.stale_locally?.length ?? null;
 
   return (
     <div style={{ padding: '0.5rem 0.5rem 2rem' }}>
@@ -163,43 +176,73 @@ export default function InsuranceCatalogPage() {
         {failure ? (
           <EndpointErrorCard failure={failure} onRetry={load} />
         ) : (
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(190px, 1fr))', gap: '0.75rem' }}>
-            <MetricTile label="Stored locally" value={loading ? '…' : products.length.toLocaleString('en-NG')} sub="Rows in our catalog" accent={colors.primary} />
-            <MetricTile
-              label="At MyCover"
-              value={sync?.provider_count === null || sync?.provider_count === undefined ? null : sync.provider_count.toLocaleString('en-NG')}
-              sub="Reported by the provider"
-            />
-            <MetricTile
-              label="Last sync"
-              value={sync?.last_synced_at ? timeAgo(sync.last_synced_at) : null}
-              sub={sync?.last_synced_at ? fmtDate(sync.last_synced_at) : 'Never synced, or not reported'}
-            />
-            <MetricTile
-              label="Missing locally"
-              value={driftMissing === null ? null : driftMissing.toLocaleString('en-NG')}
-              sub="At the provider, not in our DB"
-              accent={driftMissing ? colors.danger : undefined}
-            />
-            <MetricTile
-              label="Stale locally"
-              value={driftStale === null ? null : driftStale.toLocaleString('en-NG')}
-              sub="In our DB, gone at the provider"
-              accent={driftStale ? colors.warning : undefined}
-            />
-          </div>
+          <>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: '0.75rem' }}>
+              <MetricTile label="Stored locally" value={loading ? '…' : products.length.toLocaleString('en-NG')} sub="Rows in our catalog" accent={colors.primary} />
+              <MetricTile label="Active" value={loading ? '…' : products.filter((p) => p.active).length.toLocaleString('en-NG')} sub="Sellable right now" accent={colors.success} />
+              <MetricTile
+                label="Seen at MyCover"
+                value={lastSync?.products_seen === null || lastSync?.products_seen === undefined ? null : lastSync.products_seen.toLocaleString('en-NG')}
+                sub="On the last sync run"
+              />
+              <MetricTile
+                label="With a form schema"
+                value={lastSync?.products_with_schema === null || lastSync?.products_with_schema === undefined ? null : lastSync.products_with_schema.toLocaleString('en-NG')}
+                sub="Purchasable through the app"
+              />
+              <MetricTile
+                label="Failed to store"
+                value={lastSync?.products_failed === null || lastSync?.products_failed === undefined ? null : lastSync.products_failed.toLocaleString('en-NG')}
+                sub="Seen but not written"
+                accent={lastSync?.products_failed ? colors.danger : undefined}
+              />
+              <MetricTile
+                label="Last sync"
+                value={lastSync?.finished_at ? timeAgo(lastSync.finished_at) : null}
+                sub={lastSync?.finished_at ? fmtDate(lastSync.finished_at) : 'Never synced, or not reported'}
+                accent={lastSync?.status && lastSync.status !== 'ok' && lastSync.status !== 'success' ? colors.warning : undefined}
+              />
+            </div>
+
+            {/* Drift: what the provider showed us on the last run vs what we hold
+                now. Only stated when BOTH numbers are real — a gap computed
+                against a missing count would be a fabricated discrepancy. */}
+            {lastSync?.products_seen !== null && lastSync?.products_seen !== undefined && !loading ? (
+              products.length === lastSync.products_seen ? (
+                <p style={{ marginTop: '0.85rem', marginBottom: 0, fontSize: '0.82rem', color: colors.success }}>
+                  No drift: we hold every one of the {lastSync.products_seen.toLocaleString('en-NG')} products the
+                  provider listed on the last run.
+                </p>
+              ) : (
+                <p style={{ marginTop: '0.85rem', marginBottom: 0, fontSize: '0.82rem', color: colors.danger }}>
+                  <strong>Drift of {Math.abs(lastSync.products_seen - products.length).toLocaleString('en-NG')} products.</strong>{' '}
+                  The provider listed {lastSync.products_seen.toLocaleString('en-NG')} on the last run and we hold{' '}
+                  {products.length.toLocaleString('en-NG')}. Re-run the sync; if the gap persists, the failures
+                  count above is where it went.
+                </p>
+              )
+            ) : null}
+
+            {lastSync?.error_text ? (
+              <p style={{ marginTop: '0.6rem', marginBottom: 0, fontSize: '0.8rem', color: colors.danger }}>
+                Last sync error: <code style={{ fontSize: '0.75rem' }}>{lastSync.error_text}</code>
+              </p>
+            ) : null}
+            {lastSync?.skipped_codes?.length ? (
+              <p style={{ marginTop: '0.6rem', marginBottom: 0, fontSize: '0.78rem', color: colors.muted }}>
+                Skipped: <code style={{ fontSize: '0.74rem' }}>{lastSync.skipped_codes.slice(0, 20).join(', ')}</code>
+                {lastSync.skipped_codes.length > 20 ? ` … +${lastSync.skipped_codes.length - 20} more` : ''}
+              </p>
+            ) : null}
+            {syncRunFail && !lastSync ? (
+              <p style={{ marginTop: '0.85rem', marginBottom: 0, fontSize: '0.8rem', color: colors.muted, lineHeight: 1.5 }}>
+                The sync run record could not be read ({syncRunFail.method} {syncRunFail.path} → HTTP{' '}
+                {syncRunFail.status || 'no response'}), so last-sync time and drift are unknown rather than
+                assumed clean.
+              </p>
+            ) : null}
+          </>
         )}
-        {sync?.last_sync_error ? (
-          <p style={{ marginTop: '0.75rem', marginBottom: 0, fontSize: '0.8rem', color: colors.danger }}>
-            Last sync error: <code style={{ fontSize: '0.75rem' }}>{sync.last_sync_error}</code>
-          </p>
-        ) : null}
-        {sync?.missing_locally?.length ? (
-          <p style={{ marginTop: '0.6rem', marginBottom: 0, fontSize: '0.78rem', color: colors.muted }}>
-            Missing: <code style={{ fontSize: '0.74rem' }}>{sync.missing_locally.slice(0, 20).join(', ')}</code>
-            {sync.missing_locally.length > 20 ? ` … +${sync.missing_locally.length - 20} more` : ''}
-          </p>
-        ) : null}
       </Card>
 
       <Card

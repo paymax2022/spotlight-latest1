@@ -330,44 +330,44 @@ export function DisclosureNote({ children }: PropsWithChildren) {
 
 /** The float shape this module renders. Mirrors ProviderFloat structurally. */
 export interface FloatView {
+  provider?: string;
+  state?: string;
+  binding_paused?: boolean | null;
+  consecutive_failures?: number | null;
+  last_failure_at?: string | null;
+  last_failure_text?: string | null;
+  last_success_at?: string | null;
+  last_topup_note?: string | null;
+  last_reset_at?: string | null;
+  updated_at?: string | null;
   balance_kobo?: number | null;
-  burn_per_day_kobo?: number | null;
-  burn_window_days?: number | null;
-  binds_in_window?: number | null;
-  avg_bind_kobo?: number | null;
-  policies_remaining?: number | null;
-  days_remaining?: number | null;
-  low_threshold_kobo?: number | null;
-  last_funded_at?: string | null;
-  as_of?: string | null;
-  unavailable_reason?: string | null;
 }
 
 const FLOAT_UNREADABLE_NOTE =
-  "MyCover's /wallet/balance returns 403 for our API key, so the float may not be machine-readable at all. Fund it and read the balance from the MyCover dashboard.";
+  "MyCover's /wallet/balance returns 403 for our API key, so there is no balance to read. What is tracked instead is what the provider was observed to do on real bind attempts.";
 
 /**
  * Page-top float alarm.
  *
- * Three states, three very different messages, and none of them is silent:
- *   empty    — nothing can be sold right now. Loudest.
- *   critical — sellable but close to the floor.
- *   unknown  — we cannot see the balance. NOT treated as healthy: the last
- *              verified observation was that the float is empty, and that is
- *              stated with its date and its source rather than assumed away.
- * A healthy float renders nothing, because an alarm that fires when all is well
- * teaches people to ignore it.
+ * Three states, three different messages, none of them silent:
+ *   empty    — the breaker is tripped. Nothing can be sold. Loudest.
+ *   critical — binds have been failing but the breaker has not tripped yet.
+ *   unknown  — no float record. NOT treated as healthy: the last verified
+ *              observation was an empty wallet, and that is stated with its date
+ *              and its source rather than assumed away.
+ * A healthy float renders nothing — an alarm that fires when all is well teaches
+ * people to ignore it.
  */
-export function FloatAlarm({ severity, balanceLabel, remaining, providerLabel = 'MyCover' }: {
+export function FloatAlarm({ severity, reason, providerLabel = 'MyCover', failures }: {
   severity: 'unknown' | 'empty' | 'critical' | 'ok';
-  balanceLabel?: string | null;
-  remaining?: number | null;
+  reason?: string | null;
   providerLabel?: string;
+  failures?: number | null;
 }) {
   if (severity === 'ok') return null;
   const empty = severity === 'empty';
   const unknown = severity === 'unknown';
-  const accent = empty ? colors.danger : unknown ? colors.warning : colors.warning;
+  const accent = empty ? colors.danger : colors.warning;
   return (
     <div
       style={{
@@ -382,37 +382,31 @@ export function FloatAlarm({ severity, balanceLabel, remaining, providerLabel = 
       <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap', marginBottom: '0.35rem' }}>
         <strong style={{ color: accent, fontSize: '1rem' }}>
           {empty
-            ? `${providerLabel} float is empty — no policy can be bound`
+            ? `${providerLabel} prefunded wallet is empty — binding is paused`
             : unknown
-              ? `${providerLabel} float balance is unknown`
-              : `${providerLabel} float is running low`}
+              ? `${providerLabel} float state is unknown`
+              : `${providerLabel} binds are failing at the provider`}
         </strong>
-        {balanceLabel ? (
-          <span style={{ fontSize: '0.8rem', fontWeight: 700, color: accent, background: tint(accent, 0.16), borderRadius: 9999, padding: '0.1rem 0.6rem' }}>
-            {balanceLabel}
-          </span>
-        ) : null}
       </div>
       <p style={{ margin: 0, fontSize: '0.85rem', color: colors.text, lineHeight: 1.55 }}>
         {empty ? (
           <>
-            Every purchase debits a wallet Paymax prefunds with {providerLabel}, and that wallet is at zero.
-            Binds will fail at the provider even though the payload is valid, so <strong>no customer can be
-            issued cover</strong> until it is topped up. If customers are being debited before the bind is
-            confirmed, each failed bind is a refund we owe.
+            {reason ??
+              "Every purchase debits a wallet Paymax funds in advance with the provider, and a bind was refused for insufficient funds. Binding is now paused so that no member is charged for cover that cannot be issued."}{' '}
+            <strong>No policy can be sold until the wallet is topped up at the provider and the breaker is
+            reset.</strong>
           </>
         ) : unknown ? (
           <>
-            The float balance could not be read, so this console will not claim it is funded.{' '}
-            {FLOAT_UNREADABLE_NOTE} The last verified check, on 2026-08-31, found the balance empty: a live
-            purchase with a fully valid payload was rejected with &ldquo;Insufficient wallet fund for
-            purchase&rdquo;. Treat the float as unfunded until a balance is actually reported here.
+            No float state was reported, so this console will not claim the wallet is funded.{' '}
+            {FLOAT_UNREADABLE_NOTE} The last verified check, on 2026-08-31, found it empty: a live purchase
+            with a fully valid payload was rejected with &ldquo;Insufficient wallet fund for purchase&rdquo;.
+            Treat the float as unfunded until a state is actually reported here.
           </>
         ) : (
           <>
-            The prefunded {providerLabel} wallet is close to its floor
-            {remaining !== null && remaining !== undefined ? <> — roughly <strong>{remaining.toLocaleString('en-NG')}</strong> more policies at the current average bind cost</> : null}
-            . When it empties, every bind fails at the provider.
+            {failures ? <><strong>{failures}</strong> consecutive bind failure{failures === 1 ? '' : 's'} recorded at the provider. </> : null}
+            The breaker has not tripped yet, but a wallet that is emptying will stop every sale when it does.
           </>
         )}
       </p>
@@ -421,54 +415,63 @@ export function FloatAlarm({ severity, balanceLabel, remaining, providerLabel = 
 }
 
 /**
- * Float detail panel. `balance` of null renders "not readable", never ₦0.00 —
- * the distinction between an empty float and an invisible one is the whole point.
+ * Float detail panel — a breaker readout, not a balance readout.
+ *
+ * There is deliberately no "balance" tile filled with a zero. We cannot read the
+ * balance, and inventing one is exactly what this console exists to stop; what
+ * is shown is what the provider actually did on real bind attempts.
  */
-export function FloatPanel({ float: f, severity, formatMoney, remaining }: {
+export function FloatPanel({ float: f, severity, onReset }: {
   float: FloatView | null;
   severity: 'unknown' | 'empty' | 'critical' | 'ok';
-  formatMoney: (kobo: number | null | undefined) => string;
-  remaining: number | null;
+  onReset?: () => void;
 }) {
-  const readable = !!f && f.balance_kobo !== null && f.balance_kobo !== undefined;
   const accent = severity === 'empty' ? colors.danger : severity === 'critical' ? colors.warning : severity === 'unknown' ? colors.muted : colors.success;
+  if (!f) {
+    return (
+      <p style={{ color: colors.muted, fontSize: '0.85rem', margin: 0, lineHeight: 1.55 }}>
+        No float state was reported for this rail. That is an absence of information, not a healthy
+        reading. {FLOAT_UNREADABLE_NOTE}
+      </p>
+    );
+  }
   return (
     <>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(190px, 1fr))', gap: '0.75rem' }}>
         <MetricTile
-          label="Float balance"
-          value={readable ? formatMoney(f!.balance_kobo) : null}
-          sub={readable ? (f?.as_of ? `as of ${fmtDate(f.as_of)}` : 'prefunded with the provider') : 'not readable — see note below'}
+          label="Binding"
+          value={f.binding_paused === null || f.binding_paused === undefined ? null : f.binding_paused ? 'PAUSED' : 'Allowed'}
+          sub={f.binding_paused ? 'no policy can be issued' : 'binds are being attempted'}
           accent={accent}
         />
+        <MetricTile label="Breaker state" value={f.state ?? null} sub="as observed at the provider" accent={accent} />
         <MetricTile
-          label="Burn rate"
-          value={f?.burn_per_day_kobo === null || f?.burn_per_day_kobo === undefined ? null : `${formatMoney(f.burn_per_day_kobo)}/day`}
-          sub={f?.burn_window_days ? `over ${f.burn_window_days} days` : 'drawdown per day'}
+          label="Consecutive failures"
+          value={f.consecutive_failures === null || f.consecutive_failures === undefined ? null : f.consecutive_failures.toLocaleString('en-NG')}
+          sub="binds refused in a row"
+          accent={f.consecutive_failures ? colors.danger : undefined}
         />
+        <MetricTile label="Last successful bind" value={f.last_success_at ? fmtDate(f.last_success_at) : null} />
         <MetricTile
-          label="Policies remaining"
-          value={remaining === null ? null : remaining.toLocaleString('en-NG')}
-          sub={f?.avg_bind_kobo ? `at ${formatMoney(f.avg_bind_kobo)} average bind` : 'needs balance ÷ average bind cost'}
-          accent={remaining !== null && remaining < 10 ? colors.danger : undefined}
-        />
-        <MetricTile
-          label="Days remaining"
-          value={f?.days_remaining === null || f?.days_remaining === undefined ? null : f.days_remaining.toLocaleString('en-NG')}
-          sub="at the current burn rate"
-        />
-        <MetricTile
-          label="Last funded"
-          value={f?.last_funded_at ? fmtDate(f.last_funded_at) : null}
-          sub="last top-up recorded"
+          label="Last reset"
+          value={f.last_reset_at ? fmtDate(f.last_reset_at) : null}
+          sub={f.last_topup_note ? `note: ${f.last_topup_note}` : 'after a top-up'}
         />
       </div>
-      {!readable ? (
-        <p style={{ marginTop: '0.85rem', marginBottom: 0, fontSize: '0.82rem', color: colors.text, lineHeight: 1.55 }}>
-          <strong>Balance not available.</strong> {f?.unavailable_reason ? `${f.unavailable_reason} ` : ''}
-          {FLOAT_UNREADABLE_NOTE} Nothing here is being shown as zero on its behalf: a float we cannot see and
-          a float that is empty require different actions, and only one of them is fixed by topping up.
+      {f.last_failure_text ? (
+        <p style={{ marginTop: '0.8rem', marginBottom: 0, fontSize: '0.8rem', color: colors.danger }}>
+          Provider said: <code style={{ fontSize: '0.75rem' }}>{f.last_failure_text}</code>
+          {f.last_failure_at ? <span style={{ color: colors.muted }}> ({timeAgo(f.last_failure_at)})</span> : null}
         </p>
+      ) : null}
+      <p style={{ marginTop: '0.8rem', marginBottom: 0, fontSize: '0.8rem', color: colors.muted, lineHeight: 1.55 }}>
+        <strong>There is no balance figure here on purpose.</strong> {FLOAT_UNREADABLE_NOTE} A zero would be a
+        number we made up, and the one thing worse than not knowing the float is believing a figure for it.
+      </p>
+      {onReset ? (
+        <button onClick={onReset} style={{ ...btn(), marginTop: '0.8rem' }}>
+          Reset breaker after funding…
+        </button>
       ) : null}
     </>
   );
