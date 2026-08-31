@@ -453,7 +453,14 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		// and the finance group before it — see the note above line 284.
 		insuranceAdmin.Use(middleware.RequireAuthContext(supabase, rbac))
 		insuranceAdmin.Use(requireUserID())
-		insuranceWebhooks := r.Group("/internal/webhooks")                              // provider-signed, no user auth
+		// Pass the ROOT group, for the same reason the member group is passed bare:
+		// webhooks.Register adds "/internal/webhooks" itself (g := webhooks.Group(
+		// "/internal/webhooks")), so naming the segment here too mounted every
+		// provider callback at /internal/webhooks/internal/webhooks/* — the
+		// documented path 404'd and only the doubled one answered. A provider
+		// cannot discover that, so every real MyCover delivery would have been
+		// lost, and silently: the provider sees a 404 and we see nothing at all.
+		insuranceWebhooks := r.Group("") // provider-signed, no user auth
 		RegisterInsurance(finance, insuranceAdmin, pool, rbac)                          // gateway/catalog/policy/quote/saga/consent
 		RegisterInsuranceClaims(finance, insuranceAdmin, insuranceWebhooks, pool, rbac) // claims/embedded/webhooks/reconciliation
 	}
