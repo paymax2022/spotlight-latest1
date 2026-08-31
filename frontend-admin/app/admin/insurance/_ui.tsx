@@ -94,8 +94,10 @@ export function InsuranceTabs({ active }: { active: string }) {
     { href: '/admin/insurance/catalog', label: 'Catalog', key: 'catalog' },
     { href: '/admin/insurance/policies', label: 'Policies', key: 'policies' },
     { href: '/admin/insurance/claims', label: 'Claims', key: 'claims' },
-    { href: '/admin/insurance/premiums', label: 'Finance', key: 'finance' },
+    { href: '/admin/insurance/commission', label: 'Commission', key: 'commission' },
+    { href: '/admin/insurance/reconciliation', label: 'Reconciliation', key: 'reconciliation' },
     { href: '/admin/insurance/providers', label: 'Providers', key: 'providers' },
+    { href: '/admin/insurance/premiums', label: 'Finance', key: 'finance' },
     { href: '/admin/insurance/reports', label: 'Ops', key: 'ops' },
   ];
   return (
@@ -113,6 +115,167 @@ export function StateBlock({ loading, error, empty, emptyText = 'No records foun
   if (error) return <p style={{ color: colors.danger }}>{error}</p>;
   if (empty) return <p style={{ color: colors.muted }}>{emptyText}</p>;
   return <>{children}</>;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Honest state rendering
+//
+// These exist because the alternative — a console that fills gaps with plausible
+// numbers — is the failure mode this whole screen set was rebuilt to remove. An
+// operator must always be able to tell three things apart:
+//   1. the backend reported a value (show it),
+//   2. the backend reported nothing for this field (show "not reported"),
+//   3. the call failed (show what failed, where, and why).
+// Never collapse (2) or (3) into a zero.
+// ═══════════════════════════════════════════════════════════════════════════
+
+/** Placeholder for a field the backend did not report. Never a 0. */
+export function NotReported({ hint }: { hint?: string }) {
+  return (
+    <span style={{ color: colors.muted, fontStyle: 'italic', fontSize: '0.85rem' }} title={hint ?? 'Not reported by the API'}>
+      not reported
+    </span>
+  );
+}
+
+/** The shape `InsuranceAdminError` presents to the UI (structurally typed so
+ *  _ui.tsx does not need to import the service). */
+export interface EndpointFailure {
+  kind: string;
+  status: number;
+  method: string;
+  path: string;
+  detail: string | null;
+  headline: string;
+  explanation: string;
+}
+
+export function toFailure(e: unknown): EndpointFailure {
+  const o = e as Partial<EndpointFailure> & { message?: string };
+  if (o && typeof o === 'object' && typeof o.path === 'string' && typeof o.headline === 'string') {
+    return {
+      kind: o.kind ?? 'unknown',
+      status: o.status ?? 0,
+      method: o.method ?? 'GET',
+      path: o.path,
+      detail: o.detail ?? null,
+      headline: o.headline,
+      explanation: o.explanation ?? '',
+    };
+  }
+  return {
+    kind: 'unknown',
+    status: 0,
+    method: '',
+    path: '',
+    detail: null,
+    headline: 'Unexpected error',
+    explanation: String((o && o.message) || e),
+  };
+}
+
+/**
+ * Renders a failed endpoint call as something an operator can act on: the exact
+ * request, the HTTP status, the backend's own message, and what that class of
+ * failure means. A 404 is styled as a neutral "not built yet" rather than a red
+ * alarm, because a missing endpoint is a roadmap fact, not an incident.
+ */
+export function EndpointErrorCard({ failure, onRetry }: { failure: EndpointFailure; onRetry?: () => void }) {
+  const notBuilt = failure.kind === 'not_implemented';
+  const accent = notBuilt ? colors.muted : failure.kind === 'unauthorized' || failure.kind === 'forbidden' ? colors.warning : colors.danger;
+  return (
+    <div style={{ border: `1px solid ${tint(accent, 0.45)}`, background: tint(accent, 0.07), borderRadius: '0.5rem', padding: '0.9rem 1rem' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap', marginBottom: '0.4rem' }}>
+        <strong style={{ color: accent, fontSize: '0.95rem' }}>{failure.headline}</strong>
+        <span style={{ fontSize: '0.72rem', fontWeight: 700, color: accent, background: tint(accent, 0.15), borderRadius: 9999, padding: '0.05rem 0.5rem' }}>
+          {failure.status ? `HTTP ${failure.status}` : 'no response'}
+        </span>
+      </div>
+      <code style={{ display: 'block', fontSize: '0.75rem', color: colors.text, background: colors.headBg, padding: '0.3rem 0.45rem', borderRadius: 4, marginBottom: '0.5rem', wordBreak: 'break-all' }}>
+        {failure.method} {failure.path}
+      </code>
+      <p style={{ margin: '0 0 0.35rem', fontSize: '0.82rem', color: colors.text, lineHeight: 1.45 }}>{failure.explanation}</p>
+      {failure.detail ? (
+        <p style={{ margin: '0 0 0.5rem', fontSize: '0.78rem', color: colors.muted }}>
+          Backend said: <code style={{ fontSize: '0.75rem' }}>{failure.detail}</code>
+        </p>
+      ) : null}
+      <p style={{ margin: '0 0 0.6rem', fontSize: '0.75rem', color: colors.muted }}>
+        No placeholder data is shown in its place — this console does not display figures it did not receive.
+      </p>
+      {onRetry ? <button onClick={onRetry} style={btn()}>Retry</button> : null}
+    </div>
+  );
+}
+
+/**
+ * Loading / failure / empty / content, driven by a real failure object.
+ * `emptyNote` explains WHY an empty result is legitimate (e.g. "no policies have
+ * been sold yet"), so a genuine zero does not read as a broken screen.
+ */
+export function LiveState({ loading, failure, empty, emptyTitle = 'Nothing to show yet', emptyNote, onRetry, children }: PropsWithChildren<{
+  loading: boolean;
+  failure: EndpointFailure | null;
+  empty: boolean;
+  emptyTitle?: string;
+  emptyNote?: string;
+  onRetry?: () => void;
+}>) {
+  if (loading) return <p style={{ color: colors.muted, fontSize: '0.9rem' }}>Loading from the live API…</p>;
+  if (failure) return <EndpointErrorCard failure={failure} onRetry={onRetry} />;
+  if (empty) {
+    return (
+      <div style={{ border: `1px dashed ${colors.border}`, borderRadius: '0.5rem', padding: '1.5rem 1rem', textAlign: 'center' }}>
+        <div style={{ fontWeight: 700, color: colors.text, marginBottom: '0.3rem' }}>{emptyTitle}</div>
+        {emptyNote ? <div style={{ color: colors.muted, fontSize: '0.82rem', maxWidth: 560, margin: '0 auto', lineHeight: 1.5 }}>{emptyNote}</div> : null}
+      </div>
+    );
+  }
+  return <>{children}</>;
+}
+
+/**
+ * A KPI whose value may legitimately be absent. `value` of null renders
+ * "not reported" rather than a zero — the distinction matters when the number
+ * is money.
+ */
+export function MetricTile({ label: lbl, value, sub, accent, hint }: { label: string; value: string | null; sub?: string | null; accent?: string; hint?: string }) {
+  return (
+    <div style={{ border: `1px solid ${colors.border}`, borderRadius: '0.5rem', padding: '0.85rem 1rem', background: colors.card }} title={hint}>
+      <div style={{ fontSize: '0.72rem', textTransform: 'uppercase', letterSpacing: 0.3, color: colors.muted, fontWeight: 600 }}>{lbl}</div>
+      <div style={{ fontSize: '1.35rem', fontWeight: 700, marginTop: '0.25rem', color: accent ?? colors.text }}>
+        {value === null ? <NotReported /> : value}
+      </div>
+      {sub ? <div style={{ fontSize: '0.75rem', color: colors.muted, marginTop: '0.15rem' }}>{sub}</div> : null}
+    </div>
+  );
+}
+
+/** Amber warning strip for a known, real gap (e.g. an unset webhook secret). */
+export function WarningNote({ title, children }: PropsWithChildren<{ title: string }>) {
+  return (
+    <div style={{ border: `1px solid ${tint(colors.warning, 0.5)}`, background: tint(colors.warning, 0.1), borderRadius: '0.5rem', padding: '0.65rem 0.85rem', fontSize: '0.8rem', marginBottom: '1rem', lineHeight: 1.5 }}>
+      <strong style={{ display: 'block', color: colors.warning, marginBottom: '0.15rem' }}>{title}</strong>
+      <span style={{ color: colors.text }}>{children}</span>
+    </div>
+  );
+}
+
+/**
+ * Banner for a page whose endpoint is not part of the agreed internal contract.
+ * The page still calls the endpoint (so it lights up the day it exists) but says
+ * plainly that it is unbuilt rather than dressing a fixture up as live data.
+ */
+export function ContractGapNote({ endpoint }: { endpoint: string }) {
+  return (
+    <div style={{ border: `1px solid ${colors.border}`, background: colors.headBg, borderRadius: '0.5rem', padding: '0.65rem 0.85rem', fontSize: '0.8rem', marginBottom: '1rem', lineHeight: 1.5, color: colors.text }}>
+      <strong>Not in the internal contract yet.</strong> This screen reads{' '}
+      <code style={{ fontSize: '0.75rem' }}>{endpoint}</code>, which the agreed
+      admin contract does not define. The call is made live on every load, so the page
+      will start working the moment the endpoint exists. Until then it shows the real
+      response — it does not fall back to sample data.
+    </div>
+  );
 }
 
 // Disclosure banner — underwriter + aggregator must be shown (PRD §13/§18).
