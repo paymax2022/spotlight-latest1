@@ -41,10 +41,14 @@ type UnderwriterGateway interface {
 // implements this; keeping it as an interface keeps the gateway free of a catalog
 // import cycle and keeps routing data-driven.
 type ProductResolver interface {
-	// ResolveProduct returns the aggregator key (e.g. "mycover") and the
-	// provider-side product code for a Paymax product_code. ok is false when the
-	// product is unknown or inactive.
-	ResolveProduct(ctx context.Context, productCode string) (aggregator string, providerProductCode string, ok bool)
+	// ResolveProduct returns the aggregator key (e.g. "mycover") and the full
+	// per-product routing descriptor (provider code, buy path, pricing model,
+	// cover terms) for a Paymax product_code. ok is false when the product is
+	// unknown or inactive.
+	//
+	// Everything an adapter needs to reach a product travels in the descriptor,
+	// which is a CATALOG ROW — that is what makes adding a product a data change.
+	ResolveProduct(ctx context.Context, productCode string) (aggregator string, product ProviderProduct, ok bool)
 }
 
 // Router resolves the concrete adapter for a Paymax product_code via the catalog.
@@ -69,22 +73,23 @@ func NewRouter(resolver ProductResolver, adapters ...UnderwriterGateway) *Router
 // the product is unknown/inactive.
 var ErrNoProvider = fmt.Errorf("insurance gateway: no provider for product")
 
-// Resolve returns the UnderwriterGateway and the provider-side product code for a
-// Paymax product_code. The product line → provider mapping lives entirely in the
-// catalog/routing data; this function performs no per-product branching.
-func (r *Router) Resolve(ctx context.Context, productCode string) (UnderwriterGateway, string, error) {
+// Resolve returns the UnderwriterGateway and the per-product routing descriptor
+// for a Paymax product_code. The product → provider mapping AND the per-product
+// buy path / pricing model live entirely in the catalog data; this function
+// performs no per-product branching.
+func (r *Router) Resolve(ctx context.Context, productCode string) (UnderwriterGateway, ProviderProduct, error) {
 	if r == nil || r.resolver == nil {
-		return nil, "", ErrNoProvider
+		return nil, ProviderProduct{}, ErrNoProvider
 	}
-	aggregator, providerProductCode, ok := r.resolver.ResolveProduct(ctx, productCode)
+	aggregator, product, ok := r.resolver.ResolveProduct(ctx, productCode)
 	if !ok || aggregator == "" {
-		return nil, "", fmt.Errorf("%w: %s", ErrNoProvider, productCode)
+		return nil, ProviderProduct{}, fmt.Errorf("%w: %s", ErrNoProvider, productCode)
 	}
 	gw, ok := r.adapters[aggregator]
 	if !ok {
-		return nil, "", fmt.Errorf("%w: aggregator %q not registered", ErrNoProvider, aggregator)
+		return nil, ProviderProduct{}, fmt.Errorf("%w: aggregator %q not registered", ErrNoProvider, aggregator)
 	}
-	return gw, providerProductCode, nil
+	return gw, product, nil
 }
 
 // Adapter returns a registered adapter by aggregator name (used by webhook
