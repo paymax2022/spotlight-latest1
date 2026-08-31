@@ -37,7 +37,12 @@ export type FieldType =
   | 'file'
   | 'image'
   | 'nin'
-  | 'address';
+  | 'address'
+  | 'boolean'
+  /** A nested block of fields (`policy_holder` — on ~65 of 69 products). */
+  | 'object'
+  /** A repeating group; `children` is the row shape (`office_items[]`, `beneficiaries[]`). */
+  | 'array';
 
 export interface FieldOption {
   value: string;
@@ -65,8 +70,36 @@ export interface Field {
   options?: FieldOption[];
   help?: string;
   placeholder?: string;
-  /** Render/validate this field only while `field` equals `equals`. */
-  dependsOn?: { field: string; equals: string };
+  /**
+   * Dependency on another field.
+   *  · `equals`     — render/validate this field only while the parent has that value
+   *  · `queryParam` — this field's OPTIONS depend on the parent: the options
+   *                   endpoint is called with the parent's value as `query`.
+   *
+   * The second form is not optional polish. `vehicle_model` returns an EMPTY
+   * list when called without its parent make, so a renderer that fetches
+   * eagerly shows a dropdown that can never be opened successfully. Options are
+   * therefore not fetched at all until the parent is answered.
+   */
+  dependsOn?: { field: string; equals?: string; queryParam?: boolean };
+
+  /**
+   * The field's options come from a server-side lookup rather than a literal
+   * enum (vehicle makes: 109 entries; colours: 121; nationalities: 193). The
+   * client asks OUR backend for them by product + field name — it never
+   * receives or follows a provider URL, so nothing here can be pointed at an
+   * arbitrary host.
+   */
+  remoteOptions?: boolean;
+
+  /** Regex the provider enforces (e.g. NIN `^[0-9]{11}$`). */
+  pattern?: string;
+
+  /** Row/nested shape for `object` and `array` fields. */
+  children?: Field[];
+  /** Bounds on the number of rows in an `array` field. */
+  minRows?: number;
+  maxRows?: number;
   /** Optional grouping hint from the backend; the renderer chunks by it. */
   group?: string;
 
@@ -98,9 +131,17 @@ export interface FormSchema {
   fields: Field[];
 }
 
-/** A value held by the dynamic form. Arrays back multiselect + file/image lists. */
-export type FieldValue = string | string[];
-export type FormValues = Record<string, FieldValue>;
+/**
+ * A value held by the dynamic form.
+ *  · string    — every scalar control, including booleans ('true' / 'false')
+ *  · string[]  — multiselect
+ *  · FormValues        — an `object` field's nested answers
+ *  · FormValues[]      — an `array` field's repeating rows
+ */
+export type FieldValue = string | string[] | FormValues | FormValues[];
+export interface FormValues {
+  [name: string]: FieldValue | undefined;
+}
 
 export interface Product {
   code: string;
@@ -136,25 +177,38 @@ export interface Product {
   howToClaimHtml: string;
 
   active: boolean;
+
+  /**
+   * Whether this plan can actually be sold today.
+   *
+   * Seven of the 69 products are broken on MyCover's side — four have no
+   * purchase config (and return an empty schema), three have no sharing
+   * formula. `compute-price` refuses all seven. They are listed so a person can
+   * see the plan exists, but the buy path is closed rather than leading to a
+   * dead end at the last step.
+   */
+  purchasable: boolean;
+  /** Why, when `purchasable` is false — surfaced as an explanation, not a code. */
+  providerConfigStatus: string | null;
+
   /** Present on GET /products/:code; absent on the list payload. */
   formSchema: FormSchema | null;
 
   /**
-   * MyCover's buy endpoints are per product FAMILY, not per product: one
-   * `POST /products/bastion/buy-medisure` serves FlexiCare, FlexiCare Mini,
-   * PrimeCare, Seniors and ZenCare, and the body's `product_id` picks which.
-   *
-   * So a "product" in the catalog is really a PLAN, and plans that share a
-   * family share one form schema. The buy flow is therefore: choose plan →
-   * fill the family's form once. `familyCode` groups them; falls back to the
-   * product's own code when the backend has not grouped it.
+   * Sibling plans. MyCover sells several tiers of one thing under separate
+   * product ids (FlexiCare / FlexiCare Mini / PrimeCare / Seniors / ZenCare all
+   * come from Bastion), and a person choosing health cover wants to compare
+   * those side by side rather than meet them as five unrelated rows in a list.
+   * `familyCode` is what groups them on the detail screen's plan picker; it
+   * falls back to the product's own code, i.e. a family of one.
    */
   familyCode: string;
   /** Human name of the family, for the plan-picker heading. */
   familyName: string;
   /**
-   * The aggregator's own product UUID, submitted as `product_id`. The user
-   * never types this — the form injects it from the plan they chose.
+   * The aggregator's own product UUID. It is submitted as `product_id` — the
+   * one field on every schema that identifies WHICH plan is being bought. The
+   * user never types it; the form injects it from the plan they chose.
    */
   providerProductId: string | null;
 }
@@ -188,6 +242,16 @@ export interface Policy {
   endsAt: string | null;
   certificateUrl: string | null;
   createdAt: string | null;
+
+  /**
+   * MyCover has NO claim-filing REST endpoint (`POST /v2/claims` is a 404). It
+   * runs claims through a hosted flow and hands the distributor a per-policy
+   * link on the purchase webhook. So filing a claim means opening this link,
+   * and progress comes back over webhooks — not a form we post.
+   */
+  claimUrl: string | null;
+  /** Hosted vehicle/gadget inspection flow, same mechanism. */
+  inspectionUrl: string | null;
 }
 
 export type ClaimStatus = 'submitted' | 'under_review' | 'approved' | 'rejected' | 'paid';

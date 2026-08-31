@@ -3,15 +3,20 @@
 //
 // WHY THIS EXISTS
 // ---------------
-// MyCover is not a "get a quote, buy a policy" API. It exposes ONE bespoke
-// purchase endpoint per product, each with its own required-field schema — 68
-// products, 68 schemas. Verified live:
-//   buy-medisure             → gender(Male|Female), nin(exactly 11), image_url,
-//                              first_name, last_name, email
-//   buy-marine-cover         → cargo_details[], cargo_value(>=5000),
-//                              country_of_origin(enum), phone_number
-//   buy-office-content-cover → pre_ownership, tenancy, address(>=6),
-//                              office_items[], lga(enum of Nigerian LGAs)
+// Every one of MyCover's 69 products publishes its OWN required-field table, and
+// no two are alike. Verified live:
+//   Bastion health   → gender(Male|Female), nin(exactly 11 digits), image_url,
+//                      date_of_birth(must be past), payment_plan(1..12)
+//   MCG gadget       → device make/model/colour/serial, device_type enum,
+//                      device_value(min ₦50,000), two image uploads
+//   STI comprehensive→ 23 required of 27, incl. four utility-backed dropdowns,
+//                      one of which (vehicle_model) is EMPTY until its parent
+//                      make is chosen
+//   Office content   → tenancy, address(>=6), office_items[] repeating rows,
+//                      lga(enum of Nigerian LGAs, dependent on state)
+//
+// ~65 products also nest a `policy_holder` object, and 17 carry repeating array
+// groups. So no screen may ever hardcode a product's fields.
 //
 // So no screen may ever hardcode a product's fields. Screens render a `Field[]`
 // and this module decides: which fields are currently visible (dependent
@@ -29,10 +34,25 @@ import type { Field, FieldValue, FormSchema, FormValues } from './types';
  */
 export function isActive(field: Field, values: FormValues): boolean {
   const dep = field.dependsOn;
-  if (!dep) return true;
+  // No dependency, or a dependency that only governs which OPTIONS to fetch
+  // (`queryParam`) rather than whether the field exists at all.
+  if (!dep || dep.equals == null) return true;
   const current = values[dep.field];
-  if (Array.isArray(current)) return current.includes(dep.equals);
+  if (Array.isArray(current)) return (current as unknown[]).includes(dep.equals);
   return String(current ?? '') === dep.equals;
+}
+
+/**
+ * The parent answer a remote-options lookup must be filtered by, or null when
+ * there is no such dependency. Returns an EMPTY STRING when the parent exists
+ * but is unanswered — the caller must then not fetch at all, because
+ * `vehicle_model` with no make comes back empty and leaves the user staring at
+ * a dropdown that can never be opened successfully.
+ */
+export function optionsQueryFor(field: Field, values: FormValues): string | null {
+  const dep = field.dependsOn;
+  if (!dep?.queryParam) return null;
+  return asText(values[dep.field]).trim();
 }
 
 /**
@@ -57,17 +77,33 @@ export function submittableFields(fields: Field[], values: FormValues): Field[] 
 export function isEmptyValue(v: FieldValue | undefined): boolean {
   if (v == null) return true;
   if (Array.isArray(v)) return v.length === 0;
+  if (typeof v === 'object') return Object.keys(v).length === 0;
   return String(v).trim() === '';
 }
 
 export function asText(v: FieldValue | undefined): string {
   if (v == null) return '';
-  return Array.isArray(v) ? v.join(', ') : String(v);
+  if (Array.isArray(v)) return v.map((x) => (typeof x === 'string' ? x : '')).filter(Boolean).join(', ');
+  if (typeof v === 'object') return '';
+  return String(v);
 }
 
 export function asList(v: FieldValue | undefined): string[] {
   if (v == null) return [];
-  return Array.isArray(v) ? v : String(v).split(',').map((s) => s.trim()).filter(Boolean);
+  if (Array.isArray(v)) return v.filter((x): x is string => typeof x === 'string');
+  if (typeof v === 'object') return [];
+  return String(v).split(',').map((s) => s.trim()).filter(Boolean);
+}
+
+/** An `object` field's nested answers. */
+export function asGroup(v: FieldValue | undefined): FormValues {
+  return v && !Array.isArray(v) && typeof v === 'object' ? (v as FormValues) : {};
+}
+
+/** An `array` field's repeating rows. */
+export function asRows(v: FieldValue | undefined): FormValues[] {
+  if (!Array.isArray(v)) return [];
+  return v.filter((x): x is FormValues => !!x && typeof x === 'object' && !Array.isArray(x));
 }
 
 // ── Validation ──────────────────────────────────────────────────────────────
@@ -91,12 +127,36 @@ function isValidNgPhone(raw: string): boolean {
  * constraint the provider actually enforces.
  */
 export function validateField(field: Field, value: FieldValue | undefined): string | null {
+  // Composite fields validate their contents, not themselves.
+  if (field.type === 'object') {
+    const nested = validateAll(field.children ?? [], asGroup(value));
+    const first = Object.values(nested)[0];
+    return first ?? (field.required && isEmptyValue(value) ? `${field.label} is required` : null);
+  }
+  if (field.type === 'array') {
+    const rows = asRows(value);
+    const minRows = field.minRows ?? (field.required ? 1 : 0);
+    if (rows.length < minRows) {
+      return minRows === 1 ? `Add at least one ${singular(field.label)}` : `Add at least ${minRows}`;
+    }
+    if (field.maxRows != null && rows.length > field.maxRows) {
+      return `You can add up to ${field.maxRows}`;
+    }
+    for (const row of rows) {
+      const first = Object.values(validateAll(field.children ?? [], row))[0];
+      if (first) return first;
+    }
+    return null;
+  }
+
   const empty = isEmptyValue(value);
 
   if (field.required && empty) {
     return field.type === 'select' || field.type === 'multiselect'
       ? `Choose a ${field.label.toLowerCase()}`
-      : `${field.label} is required`;
+      : field.type === 'boolean'
+        ? `Choose an answer for ${field.label.toLowerCase()}`
+        : `${field.label} is required`;
   }
   if (empty) return null; // optional + blank is fine; nothing else applies.
 
@@ -164,15 +224,34 @@ export function validateField(field: Field, value: FieldValue | undefined): stri
       return null; // length rules below are for text, not for a list.
     }
 
+    case 'boolean':
+      if (text !== 'true' && text !== 'false') return `Choose an answer for ${field.label.toLowerCase()}`;
+      return null;
+
     case 'file':
     case 'image':
-      if (!/^(https?:|file:|content:|data:|blob:)/i.test(text)) {
-        return `Add ${field.label.toLowerCase()}`;
+      // The value here is the UPLOAD REFERENCE the provider gave us back, not
+      // the local file. A raw `file://` URI means the upload never completed —
+      // submitting it would fail at the insurer with a useless message.
+      if (/^(file:|content:|blob:|data:)/i.test(text)) {
+        return 'That file is still uploading — wait a moment and try again';
       }
+      if (!text) return `Add ${field.label.toLowerCase()}`;
       return null;
 
     default:
       break;
+  }
+
+  // A provider-supplied regex is authoritative — it is the exact rule the
+  // insurer applies, so failing it here saves a round trip and a bad message.
+  if (field.pattern) {
+    try {
+      if (!new RegExp(field.pattern).test(text)) return `${field.label} isn't in the expected format`;
+    } catch {
+      // An unparseable pattern is the schema's problem, not the user's: skip it
+      // rather than blocking a form on a rule we cannot evaluate.
+    }
   }
 
   // Length rules apply to every text-shaped field (address >= 6, first_name >= 2…).
@@ -341,15 +420,33 @@ export function buildSteps(
 
   const taken = new Set<string>();
   const steps: FormStep[] = [];
+
+  // A nested block (`policy_holder`) or a repeating group (`office_items[]`) is
+  // a screenful on its own. Mixing one in beside six scalar inputs makes a step
+  // that scrolls forever, so composites always get their own step.
+  const composites = all.filter((f) => f.type === 'object' || f.type === 'array');
+  for (const f of composites) taken.add(f.name);
+
   for (const bucket of BUCKETS) {
     const fields = all.filter((f) => !taken.has(f.name) && bucket.test.test(f.name));
     if (!fields.length) continue;
     for (const f of fields) taken.add(f.name);
     steps.push({ key: bucket.key, title: bucket.title, subtitle: bucket.subtitle, fields });
   }
-  const rest = all.filter((f) => !taken.has(f.name));
+  const rest = all.filter((f) => !taken.has(f.name) && !composites.includes(f));
   if (rest.length) {
     steps.push({ ...DETAILS_STEP, fields: rest });
+  }
+  for (const f of composites) {
+    steps.push({
+      key: `group-${slug(f.name)}`,
+      title: f.label,
+      subtitle:
+        f.type === 'array'
+          ? 'Add every item you want covered.'
+          : 'Details of the person this policy is for.',
+      fields: [f],
+    });
   }
 
   return splitOversized(steps, maxPerStep);
@@ -359,6 +456,10 @@ function splitOversized(steps: FormStep[], maxPerStep: number): FormStep[] {
   const out: FormStep[] = [];
   for (const step of steps) {
     if (step.fields.length <= maxPerStep) { out.push(step); continue; }
+    if (step.fields.some((f) => f.type === 'object' || f.type === 'array')) {
+      out.push(step);
+      continue;
+    }
     const parts = Math.ceil(step.fields.length / maxPerStep);
     const size = Math.ceil(step.fields.length / parts);
     for (let i = 0; i < parts; i += 1) {
@@ -371,6 +472,12 @@ function splitOversized(steps: FormStep[], maxPerStep: number): FormStep[] {
     }
   }
   return out;
+}
+
+/** "Office items" → "office item", for "Add at least one …" messages. */
+function singular(label: string): string {
+  const l = label.toLowerCase().trim();
+  return l.endsWith('ies') ? `${l.slice(0, -3)}y` : l.endsWith('s') ? l.slice(0, -1) : l;
 }
 
 function slug(s: string): string {
@@ -466,6 +573,15 @@ export function buildInputs(fields: Field[], values: FormValues): Record<string,
     switch (f.type) {
       case 'multiselect':
         out[f.name] = asList(v);
+        break;
+      case 'object':
+        out[f.name] = buildInputs(f.children ?? [], asGroup(v));
+        break;
+      case 'array':
+        out[f.name] = asRows(v).map((row) => buildInputs(f.children ?? [], row));
+        break;
+      case 'boolean':
+        out[f.name] = asText(v) === 'true';
         break;
       case 'money': {
         const kobo = numericValue(f, asText(v));

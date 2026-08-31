@@ -15,6 +15,7 @@ import { INSURANCE_API_BASE } from '../constants/insurance.constants';
 import {
   mapClaim,
   mapClaims,
+  mapFieldOptions,
   mapFormSchema,
   mapPolicies,
   mapPolicy,
@@ -26,6 +27,7 @@ import {
 } from './normalize';
 import type {
   Claim,
+  FieldOption,
   FormSchema,
   Policy,
   Product,
@@ -86,19 +88,51 @@ export async function fetchFormSchema(code: string): Promise<FormSchema> {
   });
 }
 
+// ── Dropdown options ────────────────────────────────────────────────────────
+/**
+ * Options for a utility-backed dropdown (109 vehicle makes, 121 colours, 193
+ * nationalities, 36 states, the LGAs of one state…).
+ *
+ * The client asks by PRODUCT + FIELD NAME and never by URL. The schema does
+ * carry a provider URL, but sending that from the device and having the backend
+ * fetch it would be a request-forgery hole with the field schema as its input;
+ * resolving the field name server-side keeps the set of reachable hosts closed.
+ *
+ * `query` carries the parent's answer for a dependent list (make → model,
+ * state → LGA). Callers must not fetch a dependent list before its parent is
+ * answered: the provider returns [] and the user gets a dropdown that cannot be
+ * opened successfully.
+ */
+export async function fetchFieldOptions(args: {
+  productCode: string;
+  field: string;
+  query?: string;
+}): Promise<FieldOption[]> {
+  return call(async () => {
+    const { data } = await api.get(
+      `${INSURANCE_API_BASE}/products/${encodeURIComponent(args.productCode)}/options/${encodeURIComponent(args.field)}`,
+      { params: args.query ? { query: args.query } : undefined },
+    );
+    return mapFieldOptions(data);
+  });
+}
+
 // ── Uploads ─────────────────────────────────────────────────────────────────
 /**
- * Turn a locally-picked file into a URL the insurer can fetch.
+ * Turn a locally-picked file into the reference the insurer expects.
  *
- * MyCover's `image_url` / `id_image_url` / `device_about_image_url` fields are
- * URL-valued, not multipart: the provider validates that the value is a
- * reachable image URL. So the flow is pick → upload to OUR storage → send the
- * returned URL. The client never holds a storage credential; the backend
- * presigns and returns the public URL.
+ * MyCover's `image_url` / `id_image_url` / `device_about_image_url` fields do
+ * NOT take an arbitrary URL. The file is posted to the provider's own upload
+ * endpoint, which returns an `upload_id` UUID, and THAT uuid is the field's
+ * value — the provider's own sample payloads show a bare uuid there.
+ *
+ * We proxy through our backend rather than uploading from the device, so the
+ * provider key never leaves the server. Whatever reference comes back (an
+ * upload id, or a URL if the backend chose to host it) is what we store.
  *
  * BACKEND DEPENDENCY: `POST /api/v1/insurance/uploads`. Until it exists this
- * rejects, and the field shows a real upload error rather than submitting a
- * `file://` URI the insurer would reject at purchase time.
+ * rejects, and the field shows a real upload error rather than letting a
+ * `file://` URI through to a purchase that would be refused.
  */
 export async function uploadInsuranceFile(file: {
   uri: string;
@@ -129,12 +163,25 @@ export async function uploadInsuranceFile(file: {
       headers: { 'Content-Type': 'multipart/form-data' },
       timeout: 60_000,
     });
-    const body = unwrap(data) as { url?: unknown } | string | null;
-    const url = typeof body === 'string' ? body : body?.url;
-    if (!url) {
-      throw { response: { status: 502, data: { error: { code: 'UPLOAD_NO_URL', message: 'Upload succeeded but no file URL came back.' } } } };
+    const body = unwrap(data) as { upload_id?: unknown; uploadId?: unknown; id?: unknown; url?: unknown } | string | null;
+    const reference =
+      typeof body === 'string'
+        ? body
+        : body?.upload_id ?? body?.uploadId ?? body?.id ?? body?.url;
+    if (!reference) {
+      throw {
+        response: {
+          status: 502,
+          data: {
+            error: {
+              code: 'UPLOAD_NO_REFERENCE',
+              message: 'That file uploaded, but the insurer did not return a reference for it.',
+            },
+          },
+        },
+      };
     }
-    return String(url);
+    return String(reference);
   });
 }
 

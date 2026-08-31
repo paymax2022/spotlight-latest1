@@ -1,126 +1,386 @@
-import React, { useState } from 'react';
-import { View, Text, ScrollView, StyleSheet } from 'react-native';
+// ── Protection — product detail ──────────────────────────────────────────────
+// A real plan from the live catalog: what it costs (flat naira or a rate on the
+// value you declare), who underwrites it, how long it runs, what it covers, how
+// it works and how to claim — the last four arriving as provider HTML, rendered
+// as readable blocks rather than raw markup.
+//
+// It also carries the PLAN PICKER. MyCover's buy endpoints are per product
+// family, so several plans (FlexiCare, FlexiCare Mini, PrimeCare…) share one
+// purchase form and differ only by the `product_id` in the body. Choosing among
+// them belongs here, before the form, not buried inside it.
+
+import React, { useMemo, useState } from 'react';
+import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import * as Icons from 'lucide-react-native';
-import { Check, X, ShieldCheck } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
+import { BadgeCheck, CalendarDays, Check, RefreshCw, ShieldCheck, Wallet } from 'lucide-react-native';
 import ScreenHeader from '@/components/ScreenHeader';
-import StateView from '@/components/StateView';
 import PrimaryButton from '@/components/PrimaryButton';
-import { useProduct } from '@/features/insurance/hooks';
-import { UnderwriterBadge, PremiumRow, DisclosureSheet } from '@/features/insurance/components';
+import { Colors } from '@/constants/colors';
+import { Radius } from '@/constants/radius';
+import { Spacing } from '@/constants/spacing';
+import { Typography } from '@/constants/typography';
 import {
-  InsuranceColors,
-  formatNaira,
-  PRODUCT_LINE_LABEL,
-  TIER_LABEL,
-} from '@/features/insurance/constants/insurance.constants';
+  DetailSkeleton,
+  HtmlContent,
+  HtmlSection,
+  InsuranceErrorState,
+  PriceLabel,
+  PricingModeBadge,
+  UnderwriterRow,
+} from '@/features/insurance/components/live';
+import { InsuranceColors } from '@/features/insurance/constants/insurance.constants';
+import { categoryMeta } from '@/features/insurance/live/catalog';
+import { familyPlans } from '@/features/insurance/live/formEngine';
+import { toBulletList } from '@/features/insurance/live/html';
+import { useLiveProduct, useLiveProducts } from '@/features/insurance/live/hooks';
+import { coverPeriodLabel, nairaCompact, priceDisplay } from '@/features/insurance/live/money';
+import type { Product } from '@/features/insurance/live/types';
 
 export default function ProductDetail() {
   const { code } = useLocalSearchParams<{ code: string }>();
-  const product = useProduct(code ?? '');
-  const [disclosureOpen, setDisclosureOpen] = useState(false);
+  const product = useLiveProduct(code ?? '');
+  // The full catalog is already cached from browse; it is what lets us find the
+  // sibling plans that share this product's purchase form.
+  const catalog = useLiveProducts();
+
+  const [selectedCode, setSelectedCode] = useState<string | null>(null);
+
+  const plans = useMemo(
+    () => familyPlans(product.data, catalog.data),
+    [product.data, catalog.data],
+  );
+  const selected: Product | undefined =
+    plans.find((p) => p.code === selectedCode) ?? product.data ?? undefined;
 
   if (product.isLoading) {
     return (
       <SafeAreaView style={styles.safe} edges={['top']}>
-        <ScreenHeader title="Product" />
-        <StateView kind="loading" message="Loading product…" />
-      </SafeAreaView>
-    );
-  }
-  if (product.isError || !product.data) {
-    return (
-      <SafeAreaView style={styles.safe} edges={['top']}>
-        <ScreenHeader title="Product" />
-        <StateView
-          kind="error"
-          title="Couldn't load product"
-          message="This product may be unavailable."
-          actionLabel="Retry"
-          onAction={() => product.refetch()}
-        />
+        <ScreenHeader title="Cover" />
+        <DetailSkeleton />
       </SafeAreaView>
     );
   }
 
-  const p = product.data;
-  const Icon = (Icons as unknown as Record<string, Icons.LucideIcon>)[p.icon] ?? ShieldCheck;
+  if (product.isError || !product.data || !selected) {
+    return (
+      <SafeAreaView style={styles.safe} edges={['top']}>
+        <ScreenHeader title="Cover" />
+        <InsuranceErrorState error={product.error} onRetry={() => product.refetch()} />
+      </SafeAreaView>
+    );
+  }
+
+  const meta = categoryMeta(selected.productLine);
+  const Icon =
+    (Icons as unknown as Record<string, Icons.LucideIcon>)[meta.icon] ?? ShieldCheck;
+  const price = priceDisplay(selected);
+  const highlights = toBulletList(selected.keyBenefitsHtml, 5);
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
-      <ScreenHeader title={PRODUCT_LINE_LABEL[p.productLine] ?? 'Product'} />
+      <ScreenHeader title={meta.label} subtitle={selected.underwriter || undefined} />
 
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scroll}>
         {/* Hero */}
         <View style={styles.hero}>
-          <View style={styles.heroIcon}><Icon size={28} color={InsuranceColors.brand} strokeWidth={2} /></View>
-          <Text style={styles.title}>{p.displayName}</Text>
-          <Text style={styles.desc}>{p.shortDescription}</Text>
+          <View style={styles.heroIcon}>
+            <Icon size={26} color={InsuranceColors.brand} strokeWidth={2} />
+          </View>
+          <Text style={styles.title}>{selected.name}</Text>
+          {selected.description ? (
+            <Text style={styles.desc}>{selected.description}</Text>
+          ) : null}
         </View>
 
-        {/* Disclosure (PRD §5) */}
-        <UnderwriterBadge disclosure={p.disclosure} onPress={() => setDisclosureOpen(true)} />
+        {/* Price — flat and percentage read very differently on purpose. */}
+        <View style={styles.priceCard}>
+          <View style={styles.priceRow}>
+            <PriceLabel product={selected} size="lg" />
+            <View style={styles.grow} />
+            <PricingModeBadge product={selected} />
+          </View>
+          <Text style={styles.priceNote}>
+            {price.kind === 'percentage'
+              ? 'Your premium is worked out from the value you declare, and confirmed by the insurer before you pay.'
+              : 'A fixed premium for the full cover period. The exact amount is confirmed before you pay.'}
+          </Text>
+        </View>
+
+        <UnderwriterRow
+          underwriter={selected.underwriter}
+          logoUrl={selected.underwriterLogoUrl}
+          aggregator={selected.aggregator === 'mycover' ? 'MyCover.ai' : selected.aggregator}
+        />
+
+        {/* Plan picker — only when the family really has more than one plan. */}
+        {plans.length > 1 ? (
+          <View style={styles.planBlock}>
+            <Text style={styles.sectionTitle}>Choose your plan</Text>
+            <Text style={styles.sectionSub}>
+              {plans.length} plans from {selected.underwriter}. They share one application form.
+            </Text>
+            <View style={styles.planList}>
+              {plans.map((plan) => (
+                <PlanRow
+                  key={plan.code}
+                  plan={plan}
+                  selected={plan.code === selected.code}
+                  onPress={() => setSelectedCode(plan.code)}
+                />
+              ))}
+            </View>
+          </View>
+        ) : null}
 
         {/* Key facts */}
-        <View style={styles.card}>
-          <PremiumRow label="From" amountKobo={p.fromPremiumKobo} cadence={p.premiumCadence} />
-          <PremiumRow label="Cover up to" amountKobo={p.sumInsuredRules.max} />
-          <PremiumRow label="Required KYC" value={TIER_LABEL[p.requiredKycTier]} />
+        <View style={styles.factGrid}>
+          <Fact
+            icon={<CalendarDays size={16} color={InsuranceColors.brand} />}
+            label="Cover period"
+            value={coverPeriodLabel(selected.coverPeriodDays)}
+          />
+          <Fact
+            icon={<Wallet size={16} color={InsuranceColors.brand} />}
+            label="Cover up to"
+            value={selected.sumInsuredKobo > 0 ? nairaCompact(selected.sumInsuredKobo) : 'You declare'}
+          />
+          <Fact
+            icon={<RefreshCw size={16} color={InsuranceColors.brand} />}
+            label="Renewal"
+            value={selected.isRenewable ? 'Renewable' : 'One-off'}
+          />
+          <Fact
+            icon={<BadgeCheck size={16} color={InsuranceColors.brand} />}
+            label="Certificate"
+            value={selected.isCertificateable ? 'Issued' : 'Not issued'}
+          />
         </View>
 
-        {/* Benefits */}
-        <Text style={styles.sectionTitle}>What's covered</Text>
-        <View style={styles.card}>
-          {p.benefits.map((b) => (
-            <View key={b} style={styles.bulletRow}>
-              <View style={[styles.bulletIcon, styles.bulletOk]}><Check size={14} color={InsuranceColors.ok} strokeWidth={2.6} /></View>
-              <Text style={styles.bulletText}>{b}</Text>
-            </View>
-          ))}
-        </View>
+        {/* Headline benefits, pulled out of the provider's HTML. */}
+        {highlights.length > 0 ? (
+          <View style={styles.card}>
+            <Text style={styles.cardTitle}>What's covered</Text>
+            {highlights.map((b, i) => (
+              <View key={i} style={styles.bulletRow}>
+                <View style={styles.bulletIcon}>
+                  <Check size={13} color={InsuranceColors.ok} strokeWidth={2.8} />
+                </View>
+                <Text style={styles.bulletText}>{b}</Text>
+              </View>
+            ))}
+          </View>
+        ) : (
+          <View style={styles.card}>
+            <Text style={styles.cardTitle}>What's covered</Text>
+            <HtmlContent
+              html={selected.fullBenefitsHtml}
+              collapseAfter={4}
+              emptyText="The insurer hasn't published a benefit summary for this plan yet. The full policy wording is issued with your certificate."
+            />
+          </View>
+        )}
 
-        {/* Exclusions */}
-        <Text style={styles.sectionTitle}>What's not covered</Text>
-        <View style={styles.card}>
-          {p.exclusions.map((e) => (
-            <View key={e} style={styles.bulletRow}>
-              <View style={[styles.bulletIcon, styles.bulletNo]}><X size={14} color={Colors.error} strokeWidth={2.6} /></View>
-              <Text style={styles.bulletText}>{e}</Text>
-            </View>
-          ))}
-        </View>
+        <HtmlSection title="Full benefits" html={selected.fullBenefitsHtml} />
+        <HtmlSection title="How it works" html={selected.howItWorksHtml} />
+        <HtmlSection
+          title="How to claim"
+          html={selected.howToClaimHtml}
+          emptyText={
+            selected.isClaimable
+              ? 'Claims for this plan are filed in the app and passed to the insurer.'
+              : 'This plan is not claimable in-app — the insurer handles claims directly.'
+          }
+        />
+
+        <Text style={styles.disclaimer}>
+          Cover is provided by {selected.underwriter || 'the insurer named on your certificate'},
+          a NAICOM-licensed insurer. Paymax distributes this policy and does not carry the risk.
+        </Text>
       </ScrollView>
 
       <View style={styles.footer}>
-        <PrimaryButton
-          label="Get a quote"
-          onPress={() => router.push(`/insurance/quote/form?code=${encodeURIComponent(p.code)}`)}
-        />
+        <View style={styles.footerPrice}>
+          <Text style={styles.footerLabel}>{price.prefix || 'Premium'}</Text>
+          <PriceLabel product={selected} />
+        </View>
+        <View style={styles.grow}>
+          <PrimaryButton
+            label="Get covered"
+            onPress={() =>
+              router.push(
+                `/insurance/quote/form?code=${encodeURIComponent(selected.code)}&family=${encodeURIComponent(selected.familyCode)}`,
+              )
+            }
+          />
+        </View>
       </View>
-
-      <DisclosureSheet visible={disclosureOpen} disclosure={p.disclosure} onClose={() => setDisclosureOpen(false)} />
     </SafeAreaView>
+  );
+}
+
+/** One selectable plan within a family. */
+function PlanRow({
+  plan,
+  selected,
+  onPress,
+}: {
+  plan: Product;
+  selected: boolean;
+  onPress: () => void;
+}) {
+  return (
+    <Pressable
+      onPress={onPress}
+      accessibilityRole="radio"
+      accessibilityState={{ selected }}
+      style={[styles.planRow, selected && styles.planRowActive]}
+    >
+      <View style={[styles.radio, selected && styles.radioActive]}>
+        {selected ? <View style={styles.radioDot} /> : null}
+      </View>
+      <View style={styles.grow}>
+        <Text style={styles.planName} numberOfLines={2}>
+          {plan.name}
+        </Text>
+        <Text style={styles.planMeta} numberOfLines={1}>
+          {coverPeriodLabel(plan.coverPeriodDays)}
+          {plan.sumInsuredKobo > 0 ? ` · up to ${nairaCompact(plan.sumInsuredKobo)}` : ''}
+        </Text>
+      </View>
+      <PriceLabel product={plan} size="sm" />
+    </Pressable>
+  );
+}
+
+function Fact({ icon, label, value }: { icon: React.ReactNode; label: string; value: string }) {
+  return (
+    <View style={styles.fact}>
+      {icon}
+      <Text style={styles.factLabel}>{label}</Text>
+      <Text style={styles.factValue} numberOfLines={2}>
+        {value}
+      </Text>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
   safe: { flex: 1 },
-  scroll: { paddingHorizontal: Spacing.containerMargin, paddingBottom: 24, gap: Spacing.md },
-  hero: { alignItems: 'center', gap: Spacing.xs, paddingVertical: Spacing.md },
-  heroIcon: { width: 64, height: 64, borderRadius: Radius.lg, backgroundColor: InsuranceColors.okBg, alignItems: 'center', justifyContent: 'center', marginBottom: Spacing.xs },
+  grow: { flex: 1 },
+  scroll: {
+    paddingHorizontal: Spacing.containerMargin,
+    paddingBottom: 32,
+    gap: Spacing.md,
+  },
+  hero: { alignItems: 'center', gap: Spacing.xs, paddingTop: Spacing.sm },
+  heroIcon: {
+    width: 60,
+    height: 60,
+    borderRadius: Radius.lg,
+    backgroundColor: Colors.iconBgPurple,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: Spacing.xs,
+  },
   title: { ...Typography.headlineMd, color: Colors.onSurface, textAlign: 'center' },
-  desc: { ...Typography.bodyMd, color: Colors.onSurfaceVariant, textAlign: 'center' },
-  card: { backgroundColor: InsuranceColors.surface, borderRadius: Radius.lg, borderWidth: 1, borderColor: InsuranceColors.border, paddingHorizontal: Spacing.md, paddingVertical: Spacing.xs },
-  sectionTitle: { ...Typography.titleMd, color: Colors.onSurface, marginTop: Spacing.xs },
-  bulletRow: { flexDirection: 'row', alignItems: 'flex-start', gap: Spacing.sm, paddingVertical: Spacing.sm },
-  bulletIcon: { width: 22, height: 22, borderRadius: Radius.full, alignItems: 'center', justifyContent: 'center', marginTop: 1 },
-  bulletOk: { backgroundColor: InsuranceColors.okBg },
-  bulletNo: { backgroundColor: Colors.errorContainer },
-  bulletText: { ...Typography.bodyMd, color: Colors.onSurface, flex: 1 },
-  footer: { padding: Spacing.containerMargin, borderTopWidth: 1, borderTopColor: Colors.outlineVariant, backgroundColor: Colors.background },
+  desc: { ...Typography.bodyMd, color: Colors.onSurfaceVariant, textAlign: 'center', lineHeight: 22 },
+
+  priceCard: {
+    backgroundColor: Colors.surfaceContainerLow,
+    borderRadius: Radius.lg,
+    padding: Spacing.md,
+    gap: Spacing.sm,
+  },
+  priceRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm },
+  priceNote: { ...Typography.labelSm, color: Colors.onSurfaceVariant, lineHeight: 18 },
+
+  planBlock: { gap: Spacing.xs },
+  sectionTitle: { ...Typography.titleMd, color: Colors.onSurface },
+  sectionSub: { ...Typography.labelSm, color: Colors.onSurfaceVariant },
+  planList: { gap: Spacing.sm, marginTop: Spacing.sm },
+  planRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.md,
+    borderWidth: 1,
+    borderColor: InsuranceColors.border,
+    borderRadius: Radius.lg,
+    padding: Spacing.md,
+    backgroundColor: InsuranceColors.surface,
+  },
+  planRowActive: { borderColor: InsuranceColors.brand, backgroundColor: Colors.iconBgPurple },
+  radio: {
+    width: 20,
+    height: 20,
+    borderRadius: Radius.full,
+    borderWidth: 2,
+    borderColor: Colors.outline,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  radioActive: { borderColor: InsuranceColors.brand },
+  radioDot: {
+    width: 10,
+    height: 10,
+    borderRadius: Radius.full,
+    backgroundColor: InsuranceColors.brand,
+  },
+  planName: { ...Typography.labelLg, color: Colors.onSurface },
+  planMeta: { ...Typography.labelSm, color: Colors.onSurfaceVariant, marginTop: 2 },
+
+  factGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.sm },
+  fact: {
+    width: '47%',
+    flexGrow: 1,
+    backgroundColor: InsuranceColors.surface,
+    borderRadius: Radius.md,
+    borderWidth: 1,
+    borderColor: InsuranceColors.border,
+    padding: Spacing.md,
+    gap: 2,
+  },
+  factLabel: { ...Typography.labelSm, color: Colors.onSurfaceVariant, marginTop: Spacing.xs },
+  factValue: { ...Typography.labelLg, color: Colors.onSurface },
+
+  card: {
+    backgroundColor: InsuranceColors.surface,
+    borderRadius: Radius.lg,
+    borderWidth: 1,
+    borderColor: InsuranceColors.border,
+    padding: Spacing.md,
+    gap: Spacing.sm,
+  },
+  cardTitle: { ...Typography.titleMd, color: Colors.onSurface, marginBottom: Spacing.xs },
+  bulletRow: { flexDirection: 'row', alignItems: 'flex-start', gap: Spacing.sm },
+  bulletIcon: {
+    width: 20,
+    height: 20,
+    borderRadius: Radius.full,
+    backgroundColor: InsuranceColors.okBg,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 2,
+  },
+  bulletText: { ...Typography.bodyMd, color: Colors.onSurfaceVariant, flex: 1, lineHeight: 23 },
+
+  disclaimer: {
+    ...Typography.labelSm,
+    color: Colors.onSurfaceVariant,
+    lineHeight: 18,
+    marginTop: Spacing.xs,
+  },
+
+  footer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.md,
+    padding: Spacing.containerMargin,
+    borderTopWidth: 1,
+    borderTopColor: Colors.outlineVariant,
+    backgroundColor: Colors.background,
+  },
+  footerPrice: { minWidth: 96 },
+  footerLabel: { ...Typography.labelSm, color: Colors.onSurfaceVariant },
 });

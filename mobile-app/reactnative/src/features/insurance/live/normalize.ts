@@ -139,6 +139,7 @@ export function toClaimStatus(v: unknown): ClaimStatus {
 const FIELD_TYPES = new Set<FieldType>([
   'text', 'email', 'phone', 'number', 'money', 'date',
   'select', 'multiselect', 'file', 'image', 'nin', 'address',
+  'boolean', 'object', 'array',
 ]);
 
 /**
@@ -154,12 +155,16 @@ export function toFieldType(v: unknown): FieldType {
     case 'integer': case 'int': case 'float': case 'decimal': return 'number';
     case 'amount': case 'currency': case 'money_kobo': return 'money';
     case 'enum': case 'dropdown': return 'select';
-    case 'array': case 'list': case 'multi_select': return 'multiselect';
+    case 'list': case 'multi_select': return 'multiselect';
     case 'datetime': case 'dob': return 'date';
     case 'upload': case 'document': return 'file';
     case 'photo': case 'image_url': return 'image';
     case 'tel': case 'msisdn': case 'phone_number': return 'phone';
     case 'bvn': case 'nin_number': return 'nin';
+    case 'bool': case 'checkbox': return 'boolean';
+    case 'group': case 'nested': return 'object';
+    case 'repeating': case 'repeater': return 'array';
+    case 'hidden': return 'text';
     default: return 'text';
   }
 }
@@ -201,7 +206,30 @@ function toDependsOn(v: unknown): Field['dependsOn'] {
   const raw = v as Raw;
   const field = str(raw.field ?? raw.name);
   if (!field) return undefined;
-  return { field, equals: str(raw.equals ?? raw.value) };
+  const out: NonNullable<Field['dependsOn']> = { field };
+  const equals = strOrNull(raw.equals ?? raw.value);
+  if (equals) out.equals = equals;
+  // `query_param` marks an OPTIONS dependency, not a visibility one: the child
+  // list is fetched with the parent's answer as `query`. `vehicle_model` with
+  // no make returns [], which is how a naive renderer ends up with a dropdown
+  // that can never be opened successfully.
+  if (bool(raw.query_param ?? raw.queryParam)) out.queryParam = true;
+  return out;
+}
+
+function isUrl(v: unknown): boolean {
+  return /^https?:\/\//i.test(String(v ?? ''));
+}
+
+/**
+ * MyCover writes small enums into `data_source` as a bracketed list —
+ * `"[Male, Female]"`, `"[true, false]"`. "User input" means free text.
+ */
+function literalEnum(v: unknown): string[] | undefined {
+  const s = String(v ?? '').trim();
+  if (!s.startsWith('[') || !s.endsWith(']')) return undefined;
+  const parts = s.slice(1, -1).split(',').map((x) => x.trim().replace(/^['"]|['"]$/g, '')).filter(Boolean);
+  return parts.length ? parts : undefined;
 }
 
 function optInt(v: unknown): number | undefined {
@@ -212,24 +240,50 @@ function optInt(v: unknown): number | undefined {
 
 export function mapField(raw: Raw): Field {
   const name = str(raw?.name ?? raw?.key ?? raw?.field);
-  const type = toFieldType(raw?.type);
+  // MyCover publishes constraints under `validation` and options under
+  // `data_source`. The backend is expected to flatten those into the internal
+  // contract, but we accept the provider's own shape too, because a schema that
+  // arrives one layer deeper should degrade to a working form rather than a
+  // form with no rules on it at all.
+  const validation = (raw?.validation ?? {}) as Raw;
+  const type = toFieldType(raw?.type ?? validation?.type);
   const field: Field = {
     name,
     label: str(raw?.label) || humanizeName(name),
     type,
     required: bool(raw?.required),
   };
-  const min = optInt(raw?.min);
-  const max = optInt(raw?.max);
-  const minLength = optInt(raw?.min_length ?? raw?.minLength);
-  const maxLength = optInt(raw?.max_length ?? raw?.maxLength);
+  const min = optInt(raw?.min ?? validation?.minimum);
+  const max = optInt(raw?.max ?? validation?.maximum);
+  const minLength = optInt(raw?.min_length ?? raw?.minLength ?? validation?.min_length);
+  const maxLength = optInt(raw?.max_length ?? raw?.maxLength ?? validation?.max_length);
   if (min !== undefined) field.min = min;
   if (max !== undefined) field.max = max;
   if (minLength !== undefined) field.minLength = minLength;
   if (maxLength !== undefined) field.maxLength = maxLength;
 
-  const options = toOptions(raw?.options);
+  const options = toOptions(raw?.options ?? validation?.enum ?? literalEnum(raw?.data_source));
   if (options) field.options = options;
+
+  // A `data_source` that is a URL means the options are fetched. The client
+  // never sees or follows that URL — it asks OUR backend by product + field —
+  // so all we keep is the fact that a lookup is needed.
+  if (!options && (bool(raw?.remote_options ?? raw?.remoteOptions) || isUrl(raw?.data_source) || isUrl(raw?.options_url))) {
+    field.remoteOptions = true;
+  }
+
+  const pattern = strOrNull(raw?.pattern ?? validation?.pattern);
+  if (pattern) field.pattern = pattern;
+
+  const children = Array.isArray(raw?.children)
+    ? raw.children.map(mapField).filter((f: Field) => f.name)
+    : undefined;
+  if (children?.length) field.children = children;
+
+  const minRows = optInt(raw?.min_rows ?? raw?.minRows ?? validation?.min_items);
+  const maxRows = optInt(raw?.max_rows ?? raw?.maxRows ?? validation?.max_items);
+  if (minRows !== undefined) field.minRows = minRows;
+  if (maxRows !== undefined) field.maxRows = maxRows;
 
   const help = strOrNull(raw?.help ?? raw?.hint ?? raw?.description);
   if (help) field.help = help;
@@ -263,6 +317,20 @@ export function mapField(raw: Raw): Field {
   if (hidden) field.hidden = true;
 
   return field;
+}
+
+/**
+ * Options payload for a utility-backed dropdown.
+ *
+ * Utilities normally return `[{label,value}]` — except the hospital list, which
+ * returns an OBJECT (`{name, hospitals:[…]}`). That one is informational, not a
+ * form field, so it must never be routed through here; if it ever is, this
+ * yields an empty list rather than a screenful of `[object Object]`.
+ */
+export function mapFieldOptions(body: unknown): FieldOption[] {
+  const inner = unwrap(body);
+  if (!Array.isArray(inner)) return [];
+  return toOptions(inner) ?? [];
 }
 
 export function mapFormSchema(raw: unknown): FormSchema | null {
@@ -339,6 +407,11 @@ export function mapProduct(raw: Raw): Product {
     // `active` defaults TRUE when absent: a catalog the backend chose to return
     // is a catalog it means us to show. Only an explicit false hides a product.
     active: raw?.active == null ? true : bool(raw.active),
+    // `purchasable` also defaults TRUE — but an explicit false closes the buy
+    // path for the seven products broken on the provider's side, so nobody is
+    // walked through a full application only to be refused at pricing.
+    purchasable: raw?.purchasable == null ? true : bool(raw.purchasable),
+    providerConfigStatus: strOrNull(raw?.provider_config_status ?? raw?.providerConfigStatus),
     formSchema: mapFormSchema(raw?.form_schema ?? raw?.formSchema),
   };
 }
@@ -380,6 +453,10 @@ export function mapPolicy(raw: Raw): Policy {
     endsAt: strOrNull(raw?.ends_at ?? raw?.endsAt),
     certificateUrl: strOrNull(raw?.certificate_url ?? raw?.certificateUrl),
     createdAt: strOrNull(raw?.created_at ?? raw?.createdAt),
+    claimUrl: strOrNull(raw?.claim_url ?? raw?.claimUrl ?? raw?.sdk?.claim_link),
+    inspectionUrl: strOrNull(
+      raw?.inspection_url ?? raw?.inspectionUrl ?? raw?.sdk?.inspection_link,
+    ),
   };
 }
 

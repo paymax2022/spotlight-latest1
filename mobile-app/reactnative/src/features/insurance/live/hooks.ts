@@ -13,6 +13,7 @@ import {
   fetchCertificateUrl,
   fetchClaim,
   fetchClaims,
+  fetchFieldOptions,
   fetchFormSchema,
   fetchPolicies,
   fetchPolicy,
@@ -63,6 +64,37 @@ export function useProductSchema(code: string, enabled = true) {
     queryKey: [KEY, 'schema', code],
     queryFn: () => fetchFormSchema(code),
     enabled: enabled && !!code,
+    staleTime: 30 * 60_000,
+    ...commonQuery,
+  });
+}
+
+/**
+ * Options for one utility-backed dropdown.
+ *
+ * `query` is the parent's answer for a dependent list. When the field declares
+ * such a parent and it is still unanswered, `query` is an empty string and this
+ * DOES NOT FETCH — `vehicle_model` called without a make returns [], and a
+ * dropdown that opens onto nothing is worse than one that says "choose a make
+ * first".
+ */
+export function useFieldOptions(args: {
+  productCode: string;
+  field: string;
+  enabled: boolean;
+  /** null = no parent dependency; '' = parent unanswered; otherwise its value. */
+  query: string | null;
+}) {
+  const waitingOnParent = args.query === '';
+  return useQuery({
+    queryKey: [KEY, 'options', args.productCode, args.field, args.query ?? ''],
+    queryFn: () =>
+      fetchFieldOptions({
+        productCode: args.productCode,
+        field: args.field,
+        query: args.query || undefined,
+      }),
+    enabled: args.enabled && !!args.productCode && !!args.field && !waitingOnParent,
     staleTime: 30 * 60_000,
     ...commonQuery,
   });
