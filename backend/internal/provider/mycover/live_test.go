@@ -2,7 +2,9 @@ package mycover
 
 import (
 	"bufio"
+	"bytes"
 	"context"
+	"encoding/json"
 	"os"
 	"strings"
 	"testing"
@@ -198,12 +200,12 @@ func TestLive_ComputePrice(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 	defer cancel()
 
-	product := gateway.ProviderProduct{
+	product := liveProduct(t, ctx, c, gateway.ProviderProduct{
 		Code:              "bastion-flexicare-mini",
 		ProviderProductID: "f7b4bca1-b870-4648-8704-11c1802a51d0",
 		CommissionBps:     1000, // 10%, for the commission assertion below
 		Underwriter:       "Bastion Health Ltd",
-	}
+	})
 	base := map[string]any{
 		"first_name":   "Q",
 		"last_name":    "A",
@@ -309,5 +311,96 @@ func TestLive_BrokenProductsAreDetected(t *testing.T) {
 			continue
 		}
 		t.Logf("%s: correctly detected as not purchasable (%d fields, all system)", code, len(schema.Fields))
+	}
+}
+
+// liveProduct completes a routing descriptor the way the CATALOG does: it
+// fetches the product's REAL published schema and derives the money-input spec
+// from it, exactly as catalog.ResolveProduct derives it from the stored copy of
+// that same schema.
+//
+// Hand-writing the spec here would prove nothing about production. Deriving it
+// from the provider's own schema is what makes the live tests below exercise the
+// real seam.
+func liveProduct(t *testing.T, ctx context.Context, c *Client, p gateway.ProviderProduct) gateway.ProviderProduct {
+	t.Helper()
+	schema, err := c.ProductSchemaFor(ctx, p.ProviderProductID)
+	if err != nil {
+		t.Fatalf("live product schema for %s: %v", p.Code, err)
+	}
+	raw, err := json.Marshal(schema.AsMap())
+	if err != nil {
+		t.Fatalf("marshal schema: %v", err)
+	}
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.UseNumber()
+	var stored map[string]any
+	if err := dec.Decode(&stored); err != nil {
+		t.Fatalf("decode schema: %v", err)
+	}
+	fields, _ := stored["fields"].([]any)
+	p.FormSchemaKnown = len(fields) > 0
+	p.MoneyInputPaths = gateway.MoneyInputPaths(stored)
+	t.Logf("%s: %d published fields, money inputs %v", p.Code, len(fields), p.MoneyInputPaths)
+	return p
+}
+
+// TestLive_DeclaredValueIsPricedInNaira is the live proof of the money-unit bug
+// and of its fix, on a PERCENTAGE-rated product where the premium is a direct
+// function of the declared value.
+//
+// MyCover's `value` field is denominated in NAIRA; every Paymax client submits
+// INTEGER KOBO. Nothing converted between them, so the provider was told a
+// ₦200,000 phone was worth ₦20,000,000 and priced it accordingly:
+//
+//	body.value = 200000    -> price 10,000     (correct)
+//	body.value = 20000000  -> price 1,000,000  (the bug: 100x)
+//
+// The quote below submits 20,000,000 KOBO — what the app actually sends — and
+// must come back at ₦10,000. If the outbound conversion is ever removed this
+// test fails against the real insurer, not against a fixture.
+func TestLive_DeclaredValueIsPricedInNaira(t *testing.T) {
+	c := liveClient(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+	defer cancel()
+
+	product := liveProduct(t, ctx, c, gateway.ProviderProduct{
+		Code:              "mcg-gadget-cover",
+		ProviderProductID: "ffb0711c-1e4a-453b-a26c-2726e0a1a7bb",
+		IsPercentage:      true,
+		RateBps:           500, // 5%
+		Underwriter:       "Sovereign Trust Insurance Plc",
+	})
+	if len(product.MoneyInputPaths) == 0 {
+		t.Fatal("the gadget schema publishes a `money` value field; deriving none means the seam is broken at the source")
+	}
+
+	const declaredKobo = 20_000_000 // ₦200,000, as the app submits it
+	q, err := c.GetQuote(ctx, gateway.QuoteRequest{
+		Product: product,
+		Inputs: map[string]any{
+			"first_name":   "Quote",
+			"last_name":    "Probe",
+			"email":        "quote.probe@example.com",
+			"phone_number": "2348012345678",
+			"device_type":  "Phone",
+			"device_make":  "Samsung",
+			"device_model": "SM-S916B",
+			"value":        int64(declaredKobo),
+		},
+	})
+	if err != nil {
+		t.Fatalf("live compute-price: %v", err)
+	}
+	t.Logf("declared %d kobo (₦%d) -> premium %d kobo (₦%d)",
+		declaredKobo, declaredKobo/100, q.PremiumKobo, q.PremiumKobo/100)
+
+	const wantKobo = 1_000_000 // ₦10,000 = 5% of ₦200,000
+	if q.PremiumKobo != wantKobo {
+		if q.PremiumKobo == wantKobo*100 {
+			t.Fatalf("premium = %d kobo (₦%d) — 100x the correct figure: kobo reached the insurer as naira",
+				q.PremiumKobo, q.PremiumKobo/100)
+		}
+		t.Fatalf("premium = %d kobo, want %d (₦10,000)", q.PremiumKobo, wantKobo)
 	}
 }

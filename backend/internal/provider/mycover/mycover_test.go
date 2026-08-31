@@ -93,7 +93,7 @@ func TestDo_ValidationErrorCarriesFieldMessages(t *testing.T) {
 
 	c := New("test-key", "", "", srv.URL)
 	_, err := c.BindPolicy(context.Background(), gateway.BindRequest{
-		Product: gateway.ProviderProduct{Code: "bastion-medisure", ProviderProductID: "uuid-1"},
+		Product: gateway.ProviderProduct{Code: "bastion-medisure", ProviderProductID: "uuid-1", FormSchemaKnown: true},
 		Inputs:  map[string]any{"first_name": "A"},
 	})
 	var apiErr *APIError
@@ -158,12 +158,16 @@ func TestBindPolicy_PostsToTheSingleV2Endpoint(t *testing.T) {
 			ProviderProductID: "uuid-marine",
 			CommissionBps:     1000, // 10%
 			Underwriter:       "Sovereign Trust Insurance Plc",
+			// The published schema classified cargo_value as `money`, so the
+			// adapter rescales exactly that field to the provider's naira.
+			FormSchemaKnown: true,
+			MoneyInputPaths: []string{"cargo_value"},
 		},
 		Currency:    "NGN",
 		PremiumKobo: 600_000,
 		Inputs: map[string]any{
 			"first_name":  "Ada",
-			"cargo_value": 50000,
+			"cargo_value": 50000, // ₦500 in kobo
 		},
 	})
 	if err != nil {
@@ -177,6 +181,10 @@ func TestBindPolicy_PostsToTheSingleV2Endpoint(t *testing.T) {
 	}
 	if gotBody["first_name"] != "Ada" {
 		t.Fatalf("product fields must be sent FLAT, got %v", gotBody)
+	}
+	// MyCover's form inputs are NAIRA and we hold kobo: 50000 kobo is ₦500.
+	if got := fmt.Sprint(gotBody["cargo_value"]); got != "500" {
+		t.Fatalf("cargo_value reached the provider as %s, want 500 naira", got)
 	}
 	if _, nested := gotBody["inputs"]; nested {
 		t.Fatal("fields must not be wrapped in an `inputs` object — no MyCover schema declares one")
@@ -240,7 +248,7 @@ func TestBindPolicy_MissingPolicyRefIsAnError(t *testing.T) {
 	defer srv.Close()
 	c := New("k", "", "", srv.URL)
 	_, err := c.BindPolicy(context.Background(), gateway.BindRequest{
-		Product: gateway.ProviderProduct{Code: "p", ProviderProductID: "uuid-p"},
+		Product: gateway.ProviderProduct{Code: "p", ProviderProductID: "uuid-p", FormSchemaKnown: true},
 	})
 	if err == nil || !strings.Contains(err.Error(), "no policy reference") {
 		t.Fatalf("want a missing-reference error, got %v", err)
@@ -280,6 +288,9 @@ func TestGetQuote_UsesProviderComputePrice(t *testing.T) {
 			CommissionBps:     1000, // 10%
 			CoverPeriodDays:   365,
 			Underwriter:       "Bastion Health Ltd",
+			// A health plan with a flat premium: a published schema, no money
+			// inputs in it. The guard is about knowing, not about having any.
+			FormSchemaKnown: true,
 		},
 		Inputs: map[string]any{"first_name": "Q", "payment_plan": 1},
 	})
@@ -336,7 +347,7 @@ func TestGetQuote_ForwardsPaymentPlanToTheProvider(t *testing.T) {
 	defer srv.Close()
 
 	c := New("k", "", "", srv.URL)
-	prod := gateway.ProviderProduct{Code: "bastion-flexicare-mini", ProviderProductID: "uuid"}
+	prod := gateway.ProviderProduct{Code: "bastion-flexicare-mini", ProviderProductID: "uuid", FormSchemaKnown: true}
 
 	for _, tc := range []struct{ plan, wantKobo int }{{1, 400_000}, {12, 4_800_000}} {
 		q, err := c.GetQuote(context.Background(), gateway.QuoteRequest{
@@ -361,7 +372,7 @@ func TestGetQuote_RefusesZeroPremium(t *testing.T) {
 	defer srv.Close()
 	c := New("k", "", "", srv.URL)
 	if _, err := c.GetQuote(context.Background(), gateway.QuoteRequest{
-		Product: gateway.ProviderProduct{Code: "x", ProviderProductID: "uuid"},
+		Product: gateway.ProviderProduct{Code: "x", ProviderProductID: "uuid", FormSchemaKnown: true},
 	}); err == nil {
 		t.Fatal("a quote with no usable premium must fail, not return zero")
 	}
@@ -700,6 +711,7 @@ func TestBindPolicy_InjectsProductID(t *testing.T) {
 		Product: gateway.ProviderProduct{
 			Code:              "bastion-flexicare-mini",
 			ProviderProductID: "6e417faa-e042-4768-8d5d-916fd531a478",
+			FormSchemaKnown:   true,
 		},
 		Inputs: map[string]any{"first_name": "Ada", "nin": "12345678901"},
 	})
@@ -723,7 +735,7 @@ func TestBindPolicy_CatalogProductIDWinsOverInput(t *testing.T) {
 	defer srv.Close()
 	c := New("k", "", "", srv.URL)
 	_, err := c.BindPolicy(context.Background(), gateway.BindRequest{
-		Product: gateway.ProviderProduct{Code: "p", ProviderProductID: "from-catalog"},
+		Product: gateway.ProviderProduct{Code: "p", ProviderProductID: "from-catalog", FormSchemaKnown: true},
 		Inputs:  map[string]any{FieldProductID: "from-caller"},
 	})
 	if err != nil {

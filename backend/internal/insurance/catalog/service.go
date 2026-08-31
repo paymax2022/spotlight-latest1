@@ -1,6 +1,7 @@
 package catalog
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -128,13 +129,15 @@ func (s *Service) ResolveProduct(ctx context.Context, productCode string) (strin
 		buyPath     *string
 		providerID  *string
 		underwriter string
+		schemaJSON  []byte
 	)
 	err := s.db.QueryRow(ctx, `
 		SELECT provider, provider_product_code, provider_product_id, provider_buy_path,
 		       is_percentage, base_price_kobo, rate_bps, default_sum_insured_kobo,
 		       distributor_commission_bps, cover_period_days,
 		       underwriter_display, is_renewable, is_claimable, is_certificateable,
-		       (NOT purchasable OR provider_missing)
+		       (NOT purchasable OR provider_missing),
+		       form_schema
 		FROM public.insurance_products
 		WHERE code = $1 AND active = true
 		LIMIT 1`, productCode).Scan(
@@ -142,7 +145,7 @@ func (s *Service) ResolveProduct(ctx context.Context, productCode string) (strin
 		&pp.IsPercentage, &pp.BasePriceKobo, &pp.RateBps, &pp.DefaultSumInsuredKobo,
 		&pp.CommissionBps, &pp.CoverPeriodDays,
 		&underwriter, &pp.IsRenewable, &pp.IsClaimable, &pp.IsCertificateable,
-		&pp.NotPurchasable,
+		&pp.NotPurchasable, &schemaJSON,
 	)
 	if err != nil {
 		return "", gateway.ProviderProduct{}, false
@@ -154,7 +157,40 @@ func (s *Service) ResolveProduct(ctx context.Context, productCode string) (strin
 	if buyPath != nil {
 		pp.BuyPath = *buyPath
 	}
+
+	// MONEY-UNIT SEAM. The adapter has to know WHICH answers are monetary before
+	// it can cross them into a provider that speaks a different unit, and the
+	// only safe source for that is the very schema the client rendered the form
+	// from. Deriving it from the same catalog row is what keeps the client's
+	// scaling and the adapter's unscaling symmetric — see gateway/form_money.go.
+	if schema := decodeStoredSchema(schemaJSON); schema != nil {
+		gateway.NormalizeMoneyBounds(schema)
+		pp.MoneyInputPaths = gateway.MoneyInputPaths(schema)
+		pp.FormSchemaKnown = hasSchemaFields(schema)
+	}
 	return provider, pp, true
+}
+
+// decodeStoredSchema reads a stored form_schema jsonb.
+//
+// UseNumber is NOT optional here: a money bound decoded as float64 could not be
+// scaled exactly, and float64 is banned from every money path.
+func decodeStoredSchema(raw []byte) map[string]any {
+	if len(raw) == 0 {
+		return nil
+	}
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.UseNumber()
+	var m map[string]any
+	if err := dec.Decode(&m); err != nil || m == nil {
+		return nil
+	}
+	return m
+}
+
+func hasSchemaFields(schema map[string]any) bool {
+	fields, _ := schema["fields"].([]any)
+	return len(fields) > 0
 }
 
 // Get returns a single active product by code.
@@ -295,7 +331,8 @@ func (s *Service) list(ctx context.Context, f listFilter) ([]Product, error) {
 		); err != nil {
 			return nil, fmt.Errorf("catalog: scan: %w", err)
 		}
-		_ = json.Unmarshal(formSchema, &p.FormSchema)
+		p.FormSchema = decodeStoredSchema(formSchema)
+		gateway.NormalizeMoneyBounds(p.FormSchema)
 		_ = json.Unmarshal(reqFields, &p.RequiredFields)
 		_ = json.Unmarshal(sumRules, &p.SumInsuredRules)
 		if p.FormSchema == nil {
@@ -327,10 +364,16 @@ func (s *Service) FormSchema(ctx context.Context, productCode string) (map[strin
 	if err != nil {
 		return nil, false, fmt.Errorf("catalog: product %q not found", productCode)
 	}
-	var schema map[string]any
-	if err := json.Unmarshal(raw, &schema); err != nil || schema == nil {
+	schema := decodeStoredSchema(raw)
+	if schema == nil {
 		return map[string]any{"fields": []any{}}, false, nil
 	}
+	// Publish money bounds in the unit the contract says they are in. Rows synced
+	// before the sync learned to do this still carry the provider's naira
+	// figures, and an unscaled bound makes a NGN 100,000 minimum bite at
+	// NGN 1,000. The normaliser is idempotent, so a row that already carries
+	// `unit` is left exactly as stored.
+	gateway.NormalizeMoneyBounds(schema)
 	fields, _ := schema["fields"].([]any)
 	if len(fields) == 0 {
 		if schema["fields"] == nil {

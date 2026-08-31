@@ -47,18 +47,22 @@ func percentageRatedProvider(t *testing.T, ratePercent int64, capture *map[strin
 		if capture != nil {
 			*capture = in.Body
 		}
-		value := int64(0)
+		// The provider's `value` is a NAIRA number, whole or decimal. Price it in
+		// exact minor units so the fake never introduces rounding the real API
+		// would not have.
+		valueKobo := int64(0)
 		if n, ok := in.Body["value"].(json.Number); ok {
-			v, err := n.Int64()
+			k, err := NairaToKobo(n.String())
 			if err != nil {
 				w.WriteHeader(http.StatusBadRequest)
 				_, _ = w.Write([]byte(`{"responseCode":400,"responseText":["bad value"]}`))
 				return
 			}
-			value = v
+			valueKobo = k
 		}
-		premium := value * ratePercent / 100
-		_, _ = fmt.Fprintf(w, `{"responseCode":1,"responseText":"Price computed successfully","data":{"price":%d}}`, premium)
+		premiumKobo := valueKobo * ratePercent / 100
+		_, _ = fmt.Fprintf(w, `{"responseCode":1,"responseText":"Price computed successfully","data":{"price":%s}}`,
+			KoboToNaira(premiumKobo))
 	}))
 }
 

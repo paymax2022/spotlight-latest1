@@ -558,12 +558,30 @@ function camel(s: string): string {
 
 // ── Submission ──────────────────────────────────────────────────────────────
 /**
+ * The unit EVERY money field is submitted in, and the app's half of a contract
+ * the Go backend states as `gateway.MoneyInputWireUnit`.
+ *
+ * It exists because this seam once had no stated unit at all. MyCover's form
+ * inputs are denominated in NAIRA; this app submits KOBO because that is the
+ * internal contract. Nothing converted between them — each side assumed the
+ * other did — so every declared value reached the insurer 100x too large, and a
+ * ₦200,000 phone was quoted ₦1,000,000 instead of ₦10,000 (verified live).
+ *
+ * The conversion now happens exactly once, in the Go adapter, for exactly the
+ * fields the published schema labelled `money`. A regression test in each lane
+ * compares this constant with the Go one, so the two halves cannot drift apart
+ * silently again. Changing it here without changing it there is the bug.
+ */
+export const MONEY_WIRE_UNIT = 'kobo';
+
+/**
  * Build the `inputs` map for POST /quotes and POST /policies.
  *
  * Only VISIBLE fields are sent — a hidden dependent field must not leak a stale
- * answer to the insurer. `money` fields are sent as INTEGER KOBO under the same
- * field name, because the contract says every money value crossing this boundary
- * is kobo; the Go adapter converts to the provider's naira exactly once.
+ * answer to the insurer. `money` fields are sent as INTEGER KOBO
+ * (MONEY_WIRE_UNIT) under the same field name; the Go adapter converts them to
+ * the provider's naira exactly once, keyed off the same schema this form was
+ * rendered from.
  */
 export function buildInputs(fields: Field[], values: FormValues): Record<string, unknown> {
   const out: Record<string, unknown> = {};
