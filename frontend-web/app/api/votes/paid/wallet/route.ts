@@ -18,6 +18,7 @@ import { requireRequestUser } from '@/src/lib/auth/request';
 import { debitWallet, reverseWalletDebit } from '@/src/server/wallet/service';
 import { getVotingSettings, assertVotingOpen } from '@/src/server/voting/free-vote.service';
 import { incrementVoteTotals } from '@/src/server/voting/totals.service';
+import { mirrorPaidVoteToConnect } from '@/src/server/voting-bridge/connect-tally';
 import { appendAuditLog } from '@/src/server/voting/audit.service';
 import { createAdminClient } from '@/lib/supabase/server';
 import { randomUUID } from 'node:crypto';
@@ -160,6 +161,32 @@ export async function POST(request: Request) {
       paidVotes: votesPurchased,
       bonusVotes,
     });
+
+    // ...and mirror the purchase into the connect tally, which is the plane the
+    // mobile roster and leaderboard actually read (Go ListRoster sums
+    // connect_votes.quantity). Without this the buyer is told "N votes credited"
+    // and the contestant's displayed count never moves — money taken, nothing to
+    // show for it.
+    //
+    // Never fail the request on a mirror error: the money has moved and the votes
+    // ARE credited in the universal engine, so turning this into a 500 would
+    // report a failed purchase that actually succeeded. The write is idempotent
+    // on the payment reference, so a miss is replayable —
+    // scripts/dev/repair-connect-tally.sh.
+    const mirrored = await mirrorPaidVoteToConnect({
+      contestId: body.contestId,
+      contestantId: body.contestantId,
+      voterUserId: user.id,
+      quantity: totalVotesToCredit,
+      amountKobo,
+      reference: paymentReference,
+    });
+    if (!mirrored.recorded && mirrored.reason !== 'already_recorded') {
+      console.error(
+        '[votes/paid/wallet] connect tally mirror skipped — the buyer will not see these votes.',
+        { paymentReference, reason: mirrored.reason, error: mirrored.error },
+      );
+    }
 
     await appendAuditLog({
       actorId: user.id,
