@@ -102,6 +102,32 @@ type SubmitCampaignRequest struct {
 	// the creator filled in a funding plan and the server dropped it on the floor —
 	// the client's own comment in crowdfunding.api.ts says exactly that.
 	Milestones []SubmitMilestoneRequest `json:"milestones"`
+	// Budget lines and reward tiers, the other two things the wizard collected and
+	// the server used to discard.
+	Budget      []SubmitBudgetItemRequest `json:"budget"`
+	RewardTiers []SubmitRewardTierRequest `json:"rewardTiers"`
+}
+
+// SubmitBudgetItemRequest is one "use of funds" line from the create wizard.
+type SubmitBudgetItemRequest struct {
+	Label      string  `json:"label"`
+	AmountKobo int64   `json:"amountKobo"`
+	Note       *string `json:"note"`
+}
+
+// SubmitRewardTierRequest is one reward tier from the create wizard.
+//
+// `claimed` is deliberately NOT a field. How many backers took a tier is a fact
+// about what happened, derived from cf_reward_backers; letting a campaign state it
+// at creation would let it advertise social proof it has not earned, the same way
+// a self-declared RELEASED milestone would advertise money that never moved.
+type SubmitRewardTierRequest struct {
+	Title             string  `json:"title"`
+	AmountKobo        int64   `json:"amountKobo"`
+	Description       string  `json:"description"`
+	EstimatedDelivery *string `json:"estimatedDelivery"`
+	Limit             *int    `json:"limit"`
+	RequiresShipping  bool    `json:"requiresShipping"`
 }
 
 // SubmitMilestoneRequest is one milestone from the create wizard.

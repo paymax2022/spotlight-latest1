@@ -121,9 +121,86 @@ func (s *Service) GetDetail(ctx context.Context, id string) (map[string]any, err
 		"beneficiary": nil, "disbursementModel": r.disbursementModel, "refundPolicy": r.refundPolicy,
 		"riskDisclosure": nil, "verified": sum.Verified, "featured": sum.Featured, "trending": sum.Trending,
 		"urgent": sum.Urgent, "saved": false,
-		"budget": []any{}, "milestones": s.campaignMilestones(ctx, id), "updates": s.campaignUpdates(ctx, id), "rewardTiers": []any{},
+		"budget": s.campaignBudget(ctx, id), "milestones": s.campaignMilestones(ctx, id), "updates": s.campaignUpdates(ctx, id), "rewardTiers": s.campaignRewardTiers(ctx, id),
 		"documents": []any{}, "faqs": []any{}, "tags": []any{}, "location": sum.Location,
 	}, nil
+}
+
+// campaignBudget returns the "use of funds" lines in the order the creator
+// entered them. This was an empty array, so the campaign page showed
+// "0 budget items" under a heading that promises to explain where the money goes.
+func (s *Service) campaignBudget(ctx context.Context, campaignID string) []map[string]any {
+	const q = `
+		SELECT id::text, label, amount_kobo, note
+		  FROM cf_campaign_budget
+		 WHERE campaign_id = $1
+		 ORDER BY sort_order ASC, created_at ASC`
+	out := []map[string]any{}
+	rows, err := s.db.Query(ctx, q, campaignID)
+	if err != nil {
+		return out
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id, label string
+		var amount int64
+		var note *string
+		if err := rows.Scan(&id, &label, &amount, &note); err != nil {
+			return out
+		}
+		var n any
+		if note != nil {
+			n = *note
+		}
+		out = append(out, map[string]any{"id": id, "label": label, "amountKobo": amount, "note": n})
+	}
+	return out
+}
+
+// campaignRewardTiers returns the tiers a backer can pledge into, cheapest first —
+// the order a backer scans them in.
+//
+// `claimed` is COUNTED from cf_reward_backers rather than read from the column of
+// the same name. The column is a stored counter nothing currently maintains, and a
+// count cannot drift: the number shown next to "12 claimed" is the number of
+// people who actually took the tier.
+func (s *Service) campaignRewardTiers(ctx context.Context, campaignID string) []map[string]any {
+	const q = `
+		SELECT t.id::text, t.title, t.amount_kobo, COALESCE(t.description,''), t.estimated_delivery,
+		       t.tier_limit, t.requires_shipping,
+		       (SELECT count(*) FROM cf_reward_backers b WHERE b.tier_id = t.id)::int
+		  FROM cf_reward_tiers t
+		 WHERE t.campaign_id = $1
+		 ORDER BY t.amount_kobo ASC, t.created_at ASC`
+	out := []map[string]any{}
+	rows, err := s.db.Query(ctx, q, campaignID)
+	if err != nil {
+		return out
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id, title, desc string
+		var amount int64
+		var delivery *string
+		var limit *int
+		var shipping bool
+		var claimed int
+		if err := rows.Scan(&id, &title, &amount, &desc, &delivery, &limit, &shipping, &claimed); err != nil {
+			return out
+		}
+		var d, l any
+		if delivery != nil {
+			d = *delivery
+		}
+		if limit != nil {
+			l = *limit
+		}
+		out = append(out, map[string]any{
+			"id": id, "title": title, "amountKobo": amount, "description": desc,
+			"estimatedDelivery": d, "claimed": claimed, "limit": l, "requiresShipping": shipping,
+		})
+	}
+	return out
 }
 
 // campaignMilestones returns the campaign's funding plan in display order.
@@ -369,6 +446,59 @@ func (s *Service) SubmitForReview(ctx context.Context, creatorID string, req Sub
 			VALUES ($1,$2,$3,$4,$5,$6)`,
 			id, title, m.TargetKobo, status, dueAt, i,
 		); err != nil {
+			return nil, err
+		}
+	}
+
+	for i, b := range req.Budget {
+		label := strings.TrimSpace(b.Label)
+		if label == "" {
+			return nil, fmt.Errorf("%w: budget line %d: label is required", ErrInvalidSubmission, i+1)
+		}
+		if b.AmountKobo < 0 {
+			return nil, fmt.Errorf("%w: budget line %d: amountKobo must not be negative", ErrInvalidSubmission, i+1)
+		}
+		var note any
+		if b.Note != nil && strings.TrimSpace(*b.Note) != "" {
+			note = strings.TrimSpace(*b.Note)
+		}
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO cf_campaign_budget (campaign_id, label, amount_kobo, note, sort_order)
+			VALUES ($1,$2,$3,$4,$5)`, id, label, b.AmountKobo, note, i); err != nil {
+			return nil, err
+		}
+	}
+
+	for i, r := range req.RewardTiers {
+		title := strings.TrimSpace(r.Title)
+		if title == "" {
+			return nil, fmt.Errorf("%w: reward tier %d: title is required", ErrInvalidSubmission, i+1)
+		}
+		if r.AmountKobo < 0 {
+			return nil, fmt.Errorf("%w: reward tier %d: amountKobo must not be negative", ErrInvalidSubmission, i+1)
+		}
+		// A limit of zero would be a tier nobody can ever claim, which is a mistake
+		// rather than an intention; unlimited is expressed by omitting it.
+		if r.Limit != nil && *r.Limit <= 0 {
+			return nil, fmt.Errorf("%w: reward tier %d: limit must be greater than zero, or omitted for unlimited", ErrInvalidSubmission, i+1)
+		}
+		var desc, delivery, limit any
+		if strings.TrimSpace(r.Description) != "" {
+			desc = strings.TrimSpace(r.Description)
+		}
+		if r.EstimatedDelivery != nil && strings.TrimSpace(*r.EstimatedDelivery) != "" {
+			delivery = strings.TrimSpace(*r.EstimatedDelivery)
+		}
+		if r.Limit != nil {
+			limit = *r.Limit
+		}
+		// `claimed` is not inserted: it stays at its column default of zero and the
+		// read path counts cf_reward_backers instead, so the number a backer sees is
+		// the number of people who actually took the tier.
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO cf_reward_tiers (campaign_id, title, amount_kobo, description, estimated_delivery, tier_limit, requires_shipping)
+			VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+			id, title, r.AmountKobo, desc, delivery, limit, r.RequiresShipping); err != nil {
 			return nil, err
 		}
 	}

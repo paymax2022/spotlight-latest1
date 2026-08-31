@@ -662,11 +662,11 @@ export async function submitCampaign(
   // draft looked equivalent but was not: the server field is `coverImageUrl`
   // while the draft carries `coverImageUri`, so every cover image was silently
   // dropped, and the spread hid that the DTO accepts none of the wizard's
-  // budget/reward/document/beneficiary data either — the wizard collects all of
-  // it and the server discards it. MILESTONES are no longer in that list: the DTO
-  // accepts them and SubmitForReview stores them in the same transaction as the
-  // campaign. The rest still go nowhere. Keep this list explicit so the next
-  // field that stops being persisted is visible in review.
+  // document/beneficiary data either — the wizard collects it and the server
+  // discards it. MILESTONES, BUDGET and REWARD TIERS are no longer in that list:
+  // the DTO accepts them and SubmitForReview stores them in the same transaction
+  // as the campaign. Documents and beneficiary still go nowhere. Keep this list
+  // explicit so the next field that stops being persisted is visible in review.
   const res = await api.post(
     `${LIVE}/campaigns`,
     {
@@ -697,6 +697,23 @@ export async function submitCampaign(
           targetKobo: m.targetKobo,
           status: i === 0 ? 'ACTIVE' : 'LOCKED',
           dueAt: null,
+        })),
+        // The other two things the wizard collected and the server used to drop.
+        // Reward tiers deliberately send no `claimed`: how many backers took a tier
+        // is a fact the server counts from who actually did, not a number a campaign
+        // may assert about itself.
+        budget: draft.budget.map((b) => ({
+          label: b.label,
+          amountKobo: b.amountKobo,
+          note: null,
+        })),
+        rewardTiers: draft.rewardTiers.map((r) => ({
+          title: r.title,
+          amountKobo: r.amountKobo,
+          description: r.description,
+          estimatedDelivery: null,
+          limit: null,
+          requiresShipping: r.requiresShipping,
         })),
       submitForReview,
     },
