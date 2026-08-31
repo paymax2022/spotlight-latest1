@@ -115,7 +115,10 @@ const styles = StyleSheet.create({
   stage: { height: 260, margin: Spacing.md, borderRadius: Radius.xl, backgroundColor: Colors.inverseSurface, overflow: 'hidden', alignItems: 'center', justifyContent: 'center' },
   remote: { alignItems: 'center', gap: 6 },
   remoteAvatar: { width: 80, height: 80, borderRadius: 40, backgroundColor: Colors.primaryContainer, alignItems: 'center', justifyContent: 'center' },
-  remoteAvatarText: { ...Typography.displayLg, fontSize: 36, color: Colors.inversePrimary },
+  // letterSpacing re-stated: displayLg's -0.96 is -0.02em at its own 48px, and
+  // spreading the style while overriding only the size keeps that ABSOLUTE
+  // value, which is tighter than the scale intends at 36px. -0.72 is the same -0.02em.
+  remoteAvatarText: { ...Typography.displayLg, fontSize: 36, letterSpacing: -0.72, color: Colors.inversePrimary },
   remoteName: { ...Typography.titleMd, color: Colors.white },
   remoteSub: { ...Typography.bodySm, color: Colors.inverseOnSurface },
   self: { position: 'absolute', right: Spacing.sm, bottom: Spacing.sm, width: 70, height: 90, borderRadius: Radius.md, backgroundColor: Colors.inversePrimary, alignItems: 'center', justifyContent: 'center', gap: 4 },

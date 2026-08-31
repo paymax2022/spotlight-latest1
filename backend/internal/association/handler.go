@@ -8,9 +8,17 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/gin-gonic/gin"
+
+	"spotlight/backend/internal/platform/r2"
 )
 
-type Handler struct{ svc *Service }
+type Handler struct {
+	svc *Service
+	// Presigned R2 uploads for organisation logos; see presign.go. Nil until
+	// WithPresigner is called, which makes the upload endpoint fail closed.
+	presigner     *r2.Presigner
+	presignBucket string
+}
 
 func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
 
@@ -253,7 +261,9 @@ func (h *Handler) ListMeetings(c *gin.Context) {
 func (h *Handler) ListTasks(c *gin.Context) {
 	list, err := h.svc.GetTasks(c.Request.Context(), c.GetString("user_id"), c.Query("scope"))
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		// statusFor, not a blanket 500: scope=org is admin-only, and a member
+		// asking for it is forbidden rather than a server fault.
+		c.JSON(statusFor(err), gin.H{"error": err.Error()})
 		return
 	}
 	c.JSON(http.StatusOK, list)

@@ -28,6 +28,12 @@ export interface CommitteeMember {
   fullName?: string;              // live DTO
   membershipId?: string;          // live DTO
   role?:     string;              // "Chairperson" | "Secretary" | "Member"
+  /**
+   * PENDING while a join request is unanswered, ACTIVE once accepted. The live
+   * DTO has always carried it; it had no field here, so a request awaiting a
+   * decision rendered exactly like a full member.
+   */
+  status?:   'PENDING' | 'ACTIVE' | string;
   photoUrl?: string | null;
 }
 
@@ -58,6 +64,12 @@ export interface EventSummary {
   registered: boolean;
   rsvp:      EventRsvp;
   coverUrl:  string | null;
+  /**
+   * True when this member was explicitly invited rather than finding the event
+   * in the list. Invitation and RSVP live on the same registration row, so being
+   * invited says nothing about whether they have responded.
+   */
+  invited?:  boolean;
 }
 
 /**

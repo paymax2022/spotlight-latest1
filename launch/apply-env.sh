@@ -23,7 +23,13 @@ set -a; # shellcheck disable=SC1090
 # Defaults for anything left blank in master.env (keeps output valid).
 : "${PAYSTACK_DVA_BANK:=wema-bank}"
 : "${MAPLERAD_PROD:=false}"; : "${EVERSEND_PROD:=false}"
-: "${R2_BUCKET:=spotlight-open-mic}"; : "${MAPS_PROVIDER:=mock}"
+# R2_BUCKET is deliberately NOT defaulted. It used to fall back to
+# "spotlight-open-mic", a bucket that does not exist in the account, which
+# made every generated environment look configured and then fail at upload
+# time with NoSuchBucket. Blank flows through to the backend, where an empty
+# bucket fails closed as "uploads are not configured" — an honest 503 rather
+# than a broken PUT. Set it in master.env.
+: "${MAPS_PROVIDER:=mock}"
 : "${SITE_URL_WEB:=http://localhost:3000}"
 : "${API_BASE_URL_PUBLIC:=http://localhost:8080/api/v1}"
 : "${GO_BACKEND_URL:=http://localhost:8080}"
@@ -88,7 +94,7 @@ EVERSEND_CLIENT_SECRET=${EVERSEND_CLIENT_SECRET:-}
 EVERSEND_PROD=$EVERSEND_PROD
 EVERSEND_WEBHOOK_SECRET=${EVERSEND_WEBHOOK_SECRET:-}
 R2_ACCOUNT_ENDPOINT=${R2_ACCOUNT_ENDPOINT:-}
-R2_BUCKET=$R2_BUCKET
+R2_BUCKET=${R2_BUCKET:-}
 R2_ACCESS_KEY_ID=${R2_ACCESS_KEY_ID:-}
 R2_SECRET_ACCESS_KEY=${R2_SECRET_ACCESS_KEY:-}
 R2_REGION=auto
@@ -132,7 +138,7 @@ R2_ACCOUNT_ID=${R2_ACCOUNT_ID:-}
 CLOUDFLARE_ACCOUNT_ID=${R2_ACCOUNT_ID:-}
 R2_ACCESS_KEY_ID=${R2_ACCESS_KEY_ID:-}
 R2_SECRET_ACCESS_KEY=${R2_SECRET_ACCESS_KEY:-}
-R2_BUCKET=$R2_BUCKET
+R2_BUCKET=${R2_BUCKET:-}
 R2_ENDPOINT=${R2_ACCOUNT_ENDPOINT:-}
 R2_PUBLIC_BASE_URL=${R2_PUBLIC_BASE_URL:-}
 MAILGUN_API_KEY=${MAILGUN_API_KEY:-}

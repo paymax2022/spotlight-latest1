@@ -12,6 +12,10 @@ import type {
   AppNotification,
   Meeting,
   MeetingSummary,
+  MeetingApprovalStatus,
+  MeetingProposalInput,
+  MeetingProposalResult,
+  PendingMeeting,
   RsvpStatus,
   Task,
   TaskSummary,
@@ -115,6 +119,40 @@ export async function rsvpMeeting(id: string, status: RsvpStatus): Promise<{ ok:
   if (USE_MOCK) { await delay(); return { ok: true }; }
   const { data } = await api.post(`${BASE}/meetings/${id}/rsvp`, { status });
   return data;
+}
+
+/**
+ * Put a meeting forward.
+ *
+ * The SERVER decides whether this schedules or queues: an admin's proposal is
+ * approved on insert, a member's starts pending. The client cannot be the one
+ * to decide that — it would only be guessing at the caller's role, and a client
+ * that guessed "approved" would show a meeting on the calendar that nobody else
+ * can see. Render the returned approvalStatus.
+ */
+export async function proposeMeeting(input: MeetingProposalInput): Promise<MeetingProposalResult> {
+  if (USE_MOCK) {
+    await delay();
+    return { id: `mtg_${Date.now()}`, approvalStatus: 'PENDING' };
+  }
+  const { data } = await api.post(`${BASE}/meetings`, input, {
+    headers: { 'Idempotency-Key': generateIdempotencyKey() },
+  });
+  return (data?.data ?? data) as MeetingProposalResult;
+}
+
+/** The admin approval queue for an organisation. */
+export async function getPendingMeetings(orgId: string): Promise<PendingMeeting[]> {
+  if (USE_MOCK) { await delay(); return []; }
+  const { data } = await api.get(`${BASE}/admin/organisations/${orgId}/meetings/pending`);
+  return (data?.data ?? data ?? []) as PendingMeeting[];
+}
+
+/** Approve or reject a proposed meeting. Admins only; the server enforces it. */
+export async function decideMeeting(id: string, approve: boolean, note?: string): Promise<MeetingApprovalStatus> {
+  if (USE_MOCK) { await delay(); return approve ? 'APPROVED' : 'REJECTED'; }
+  const { data } = await api.post(`${BASE}/admin/meetings/${id}/decision`, { approve, note: note ?? '' });
+  return ((data?.data ?? data)?.approvalStatus ?? (approve ? 'APPROVED' : 'REJECTED')) as MeetingApprovalStatus;
 }
 
 export async function checkInMeeting(id: string): Promise<{ ok: true }> {

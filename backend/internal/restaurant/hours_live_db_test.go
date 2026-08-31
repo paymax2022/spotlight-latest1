@@ -15,6 +15,8 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"spotlight/backend/internal/testsupport"
 )
 
 func hoursLivePool(t *testing.T) *pgxpool.Pool {
@@ -35,7 +37,7 @@ func hoursLivePool(t *testing.T) *pgxpool.Pool {
 
 func TestLiveDB_BusinessHours(t *testing.T) {
 	pool := hoursLivePool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	svc := NewService(pool, nil)
 
@@ -45,6 +47,7 @@ func TestLiveDB_BusinessHours(t *testing.T) {
 		if _, err := pool.Exec(ctx, `INSERT INTO auth.users (id,email) VALUES ($1,$2) ON CONFLICT DO NOTHING`, u, u+"@seed.test"); err != nil {
 			t.Fatalf("seed user: %v", err)
 		}
+		testsupport.CleanupUser(t, pool, u)
 	}
 	restID := uuid.New().String()
 	if _, err := pool.Exec(ctx, `INSERT INTO restaurants (id, owner_id, name, address, is_open) VALUES ($1,$2,'Hours Kitchen','1 St',TRUE)`, restID, owner); err != nil {

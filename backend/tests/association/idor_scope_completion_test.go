@@ -25,7 +25,7 @@ import (
 // (with the capability in A) must not be able to write memberships into org B.
 func TestLiveDB_IDOR_BulkImportMembers_CrossOrgForbidden(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	svc := newLiveAssociationService(pool)
 	ctx := context.Background()
 
@@ -50,7 +50,7 @@ func TestLiveDB_IDOR_BulkImportMembers_CrossOrgForbidden(t *testing.T) {
 // GetApprovalQueue must only surface the admin's own organisation's applications.
 func TestLiveDB_IDOR_GetApprovalQueue_ScopedToAdminOrg(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	svc := newLiveAssociationService(pool)
 	ctx := context.Background()
 
@@ -90,7 +90,7 @@ func TestLiveDB_IDOR_GetApprovalQueue_ScopedToAdminOrg(t *testing.T) {
 // GetOfflinePayments must only surface the admin's own organisation's payments.
 func TestLiveDB_IDOR_GetOfflinePayments_ScopedToAdminOrg(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	svc := newLiveAssociationService(pool)
 	ctx := context.Background()
 

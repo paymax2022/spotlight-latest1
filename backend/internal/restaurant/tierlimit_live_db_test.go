@@ -54,6 +54,8 @@ import (
 	"spotlight/backend/internal/finance/ledger"
 	"spotlight/backend/internal/finance/settlement"
 	"spotlight/backend/internal/finance/tiers"
+
+	"spotlight/backend/internal/testsupport"
 )
 
 func tierPool(t *testing.T) *pgxpool.Pool {
@@ -151,6 +153,7 @@ func tierGateFixture(t *testing.T, ctx context.Context, pool *pgxpool.Pool, name
 		if _, err := pool.Exec(ctx, `INSERT INTO auth.users (id,email) VALUES ($1,$2) ON CONFLICT DO NOTHING`, u, u+"@seed.test"); err != nil {
 			t.Fatalf("seed user: %v", err)
 		}
+		testsupport.CleanupUser(t, pool, u)
 	}
 	restID := uuid.New().String()
 	if _, err := pool.Exec(ctx,
@@ -185,7 +188,7 @@ func tierGateFixture(t *testing.T, ctx context.Context, pool *pgxpool.Pool, name
 // ₦2,000 item + the flat ₦500 delivery fee + a ₦500 tip = ₦3,000, comfortably under.
 func TestLiveDB_OrderEscrowTierGate_UnderLimit(t *testing.T) {
 	pool := tierPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 
 	svc, led, restID, item, customer := tierGateFixture(t, ctx, pool, "Under Limit Kitchen", 200_000, 10_000_000)
@@ -232,7 +235,7 @@ func TestLiveDB_OrderEscrowTierGate_UnderLimit(t *testing.T) {
 // refusal does not depend on any prior spend in the test window.
 func TestLiveDB_OrderEscrowTierGate_OverLimit(t *testing.T) {
 	pool := tierPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 
 	// One ₦60,000 item — over Tier 1's ₦50,000/day cap before delivery is even added.
@@ -263,7 +266,7 @@ func TestLiveDB_OrderEscrowTierGate_OverLimit(t *testing.T) {
 // same wallet DEBIT rows the escrow posts.
 func TestLiveDB_OrderEscrowTierGate_OverLimitCumulative(t *testing.T) {
 	pool := tierPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 
 	// ₦300 item; Tier 1's cap is ₦50,000/day. 100 × (₦300 + nothing) plus the flat
@@ -301,7 +304,7 @@ func TestLiveDB_OrderEscrowTierGate_OverLimitCumulative(t *testing.T) {
 // wallet, so an order is refused before the escrow even with a funded balance.
 func TestLiveDB_OrderEscrowTierGate_Tier0WalletDisabled(t *testing.T) {
 	pool := tierPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 
 	svc, led, restID, item, customer := tierGateFixture(t, ctx, pool, "Tier0 Kitchen", 200_000, 10_000_000)
@@ -329,7 +332,7 @@ func TestLiveDB_OrderEscrowTierGate_Tier0WalletDisabled(t *testing.T) {
 // allow" bug would quietly break.
 func TestLiveDB_OrderEscrowTierGate_NoProfileFailsClosed(t *testing.T) {
 	pool := tierPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 
 	// Deliberately NO seedKYCTier call for this customer.
@@ -357,7 +360,7 @@ func TestLiveDB_OrderEscrowTierGate_NoProfileFailsClosed(t *testing.T) {
 // problem by making the nil case permissive again.
 func TestLiveDB_OrderEscrowTierGate_UnwiredGateRefuses(t *testing.T) {
 	pool := tierPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 
 	svc, led, restID, item, customer := tierGateFixture(t, ctx, pool, "Unwired Kitchen", 200_000, 10_000_000)
@@ -414,7 +417,7 @@ func (r *recordingLimiter) EnforceCheckoutDebitLimit(_ context.Context, _ string
 // escrowed would let a customer spend past their limit by tipping.
 func TestLiveDB_OrderEscrowTierGate_GatesTheFullEscrowedTotal(t *testing.T) {
 	pool := tierPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 
 	svc, _, restID, item, customer := tierGateFixture(t, ctx, pool, "Full Total Kitchen", 200_000, 10_000_000)
@@ -460,7 +463,7 @@ func TestLiveDB_OrderEscrowTierGate_GatesTheFullEscrowedTotal(t *testing.T) {
 // over half the daily cap, which is exactly the range where that double-count bites.
 func TestLiveDB_OrderEscrowTierGate_ReplayNotRegated(t *testing.T) {
 	pool := tierPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 
 	// ₦30,000 item; Tier 1's cap is ₦50,000/day. One order = ₦30,500 — under the cap,
@@ -521,7 +524,7 @@ func TestLiveDB_OrderEscrowTierGate_ReplayNotRegated(t *testing.T) {
 // that double-count bites. Deleting the order row reproduces the crash window.
 func TestLiveDB_OrderEscrowTierGate_StrandedEscrowRetryHeals(t *testing.T) {
 	pool := tierPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 
 	// ₦26,000 item + ₦500 delivery = ₦26,500 against Tier 1's ₦50,000/day cap: one
@@ -580,7 +583,7 @@ func TestLiveDB_OrderEscrowTierGate_StrandedEscrowRetryHeals(t *testing.T) {
 // rather than resolving it against the globally-unique ”-keyed order row.
 func TestLiveDB_OrderRequiresIdempotencyKey(t *testing.T) {
 	pool := tierPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 
 	svc, _, restID, item, customer := tierGateFixture(t, ctx, pool, "No Idem Kitchen", 200_000, 10_000_000)
@@ -599,7 +602,7 @@ func TestLiveDB_OrderRequiresIdempotencyKey(t *testing.T) {
 // refused and, because the escrow dedups on the same key, moves no money either way.
 func TestLiveDB_OrderIdempotencyKeyIsCustomerScoped(t *testing.T) {
 	pool := tierPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 
 	svc, led, restID, item, victim := tierGateFixture(t, ctx, pool, "Scoped Key Kitchen", 200_000, 10_000_000)
@@ -620,6 +623,7 @@ func TestLiveDB_OrderIdempotencyKeyIsCustomerScoped(t *testing.T) {
 	if _, err := pool.Exec(ctx, `INSERT INTO auth.users (id,email) VALUES ($1,$2) ON CONFLICT DO NOTHING`, stranger, stranger+"@seed.test"); err != nil {
 		t.Fatalf("seed stranger: %v", err)
 	}
+	testsupport.CleanupUser(t, pool, stranger)
 	seedKYCTier(t, ctx, pool, stranger, 3)
 	revAcc, err := led.GetOrCreateStandingAccount(ctx, ledger.AccountPaymaxRevenue)
 	if err != nil {
@@ -652,7 +656,7 @@ func TestLiveDB_OrderIdempotencyKeyIsCustomerScoped(t *testing.T) {
 // around it, and the group is re-opened rather than wedged in `locked`.
 func TestLiveDB_GroupOrderEscrowTierGate(t *testing.T) {
 	pool := tierPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 
 	// One ₦60,000 item — over Tier 1's ₦50,000/day cap on its own.

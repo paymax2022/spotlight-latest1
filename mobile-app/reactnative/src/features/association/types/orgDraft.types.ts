@@ -62,12 +62,19 @@ export interface OrgDraft {
    */
   foundedYear: string;          // REQUIRED
   /**
-   * Logo, REQUIRED. Set either from a pasted URL or from the image picker —
-   * one value, two ways in. Note the picker yields a device-local file:// URI
-   * and the association module has no upload endpoint behind it, so a logo
-   * added that way will not resolve anywhere but the device that picked it.
+   * Logo, REQUIRED. Holds the value that is SUBMITTED: either a pasted URL or,
+   * for a picked image, the R2 object key returned by the upload. Never a
+   * device-local file:// URI — that was the old behaviour, and it stored a
+   * path that resolved on the founder's phone and nowhere else.
    */
   logoUri:     string | null;
+  /**
+   * Local file URI of a just-picked image, for preview only. Never submitted.
+   * The uploaded object is not publicly fetchable (the backend signs it on
+   * read), so without this the founder would upload a logo and then see an
+   * empty badge for the rest of the wizard.
+   */
+  logoPreviewUri: string | null;
   groupType:   GroupType | null;
   approvalRule: ApprovalRule | null;
   registrationFeeKobo: number;

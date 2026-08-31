@@ -14,6 +14,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"spotlight/backend/internal/finance/ledger"
+	"spotlight/backend/internal/platform/r2"
 )
 
 // ErrIdempotencyRequired is returned when a money mutation arrives without an
@@ -43,6 +44,9 @@ type Service struct {
 	ledger     *ledger.Service
 	commission CommissionRecorder // optional; nil ⇒ realized-profit recording is a no-op
 	cardKey    []byte             // HMAC key for membership card QR signing (set via SetCardSigningSecret)
+	// presigner resolves stored logo object keys to signed GET URLs on read;
+	// nil means stored values are passed through unchanged (see presign.go).
+	presigner *r2.Presigner
 }
 
 func NewService(db *pgxpool.Pool, ledger *ledger.Service) *Service {
@@ -371,6 +375,10 @@ func (s *Service) GetOrganisations(ctx context.Context, search string, limit, of
 			&o.GroupType, &o.Verified, &o.Location, &o.MemberCount, &o.ChapterCount); err != nil {
 			return nil, err
 		}
+		// An uploaded logo is stored as an R2 object key, which renders nothing
+		// on its own — the bucket is not public. Sign it here so the client can
+		// keep treating logoUrl as an image source. Pasted URLs pass through.
+		o.LogoURL = s.resolveLogo(o.LogoURL)
 		out = append(out, o)
 	}
 	return out, rows.Err()
@@ -409,6 +417,7 @@ func (s *Service) GetOrganisation(ctx context.Context, viewerID, orgID string) (
 		return nil, fmt.Errorf("association: org not found: %w", err)
 	}
 	org.ApprovalSummary = approvalSummary(approvalRule, org.GroupType)
+	org.LogoURL = s.resolveLogo(org.LogoURL)
 
 	catRows, err := s.db.Query(ctx, `SELECT id, label, description, dues_kobo, cadence FROM assoc_membership_categories WHERE organisation_id=$1`, orgID)
 	if err == nil {
@@ -1076,10 +1085,17 @@ func (s *Service) GetMeetings(ctx context.Context, userID string) ([]MeetingSumm
 		       CASE WHEN mt.starts_at > now() THEN 'UPCOMING'
 		            WHEN mt.ends_at IS NULL OR mt.ends_at > now() THEN 'LIVE'
 		            ELSE 'PAST' END,
-		       (SELECT count(*) FROM assoc_meeting_attendance ma WHERE ma.meeting_id=mt.id)
+		       (SELECT count(*) FROM assoc_meeting_attendance ma WHERE ma.meeting_id=mt.id),
+		       mt.approval_status
 		FROM assoc_meetings mt
 		JOIN assoc_memberships m ON m.organisation_id=mt.organisation_id
 		WHERE m.user_id=$1 AND m.status='ACTIVE'
+		  -- A member sees the approved calendar, plus their OWN proposals
+		  -- whatever state those are in. Showing everyone's pending proposals
+		  -- would put unapproved meetings on the organisation's calendar, which
+		  -- is the thing approval exists to prevent; hiding the proposer's own
+		  -- would leave them with no way to see what they submitted.
+		  AND (mt.approval_status = 'APPROVED' OR mt.created_by = $1)
 		ORDER BY mt.starts_at DESC LIMIT 50`, userID)
 	if err != nil {
 		return nil, fmt.Errorf("association: meetings: %w", err)
@@ -1089,7 +1105,7 @@ func (s *Service) GetMeetings(ctx context.Context, userID string) ([]MeetingSumm
 	for rows.Next() {
 		var mt MeetingSummary
 		if err := rows.Scan(&mt.ID, &mt.Title, &mt.Mode, &mt.StartsAt, &mt.EndsAt,
-			&mt.Location, &mt.State, &mt.AttendeeCount); err != nil {
+			&mt.Location, &mt.State, &mt.AttendeeCount, &mt.ApprovalStatus); err != nil {
 			continue
 		}
 		out = append(out, mt)
@@ -1103,20 +1119,51 @@ func (s *Service) GetMeetings(ctx context.Context, userID string) ([]MeetingSumm
 // ── Tasks ─────────────────────────────────────────────────────────────────────
 
 // GetTasks returns tasks assigned to or created by the caller.
+// GetTasks returns the caller's tasks, or — for scope "org" — every task in
+// their organisation.
+//
+// The "org" scope is what makes tracking possible at all: every other scope is
+// filtered to tasks ASSIGNED to the caller, so nobody could see whether the
+// organisation's work was actually getting done. It is admin-only, because a
+// list of who has been given what and who is late is a management view, not a
+// member one.
+//
+// `overdue` is DERIVED, never read from the status column. assoc_tasks has an
+// OVERDUE status value but nothing ever writes it, so a task past its due date
+// still reads ASSIGNED — trusting the column would report every late task as on
+// track. A task with no due date is never overdue, and a completed one stops
+// being overdue the moment it is done rather than staying flagged forever.
 func (s *Service) GetTasks(ctx context.Context, userID, scope string) ([]TaskSummary, error) {
 	q := `
 		SELECT t.id, t.title, t.status, t.priority, t.due_date::text,
-		       COALESCE(mp.full_name, 'Unassigned'), c.name
+		       COALESCE(mp.full_name, 'Unassigned'), c.name,
+		       (t.due_date IS NOT NULL AND t.due_date < now()
+		        AND t.status NOT IN ('COMPLETED','CANCELLED','REJECTED')) AS overdue
 		FROM assoc_tasks t
 		LEFT JOIN assoc_memberships ma ON ma.id=t.assignee_id
 		LEFT JOIN assoc_member_profiles mp ON mp.membership_id=ma.id
 		LEFT JOIN assoc_committees c ON c.id=t.committee_id
-		WHERE t.assignee_id IN (SELECT id FROM assoc_memberships WHERE user_id=$1)`
+		WHERE `
+	if scope == "org" {
+		_, orgID, err := s.primaryMembership(ctx, userID)
+		if err != nil {
+			return nil, err
+		}
+		if err := s.requireOrgAdmin(ctx, userID, orgID); err != nil {
+			return nil, err
+		}
+		q += `t.organisation_id = (SELECT organisation_id FROM assoc_memberships WHERE user_id=$1 AND status='ACTIVE' LIMIT 1)`
+	} else {
+		q += `t.assignee_id IN (SELECT id FROM assoc_memberships WHERE user_id=$1)`
+	}
 	switch scope {
 	case "overdue":
 		q += ` AND t.due_date < now() AND t.status NOT IN ('COMPLETED')`
 	case "completed":
 		q += ` AND t.status='COMPLETED'`
+	case "org":
+		// No status filter: the point of the tracking view is seeing everything,
+		// including what is already closed.
 	default: // mine
 		q += ` AND t.status NOT IN ('COMPLETED')`
 	}
@@ -1130,7 +1177,7 @@ func (s *Service) GetTasks(ctx context.Context, userID, scope string) ([]TaskSum
 	for rows.Next() {
 		var t TaskSummary
 		if err := rows.Scan(&t.ID, &t.Title, &t.Status, &t.Priority, &t.DueDate,
-			&t.AssigneeName, &t.Committee); err != nil {
+			&t.AssigneeName, &t.Committee, &t.Overdue); err != nil {
 			continue
 		}
 		out = append(out, t)
@@ -1221,7 +1268,10 @@ func (s *Service) GetEvents(ctx context.Context, userID string) ([]EventSummary,
 		              WHERE er.event_id=e.id AND m2.user_id=$1 AND er.registered=true),
 		       (SELECT er.rsvp FROM assoc_event_registrations er
 		         JOIN assoc_memberships m3 ON m3.id=er.membership_id
-		        WHERE er.event_id=e.id AND m3.user_id=$1 LIMIT 1)
+		        WHERE er.event_id=e.id AND m3.user_id=$1 LIMIT 1),
+		       EXISTS(SELECT 1 FROM assoc_event_registrations er
+		              JOIN assoc_memberships m4 ON m4.id=er.membership_id
+		              WHERE er.event_id=e.id AND m4.user_id=$1 AND er.invited_at IS NOT NULL)
 		FROM assoc_events e
 		JOIN assoc_memberships m ON m.organisation_id=e.organisation_id
 		WHERE m.user_id=$1 AND m.status='ACTIVE'
@@ -1235,7 +1285,7 @@ func (s *Service) GetEvents(ctx context.Context, userID string) ([]EventSummary,
 	for rows.Next() {
 		var e EventSummary
 		if err := rows.Scan(&e.ID, &e.Title, &e.StartsAt, &e.Location,
-			&e.State, &e.Paid, &e.FeeKobo, &e.CoverURL, &e.Registered, &e.Rsvp); err != nil {
+			&e.State, &e.Paid, &e.FeeKobo, &e.CoverURL, &e.Registered, &e.Rsvp, &e.Invited); err != nil {
 			// A scan failure here used to be swallowed, which silently dropped the
 			// row from the caller's list; surface it instead.
 			return nil, fmt.Errorf("association: events: scan: %w", err)

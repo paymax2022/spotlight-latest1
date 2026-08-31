@@ -33,6 +33,8 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"spotlight/backend/internal/academy/assessment"
+
+	"spotlight/backend/internal/testsupport"
 )
 
 func liveDBPool(t *testing.T) *pgxpool.Pool {
@@ -66,6 +68,7 @@ func seedMockExamWithScheme(t *testing.T, ctx context.Context, pool *pgxpool.Poo
 		userID, userID+"@seed.test"); err != nil {
 		t.Fatalf("seed auth.users: %v", err)
 	}
+	testsupport.CleanupUser(t, pool, userID)
 
 	runTag := uuid.NewString()[:8]
 	var versionID string

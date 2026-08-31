@@ -939,6 +939,11 @@ func (s *Service) ConfirmImport(ctx context.Context, adminID, batchID string, se
 
 // ─── Organisation publish (founder) ───────────────────────────────────────────
 
+// DefaultChapterName is the chapter an organisation gets when its founder names
+// none. It is a real chapter row, not a placeholder: members are filed under it
+// and it appears wherever chapters are listed.
+const DefaultChapterName = "Home"
+
 // validateOrgIdentity checks (and normalises in place) the founder-supplied
 // identity fields, and is the SERVER's copy of the wizard's required/optional
 // split rather than a restatement of it — the mobile wizard is currently the
@@ -1047,12 +1052,37 @@ func (s *Service) PublishOrganisation(ctx context.Context, userID string, d OrgD
 	}
 	chapterByName := make(map[string]string, len(d.Chapters))
 	for _, ch := range d.Chapters {
+		// A blank name is not a chapter. The wizard's chapter field is optional
+		// free text, so an empty or whitespace-only entry reaches here as a real
+		// element of the slice; inserting it would create a nameless chapter that
+		// renders as an empty row everywhere it is listed.
+		name := strings.TrimSpace(ch.Name)
+		if name == "" {
+			continue
+		}
 		chID := uuid.New().String()
 		if _, err := tx.Exec(ctx, `INSERT INTO assoc_chapters (id, organisation_id, name, level) VALUES ($1,$2,$3,$4)`,
-			chID, orgID, ch.Name, nz(ch.Level, "STATE")); err != nil {
+			chID, orgID, name, nz(ch.Level, "STATE")); err != nil {
 			return nil, fmt.Errorf("association: insert chapter: %w", err)
 		}
-		chapterByName[strings.ToLower(strings.TrimSpace(ch.Name))] = chID
+		chapterByName[strings.ToLower(name)] = chID
+	}
+	// Every organisation gets at least one chapter. A founder who names none is
+	// not saying "this organisation has no structure", they are saying they have
+	// not divided it up — so it gets a single default chapter rather than zero.
+	//
+	// Zero chapters was a real source of breakage rather than a tidy edge case:
+	// members had no chapter to be filed under, the join screen's chapter picker
+	// had nothing to offer, and chapter-scoped admin views had nothing to scope
+	// to. Defaulting here, at the one place organisations are created, means no
+	// read path has to keep special-casing the empty structure.
+	if len(chapterByName) == 0 {
+		chID := uuid.New().String()
+		if _, err := tx.Exec(ctx, `INSERT INTO assoc_chapters (id, organisation_id, name, level) VALUES ($1,$2,$3,$4)`,
+			chID, orgID, DefaultChapterName, "LOCAL"); err != nil {
+			return nil, fmt.Errorf("association: insert default chapter: %w", err)
+		}
+		chapterByName[strings.ToLower(DefaultChapterName)] = chID
 	}
 	// State leaders. chapter_id is best-effort: the wizard collects leaders by
 	// state name, which may or may not match a chapter the user also created,

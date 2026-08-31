@@ -1,9 +1,13 @@
 import { Stack } from 'expo-router';
 import { Colors } from '@/constants/colors';
+import { View } from 'react-native';
+import ModuleTabBar from '@/components/ModuleTabBar';
+import { ASSOCIATION_TABS } from '@/constants/moduleTabs';
 
 export default function AssociationLayout() {
   return (
-    <Stack
+    <View style={{ flex: 1 }}>
+      <Stack
       screenOptions={{
         headerShown: false,
         contentStyle: { backgroundColor: Colors.background },
@@ -138,5 +142,7 @@ export default function AssociationLayout() {
       {/* Edge / restriction states (H, Z) */}
       <Stack.Screen name="edge/[type]" options={{ animation: 'fade' }} />
     </Stack>
+  <ModuleTabBar tabs={ASSOCIATION_TABS} />
+  </View>
   );
 }

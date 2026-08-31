@@ -111,7 +111,7 @@ const styles = StyleSheet.create({
   scroll: { paddingHorizontal: Spacing.containerMargin, gap: Spacing.md, paddingTop: Spacing.sm },
   balanceCard: { backgroundColor: Colors.primary, borderRadius: Radius.xl, padding: Spacing.lg, gap: 4 },
   balLabel: { ...Typography.labelMd, color: Colors.inversePrimary },
-  balValue: { ...Typography.displayLg, color: Colors.onPrimary, fontSize: 38, lineHeight: 44 },
+  balValue: { ...Typography.displayLg, color: Colors.onPrimary, fontSize: 38, letterSpacing: -0.76, lineHeight: 44 },
   balSub: { ...Typography.labelSm, color: Colors.inversePrimary },
   actionsRow: { flexDirection: 'row', gap: Spacing.sm },
   action: { flex: 1, alignItems: 'center', gap: 6, backgroundColor: EventColors.surface, borderRadius: Radius.lg, paddingVertical: Spacing.md, ...shadow1 },

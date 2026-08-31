@@ -78,7 +78,7 @@ const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: Colors.background },
   body: { paddingHorizontal: Spacing.containerMargin, paddingBottom: 60 },
   headline: { alignItems: 'center', paddingVertical: Spacing.lg },
-  headlineValue: { ...Typography.displayLg, fontSize: 36, lineHeight: 44, color: Colors.onSurface },
+  headlineValue: { ...Typography.displayLg, fontSize: 36, letterSpacing: -0.72, lineHeight: 44, color: Colors.onSurface },
   headlineLabel: { ...Typography.bodyMd, color: Colors.onSurfaceVariant },
   kpiRow: { flexDirection: 'row', gap: Spacing.sm },
   kpi: { flex: 1, backgroundColor: Colors.surfaceContainerLowest, borderRadius: Radius.lg, borderWidth: 1, borderColor: Colors.surfaceContainerHigh, padding: Spacing.md, gap: 4 },

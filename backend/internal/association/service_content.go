@@ -880,3 +880,474 @@ func nonNilStrings(v []string) []string {
 	}
 	return v
 }
+
+// ── Member-proposed meetings ─────────────────────────────────────────────────
+
+// MeetingApprovalDecision is the outcome an admin records on a proposal.
+type MeetingApprovalDecision struct {
+	Approve bool   `json:"approve"`
+	Note    string `json:"note"`
+}
+
+// ProposeMeeting lets ANY active member put a meeting forward.
+//
+// The caller's standing decides what happens next, and that is the whole point
+// of the endpoint: an admin scheduling a meeting is scheduling it, so it is
+// APPROVED on insert and behaves exactly like one created through the admin
+// route. A member without admin rights is proposing one, so it starts PENDING
+// and stays invisible to the rest of the organisation until an admin decides.
+//
+// The organisation is resolved from the caller's own membership rather than
+// taken from the request. A body-supplied organisation id would let any member
+// of any organisation file proposals into somebody else's calendar, which is
+// the shape of the cross-org write this module has been bitten by before.
+func (s *Service) ProposeMeeting(ctx context.Context, userID string, r MeetingRequest) (string, string, error) {
+	_, orgID, err := s.primaryMembership(ctx, userID)
+	if err != nil {
+		return "", "", err
+	}
+
+	// Admin ⇒ approved on insert. requireOrgAdmin returns an error for a plain
+	// member, which here is not a failure but the answer: they are proposing.
+	approval := "PENDING"
+	if err := s.requireOrgAdmin(ctx, userID, orgID); err == nil {
+		approval = "APPROVED"
+	}
+
+	mode := nz(r.Mode, "PHYSICAL")
+	if !validMeetingModes[mode] {
+		return "", "", fmt.Errorf("%w: association: invalid meeting mode %q", ErrInvalidInput, mode)
+	}
+	startsAt, err := mustParseTime(r.StartsAt, "startsAt")
+	if err != nil {
+		return "", "", err
+	}
+	endsAt, err := parseTime(r.EndsAt, "endsAt")
+	if err != nil {
+		return "", "", err
+	}
+	if endsAt != nil && endsAt.Before(startsAt) {
+		return "", "", fmt.Errorf("%w: association: endsAt is before startsAt", ErrInvalidInput)
+	}
+	// A proposal for a time that has already passed is not something an admin can
+	// meaningfully approve, and it would land in the calendar's past on arrival.
+	if startsAt.Before(time.Now()) {
+		return "", "", fmt.Errorf("%w: association: startsAt is in the past", ErrInvalidInput)
+	}
+	agenda, err := json.Marshal(nonNilStrings(r.Agenda))
+	if err != nil {
+		return "", "", fmt.Errorf("association: agenda: %w", err)
+	}
+
+	id := uuid.New().String()
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return "", "", fmt.Errorf("association: begin tx: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO assoc_meetings
+		  (id, organisation_id, title, description, mode, starts_at, ends_at, location,
+		   state, agenda, created_by, approval_status)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'UPCOMING',$9,$10,$11)`,
+		id, orgID, r.Title, r.Description, mode, startsAt, endsAt, r.Location,
+		agenda, userID, approval); err != nil {
+		return "", "", fmt.Errorf("association: propose meeting: %w", err)
+	}
+
+	// Only an approved meeting is announced. Notifying the organisation about a
+	// proposal would tell everyone about a meeting that may never be approved,
+	// and the proposal is not visible to them yet in any case.
+	if approval == "APPROVED" && r.Notify {
+		if err := s.notifyOrg(ctx, tx, orgID, "MEETING", r.Title, deref(r.Description), "/association/meetings/"+id); err != nil {
+			return "", "", err
+		}
+	}
+
+	action := "MEETING_PROPOSE"
+	if approval == "APPROVED" {
+		action = "MEETING_CREATE"
+	}
+	if err := s.audit(ctx, tx, orgID, userID, action, "meeting", id,
+		map[string]any{"title": r.Title, "startsAt": startsAt, "approvalStatus": approval}); err != nil {
+		return "", "", err
+	}
+	return id, approval, tx.Commit(ctx)
+}
+
+// DecideMeeting records an admin's decision on a proposed meeting.
+//
+// Only a PENDING meeting can be decided. Re-deciding an already-approved or
+// already-rejected meeting is refused rather than silently overwritten: the
+// decision is an audited record of who let a meeting onto the calendar, and
+// letting it be flipped afterwards would make that record unreliable. Removing
+// an approved meeting is what cancel/delete are for.
+func (s *Service) DecideMeeting(ctx context.Context, adminID, meetingID string, d MeetingApprovalDecision) (string, error) {
+	var orgID, current, title string
+	var createdBy *string
+	if err := s.db.QueryRow(ctx,
+		`SELECT organisation_id::text, approval_status, title, created_by::text FROM assoc_meetings WHERE id=$1`,
+		meetingID).Scan(&orgID, &current, &title, &createdBy); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			// This package has no ErrNotFound; statusFor maps pgx.ErrNoRows to 404.
+			return "", pgx.ErrNoRows
+		}
+		return "", fmt.Errorf("association: meeting lookup: %w", err)
+	}
+	if err := s.requireOrgAdmin(ctx, adminID, orgID); err != nil {
+		return "", err
+	}
+	if current != "PENDING" {
+		return "", fmt.Errorf("%w: association: meeting is already %s", ErrInvalidInput, current)
+	}
+
+	next := "REJECTED"
+	if d.Approve {
+		next = "APPROVED"
+	}
+
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return "", fmt.Errorf("association: begin tx: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	// Conditional on still being PENDING so two admins deciding at once cannot
+	// both write a decision — the second finds no row and is told it is decided.
+	tag, err := tx.Exec(ctx, `
+		UPDATE assoc_meetings
+		SET approval_status=$2, decided_by=$3, decided_at=now(), decision_note=NULLIF($4,'')
+		WHERE id=$1 AND approval_status='PENDING'`,
+		meetingID, next, adminID, strings.TrimSpace(d.Note))
+	if err != nil {
+		return "", fmt.Errorf("association: decide meeting: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return "", fmt.Errorf("%w: association: meeting is no longer pending", ErrInvalidInput)
+	}
+
+	// The organisation only hears about it once it is real.
+	if next == "APPROVED" {
+		if err := s.notifyOrg(ctx, tx, orgID, "MEETING", title, "", "/association/meetings/"+meetingID); err != nil {
+			return "", err
+		}
+	}
+	if err := s.audit(ctx, tx, orgID, adminID, "MEETING_DECIDE", "meeting", meetingID,
+		map[string]any{"decision": next, "note": d.Note, "proposedBy": deref(createdBy)}); err != nil {
+		return "", err
+	}
+	return next, tx.Commit(ctx)
+}
+
+// GetPendingMeetings returns the approval queue for one organisation.
+func (s *Service) GetPendingMeetings(ctx context.Context, adminID, orgID string) ([]PendingMeeting, error) {
+	if err := s.requireOrgAdmin(ctx, adminID, orgID); err != nil {
+		return nil, err
+	}
+	rows, err := s.db.Query(ctx, `
+		SELECT mt.id::text, mt.title, mt.mode, mt.starts_at::text, mt.ends_at::text, mt.location,
+		       COALESCE(u.raw_user_meta_data->>'full_name', u.email, 'A member'),
+		       mt.created_at::text
+		FROM assoc_meetings mt
+		LEFT JOIN auth.users u ON u.id = mt.created_by
+		WHERE mt.organisation_id=$1 AND mt.approval_status='PENDING'
+		ORDER BY mt.starts_at ASC
+		LIMIT 100`, orgID)
+	if err != nil {
+		return nil, fmt.Errorf("association: pending meetings: %w", err)
+	}
+	defer rows.Close()
+
+	out := []PendingMeeting{}
+	for rows.Next() {
+		var p PendingMeeting
+		if err := rows.Scan(&p.ID, &p.Title, &p.Mode, &p.StartsAt, &p.EndsAt, &p.Location,
+			&p.ProposedByName, &p.ProposedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
+// ── Event invitations ────────────────────────────────────────────────────────
+
+// InviteToEvent invites members to an event and returns how many invitations
+// were newly recorded.
+//
+// An invitation is a registration row with invited_at set, not a separate
+// record — see the migration. That means a member who was already registered or
+// had already RSVPed keeps that state and simply becomes "invited" as well; the
+// invitation never resets a response somebody has already given.
+//
+// Every membership is checked against the EVENT'S organisation rather than the
+// caller's. They are normally the same, but validating against the event closes
+// the case where an admin of one organisation passes membership ids belonging
+// to another: the ids are silently dropped instead of writing rows that would
+// put a foreign member on this organisation's guest list.
+func (s *Service) InviteToEvent(ctx context.Context, adminID, eventID string, membershipIDs []string) (int, error) {
+	var orgID, title string
+	if err := s.db.QueryRow(ctx,
+		`SELECT organisation_id::text, title FROM assoc_events WHERE id=$1`, eventID).Scan(&orgID, &title); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return 0, pgx.ErrNoRows
+		}
+		return 0, fmt.Errorf("association: event lookup: %w", err)
+	}
+	if err := s.requireOrgAdmin(ctx, adminID, orgID); err != nil {
+		return 0, err
+	}
+	if len(membershipIDs) == 0 {
+		return 0, fmt.Errorf("%w: association: no members selected", ErrInvalidInput)
+	}
+
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("association: begin tx: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	// One statement: the SELECT filters the supplied ids down to memberships that
+	// actually belong to this event's organisation, so a foreign id inserts
+	// nothing rather than being rejected with an error that names it.
+	tag, err := tx.Exec(ctx, `
+		INSERT INTO assoc_event_registrations (event_id, membership_id, invited_by, invited_at)
+		SELECT $1, m.id, $2, now()
+		FROM assoc_memberships m
+		WHERE m.id = ANY($3::uuid[]) AND m.organisation_id = $4 AND m.status = 'ACTIVE'
+		ON CONFLICT (event_id, membership_id) DO UPDATE
+		  SET invited_by = EXCLUDED.invited_by,
+		      invited_at = COALESCE(assoc_event_registrations.invited_at, EXCLUDED.invited_at)`,
+		eventID, adminID, membershipIDs, orgID)
+	if err != nil {
+		return 0, fmt.Errorf("association: invite to event: %w", err)
+	}
+
+	if err := s.audit(ctx, tx, orgID, adminID, "EVENT_INVITE", "event", eventID,
+		map[string]any{"title": title, "requested": len(membershipIDs), "invited": tag.RowsAffected()}); err != nil {
+		return 0, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return 0, err
+	}
+	return int(tag.RowsAffected()), nil
+}
+
+// ── Committee membership management ──────────────────────────────────────────
+
+// validCommitteeRoles are the roles a committee member may hold. CHAIR and
+// SECRETARY are positions, not permissions: they do not grant organisation admin
+// rights, and nothing here checks them for authorisation.
+var validCommitteeRoles = map[string]bool{"MEMBER": true, "CHAIR": true, "SECRETARY": true, "TREASURER": true}
+
+// committeeOrg resolves the organisation a committee belongs to and checks the
+// caller administers it. Every mutation below goes through this, so a committee
+// id from another organisation is refused before anything is written.
+func (s *Service) committeeOrg(ctx context.Context, adminID, committeeID string) (string, error) {
+	var orgID string
+	if err := s.db.QueryRow(ctx,
+		`SELECT organisation_id::text FROM assoc_committees WHERE id=$1`, committeeID).Scan(&orgID); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return "", pgx.ErrNoRows
+		}
+		return "", fmt.Errorf("association: committee lookup: %w", err)
+	}
+	if err := s.requireOrgAdmin(ctx, adminID, orgID); err != nil {
+		return "", err
+	}
+	return orgID, nil
+}
+
+// AddCommitteeMembers puts members straight onto a committee, skipping the
+// request-and-approve step. Returns how many were added.
+//
+// Memberships are filtered against the COMMITTEE'S organisation, so ids from
+// elsewhere write nothing rather than erroring — the same shape as event
+// invitations, and for the same reason: one stale id must not fail the batch.
+//
+// An existing row is left alone apart from being activated. Someone who had
+// already asked to join is accepted rather than duplicated, and their role is
+// preserved: an admin adding a list of people should not silently demote a
+// chair who happened to be on it.
+func (s *Service) AddCommitteeMembers(ctx context.Context, adminID, committeeID string, membershipIDs []string) (int, error) {
+	orgID, err := s.committeeOrg(ctx, adminID, committeeID)
+	if err != nil {
+		return 0, err
+	}
+	if len(membershipIDs) == 0 {
+		return 0, fmt.Errorf("%w: association: no members selected", ErrInvalidInput)
+	}
+
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("association: begin tx: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	tag, err := tx.Exec(ctx, `
+		INSERT INTO assoc_committee_members (committee_id, membership_id, role, status, joined_at)
+		SELECT $1, m.id, 'MEMBER', 'ACTIVE', now()
+		FROM assoc_memberships m
+		WHERE m.id = ANY($2::uuid[]) AND m.organisation_id = $3 AND m.status = 'ACTIVE'
+		ON CONFLICT (committee_id, membership_id) DO UPDATE
+		  SET status = 'ACTIVE',
+		      joined_at = COALESCE(assoc_committee_members.joined_at, now())`,
+		committeeID, membershipIDs, orgID)
+	if err != nil {
+		return 0, fmt.Errorf("association: add committee members: %w", err)
+	}
+	if err := s.audit(ctx, tx, orgID, adminID, "COMMITTEE_MEMBER_ADD", "committee", committeeID,
+		map[string]any{"requested": len(membershipIDs), "added": tag.RowsAffected()}); err != nil {
+		return 0, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return 0, err
+	}
+	return int(tag.RowsAffected()), nil
+}
+
+// DecideCommitteeRequest accepts or declines a pending request to join.
+//
+// A decline REMOVES the row rather than parking it in a REJECTED state, so the
+// member can ask again later. A rejection that persisted would silently block
+// every future request without telling anyone why.
+func (s *Service) DecideCommitteeRequest(ctx context.Context, adminID, committeeID, membershipID string, approve bool) error {
+	orgID, err := s.committeeOrg(ctx, adminID, committeeID)
+	if err != nil {
+		return err
+	}
+
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("association: begin tx: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	var tag interface{ RowsAffected() int64 }
+	if approve {
+		tag, err = tx.Exec(ctx, `
+			UPDATE assoc_committee_members SET status='ACTIVE', joined_at=COALESCE(joined_at, now())
+			WHERE committee_id=$1 AND membership_id=$2 AND status='PENDING'`, committeeID, membershipID)
+	} else {
+		tag, err = tx.Exec(ctx, `
+			DELETE FROM assoc_committee_members
+			WHERE committee_id=$1 AND membership_id=$2 AND status='PENDING'`, committeeID, membershipID)
+	}
+	if err != nil {
+		return fmt.Errorf("association: decide committee request: %w", err)
+	}
+	// Conditional on PENDING, so deciding twice — or deciding on somebody who was
+	// never waiting — is refused rather than silently doing nothing.
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("%w: association: no pending request for that member", ErrInvalidInput)
+	}
+
+	action := "COMMITTEE_REQUEST_REJECT"
+	if approve {
+		action = "COMMITTEE_REQUEST_APPROVE"
+	}
+	if err := s.audit(ctx, tx, orgID, adminID, action, "committee", committeeID,
+		map[string]any{"membershipId": membershipID}); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+// RemoveCommitteeMember takes somebody off a committee entirely.
+func (s *Service) RemoveCommitteeMember(ctx context.Context, adminID, committeeID, membershipID string) error {
+	orgID, err := s.committeeOrg(ctx, adminID, committeeID)
+	if err != nil {
+		return err
+	}
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("association: begin tx: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	tag, err := tx.Exec(ctx,
+		`DELETE FROM assoc_committee_members WHERE committee_id=$1 AND membership_id=$2`, committeeID, membershipID)
+	if err != nil {
+		return fmt.Errorf("association: remove committee member: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return pgx.ErrNoRows
+	}
+	if err := s.audit(ctx, tx, orgID, adminID, "COMMITTEE_MEMBER_REMOVE", "committee", committeeID,
+		map[string]any{"membershipId": membershipID}); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+// SetCommitteeMemberRole changes a member's position on a committee.
+func (s *Service) SetCommitteeMemberRole(ctx context.Context, adminID, committeeID, membershipID, role string) error {
+	orgID, err := s.committeeOrg(ctx, adminID, committeeID)
+	if err != nil {
+		return err
+	}
+	role = strings.ToUpper(strings.TrimSpace(role))
+	if !validCommitteeRoles[role] {
+		return fmt.Errorf("%w: association: invalid committee role %q", ErrInvalidInput, role)
+	}
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("association: begin tx: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	// Only an ACTIVE member can hold a position: giving a chair's title to
+	// somebody whose request has not been accepted would put a name on the
+	// committee that its own member list does not show as belonging to it.
+	tag, err := tx.Exec(ctx,
+		`UPDATE assoc_committee_members SET role=$3
+		 WHERE committee_id=$1 AND membership_id=$2 AND status='ACTIVE'`, committeeID, membershipID, role)
+	if err != nil {
+		return fmt.Errorf("association: set committee role: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("%w: association: that member is not an active member of this committee", ErrInvalidInput)
+	}
+	if err := s.audit(ctx, tx, orgID, adminID, "COMMITTEE_ROLE_SET", "committee", committeeID,
+		map[string]any{"membershipId": membershipID, "role": role}); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+// ResolveDocumentDownload returns the storage key of a document the caller is
+// allowed to read, or an error.
+//
+// The gate is two-part and both parts matter. Membership scopes the vault to the
+// organisation that owns it — a document id is a bare uuid, so without it any
+// authenticated user could fetch any organisation's constitution. The
+// `restricted` flag then narrows further: a restricted document is admin-only,
+// which is what the flag is for, and it is checked HERE rather than in the
+// handler so a signed URL cannot be minted for one by any other caller.
+//
+// An empty key is returned as an empty string, not an error: the document exists
+// and the caller may see it, it simply predates uploads and has no file.
+func (s *Service) ResolveDocumentDownload(ctx context.Context, userID, documentID string) (string, error) {
+	var orgID, key string
+	var restricted bool
+	if err := s.db.QueryRow(ctx, `
+		SELECT d.organisation_id::text, COALESCE(d.storage_key,''), d.restricted
+		FROM assoc_documents d
+		JOIN assoc_memberships m ON m.organisation_id = d.organisation_id
+		WHERE d.id = $1 AND m.user_id = $2 AND m.status = 'ACTIVE'
+		LIMIT 1`, documentID, userID).Scan(&orgID, &key, &restricted); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			// Not a member, or no such document — the same answer either way, so
+			// the endpoint does not confirm a document it will not serve.
+			return "", pgx.ErrNoRows
+		}
+		return "", fmt.Errorf("association: document lookup: %w", err)
+	}
+	if restricted {
+		if err := s.requireOrgAdmin(ctx, userID, orgID); err != nil {
+			return "", err
+		}
+	}
+	return key, nil
+}

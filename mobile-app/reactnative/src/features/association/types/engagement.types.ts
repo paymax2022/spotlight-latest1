@@ -60,6 +60,16 @@ export type MeetingMode = 'PHYSICAL' | 'VIRTUAL' | 'HYBRID';
 export type RsvpStatus = 'YES' | 'NO' | 'MAYBE' | null;
 export type MeetingState = 'UPCOMING' | 'LIVE' | 'PAST' | 'CANCELLED';
 
+/**
+ * Whether a meeting is on the organisation's calendar.
+ *
+ * A member's proposal starts PENDING and is visible only to them until an admin
+ * decides; an admin scheduling a meeting gets APPROVED on insert. Distinct from
+ * MeetingState, which is lifecycle (upcoming/live/past/cancelled) — a proposal
+ * awaiting approval is still UPCOMING.
+ */
+export type MeetingApprovalStatus = 'PENDING' | 'APPROVED' | 'REJECTED';
+
 export interface MeetingSummary {
   id:        string;
   title:     string;
@@ -70,6 +80,35 @@ export interface MeetingSummary {
   state:     MeetingState;
   rsvp:      RsvpStatus;
   attendeeCount: number;
+  approvalStatus?: MeetingApprovalStatus;
+}
+
+/** A member's meeting proposal, as the client submits it. */
+export interface MeetingProposalInput {
+  title:       string;
+  description?: string | null;
+  mode:        MeetingMode;
+  startsAt:    string;        // ISO
+  endsAt?:     string | null;
+  location?:   string | null;
+  agenda?:     string[];
+}
+
+export interface MeetingProposalResult {
+  id: string;
+  approvalStatus: MeetingApprovalStatus;
+}
+
+/** One row of the admin approval queue. */
+export interface PendingMeeting {
+  id:             string;
+  title:          string;
+  mode:           MeetingMode;
+  startsAt:       string;
+  endsAt:         string | null;
+  location:       string | null;
+  proposedByName: string;
+  proposedAt:     string;
 }
 
 export interface AgendaItem { id: string; order: number; title: string; durationMin: number | null }
@@ -107,6 +146,12 @@ export interface TaskSummary {
   dueDate:   string | null;   // ISO
   assigneeName: string;
   committee: string | null;
+  /**
+   * Derived server-side from dueDate — NOT read from `status`. The backend has
+   * an OVERDUE status value that nothing writes, so a late task still reports
+   * ASSIGNED; this is the field to trust.
+   */
+  overdue?: boolean;
 }
 
 export interface TaskComment { id: string; author: string; body: string; createdAt: string }
@@ -120,7 +165,12 @@ export interface Task extends TaskSummary {
   meetingTitle?: string | null;
 }
 
-export type TaskScope = 'mine' | 'assigned' | 'overdue' | 'completed';
+/**
+ * Which tasks to list. Everything but 'org' is filtered to the caller's own
+ * assignments; 'org' is the admin-only tracking view over the whole
+ * organisation, including tasks assigned to nobody and work already closed.
+ */
+export type TaskScope = 'mine' | 'assigned' | 'overdue' | 'completed' | 'org';
 
 // ─── Documents (P) ────────────────────────────────────────────────────────────
 

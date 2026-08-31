@@ -8,7 +8,6 @@ import { View, Text, StyleSheet, Pressable, ScrollView } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import { goBack } from '@/lib/navigation';
-import * as Icons from 'lucide-react-native';
 import { ArrowLeft } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
@@ -17,13 +16,20 @@ import { Radius } from '@/constants/radius';
 import StateView from '@/components/StateView';
 import { MarketColors } from '@/features/marketplace';
 import type { CategoryQuickFilter } from '@/features/marketplace';
-import { useCategory, useSearch } from '@/features/marketplace/hooks';
+import { useCategory, useCategories, useSearch } from '@/features/marketplace/hooks';
+import { subcategoriesOf, breadcrumb } from '@/features/marketplace/categoryTree';
+import CategoryIcon from '@/features/marketplace/components/CategoryIcon';
 import ListingCard from '@/features/marketplace/components/ListingCard';
 import { GridSkeleton } from '@/features/marketplace/components/Skeletons';
 
 export default function CategoryLanding() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const category = useCategory(id!);
+  // The flat list is already cached by the home grid, so the subcategory row
+  // renders immediately rather than costing another round trip.
+  const allCategories = useCategories();
+  const subs = subcategoriesOf(allCategories.data, id!);
+  const trail = breadcrumb(allCategories.data, id!);
   const preview = useSearch({ categoryId: id, sort: 'trusted_first', limit: 8 }, !!id);
   const results = preview.data?.results ?? [];
 
@@ -34,7 +40,6 @@ export default function CategoryLanding() {
     router.push(`/marketplace/results?${p.toString()}` as never);
   };
 
-  const Icon = (Icons as unknown as Record<string, Icons.LucideIcon>)[category.data?.icon ?? 'Package'] ?? Icons.Package;
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
@@ -46,9 +51,45 @@ export default function CategoryLanding() {
       <ScrollView contentContainerStyle={styles.scroll}>
         {/* Hero */}
         <View style={styles.hero}>
-          <View style={styles.heroIcon}><Icon size={28} color={MarketColors.brand} /></View>
-          <Text style={styles.heroName}>{category.data?.name ?? '—'}</Text>
+          <CategoryIcon
+            category={category.data ?? {}}
+            parent={trail.length > 1 ? trail[trail.length - 2] : undefined}
+            size={64}
+          />
+          <View style={styles.heroText}>
+            <Text style={styles.heroName}>{category.data?.name ?? '—'}</Text>
+            {/* Only shown one level down, where it says something the title does
+                not: which main this subcategory belongs to. */}
+            {trail.length > 1 ? (
+              <Text style={styles.heroTrail} numberOfLines={1}>
+                {trail.slice(0, -1).map((c) => c.name).join(' › ')}
+              </Text>
+            ) : null}
+          </View>
         </View>
+
+        {/* Subcategories */}
+        {subs.length > 0 ? (
+          <View style={styles.subBlock}>
+            <Text style={styles.filterLabel}>Browse {category.data?.name ?? 'category'}</Text>
+            <View style={styles.subGrid}>
+              {subs.map((sc) => (
+                <Pressable
+                  key={sc.id}
+                  style={styles.subTile}
+                  onPress={() => router.push(`/marketplace/category/${sc.id}` as never)}
+                  accessibilityRole="button"
+                  accessibilityLabel={sc.name}
+                >
+                  {/* parent = the category being browsed, so every child puck
+                      carries this main's hue. */}
+                  <CategoryIcon category={sc} parent={category.data ?? undefined} size={28} />
+                  <Text style={styles.subLabel} numberOfLines={2}>{sc.name}</Text>
+                </Pressable>
+              ))}
+            </View>
+          </View>
+        ) : null}
 
         {/* Schema-driven quick filters */}
         {(category.data?.quickFilters ?? []).map((f) => (
@@ -93,6 +134,16 @@ const styles = StyleSheet.create({
   topRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm, paddingHorizontal: Spacing.containerMargin, paddingVertical: Spacing.sm },
   title: { ...Typography.titleLg, color: Colors.onSurface, flex: 1 },
   scroll: { paddingBottom: Spacing.xxl },
+  heroText: { alignItems: 'center', gap: 2 },
+  heroTrail: { ...Typography.labelSm, color: Colors.onPrimaryContainer, opacity: 0.75 },
+  subBlock: { paddingHorizontal: Spacing.containerMargin, marginTop: Spacing.md, gap: Spacing.xs },
+  subGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.sm },
+  subTile: { width: '30%', flexDirection: 'row', alignItems: 'center', gap: 6,
+             backgroundColor: Colors.surfaceContainerLowest, borderRadius: Radius.md,
+             borderWidth: 1, borderColor: Colors.surfaceContainerHigh, padding: Spacing.sm },
+  subIcon: { width: 28, height: 28, borderRadius: Radius.sm, backgroundColor: Colors.primaryContainer,
+             alignItems: 'center', justifyContent: 'center' },
+  subLabel: { ...Typography.caption, color: MarketColors.text, flex: 1 },
   hero: { alignItems: 'center', gap: Spacing.sm, paddingVertical: Spacing.lg, backgroundColor: Colors.primaryContainer, marginHorizontal: Spacing.containerMargin, borderRadius: Radius.xl, marginBottom: Spacing.md },
   heroIcon: { width: 64, height: 64, borderRadius: Radius.lg, backgroundColor: Colors.surface, alignItems: 'center', justifyContent: 'center' },
   heroName: { ...Typography.titleLg, color: Colors.onPrimaryContainer },

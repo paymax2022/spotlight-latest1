@@ -15,7 +15,8 @@
     "test:money": "vitest run tests/unit/estate tests/unit/wallet tests/unit/tiers",
     "test:estate": "vitest run tests/unit/estate",
     "contract:check": "node scripts/contract-check.mjs",
-    "sass": "sass --watch public/assets/scss/main.scss:public/assets/css/main.css"
+    "sass": "sass --watch public/assets/scss/main.scss:public/assets/css/main.css",
+    "test:integration": "vitest run --config vitest.integration.config.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1058.0",

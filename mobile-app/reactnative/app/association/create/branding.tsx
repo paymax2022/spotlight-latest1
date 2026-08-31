@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { View, Text, Image, ScrollView, Pressable, StyleSheet } from 'react-native';
+import { View, Text, Image, ScrollView, Pressable, StyleSheet, ActivityIndicator } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { ImagePlus } from 'lucide-react-native';
@@ -14,24 +14,63 @@ import { useOrgDraft } from '@/features/association/store/orgDraftStore';
 import { pickDocument } from '@/features/association/utils/docPicker';
 import { GROUP_TYPE_OPTIONS } from '@/features/association/constants/orgWizard.constants';
 import { initials } from '@/features/association/utils/associationFormatters';
-import { logoError, isRemoteLogoUrl } from '@/features/association/utils/orgDraftValidation';
+import { logoError, isRemoteLogoUrl, isUploadedLogoKey } from '@/features/association/utils/orgDraftValidation';
+import { uploadLogo, LogoUploadsUnavailableError } from '@/features/association/api/logoUpload.api';
 import TextInputField from '@/components/TextInputField';
 
 export default function WizardBranding() {
   const { draft, patch } = useOrgDraft();
   const [touched, setTouched] = useState(false);
 
+  const [uploading, setUploading] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  // Set when the server has no R2 credentials. Permanent for this deployment,
+  // so the upload affordance is retired rather than left inviting a retry that
+  // can never succeed.
+  const [uploadsUnavailable, setUploadsUnavailable] = useState(false);
+
   // The logo is REQUIRED, and one draft field backs both ways of supplying it:
-  // a pasted URL and the image picker write the same `logoUri`. Whichever the
+  // a pasted URL and an uploaded image write the same `logoUri`. Whichever the
   // founder used last is the one that counts, so the two inputs can never hold
   // conflicting values.
   const logoIssue = logoError(draft.logoUri);
   const urlValue = draft.logoUri && isRemoteLogoUrl(draft.logoUri) ? draft.logoUri : '';
-  const pickedLocalFile = Boolean(draft.logoUri) && !urlValue;
+  const uploaded = isUploadedLogoKey(draft.logoUri);
 
-  const valid = Boolean(draft.groupType) && !logoIssue;
+  // An in-flight or failed upload must not count as a logo.
+  const valid = Boolean(draft.groupType) && !logoIssue && !uploading && !uploadError;
 
-  const onLogo = async () => { const f = await pickDocument(); if (f) patch({ logoUri: f.uri }); };
+  // Pick → preview immediately → upload → store the object key. The preview is
+  // kept separately because the uploaded object is not publicly fetchable (the
+  // backend signs it on read), so the key alone would render nothing here.
+  const onLogo = async () => {
+    if (uploadsUnavailable) return;
+    const f = await pickDocument();
+    if (!f) return;
+    setUploadError(null);
+    setUploading(true);
+    // Clear any previous logo up front: leaving the old one in place while a new
+    // upload runs would let a failed upload publish the image the founder just
+    // replaced.
+    patch({ logoPreviewUri: f.uri, logoUri: null });
+    try {
+      const objectKey = await uploadLogo(f.uri, f.name);
+      patch({ logoUri: objectKey });
+    } catch (err) {
+      // A server with no R2 credentials can never sign an upload, so "try again"
+      // would be a loop. Say what actually happened and point at the way out.
+      if (err instanceof LogoUploadsUnavailableError) {
+        setUploadsUnavailable(true);
+        setUploadError('Image upload is not available on this server yet — paste a logo URL below instead.');
+      } else {
+        setUploadError("That image couldn't be uploaded. Try again, or paste a logo URL instead.");
+      }
+      patch({ logoPreviewUri: null });
+    } finally {
+      setUploading(false);
+    }
+  };
+
   const next = () => { setTouched(true); if (valid) router.push('/association/create/structure'); };
 
   return (
@@ -43,29 +82,38 @@ export default function WizardBranding() {
         <View style={styles.logoWrap}>
           <Pressable onPress={onLogo} accessibilityRole="button" accessibilityLabel="Upload logo">
             <View style={[styles.logo, touched && logoIssue ? styles.logoErrored : null]}>
-              {draft.logoUri ? <Image source={{ uri: draft.logoUri }} style={styles.logoImg} /> : (
-                draft.acronym || draft.name ? <Text style={styles.logoText}>{draft.acronym || initials(draft.name)}</Text> : <ImagePlus size={26} color={Colors.primary} strokeWidth={2} />
-              )}
+              {uploading ? <ActivityIndicator color={Colors.primary} /> :
+                draft.logoPreviewUri || urlValue ? <Image source={{ uri: draft.logoPreviewUri ?? urlValue }} style={styles.logoImg} /> : (
+                  draft.acronym || draft.name ? <Text style={styles.logoText}>{draft.acronym || initials(draft.name)}</Text> : <ImagePlus size={26} color={Colors.primary} strokeWidth={2} />
+                )}
             </View>
           </Pressable>
-          <Text style={styles.logoHint}>Tap to upload a logo</Text>
+          <Text style={styles.logoHint}>
+            {uploading ? 'Uploading…' : uploadsUnavailable ? 'Use the logo URL below' : 'Tap to upload a logo'}
+          </Text>
         </View>
+        {uploadError ? <Text style={styles.error}>{uploadError}</Text> : null}
 
         <TextInputField
           label="Logo URL"
           placeholder="https://…"
           value={urlValue}
-          onChangeText={(t) => patch({ logoUri: t.trim() ? t.trim() : null })}
+          // Clearing logoPreviewUri is what makes the two inputs mutually
+          // exclusive on screen. logoUri already holds only one value (last
+          // write wins), but the preview is a separate field: without this, a
+          // founder who uploaded an image and then pasted a URL saw the
+          // UPLOADED image in the badge while the URL was what would be saved.
+          onChangeText={(t) => patch({ logoUri: t.trim() ? t.trim() : null, logoPreviewUri: null })}
           autoCapitalize="none"
           keyboardType="url"
           error={touched ? logoIssue : undefined}
         />
-        {pickedLocalFile ? (
-          <Text style={styles.logoNote}>
-            Using the image you picked. It previews here, but it is stored as a file on this device — paste a public URL instead if the logo should appear for other members and in the admin console.
-          </Text>
+        {uploaded ? (
+          <Text style={styles.logoNote}>Image uploaded. It will appear for members and in the admin console.</Text>
+        ) : uploadsUnavailable ? (
+          <Text style={styles.logoNote}>Paste a link to your logo. Uploading an image is not available here.</Text>
         ) : (
-          <Text style={styles.logoNote}>Paste a link to your logo, or tap the badge above to pick an image.</Text>
+          <Text style={styles.logoNote}>Paste a link to your logo, or tap the badge above to upload an image — whichever you set last is the one that is used.</Text>
         )}
 
         <Text style={styles.label}>Group type</Text>

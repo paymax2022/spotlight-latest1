@@ -19,6 +19,8 @@ import (
 
 	"spotlight/backend/internal/association"
 	"spotlight/backend/internal/finance/ledger"
+
+	"spotlight/backend/internal/testsupport"
 )
 
 // seedFounder creates a user who owns a fresh organisation, returning both ids.
@@ -33,6 +35,7 @@ func seedFounder(t *testing.T, ctx context.Context, label string) (userID, orgID
 		pool.Close()
 		t.Fatalf("seed auth.users: %v", err)
 	}
+	testsupport.CleanupUser(t, pool, userID)
 	res, err := svc.PublishOrganisation(ctx, userID, newTestDraft(label+" "+uuid.New().String()[:8]))
 	if err != nil {
 		pool.Close()
@@ -216,7 +219,7 @@ func TestRegisterEvent_PaidEventRaisesInvoiceInsteadOfFreeTicket(t *testing.T) {
 // most here: a retried dues run must never re-bill an organisation's roster.
 func TestRunDues_RaisesInvoicesAndIsReplaySafe(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	svc := newLiveAssociationService(pool)
 
@@ -225,6 +228,7 @@ func TestRunDues_RaisesInvoicesAndIsReplaySafe(t *testing.T) {
 		founder, founder+"@dues.test"); err != nil {
 		t.Fatalf("seed auth.users: %v", err)
 	}
+	testsupport.CleanupUser(t, pool, founder)
 	res, err := svc.PublishOrganisation(ctx, founder, newTestDraft("Dues Run "+uuid.New().String()[:8]))
 	if err != nil {
 		t.Fatalf("publish: %v", err)
@@ -292,7 +296,7 @@ func TestRunDues_RaisesInvoicesAndIsReplaySafe(t *testing.T) {
 // be a cross-org write.
 func TestCreateTask_RejectsCrossOrgAssignee(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	svc := newLiveAssociationService(pool)
 
@@ -301,6 +305,7 @@ func TestCreateTask_RejectsCrossOrgAssignee(t *testing.T) {
 		founder, founder+"@task.test"); err != nil {
 		t.Fatalf("seed auth.users: %v", err)
 	}
+	testsupport.CleanupUser(t, pool, founder)
 	mine, err := svc.PublishOrganisation(ctx, founder, newTestDraft("Task Org "+uuid.New().String()[:8]))
 	if err != nil {
 		t.Fatalf("publish: %v", err)
@@ -362,7 +367,7 @@ func TestRegisterDevice_MakesTheDeviceListUsable(t *testing.T) {
 // one → assert the double-entry landed and the invoice settled.
 func TestFullDuesLifecycle_RunThenPayPostsBalancedLedger(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	svc := newLiveAssociationService(pool)
 	led := ledger.NewService(ledger.NewRepository(pool), (*goredis.Client)(nil))
@@ -372,6 +377,7 @@ func TestFullDuesLifecycle_RunThenPayPostsBalancedLedger(t *testing.T) {
 		founder, founder+"@lifecycle.test"); err != nil {
 		t.Fatalf("seed auth.users: %v", err)
 	}
+	testsupport.CleanupUser(t, pool, founder)
 	org, err := svc.PublishOrganisation(ctx, founder, newTestDraft("Lifecycle "+uuid.New().String()[:8]))
 	if err != nil {
 		t.Fatalf("publish: %v", err)
@@ -550,7 +556,7 @@ func TestValidationErrors_Map400NotServerError(t *testing.T) {
 // they could actually do.
 func TestGetAdminAccess_RecognisesPlatformSuperAdmin(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	svc := newLiveAssociationService(pool)
 
@@ -586,7 +592,7 @@ func TestGetAdminAccess_RecognisesPlatformSuperAdmin(t *testing.T) {
 // the admin Members page and every assignee picker built on it.
 func TestDirectoryAndProfile_SurviveNullFullName(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	svc := newLiveAssociationService(pool)
 

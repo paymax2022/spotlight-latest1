@@ -110,7 +110,10 @@ const styles = StyleSheet.create({
   scroll: { paddingHorizontal: Spacing.containerMargin, paddingTop: Spacing.sm, paddingBottom: 120, gap: Spacing.md },
   totalCard: { backgroundColor: Colors.surfaceContainerLowest, borderRadius: Radius.lg, borderWidth: 1, borderColor: Colors.outlineVariant, padding: Spacing.lg },
   totalLabel: { ...Typography.labelMd, color: Colors.onSurfaceVariant },
-  totalValue: { ...Typography.displayLg, fontSize: 34, lineHeight: 40, color: Colors.onSurface },
+  // letterSpacing re-stated: displayLg's -0.96 is -0.02em at its own 48px, and
+  // spreading the style while overriding only the size keeps that ABSOLUTE
+  // value, which is tighter than the scale intends at 34px. -0.68 is the same -0.02em.
+  totalValue: { ...Typography.displayLg, fontSize: 34, lineHeight: 40, letterSpacing: -0.68, color: Colors.onSurface },
   divider: { height: 1, backgroundColor: Colors.outlineVariant, marginVertical: Spacing.sm },
   totalRow: { flexDirection: 'row', justifyContent: 'space-between' },
   totalSub: { ...Typography.labelMd, color: Colors.onSurfaceVariant },

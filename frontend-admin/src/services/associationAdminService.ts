@@ -16,6 +16,24 @@ import { resolveUseMock } from '@/config/useMock';
 // nothing to indicate it.
 const USE_MOCK = resolveUseMock(process.env.NEXT_PUBLIC_ASSOCIATION_ADMIN_USE_MOCK);
 
+// Reads may serve fixtures. WRITES MAY NOT.
+//
+// A mutation that mutates an in-memory fixture and returns success tells the
+// operator the action was applied when nothing reached the server. That is worse
+// than a broken button: a broken button gets reported, while one that reports
+// success trains people to trust a control that does not exist, and the
+// divergence surfaces much later — or never. The precedent in
+// docs/audit/ADMIN_SIMULATED_WRITES.md is the restaurant KYB console, which
+// approved applications into an array while payouts gated on the real column:
+// 709 outlets trading and unpayable, and a console reporting approvals it never
+// performed is a plausible reason nobody noticed.
+//
+// Every write below has a working live endpoint (verified against the running
+// backend), so fixture mode has nothing to add and refuses loudly instead.
+const NOT_IN_FIXTURE_MODE =
+  'is unavailable in fixture mode: this console will not report a write it did not perform. ' +
+  'Set NEXT_PUBLIC_ASSOCIATION_ADMIN_USE_MOCK=false to make this change against the live backend.';
+
 // /api/finance/associations/admin — approvals, finance, offline decisions,
 // member actions, import, audit-log all live under this admin sub-group
 // (routes.go: rg.GET("/admin/kpis") etc., where rg is already the
@@ -889,18 +907,7 @@ export async function getAdminOrganisation(id: string): Promise<AdminOrganisatio
 }
 
 export async function updateAdminOrganisation(id: string, patch: UpdateOrganisationInput): Promise<AdminOrganisationDetail> {
-  if (USE_MOCK) {
-    await delay();
-    const d = mockOrg(id);
-    const { graceDays, disableVoting, disableEvents, disableChat, disableCard, ...rest } = patch;
-    Object.assign(d, rest);
-    if (graceDays !== undefined) d.restrictions.graceDays = graceDays;
-    if (disableVoting !== undefined) d.restrictions.disableVoting = disableVoting;
-    if (disableEvents !== undefined) d.restrictions.disableEvents = disableEvents;
-    if (disableChat !== undefined) d.restrictions.disableChat = disableChat;
-    if (disableCard !== undefined) d.restrictions.disableCard = disableCard;
-    return structuredClone(d);
-  }
+  if (USE_MOCK) throw new Error(`Updating an organisation ${NOT_IN_FIXTURE_MODE}`);
   return sendJson<AdminOrganisationDetail>('PATCH', `/organisations/${id}`, patch);
 }
 
@@ -910,17 +917,7 @@ export async function updateAdminOrganisation(id: string, patch: UpdateOrganisat
 // pairs are open to an org admin.
 export type OrgFlagAction = 'verify' | 'unverify' | 'publish' | 'unpublish' | 'suspend' | 'restore';
 export async function setOrganisationFlag(id: string, action: OrgFlagAction): Promise<{ ok: boolean }> {
-  if (USE_MOCK) {
-    await delay();
-    const d = mockOrg(id);
-    if (action === 'verify' || action === 'unverify') d.verified = action === 'verify';
-    if (action === 'publish' || action === 'unpublish') d.published = action === 'publish';
-    if (action === 'suspend' || action === 'restore') {
-      d.status = action === 'suspend' ? 'SUSPENDED' : 'ACTIVE';
-      d.suspendedAt = action === 'suspend' ? new Date().toISOString() : null;
-    }
-    return { ok: true };
-  }
+  if (USE_MOCK) throw new Error(`Changing an organisation flag ${NOT_IN_FIXTURE_MODE}`);
   return sendJson<{ ok: boolean }>('POST', `/organisations/${id}/${action}`, {});
 }
 
@@ -936,28 +933,13 @@ export async function updateOrganisationSettings(
   id: string,
   patch: Record<string, unknown>,
 ): Promise<Record<string, unknown>> {
-  if (USE_MOCK) {
-    await delay();
-    const d = mockOrg(id);
-    for (const [k, v] of Object.entries(patch)) {
-      if (v === null) delete d.settings[k];
-      else d.settings[k] = v;
-    }
-    return structuredClone(d.settings);
-  }
+  if (USE_MOCK) throw new Error(`Updating organisation settings ${NOT_IN_FIXTURE_MODE}`);
   return sendJson<Record<string, unknown>>('PUT', `/organisations/${id}/settings`, patch);
 }
 
 // ── Chapters ──
 export async function createChapter(orgId: string, input: ChapterInput): Promise<{ id: string }> {
-  if (USE_MOCK) {
-    await delay();
-    const d = mockOrg(orgId);
-    const id = mockId('ch');
-    d.chapters.push({ id, name: input.name, level: input.level, parentId: null, memberCount: 0 });
-    d.chapterCount = d.chapters.length;
-    return { id };
-  }
+  if (USE_MOCK) throw new Error(`Creating a chapter ${NOT_IN_FIXTURE_MODE}`);
   return sendJson<{ id: string }>('POST', `/organisations/${orgId}/chapters`, input);
 }
 export async function updateChapter(chapterId: string, input: ChapterInput): Promise<{ ok: boolean }> {
@@ -992,14 +974,7 @@ export async function deleteChapter(chapterId: string): Promise<{ ok: boolean }>
 
 // ── Committees ──
 export async function createCommittee(orgId: string, input: CommitteeInput): Promise<{ id: string }> {
-  if (USE_MOCK) {
-    await delay();
-    const d = mockOrg(orgId);
-    const id = mockId('cm');
-    d.committees.push({ id, name: input.name, description: input.description ?? null, memberCount: 0 });
-    d.committeeCount = d.committees.length;
-    return { id };
-  }
+  if (USE_MOCK) throw new Error(`Creating a committee ${NOT_IN_FIXTURE_MODE}`);
   return sendJson<{ id: string }>('POST', `/organisations/${orgId}/committees`, input);
 }
 export async function updateCommittee(committeeId: string, input: CommitteeInput): Promise<{ ok: boolean }> {
@@ -1030,14 +1005,7 @@ export async function deleteCommittee(committeeId: string): Promise<{ ok: boolea
 // ErrIdempotencyRequired without one): a retried create must not silently mint a
 // second tier at the same price, and a retried re-price must not double-apply.
 export async function createCategory(orgId: string, input: CategoryInput): Promise<{ id: string }> {
-  if (USE_MOCK) {
-    await delay();
-    const d = mockOrg(orgId);
-    const id = mockId('ct');
-    d.categories.push({ id, label: input.label, description: input.description ?? null, duesKobo: input.duesKobo, duesCadence: input.cadence });
-    d.categoryCount = d.categories.length;
-    return { id };
-  }
+  if (USE_MOCK) throw new Error(`Creating a membership category ${NOT_IN_FIXTURE_MODE}`);
   return sendJson<{ id: string }>('POST', `/organisations/${orgId}/categories`, input, { idempotent: true });
 }
 export async function updateCategory(categoryId: string, input: CategoryInput): Promise<{ ok: boolean }> {
@@ -1066,14 +1034,7 @@ export async function deleteCategory(categoryId: string): Promise<{ ok: boolean 
 
 // ── Rules ──
 export async function createRule(orgId: string, input: RuleInput): Promise<{ id: string }> {
-  if (USE_MOCK) {
-    await delay();
-    const d = mockOrg(orgId);
-    const id = mockId('r');
-    d.rules.push({ id, body: input.body, position: input.position });
-    d.rules.sort((a, b) => a.position - b.position);
-    return { id };
-  }
+  if (USE_MOCK) throw new Error(`Creating a group rule ${NOT_IN_FIXTURE_MODE}`);
   return sendJson<{ id: string }>('POST', `/organisations/${orgId}/rules`, input);
 }
 export async function updateRule(ruleId: string, input: RuleInput): Promise<{ ok: boolean }> {
@@ -1392,30 +1353,17 @@ export async function listAdminAnnouncements(orgId: string, opts?: ContentListOp
   return getJson<AnnouncementRow[]>(`/organisations/${orgId}/announcements${contentQuery(opts)}`);
 }
 export async function createAnnouncement(orgId: string, input: AnnouncementInput): Promise<{ id: string }> {
-  if (USE_MOCK) {
-    await delay();
-    return mockCreate('announcements', {
-      title: input.title, subtitle: input.audience ?? '', status: input.urgent ? 'URGENT' : 'POSTED',
-      at: new Date().toISOString(), createdAt: new Date().toISOString(),
-      meta: { body: input.body ?? null, audience: input.audience ?? null, author: 'You (mock)', urgent: input.urgent, requiresAck: input.requiresAck, readCount: 0, ackCount: 0 },
-    });
-  }
+  if (USE_MOCK) throw new Error(`Creating an announcement ${NOT_IN_FIXTURE_MODE}`);
   return sendJson<{ id: string }>('POST', `/organisations/${orgId}/announcements`, input);
 }
 export async function updateAnnouncement(id: string, input: AnnouncementInput): Promise<{ ok: boolean }> {
-  if (USE_MOCK) {
-    await delay();
-    return mockPatch('announcements', id, {
-      title: input.title, subtitle: input.audience ?? '', status: input.urgent ? 'URGENT' : 'POSTED',
-      meta: { body: input.body ?? null, audience: input.audience ?? null, urgent: input.urgent, requiresAck: input.requiresAck } as Partial<AnnouncementMeta> as Record<string, unknown>,
-    });
-  }
+  if (USE_MOCK) throw new Error(`Updating an announcement ${NOT_IN_FIXTURE_MODE}`);
   // The PATCH body is the FULL AnnouncementRequest: Go binds `title` as
   // required, so a partial patch omitting it is a 400, not a no-op.
   return sendJson<{ ok: boolean }>('PATCH', `/announcements/${id}`, input);
 }
 export async function deleteAnnouncement(id: string): Promise<{ ok: boolean }> {
-  if (USE_MOCK) { await delay(); return mockRemove('announcements', id); }
+  if (USE_MOCK) throw new Error(`Deleting an announcement ${NOT_IN_FIXTURE_MODE}`);
   return sendJson<{ ok: boolean }>('DELETE', `/announcements/${id}`, undefined);
 }
 
@@ -1425,33 +1373,20 @@ export async function listAdminMeetings(orgId: string, opts?: ContentListOpts): 
   return getJson<MeetingRow[]>(`/organisations/${orgId}/meetings${contentQuery(opts)}`);
 }
 export async function createMeeting(orgId: string, input: MeetingInput): Promise<{ id: string }> {
-  if (USE_MOCK) {
-    await delay();
-    return mockCreate('meetings', {
-      title: input.title, subtitle: input.location ?? '', status: input.state,
-      at: input.startsAt, createdAt: new Date().toISOString(),
-      meta: { description: input.description ?? null, mode: input.mode, startsAt: input.startsAt, endsAt: input.endsAt ?? null, location: input.location ?? null, agenda: input.agenda, minutesPublished: false, attendanceCode: input.generateAttendanceCode ? 'MOCK01' : null, rsvpCount: 0, checkedInCount: 0 },
-    });
-  }
+  if (USE_MOCK) throw new Error(`Creating a meeting ${NOT_IN_FIXTURE_MODE}`);
   return sendJson<{ id: string }>('POST', `/organisations/${orgId}/meetings`, input);
 }
 export async function updateMeeting(id: string, input: MeetingInput): Promise<{ ok: boolean }> {
-  if (USE_MOCK) {
-    await delay();
-    return mockPatch('meetings', id, {
-      title: input.title, subtitle: input.location ?? '', status: input.state, at: input.startsAt,
-      meta: { description: input.description ?? null, mode: input.mode, startsAt: input.startsAt, endsAt: input.endsAt ?? null, location: input.location ?? null, agenda: input.agenda } as Partial<MeetingMeta> as Record<string, unknown>,
-    });
-  }
+  if (USE_MOCK) throw new Error(`Updating a meeting ${NOT_IN_FIXTURE_MODE}`);
   return sendJson<{ ok: boolean }>('PATCH', `/meetings/${id}`, input);
 }
 export async function deleteMeeting(id: string): Promise<{ ok: boolean }> {
-  if (USE_MOCK) { await delay(); return mockRemove('meetings', id); }
+  if (USE_MOCK) throw new Error(`Deleting a meeting ${NOT_IN_FIXTURE_MODE}`);
   return sendJson<{ ok: boolean }>('DELETE', `/meetings/${id}`, undefined);
 }
 /** Publish or retract the minutes. Separate route because it is a one-field state flip. */
 export async function publishMeetingMinutes(id: string, published: boolean): Promise<{ ok: boolean }> {
-  if (USE_MOCK) { await delay(); return mockPatch('meetings', id, { meta: { minutesPublished: published } }); }
+  if (USE_MOCK) throw new Error(`Publishing meeting minutes ${NOT_IN_FIXTURE_MODE}`);
   return sendJson<{ ok: boolean }>('POST', `/meetings/${id}/minutes`, { published });
 }
 
@@ -1461,28 +1396,15 @@ export async function listAdminDocuments(orgId: string, opts?: ContentListOpts):
   return getJson<DocumentRow[]>(`/organisations/${orgId}/documents${contentQuery(opts)}`);
 }
 export async function createDocument(orgId: string, input: DocumentInput): Promise<{ id: string }> {
-  if (USE_MOCK) {
-    await delay();
-    return mockCreate('documents', {
-      title: input.title, subtitle: input.category, status: input.restricted ? 'RESTRICTED' : 'OPEN',
-      at: new Date().toISOString(), createdAt: new Date().toISOString(),
-      meta: { kind: input.kind, storageKey: input.storageKey ?? null, sizeLabel: input.sizeLabel ?? null, version: input.version ?? 'v1', restricted: input.restricted, requiresAck: input.requiresAck, aiSummary: input.aiSummary ?? null, uploadedBy: 'You (mock)', ackCount: 0 },
-    });
-  }
+  if (USE_MOCK) throw new Error(`Creating a document ${NOT_IN_FIXTURE_MODE}`);
   return sendJson<{ id: string }>('POST', `/organisations/${orgId}/documents`, input);
 }
 export async function updateDocument(id: string, input: DocumentInput): Promise<{ ok: boolean }> {
-  if (USE_MOCK) {
-    await delay();
-    return mockPatch('documents', id, {
-      title: input.title, subtitle: input.category, status: input.restricted ? 'RESTRICTED' : 'OPEN',
-      meta: { kind: input.kind, storageKey: input.storageKey ?? null, sizeLabel: input.sizeLabel ?? null, version: input.version ?? 'v1', restricted: input.restricted, requiresAck: input.requiresAck, aiSummary: input.aiSummary ?? null } as Partial<DocumentMeta> as Record<string, unknown>,
-    });
-  }
+  if (USE_MOCK) throw new Error(`Updating a document ${NOT_IN_FIXTURE_MODE}`);
   return sendJson<{ ok: boolean }>('PATCH', `/documents/${id}`, input);
 }
 export async function deleteDocument(id: string): Promise<{ ok: boolean }> {
-  if (USE_MOCK) { await delay(); return mockRemove('documents', id); }
+  if (USE_MOCK) throw new Error(`Deleting a document ${NOT_IN_FIXTURE_MODE}`);
   return sendJson<{ ok: boolean }>('DELETE', `/documents/${id}`, undefined);
 }
 
@@ -1494,31 +1416,18 @@ export async function listAdminEvents(orgId: string, opts?: ContentListOpts): Pr
 export async function createEvent(orgId: string, input: EventInput): Promise<{ id: string }> {
   const bad = eventFeeError(input.paid, input.feeKobo);
   if (bad) throw new Error(bad);
-  if (USE_MOCK) {
-    await delay();
-    return mockCreate('events', {
-      title: input.title, subtitle: input.location ?? '', status: 'UPCOMING',
-      at: input.startsAt, createdAt: new Date().toISOString(),
-      meta: { description: input.description ?? null, startsAt: input.startsAt, endsAt: input.endsAt ?? null, location: input.location ?? null, paid: input.paid, feeKobo: input.feeKobo, capacity: input.capacity ?? null, organiser: input.organiser ?? null, coverUrl: input.coverUrl ?? null, registeredCount: 0, awaitingPayment: 0 },
-    });
-  }
+  if (USE_MOCK) throw new Error(`Creating an event ${NOT_IN_FIXTURE_MODE}`);
   return sendJson<{ id: string }>('POST', `/organisations/${orgId}/events`, input);
 }
 export async function updateEvent(id: string, input: EventInput): Promise<{ ok: boolean }> {
   const bad = eventFeeError(input.paid, input.feeKobo);
   if (bad) throw new Error(bad);
-  if (USE_MOCK) {
-    await delay();
-    return mockPatch('events', id, {
-      title: input.title, subtitle: input.location ?? '', at: input.startsAt,
-      meta: { description: input.description ?? null, startsAt: input.startsAt, endsAt: input.endsAt ?? null, location: input.location ?? null, paid: input.paid, feeKobo: input.feeKobo, capacity: input.capacity ?? null, organiser: input.organiser ?? null, coverUrl: input.coverUrl ?? null } as Partial<EventMeta> as Record<string, unknown>,
-    });
-  }
+  if (USE_MOCK) throw new Error(`Updating an event ${NOT_IN_FIXTURE_MODE}`);
   return sendJson<{ ok: boolean }>('PATCH', `/events/${id}`, input);
 }
 /** Refused (400) by the backend once paid registrations exist — cancel instead. */
 export async function deleteEvent(id: string): Promise<{ ok: boolean }> {
-  if (USE_MOCK) { await delay(); return mockRemove('events', id); }
+  if (USE_MOCK) throw new Error(`Deleting an event ${NOT_IN_FIXTURE_MODE}`);
   return sendJson<{ ok: boolean }>('DELETE', `/events/${id}`, undefined);
 }
 
@@ -1528,28 +1437,15 @@ export async function listAdminTasks(orgId: string, opts?: ContentListOpts): Pro
   return getJson<TaskRow[]>(`/organisations/${orgId}/tasks${contentQuery(opts)}`);
 }
 export async function createTask(orgId: string, input: TaskInput): Promise<{ id: string }> {
-  if (USE_MOCK) {
-    await delay();
-    return mockCreate('tasks', {
-      title: input.title, subtitle: '', status: input.status,
-      at: input.dueDate ?? null, createdAt: new Date().toISOString(),
-      meta: { description: input.description ?? null, priority: input.priority, dueDate: input.dueDate ?? null, assigneeId: input.assigneeId ?? null, assigneeName: null, committeeId: input.committeeId ?? null, meetingId: input.meetingId ?? null, checklist: input.checklist },
-    });
-  }
+  if (USE_MOCK) throw new Error(`Creating a task ${NOT_IN_FIXTURE_MODE}`);
   return sendJson<{ id: string }>('POST', `/organisations/${orgId}/tasks`, input);
 }
 export async function updateTask(id: string, input: TaskInput): Promise<{ ok: boolean }> {
-  if (USE_MOCK) {
-    await delay();
-    return mockPatch('tasks', id, {
-      title: input.title, status: input.status, at: input.dueDate ?? null,
-      meta: { description: input.description ?? null, priority: input.priority, dueDate: input.dueDate ?? null, assigneeId: input.assigneeId ?? null, committeeId: input.committeeId ?? null, meetingId: input.meetingId ?? null, checklist: input.checklist } as Partial<TaskMeta> as Record<string, unknown>,
-    });
-  }
+  if (USE_MOCK) throw new Error(`Updating a task ${NOT_IN_FIXTURE_MODE}`);
   return sendJson<{ ok: boolean }>('PATCH', `/tasks/${id}`, input);
 }
 export async function deleteTask(id: string): Promise<{ ok: boolean }> {
-  if (USE_MOCK) { await delay(); return mockRemove('tasks', id); }
+  if (USE_MOCK) throw new Error(`Deleting a task ${NOT_IN_FIXTURE_MODE}`);
   return sendJson<{ ok: boolean }>('DELETE', `/tasks/${id}`, undefined);
 }
 
@@ -1571,19 +1467,7 @@ export async function listAdminDuesRuns(orgId: string, opts?: ContentListOpts): 
  */
 export async function runDues(orgId: string, input: DuesRunInput, idempotencyKey: string): Promise<DuesRunResult> {
   if (!idempotencyKey) throw new Error('An Idempotency-Key is required to raise dues.');
-  if (USE_MOCK) {
-    await delay();
-    const prior = MOCK_DUES_KEYS.get(idempotencyKey);
-    if (prior) return { ...prior, alreadyRaised: true };
-    const res: DuesRunResult = { runId: mockId('run'), invoiced: 118, skipped: 4, totalKobo: 11_800_000_00, alreadyRaised: false };
-    MOCK_DUES_KEYS.set(idempotencyKey, res);
-    MOCK_CONTENT.duesRuns.unshift({
-      id: res.runId, title: input.title, subtitle: input.scope, status: 'RAISED',
-      at: new Date().toISOString(), createdAt: new Date().toISOString(),
-      meta: { invoiced: res.invoiced, skipped: res.skipped, totalKobo: res.totalKobo, categoryId: input.categoryId ?? null, chapterId: input.chapterId ?? null, paidCount: 0, outstandingKobo: res.totalKobo },
-    });
-    return res;
-  }
+  if (USE_MOCK) throw new Error(`Running a dues cycle ${NOT_IN_FIXTURE_MODE}`);
   return sendJson<DuesRunResult>('POST', `/organisations/${orgId}/dues/run`, input, { idempotencyKey });
 }
 
@@ -1595,6 +1479,6 @@ export async function runDues(orgId: string, input: DuesRunInput, idempotencyKey
 export async function createInvoice(input: InvoiceInput, idempotencyKey: string): Promise<{ id: string }> {
   if (!idempotencyKey) throw new Error('An Idempotency-Key is required to raise an invoice.');
   if (input.amountKobo <= 0) throw new Error('Invoice amount must be greater than ₦0.00.');
-  if (USE_MOCK) { await delay(); return { id: mockId('inv') }; }
+  if (USE_MOCK) throw new Error(`Raising an invoice ${NOT_IN_FIXTURE_MODE}`);
   return sendJson<{ id: string }>('POST', '/invoices', input, { idempotencyKey });
 }

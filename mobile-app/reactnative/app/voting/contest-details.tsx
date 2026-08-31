@@ -15,6 +15,7 @@ import PrimaryButton from '@/components/PrimaryButton';
 import { formatDate } from '@/features/voting/utils/voteFormatters';
 import { useContestDetails } from '@/features/voting/hooks/useContestDetails';
 import { useContestants } from '@/features/voting/hooks/useContestants';
+import { useMyRegistrationForContest } from '@/features/registration/hooks/useRegistration';
 import ContestHero from '@/features/voting/components/ContestHero';
 import SponsorBanner from '@/features/voting/components/SponsorBanner';
 import ContestantCard from '@/features/voting/components/ContestantCard';
@@ -29,6 +30,11 @@ export default function ContestDetailsScreen() {
   const { data: contest, isLoading, isError } = useContestDetails(contestId ?? '');
   const { data: contestants } = useContestants(contestId ?? '');
   const preview = (contestants ?? []).slice(0, 4);
+  // An applicant who already applied gets a way back into their application
+  // rather than a second apply button. Undefined while loading — the CTA stays
+  // on 'Apply' until we know, since offering 'Manage' for an application that
+  // does not exist is the worse of the two wrong answers.
+  const { data: myRegistration } = useMyRegistrationForContest({ contestId: contestId ?? '' });
 
   if (isLoading) {
     return (
@@ -153,10 +159,23 @@ export default function ContestDetailsScreen() {
 
           {/* CTA */}
           <View style={styles.ctaRow}>
-            <PrimaryButton
-              label="Register / Apply to Compete"
-              onPress={() => router.push({ pathname: '/registration', params: { contestId: contest.id, contestTitle: contest.title } } as never)}
-            />
+            {myRegistration ? (
+              <PrimaryButton
+                label={myRegistration.submitted ? 'Manage Your Application' : 'Continue Your Application'}
+                onPress={() =>
+                  router.push(
+                    myRegistration.submitted
+                      ? `/registration/${myRegistration.id}/status`
+                      : `/registration/${myRegistration.id}/wizard`,
+                  )
+                }
+              />
+            ) : (
+              <PrimaryButton
+                label="Register / Apply to Compete"
+                onPress={() => router.push({ pathname: '/registration', params: { contestId: contest.id, contestTitle: contest.title } } as never)}
+              />
+            )}
             <PrimaryButton
               label="View All Contestants"
               onPress={() => router.push(`/voting/contestants?contestId=${contest.id}`)}

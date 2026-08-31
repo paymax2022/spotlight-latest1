@@ -32,6 +32,8 @@ import (
 	"spotlight/backend/internal/finance/kyc"
 	"spotlight/backend/internal/finance/ledger"
 	"spotlight/backend/internal/finance/tiers"
+
+	"spotlight/backend/internal/testsupport"
 )
 
 type tierStatusBody struct {
@@ -80,6 +82,7 @@ func TestLiveDB_TierStatusReportsSpendAllowance(t *testing.T) {
 			`INSERT INTO auth.users (id,email) VALUES ($1,$2) ON CONFLICT DO NOTHING`, id, id+"@seed.test"); err != nil {
 			t.Fatalf("seed auth user: %v", err)
 		}
+		testsupport.CleanupUser(t, pool, id)
 		if _, err := pool.Exec(ctx,
 			`INSERT INTO user_profiles (id, email, kyc_tier) VALUES ($1,$2,$3)
 			 ON CONFLICT (id) DO UPDATE SET kyc_tier = EXCLUDED.kyc_tier`,

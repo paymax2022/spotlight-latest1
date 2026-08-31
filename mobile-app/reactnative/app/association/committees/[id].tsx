@@ -2,7 +2,7 @@ import React from 'react';
 import { View, Text, Image, ScrollView, Pressable, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
-import { MessageCircle, CalendarDays, ListTodo, FileText, Check, Clock, Crown, Pencil } from 'lucide-react-native';
+import { MessageCircle, CalendarDays, ListTodo, FileText, Check, Clock, Crown, Pencil, X, UserMinus } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
 import { Spacing } from '@/constants/spacing';
@@ -12,12 +12,64 @@ import ScreenHeader from '@/components/ScreenHeader';
 import StateView from '@/components/StateView';
 import PrimaryButton from '@/components/PrimaryButton';
 import { useCommittee, useRequestJoinCommittee } from '@/features/association/hooks/useCommunity';
+import { useAdminAccess } from '@/features/association/hooks/useAdminMembers';
+import { useQueryClient } from '@tanstack/react-query';
+import { decideCommitteeRequest, removeCommitteeMember } from '@/features/association/api/authoring.api';
+import { confirmAsync, alertAsync } from '@/lib/confirm';
 import { initials, formatCount } from '@/features/association/utils/associationFormatters';
 
 export default function CommitteeDetail() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const committee = useCommittee(id);
   const join = useRequestJoinCommittee();
+  const access = useAdminAccess();
+  const isAdmin = Boolean(access.data?.isAdmin);
+  const qc = useQueryClient();
+  const [busy, setBusy] = React.useState(false);
+
+  const refresh = () => qc.invalidateQueries({ queryKey: ['association', 'committee', id] });
+
+  const decide = async (membershipId: string, name: string, approve: boolean) => {
+    if (busy) return;
+    const ok = await confirmAsync({
+      title: approve ? `Approve ${name}?` : `Decline ${name}?`,
+      message: approve
+        ? 'They will join the committee.'
+        : 'They can ask to join again later.',
+      confirmLabel: approve ? 'Approve' : 'Decline',
+      destructive: !approve,
+    });
+    if (!ok) return;
+    setBusy(true);
+    try {
+      await decideCommitteeRequest(id as string, membershipId, approve);
+      refresh();
+    } catch {
+      await alertAsync({ title: "Couldn't save that", message: 'Please try again.' });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const remove = async (membershipId: string, name: string) => {
+    if (busy) return;
+    const ok = await confirmAsync({
+      title: `Remove ${name}?`,
+      message: 'They will be taken off this committee.',
+      confirmLabel: 'Remove',
+      destructive: true,
+    });
+    if (!ok) return;
+    setBusy(true);
+    try {
+      await removeCommitteeMember(id as string, membershipId);
+      refresh();
+    } catch {
+      await alertAsync({ title: "Couldn't remove them", message: 'Please try again.' });
+    } finally {
+      setBusy(false);
+    }
+  };
 
   if (committee.isLoading) {
     return (
@@ -106,8 +158,29 @@ export default function CommitteeDetail() {
                 <View style={styles.avatar}>
                   {m.photoUrl ? <Image source={{ uri: m.photoUrl }} style={styles.avatarImg} /> : <Text style={styles.avatarText}>{initials(displayName)}</Text>}
                 </View>
-                <Text style={styles.memberName}>{displayName}</Text>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.memberName}>{displayName}</Text>
+                  {/* PENDING means they asked and nobody has answered. Before
+                      this screen could answer, that row was a dead end. */}
+                  {m.status === 'PENDING' ? <Text style={styles.pendingTag}>Awaiting approval</Text> : null}
+                </View>
                 <Text style={styles.memberRole}>{m.role ?? 'Member'}</Text>
+                {isAdmin && m.membershipId ? (
+                  m.status === 'PENDING' ? (
+                    <View style={styles.adminActions}>
+                      <Pressable onPress={() => decide(m.membershipId as string, displayName, true)} disabled={busy} hitSlop={8} style={styles.iconBtn} accessibilityRole="button" accessibilityLabel={`Approve ${displayName}`}>
+                        <Check size={16} color={Colors.tertiaryContainer} strokeWidth={2.4} />
+                      </Pressable>
+                      <Pressable onPress={() => decide(m.membershipId as string, displayName, false)} disabled={busy} hitSlop={8} style={styles.iconBtn} accessibilityRole="button" accessibilityLabel={`Decline ${displayName}`}>
+                        <X size={16} color={Colors.error} strokeWidth={2.4} />
+                      </Pressable>
+                    </View>
+                  ) : (
+                    <Pressable onPress={() => remove(m.membershipId as string, displayName)} disabled={busy} hitSlop={8} style={styles.iconBtn} accessibilityRole="button" accessibilityLabel={`Remove ${displayName}`}>
+                      <UserMinus size={16} color={Colors.onSurfaceVariant} strokeWidth={2} />
+                    </Pressable>
+                  )
+                ) : null}
               </View>
             );
           })}
@@ -151,6 +224,12 @@ const styles = StyleSheet.create({
   chatText: { ...Typography.labelMd, color: Colors.primary, flex: 1 },
   sectionTitle: { ...Typography.titleMd, color: Colors.onSurface, marginTop: Spacing.xs },
   memberRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm, paddingVertical: Spacing.sm },
+  pendingTag: { ...Typography.labelSm, color: Colors.gold },
+  adminActions: { flexDirection: 'row', gap: 4 },
+  iconBtn: {
+    width: 30, height: 30, borderRadius: Radius.full, alignItems: 'center', justifyContent: 'center',
+    backgroundColor: Colors.surfaceContainerLowest, borderWidth: 1, borderColor: Colors.outlineVariant,
+  },
   memberDivider: { borderTopWidth: 1, borderTopColor: Colors.outlineVariant },
   avatar: { width: 36, height: 36, borderRadius: Radius.full, backgroundColor: Colors.surfaceContainerHigh, alignItems: 'center', justifyContent: 'center', overflow: 'hidden' },
   avatarImg: { width: '100%', height: '100%' },

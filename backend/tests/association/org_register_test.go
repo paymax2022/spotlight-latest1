@@ -7,6 +7,8 @@ import (
 	"github.com/google/uuid"
 
 	"spotlight/backend/internal/association"
+
+	"spotlight/backend/internal/testsupport"
 )
 
 // TestListAdminOrganisations_ReturnsRegisterColumnsAndFilters pins the widened
@@ -16,7 +18,7 @@ import (
 // purely because matches sat on another page).
 func TestListAdminOrganisations_ReturnsRegisterColumnsAndFilters(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	svc := newLiveAssociationService(pool)
 
@@ -25,6 +27,7 @@ func TestListAdminOrganisations_ReturnsRegisterColumnsAndFilters(t *testing.T) {
 		founder, founder+"@register.test"); err != nil {
 		t.Fatalf("seed auth.users: %v", err)
 	}
+	testsupport.CleanupUser(t, pool, founder)
 	name := "Register Test " + uuid.New().String()[:8]
 	res, err := svc.PublishOrganisation(ctx, founder, newTestDraft(name))
 	if err != nil {

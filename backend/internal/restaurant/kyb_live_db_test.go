@@ -15,6 +15,8 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"spotlight/backend/internal/testsupport"
 )
 
 func kybLivePool(t *testing.T) *pgxpool.Pool {
@@ -35,7 +37,7 @@ func kybLivePool(t *testing.T) *pgxpool.Pool {
 
 func TestLiveDB_KYBOnboarding(t *testing.T) {
 	pool := kybLivePool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	svc := NewService(pool, nil)
 
@@ -46,6 +48,7 @@ func TestLiveDB_KYBOnboarding(t *testing.T) {
 		if _, err := pool.Exec(ctx, `INSERT INTO auth.users (id,email) VALUES ($1,$2) ON CONFLICT DO NOTHING`, u, u+"@seed.test"); err != nil {
 			t.Fatalf("seed user: %v", err)
 		}
+		testsupport.CleanupUser(t, pool, u)
 	}
 	// Restaurant starts CLOSED (not yet approved).
 	restID := uuid.New().String()

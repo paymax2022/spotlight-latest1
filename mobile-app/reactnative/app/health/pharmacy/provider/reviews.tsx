@@ -95,7 +95,7 @@ const styles = StyleSheet.create({
     gap: Spacing.sm,
     marginBottom: Spacing.md,
   },
-  avgNumber: { ...Typography.displayLg, fontSize: 44, lineHeight: 50, color: Colors.onSurface },
+  avgNumber: { ...Typography.displayLg, fontSize: 44, letterSpacing: -0.88, lineHeight: 50, color: Colors.onSurface },
   avgCount: { ...Typography.bodySm, color: Colors.onSurfaceVariant },
   starRow: { flexDirection: 'row', gap: 2 },
   card: {

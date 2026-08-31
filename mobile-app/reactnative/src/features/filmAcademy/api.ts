@@ -129,14 +129,29 @@ export async function setLessonProgress(lessonId: string, completed: boolean): P
   await api.post('/api/academy/learning/progress', { lessonId, completed });
 }
 
-/** The learner's assignments, each with their own submission and grade if any. */
-export async function getAssignments(): Promise<FilmAcademyAssignments> {
-  const res = await api.get('/api/academy/assignments');
+/**
+ * One page of the learner's assignments, each with their submission and grade.
+ *
+ * Paginated because a cohort's brief list grows all term and the screen used to
+ * render every one of them at once. `page` is 1-based.
+ */
+export async function getAssignments(
+  page = 1,
+  pageSize = 10,
+): Promise<FilmAcademyAssignments> {
+  const res = await api.get('/api/academy/assignments', { params: { page, pageSize } });
   const body = unwrap<Partial<FilmAcademyAssignments>>(res);
+  const assignments = body?.assignments ?? [];
   return {
     locked: body?.locked ?? true,
     reason: body?.reason,
-    assignments: body?.assignments ?? [],
+    assignments,
+    page: body?.page ?? page,
+    pageSize: body?.pageSize ?? pageSize,
+    // An older server sends neither — fall back to "this page is everything"
+    // rather than showing a Load-more button that would fetch nothing.
+    total: body?.total ?? assignments.length,
+    hasMore: body?.hasMore ?? false,
   };
 }
 
@@ -147,4 +162,20 @@ export async function submitAssignment(input: {
   submissionText?: string;
 }): Promise<void> {
   await api.post('/api/academy/assignments/submit', input);
+}
+
+/**
+ * Submit or resubmit ONE PART of a multi-part assignment.
+ *
+ * A separate endpoint from submitAssignment, not an optional field on it: the
+ * two write different rows, and a partId that silently fell through to the
+ * whole-assignment path would let a learner's week 2 upload overwrite their
+ * week 1. A graded part is refused by the server, same as a graded assignment.
+ */
+export async function submitAssignmentPart(input: {
+  partId: string;
+  submissionLink?: string;
+  submissionText?: string;
+}): Promise<void> {
+  await api.post('/api/academy/assignments/parts/submit', input);
 }

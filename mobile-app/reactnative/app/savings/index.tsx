@@ -150,7 +150,7 @@ const styles = StyleSheet.create({
   scroll: { paddingHorizontal: Spacing.containerMargin, gap: Spacing.md, paddingTop: Spacing.sm },
   totalCard: { backgroundColor: Colors.primary, borderRadius: Radius.xl, padding: Spacing.lg, gap: Spacing.sm },
   totalLabel: { ...Typography.labelMd, color: Colors.inversePrimary },
-  totalAmount: { ...Typography.displayLg, color: Colors.onPrimary, fontSize: 36, lineHeight: 42 },
+  totalAmount: { ...Typography.displayLg, color: Colors.onPrimary, fontSize: 36, letterSpacing: -0.72, lineHeight: 42 },
   statsRow: { flexDirection: 'row', gap: Spacing.lg, marginTop: Spacing.sm },
   stat: { gap: 2 },
   statValue: { ...Typography.titleLg, color: Colors.onPrimary },

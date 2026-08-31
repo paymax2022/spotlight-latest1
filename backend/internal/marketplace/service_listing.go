@@ -45,6 +45,18 @@ func (s *Service) CreateListing(ctx context.Context, sellerID string, in CreateL
 	if !cat.IsActive {
 		return nil, fieldErr(CodeValidation, "category is not active", "category_id")
 	}
+	// The listing below is stamped DefaultMarketID while category_id is whatever the
+	// caller sent, so without this the two could disagree — and they did: 210 of 229
+	// local listings sit in market NG under a category from another market. Market is
+	// this module's tenancy boundary (categories and search are both scoped to one),
+	// so such a listing shows up in one half of a market's UI and not the other.
+	//
+	// The category is already loaded for the attrs check, so this costs no extra
+	// query. The composite FK added in 20270119000000 is the backstop; this exists so
+	// the caller gets a field error naming category_id instead of a raw FK violation.
+	if cat.MarketID != DefaultMarketID {
+		return nil, fieldErr(CodeValidation, "category belongs to a different market", "category_id")
+	}
 	if err := validateAttrs(cat.AttributeSchema, in.Attrs); err != nil {
 		return nil, err
 	}

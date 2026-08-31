@@ -40,6 +40,8 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"spotlight/backend/internal/crowdfunding/creator"
+
+	"spotlight/backend/internal/testsupport"
 )
 
 func liveDBPool(t *testing.T) *pgxpool.Pool {
@@ -57,11 +59,11 @@ func liveDBPool(t *testing.T) *pgxpool.Pool {
 	}
 
 	// The pool is closed via t.Cleanup, NOT `defer` in the caller. t.Cleanup runs
-	// LIFO and only AFTER the test function returns, so a `defer pool.Close()` in
+	// LIFO and only AFTER the test function returns, so a `t.Cleanup(pool.Close)` in
 	// the test would close the pool BEFORE the fixture cleanup registered below
 	// ever runs — every DELETE would fail against a closed pool. Registering the
 	// close here, first, guarantees it runs LAST. This is not hypothetical: the
-	// original version of this file used `defer pool.Close()` and silently leaked
+	// original version of this file used `t.Cleanup(pool.Close)` and silently leaked
 	// nine campaigns, twelve users and their contributions into the shared dev
 	// database before anyone noticed.
 	t.Cleanup(pool.Close)
@@ -89,6 +91,7 @@ func seedCampaign(t *testing.T, ctx context.Context, pool *pgxpool.Pool) (campai
 		ON CONFLICT (id) DO NOTHING`, creatorID, "cf-analytics-"+creatorID+"@test.local"); err != nil {
 		t.Fatalf("seed creator: %v", err)
 	}
+	testsupport.CleanupUser(t, pool, creatorID)
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO campaigns (id, creator_id, title, goal_kobo, status, deadline)
 		VALUES ($1, $2, 'Analytics fixture', 1000000, 'active', NOW() + INTERVAL '30 days')`,

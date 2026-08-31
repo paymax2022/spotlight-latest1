@@ -48,6 +48,10 @@ func liveConnectService(t *testing.T) (*mkt.Service, *pgxpool.Pool) {
 	}
 	// The connect-flow methods (messaging/offers/reviews) are pure DB — no ledger
 	// or redis path — but NewService requires a ledger; build a real one on the pool.
+	// See fixtures_test.go: registered first so it runs last, after the fixture
+	// teardown that needs the pool open. The `defer pool.Close()` this replaces
+	// fired before every t.Cleanup, so the teardown below silently no-opped.
+	t.Cleanup(pool.Close)
 	ledgerSvc := ledger.NewService(ledger.NewRepository(pool), nil)
 	return mkt.NewService(pool, ledgerSvc, nil), pool
 }
@@ -71,13 +75,15 @@ func seedActiveListing(t *testing.T, ctx context.Context, pool *pgxpool.Pool, se
 		500000, "Lagos"); err != nil {
 		t.Fatalf("seed listing: %v", err)
 	}
+	// Covers the listing too — deleteCategoryTree unwinds everything filed under
+	// the category, so the per-test teardown below is now belt-and-braces.
+	cleanupCategory(t, pool, catID)
 	return catID, listingID
 }
 
 func TestConnectFlow_LiveDB(t *testing.T) {
 	ctx := context.Background()
 	svc, pool := liveConnectService(t)
-	defer pool.Close()
 
 	// mkt_listings.seller_id (and thread/offer actor columns) are uuid — use bare UUIDs.
 	seller := uuid.NewString()

@@ -201,6 +201,28 @@ export interface FilmAcademySubmission {
   status: string | null;
 }
 
+/**
+ * One part of a multi-part assignment — a single week's deliverable.
+ *
+ * Parts are OPTIONAL. An assignment with none is submitted whole, exactly as
+ * before; `parts: []` is the normal, unchanged case rather than an empty state.
+ */
+export interface FilmAcademyAssignmentPart {
+  id: string;
+  assignment_id: string;
+  part_number: number;
+  /** Programme week this part is due in — the "week 1-4" timeline. */
+  week_number: number;
+  title: string;
+  description: string | null;
+  due_date: string | null;
+  /** null = progress only, not separately scored. */
+  max_score: number | null;
+  /** An optional part shows on the timeline but never blocks completion. */
+  is_required: boolean;
+  submission: FilmAcademySubmission | null;
+}
+
 export interface FilmAcademyAssignment {
   id: string;
   title: string;
@@ -210,11 +232,22 @@ export interface FilmAcademyAssignment {
   max_score: number | null;
   rubric: string | null;
   status: string | null;
+  /** Week the brief opens. null = unscheduled (every pre-timeline assignment). */
+  week_number: number | null;
   submission: FilmAcademySubmission | null;
+  parts: FilmAcademyAssignmentPart[];
+  /** Required parts only — the server computes these so the app and the console cannot disagree. */
+  partsTotal: number;
+  partsSubmitted: number;
+  partsComplete: boolean;
 }
 
 export interface FilmAcademyAssignments {
   locked: boolean;
   reason?: LearningLockReason;
   assignments: FilmAcademyAssignment[];
+  page: number;
+  pageSize: number;
+  total: number;
+  hasMore: boolean;
 }

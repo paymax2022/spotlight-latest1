@@ -13,6 +13,7 @@ const emptyDraft: OrgDraft = {
   website: '',
   foundedYear: '',
   logoUri: null,
+  logoPreviewUri: null,
   groupType: null,
   approvalRule: null,
   registrationFeeKobo: 0,

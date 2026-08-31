@@ -5873,6 +5873,11 @@ paths:
     get:
       operationId: fxGetBalances
       summary: Customer multi-currency balances
+      description: >-
+        Every wallet the customer holds. NGN is the platform's main wallet — the
+        same ledger-projected balance the wallet, checkout and other NGN modules
+        read — and is always present, even at zero. Other currencies are the FX
+        pots the customer has opened. Amounts are integer minor units.
       tags: [FX Orchestration]
       security: [{ bearerAuth: [] }]
       responses:
@@ -5894,7 +5899,12 @@ paths:
                         ledger: { type: integer, format: int64, description: posted minor units }
     post:
       operationId: fxAddWallet
-      summary: Open (provision) a zero-balance wallet for a currency (no ledger)
+      summary: Open (provision) a wallet for a currency (persisted, no ledger entry)
+      description: >-
+        Provisioning only — no value moves, so no Idempotency-Key is required and
+        re-opening an existing wallet is a no-op that returns its current balance
+        rather than resetting it. NGN needs no provisioning (it is the main
+        wallet). Currency must be one of NGN, USD, EUR, GBP, GHS, KES.
       tags: [FX Orchestration]
       security: [{ bearerAuth: [] }]
       requestBody:
@@ -5904,17 +5914,69 @@ paths:
             schema:
               type: object
               required: [currency]
-              properties: { currency: { type: string, description: ISO-4217 } }
+              properties:
+                currency:
+                  type: string
+                  description: ISO-4217
+                  enum: [NGN, USD, EUR, GBP, GHS, KES]
       responses:
         '201':
-          description: Provisioned wallet
+          description: Provisioned wallet, carrying its stored balance
           content:
             application/json:
               schema: { $ref: '#/components/schemas/FxWalletBalance' }
+        '400':
+          description: Missing currency, or a currency wallets are not offered in
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FxError' }
+  /api/v1/fx/webhooks/{provider}:
+    post:
+      operationId: fxProviderWebhook
+      summary: Provider async callback — status updates and inbound collections
+      description: >-
+        Signature-verified (HMAC-SHA256 over the raw body, `Webhook-Signature`;
+        Maplerad may send `X-Maplerad-Signature`). Verification FAILS CLOSED — an
+        unconfigured `*_WEBHOOK_SECRET` rejects every delivery rather than
+        accepting unsigned ones.
+
+
+        Transfer and conversion events update the record's status. A collection
+        event (`collection.successful` / `collection.success` /
+        `virtual_account.credit`) is an inbound DEPOSIT: it is matched to the
+        virtual account it was paid into and credits that account's owner, once,
+        deduped on the provider event id. An unmatched reference is acknowledged
+        and credits nothing — a deposit with no owner is never guessed at. A
+        payload currency that disagrees with the account's own currency is
+        refused.
+      tags: [FX Orchestration]
+      security: []
+      parameters:
+        - { name: provider, in: path, required: true, schema: { type: string, enum: [maplerad, eversend] } }
+        - { name: Webhook-Signature, in: header, required: false, schema: { type: string }, description: "HMAC-SHA256 of the raw body, hex-encoded." }
+        - { name: X-Maplerad-Signature, in: header, required: false, schema: { type: string }, description: Alternate header name used by Maplerad. }
+      requestBody:
+        required: true
+        description: Raw provider event payload.
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: true }
+      responses:
+        '200':
+          description: Received (acknowledged even when nothing matched, to stop provider retries)
+        '401':
+          description: Signature verification failed
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FxError' }
   /api/v1/fx/transactions:
     get:
       operationId: fxListTransactions
       summary: Unified ledger view (conversions, transfers, collections)
+      description: >-
+        Conversions, payouts and inbound collection DEPOSITS. Every row carries a
+        currency on both money legs; a collection is money arriving 1:1, so its
+        source and destination are equal.
       tags: [FX Orchestration]
       security: [{ bearerAuth: [] }]
       responses:

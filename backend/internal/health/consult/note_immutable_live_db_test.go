@@ -7,6 +7,8 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"spotlight/backend/internal/testsupport"
 )
 
 // TM-005 live-DB integration test: a persisted clinical note is IMMUTABLE — the
@@ -53,7 +55,9 @@ func TestClinicalNoteImmutable_LiveDB(t *testing.T) {
 		}
 	}
 	seed(`INSERT INTO auth.users (id, email) VALUES ($1,$2) ON CONFLICT DO NOTHING`, patientID, patientID+"@seed.test")
+	testsupport.CleanupUser(t, pool, patientID)
 	seed(`INSERT INTO auth.users (id, email) VALUES ($1,$2) ON CONFLICT DO NOTHING`, authorID, authorID+"@seed.test")
+	testsupport.CleanupUser(t, pool, authorID)
 	seed(`INSERT INTO public.health_providers (id, owner_user_id, domain, provider_type, display_name, status)
 	      VALUES ($1,$2,'PHARMACY','pharmacist','Seed Clinic','APPROVED')`, providerID, authorID)
 	seed(`INSERT INTO public.health_consults (id, provider_id, patient_id, state, recording_enabled)

@@ -12,6 +12,10 @@ import {
   type AdminContest, type ContestStage, type AdvanceStageResult,
 } from '@/services/contestsAdminService';
 import { triggerStageEviction, finalizeStageEvictions, getContestEvictions, saveContestantFromEviction, extendGracePeriod } from '@/services/competitionsService';
+import {
+  listVotePackageTemplates, applyTemplatesToContest, listVotePackages, formatNaira,
+  type VotePackageTemplate,
+} from '@/services/votePackagesService';
 import type { StageEvictionInfo } from '@/types/competitions';
 
 // Real contest create/edit — POST/PATCH /api/admin/contests[/[slug]], the
@@ -123,6 +127,18 @@ function CreateCompetitionContent() {
 
   // The real contest UUID (public.contests.id) — the eviction endpoints below
   // are Go routes keyed on this id, not the slug the rest of this page uses.
+  // Voting packages — the reusable templates offered, which of them are picked,
+  // and (in edit mode) the packages already attached to this contest. Mirrors the
+  // stages pattern: selections made before the contest exists are queued and
+  // flushed on save, because vote_packages.contest_id is NOT NULL.
+  const [pkgTemplates, setPkgTemplates] = useState<VotePackageTemplate[]>([]);
+  const [pkgSelected, setPkgSelected] = useState<string[]>([]);
+  const [pkgAttached, setPkgAttached] = useState<Awaited<ReturnType<typeof listVotePackages>>>([]);
+  const [pkgLoading, setPkgLoading] = useState(false);
+  const [pkgError, setPkgError] = useState<string | null>(null);
+  const [pkgNotice, setPkgNotice] = useState<string | null>(null);
+  const [pkgApplying, setPkgApplying] = useState(false);
+
   const [contestId, setContestId] = useState<string>('');
   const [evictingStage, setEvictingStage] = useState<number | null>(null);
   const [finalizingStage, setFinalizingStage] = useState<number | null>(null);
@@ -196,6 +212,45 @@ function CreateCompetitionContent() {
   }, [isEdit, editSlug]);
 
   useEffect(() => { void loadStages(); }, [loadStages]);
+
+  const loadPackages = useCallback(async () => {
+    setPkgLoading(true);
+    setPkgError(null);
+    try {
+      const [tpl, attached] = await Promise.all([
+        listVotePackageTemplates(true),
+        contestId ? listVotePackages(contestId) : Promise.resolve([]),
+      ]);
+      setPkgTemplates(tpl);
+      setPkgAttached(attached);
+    } catch (e) {
+      setPkgError(e instanceof Error ? e.message : 'Failed to load voting packages');
+    } finally {
+      setPkgLoading(false);
+    }
+  }, [contestId]);
+
+  useEffect(() => { void loadPackages(); }, [loadPackages]);
+
+  /** Attach the picked templates to a contest that already exists. */
+  const attachSelectedPackages = useCallback(async (targetContestId: string) => {
+    if (pkgSelected.length === 0) return;
+    setPkgApplying(true);
+    setPkgError(null);
+    try {
+      const res = await applyTemplatesToContest(targetContestId, pkgSelected);
+      const parts = [`Attached ${res.applied} package${res.applied === 1 ? '' : 's'}.`];
+      if (res.skipped > 0) parts.push(`${res.skipped} already on this contest.`);
+      if (res.missing.length > 0) parts.push(`${res.missing.length} template(s) no longer exist.`);
+      setPkgNotice(parts.join(' '));
+      setPkgSelected([]);
+      await loadPackages();
+    } catch (e) {
+      setPkgError(e instanceof Error ? e.message : 'Failed to attach voting packages');
+    } finally {
+      setPkgApplying(false);
+    }
+  }, [pkgSelected, loadPackages]);
 
   const loadEvictions = useCallback(async () => {
     if (!contestId) return;
@@ -373,6 +428,14 @@ function CreateCompetitionContent() {
         setDraftStages([]);
       }
 
+      // Attach the voting packages picked while creating. Done after the contest
+      // exists because vote_packages.contest_id is NOT NULL — there is nothing to
+      // attach them to until now. A failure here must not read as "contest not
+      // saved": the contest IS saved, so surface it on the packages panel.
+      if (saved.id && pkgSelected.length > 0) {
+        await attachSelectedPackages(saved.id);
+      }
+
       setRecentPage(1);
       await loadRecent();
       router.push(`/admin/competitions/create?id=${saved.slug}`);
@@ -382,7 +445,7 @@ function CreateCompetitionContent() {
     } finally {
       setSaving(false);
     }
-  }, [form, isEdit, editSlug, router, loadRecent, draftStages]);
+  }, [form, isEdit, editSlug, router, loadRecent, draftStages, pkgSelected, attachSelectedPackages]);
 
   const remove = useCallback(async () => {
     if (!isEdit) return;
@@ -553,6 +616,111 @@ function CreateCompetitionContent() {
             </Button>
           )}
         </div>
+      </Card>
+
+      <Card title="Voting packages" style={{ marginBottom: 16 }}>
+        <p style={{ margin: '0 0 12px', fontSize: 12, color: colors.muted }}>
+          {isEdit
+            ? 'Packages voters can buy on this contest. Attaching a template copies it onto the contest — later edits to the template do not change a contest that is already selling votes.'
+            : 'Pick the packages this contest sells. They are attached when you save, because a package has to belong to a contest that exists.'}
+          {' '}
+          <Link href="/admin/voting/packages" style={{ color: colors.primary }}>Manage templates</Link>
+        </p>
+
+        {pkgError && (
+          <div style={{ marginBottom: 10, color: colors.danger, fontSize: 12 }}>{pkgError}</div>
+        )}
+        {pkgNotice && (
+          <div style={{ marginBottom: 10, color: colors.success, fontSize: 12 }}>{pkgNotice}</div>
+        )}
+
+        {isEdit && pkgAttached.length > 0 && (
+          <div style={{ marginBottom: 14 }}>
+            <div style={{ fontSize: 12, color: colors.muted, marginBottom: 6 }}>
+              Currently on this contest ({pkgAttached.length})
+            </div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+              {pkgAttached.map((p) => (
+                <span key={p.id} style={{ border: `1px solid ${colors.border}`, borderRadius: 6, padding: '6px 10px', fontSize: 12 }}>
+                  <strong>{p.name}</strong>{' — '}
+                  {p.votes.toLocaleString('en-NG')}
+                  {p.bonusVotes > 0 ? ` +${p.bonusVotes.toLocaleString('en-NG')}` : ''} votes
+                  {' · '}{formatNaira(p.amount)}
+                  {!p.isActive && <span style={{ color: colors.muted }}> · inactive</span>}
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {pkgLoading ? (
+          <p style={{ margin: 0, fontSize: 12, color: colors.muted }}>Loading packages…</p>
+        ) : pkgTemplates.length === 0 ? (
+          <p style={{ margin: 0, fontSize: 12, color: colors.muted }}>
+            No package templates yet.{' '}
+            <Link href="/admin/voting/packages" style={{ color: colors.primary }}>Create one first</Link>
+            {' '}— then it can be attached to this and any other contest.
+          </p>
+        ) : (
+          <>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: 10 }}>
+              {pkgTemplates.map((t) => {
+                const already = pkgAttached.some((p) => p.templateId === t.id);
+                const checked = pkgSelected.includes(t.id);
+                return (
+                  <label
+                    key={t.id}
+                    style={{
+                      display: 'flex', gap: 10, alignItems: 'flex-start', padding: 10,
+                      border: `1px solid ${checked ? colors.primary : colors.border}`,
+                      borderRadius: 8, fontSize: 13,
+                      opacity: already ? 0.55 : 1,
+                      cursor: already ? 'not-allowed' : 'pointer',
+                    }}
+                  >
+                    <input
+                      type="checkbox"
+                      disabled={already}
+                      checked={checked}
+                      onChange={(e) =>
+                        setPkgSelected((prev) =>
+                          e.target.checked ? [...prev, t.id] : prev.filter((id) => id !== t.id),
+                        )
+                      }
+                    />
+                    <span>
+                      <strong>{t.name}</strong>
+                      {already && <span style={{ color: colors.muted, fontSize: 11 }}> · already attached</span>}
+                      <div style={{ color: colors.muted, fontSize: 12 }}>
+                        {t.votes.toLocaleString('en-NG')}
+                        {t.bonusVotes > 0 ? ` +${t.bonusVotes.toLocaleString('en-NG')} bonus` : ''} votes
+                        {' · '}{formatNaira(t.amount)}
+                      </div>
+                    </span>
+                  </label>
+                );
+              })}
+            </div>
+
+            {isEdit ? (
+              <Button
+                variant="primary"
+                type="button"
+                style={{ marginTop: 12 }}
+                disabled={pkgApplying || pkgSelected.length === 0 || !contestId}
+                onClick={() => void attachSelectedPackages(contestId)}
+              >
+                {pkgApplying ? 'Attaching…' : `Attach ${pkgSelected.length || ''} package${pkgSelected.length === 1 ? '' : 's'}`.trim()}
+              </Button>
+            ) : (
+              pkgSelected.length > 0 && (
+                <p style={{ margin: '12px 0 0', fontSize: 12, color: colors.muted }}>
+                  {pkgSelected.length} package{pkgSelected.length === 1 ? '' : 's'} will be attached when you save this contest.
+                </p>
+              )
+            )}
+          </>
+        )}
       </Card>
 
       <Card title="Stages" style={{ marginBottom: 16 }}>

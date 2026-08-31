@@ -166,7 +166,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  avatarBigText: { ...Typography.displayLg, fontSize: 36, color: Colors.onPrimary },
+  avatarBigText: { ...Typography.displayLg, fontSize: 36, letterSpacing: -0.72, color: Colors.onPrimary },
   selfTile: {
     position: 'absolute',
     right: Spacing.lg,

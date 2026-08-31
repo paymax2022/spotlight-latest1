@@ -15,6 +15,8 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"spotlight/backend/internal/testsupport"
 )
 
 func searchLivePool(t *testing.T) *pgxpool.Pool {
@@ -35,7 +37,7 @@ func searchLivePool(t *testing.T) *pgxpool.Pool {
 
 func TestLiveDB_SearchRestaurants(t *testing.T) {
 	pool := searchLivePool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	svc := NewService(pool, nil)
 
@@ -43,6 +45,7 @@ func TestLiveDB_SearchRestaurants(t *testing.T) {
 	if _, err := pool.Exec(ctx, `INSERT INTO auth.users (id,email) VALUES ($1,$2) ON CONFLICT DO NOTHING`, owner, owner+"@seed.test"); err != nil {
 		t.Fatalf("seed user: %v", err)
 	}
+	testsupport.CleanupUser(t, pool, owner)
 
 	// Unique name tokens so the text search can't collide with other rows in a shared DB.
 	tag := uuid.New().String()[:8]

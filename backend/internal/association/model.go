@@ -328,6 +328,10 @@ type MeetingSummary struct {
 	Location      *string `json:"location"`
 	State         string  `json:"state"`
 	AttendeeCount int     `json:"attendeeCount"`
+	// ApprovalStatus is APPROVED for the organisation's calendar. A member's own
+	// proposal appears in their list as PENDING or REJECTED so they can see what
+	// they submitted; nobody else sees it until it is approved.
+	ApprovalStatus string `json:"approvalStatus"`
 }
 
 // ── Tasks ─────────────────────────────────────────────────────────────────────
@@ -340,6 +344,10 @@ type TaskSummary struct {
 	DueDate      *string `json:"dueDate"`
 	AssigneeName string  `json:"assigneeName"`
 	Committee    *string `json:"committee"`
+	// Overdue is derived from due_date on read, not read from `status`. The
+	// OVERDUE status value exists in the schema but nothing writes it, so a late
+	// task still reads ASSIGNED.
+	Overdue bool `json:"overdue"`
 }
 
 // ── Documents ─────────────────────────────────────────────────────────────────
@@ -384,6 +392,11 @@ type EventSummary struct {
 	// Rsvp is what the list screen renders; it had no field at all, so a saved
 	// RSVP never showed on the events list.
 	Rsvp *string `json:"rsvp"`
+	// Invited is true when this member was explicitly invited, as opposed to
+	// finding the event in the list themselves. An invitation and an RSVP live on
+	// the same registration row, so being invited says nothing about whether they
+	// have responded.
+	Invited bool `json:"invited"`
 }
 
 // ── Admin ─────────────────────────────────────────────────────────────────────

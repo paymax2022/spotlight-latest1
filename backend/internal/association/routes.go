@@ -59,6 +59,9 @@ func RegisterRoutes(rg *gin.RouterGroup, h *Handler) {
 	// ── Meetings ────────────────────────────────────────────────
 	rg.GET("/meetings", h.ListMeetings)
 	rg.GET("/meetings/:id", h.GetMeeting)
+	// Any active member may propose a meeting; an admin's goes straight onto the
+	// calendar and everyone else's waits for a decision (see ProposeMeeting).
+	rg.POST("/meetings", h.ProposeMeeting)
 	rg.POST("/meetings/:id/rsvp", h.RsvpMeeting)
 	rg.POST("/meetings/:id/attendance", h.CheckInMeeting)
 
@@ -156,6 +159,20 @@ func RegisterRoutes(rg *gin.RouterGroup, h *Handler) {
 	rg.PATCH("/admin/meetings/:childId", h.UpdateMeeting)
 	rg.DELETE("/admin/meetings/:childId", h.DeleteMeeting)
 	rg.POST("/admin/meetings/:childId/minutes", h.PublishMinutes)
+	rg.GET("/admin/organisations/:id/meetings/pending", h.ListPendingMeetings)
+	rg.POST("/admin/meetings/:childId/decision", h.DecideMeeting)
+	rg.POST("/admin/events/:childId/invite", h.InviteToEvent)
+
+	// Committee membership: approve/decline requests, add and remove members,
+	// and set a member's position. All org-admin gated on the COMMITTEE's
+	// organisation, not the caller's.
+	rg.GET("/documents/:id/download-url", h.DocumentDownloadURL)
+	rg.POST("/admin/organisations/:id/documents/presign", h.PresignDocumentUpload)
+
+	rg.POST("/admin/committees/:childId/members", h.AddCommitteeMembers)
+	rg.POST("/admin/committees/:childId/requests", h.DecideCommitteeRequest)
+	rg.DELETE("/admin/committees/:childId/members/:membershipId", h.RemoveCommitteeMember)
+	rg.PATCH("/admin/committees/:childId/members/:membershipId", h.SetCommitteeMemberRole)
 
 	rg.POST("/admin/organisations/:id/documents", h.CreateDocument)
 	rg.PATCH("/admin/documents/:childId", h.UpdateDocument)
@@ -210,6 +227,12 @@ func RegisterRoutes(rg *gin.RouterGroup, h *Handler) {
 	rg.POST("/ai-notes/:id/approve", h.ApproveAiNote)
 	rg.POST("/ai-notes/:id/publish", h.PublishAiNote)
 	rg.POST("/ai-notes/:id/action-items/:itemId/convert", h.ConvertActionItem)
+
+	// ── Uploads (logo) ──────────────────────────────────────────
+	// Not scoped to an organisation: a logo is chosen while the org is still a
+	// draft on the founder's phone, so the key is namespaced by the caller's own
+	// user id instead. See presign.go.
+	rg.POST("/uploads/logo/presign", h.PresignLogoUpload)
 
 	// ── Join / publish (B, U) ───────────────────────────────────
 	rg.POST("", h.PublishOrganisation)

@@ -13,6 +13,8 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"spotlight/backend/internal/testsupport"
 )
 
 func modPool(t *testing.T) *pgxpool.Pool {
@@ -46,7 +48,7 @@ func seedDeliveredOrder(t *testing.T, ctx context.Context, pool *pgxpool.Pool, r
 
 func TestLiveDB_ReviewModeration(t *testing.T) {
 	pool := modPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	svc := NewService(pool, nil)
 
@@ -55,6 +57,7 @@ func TestLiveDB_ReviewModeration(t *testing.T) {
 	c2 := uuid.New().String()
 	for _, u := range []string{owner, c1, c2} {
 		_, _ = pool.Exec(ctx, `INSERT INTO auth.users (id,email) VALUES ($1,$2) ON CONFLICT DO NOTHING`, u, u+"@seed.test")
+		testsupport.CleanupUser(t, pool, u)
 	}
 	restID := uuid.New().String()
 	if _, err := pool.Exec(ctx, `INSERT INTO restaurants (id, owner_id, name, address, is_open, rating) VALUES ($1,$2,'Review Kitchen','1 St',TRUE,5.0)`, restID, owner); err != nil {
@@ -102,6 +105,7 @@ func TestLiveDB_ReviewModeration(t *testing.T) {
 	// the rider's OFFERS list.
 	rider := uuid.New().String()
 	_, _ = pool.Exec(ctx, `INSERT INTO auth.users (id,email) VALUES ($1,$2) ON CONFLICT DO NOTHING`, rider, rider+"@t")
+	testsupport.CleanupUser(t, pool, rider)
 	oid := uuid.New().String()
 	_, _ = pool.Exec(ctx, `INSERT INTO orders (id, customer_id, restaurant_id, subtotal_kobo, total_kobo, status, dispatch_status, idempotency_key, delivery_address) VALUES ($1,$2,$3,1000,1000,'ready','searching',$4,'12b Adeola St, Victoria Island, Lagos')`,
 		oid, c1, restID, "offer-"+oid)

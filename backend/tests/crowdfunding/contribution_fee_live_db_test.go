@@ -39,6 +39,8 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"spotlight/backend/internal/crowdfunding/creator"
+
+	"spotlight/backend/internal/testsupport"
 )
 
 // seedSettledContribution inserts a settlement + the contribution escrowed under
@@ -106,6 +108,7 @@ func seedContributor(t *testing.T, ctx context.Context, pool *pgxpool.Pool, trac
 		ON CONFLICT (id) DO NOTHING`, id, "cf-fee-"+id+"@test.local"); err != nil {
 		t.Fatalf("seed contributor: %v", err)
 	}
+	testsupport.CleanupUser(t, pool, id)
 	return id
 }
 

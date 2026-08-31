@@ -4,6 +4,7 @@ import type { RegistrationListFilter } from '@/src/features/registration/types';
 import { requireUser } from '@/src/lib/auth/server';
 import { getOrCreateUserProfile } from '@/src/server/user/profile';
 import { buildAccountPrefill } from '@/src/features/registration/account-prefill';
+import { RegistrationExistsError } from '@/src/server/registration-v2/registration-for-contest';
 
 export async function GET(request: Request) {
   try {
@@ -68,6 +69,20 @@ export async function POST(request: Request) {
 
     return successResponse({ success: true, draft }, 201);
   } catch (error) {
+    // A second application to the same contest is not a failure the applicant
+    // can act on by retrying — hand back the one they already have so the client
+    // can route them into it.
+    if (error instanceof RegistrationExistsError) {
+      return successResponse(
+        {
+          success: false,
+          code: error.code,
+          message: error.message,
+          registration: error.registration,
+        },
+        409,
+      );
+    }
     return handleApiError(error, 'Failed to create registration draft');
   }
 }

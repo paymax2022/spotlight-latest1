@@ -1,196 +1,221 @@
+// ── Protection — the application form ────────────────────────────────────────
+// Renders the product family's real MyCover schema through `DynamicForm`. This
+// screen contains NO product-specific field knowledge: a Bastion health
+// application (gender, an 11-digit NIN, a passport photo, a past date of birth,
+// an instalment plan) and an MCG gadget application (device make/model/serial,
+// a device value with a ₦50,000 floor, two image URLs) are the same code path.
+//
+// Submitting prices the application server-side and moves to review. The
+// premium is never computed here — for percentage-rated plans we can show an
+// indicative figure while the user types, clearly labelled as an estimate, but
+// the binding number always comes back from the insurer.
+
 import React, { useEffect, useMemo, useState } from 'react';
-import { View, Text, ScrollView, StyleSheet, Pressable } from 'react-native';
+import { StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
-import { BadgeCheck } from 'lucide-react-native';
-import { Colors } from '@/constants/colors';
-import { Typography } from '@/constants/typography';
-import { Spacing } from '@/constants/spacing';
-import { Radius } from '@/constants/radius';
+import { Info, ShieldCheck } from 'lucide-react-native';
 import ScreenHeader from '@/components/ScreenHeader';
-import StateView from '@/components/StateView';
-import PrimaryButton from '@/components/PrimaryButton';
-import TextInputField from '@/components/TextInputField';
-import SelectField from '@/components/SelectField';
-import { sanitizeMoneyInput } from '@/utils/money';
-import { useProduct, useKycProfile, useCreateQuote } from '@/features/insurance/hooks';
-import { UnderwriterBadge } from '@/features/insurance/components';
-import { InsuranceColors, TIER_RANK, TIER_LABEL } from '@/features/insurance/constants/insurance.constants';
-import type { FieldSchema } from '@/features/insurance/types';
+import { Colors } from '@/constants/colors';
+import { Radius } from '@/constants/radius';
+import { Spacing } from '@/constants/spacing';
+import { Typography } from '@/constants/typography';
+import { useAuthStore } from '@/store/authStore';
+import {
+  DetailSkeleton,
+  DynamicForm,
+  InsuranceErrorBanner,
+  InsuranceErrorState,
+  UnderwriterRow,
+} from '@/features/insurance/components/live';
+import { InsuranceColors } from '@/features/insurance/constants/insurance.constants';
+import { createDraft, getDraft, updateDraft } from '@/features/insurance/live/draft';
+import {
+  declaredValueKobo,
+  buildInputs,
+  planIdValue,
+  prefillFromProfile,
+} from '@/features/insurance/live/formEngine';
+import {
+  useCreateLiveQuote,
+  useLiveProduct,
+  useProductSchema,
+} from '@/features/insurance/live/hooks';
+import { indicativePremiumKobo, nairaFromKobo } from '@/features/insurance/live/money';
+import type { FormValues, InsuranceError } from '@/features/insurance/live/types';
 
-export default function QuoteForm() {
-  const { code } = useLocalSearchParams<{ code: string }>();
-  const product = useProduct(code ?? '');
-  const kyc = useKycProfile();
-  const createQuote = useCreateQuote();
+export default function ApplicationForm() {
+  const { code, draft: draftId } = useLocalSearchParams<{ code?: string; draft?: string }>();
+  const product = useLiveProduct(code ?? '');
+  const schema = useProductSchema(code ?? '');
+  const quote = useCreateLiveQuote();
+  const user = useAuthStore((s) => s.user);
 
-  const [values, setValues] = useState<Record<string, string>>({});
-  const [errors, setErrors] = useState<Record<string, string>>({});
+  const existing = getDraft(draftId);
+  const [draftKey, setDraftKey] = useState<string | null>(existing?.id ?? null);
+  const [values, setValues] = useState<FormValues>(existing?.values ?? {});
+  const [prefilled, setPrefilled] = useState(false);
 
-  // Prefill from KYC (PRD §6.1 — never re-collect what KYC holds).
+  // The schema may be embedded in the product payload or served separately;
+  // whichever arrives first is what we render.
+  const activeSchema = schema.data ?? product.data?.formSchema ?? null;
+
+  // Seed from the signed-in profile and inject the plan's `product_id`. The
+  // user never types a UUID — the plan they chose upstream supplies it.
   useEffect(() => {
-    if (product.data && kyc.data) {
-      const init: Record<string, string> = {};
-      for (const f of product.data.fieldsSchema) {
-        if (f.kycKey && kyc.data[f.kycKey] != null) init[f.key] = String(kyc.data[f.kycKey]);
-      }
-      setValues((prev) => ({ ...init, ...prev }));
+    if (prefilled || !activeSchema || !product.data) return;
+    const seeded = prefillFromProfile(
+      activeSchema.fields,
+      {
+        firstName: firstNameOf(user?.fullName),
+        lastName: lastNameOf(user?.fullName),
+        email: user?.email ?? '',
+        phone: user?.phone ?? '',
+      },
+      values,
+    );
+    const planId = planIdValue(product.data);
+    for (const f of activeSchema.fields) {
+      if (f.hidden && /product_?id/i.test(f.name) && planId) seeded[f.name] = planId;
     }
-  }, [product.data, kyc.data]);
+    setValues(seeded);
+    setPrefilled(true);
+  }, [activeSchema, product.data, user, prefilled, values]);
 
-  // KYC-gap gate (PRD §16 / §24 KYC_TIER_INSUFFICIENT).
-  const tierInsufficient = useMemo(() => {
-    if (!product.data || !kyc.data) return false;
-    return TIER_RANK[kyc.data.tier] < TIER_RANK[product.data.requiredKycTier];
-  }, [product.data, kyc.data]);
+  const declaredKobo = useMemo(
+    () => (activeSchema ? declaredValueKobo(activeSchema.fields, values) : 0),
+    [activeSchema, values],
+  );
 
-  if (product.isLoading || kyc.isLoading) {
+  const serverFieldErrors = (quote.error as unknown as InsuranceError | null)?.fieldErrors;
+
+  if (product.isLoading || schema.isLoading) {
     return (
       <SafeAreaView style={styles.safe} edges={['top']}>
-        <ScreenHeader title="Get a quote" />
-        <StateView kind="loading" message="Preparing your form…" />
+        <ScreenHeader title="Your application" />
+        <DetailSkeleton />
       </SafeAreaView>
     );
   }
+
   if (product.isError || !product.data) {
     return (
       <SafeAreaView style={styles.safe} edges={['top']}>
-        <ScreenHeader title="Get a quote" />
-        <StateView kind="error" title="Couldn't load product" actionLabel="Retry" onAction={() => product.refetch()} />
+        <ScreenHeader title="Your application" />
+        <InsuranceErrorState error={product.error} onRetry={() => product.refetch()} />
+      </SafeAreaView>
+    );
+  }
+
+  // A missing schema is not "no fields" — it means we do not know what the
+  // insurer requires, and submitting a blank application would be rejected.
+  if (schema.isError && !product.data.formSchema) {
+    return (
+      <SafeAreaView style={styles.safe} edges={['top']}>
+        <ScreenHeader title="Your application" subtitle={product.data.name} />
+        <InsuranceErrorState error={schema.error} onRetry={() => schema.refetch()} />
       </SafeAreaView>
     );
   }
 
   const p = product.data;
 
-  const setField = (key: string, val: string) => {
-    setValues((v) => ({ ...v, [key]: val }));
-    setErrors((e) => ({ ...e, [key]: '' }));
-  };
-
-  const validate = (): boolean => {
-    const next: Record<string, string> = {};
-    for (const f of p.fieldsSchema) {
-      const val = (values[f.key] ?? '').trim();
-      if (f.required && !val) next[f.key] = `${f.label} is required`;
-      else if (val && (f.type === 'number' || f.type === 'currency')) {
-        const n = Number(val);
-        if (Number.isNaN(n)) next[f.key] = 'Enter a valid number';
-        else if (f.min != null && n < f.min) next[f.key] = `Minimum is ${f.min.toLocaleString()}`;
-        else if (f.max != null && n > f.max) next[f.key] = `Maximum is ${f.max.toLocaleString()}`;
+  const submit = async (submittedValues: FormValues) => {
+    if (!activeSchema) return;
+    const inputs = buildInputs(activeSchema.fields, submittedValues);
+    try {
+      const priced = await quote.mutateAsync({ productCode: p.code, inputs });
+      // Create the draft only once, so the idempotency key survives a user who
+      // goes back, edits an answer and submits again.
+      const draft =
+        (draftKey && updateDraft(draftKey, { values: submittedValues, quote: priced })) ||
+        createDraft(p, submittedValues);
+      if (!draftKey) {
+        updateDraft(draft.id, { quote: priced });
+        setDraftKey(draft.id);
       }
+      router.push(`/insurance/quote/review?draft=${draft.id}`);
+    } catch {
+      // `quote.error` is rendered inline; DynamicForm attributes field errors
+      // back onto the inputs that caused them.
     }
-    setErrors(next);
-    return Object.keys(next).length === 0;
-  };
-
-  const onSubmit = async () => {
-    if (!validate()) return;
-    const quote = await createQuote.mutateAsync({ productCode: p.code, inputs: values });
-    router.push(`/insurance/quote/review?id=${quote.id}`);
   };
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
-      <ScreenHeader title="Get a quote" subtitle={p.displayName} />
+      <ScreenHeader title="Your application" subtitle={p.name} />
 
-      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled">
-        <UnderwriterBadge disclosure={p.disclosure} />
-
-        {tierInsufficient ? (
-          <View style={styles.gapCard}>
-            <Text style={styles.gapTitle}>Verification required</Text>
-            <Text style={styles.gapText}>
-              This product needs {TIER_LABEL[p.requiredKycTier]} verification. You're currently{' '}
-              {TIER_LABEL[kyc.data?.tier ?? 'TIER_0']}.
-            </Text>
-            <PrimaryButton
-              label="Upgrade verification"
-              onPress={() =>
-                router.push(`/insurance/kyc-gap?required=${p.requiredKycTier}&current=${kyc.data?.tier}&code=${encodeURIComponent(p.code)}`)
-              }
+      <DynamicForm
+        schema={activeSchema}
+        productCode={p.code}
+        values={values}
+        onChange={setValues}
+        onSubmit={submit}
+        submitting={quote.isPending}
+        submitLabel="Get my price"
+        serverFieldErrors={serverFieldErrors}
+        header={
+          <View style={styles.header}>
+            <UnderwriterRow
+              underwriter={p.underwriter}
+              logoUrl={p.underwriterLogoUrl}
+              aggregator={p.aggregator === 'mycover' ? 'MyCover.ai' : p.aggregator}
             />
-          </View>
-        ) : (
-          <>
-            {kyc.data ? (
-              <View style={styles.prefillNote}>
-                <BadgeCheck size={16} color={InsuranceColors.ok} />
-                <Text style={styles.prefillText}>Prefilled from your verified profile — edit if needed.</Text>
+            <View style={styles.privacy}>
+              <ShieldCheck size={15} color={InsuranceColors.ok} />
+              <Text style={styles.privacyText}>
+                These answers go to {p.underwriter || 'the insurer'} to issue your policy. We only
+                share what they ask for.
+              </Text>
+            </View>
+            {quote.isError ? (
+              <View style={styles.bannerWrap}>
+                <InsuranceErrorBanner error={quote.error} />
               </View>
             ) : null}
-
-            {p.fieldsSchema.map((f) => (
-              <Field key={f.key} field={f} value={values[f.key] ?? ''} error={errors[f.key]} onChange={(v) => setField(f.key, v)} />
-            ))}
-          </>
-        )}
-      </ScrollView>
-
-      {!tierInsufficient ? (
-        <View style={styles.footer}>
-          <PrimaryButton label="Get quote" onPress={onSubmit} loading={createQuote.isPending} />
-          {createQuote.isError ? <Text style={styles.err}>Couldn't get a quote. Please try again.</Text> : null}
-        </View>
-      ) : null}
+          </View>
+        }
+        footer={
+          p.isPercentage && declaredKobo > 0 ? (
+            <View style={styles.estimate}>
+              <Info size={16} color={InsuranceColors.warnText} />
+              <Text style={styles.estimateText}>
+                Roughly {nairaFromKobo(indicativePremiumKobo(declaredKobo, p.rateBps))} at this
+                declared value. The insurer confirms the exact premium on the next screen.
+              </Text>
+            </View>
+          ) : null
+        }
+      />
     </SafeAreaView>
   );
 }
 
-function Field({
-  field,
-  value,
-  error,
-  onChange,
-}: {
-  field: FieldSchema;
-  value: string;
-  error?: string;
-  onChange: (v: string) => void;
-}) {
-  if (field.type === 'select' && field.options) {
-    const labels = field.options.map((o) => o.label);
-    const selectedLabel = field.options.find((o) => o.value === value)?.label ?? '';
-    return (
-      <SelectField
-        label={field.label}
-        value={selectedLabel}
-        error={error}
-        placeholder={`Select ${field.label.toLowerCase()}`}
-        options={labels}
-        searchable={labels.length > 6}
-        onChange={(label) => {
-          const opt = field.options?.find((o) => o.label === label);
-          onChange(opt?.value ?? label);
-        }}
-      />
-    );
-  }
-  return (
-    <>
-      <TextInputField
-        label={field.label}
-        value={value}
-        error={error}
-        placeholder={field.placeholder}
-        onChangeText={(v) => onChange(field.type === 'currency' ? sanitizeMoneyInput(v) : v)}
-        keyboardType={field.type === 'currency' ? 'decimal-pad' : field.type === 'number' ? 'numeric' : 'default'}
-        maxLength={field.type === 'currency' ? 13 : undefined}
-      />
-      {field.helper ? <Text style={styles.helper}>{field.helper}</Text> : null}
-    </>
-  );
+/** The profile stores one `fullName`; the insurers want the halves separately. */
+function firstNameOf(fullName: string | undefined): string {
+  const parts = String(fullName ?? '').trim().split(/\s+/).filter(Boolean);
+  return parts[0] ?? '';
+}
+
+function lastNameOf(fullName: string | undefined): string {
+  const parts = String(fullName ?? '').trim().split(/\s+/).filter(Boolean);
+  return parts.length > 1 ? parts[parts.length - 1] : '';
 }
 
 const styles = StyleSheet.create({
   safe: { flex: 1 },
-  scroll: { paddingHorizontal: Spacing.containerMargin, paddingBottom: 24, gap: Spacing.sm },
-  prefillNote: { flexDirection: 'row', alignItems: 'center', gap: Spacing.xs, marginVertical: Spacing.xs },
-  prefillText: { ...Typography.labelSm, color: InsuranceColors.muted, flex: 1 },
-  helper: { ...Typography.labelSm, color: Colors.onSurfaceVariant, marginTop: -Spacing.sm, marginBottom: Spacing.md },
-  gapCard: { backgroundColor: InsuranceColors.surface, borderRadius: Radius.lg, borderWidth: 1, borderColor: InsuranceColors.border, padding: Spacing.lg, gap: Spacing.md, marginTop: Spacing.md },
-  gapTitle: { ...Typography.titleMd, color: Colors.onSurface },
-  gapText: { ...Typography.bodyMd, color: Colors.onSurfaceVariant },
-  footer: { padding: Spacing.containerMargin, borderTopWidth: 1, borderTopColor: Colors.outlineVariant, backgroundColor: Colors.background, gap: Spacing.xs },
-  err: { ...Typography.labelSm, color: Colors.error, textAlign: 'center' },
+  header: { gap: Spacing.sm, marginBottom: Spacing.md },
+  privacy: { flexDirection: 'row', alignItems: 'flex-start', gap: Spacing.sm },
+  privacyText: { ...Typography.labelSm, color: Colors.onSurfaceVariant, flex: 1, lineHeight: 18 },
+  bannerWrap: { marginTop: Spacing.xs },
+  estimate: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: Spacing.sm,
+    backgroundColor: Colors.iconBgGold,
+    borderRadius: Radius.md,
+    padding: Spacing.md,
+    marginTop: Spacing.md,
+  },
+  estimateText: { ...Typography.labelSm, color: InsuranceColors.text, flex: 1, lineHeight: 18 },
 });

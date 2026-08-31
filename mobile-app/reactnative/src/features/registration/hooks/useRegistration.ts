@@ -123,3 +123,19 @@ export function useVerifyRegistrationPayment(id: string) {
 export function useUploadFile() {
   return useMutation({ mutationFn: (file: PickedUpload) => reg.uploadFile(file) });
 }
+
+/**
+ * The signed-in user's live application for a contest, or null. Used by the
+ * contest screen to offer "Manage your application" instead of a second apply
+ * button — the gap that let one account accumulate five applications to the
+ * same contest.
+ */
+export function useMyRegistrationForContest(target: { contestId?: string; contestSlug?: string }) {
+  const key = target.contestId ?? target.contestSlug ?? '';
+  return useQuery({
+    queryKey: [KEY, 'for-contest', key],
+    queryFn: () => reg.getMyRegistrationForContest(target),
+    enabled: !!key,
+    staleTime: 15_000,
+  });
+}

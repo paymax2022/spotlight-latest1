@@ -1,9 +1,13 @@
 import { Stack } from 'expo-router';
 import { Colors } from '@/constants/colors';
+import { View } from 'react-native';
+import ModuleTabBar from '@/components/ModuleTabBar';
+import { VOTING_TABS } from '@/constants/moduleTabs';
 
 export default function VotingLayout() {
   return (
-    <Stack
+    <View style={{ flex: 1 }}>
+      <Stack
       screenOptions={{
         headerShown:       false,
         contentStyle:      { backgroundColor: Colors.background },
@@ -28,5 +32,7 @@ export default function VotingLayout() {
       <Stack.Screen name="rules"                 options={{ animation: 'slide_from_bottom' }} />
       <Stack.Screen name="support"               options={{ animation: 'slide_from_bottom' }} />
     </Stack>
+  <ModuleTabBar tabs={VOTING_TABS} />
+  </View>
   );
 }

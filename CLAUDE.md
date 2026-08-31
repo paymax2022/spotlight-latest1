@@ -80,7 +80,13 @@ API source of truth: `contracts/openapi.yaml`.
   (`frontend-web/src/middleware.ts`); Bearer token validated via service-role client in API
   route handlers (`frontend-web/src/lib/auth/request.ts`); Go backend uses
   `RequireAuthContext` + RBAC permission middleware.
-- **Storage:** Cloudflare R2 (`@aws-sdk/client-s3` presigned URLs). Bucket: `spotlight-open-mic`.
+- **Storage:** Cloudflare R2 (`@aws-sdk/client-s3` presigned URLs). Bucket:
+  `spotlight-openmic-songs` — set via `R2_BUCKET`, no default. `spotlight-open-mic`
+  was documented here for a long time and **does not exist** in the account; it was
+  also the `config.go` default, which made uploads presign a 200 and then fail at the
+  PUT with `NoSuchBucket`. Several modules still pass the old name literally
+  (marketplace `account.api.ts`, mobility, featured-placement fixtures,
+  registration uploads) — those are unverified and likely broken the same way.
 - **Email:** Resend API (`RESEND_API_KEY`). No queue — fire-and-forget; failures are silent.
 - **Payments:** Paystack. HMAC-SHA512 webhook verification. Live webhook handler:
   `frontend-web/app/api/webhooks/paystack/route.ts`.

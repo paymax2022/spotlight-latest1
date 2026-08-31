@@ -97,15 +97,15 @@ func RegisterHealthPharmacy(member *gin.RouterGroup, admin *gin.RouterGroup, poo
 	// The pharmacist's inbox — orders for the pharmacies the caller OWNS. Declared
 	// BEFORE /orders/:id so Gin routes the literal path rather than binding "orders"
 	// as an :id.
-	pg.GET("/orders", h.ListMine)                               // owner-scoped fulfilment queue
-	pg.GET("/earnings", h.Earnings)                             // owner-scoped money view
-	pg.GET("/orders/:id", h.Get)                                // object-level authZ
-	pg.POST("/orders/:id/confirm", h.Confirm)                   // HL-3 verified e-Rx gate
-	pg.POST("/orders/:id/dispense", h.Dispense)                 // pharmacist (HL-1/HL-3)
-	pg.POST("/orders/:id/dispatch", h.Dispatch)                 // transport last-mile rail
-	pg.POST("/orders/:id/complete", h.Complete)                 // release payment (HL-9)
-	pg.POST("/orders/:id/cancel", h.Cancel)                     // pre-dispense → refund (HL-9)
-	pg.POST("/orders/:id/reviews", h.SubmitReview)              // patient, order must be completed
+	pg.GET("/orders", h.ListMine)                  // owner-scoped fulfilment queue
+	pg.GET("/earnings", h.Earnings)                // owner-scoped money view
+	pg.GET("/orders/:id", h.Get)                   // object-level authZ
+	pg.POST("/orders/:id/confirm", h.Confirm)      // HL-3 verified e-Rx gate
+	pg.POST("/orders/:id/dispense", h.Dispense)    // pharmacist (HL-1/HL-3)
+	pg.POST("/orders/:id/dispatch", h.Dispatch)    // transport last-mile rail
+	pg.POST("/orders/:id/complete", h.Complete)    // release payment (HL-9)
+	pg.POST("/orders/:id/cancel", h.Cancel)        // pre-dispense → refund (HL-9)
+	pg.POST("/orders/:id/reviews", h.SubmitReview) // patient, order must be completed
 
 	// --- Admin routes (/api/health/pharmacy/admin, RBAC health.pharmacy.*) ---
 	ag := admin.Group("")

@@ -30,7 +30,7 @@ import (
 // control characters stripped and whitespace collapsed; an empty note stays NULL.
 func TestLiveDB_OrderSpecialInstructionsSanitizedAndPersisted(t *testing.T) {
 	pool := promoOrderPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	f := newPromoOrderFixture(t, ctx, pool, "Notes Kitchen", 400_000)
 
@@ -115,7 +115,7 @@ func TestLiveDB_OrderSpecialInstructionsSanitizedAndPersisted(t *testing.T) {
 // arrives — the sweeper could never fire for an API-placed order before this.
 func TestLiveDB_OrderScheduledForPersistedAndSweepable(t *testing.T) {
 	pool := promoOrderPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	f := newPromoOrderFixture(t, ctx, pool, "Scheduled Kitchen", 400_000)
 
@@ -180,7 +180,7 @@ func TestLiveDB_OrderScheduledForPersistedAndSweepable(t *testing.T) {
 // booked, silently deleting the feature.
 func TestLiveDB_ScheduledOrderSurvivesTheAcceptSlaReaper(t *testing.T) {
 	pool := promoOrderPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	f := newPromoOrderFixture(t, ctx, pool, "SLA Kitchen", 400_000)
 
@@ -230,7 +230,7 @@ func TestLiveDB_ScheduledOrderSurvivesTheAcceptSlaReaper(t *testing.T) {
 // escrow, so no money moves for an order that could never be cooked.
 func TestLiveDB_OrderScheduledSlotValidated(t *testing.T) {
 	pool := promoOrderPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	f := newPromoOrderFixture(t, ctx, pool, "Slot Validation Kitchen", 400_000)
 
@@ -271,7 +271,7 @@ func TestLiveDB_OrderScheduledSlotValidated(t *testing.T) {
 // hours, and the sweeper refunds if the kitchen is still closed when the slot arrives.
 func TestLiveDB_OrderScheduledWhileClosed(t *testing.T) {
 	pool := promoOrderPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	f := newPromoOrderFixture(t, ctx, pool, "Closed Now Kitchen", 400_000)
 

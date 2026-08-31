@@ -39,6 +39,8 @@ import (
 	"spotlight/backend/internal/finance/ledger"
 	"spotlight/backend/internal/finance/settlement"
 	"spotlight/backend/internal/finance/tiers"
+
+	"spotlight/backend/internal/testsupport"
 )
 
 // disputeTipFixture is a tipped order that has been DELIVERED (and therefore settled,
@@ -85,6 +87,7 @@ func newDisputeTipFixture(t *testing.T, ctx context.Context, pool *pgxpool.Pool,
 		if _, err := pool.Exec(ctx, `INSERT INTO auth.users (id,email) VALUES ($1,$2) ON CONFLICT DO NOTHING`, u, u+"@seed.test"); err != nil {
 			t.Fatalf("seed user: %v", err)
 		}
+		testsupport.CleanupUser(t, pool, u)
 	}
 	// PlaceOrder's escrow is tier-gated fail-closed (ADR-033), so the paying customer
 	// needs a KYC tier. Tier 3 is unlimited — these tests are about the dispute, not the cap.
@@ -158,7 +161,7 @@ func newDisputeTipFixture(t *testing.T, ctx context.Context, pool *pgxpool.Pool,
 // and passed to the customer, so the customer still ends up whole.
 func TestLiveDB_DisputeFullRefundCapsPlatformAtNonTipBasis(t *testing.T) {
 	pool := tipPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	led := ledger.NewService(ledger.NewRepository(pool), (*goredis.Client)(nil))
 
@@ -179,6 +182,7 @@ func TestLiveDB_DisputeFullRefundCapsPlatformAtNonTipBasis(t *testing.T) {
 	if _, err := pool.Exec(ctx, `INSERT INTO auth.users (id,email) VALUES ($1,$2) ON CONFLICT DO NOTHING`, admin, admin+"@seed.test"); err != nil {
 		t.Fatalf("seed admin: %v", err)
 	}
+	testsupport.CleanupUser(t, pool, admin)
 	got, err := f.svc.AdminResolveFoodDispute(ctx, f.disputeID, admin, FoodRefundFull, 0, "upheld — never delivered")
 	if err != nil {
 		t.Fatalf("resolve dispute: %v", err)
@@ -260,7 +264,7 @@ func TestLiveDB_DisputeFullRefundCapsPlatformAtNonTipBasis(t *testing.T) {
 // neither reach into the tip nor be used to refund it a slice at a time.
 func TestLiveDB_DisputePartialRefundInheritsTipCap(t *testing.T) {
 	pool := tipPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	led := ledger.NewService(ledger.NewRepository(pool), (*goredis.Client)(nil))
 
@@ -271,6 +275,7 @@ func TestLiveDB_DisputePartialRefundInheritsTipCap(t *testing.T) {
 	if _, err := pool.Exec(ctx, `INSERT INTO auth.users (id,email) VALUES ($1,$2) ON CONFLICT DO NOTHING`, admin, admin+"@seed.test"); err != nil {
 		t.Fatalf("seed admin: %v", err)
 	}
+	testsupport.CleanupUser(t, pool, admin)
 
 	// --- A partial ABOVE the non-tip basis is rejected, and moves nothing. ---
 	custBefore, _ := led.GetBalance(ctx, f.customer)
@@ -325,7 +330,7 @@ func TestLiveDB_DisputePartialRefundInheritsTipCap(t *testing.T) {
 // customer is refunded the non-tip basis only.
 func TestLiveDB_DisputeNoClawbackWhenRiderNeverPaidTip(t *testing.T) {
 	pool := tipPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	led := ledger.NewService(ledger.NewRepository(pool), (*goredis.Client)(nil))
 	svc := NewService(pool, settlement.NewService(pool, led)).WithLedger(led).WithTiers(tiers.NewService(pool))
@@ -337,6 +342,7 @@ func TestLiveDB_DisputeNoClawbackWhenRiderNeverPaidTip(t *testing.T) {
 		if _, err := pool.Exec(ctx, `INSERT INTO auth.users (id,email) VALUES ($1,$2) ON CONFLICT DO NOTHING`, u, u+"@seed.test"); err != nil {
 			t.Fatalf("seed user: %v", err)
 		}
+		testsupport.CleanupUser(t, pool, u)
 	}
 	// PlaceOrder's escrow is tier-gated fail-closed (ADR-033), so the paying customer
 	// needs a KYC tier. Tier 3 is unlimited — these tests are about the dispute, not the cap.
@@ -398,6 +404,7 @@ func TestLiveDB_DisputeNoClawbackWhenRiderNeverPaidTip(t *testing.T) {
 	if _, err := pool.Exec(ctx, `INSERT INTO auth.users (id,email) VALUES ($1,$2) ON CONFLICT DO NOTHING`, admin, admin+"@seed.test"); err != nil {
 		t.Fatalf("seed admin: %v", err)
 	}
+	testsupport.CleanupUser(t, pool, admin)
 	riderBefore, _ := led.GetBalance(ctx, rider)
 
 	if _, err := svc.AdminResolveFoodDispute(ctx, d.ID, admin, FoodRefundFull, 0, "upheld"); err != nil {
@@ -427,7 +434,7 @@ func TestLiveDB_DisputeNoClawbackWhenRiderNeverPaidTip(t *testing.T) {
 // back at most once per order.
 func TestLiveDB_DisputeTipClawedBackOnlyOncePerOrder(t *testing.T) {
 	pool := tipPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	led := ledger.NewService(ledger.NewRepository(pool), (*goredis.Client)(nil))
 
@@ -438,6 +445,7 @@ func TestLiveDB_DisputeTipClawedBackOnlyOncePerOrder(t *testing.T) {
 	if _, err := pool.Exec(ctx, `INSERT INTO auth.users (id,email) VALUES ($1,$2) ON CONFLICT DO NOTHING`, admin, admin+"@seed.test"); err != nil {
 		t.Fatalf("seed admin: %v", err)
 	}
+	testsupport.CleanupUser(t, pool, admin)
 	if _, err := f.svc.AdminResolveFoodDispute(ctx, f.disputeID, admin, FoodRefundFull, 0, "upheld"); err != nil {
 		t.Fatalf("resolve first dispute: %v", err)
 	}
@@ -495,7 +503,7 @@ func TestLiveDB_DisputeTipClawedBackOnlyOncePerOrder(t *testing.T) {
 // upheld refund_full credited the customer the whole basis again, N times for N disputes.
 func TestLiveDB_DisputeRefundBudgetIsCumulativePerOrder(t *testing.T) {
 	pool := tipPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	led := ledger.NewService(ledger.NewRepository(pool), (*goredis.Client)(nil))
 
@@ -506,6 +514,7 @@ func TestLiveDB_DisputeRefundBudgetIsCumulativePerOrder(t *testing.T) {
 	if _, err := pool.Exec(ctx, `INSERT INTO auth.users (id,email) VALUES ($1,$2) ON CONFLICT DO NOTHING`, admin, admin+"@seed.test"); err != nil {
 		t.Fatalf("seed admin: %v", err)
 	}
+	testsupport.CleanupUser(t, pool, admin)
 	custBefore, _ := led.GetBalance(ctx, f.customer)
 	revBefore := platformRevenueBalance(t, ctx, led)
 
@@ -590,7 +599,7 @@ func TestLiveDB_DisputeRefundBudgetIsCumulativePerOrder(t *testing.T) {
 // advisory lock the service does, which is what makes the read-modify-write serial.
 func TestLiveDB_DisputeRefundCapHoldsUnderConcurrency(t *testing.T) {
 	pool := tipPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	led := ledger.NewService(ledger.NewRepository(pool), (*goredis.Client)(nil))
 
@@ -599,6 +608,7 @@ func TestLiveDB_DisputeRefundCapHoldsUnderConcurrency(t *testing.T) {
 	if _, err := pool.Exec(ctx, `INSERT INTO auth.users (id,email) VALUES ($1,$2) ON CONFLICT DO NOTHING`, admin, admin+"@seed.test"); err != nil {
 		t.Fatalf("seed admin: %v", err)
 	}
+	testsupport.CleanupUser(t, pool, admin)
 
 	// Each insert is 60% of the cap, so the two together must not both survive.
 	//
@@ -693,7 +703,7 @@ func TestLiveDB_DisputeRefundCapHoldsUnderConcurrency(t *testing.T) {
 // NEXT delivery settlement, crediting the customer at that point.
 func TestLiveDB_DisputeTipClawbackDeferredToNextSettlement(t *testing.T) {
 	pool := tipPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	led := ledger.NewService(ledger.NewRepository(pool), (*goredis.Client)(nil))
 
@@ -719,6 +729,7 @@ func TestLiveDB_DisputeTipClawbackDeferredToNextSettlement(t *testing.T) {
 	if _, err := pool.Exec(ctx, `INSERT INTO auth.users (id,email) VALUES ($1,$2) ON CONFLICT DO NOTHING`, admin, admin+"@seed.test"); err != nil {
 		t.Fatalf("seed admin: %v", err)
 	}
+	testsupport.CleanupUser(t, pool, admin)
 	custBefore, _ := led.GetBalance(ctx, f.customer)
 	revBefore := platformRevenueBalance(t, ctx, led)
 
@@ -772,6 +783,7 @@ func TestLiveDB_DisputeTipClawbackDeferredToNextSettlement(t *testing.T) {
 	if _, err := pool.Exec(ctx, `INSERT INTO auth.users (id,email) VALUES ($1,$2) ON CONFLICT DO NOTHING`, nextCustomer, nextCustomer+"@seed.test"); err != nil {
 		t.Fatalf("seed user: %v", err)
 	}
+	testsupport.CleanupUser(t, pool, nextCustomer)
 	seedKYCTier(t, ctx, pool, nextCustomer, 3) // tier-gated escrow (ADR-033)
 	if err := led.Credit(ctx, nextCustomer, "seed-fund", "nextfund-"+nextCustomer, revAcc.ID, 5_000_000); err != nil {
 		t.Fatalf("fund next customer: %v", err)

@@ -256,3 +256,141 @@ func (h *Handler) ListAdminDuesRuns() gin.HandlerFunc {
 		return h.svc.ListAdminDuesRuns(c.Request.Context(), a, o, l, off)
 	})
 }
+
+// ── Member-proposed meetings ─────────────────────────────────────────────────
+
+// ProposeMeeting — POST /associations/meetings.
+// Any active member may call it; an admin's proposal is approved on insert,
+// everyone else's starts pending. 201 with the resulting approvalStatus so the
+// client can say which of the two happened.
+func (h *Handler) ProposeMeeting(c *gin.Context) {
+	var r MeetingRequest
+	if err := c.ShouldBindJSON(&r); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	id, approval, err := h.svc.ProposeMeeting(c.Request.Context(), c.GetString("user_id"), r)
+	if err != nil {
+		c.JSON(statusFor(err), gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusCreated, gin.H{"id": id, "approvalStatus": approval})
+}
+
+// DecideMeeting — POST /associations/admin/meetings/:childId/decision.
+func (h *Handler) DecideMeeting(c *gin.Context) {
+	var d MeetingApprovalDecision
+	if err := c.ShouldBindJSON(&d); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	status, err := h.svc.DecideMeeting(c.Request.Context(), c.GetString("user_id"), c.Param("childId"), d)
+	if err != nil {
+		c.JSON(statusFor(err), gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"approvalStatus": status})
+}
+
+// ListPendingMeetings — GET /associations/admin/organisations/:id/meetings/pending.
+func (h *Handler) ListPendingMeetings(c *gin.Context) {
+	items, err := h.svc.GetPendingMeetings(c.Request.Context(), c.GetString("user_id"), c.Param("id"))
+	if err != nil {
+		c.JSON(statusFor(err), gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": items})
+}
+
+// InviteToEventRequest is the body for POST /admin/events/:childId/invite.
+type InviteToEventRequest struct {
+	// MembershipIDs in the event's own organisation. Ids from elsewhere are
+	// dropped rather than erroring, so one stale id cannot fail the whole invite.
+	MembershipIDs []string `json:"membershipIds" binding:"required"`
+}
+
+// InviteToEvent — POST /associations/admin/events/:childId/invite.
+func (h *Handler) InviteToEvent(c *gin.Context) {
+	var r InviteToEventRequest
+	if err := c.ShouldBindJSON(&r); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	n, err := h.svc.InviteToEvent(c.Request.Context(), c.GetString("user_id"), c.Param("childId"), r.MembershipIDs)
+	if err != nil {
+		c.JSON(statusFor(err), gin.H{"error": err.Error()})
+		return
+	}
+	// `invited` can be lower than what was requested: ids outside the event's
+	// organisation are dropped. Reporting the real number lets the client say so.
+	c.JSON(http.StatusOK, gin.H{"invited": n, "requested": len(r.MembershipIDs)})
+}
+
+// ── Committee membership management ──────────────────────────────────────────
+
+type addCommitteeMembersBody struct {
+	MembershipIDs []string `json:"membershipIds" binding:"required"`
+}
+
+// AddCommitteeMembers — POST /associations/admin/committees/:childId/members.
+func (h *Handler) AddCommitteeMembers(c *gin.Context) {
+	var b addCommitteeMembersBody
+	if err := c.ShouldBindJSON(&b); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	n, err := h.svc.AddCommitteeMembers(c.Request.Context(), c.GetString("user_id"), c.Param("childId"), b.MembershipIDs)
+	if err != nil {
+		c.JSON(statusFor(err), gin.H{"error": err.Error()})
+		return
+	}
+	// `added` can be lower than requested: ids outside the committee's
+	// organisation are dropped rather than failing the batch.
+	c.JSON(http.StatusOK, gin.H{"added": n, "requested": len(b.MembershipIDs)})
+}
+
+type committeeDecisionBody struct {
+	MembershipID string `json:"membershipId" binding:"required"`
+	Approve      bool   `json:"approve"`
+}
+
+// DecideCommitteeRequest — POST /associations/admin/committees/:childId/requests.
+func (h *Handler) DecideCommitteeRequest(c *gin.Context) {
+	var b committeeDecisionBody
+	if err := c.ShouldBindJSON(&b); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if err := h.svc.DecideCommitteeRequest(c.Request.Context(), c.GetString("user_id"), c.Param("childId"), b.MembershipID, b.Approve); err != nil {
+		c.JSON(statusFor(err), gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"ok": true})
+}
+
+// RemoveCommitteeMember — DELETE /associations/admin/committees/:childId/members/:membershipId.
+func (h *Handler) RemoveCommitteeMember(c *gin.Context) {
+	if err := h.svc.RemoveCommitteeMember(c.Request.Context(), c.GetString("user_id"), c.Param("childId"), c.Param("membershipId")); err != nil {
+		c.JSON(statusFor(err), gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"ok": true})
+}
+
+type committeeRoleBody struct {
+	Role string `json:"role" binding:"required"`
+}
+
+// SetCommitteeMemberRole — PATCH /associations/admin/committees/:childId/members/:membershipId.
+func (h *Handler) SetCommitteeMemberRole(c *gin.Context) {
+	var b committeeRoleBody
+	if err := c.ShouldBindJSON(&b); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if err := h.svc.SetCommitteeMemberRole(c.Request.Context(), c.GetString("user_id"), c.Param("childId"), c.Param("membershipId"), b.Role); err != nil {
+		c.JSON(statusFor(err), gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"ok": true})
+}

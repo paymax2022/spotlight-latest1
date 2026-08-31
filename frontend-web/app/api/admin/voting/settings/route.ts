@@ -43,6 +43,17 @@ async function syncContestVotingState(
   const parsed = Number(body.pricePerVoteNgn);
   const price = paidVotingEnabled && Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
 
+  // Free allowance has to be written to contests.max_votes_per_user, because the
+  // connect mirror derives connect_contests.free_votes_per_user from THAT column
+  // (GREATEST(COALESCE(NEW.max_votes_per_user,0),0)) and the voting paths gate on
+  // the mirrored value. Writing the allowance only to voting_settings meant every
+  // save re-fired the mirror, which read an untouched max_votes_per_user and reset
+  // the allowance to 0 — so saving any voting setting silently made a
+  // free-voting contest unvotable. Verified: a contest on 1 free vote dropped to 0.
+  const freeEnabled = Boolean(body.freeVotingEnabled ?? true);
+  const freeParsed = Number(body.freeVotesPerDay);
+  const freeVotes = freeEnabled && Number.isFinite(freeParsed) && freeParsed > 0 ? Math.trunc(freeParsed) : 0;
+
   const { error } = await supabase
     .from('contests')
     .update({
@@ -50,6 +61,7 @@ async function syncContestVotingState(
       voting_type: (body.votingType as string) ?? (price > 0 ? 'paid' : 'free'),
       vote_price_ngn: price,
       vote_price: price,
+      max_votes_per_user: freeVotes,
     })
     .eq('id', body.contestId as string);
 
