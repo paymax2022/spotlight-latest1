@@ -3,15 +3,16 @@ import { View, Text, ScrollView, Pressable, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { useQuery } from '@tanstack/react-query';
-import { Check } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
 import { Spacing } from '@/constants/spacing';
 import { Radius } from '@/constants/radius';
 import ScreenHeader from '@/components/ScreenHeader';
 import TextInputField from '@/components/TextInputField';
+import DatePickerField from '@/components/DatePickerField';
 import PrimaryButton from '@/components/PrimaryButton';
 import StateView from '@/components/StateView';
+import { OptionSelect, type Option } from '@/features/association/components/AdminFormControls';
 import { useAdminAccess } from '@/features/association/hooks/useAdminMembers';
 import { createTask, listOrgMembers } from '@/features/association/api/authoring.api';
 import { alertAsync } from '@/lib/confirm';
@@ -38,24 +39,30 @@ export default function NewTaskScreen() {
   const [priority, setPriority] = useState<TaskPriority>('MEDIUM');
   const [due, setDue] = useState('');
   const [assigneeId, setAssigneeId] = useState<string | null>(null);
-  const [search, setSearch] = useState('');
   const [touched, setTouched] = useState(false);
   const [saving, setSaving] = useState(false);
 
   // The assignee list is MEMBERSHIPS in this organisation — the id the task
   // assignee field expects. A foreign membership is refused 403 server-side.
+  // Fetched once (no server-side search param): OptionSelect below filters
+  // this list client-side, which is instant rather than a network round trip
+  // per keystroke, and an association's membership is small enough that
+  // fetching it all up front costs nothing noticeable.
   const members = useQuery({
-    queryKey: ['association', 'orgMembers', orgId, search],
-    queryFn: () => listOrgMembers(orgId as string, search || undefined),
+    queryKey: ['association', 'orgMembers', orgId],
+    queryFn: () => listOrgMembers(orgId as string),
     enabled: Boolean(orgId),
     staleTime: 30_000,
   });
 
   const titleError = title.trim().length < 3 ? 'Give the task a title' : undefined;
-  const dueError = due.trim() && !dueToIso(due) ? 'Use YYYY-MM-DD' : undefined;
-  const valid = !titleError && !dueError;
+  const valid = !titleError;
 
   const list = useMemo(() => members.data ?? [], [members.data]);
+  const assigneeOptions = useMemo<Option<string>[]>(
+    () => list.map((m) => ({ value: m.id, label: `${m.fullName} · ${m.memberId}${m.chapterName ? ` · ${m.chapterName}` : ''}` })),
+    [list],
+  );
 
   const submit = async () => {
     setTouched(true);
@@ -123,32 +130,24 @@ export default function NewTaskScreen() {
           })}
         </View>
 
-        <TextInputField label="Due date (optional)" placeholder="2026-09-30" value={due} onChangeText={setDue} keyboardType="numbers-and-punctuation" error={touched ? dueError : undefined} />
+        <DatePickerField
+          label="Due date (optional)"
+          value={due || undefined}
+          onChange={setDue}
+          minYear={new Date().getFullYear()}
+          maxYear={new Date().getFullYear() + 5}
+        />
 
-        <Text style={styles.label}>Assign to</Text>
-        <TextInputField placeholder="Search members" value={search} onChangeText={setSearch} autoCapitalize="none" />
-        <Pressable onPress={() => setAssigneeId(null)} style={[styles.member, assigneeId === null && styles.memberActive]} accessibilityRole="radio" accessibilityState={{ selected: assigneeId === null }}>
-          <Text style={[styles.memberName, assigneeId === null && styles.memberNameActive]}>Leave unassigned</Text>
-          {assigneeId === null ? <Check size={16} color={Colors.primary} strokeWidth={2.4} /> : null}
-        </Pressable>
-        {members.isLoading ? (
-          <Text style={styles.help}>Loading members…</Text>
-        ) : list.length === 0 ? (
-          <Text style={styles.help}>No members match that search.</Text>
-        ) : (
-          list.slice(0, 25).map((m) => {
-            const active = assigneeId === m.id;
-            return (
-              <Pressable key={m.id} onPress={() => setAssigneeId(m.id)} style={[styles.member, active && styles.memberActive]} accessibilityRole="radio" accessibilityState={{ selected: active }}>
-                <View style={{ flex: 1 }}>
-                  <Text style={[styles.memberName, active && styles.memberNameActive]} numberOfLines={1}>{m.fullName}</Text>
-                  <Text style={styles.memberMeta} numberOfLines={1}>{m.memberId}{m.chapterName ? ` · ${m.chapterName}` : ''}</Text>
-                </View>
-                {active ? <Check size={16} color={Colors.primary} strokeWidth={2.4} /> : null}
-              </Pressable>
-            );
-          })
-        )}
+        <OptionSelect
+          label="Assign to"
+          placeholder={members.isLoading ? 'Loading members…' : 'Search members'}
+          options={assigneeOptions}
+          value={assigneeId}
+          onChange={setAssigneeId}
+          disabled={members.isLoading}
+          allowClear
+          clearLabel="Leave unassigned"
+        />
       </ScrollView>
 
       <View style={styles.footer}>
@@ -162,7 +161,6 @@ const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: Colors.background },
   scroll: { paddingHorizontal: Spacing.containerMargin, paddingBottom: 120, gap: Spacing.sm, paddingTop: Spacing.sm },
   label: { ...Typography.titleMd, color: Colors.onSurface, marginTop: Spacing.xs },
-  help: { ...Typography.labelSm, color: Colors.onSurfaceVariant },
   row: { flexDirection: 'row', gap: Spacing.sm },
   chip: {
     flex: 1, alignItems: 'center', paddingVertical: Spacing.sm, borderRadius: Radius.lg,
@@ -171,15 +169,5 @@ const styles = StyleSheet.create({
   chipActive: { borderColor: Colors.primary },
   chipText: { ...Typography.labelMd, color: Colors.onSurfaceVariant },
   chipTextActive: { color: Colors.primary },
-  member: {
-    flexDirection: 'row', alignItems: 'center', gap: Spacing.sm,
-    paddingVertical: Spacing.sm, paddingHorizontal: Spacing.md,
-    borderRadius: Radius.lg, borderWidth: 1.5, borderColor: Colors.outlineVariant,
-    backgroundColor: Colors.surfaceContainerLowest,
-  },
-  memberActive: { borderColor: Colors.primary },
-  memberName: { ...Typography.labelMd, color: Colors.onSurface },
-  memberNameActive: { color: Colors.primary },
-  memberMeta: { ...Typography.labelSm, color: Colors.onSurfaceVariant },
   footer: { paddingHorizontal: Spacing.containerMargin, paddingTop: Spacing.sm, paddingBottom: Spacing.lg, backgroundColor: Colors.background, borderTopWidth: 1, borderTopColor: Colors.outlineVariant },
 });
