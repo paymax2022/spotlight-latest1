@@ -61,7 +61,7 @@ not independently authored: a fixed widget→JSON-Schema-type table (`select`→
 `string`+`enum`, `multiselect`→`array` with `items.enum`, `stepper`→
 `integer`+`minimum`/`maximum`, `toggle`→`boolean`, ...) generates the backend
 half from the client half at content-authoring time
-(`supabase/migrations/20270147000000_marketplace_attribute_schemas.sql`).
+(`supabase/migrations/20270151000000_marketplace_attribute_schemas.sql`).
 This removes an entire class of possible drift (a field present in one shape
 but not the other, or an enum that disagrees between the two) — there is
 exactly one authored source (`fields[]`) per subcategory, not two.

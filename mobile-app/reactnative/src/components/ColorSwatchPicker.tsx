@@ -7,7 +7,7 @@ import { Spacing } from '@/constants/spacing';
 import { Radius } from '@/constants/radius';
 
 /** CSS-renderable colour keywords this app's option vocab actually uses today
- *  (see supabase/migrations/20270147000000_marketplace_attribute_schemas.sql).
+ *  (see supabase/migrations/20270151000000_marketplace_attribute_schemas.sql).
  *  A value outside this list — chiefly the catch-all "other" option every
  *  colour field carries — isn't a paintable colour and must fall back to the
  *  neutral swatch below rather than be handed to `backgroundColor` as-is. */
