@@ -122,8 +122,48 @@ func (s *Service) GetDetail(ctx context.Context, id string) (map[string]any, err
 		"riskDisclosure": nil, "verified": sum.Verified, "featured": sum.Featured, "trending": sum.Trending,
 		"urgent": sum.Urgent, "saved": false,
 		"budget": s.campaignBudget(ctx, id), "milestones": s.campaignMilestones(ctx, id), "updates": s.campaignUpdates(ctx, id), "rewardTiers": s.campaignRewardTiers(ctx, id),
-		"documents": []any{}, "faqs": []any{}, "tags": []any{}, "location": sum.Location,
+		"documents": s.campaignDocuments(ctx, id), "faqs": []any{}, "tags": []any{}, "location": sum.Location,
 	}, nil
+}
+
+// campaignDocuments returns the campaign's supporting evidence.
+//
+// sizeLabel is formatted here, next to the only other place that formats it, so
+// the list and the attach response cannot disagree about what a megabyte is.
+func (s *Service) campaignDocuments(ctx context.Context, campaignID string) []map[string]any {
+	const q = `
+		SELECT id::text, label, doc_type, size_bytes, verified, url
+		  FROM cf_campaign_documents
+		 WHERE campaign_id = $1 AND deleted_at IS NULL
+		 ORDER BY sort_order ASC, created_at ASC`
+	out := []map[string]any{}
+	rows, err := s.db.Query(ctx, q, campaignID)
+	if err != nil {
+		return out
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id, label, docType, url string
+		var size int64
+		var verified bool
+		if err := rows.Scan(&id, &label, &docType, &size, &verified, &url); err != nil {
+			return out
+		}
+		sizeLabel := "—"
+		switch {
+		case size >= 1024*1024:
+			sizeLabel = fmt.Sprintf("%.1f MB", float64(size)/(1024*1024))
+		case size >= 1024:
+			sizeLabel = fmt.Sprintf("%.0f KB", float64(size)/1024)
+		case size > 0:
+			sizeLabel = fmt.Sprintf("%d B", size)
+		}
+		out = append(out, map[string]any{
+			"id": id, "label": label, "type": docType,
+			"sizeLabel": sizeLabel, "verified": verified, "url": url,
+		})
+	}
+	return out
 }
 
 // campaignBeneficiary returns who the campaign is for, or nil when none was
