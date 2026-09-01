@@ -122,7 +122,11 @@ func RegisterStays(member *gin.RouterGroup, adminGroup *gin.RouterGroup, pool *p
 	adminHandler := staysadmin.NewHandler(pool)
 
 	// --- Member routes (/api/finance/stays) ---
-	mg := member.Group("/stays")
+	// member is ALREADY scoped to /api/finance/stays by the caller (see the doc
+	// comment above) — grouping "/stays" again here doubled every path to
+	// /api/finance/stays/stays/*, 404ing every real client while curl-shaped
+	// manual testing against the doubled path masked it.
+	mg := member
 	// Search + content.
 	mg.GET("/search", searchHandler.Search)
 	mg.GET("/properties/:rail/:supplier/:ref", searchHandler.Content)

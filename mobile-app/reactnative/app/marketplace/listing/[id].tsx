@@ -18,6 +18,7 @@ import { Radius } from '@/constants/radius';
 import { shadow1 } from '@/constants/shadows';
 import StateView from '@/components/StateView';
 import PrimaryButton from '@/components/PrimaryButton';
+import { useAuthStore } from '@/store/authStore';
 import { MarketColors, formatNaira, conditionLabel, fairPriceVerdict, FAIR_PRICE_LABEL, MEETUP_SAFETY_NUDGE } from '@/features/marketplace';
 import { useListing } from '@/features/marketplace/hooks';
 import * as accountApi from '@/features/marketplace/api/account.api';
@@ -30,6 +31,7 @@ export default function ListingDetail() {
   const listing = useListing(id!);
   const [saved, setSaved] = useState(false);
   const [callRevealed, setCallRevealed] = useState(false);
+  const currentUserId = useAuthStore((st) => st.user?.id);
   const [gallery, setGallery] = useState(0);
 
   // Reflect the server's saved state once the listing loads (hook stays above the
@@ -55,6 +57,8 @@ export default function ListingDetail() {
   }
 
   const l = listing.data;
+  // Ownership decides which half of this screen a viewer gets.
+  const isOwnListing = !!currentUserId && l.sellerId === currentUserId;
   const media = l.media ?? [];
   const unavailable = l.status === 'sold' || l.status === 'expired' || l.status === 'removed_policy' || l.status === 'removed_user';
   const verdict = fairPriceVerdict(l.priceKobo, l.fairPriceBand);
@@ -176,7 +180,27 @@ export default function ListingDetail() {
 
       {/* Sticky CTA bar — Contact seller opens the Deal Room; Make Offer sends a
           non-binding price proposal. No escrow / checkout in the connect model. */}
-      {!unavailable ? (
+      {isOwnListing ? (
+        /* Your own listing. The buyer CTAs used to render here regardless, and
+           both dead-ended: POST /threads answers 422 CANNOT_MESSAGE_SELF, which
+           the deals screen swallowed, leaving you on an empty inbox with nothing
+           explaining why. Offer the seller's own actions instead. */
+        <View style={styles.ctaBar}>
+          <Pressable
+            style={styles.offerBtn}
+            onPress={() => router.push(`/marketplace/boost/${l.id}` as never)}
+            accessibilityLabel="Boost this listing"
+          >
+            <Text style={styles.offerBtnText}>Boost</Text>
+          </Pressable>
+          <View style={styles.ctaPrimary}>
+            <PrimaryButton
+              label="Edit listing"
+              onPress={() => router.push(`/marketplace/sell/edit/${l.id}` as never)}
+            />
+          </View>
+        </View>
+      ) : !unavailable ? (
         <View style={styles.ctaBar}>
           <Pressable
             style={styles.offerBtn}
