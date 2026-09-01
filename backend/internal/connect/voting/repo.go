@@ -440,6 +440,15 @@ func (r *Repository) ContestantOwner(ctx context.Context, contestantID string) (
 //
 // Paid votes are always attributed: they are a transaction with a receipt, and
 // the anonymity setting covers free voting only.
+//
+// IF PAID SUPPORTERS ARE MISSING, LOOK IN bridge_outbox BEFORE SUSPECTING THIS
+// QUERY. Paid votes reach connect_votes through
+// trg_connect_tally_follows_credit on vote_transactions, and that trigger
+// refuses to project a vote whose contestant does not resolve on
+// ct.connect_contest_id = NEW.contest_id — it emits a
+// 'votes.paid.tally_skipped' row to bridge_outbox and inserts nothing. Such a
+// vote is invisible here and to the roster tally alike, because neither has a
+// connect_votes row to read. That is upstream of this function.
 func (r *Repository) Supporters(ctx context.Context, contestantID, contestID string) ([]Supporter, error) {
 	const q = `
 		WITH anon AS (

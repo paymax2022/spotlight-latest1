@@ -19,6 +19,7 @@ import { useFreeVoteAllocation, useCastFreeVotes } from '@/features/voting/hooks
 import { useVotePackages } from '@/features/voting/hooks/useVotePackages';
 import { getVotingWindow } from '@/features/voting/utils/votingWindow';
 import RankBadge from '@/features/voting/components/RankBadge';
+import SupportersList from '@/features/voting/components/SupportersList';
 import RankMovementBadge from '@/features/voting/components/RankMovementBadge';
 import FreeVoteBadge from '@/features/voting/components/FreeVoteBadge';
 import FreeVoteResetCountdown from '@/features/voting/components/FreeVoteResetCountdown';
@@ -243,6 +244,12 @@ export default function ContestantProfileScreen() {
 
           {/* Stats */}
           <ContestantStatsCard contestant={contestant} />
+
+          {/* Who voted. Safe on a PUBLIC screen: the server answers 403 to
+              anyone who does not own this contestant, so for every other viewer
+              this renders nothing. The contestant sees their supporters here as
+              well as on their dashboard. */}
+          <SupportersList contestantId={contestant.id} />
 
           {/* Vote CTA — gated on the SAME window the server enforces, so a closed
               contest never offers an action that is going to be refused. Users
