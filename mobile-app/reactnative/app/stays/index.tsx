@@ -1,14 +1,14 @@
 import React from 'react';
-import { View, Text, StyleSheet, Pressable, ScrollView, FlatList } from 'react-native';
+import { View, Text, StyleSheet, Pressable, ScrollView, FlatList, Platform } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { LinearGradient } from 'expo-linear-gradient';
 import { router } from 'expo-router';
-import { MapPin, CalendarRange, Users, Search, Clock, Tag, Heart, Navigation } from 'lucide-react-native';
+import { MapPin, CalendarRange, Users, Search, Clock, Tag, Heart, Navigation, BedDouble, Sparkles } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
 import { Spacing } from '@/constants/spacing';
 import { Radius } from '@/constants/radius';
-import { shadow1 } from '@/constants/shadows';
-import ScreenHeader from '@/components/ScreenHeader';
+import { shadow1, shadow2 } from '@/constants/shadows';
 import StateView from '@/components/StateView';
 import { PropertyCard } from '@/features/stays/components';
 import { useStaysHome, useToggleSaved } from '@/features/stays/hooks';
@@ -25,43 +25,64 @@ export default function StaysHome() {
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
-      <ScreenHeader
-        title="Stays"
-        subtitle="Hotels & shortlets — confirmed inventory, instant wallet refunds"
-        rightSlot={
-          <Pressable onPress={() => router.push('/stays/saved')} hitSlop={8} accessibilityLabel="Saved">
-            <Heart size={22} color={Colors.onSurface} strokeWidth={2} />
-          </Pressable>
-        }
-      />
+      <View style={styles.topBar}>
+        <Text style={styles.topTitle}>Stays</Text>
+        <Pressable onPress={() => router.push('/stays/saved')} hitSlop={8} accessibilityLabel="Saved">
+          <Heart size={22} color={Colors.onSurface} strokeWidth={2} />
+        </Pressable>
+      </View>
 
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scroll}>
-        {/* Search panel */}
-        <View style={styles.panel}>
-          <SearchRow
-            icon={<MapPin size={18} color={StaysColors.brand} strokeWidth={2} />}
-            label="Where to?"
-            value={query.destination || 'Enter a city or hotel'}
-            onPress={() => router.push('/stays/destination')}
-          />
-          <View style={styles.divider} />
-          <SearchRow
-            icon={<CalendarRange size={18} color={StaysColors.brand} strokeWidth={2} />}
-            label="Dates"
-            value={formatStayRange(query.checkIn, query.checkOut)}
-            onPress={() => router.push('/stays/dates')}
-          />
-          <View style={styles.divider} />
-          <SearchRow
-            icon={<Users size={18} color={StaysColors.brand} strokeWidth={2} />}
-            label="Guests & rooms"
-            value={formatGuestSummary(query.guests)}
-            onPress={() => router.push('/stays/guests')}
-          />
-          <Pressable style={styles.searchBtn} onPress={startSearch} accessibilityRole="button">
-            <Search size={18} color={Colors.onPrimary} strokeWidth={2.4} />
-            <Text style={styles.searchBtnText}>Search stays</Text>
-          </Pressable>
+        {/* Hero — deep-purple → electric-blue gradient, matching Food's discovery
+            pattern (a gradient hero with the search panel floating up over it via
+            a negative margin) so the two "discovery" landing screens read as one
+            family rather than two unrelated designs. */}
+        <LinearGradient
+          colors={[Colors.primary, StaysColors.brand, Colors.secondary]}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+          style={[styles.hero, shadow2]}
+        >
+          <View style={styles.heroWatermark}>
+            <BedDouble size={140} color="rgba(255,255,255,0.10)" strokeWidth={1} />
+          </View>
+          <View style={styles.heroEyebrow}>
+            <Sparkles size={12} color={Colors.white} strokeWidth={2} />
+            <Text style={styles.heroEyebrowText}>Paymax Stays</Text>
+          </View>
+          <Text style={styles.heroTitle}>Find your{'\n'}next stay</Text>
+          <Text style={styles.heroSubtitle}>Hotels & shortlets — confirmed inventory, instant wallet refunds.</Text>
+        </LinearGradient>
+
+        {/* Search panel — floats up over the hero (negative marginTop), so
+            anything inserted between the two breaks that overlap. */}
+        <View style={styles.panelFloat}>
+          <View style={styles.panel}>
+            <SearchRow
+              icon={<MapPin size={18} color={StaysColors.brand} strokeWidth={2} />}
+              label="Where to?"
+              value={query.destination || 'Enter a city or hotel'}
+              onPress={() => router.push('/stays/destination')}
+            />
+            <View style={styles.divider} />
+            <SearchRow
+              icon={<CalendarRange size={18} color={StaysColors.brand} strokeWidth={2} />}
+              label="Dates"
+              value={formatStayRange(query.checkIn, query.checkOut)}
+              onPress={() => router.push('/stays/dates')}
+            />
+            <View style={styles.divider} />
+            <SearchRow
+              icon={<Users size={18} color={StaysColors.brand} strokeWidth={2} />}
+              label="Guests & rooms"
+              value={formatGuestSummary(query.guests)}
+              onPress={() => router.push('/stays/guests')}
+            />
+            <Pressable style={styles.searchBtn} onPress={startSearch} accessibilityRole="button">
+              <Search size={18} color={Colors.onPrimary} strokeWidth={2.4} />
+              <Text style={styles.searchBtnText}>Search stays</Text>
+            </Pressable>
+          </View>
         </View>
 
         {/* Quick links */}
@@ -100,44 +121,48 @@ export default function StaysHome() {
             ) : null}
 
             {/* Deals rail */}
-            <Section title="Deals & offers" onSeeAll={() => router.push('/stays/deals')}>
-              <FlatList
-                horizontal
-                showsHorizontalScrollIndicator={false}
-                data={home.data!.deals}
-                keyExtractor={(d) => d.id}
-                contentContainerStyle={styles.rail}
-                ItemSeparatorComponent={() => <View style={{ width: Spacing.md }} />}
-                renderItem={({ item }) => (
-                  <PropertyCard
-                    property={item.property}
-                    variant="rail"
-                    saved={isSavedSync(item.property.id)}
-                    onToggleSave={() => toggleSave.mutate(item.property.id)}
-                    onPress={() => router.push(`/stays/property/${item.property.id}`)}
-                  />
-                )}
-              />
-            </Section>
+            {home.data!.deals.length > 0 ? (
+              <Section title="Deals & offers" onSeeAll={() => router.push('/stays/deals')}>
+                <FlatList
+                  horizontal
+                  showsHorizontalScrollIndicator={false}
+                  data={home.data!.deals}
+                  keyExtractor={(d) => d.id}
+                  contentContainerStyle={styles.rail}
+                  ItemSeparatorComponent={() => <View style={{ width: Spacing.md }} />}
+                  renderItem={({ item }) => (
+                    <PropertyCard
+                      property={item.property}
+                      variant="rail"
+                      saved={isSavedSync(item.property.id)}
+                      onToggleSave={() => toggleSave.mutate(item.property.id)}
+                      onPress={() => router.push(`/stays/property/${item.property.id}`)}
+                    />
+                  )}
+                />
+              </Section>
+            ) : null}
 
             {/* Trending destinations */}
-            <Section title="Trending destinations">
-              <View style={styles.destGrid}>
-                {home.data!.trendingDestinations.map((d) => (
-                  <Pressable
-                    key={d.id}
-                    style={styles.destChip}
-                    onPress={() => {
-                      setQuery({ destination: d.name, destinationId: d.id });
-                      startSearch();
-                    }}
-                  >
-                    <Text style={styles.destName}>{d.name}</Text>
-                    <Text style={styles.destCount}>{d.propertyCount} stays</Text>
-                  </Pressable>
-                ))}
-              </View>
-            </Section>
+            {home.data!.trendingDestinations.length > 0 ? (
+              <Section title="Trending destinations">
+                <View style={styles.destGrid}>
+                  {home.data!.trendingDestinations.map((d) => (
+                    <Pressable
+                      key={d.id}
+                      style={styles.destChip}
+                      onPress={() => {
+                        setQuery({ destination: d.name, destinationId: d.id });
+                        startSearch();
+                      }}
+                    >
+                      <Text style={styles.destName}>{d.name}</Text>
+                      <Text style={styles.destCount}>{d.propertyCount} stays</Text>
+                    </Pressable>
+                  ))}
+                </View>
+              </Section>
+            ) : null}
           </>
         )}
       </ScrollView>
@@ -182,7 +207,31 @@ function Section({ title, children, onSeeAll }: { title: string; children: React
 
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: Colors.background },
-  scroll: { paddingBottom: Spacing.xxl },
+  topBar: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    paddingHorizontal: Spacing.containerMargin, paddingVertical: Spacing.sm,
+  },
+  topTitle: { ...Typography.titleLg, color: Colors.onSurface },
+  scroll: { paddingTop: 0, paddingBottom: Spacing.xxl },
+  hero: {
+    minHeight: 180,
+    borderBottomLeftRadius: Radius.xxl,
+    borderBottomRightRadius: Radius.xxl,
+    padding: Spacing.cardPadding,
+    paddingTop: Spacing.lg,
+    justifyContent: 'flex-end',
+    overflow: 'hidden',
+  },
+  heroWatermark: { position: 'absolute', right: -24, top: -20 },
+  heroEyebrow: {
+    flexDirection: 'row', alignItems: 'center', gap: 5, alignSelf: 'flex-start',
+    backgroundColor: 'rgba(255,255,255,0.18)', borderRadius: Radius.full,
+    paddingHorizontal: Spacing.sm, paddingVertical: 4,
+  },
+  heroEyebrowText: { ...Typography.labelSm, color: Colors.white },
+  heroTitle: { ...Typography.headlineLg, color: Colors.white, marginTop: Spacing.sm },
+  heroSubtitle: { ...Typography.bodySm, color: 'rgba(255,255,255,0.88)', marginTop: Spacing.sm, marginBottom: Spacing.lg, maxWidth: '85%' },
+  panelFloat: { marginTop: -30, zIndex: 2 },
   panel: {
     marginHorizontal: Spacing.containerMargin,
     backgroundColor: Colors.surfaceContainerLowest,
