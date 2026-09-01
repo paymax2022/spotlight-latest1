@@ -34,7 +34,12 @@ import (
 
 func TestVotingSupporters_ContestantOnlyAndAnonymityHonoured(t *testing.T) {
 	pool := blockLiveDBPool(t)
-	defer pool.Close()
+	// t.Cleanup, NOT defer. A deferred Close runs when the test function
+	// returns, which is BEFORE any t.Cleanup — so every fixture DELETE below
+	// would fire against a closed pool and silently no-op, leaking rows into a
+	// shared database. Cleanups run LIFO, so registering the close FIRST makes
+	// it run LAST, after the fixtures are gone.
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	repo := connectvoting.NewRepository(pool)
 	svc := connectvoting.NewService(repo, nil, nil, nil, nil)
@@ -129,7 +134,12 @@ func TestVotingSupporters_ContestantOnlyAndAnonymityHonoured(t *testing.T) {
 
 func TestVotingMyVotes_ReturnsOnlyTheCallersOwnVotes(t *testing.T) {
 	pool := blockLiveDBPool(t)
-	defer pool.Close()
+	// t.Cleanup, NOT defer. A deferred Close runs when the test function
+	// returns, which is BEFORE any t.Cleanup — so every fixture DELETE below
+	// would fire against a closed pool and silently no-op, leaking rows into a
+	// shared database. Cleanups run LIFO, so registering the close FIRST makes
+	// it run LAST, after the fixtures are gone.
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	svc := connectvoting.NewService(connectvoting.NewRepository(pool), nil, nil, nil, nil)
 

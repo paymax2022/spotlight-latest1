@@ -102,6 +102,32 @@
       "cwd": "frontend-web",
       "port": 3010,
       "description": "Worktree frontend-web on :3010, invoking next directly (npm run dev -- --port exits immediately here)."
+    },
+    {
+      "name": "backend-worktree",
+      "runtimeExecutable": "go",
+      "runtimeArgs": [
+        "run",
+        "./cmd/server"
+      ],
+      "cwd": "backend",
+      "port": 8092,
+      "description": "Go backend on :8092 (this worktree's .env sets APP_PORT=8092) so it doesn't collide with the main checkout's :8091."
+    },
+    {
+      "name": "mobile-worktree",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": [
+        "expo",
+        "start",
+        "--web",
+        "--port",
+        "8086",
+        "-c"
+      ],
+      "cwd": "mobile-app/reactnative",
+      "port": 8086,
+      "description": "Expo web on :8086 for this worktree, cache-cleared so EXPO_PUBLIC_API_BASE_URL=:3010 / EXPO_PUBLIC_MARKETPLACE_USE_MOCK=false actually take effect."
     }
   ]
 }

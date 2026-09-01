@@ -662,10 +662,11 @@ export async function submitCampaign(
   // draft looked equivalent but was not: the server field is `coverImageUrl`
   // while the draft carries `coverImageUri`, so every cover image was silently
   // dropped, and the spread hid that the DTO accepts none of the wizard's
-  // document/beneficiary data either — the wizard collects it and the server
-  // discards it. MILESTONES, BUDGET and REWARD TIERS are no longer in that list:
-  // the DTO accepts them and SubmitForReview stores them in the same transaction
-  // as the campaign. Documents and beneficiary still go nowhere. Keep this list
+  // data either — it collected all of it and the server discarded it.
+  // That is no longer true of milestones, budget, reward tiers or the beneficiary:
+  // the DTO accepts each one and SubmitForReview stores it in the same transaction
+  // as the campaign. DOCUMENTS are the only thing still dropped, and they need a
+  // real upload path before persistence would mean anything. Keep this list
   // explicit so the next field that stops being persisted is visible in review.
   const res = await api.post(
     `${LIVE}/campaigns`,
@@ -715,6 +716,17 @@ export async function submitCampaign(
           limit: null,
           requiresShipping: r.requiresShipping,
         })),
+        // Who the campaign is for. Sent only when the wizard collected one — a
+        // campaign raising for its own creator legitimately has no beneficiary, and
+        // an empty object would be a different claim from none at all. No
+        // `verified`: that badge is granted by review, not asserted here.
+        beneficiary: draft.beneficiaryName.trim()
+          ? {
+              name: draft.beneficiaryName.trim(),
+              relationship: draft.beneficiaryRelationship,
+              description: null,
+            }
+          : null,
       submitForReview,
     },
     { headers: { 'Idempotency-Key': idempotencyKey } },

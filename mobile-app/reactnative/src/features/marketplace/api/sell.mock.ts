@@ -36,14 +36,56 @@ export const MOCK_SELF_SELLER_ID = 'seller_self';
 // schema-per-category so the Attribute form has something to render. Shape mirrors
 // a config-driven form: { fields: [{ key, label, type, required, options?, unit? }] }.
 
+export interface AttributeFieldOption {
+  value: string;
+  label: string;
+  /**
+   * For a dependent field (see `dependsOnKey`): this option is only offered
+   * when the parent field's current value equals `dependsOnValue`. Options
+   * with no `dependsOnValue` are always offered.
+   */
+  dependsOnValue?: string;
+}
+
 export interface AttributeField {
   key: string;
   label: string;
-  type: 'text' | 'number' | 'enum' | 'bool';
+  /**
+   * Widget to render. 'enum' and 'bool' are legacy aliases of 'select' and
+   * 'toggle' kept for backward compatibility with pre-existing fixtures/DB
+   * rows — the dispatcher treats each pair identically.
+   */
+  type:
+    | 'text'
+    | 'number'
+    | 'currency'
+    | 'enum'
+    | 'select'
+    | 'multiselect'
+    | 'radio'
+    | 'segmented'
+    | 'bool'
+    | 'toggle'
+    | 'stepper'
+    | 'date'
+    | 'color';
   required?: boolean;
-  options?: Array<{ value: string; label: string }>;
+  /** Surfaced on the search/filter UI when true. Purely descriptive to the client. */
+  filterable?: boolean;
+  /** Section heading this field renders under (e.g. "Specifications"). */
+  group?: string;
+  options?: AttributeFieldOption[];
   unit?: string;
   placeholder?: string;
+  min?: number;
+  max?: number;
+  /**
+   * Marks this field as dependent on another field's value (e.g. Model
+   * depends on Brand). The renderer filters `options` down to those whose
+   * `dependsOnValue` matches the current value of the field named here, and
+   * disables the control until the parent has a value.
+   */
+  dependsOnKey?: string;
 }
 
 export interface AttributeSchema {

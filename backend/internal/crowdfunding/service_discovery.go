@@ -118,12 +118,82 @@ func (s *Service) GetDetail(ctx context.Context, id string) (map[string]any, err
 			"location": sum.Location, "campaignsCreated": 1, "totalRaisedKobo": sum.RaisedKobo, "bio": nil,
 			"joinedAt": r.createdAt.UTC().Format(time.RFC3339), "followed": false,
 		},
-		"beneficiary": nil, "disbursementModel": r.disbursementModel, "refundPolicy": r.refundPolicy,
+		"beneficiary": s.campaignBeneficiary(ctx, id), "disbursementModel": r.disbursementModel, "refundPolicy": r.refundPolicy,
 		"riskDisclosure": nil, "verified": sum.Verified, "featured": sum.Featured, "trending": sum.Trending,
 		"urgent": sum.Urgent, "saved": false,
 		"budget": s.campaignBudget(ctx, id), "milestones": s.campaignMilestones(ctx, id), "updates": s.campaignUpdates(ctx, id), "rewardTiers": s.campaignRewardTiers(ctx, id),
-		"documents": []any{}, "faqs": []any{}, "tags": []any{}, "location": sum.Location,
+		"documents": s.campaignDocuments(ctx, id), "faqs": []any{}, "tags": []any{}, "location": sum.Location,
 	}, nil
+}
+
+// campaignDocuments returns the campaign's supporting evidence.
+//
+// sizeLabel is formatted here, next to the only other place that formats it, so
+// the list and the attach response cannot disagree about what a megabyte is.
+func (s *Service) campaignDocuments(ctx context.Context, campaignID string) []map[string]any {
+	const q = `
+		SELECT id::text, label, doc_type, size_bytes, verified, url
+		  FROM cf_campaign_documents
+		 WHERE campaign_id = $1 AND deleted_at IS NULL
+		 ORDER BY sort_order ASC, created_at ASC`
+	out := []map[string]any{}
+	rows, err := s.db.Query(ctx, q, campaignID)
+	if err != nil {
+		return out
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id, label, docType, url string
+		var size int64
+		var verified bool
+		if err := rows.Scan(&id, &label, &docType, &size, &verified, &url); err != nil {
+			return out
+		}
+		sizeLabel := "—"
+		switch {
+		case size >= 1024*1024:
+			sizeLabel = fmt.Sprintf("%.1f MB", float64(size)/(1024*1024))
+		case size >= 1024:
+			sizeLabel = fmt.Sprintf("%.0f KB", float64(size)/1024)
+		case size > 0:
+			sizeLabel = fmt.Sprintf("%d B", size)
+		}
+		out = append(out, map[string]any{
+			"id": id, "label": label, "type": docType,
+			"sizeLabel": sizeLabel, "verified": verified, "url": url,
+		})
+	}
+	return out
+}
+
+// campaignBeneficiary returns who the campaign is for, or nil when none was
+// given — which is the honest answer for a campaign raising for its own creator,
+// and is what the client renders as "no beneficiary block" rather than an empty
+// card.
+//
+// This was a hardcoded nil, so "raising for my mother" and "raising for myself"
+// looked identical to everyone who visited the page.
+func (s *Service) campaignBeneficiary(ctx context.Context, campaignID string) any {
+	var id, name, relationship string
+	var description *string
+	var verified bool
+	err := s.db.QueryRow(ctx, `
+		SELECT id::text, name, relationship, description, verified
+		  FROM cf_campaign_beneficiary WHERE campaign_id = $1`, campaignID,
+	).Scan(&id, &name, &relationship, &description, &verified)
+	if err != nil {
+		// No row, or an unreadable one: the campaign page still renders everything
+		// else. A missing beneficiary is a normal state, not a failure.
+		return nil
+	}
+	var desc any
+	if description != nil {
+		desc = *description
+	}
+	return map[string]any{
+		"id": id, "name": name, "relationship": relationship,
+		"description": desc, "verified": verified,
+	}
 }
 
 // campaignBudget returns the "use of funds" lines in the order the creator
@@ -500,6 +570,37 @@ func (s *Service) SubmitForReview(ctx context.Context, creatorID string, req Sub
 			VALUES ($1,$2,$3,$4,$5,$6,$7)`,
 			id, title, r.AmountKobo, desc, delivery, limit, r.RequiresShipping); err != nil {
 			return nil, err
+		}
+	}
+
+	if b := req.Beneficiary; b != nil {
+		name := strings.TrimSpace(b.Name)
+		rel := strings.TrimSpace(b.Relationship)
+		// Only reject a beneficiary the caller actually tried to supply. An
+		// entirely empty object is treated as "none given" rather than an error,
+		// because a campaign raising for its own creator legitimately has none.
+		if name != "" || rel != "" || (b.Description != nil && strings.TrimSpace(*b.Description) != "") {
+			if len([]rune(name)) < 2 {
+				return nil, fmt.Errorf("%w: beneficiary: name is required", ErrInvalidSubmission)
+			}
+			if rel == "" {
+				return nil, fmt.Errorf("%w: beneficiary: relationship is required", ErrInvalidSubmission)
+			}
+			var desc any
+			if b.Description != nil && strings.TrimSpace(*b.Description) != "" {
+				desc = strings.TrimSpace(*b.Description)
+			}
+			// `verified` is never written here: it keeps its column default of false
+			// until a reviewer grants it.
+			if _, err := tx.Exec(ctx, `
+				INSERT INTO cf_campaign_beneficiary (campaign_id, name, relationship, description)
+				VALUES ($1,$2,$3,$4)
+				ON CONFLICT (campaign_id) DO UPDATE
+				   SET name = EXCLUDED.name, relationship = EXCLUDED.relationship,
+				       description = EXCLUDED.description, updated_at = now()`,
+				id, name, rel, desc); err != nil {
+				return nil, err
+			}
 		}
 	}
 
