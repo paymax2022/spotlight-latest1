@@ -31,6 +31,8 @@ export interface PruneResult extends PrunableCart {
    * so a line holding 2 portions must not be reported as "1 item".
    */
   removedItemCount: number;
+  /** True when the cart-level restaurant pointer had to be re-derived. */
+  repointed: boolean;
 }
 
 const lineRestaurant = (l: CartLine): string => l.restaurantId ?? '';
@@ -51,7 +53,7 @@ const lineRestaurant = (l: CartLine): string => l.restaurantId ?? '';
  */
 export function pruneCart(cart: PrunableCart, goneIds: Iterable<string>): PruneResult {
   const gone = new Set([...goneIds].filter(Boolean));
-  if (gone.size === 0) return { ...cart, removedIds: [], removedNames: [], removedItemCount: 0 };
+  if (gone.size === 0) return { ...cart, removedIds: [], removedNames: [], removedItemCount: 0, repointed: false };
 
   const removedIds = new Set<string>();
   const removedNames = new Map<string, string>();
@@ -79,6 +81,13 @@ export function pruneCart(cart: PrunableCart, goneIds: Iterable<string>): PruneR
   }
 
   // The cart-level pointer, re-derived only when the kitchen it named is gone.
+  //
+  // Re-pointing is SILENT HOUSEKEEPING and deliberately does not add to
+  // removedIds. This pointer is "first restaurant added, never updated", so it
+  // routinely names a kitchen whose food left the cart long ago — announcing
+  // "X is no longer available, so 0 items were removed" for one of those tells
+  // the customer something was taken out of a cart that never contained it.
+  // Only lines and packs actually removed above count as a removal.
   let restaurantId = cart.restaurantId;
   let restaurantName = cart.restaurantName;
   if (restaurantId && gone.has(restaurantId)) {
@@ -88,7 +97,6 @@ export function pruneCart(cart: PrunableCart, goneIds: Iterable<string>): PruneR
     if (restaurantName?.trim() && !removedNames.has(restaurantId)) {
       removedNames.set(restaurantId, restaurantName.trim());
     }
-    removedIds.add(restaurantId);
     const survivor = packages.flatMap((p) => p.lines).find((l) => l.restaurantId);
     restaurantId = survivor?.restaurantId ?? null;
     restaurantName = survivor?.restaurantName ?? null;
@@ -103,6 +111,7 @@ export function pruneCart(cart: PrunableCart, goneIds: Iterable<string>): PruneR
     activePackageId,
     removedIds: [...removedIds],
     removedNames: [...removedIds].map((id) => removedNames.get(id) ?? 'A restaurant'),
+    repointed: cart.restaurantId !== restaurantId,
     removedItemCount,
   };
 }

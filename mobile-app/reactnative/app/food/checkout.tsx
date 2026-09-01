@@ -52,9 +52,19 @@ export default function CheckoutScreen() {
   // Every kitchen in the cart, checked for existence — not just the primary, and
   // not just the ones that need naming: a kitchen can be perfectly nameable from
   // a captured line and still have been deleted since the cart was built.
+  // The cart-level restaurantId is in here too, and that is the point. It is the
+  // field useRestaurant (packaging) and useDeliveryQuote (delivery) are aimed at,
+  // and being "first restaurant added, never updated" it can name a kitchen with
+  // nothing left in the cart. Checking only the lines left a dead pointer
+  // undetected and never re-derived, so BOTH fees sat at "—" forever with
+  // nothing on screen explaining why.
   const cartRestaurantIds = useMemo(
-    () => [...new Set(packages.flatMap((p) => p.lines.map((l) => l.restaurantId)).filter((x): x is string => !!x))],
-    [packages],
+    () =>
+      [...new Set([
+        ...packages.flatMap((p) => p.lines.map((l) => l.restaurantId)),
+        restaurantId,
+      ])].filter((x): x is string => !!x),
+    [packages, restaurantId],
   );
   const goneRestaurantIdList = useCartRestaurantAvailability(cartRestaurantIds);
 
@@ -67,7 +77,10 @@ export default function CheckoutScreen() {
   useEffect(() => {
     if (goneRestaurantIdList.length === 0) return;
     const out = removeRestaurants(goneRestaurantIdList);
-    if (out.removedIds.length === 0) return;
+    // Only speak up when food the customer chose actually left the cart. A
+    // silent re-point (or dropping an empty pack) removes nothing they can
+    // miss, and saying so would describe a loss that did not happen.
+    if (out.removedItemCount === 0) return;
     const names = out.removedNames.join(', ');
     setPrunedNotice(
       `${names} ${out.removedIds.length > 1 ? 'are' : 'is'} no longer available, so ` +

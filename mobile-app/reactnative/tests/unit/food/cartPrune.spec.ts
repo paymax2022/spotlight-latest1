@@ -125,6 +125,45 @@ describe('pruneCart', () => {
     assert.deepEqual(pruneCart(c, ['r1']).removedNames, ['Tip Divergence Kitchen']);
   });
 
+  it('re-points a dead primary that has NO food in the cart, silently', () => {
+    // The cart-level pointer is first-added-wins and never updated, so it
+    // routinely names a kitchen whose food left long ago. Re-deriving it must
+    // not be reported: announcing "X is no longer available, so 0 items were
+    // removed" describes a loss from a cart that never held it.
+    const c = cart({
+      restaurantId: 'r1',
+      restaurantName: 'Tip Divergence Kitchen',
+      packages: [pack('p1', [line('r2', 'Jollof', 'Ikoyi Kitchen')], 'r2')],
+    });
+    const out = pruneCart(c, ['r1']);
+    assert.equal(out.restaurantId, 'r2', 're-pointed');
+    assert.equal(out.restaurantName, 'Ikoyi Kitchen');
+    assert.equal(out.repointed, true);
+    assert.deepEqual(out.removedIds, [], 'nothing was actually removed');
+    assert.equal(out.removedItemCount, 0);
+    assert.deepEqual(out.packages.map((p) => p.id), ['p1'], 'the live food is untouched');
+  });
+
+  it('still reports the removal when the dead primary DID hold food', () => {
+    const c = cart({
+      restaurantId: 'r1',
+      restaurantName: 'Tip Divergence Kitchen',
+      packages: [pack('p1', [line('r1', 'Egusi', 'Tip Divergence Kitchen')], 'r1')],
+    });
+    const out = pruneCart(c, ['r1']);
+    assert.deepEqual(out.removedIds, ['r1']);
+    assert.deepEqual(out.removedNames, ['Tip Divergence Kitchen']);
+    assert.equal(out.removedItemCount, 1);
+  });
+
+  it('empties the cart-level pointer when the dead primary was the only kitchen', () => {
+    const c = cart({ restaurantId: 'r1', restaurantName: 'Gone', packages: [] });
+    const out = pruneCart(c, ['r1']);
+    assert.equal(out.restaurantId, null);
+    assert.equal(out.restaurantName, null);
+    assert.deepEqual(out.removedIds, []);
+  });
+
   it('reports nothing removed for an id the cart never held', () => {
     const c = cart({ restaurantId: 'r2', packages: [pack('p1', [line('r2')], 'r2')] });
     const out = pruneCart(c, ['r-nonexistent']);
