@@ -3,7 +3,7 @@ import { View, Text, StyleSheet, Pressable, ScrollView, FlatList, Platform } fro
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { router } from 'expo-router';
-import { MapPin, CalendarRange, Users, Search, Clock, Tag, Heart, Navigation, BedDouble, Sparkles } from 'lucide-react-native';
+import { MapPin, CalendarRange, Users, Search, Clock, Tag, Heart, Navigation, BedDouble, Sparkles, ChevronRight } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
 import { Spacing } from '@/constants/spacing';
@@ -91,6 +91,25 @@ export default function StaysHome() {
           <QuickLink icon={<Navigation size={20} color={StaysColors.ok} />} label="Nearby" onPress={() => router.push('/stays/nearby')} />
           <QuickLink icon={<Heart size={20} color={Colors.gold} />} label="Saved" onPress={() => router.push('/stays/saved')} />
         </View>
+
+        {/* Become a host — same shape as "Sell food on Paymax" on /food: one
+            plain-language door into the owner/manager console, rather than
+            expecting an owner to guess a hidden icon exists for it. */}
+        <Pressable
+          onPress={() => router.push('/stays/host')}
+          style={({ pressed }) => [styles.hostRow, pressed && { opacity: 0.9 }]}
+          accessibilityRole="button"
+          accessibilityLabel="List your property on Paymax — for owners and managers"
+        >
+          <View style={styles.hostIcon}>
+            <BedDouble size={20} color={Colors.primary} strokeWidth={2} />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.hostTitle}>List your property on Paymax</Text>
+            <Text style={styles.hostSub}>Owners & managers: add your hotel or shortlet, set rooms and rates.</Text>
+          </View>
+          <ChevronRight size={18} color={Colors.onSurfaceVariant} strokeWidth={2} />
+        </Pressable>
 
         {home.isLoading ? (
           <StateView kind="loading" message="Loading stays…" />
@@ -255,6 +274,15 @@ const styles = StyleSheet.create({
   quickLink: { flex: 1, alignItems: 'center', gap: 6, backgroundColor: Colors.surfaceContainerLowest, borderRadius: Radius.lg, borderWidth: 1, borderColor: Colors.outlineVariant, paddingVertical: Spacing.md },
   quickIcon: { width: 40, height: 40, borderRadius: Radius.md, backgroundColor: Colors.surfaceContainerLow, alignItems: 'center', justifyContent: 'center' },
   quickLabel: { ...Typography.labelMd, color: Colors.onSurface },
+  hostRow: {
+    flexDirection: 'row', alignItems: 'center', gap: Spacing.sm,
+    marginHorizontal: Spacing.containerMargin, marginTop: Spacing.md,
+    padding: Spacing.md, borderRadius: Radius.lg,
+    backgroundColor: Colors.surfaceContainerLowest, borderWidth: 1, borderColor: Colors.outlineVariant,
+  },
+  hostIcon: { width: 40, height: 40, borderRadius: Radius.full, alignItems: 'center', justifyContent: 'center', backgroundColor: Colors.iconBgPurple },
+  hostTitle: { ...Typography.labelLg, color: Colors.onSurface },
+  hostSub: { ...Typography.bodySm, color: Colors.onSurfaceVariant },
   section: { marginTop: Spacing.lg },
   sectionHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: Spacing.containerMargin, marginBottom: Spacing.sm },
   sectionTitle: { ...Typography.titleLg, color: Colors.onSurface },
