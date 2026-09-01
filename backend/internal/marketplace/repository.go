@@ -162,10 +162,17 @@ func (r *Repository) ListSellerListings(ctx context.Context, sellerID string, li
 }
 
 // ModerationQueue returns pending_review listings for the admin moderation queue.
+//
+// The placeholders are $1/$2 and must stay that way: two arguments are passed, so
+// numbering them $2/$3 leaves $1 bound but unreferenced and Postgres cannot infer
+// its type — every call failed with 42P18 "could not determine data type of
+// parameter $1", 500ing the endpoint. It failed that way from the start, and the
+// symptom was an admin seeing no queue at all rather than an error they would
+// report: listings sat in pending_review with no surface that showed them.
 func (r *Repository) ModerationQueue(ctx context.Context, limit, offset int) ([]Listing, error) {
 	limit = clampLimit(limit)
 	rows, err := r.db.Query(ctx, `SELECT `+listingCols+`
-		FROM public.mkt_listings WHERE status='pending_review' ORDER BY created_at ASC LIMIT $2 OFFSET $3`,
+		FROM public.mkt_listings WHERE status='pending_review' ORDER BY created_at ASC LIMIT $1 OFFSET $2`,
 		limit, offset)
 	if err != nil {
 		return nil, wrapInternal("moderation queue", err)
