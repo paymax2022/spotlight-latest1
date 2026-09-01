@@ -29,20 +29,45 @@ type client struct {
 // Fan-out is done via Redis pub/sub in a multi-instance deployment; for MVP
 // this in-process hub is used directly.
 type Hub struct {
-	mu      sync.RWMutex
-	clients map[string][]*client // userID → clients
+	mu            sync.RWMutex
+	clients       map[string][]*client // userID → clients
+	originAllowed func(origin string) bool
 }
 
-// New creates a new Hub.
-func New() *Hub {
-	return &Hub{clients: make(map[string][]*client)}
+// New creates a new Hub. originAllowed reports whether a browser-sent Origin
+// header is trusted; pass nil to allow every origin (only appropriate for a
+// hub no browser client ever reaches).
+//
+// nhooyr's default Origin check only accepts an Origin that is byte-identical
+// to the request's own Host — i.e. "the frontend page and this WS endpoint are
+// the exact same origin". That is never true here: the browser/RN-web client
+// always lives on a different port (dev: :8083 vs :8091) or a different
+// subdomain entirely (staging/prod: frontend-web-* vs backend-*). Left on the
+// default, EVERY real browser WebSocket connection 403s at the handshake while
+// curl (which sends no Origin header) succeeds — the split that made this look
+// like a client bug rather than a server one. originAllowed lets callers reuse
+// the same allowlist as the HTTP CORS middleware (CORS_ALLOW_ORIGINS + the
+// dev-only loopback/LAN patterns) instead.
+func New(originAllowed func(origin string) bool) *Hub {
+	return &Hub{clients: make(map[string][]*client), originAllowed: originAllowed}
 }
 
 // ServeHTTP upgrades the HTTP request to a WebSocket and registers the client.
 // userID must be extracted from the JWT by the caller before invoking this.
 func (h *Hub) ServeHTTP(w http.ResponseWriter, r *http.Request, userID string) error {
+	origin := r.Header.Get("Origin")
+	// A missing Origin means a non-browser client (native app, curl) that
+	// browser same-origin enforcement never applied to in the first place —
+	// this endpoint's real auth boundary is the ticket/JWT the caller already
+	// validated, not Origin. Only a PRESENT, disallowed Origin is rejected.
+	if origin != "" && h.originAllowed != nil && !h.originAllowed(origin) {
+		http.Error(w, fmt.Sprintf("request Origin %q is not authorized", origin), http.StatusForbidden)
+		return fmt.Errorf("ws: origin %q not authorized", origin)
+	}
 	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{
-		InsecureSkipVerify: false,
+		// Origin is verified explicitly above using the shared allowlist rather
+		// than nhooyr's built-in same-host-only check. See the New() doc comment.
+		InsecureSkipVerify: true,
 	})
 	if err != nil {
 		return fmt.Errorf("ws: accept: %w", err)

@@ -97,6 +97,13 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		return nil
 	}
 
+	// Shared by every browser-facing WebSocket hub built below (restaurant,
+	// transport, doctor) so their Origin enforcement can never drift from the
+	// HTTP CORS allowlist. See platform/ws.New's doc comment for why this is
+	// required at all: nhooyr's default check rejects any Origin that isn't
+	// byte-identical to this server's own host, which no real frontend ever is.
+	wsOriginAllowed := middleware.AllowedOriginChecker(cfg.CORSAllowOrigins, cfg.AppEnv)
+
 	// Direct Referral Rewards engine service, captured below when the flag is on and
 	// threaded into the revenue modules that emit purchase events (PRD §2.5/§7.1).
 	// Stays nil when FEATURE_REFERRAL_REWARDS_ENABLED is off — every emit is nil-safe.
@@ -1499,7 +1506,7 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		// Real-time per-order channel: status changes, rider location, and chat
 		// messages fan out to the order's three participants over the WS hub
 		// (Redis pub/sub fans out across instances).
-		restaurantHub := platformWS.New()
+		restaurantHub := platformWS.New(wsOriginAllowed)
 		restaurantRT := restaurant.NewRealtime(restaurantHub, redisClient, restaurantSvc.OrderParties)
 		restaurantRT.Start(ctx)
 		restaurantSvc = restaurantSvc.WithRealtime(restaurantRT)
@@ -1856,7 +1863,7 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 
 		// Real-time trip tracking: driver GPS → MatchToRoad snap → rider+driver
 		// over WebSocket (Redis pub/sub fans out across instances).
-		transportHub := platformWS.New()
+		transportHub := platformWS.New(wsOriginAllowed)
 		var trackMaps maps.MapService
 		if mapSvc != nil {
 			trackMaps = mapSvc
@@ -2298,7 +2305,7 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 			VideoSDKAPIKey:      cfg.VideoSDKAPIKey,
 			VideoSDKSecret:      cfg.VideoSDKSecret,
 		})
-		doctorHub := platformWS.New()
+		doctorHub := platformWS.New(wsOriginAllowed)
 
 		doctorSvc := doctor.NewService(pool, ledgerSvc, tiersSvc, redisClient).WithRealtime(rtcIssuer, doctorHub)
 		// Central Commission & Profit registry: record realized Spotlight profit at the
