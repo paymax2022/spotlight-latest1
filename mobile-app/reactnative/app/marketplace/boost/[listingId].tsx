@@ -50,7 +50,20 @@ function BoostPurchase({ listingId, onPurchased }: { listingId: string; onPurcha
   const [selectedTier, setSelectedTier] = useState<string | null>(null);
 
   const tier = tiersQuery.data?.find((t) => t.tier === selectedTier);
-  const insufficient = !!tier && !pay.walletLoading && pay.walletKobo < tier.priceKobo;
+
+  // NO pre-flight affordability gate here, deliberately.
+  //
+  // usePurchasePayment fetches the wallet balance with `enabled: visible`, so it
+  // only runs once the payment sheet opens. A disabled React Query reports
+  // isLoading === false, so a `!walletLoading && walletKobo < price` check read a
+  // balance of 0 that had never been fetched and declared EVERY tier unaffordable
+  // — the button was permanently disabled no matter how much was in the wallet.
+  //
+  // It also hid the card rail: pay.start() passes no `method`, so the sheet offers
+  // wallet OR card, and blocking on the wallet balance alone denied a user who
+  // intended to pay by card. The sheet knows the real balance, offers both rails,
+  // and the server enforces the debit — none of which needs this screen to guess
+  // first.
 
   const handleConfirm = () => {
     if (!tier || !listingId) return;
@@ -83,10 +96,19 @@ function BoostPurchase({ listingId, onPurchased }: { listingId: string; onPurcha
         <StateView kind="error" title="Couldn't load boost tiers" actionLabel="Retry" onAction={() => tiersQuery.refetch()} />
       ) : (
         <>
+          {/* Only state a balance once one has actually been fetched — the query is
+              idle until the sheet opens, and rendering formatNaira(0) told the
+              seller their wallet was empty when it was not. */}
           <View style={styles.walletRow}>
             <Wallet size={16} color={MarketColors.muted} />
             <Text style={styles.walletText}>
-              Wallet balance: <Text style={styles.walletAmount}>{pay.walletLoading ? '…' : formatNaira(pay.walletKobo)}</Text>
+              {pay.walletLoading ? (
+                <>Wallet balance: <Text style={styles.walletAmount}>…</Text></>
+              ) : pay.walletKobo > 0 ? (
+                <>Wallet balance: <Text style={styles.walletAmount}>{formatNaira(pay.walletKobo)}</Text></>
+              ) : (
+                <>Pay with your wallet or card at checkout</>
+              )}
             </Text>
           </View>
 
@@ -106,15 +128,6 @@ function BoostPurchase({ listingId, onPurchased }: { listingId: string; onPurcha
               );
             })}
 
-            {insufficient ? (
-              <Pressable style={styles.topupBanner} onPress={() => router.push('/wallet' as never)} accessibilityRole="button">
-                <AlertTriangle size={16} color={MarketColors.warnText} />
-                <Text style={styles.topupText}>
-                  Not enough in your wallet for this tier. <Text style={styles.topupLink}>Top up →</Text>
-                </Text>
-              </Pressable>
-            ) : null}
-
             <Text style={styles.disclaimer}>
               Boosts add extra visibility on top of relevance, trust, and freshness — they never override quality or trust scoring in results.
             </Text>
@@ -125,7 +138,7 @@ function BoostPurchase({ listingId, onPurchased }: { listingId: string; onPurcha
             <PrimaryButton
               label={tier ? `Boost for ${formatNaira(tier.priceKobo)}` : 'Select a tier'}
               onPress={handleConfirm}
-              disabled={!selectedTier || insufficient || pay.phase === 'charging' || pay.phase === 'awaiting'}
+              disabled={!selectedTier || pay.phase === 'charging' || pay.phase === 'awaiting'}
               loading={pay.phase === 'charging' || pay.phase === 'awaiting' || purchaseBoost.isPending}
             />
           </View>
