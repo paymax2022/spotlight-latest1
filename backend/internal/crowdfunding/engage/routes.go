@@ -26,6 +26,8 @@ import (
 //	GET  /campaigns/:id/updates      → campaign updates, newest first
 //	POST /campaigns/:id/updates      → publish an update (creator only)
 //	POST /updates/:updateId/like     → like an update (idempotent)
+//	GET  /campaigns/:id/documents    → supporting documents
+//	POST /campaigns/:id/documents    → attach an uploaded document (creator only)
 //	GET  /settings/notifications     → notification preferences
 //	PUT  /settings/notifications     → upsert notification preferences
 func Register(rg *gin.RouterGroup, db *pgxpool.Pool) {
@@ -63,6 +65,9 @@ func Register(rg *gin.RouterGroup, db *pgxpool.Pool) {
 	rg.GET("/campaigns/:id/updates", h.ListUpdates)
 	rg.POST("/campaigns/:id/updates", h.PostUpdate)
 	rg.POST("/updates/:updateId/like", h.LikeUpdate)
+
+	rg.GET("/campaigns/:id/documents", h.ListDocuments)
+	rg.POST("/campaigns/:id/documents", h.AttachDocument)
 
 	rg.GET("/settings/notifications", h.GetNotificationPrefs)
 	rg.PUT("/settings/notifications", h.UpdateNotificationPrefs)
