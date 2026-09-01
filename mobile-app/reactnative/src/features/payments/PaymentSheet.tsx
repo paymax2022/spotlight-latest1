@@ -5,10 +5,13 @@ import { router } from 'expo-router';
 
 import { Colors } from '@/constants/colors';
 import type { PurchaseController } from './usePurchasePayment';
+// Shared formatter. This screen carried its own copy with minimumFractionDigits:0,
+// which trimmed the trailing zero — ₦13,645.20 rendered as "₦13,645.2" on the very
+// screen where the customer authorises the charge, disagreeing with the checkout
+// summary behind it. src/utils/money.ts exists precisely so amounts cannot drift.
+import { formatNaira } from '@/utils/money';
 
-function naira(kobo: number): string {
-  return '₦' + (kobo / 100).toLocaleString('en-NG', { minimumFractionDigits: 0, maximumFractionDigits: 2 });
-}
+
 
 // Shared checkout sheet: lets the user pay a purchase from their wallet balance
 // OR directly via card (Paystack). Drop it once near a module's pay button and
@@ -54,7 +57,7 @@ export default function PaymentSheet({ controller }: { controller: PurchaseContr
             )}
           </View>
 
-          <Text style={styles.amount}>{naira(amount)}</Text>
+          <Text style={styles.amount}>{formatNaira(amount)}</Text>
 
           {phase === 'blocked' && spendBlock ? (
             /* The caller's KYC tier will not permit this spend on ANY rail, so the
@@ -107,7 +110,7 @@ export default function PaymentSheet({ controller }: { controller: PurchaseContr
                 disabled={pin.length !== 4}
                 onPress={() => submitPin(pin)}
               >
-                <Text style={styles.pinBtnText}>Confirm &amp; pay {naira(amount)}</Text>
+                <Text style={styles.pinBtnText}>Confirm &amp; pay {formatNaira(amount)}</Text>
               </Pressable>
               <Text style={styles.secure}>Your PIN authorises this wallet debit.</Text>
             </View>
@@ -149,7 +152,7 @@ export default function PaymentSheet({ controller }: { controller: PurchaseContr
                 <View style={{ flex: 1 }}>
                   <Text style={styles.optTitle}>Pay with wallet</Text>
                   <Text style={styles.optSub}>
-                    {walletLoading ? 'Checking balance…' : `Balance: ${naira(walletKobo)}`}
+                    {walletLoading ? 'Checking balance…' : `Balance: ${formatNaira(walletKobo)}`}
                     {!walletLoading && !walletCovers ? '  •  insufficient' : ''}
                   </Text>
                 </View>

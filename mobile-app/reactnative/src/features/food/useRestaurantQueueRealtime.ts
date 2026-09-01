@@ -23,6 +23,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { createSupabaseClient } from '@/lib/supabase';
 import { getDevUrl } from '@/lib/devUrl';
+import { openWebSocket } from '@/lib/nativeWebSocket';
 import { api } from '@/api/client';
 import { USE_MOCK } from './api';
 import type { OrderFrame } from './types';
@@ -104,16 +105,13 @@ export function useRestaurantQueueRealtime(enabled = true): QueueRealtimeState {
       try {
         const wsUrl = await resolveUserWsUrl();
         const usingTicket = wsUrl !== userWsUrl();
-        const WS = WebSocket as unknown as new (
-          url: string,
-          protocols?: string | string[],
-          options?: { headers?: Record<string, string> },
-        ) => WebSocket;
-        const ws = new WS(wsUrl, undefined, {
+        const ws = openWebSocket(
+          wsUrl,
           // The signed URL authenticates via its ?ticket= query; the header is
-          // only needed on the legacy fallback path.
-          headers: !usingTicket && token ? { Authorization: `Bearer ${token}` } : {},
-        });
+          // only needed on the legacy fallback path (and only takes effect on
+          // native — see nativeWebSocket.ts for why web can't use it at all).
+          !usingTicket && token ? { Authorization: `Bearer ${token}` } : {},
+        );
         wsRef.current = ws;
         ws.onopen = () => {
           setConnected(true);
