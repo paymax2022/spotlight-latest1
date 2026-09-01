@@ -61,6 +61,8 @@ function label(status: string): string {
 export default function ParticipantsPage() {
   const [search, setSearch] = useState('');
   const [filterStatus, setFilterStatus] = useState('');
+  const [filterContest, setFilterContest] = useState('');
+  const [contestOptions, setContestOptions] = useState<string[]>([]);
   const [rows, setRows] = useState<AdminRegistration[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -80,6 +82,7 @@ export default function ParticipantsPage() {
     try {
       const { items, total: t } = await listRegistrations({
         status: filterStatus || undefined,
+        contestSlug: filterContest || undefined,
         search: search.trim() || undefined,
         limit: 200,
       });
@@ -92,13 +95,24 @@ export default function ParticipantsPage() {
     } finally {
       setLoading(false);
     }
-  }, [filterStatus, search]);
+  }, [filterStatus, filterContest, search]);
 
   // Debounced so typing in the search box doesn't fire a request per keystroke.
   useEffect(() => {
     const t = setTimeout(() => { void load(); }, 250);
     return () => clearTimeout(t);
   }, [load]);
+
+  // Contest options for the filter dropdown: the distinct slugs across an
+  // unfiltered read, so switching status/contest filters never shrinks the
+  // list of contests on offer. Loaded once — new contests appear on refresh.
+  useEffect(() => {
+    void listRegistrations({ limit: 200 }).then(({ items }) => {
+      const slugs = Array.from(new Set(items.map((r) => r.contestSlug).filter(Boolean)));
+      slugs.sort((a, b) => a.localeCompare(b));
+      setContestOptions(slugs);
+    }).catch(() => { /* filter options are a convenience; the list still works without them */ });
+  }, []);
 
   // Live updates: a mobile entry submitted or another reviewer's decision shows
   // up without a refresh. Quiet reload so the table doesn't flash a spinner.
@@ -207,6 +221,19 @@ export default function ParticipantsPage() {
               <option key={s} value={s}>{label(s)}</option>
             ))}
           </select>
+          <select
+            value={filterContest}
+            onChange={(e) => setFilterContest(e.target.value)}
+            style={{
+              padding: '0.4rem 0.55rem', border: `1px solid ${colors.inputBorder}`, borderRadius: '0.375rem',
+              fontSize: '0.85rem', background: colors.card, cursor: 'pointer', color: colors.text,
+            }}
+          >
+            <option value="">All Competitions</option>
+            {contestOptions.map((slug) => (
+              <option key={slug} value={slug}>{slug}</option>
+            ))}
+          </select>
         </div>
       </Card>
 
@@ -234,7 +261,7 @@ export default function ParticipantsPage() {
                   {rows.length === 0 ? (
                     <tr>
                       <td style={{ ...tdCell, color: colors.muted, textAlign: 'center' }} colSpan={9}>
-                        {search || filterStatus ? 'No participants match your search.' : 'No participants yet.'}
+                        {search || filterStatus || filterContest ? 'No participants match your search.' : 'No participants yet.'}
                       </td>
                     </tr>
                   ) : (
