@@ -9,6 +9,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { createSupabaseClient } from '@/lib/supabase';
 import { getDevUrl } from '@/lib/devUrl';
+import { openWebSocket } from '@/lib/nativeWebSocket';
 import { api } from '@/api/client';
 import { USE_MOCK } from './api';
 import type { ChatMessage, LatLng, OrderStatus, OrderFrame } from './types';
@@ -150,16 +151,13 @@ export function useOrderRealtime(
         // falling back to the legacy header-auth URL on the same Next.js base.
         const wsUrl = await resolveOrderWsUrl(orderId);
         const usingTicket = wsUrl !== orderWsUrl(orderId);
-        const WS = WebSocket as unknown as new (
-          url: string,
-          protocols?: string | string[],
-          options?: { headers?: Record<string, string> },
-        ) => WebSocket;
-        const ws = new WS(wsUrl, undefined, {
+        const ws = openWebSocket(
+          wsUrl,
           // The signed URL already authenticates via its ?ticket= query, so the
-          // header is only needed on the legacy fallback path.
-          headers: !usingTicket && token ? { Authorization: `Bearer ${token}` } : {},
-        });
+          // header is only needed on the legacy fallback path (native only —
+          // see nativeWebSocket.ts for why web can't use it at all).
+          !usingTicket && token ? { Authorization: `Bearer ${token}` } : {},
+        );
         wsRef.current = ws;
         ws.onopen = () => {
           setConnected(true);
