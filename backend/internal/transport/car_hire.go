@@ -314,7 +314,7 @@ func (s *Service) CompleteCarHire(ctx context.Context, id, callerID string) erro
 	if b.DriverID != nil {
 		s.db.QueryRow(ctx, `SELECT user_id FROM drivers WHERE id=$1`, *b.DriverID).Scan(&driverUserID)
 	}
-	split := settlementSplit(driverUserID, comm)
+	split := settlementSplit(driverUserID, comm, 0)
 	// Fare + extensions: reference 'carhire:<id>' and 'carhire:<id>:ext:%' (NOT deposit).
 	rows, err := s.db.Query(ctx,
 		`SELECT id FROM settlements WHERE status='escrowed' AND (reference=$1 OR reference LIKE $2)`,

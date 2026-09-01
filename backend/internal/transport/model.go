@@ -194,6 +194,7 @@ type PricingConfig struct {
 	SurgeMultiplier       float64 `json:"surgeMultiplier"`
 	CancellationFeeKobo   int64   `json:"cancellationFeeKobo"`
 	WaitingFeePerMinKobo  int64   `json:"waitingFeePerMinKobo"`
+	InsuranceRateBps      int64   `json:"insuranceRateBps"`
 	Active                bool    `json:"active"`
 }
 

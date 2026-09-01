@@ -258,7 +258,7 @@ func (s *Service) BookEventTransport(ctx context.Context, userID, offerID string
 
 	// Trusted catalog: settle the organizer immediately on book (like bus).
 	comm, _ := s.commissionForTier(ctx, "standard")
-	if err := s.settlement.Settle(ctx, sett.ID, settlementSplit(organizerID, comm)); err != nil {
+	if err := s.settlement.Settle(ctx, sett.ID, settlementSplit(organizerID, comm, 0)); err != nil {
 		return nil, fmt.Errorf("transport: settle event booking: %w", err)
 	}
 	s.recordModeEvent(ctx, userID, "event.booked", "event_transport_booking", bookingID, "", "booked",
