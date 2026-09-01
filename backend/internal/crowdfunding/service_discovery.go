@@ -122,7 +122,8 @@ func (s *Service) GetDetail(ctx context.Context, id string) (map[string]any, err
 		"riskDisclosure": nil, "verified": sum.Verified, "featured": sum.Featured, "trending": sum.Trending,
 		"urgent": sum.Urgent, "saved": false,
 		"budget": s.campaignBudget(ctx, id), "milestones": s.campaignMilestones(ctx, id), "updates": s.campaignUpdates(ctx, id), "rewardTiers": s.campaignRewardTiers(ctx, id),
-		"documents": s.campaignDocuments(ctx, id), "faqs": []any{}, "tags": []any{}, "location": sum.Location,
+		"documents": s.campaignDocuments(ctx, id), "commentCount": s.campaignCommentCount(ctx, id),
+		"faqs": []any{}, "tags": []any{}, "location": sum.Location,
 	}, nil
 }
 
@@ -313,6 +314,23 @@ func (s *Service) campaignMilestones(ctx context.Context, campaignID string) []m
 		})
 	}
 	return out
+}
+
+// campaignCommentCount returns how many comments the Q&A thread holds, so the
+// detail row can show a count instead of a static invitation. It counts exactly
+// what ListComments returns — questions and creator replies alike, minus
+// soft-deleted rows — so the number always matches the screen it links to.
+//
+// Read failures degrade to 0 rather than failing the whole campaign page, the
+// same bargain the other detail helpers make.
+func (s *Service) campaignCommentCount(ctx context.Context, campaignID string) int {
+	var n int
+	if err := s.db.QueryRow(ctx, `
+		SELECT count(*)::int FROM cf_campaign_comments
+		 WHERE campaign_id = $1 AND deleted_at IS NULL`, campaignID).Scan(&n); err != nil {
+		return 0
+	}
+	return n
 }
 
 // campaignUpdates returns the campaign's updates newest-first for the detail

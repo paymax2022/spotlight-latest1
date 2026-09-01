@@ -194,6 +194,13 @@ export interface Campaign {
   updates: CampaignUpdate[];
   rewardTiers: RewardTier[];
   documents: CampaignDocument[];
+  /**
+   * How many comments the Q&A thread holds (questions + creator replies,
+   * excluding soft-deleted). Optional because the mock fixtures and the
+   * optimistic draft mapper do not supply it; the detail row falls back to
+   * its invitation copy when it is absent rather than rendering "0 comments".
+   */
+  commentCount?: number;
   faqs: CampaignFaq[];
   tags: string[];
   location: string | null;
