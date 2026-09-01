@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React from 'react';
 import { View, Text, ScrollView, StyleSheet, Pressable, Platform } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
@@ -15,18 +15,14 @@ import { useRestaurantQueueRealtime } from '@/features/food/useRestaurantQueueRe
 import { OrderListRow } from '@/features/food/components';
 import { isTerminalStatus } from '@/features/food/utils';
 
-type MenuTab = 'orders' | 'earnings' | 'manage';
-
 export default function RestaurantQueueScreen() {
-  const [activeTab, setActiveTab] = useState<MenuTab>('orders');
-
   // Live order events over the user-scoped socket. A merchant's critical event
   // is a NEW order, which cannot be subscribed to per-order because the id does
   // not exist client-side yet — see useRestaurantQueueRealtime.
   //
   // Named socketLive, not `live`: `live` below is the ACTIVE-ORDER list, and the
   // two mean very different things.
-  const { live: socketLive } = useRestaurantQueueRealtime(activeTab === 'orders');
+  const { live: socketLive } = useRestaurantQueueRealtime(true);
 
   // Polling becomes the FALLBACK rather than the mechanism: every 6s while the
   // socket is down (or under mock), backing off to 60s while it is up — kept
@@ -62,78 +58,75 @@ export default function RestaurantQueueScreen() {
         </Pressable>
       </View>
 
+      {/* This gate covers the ORDER LIST only. It used to wrap the tab content
+          too, so Earnings and Manage rendered nothing at all whenever the queue
+          was empty — which is the state of every person who has not started
+          selling yet, i.e. exactly the people who need Manage to set a store up.
+          The tabs are real navigation now (see the bottom bar), so nothing else
+          depends on this branch. */}
       {isLoading ? (
         <StateView kind="loading" message="Loading the order queue…" />
       ) : isError ? (
         <StateView kind="error" title="Couldn't load orders" actionLabel="Retry" onAction={() => refetch()} />
       ) : !data || data.length === 0 ? (
-        <StateView kind="empty" icon="Store" title="No orders yet" message="Incoming orders will appear here in real time." />
+        <StateView
+          kind="empty"
+          icon="Store"
+          title="No orders yet"
+          message="Incoming orders will appear here in real time. If you haven't set your restaurant up, start there."
+          actionLabel="Set up your restaurant"
+          onAction={() => router.push('/food/restaurant/manage')}
+        />
       ) : (
         <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={s.content}>
-          {activeTab === 'orders' && (
+          <Text style={s.sectionTitle}>Active ({live.length})</Text>
+          {live.length === 0 ? <Text style={s.empty}>No active orders.</Text> : null}
+          {live.map((order) => (
+            <OrderListRow key={order.id} order={order} onPress={() => router.push(`/food/restaurant/order/${order.id}`)} />
+          ))}
+
+          {past.length ? (
             <>
-              <Text style={s.sectionTitle}>Active ({live.length})</Text>
-              {live.length === 0 ? <Text style={s.empty}>No active orders.</Text> : null}
-              {live.map((order) => (
+              <Text style={s.sectionTitle}>Completed</Text>
+              {past.map((order) => (
                 <OrderListRow key={order.id} order={order} onPress={() => router.push(`/food/restaurant/order/${order.id}`)} />
               ))}
-
-              {past.length ? (
-                <>
-                  <Text style={s.sectionTitle}>Completed</Text>
-                  {past.map((order) => (
-                    <OrderListRow key={order.id} order={order} onPress={() => router.push(`/food/restaurant/order/${order.id}`)} />
-                  ))}
-                </>
-              ) : null}
             </>
-          )}
-          {activeTab === 'earnings' && (
-            <Pressable onPress={() => router.push('/food/restaurant/earnings')} style={{ marginTop: Spacing.lg }}>
-              <Text style={s.sectionTitle}>View earnings details</Text>
-            </Pressable>
-          )}
-          {activeTab === 'manage' && (
-            <Pressable onPress={() => router.push('/food/restaurant/manage')} style={{ marginTop: Spacing.lg }}>
-              <Text style={s.sectionTitle}>Manage your store</Text>
-            </Pressable>
-          )}
+          ) : null}
         </ScrollView>
       )}
 
-      {/* Bottom menu navigation */}
+      {/* Bottom navigation.
+          These were local tab-state toggles, and selecting one rendered a text
+          link that had to be tapped AGAIN to reach the screen — when it rendered
+          at all. They are destinations, so they navigate. Orders is this screen,
+          hence the selected styling on it and no press handler. */}
       <View style={[s.bottomMenu, shadow1]}>
-        <Pressable
-          style={[s.menuItem, activeTab === 'orders' && s.menuItemActive]}
-          onPress={() => setActiveTab('orders')}
-          accessibilityRole="tab"
-          accessibilityLabel="Orders"
-          accessibilityState={{ selected: activeTab === 'orders' }}
-        >
-          <Icons.ReceiptText size={20} color={activeTab === 'orders' ? Colors.primary : Colors.onSurfaceVariant} strokeWidth={2} />
-          <Text style={[s.menuLabel, activeTab === 'orders' && s.menuLabelActive]}>Orders</Text>
-        </Pressable>
+        <View style={[s.menuItem, s.menuItemActive]} accessibilityRole="tab" accessibilityState={{ selected: true }}>
+          <Icons.ReceiptText size={20} color={Colors.primary} strokeWidth={2} />
+          <Text style={[s.menuLabel, s.menuLabelActive]}>Orders</Text>
+        </View>
 
         <Pressable
-          style={[s.menuItem, activeTab === 'earnings' && s.menuItemActive]}
-          onPress={() => setActiveTab('earnings')}
+          style={s.menuItem}
+          onPress={() => router.push('/food/restaurant/earnings')}
           accessibilityRole="tab"
           accessibilityLabel="Earnings"
-          accessibilityState={{ selected: activeTab === 'earnings' }}
+          accessibilityState={{ selected: false }}
         >
-          <Icons.TrendingUp size={20} color={activeTab === 'earnings' ? Colors.primary : Colors.onSurfaceVariant} strokeWidth={2} />
-          <Text style={[s.menuLabel, activeTab === 'earnings' && s.menuLabelActive]}>Earnings</Text>
+          <Icons.TrendingUp size={20} color={Colors.onSurfaceVariant} strokeWidth={2} />
+          <Text style={s.menuLabel}>Earnings</Text>
         </Pressable>
 
         <Pressable
-          style={[s.menuItem, activeTab === 'manage' && s.menuItemActive]}
-          onPress={() => setActiveTab('manage')}
+          style={s.menuItem}
+          onPress={() => router.push('/food/restaurant/manage')}
           accessibilityRole="tab"
           accessibilityLabel="Manage"
-          accessibilityState={{ selected: activeTab === 'manage' }}
+          accessibilityState={{ selected: false }}
         >
-          <Icons.Settings size={20} color={activeTab === 'manage' ? Colors.primary : Colors.onSurfaceVariant} strokeWidth={2} />
-          <Text style={[s.menuLabel, activeTab === 'manage' && s.menuLabelActive]}>Manage</Text>
+          <Icons.Settings size={20} color={Colors.onSurfaceVariant} strokeWidth={2} />
+          <Text style={s.menuLabel}>Manage</Text>
         </Pressable>
       </View>
     </SafeAreaView>
