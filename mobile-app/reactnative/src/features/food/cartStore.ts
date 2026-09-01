@@ -221,7 +221,12 @@ export const useCartStore = create<CartState>((set) => ({
   removeRestaurants: (goneIds) => {
     const st = useCartStore.getState();
     const out = pruneCart(st, goneIds);
-    if (out.removedIds.length > 0) {
+    // `repointed` matters as much as `removedIds` here. A dead cart-level
+    // pointer with no food behind it removes NOTHING, so gating on removedIds
+    // alone computed the re-derivation and then threw it away — leaving the
+    // pointer aimed at a deleted kitchen, which is what kept the delivery fee
+    // and packaging price from ever resolving.
+    if (out.removedIds.length > 0 || out.repointed) {
       set({
         restaurantId: out.restaurantId,
         restaurantName: out.restaurantName,
