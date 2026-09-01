@@ -263,6 +263,30 @@ export default function FoodDiscoveryScreen() {
           <SearchBar value={search} onChangeText={setSearch} placeholder="Search restaurant or dish…" />
         </View>
 
+        {/* Becoming a seller had exactly one door: the unlabelled store glyph in
+            the top bar, which nobody looking to sell food would think to press.
+            The console it opens has always carried the whole flow — create the
+            store, set the packaging price, build the menu — so what was missing
+            was a way to find out it exists. Say it in words, above the fold.
+            Below the search rather than above it: the search floats UP over the
+            hero (searchFloat's negative margin), so anything between the two
+            breaks that overlap. */}
+        <Pressable
+          onPress={() => router.push('/food/restaurant')}
+          style={({ pressed }) => [s.sellRow, pressed && { opacity: 0.9 }]}
+          accessibilityRole="button"
+          accessibilityLabel="Sell food on Paymax — set up your restaurant"
+        >
+          <View style={s.sellIcon}>
+            <Icons.ChefHat size={20} color={Colors.primary} strokeWidth={2} />
+          </View>
+          <View style={s.sellText}>
+            <Text style={s.sellTitle}>Sell food on Paymax</Text>
+            <Text style={s.sellSub}>Set up your restaurant, add your menu, start taking orders.</Text>
+          </View>
+          <Icons.ChevronRight size={18} color={Colors.onSurfaceVariant} strokeWidth={2} />
+        </Pressable>
+
         {/* Active browse view (arrived via ?view=), clearable back to the full list */}
         {viewMeta ? (
           <View style={s.viewPillRow}>
@@ -412,6 +436,23 @@ const s = StyleSheet.create({
   heroTitle: { ...Typography.headlineLg, color: Colors.white, marginTop: Spacing.sm },
   heroSubtitle: { ...Typography.bodySm, color: 'rgba(255,255,255,0.88)', marginTop: Spacing.sm, marginBottom: Spacing.lg, maxWidth: '85%' },
   searchFloat: { marginTop: -26, marginBottom: Spacing.xs, zIndex: 2 },
+  sellRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.sm,
+    marginHorizontal: Spacing.containerMargin,
+    marginTop: Spacing.sm,
+    marginBottom: Spacing.xs,
+    padding: Spacing.md,
+    borderRadius: Radius.lg,
+    backgroundColor: Colors.surfaceContainerLowest,
+    borderWidth: 1,
+    borderColor: Colors.surfaceContainerHigh,
+  },
+  sellIcon: { width: 40, height: 40, borderRadius: Radius.full, alignItems: 'center', justifyContent: 'center', backgroundColor: Colors.surfaceContainerLow },
+  sellText: { flex: 1, gap: 2 },
+  sellTitle: { ...Typography.labelLg, color: Colors.onSurface },
+  sellSub: { ...Typography.bodySm, color: Colors.onSurfaceVariant },
   viewPillRow: { flexDirection: 'row', paddingHorizontal: Spacing.containerMargin, marginTop: Spacing.sm },
   viewPill: {
     flexDirection: 'row',
