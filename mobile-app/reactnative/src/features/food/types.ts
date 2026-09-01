@@ -111,6 +111,19 @@ export interface CartLine {
 export interface CartPackage {
   id: string;        // local-only client id
   lines: CartLine[];
+  /**
+   * Which restaurant this pack belongs to.
+   *
+   * The cart is multi-restaurant and every LINE already carries its own
+   * restaurantId; the pack — the container the user actually adds — did not, so
+   * an empty pack could not be attributed to anything. Screens fell back to the
+   * cart-level restaurantId, which is "whichever restaurant was added FIRST",
+   * and an empty pack created anywhere else was invisible.
+   *
+   * Optional because carts persisted before this existed have packs without it;
+   * those are matched by the old cart-level rule instead.
+   */
+  restaurantId?: string | null;
 }
 
 // ─── Order ──────────────────────────────────────────────────────────────────

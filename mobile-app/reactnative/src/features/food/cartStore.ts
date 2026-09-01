@@ -47,8 +47,17 @@ interface CartState {
   packages: CartPackage[];
   activePackageId: string | null;
 
-  /** Add an empty takeaway package and make it active. Returns its id. */
-  addPackage: () => string;
+  /**
+   * Add an empty takeaway package and make it active. Returns its id.
+   *
+   * Takes the restaurant it is being added FOR. Without it an empty pack could
+   * not be attributed to anything, so a screen showing "this restaurant's packs"
+   * had to fall back to the cart-level restaurantId — which holds whichever
+   * restaurant was added FIRST. Adding a pack from any other restaurant's page
+   * then created it and immediately filtered it out of view, so the button
+   * looked dead while quietly growing the cart.
+   */
+  addPackage: (restaurantId?: string, restaurantName?: string) => string;
   removePackage: (packageId: string) => void;
   setActivePackage: (packageId: string) => void;
 
@@ -77,9 +86,16 @@ export const useCartStore = create<CartState>((set) => ({
   packages: [],
   activePackageId: null,
 
-  addPackage: () => {
+  addPackage: (restaurantId, restaurantName) => {
     const id = newPkgId();
-    set((st) => ({ packages: [...st.packages, { id, lines: [] }], activePackageId: id }));
+    set((st) => ({
+      packages: [...st.packages, { id, lines: [], restaurantId: restaurantId ?? null }],
+      activePackageId: id,
+      // Keep the legacy first-wins cart fields in step for callers that still
+      // read them; they are only filled when empty, exactly as addItem does.
+      restaurantId: st.restaurantId || restaurantId || null,
+      restaurantName: st.restaurantName || restaurantName || null,
+    }));
     return id;
   },
 
@@ -114,7 +130,7 @@ export const useCartStore = create<CartState>((set) => ({
       let targetId = packageId ?? active ?? packages[packages.length - 1]?.id ?? null;
       if (!targetId || !packages.some((p) => p.id === targetId)) {
         targetId = newPkgId();
-        packages = [...packages, { id: targetId, lines: [] }];
+        packages = [...packages, { id: targetId, lines: [], restaurantId }];
       }
 
       const target = packages.find((p) => p.id === targetId)!;
@@ -137,7 +153,7 @@ export const useCartStore = create<CartState>((set) => ({
         // Auto-overflow: the active pack is full for this regular item → open a NEW
         // pack with the selected item and make it active; shopping continues there.
         const overflowId = newPkgId();
-        packages = [...packages, { id: overflowId, lines: [newLine()] }];
+        packages = [...packages, { id: overflowId, lines: [newLine()], restaurantId }];
         result = { ok: true, overflowed: true, packageId: overflowId, packageIndex: idxOf(overflowId) };
         return {
           restaurantId: st.restaurantId || restaurantId,

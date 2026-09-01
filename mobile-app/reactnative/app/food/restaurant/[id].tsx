@@ -11,6 +11,7 @@ import { Typography } from '@/constants/typography';
 import { shadow1, shadow2 } from '@/constants/shadows';
 import { useRestaurant } from '@/features/food/hooks';
 import { useCartStore, cartItemCount, cartSubtotalKobo, MAX_SAME_FOOD_PER_PACKAGE } from '@/features/food/cartStore';
+import { packsForRestaurant } from '@/features/food/packScope';
 import { formatNaira, formatNairaWhole } from '@/features/food/utils';
 import { DynamicIcon } from '@/features/food/components';
 import type { MenuItem } from '@/features/food/types';
@@ -117,10 +118,13 @@ export default function RestaurantDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const { data: restaurant, isLoading, isError, refetch } = useRestaurant(id);
   const { packages, restaurantId, activePackageId, addPackage, removePackage, setActivePackage, addItem, decrementItem, removeItem } = useCartStore();
-  // Multi-restaurant: show THIS restaurant's packs. Cart may have items from other restaurants too.
-  const mine = restaurantId === id;
-  const myPackages = mine ? packages : [];
-  const activeId = mine ? activePackageId : null;
+  // Multi-restaurant: show THIS restaurant's packs. Cart may have items from
+  // other restaurants too. See packsForRestaurant for why this is not the
+  // cart-level restaurantId.
+  const legacyMine = restaurantId === id;
+  const myPackages = packsForRestaurant(packages, id, restaurantId);
+  const mine = myPackages.length > 0 || legacyMine;
+  const activeId = myPackages.some((p) => p.id === activePackageId) ? activePackageId : null;
   const activePkg = myPackages.find((p) => p.id === activeId) ?? null;
 
   // Cart totals across ALL restaurants (for display at bottom)
@@ -211,7 +215,7 @@ export default function RestaurantDetailScreen() {
             ) : null}
             <View style={s.packsHead}>
               <Text style={s.packBarTitle}>Takeaway packs{myPackages.length > 0 ? ` (${myPackages.length})` : ''}</Text>
-              <Pressable onPress={() => addPackage()} style={s.addPackBtn} accessibilityRole="button" accessibilityLabel="Add takeaway pack">
+              <Pressable onPress={() => addPackage(id, restaurant?.name)} style={s.addPackBtn} accessibilityRole="button" accessibilityLabel="Add takeaway pack">
                 <Icons.Plus size={14} color={Colors.primary} strokeWidth={2.6} />
                 <Text style={s.addPackText}>Add pack</Text>
               </Pressable>
