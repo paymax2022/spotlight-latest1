@@ -58,7 +58,7 @@ export default function EditListingScreen() {
   const bannedMatches = useMemo(() => checkBannedPatterns(`${title} ${description}`), [title, description]);
   const descWords = countWords(description);
   const requiredMissing = missingRequired(schema, attrs);
-  const titleValid = title.trim().length >= 10 && title.trim().length <= 100;
+  const titleValid = title.trim().length >= 1 && title.trim().length <= 100;
   const descValid = descWords >= MIN_DESC_WORDS;
   const priceValid = priceKobo > 0;
   const canSave = hydrated && titleValid && descValid && priceValid && bannedMatches.length === 0 && requiredMissing.length === 0 && !update.isPending;
@@ -138,7 +138,7 @@ export default function EditListingScreen() {
         ) : null}
 
         {/* Title */}
-        <Field label="Title" error={showErrors && !titleValid ? 'Title must be 10–100 characters.' : null}>
+        <Field label="Title" error={showErrors && !titleValid ? 'Title must be 1–100 characters.' : null}>
           <TextInput style={styles.input} value={title} onChangeText={setTitle} maxLength={100} editable={!terminal} placeholder="What are you selling?" placeholderTextColor={MarketColors.muted} />
           <Text style={styles.hint}>{title.trim().length}/100</Text>
         </Field>

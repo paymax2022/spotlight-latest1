@@ -130,7 +130,7 @@ export default function SellWizard() {
     wordCount >= minWords &&
     bannedMatches.length === 0 &&
     !hasDuplicatePhoto &&
-    title.trim().length >= 6 &&
+    title.trim().length >= 1 &&
     !!categoryId;
 
   const requiredMissing = missingRequired(schema, attrs);

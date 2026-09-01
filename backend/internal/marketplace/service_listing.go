@@ -20,8 +20,11 @@ func (s *Service) CreateListing(ctx context.Context, sellerID string, in CreateL
 	if sellerID == "" {
 		return nil, ErrUnauthenticated
 	}
-	if n := len(strings.TrimSpace(in.Title)); n < 10 || n > 100 {
-		return nil, fieldErr(CodeValidation, "title must be 10–100 characters", "title")
+	// No minimum beyond non-empty: "iPhone 15", "Sofa" and "Bike" are all real
+	// titles under ten characters. The 100 ceiling stays — it is what keeps a title
+	// inside the fixed-height listing card. See migration 20270157000000.
+	if n := len(strings.TrimSpace(in.Title)); n < 1 || n > 100 {
+		return nil, fieldErr(CodeValidation, "title must be 1–100 characters", "title")
 	}
 	if wordCount(in.Description) < minDescriptionWords {
 		return nil, newErr(422, CodeDescriptionTooShort, "description must be at least 8 words")
