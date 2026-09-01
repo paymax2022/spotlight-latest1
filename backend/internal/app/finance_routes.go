@@ -481,9 +481,15 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 	if cfg.FeatureStaysEnabled && pool != nil {
 		staysMember := finance.Group("/stays")
 		staysAdmin := r.Group("/api/stays/admin")
-		staysAdmin.Use(requireUserID())
+		// staysAdmin/staysExtranet are mounted on the ROOT engine, not on `finance`
+		// (which already carries RequireAuthContext), so without it explicitly here
+		// requireUserID() checks a user_id that nothing ever set — every call 401s
+		// "authentication required" even with a valid Bearer token. Same shape as
+		// the admin-group auth-ordering bug fixed at 13c3e691; this pair inherited
+		// it because RegisterStaysExtranet/RegisterStays predate that fix.
+		staysAdmin.Use(middleware.RequireAuthContext(supabase, rbac), requireUserID())
 		staysExtranet := r.Group("/api/stays/extranet")
-		staysExtranet.Use(requireUserID())
+		staysExtranet.Use(middleware.RequireAuthContext(supabase, rbac), requireUserID())
 		staysWebhooks := r.Group("/internal/webhooks")                                           // provider-signed, no user auth
 		RegisterStays(staysMember, staysAdmin, pool, rbac, cfg)                                  // supply-gateway/search/prebook→book saga/pricing
 		RegisterStaysExtranet(staysMember, staysAdmin, staysExtranet, staysWebhooks, pool, rbac) // ari/extranet/settlement/reviews/webhooks
