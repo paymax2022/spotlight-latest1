@@ -179,6 +179,20 @@ func (h *Handler) MarkSoldListing(c *gin.Context) {
 	respond(c, http.StatusOK, l)
 }
 
+// RevealSellerContact POST /listings/:id/contact
+func (h *Handler) RevealSellerContact(c *gin.Context) {
+	uid, ok := requireUser(c)
+	if !ok {
+		return
+	}
+	contact, err := h.svc.RevealSellerContact(c.Request.Context(), uid, c.Param("id"))
+	if err != nil {
+		fail(c, err)
+		return
+	}
+	respond(c, http.StatusOK, contact)
+}
+
 // DeleteListing DELETE /listings/:id
 func (h *Handler) DeleteListing(c *gin.Context) {
 	uid, ok := requireUser(c)
