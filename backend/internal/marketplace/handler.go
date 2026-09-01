@@ -230,7 +230,7 @@ func (h *Handler) Search(c *gin.Context) {
 		"offset":      offset,
 		// Same shape as Categories on the line below: one screen, one market, and the
 		// same way of asking for a different one.
-		"market_id":   c.DefaultQuery("market_id", DefaultMarketID),
+		"market_id": c.DefaultQuery("market_id", DefaultMarketID),
 	}
 	res, err := h.svc.Search(c.Request.Context(), req)
 	if err != nil {
