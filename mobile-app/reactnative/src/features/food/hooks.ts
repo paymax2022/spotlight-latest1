@@ -8,6 +8,7 @@ import { useInfiniteQuery, useMutation, useQueries, useQuery, useQueryClient } f
 import * as food from './api';
 import { newIdempotencyKey, toFoodError } from './utils';
 import type { OrderRole, OrderStatus, PlaceOrderRequest, RateOrderRequest, LatLng } from './types';
+import { goneRestaurantIds } from './availability';
 
 const KEY = 'food';
 
@@ -24,12 +25,17 @@ const KEY = 'food';
  * ones) so a screen can honestly say "showing 20 of 137".
  */
 export function useRestaurantSearch(params: food.RestaurantQuery = {}) {
-  const { q = '', cuisine = '', sort, promo = false } = params;
+  const { q = '', cuisine = '', sort, promo = false, nearLat, nearLng } = params;
   const query = useInfiniteQuery({
     // Every filter is in the key: a page fetched under one set of filters must
-    // never be served for another.
-    queryKey: [KEY, 'restaurants', { q, cuisine, sort: sort ?? 'newest', promo }],
-    queryFn: ({ pageParam }) => food.listRestaurants({ q, cuisine, sort, promo, offset: pageParam }),
+    // never be served for another. Coordinates are rounded to ~1km so the
+    // normal GPS jitter between renders doesn't mint a fresh cache key (and a
+    // fresh page-0 fetch) every time distance sort re-evaluates.
+    queryKey: [KEY, 'restaurants', {
+      q, cuisine, sort: sort ?? 'newest', promo,
+      near: nearLat != null && nearLng != null ? `${nearLat.toFixed(2)},${nearLng.toFixed(2)}` : null,
+    }],
+    queryFn: ({ pageParam }) => food.listRestaurants({ q, cuisine, sort, promo, nearLat, nearLng, offset: pageParam }),
     initialPageParam: 0,
     // Page by the offset the SERVER reports it served, never by a locally
     // accumulated count: the two diverge the moment a row is added or removed
@@ -72,6 +78,33 @@ export function useRestaurant(id?: string) {
  * restaurants are all open this issues no requests at all. Same query key as
  * useRestaurant, so anything already fetched is served from cache.
  */
+/**
+ * Which of the cart's restaurants still exist.
+ *
+ * Every id is checked, not just the ones that need naming: a kitchen can be
+ * perfectly nameable from a captured line and still have been deleted since.
+ * Same query key as useRestaurant, so a restaurant already fetched costs nothing.
+ *
+ * `retry: false` because a 404 is not going to become a 200, and a cart's worth
+ * of dead ids should not retry-storm checkout. That also means a single transient
+ * failure lands here as an error — which is exactly why classifyAvailability
+ * insists on a 404 status before anything is removed.
+ */
+export function useCartRestaurantAvailability(ids: string[]): string[] {
+  const results = useQueries({
+    queries: ids.map((id) => ({
+      queryKey: [KEY, 'restaurant', id],
+      queryFn: () => food.getRestaurant(id),
+      staleTime: 5 * 60_000,
+      retry: false,
+    })),
+  });
+  const gone = goneRestaurantIds(ids, results);
+  // Stable identity: this feeds an effect that mutates the cart, and a fresh
+  // array every render would re-fire it forever.
+  return useMemo(() => gone, [gone.join(',')]); // eslint-disable-line react-hooks/exhaustive-deps
+}
+
 export function useRestaurantNames(ids: string[]): Map<string, string> {
   const results = useQueries({
     queries: ids.map((id) => ({

@@ -10,6 +10,7 @@ import {
   GraduationCap, BookOpen, ClipboardList, Wallet,
   Trophy, Vote, BarChart3,
   Smartphone, Wifi, Zap, Tv, FileText,
+  ReceiptText,
 } from 'lucide-react-native';
 import type { ModuleTab } from '@/components/ModuleTabBar';
 
@@ -35,6 +36,19 @@ export const FILM_ACADEMY_TABS: readonly ModuleTab[] = [
   { href: '/film-academy/learn',       label: 'Learn',       icon: BookOpen },
   { href: '/film-academy/assignments', label: 'Assignments', icon: ClipboardList },
   { href: '/film-academy/tuition',     label: 'Tuition',     icon: Wallet },
+] as const;
+
+/**
+ * Food & delivery — customer side only. `checkout` and `restaurant/[id]` are
+ * flow/detail screens reached by push (the checkout CTA and a restaurant card
+ * tap), not landing destinations, so they stay off the bar per ModuleTabBar's
+ * own rule: it only ever draws on a screen that's actually in `tabs`. The
+ * rider and restaurant-owner consoles under /food/rider and /food/restaurant
+ * are separate personas with their own navigation, not part of this bar.
+ */
+export const FOOD_TABS: readonly ModuleTab[] = [
+  { href: '/food',        label: 'Discover', icon: Compass },
+  { href: '/food/orders', label: 'Orders',   icon: ReceiptText },
 ] as const;
 
 /** Contest / voting. */

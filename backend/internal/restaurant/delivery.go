@@ -18,7 +18,8 @@ import (
 // this and the paged read cannot drift apart.
 func (s *Service) ListOpenRestaurants(ctx context.Context) ([]Restaurant, error) {
 	where, args := buildDiscoveryWhere(DiscoveryParams{}, s.moderationOn)
-	return s.queryRestaurants(ctx, where, discoveryOrderBy(""), args, 0, 0)
+	orderBy, orderArgs := discoveryOrderBy("", nil, nil, len(args)+1)
+	return s.queryRestaurants(ctx, where, orderBy, args, orderArgs, 0, 0)
 }
 
 // RestaurantDetail is a restaurant plus its categorized menu.

@@ -4,7 +4,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { goBack } from '@/lib/navigation';
 import {
-  ArrowLeft, Bell, CreditCard, Users, IdCard, CalendarDays, Megaphone, ListTodo, ChevronRight, AlertTriangle, FileText, MessageCircle, Sparkles, Ticket, Building2, UserRound, ShieldCheck, Vote,
+  ArrowLeft, Bell, CalendarDays, Megaphone, ListTodo, ChevronRight, AlertTriangle, UserRound, ShieldCheck,
 } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
@@ -14,23 +14,11 @@ import { shadow1 } from '@/constants/shadows';
 import StateView from '@/components/StateView';
 import SectionHeader from '@/components/SectionHeader';
 import MembershipCardView from '@/features/association/components/MembershipCardView';
+import QuickNav from '@/features/association/components/QuickNav';
 import { useDashboard } from '@/features/association/hooks/useAssociation';
 import { useAdminAccess } from '@/features/association/hooks/useAdminMembers';
 import { formatNaira, formatDateTime, relativeTime, dueLabel } from '@/features/association/utils/associationFormatters';
 
-const QUICK_ACTIONS = [
-  { id: 'card', label: 'My card', icon: IdCard, to: '/association/card' },
-  { id: 'dues', label: 'Dues', icon: CreditCard, to: '/association/dues' },
-  { id: 'chat', label: 'Chat', icon: MessageCircle, to: '/association/chat' },
-  { id: 'meetings', label: 'Meetings', icon: CalendarDays, to: '/association/meetings' },
-  { id: 'events', label: 'Events', icon: Ticket, to: '/association/events' },
-  { id: 'tasks', label: 'Tasks', icon: ListTodo, to: '/association/tasks' },
-  { id: 'committees', label: 'Committees', icon: Building2, to: '/association/committees' },
-  { id: 'documents', label: 'Documents', icon: FileText, to: '/association/documents' },
-  { id: 'ai-notes', label: 'AI notes', icon: Sparkles, to: '/association/ai-notes' },
-  { id: 'voting', label: 'Voting', icon: Vote, to: '/association/governance' },
-  { id: 'directory', label: 'Directory', icon: Users, to: '/association/directory' },
-] as const;
 
 export default function MemberHome() {
   const dash = useDashboard();
@@ -96,17 +84,7 @@ export default function MemberHome() {
           </Pressable>
 
           {/* Quick actions */}
-          <View style={styles.actionsRow}>
-            {QUICK_ACTIONS.map((a) => {
-              const Icon = a.icon;
-              return (
-                <Pressable key={a.id} style={styles.action} onPress={() => router.push(a.to as never)} accessibilityRole="button" accessibilityLabel={a.label}>
-                  <View style={styles.actionIcon}><Icon size={20} color={Colors.primary} strokeWidth={2} /></View>
-                  <Text style={styles.actionLabel}>{a.label}</Text>
-                </Pressable>
-              );
-            })}
-          </View>
+          <QuickNav />
 
           {/* Next meeting */}
           {dash.data.nextMeeting ? (
@@ -178,14 +156,6 @@ const styles = StyleSheet.create({
   duesDue: { ...Typography.labelSm, color: Colors.gold, marginTop: 2 },
   payChip: { backgroundColor: Colors.primary, borderRadius: Radius.full, paddingHorizontal: Spacing.lg, paddingVertical: Spacing.sm },
   payChipText: { ...Typography.labelMd, color: Colors.onPrimary, fontWeight: '700' as const },
-  actionsRow: { flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.sm },
-  action: {
-    flexBasis: '31%', flexGrow: 1, alignItems: 'center', gap: 6,
-    backgroundColor: Colors.surfaceContainerLowest, borderRadius: Radius.lg,
-    borderWidth: 1, borderColor: Colors.outlineVariant, paddingVertical: Spacing.md,
-  },
-  actionIcon: { width: 40, height: 40, borderRadius: Radius.md, backgroundColor: Colors.iconBgPurple, alignItems: 'center', justifyContent: 'center' },
-  actionLabel: { ...Typography.labelSm, color: Colors.onSurface },
   sectionGap: { marginTop: Spacing.sm, marginBottom: 0, paddingHorizontal: 0 },
   infoCard: {
     flexDirection: 'row', alignItems: 'center', gap: Spacing.md,

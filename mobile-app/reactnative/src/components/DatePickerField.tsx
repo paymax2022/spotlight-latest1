@@ -40,7 +40,9 @@ interface WheelProps {
   width?: number;
 }
 
-function WheelPicker({ items, selectedIndex, onSelect, width = 80 }: WheelProps) {
+// Exported so TimePickerField can reuse the exact same wheel rather than ship a
+// second, subtly-different implementation of scroll-snapping.
+export function WheelPicker({ items, selectedIndex, onSelect, width = 80 }: WheelProps) {
   const scrollRef = useRef<ScrollView>(null);
   const [isDragging, setIsDragging] = useState(false);
 

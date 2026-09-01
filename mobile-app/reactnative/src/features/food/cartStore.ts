@@ -11,6 +11,7 @@ import { create } from 'zustand';
 import { Platform } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import type { CartLine, CartPackage, MenuItem } from './types';
+import { pruneCart, type PruneResult } from './cartPrune';
 
 export const MAX_SAME_FOOD_PER_PACKAGE = 2;
 
@@ -77,6 +78,13 @@ interface CartState {
   ) => AddItemResult;
   decrementItem: (packageId: string, itemId: string) => void;
   removeItem: (packageId: string, itemId: string) => void;
+  /**
+   * Drop every trace of restaurants that no longer exist, returning what went.
+   * The decision of WHICH ids are gone belongs to the caller (only a 404 counts
+   * — see availability.ts); this just applies it. Reducer lives in cartPrune.ts
+   * so it can be tested without React Native.
+   */
+  removeRestaurants: (goneIds: string[]) => PruneResult;
   clear: () => void;
 }
 
@@ -209,6 +217,25 @@ export const useCartStore = create<CartState>((set) => ({
       }
       return { ...st, packages };
     }),
+
+  removeRestaurants: (goneIds) => {
+    const st = useCartStore.getState();
+    const out = pruneCart(st, goneIds);
+    // `repointed` matters as much as `removedIds` here. A dead cart-level
+    // pointer with no food behind it removes NOTHING, so gating on removedIds
+    // alone computed the re-derivation and then threw it away — leaving the
+    // pointer aimed at a deleted kitchen, which is what kept the delivery fee
+    // and packaging price from ever resolving.
+    if (out.removedIds.length > 0 || out.repointed) {
+      set({
+        restaurantId: out.restaurantId,
+        restaurantName: out.restaurantName,
+        packages: out.packages,
+        activePackageId: out.activePackageId,
+      });
+    }
+    return out;
+  },
 
   clear: () => set({ restaurantId: null, restaurantName: null, packages: [], activePackageId: null }),
 }));

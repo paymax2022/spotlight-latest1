@@ -9,6 +9,8 @@ import { Spacing } from '@/constants/spacing';
 import { Radius } from '@/constants/radius';
 import ScreenHeader from '@/components/ScreenHeader';
 import TextInputField from '@/components/TextInputField';
+import DatePickerField from '@/components/DatePickerField';
+import TimePickerField from '@/components/TimePickerField';
 import PrimaryButton from '@/components/PrimaryButton';
 import { useProposeMeeting } from '@/features/association/hooks/useEngagement';
 import { alertAsync } from '@/lib/confirm';
@@ -91,12 +93,26 @@ export default function ProposeMeetingScreen() {
 
         <TextInputField label="Title" placeholder="e.g. Q1 planning meeting" value={title} onChangeText={setTitle} error={touched ? titleError : undefined} />
 
+        {/* Pickers, not free text. The previous fields accepted any string and
+            validated it against ^\d{4}-\d{2}-\d{2}$ / ^\d{2}:\d{2}$ afterwards, so a
+            plausible entry like "15/09/2026" or "6:30pm" was rejected with a
+            generic "Set a date and time" and no indication of the format wanted.
+            A picker cannot emit a malformed value at all — DatePickerField gives
+            YYYY-MM-DD and TimePickerField gives HH:MM, which is exactly what
+            toIso() already parses, so the validator below is unchanged and now
+            only ever fires on "empty" or "in the past". */}
         <View style={styles.row}>
           <View style={styles.rowItem}>
-            <TextInputField label="Date" placeholder="2026-09-15" value={date} onChangeText={setDate} keyboardType="numbers-and-punctuation" />
+            <DatePickerField
+              label="Date"
+              value={date || undefined}
+              onChange={setDate}
+              minYear={new Date().getFullYear()}
+              maxYear={new Date().getFullYear() + 5}
+            />
           </View>
           <View style={styles.rowItem}>
-            <TextInputField label="Time" placeholder="18:30" value={time} onChangeText={setTime} keyboardType="numbers-and-punctuation" />
+            <TimePickerField label="Time" value={time || undefined} onChange={setTime} />
           </View>
         </View>
         {touched && whenError ? <Text style={styles.error}>{whenError}</Text> : null}

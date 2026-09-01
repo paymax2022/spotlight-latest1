@@ -553,6 +553,51 @@ func (r *Repository) UpsertStaff(ctx context.Context, propertyID, userID, role, 
 	return err
 }
 
+// CreateProperty self-lists a new property (hotel/shortlet/apartment) and grants
+// the creating user OWNER in the same transaction — the two rows must appear
+// together or not at all, since a stays_property with no hotelier_profile grant
+// is unreachable (every other extranet call is object-scoped) and a grant on a
+// nonexistent property is meaningless.
+//
+// source_rail/supplier_code/supplier_property_ref are NOT NULL on stays_property
+// (UNIQUE together) because the table's original design assumes every row is
+// supplier-sourced (a bedbank aggregator or the DIRECT rail's own supplier
+// identity). A self-listed property has no such upstream identity, so it is
+// stamped source_rail='DIRECT', supplier_code='self', and a fresh random
+// supplier_property_ref — satisfying the constraint without claiming a real
+// supplier relationship. New listings start DRAFT (the table's own default);
+// go-live is the existing admin moderation endpoint
+// (POST /api/stays/admin/properties/:id/status), unchanged by this addition.
+func (r *Repository) CreateProperty(ctx context.Context, ownerUserID, name, propertyType, address, city string, starRating int) (string, error) {
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return "", fmt.Errorf("extranet: begin create-property tx: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	var propertyID string
+	err = tx.QueryRow(ctx, `
+		INSERT INTO public.stays_property
+			(source_rail, supplier_code, supplier_property_ref, name, address, city, star_rating, property_type)
+		VALUES ('DIRECT', 'self', gen_random_uuid()::text, $1, $2, $3, $4, $5)
+		RETURNING id`,
+		name, address, city, starRating, orStr(propertyType, "hotel")).Scan(&propertyID)
+	if err != nil {
+		return "", fmt.Errorf("extranet: insert property: %w", err)
+	}
+
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO public.stays_hotelier_profile (user_id, property_id, role, status)
+		VALUES ($1, $2, 'OWNER', 'ACTIVE')`, ownerUserID, propertyID); err != nil {
+		return "", fmt.Errorf("extranet: grant owner: %w", err)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return "", fmt.Errorf("extranet: commit create-property tx: %w", err)
+	}
+	return propertyID, nil
+}
+
 // MyProperties returns the properties the user has ACTIVE grants on (the extranet
 // landing — the set of objects the hotelier may act on).
 func (r *Repository) MyProperties(ctx context.Context, userID string) ([]gin2H, error) {

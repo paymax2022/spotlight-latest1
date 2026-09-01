@@ -13,6 +13,7 @@ import SectionHeader from '@/components/SectionHeader';
 import StateView from '@/components/StateView';
 import PromoBanner from '@/components/PromoBanner';
 import OrganisationCard from '@/features/association/components/OrganisationCard';
+import QuickNav from '@/features/association/components/QuickNav';
 import { useOrganisations } from '@/features/association/hooks/useAssociation';
 
 export default function AssociationDiscovery() {
@@ -81,6 +82,19 @@ export default function AssociationDiscovery() {
                     onPress={() => router.push('/association/create')}
                   />
                 </View>
+              ) : null}
+              {!search ? (
+                <>
+                  {/* The module's navigation. Without this, every section
+                      (dues, meetings, chat, documents, voting…) was reachable
+                      only from /association/home, and the sole route there was
+                      an unlabelled ID-card icon in the header — so this screen
+                      was a dead end for anyone who did not already know the
+                      URLs. Hidden while searching: a result list should not
+                      have a menu wedged above it. */}
+                  <SectionHeader title="Your association" style={styles.sectionGap} />
+                  <QuickNav />
+                </>
               ) : null}
               {!search ? (
                 <View style={styles.codeRow}>

@@ -280,6 +280,8 @@ func RegisterMarketplace(
 	m.POST("/listings/:id/submit", h.SubmitListing)
 	m.POST("/listings/:id/pause", h.PauseListing)
 	m.POST("/listings/:id/resume", h.ResumeListing)
+	m.POST("/listings/:id/mark-sold", h.MarkSoldListing)
+	m.POST("/listings/:id/contact", h.RevealSellerContact)
 	m.DELETE("/listings/:id", h.DeleteListing)
 
 	// Offers

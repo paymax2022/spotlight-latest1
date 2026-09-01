@@ -231,6 +231,23 @@ func (s *Service) PauseListing(ctx context.Context, sellerID, id string) (*Listi
 	return s.sellerListingTransition(ctx, sellerID, id, ListingActive, ListingPaused)
 }
 
+// MarkSoldListing (seller) active → sold. Terminal: the FSM has no outgoing edge
+// from sold, which is deliberate — a sold listing must not silently return to
+// discovery. SetListingStatus stamps sold_at, and the outbox delete removes it
+// from search.
+//
+// The mobile client has called POST /listings/:id/mark-sold since the Sell group
+// was built; the route was never registered, so "Mark as sold" 404ed and the
+// listing stayed live with the item gone.
+//
+// A PAUSED listing cannot be marked sold: paused only leads to active, expired or
+// removed_user. A seller who paused and then sold has to resume first, which is a
+// product question rather than a bug — widening the FSM is a deliberate decision
+// and this does not take it.
+func (s *Service) MarkSoldListing(ctx context.Context, sellerID, id string) (*Listing, error) {
+	return s.sellerListingTransition(ctx, sellerID, id, ListingActive, ListingSold)
+}
+
 // ResumeListing (seller) paused → active if not expired, re-adding to search.
 func (s *Service) ResumeListing(ctx context.Context, sellerID, id string) (*Listing, error) {
 	l, err := s.repo.GetListing(ctx, id)

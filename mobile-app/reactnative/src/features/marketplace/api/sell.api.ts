@@ -174,3 +174,25 @@ export async function getBoost(id: string): Promise<Boost> {
   if (MKT_USE_MOCK) return S.mockGetBoost(id);
   return mktGet<Boost>(`/boosts/${id}`);
 }
+
+// ── Seller contact reveal ────────────────────────────────────────────────────
+// POST /listings/:id/contact — any signed-in user, budgeted at 10 distinct
+// listings per hour and recorded per reveal. Re-revealing the same listing is
+// free, so a screen remount does not cost the viewer their quota.
+//
+// The listing screen's "Tap to reveal seller phone" used to flip a local boolean
+// and relabel itself; no number was ever fetched, because nothing in the stack
+// had one to give.
+
+export interface SellerContact {
+  sellerId: string;
+  phone: string;
+}
+
+export async function revealSellerContact(listingId: string): Promise<SellerContact> {
+  if (MKT_USE_MOCK) return { sellerId: 'seller_self', phone: '0803 000 0000' };
+  const r = await mktPost<{ seller_id?: string; sellerId?: string; phone: string }>(
+    `/listings/${listingId}/contact`,
+  );
+  return { sellerId: String(r.sellerId ?? r.seller_id ?? ''), phone: r.phone };
+}
