@@ -1,4 +1,4 @@
-import React, { useCallback, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { View, Text, ScrollView, StyleSheet, Pressable, ActivityIndicator, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
@@ -23,7 +23,7 @@ import { resolveRestaurantName, groupPackagesByRestaurant, UNKNOWN_RESTAURANT_ID
 import { formatNaira } from '@/features/food/utils';
 import { resolveDeliveryFee } from '@/features/food/deliveryFee';
 import { resolvePackagingFee } from '@/features/food/packagingFee';
-import { useRestaurant, useRestaurantNames } from '@/features/food/hooks';
+import { useRestaurant, useRestaurantNames, useCartRestaurantAvailability } from '@/features/food/hooks';
 import { usePurchasePayment, PaymentSheet } from '@/features/payments';
 import { CartNutritionSummary } from '@/features/nutrition';
 
@@ -46,8 +46,35 @@ function SubLine({ label, value, strong }: { label: string; value: string; stron
 }
 
 export default function CheckoutScreen() {
-  const { packages, restaurantId, restaurantName, clear, addItem, decrementItem, addPackage, removePackage } = useCartStore();
+  const { packages, restaurantId, restaurantName, clear, addItem, decrementItem, addPackage, removePackage, removeRestaurants } = useCartStore();
   const { data: restaurant, isError: restaurantUnavailable, isPending: restaurantLoading } = useRestaurant(restaurantId ?? undefined);
+
+  // Every kitchen in the cart, checked for existence — not just the primary, and
+  // not just the ones that need naming: a kitchen can be perfectly nameable from
+  // a captured line and still have been deleted since the cart was built.
+  const cartRestaurantIds = useMemo(
+    () => [...new Set(packages.flatMap((p) => p.lines.map((l) => l.restaurantId)).filter((x): x is string => !!x))],
+    [packages],
+  );
+  const goneRestaurantIdList = useCartRestaurantAvailability(cartRestaurantIds);
+
+  // Remove them. A cart persists locally AND on the server, so it outlives the
+  // menu it was built from; the food of a deleted kitchen sits here looking
+  // ordinary — named, priced, adding to the total — while PlaceOrder can never
+  // accept it and its delivery leg can never be quoted. Only a 404 gets here
+  // (see availability.ts); a server error leaves the cart alone.
+  const [prunedNotice, setPrunedNotice] = useState<string | null>(null);
+  useEffect(() => {
+    if (goneRestaurantIdList.length === 0) return;
+    const out = removeRestaurants(goneRestaurantIdList);
+    if (out.removedIds.length === 0) return;
+    const names = out.removedNames.join(', ');
+    setPrunedNotice(
+      `${names} ${out.removedIds.length > 1 ? 'are' : 'is'} no longer available, so ` +
+        `${out.removedItemCount} item${out.removedItemCount === 1 ? '' : 's'} ` +
+        `${out.removedItemCount === 1 ? 'was' : 'were'} removed from your order.`,
+    );
+  }, [goneRestaurantIdList, removeRestaurants]);
 
   // Names for the OTHER restaurants in a multi-restaurant cart. Lines added in
   // this session carry their own name; the per-id lookup below covers carts
@@ -253,10 +280,18 @@ export default function CheckoutScreen() {
             its delivery fee cannot be quoted either — which is what "the fee is
             not computing" looks like from the outside. Say so ABOVE the prices,
             not after the total. */}
-        {restaurantUnavailable ? (
+        {/* What was removed, and why. The cart quietly shrinking is worse than the
+            stale lines it replaces — the customer picked that food and has no
+            other way to learn it went. */}
+        {prunedNotice ? <Text style={s.blocker}>{prunedNotice}</Text> : null}
+
+        {/* Still reachable when the PRIMARY restaurant fails for a reason that is
+            not a 404 (a 500, say): nothing is removed in that case, so the order
+            cannot proceed and the screen has to say so rather than sit there. */}
+        {restaurantUnavailable && !prunedNotice ? (
           <Text style={s.blocker}>
-            {restaurantName ? `"${restaurantName}" is no longer available` : 'A restaurant in this cart is no longer available'}
-            , so this order can't be placed and its delivery fee can't be priced. Remove its items to continue.
+            {restaurantName ? `We couldn't load "${restaurantName}"` : "We couldn't load this restaurant"}
+            , so this order can't be placed and its delivery fee can't be priced. Try again in a moment.
           </Text>
         ) : null}
         {/* Group items by restaurant and display */}

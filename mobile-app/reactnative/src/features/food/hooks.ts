@@ -8,6 +8,7 @@ import { useInfiniteQuery, useMutation, useQueries, useQuery, useQueryClient } f
 import * as food from './api';
 import { newIdempotencyKey, toFoodError } from './utils';
 import type { OrderRole, OrderStatus, PlaceOrderRequest, RateOrderRequest, LatLng } from './types';
+import { goneRestaurantIds } from './availability';
 
 const KEY = 'food';
 
@@ -72,6 +73,33 @@ export function useRestaurant(id?: string) {
  * restaurants are all open this issues no requests at all. Same query key as
  * useRestaurant, so anything already fetched is served from cache.
  */
+/**
+ * Which of the cart's restaurants still exist.
+ *
+ * Every id is checked, not just the ones that need naming: a kitchen can be
+ * perfectly nameable from a captured line and still have been deleted since.
+ * Same query key as useRestaurant, so a restaurant already fetched costs nothing.
+ *
+ * `retry: false` because a 404 is not going to become a 200, and a cart's worth
+ * of dead ids should not retry-storm checkout. That also means a single transient
+ * failure lands here as an error — which is exactly why classifyAvailability
+ * insists on a 404 status before anything is removed.
+ */
+export function useCartRestaurantAvailability(ids: string[]): string[] {
+  const results = useQueries({
+    queries: ids.map((id) => ({
+      queryKey: [KEY, 'restaurant', id],
+      queryFn: () => food.getRestaurant(id),
+      staleTime: 5 * 60_000,
+      retry: false,
+    })),
+  });
+  const gone = goneRestaurantIds(ids, results);
+  // Stable identity: this feeds an effect that mutates the cart, and a fresh
+  // array every render would re-fire it forever.
+  return useMemo(() => gone, [gone.join(',')]); // eslint-disable-line react-hooks/exhaustive-deps
+}
+
 export function useRestaurantNames(ids: string[]): Map<string, string> {
   const results = useQueries({
     queries: ids.map((id) => ({
