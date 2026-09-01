@@ -11,7 +11,7 @@ import { Colors } from '@/constants/colors';
 import { Radius } from '@/constants/radius';
 import { Spacing } from '@/constants/spacing';
 import { Typography } from '@/constants/typography';
-import { shadow1, shadow2 } from '@/constants/shadows';
+import { shadow1, shadow2, shadow3 } from '@/constants/shadows';
 import { useRestaurantSearch } from '@/features/food/hooks';
 import { useDebouncedValue } from '@/features/food/useDebouncedValue';
 import { useCartStore, cartItemCount } from '@/features/food/cartStore';
@@ -20,14 +20,37 @@ import { DynamicIcon } from '@/features/food/components';
 import type { Restaurant } from '@/features/food/types';
 
 const CUISINE_FILTERS = [
-  { key: 'all', label: 'All' },
-  { key: 'local', label: 'Local' },
-  { key: 'fast', label: 'Fast Food' },
-  { key: 'chinese', label: 'Chinese' },
-  { key: 'grills', label: 'Grills' },
-  { key: 'healthy', label: 'Healthy' },
+  { key: 'all', label: 'All', icon: 'LayoutGrid' },
+  { key: 'local', label: 'Local', icon: 'Soup' },
+  { key: 'fast', label: 'Fast Food', icon: 'Zap' },
+  { key: 'chinese', label: 'Chinese', icon: 'UtensilsCrossed' },
+  { key: 'grills', label: 'Grills', icon: 'Flame' },
+  { key: 'healthy', label: 'Healthy', icon: 'Leaf' },
 ] as const;
 type Cuisine = (typeof CUISINE_FILTERS)[number]['key'];
+
+/**
+ * There is no restaurant photography pipeline (no image field on Restaurant,
+ * no upload flow) — the discovery cards never had a photo to show. This
+ * palette stands in for that: each restaurant gets a deterministic gradient
+ * "cover" (same card always gets the same one, no flicker on reload) so the
+ * list has the visual variety a photo grid would, without inventing images
+ * that don't exist. A stable string hash, not Math.random — id order must
+ * not affect the pick.
+ */
+const COVER_GRADIENTS: [string, string][] = [
+  ['#F97316', '#C2410C'], // tomato
+  ['#DB2777', '#831843'], // wine
+  ['#65A30D', '#14532D'], // herb
+  ['#FBBF24', '#B45309'], // golden
+  ['#14B8A6', '#134E4A'], // ocean
+  ['#EF4444', '#7F1D1D'], // deep red
+];
+function coverGradient(id: string): [string, string] {
+  let h = 0;
+  for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) >>> 0;
+  return COVER_GRADIENTS[h % COVER_GRADIENTS.length];
+}
 
 /**
  * Browse views reachable from the "Browse" tiles on /services/food, passed in as
@@ -50,87 +73,112 @@ function asBrowseView(v: unknown): BrowseView | null {
   return typeof v === 'string' && v in BROWSE_VIEWS ? (v as BrowseView) : null;
 }
 
-function StarRow({ rating }: { rating: number }) {
-  return (
-    <View style={sr.row}>
-      <Icons.Star size={12} color={Colors.gold} fill={Colors.gold} strokeWidth={0} />
-      <Text style={sr.label}>{rating.toFixed(1)}</Text>
-    </View>
-  );
-}
-const sr = StyleSheet.create({
-  row: { flexDirection: 'row', alignItems: 'center', gap: 3 },
-  label: { ...Typography.labelSm, color: Colors.onSurface },
-});
-
 function RestaurantCard({ item, onPress }: { item: Restaurant; onPress: () => void }) {
+  const [coverStart, coverEnd] = coverGradient(item.id);
   return (
     <Pressable
       onPress={onPress}
       disabled={!item.isOpen}
-      style={({ pressed }) => [rc.card, shadow1, pressed && { opacity: 0.88 }, !item.isOpen && { opacity: 0.6 }]}
+      style={({ pressed }) => [rc.card, shadow2, pressed && { opacity: 0.9, transform: [{ scale: 0.99 }] }, !item.isOpen && { opacity: 0.7 }]}
       accessibilityRole="button"
     >
-      <View style={[rc.iconBox, { backgroundColor: item.iconBg }]}>
-        <DynamicIcon name={item.icon} color={item.iconColor} size={26} />
-      </View>
+      <LinearGradient colors={[coverStart, coverEnd]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={rc.cover}>
+        <View style={rc.coverIconRing}>
+          <DynamicIcon name={item.icon} color={Colors.white} size={30} strokeWidth={1.6} />
+        </View>
+
+        <View style={rc.ratingBadge}>
+          <Icons.Star size={11} color={Colors.gold} fill={Colors.gold} strokeWidth={0} />
+          <Text style={rc.ratingText}>{item.rating.toFixed(1)}</Text>
+        </View>
+
+        {item.promo ? (
+          <View style={rc.promoRibbon}>
+            <Text style={rc.promoText} numberOfLines={1}>{item.promo}</Text>
+          </View>
+        ) : null}
+
+        {!item.isOpen ? (
+          <View style={rc.closedScrim}>
+            <Text style={rc.closedLabel}>Closed</Text>
+          </View>
+        ) : null}
+      </LinearGradient>
+
       <View style={rc.body}>
         <View style={rc.nameRow}>
-          <Text style={rc.name} numberOfLines={1}>
-            {item.name}
-          </Text>
-          {item.promo ? (
-            <View style={rc.promoBadge}>
-              <Text style={rc.promoText}>{item.promo}</Text>
-            </View>
-          ) : null}
+          <Text style={rc.name} numberOfLines={1}>{item.name}</Text>
+          <Icons.ChevronRight size={16} color={Colors.outline} strokeWidth={2.2} />
         </View>
-        <View style={rc.metaRow}>
-          {item.tags.map((t) => (
-            <Text key={t} style={rc.tag}>
-              {t}
-            </Text>
+
+        <View style={rc.tagRow}>
+          {item.tags.slice(0, 3).map((t) => (
+            <View key={t} style={rc.tagChip}>
+              <Text style={rc.tagText}>{t}</Text>
+            </View>
           ))}
         </View>
-        <View style={rc.bottomRow}>
-          <StarRow rating={item.rating} />
-          <Text style={rc.dot}>·</Text>
-          <Icons.Clock size={11} color={Colors.onSurfaceVariant} strokeWidth={2} />
-          <Text style={rc.meta}>{item.etaLabel}</Text>
-          <Text style={rc.dot}>·</Text>
-          <Text style={rc.meta}>Min {formatNairaWhole(item.minOrderKobo)}</Text>
-          {!item.isOpen ? <Text style={rc.closed}>Closed</Text> : null}
+
+        <View style={rc.metaRow}>
+          <View style={rc.metaItem}>
+            <Icons.Clock size={13} color={Colors.onSurfaceVariant} strokeWidth={2} />
+            <Text style={rc.metaText}>{item.etaLabel}</Text>
+          </View>
+          <View style={rc.metaDivider} />
+          <View style={rc.metaItem}>
+            <Icons.Wallet size={13} color={Colors.onSurfaceVariant} strokeWidth={2} />
+            <Text style={rc.metaText}>Min {formatNairaWhole(item.minOrderKobo)}</Text>
+          </View>
         </View>
       </View>
-      <Icons.ChevronRight size={16} color={Colors.outline} strokeWidth={2} />
     </Pressable>
   );
 }
 
+const CARD_RADIUS = Radius.xl;
 const rc = StyleSheet.create({
   card: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: Spacing.md,
     backgroundColor: Colors.surfaceContainerLowest,
-    borderRadius: Radius.lg,
-    borderWidth: 1,
-    borderColor: Colors.surfaceContainerHigh,
-    padding: Spacing.md,
-    marginBottom: Spacing.md,
+    borderRadius: CARD_RADIUS,
+    overflow: 'hidden',
+    marginBottom: Spacing.lg,
   },
-  iconBox: { width: 54, height: 54, borderRadius: Radius.md, alignItems: 'center', justifyContent: 'center' },
-  body: { flex: 1, gap: 4 },
-  nameRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm, flexWrap: 'wrap' },
-  name: { ...Typography.labelLg, color: Colors.onSurface, flex: 1 },
-  promoBadge: { backgroundColor: Colors.iconBgGreen, paddingHorizontal: 6, paddingVertical: 2, borderRadius: Radius.sm },
-  promoText: { ...Typography.labelSm, color: '#16A34A' },
-  metaRow: { flexDirection: 'row', gap: 6 },
-  tag: { ...Typography.labelSm, color: Colors.onSurfaceVariant },
-  bottomRow: { flexDirection: 'row', alignItems: 'center', gap: 4, flexWrap: 'wrap' },
-  dot: { ...Typography.labelSm, color: Colors.outline },
-  meta: { ...Typography.labelSm, color: Colors.onSurfaceVariant },
-  closed: { ...Typography.labelSm, color: Colors.error, marginLeft: 4 },
+  cover: { height: 108, justifyContent: 'center', alignItems: 'center' },
+  coverIconRing: {
+    width: 60, height: 60, borderRadius: Radius.full,
+    backgroundColor: 'rgba(255,255,255,0.18)',
+    borderWidth: 1.5, borderColor: 'rgba(255,255,255,0.35)',
+    alignItems: 'center', justifyContent: 'center',
+  },
+  ratingBadge: {
+    position: 'absolute', top: Spacing.sm, right: Spacing.sm,
+    flexDirection: 'row', alignItems: 'center', gap: 4,
+    backgroundColor: 'rgba(255,255,255,0.95)',
+    borderRadius: Radius.full, paddingHorizontal: Spacing.sm, paddingVertical: 4,
+  },
+  ratingText: { ...Typography.labelSm, color: Colors.onSurface },
+  promoRibbon: {
+    position: 'absolute', top: Spacing.sm, left: Spacing.sm, maxWidth: '60%',
+    backgroundColor: Colors.onSurface, borderRadius: Radius.full,
+    paddingHorizontal: Spacing.sm, paddingVertical: 4,
+  },
+  promoText: { ...Typography.labelSm, color: Colors.white },
+  closedScrim: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(11,28,48,0.55)',
+    alignItems: 'center', justifyContent: 'center',
+  },
+  closedLabel: { ...Typography.labelLg, color: Colors.white },
+  body: { padding: Spacing.md, gap: Spacing.xs },
+  nameRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: Spacing.sm },
+  name: { ...Typography.titleMd, color: Colors.onSurface, flex: 1 },
+  tagRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
+  tagChip: { backgroundColor: Colors.surfaceContainerLow, borderRadius: Radius.full, paddingHorizontal: Spacing.sm, paddingVertical: 3 },
+  tagText: { ...Typography.caption, color: Colors.onSurfaceVariant },
+  metaRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm, marginTop: 2 },
+  metaItem: { flexDirection: 'row', alignItems: 'center', gap: 5 },
+  metaDivider: { width: 1, height: 12, backgroundColor: Colors.outlineVariant },
+  metaText: { ...Typography.labelSm, color: Colors.onSurfaceVariant },
 });
 
 export default function FoodDiscoveryScreen() {
@@ -199,13 +247,45 @@ export default function FoodDiscoveryScreen() {
       </View>
 
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={s.content}>
-        <LinearGradient colors={['#EF4444', '#B91C1C']} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={[s.hero, shadow2]}>
-          <Text style={s.heroEyebrow}>Paymax Food</Text>
-          <Text style={s.heroTitle}>Hungry? Order now</Text>
-          <Text style={s.heroSubtitle}>Restaurants near you, live tracked delivery, chat with your rider — pay with your Paymax wallet.</Text>
+        <LinearGradient colors={['#FB923C', '#EF4444', '#7F1D1D']} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={[s.hero, shadow2]}>
+          <View style={s.heroWatermark}>
+            <Icons.ChefHat size={140} color="rgba(255,255,255,0.10)" strokeWidth={1} />
+          </View>
+          <View style={s.heroEyebrow}>
+            <Icons.Sparkles size={12} color={Colors.white} strokeWidth={2} />
+            <Text style={s.heroEyebrowText}>Paymax Food</Text>
+          </View>
+          <Text style={s.heroTitle}>Hungry?{'\n'}Order now</Text>
+          <Text style={s.heroSubtitle}>Restaurants near you, live tracked delivery — pay with your Paymax wallet.</Text>
         </LinearGradient>
 
-        <SearchBar value={search} onChangeText={setSearch} placeholder="Search restaurant or dish…" />
+        <View style={s.searchFloat}>
+          <SearchBar value={search} onChangeText={setSearch} placeholder="Search restaurant or dish…" />
+        </View>
+
+        {/* Becoming a seller had exactly one door: the unlabelled store glyph in
+            the top bar, which nobody looking to sell food would think to press.
+            The console it opens has always carried the whole flow — create the
+            store, set the packaging price, build the menu — so what was missing
+            was a way to find out it exists. Say it in words, above the fold.
+            Below the search rather than above it: the search floats UP over the
+            hero (searchFloat's negative margin), so anything between the two
+            breaks that overlap. */}
+        <Pressable
+          onPress={() => router.push('/food/restaurant')}
+          style={({ pressed }) => [s.sellRow, pressed && { opacity: 0.9 }]}
+          accessibilityRole="button"
+          accessibilityLabel="Sell food on Paymax — set up your restaurant"
+        >
+          <View style={s.sellIcon}>
+            <Icons.ChefHat size={20} color={Colors.primary} strokeWidth={2} />
+          </View>
+          <View style={s.sellText}>
+            <Text style={s.sellTitle}>Sell food on Paymax</Text>
+            <Text style={s.sellSub}>Set up your restaurant, add your menu, start taking orders.</Text>
+          </View>
+          <Icons.ChevronRight size={18} color={Colors.onSurfaceVariant} strokeWidth={2} />
+        </Pressable>
 
         {/* Active browse view (arrived via ?view=), clearable back to the full list */}
         {viewMeta ? (
@@ -224,11 +304,19 @@ export default function FoodDiscoveryScreen() {
         ) : null}
 
         <ScrollView horizontal showsHorizontalScrollIndicator={false} style={s.chips} contentContainerStyle={s.chipsContent}>
-          {CUISINE_FILTERS.map((f) => (
-            <Pressable key={f.key} onPress={() => setCuisine(f.key)} style={[s.chip, cuisine === f.key && s.chipActive]}>
-              <Text style={[s.chipLabel, cuisine === f.key && s.chipLabelActive]}>{f.label}</Text>
-            </Pressable>
-          ))}
+          {CUISINE_FILTERS.map((f) => {
+            const active = cuisine === f.key;
+            return (
+              <Pressable
+                key={f.key}
+                onPress={() => setCuisine(f.key)}
+                style={({ pressed }) => [s.chip, active && s.chipActive, active && shadow1, pressed && { opacity: 0.9 }]}
+              >
+                <DynamicIcon name={f.icon} color={active ? Colors.white : Colors.onSurfaceVariant} size={15} strokeWidth={2} />
+                <Text style={[s.chipLabel, active && s.chipLabelActive]}>{f.label}</Text>
+              </Pressable>
+            );
+          })}
         </ScrollView>
 
         <View style={s.sectionHeader}>
@@ -240,9 +328,11 @@ export default function FoodDiscoveryScreen() {
                 : CUISINE_FILTERS.find((f) => f.key === cuisine)?.label}
           </Text>
           {!isLoading && !isError ? (
-            <Text style={s.sectionMeta}>
-              {restaurants.length < total ? `${restaurants.length} of ${total.toLocaleString('en-NG')}` : `${total.toLocaleString('en-NG')} open`}
-            </Text>
+            <View style={s.sectionMetaBadge}>
+              <Text style={s.sectionMeta}>
+                {restaurants.length < total ? `${restaurants.length} of ${total.toLocaleString('en-NG')}` : `${total.toLocaleString('en-NG')} open`}
+              </Text>
+            </View>
           ) : null}
         </View>
 
@@ -282,6 +372,7 @@ export default function FoodDiscoveryScreen() {
                   <Text style={s.loadMoreLabel}>
                     {isFetchingNextPage ? 'Loading…' : `Load more (${(total - restaurants.length).toLocaleString('en-NG')} left)`}
                   </Text>
+                  {!isFetchingNextPage && <Icons.ChevronDown size={16} color={Colors.white} strokeWidth={2.4} />}
                 </Pressable>
               ) : (
                 <Text style={s.listEnd}>That's all {total.toLocaleString('en-NG')} of them.</Text>
@@ -293,10 +384,17 @@ export default function FoodDiscoveryScreen() {
 
       {/* Cart bar */}
       {cartCount > 0 ? (
-        <Pressable style={[s.cartBar, shadow2]} onPress={() => router.push('/food/checkout')} accessibilityRole="button">
-          <Icons.ShoppingCart size={18} color={Colors.white} strokeWidth={2} />
-          <Text style={s.cartText}>{cartCount} item{cartCount > 1 ? 's' : ''} in cart</Text>
-          <Text style={s.cartCta}>Checkout</Text>
+        <Pressable onPress={() => router.push('/food/checkout')} accessibilityRole="button">
+          <LinearGradient colors={['#FB923C', '#EF4444']} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }} style={[s.cartBar, shadow3]}>
+            <View style={s.cartIconBadge}>
+              <Icons.ShoppingCart size={16} color={Colors.white} strokeWidth={2.2} />
+            </View>
+            <Text style={s.cartText}>{cartCount} item{cartCount > 1 ? 's' : ''} in cart</Text>
+            <View style={s.cartCtaPill}>
+              <Text style={s.cartCta}>Checkout</Text>
+              <Icons.ArrowRight size={14} color="#EF4444" strokeWidth={2.4} />
+            </View>
+          </LinearGradient>
         </Pressable>
       ) : null}
     </SafeAreaView>
@@ -318,12 +416,44 @@ const s = StyleSheet.create({
   iconButton: { width: 40, height: 40, borderRadius: Radius.full, alignItems: 'center', justifyContent: 'center', backgroundColor: Colors.surfaceContainerLow },
   topActions: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm },
   topTitle: { ...Typography.titleLg, color: Colors.primary },
-  content: { paddingTop: Spacing.lg, paddingBottom: Platform.OS === 'ios' ? 140 : 120 },
-  hero: { minHeight: 172, borderRadius: Radius.xl, padding: Spacing.cardPadding, justifyContent: 'flex-end', marginHorizontal: Spacing.containerMargin, marginBottom: Spacing.lg },
-  heroEyebrow: { ...Typography.labelSm, color: 'rgba(255,255,255,0.85)' },
-  heroTitle: { ...Typography.headlineLgMobile, color: Colors.white, marginTop: Spacing.xs },
-  heroSubtitle: { ...Typography.bodySm, color: 'rgba(255,255,255,0.85)', marginTop: Spacing.xs },
-  viewPillRow: { flexDirection: 'row', paddingHorizontal: Spacing.containerMargin, marginTop: Spacing.md },
+  content: { paddingTop: 0, paddingBottom: Platform.OS === 'ios' ? 140 : 120 },
+  hero: {
+    minHeight: 200,
+    borderBottomLeftRadius: Radius.xxl,
+    borderBottomRightRadius: Radius.xxl,
+    padding: Spacing.cardPadding,
+    paddingTop: Spacing.lg,
+    justifyContent: 'flex-end',
+    overflow: 'hidden',
+  },
+  heroWatermark: { position: 'absolute', right: -24, top: -20 },
+  heroEyebrow: {
+    flexDirection: 'row', alignItems: 'center', gap: 5, alignSelf: 'flex-start',
+    backgroundColor: 'rgba(255,255,255,0.18)', borderRadius: Radius.full,
+    paddingHorizontal: Spacing.sm, paddingVertical: 4,
+  },
+  heroEyebrowText: { ...Typography.labelSm, color: Colors.white },
+  heroTitle: { ...Typography.headlineLg, color: Colors.white, marginTop: Spacing.sm },
+  heroSubtitle: { ...Typography.bodySm, color: 'rgba(255,255,255,0.88)', marginTop: Spacing.sm, marginBottom: Spacing.lg, maxWidth: '85%' },
+  searchFloat: { marginTop: -26, marginBottom: Spacing.xs, zIndex: 2 },
+  sellRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.sm,
+    marginHorizontal: Spacing.containerMargin,
+    marginTop: Spacing.sm,
+    marginBottom: Spacing.xs,
+    padding: Spacing.md,
+    borderRadius: Radius.lg,
+    backgroundColor: Colors.surfaceContainerLowest,
+    borderWidth: 1,
+    borderColor: Colors.surfaceContainerHigh,
+  },
+  sellIcon: { width: 40, height: 40, borderRadius: Radius.full, alignItems: 'center', justifyContent: 'center', backgroundColor: Colors.surfaceContainerLow },
+  sellText: { flex: 1, gap: 2 },
+  sellTitle: { ...Typography.labelLg, color: Colors.onSurface },
+  sellSub: { ...Typography.bodySm, color: Colors.onSurfaceVariant },
+  viewPillRow: { flexDirection: 'row', paddingHorizontal: Spacing.containerMargin, marginTop: Spacing.sm },
   viewPill: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -334,27 +464,33 @@ const s = StyleSheet.create({
     paddingVertical: Spacing.xs,
   },
   viewPillLabel: { ...Typography.labelMd, color: Colors.white },
-  chips: { flexGrow: 0, marginTop: Spacing.lg },
+  chips: { flexGrow: 0, marginTop: Spacing.md },
   chipsContent: { paddingHorizontal: Spacing.containerMargin, gap: Spacing.sm },
-  chip: { paddingHorizontal: Spacing.md, paddingVertical: Spacing.xs, borderRadius: Radius.full, backgroundColor: Colors.surfaceContainerLow, borderWidth: 1, borderColor: Colors.outlineVariant },
+  chip: {
+    flexDirection: 'row', alignItems: 'center', gap: 6,
+    paddingHorizontal: Spacing.md, paddingVertical: Spacing.sm,
+    borderRadius: Radius.full, backgroundColor: Colors.surfaceContainerLow,
+    borderWidth: 1, borderColor: Colors.outlineVariant,
+  },
   chipActive: { backgroundColor: '#EF4444', borderColor: '#EF4444' },
   chipLabel: { ...Typography.labelMd, color: Colors.onSurfaceVariant },
   chipLabelActive: { color: Colors.white },
   sectionHeader: { paddingHorizontal: Spacing.containerMargin, marginTop: Spacing.lg, marginBottom: Spacing.md, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   sectionTitle: { ...Typography.titleLg, color: Colors.onSurface },
-  sectionMeta: { ...Typography.labelMd, color: Colors.secondary },
+  sectionMetaBadge: { backgroundColor: Colors.iconBgOrange, borderRadius: Radius.full, paddingHorizontal: Spacing.sm, paddingVertical: 4 },
+  sectionMeta: { ...Typography.labelSm, color: '#C2410C' },
   list: { paddingHorizontal: Spacing.containerMargin, paddingTop: Spacing.sm, minHeight: 200 },
   loadMore: {
+    flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
+    gap: 6,
     paddingVertical: Spacing.md,
     borderRadius: Radius.lg,
-    borderWidth: 1,
-    borderColor: Colors.outlineVariant,
-    backgroundColor: Colors.surfaceContainerLowest,
+    backgroundColor: '#EF4444',
     marginBottom: Spacing.md,
   },
-  loadMoreLabel: { ...Typography.labelMd, color: Colors.primary },
+  loadMoreLabel: { ...Typography.labelMd, color: Colors.white },
   listEnd: { ...Typography.labelSm, color: Colors.onSurfaceVariant, textAlign: 'center', paddingVertical: Spacing.md },
   cartBar: {
     position: 'absolute',
@@ -364,11 +500,19 @@ const s = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: Spacing.sm,
-    backgroundColor: Colors.primary,
-    borderRadius: Radius.lg,
-    paddingHorizontal: Spacing.md,
-    paddingVertical: Spacing.md,
+    borderRadius: Radius.full,
+    paddingHorizontal: Spacing.sm,
+    paddingVertical: Spacing.sm,
+  },
+  cartIconBadge: {
+    width: 32, height: 32, borderRadius: Radius.full,
+    backgroundColor: 'rgba(255,255,255,0.22)', alignItems: 'center', justifyContent: 'center',
   },
   cartText: { ...Typography.labelMd, color: Colors.white, flex: 1 },
-  cartCta: { ...Typography.labelLg, color: Colors.white },
+  cartCtaPill: {
+    flexDirection: 'row', alignItems: 'center', gap: 4,
+    backgroundColor: Colors.white, borderRadius: Radius.full,
+    paddingHorizontal: Spacing.md, paddingVertical: Spacing.sm,
+  },
+  cartCta: { ...Typography.labelMd, color: '#EF4444' },
 });

@@ -177,7 +177,24 @@ export default function CampaignDetailScreen() {
             <NavRow icon={<Gift size={18} color={'#B65A00'} strokeWidth={2} />} label="Reward tiers" sub={`${c.rewardTiers.length} tiers available`} onPress={() => link('rewards')} />
           )}
           {c.documents.length > 0 && (
-            <NavRow icon={<FileText size={18} color={Colors.secondary} strokeWidth={2} />} label="Documents" sub={`${c.documents.length} verified file${c.documents.length === 1 ? '' : 's'}`} onPress={() => link('documents')} />
+            <NavRow
+              icon={<FileText size={18} color={Colors.secondary} strokeWidth={2} />}
+              label="Documents"
+              // Counts files, and says "verified" only about the ones that ARE.
+              // This used to read "N verified file(s)" for every document on the
+              // campaign — the word was part of the template, not a fact about the
+              // rows. It went unnoticed while `documents` was hardcoded empty and
+              // the row never rendered; the first real attachment made the page
+              // tell backers a document had been checked when nothing had checked
+              // it. `verified` is granted by review, and the copy has to mean it.
+              sub={(() => {
+                const total = c.documents.length;
+                const verified = c.documents.filter((d) => d.verified).length;
+                const files = `${total} file${total === 1 ? '' : 's'}`;
+                return verified > 0 ? `${files} · ${verified} verified` : files;
+              })()}
+              onPress={() => link('documents')}
+            />
           )}
 
           {/* Updates preview */}
