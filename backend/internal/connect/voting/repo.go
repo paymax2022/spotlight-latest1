@@ -547,9 +547,13 @@ func (r *Repository) Notifications(ctx context.Context, userID string) ([]Notifi
 		SELECT 'vote:' || v.id::text,
 		       'VOTE_SUCCESS',
 		       'Vote confirmed',
-		       'Your ' || v.quantity || CASE WHEN v.quantity = 1 THEN ' vote for ' ELSE ' votes for ' END
+		       -- The VERB has to agree as well as the noun: branching only on
+		       -- 'vote'/'votes' produced "Your 50 votes ... was counted".
+		       'Your ' || v.quantity
+		         || CASE WHEN v.quantity = 1 THEN ' vote for ' ELSE ' votes for ' END
 		         || COALESCE(NULLIF(c.name, ''), 'a contestant')
-		         || COALESCE(' in ' || NULLIF(ct.title, ''), '') || ' was counted.',
+		         || COALESCE(' in ' || NULLIF(ct.title, ''), '')
+		         || CASE WHEN v.quantity = 1 THEN ' was counted.' ELSE ' were counted.' END,
 		       v.contest_id::text,
 		       v.option_ref,
 		       v.created_at
