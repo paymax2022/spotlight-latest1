@@ -222,7 +222,12 @@ export default function CampaignDetailScreen() {
           </SectionBlock>
 
           {/* Comments & Q&A */}
-          <NavRow icon={<MessageCircle size={18} color={Colors.secondary} strokeWidth={2} />} label="Comments & Q&A" sub="Ask the creator a question" onPress={() => link('comments')} />
+          <NavRow
+            icon={<MessageCircle size={18} color={Colors.secondary} strokeWidth={2} />}
+            label="Comments & Q&A"
+            sub={c.commentCount ? `${c.commentCount} comment${c.commentCount === 1 ? '' : 's'}` : 'Ask the creator a question'}
+            onPress={() => link('comments')}
+          />
 
           {/* FAQ */}
           {c.faqs.length > 0 && (

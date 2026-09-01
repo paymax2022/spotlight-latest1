@@ -35,7 +35,7 @@ const (
 type DiscoveryParams struct {
 	Query   string // free text over name + description + cuisine
 	Cuisine string // exact (case-insensitive) cuisine tag; "" or "all" = no filter
-	Sort    string // newest (default) | rating | name | eta
+	Sort    string // newest (default) | rating | name | eta | distance
 	Limit   int    // page size (default 20, capped 50)
 	Offset  int    // page offset
 	// PromoOnly keeps only restaurants running a live offer. This backs the
@@ -43,6 +43,11 @@ type DiscoveryParams struct {
 	// in-memory copy of the list on a `promo` field the discovery DTO never
 	// sent — so it matched nothing and the tile always showed "no offers".
 	PromoOnly bool
+	// NearLat/NearLng are the customer's device coordinates. Only consulted
+	// when Sort == "distance"; without them that sort falls back to the same
+	// prep-time proxy "eta" uses, same as if the client never asked.
+	NearLat *float64
+	NearLng *float64
 }
 
 // normalized clamps caller-supplied paging/sort into the supported range. Values
@@ -62,7 +67,7 @@ func (p DiscoveryParams) normalized() DiscoveryParams {
 		out.Offset = 0
 	}
 	switch out.Sort {
-	case "rating", "name", "newest", "eta":
+	case "rating", "name", "newest", "eta", "distance":
 	default:
 		out.Sort = "newest"
 	}
@@ -131,30 +136,54 @@ func buildDiscoveryWhere(p DiscoveryParams, moderationOn bool) (string, []any) {
 // created_at to the microsecond — lets Postgres order the duplicates differently
 // per query, so the same restaurant can appear on two pages while another is
 // never returned at all.
-func discoveryOrderBy(sort string) string {
+//
+// "distance" needs two extra bound params (the device's lat/lng) that the WHERE
+// clause never uses, so they cannot ride in buildDiscoveryWhere's args — nextParam
+// is the next free placeholder index, i.e. len(whereArgs)+1, and the returned args
+// are appended after whereArgs and before LIMIT/OFFSET by the caller.
+func discoveryOrderBy(sort string, nearLat, nearLng *float64, nextParam int) (string, []any) {
 	switch sort {
 	case "rating":
-		return " ORDER BY r.rating DESC, r.created_at DESC, r.id DESC"
+		return " ORDER BY r.rating DESC, r.created_at DESC, r.id DESC", nil
 	case "name":
-		return " ORDER BY r.name ASC, r.id ASC"
+		return " ORDER BY r.name ASC, r.id ASC", nil
+	case "distance":
+		if nearLat != nil && nearLng != nil {
+			latPh := "$" + strconv.Itoa(nextParam)
+			lngPh := "$" + strconv.Itoa(nextParam+1)
+			// Restaurants without a pin (geo_lat/geo_lng NULL) sort last rather
+			// than being excluded — an owner who hasn't set a location yet
+			// shouldn't vanish from discovery entirely.
+			return " ORDER BY (r.geo_lat IS NULL OR r.geo_lng IS NULL) ASC, " +
+					"ST_Distance(ST_SetSRID(ST_MakePoint(r.geo_lng, r.geo_lat), 4326)::geography, " +
+					"ST_SetSRID(ST_MakePoint(" + lngPh + ", " + latPh + "), 4326)::geography) ASC, " +
+					"r.rating DESC, r.id ASC",
+				[]any{*nearLat, *nearLng}
+		}
+		// No coords supplied — same honest fallback "eta" uses below.
+		fallthrough
 	case "eta":
-		// Backs the "Nearby" tile. There is no distance on the discovery row, and
-		// prep time is what the ETA the cards show is derived from, so it is the
-		// honest proxy the client was already sorting on.
-		return " ORDER BY r.prep_time_minutes ASC, r.rating DESC, r.id ASC"
+		// Backs the "Nearby" tile when the device has no location (or the caller
+		// asked for "distance" without one). Prep time is what the ETA the cards
+		// show is derived from, so it is the honest proxy available without it.
+		return " ORDER BY r.prep_time_minutes ASC, r.rating DESC, r.id ASC", nil
 	default:
-		return " ORDER BY r.created_at DESC, r.id DESC"
+		return " ORDER BY r.created_at DESC, r.id DESC", nil
 	}
 }
 
 // queryRestaurants runs a restaurant SELECT over discoveryColumns. limit <= 0
 // means "no LIMIT clause" — that is how the unpaged ListOpenRestaurants shares
 // this one scanner instead of keeping a second copy of the column list.
-func (s *Service) queryRestaurants(ctx context.Context, where, orderBy string, args []any, limit, offset int) ([]Restaurant, error) {
+// orderArgs are whatever discoveryOrderBy needed beyond whereArgs (e.g. the
+// device coordinates for a distance sort) — kept separate from whereArgs so
+// the COUNT query, which never runs orderBy, doesn't carry unused params.
+func (s *Service) queryRestaurants(ctx context.Context, where, orderBy string, whereArgs, orderArgs []any, limit, offset int) ([]Restaurant, error) {
 	q := `SELECT ` + discoveryColumns + ` FROM restaurants r ` + where + orderBy
-	// Copy before appending: the caller reuses `args` for the COUNT query, and
-	// append may write through to its backing array.
-	full := append([]any{}, args...)
+	// Copy before appending: the caller reuses `whereArgs` for the COUNT query,
+	// and append may write through to its backing array.
+	full := append([]any{}, whereArgs...)
+	full = append(full, orderArgs...)
 	if limit > 0 {
 		full = append(full, limit, offset)
 		q += " LIMIT $" + strconv.Itoa(len(full)-1) + " OFFSET $" + strconv.Itoa(len(full))
@@ -191,7 +220,8 @@ func (s *Service) ListOpenRestaurantsPage(ctx context.Context, params DiscoveryP
 		return nil, err
 	}
 
-	list, err := s.queryRestaurants(ctx, where, discoveryOrderBy(p.Sort), args, p.Limit, p.Offset)
+	orderBy, orderArgs := discoveryOrderBy(p.Sort, p.NearLat, p.NearLng, len(args)+1)
+	list, err := s.queryRestaurants(ctx, where, orderBy, args, orderArgs, p.Limit, p.Offset)
 	if err != nil {
 		return nil, err
 	}

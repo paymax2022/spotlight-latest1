@@ -81,10 +81,18 @@ export interface RestaurantPage {
 export interface RestaurantQuery {
   q?: string;
   cuisine?: string;
-  /** 'eta' sorts by kitchen prep time — what the Nearby view uses. */
-  sort?: 'newest' | 'rating' | 'name' | 'eta';
+  /**
+   * 'eta' sorts by kitchen prep time — the Nearby view's fallback when the
+   * device has no location. 'distance' sorts by real proximity to `nearLat`/
+   * `nearLng`; without both of those the server degrades it to the same 'eta'
+   * proxy, so passing 'distance' alone is always safe.
+   */
+  sort?: 'newest' | 'rating' | 'name' | 'eta' | 'distance';
   /** Keep only restaurants running a live offer (the Offers view). */
   promo?: boolean;
+  /** Device coordinates for `sort: 'distance'`. Ignored by every other sort. */
+  nearLat?: number;
+  nearLng?: number;
   limit?: number;
   offset?: number;
 }
@@ -142,6 +150,8 @@ export async function listRestaurants(params: RestaurantQuery = {}): Promise<Res
         cuisine: params.cuisine || undefined,
         sort: params.sort,
         promo: params.promo ? '1' : undefined,
+        near_lat: params.nearLat,
+        near_lng: params.nearLng,
         limit,
         offset,
       },

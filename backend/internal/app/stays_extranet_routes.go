@@ -74,24 +74,30 @@ func RegisterStaysExtranet(member *gin.RouterGroup, admin *gin.RouterGroup, extr
 
 	// --- extranet: /api/stays/extranet/* (RBAC stays.hotelier.* + object scope) ---
 	if extranetGroup != nil {
-		// Baseline access gate for the whole extranet surface; per-capability perms
-		// are enforced on the sub-groups below, and object-level scope is checked IN
-		// each service (the user must hold an ACTIVE stays_hotelier_profile grant).
+		// No RBAC gate here — object-level scope is checked IN each service (the
+		// user must hold an ACTIVE stays_hotelier_profile grant, checked per call),
+		// the same self-serve, ownership-stamped-not-role-granted model already
+		// proven live by the restaurant module (POST /api/finance/restaurant has
+		// no RBAC guard either; ownership is stamped from the JWT at creation and
+		// checked server-side on every subsequent call).
+		//
+		// This was previously gated on stays.hotelier.* RBAC permissions, but those
+		// are seeded ONLY onto super-admin/system-admin (20260715000000_stays_ari.sql)
+		// with no self-service grant path — so no property owner could ever pass the
+		// gate, regardless of holding a real ACTIVE grant. CreateProperty (below) is
+		// the only way to acquire that grant, and it has no permission to hold before
+		// it runs. Removing the redundant outer gate is what makes self-service work;
+		// the object-scope check the design doc already called the "complementing"
+		// layer is now the ONLY layer, same as restaurant.
 		eg := extranetGroup.Group("")
-		eg.Use(guard("stays.hotelier.access"))
-
-		// Core extranet (content / rooms / rate plans / reservations / finance reads /
-		// analytics / staff / messaging stub).
 		extranetHandler.Register(eg)
 
 		// Calendar / ARI / promotions / restrictions / derived rates.
 		calendar := extranetGroup.Group("")
-		calendar.Use(guard("stays.hotelier.calendar"))
 		ariHandler.RegisterExtranet(calendar)
 
 		// Reviews (hotelier responses + flagging).
 		rev := extranetGroup.Group("")
-		rev.Use(guard("stays.hotelier.review"))
 		reviewsHandler.RegisterExtranet(rev)
 	}
 

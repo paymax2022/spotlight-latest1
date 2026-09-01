@@ -71,11 +71,43 @@ func TestDiscoveryOrderByAlwaysBreaksTies(t *testing.T) {
 	// Every ordering must end in a UNIQUE column. Without one, rows tied on the
 	// sort key can be returned in a different order per query, so paging repeats
 	// some restaurants and never returns others.
-	for _, sort := range []string{"", "newest", "rating", "name", "eta", "nonsense"} {
-		got := discoveryOrderBy(sort)
+	lat, lng := 6.5244, 3.3792
+	for _, tc := range []struct {
+		sort     string
+		lat, lng *float64
+	}{
+		{sort: ""}, {sort: "newest"}, {sort: "rating"}, {sort: "name"},
+		{sort: "eta"}, {sort: "nonsense"},
+		{sort: "distance"}, // no coords — falls back to eta
+		{sort: "distance", lat: &lat, lng: &lng},
+	} {
+		got, _ := discoveryOrderBy(tc.sort, tc.lat, tc.lng, 1)
 		if !strings.HasSuffix(got, "r.id DESC") && !strings.HasSuffix(got, "r.id ASC") {
-			t.Errorf("discoveryOrderBy(%q) = %q, want an id tiebreaker", sort, got)
+			t.Errorf("discoveryOrderBy(%q, %v, %v) = %q, want an id tiebreaker", tc.sort, tc.lat, tc.lng, got)
 		}
+	}
+}
+
+func TestDiscoveryOrderByDistanceUsesRealCoordinates(t *testing.T) {
+	lat, lng := 6.5244, 3.3792
+	got, args := discoveryOrderBy("distance", &lat, &lng, 3)
+	if !strings.Contains(got, "ST_Distance") {
+		t.Fatalf("distance sort should compute a real distance, got %q", got)
+	}
+	if !strings.Contains(got, "$3") || !strings.Contains(got, "$4") {
+		t.Fatalf("distance sort should place its params starting at nextParam=3, got %q", got)
+	}
+	if len(args) != 2 || args[0] != lat || args[1] != lng {
+		t.Fatalf("distance sort args = %v, want [%v %v]", args, lat, lng)
+	}
+
+	// Without coordinates it must degrade to the eta proxy, not error or panic.
+	fallback, fallbackArgs := discoveryOrderBy("distance", nil, nil, 1)
+	if len(fallbackArgs) != 0 {
+		t.Fatalf("distance sort with no coords should bind no extra args, got %v", fallbackArgs)
+	}
+	if !strings.Contains(fallback, "prep_time_minutes") {
+		t.Fatalf("distance sort with no coords should fall back to the eta proxy, got %q", fallback)
 	}
 }
 

@@ -75,6 +75,8 @@ const (
 	CodeDuplicatePhotoDetected   = "DUPLICATE_PHOTO_DETECTED"
 	CodeListingHasActiveOrder    = "LISTING_HAS_ACTIVE_ORDER"
 	CodeInvalidListingTransition = "INVALID_LISTING_TRANSITION"
+	CodeContactRevealLimit       = "CONTACT_REVEAL_LIMIT"
+	CodeSellerHasNoPhone         = "SELLER_HAS_NO_PHONE"
 
 	// Orders / escrow
 	CodeInvalidDeliveryOption  = "INVALID_DELIVERY_OPTION"

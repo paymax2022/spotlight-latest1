@@ -42,6 +42,19 @@ func (s *Service) MyProperties(ctx context.Context, userID string) ([]map[string
 	return s.repo.MyProperties(ctx, userID)
 }
 
+// CreateProperty self-lists a new property and grants the caller OWNER on it.
+// Unlike every other extranet operation this has no object to scope against —
+// it IS how the caller gets one — so there is deliberately no s.guard call here.
+func (s *Service) CreateProperty(ctx context.Context, userID, name, propertyType, address, city string, starRating int) (string, error) {
+	if userID == "" {
+		return "", ErrForbidden
+	}
+	if name == "" {
+		return "", errors.New("extranet: property name required")
+	}
+	return s.repo.CreateProperty(ctx, userID, name, propertyType, address, city, starRating)
+}
+
 // --- content ---
 
 // GetProperty returns the property content (object-scoped).

@@ -14,6 +14,7 @@ import { Typography } from '@/constants/typography';
 import { shadow1, shadow2, shadow3 } from '@/constants/shadows';
 import { useRestaurantSearch } from '@/features/food/hooks';
 import { useDebouncedValue } from '@/features/food/useDebouncedValue';
+import { useDeviceCoords } from '@/features/food/useDeviceCoords';
 import { useCartStore, cartItemCount } from '@/features/food/cartStore';
 import { formatNairaWhole } from '@/features/food/utils';
 import { DynamicIcon } from '@/features/food/components';
@@ -199,6 +200,28 @@ export default function FoodDiscoveryScreen() {
   const viewMeta = view ? BROWSE_VIEWS[view] : null;
   const debouncedSearch = useDebouncedValue(search);
 
+  // "Nearby" wants a real proximity sort, which needs the device's own
+  // coordinates. Request them the moment the view is entered rather than
+  // eagerly on every screen load — most visits never touch this tile, and
+  // asking only when it's actually wanted keeps the permission prompt tied to
+  // something the user just did. Until coords resolve (or if the device/user
+  // declines), the query below falls back to the same kitchen-speed proxy
+  // "Nearby" already used — never a broken or empty view.
+  const deviceCoords = useDeviceCoords();
+  useEffect(() => {
+    if (view === 'nearby' && !deviceCoords.coords && deviceCoords.available) {
+      void deviceCoords.request();
+    }
+    // deviceCoords itself is a fresh object every render; only `view` should
+    // retrigger this.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [view]);
+
+  const nearbyParams =
+    view === 'nearby' && deviceCoords.coords
+      ? { sort: 'distance' as const, nearLat: deviceCoords.coords.lat, nearLng: deviceCoords.coords.lng }
+      : viewMeta?.params;
+
   // Every filter is a SERVER param. `restaurants` below is the pages loaded so
   // far; `total` is every match, which is what the counts must report — saying
   // "20 open" while 2,016 match would be worse than saying nothing.
@@ -214,7 +237,7 @@ export default function FoodDiscoveryScreen() {
   } = useRestaurantSearch({
     q: debouncedSearch,
     cuisine: cuisine === 'all' ? '' : cuisine,
-    ...(viewMeta?.params ?? {}),
+    ...(nearbyParams ?? {}),
   });
 
   return (

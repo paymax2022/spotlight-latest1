@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { View, Text, StyleSheet, Pressable, FlatList } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
@@ -11,6 +11,8 @@ import { Radius } from '@/constants/radius';
 import ScreenHeader from '@/components/ScreenHeader';
 import SearchBar from '@/components/SearchBar';
 import StateView from '@/components/StateView';
+import MapView, { type MapMarker } from '@/features/mobility/components/MapView';
+import { resolveCoordinate } from '@/lib/addressLookup';
 import { useDestinations } from '@/features/stays/hooks';
 import { useStaysStore } from '@/features/stays/store';
 import type { DestinationSuggestion } from '@/features/stays/types';
@@ -21,10 +23,43 @@ const KIND_ICON = {
   landmark: Landmark,
 } as const;
 
+// Nigeria — a wide default center until a destination resolves to a pin.
+const DEFAULT_CENTER = { lat: 9.082, lng: 8.6753 };
+
 export default function DestinationScreen() {
   const [q, setQ] = useState('');
   const list = useDestinations(q);
   const { setQuery } = useStaysStore();
+  const [pin, setPin] = useState<{ lat: number; lng: number } | null>(null);
+  const resolveSeq = useRef(0);
+
+  // The map previews the TOP visible destination (first result, or the first
+  // popular one when the search is empty) so it always reflects what "Where
+  // to?" would actually select if the user tapped now — updates as they type,
+  // same live-preview pattern AddressEntry uses for a precise address, just
+  // resolved from the city name instead of a draggable pin.
+  const topDestination = list.data?.[0];
+  useEffect(() => {
+    const seq = ++resolveSeq.current;
+    if (!topDestination) {
+      setPin(null);
+      return;
+    }
+    resolveCoordinate({
+      id: topDestination.id,
+      label: `${topDestination.name}, ${topDestination.region}`,
+      primary: topDestination.name,
+      secondary: topDestination.region,
+      source: 'proxy',
+    }).then((resolved) => {
+      if (seq !== resolveSeq.current) return; // a newer destination superseded this lookup
+      if (resolved) setPin({ lat: resolved.lat, lng: resolved.lng });
+    });
+  }, [topDestination]);
+
+  const markers: MapMarker[] = pin
+    ? [{ id: 'destination-preview', lat: pin.lat, lng: pin.lng, color: Colors.primary, title: topDestination?.name }]
+    : [];
 
   const pick = (d: DestinationSuggestion) => {
     setQuery({ destination: d.name, destinationId: d.id });
@@ -40,6 +75,21 @@ export default function DestinationScreen() {
         <View style={styles.nearIcon}><Navigation size={18} color={Colors.secondary} strokeWidth={2} /></View>
         <Text style={styles.nearText}>Use my current location</Text>
       </Pressable>
+
+      <View style={styles.mapCard}>
+        <MapView
+          center={pin ?? DEFAULT_CENTER}
+          zoom={pin ? 11 : 5}
+          markers={markers}
+          style={styles.map}
+        />
+        {topDestination && (
+          <View style={styles.mapLabel}>
+            <MapPin size={14} color={Colors.primary} strokeWidth={2.5} />
+            <Text style={styles.mapLabelText} numberOfLines={1}>{topDestination.name}, {topDestination.region}</Text>
+          </View>
+        )}
+      </View>
 
       {list.isLoading ? (
         <StateView kind="loading" message="Searching…" compact />
@@ -77,6 +127,33 @@ const styles = StyleSheet.create({
   nearRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.md, paddingHorizontal: Spacing.containerMargin, paddingVertical: Spacing.sm, marginBottom: Spacing.sm },
   nearIcon: { width: 40, height: 40, borderRadius: Radius.md, backgroundColor: Colors.iconBgBlue, alignItems: 'center', justifyContent: 'center' },
   nearText: { ...Typography.labelLg, color: Colors.secondary },
+  mapCard: {
+    marginHorizontal: Spacing.containerMargin,
+    marginBottom: Spacing.md,
+    borderRadius: Radius.xl,
+    overflow: 'hidden',
+    backgroundColor: Colors.surfaceContainerLow,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.05,
+    shadowRadius: 20,
+    elevation: 2,
+  },
+  map: { height: 160, borderRadius: 0 },
+  mapLabel: {
+    position: 'absolute',
+    left: Spacing.sm,
+    bottom: Spacing.sm,
+    right: Spacing.sm,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.xs,
+    backgroundColor: Colors.background,
+    borderRadius: Radius.md,
+    paddingHorizontal: Spacing.sm,
+    paddingVertical: 6,
+  },
+  mapLabelText: { ...Typography.labelSm, color: Colors.onSurface, fontWeight: '600' as const, flexShrink: 1 },
   list: { paddingHorizontal: Spacing.containerMargin, paddingBottom: Spacing.xxl },
   heading: { ...Typography.labelMd, color: Colors.onSurfaceVariant, marginBottom: Spacing.sm, textTransform: 'uppercase' },
   row: { flexDirection: 'row', alignItems: 'center', gap: Spacing.md, paddingVertical: Spacing.sm },

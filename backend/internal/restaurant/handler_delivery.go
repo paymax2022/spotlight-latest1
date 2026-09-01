@@ -38,6 +38,10 @@ func (h *Handler) ListRestaurants(c *gin.Context) {
 		Offset:  queryInt(c, "offset"),
 		// ?promo=1 backs the "Offers" browse tile.
 		PromoOnly: c.Query("promo") == "1" || c.Query("promo") == "true",
+		// ?near_lat & ?near_lng back ?sort=distance (see discoveryOrderBy). Only
+		// consulted together — a lone coordinate is not a location.
+		NearLat: queryFloat(c, "near_lat"),
+		NearLng: queryFloat(c, "near_lng"),
 	})
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -55,6 +59,21 @@ func queryInt(c *gin.Context, key string) int {
 		return 0
 	}
 	return n
+}
+
+// queryFloat reads an optional query param as a float, or nil if absent/
+// unparseable — same "never 400 a browse request" policy as queryInt. nil is
+// the signal discoveryOrderBy's distance sort treats as "no location given".
+func queryFloat(c *gin.Context, key string) *float64 {
+	raw := c.Query(key)
+	if raw == "" {
+		return nil
+	}
+	v, err := strconv.ParseFloat(raw, 64)
+	if err != nil {
+		return nil
+	}
+	return &v
 }
 
 // GetRestaurant → GET /restaurant/:id (restaurant detail + menu).

@@ -8,9 +8,11 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// Handler exposes the hotelier extranet routes. RBAC stays.hotelier.* is applied at
-// the route by the aggregator; this handler adds the object-level property scope
-// check (delegated to the service guard).
+// Handler exposes the hotelier extranet routes. Authorization is object-level
+// only (delegated to the service guard: an ACTIVE stays_hotelier_profile grant
+// on the property) — same self-serve model as the restaurant module, chosen
+// because stays.hotelier.* RBAC permissions have no self-service grant path
+// (seeded only onto super-admin/system-admin).
 type Handler struct {
 	svc *Service
 }
@@ -36,6 +38,8 @@ func mapErr(c *gin.Context, err error) {
 func (h *Handler) Register(g *gin.RouterGroup) {
 	// Extranet landing — the set of properties the hotelier may act on.
 	g.GET("/me/properties", h.MyProperties)
+	// Self-list a new property (hotel/shortlet/apartment); grants the caller OWNER.
+	g.POST("/properties", h.CreateProperty)
 
 	// Property content.
 	g.GET("/properties/:propertyId", h.GetProperty)
@@ -79,6 +83,30 @@ func (h *Handler) MyProperties(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": out})
+}
+
+// CreateProperty: POST /properties {name, property_type, address, city, star_rating}
+func (h *Handler) CreateProperty(c *gin.Context) {
+	var b struct {
+		Name         string `json:"name" binding:"required"`
+		PropertyType string `json:"property_type"`
+		Address      string `json:"address"`
+		City         string `json:"city"`
+		StarRating   int    `json:"star_rating"`
+	}
+	if err := c.ShouldBindJSON(&b); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if b.StarRating < 0 || b.StarRating > 5 {
+		b.StarRating = 0
+	}
+	id, err := h.svc.CreateProperty(c.Request.Context(), uid(c), b.Name, b.PropertyType, b.Address, b.City, b.StarRating)
+	if err != nil {
+		mapErr(c, err)
+		return
+	}
+	c.JSON(http.StatusCreated, gin.H{"data": gin.H{"id": id}})
 }
 
 // GetProperty: GET /properties/:propertyId
