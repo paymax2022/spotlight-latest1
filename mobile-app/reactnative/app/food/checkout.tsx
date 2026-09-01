@@ -302,7 +302,7 @@ export default function CheckoutScreen() {
         })()}
 
         <View style={s.packActionsRow}>
-          <Pressable style={[s.actionButton, s.actionButtonAdd]} onPress={() => addPackage()} accessibilityRole="button">
+          <Pressable style={[s.actionButton, s.actionButtonAdd]} onPress={() => addPackage(restaurantId ?? undefined, restaurantName ?? undefined)} accessibilityRole="button">
             <Icons.Plus size={16} color={Colors.primary} strokeWidth={2.6} />
             <Text style={s.actionButtonText}>Add another pack</Text>
           </Pressable>
