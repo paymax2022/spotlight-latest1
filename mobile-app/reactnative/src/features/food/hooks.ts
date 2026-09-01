@@ -25,12 +25,17 @@ const KEY = 'food';
  * ones) so a screen can honestly say "showing 20 of 137".
  */
 export function useRestaurantSearch(params: food.RestaurantQuery = {}) {
-  const { q = '', cuisine = '', sort, promo = false } = params;
+  const { q = '', cuisine = '', sort, promo = false, nearLat, nearLng } = params;
   const query = useInfiniteQuery({
     // Every filter is in the key: a page fetched under one set of filters must
-    // never be served for another.
-    queryKey: [KEY, 'restaurants', { q, cuisine, sort: sort ?? 'newest', promo }],
-    queryFn: ({ pageParam }) => food.listRestaurants({ q, cuisine, sort, promo, offset: pageParam }),
+    // never be served for another. Coordinates are rounded to ~1km so the
+    // normal GPS jitter between renders doesn't mint a fresh cache key (and a
+    // fresh page-0 fetch) every time distance sort re-evaluates.
+    queryKey: [KEY, 'restaurants', {
+      q, cuisine, sort: sort ?? 'newest', promo,
+      near: nearLat != null && nearLng != null ? `${nearLat.toFixed(2)},${nearLng.toFixed(2)}` : null,
+    }],
+    queryFn: ({ pageParam }) => food.listRestaurants({ q, cuisine, sort, promo, nearLat, nearLng, offset: pageParam }),
     initialPageParam: 0,
     // Page by the offset the SERVER reports it served, never by a locally
     // accumulated count: the two diverge the moment a row is added or removed
