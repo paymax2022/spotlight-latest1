@@ -16,12 +16,13 @@ import { Typography } from '@/constants/typography';
 import { shadow1 } from '@/constants/shadows';
 import { usePlaceOrder, useDeliveryQuote } from '@/features/food/hooks';
 import {
-  useCartStore, cartSubtotalKobo, cartItemCount, cartPackageCount, cartPackagingKobo,
+  useCartStore, cartSubtotalKobo, cartItemCount, cartPackageCount,
   aggregateCartLines, cartPackagesPayload, MAX_SAME_FOOD_PER_PACKAGE,
 } from '@/features/food/cartStore';
 import { resolveRestaurantName, groupPackagesByRestaurant, UNKNOWN_RESTAURANT_ID } from '@/features/food/restaurantName';
 import { formatNaira } from '@/features/food/utils';
 import { resolveDeliveryFee } from '@/features/food/deliveryFee';
+import { resolvePackagingFee } from '@/features/food/packagingFee';
 import { useRestaurant, useRestaurantNames } from '@/features/food/hooks';
 import { usePurchasePayment, PaymentSheet } from '@/features/payments';
 import { CartNutritionSummary } from '@/features/nutrition';
@@ -46,7 +47,7 @@ function SubLine({ label, value, strong }: { label: string; value: string; stron
 
 export default function CheckoutScreen() {
   const { packages, restaurantId, restaurantName, clear, addItem, decrementItem, addPackage, removePackage } = useCartStore();
-  const { data: restaurant } = useRestaurant(restaurantId ?? undefined);
+  const { data: restaurant, isError: restaurantUnavailable, isPending: restaurantLoading } = useRestaurant(restaurantId ?? undefined);
 
   // Names for the OTHER restaurants in a multi-restaurant cart. Lines added in
   // this session carry their own name; the per-id lookup below covers carts
@@ -115,16 +116,26 @@ export default function CheckoutScreen() {
   const deliveryKnown = deliveryQuoteView.known;
   const deliveryEstimated = deliveryQuoteView.estimated;
   const deliveryCalculating = Boolean(addressLocation) && quoteQ.isPending && !quote;
+  // An address IS set and the quote came back an error — telling the buyer to
+  // "add your address" here sends them to fix something that is not wrong.
+  const deliveryFailed = Boolean(addressLocation) && quoteQ.isError && !quote;
   // Only a distance-based quote carries a breakdown worth showing.
   const haveQuote = deliveryKnown && !deliveryEstimated;
   // Service fee shown as an estimate; the SERVER computes the authoritative total.
   const serviceFee = Math.round(subtotal * 0.05);
   // Mandatory take-away packaging — one pack fee PER takeaway package the customer
   // added (the package is the container). Cannot be removed.
-  const packFee = restaurant?.packagingFeeKobo ?? 0;
+  // Unknown is not free. `restaurant?.packagingFeeKobo ?? 0` rendered ₦0 whenever
+  // the restaurant had not loaded, and the server charges the real per-pack fee
+  // regardless — so the estimate was short by exactly that amount.
+  const packagingView = resolvePackagingFee(packages, restaurant?.packagingFeeKobo);
+  const packagingFee = packagingView.feeKobo;
+  const packagingKnown = packagingView.known;
   const packCount = cartPackageCount(packages);
-  const packagingFee = cartPackagingKobo(packages, packFee);
   const estTotal = subtotal + deliveryFee + serviceFee + packagingFee;
+  // The estimate is missing a component the server will still charge. Say so
+  // rather than presenting a total that reads as complete.
+  const estIncomplete = !deliveryKnown || !packagingKnown;
   const count = cartItemCount(packages);
   // Aggregated lines (across packages) drive pricing + the nutrition summary.
   const aggregated = useMemo(() => aggregateCartLines(packages), [packages]);
@@ -151,6 +162,10 @@ export default function CheckoutScreen() {
 
   const onPlace = () => {
     if (!restaurantId || !address.trim() || belowMin || placeOrder.isPending || paid) return;
+    // PlaceOrder reads the restaurant row for pricing and open-hours; if we could
+    // not load it, the order cannot be placed and taking a payment first would
+    // charge for something the server is about to refuse.
+    if (restaurantUnavailable) return;
     // Open the two-option modal. Wallet pays from balance; Card/Transfer charges
     // on the Paystack gateway. Either way placeOrder (the fulfilment) runs on
     // confirmation, with its own Idempotency-Key.
@@ -234,6 +249,16 @@ export default function CheckoutScreen() {
       </View>
 
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={s.content}>
+        {/* An order cannot be placed for a restaurant the server cannot load, and
+            its delivery fee cannot be quoted either — which is what "the fee is
+            not computing" looks like from the outside. Say so ABOVE the prices,
+            not after the total. */}
+        {restaurantUnavailable ? (
+          <Text style={s.blocker}>
+            {restaurantName ? `"${restaurantName}" is no longer available` : 'A restaurant in this cart is no longer available'}
+            , so this order can't be placed and its delivery fee can't be priced. Remove its items to continue.
+          </Text>
+        ) : null}
         {/* Group items by restaurant and display */}
         {(() => {
           // Grouping is memoized above (restaurantGroups) so the screen can
@@ -340,11 +365,13 @@ export default function CheckoutScreen() {
           <Line label={`Subtotal (${count} item${count > 1 ? 's' : ''})`} value={formatNaira(subtotal)} />
           <Line
             label={
-              !deliveryKnown
-                ? 'Delivery fee (add your address)'
-                : deliveryEstimated
-                  ? 'Delivery fee (estimated)'
-                  : 'Delivery fee'
+              deliveryFailed
+                ? "Delivery fee (couldn't be priced)"
+                : !deliveryKnown
+                  ? 'Delivery fee (add your address)'
+                  : deliveryEstimated
+                    ? 'Delivery fee (estimated)'
+                    : 'Delivery fee'
             }
             value={
               deliveryCalculating
@@ -391,12 +418,18 @@ export default function CheckoutScreen() {
               <SubLine label="Delivery total" value={formatNaira(quote.breakdown.total_kobo)} strong />
             </View>
           ) : null}
-          <Line label={`Takeaway packaging (${packCount} pack${packCount > 1 ? 's' : ''})`} value={formatNaira(packagingFee)} />
+          <Line
+            label={`Takeaway packaging (${packCount} pack${packCount > 1 ? 's' : ''})`}
+            value={packagingKnown ? formatNaira(packagingFee) : restaurantLoading ? 'Calculating…' : '—'}
+          />
           <Line label="Service fee" value={formatNaira(serviceFee)} />
           <View style={s.divider} />
           <Line label="Estimated total" value={formatNaira(estTotal)} strong />
           <Text style={s.note}>
-            {deliveryEstimated
+            {estIncomplete
+              ? 'This estimate is missing a charge the server will still apply, so the final amount will be higher. '
+              : ''}
+            {deliveryEstimated && !deliveryFailed
               ? 'Add your delivery address to get an exact distance-based delivery fee. '
               : ''}
             Takeaway packaging is required so the restaurant can pack your order. Final total is confirmed by the server when you place the order.
@@ -417,7 +450,7 @@ export default function CheckoutScreen() {
           label={`Pay & place order · ${formatNaira(estTotal)}`}
           onPress={onPlace}
           loading={placeOrder.isPending}
-          disabled={!address.trim() || belowMin}
+          disabled={!address.trim() || belowMin || restaurantUnavailable}
         />
         <Text style={s.payHint}>You'll be taken to the secure payment gateway (Paystack) to complete payment.</Text>
       </View>
@@ -472,6 +505,7 @@ const s = StyleSheet.create({
   qty: { ...Typography.labelMd, color: Colors.onSurface, minWidth: 16, textAlign: 'center' },
   itemPrice: { ...Typography.labelMd, color: Colors.onSurface, minWidth: 72, textAlign: 'right' },
   sectionLabel: { ...Typography.labelMd, color: Colors.onSurfaceVariant, marginTop: Spacing.lg, marginBottom: Spacing.sm },
+  blocker: { ...Typography.bodySm, color: Colors.error, backgroundColor: Colors.errorContainer, borderRadius: Radius.md, padding: Spacing.md, marginBottom: Spacing.sm },
   priceRow: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 4 },
   priceLabel: { ...Typography.bodyMd, color: Colors.onSurfaceVariant },
   priceLabelStrong: { ...Typography.labelLg, color: Colors.onSurface },
