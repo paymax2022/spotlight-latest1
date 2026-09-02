@@ -23,7 +23,12 @@ export type CampaignState =
   | 'CANCELLED_EARLY'
   | 'COMPLETED';
 
-export type SubjectType = 'listing' | 'product' | 'event' | 'service' | 'profile';
+// 'restaurant' promotes a whole store to the top of food discovery, priced by
+// the RESTAURANT_TOP zone. The backend's subject_type is free text and its
+// eligibility check is permissive, so this is a client-side vocabulary addition;
+// the value must stay exactly 'restaurant' because food discovery's ordering
+// filters on that literal (see restaurant/discovery_page.go).
+export type SubjectType = 'listing' | 'product' | 'event' | 'service' | 'profile' | 'restaurant';
 
 export interface Creative {
   headline: string;

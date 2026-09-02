@@ -141,12 +141,44 @@ func buildDiscoveryWhere(p DiscoveryParams, moderationOn bool) (string, []any) {
 // clause never uses, so they cannot ride in buildDiscoveryWhere's args — nextParam
 // is the next free placeholder index, i.e. len(whereArgs)+1, and the returned args
 // are appended after whereArgs and before LIMIT/OFFSET by the caller.
+// featuredFirstOrder ranks a restaurant that has a LIVE paid RESTAURANT_TOP
+// placement above one that does not. It leads every sort, because an owner who
+// buys the slot cannot control which tab a customer is looking at — if this
+// only applied to the default sort, most of the audience would never see the
+// thing they paid for.
+//
+// The predicate mirrors placement.Repository.ServingCandidates exactly, which is
+// the authoritative definition of "serving right now": ACTIVE, inside its
+// window. Anything looser would hand out position for free — a PAUSED, expired
+// or unpaid campaign must not lift anybody. If that definition changes, change
+// it here too.
+//
+// EXISTS rather than a join: discovery already pages over this query, and a join
+// against a table that can hold several campaigns per subject would multiply
+// rows and corrupt the count. It also consumes no bound parameter, which matters
+// because the caller indexes LIMIT/OFFSET off the arg count.
+const featuredFirstOrder = `(EXISTS (` +
+	`SELECT 1 FROM public.featured_campaign fc ` +
+	`WHERE fc.subject_type = 'restaurant' AND fc.subject_id = r.id::text ` +
+	`AND fc.zone_code = 'RESTAURANT_TOP' AND fc.state = 'ACTIVE' ` +
+	`AND fc.window_start <= now() AND fc.window_end > now())) DESC`
+
+// discoveryOrderBy builds the ORDER BY for a discovery page. Every branch is
+// prefixed with featuredFirstOrder by the single return below, so a new sort
+// cannot silently omit paid placement by forgetting to include it.
 func discoveryOrderBy(sort string, nearLat, nearLng *float64, nextParam int) (string, []any) {
+	tail, args := discoverySortTail(sort, nearLat, nearLng, nextParam)
+	return " ORDER BY " + featuredFirstOrder + ", " + tail, args
+}
+
+// discoverySortTail is the customer-chosen ordering, applied among restaurants
+// that share a featured status.
+func discoverySortTail(sort string, nearLat, nearLng *float64, nextParam int) (string, []any) {
 	switch sort {
 	case "rating":
-		return " ORDER BY r.rating DESC, r.created_at DESC, r.id DESC", nil
+		return "r.rating DESC, r.created_at DESC, r.id DESC", nil
 	case "name":
-		return " ORDER BY r.name ASC, r.id ASC", nil
+		return "r.name ASC, r.id ASC", nil
 	case "distance":
 		if nearLat != nil && nearLng != nil {
 			latPh := "$" + strconv.Itoa(nextParam)
@@ -154,7 +186,7 @@ func discoveryOrderBy(sort string, nearLat, nearLng *float64, nextParam int) (st
 			// Restaurants without a pin (geo_lat/geo_lng NULL) sort last rather
 			// than being excluded — an owner who hasn't set a location yet
 			// shouldn't vanish from discovery entirely.
-			return " ORDER BY (r.geo_lat IS NULL OR r.geo_lng IS NULL) ASC, " +
+			return "(r.geo_lat IS NULL OR r.geo_lng IS NULL) ASC, " +
 					"ST_Distance(ST_SetSRID(ST_MakePoint(r.geo_lng, r.geo_lat), 4326)::geography, " +
 					"ST_SetSRID(ST_MakePoint(" + lngPh + ", " + latPh + "), 4326)::geography) ASC, " +
 					"r.rating DESC, r.id ASC",
@@ -166,9 +198,9 @@ func discoveryOrderBy(sort string, nearLat, nearLng *float64, nextParam int) (st
 		// Backs the "Nearby" tile when the device has no location (or the caller
 		// asked for "distance" without one). Prep time is what the ETA the cards
 		// show is derived from, so it is the honest proxy available without it.
-		return " ORDER BY r.prep_time_minutes ASC, r.rating DESC, r.id ASC", nil
+		return "r.prep_time_minutes ASC, r.rating DESC, r.id ASC", nil
 	default:
-		return " ORDER BY r.created_at DESC, r.id DESC", nil
+		return "r.created_at DESC, r.id DESC", nil
 	}
 }
 
