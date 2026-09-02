@@ -39,10 +39,21 @@ import (
 //
 //	INSURANCE_MYCOVER_API_KEY (secret) / INSURANCE_MYCOVER_PUBLIC_KEY / INSURANCE_MYCOVER_WEBHOOK_SECRET / INSURANCE_MYCOVER_BASE_URL
 //	INSURANCE_OCTAMILE_API_KEY (secret) / INSURANCE_OCTAMILE_PUBLIC_KEY / INSURANCE_OCTAMILE_WEBHOOK_SECRET / INSURANCE_OCTAMILE_BASE_URL
-func RegisterInsurance(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pgxpool.Pool, rbac services.RBACService) {
+// InsuranceServices exposes the subset of the insurance module other verticals
+// may reuse directly (in-process Go calls, not HTTP) — e.g. transport's parcel
+// flow binding real Goods-in-Transit cover. Nil-safe: a caller that gets a nil
+// *InsuranceServices (pool was nil) must treat the feature as unavailable
+// rather than dereference it.
+type InsuranceServices struct {
+	Policy  *policy.Service
+	Catalog *catalog.Service
+	Consent *consent.Service
+}
+
+func RegisterInsurance(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pgxpool.Pool, rbac services.RBACService) *InsuranceServices {
 	if pool == nil {
 		log.Println("[insurance] nil pool — skipping insurance routes")
-		return
+		return nil
 	}
 
 	// --- Reused finance primitives (money path) ---
@@ -175,4 +186,6 @@ func RegisterInsurance(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pg
 	ag.GET("/policies", guard("insurance.policy.view"), policyHandler.AdminSearch)
 
 	log.Println("[insurance] routes registered — catalog/quotes/policies/consent + premium-bind saga live")
+
+	return &InsuranceServices{Policy: policySvc, Catalog: catalogSvc, Consent: consentSvc}
 }

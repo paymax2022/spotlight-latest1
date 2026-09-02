@@ -290,6 +290,14 @@ func (s *Service) VerifyBusiness(ctx context.Context, userID string) error {
 
 // CreateOffer places a pending offer on a listing.
 func (s *Service) CreateOffer(ctx context.Context, buyerID, listingID string, offerKobo int64, message string) (*Offer, error) {
+	// Guard before the fetch. offerKobo is already checked below, but listingID
+	// was not, so an absent or misspelled field — listing_id instead of listingId
+	// is the easy slip, since the RESPONSE is camelCase — reached the repository
+	// as an empty string and surfaced as 500 "invalid input syntax for type uuid".
+	// A missing field is the caller's error and should name the field.
+	if strings.TrimSpace(listingID) == "" {
+		return nil, fieldErr(CodeValidation, "listingId is required", "listingId")
+	}
 	l, err := s.repo.GetListing(ctx, listingID)
 	if err != nil {
 		return nil, err
