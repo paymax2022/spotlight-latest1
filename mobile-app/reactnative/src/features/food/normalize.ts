@@ -152,6 +152,21 @@ export function mapRestaurants(input: unknown): Restaurant[] {
   return Array.isArray(rows) ? rows.map(mapRestaurant) : [];
 }
 
+/**
+ * Peel the order-list envelope, tolerating both shapes and an empty one.
+ *
+ * GET /api/v1/restaurant/orders answers `{"orders": [...]}` — and when a merchant
+ * has none, `{"orders": null}` with HTTP 200. `unwrap` only peels a `data`
+ * envelope, so it handed the OBJECT to `.map()`; on null that threw a TypeError,
+ * the query rejected, and the merchant queue rendered "Couldn't load orders" for
+ * what was simply a restaurant with no orders yet. Same shape as the
+ * ListRestaurants envelope above, which had already been fixed this way.
+ */
+export function mapOrderList(input: unknown): unknown[] {
+  const rows = Array.isArray(input) ? input : asRaw(input).orders;
+  return Array.isArray(rows) ? rows : [];
+}
+
 // ── Menu ─────────────────────────────────────────────────────────────────────
 
 export function mapMenuItem(input: unknown): MenuItem {

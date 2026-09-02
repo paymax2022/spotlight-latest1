@@ -38,7 +38,7 @@ import {
   mockConfirmHandoff,
   mockRedispatch,
 } from './mock';
-import { mapRestaurants, mapRestaurantDetail } from './normalize';
+import { mapRestaurants, mapRestaurantDetail, mapOrderList } from './normalize';
 import { computeDeliveryFeeMock, type DeliveryQuote } from './deliveryFee';
 export type { DeliveryQuote, DeliveryFeeBreakdown } from './deliveryFee';
 
@@ -225,7 +225,11 @@ export async function listOrders(role: OrderRole): Promise<Order[]> {
     await delay();
     return mockOrdersByRole(role);
   }
-  return unwrap<Order[]>(await api.get(`${BASE}/orders`, { params: { role } })).map(mapOrder);
+  // mapOrderList peels the `orders` envelope and turns a null — which is what a
+  // merchant with no orders gets, alongside HTTP 200 — into an empty list, so the
+  // screen shows its "No orders yet" state instead of an error.
+  const res = await api.get(`${BASE}/orders`, { params: { role } });
+  return mapOrderList(unwrap<unknown>(res)).map((o) => mapOrder(o as Order));
 }
 
 /** Place an order — money mutation → Idempotency-Key. Totals come from server. */
