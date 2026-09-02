@@ -1110,6 +1110,25 @@ func (r *Repository) GetCategory(ctx context.Context, id string) (*Category, err
 	return c, nil
 }
 
+// IsCategoryDescendantOfSlug reports whether categoryID or any of its
+// ancestors carries the given slug — e.g. whether a "Cars" listing sits under
+// "Vehicles". Walks up rather than assuming today's taxonomy depth, mirroring
+// the downward recursive walk in repository_account.go's category filter.
+func (r *Repository) IsCategoryDescendantOfSlug(ctx context.Context, categoryID, slug string) (bool, error) {
+	var exists bool
+	err := r.db.QueryRow(ctx, `
+		WITH RECURSIVE anc(id, parent_id, slug) AS (
+			SELECT id, parent_id, slug FROM public.mkt_categories WHERE id = $1
+			UNION ALL
+			SELECT c.id, c.parent_id, c.slug FROM public.mkt_categories c JOIN anc a ON c.id = a.parent_id
+		)
+		SELECT EXISTS (SELECT 1 FROM anc WHERE slug = $2)`, categoryID, slug).Scan(&exists)
+	if err != nil {
+		return false, wrapInternal("check category ancestor", err)
+	}
+	return exists, nil
+}
+
 func scanCategory(row pgx.Row) (*Category, error) {
 	var c Category
 	var schema []byte

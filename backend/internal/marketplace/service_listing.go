@@ -12,6 +12,33 @@ import (
 // minDescriptionWords is the §2.1 submit guard (description ≥ 8 words).
 const minDescriptionWords = 8
 
+// validConditions are the item conditions this module accepts. `condition` is
+// a free TEXT column (20260905000000_marketplace_v1.sql, documented only by a
+// comment) with no CHECK constraint, so nothing previously caught a typo or an
+// invented value before it became a fact on a listing.
+var validConditions = map[string]bool{
+	"new": true, "used": true, "refurbished": true, "foreign_used": true, "local_used": true,
+}
+
+// vehicleOnlyConditions is the "foreign used" (Tokunbo) vs. "local used" split
+// — meaningful only for a listing filed under the Vehicles category tree; every
+// other category just gets new/used/refurbished.
+var vehicleOnlyConditions = map[string]bool{"foreign_used": true, "local_used": true}
+
+// validateCondition checks a listing's condition value is known, and that a
+// vehicle-only condition is confined to a listing filed under Vehicles. Pure/
+// testable — the DB-backed "is this a Vehicles category" check that produces
+// isVehicleCategory lives in CreateListing, one level up.
+func validateCondition(condition string, isVehicleCategory bool) error {
+	if !validConditions[condition] {
+		return fieldErr(CodeValidation, "invalid condition", "condition")
+	}
+	if vehicleOnlyConditions[condition] && !isVehicleCategory {
+		return fieldErr(CodeValidation, "foreign_used/local_used only applies to Vehicles categories", "condition")
+	}
+	return nil
+}
+
 // autoApproveTrustScore is the §2.1 auto-approve guard threshold (seller ≥ 0.6).
 const autoApproveTrustScore = 0.6
 
@@ -63,6 +90,19 @@ func (s *Service) CreateListing(ctx context.Context, sellerID string, in CreateL
 	if err := validateAttrs(cat.AttributeSchema, in.Attrs); err != nil {
 		return nil, err
 	}
+	condition := orStr(in.Condition, "used")
+	// Only spend the ancestor-walk query when the condition actually needs it.
+	isVehicle := false
+	if vehicleOnlyConditions[condition] {
+		var verr error
+		isVehicle, verr = s.repo.IsCategoryDescendantOfSlug(ctx, in.CategoryID, "vehicles")
+		if verr != nil {
+			return nil, verr
+		}
+	}
+	if err := validateCondition(condition, isVehicle); err != nil {
+		return nil, err
+	}
 	escrowEligible := true
 	if in.EscrowEligible != nil {
 		escrowEligible = *in.EscrowEligible
@@ -75,7 +115,7 @@ func (s *Service) CreateListing(ctx context.Context, sellerID string, in CreateL
 		Title:          in.Title,
 		Description:    in.Description,
 		PriceKobo:      in.PriceKobo,
-		Condition:      orStr(in.Condition, "used"),
+		Condition:      condition,
 		Attrs:          in.Attrs,
 		Status:         ListingDraft,
 		EscrowEligible: escrowEligible,
