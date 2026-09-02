@@ -18,14 +18,25 @@
 # running it twice (or from five worktrees at once) leaves the same end state.
 # Reach for this instead of inventing a password.
 #
-# It repairs BOTH layers a login must pass, which is the other half of why this
-# kept recurring — fixing only the first leaves you with a correct password and
-# a still-failing login:
+# It repairs ALL THREE layers a login must pass, which is the other half of why
+# this kept recurring — fixing only the first leaves you with a correct password
+# and a still-failing login:
 #
 #   1. The GoTrue credential            -> PUT /auth/v1/admin/users/{id}
 #   2. platform_users' lockout gate     -> status / failed_login_attempts /
 #      (checked BEFORE GoTrue by           locked_until
 #       auth_service.go LoginUser)
+#   3. user_profiles.role               -> the ADMIN CONSOLE's own gate
+#      (checked AFTER GoTrue by
+#       frontend-admin adminAuth.ts)
+#
+# Layer 3 was added on 2026-09-01 after admin@spotlight.internal failed to log
+# into the console with a perfectly good password. It authenticated, and then
+# adminAuth.ts read user_profiles.role, found 'USER', called signOut() and threw
+# "Access denied. Admin privileges required." Layers 1 and 2 were both already
+# healthy — so this script reported success while the console stayed shut, which
+# is precisely the "correct password, still-failing login" trap the note above
+# warns about. It just did not cover the third layer yet.
 #
 # platform_users.password_hash is deliberately NOT touched: LoginUser
 # authenticates via the GoTrue password grant (auth_service.go:232) and never
@@ -47,6 +58,24 @@ DEFAULT_ACCOUNTS=(
   "admin@spotlight.internal"
   "qa-claude-test@spotlight.internal"
 )
+
+# Accounts this script will grant user_profiles.role='admin'. DELIBERATELY a
+# separate, explicit list rather than "whatever was passed in": the console gate
+# is an authorisation boundary, and a script that silently hands admin to any
+# email on its command line is a privilege-escalation tool wearing a repair
+# script's clothes. An account outside this list still gets layers 1 and 2.
+ADMIN_ROLE_ACCOUNTS=(
+  "admin@spotlight.internal"
+  "qa-claude-test@spotlight.internal"
+)
+
+is_admin_fixture() {
+  local want="$1" a
+  for a in "${ADMIN_ROLE_ACCOUNTS[@]}"; do
+    [[ "$a" == "$want" ]] && return 0
+  done
+  return 1
+}
 
 SUPABASE_URL="${SUPABASE_URL:-http://127.0.0.1:54321}"
 
@@ -136,7 +165,23 @@ print(next((u["id"] for u in users if (u.get("email") or "").lower() == want), "
     -d '{"status":"active","failed_login_attempts":0,"locked_until":null}' >/dev/null && \
     echo "   ✓ lockout cleared (status=active, attempts=0, locked_until=null)"
 
-  # 3) prove it, rather than assuming the writes took
+  # 3) the ADMIN CONSOLE's gate. adminAuth.ts signs in, reads user_profiles.role
+  #    and signs you straight back out unless it is 'admin' or a finance_* role.
+  #    Note the comparison there is CASE-SENSITIVE (role !== 'admin'), so a row
+  #    reading 'ADMIN' or 'USER' fails identically — write lowercase.
+  #    Only for the fixtures on the allowlist; see ADMIN_ROLE_ACCOUNTS.
+  if is_admin_fixture "$email"; then
+    curl -sS --max-time 20 -X PATCH \
+      "$SUPABASE_URL/rest/v1/user_profiles?id=eq.$uid" \
+      -H "apikey: $SERVICE_ROLE_KEY" -H "Authorization: Bearer $SERVICE_ROLE_KEY" \
+      -H "Content-Type: application/json" -H "Prefer: return=minimal" \
+      -d '{"role":"admin"}' >/dev/null && \
+      echo "   ✓ console role set (user_profiles.role=admin)"
+  else
+    echo "   · not on ADMIN_ROLE_ACCOUNTS — console role left untouched"
+  fi
+
+  # 4) prove it, rather than assuming the writes took
   if curl -sS --max-time 20 -X POST "$SUPABASE_URL/auth/v1/token?grant_type=password" \
       -H "apikey: $SERVICE_ROLE_KEY" -H "Content-Type: application/json" \
       -d "$(DEV_LOGIN_PASSWORD="$DEV_LOGIN_PASSWORD" EMAIL="$email" python3 -c 'import json,os; print(json.dumps({"email": os.environ["EMAIL"], "password": os.environ["DEV_LOGIN_PASSWORD"]}))')" \
@@ -145,6 +190,30 @@ print(next((u["id"] for u in users if (u.get("email") or "").lower() == want), "
   else
     echo "   ✗ verification FAILED — the grant still rejects this password"
     failed=1
+  fi
+
+  # 5) and prove the CONSOLE gate too. A token proves GoTrue is happy; it says
+  #    nothing about whether adminAuth.ts will let you past. Reading the role
+  #    back is what turns "password works" into "you can actually get in" —
+  #    without it this script can report total success on an account the console
+  #    refuses, which is exactly what happened on 2026-09-01.
+  if is_admin_fixture "$email"; then
+    role_now="$(curl -sS --max-time 20 \
+      "$SUPABASE_URL/rest/v1/user_profiles?id=eq.$uid&select=role" \
+      -H "apikey: $SERVICE_ROLE_KEY" -H "Authorization: Bearer $SERVICE_ROLE_KEY" \
+      | python3 -c 'import sys,json
+try:
+    r=json.load(sys.stdin)
+    print(r[0].get("role","") if r else "")
+except Exception:
+    print("")')"
+    if [[ "$role_now" == "admin" ]]; then
+      echo "   ✓ verified: console gate passes (user_profiles.role=admin)"
+    else
+      echo "   ✗ console gate FAILS — user_profiles.role is '${role_now:-<missing>}', not 'admin'"
+      echo "     The password is fine; the admin console will still refuse this account."
+      failed=1
+    fi
   fi
   echo
 done
@@ -155,5 +224,7 @@ if [[ $failed -ne 0 ]]; then
 fi
 
 echo "✓ Dev login restored. Password: \$DEV_LOGIN_PASSWORD (default documented in this script)."
-echo "  If a login still fails, it is NOT the password — check the app layer"
-echo "  (Go :8091 / Next :3000) rather than resetting anything."
+echo "  All three layers asserted: GoTrue credential, platform_users lockout, and"
+echo "  user_profiles.role (the admin console's own gate)."
+echo "  If a login still fails, it is NOT the password and NOT the role — check"
+echo "  the app layer (Go :8091 / Next :3000) rather than resetting anything."
