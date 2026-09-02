@@ -15,6 +15,7 @@ import { useAdminRole } from '@/features/admin/context/AdminRole';
 import { useAdminOrders } from '@/features/admin/hooks/useAdmin';
 import { can } from '@/features/admin/constants/admin.constants';
 import type { OrderFilter } from '@/features/admin/types/admin.types';
+import { HomeMenuButton } from '@/components/HomeMenu';
 
 const FILTERS: { value: OrderFilter; label: string }[] = [
   { value: 'all', label: 'All' },
@@ -104,6 +105,8 @@ export default function AdminOrdersScreen() {
           <View style={styles.grid}>
             <View style={styles.gridCell}>
               <KpiCard label="Total" value={String(counts.total)} icon="ArrowLeftRight" iconColor={Colors.secondary} iconBg={Colors.iconBgBlue} />
+              <View style={{ flex: 1 }} />
+              <HomeMenuButton />
             </View>
             <View style={styles.gridCell}>
               <KpiCard label="Failed" value={String(counts.failed)} icon="TriangleAlert" iconColor={Colors.error} iconBg={Colors.iconBgRed} />

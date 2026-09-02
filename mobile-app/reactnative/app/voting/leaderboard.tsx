@@ -18,6 +18,7 @@ import TopThreePodium from '@/features/voting/components/TopThreePodium';
 import LeaderboardRow from '@/features/voting/components/LeaderboardRow';
 import ContestStatusBadge from '@/features/voting/components/ContestStatusBadge';
 import CountdownTimer from '@/features/voting/components/CountdownTimer';
+import { HomeMenuButton } from '@/components/HomeMenu';
 
 export default function LeaderboardScreen() {
   const { contestId } = useLocalSearchParams<{ contestId: string }>();
@@ -49,7 +50,10 @@ export default function LeaderboardScreen() {
           <Text style={styles.title}>Leaderboard</Text>
           {contest && <Text style={styles.subtitle} numberOfLines={1}>{contest.title}</Text>}
         </View>
-        {contest && <ContestStatusBadge status={contest.status} size="sm" />}
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+          {contest && <ContestStatusBadge status={contest.status} size="sm" />}
+          <HomeMenuButton />
+        </View>
       </View>
 
       {/* Countdown */}

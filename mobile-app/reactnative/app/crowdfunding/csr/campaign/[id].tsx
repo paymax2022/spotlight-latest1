@@ -12,6 +12,7 @@ import StateView from '@/components/StateView';
 import PrimaryButton from '@/components/PrimaryButton';
 import { useMatchableCampaign } from '@/features/crowdfunding/hooks/useCsr';
 import { formatNaira, progressPct } from '@/features/crowdfunding/utils/crowdfundingFormatters';
+import { HomeMenuButton } from '@/components/HomeMenu';
 
 export default function CsrCampaignDetail() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -29,6 +30,8 @@ export default function CsrCampaignDetail() {
           {c.coverImage ? <Image source={{ uri: c.coverImage }} style={styles.coverImg} resizeMode="cover" /> : <View style={[styles.coverImg, styles.coverPlaceholder]} />}
           <SafeAreaView edges={['top']} style={styles.coverBar}>
             <Pressable onPress={() => goBack('/crowdfunding/csr')} style={styles.circleBtn} accessibilityLabel="Go back"><ArrowLeft size={20} color={Colors.onSurface} strokeWidth={2} /></Pressable>
+            <View style={{ flex: 1 }} />
+            <HomeMenuButton />
           </SafeAreaView>
         </View>
         <View style={styles.container}>

@@ -17,6 +17,7 @@ import StateView from '@/components/StateView';
 import { useAdminKpis } from '@/features/association/hooks/useAdmin';
 import { useAdminAccess } from '@/features/association/hooks/useAdminMembers';
 import { formatNaira, formatNairaCompact } from '@/features/association/utils/associationFormatters';
+import { HomeMenuButton } from '@/components/HomeMenu';
 
 export default function AdminDashboard() {
   const kpis = useAdminKpis();
@@ -30,7 +31,10 @@ export default function AdminDashboard() {
           <Pressable onPress={() => goBack('/association')} hitSlop={10} style={styles.iconBtn} accessibilityLabel="Go back">
             <ArrowLeft size={22} color={Colors.onSurface} strokeWidth={2} />
           </Pressable>
-          <View style={styles.headerTitleWrap}><Text style={styles.headerTitle}>Admin</Text></View>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+            <View style={styles.headerTitleWrap}><Text style={styles.headerTitle}>Admin</Text></View>
+            <HomeMenuButton />
+          </View>
         </View>
         <StateView kind="empty" icon="Lock" title="Admin access only" message="You don’t have an admin role for this organisation." />
       </SafeAreaView>
@@ -47,6 +51,7 @@ export default function AdminDashboard() {
           <Text style={styles.eyebrow}>Admin</Text>
           <Text style={styles.headerTitle}>{access.data?.roleLabel ?? 'Chapter console'}</Text>
         </View>
+        <HomeMenuButton />
       </View>
 
       {kpis.isLoading || access.isLoading ? (

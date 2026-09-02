@@ -23,6 +23,7 @@ import DetailRow from '@/features/realtor/components/DetailRow';
 import { useListing, useSimilarListings } from '@/features/realtor/hooks/useRealtor';
 import { priceLabelFull, formatNaira, bedBathLabel, timeAgo } from '@/features/realtor/utils/realtorFormatters';
 import { PROPERTY_TYPE_LABEL, FURNISHING_LABEL, MODE_LABEL } from '@/features/realtor/constants/realtor.constants';
+import { HomeMenuButton } from '@/components/HomeMenu';
 
 export default function ListingDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -81,6 +82,7 @@ export default function ListingDetailScreen() {
             <Pressable style={styles.circleBtn} hitSlop={8} onPress={() => setSaved((s) => !s)} accessibilityLabel={saved ? 'Remove from saved' : 'Save listing'}>
               <Heart size={18} color={saved ? Colors.gold : Colors.onSurface} fill={saved ? Colors.gold : 'transparent'} strokeWidth={2} />
             </Pressable>
+            <HomeMenuButton />
           </View>
         </SafeAreaView>
 
@@ -220,6 +222,8 @@ function FloatingBack() {
       <Pressable onPress={() => goBack('/realtor')} style={styles.circleBtn} hitSlop={8} accessibilityLabel="Go back">
         <ArrowLeft size={20} color={Colors.onSurface} strokeWidth={2} />
       </Pressable>
+      <View style={{ flex: 1 }} />
+      <HomeMenuButton />
     </SafeAreaView>
   );
 }

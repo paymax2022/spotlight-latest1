@@ -15,6 +15,7 @@ import AmenityChip from '@/features/realtor/components/AmenityChip';
 import StatusBadge from '@/features/realtor/components/StatusBadge';
 import { useHotel } from '@/features/realtor/hooks/useRealtorHotel';
 import { formatNaira } from '@/features/realtor/utils/realtorFormatters';
+import { HomeMenuButton } from '@/components/HomeMenu';
 
 export default function HotelDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -30,6 +31,8 @@ export default function HotelDetailScreen() {
         <Image source={{ uri: h.media[0] ?? h.coverUrl }} style={styles.cover} />
         <SafeAreaView edges={['top']} style={styles.headerOverlay} pointerEvents="box-none">
           <Pressable onPress={() => goBack('/realtor/hotel')} style={styles.circleBtn} hitSlop={8} accessibilityLabel="Back"><ArrowLeft size={20} color={Colors.onSurface} strokeWidth={2} /></Pressable>
+          <View style={{ flex: 1 }} />
+          <HomeMenuButton />
         </SafeAreaView>
 
         <View style={styles.body}>

@@ -17,6 +17,7 @@ import { useOrder, useCancelOrder } from '@/features/food/hooks';
 import { useOrderRealtime } from '@/features/food/useOrderRealtime';
 import { OrderTimeline, OrderChatThread, FoodStatusBadge, RiderInfoCard } from '@/features/food/components';
 import { formatNaira, STATUS_LABEL, isLiveTrackable, isTerminalStatus, normalizeStatus } from '@/features/food/utils';
+import { HomeMenuButton } from '@/components/HomeMenu';
 
 type Tab = 'tracking' | 'chat';
 
@@ -61,6 +62,7 @@ export default function OrderTrackingScreen() {
         <Text style={s.topTitle}>Your order</Text>
         <View style={s.iconButton}>
           {realtime.live ? <View style={s.liveDot} /> : null}
+          <HomeMenuButton />
         </View>
       </View>
 

@@ -21,6 +21,7 @@ import StateView from '@/components/StateView';
 import { MarketColors, formatNaira } from '@/features/marketplace';
 import type { SearchParams } from '@/features/marketplace';
 import { useSearch } from '@/features/marketplace/hooks';
+import { HomeMenuButton } from '@/components/HomeMenu';
 
 // Lagos city-center default (used when permission is denied).
 const DEFAULT_CENTER = { lat: 6.5244, lng: 3.3792, label: 'Lagos' };
@@ -58,7 +59,10 @@ export default function MarketplaceMap() {
       <View style={styles.topRow}>
         <Pressable onPress={() => goBack('/marketplace')} hitSlop={10} accessibilityLabel="Back to results"><ArrowLeft size={22} color={Colors.onSurface} /></Pressable>
         <Text style={styles.title}>Map view</Text>
-        <Pressable onPress={() => goBack('/marketplace')} hitSlop={8} accessibilityLabel="List view"><ListIcon size={20} color={Colors.onSurface} /></Pressable>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+          <Pressable onPress={() => goBack('/marketplace')} hitSlop={8} accessibilityLabel="List view"><ListIcon size={20} color={Colors.onSurface} /></Pressable>
+          <HomeMenuButton />
+        </View>
       </View>
 
       {/* Map surface (placeholder — clustered pins render here in native builds) */}

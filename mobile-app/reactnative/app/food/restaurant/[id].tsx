@@ -16,6 +16,7 @@ import { formatNaira, formatNairaWhole } from '@/features/food/utils';
 import { DynamicIcon } from '@/features/food/components';
 import type { MenuItem } from '@/features/food/types';
 import { DishNutritionBlock } from '@/features/nutrition';
+import { HomeMenuButton } from '@/components/HomeMenu';
 
 function MenuRow({
   item,
@@ -165,7 +166,10 @@ export default function RestaurantDetailScreen() {
         <Text style={s.topTitle} numberOfLines={1}>
           {restaurant?.name ?? 'Restaurant'}
         </Text>
-        <View style={s.iconButton} />
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+          <View style={s.iconButton} />
+          <HomeMenuButton />
+        </View>
       </View>
 
       {isLoading ? (

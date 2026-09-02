@@ -42,8 +42,13 @@ ENV NEXT_TELEMETRY_DISABLED=1
 ENV NODE_OPTIONS=--max-old-space-size=768
 ENV PORT=3000
 ENV HOSTNAME=0.0.0.0
-COPY --from=builder /app/public ./public
-COPY --from=builder /app/.next/standalone ./
-COPY --from=builder /app/.next/static ./.next/static
+COPY --from=builder --chown=node:node /app/public ./public
+COPY --from=builder --chown=node:node /app/.next/standalone ./
+COPY --from=builder --chown=node:node /app/.next/static ./.next/static
+# Run as the built-in non-root `node` user (trivy DS-0002). The COPYs above use
+# --chown because Next writes to .next/cache at runtime; root-owned files would
+# turn a clean image into a runtime permission failure. The service binds a
+# high port, so nothing here needs privilege.
+USER node
 EXPOSE 8080
 CMD ["node", "server.js"]

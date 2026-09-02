@@ -13,6 +13,7 @@ import StateView from '@/components/StateView';
 import { useListings, formatNaira } from '@/features/social/escrow';
 import { SocialColors } from '@/features/social/constants/social.constants';
 import type { Listing } from '@/features/social/escrow';
+import { HomeMenuButton } from '@/components/HomeMenu';
 
 export default function BrowseListings() {
   const [query, setQuery] = useState('');
@@ -23,7 +24,10 @@ export default function BrowseListings() {
       <View style={styles.header}>
         <Pressable onPress={() => goBack('/social')} hitSlop={10} style={styles.iconBtn} accessibilityLabel="Go back"><ArrowLeft size={22} color={Colors.onSurface} /></Pressable>
         <View style={styles.headerTitleWrap}><Text style={styles.eyebrow}>Marketplace</Text><Text style={styles.headerTitle}>Buy & sell with escrow</Text></View>
-        <Pressable onPress={() => router.push('/social/listing/create')} hitSlop={10} style={styles.iconBtn} accessibilityLabel="Create listing"><Plus size={22} color={Colors.onSurface} /></Pressable>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+          <Pressable onPress={() => router.push('/social/listing/create')} hitSlop={10} style={styles.iconBtn} accessibilityLabel="Create listing"><Plus size={22} color={Colors.onSurface} /></Pressable>
+          <HomeMenuButton />
+        </View>
       </View>
 
       <View style={styles.searchWrap}>

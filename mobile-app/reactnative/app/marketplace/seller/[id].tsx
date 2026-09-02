@@ -19,6 +19,7 @@ import StateView from '@/components/StateView';
 import { MarketColors, formatNaira } from '@/features/marketplace';
 import { useSellerProfile, useSellerListings, useSellerReviews } from '@/features/marketplace/hooks';
 import ListingCard from '@/features/marketplace/components/ListingCard';
+import { HomeMenuButton } from '@/components/HomeMenu';
 
 export default function SellerProfileScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -33,7 +34,10 @@ export default function SellerProfileScreen() {
     return (
       <SafeAreaView style={styles.safe} edges={['top']}>
         <View style={styles.topRow}><Pressable onPress={() => goBack('/marketplace')} hitSlop={10}><ArrowLeft size={22} color={Colors.onSurface} /></Pressable></View>
-        <StateView kind="error" title="Couldn't load seller" actionLabel="Retry" onAction={() => profile.refetch()} />
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+          <StateView kind="error" title="Couldn't load seller" actionLabel="Retry" onAction={() => profile.refetch()} />
+          <HomeMenuButton />
+        </View>
       </SafeAreaView>
     );
   }
@@ -46,17 +50,20 @@ export default function SellerProfileScreen() {
       <View style={styles.topRow}>
         <Pressable onPress={() => goBack('/marketplace')} hitSlop={10} accessibilityLabel="Back"><ArrowLeft size={22} color={Colors.onSurface} /></Pressable>
         <Text style={styles.topTitle}>Seller</Text>
-        <Pressable
-          hitSlop={8}
-          accessibilityLabel="Report seller"
-          onPress={() =>
-            router.push(
-              `/marketplace/account/report?targetType=seller&targetId=${id}&targetName=${encodeURIComponent(p.name)}&sellerId=${id}` as never,
-            )
-          }
-        >
-          <Flag size={18} color={Colors.onSurface} />
-        </Pressable>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+          <Pressable
+            hitSlop={8}
+            accessibilityLabel="Report seller"
+            onPress={() =>
+              router.push(
+                `/marketplace/account/report?targetType=seller&targetId=${id}&targetName=${encodeURIComponent(p.name)}&sellerId=${id}` as never,
+              )
+            }
+          >
+            <Flag size={18} color={Colors.onSurface} />
+          </Pressable>
+          <HomeMenuButton />
+        </View>
       </View>
 
       <ScrollView contentContainerStyle={styles.scroll}>
