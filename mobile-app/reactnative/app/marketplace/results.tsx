@@ -19,6 +19,7 @@ import type { SearchParams, SearchSort } from '@/features/marketplace';
 import { useSearch, useCreateSavedSearch } from '@/features/marketplace/hooks';
 import ListingCard from '@/features/marketplace/components/ListingCard';
 import { GridSkeleton } from '@/features/marketplace/components/Skeletons';
+import { HomeMenuButton } from '@/components/HomeMenu';
 
 const SORTS: { value: SearchSort; label: string }[] = [
   { value: 'trusted_first', label: 'Trusted first' },
@@ -81,6 +82,7 @@ export default function MarketplaceResults() {
           <Pressable onPress={() => setView((v) => (v === 'grid' ? 'list' : 'grid'))} hitSlop={8} accessibilityLabel="Toggle list or grid">
             {view === 'grid' ? <ListIcon size={20} color={Colors.onSurface} /> : <LayoutGrid size={20} color={Colors.onSurface} />}
           </Pressable>
+          <HomeMenuButton />
         </View>
       </View>
 

@@ -15,6 +15,7 @@ import { useMyContent, useCreateContent } from '@/features/creators/hooks';
 import { CreatorsColors, formatNaira } from '@/features/creators/constants/creators.constants';
 import type { ContentKind, GatedContent } from '@/features/creators/types';
 import { sanitizeMoneyInput } from '@/utils/money';
+import { HomeMenuButton } from '@/components/HomeMenu';
 
 const KINDS: ContentKind[] = ['video', 'image', 'article', 'audio'];
 
@@ -42,7 +43,10 @@ export default function ContentManage() {
       <View style={styles.header}>
         <Pressable onPress={() => goBack('/creators')} hitSlop={10} style={styles.iconBtn} accessibilityLabel="Go back"><ArrowLeft size={22} color={Colors.onSurface} /></Pressable>
         <Text style={styles.headerTitle}>Manage content</Text>
-        <Pressable onPress={() => setOpen(true)} hitSlop={10} style={styles.iconBtn} accessibilityLabel="New content"><Plus size={22} color={Colors.onSurface} /></Pressable>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+          <Pressable onPress={() => setOpen(true)} hitSlop={10} style={styles.iconBtn} accessibilityLabel="New content"><Plus size={22} color={Colors.onSurface} /></Pressable>
+          <HomeMenuButton />
+        </View>
       </View>
 
       {content.isLoading ? (

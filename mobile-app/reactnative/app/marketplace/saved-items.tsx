@@ -16,6 +16,7 @@ import { Radius } from '@/constants/radius';
 import StateView from '@/components/StateView';
 import { MarketColors, formatNaira } from '@/features/marketplace';
 import { useSavedItems } from '@/features/marketplace/hooks';
+import { HomeMenuButton } from '@/components/HomeMenu';
 
 export default function SavedItems() {
   const saved = useSavedItems();
@@ -25,7 +26,10 @@ export default function SavedItems() {
     <SafeAreaView style={styles.safe} edges={['top']}>
       <View style={styles.topRow}>
         <Pressable onPress={() => goBack('/marketplace')} hitSlop={10} accessibilityLabel="Back"><ArrowLeft size={22} color={Colors.onSurface} /></Pressable>
-        <Text style={styles.title}>Saved items</Text>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+          <Text style={styles.title}>Saved items</Text>
+          <HomeMenuButton />
+        </View>
       </View>
 
       {saved.isLoading && !saved.data ? (

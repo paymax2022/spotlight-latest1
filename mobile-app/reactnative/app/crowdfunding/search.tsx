@@ -12,6 +12,7 @@ import SearchBar from '@/components/SearchBar';
 import StateView from '@/components/StateView';
 import CampaignCard from '@/features/crowdfunding/components/CampaignCard';
 import { useCampaigns, useToggleSave } from '@/features/crowdfunding/hooks/useCrowdfunding';
+import { HomeMenuButton } from '@/components/HomeMenu';
 
 const SUGGESTIONS = ['Medical', 'School fees', 'Flood relief', 'Church building', 'Startup', 'Film'];
 
@@ -31,6 +32,7 @@ export default function SearchScreen() {
         <View style={styles.searchFlex}>
           <SearchBar placeholder="Search campaigns…" value={term} onChangeText={setTerm} />
         </View>
+        <HomeMenuButton />
       </View>
 
       {!hasQuery ? (

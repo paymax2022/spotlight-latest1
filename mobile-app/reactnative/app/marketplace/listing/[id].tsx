@@ -24,6 +24,7 @@ import { MarketColors, formatNaira, conditionLabel, fairPriceVerdict, FAIR_PRICE
 import { useListing } from '@/features/marketplace/hooks';
 import * as accountApi from '@/features/marketplace/api/account.api';
 import SellerTrustCard from '@/features/marketplace/components/SellerTrustCard';
+import { HomeMenuButton } from '@/components/HomeMenu';
 
 const { width } = Dimensions.get('window');
 
@@ -54,7 +55,10 @@ export default function ListingDetail() {
     return (
       <SafeAreaView style={styles.safe} edges={['top']}>
         <View style={styles.topRow}><Pressable onPress={() => goBack('/marketplace')} hitSlop={10}><ArrowLeft size={22} color={Colors.onSurface} /></Pressable></View>
-        <StateView kind="error" title="Couldn't load listing" actionLabel="Retry" onAction={() => listing.refetch()} />
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+          <StateView kind="error" title="Couldn't load listing" actionLabel="Retry" onAction={() => listing.refetch()} />
+          <HomeMenuButton />
+        </View>
       </SafeAreaView>
     );
   }
@@ -123,6 +127,7 @@ export default function ListingDetail() {
             <Heart size={18} color={saved ? MarketColors.danger : Colors.onSurface} fill={saved ? MarketColors.danger : 'transparent'} />
           </Pressable>
           <Pressable style={styles.roundBtn} onPress={openReport} hitSlop={8} accessibilityLabel="Report listing"><Flag size={18} color={Colors.onSurface} /></Pressable>
+          <HomeMenuButton />
         </View>
       </View>
 

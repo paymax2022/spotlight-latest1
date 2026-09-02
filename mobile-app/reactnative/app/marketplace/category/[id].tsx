@@ -21,6 +21,7 @@ import { subcategoriesOf, breadcrumb } from '@/features/marketplace/categoryTree
 import CategoryIcon from '@/features/marketplace/components/CategoryIcon';
 import ListingCard from '@/features/marketplace/components/ListingCard';
 import { GridSkeleton } from '@/features/marketplace/components/Skeletons';
+import { HomeMenuButton } from '@/components/HomeMenu';
 
 export default function CategoryLanding() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -45,7 +46,10 @@ export default function CategoryLanding() {
     <SafeAreaView style={styles.safe} edges={['top']}>
       <View style={styles.topRow}>
         <Pressable onPress={() => goBack('/marketplace')} hitSlop={10} accessibilityLabel="Back"><ArrowLeft size={22} color={Colors.onSurface} /></Pressable>
-        <Text style={styles.title} numberOfLines={1}>{category.data?.name ?? 'Category'}</Text>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+          <Text style={styles.title} numberOfLines={1}>{category.data?.name ?? 'Category'}</Text>
+          <HomeMenuButton />
+        </View>
       </View>
 
       <ScrollView contentContainerStyle={styles.scroll}>

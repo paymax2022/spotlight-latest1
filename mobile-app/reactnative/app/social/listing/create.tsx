@@ -14,6 +14,7 @@ import { useCreateListing, ESCROW_DISCLOSURE } from '@/features/social/escrow';
 import { SocialColors } from '@/features/social/constants/social.constants';
 import type { ListingCondition } from '@/features/social/escrow';
 import { sanitizeMoneyInput } from '@/utils/money';
+import { HomeMenuButton } from '@/components/HomeMenu';
 
 const CONDITIONS: ListingCondition[] = ['new', 'used', 'refurbished'];
 const CATEGORIES = ['Phones', 'Gaming', 'Fashion', 'Home', 'Electronics', 'Other'];
@@ -40,7 +41,10 @@ export default function CreateListing() {
     return (
       <SafeAreaView style={styles.safe} edges={['top']}>
         <View style={styles.header}><Pressable onPress={() => goBack('/social')} hitSlop={10} style={styles.iconBtn}><ArrowLeft size={22} color={Colors.onSurface} /></Pressable><Text style={styles.headerTitle}>Listed</Text><View style={styles.iconBtn} /></View>
-        <StateView kind="empty" icon="CheckCircle2" title="Listing published" message="Your item is now live in the marketplace. Buyers pay into escrow." actionLabel="Browse marketplace" onAction={() => router.replace('/social/listing/browse')} />
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+          <StateView kind="empty" icon="CheckCircle2" title="Listing published" message="Your item is now live in the marketplace. Buyers pay into escrow." actionLabel="Browse marketplace" onAction={() => router.replace('/social/listing/browse')} />
+          <HomeMenuButton />
+        </View>
       </SafeAreaView>
     );
   }
@@ -50,7 +54,10 @@ export default function CreateListing() {
       <View style={styles.header}>
         <Pressable onPress={() => goBack('/social')} hitSlop={10} style={styles.iconBtn} accessibilityLabel="Go back"><ArrowLeft size={22} color={Colors.onSurface} /></Pressable>
         <Text style={styles.headerTitle}>New listing</Text>
-        <View style={styles.iconBtn} />
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+          <View style={styles.iconBtn} />
+          <HomeMenuButton />
+        </View>
       </View>
 
       <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>

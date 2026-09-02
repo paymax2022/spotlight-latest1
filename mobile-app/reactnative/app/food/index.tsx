@@ -19,6 +19,7 @@ import { useCartStore, cartItemCount } from '@/features/food/cartStore';
 import { formatNairaWhole } from '@/features/food/utils';
 import { DynamicIcon } from '@/features/food/components';
 import type { Restaurant } from '@/features/food/types';
+import { HomeMenuButton } from '@/components/HomeMenu';
 
 const CUISINE_FILTERS = [
   { key: 'all', label: 'All', icon: 'LayoutGrid' },
@@ -266,6 +267,7 @@ export default function FoodDiscoveryScreen() {
           >
             <Icons.ReceiptText size={21} color={Colors.primary} strokeWidth={2} />
           </Pressable>
+          <HomeMenuButton />
         </View>
       </View>
 

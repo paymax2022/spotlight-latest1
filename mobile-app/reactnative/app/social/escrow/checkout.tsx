@@ -13,6 +13,7 @@ import PrimaryButton from '@/components/PrimaryButton';
 import { PaymentSheet, usePurchasePayment } from '@/features/payments';
 import { useListing, useCheckoutEscrow, formatNaira, ESCROW_DISCLOSURE } from '@/features/social/escrow';
 import { SocialColors } from '@/features/social/constants/social.constants';
+import { HomeMenuButton } from '@/components/HomeMenu';
 
 export default function EscrowCheckout() {
   const { listingId } = useLocalSearchParams<{ listingId: string }>();
@@ -35,7 +36,10 @@ export default function EscrowCheckout() {
     return (
       <SafeAreaView style={styles.safe} edges={['top']}>
         <View style={styles.header}><Pressable onPress={() => router.replace('/social/listing/browse')} hitSlop={10} style={styles.iconBtn}><ArrowLeft size={22} color={Colors.onSurface} /></Pressable><Text style={styles.headerTitle}>Funds held</Text><View style={styles.iconBtn} /></View>
-        <StateView kind="empty" icon="ShieldCheck" title="Payment held in escrow" message="Your money is safe. Confirm release once you receive the item, or raise a dispute if something's wrong." actionLabel="View escrow" onAction={() => router.replace(`/social/escrow/${tradeId}`)} />
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+          <StateView kind="empty" icon="ShieldCheck" title="Payment held in escrow" message="Your money is safe. Confirm release once you receive the item, or raise a dispute if something's wrong." actionLabel="View escrow" onAction={() => router.replace(`/social/escrow/${tradeId}`)} />
+          <HomeMenuButton />
+        </View>
       </SafeAreaView>
     );
   }
@@ -45,7 +49,10 @@ export default function EscrowCheckout() {
       <View style={styles.header}>
         <Pressable onPress={() => goBack('/social')} hitSlop={10} style={styles.iconBtn} accessibilityLabel="Go back"><ArrowLeft size={22} color={Colors.onSurface} /></Pressable>
         <Text style={styles.headerTitle}>Escrow checkout</Text>
-        <View style={styles.iconBtn} />
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+          <View style={styles.iconBtn} />
+          <HomeMenuButton />
+        </View>
       </View>
 
       {listing.isLoading ? (

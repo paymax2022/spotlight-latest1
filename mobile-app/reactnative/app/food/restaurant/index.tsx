@@ -14,6 +14,7 @@ import { useOrders } from '@/features/food/hooks';
 import { useRestaurantQueueRealtime } from '@/features/food/useRestaurantQueueRealtime';
 import { OrderListRow } from '@/features/food/components';
 import { isTerminalStatus } from '@/features/food/utils';
+import { HomeMenuButton } from '@/components/HomeMenu';
 
 export default function RestaurantQueueScreen() {
   // Live order events over the user-scoped socket. A merchant's critical event
@@ -53,9 +54,12 @@ export default function RestaurantQueueScreen() {
             </View>
           ) : null}
         </View>
-        <Pressable onPress={() => router.push('/food/restaurant/manage')} style={s.iconButton} accessibilityLabel="Manage store">
-          <Icons.Store size={22} color={Colors.primary} strokeWidth={2.2} />
-        </Pressable>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+          <Pressable onPress={() => router.push('/food/restaurant/manage')} style={s.iconButton} accessibilityLabel="Manage store">
+            <Icons.Store size={22} color={Colors.primary} strokeWidth={2.2} />
+          </Pressable>
+          <HomeMenuButton />
+        </View>
       </View>
 
       {/* This gate covers the ORDER LIST only. It used to wrap the tab content

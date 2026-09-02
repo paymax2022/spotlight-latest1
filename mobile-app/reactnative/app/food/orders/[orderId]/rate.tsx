@@ -13,6 +13,7 @@ import { Spacing } from '@/constants/spacing';
 import { Typography } from '@/constants/typography';
 import { shadow1 } from '@/constants/shadows';
 import { useOrder, useRateOrder } from '@/features/food/hooks';
+import { HomeMenuButton } from '@/components/HomeMenu';
 
 export default function RateOrderScreen() {
   const { orderId } = useLocalSearchParams<{ orderId: string }>();
@@ -45,7 +46,10 @@ export default function RateOrderScreen() {
           <Icons.ArrowLeft size={22} color={Colors.primary} strokeWidth={2.2} />
         </Pressable>
         <Text style={s.topTitle}>Rate your order</Text>
-        <View style={s.iconButton} />
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+          <View style={s.iconButton} />
+          <HomeMenuButton />
+        </View>
       </View>
 
       {isLoading ? (

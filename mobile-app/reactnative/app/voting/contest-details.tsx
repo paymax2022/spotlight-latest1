@@ -22,6 +22,7 @@ import ContestantCard from '@/features/voting/components/ContestantCard';
 import VotingRulesCard from '@/features/voting/components/VotingRulesCard';
 import ContestStatusBadge from '@/features/voting/components/ContestStatusBadge';
 import ShareBottomSheet from '@/features/voting/components/ShareBottomSheet';
+import { HomeMenuButton } from '@/components/HomeMenu';
 
 export default function ContestDetailsScreen() {
   const { contestId } = useLocalSearchParams<{ contestId: string }>();
@@ -64,9 +65,12 @@ export default function ContestDetailsScreen() {
         <Pressable onPress={() => goBack('/voting')} style={styles.floatBtn}>
           <ArrowLeft size={20} color={Colors.onSurface} strokeWidth={2} />
         </Pressable>
-        <Pressable onPress={() => setShareOpen(true)} style={styles.floatBtn}>
-          <Share2 size={20} color={Colors.onSurface} strokeWidth={2} />
-        </Pressable>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+          <Pressable onPress={() => setShareOpen(true)} style={styles.floatBtn}>
+            <Share2 size={20} color={Colors.onSurface} strokeWidth={2} />
+          </Pressable>
+          <HomeMenuButton />
+        </View>
       </View>
 
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.content}>
