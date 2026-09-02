@@ -3,6 +3,7 @@ package transport
 import (
 	"context"
 	"fmt"
+	"log"
 	"math"
 	"net/http"
 	"time"
@@ -70,23 +71,31 @@ func parcelSpeedMultiplier(speed string) float64 {
 
 // parcelRow is the internal projection of a parcel.
 type parcelRow struct {
-	ID            string
-	SenderID      string
-	CourierID     *string
-	Status        string
-	FareKobo      int64
-	InsuranceKobo int64
-	PickupPin     *string
-	DropoffPin    *string
-	SettlementID  *string
-	DistanceM     *int
+	ID                string
+	SenderID          string
+	CourierID         *string
+	Status            string
+	FareKobo          int64
+	InsuranceKobo     int64 // indicative estimate shown before booking, not a charge
+	DeclaredValueKobo int64
+	PickupAddress     string
+	DropoffAddress    string
+	Category          string
+	InsurancePolicyID *string
+	PickupPin         *string
+	DropoffPin        *string
+	SettlementID      *string
+	DistanceM         *int
 }
 
 func (s *Service) loadParcel(ctx context.Context, id string, p *parcelRow) error {
-	const q = `SELECT id, sender_id, courier_id, status, fare_kobo, insurance_kobo, pickup_pin, dropoff_pin, settlement_id, distance_m
+	const q = `SELECT id, sender_id, courier_id, status, fare_kobo, insurance_kobo, declared_value_kobo,
+	                  pickup_address, dropoff_address, category, insurance_policy_id,
+	                  pickup_pin, dropoff_pin, settlement_id, distance_m
 	           FROM parcels WHERE id=$1`
 	return s.db.QueryRow(ctx, q, id).Scan(
-		&p.ID, &p.SenderID, &p.CourierID, &p.Status, &p.FareKobo, &p.InsuranceKobo,
+		&p.ID, &p.SenderID, &p.CourierID, &p.Status, &p.FareKobo, &p.InsuranceKobo, &p.DeclaredValueKobo,
+		&p.PickupAddress, &p.DropoffAddress, &p.Category, &p.InsurancePolicyID,
 		&p.PickupPin, &p.DropoffPin, &p.SettlementID, &p.DistanceM,
 	)
 }
@@ -181,7 +190,7 @@ func (s *Service) EstimateParcel(ctx context.Context, req ParcelEstimateRequest)
 		return nil, err
 	}
 	fare := parcelFare(route.DistanceM, route.DurationS, req.Size, req.Speed, cfg)
-	insurance := parcelInsurance(req.DeclaredValueKobo, cfg)
+	insurance := s.parcelIndicativeInsurance(ctx, req.DeclaredValueKobo, cfg)
 	return &ParcelEstimate{
 		DistanceM:       route.DistanceM,
 		DurationS:       route.DurationS,
@@ -228,26 +237,38 @@ func (s *Service) BookParcel(ctx context.Context, senderID string, req ParcelBoo
 		category = "small"
 	}
 	fare := parcelFare(route.DistanceM, route.DurationS, size, speed, cfg)
-	insurance := parcelInsurance(req.DeclaredValueKobo, cfg)
-	total := fare + insurance
+	// Indicative only — DISPLAY, never charged here. Real cover (if any) is
+	// quoted and bound for its real premium once a courier + vehicle are known,
+	// see AcceptParcel/bindParcelInsurance. The escrow below is fare-only: the
+	// courier settlement split must never include a third-party insurance
+	// premium, which belongs entirely to a separate wallet-debit saga.
+	insurance := s.parcelIndicativeInsurance(ctx, req.DeclaredValueKobo, cfg)
 
-	// Fail-closed tier/spending-limit gate BEFORE any wallet escrow (same contract
-	// as RequestRide): a Tier0/over-limit sender cannot move money. Gated on the
-	// TOTAL, since that's the amount actually escrowed below — gating on fare
-	// alone would let a large declared value slip a sender's real spend past
-	// their tier limit.
-	if err := s.enforceTierLimit(ctx, senderID, total); err != nil {
+	// Fail-closed tier/spending-limit gate BEFORE any wallet escrow (same
+	// contract as RequestRide): a Tier0/over-limit sender cannot move money.
+	if err := s.enforceTierLimit(ctx, senderID, fare); err != nil {
 		return nil, err
 	}
 
 	parcelID := uuid.New().String()
 	ref := "parcel:" + parcelID
-	sett, err := s.settlement.Escrow(ctx, senderID, ref, idempotencyKey, "transport", total)
+	sett, err := s.settlement.Escrow(ctx, senderID, ref, idempotencyKey, "transport", fare)
 	if err != nil {
-		return nil, fmt.Errorf("transport: escrow parcel fare+insurance: %w", err)
+		return nil, fmt.Errorf("transport: escrow parcel fare: %w", err)
 	}
 	pickupPin := generatePin()
 	dropoffPin := generatePin()
+
+	// Best-effort NDPA consent for the real insurer, so a later real bind
+	// (AcceptParcel) doesn't need a separate UI moment: the sender already
+	// opted in by entering a declared value on a field explicitly labelled
+	// "for insurance". A failure here is NOT fatal to booking — it just means
+	// the later bind attempt will find consent missing and skip cover cleanly.
+	if req.DeclaredValueKobo > 0 && s.insurance != nil {
+		if cErr := s.insurance.GrantConsent(ctx, senderID, parcelInsuranceProductCode); cErr != nil {
+			log.Printf("[transport] parcel insurance consent grant failed at booking (non-fatal): %v", cErr)
+		}
+	}
 
 	const q = `
 		INSERT INTO parcels
@@ -272,20 +293,20 @@ func (s *Service) BookParcel(ctx context.Context, senderID string, req ParcelBoo
 func (s *Service) ParcelDetail(ctx context.Context, id, callerID string) (map[string]any, error) {
 	const q = `
 		SELECT id, sender_id, courier_id, pickup_address, dropoff_address, receiver_name, receiver_phone,
-		       category, size, speed, declared_value_kobo, fare_kobo, insurance_kobo, status, pickup_pin, dropoff_pin,
-		       photo_url, proof_url, distance_m, created_at
+		       category, size, speed, declared_value_kobo, fare_kobo, insurance_kobo, insurance_policy_id,
+		       status, pickup_pin, dropoff_pin, photo_url, proof_url, distance_m, created_at
 		FROM parcels WHERE id=$1`
 	var (
 		pid, senderID, pickup, dropoff, receiver, rphone, category, size, speed, status string
-		courierID, photoURL, proofURL, pickupPin, dropoffPin                            *string
+		courierID, photoURL, proofURL, pickupPin, dropoffPin, insurancePolicyID         *string
 		declared, fare, insurance                                                       int64
 		distM                                                                           *int
 		createdAt                                                                       time.Time
 	)
 	if err := s.db.QueryRow(ctx, q, id).Scan(
 		&pid, &senderID, &courierID, &pickup, &dropoff, &receiver, &rphone,
-		&category, &size, &speed, &declared, &fare, &insurance, &status, &pickupPin, &dropoffPin,
-		&photoURL, &proofURL, &distM, &createdAt,
+		&category, &size, &speed, &declared, &fare, &insurance, &insurancePolicyID,
+		&status, &pickupPin, &dropoffPin, &photoURL, &proofURL, &distM, &createdAt,
 	); err != nil {
 		return nil, codedErr(http.StatusNotFound, CodeNotFound, "parcel not found")
 	}
@@ -307,7 +328,8 @@ func (s *Service) ParcelDetail(ctx context.Context, id, callerID string) (map[st
 		"receiverName": receiver, "receiverPhone": rphone,
 		"category": category, "size": size, "speed": speed,
 		"declaredValueKobo": declared, "fareKobo": fare, "insuranceKobo": insurance,
-		"totalKobo": fare + insurance, "status": status,
+		"insurancePolicyId": insurancePolicyID, // null until AcceptParcel successfully binds real cover
+		"totalKobo":         fare + insurance, "status": status,
 		"photoUrl": photoURL, "proofUrl": proofURL, "distanceM": distM, "createdAt": createdAt,
 	}
 	// Only the sender may read the PINs (courier verifies, never reads).
@@ -364,6 +386,11 @@ func (s *Service) CancelParcel(ctx context.Context, id, senderID, reason string)
 	}
 	if p.CourierID != nil {
 		s.db.Exec(ctx, `UPDATE drivers SET status='online', cancelled_trips=cancelled_trips+1, updated_at=NOW() WHERE id=$1`, *p.CourierID)
+	}
+	// Best-effort: if real cover was bound (AcceptParcel already ran), cancel it
+	// too. Never blocks the parcel cancellation — see cancelParcelInsurance.
+	if p.InsurancePolicyID != nil && *p.InsurancePolicyID != "" {
+		s.cancelParcelInsurance(ctx, senderID, *p.InsurancePolicyID)
 	}
 	s.recordModeEvent(ctx, senderID, "parcel.cancelled", "parcel", id, p.Status, "cancelled", map[string]any{"reason": reason})
 	return nil
@@ -442,6 +469,27 @@ func (s *Service) AcceptParcel(ctx context.Context, id, driverUserID string) (ma
 	s.db.Exec(ctx, `UPDATE drivers SET status='on_trip', updated_at=NOW() WHERE id=$1`, courierID)
 	s.recordModeEvent(ctx, driverUserID, "parcel.courier_assigned", "parcel", id, "created", "courier_assigned",
 		map[string]any{"courier_id": courierID})
+
+	// Real cover, if the sender declared a value: only now do we know the actual
+	// vehicle carrying the shipment, which the real insurer's form requires.
+	// Best-effort — bindParcelInsurance NEVER blocks courier assignment; a
+	// declined/failed bind just means this parcel ships uninsured.
+	if p.DeclaredValueKobo > 0 {
+		sender := s.loadParcelSenderProfile(ctx, p.SenderID)
+		vehicle := s.loadParcelDriverVehicle(ctx, courierID)
+		if policyID, premiumKobo, ok := s.bindParcelInsurance(ctx, &p, p.PickupAddress, p.DropoffAddress, p.Category, sender, vehicle); ok {
+			if _, err := s.db.Exec(ctx,
+				`UPDATE parcels SET insurance_policy_id=$1, insurance_kobo=$2, updated_at=NOW() WHERE id=$3`,
+				policyID, premiumKobo, id,
+			); err != nil {
+				log.Printf("[transport] parcel %s: insurance bound (policy %s) but failed to persist the reference: %v", id, policyID, err)
+			} else {
+				s.recordModeEvent(ctx, driverUserID, "parcel.insured", "parcel", id, "courier_assigned", "courier_assigned",
+					map[string]any{"insurance_policy_id": policyID, "premium_kobo": premiumKobo})
+			}
+		}
+	}
+
 	return s.ParcelDetail(ctx, id, driverUserID)
 }
 
@@ -511,11 +559,14 @@ func (s *Service) VerifyParcelDropoff(ctx context.Context, id, driverUserID, pin
 	s.recordModeEvent(ctx, driverUserID, "parcel.dropoff_verified", "parcel", id, p.Status, "dropoff_verified",
 		map[string]any{"proof_url": proofURL})
 
-	// Release escrow → settle courier split, then mark delivered. The insurance
-	// premium (if any) is carved out 100% to the platform via ServiceFeeKobo —
-	// the courier's commission split applies only to the fare.
+	// Release escrow → settle courier split, then mark delivered. The escrow is
+	// fare-only (serviceFeeKobo=0): a real insurance premium, when one was
+	// bound, was ALREADY paid separately via the insurance module's own wallet-
+	// debit saga at courier-assignment time (see AcceptParcel/bindParcelInsurance)
+	// — it must never also be carved out of this courier settlement, which would
+	// charge the sender for it twice.
 	if p.SettlementID != nil && p.CourierID != nil {
-		if err := s.settleModeProvider(ctx, *p.SettlementID, *p.CourierID, p.InsuranceKobo); err != nil {
+		if err := s.settleModeProvider(ctx, *p.SettlementID, *p.CourierID, 0); err != nil {
 			return fmt.Errorf("transport: settle parcel: %w", err)
 		}
 		// Record realized Spotlight profit (best-effort + idempotent; parcel id as
