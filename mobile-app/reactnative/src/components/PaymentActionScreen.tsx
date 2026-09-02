@@ -528,6 +528,22 @@ export default function PaymentActionScreen({ kind }: { kind: ActionKind }) {
           </View>
         )}
 
+        {/* Bank-transfer alternative — same "fund" screen, a different rail
+            (a dedicated account number to transfer into) rather than a second
+            amount-entry form, so it links out to its own screen instead of
+            branching this one. */}
+        {kind === 'fund' && (
+          <Pressable
+            onPress={() => router.push('/wallet/bank-transfer')}
+            style={[styles.card, shadow1, styles.bankTransferLink]}
+            accessibilityRole="button"
+            accessibilityLabel="Or transfer to your bank account"
+          >
+            <Text style={styles.sectionTitle}>Bank transfer</Text>
+            <Text style={styles.sectionHint}>Get your dedicated account number and transfer in directly →</Text>
+          </Pressable>
+        )}
+
         {transferStep !== 'success' && bankStep !== 'success' && <SecurityPanel />}
 
         {/* Hide primary button on beneficiary picker (tap-to-select UX) and success */}
@@ -1074,6 +1090,7 @@ const styles = StyleSheet.create({
   },
   sectionTitle: { ...Typography.titleMd, color: Colors.onSurface },
   sectionHint: { ...Typography.bodySm, color: Colors.onSurfaceVariant, marginTop: Spacing.xs, marginBottom: Spacing.md },
+  bankTransferLink: { marginTop: -Spacing.sm },
   amountBlock: { marginTop: Spacing.xs },
   amountGrid: {
     flexDirection: 'row',

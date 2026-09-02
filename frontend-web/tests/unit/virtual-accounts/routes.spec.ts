@@ -23,13 +23,13 @@ vi.mock('@/src/server/kyc/gate', () => ({
 }));
 
 vi.mock('@/src/server/virtual-accounts/service', () => ({
-  getVirtualAccount: vi.fn(),
+  getOrProvisionVirtualAccount: vi.fn(),
 }));
 
 import { GET } from '../../../app/api/v1/virtual-accounts/me/route';
 import { requireRequestUser } from '@/src/lib/auth/request';
 import { requireKycTier } from '@/src/server/kyc/gate';
-import { getVirtualAccount } from '@/src/server/virtual-accounts/service';
+import { getOrProvisionVirtualAccount } from '@/src/server/virtual-accounts/service';
 
 const TEST_USER = { id: 'user-001', email: 'test@example.com' };
 
@@ -58,8 +58,8 @@ describe('GET /api/v1/virtual-accounts/me', () => {
   beforeEach(() => { vi.clearAllMocks(); authAsUser(); enableFlag(); });
   afterEach(disableFlag);
 
-  it('returns 200 with account details when provisioned', async () => {
-    vi.mocked(getVirtualAccount).mockResolvedValue(DVA_ROW as any);
+  it('returns 200 with account details for an already-provisioned account', async () => {
+    vi.mocked(getOrProvisionVirtualAccount).mockResolvedValue(DVA_ROW as any);
 
     const res = await GET(new Request('http://localhost/api/v1/virtual-accounts/me'));
     const body = await res.json();
@@ -71,16 +71,28 @@ describe('GET /api/v1/virtual-accounts/me', () => {
     expect(body.account?.bank_name).toBe('Wema Bank');
   });
 
-  it('returns 200 with account=null when not yet provisioned', async () => {
-    vi.mocked(getVirtualAccount).mockResolvedValue(null);
+  it('provisions on first call for a Tier-1 user who never had an account', async () => {
+    // getOrProvisionVirtualAccount provisions internally — the route only ever
+    // sees a resolved row (or a thrown error), never null.
+    vi.mocked(getOrProvisionVirtualAccount).mockResolvedValue(DVA_ROW as any);
 
     const res = await GET(new Request('http://localhost/api/v1/virtual-accounts/me'));
     const body = await res.json();
 
     expect(res.status).toBe(200);
-    expect(body.success).toBe(true);
-    expect(body.provisioned).toBe(false);
-    expect(body.account).toBeNull();
+    expect(body.provisioned).toBe(true);
+    expect(body.account?.account_number).toBe('1234567890');
+    expect(getOrProvisionVirtualAccount).toHaveBeenCalledWith(TEST_USER.id, TEST_USER.email);
+  });
+
+  it('returns 502 when the underlying Paystack provisioning call fails', async () => {
+    const { ApiError } = await import('@/src/lib/api/responses');
+    vi.mocked(getOrProvisionVirtualAccount).mockRejectedValue(
+      new ApiError('Paystack did not return a virtual account number', 502),
+    );
+
+    const res = await GET(new Request('http://localhost/api/v1/virtual-accounts/me'));
+    expect(res.status).toBe(502);
   });
 
   it('returns 503 when virtual accounts feature flag is off', async () => {
@@ -103,7 +115,7 @@ describe('GET /api/v1/virtual-accounts/me', () => {
   });
 
   it('returns 500 when service throws an unexpected error', async () => {
-    vi.mocked(getVirtualAccount).mockRejectedValue(new Error('DB connection lost'));
+    vi.mocked(getOrProvisionVirtualAccount).mockRejectedValue(new Error('DB connection lost'));
     const res = await GET(new Request('http://localhost/api/v1/virtual-accounts/me'));
     expect(res.status).toBe(500);
   });
