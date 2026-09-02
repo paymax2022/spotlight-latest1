@@ -13,6 +13,7 @@ import StateView from '@/components/StateView';
 import { useSubscriptions, useCancelSubscription } from '@/features/creators/hooks';
 import { CreatorsColors, formatNaira, SUB_STATUS_LABEL } from '@/features/creators/constants/creators.constants';
 import type { Subscription } from '@/features/creators/types';
+import { HomeMenuButton } from '@/components/HomeMenu';
 
 const STATUS_STYLE: Record<string, { bg: string; fg: string }> = {
   ACTIVE:    { bg: CreatorsColors.okBg, fg: CreatorsColors.ok },
@@ -29,7 +30,7 @@ export default function MySubscriptions() {
       <View style={styles.header}>
         <Pressable onPress={() => goBack('/creators')} hitSlop={10} style={styles.iconBtn} accessibilityLabel="Go back"><ArrowLeft size={22} color={Colors.onSurface} /></Pressable>
         <Text style={styles.headerTitle}>My subscriptions</Text>
-        <View style={styles.iconBtn} />
+        <HomeMenuButton />
       </View>
 
       {subs.isLoading ? (

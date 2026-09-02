@@ -28,6 +28,7 @@ import { getWallet } from '@/api/wallet.api';
 import { getErrorMessage } from '@/utils/errorMapper';
 import { generateIdempotencyKey } from '@/utils/idempotency';
 import { CableProvider, CablePackage, SmartCardValidation } from '@/types/billing';
+import { HomeMenuButton } from '@/components/HomeMenu';
 
 const schema = z.object({
   smartCardNumber: z.string().min(8, 'Enter a valid smart card number'),
@@ -201,9 +202,12 @@ export default function CableTvScreen() {
           <ArrowLeft size={22} color={Colors.primary} strokeWidth={2.2} />
         </Pressable>
         <Text style={styles.topTitle}>Cable TV Payment</Text>
-        <Pressable style={styles.iconBtn}>
-          <CircleHelp size={21} color={Colors.primary} strokeWidth={2} />
-        </Pressable>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+          <Pressable style={styles.iconBtn}>
+            <CircleHelp size={21} color={Colors.primary} strokeWidth={2} />
+          </Pressable>
+          <HomeMenuButton />
+        </View>
       </View>
 
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.content}>

@@ -19,6 +19,7 @@ import { Radius } from '@/constants/radius';
 import { getCurriculum, FILM_ACADEMY_LEARN_KEY } from '@/features/filmAcademy/api';
 import { lockCopy } from '@/features/filmAcademy/lockCopy';
 import type { FilmAcademyLesson } from '@/features/filmAcademy/types';
+import { HomeMenuButton } from '@/components/HomeMenu';
 
 function LessonRow({ lesson }: { lesson: FilmAcademyLesson }) {
   return (
@@ -64,7 +65,7 @@ export default function FilmAcademyLearnScreen() {
           <ChevronLeft size={24} color={Colors.onSurface} />
         </Pressable>
         <Text style={styles.headerTitle}>My course</Text>
-        <View style={styles.back} />
+        <HomeMenuButton />
       </View>
 
       <ScrollView

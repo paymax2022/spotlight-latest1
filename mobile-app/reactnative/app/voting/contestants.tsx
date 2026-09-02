@@ -14,6 +14,7 @@ import { useContestants } from '@/features/voting/hooks/useContestants';
 import { useVotingRealtime } from '@/features/voting/hooks/useVotingRealtime';
 import { useContestDetails } from '@/features/voting/hooks/useContestDetails';
 import ContestantCard from '@/features/voting/components/ContestantCard';
+import { HomeMenuButton } from '@/components/HomeMenu';
 
 export default function ContestantGridScreen() {
   const { contestId } = useLocalSearchParams<{ contestId: string }>();
@@ -35,7 +36,7 @@ export default function ContestantGridScreen() {
           <Text style={styles.title}>Contestants</Text>
           {contest && <Text style={styles.subtitle} numberOfLines={1}>{contest.title}</Text>}
         </View>
-        <View style={{ width: 40 }} />
+        <HomeMenuButton />
       </View>
 
       {/* Search */}

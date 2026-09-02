@@ -14,6 +14,7 @@ import BlackPerkCard from '@/features/loyalty/components/black-PerkCard';
 import { useBlackPerks, useRedeemPerk } from '@/features/loyalty/black';
 import { LoyaltyColors } from '@/features/loyalty/constants/loyalty.constants';
 import type { PerkCredential } from '@/features/loyalty/black';
+import { HomeMenuButton } from '@/components/HomeMenu';
 
 export default function BlackRedeem() {
   const perks = useBlackPerks();
@@ -30,7 +31,7 @@ export default function BlackRedeem() {
       <View style={styles.header}>
         <Pressable onPress={() => goBack('/loyalty/black')} hitSlop={10} style={styles.iconBtn} accessibilityLabel="Go back"><ArrowLeft size={22} color={Colors.onSurface} /></Pressable>
         <Text style={styles.headerTitle}>Redeem a perk</Text>
-        <View style={styles.iconBtn} />
+        <HomeMenuButton />
       </View>
 
       {perks.isLoading ? (

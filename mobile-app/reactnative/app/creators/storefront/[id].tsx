@@ -15,6 +15,7 @@ import SectionHeader from '@/components/SectionHeader';
 import { useStorefront } from '@/features/creators/hooks';
 import { CreatorsColors, formatNaira } from '@/features/creators/constants/creators.constants';
 import type { GatedContent } from '@/features/creators/types';
+import { HomeMenuButton } from '@/components/HomeMenu';
 
 export default function Storefront() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -29,7 +30,7 @@ export default function Storefront() {
           <ArrowLeft size={22} color={Colors.onSurface} strokeWidth={2} />
         </Pressable>
         <Text style={styles.headerTitle} numberOfLines={1}>{store.data?.creator.displayName ?? 'Storefront'}</Text>
-        <View style={styles.iconBtn} />
+        <HomeMenuButton />
       </View>
 
       {store.isLoading ? (

@@ -13,6 +13,7 @@ import { Radius } from '@/constants/radius';
 import { Spacing } from '@/constants/spacing';
 import { Typography } from '@/constants/typography';
 import { shadow1, shadow2 } from '@/constants/shadows';
+import { HomeMenuButton } from '@/components/HomeMenu';
 
 function DynamicIcon({ name, size = 24, color }: { name: string; size?: number; color: string }) {
   const IconComponent = (Icons as unknown as Record<string, Icons.LucideIcon>)[name] ?? Icons.Circle;
@@ -28,9 +29,12 @@ export default function BillsScreen() {
           <Icons.ArrowLeft size={22} color={Colors.primary} strokeWidth={2.2} />
         </Pressable>
         <Text style={styles.topTitle}>Bill Payments</Text>
-        <Pressable style={styles.iconButton}>
-          <Icons.History size={21} color={Colors.primary} strokeWidth={2} />
-        </Pressable>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+          <Pressable style={styles.iconButton}>
+            <Icons.History size={21} color={Colors.primary} strokeWidth={2} />
+          </Pressable>
+          <HomeMenuButton />
+        </View>
       </View>
 
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.content}>

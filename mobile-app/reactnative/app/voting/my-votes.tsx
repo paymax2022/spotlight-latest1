@@ -15,6 +15,7 @@ import { useMyVotes } from '@/features/voting/hooks/useMyVotes';
 import { formatAmount, formatDate } from '@/features/voting/utils/voteFormatters';
 import { VOTE_STATUS_LABELS, VotingColors } from '@/features/voting/constants/voting.constants';
 import type { VoteType, VoteTransactionStatus } from '@/features/voting/types/voting.types';
+import { HomeMenuButton } from '@/components/HomeMenu';
 
 type Filter = 'ALL' | VoteType;
 const FILTERS: { label: string; value: Filter }[] = [
@@ -40,7 +41,7 @@ export default function MyVotesScreen() {
           <ArrowLeft size={22} color={Colors.onSurface} strokeWidth={2} />
         </Pressable>
         <Text style={styles.title}>My Votes</Text>
-        <View style={{ width: 40 }} />
+        <HomeMenuButton />
       </View>
 
       {/* Summary */}

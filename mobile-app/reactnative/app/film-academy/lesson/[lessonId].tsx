@@ -19,6 +19,7 @@ import { getCurriculum, setLessonProgress, FILM_ACADEMY_LEARN_KEY } from '@/feat
 import { Lecture } from '@/features/filmAcademy/Lecture';
 import { InlineVideo } from '@/features/filmAcademy/InlineVideo';
 import { getErrorMessage } from '@/utils/errorMapper';
+import { HomeMenuButton } from '@/components/HomeMenu';
 
 export default function FilmAcademyLessonScreen() {
   const { lessonId } = useLocalSearchParams<{ lessonId: string }>();
@@ -60,7 +61,7 @@ export default function FilmAcademyLessonScreen() {
           <ChevronLeft size={24} color={Colors.onSurface} />
         </Pressable>
         <Text style={styles.headerTitle} numberOfLines={1}>{moduleTitle || 'Lesson'}</Text>
-        <View style={styles.back} />
+        <HomeMenuButton />
       </View>
 
       <ScrollView contentContainerStyle={styles.scroll}>

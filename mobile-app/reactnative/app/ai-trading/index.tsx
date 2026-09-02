@@ -16,6 +16,7 @@ import { Radius } from '@/constants/radius';
 import PrimaryButton from '@/components/PrimaryButton';
 import { useKyc, usePosition } from '@/features/aitrading/hooks';
 import { formatNaira, formatUnits, type TradingKycStatus } from '@/features/aitrading/api';
+import { HomeMenuButton } from '@/components/HomeMenu';
 
 const STATUS_LABEL: Record<TradingKycStatus, string> = {
   NOT_STARTED: 'Not started', SUBMITTED: 'Submitted', UNDER_REVIEW: 'Under review',
@@ -31,7 +32,7 @@ export default function AiTradingHome() {
       <View style={styles.topBar}>
         <Pressable onPress={() => goBack('/')} hitSlop={12} accessibilityLabel="Back"><ArrowLeft size={22} color={Colors.onSurface} /></Pressable>
         <Text style={styles.topTitle}>AI Trading</Text>
-        <View style={{ width: 22 }} />
+        <HomeMenuButton />
       </View>
 
       {kyc.isLoading ? (

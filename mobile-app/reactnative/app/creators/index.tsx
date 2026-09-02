@@ -13,6 +13,7 @@ import SectionHeader from '@/components/SectionHeader';
 import CreatorStorefrontCard from '@/features/creators/components/creator-StorefrontCard';
 import { useCreators } from '@/features/creators/hooks';
 import { CreatorsColors } from '@/features/creators/constants/creators.constants';
+import { HomeMenuButton } from '@/components/HomeMenu';
 
 export default function CreatorsDiscover() {
   const [query, setQuery] = useState('');
@@ -28,7 +29,7 @@ export default function CreatorsDiscover() {
           <Text style={styles.eyebrow}>Paymax</Text>
           <Text style={styles.headerTitle}>Creators</Text>
         </View>
-        <View style={styles.iconBtn} />
+        <HomeMenuButton />
       </View>
 
       <View style={styles.searchWrap}>

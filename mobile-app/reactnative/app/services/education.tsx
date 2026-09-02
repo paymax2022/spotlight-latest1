@@ -26,6 +26,7 @@ import { Typography } from '@/constants/typography';
 import { EducationProduct, EducationProvider } from '@/types/billing';
 import { getErrorMessage } from '@/utils/errorMapper';
 import { generateIdempotencyKey } from '@/utils/idempotency';
+import { HomeMenuButton } from '@/components/HomeMenu';
 
 const schema = z.object({
   customerReference: z.string().min(6, 'Enter a valid candidate, exam, or phone reference'),
@@ -192,9 +193,12 @@ export default function EducationScreen() {
           <ArrowLeft size={22} color={Colors.primary} strokeWidth={2.2} />
         </Pressable>
         <Text style={styles.topTitle}>Education Payment</Text>
-        <Pressable style={styles.iconBtn}>
-          <CircleHelp size={21} color={Colors.primary} strokeWidth={2} />
-        </Pressable>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+          <Pressable style={styles.iconBtn}>
+            <CircleHelp size={21} color={Colors.primary} strokeWidth={2} />
+          </Pressable>
+          <HomeMenuButton />
+        </View>
       </View>
 
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.content}>

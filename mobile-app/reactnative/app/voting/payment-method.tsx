@@ -19,6 +19,7 @@ import { formatAmount } from '@/features/voting/utils/voteFormatters';
 import type { VotePaidInitiateResult } from '@/features/voting/types/voting.types';
 import { useAuthStore } from '@/store/authStore';
 import { usePurchasePayment, PaymentSheet } from '@/features/payments';
+import { HomeMenuButton } from '@/components/HomeMenu';
 
 export default function PaymentMethodScreen() {
   const { contestantId, contestId, votes, amount, packageId } =
@@ -100,7 +101,7 @@ export default function PaymentMethodScreen() {
           <ArrowLeft size={22} color={Colors.onSurface} strokeWidth={2} />
         </Pressable>
         <Text style={styles.title}>Payment Method</Text>
-        <View style={{ width: 40 }} />
+        <HomeMenuButton />
       </View>
 
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.content}>

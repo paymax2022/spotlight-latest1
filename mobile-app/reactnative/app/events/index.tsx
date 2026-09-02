@@ -14,6 +14,7 @@ import StateView from '@/components/StateView';
 import EventCard from '@/features/events/components/EventCard';
 import { useEvents } from '@/features/events/hooks';
 import { EVENT_CATEGORIES } from '@/features/events/constants/events.constants';
+import { HomeMenuButton } from '@/components/HomeMenu';
 
 export default function EventsDiscovery() {
   const [query, setQuery] = useState('');
@@ -39,9 +40,12 @@ export default function EventsDiscovery() {
           <Text style={styles.eyebrow}>Paymax</Text>
           <Text style={styles.headerTitle}>Events</Text>
         </View>
-        <Pressable onPress={() => router.push('/events/my-tickets')} hitSlop={10} style={styles.iconBtn} accessibilityLabel="My tickets">
-          <TicketIcon size={22} color={Colors.onSurface} strokeWidth={2} />
-        </Pressable>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+          <Pressable onPress={() => router.push('/events/my-tickets')} hitSlop={10} style={styles.iconBtn} accessibilityLabel="My tickets">
+            <TicketIcon size={22} color={Colors.onSurface} strokeWidth={2} />
+          </Pressable>
+          <HomeMenuButton />
+        </View>
       </View>
 
       <SearchBar placeholder="Search events, venues, cities…" value={query} onChangeText={setQuery} />

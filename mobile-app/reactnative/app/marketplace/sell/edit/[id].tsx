@@ -23,6 +23,7 @@ import { useSellListing, useSellCategory, useUpdateListing } from '@/features/ma
 import AttributeFields, { normalizeSchema, missingRequired } from '@/features/marketplace/components/sell/AttributeFields';
 import { checkBannedPatterns, countWords } from '@/features/marketplace/components/sell/ComposerValidation';
 import FairPriceMeter from '@/features/marketplace/components/sell/FairPriceMeter';
+import { HomeMenuButton } from '@/components/HomeMenu';
 
 const MIN_DESC_WORDS = 8;
 
@@ -184,7 +185,7 @@ function Header() {
     <View style={styles.header}>
       <Pressable onPress={() => goBack('/marketplace/sell')} hitSlop={12} accessibilityLabel="Back"><ArrowLeft size={24} color={MarketColors.text} /></Pressable>
       <Text style={styles.headerTitle}>Edit</Text>
-      <View style={{ width: 24 }} />
+      <HomeMenuButton />
     </View>
   );
 }
