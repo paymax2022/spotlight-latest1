@@ -18,6 +18,7 @@ import StateView from '@/components/StateView';
 import { ConnectColors } from '@/features/connect/constants/connect.constants';
 import { useThread, useSendMessage } from '@/features/connect/messaging/hooks';
 import type { Message, ThreadDetail } from '@/features/connect/messaging/types';
+import { HomeMenuButton } from '@/components/HomeMenu';
 
 // MS-02 — Thread / conversation. THE core safety screen.
 // §4 GATE: a Date thread that is not a confirmed mutual match HARD-LOCKS the
@@ -197,6 +198,7 @@ export default function MessageThread() {
         ) : (
           <View style={styles.headerBtn} />
         )}
+        <HomeMenuButton />
       </View>
 
       {thread.isLoading ? (

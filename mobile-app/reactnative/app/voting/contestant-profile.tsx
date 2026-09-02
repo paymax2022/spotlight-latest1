@@ -28,6 +28,7 @@ import VoteConfirmationSheet from '@/features/voting/components/VoteConfirmation
 import ShareBottomSheet from '@/features/voting/components/ShareBottomSheet';
 import { formatVoteCount } from '@/features/voting/utils/voteFormatters';
 import type { VotePackage } from '@/features/voting/types/voting.types';
+import { HomeMenuButton } from '@/components/HomeMenu';
 
 /**
  * The sample link is contestant-submitted registration data, so it is untrusted
@@ -146,6 +147,7 @@ export default function ContestantProfileScreen() {
           <Pressable style={styles.floatBtn}>
             <Heart size={20} color={Colors.error} strokeWidth={2} />
           </Pressable>
+          <HomeMenuButton />
         </View>
       </View>
 

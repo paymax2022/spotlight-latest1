@@ -16,6 +16,7 @@ import SearchBar from '@/components/SearchBar';
 import { MarketColors } from '@/features/marketplace';
 import { getSecureItem, setSecureItem } from '@/lib/secureStorage';
 import { useSuggest, useTrending } from '@/features/marketplace/hooks';
+import { HomeMenuButton } from '@/components/HomeMenu';
 
 const RECENTS_KEY = 'mkt_recent_searches';
 
@@ -61,6 +62,7 @@ export default function MarketplaceSearch() {
         <View style={styles.searchFlex}>
           <SearchBar value={query} onChangeText={setQuery} autoFocus placeholder="Search phones, cars, furniture…" onSubmit={() => runSearch(query)} />
         </View>
+        <HomeMenuButton />
       </View>
 
       {typing ? (

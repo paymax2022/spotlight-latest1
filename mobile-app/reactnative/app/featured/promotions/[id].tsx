@@ -13,6 +13,7 @@ import { Typography } from '@/constants/typography';
 import { shadow1 } from '@/constants/shadows';
 import { useCampaign, useCampaignAnalytics, usePause, useResume, useCancel } from '@/features/featured/hooks';
 import { StatusBadge } from '@/features/featured/components';
+import { HomeMenuButton } from '@/components/HomeMenu';
 import {
   formatNaira, formatDate, countdownLabel,
   canPause, canResume, canCancel, canRenew,
@@ -146,7 +147,10 @@ function Header() {
         <Icons.ArrowLeft size={22} color={Colors.primary} strokeWidth={2.2} />
       </Pressable>
       <Text style={s.topTitle}>Promotion</Text>
-      <View style={s.iconButton} />
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+        <View style={s.iconButton} />
+        <HomeMenuButton />
+      </View>
     </View>
   );
 }

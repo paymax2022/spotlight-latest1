@@ -14,6 +14,7 @@ import { shadow1 } from '@/constants/shadows';
 import { useRiderOffers, useRiderActive, useAcceptOffer } from '@/features/food/hooks';
 import { formatNaira, formatDistance, toFoodError } from '@/features/food/utils';
 import type { RiderOffer } from '@/features/food/types';
+import { HomeMenuButton } from '@/components/HomeMenu';
 
 function OfferCard({ offer, onAccept, accepting }: { offer: RiderOffer; onAccept: () => void; accepting: boolean }) {
   return (
@@ -72,7 +73,10 @@ export default function RiderOffersScreen() {
           <Icons.ArrowLeft size={22} color={Colors.primary} strokeWidth={2.2} />
         </Pressable>
         <Text style={s.topTitle}>Rider · Offers</Text>
-        <View style={s.iconButton} />
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+          <View style={s.iconButton} />
+          <HomeMenuButton />
+        </View>
       </View>
 
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={s.content}>

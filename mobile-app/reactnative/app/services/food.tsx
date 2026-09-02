@@ -24,6 +24,7 @@ import { useMyStores } from '@/features/restaurantmerchant/hooks';
 import { useCartStore, cartItemCount } from '@/features/food/cartStore';
 import { formatNairaWhole } from '@/features/food/utils';
 import type { Restaurant } from '@/features/food/types';
+import { HomeMenuButton } from '@/components/HomeMenu';
 
 // ── Landing-screen config ───────────────────────────────────────────────────
 //
@@ -271,19 +272,22 @@ export default function FoodScreen() {
         </Pressable>
         <Text style={s.topTitle}>Food & Delivery</Text>
         {/* Was pushing '/food' (the discovery list), not the cart. */}
-        <Pressable
-          style={s.iconButton}
-          onPress={() => router.push('/food/checkout')}
-          accessibilityRole="button"
-          accessibilityLabel={cartCount ? `View cart, ${cartCount} items` : 'View cart'}
-        >
-          <Icons.ShoppingCart size={21} color={Colors.primary} strokeWidth={2} />
-          {cartCount > 0 && (
-            <View style={s.cartBadge}>
-              <Text style={s.cartBadgeText}>{cartCount > 9 ? '9+' : cartCount}</Text>
-            </View>
-          )}
-        </Pressable>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+          <Pressable
+            style={s.iconButton}
+            onPress={() => router.push('/food/checkout')}
+            accessibilityRole="button"
+            accessibilityLabel={cartCount ? `View cart, ${cartCount} items` : 'View cart'}
+          >
+            <Icons.ShoppingCart size={21} color={Colors.primary} strokeWidth={2} />
+            {cartCount > 0 && (
+              <View style={s.cartBadge}>
+                <Text style={s.cartBadgeText}>{cartCount > 9 ? '9+' : cartCount}</Text>
+              </View>
+            )}
+          </Pressable>
+          <HomeMenuButton />
+        </View>
       </View>
 
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={s.content}>

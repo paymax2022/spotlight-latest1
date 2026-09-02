@@ -23,6 +23,7 @@ import { useCampaign, useCampaignContributors, useToggleSave } from '@/features/
 import { recordCampaignEvent } from '@/features/crowdfunding/api/crowdfunding.api';
 import { formatNaira, relativeTime } from '@/features/crowdfunding/utils/crowdfundingFormatters';
 import type { CampaignStatus, DisbursementModel } from '@/features/crowdfunding/types/crowdfunding.types';
+import { HomeMenuButton } from '@/components/HomeMenu';
 
 const DISBURSEMENT_LABEL: Record<DisbursementModel, string> = {
   IMMEDIATE: 'Funds released after admin-approved withdrawal',
@@ -95,6 +96,7 @@ export default function CampaignDetailScreen() {
               <Pressable onPress={() => toggleSave.mutate({ id: c.id, saved: !c.saved })} style={styles.circleBtn} accessibilityLabel={c.saved ? 'Unsave' : 'Save'}>
                 <Heart size={18} color={c.saved ? Colors.error : Colors.onSurface} fill={c.saved ? Colors.error : 'transparent'} strokeWidth={2} />
               </Pressable>
+              <HomeMenuButton />
             </View>
           </SafeAreaView>
           {c.media.length > 1 && (
@@ -292,6 +294,8 @@ function FloatingBack() {
       <Pressable onPress={() => goBack('/crowdfunding')} style={styles.circleBtn} accessibilityLabel="Go back">
         <ArrowLeft size={20} color={Colors.onSurface} strokeWidth={2} />
       </Pressable>
+      <View style={{ flex: 1 }} />
+      <HomeMenuButton />
     </SafeAreaView>
   );
 }

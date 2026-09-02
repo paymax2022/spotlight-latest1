@@ -16,6 +16,7 @@ import { CSR_ENABLED } from '@/features/crowdfunding/constants/crowdfunding.cons
 import { useCsrProfile, useMatches } from '@/features/crowdfunding/hooks/useCsr';
 import { formatNaira, formatNairaCompact } from '@/features/crowdfunding/utils/crowdfundingFormatters';
 import type { CsrMatchStatus } from '@/features/crowdfunding/types/csr.types';
+import { HomeMenuButton } from '@/components/HomeMenu';
 
 const MATCH_BADGE: Record<CsrMatchStatus, { label: string; fg: string; bg: string }> = {
   DRAFT: { label: 'Draft', fg: Colors.onSurfaceVariant, bg: Colors.surfaceContainerHigh },
@@ -116,6 +117,7 @@ function Header({ company, verified }: { company?: string; verified?: boolean })
           {verified && <BadgeCheck size={16} color={Colors.secondary} strokeWidth={2.2} />}
         </View>
       </View>
+      <HomeMenuButton />
     </View>
   );
 }

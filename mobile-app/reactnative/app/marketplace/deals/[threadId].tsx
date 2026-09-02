@@ -40,6 +40,7 @@ import ScamWarningBanner from '@/features/marketplace/components/ScamWarningBann
 import MeetupModeSheet from '@/features/marketplace/components/MeetupModeSheet';
 import { detectScamHint } from '@/features/marketplace/transact.constants';
 import { confirmAsync } from '@/lib/confirm';
+import { HomeMenuButton } from '@/components/HomeMenu';
 
 type Item = { kind: 'msg'; msg: MockMessage } | { kind: 'offer'; offer: Offer };
 
@@ -373,6 +374,7 @@ function Header({ title, subtitle }: { title: string; subtitle?: string }) {
         <Text style={styles.headerTitle} numberOfLines={1}>{title}</Text>
         {subtitle ? <Text style={styles.headerSub} numberOfLines={1}>{subtitle}</Text> : null}
       </View>
+      <HomeMenuButton />
     </View>
   );
 }

@@ -15,6 +15,7 @@ import SectionHeader from '@/components/SectionHeader';
 import { useEarnings } from '@/features/creators/hooks';
 import { CreatorsColors, formatNaira, NL5_DISCLOSURE } from '@/features/creators/constants/creators.constants';
 import type { EarningEntry } from '@/features/creators/types';
+import { HomeMenuButton } from '@/components/HomeMenu';
 
 const SOURCE_ICON = { tip: HandCoins, subscription: Repeat, content: FileText };
 
@@ -26,7 +27,10 @@ export default function Earnings() {
       <View style={styles.header}>
         <Pressable onPress={() => goBack('/creators')} hitSlop={10} style={styles.iconBtn} accessibilityLabel="Go back"><ArrowLeft size={22} color={Colors.onSurface} /></Pressable>
         <Text style={styles.headerTitle}>Earnings</Text>
-        <Pressable onPress={() => router.push('/creators/content/manage')} hitSlop={10} style={styles.iconBtn} accessibilityLabel="Manage content"><FolderOpen size={20} color={Colors.onSurface} /></Pressable>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+          <Pressable onPress={() => router.push('/creators/content/manage')} hitSlop={10} style={styles.iconBtn} accessibilityLabel="Manage content"><FolderOpen size={20} color={Colors.onSurface} /></Pressable>
+          <HomeMenuButton />
+        </View>
       </View>
 
       {earnings.isLoading ? (

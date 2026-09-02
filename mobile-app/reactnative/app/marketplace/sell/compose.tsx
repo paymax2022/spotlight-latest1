@@ -37,7 +37,7 @@ import type { ListingCondition, DeliveryOption } from '@/features/marketplace';
 import { aiPrefill, estimateFairPriceBand, uploadListingImage, isEscrowEligibleCategory } from '@/features/marketplace/api/sell.api';
 import type { AiPrefillResult } from '@/features/marketplace/api/sell.api';
 import { useSellCategories, useSellCategory, useCreateListing, useSubmitListing } from '@/features/marketplace/sell.hooks';
-import { mainCategories, subcategoriesOf } from '@/features/marketplace/categoryTree';
+import { mainCategories, subcategoriesOf, breadcrumb } from '@/features/marketplace/categoryTree';
 import PhotoStrip, { type ComposerPhoto } from '@/features/marketplace/components/sell/PhotoStrip';
 import AiPrefillCard from '@/features/marketplace/components/sell/AiPrefillCard';
 import ComposerValidation, { checkBannedPatterns, countWords } from '@/features/marketplace/components/sell/ComposerValidation';
@@ -51,7 +51,10 @@ function track(event: string, props: Record<string, unknown>) {
 }
 
 type Step = 'capture' | 'composer' | 'attributes' | 'price' | 'preview';
-const CONDITIONS: ListingCondition[] = ['new', 'foreign_used', 'local_used', 'used', 'refurbished'];
+// "Foreign used" (Tokunbo) vs "local used" is a Vehicles-specific distinction —
+// every other category just needs a plain new/used/refurbished split.
+const VEHICLE_CONDITIONS: ListingCondition[] = ['new', 'foreign_used', 'local_used'];
+const DEFAULT_CONDITIONS: ListingCondition[] = ['new', 'used', 'refurbished'];
 const DELIVERY_OPTIONS: Array<{ key: DeliveryOption | 'seller_arranged'; label: string; icon: React.ComponentType<{ size?: number; color?: string }> }> = [
   { key: 'pickup', label: 'Pickup', icon: MapPin },
   { key: 'rider_delivery', label: 'Paymax logistics', icon: Truck },
@@ -113,6 +116,21 @@ export default function SellWizard() {
   useEffect(() => {
     if (categoryId) setEscrowReady(isEscrowEligibleCategory(categoryId));
   }, [categoryId]);
+
+  // "Foreign used" / "local used" only make sense for Vehicles — the category's
+  // root ancestor, since a listing is filed against a leaf subcategory (e.g.
+  // "Cars"), not against "Vehicles" itself.
+  const isVehicleCategory = categoryId
+    ? breadcrumb(categoriesQuery.data, categoryId)[0]?.slug === 'vehicles'
+    : false;
+  const conditions = isVehicleCategory ? VEHICLE_CONDITIONS : DEFAULT_CONDITIONS;
+
+  // Clamp the selected condition whenever the category swaps in/out of Vehicles,
+  // so a "Local used" pick from a prior vehicle category can't survive onto a
+  // listing in a category where it isn't a valid option (or vice versa).
+  useEffect(() => {
+    setCondition((prev) => (conditions.includes(prev) ? prev : conditions[0]));
+  }, [conditions]);
 
   // ── Live validation (composer step) ──
   const bannedMatches = useMemo(() => checkBannedPatterns(`${title} ${description}`), [title, description]);
@@ -327,7 +345,7 @@ export default function SellWizard() {
 
               <Text style={styles.label}>Condition</Text>
               <View style={styles.chipRow}>
-                {CONDITIONS.map((c) => (
+                {conditions.map((c) => (
                   <Pressable key={c} style={[styles.chip, condition === c && styles.chipActive]} onPress={() => setCondition(c)}>
                     <Text style={[styles.chipText, condition === c && styles.chipTextActive]}>{conditionLabel(c)}</Text>
                   </Pressable>

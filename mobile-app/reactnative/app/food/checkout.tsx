@@ -26,6 +26,7 @@ import { resolvePackagingFee } from '@/features/food/packagingFee';
 import { useRestaurant, useRestaurantNames, useCartRestaurantAvailability } from '@/features/food/hooks';
 import { usePurchasePayment, PaymentSheet } from '@/features/payments';
 import { CartNutritionSummary } from '@/features/nutrition';
+import { HomeMenuButton } from '@/components/HomeMenu';
 
 function Line({ label, value, strong }: { label: string; value: string; strong?: boolean }) {
   return (
@@ -271,7 +272,10 @@ export default function CheckoutScreen() {
             <Icons.ArrowLeft size={22} color={Colors.primary} strokeWidth={2.2} />
           </Pressable>
           <Text style={s.topTitle}>Checkout</Text>
-          <View style={s.iconButton} />
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+            <View style={s.iconButton} />
+            <HomeMenuButton />
+          </View>
         </View>
         <StateView kind="empty" icon="ShoppingCart" title="Your cart is empty" message="Add items from a restaurant to get started." actionLabel="Browse restaurants" onAction={() => router.replace('/food')} />
       </SafeAreaView>
@@ -285,7 +289,10 @@ export default function CheckoutScreen() {
           <Icons.ArrowLeft size={22} color={Colors.primary} strokeWidth={2.2} />
         </Pressable>
         <Text style={s.topTitle}>Checkout</Text>
-        <View style={s.iconButton} />
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+          <View style={s.iconButton} />
+          <HomeMenuButton />
+        </View>
       </View>
 
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={s.content}>

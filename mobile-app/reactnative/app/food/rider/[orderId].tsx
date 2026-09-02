@@ -21,6 +21,7 @@ import {
 import { useOrderRealtime } from '@/features/food/useOrderRealtime';
 import { OrderChatThread, FoodStatusBadge } from '@/features/food/components';
 import { formatNaira, STATUS_LABEL, isLiveTrackable, normalizeStatus, toFoodError } from '@/features/food/utils';
+import { HomeMenuButton } from '@/components/HomeMenu';
 
 type Tab = 'delivery' | 'chat';
 
@@ -75,7 +76,10 @@ export default function RiderActiveDeliveryScreen() {
           <Icons.ArrowLeft size={22} color={Colors.primary} strokeWidth={2.2} />
         </Pressable>
         <Text style={s.topTitle}>Active delivery</Text>
-        <View style={s.iconButton}>{realtime.live ? <View style={s.liveDot} /> : null}</View>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+          <View style={s.iconButton}>{realtime.live ? <View style={s.liveDot} /> : null}</View>
+          <HomeMenuButton />
+        </View>
       </View>
 
       {isLoading ? (
