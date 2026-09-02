@@ -447,6 +447,13 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 	// admin under /api/insurance/admin/* (RBAC insurance.*); provider webhooks
 	// under /internal/webhooks/{mycover,octamile} (UNauthenticated — signature
 	// verified inside the gateway). Reuses wallet/ledger/settlement/kyc.
+	//
+	// insuranceSvcs is captured here (function scope, not the if-block below) so
+	// the transport/parcel wiring further down can reuse the SAME policy/catalog
+	// services for real Goods-in-Transit cover, instead of constructing a second,
+	// redundant set. Stays nil when insurance is disabled — every consumer must
+	// treat that as "insurance unavailable", never dereference without a check.
+	var insuranceSvcs *InsuranceServices
 	if cfg.FeatureInsuranceEnabled && pool != nil {
 		// Pass the bare finance group: RegisterInsurance/RegisterInsuranceClaims
 		// each add the "/insurance" segment themselves (mg := member.Group("/insurance")),
@@ -468,7 +475,7 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		// cannot discover that, so every real MyCover delivery would have been
 		// lost, and silently: the provider sees a 404 and we see nothing at all.
 		insuranceWebhooks := r.Group("") // provider-signed, no user auth
-		RegisterInsurance(finance, insuranceAdmin, pool, rbac)                          // gateway/catalog/policy/quote/saga/consent
+		insuranceSvcs = RegisterInsurance(finance, insuranceAdmin, pool, rbac)          // gateway/catalog/policy/quote/saga/consent
 		RegisterInsuranceClaims(finance, insuranceAdmin, insuranceWebhooks, pool, rbac) // claims/embedded/webhooks/reconciliation
 	}
 
@@ -1833,6 +1840,18 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		if mapSvc != nil {
 			transportSvc = transportSvc.WithMaps(transport.NewMapServiceBridge(mapSvc))
 			log.Println("[transport] dispatch using provider-agnostic MapService")
+		}
+		// Real Goods-in-Transit cover for parcels (MyCover-backed), via the SAME
+		// policy/catalog/consent services /api/finance/insurance/* uses — nil-safe:
+		// when insurance is disabled (insuranceSvcs == nil), parcels book/deliver
+		// exactly as before this feature existed.
+		if insuranceSvcs != nil {
+			transportSvc = transportSvc.WithInsurance(&insuranceBinderAdapter{
+				policy:  insuranceSvcs.Policy,
+				catalog: insuranceSvcs.Catalog,
+				consent: insuranceSvcs.Consent,
+			})
+			log.Println("[transport] parcel insurance wired to the real MyCover-backed policy saga")
 		}
 		// ── Central Commission & Profit recording (§ profit registry) ──
 		// When the commission feature is on, inject a nil-safe recorder so realized
