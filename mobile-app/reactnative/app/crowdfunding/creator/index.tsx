@@ -15,6 +15,7 @@ import PrimaryButton from '@/components/PrimaryButton';
 import CreatorCampaignRow from '@/features/crowdfunding/components/CreatorCampaignRow';
 import { useCreatorStats, useMyCampaigns, useCreatorContributions } from '@/features/crowdfunding/hooks/useCreator';
 import { formatNaira, formatNairaCompact, relativeTime, maskAnonymous } from '@/features/crowdfunding/utils/crowdfundingFormatters';
+import { HomeMenuButton } from '@/components/HomeMenu';
 
 export default function CreatorDashboard() {
   const stats = useCreatorStats();
@@ -33,10 +34,13 @@ export default function CreatorDashboard() {
           <Text style={styles.eyebrow}>Creator</Text>
           <Text style={styles.headerTitle}>Dashboard</Text>
         </View>
-        <Pressable onPress={() => router.push('/crowdfunding/creator/notifications')} hitSlop={10} style={styles.iconBtn} accessibilityLabel="Notifications">
-          <Bell size={20} color={Colors.onSurface} strokeWidth={2} />
-          <View style={styles.bellDot} />
-        </Pressable>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+          <Pressable onPress={() => router.push('/crowdfunding/creator/notifications')} hitSlop={10} style={styles.iconBtn} accessibilityLabel="Notifications">
+            <Bell size={20} color={Colors.onSurface} strokeWidth={2} />
+            <View style={styles.bellDot} />
+          </Pressable>
+          <HomeMenuButton />
+        </View>
       </View>
 
       {stats.isLoading ? (

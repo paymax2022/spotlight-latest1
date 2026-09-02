@@ -13,6 +13,7 @@ import { Radius } from '@/constants/radius';
 import { Spacing } from '@/constants/spacing';
 import { Typography } from '@/constants/typography';
 import { shadow1 } from '@/constants/shadows';
+import { HomeMenuButton } from '@/components/HomeMenu';
 
 // Shared support / help screen for the money-services surfaces (FX, bills, cards).
 // A minimal but functional contact form (subject + category + message) plus direct
@@ -66,7 +67,7 @@ export default function SupportScreen() {
           <ArrowLeft size={22} color={Colors.primary} strokeWidth={2.2} />
         </Pressable>
         <Text style={styles.topTitle}>Help & support</Text>
-        <View style={styles.iconBtn} />
+        <HomeMenuButton />
       </View>
 
       <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.flex}>

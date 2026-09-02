@@ -17,6 +17,7 @@ import { shadow1 } from '@/constants/shadows';
 import { getTransactionById, retryTransaction } from '@/api/transactions.api';
 import { getErrorMessage } from '@/utils/errorMapper';
 import { TransactionStatus } from '@/types/transaction';
+import { HomeMenuButton } from '@/components/HomeMenu';
 
 const STATUS_COLOR: Record<TransactionStatus, string> = {
   SUCCESSFUL: '#16A34A',
@@ -94,9 +95,12 @@ export default function TransactionDetailScreen() {
           <ArrowLeft size={22} color={Colors.primary} strokeWidth={2.2} />
         </Pressable>
         <Text style={styles.topTitle}>Transaction Detail</Text>
-        <Pressable onPress={() => refetch()} style={styles.iconBtn}>
-          <RefreshCw size={20} color={Colors.primary} strokeWidth={2} />
-        </Pressable>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+          <Pressable onPress={() => refetch()} style={styles.iconBtn}>
+            <RefreshCw size={20} color={Colors.primary} strokeWidth={2} />
+          </Pressable>
+          <HomeMenuButton />
+        </View>
       </View>
 
       {isLoading ? (

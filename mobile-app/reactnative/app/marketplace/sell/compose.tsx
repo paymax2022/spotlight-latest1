@@ -44,6 +44,7 @@ import ComposerValidation, { checkBannedPatterns, countWords } from '@/features/
 import AttributeFields, { normalizeSchema, missingRequired } from '@/features/marketplace/components/sell/AttributeFields';
 import FairPriceMeter from '@/features/marketplace/components/sell/FairPriceMeter';
 import { confirmAsync, alertAsync } from '@/lib/confirm';
+import { HomeMenuButton } from '@/components/HomeMenu';
 
 function track(event: string, props: Record<string, unknown>) {
   if (__DEV__) console.log(`[analytics] ${event}`, props);
@@ -264,7 +265,7 @@ export default function SellWizard() {
           <ArrowLeft size={22} color={Colors.onSurface} />
         </Pressable>
         <Text style={styles.headerTitle}>{HEADER_TITLE[step]}</Text>
-        <View style={styles.iconBtn} />
+        <HomeMenuButton />
       </View>
       <StepBar step={step} />
 

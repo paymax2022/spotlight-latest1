@@ -15,6 +15,7 @@ import PrimaryButton from '@/components/PrimaryButton';
 import { usePosition, useRedeem } from '@/features/aitrading/hooks';
 import { formatNaira, formatUnits, UNIT_SCALE } from '@/features/aitrading/api';
 import { alertAsync } from '@/lib/confirm';
+import { HomeMenuButton } from '@/components/HomeMenu';
 
 export default function RedeemScreen() {
   const pos = usePosition();
@@ -43,7 +44,7 @@ export default function RedeemScreen() {
       <View style={styles.topBar}>
         <Pressable onPress={() => goBack('/ai-trading')} hitSlop={12} accessibilityLabel="Back"><ArrowLeft size={22} color={Colors.onSurface} /></Pressable>
         <Text style={styles.topTitle}>Withdraw</Text>
-        <View style={{ width: 22 }} />
+        <HomeMenuButton />
       </View>
 
       <ScrollView contentContainerStyle={styles.body} keyboardShouldPersistTaps="handled">

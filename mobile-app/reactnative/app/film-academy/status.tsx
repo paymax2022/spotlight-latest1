@@ -21,6 +21,7 @@ import { Spacing } from '@/constants/spacing';
 import { Radius } from '@/constants/radius';
 import { getApplicationStatus, FILM_ACADEMY_STATUS_KEY } from '@/features/filmAcademy/api';
 import type { FilmAcademyAction, FilmAcademyTimelineEntry } from '@/features/filmAcademy/types';
+import { HomeMenuButton } from '@/components/HomeMenu';
 
 function formatNaira(n: number | null | undefined): string {
   if (n === null || n === undefined) return '—';
@@ -139,7 +140,7 @@ export default function FilmAcademyStatusScreen() {
           <ChevronLeft size={24} color={Colors.onSurface} />
         </Pressable>
         <Text style={styles.headerTitle}>My application</Text>
-        <View style={styles.back} />
+        <HomeMenuButton />
       </View>
 
       <ScrollView

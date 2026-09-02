@@ -15,6 +15,7 @@ import CashtagAvatar from '@/features/social/components/CashtagAvatar';
 import ActivityRow from '@/features/social/components/ActivityRow';
 import { useMyCashtag, useActivity } from '@/features/social/hooks';
 import { SocialColors, formatNaira } from '@/features/social/constants/social.constants';
+import { HomeMenuButton } from '@/components/HomeMenu';
 
 export default function SocialHome() {
   const me = useMyCashtag();
@@ -36,9 +37,12 @@ export default function SocialHome() {
           <Text style={styles.eyebrow}>Paymax</Text>
           <Text style={styles.headerTitle}>Social Pay</Text>
         </View>
-        <Pressable onPress={() => router.push('/social/cashtag-setup')} hitSlop={10} style={styles.iconBtn} accessibilityLabel="Cashtag settings">
-          <AtSign size={20} color={Colors.onSurface} strokeWidth={2} />
-        </Pressable>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+          <Pressable onPress={() => router.push('/social/cashtag-setup')} hitSlop={10} style={styles.iconBtn} accessibilityLabel="Cashtag settings">
+            <AtSign size={20} color={Colors.onSurface} strokeWidth={2} />
+          </Pressable>
+          <HomeMenuButton />
+        </View>
       </View>
 
       {loading ? (

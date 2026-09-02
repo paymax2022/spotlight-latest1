@@ -21,6 +21,7 @@ import MobilityEdgeState from '@/features/mobility/components/MobilityEdgeState'
 import { DRIVER_MODE_ENABLED, QUICK_TILE_REGISTRY, type QuickTileMeta } from '@/features/mobility/constants/mobility.constants';
 import { MODE_TILES, type ModeTile } from '@/features/mobility/constants/modes.constants';
 import { formatNaira } from '@/features/mobility/utils/mobilityFormatters';
+import { HomeMenuButton } from '@/components/HomeMenu';
 
 export default function MobilityHomeScreen() {
   const home = useMobilityHome();
@@ -78,9 +79,12 @@ export default function MobilityHomeScreen() {
           <Text style={styles.eyebrow}>Paymax</Text>
           <Text style={styles.headerTitle}>Mobility</Text>
         </View>
-        <Pressable onPress={() => router.push('/mobility/history')} hitSlop={10} style={styles.iconBtn} accessibilityLabel="Trip history">
-          <Clock size={20} color={Colors.onSurface} strokeWidth={2} />
-        </Pressable>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+          <Pressable onPress={() => router.push('/mobility/history')} hitSlop={10} style={styles.iconBtn} accessibilityLabel="Trip history">
+            <Clock size={20} color={Colors.onSurface} strokeWidth={2} />
+          </Pressable>
+          <HomeMenuButton />
+        </View>
       </View>
 
       {home.isLoading ? (

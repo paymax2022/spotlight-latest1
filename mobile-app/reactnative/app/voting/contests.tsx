@@ -13,6 +13,7 @@ import { Radius } from '@/constants/radius';
 import { useContests } from '@/features/voting/hooks/useContests';
 import ContestCard from '@/features/voting/components/ContestCard';
 import type { ContestStatus } from '@/features/voting/types/voting.types';
+import { HomeMenuButton } from '@/components/HomeMenu';
 
 const STATUS_FILTERS: { label: string; value: ContestStatus | 'ALL' }[] = [
   { label: 'All', value: 'ALL' },
@@ -41,7 +42,7 @@ export default function ContestListScreen() {
           <ArrowLeft size={22} color={Colors.onSurface} strokeWidth={2} />
         </Pressable>
         <Text style={styles.title}>Contests</Text>
-        <View style={{ width: 40 }} />
+        <HomeMenuButton />
       </View>
 
       {/* Search */}

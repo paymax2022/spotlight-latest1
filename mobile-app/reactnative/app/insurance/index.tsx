@@ -34,6 +34,7 @@ import { InsuranceColors } from '@/features/insurance/constants/insurance.consta
 import { CATEGORIES, countByLine } from '@/features/insurance/live/catalog';
 import { useCoverSummary, useLiveProducts } from '@/features/insurance/live/hooks';
 import { nairaCompact } from '@/features/insurance/live/money';
+import { HomeMenuButton } from '@/components/HomeMenu';
 
 export default function ProtectionHub() {
   const products = useLiveProducts();
@@ -68,14 +69,17 @@ export default function ProtectionHub() {
           <Text style={styles.eyebrow}>Paymax</Text>
           <Text style={styles.headerTitle}>Protection</Text>
         </View>
-        <Pressable
-          onPress={() => router.push('/insurance/policies')}
-          hitSlop={10}
-          style={styles.iconBtn}
-          accessibilityLabel="My policies"
-        >
-          <FileText size={20} color={Colors.onSurface} strokeWidth={2} />
-        </Pressable>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+          <Pressable
+            onPress={() => router.push('/insurance/policies')}
+            hitSlop={10}
+            style={styles.iconBtn}
+            accessibilityLabel="My policies"
+          >
+            <FileText size={20} color={Colors.onSurface} strokeWidth={2} />
+          </Pressable>
+          <HomeMenuButton />
+        </View>
       </View>
 
       <ScrollView

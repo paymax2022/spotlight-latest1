@@ -15,6 +15,7 @@ import PromoBanner from '@/components/PromoBanner';
 import OrganisationCard from '@/features/association/components/OrganisationCard';
 import QuickNav from '@/features/association/components/QuickNav';
 import { useOrganisations } from '@/features/association/hooks/useAssociation';
+import { HomeMenuButton } from '@/components/HomeMenu';
 
 export default function AssociationDiscovery() {
   const [search, setSearch] = useState('');
@@ -30,14 +31,17 @@ export default function AssociationDiscovery() {
           <Text style={styles.eyebrow}>Spotlight</Text>
           <Text style={styles.headerTitle}>Associations</Text>
         </View>
-        <Pressable
-          onPress={() => router.push('/association/home')}
-          hitSlop={10}
-          style={styles.iconBtn}
-          accessibilityLabel="My membership"
-        >
-          <IdCard size={20} color={Colors.onSurface} strokeWidth={2} />
-        </Pressable>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+          <Pressable
+            onPress={() => router.push('/association/home')}
+            hitSlop={10}
+            style={styles.iconBtn}
+            accessibilityLabel="My membership"
+          >
+            <IdCard size={20} color={Colors.onSurface} strokeWidth={2} />
+          </Pressable>
+          <HomeMenuButton />
+        </View>
       </View>
 
       <View style={styles.searchWrap}>

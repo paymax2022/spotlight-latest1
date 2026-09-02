@@ -14,6 +14,7 @@ import { Spacing } from '@/constants/spacing';
 import { Typography } from '@/constants/typography';
 import { shadow1 } from '@/constants/shadows';
 import { getUtilityPaystackIntent } from '@/api/billing.api';
+import { HomeMenuButton } from '@/components/HomeMenu';
 
 // Resolver screen for an in-app Paystack bill payment. A utility_paystack_intents
 // row is confirmed asynchronously by the Paystack webhook, which sets its status
@@ -50,9 +51,12 @@ export default function PaystackIntentScreen() {
           <ArrowLeft size={22} color={Colors.primary} strokeWidth={2.2} />
         </Pressable>
         <Text style={styles.topTitle}>Payment Status</Text>
-        <Pressable onPress={() => refetch()} style={styles.iconBtn}>
-          <RefreshCw size={20} color={Colors.primary} strokeWidth={2} />
-        </Pressable>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+          <Pressable onPress={() => refetch()} style={styles.iconBtn}>
+            <RefreshCw size={20} color={Colors.primary} strokeWidth={2} />
+          </Pressable>
+          <HomeMenuButton />
+        </View>
       </View>
 
       <View style={styles.content}>

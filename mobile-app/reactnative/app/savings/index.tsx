@@ -16,6 +16,7 @@ import AjoCircleCard from '@/features/savings/components/AjoCircleCard';
 import DisclosureBanner from '@/features/savings/components/DisclosureBanner';
 import { useSavingsSummary, useVaults, useCircles, useTargets } from '@/features/savings/hooks';
 import { SavingsColors, formatNaira, NO_YIELD_DISCLOSURE } from '@/features/savings/constants/savings.constants';
+import { HomeMenuButton } from '@/components/HomeMenu';
 
 export default function SavingsHome() {
   const summary = useSavingsSummary();
@@ -38,9 +39,12 @@ export default function SavingsHome() {
           <Text style={styles.eyebrow}>Paymax</Text>
           <Text style={styles.headerTitle}>Savings</Text>
         </View>
-        <Pressable onPress={() => router.push('/savings/vault/create')} hitSlop={10} style={styles.iconBtn} accessibilityLabel="Create vault">
-          <Plus size={22} color={Colors.onSurface} strokeWidth={2} />
-        </Pressable>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+          <Pressable onPress={() => router.push('/savings/vault/create')} hitSlop={10} style={styles.iconBtn} accessibilityLabel="Create vault">
+            <Plus size={22} color={Colors.onSurface} strokeWidth={2} />
+          </Pressable>
+          <HomeMenuButton />
+        </View>
       </View>
 
       {loading ? (

@@ -30,6 +30,7 @@ import { getErrorMessage } from '@/utils/errorMapper';
 import { generateIdempotencyKey } from '@/utils/idempotency';
 import { sanitizeMoneyInput } from '@/utils/money';
 import { Network } from '@/types/billing';
+import { HomeMenuButton } from '@/components/HomeMenu';
 
 const AMOUNTS = [100, 200, 500, 1000, 2000, 5000];
 
@@ -205,9 +206,12 @@ export default function AirtimeScreen() {
           <ArrowLeft size={22} color={Colors.primary} strokeWidth={2.2} />
         </Pressable>
         <Text style={styles.topTitle}>Buy Airtime</Text>
-        <Pressable style={styles.iconBtn}>
-          <CircleHelp size={21} color={Colors.primary} strokeWidth={2} />
-        </Pressable>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+          <Pressable style={styles.iconBtn}>
+            <CircleHelp size={21} color={Colors.primary} strokeWidth={2} />
+          </Pressable>
+          <HomeMenuButton />
+        </View>
       </View>
 
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.content}>
