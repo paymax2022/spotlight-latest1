@@ -18,6 +18,7 @@ import QuickNav from '@/features/association/components/QuickNav';
 import { useDashboard } from '@/features/association/hooks/useAssociation';
 import { useAdminAccess } from '@/features/association/hooks/useAdminMembers';
 import { formatNaira, formatDateTime, relativeTime, dueLabel } from '@/features/association/utils/associationFormatters';
+import { HomeMenuButton } from '@/components/HomeMenu';
 
 
 export default function MemberHome() {
@@ -42,10 +43,13 @@ export default function MemberHome() {
         <Pressable onPress={() => router.push('/association/profile')} hitSlop={10} style={styles.iconBtn} accessibilityLabel="My profile">
           <UserRound size={20} color={Colors.onSurface} strokeWidth={2} />
         </Pressable>
-        <Pressable onPress={() => router.push('/association/notifications')} hitSlop={10} style={styles.iconBtn} accessibilityLabel="Notifications">
-          <Bell size={20} color={Colors.onSurface} strokeWidth={2} />
-          {(dash.data?.unreadAnnouncements ?? 0) > 0 ? <View style={styles.dot} /> : null}
-        </Pressable>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+          <Pressable onPress={() => router.push('/association/notifications')} hitSlop={10} style={styles.iconBtn} accessibilityLabel="Notifications">
+            <Bell size={20} color={Colors.onSurface} strokeWidth={2} />
+            {(dash.data?.unreadAnnouncements ?? 0) > 0 ? <View style={styles.dot} /> : null}
+          </Pressable>
+          <HomeMenuButton />
+        </View>
       </View>
 
       {dash.isLoading ? (

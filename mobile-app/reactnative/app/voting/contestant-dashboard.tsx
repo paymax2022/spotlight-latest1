@@ -16,6 +16,7 @@ import ContestantStatsCard from '@/features/voting/components/ContestantStatsCar
 import ShareBottomSheet from '@/features/voting/components/ShareBottomSheet';
 import RankBadge from '@/features/voting/components/RankBadge';
 import { formatVoteCount } from '@/features/voting/utils/voteFormatters';
+import { HomeMenuButton } from '@/components/HomeMenu';
 
 export default function ContestantDashboardScreen() {
   const { contestantId } = useLocalSearchParams<{ contestantId: string }>();
@@ -39,9 +40,12 @@ export default function ContestantDashboardScreen() {
           <ArrowLeft size={22} color={Colors.onSurface} strokeWidth={2} />
         </Pressable>
         <Text style={styles.title}>My Campaign</Text>
-        <Pressable onPress={() => setShareOpen(true)} style={styles.backBtn}>
-          <Share2 size={20} color={Colors.onSurface} strokeWidth={2} />
-        </Pressable>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+          <Pressable onPress={() => setShareOpen(true)} style={styles.backBtn}>
+            <Share2 size={20} color={Colors.onSurface} strokeWidth={2} />
+          </Pressable>
+          <HomeMenuButton />
+        </View>
       </View>
 
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.content}>

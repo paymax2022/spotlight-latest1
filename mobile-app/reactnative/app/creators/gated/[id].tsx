@@ -13,6 +13,7 @@ import PrimaryButton from '@/components/PrimaryButton';
 import { PaymentSheet, usePurchasePayment } from '@/features/payments';
 import { useContent, useUnlockContent } from '@/features/creators/hooks';
 import { CreatorsColors, formatNaira, NL11_AGE_GATE_NOTICE } from '@/features/creators/constants/creators.constants';
+import { HomeMenuButton } from '@/components/HomeMenu';
 
 export default function GatedViewer() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -46,7 +47,7 @@ export default function GatedViewer() {
       <View style={styles.header}>
         <Pressable onPress={() => goBack('/creators')} hitSlop={10} style={styles.iconBtn} accessibilityLabel="Go back"><ArrowLeft size={22} color={Colors.onSurface} /></Pressable>
         <Text style={styles.headerTitle} numberOfLines={1}>{item?.title ?? 'Content'}</Text>
-        <View style={styles.iconBtn} />
+        <HomeMenuButton />
       </View>
 
       {content.isLoading ? (

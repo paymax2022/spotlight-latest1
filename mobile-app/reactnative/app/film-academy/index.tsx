@@ -19,6 +19,7 @@ import { Spacing } from '@/constants/spacing';
 import { Radius } from '@/constants/radius';
 import { getOverview } from '@/features/filmAcademy/api';
 import type { FilmAcademyBatch } from '@/features/filmAcademy/types';
+import { HomeMenuButton } from '@/components/HomeMenu';
 
 export const FILM_ACADEMY_KEY = ['film-academy', 'overview'];
 
@@ -110,7 +111,7 @@ export default function FilmAcademyScreen() {
           <ChevronLeft size={24} color={Colors.onSurface} />
         </Pressable>
         <Text style={styles.headerTitle}>Film Academy</Text>
-        <View style={styles.back} />
+        <HomeMenuButton />
       </View>
 
       <ScrollView contentContainerStyle={styles.scroll}>

@@ -15,6 +15,7 @@ import { ActivityIndicator, View } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import ToastHost from '@/components/ToastHost';
 import ConfirmHost from '@/components/ConfirmHost';
+import HomeMenuHost from '@/components/HomeMenu';
 import { Colors } from '@/constants/colors';
 import { useAuthStore } from '@/store/authStore';
 import { getPinStatus } from '@/features/transfers/api';
@@ -252,6 +253,10 @@ function RootLayout() {
         <ToastHost />
         {/* Web renderer for confirmAsync/alertAsync (no-op on native). */}
         <ConfirmHost />
+        {/* Global "back to the module grid" hamburger + sheet. Above the
+            navigator for the same reason as the toasts: it must outlive screen
+            changes, and the floating fallback needs to sit over any screen. */}
+        <HomeMenuHost />
       </SafeAreaProvider>
     </QueryClientProvider>
   );

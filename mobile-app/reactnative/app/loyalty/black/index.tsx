@@ -14,6 +14,7 @@ import PrimaryButton from '@/components/PrimaryButton';
 import BlackPerkCard from '@/features/loyalty/components/black-PerkCard';
 import { useBlackStatus, useBlackPerks, formatPoints, BLACK_BENEFITS, BLACK_THRESHOLD_POINTS } from '@/features/loyalty/black';
 import { LoyaltyColors } from '@/features/loyalty/constants/loyalty.constants';
+import { HomeMenuButton } from '@/components/HomeMenu';
 
 export default function BlackLanding() {
   const status = useBlackStatus();
@@ -24,7 +25,7 @@ export default function BlackLanding() {
       <View style={styles.header}>
         <Pressable onPress={() => goBack('/loyalty')} hitSlop={10} style={styles.iconBtn} accessibilityLabel="Go back"><ArrowLeft size={22} color={Colors.onSurface} /></Pressable>
         <Text style={styles.headerTitle}>Paymax Black</Text>
-        <View style={styles.iconBtn} />
+        <HomeMenuButton />
       </View>
 
       {status.isLoading ? (

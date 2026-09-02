@@ -37,6 +37,7 @@ import {
 } from '@/features/filmAcademy/api';
 import { lockCopy } from '@/features/filmAcademy/lockCopy';
 import { getErrorMessage } from '@/utils/errorMapper';
+import { HomeMenuButton } from '@/components/HomeMenu';
 import type {
   FilmAcademyAssignment,
   FilmAcademyAssignmentPart,
@@ -357,7 +358,7 @@ export default function FilmAcademyAssignmentsScreen() {
           <ChevronLeft size={24} color={Colors.onSurface} />
         </Pressable>
         <Text style={styles.headerTitle}>Assignments</Text>
-        <View style={styles.back} />
+        <HomeMenuButton />
       </View>
 
       <ScrollView

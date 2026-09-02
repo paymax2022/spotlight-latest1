@@ -30,6 +30,7 @@ import { useAuthStore } from '@/store/authStore';
 import { normalizeAccountName } from '@/features/account/name';
 import AccountDetailsCard from '@/features/account/AccountDetailsCard';
 import { usePaystackGateway, PAYSTACK_PUBLIC_KEY } from '@/features/payments';
+import { HomeMenuButton } from '@/components/HomeMenu';
 import { FILM_ACADEMY_KEY } from './index';
 
 export default function FilmAcademyApplyScreen() {
@@ -199,7 +200,7 @@ export default function FilmAcademyApplyScreen() {
           <ChevronLeft size={24} color={Colors.onSurface} />
         </Pressable>
         <Text style={styles.headerTitle}>Apply</Text>
-        <View style={styles.back} />
+        <HomeMenuButton />
       </View>
 
       <ScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled">

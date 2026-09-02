@@ -15,6 +15,7 @@ import { Typography } from '@/constants/typography';
 import { shadow1 } from '@/constants/shadows';
 import { getTransactions } from '@/api/transactions.api';
 import { Transaction, ServiceType, TransactionStatus } from '@/types/transaction';
+import { HomeMenuButton } from '@/components/HomeMenu';
 
 const SERVICE_FILTERS: Array<{ label: string; value: string }> = [
   { label: 'All', value: '' },
@@ -81,7 +82,7 @@ export default function TransactionsScreen() {
           <ArrowLeft size={22} color={Colors.primary} strokeWidth={2.2} />
         </Pressable>
         <Text style={styles.topTitle}>Transactions</Text>
-        <View style={{ width: 40 }} />
+        <HomeMenuButton />
       </View>
 
       <ScrollView

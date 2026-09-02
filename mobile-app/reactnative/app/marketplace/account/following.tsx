@@ -12,6 +12,7 @@ import { Spacing } from '@/constants/spacing';
 import { Radius } from '@/constants/radius';
 import { MarketColors } from '@/features/marketplace';
 import { useFollowedSellers, useUnfollowSeller } from '@/features/marketplace/api/account.hooks';
+import { HomeMenuButton } from '@/components/HomeMenu';
 
 export default function FollowingScreen() {
   const { data, isLoading, isError, refetch, isRefetching } = useFollowedSellers();
@@ -23,7 +24,7 @@ export default function FollowingScreen() {
       <View style={styles.header}>
         <Pressable onPress={() => goBack('/marketplace/account')} hitSlop={12} accessibilityLabel="Back"><ArrowLeft size={24} color={MarketColors.text} /></Pressable>
         <Text style={styles.headerTitle}>Following</Text>
-        <View style={{ width: 24 }} />
+        <HomeMenuButton />
       </View>
 
       {isLoading ? (

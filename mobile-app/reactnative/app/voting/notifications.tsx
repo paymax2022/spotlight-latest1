@@ -12,6 +12,7 @@ import { shadow1 } from '@/constants/shadows';
 import { useQuery } from '@tanstack/react-query';
 import { getVotingNotifications } from '@/features/voting/api/voting.api';
 import type { VotingNotification } from '@/features/voting/types/voting.types';
+import { HomeMenuButton } from '@/components/HomeMenu';
 
 const NOTIF_ICONS: Record<VotingNotification['type'], { Icon: any; color: string; bg: string }> = {
   FREE_VOTES_RESET:  { Icon: Gift,         color: '#48B8AC', bg: 'rgba(72,184,172,0.12)' },
@@ -36,7 +37,7 @@ export default function VotingNotificationsScreen() {
           <ArrowLeft size={22} color={Colors.onSurface} strokeWidth={2} />
         </Pressable>
         <Text style={styles.title}>Notifications</Text>
-        <View style={{ width: 40 }} />
+        <HomeMenuButton />
       </View>
 
       <FlatList

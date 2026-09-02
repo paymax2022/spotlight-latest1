@@ -16,6 +16,7 @@ import CampaignCard from '@/features/crowdfunding/components/CampaignCard';
 import CategoryTile from '@/features/crowdfunding/components/CategoryTile';
 import { useCampaigns, useCategories, useToggleSave } from '@/features/crowdfunding/hooks/useCrowdfunding';
 import { INVESTMENT_ENABLED, CSR_ENABLED } from '@/features/crowdfunding/constants/crowdfunding.constants';
+import { HomeMenuButton } from '@/components/HomeMenu';
 import { TrendingUp, Building2 } from 'lucide-react-native';
 
 /** Source artwork is 1200x600. */
@@ -59,14 +60,17 @@ export default function CrowdfundingHome() {
         >
           <Bell size={20} color={Colors.onSurface} strokeWidth={2} />
         </Pressable>
-        <Pressable
-          onPress={() => router.push('/crowdfunding/saved')}
-          hitSlop={10}
-          style={styles.iconBtn}
-          accessibilityLabel="Saved campaigns"
-        >
-          <Bookmark size={20} color={Colors.onSurface} strokeWidth={2} />
-        </Pressable>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+          <Pressable
+            onPress={() => router.push('/crowdfunding/saved')}
+            hitSlop={10}
+            style={styles.iconBtn}
+            accessibilityLabel="Saved campaigns"
+          >
+            <Bookmark size={20} color={Colors.onSurface} strokeWidth={2} />
+          </Pressable>
+          <HomeMenuButton />
+        </View>
       </View>
 
       {loading ? (

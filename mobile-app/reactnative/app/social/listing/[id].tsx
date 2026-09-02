@@ -13,6 +13,7 @@ import StateView from '@/components/StateView';
 import PrimaryButton from '@/components/PrimaryButton';
 import { useListing, formatNaira, ESCROW_DISCLOSURE } from '@/features/social/escrow';
 import { SocialColors } from '@/features/social/constants/social.constants';
+import { HomeMenuButton } from '@/components/HomeMenu';
 
 export default function ListingDetail() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -24,7 +25,7 @@ export default function ListingDetail() {
       <View style={styles.header}>
         <Pressable onPress={() => goBack('/social')} hitSlop={10} style={styles.iconBtn} accessibilityLabel="Go back"><ArrowLeft size={22} color={Colors.onSurface} /></Pressable>
         <Text style={styles.headerTitle} numberOfLines={1}>{listing.data?.title ?? 'Listing'}</Text>
-        <View style={styles.iconBtn} />
+        <HomeMenuButton />
       </View>
 
       {listing.isLoading ? (

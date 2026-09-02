@@ -15,6 +15,7 @@ import PrimaryButton from '@/components/PrimaryButton';
 import { usePosition, useSubscribe } from '@/features/aitrading/hooks';
 import { formatNaira, formatUnits, UNIT_SCALE } from '@/features/aitrading/api';
 import { alertAsync } from '@/lib/confirm';
+import { HomeMenuButton } from '@/components/HomeMenu';
 
 export default function FundScreen() {
   const pos = usePosition();
@@ -42,7 +43,7 @@ export default function FundScreen() {
       <View style={styles.topBar}>
         <Pressable onPress={() => goBack('/ai-trading')} hitSlop={12} accessibilityLabel="Back"><ArrowLeft size={22} color={Colors.onSurface} /></Pressable>
         <Text style={styles.topTitle}>Fund trading wallet</Text>
-        <View style={{ width: 22 }} />
+        <HomeMenuButton />
       </View>
 
       <ScrollView contentContainerStyle={styles.body} keyboardShouldPersistTaps="handled">

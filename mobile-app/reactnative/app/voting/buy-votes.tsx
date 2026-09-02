@@ -16,6 +16,7 @@ import { getPaidVotingAvailability } from '@/features/voting/utils/paidVoting';
 import VotePackageCard from '@/features/voting/components/VotePackageCard';
 import { formatAmount } from '@/features/voting/utils/voteFormatters';
 import type { VotePackage } from '@/features/voting/types/voting.types';
+import { HomeMenuButton } from '@/components/HomeMenu';
 
 export default function BuyVotesScreen() {
   const { contestantId, contestId } = useLocalSearchParams<{ contestantId: string; contestId: string }>();
@@ -41,7 +42,7 @@ export default function BuyVotesScreen() {
           <ArrowLeft size={22} color={Colors.onSurface} strokeWidth={2} />
         </Pressable>
         <Text style={styles.title}>Buy Vote Packages</Text>
-        <View style={{ width: 40 }} />
+        <HomeMenuButton />
       </View>
 
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.content}>

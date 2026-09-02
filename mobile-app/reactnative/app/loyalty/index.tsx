@@ -15,6 +15,7 @@ import PointsBalanceCard from '@/features/loyalty/components/PointsBalanceCard';
 import CatalogItemCard from '@/features/loyalty/components/CatalogItemCard';
 import { useLoyaltyAccount, useTiers, useCatalog } from '@/features/loyalty/hooks';
 import { LoyaltyColors, POINTS_NOT_CASH_DISCLOSURE } from '@/features/loyalty/constants/loyalty.constants';
+import { HomeMenuButton } from '@/components/HomeMenu';
 
 export default function LoyaltyHome() {
   const account = useLoyaltyAccount();
@@ -38,9 +39,12 @@ export default function LoyaltyHome() {
           <Text style={styles.eyebrow}>Paymax</Text>
           <Text style={styles.headerTitle}>Rewards</Text>
         </View>
-        <Pressable onPress={() => router.push('/loyalty/how-it-works')} hitSlop={10} style={styles.iconBtn} accessibilityLabel="How it works">
-          <Info size={22} color={Colors.onSurface} strokeWidth={2} />
-        </Pressable>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+          <Pressable onPress={() => router.push('/loyalty/how-it-works')} hitSlop={10} style={styles.iconBtn} accessibilityLabel="How it works">
+            <Info size={22} color={Colors.onSurface} strokeWidth={2} />
+          </Pressable>
+          <HomeMenuButton />
+        </View>
       </View>
 
       {loading ? (

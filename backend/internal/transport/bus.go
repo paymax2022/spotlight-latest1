@@ -210,7 +210,7 @@ func (s *Service) BookBusTicket(ctx context.Context, userID string, req BusBookR
 	// Bus tickets settle immediately on issue (trusted catalog): to the marketplace
 	// provider's owner user when the route has a provider, else the legacy operator.
 	comm, _ := s.commissionForTier(ctx, "standard")
-	if err := s.settlement.Settle(ctx, sett.ID, settlementSplit(settleUserID, comm)); err != nil {
+	if err := s.settlement.Settle(ctx, sett.ID, settlementSplit(settleUserID, comm, 0)); err != nil {
 		return nil, fmt.Errorf("transport: settle bus ticket: %w", err)
 	}
 	// Record realized Spotlight profit (best-effort + idempotent; ticket id as source

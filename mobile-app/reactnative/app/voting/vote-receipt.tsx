@@ -13,6 +13,7 @@ import PrimaryButton from '@/components/PrimaryButton';
 import { getVoteReceipt } from '@/features/voting/api/voting.api';
 import VoteReceiptCard from '@/features/voting/components/VoteReceiptCard';
 import ShareBottomSheet from '@/features/voting/components/ShareBottomSheet';
+import { HomeMenuButton } from '@/components/HomeMenu';
 
 export default function VoteReceiptScreen() {
   const { transactionId } = useLocalSearchParams<{ transactionId: string }>();
@@ -31,9 +32,12 @@ export default function VoteReceiptScreen() {
           <ArrowLeft size={22} color={Colors.onSurface} strokeWidth={2} />
         </Pressable>
         <Text style={styles.title}>Vote Receipt</Text>
-        <Pressable onPress={() => setShareOpen(true)} style={styles.backBtn}>
-          <Share2 size={20} color={Colors.onSurface} strokeWidth={2} />
-        </Pressable>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+          <Pressable onPress={() => setShareOpen(true)} style={styles.backBtn}>
+            <Share2 size={20} color={Colors.onSurface} strokeWidth={2} />
+          </Pressable>
+          <HomeMenuButton />
+        </View>
       </View>
 
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.content}>

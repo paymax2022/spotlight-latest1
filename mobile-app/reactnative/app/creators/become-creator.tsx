@@ -12,6 +12,7 @@ import StateView from '@/components/StateView';
 import PrimaryButton from '@/components/PrimaryButton';
 import { useBecomeCreator } from '@/features/creators/hooks';
 import { CreatorsColors, NL5_DISCLOSURE, PAYOUT_KYC_NOTICE } from '@/features/creators/constants/creators.constants';
+import { HomeMenuButton } from '@/components/HomeMenu';
 
 const CATEGORIES = ['Music', 'Comedy', 'Education', 'Gaming', 'Food', 'Lifestyle', 'Fitness'];
 const STEPS = ['Profile', 'Category & bio', 'Payout KYC', 'Confirm'];
@@ -56,7 +57,7 @@ export default function BecomeCreator() {
           {step === 0 ? <X size={22} color={Colors.onSurface} /> : <ArrowLeft size={22} color={Colors.onSurface} />}
         </Pressable>
         <Text style={styles.headerTitle}>Become a creator</Text>
-        <View style={styles.iconBtn} />
+        <HomeMenuButton />
       </View>
 
       {/* Step indicator */}

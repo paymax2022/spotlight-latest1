@@ -16,6 +16,7 @@ import { Radius } from '@/constants/radius';
 import PrimaryButton from '@/components/PrimaryButton';
 import { useKyc, useSubmitKyc } from '@/features/aitrading/hooks';
 import type { TradingKycStatus } from '@/features/aitrading/api';
+import { HomeMenuButton } from '@/components/HomeMenu';
 
 export default function ModuleKycScreen() {
   const kyc = useKyc();
@@ -39,7 +40,7 @@ export default function ModuleKycScreen() {
       <View style={styles.topBar}>
         <Pressable onPress={() => goBack('/ai-trading')} hitSlop={12} accessibilityLabel="Back"><ArrowLeft size={22} color={Colors.onSurface} /></Pressable>
         <Text style={styles.topTitle}>Trading Verification</Text>
-        <View style={{ width: 22 }} />
+        <HomeMenuButton />
       </View>
 
       <ScrollView contentContainerStyle={styles.body}>
