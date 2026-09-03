@@ -144,6 +144,10 @@ export function mapRestaurant(input: unknown): Restaurant {
 
     address: str(pick(raw, 'address')),
     location,
+
+    likeCount: num(pick(raw, 'likeCount', 'like_count')),
+    liked: bool(pick(raw, 'liked'), false),
+    isFeatured: bool(pick(raw, 'isFeatured', 'is_featured'), false),
   };
 }
 

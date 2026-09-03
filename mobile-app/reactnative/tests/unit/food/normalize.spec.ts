@@ -194,6 +194,29 @@ describe('mapRestaurant — the offer badge', () => {
   });
 });
 
+describe('mapRestaurant — likes and featured placement', () => {
+  // Mirrors backend/internal/restaurant/discovery_page.go: like_count is a live
+  // COUNT(*) (always present, never optional), liked/is_featured are only ever
+  // populated by discovery reads that know who's asking — absent must read as
+  // "no", never crash the Featured-row / heart-button rendering.
+  it('reads the live like count and defaults to zero when absent', () => {
+    assert.equal(mapRestaurant({ ...GO_ROW, like_count: 342 }).likeCount, 342);
+    assert.equal(mapRestaurant(GO_ROW).likeCount, 0);
+    assert.ok(Number.isInteger(mapRestaurant({ ...GO_ROW, like_count: 342 }).likeCount));
+  });
+
+  it('reads the caller-liked flag and defaults to false', () => {
+    assert.equal(mapRestaurant({ ...GO_ROW, liked: true }).liked, true);
+    assert.equal(mapRestaurant(GO_ROW).liked, false);
+  });
+
+  it('reads is_featured (RESTAURANT_TOP placement) and defaults to false', () => {
+    assert.equal(mapRestaurant({ ...GO_ROW, is_featured: true }).isFeatured, true);
+    assert.equal(mapRestaurant({ ...GO_ROW, isFeatured: true }).isFeatured, true);
+    assert.equal(mapRestaurant(GO_ROW).isFeatured, false);
+  });
+});
+
 describe('mapMenuItem', () => {
   it('reads is_available, and hides an item on a malformed row', () => {
     assert.equal(mapMenuItem({ id: 'i', name: 'n', is_available: true }).available, true);
