@@ -26,7 +26,7 @@
 // Deliberately dependency-free (types only) so it is unit-testable under
 // `node --test` without pulling in the RN runtime.
 
-import type { Restaurant, RestaurantDetail, MenuCategory, MenuItem, LatLng } from './types';
+import type { Restaurant, RestaurantDetail, MenuCategory, MenuItem, LatLng, Order, OrderItem } from './types';
 
 type Raw = Record<string, unknown>;
 
@@ -162,6 +162,80 @@ export function mapRestaurants(input: unknown): Restaurant[] {
  * what was simply a restaurant with no orders yet. Same shape as the
  * ListRestaurants envelope above, which had already been fixed this way.
  */
+/**
+ * One order line. Go answers `menu_item_id`/`quantity`/`price_kobo`
+ * (internal/restaurant/model.go OrderItem); the screens read `itemId`/`qty`/
+ * `priceKobo`. Nothing reconciled the two, so `it.priceKobo * it.qty` was
+ * `undefined * undefined` and every line rendered "₦NaN".
+ *
+ * `priceKobo` is the BASE unit price. The wire also carries a per-line
+ * `subtotal_kobo` = (price_kobo + modifiers_kobo) × quantity. The response does
+ * emit `modifiers_kobo`, but it is always 0 today because `order_items` has no
+ * such column for it to be read from, so price × qty and the line subtotal
+ * agree. If modifiers are ever persisted, a screen computing
+ * price × qty would understate the line and should switch to the server's
+ * subtotal rather than adding modifiers here — the field is named for the base
+ * price and should keep meaning that.
+ */
+export function mapOrderItem(input: unknown): OrderItem {
+  const raw = asRaw(input);
+  return {
+    itemId: str(pick(raw, 'itemId', 'menu_item_id', 'menuItemId', 'id')),
+    name: str(pick(raw, 'name')),
+    qty: num(pick(raw, 'qty', 'quantity')),
+    priceKobo: kobo(pick(raw, 'priceKobo', 'price_kobo')),
+  };
+}
+
+/**
+ * The order envelope, same mismatch a level up: `total_kobo`, `delivery_kobo`,
+ * `delivery_address`, `created_at` on the wire against `totalKobo`,
+ * `deliveryFeeKobo`, `deliveryAddress`, `createdAt` in the screens. The visible
+ * symptom was "₦NaN" for every total and an empty "Delivering to:", on an order
+ * whose row held the right numbers the whole time.
+ *
+ * Note the delivery fee is `delivery_kobo` on the wire but `deliveryFeeKobo`
+ * here — not just a case change, so it is listed explicitly.
+ *
+ * Unknown fields are spread through untouched: this runs on every order the app
+ * loads (11 call sites), and dropping a field the server adds later would break
+ * a screen silently. Optional fields are only overridden when the wire actually
+ * carries them, so an absent `delivered_at` stays absent rather than becoming
+ * an empty string.
+ */
+export function mapOrder(input: unknown): Order {
+  const raw = asRaw(input);
+  const items = pick(raw, 'items');
+  const deliveredAt = pick(raw, 'deliveredAt', 'delivered_at');
+  const dispatchStatus = pick(raw, 'dispatchStatus', 'dispatch_status');
+  const deliveryCode = pick(raw, 'deliveryCode', 'delivery_code');
+  const riderId = pick(raw, 'riderId', 'rider_id');
+  // The order endpoint does NOT return a restaurant name (verified against
+  // /api/finance/restaurant/orders/:id). Defaulting it to '' would be worse
+  // than leaving it alone: app/food/orders/[orderId]/rate.tsx reads
+  // `order?.restaurantName ?? 'the restaurant'`, and ?? does not catch an empty
+  // string, so the prompt would read "How was the food from ?".
+  const restaurantName = pick(raw, 'restaurantName', 'restaurant_name');
+
+  return {
+    ...(input as Order),
+    restaurantId: str(pick(raw, 'restaurantId', 'restaurant_id')),
+    ...(restaurantName !== undefined ? { restaurantName: str(restaurantName) } : {}),
+    items: Array.isArray(items) ? items.map(mapOrderItem) : [],
+    subtotalKobo: kobo(pick(raw, 'subtotalKobo', 'subtotal_kobo')),
+    deliveryFeeKobo: kobo(pick(raw, 'deliveryFeeKobo', 'delivery_fee_kobo', 'delivery_kobo')),
+    serviceFeeKobo: kobo(pick(raw, 'serviceFeeKobo', 'service_fee_kobo')),
+    packagingFeeKobo: kobo(pick(raw, 'packagingFeeKobo', 'packaging_fee_kobo')),
+    totalKobo: kobo(pick(raw, 'totalKobo', 'total_kobo')),
+    deliveryAddress: str(pick(raw, 'deliveryAddress', 'delivery_address')),
+    createdAt: str(pick(raw, 'createdAt', 'created_at')),
+    ...(deliveredAt !== undefined ? { deliveredAt: str(deliveredAt) } : {}),
+    dispatchStatus: (dispatchStatus as Order['dispatchStatus']) ?? undefined,
+    deliveryCode: (deliveryCode as string | null) ?? null,
+    riderId: (riderId as string | null) ?? null,
+  };
+}
+
 export function mapOrderList(input: unknown): unknown[] {
   const rows = Array.isArray(input) ? input : asRaw(input).orders;
   return Array.isArray(rows) ? rows : [];

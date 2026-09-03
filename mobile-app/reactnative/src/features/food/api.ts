@@ -38,7 +38,7 @@ import {
   mockConfirmHandoff,
   mockRedispatch,
 } from './mock';
-import { mapRestaurants, mapRestaurantDetail, mapOrderList } from './normalize';
+import { mapRestaurants, mapRestaurantDetail, mapOrderList, mapOrder } from './normalize';
 import { computeDeliveryFeeMock, type DeliveryQuote } from './deliveryFee';
 export type { DeliveryQuote, DeliveryFeeBreakdown } from './deliveryFee';
 
@@ -55,16 +55,6 @@ const idemHeader = (key: string) => ({ headers: { 'Idempotency-Key': key } });
  * The API otherwise returns the camelCase Order shape; this only normalizes the
  * newer auto-dispatch fields (`dispatch_status`, `delivery_code`, `rider_id`).
  */
-function mapOrder(raw: Order): Order {
-  const r = raw as Order & Record<string, unknown>;
-  return {
-    ...raw,
-    dispatchStatus:
-      (r.dispatchStatus ?? (r['dispatch_status'] as Order['dispatchStatus'])) ?? undefined,
-    deliveryCode: (r.deliveryCode ?? (r['delivery_code'] as string | null)) ?? null,
-    riderId: (r.riderId ?? (r['rider_id'] as string | null)) ?? null,
-  };
-}
 
 // ─── Discovery ────────────────────────────────────────────────────────────────
 
