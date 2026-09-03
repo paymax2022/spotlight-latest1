@@ -131,7 +131,14 @@ type Listing struct {
 	UpdatedAt            time.Time      `json:"updated_at"`
 	ExpiresAt            time.Time      `json:"expires_at"`
 	SoldAt               *time.Time     `json:"sold_at,omitempty"`
-	Version              int            `json:"-"` // optimistic-lock companion (mkt_listings not shown; additive)
+	// ThumbURL is a short-lived presigned GET for the listing's first photo, or
+	// "" when it has none. The mobile ListingCard reads `thumbUrl` and has always
+	// expected it; nothing ever populated it, which is why every card fell back to
+	// a placeholder. Not a column — attached by Service.attachThumbs from
+	// mkt_listing_media, because the objects live in a PRIVATE R2 bucket and a raw
+	// object key is not fetchable by the client.
+	ThumbURL string `json:"thumb_url,omitempty"`
+	Version  int    `json:"-"` // optimistic-lock companion (mkt_listings not shown; additive)
 }
 
 // Order mirrors mkt_orders (the critical-path escrow row).

@@ -122,12 +122,59 @@ func (s *Service) CreateListing(ctx context.Context, sellerID string, in CreateL
 		State:          in.State,
 		LGA:            in.LGA,
 	}
-	return s.repo.InsertListing(ctx, l)
+	created, err := s.repo.InsertListing(ctx, l)
+	if err != nil {
+		return nil, err
+	}
+	// Persist the photos. MediaIDs was parsed and thrown away before this, so
+	// mkt_listing_media stayed empty and every listing rendered without an image.
+	//
+	// A failure here does NOT fail the create: the listing itself is valid and
+	// already written, and losing a draft because a photo row would not insert is
+	// the worse outcome. It is logged so the gap is visible rather than silent.
+	if keys := ownedMediaKeys(sellerID, in.MediaIDs); len(keys) > 0 {
+		if merr := s.repo.InsertListingMedia(ctx, created.ID, keys); merr != nil {
+			log.Printf("[marketplace] listing %s created but media not saved: %v", created.ID, merr)
+		} else {
+			created.ThumbURL = s.presignThumb(keys[0])
+		}
+	}
+	return created, nil
+}
+
+// ownedMediaKeys filters client-supplied media ids down to object keys this
+// seller actually uploaded.
+//
+// Two things make this necessary. The composer sends `fileUrl ?? photo.id` — so
+// when an upload fails it posts a LOCAL photo id, which would otherwise be stored
+// as if it were an object key and render as a broken image forever. And a key is
+// just a string from the client, so without the ownership check a caller could
+// claim another seller's object by guessing its path.
+//
+// The shape is the one presign mints: marketplace/<seller-uuid>/<32 hex><ext>.
+func ownedMediaKeys(sellerID string, ids []string) []string {
+	prefix := "marketplace/" + sellerID + "/"
+	out := make([]string, 0, len(ids))
+	for _, id := range ids {
+		if !strings.HasPrefix(id, prefix) {
+			continue
+		}
+		if name := strings.TrimPrefix(id, prefix); name == "" || strings.Contains(name, "/") {
+			continue
+		}
+		out = append(out, id)
+	}
+	return out
 }
 
 // GetListing returns a listing (public detail).
 func (s *Service) GetListing(ctx context.Context, id string) (*Listing, error) {
-	return s.repo.GetListing(ctx, id)
+	l, err := s.repo.GetListing(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	s.attachThumbs(ctx, []*Listing{l})
+	return l, nil
 }
 
 // UpdateListing edits the mutable subset. §8: while any non-terminal order

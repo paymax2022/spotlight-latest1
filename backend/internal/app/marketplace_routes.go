@@ -231,6 +231,11 @@ func RegisterMarketplace(
 		Region:          cfg.R2Region,
 	})
 
+	// The same presigner mints upload URLs (handler) and thumbnail read URLs
+	// (service): listing photos live in a PRIVATE bucket, so a stored object key
+	// only becomes fetchable once it is signed.
+	svc.WithThumbPresigner(mktPresigner)
+
 	h := marketplace.NewHandler(svc).
 		WithWebhookSecret(cfg.PaymaxWebhookSecret).
 		WithPresigner(mktPresigner, cfg.R2Bucket)

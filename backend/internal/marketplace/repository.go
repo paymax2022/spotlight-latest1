@@ -80,6 +80,72 @@ func (r *Repository) InsertListing(ctx context.Context, l *Listing) (*Listing, e
 	return out, nil
 }
 
+// ─── Listing media ───────────────────────────────────────────────────────────
+
+// InsertListingMedia persists the photos a seller uploaded for a listing.
+//
+// This is what was missing: CreateListingInput has always carried MediaIDs and
+// the service parsed them, but nothing ever wrote a mkt_listing_media row — so
+// the table was empty for every listing ever created, and every card in the app
+// fell back to a placeholder.
+//
+// The three size variants are the same object today: the presign path stores one
+// upload per photo and there is no derivative pipeline yet. They are separate
+// columns so a later resizer can fill them in without a migration or a change
+// here; storing the same key three times is honest about that, where storing it
+// only in url_full would make the thumb read look broken instead of un-derived.
+func (r *Repository) InsertListingMedia(ctx context.Context, listingID string, keys []string) error {
+	if len(keys) == 0 {
+		return nil
+	}
+	batch := &pgx.Batch{}
+	for i, k := range keys {
+		batch.Queue(`
+			INSERT INTO public.mkt_listing_media
+				(listing_id, url_thumb, url_card, url_full, blurhash, perceptual_hash, sort_order)
+			VALUES ($1,$2,$2,$2,'','',$3)`, listingID, k, i)
+	}
+	br := r.db.SendBatch(ctx, batch)
+	defer br.Close()
+	for range keys {
+		if _, err := br.Exec(); err != nil {
+			return wrapInternal("insert listing media", err)
+		}
+	}
+	return nil
+}
+
+// ThumbKeysFor returns each listing's first photo key, for the listings given.
+//
+// Batched deliberately: the alternative is a correlated subselect inside
+// listingCols, but that constant is also fed through prefixCols (which splits on
+// commas to alias each column), so a subselect there would be silently mangled.
+// One extra query per page keeps every read path — search, my listings, detail,
+// saved items — on the same code and leaves the existing SQL untouched.
+func (r *Repository) ThumbKeysFor(ctx context.Context, listingIDs []string) (map[string]string, error) {
+	out := make(map[string]string, len(listingIDs))
+	if len(listingIDs) == 0 {
+		return out, nil
+	}
+	rows, err := r.db.Query(ctx, `
+		SELECT DISTINCT ON (listing_id) listing_id, url_thumb
+		FROM public.mkt_listing_media
+		WHERE listing_id = ANY($1)
+		ORDER BY listing_id, sort_order, created_at`, listingIDs)
+	if err != nil {
+		return nil, wrapInternal("list listing media", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id, key string
+		if err := rows.Scan(&id, &key); err != nil {
+			return nil, wrapInternal("scan listing media", err)
+		}
+		out[id] = key
+	}
+	return out, rows.Err()
+}
+
 // GetListing loads a listing by id.
 func (r *Repository) GetListing(ctx context.Context, id string) (*Listing, error) {
 	row := r.db.QueryRow(ctx, `SELECT `+listingCols+` FROM public.mkt_listings WHERE id=$1`, id)
