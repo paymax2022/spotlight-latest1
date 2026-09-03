@@ -109,6 +109,7 @@ const (
 	CodeBoostNotFound          = "BOOST_NOT_FOUND"
 	CodeInvalidBoostTransition = "INVALID_BOOST_TRANSITION"
 	CodeInvalidBoostTier       = "INVALID_BOOST_TIER"
+	CodeInvalidBoostRange      = "INVALID_BOOST_DATE_RANGE"
 
 	// Offers / reviews / misc
 	CodeOfferNotFound  = "OFFER_NOT_FOUND"
@@ -147,20 +148,21 @@ const (
 
 // Constructor helpers for the most common coded errors.
 var (
-	ErrForbidden         = newErr(http.StatusForbidden, CodeForbidden, "you may not act on this resource")
-	ErrUnauthenticated   = newErr(http.StatusUnauthorized, CodeUnauthenticated, "authentication required")
-	ErrListingNotFound   = newErr(http.StatusNotFound, CodeListingNotFound, "listing not found")
-	ErrOrderNotFound     = newErr(http.StatusNotFound, CodeOrderNotFound, "order not found")
-	ErrDisputeNotFound   = newErr(http.StatusNotFound, CodeDisputeNotFound, "dispute not found")
-	ErrBoostNotFound     = newErr(http.StatusNotFound, CodeBoostNotFound, "boost not found")
-	ErrOfferNotFound     = newErr(http.StatusNotFound, CodeOfferNotFound, "offer not found")
-	ErrThreadNotFound    = newErr(http.StatusNotFound, CodeThreadNotFound, "thread not found")
-	ErrReviewExists      = newErr(http.StatusConflict, CodeReviewExists, "you have already reviewed this deal")
-	ErrCannotMessageSelf = newErr(422, CodeCannotMessageSelf, "you cannot start a conversation with yourself")
-	ErrCannotFollowSelf  = newErr(422, CodeCannotFollowSelf, "you cannot follow yourself")
-	ErrReasonRequired    = newErr(http.StatusBadRequest, CodeReasonCodeRequired, "reason_code is required")
-	ErrIdemMissing       = newErr(http.StatusBadRequest, CodeIdempotencyMissing, "Idempotency-Key header required")
-	ErrConflict          = newErr(http.StatusConflict, CodeConflict, "conflicting concurrent write")
+	ErrForbidden            = newErr(http.StatusForbidden, CodeForbidden, "you may not act on this resource")
+	ErrUnauthenticated      = newErr(http.StatusUnauthorized, CodeUnauthenticated, "authentication required")
+	ErrListingNotFound      = newErr(http.StatusNotFound, CodeListingNotFound, "listing not found")
+	ErrOrderNotFound        = newErr(http.StatusNotFound, CodeOrderNotFound, "order not found")
+	ErrDisputeNotFound      = newErr(http.StatusNotFound, CodeDisputeNotFound, "dispute not found")
+	ErrBoostNotFound        = newErr(http.StatusNotFound, CodeBoostNotFound, "boost not found")
+	ErrBoostPackageNotFound = newErr(http.StatusBadRequest, CodeInvalidBoostTier, "unknown boost tier")
+	ErrOfferNotFound        = newErr(http.StatusNotFound, CodeOfferNotFound, "offer not found")
+	ErrThreadNotFound       = newErr(http.StatusNotFound, CodeThreadNotFound, "thread not found")
+	ErrReviewExists         = newErr(http.StatusConflict, CodeReviewExists, "you have already reviewed this deal")
+	ErrCannotMessageSelf    = newErr(422, CodeCannotMessageSelf, "you cannot start a conversation with yourself")
+	ErrCannotFollowSelf     = newErr(422, CodeCannotFollowSelf, "you cannot follow yourself")
+	ErrReasonRequired       = newErr(http.StatusBadRequest, CodeReasonCodeRequired, "reason_code is required")
+	ErrIdemMissing          = newErr(http.StatusBadRequest, CodeIdempotencyMissing, "Idempotency-Key header required")
+	ErrConflict             = newErr(http.StatusConflict, CodeConflict, "conflicting concurrent write")
 	// ErrListingNotActiveRace is returned by InsertOrderAtomic when the DB-level
 	// optimistic lock finds the listing is no longer purchasable (status flipped, or
 	// another buyer's order already holds this single-quantity listing). The service

@@ -1,5 +1,5 @@
-import React, { useEffect, useState } from 'react';
-import { View, Text, ScrollView, StyleSheet, Pressable, Platform } from 'react-native';
+import React, { useCallback, useEffect, useState } from 'react';
+import { View, Text, ScrollView, StyleSheet, Pressable, Platform, StyleProp, ViewStyle } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import { goBack } from '@/lib/navigation';
@@ -12,7 +12,12 @@ import { Radius } from '@/constants/radius';
 import { Spacing } from '@/constants/spacing';
 import { Typography } from '@/constants/typography';
 import { shadow1, shadow2, shadow3 } from '@/constants/shadows';
-import { useRestaurantSearch } from '@/features/food/hooks';
+import {
+  useRestaurantSearch,
+  useFeaturedRestaurants,
+  useNearbyRestaurants,
+  useToggleRestaurantLike,
+} from '@/features/food/hooks';
 import { useDebouncedValue } from '@/features/food/useDebouncedValue';
 import { useDeviceCoords } from '@/features/food/useDeviceCoords';
 import { useCartStore, cartItemCount } from '@/features/food/cartStore';
@@ -20,6 +25,15 @@ import { formatNairaWhole } from '@/features/food/utils';
 import { DynamicIcon } from '@/features/food/components';
 import type { Restaurant } from '@/features/food/types';
 import { HomeMenuButton } from '@/components/HomeMenu';
+
+/** Price-range filter chips (server-side `min_order_kobo` bound). */
+const PRICE_FILTERS = [
+  { key: 'any', label: 'Any price', min: undefined, max: undefined },
+  { key: 'low', label: 'Under ₦2,000', min: undefined, max: 200000 },
+  { key: 'mid', label: '₦2,000 – ₦4,000', min: 200000, max: 400000 },
+  { key: 'high', label: 'Over ₦4,000', min: 400000, max: undefined },
+] as const;
+type PriceFilterKey = (typeof PRICE_FILTERS)[number]['key'];
 
 const CUISINE_FILTERS = [
   { key: 'all', label: 'All', icon: 'LayoutGrid' },
@@ -68,6 +82,7 @@ const BROWSE_VIEWS = {
   nearby:  { label: 'Nearby',  icon: 'MapPin', params: { sort: 'eta' } },
   popular: { label: 'Popular', icon: 'Flame',  params: { sort: 'rating' } },
   offers:  { label: 'Offers',  icon: 'Tag',    params: { promo: true } },
+  liked:   { label: 'Most Liked', icon: 'Heart', params: { sort: 'likes' } },
 } as const;
 type BrowseView = keyof typeof BROWSE_VIEWS;
 
@@ -75,13 +90,24 @@ function asBrowseView(v: unknown): BrowseView | null {
   return typeof v === 'string' && v in BROWSE_VIEWS ? (v as BrowseView) : null;
 }
 
-function RestaurantCard({ item, onPress }: { item: Restaurant; onPress: () => void }) {
+function RestaurantCard({
+  item,
+  onPress,
+  onToggleLike,
+  style,
+}: {
+  item: Restaurant;
+  onPress: () => void;
+  /** Omitted → no heart button (kept optional so other callers of this card are unaffected). */
+  onToggleLike?: (item: Restaurant) => void;
+  style?: StyleProp<ViewStyle>;
+}) {
   const [coverStart, coverEnd] = coverGradient(item.id);
   return (
     <Pressable
       onPress={onPress}
       disabled={!item.isOpen}
-      style={({ pressed }) => [rc.card, shadow2, pressed && { opacity: 0.9, transform: [{ scale: 0.99 }] }, !item.isOpen && { opacity: 0.7 }]}
+      style={({ pressed }) => [rc.card, shadow2, pressed && { opacity: 0.9, transform: [{ scale: 0.99 }] }, !item.isOpen && { opacity: 0.7 }, style]}
       accessibilityRole="button"
     >
       <LinearGradient colors={[coverStart, coverEnd]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={rc.cover}>
@@ -98,6 +124,27 @@ function RestaurantCard({ item, onPress }: { item: Restaurant; onPress: () => vo
           <View style={rc.promoRibbon}>
             <Text style={rc.promoText} numberOfLines={1}>{item.promo}</Text>
           </View>
+        ) : null}
+
+        {onToggleLike ? (
+          // No accessibilityRole="button" here: the OUTER card Pressable
+          // already renders as a real HTML <button> on web (its own
+          // accessibilityRole="button"), and a <button> cannot nest another
+          // <button> — that combination is what OpportunityCard.tsx's
+          // heartBtn also avoids, for the same reason.
+          <Pressable
+            hitSlop={8}
+            onPress={(e) => { e.stopPropagation?.(); onToggleLike(item); }}
+            style={rc.likeButton}
+            accessibilityLabel={item.liked ? `Unlike ${item.name}` : `Like ${item.name}`}
+          >
+            <Icons.Heart
+              size={16}
+              color={item.liked ? '#EF4444' : Colors.white}
+              fill={item.liked ? '#EF4444' : 'transparent'}
+              strokeWidth={2}
+            />
+          </Pressable>
         ) : null}
 
         {!item.isOpen ? (
@@ -130,6 +177,16 @@ function RestaurantCard({ item, onPress }: { item: Restaurant; onPress: () => vo
           <View style={rc.metaItem}>
             <Icons.Wallet size={13} color={Colors.onSurfaceVariant} strokeWidth={2} />
             <Text style={rc.metaText}>Min {formatNairaWhole(item.minOrderKobo)}</Text>
+          </View>
+          <View style={rc.metaDivider} />
+          <View style={rc.metaItem}>
+            <Icons.Heart
+              size={13}
+              color={item.liked ? '#EF4444' : Colors.onSurfaceVariant}
+              fill={item.liked ? '#EF4444' : 'transparent'}
+              strokeWidth={2}
+            />
+            <Text style={rc.metaText}>{item.likeCount.toLocaleString('en-NG')}</Text>
           </View>
         </View>
       </View>
@@ -165,6 +222,12 @@ const rc = StyleSheet.create({
     paddingHorizontal: Spacing.sm, paddingVertical: 4,
   },
   promoText: { ...Typography.labelSm, color: Colors.white },
+  likeButton: {
+    position: 'absolute', bottom: Spacing.sm, right: Spacing.sm,
+    width: 32, height: 32, borderRadius: 16,
+    backgroundColor: 'rgba(11,28,48,0.5)',
+    alignItems: 'center', justifyContent: 'center',
+  },
   closedScrim: {
     ...StyleSheet.absoluteFillObject,
     backgroundColor: 'rgba(11,28,48,0.55)',
@@ -183,13 +246,63 @@ const rc = StyleSheet.create({
   metaText: { ...Typography.labelSm, color: Colors.onSurfaceVariant },
 });
 
+/** Curated horizontal row (Featured / Near By) — reuses RestaurantCard at a fixed width. */
+function RestaurantRow({
+  title,
+  icon,
+  items,
+  isLoading,
+  onToggleLike,
+}: {
+  title: string;
+  icon: string;
+  items: Restaurant[];
+  isLoading: boolean;
+  onToggleLike: (item: Restaurant) => void;
+}) {
+  if (!isLoading && items.length === 0) return null;
+  return (
+    <View style={s.rowSection}>
+      <View style={s.rowHeader}>
+        <DynamicIcon name={icon} color="#EF4444" size={16} strokeWidth={2.2} />
+        <Text style={s.rowTitle}>{title}</Text>
+      </View>
+      {isLoading ? (
+        <View style={s.rowLoading}>
+          <StateView kind="loading" message={`Loading ${title.toLowerCase()}…`} />
+        </View>
+      ) : (
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.rowContent}>
+          {items.map((item) => (
+            <RestaurantCard
+              key={item.id}
+              item={item}
+              onPress={() => router.push(`/food/restaurant/${item.id}`)}
+              onToggleLike={onToggleLike}
+              style={rowCardStyle}
+            />
+          ))}
+        </ScrollView>
+      )}
+    </View>
+  );
+}
+const rowCardStyle: StyleProp<ViewStyle> = { width: 250, marginRight: Spacing.md, marginBottom: 0 };
+
 export default function FoodDiscoveryScreen() {
   const params = useLocalSearchParams<{ view?: string }>();
   const [cuisine, setCuisine] = useState<Cuisine>('all');
   const [search, setSearch] = useState('');
   const [view, setView] = useState<BrowseView | null>(() => asBrowseView(params.view));
+  const [priceFilter, setPriceFilter] = useState<PriceFilterKey>('any');
   const cartPackages = useCartStore((s) => s.packages);
   const cartCount = cartItemCount(cartPackages);
+
+  const toggleLike = useToggleRestaurantLike();
+  const handleToggleLike = useCallback(
+    (item: Restaurant) => toggleLike.mutate({ id: item.id, liked: !item.liked }),
+    [toggleLike],
+  );
 
   // Expo Router can hand this screen a new ?view= without remounting it (e.g.
   // navigating Browse → Nearby, back, then Browse → Offers), so mirror the param
@@ -223,6 +336,8 @@ export default function FoodDiscoveryScreen() {
       ? { sort: 'distance' as const, nearLat: deviceCoords.coords.lat, nearLng: deviceCoords.coords.lng }
       : viewMeta?.params;
 
+  const priceRange = PRICE_FILTERS.find((f) => f.key === priceFilter) ?? PRICE_FILTERS[0];
+
   // Every filter is a SERVER param. `restaurants` below is the pages loaded so
   // far; `total` is every match, which is what the counts must report — saying
   // "20 open" while 2,016 match would be worse than saying nothing.
@@ -238,8 +353,18 @@ export default function FoodDiscoveryScreen() {
   } = useRestaurantSearch({
     q: debouncedSearch,
     cuisine: cuisine === 'all' ? '' : cuisine,
+    minPriceKobo: priceRange.min,
+    maxPriceKobo: priceRange.max,
     ...(nearbyParams ?? {}),
   });
+
+  // Featured/Near By are curated rows shown only on the plain browse screen —
+  // once the caller is searching or has picked a Browse-view tab, the filtered
+  // list below already answers "what am I looking for", and stacking two more
+  // rows above it would just be noise repeating the same restaurants.
+  const showCuratedRows = !debouncedSearch && !viewMeta;
+  const featured = useFeaturedRestaurants();
+  const nearby = useNearbyRestaurants(deviceCoords.coords);
 
   return (
     <SafeAreaView style={s.safe} edges={['top']}>
@@ -312,6 +437,25 @@ export default function FoodDiscoveryScreen() {
           <Icons.ChevronRight size={18} color={Colors.onSurfaceVariant} strokeWidth={2} />
         </Pressable>
 
+        {showCuratedRows ? (
+          <>
+            <RestaurantRow
+              title="Featured restaurants"
+              icon="Sparkles"
+              items={featured.items}
+              isLoading={featured.isLoading}
+              onToggleLike={handleToggleLike}
+            />
+            <RestaurantRow
+              title="Near By"
+              icon="MapPin"
+              items={nearby.items}
+              isLoading={nearby.isLoading}
+              onToggleLike={handleToggleLike}
+            />
+          </>
+        ) : null}
+
         {/* Active browse view (arrived via ?view=), clearable back to the full list */}
         {viewMeta ? (
           <View style={s.viewPillRow}>
@@ -338,6 +482,24 @@ export default function FoodDiscoveryScreen() {
                 style={({ pressed }) => [s.chip, active && s.chipActive, active && shadow1, pressed && { opacity: 0.9 }]}
               >
                 <DynamicIcon name={f.icon} color={active ? Colors.white : Colors.onSurfaceVariant} size={15} strokeWidth={2} />
+                <Text style={[s.chipLabel, active && s.chipLabelActive]}>{f.label}</Text>
+              </Pressable>
+            );
+          })}
+        </ScrollView>
+
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={s.chips} contentContainerStyle={s.chipsContent}>
+          {PRICE_FILTERS.map((f) => {
+            const active = priceFilter === f.key;
+            return (
+              <Pressable
+                key={f.key}
+                onPress={() => setPriceFilter(f.key)}
+                style={({ pressed }) => [s.chip, active && s.chipActive, active && shadow1, pressed && { opacity: 0.9 }]}
+                accessibilityRole="button"
+                accessibilityLabel={`Filter by price: ${f.label}`}
+              >
+                <Icons.Wallet size={13} color={active ? Colors.white : Colors.onSurfaceVariant} strokeWidth={2} />
                 <Text style={[s.chipLabel, active && s.chipLabelActive]}>{f.label}</Text>
               </Pressable>
             );
@@ -384,7 +546,12 @@ export default function FoodDiscoveryScreen() {
           ) : (
             <>
               {restaurants.map((item) => (
-                <RestaurantCard key={item.id} item={item} onPress={() => router.push(`/food/restaurant/${item.id}`)} />
+                <RestaurantCard
+                  key={item.id}
+                  item={item}
+                  onPress={() => router.push(`/food/restaurant/${item.id}`)}
+                  onToggleLike={handleToggleLike}
+                />
               ))}
               {hasNextPage ? (
                 <Pressable
@@ -478,6 +645,11 @@ const s = StyleSheet.create({
   sellText: { flex: 1, gap: 2 },
   sellTitle: { ...Typography.labelLg, color: Colors.onSurface },
   sellSub: { ...Typography.bodySm, color: Colors.onSurfaceVariant },
+  rowSection: { marginTop: Spacing.lg },
+  rowHeader: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: Spacing.containerMargin, marginBottom: Spacing.sm },
+  rowTitle: { ...Typography.titleMd, color: Colors.onSurface },
+  rowLoading: { paddingHorizontal: Spacing.containerMargin },
+  rowContent: { paddingHorizontal: Spacing.containerMargin },
   viewPillRow: { flexDirection: 'row', paddingHorizontal: Spacing.containerMargin, marginTop: Spacing.sm },
   viewPill: {
     flexDirection: 'row',

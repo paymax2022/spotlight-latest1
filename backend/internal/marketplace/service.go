@@ -29,6 +29,7 @@ type Service struct {
 	searcher   Searcher           // optional; nil ⇒ GET /search returns 501 SEARCH_NOT_WIRED
 	commission CommissionRecorder // optional; nil ⇒ realized-profit recording is a no-op
 	realtime   RealtimePublisher  // optional; nil ⇒ no live push (clients poll instead)
+	thumbs     ThumbPresigner     // optional; nil ⇒ listings serve without images
 	// referralEmitter was removed in the listings-and-connect pivot (ADR-023): the
 	// marketplace no longer settles purchases (no escrow release), so there is nothing
 	// to emit to the Direct Referral Rewards engine. See marketplace_routes.go, where
@@ -171,6 +172,73 @@ func (s *Service) GetCategory(ctx context.Context, id string) (*Category, error)
 // fallback (ILIKE title + category/condition/state/price filters, newest-first,
 // LIMIT-bounded) so the mobile search screen still returns real active listings
 // instead of a 501 dead-end. Full facets/relevance/geo ranking only ship with ES.
+// ─── Listing thumbnails ──────────────────────────────────────────────────────
+
+// listingThumbTTL is how long a thumbnail URL stays valid. Long enough that a
+// browse session never sees an image expire mid-scroll, short enough that a
+// leaked URL is not a durable handle on the object.
+const listingThumbTTL = 6 * time.Hour
+
+// WithThumbPresigner attaches the R2 presigner used to turn a stored object key
+// into a fetchable thumbnail URL. Without it listings still serve correctly, just
+// with no images — the same behaviour as before thumbnails existed, rather than
+// a hard failure on a display concern.
+func (s *Service) WithThumbPresigner(p ThumbPresigner) *Service {
+	s.thumbs = p
+	return s
+}
+
+// ThumbPresigner is the slice of the R2 presigner this needs, so the marketplace
+// package does not take a dependency on the whole platform client.
+type ThumbPresigner interface {
+	PresignGet(key string, expiry time.Duration) (string, error)
+	Configured() bool
+}
+
+// presignThumb converts one stored object key into a fetchable URL, or "" when
+// there is no presigner, no key, or signing fails. Never an error: a listing that
+// cannot show its photo is still a listing worth returning.
+func (s *Service) presignThumb(key string) string {
+	if key == "" || s.thumbs == nil || !s.thumbs.Configured() {
+		return ""
+	}
+	url, err := s.thumbs.PresignGet(key, listingThumbTTL)
+	if err != nil {
+		return ""
+	}
+	return url
+}
+
+// attachThumbs fills ThumbURL for a page of listings in ONE media query plus a
+// local signature each (signing is HMAC, no network).
+//
+// The objects sit in a private R2 bucket, so the client cannot fetch a raw key —
+// it needs a signed URL, which is why this happens on read rather than being
+// stored. If a public bucket or CDN binding is configured later, this is the one
+// place that changes.
+func (s *Service) attachThumbs(ctx context.Context, listings []*Listing) {
+	if len(listings) == 0 || s.thumbs == nil || !s.thumbs.Configured() {
+		return
+	}
+	ids := make([]string, 0, len(listings))
+	for _, l := range listings {
+		if l != nil {
+			ids = append(ids, l.ID)
+		}
+	}
+	keys, err := s.repo.ThumbKeysFor(ctx, ids)
+	if err != nil {
+		// Display-only: a listing page must not fail because a thumbnail lookup did.
+		log.Printf("[marketplace] thumbnail lookup failed for %d listing(s): %v", len(ids), err)
+		return
+	}
+	for _, l := range listings {
+		if l != nil {
+			l.ThumbURL = s.presignThumb(keys[l.ID])
+		}
+	}
+}
+
 func (s *Service) Search(ctx context.Context, req any) (any, error) {
 	if s.searcher != nil {
 		return s.searcher.Search(ctx, req)
@@ -187,6 +255,11 @@ func (s *Service) Search(ctx context.Context, req any) (any, error) {
 	if listings == nil {
 		listings = []Listing{}
 	}
+	ptrs := make([]*Listing, len(listings))
+	for i := range listings {
+		ptrs[i] = &listings[i]
+	}
+	s.attachThumbs(ctx, ptrs)
 	// Shape a search-response-like envelope the mobile client already understands
 	// (results + empty facets + no cursor). `degraded` flags the reduced mode.
 	return map[string]any{
@@ -264,7 +337,18 @@ func (s *Service) SellerProfile(ctx context.Context, sellerID string) (*TrustPro
 
 // SellerListings returns a seller's listings.
 func (s *Service) SellerListings(ctx context.Context, sellerID string, limit, offset int) ([]Listing, error) {
-	return s.repo.ListSellerListings(ctx, sellerID, limit, offset)
+	ls, err := s.repo.ListSellerListings(ctx, sellerID, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	// This is the "My listings" screen — the one a seller checks right after
+	// uploading photos, so it is the last place that should show a placeholder.
+	ptrs := make([]*Listing, len(ls))
+	for i := range ls {
+		ptrs[i] = &ls[i]
+	}
+	s.attachThumbs(ctx, ptrs)
+	return ls, nil
 }
 
 // SellerReviews returns a seller's visible reviews.

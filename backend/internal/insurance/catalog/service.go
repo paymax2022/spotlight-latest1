@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -106,11 +107,103 @@ type Product struct {
 // Service reads the versioned product catalog + routing table. All queries are
 // parameterized.
 type Service struct {
-	db *pgxpool.Pool
+	db      *pgxpool.Pool
+	options OptionsFetcher
 }
 
 // NewService constructs the catalog service over the pgx pool.
 func NewService(db *pgxpool.Pool) *Service { return &Service{db: db} }
+
+// OptionsFetcher fetches a schema field's remote option list from the provider.
+// Narrow on purpose: catalog needs one call, not the whole adapter.
+type OptionsFetcher interface {
+	FetchUtilityOptions(ctx context.Context, optionsURL, query string) ([]FieldOption, error)
+}
+
+// FieldOption is one choice in a remote-options select, in the shape the client
+// already reads.
+type FieldOption struct {
+	Value string `json:"value"`
+	Label string `json:"label"`
+}
+
+// WithOptionsFetcher attaches the provider adapter used to fill remote-options
+// fields. Without it FieldOptions reports the lookup as unavailable rather than
+// pretending the list is empty — an empty picker and an unreachable one are
+// different problems and the form should not conflate them.
+func (s *Service) WithOptionsFetcher(f OptionsFetcher) *Service {
+	s.options = f
+	return s
+}
+
+// ErrOptionsUnavailable means the field exists but its options cannot be served.
+var ErrOptionsUnavailable = errors.New("catalog: field options unavailable")
+
+// ErrNoSuchField means the product has no such field, or it carries no remote
+// option list.
+var ErrNoSuchField = errors.New("catalog: unknown field or field has no remote options")
+
+// FieldOptions serves the list behind a schema field's options_url.
+//
+// The client names a PRODUCT and a FIELD, never a URL: the URL is read from our
+// own stored schema here. That is what keeps this from being an open proxy —
+// see the pin in mycover.FetchUtilityOptions for the second half of it.
+//
+// `query` forwards a dependent list's parent value (a state's LGAs, say). It is
+// passed through as an opaque string; the provider decides whether it matters.
+func (s *Service) FieldOptions(ctx context.Context, productCode, fieldName, query string) ([]FieldOption, error) {
+	if s.db == nil {
+		return nil, fmt.Errorf("catalog: nil pool")
+	}
+	schema, _, err := s.FormSchema(ctx, productCode)
+	if err != nil {
+		return nil, err
+	}
+	url := optionsURLFor(schema, fieldName)
+	if url == "" {
+		return nil, ErrNoSuchField
+	}
+	if s.options == nil {
+		return nil, ErrOptionsUnavailable
+	}
+	return s.options.FetchUtilityOptions(ctx, url, query)
+}
+
+// optionsURLFor finds a field by name and returns its options_url.
+//
+// Walks nested children too: ~65 products nest their fields under a
+// `policy_holder` object and 17 have repeating groups, so a top-level-only scan
+// would miss most of the form.
+func optionsURLFor(schema map[string]any, fieldName string) string {
+	fields, _ := schema["fields"].([]any)
+	return findOptionsURL(fields, fieldName, 0)
+}
+
+func findOptionsURL(fields []any, fieldName string, depth int) string {
+	// Bounded so a schema that somehow references itself cannot spin.
+	if depth > 6 {
+		return ""
+	}
+	for _, raw := range fields {
+		f, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		if name, _ := f["name"].(string); name == fieldName {
+			if u, _ := f["options_url"].(string); strings.TrimSpace(u) != "" {
+				return u
+			}
+			// Named match with no options_url: keep looking, since a nested field
+			// may legitimately share the name.
+		}
+		if kids, ok := f["children"].([]any); ok {
+			if u := findOptionsURL(kids, fieldName, depth+1); u != "" {
+				return u
+			}
+		}
+	}
+	return ""
+}
 
 // ResolveProduct implements gateway.ProductResolver: maps a Paymax product_code
 // to (aggregator, per-product routing descriptor). Only ACTIVE products resolve.

@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"log"
 	"os"
 
@@ -39,6 +40,7 @@ import (
 //
 //	INSURANCE_MYCOVER_API_KEY (secret) / INSURANCE_MYCOVER_PUBLIC_KEY / INSURANCE_MYCOVER_WEBHOOK_SECRET / INSURANCE_MYCOVER_BASE_URL
 //	INSURANCE_OCTAMILE_API_KEY (secret) / INSURANCE_OCTAMILE_PUBLIC_KEY / INSURANCE_OCTAMILE_WEBHOOK_SECRET / INSURANCE_OCTAMILE_BASE_URL
+//
 // InsuranceServices exposes the subset of the insurance module other verticals
 // may reuse directly (in-process Go calls, not HTTP) — e.g. transport's parcel
 // flow binding real Goods-in-Transit cover. Nil-safe: a caller that gets a nil
@@ -83,6 +85,11 @@ func RegisterInsurance(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pg
 		os.Getenv("INSURANCE_OCTAMILE_WEBHOOK_SECRET"),
 		os.Getenv("INSURANCE_OCTAMILE_BASE_URL"),
 	)
+
+	// Remote-options dropdowns: catalog resolves the field's options_url from the
+	// stored schema, the adapter fetches it. Adapted rather than passed directly
+	// so catalog keeps its narrow OptionsFetcher and does not import the provider.
+	catalogSvc.WithOptionsFetcher(mycoverOptions{mycoverGW})
 
 	// Router resolves an adapter from the data-driven catalog (product.provider).
 	router := gateway.NewRouter(catalogSvc, mycoverGW, octamileGW)
@@ -144,6 +151,10 @@ func RegisterInsurance(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pg
 	// Dynamic purchase form. MyCover validates a bespoke field set per purchase
 	// family, so the app renders from this rather than a hardcoded form.
 	mg.GET("/products/:code/schema", catalogHandler.GetProductSchema)
+	// Remote-options dropdowns the schema points at (options_url). The client
+	// asks by product + field; the URL is resolved from our stored schema, so
+	// this is not an open proxy.
+	mg.GET("/products/:code/options/:field", catalogHandler.GetFieldOptions)
 	// NDPA consent (gate before any provider data-share).
 	mg.GET("/consent", consentHandler.Status)
 	mg.POST("/consent", consentHandler.Grant)
@@ -188,4 +199,21 @@ func RegisterInsurance(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pg
 	log.Println("[insurance] routes registered — catalog/quotes/policies/consent + premium-bind saga live")
 
 	return &InsuranceServices{Policy: policySvc, Catalog: catalogSvc, Consent: consentSvc}
+}
+
+// mycoverOptions adapts the MyCover client to catalog.OptionsFetcher, mapping the
+// provider's Option to the catalog's own type so neither package depends on the
+// other's shape.
+type mycoverOptions struct{ c *mycover.Client }
+
+func (m mycoverOptions) FetchUtilityOptions(ctx context.Context, optionsURL, query string) ([]catalog.FieldOption, error) {
+	opts, err := m.c.FetchUtilityOptions(ctx, optionsURL, query)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]catalog.FieldOption, 0, len(opts))
+	for _, o := range opts {
+		out = append(out, catalog.FieldOption{Value: o.Value, Label: o.Label})
+	}
+	return out, nil
 }

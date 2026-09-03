@@ -395,6 +395,7 @@ export interface BoostTier {
   tier: string;
   durationDays: number;
   priceKobo: number;
+  weight: number;
   label: string;
   description: string;
 }
@@ -406,6 +407,7 @@ export interface Boost {
   tier: string;
   durationDays: number;
   priceKobo: number;
+  weight: number;
   status: BoostStatus;
   rejectionReasonCode: string | null;
   startsAt: string | null;
@@ -413,9 +415,26 @@ export interface Boost {
   createdAt?: string;
 }
 
+// BoostQuote is the server-authoritative price preview for GET /boosts/quote —
+// PurchaseBoost resolves the SAME quote server-side, so a price shown here
+// and what createBoost actually charges can never drift.
+export interface BoostQuote {
+  mode: 'package' | 'custom';
+  tier?: string;
+  durationDays: number;
+  priceKobo: number;
+  weight: number;
+  startsAt: string;
+  endsAt: string;
+}
+
+// Exactly ONE of tier (a preset package) or endsAt (a custom date-range
+// boost — starts now, ends at this ISO timestamp, rounded up to whole days)
+// is expected.
 export interface CreateBoostInput {
   listingId: string;
-  tier: string;
+  tier?: string;
+  endsAt?: string;
 }
 
 // ─── Saved search (mkt_saved_searches) ───────────────────────────────────────

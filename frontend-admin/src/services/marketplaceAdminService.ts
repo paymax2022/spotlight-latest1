@@ -5,6 +5,7 @@ import type {
   MktFlagActionRequest,
   MktAdminAuditLogEntry,
   MktBoost,
+  MktBoostDailyRate,
 } from '@/types/marketplaceAdmin';
 
 // Paymax Marketplace admin console — service layer.
@@ -372,6 +373,26 @@ export async function upsertBoostPackage(data: any, reasonCode?: string): Promis
     method: 'PUT', headers: authHeaders(), body: JSON.stringify(body),
   });
   if (!res.ok) throw new Error(await parseErrorMessage(res, 'Upsert boost package failed'));
+  return res.json();
+}
+
+// The custom-range "N/day" rate (ADM-002/MO-002) — separate from the preset
+// boost packages above: this is what prices a mobile buyer's own
+// start-date+time/end-date+time boost, at duration (rounded up to whole
+// days) × this rate.
+export async function getBoostDailyRate(): Promise<MktBoostDailyRate> {
+  if (USE_FIXTURES) return delay({ daily_rate_kobo: 10_000 }); // mirrors the backend's seeded default (₦100/day)
+  const res = await fetch(`${marketplaceAdminBase()}/pricing/boosts/daily-rate`, { cache: 'no-store', headers: authHeaders() });
+  if (!res.ok) throw new Error(await parseErrorMessage(res, 'Boost daily rate fetch failed'));
+  return res.json();
+}
+
+export async function setBoostDailyRate(dailyRateKobo: number, reasonCode: string): Promise<MktBoostDailyRate> {
+  if (USE_FIXTURES) return delay({ daily_rate_kobo: dailyRateKobo });
+  const res = await fetch(`${marketplaceAdminBase()}/pricing/boosts/daily-rate`, {
+    method: 'PUT', headers: authHeaders(), body: JSON.stringify({ daily_rate_kobo: dailyRateKobo, reason_code: reasonCode }),
+  });
+  if (!res.ok) throw new Error(await parseErrorMessage(res, 'Set boost daily rate failed'));
   return res.json();
 }
 

@@ -38,7 +38,7 @@ func (s *Service) GetRestaurantDetail(ctx context.Context, restaurantID string) 
 	// deep link.
 	const qr = `SELECT ` + discoveryColumns + ` FROM restaurants r WHERE r.id=$1`
 	if err := s.db.QueryRow(ctx, qr, restaurantID).Scan(&r.ID, &r.OwnerID, &r.Name, &r.Description, &r.Address, &r.LogoURL, &r.IsOpen, &r.Rating, &r.Cuisine, &r.CreatedAt,
-		&r.MinOrderKobo, &r.PackagingFeeKobo, &r.PrepTimeMinutes, &r.GeoLat, &r.GeoLng, &r.HasPromo); err != nil {
+		&r.MinOrderKobo, &r.PackagingFeeKobo, &r.PrepTimeMinutes, &r.GeoLat, &r.GeoLng, &r.HasPromo, &r.IsFeatured, &r.LikeCount); err != nil {
 		return nil, fmt.Errorf("restaurant: not found")
 	}
 
