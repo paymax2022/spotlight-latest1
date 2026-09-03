@@ -525,15 +525,23 @@ func (s *Service) searchPayload(ctx context.Context, l *Listing) map[string]any 
 	}
 }
 
-// maxBoostWeight returns the largest catalog weight among the given (already
-// active + unexpired) boosts, or 0 if none. Pure/testable. §4: boost_mode:sum, so a
-// listing gets the single strongest boost's additive weight, not the sum of stacked
-// boosts (stacking must not let a seller buy their way to unbounded dominance).
+// maxBoostWeight returns the largest weight among the given (already active +
+// unexpired) boosts, or 0 if none. Pure/testable. §4: boost_mode:sum, so a
+// listing gets the single strongest boost's additive weight, not the sum of
+// stacked boosts (stacking must not let a seller buy their way to unbounded
+// dominance).
+//
+// Reads Boost.Weight — frozen on the row at purchase time by
+// ComputeBoostQuote/PurchaseBoost — rather than looking the tier up against
+// the current catalog. A live lookup would let an admin's later price/weight
+// change on mkt_boost_packages silently reweight an already-purchased boost,
+// which contradicts the pricing console's own disclosure that config changes
+// apply to new purchases only (ADM-001).
 func maxBoostWeight(boosts []Boost) float64 {
 	var max float64
 	for i := range boosts {
-		if t, ok := lookupBoostTier(boosts[i].Tier); ok && t.Weight > max {
-			max = t.Weight
+		if boosts[i].Weight > max {
+			max = boosts[i].Weight
 		}
 	}
 	return max

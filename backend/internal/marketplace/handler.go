@@ -3,6 +3,7 @@ package marketplace
 import (
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
@@ -364,7 +365,34 @@ func (h *Handler) ListOffers(c *gin.Context) {
 
 // BoostTiers GET /boosts/tiers
 func (h *Handler) BoostTiers(c *gin.Context) {
-	respond(c, http.StatusOK, h.svc.ListBoostTiers())
+	tiers, err := h.svc.ListBoostTiers(c.Request.Context())
+	if err != nil {
+		fail(c, err)
+		return
+	}
+	respond(c, http.StatusOK, tiers)
+}
+
+// GetBoostQuote GET /boosts/quote?tier=<pkg>  OR  ?ends_at=<RFC3339> — a
+// live, authoritative price preview so the client can show "5 days × ₦100 =
+// ₦500" before the user commits to POST /boosts. Public (no auth): pricing
+// info alone, no listing/wallet access.
+func (h *Handler) GetBoostQuote(c *gin.Context) {
+	var endsAt *time.Time
+	if raw := c.Query("ends_at"); raw != "" {
+		t, err := time.Parse(time.RFC3339, raw)
+		if err != nil {
+			fail(c, fieldErr(CodeValidation, "ends_at must be an RFC3339 timestamp", "ends_at"))
+			return
+		}
+		endsAt = &t
+	}
+	q, err := h.svc.ComputeBoostQuote(c.Request.Context(), c.Query("tier"), endsAt)
+	if err != nil {
+		fail(c, err)
+		return
+	}
+	respond(c, http.StatusOK, q)
 }
 
 // CreateBoost POST /boosts (Idempotency-Key)

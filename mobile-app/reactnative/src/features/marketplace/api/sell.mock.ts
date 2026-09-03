@@ -12,6 +12,7 @@
 
 import type {
   Boost,
+  BoostQuote,
   BoostTier,
   Category,
   CreateListingInput,
@@ -499,10 +500,14 @@ export async function mockPresignMedia(input: { fileName: string; mimeType: stri
 // ─── Boosts ───────────────────────────────────────────────────────────────────
 
 const BOOST_TIERS: BoostTier[] = [
-  { tier: 'spotlight_3d', durationDays: 3, priceKobo: 50_000, label: 'Spotlight — 3 days', description: 'Top of category results and a highlighted card for 3 days.' },
-  { tier: 'spotlight_7d', durationDays: 7, priceKobo: 100_000, label: 'Spotlight — 7 days', description: 'A full week of premium placement — best value for fast-moving items.' },
-  { tier: 'premium_14d', durationDays: 14, priceKobo: 180_000, label: 'Premium — 14 days', description: 'Two weeks across category, search, and the "Near you" home rail.' },
+  { tier: 'spotlight_3d', durationDays: 3, priceKobo: 50_000, weight: 1.0, label: 'Spotlight — 3 days', description: 'Top of category results and a highlighted card for 3 days.' },
+  { tier: 'spotlight_7d', durationDays: 7, priceKobo: 100_000, weight: 2.0, label: 'Spotlight — 7 days', description: 'A full week of premium placement — best value for fast-moving items.' },
+  { tier: 'premium_14d', durationDays: 14, priceKobo: 180_000, weight: 3.0, label: 'Premium — 14 days', description: 'Two weeks across category, search, and the "Near you" home rail.' },
 ];
+
+// Mirrors the real backend's seeded default (mkt_boost_daily_rate: ₦100/day).
+const MOCK_BOOST_DAILY_RATE_KOBO = 10_000;
+const MOCK_BASE_BOOST_WEIGHT = 1.0;
 
 const boostStore = new Map<string, Boost>();
 
@@ -511,25 +516,61 @@ export async function mockBoostTiers(): Promise<BoostTier[]> {
   return BOOST_TIERS;
 }
 
-export async function mockCreateBoost(listingId: string, tier: string): Promise<Boost> {
+// Mirrors the real ComputeBoostQuote: package mode looks up the tier;
+// custom mode rounds the [now, endsAt) range up to whole days and prices at
+// the flat daily rate — so the mock quote and the mock purchase always agree,
+// same as the real endpoint and PurchaseBoost share one computation.
+export async function mockBoostQuote(params: { tier?: string; endsAt?: string }): Promise<BoostQuote> {
+  await mockDelay(120);
+  const startsAt = now();
+  if (params.tier) {
+    const t = BOOST_TIERS.find((x) => x.tier === params.tier);
+    if (!t) throw Object.assign(new Error('Unknown boost tier'), { code: 'INVALID_BOOST_TIER', status: 400 });
+    return { mode: 'package', tier: t.tier, durationDays: t.durationDays, priceKobo: t.priceKobo, weight: t.weight, startsAt, endsAt: daysFromNow(t.durationDays) };
+  }
+  if (!params.endsAt) throw Object.assign(new Error('tier or endsAt is required'), { code: 'SCHEMA_VALIDATION_FAILED', status: 400 });
+  const days = customBoostDaysFor(params.endsAt);
+  return { mode: 'custom', durationDays: days, priceKobo: days * MOCK_BOOST_DAILY_RATE_KOBO, weight: MOCK_BASE_BOOST_WEIGHT, startsAt, endsAt: params.endsAt };
+}
+
+function customBoostDaysFor(endsAtIso: string): number {
+  const ms = new Date(endsAtIso).getTime() - Date.now();
+  return Math.max(1, Math.ceil(ms / (24 * 60 * 60 * 1000)));
+}
+
+export async function mockCreateBoost(listingId: string, tier?: string, endsAt?: string): Promise<Boost> {
   await mockDelay(420);
-  const t = BOOST_TIERS.find((x) => x.tier === tier);
-  if (!t) throw Object.assign(new Error('Unknown boost tier'), { code: 'BOOST_TIER_NOT_FOUND', status: 404 });
   const id = `bst_${Date.now()}`;
   // Simulate an occasional reason-coded rejection → instant auto-refund, so the
   // Boost status screen's rejection/refund branch is exercisable in mock mode.
   const rejected = /reject/i.test(listingId);
+
+  let boostTier: string, durationDays: number, priceKobo: number, weight: number;
+  if (tier) {
+    const t = BOOST_TIERS.find((x) => x.tier === tier);
+    if (!t) throw Object.assign(new Error('Unknown boost tier'), { code: 'BOOST_TIER_NOT_FOUND', status: 404 });
+    boostTier = t.tier; durationDays = t.durationDays; priceKobo = t.priceKobo; weight = t.weight;
+  } else if (endsAt) {
+    boostTier = 'custom';
+    durationDays = customBoostDaysFor(endsAt);
+    priceKobo = durationDays * MOCK_BOOST_DAILY_RATE_KOBO;
+    weight = MOCK_BASE_BOOST_WEIGHT;
+  } else {
+    throw Object.assign(new Error('tier or endsAt is required'), { code: 'SCHEMA_VALIDATION_FAILED', status: 400 });
+  }
+
   const boost: Boost = {
     id,
     listingId,
     sellerId: MOCK_SELF_SELLER_ID,
-    tier: t.tier,
-    durationDays: t.durationDays,
-    priceKobo: t.priceKobo,
+    tier: boostTier,
+    durationDays,
+    priceKobo,
+    weight,
     status: rejected ? 'rejected_with_reason' : 'active',
     rejectionReasonCode: rejected ? 'listing_quality_below_threshold' : null,
     startsAt: rejected ? null : now(),
-    endsAt: rejected ? null : daysFromNow(t.durationDays),
+    endsAt: rejected ? null : (endsAt ?? daysFromNow(durationDays)),
     createdAt: now(),
   };
   boostStore.set(id, boost);

@@ -754,14 +754,14 @@ func (r *Repository) DisputeQueue(ctx context.Context, status string, limit, off
 
 // ─── Boosts ──────────────────────────────────────────────────────────────────
 
-const boostCols = `id, listing_id, seller_id, tier, duration_days, price_kobo,
+const boostCols = `id, listing_id, seller_id, tier, duration_days, price_kobo, weight,
 	ledger_charge_ref, status, rejection_reason_code, refund_ref, starts_at, ends_at, created_at`
 
 func scanBoost(row pgx.Row) (*Boost, error) {
 	var b Boost
 	var status string
 	if err := row.Scan(
-		&b.ID, &b.ListingID, &b.SellerID, &b.Tier, &b.DurationDays, &b.PriceKobo,
+		&b.ID, &b.ListingID, &b.SellerID, &b.Tier, &b.DurationDays, &b.PriceKobo, &b.Weight,
 		&b.LedgerChargeRef, &status, &b.RejectionReasonCode, &b.RefundRef, &b.StartsAt, &b.EndsAt, &b.CreatedAt,
 	); err != nil {
 		return nil, err
@@ -774,10 +774,10 @@ func scanBoost(row pgx.Row) (*Boost, error) {
 func (r *Repository) InsertBoost(ctx context.Context, b *Boost) (*Boost, error) {
 	row := r.db.QueryRow(ctx, `
 		INSERT INTO public.mkt_boosts
-			(listing_id, seller_id, tier, duration_days, price_kobo, ledger_charge_ref, status, starts_at, ends_at)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+			(listing_id, seller_id, tier, duration_days, price_kobo, weight, ledger_charge_ref, status, starts_at, ends_at)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
 		RETURNING `+boostCols,
-		b.ListingID, b.SellerID, b.Tier, b.DurationDays, b.PriceKobo, b.LedgerChargeRef, string(b.Status), b.StartsAt, b.EndsAt,
+		b.ListingID, b.SellerID, b.Tier, b.DurationDays, b.PriceKobo, b.Weight, b.LedgerChargeRef, string(b.Status), b.StartsAt, b.EndsAt,
 	)
 	out, err := scanBoost(row)
 	if err != nil {
@@ -826,7 +826,7 @@ func (r *Repository) GetBoost(ctx context.Context, id string) (*Boost, error) {
 // boostColsB is boostCols qualified with the `b` alias, for the admin list JOIN
 // (mkt_boosts b LEFT JOIN mkt_listings l): `id` exists in both tables, so every
 // column must be table-qualified to avoid an ambiguous-column error.
-const boostColsB = `b.id, b.listing_id, b.seller_id, b.tier, b.duration_days, b.price_kobo,
+const boostColsB = `b.id, b.listing_id, b.seller_id, b.tier, b.duration_days, b.price_kobo, b.weight,
 	b.ledger_charge_ref, b.status, b.rejection_reason_code, b.refund_ref, b.starts_at, b.ends_at, b.created_at`
 
 // AdminBoostRow is the admin boost-console read-model: the full boost row plus the
@@ -844,7 +844,7 @@ func scanAdminBoost(row pgx.Row) (*AdminBoostRow, error) {
 	var b AdminBoostRow
 	var status string
 	if err := row.Scan(
-		&b.ID, &b.ListingID, &b.SellerID, &b.Tier, &b.DurationDays, &b.PriceKobo,
+		&b.ID, &b.ListingID, &b.SellerID, &b.Tier, &b.DurationDays, &b.PriceKobo, &b.Weight,
 		&b.LedgerChargeRef, &status, &b.RejectionReasonCode, &b.RefundRef, &b.StartsAt, &b.EndsAt, &b.CreatedAt,
 		&b.ListingTitle,
 	); err != nil {
@@ -852,6 +852,101 @@ func scanAdminBoost(row pgx.Row) (*AdminBoostRow, error) {
 	}
 	b.Status = BoostStatus(status)
 	return &b, nil
+}
+
+// ─── Boost pricing (ADM-002/MO-002) ────────────────────────────────────────────
+
+const boostPackageCols = `tier, label, duration_days, price_kobo, weight, is_active, updated_at, updated_by, created_at`
+
+func scanBoostPackage(row pgx.Row) (*BoostPackage, error) {
+	var p BoostPackage
+	if err := row.Scan(
+		&p.Tier, &p.Label, &p.DurationDays, &p.PriceKobo, &p.Weight, &p.IsActive,
+		&p.UpdatedAt, &p.UpdatedBy, &p.CreatedAt,
+	); err != nil {
+		return nil, err
+	}
+	return &p, nil
+}
+
+// ListBoostPackages returns every package — active AND inactive, so the admin
+// console can show and re-enable a disabled one — cheapest first.
+func (r *Repository) ListBoostPackages(ctx context.Context) ([]BoostPackage, error) {
+	rows, err := r.db.Query(ctx, `SELECT `+boostPackageCols+` FROM public.mkt_boost_packages ORDER BY price_kobo ASC`)
+	if err != nil {
+		return nil, wrapInternal("list boost packages", err)
+	}
+	defer rows.Close()
+	var out []BoostPackage
+	for rows.Next() {
+		p, serr := scanBoostPackage(rows)
+		if serr != nil {
+			return nil, wrapInternal("scan boost package", serr)
+		}
+		out = append(out, *p)
+	}
+	return out, rows.Err()
+}
+
+// GetBoostPackage loads one package by tier. Returns ErrBoostPackageNotFound
+// (a 400 INVALID_BOOST_TIER, matching the pre-migration lookup-miss behavior)
+// if no such tier exists — NOT a 404, since this is caller-input validation.
+func (r *Repository) GetBoostPackage(ctx context.Context, tier string) (*BoostPackage, error) {
+	row := r.db.QueryRow(ctx, `SELECT `+boostPackageCols+` FROM public.mkt_boost_packages WHERE tier=$1`, tier)
+	p, err := scanBoostPackage(row)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrBoostPackageNotFound
+		}
+		return nil, wrapInternal("get boost package", err)
+	}
+	return p, nil
+}
+
+// UpsertBoostPackage creates or updates a package's price/duration/weight/
+// active state (ADM-002 admin pricing console). Applies to NEW purchases only —
+// PurchaseBoost freezes duration_days/price_kobo/weight onto the boost row, so
+// an in-flight or already-purchased boost is untouched by a later edit here.
+func (r *Repository) UpsertBoostPackage(ctx context.Context, p BoostPackage, updatedBy string) (*BoostPackage, error) {
+	row := r.db.QueryRow(ctx, `
+		INSERT INTO public.mkt_boost_packages (tier, label, duration_days, price_kobo, weight, is_active, updated_by, updated_at)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,now())
+		ON CONFLICT (tier) DO UPDATE SET
+			label = EXCLUDED.label, duration_days = EXCLUDED.duration_days,
+			price_kobo = EXCLUDED.price_kobo, weight = EXCLUDED.weight,
+			is_active = EXCLUDED.is_active, updated_by = EXCLUDED.updated_by, updated_at = now()
+		RETURNING `+boostPackageCols,
+		p.Tier, p.Label, p.DurationDays, p.PriceKobo, p.Weight, p.IsActive, updatedBy,
+	)
+	out, err := scanBoostPackage(row)
+	if err != nil {
+		return nil, wrapInternal("upsert boost package", err)
+	}
+	return out, nil
+}
+
+// GetBoostDailyRate loads the singleton custom-range ₦/day rate.
+func (r *Repository) GetBoostDailyRate(ctx context.Context) (*BoostDailyRate, error) {
+	row := r.db.QueryRow(ctx, `SELECT daily_rate_kobo, updated_at, updated_by FROM public.mkt_boost_daily_rate WHERE id='default'`)
+	var d BoostDailyRate
+	if err := row.Scan(&d.DailyRateKobo, &d.UpdatedAt, &d.UpdatedBy); err != nil {
+		return nil, wrapInternal("get boost daily rate", err)
+	}
+	return &d, nil
+}
+
+// SetBoostDailyRate updates the singleton custom-range ₦/day rate (ADM-002).
+func (r *Repository) SetBoostDailyRate(ctx context.Context, kobo int64, updatedBy string) (*BoostDailyRate, error) {
+	row := r.db.QueryRow(ctx, `
+		UPDATE public.mkt_boost_daily_rate SET daily_rate_kobo=$1, updated_by=$2, updated_at=now()
+		WHERE id='default' RETURNING daily_rate_kobo, updated_at, updated_by`,
+		kobo, updatedBy,
+	)
+	var d BoostDailyRate
+	if err := row.Scan(&d.DailyRateKobo, &d.UpdatedAt, &d.UpdatedBy); err != nil {
+		return nil, wrapInternal("set boost daily rate", err)
+	}
+	return &d, nil
 }
 
 // ListBoosts returns boosts platform-wide for the admin boost console, newest-first,

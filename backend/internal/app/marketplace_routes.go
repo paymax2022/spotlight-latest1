@@ -274,6 +274,7 @@ func RegisterMarketplace(
 	base.GET("/sellers/:id/listings", h.SellerListings)
 	base.GET("/sellers/:id/reviews", h.SellerReviews)
 	base.GET("/boosts/tiers", h.BoostTiers)
+	base.GET("/boosts/quote", h.GetBoostQuote)
 
 	// ── Member group (auth) ──
 	m := base.Group("")
@@ -399,6 +400,14 @@ func RegisterMarketplace(
 	// platform-wide (read-scoped marketplace.admin.moderation); POST rejects+auto-refunds.
 	a.GET("/boosts", guard("marketplace.admin.moderation"), h.AdminListBoosts)
 	a.POST("/boosts/:id/reject", guard("marketplace.admin.reject"), h.AdminRejectBoost)
+
+	// Boost pricing (ADM-002/MO-002) — admin-editable packages + the custom-range
+	// ₦/day rate. Gated on marketplace.admin.pricing (seeded by
+	// 20261028000400_marketplace_pricing_rbac_perm.sql, granted super-admin/system-admin).
+	a.GET("/pricing/boosts", guard("marketplace.admin.pricing"), h.AdminListBoostPackages)
+	a.PUT("/pricing/boosts", guard("marketplace.admin.pricing"), h.AdminUpsertBoostPackage)
+	a.GET("/pricing/boosts/daily-rate", guard("marketplace.admin.pricing"), h.AdminGetBoostDailyRate)
+	a.PUT("/pricing/boosts/daily-rate", guard("marketplace.admin.pricing"), h.AdminSetBoostDailyRate)
 
 	log.Println("[marketplace] routes registered — listings/offers/boosts + trust/account + admin moderation + real-time audit (listings-and-connect; no escrow)")
 	return svc

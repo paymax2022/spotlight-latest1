@@ -171,3 +171,97 @@ func (h *Handler) AdminRejectBoost(c *gin.Context) {
 	}
 	respond(c, http.StatusOK, b)
 }
+
+// ─── Boost pricing (ADM-002/MO-002) ────────────────────────────────────────────
+// GET routes are read-scoped like the other dashboard-ish admin GETs; PUT routes
+// require reason_code and RBAC guard("marketplace.admin.pricing"), applied at
+// route registration (marketplace_routes.go), matching the moderation pattern.
+
+// AdminListBoostPackages GET /admin/pricing/boosts
+func (h *Handler) AdminListBoostPackages(c *gin.Context) {
+	pkgs, err := h.svc.repo.ListBoostPackages(c.Request.Context())
+	if err != nil {
+		fail(c, err)
+		return
+	}
+	respond(c, http.StatusOK, pkgs)
+}
+
+// boostPackageBody is PUT /admin/pricing/boosts' request body — the
+// MktBoostPackage shape (frontend-admin/src/types/marketplaceAdmin.ts) plus
+// the mandatory reason_code the console merges into the same object.
+type boostPackageBody struct {
+	Tier         string  `json:"tier"`
+	Label        string  `json:"label"`
+	DurationDays int     `json:"duration_days"`
+	PriceKobo    int64   `json:"price_kobo"`
+	Weight       float64 `json:"weight"`
+	IsActive     bool    `json:"is_active"`
+	ReasonCode   string  `json:"reason_code"`
+}
+
+// AdminUpsertBoostPackage PUT /admin/pricing/boosts — reason_code MANDATORY.
+func (h *Handler) AdminUpsertBoostPackage(c *gin.Context) {
+	uid, ok := requireUser(c)
+	if !ok {
+		return
+	}
+	var body boostPackageBody
+	if err := c.ShouldBindJSON(&body); err != nil {
+		fail(c, fieldErr(CodeValidation, err.Error(), ""))
+		return
+	}
+	if body.Tier == "" || body.Label == "" {
+		fail(c, fieldErr(CodeValidation, "tier and label are required", "tier"))
+		return
+	}
+	if body.DurationDays <= 0 {
+		fail(c, fieldErr(CodeValidation, "duration_days must be > 0", "duration_days"))
+		return
+	}
+	if body.PriceKobo < 0 {
+		fail(c, fieldErr(CodeValidation, "price_kobo must be >= 0", "price_kobo"))
+		return
+	}
+	pkg, err := h.svc.UpsertBoostPackage(c.Request.Context(), uid, BoostPackage{
+		Tier: body.Tier, Label: body.Label, DurationDays: body.DurationDays,
+		PriceKobo: body.PriceKobo, Weight: body.Weight, IsActive: body.IsActive,
+	}, body.ReasonCode)
+	if err != nil {
+		fail(c, err)
+		return
+	}
+	respond(c, http.StatusOK, pkg)
+}
+
+// AdminGetBoostDailyRate GET /admin/pricing/boosts/daily-rate
+func (h *Handler) AdminGetBoostDailyRate(c *gin.Context) {
+	r, err := h.svc.repo.GetBoostDailyRate(c.Request.Context())
+	if err != nil {
+		fail(c, err)
+		return
+	}
+	respond(c, http.StatusOK, r)
+}
+
+// AdminSetBoostDailyRate PUT /admin/pricing/boosts/daily-rate — reason_code MANDATORY.
+func (h *Handler) AdminSetBoostDailyRate(c *gin.Context) {
+	uid, ok := requireUser(c)
+	if !ok {
+		return
+	}
+	var body struct {
+		DailyRateKobo int64  `json:"daily_rate_kobo"`
+		ReasonCode    string `json:"reason_code"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		fail(c, fieldErr(CodeValidation, err.Error(), ""))
+		return
+	}
+	r, err := h.svc.SetBoostDailyRate(c.Request.Context(), uid, body.DailyRateKobo, body.ReasonCode)
+	if err != nil {
+		fail(c, err)
+		return
+	}
+	respond(c, http.StatusOK, r)
+}

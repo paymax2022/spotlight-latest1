@@ -198,6 +198,7 @@ type Boost struct {
 	Tier                string      `json:"tier"`
 	DurationDays        int         `json:"duration_days"`
 	PriceKobo           int64       `json:"price_kobo"`
+	Weight              float64     `json:"weight"`
 	LedgerChargeRef     string      `json:"ledger_charge_ref"`
 	Status              BoostStatus `json:"status"`
 	RejectionReasonCode *string     `json:"rejection_reason_code,omitempty"`
@@ -205,6 +206,44 @@ type Boost struct {
 	StartsAt            *time.Time  `json:"starts_at,omitempty"`
 	EndsAt              *time.Time  `json:"ends_at,omitempty"`
 	CreatedAt           time.Time   `json:"created_at"`
+}
+
+// BoostPackage mirrors mkt_boost_packages — the admin-editable catalog of
+// preset boost tiers (ADM-002/MO-002). Mirrors frontend-admin's MktBoostPackage
+// (types/marketplaceAdmin.ts) field-for-field so the pricing console renders
+// the backend response unchanged.
+type BoostPackage struct {
+	Tier         string     `json:"tier"`
+	Label        string     `json:"label"`
+	DurationDays int        `json:"duration_days"`
+	PriceKobo    int64      `json:"price_kobo"`
+	Weight       float64    `json:"weight"`
+	IsActive     bool       `json:"is_active"`
+	UpdatedAt    *time.Time `json:"updated_at,omitempty"`
+	UpdatedBy    *string    `json:"updated_by,omitempty"`
+	CreatedAt    *time.Time `json:"created_at,omitempty"`
+}
+
+// BoostDailyRate mirrors mkt_boost_daily_rate — the single admin-set ₦/day
+// rate used to price a custom (non-package) date-range boost.
+type BoostDailyRate struct {
+	DailyRateKobo int64      `json:"daily_rate_kobo"`
+	UpdatedAt     *time.Time `json:"updated_at,omitempty"`
+	UpdatedBy     *string    `json:"updated_by,omitempty"`
+}
+
+// BoostQuote is the authoritative, server-computed price for a would-be boost
+// purchase — returned by both GET /boosts/quote (preview) and internally by
+// PurchaseBoost, from the SAME ComputeBoostQuote call, so the two can never
+// price the same request differently.
+type BoostQuote struct {
+	Mode         string    `json:"mode"` // "package" | "custom"
+	Tier         string    `json:"tier,omitempty"`
+	DurationDays int       `json:"duration_days"`
+	PriceKobo    int64     `json:"price_kobo"`
+	Weight       float64   `json:"weight"`
+	StartsAt     time.Time `json:"starts_at"`
+	EndsAt       time.Time `json:"ends_at"`
 }
 
 // Offer mirrors mkt_offers. JSON is camelCase to match the mobile Offer type
@@ -355,10 +394,14 @@ type UpdateListingInput struct {
 	Attrs       map[string]any `json:"attrs,omitempty"`
 }
 
-// CreateBoostInput is the purchase-boost request body (§2.4).
+// CreateBoostInput is the purchase-boost request body (§2.4). Exactly ONE of
+// Tier (a preset package) or EndsAt (a custom date-range boost, priced by the
+// admin-set ₦/day rate) is expected — ComputeBoostQuote is the single place
+// that resolves and validates which.
 type CreateBoostInput struct {
-	ListingID string `json:"listing_id"`
-	Tier      string `json:"tier"`
+	ListingID string     `json:"listing_id"`
+	Tier      string     `json:"tier,omitempty"`
+	EndsAt    *time.Time `json:"ends_at,omitempty"`
 }
 
 // DecideDisputeInput is the admin dispute-decision body (§6.3).
