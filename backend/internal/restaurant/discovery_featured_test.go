@@ -19,6 +19,7 @@ func TestDiscoveryOrderByPutsFeaturedFirstOnEverySort(t *testing.T) {
 		{"rating", nil, nil},
 		{"name", nil, nil},
 		{"eta", nil, nil},
+		{"likes", nil, nil},
 		{"distance", &lat, &lng},
 		{"unknown-sort", nil, nil}, // default branch
 		{"", nil, nil},             // default
@@ -71,7 +72,7 @@ func TestDiscoveryOrderByFeaturedOnlyCountsLiveCampaigns(t *testing.T) {
 // LIMIT/OFFSET off len(whereArgs)+len(orderArgs). A stray placeholder here
 // would shift those and corrupt every paged query.
 func TestDiscoveryOrderByFeaturedAddsNoBoundParams(t *testing.T) {
-	for _, s := range []string{"rating", "name", "eta", ""} {
+	for _, s := range []string{"rating", "name", "eta", "likes", ""} {
 		got, args := discoveryOrderBy(s, nil, nil, 7)
 		if len(args) != 0 {
 			t.Errorf("sort %q returned %d args, want 0", s, len(args))
@@ -96,7 +97,7 @@ func TestDiscoveryOrderByFeaturedAddsNoBoundParams(t *testing.T) {
 // id tiebreaker that stops a restaurant appearing on two pages while another
 // never appears at all.
 func TestDiscoveryOrderByStillBreaksTiesWithFeatured(t *testing.T) {
-	for _, s := range []string{"rating", "name", "eta", ""} {
+	for _, s := range []string{"rating", "name", "eta", "likes", ""} {
 		got, _ := discoveryOrderBy(s, nil, nil, 1)
 		if !strings.HasSuffix(got, "r.id DESC") && !strings.HasSuffix(got, "r.id ASC") {
 			t.Errorf("sort %q lost its id tiebreaker: %q", s, got)

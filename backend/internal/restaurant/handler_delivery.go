@@ -38,11 +38,17 @@ func (h *Handler) ListRestaurants(c *gin.Context) {
 		Offset:  queryInt(c, "offset"),
 		// ?promo=1 backs the "Offers" browse tile.
 		PromoOnly: c.Query("promo") == "1" || c.Query("promo") == "true",
+		// ?featured=1 backs a "Featured" section.
+		FeaturedOnly: c.Query("featured") == "1" || c.Query("featured") == "true",
 		// ?near_lat & ?near_lng back ?sort=distance (see discoveryOrderBy). Only
 		// consulted together — a lone coordinate is not a location.
 		NearLat: queryFloat(c, "near_lat"),
 		NearLng: queryFloat(c, "near_lng"),
-	})
+		// ?min_price & ?max_price (kobo) back a price-range filter.
+		MinPriceKobo: queryInt64Ptr(c, "min_price"),
+		MaxPriceKobo: queryInt64Ptr(c, "max_price"),
+		// callerUserID marks which rows THIS caller liked (see attachLikedFlags).
+	}, c.GetString("user_id"))
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -76,6 +82,22 @@ func queryFloat(c *gin.Context, key string) *float64 {
 	return &v
 }
 
+// queryInt64Ptr reads an optional query param as an int64 (kobo amounts don't
+// fit queryInt's plain int/"0 means default" convention — 0 is a real,
+// meaningful minimum price), or nil if absent/unparseable/negative. nil is
+// the signal buildDiscoveryWhere treats as "no bound on this side".
+func queryInt64Ptr(c *gin.Context, key string) *int64 {
+	raw := c.Query(key)
+	if raw == "" {
+		return nil
+	}
+	v, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil || v < 0 {
+		return nil
+	}
+	return &v
+}
+
 // GetRestaurant → GET /restaurant/:id (restaurant detail + menu).
 func (h *Handler) GetRestaurant(c *gin.Context) {
 	detail, err := h.svc.GetRestaurantDetail(c.Request.Context(), c.Param("id"))
@@ -84,6 +106,28 @@ func (h *Handler) GetRestaurant(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, detail)
+}
+
+// LikeRestaurant → POST /restaurant/:id/like. Idempotent (see
+// Service.LikeRestaurant) — liking twice is a 200, not a 409.
+func (h *Handler) LikeRestaurant(c *gin.Context) {
+	userID := c.GetString("user_id")
+	if err := h.svc.LikeRestaurant(c.Request.Context(), userID, c.Param("id")); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"liked": true})
+}
+
+// UnlikeRestaurant → DELETE /restaurant/:id/like. Idempotent — unliking
+// something never liked is a 200, not a 404.
+func (h *Handler) UnlikeRestaurant(c *gin.Context) {
+	userID := c.GetString("user_id")
+	if err := h.svc.UnlikeRestaurant(c.Request.Context(), userID, c.Param("id")); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"liked": false})
 }
 
 // GetOrder → GET /restaurant/orders/:orderId (participant-scoped).
