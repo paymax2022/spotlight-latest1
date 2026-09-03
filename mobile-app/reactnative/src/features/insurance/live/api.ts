@@ -215,6 +215,40 @@ export async function createQuote(args: {
   });
 }
 
+// ── NDPA consent ────────────────────────────────────────────────────────────
+// Nigeria's Data Protection Act requires informed, specific consent BEFORE a
+// person's details are shared with an underwriter. The Go quote endpoint
+// enforces it and answers 428 with `ndpa_consent_required` until it is on
+// record, per product and per NDPA version.
+//
+// ⚠️ This must never be granted automatically on the user's behalf, or from a
+// pre-ticked box. Consent that the person did not knowingly give is not consent,
+// and recording it would make our audit trail a false statement about them. The
+// screen asks; this only reports and records the answer.
+
+/** True when the signed-in user has already consented for this product. */
+export async function getConsentStatus(productCode: string): Promise<boolean> {
+  return call(async () => {
+    const { data } = await api.get(`${INSURANCE_API_BASE}/consent`, {
+      params: { product_code: productCode, scope: 'provider_data_share' },
+    });
+    // Tolerates {granted}, {ok}, {data:{granted}} — the screen must not treat an
+    // unrecognised shape as "already consented", so anything unclear is false.
+    const d: any = (data as any)?.data ?? data;
+    return d?.granted === true || d?.ok === true || d?.has_consent === true;
+  });
+}
+
+/** Records consent for this product. Idempotent server-side. */
+export async function grantConsent(productCode: string): Promise<void> {
+  return call(async () => {
+    await api.post(`${INSURANCE_API_BASE}/consent`, {
+      product_code: productCode,
+      scope: 'provider_data_share',
+    });
+  });
+}
+
 // ── Purchase ────────────────────────────────────────────────────────────────
 export async function purchasePolicy(args: {
   quoteRef: string;
