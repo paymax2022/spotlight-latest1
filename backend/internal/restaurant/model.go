@@ -36,6 +36,20 @@ type Restaurant struct {
 	// terms are deliberately NOT here — a discount is validated and priced
 	// server-side at PlaceOrder, and this is purely the "offer available" badge.
 	HasPromo bool `json:"has_promo"`
+
+	// IsFeatured reports an ACTIVE paid placement in the RESTAURANT_TOP zone
+	// right now (see featuredFirstOrder in discovery_page.go, which already
+	// used this predicate to sort featured restaurants first — this just
+	// surfaces the same fact as a badge/filter instead of only an ordering).
+	IsFeatured bool `json:"is_featured,omitempty"`
+
+	// LikeCount is a live COUNT(*) over restaurant_likes, never a denormalized
+	// counter — see 20270166000000_restaurant_likes.sql. Liked is whether the
+	// AUTHENTICATED CALLER liked this restaurant; populated only by discovery
+	// reads that know who's asking (attachLikedFlags in discovery_page.go),
+	// omitted (false) elsewhere rather than guessed.
+	LikeCount int64 `json:"like_count"`
+	Liked     bool  `json:"liked,omitempty"`
 }
 
 // MenuCategory groups menu items (e.g. "Starters", "Mains").

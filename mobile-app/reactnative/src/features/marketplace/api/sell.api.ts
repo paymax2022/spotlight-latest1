@@ -27,6 +27,7 @@ import { MKT_USE_MOCK, mktGet, mktPost, mktPut, mktDelete, arr } from './client'
 import * as S from './sell.mock';
 import type {
   Boost,
+  BoostQuote,
   BoostTier,
   Category,
   CreateBoostInput,
@@ -165,8 +166,18 @@ export async function getBoostTiers(): Promise<BoostTier[]> {
   return arr(await mktGet<BoostTier[]>('/boosts/tiers'));
 }
 
+// getBoostQuote previews the SAME price createBoost will actually charge
+// (both resolve through the backend's ComputeBoostQuote) — pass exactly one
+// of tier (a preset package) or endsAt (a custom date-range boost, ISO
+// string with time-of-day) so the screen can show the fee live as the user
+// picks dates, before they commit to a purchase.
+export async function getBoostQuote(params: { tier?: string; endsAt?: string }): Promise<BoostQuote> {
+  if (MKT_USE_MOCK) return S.mockBoostQuote(params);
+  return mktGet<BoostQuote>('/boosts/quote', params.tier ? { tier: params.tier } : { ends_at: params.endsAt });
+}
+
 export async function createBoost(input: CreateBoostInput, idempotencyKey: string): Promise<Boost> {
-  if (MKT_USE_MOCK) return S.mockCreateBoost(input.listingId, input.tier);
+  if (MKT_USE_MOCK) return S.mockCreateBoost(input.listingId, input.tier, input.endsAt);
   return mktPost<Boost>('/boosts', input, idempotencyKey);
 }
 

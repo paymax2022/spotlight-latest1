@@ -43,29 +43,14 @@ func guardBoostTransition(from, to BoostStatus) error {
 	return nil
 }
 
-// BoostTier is one purchasable boost catalog entry.
+// BoostTier is one resolved, purchasable boost — either a preset package
+// (mkt_boost_packages, admin-editable via ADM-002) or a synthesized "custom"
+// entry priced by the admin-set ₦/day rate (ComputeBoostQuote in
+// service_boost.go resolves either shape into this same struct so
+// postBoostCharge/postBoostRefund need not know which).
 type BoostTier struct {
 	Tier         string  `json:"tier"`
 	DurationDays int     `json:"duration_days"`
 	PriceKobo    int64   `json:"price_kobo"`
 	Weight       float64 `json:"weight"` // additive boost_weight in ES function_score (§4)
-}
-
-// BoostTiers is the frozen boost catalog (§1 mkt_boosts.tier enum values).
-var BoostTiers = []BoostTier{
-	{Tier: "start", DurationDays: 7, PriceKobo: 50000, Weight: 1.0},
-	{Tier: "vip", DurationDays: 14, PriceKobo: 200000, Weight: 2.0},
-	{Tier: "vip_gold", DurationDays: 30, PriceKobo: 500000, Weight: 3.0},
-	{Tier: "diamond", DurationDays: 30, PriceKobo: 1500000, Weight: 5.0},
-	{Tier: "enterprise", DurationDays: 60, PriceKobo: 5000000, Weight: 8.0},
-}
-
-// lookupBoostTier returns the catalog entry for a tier, or (zero,false).
-func lookupBoostTier(tier string) (BoostTier, bool) {
-	for _, t := range BoostTiers {
-		if t.Tier == tier {
-			return t, true
-		}
-	}
-	return BoostTier{}, false
 }

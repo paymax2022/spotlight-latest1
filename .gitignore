@@ -90,3 +90,10 @@ __pycache__/
 # Agent working dumps (provider schema probes). Schemas are fetchable live from
 # MyCover /v2/public-product-details, so these are scratch, not source of truth.
 /SCRATCHPAD/
+
+# The dead prototype app, removed in c50c1e99 ("62% of trivy's high findings").
+# It is gone from develop and main, but a 474MB working copy survived the
+# deletion on developer machines — untracked and, until now, NOT ignored, so a
+# single `git add -A` from the repo root would have resurrected the vulnerable
+# dependencies the removal existed to get rid of. Ignored so that cannot happen.
+/apps/

@@ -41,6 +41,9 @@ export const MOCK_RESTAURANTS: Restaurant[] = [
     isOpen: true,
     address: '14 Adeola Odeku, Victoria Island',
     location: { lat: 6.4281, lng: 3.4219 },
+    likeCount: 342,
+    liked: false,
+    isFeatured: true,
   },
   {
     id: 'r2',
@@ -60,6 +63,8 @@ export const MOCK_RESTAURANTS: Restaurant[] = [
     isOpen: true,
     address: '3 Allen Avenue, Ikeja',
     location: { lat: 6.6018, lng: 3.3515 },
+    likeCount: 210,
+    liked: false,
   },
   {
     id: 'r3',
@@ -79,6 +84,8 @@ export const MOCK_RESTAURANTS: Restaurant[] = [
     isOpen: true,
     address: '22 Awolowo Road, Ikoyi',
     location: { lat: 6.4488, lng: 3.4316 },
+    likeCount: 98,
+    liked: false,
   },
   {
     id: 'r4',
@@ -98,6 +105,9 @@ export const MOCK_RESTAURANTS: Restaurant[] = [
     isOpen: true,
     address: '9 Admiralty Way, Lekki Phase 1',
     location: { lat: 6.4452, lng: 3.4744 },
+    likeCount: 156,
+    liked: false,
+    isFeatured: true,
   },
   {
     id: 'r5',
@@ -117,6 +127,8 @@ export const MOCK_RESTAURANTS: Restaurant[] = [
     isOpen: true,
     address: '5 Karimu Kotun, Victoria Island',
     location: { lat: 6.4302, lng: 3.4198 },
+    likeCount: 289,
+    liked: false,
   },
   {
     id: 'r6',
@@ -136,6 +148,8 @@ export const MOCK_RESTAURANTS: Restaurant[] = [
     isOpen: false,
     address: '17 Herbert Macaulay, Yaba',
     location: { lat: 6.5095, lng: 3.3711 },
+    likeCount: 64,
+    liked: false,
   },
 ];
 
@@ -330,7 +344,24 @@ function defaultMenu(): MenuCategory[] {
 
 export function mockRestaurantDetail(id: string): RestaurantDetail {
   const base = MOCK_RESTAURANTS.find((r) => r.id === id) ?? MOCK_RESTAURANTS[0];
-  return { ...base, menu: MENU_BY_RESTAURANT[id] ?? defaultMenu() };
+  return { ...withMockLikeState(base), menu: MENU_BY_RESTAURANT[id] ?? defaultMenu() };
+}
+
+// ─── Likes (mock) ────────────────────────────────────────────────────────────
+// Mock mode has no caller identity — one Set stands in for "the current user's
+// likes", the same simplification the mock uses everywhere else (a single
+// customer/rider/restaurant role rather than per-account state).
+const mockLikedIds = new Set<string>();
+
+export function mockToggleLike(id: string, liked: boolean): void {
+  if (liked) mockLikedIds.add(id);
+  else mockLikedIds.delete(id);
+}
+
+/** Overlay the mock caller's like state on a restaurant's seeded base count. */
+export function withMockLikeState<T extends Restaurant>(r: T): T {
+  const liked = mockLikedIds.has(r.id);
+  return { ...r, likeCount: r.likeCount + (liked ? 1 : 0), liked };
 }
 
 // ─── In-memory order store ────────────────────────────────────────────────────

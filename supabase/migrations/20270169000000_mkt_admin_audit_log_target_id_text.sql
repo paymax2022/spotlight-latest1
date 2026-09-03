@@ -1,0 +1,21 @@
+-- Widen mkt_admin_audit_log.target_id from uuid to text.
+--
+-- Every existing writer (RejectListing, RejectBoost, ActionFlag, ...) audits a
+-- real DB row with a uuid PK, so this is lossless for them (every uuid value
+-- casts to its own text form, and the AuditEntry.TargetID Go field was already
+-- a plain string — no application-code change needed).
+--
+-- The new boost-pricing admin mutations (UpsertBoostPackage, SetBoostDailyRate
+-- — see 20270166000000_marketplace_boost_pricing_config.sql) audit
+-- mkt_boost_packages/mkt_boost_daily_rate, which are keyed by TEXT (tier name,
+-- 'default'), not uuid. Writing "vip" into a NOT NULL uuid column fails the
+-- INSERT — writeAudit() treats a failed audit write as best-effort/non-fatal
+-- (the pricing change itself already committed), so this failed completely
+-- silently: no error surfaced anywhere, and the pricing console's own
+-- "Audit entry recorded" success message was simply false. Caught by live
+-- end-to-end verification (curl an admin PUT, then check the audit table),
+-- not by any test — this is exactly the failure mode that gave the admin
+-- money-path console its "operator sees success while nothing happens
+-- server-side" doc (docs/audit/ADMIN_SIMULATED_WRITES.md) its name.
+ALTER TABLE public.mkt_admin_audit_log
+  ALTER COLUMN target_id TYPE text USING target_id::text;

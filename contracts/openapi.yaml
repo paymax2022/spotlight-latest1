@@ -3656,9 +3656,10 @@ components:
     MktBoostTier:
       type: object
       properties:
-        tier: { type: string, enum: [start, vip, vip_gold, diamond, enterprise] }
+        tier: { type: string, description: "A preset package tier, or 'custom' for a date-range boost." }
         duration_days: { type: integer }
         price_kobo: { type: integer, format: int64 }
+        weight: { type: number, description: "Additive search-rank weight (ES function_score boost_mode:sum)." }
 
     MktBoost:
       type: object
@@ -3666,9 +3667,10 @@ components:
         id: { type: string, format: uuid }
         listing_id: { type: string, format: uuid }
         seller_id: { type: string, format: uuid }
-        tier: { type: string, enum: [start, vip, vip_gold, diamond, enterprise] }
+        tier: { type: string, description: "A preset package tier, or 'custom' for a date-range boost." }
         duration_days: { type: integer }
         price_kobo: { type: integer, format: int64 }
+        weight: { type: number, description: "Search-rank weight frozen onto this boost at purchase time." }
         ledger_charge_ref: { type: string }
         status: { $ref: '#/components/schemas/MktBoostStatus' }
         rejection_reason_code: { type: string, nullable: true }
@@ -3678,10 +3680,65 @@ components:
 
     MktBoostPurchaseRequest:
       type: object
-      required: [listing_id, tier]
+      required: [listing_id]
+      description: >
+        Exactly ONE of `tier` (a preset package) or `ends_at` (a custom
+        date-range boost, priced by the admin-set ₦/day rate — starts
+        immediately at purchase time, ends_at rounds UP to the next whole day)
+        is expected. GET /boosts/quote resolves either into the same price
+        before the caller commits to this request.
       properties:
         listing_id: { type: string, format: uuid }
-        tier: { type: string, enum: [start, vip, vip_gold, diamond, enterprise] }
+        tier: { type: string, description: "A preset package tier from GET /boosts/tiers. Omit for a custom date-range boost." }
+        ends_at: { type: string, format: date-time, description: "Custom-boost end date+time. Omit tier when set." }
+
+    MktBoostQuote:
+      type: object
+      description: Server-authoritative price preview for a would-be boost purchase (GET /boosts/quote).
+      properties:
+        mode: { type: string, enum: [package, custom] }
+        tier: { type: string, nullable: true }
+        duration_days: { type: integer }
+        price_kobo: { type: integer, format: int64 }
+        weight: { type: number }
+        starts_at: { type: string, format: date-time }
+        ends_at: { type: string, format: date-time }
+
+    MktBoostPackage:
+      type: object
+      description: Admin-editable boost package (ADM-002/MO-002).
+      properties:
+        tier: { type: string }
+        label: { type: string }
+        duration_days: { type: integer }
+        price_kobo: { type: integer, format: int64 }
+        weight: { type: number }
+        is_active: { type: boolean }
+        updated_at: { type: string, format: date-time, nullable: true }
+        updated_by: { type: string, format: uuid, nullable: true }
+
+    MktBoostPackageUpsertRequest:
+      allOf:
+        - $ref: '#/components/schemas/MktBoostPackage'
+        - type: object
+          required: [tier, label, duration_days, price_kobo, reason_code]
+          properties:
+            reason_code: { type: string, description: Mandatory; every pricing change is audited. }
+
+    MktBoostDailyRate:
+      type: object
+      description: The single admin-set ₦/day rate used to price a custom date-range boost.
+      properties:
+        daily_rate_kobo: { type: integer, format: int64 }
+        updated_at: { type: string, format: date-time, nullable: true }
+        updated_by: { type: string, format: uuid, nullable: true }
+
+    MktBoostDailyRateSetRequest:
+      type: object
+      required: [daily_rate_kobo, reason_code]
+      properties:
+        daily_rate_kobo: { type: integer, format: int64 }
+        reason_code: { type: string, description: Mandatory; every pricing change is audited. }
 
     MktSavedSearch:
       type: object
@@ -13389,6 +13446,26 @@ paths:
           content:
             application/json:
               schema: { type: array, items: { $ref: '#/components/schemas/MktBoostTier' } }
+  /v1/marketplace/boosts/quote:
+    get:
+      operationId: mktGetBoostQuote
+      summary: Preview a boost's authoritative price before purchasing
+      description: >
+        Pass EITHER `tier` (a preset package) OR `ends_at` (a custom
+        date-range boost, RFC3339). Public — no auth required, pricing info
+        only. PurchaseBoost resolves the SAME quote server-side, so the price
+        shown here and what is actually charged can never drift.
+      tags: [Marketplace]
+      parameters:
+        - { name: tier, in: query, required: false, schema: { type: string } }
+        - { name: ends_at, in: query, required: false, schema: { type: string, format: date-time } }
+      responses:
+        '200':
+          description: Computed quote
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MktBoostQuote' }
+        '400': { $ref: '#/components/responses/MktBadRequest' }
   /v1/marketplace/boosts:
     post:
       operationId: mktPurchaseBoost
@@ -13704,6 +13781,79 @@ paths:
         '403': { $ref: '#/components/responses/MktForbidden' }
   # Admin orders/aging REMOVED (ADR-023): no orders to age. MktOrder schema +
   # orders.aging RBAC perm retained (additive-only), unreachable.
+
+  # ── Boost pricing (ADM-002/MO-002) ─────────────────────────────────────
+  /v1/marketplace/admin/pricing/boosts:
+    get:
+      operationId: mktAdminListBoostPackages
+      summary: List boost packages (admin pricing console)
+      tags: [MarketplaceAdmin]
+      security: [{ bearerAuth: [] }]
+      description: "Requires marketplace.admin.pricing"
+      responses:
+        '200':
+          description: Boost package list
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: '#/components/schemas/MktBoostPackage' } }
+        '403': { $ref: '#/components/responses/MktForbidden' }
+    put:
+      operationId: mktAdminUpsertBoostPackage
+      summary: Create or edit a boost package's price/duration/weight/active state
+      tags: [MarketplaceAdmin]
+      security: [{ bearerAuth: [] }]
+      description: >
+        Requires marketplace.admin.pricing. reason_code mandatory, every
+        change audited (mkt_admin_audit_log). Applies to NEW purchases only —
+        an already-purchased boost keeps its bought terms (ADM-001).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/MktBoostPackageUpsertRequest' }
+      responses:
+        '200':
+          description: Saved package
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MktBoostPackage' }
+        '400': { $ref: '#/components/responses/MktBadRequest' }
+        '403': { $ref: '#/components/responses/MktForbidden' }
+  /v1/marketplace/admin/pricing/boosts/daily-rate:
+    get:
+      operationId: mktAdminGetBoostDailyRate
+      summary: Get the custom-range boost ₦/day rate
+      tags: [MarketplaceAdmin]
+      security: [{ bearerAuth: [] }]
+      description: "Requires marketplace.admin.pricing"
+      responses:
+        '200':
+          description: Current daily rate
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MktBoostDailyRate' }
+        '403': { $ref: '#/components/responses/MktForbidden' }
+    put:
+      operationId: mktAdminSetBoostDailyRate
+      summary: Set the custom-range boost ₦/day rate
+      tags: [MarketplaceAdmin]
+      security: [{ bearerAuth: [] }]
+      description: >
+        Requires marketplace.admin.pricing. reason_code mandatory, every
+        change audited. Applies to NEW custom-boost purchases only.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/MktBoostDailyRateSetRequest' }
+      responses:
+        '200':
+          description: Updated rate
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MktBoostDailyRate' }
+        '400': { $ref: '#/components/responses/MktBadRequest' }
+        '403': { $ref: '#/components/responses/MktForbidden' }
 
   # ── Trust & Account gap endpoints (Mobile-UX-Flows.md §28–34; ADR-021) ──
   # Non-money metadata (no Idempotency-Key). Bearer auth; owner-scoped (OLA).

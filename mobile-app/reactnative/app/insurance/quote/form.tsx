@@ -42,6 +42,9 @@ import {
   useProductSchema,
 } from '@/features/insurance/live/hooks';
 import { indicativePremiumKobo, nairaFromKobo } from '@/features/insurance/live/money';
+import { getConsentStatus, grantConsent } from '@/features/insurance/live/api';
+import { Pressable } from 'react-native';
+import { Check } from 'lucide-react-native';
 import type { FormValues, InsuranceError } from '@/features/insurance/live/types';
 
 export default function ApplicationForm() {
@@ -120,8 +123,38 @@ export default function ApplicationForm() {
 
   const p = product.data;
 
+  // Consent is per product and per NDPA version, so it is asked once per product
+  // and skipped silently for anyone who has already given it.
+  const [hasConsent, setHasConsent] = useState<boolean | null>(null);
+  const [consentTicked, setConsentTicked] = useState(false);
+  const [consentError, setConsentError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    // Unknown status must not read as "already consented" — default closed.
+    setHasConsent(null);
+    getConsentStatus(p.code)
+      .then((ok) => { if (!cancelled) setHasConsent(ok); })
+      .catch(() => { if (!cancelled) setHasConsent(false); });
+    return () => { cancelled = true; };
+  }, [p.code]);
+
   const submit = async (submittedValues: FormValues) => {
     if (!activeSchema) return;
+    // NDPA: the quote endpoint answers 428 ndpa_consent_required until consent is
+    // on record, because pricing SHARES the applicant's details with the
+    // underwriter. Record the tick before quoting rather than after, so we never
+    // transmit anything the person has not agreed to.
+    if (!hasConsent) {
+      if (!consentTicked) return;
+      try {
+        await grantConsent(p.code);
+        setHasConsent(true);
+      } catch (e) {
+        setConsentError('We could not record your consent. Please try again.');
+        return;
+      }
+    }
     const inputs = buildInputs(activeSchema.fields, submittedValues);
     try {
       const priced = await quote.mutateAsync({ productCode: p.code, inputs });
@@ -203,6 +236,31 @@ function lastNameOf(fullName: string | undefined): string {
 }
 
 const styles = StyleSheet.create({
+  consentBox: { marginTop: Spacing.md, gap: Spacing.xs },
+  consentRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: Spacing.sm,
+    padding: Spacing.md,
+    borderRadius: Radius.md,
+    borderWidth: 1,
+    borderColor: InsuranceColors.border,
+    backgroundColor: InsuranceColors.surfaceAlt,
+  },
+  checkbox: {
+    width: 20,
+    height: 20,
+    borderRadius: Radius.sm,
+    borderWidth: 2,
+    borderColor: InsuranceColors.border,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 1,
+  },
+  checkboxOn: { backgroundColor: Colors.primary, borderColor: Colors.primary },
+  consentText: { ...Typography.bodySm, color: InsuranceColors.text, flex: 1, lineHeight: 18 },
+  consentEmphasis: { fontWeight: '600', color: InsuranceColors.text },
+  consentError: { ...Typography.bodySm, color: InsuranceColors.danger, paddingHorizontal: Spacing.sm },
   safe: { flex: 1 },
   header: { gap: Spacing.sm, marginBottom: Spacing.md },
   privacy: { flexDirection: 'row', alignItems: 'flex-start', gap: Spacing.sm },

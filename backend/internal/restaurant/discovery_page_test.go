@@ -127,3 +127,77 @@ func TestBuildDiscoveryWherePromoOnlyReusesTheProjection(t *testing.T) {
 		t.Fatal("has_promo projection does not reuse livePromoExists")
 	}
 }
+
+// The Featured section and the badge/ranking must agree by construction, same
+// reasoning as PromoOnly above: a "Featured" section filtered on a different
+// predicate than the one that decides featuredFirstOrder and is_featured could
+// show a restaurant the badge/ranking disagree is featured.
+func TestBuildDiscoveryWhereFeaturedOnlyReusesTheProjection(t *testing.T) {
+	none, _ := buildDiscoveryWhere(DiscoveryParams{}.normalized(), false)
+	if strings.Contains(none, "featured_campaign") {
+		t.Fatalf("featured filter applied without FeaturedOnly: %s", none)
+	}
+	on, _ := buildDiscoveryWhere(DiscoveryParams{FeaturedOnly: true}.normalized(), false)
+	if !strings.Contains(on, restaurantIsFeatured) {
+		t.Fatalf("FeaturedOnly filter does not reuse restaurantIsFeatured: %s", on)
+	}
+	if !strings.Contains(discoveryColumns, restaurantIsFeatured) {
+		t.Fatal("is_featured projection does not reuse restaurantIsFeatured")
+	}
+	if !strings.Contains(featuredFirstOrder, restaurantIsFeatured) {
+		t.Fatal("featuredFirstOrder does not reuse restaurantIsFeatured")
+	}
+}
+
+// Price-range bounds must be parameterized (never interpolated) and must be
+// independently optional — a caller who only sets a minimum must not also get
+// an accidental upper bound, and vice versa.
+func TestBuildDiscoveryWherePriceRangeIsParameterizedAndIndependent(t *testing.T) {
+	none, args := buildDiscoveryWhere(DiscoveryParams{}.normalized(), false)
+	if strings.Contains(none, "min_order_kobo") {
+		t.Fatalf("price filter applied with neither bound set: %s", none)
+	}
+	if len(args) != 0 {
+		t.Fatalf("no args expected with neither bound set, got %v", args)
+	}
+
+	min := int64(200000)
+	minOnly, args := buildDiscoveryWhere(DiscoveryParams{MinPriceKobo: &min}.normalized(), false)
+	if !strings.Contains(minOnly, "r.min_order_kobo >= $1") {
+		t.Fatalf("min-only filter missing/malformed: %s", minOnly)
+	}
+	if strings.Contains(minOnly, "<=") {
+		t.Fatalf("min-only filter should not also bound the max: %s", minOnly)
+	}
+	if len(args) != 1 || args[0] != min {
+		t.Fatalf("args = %v, want [%v]", args, min)
+	}
+
+	max := int64(500000)
+	both, args := buildDiscoveryWhere(DiscoveryParams{MinPriceKobo: &min, MaxPriceKobo: &max}.normalized(), false)
+	if !strings.Contains(both, "r.min_order_kobo >= $1") || !strings.Contains(both, "r.min_order_kobo <= $2") {
+		t.Fatalf("both-bounds filter missing/malformed: %s", both)
+	}
+	if len(args) != 2 || args[0] != min || args[1] != max {
+		t.Fatalf("args = %v, want [%v %v]", args, min, max)
+	}
+}
+
+// "likes" must order by the discoveryColumns like_count alias (a live
+// COUNT(*), never a stored/denormalized counter) and must not itself consume
+// a bound parameter — same contract distance/featured are held to.
+func TestDiscoveryOrderByLikesUsesTheProjectedAliasAndNoBoundParams(t *testing.T) {
+	got, args := discoverySortTail("likes", nil, nil, 7)
+	if !strings.Contains(got, "like_count DESC") {
+		t.Fatalf("likes sort does not order by the like_count alias: %q", got)
+	}
+	if len(args) != 0 {
+		t.Fatalf("likes sort should bind no args, got %v", args)
+	}
+	if strings.Contains(got, "$7") {
+		t.Fatalf("likes sort should not consume a bound param: %q", got)
+	}
+	if !strings.Contains(discoveryColumns, "AS like_count") {
+		t.Fatal("discoveryColumns does not project like_count under that alias")
+	}
+}

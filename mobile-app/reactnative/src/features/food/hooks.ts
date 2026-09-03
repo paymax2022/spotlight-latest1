@@ -25,17 +25,18 @@ const KEY = 'food';
  * ones) so a screen can honestly say "showing 20 of 137".
  */
 export function useRestaurantSearch(params: food.RestaurantQuery = {}) {
-  const { q = '', cuisine = '', sort, promo = false, nearLat, nearLng } = params;
+  const { q = '', cuisine = '', sort, promo = false, featured = false, nearLat, nearLng, minPriceKobo, maxPriceKobo } = params;
   const query = useInfiniteQuery({
     // Every filter is in the key: a page fetched under one set of filters must
     // never be served for another. Coordinates are rounded to ~1km so the
     // normal GPS jitter between renders doesn't mint a fresh cache key (and a
     // fresh page-0 fetch) every time distance sort re-evaluates.
     queryKey: [KEY, 'restaurants', {
-      q, cuisine, sort: sort ?? 'newest', promo,
+      q, cuisine, sort: sort ?? 'newest', promo, featured, minPriceKobo, maxPriceKobo,
       near: nearLat != null && nearLng != null ? `${nearLat.toFixed(2)},${nearLng.toFixed(2)}` : null,
     }],
-    queryFn: ({ pageParam }) => food.listRestaurants({ q, cuisine, sort, promo, nearLat, nearLng, offset: pageParam }),
+    queryFn: ({ pageParam }) =>
+      food.listRestaurants({ q, cuisine, sort, promo, featured, nearLat, nearLng, minPriceKobo, maxPriceKobo, offset: pageParam }),
     initialPageParam: 0,
     // Page by the offset the SERVER reports it served, never by a locally
     // accumulated count: the two diverge the moment a row is added or removed
@@ -62,6 +63,80 @@ export function useRestaurant(id?: string) {
     queryFn: () => food.getRestaurant(id as string),
     enabled: Boolean(id),
     staleTime: 30_000,
+  });
+}
+
+/** Curated horizontal row: restaurants with an active paid RESTAURANT_TOP placement. */
+export function useFeaturedRestaurants(limit = 10) {
+  const query = useQuery({
+    queryKey: [KEY, 'featured', limit],
+    queryFn: () => food.listRestaurants({ featured: true, sort: 'likes', limit, offset: 0 }),
+    staleTime: 30_000,
+  });
+  return { ...query, items: query.data?.items ?? [] };
+}
+
+/**
+ * Curated horizontal row: nearest restaurants. Mirrors the ?view=nearby
+ * fallback already used below — real proximity once `coords` resolves,
+ * degrading to the kitchen-speed proxy (never empty) until then.
+ */
+export function useNearbyRestaurants(coords: LatLng | null, limit = 10) {
+  const near = coords ? `${coords.lat.toFixed(2)},${coords.lng.toFixed(2)}` : null;
+  const query = useQuery({
+    queryKey: [KEY, 'nearby', near, limit],
+    queryFn: () =>
+      coords
+        ? food.listRestaurants({ sort: 'distance', nearLat: coords.lat, nearLng: coords.lng, limit, offset: 0 })
+        : food.listRestaurants({ sort: 'eta', limit, offset: 0 }),
+    staleTime: 30_000,
+  });
+  return { ...query, items: query.data?.items ?? [] };
+}
+
+/** Optimistic like/unlike toggle; patches every cached page and detail read, rolls back on error. */
+export function useToggleRestaurantLike() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, liked }: { id: string; liked: boolean }) =>
+      liked ? food.likeRestaurant(id) : food.unlikeRestaurant(id),
+    onMutate: async ({ id, liked }) => {
+      await qc.cancelQueries({ queryKey: [KEY] });
+
+      const patch = <T extends { id: string; liked: boolean; likeCount: number }>(r: T): T =>
+        r.id === id && r.liked !== liked
+          ? { ...r, liked, likeCount: Math.max(0, r.likeCount + (liked ? 1 : -1)) }
+          : r;
+
+      // Paged discovery lists (useInfiniteQuery → {pages: RestaurantPage[]}) —
+      // covers the main list, Featured row, and Near By row (all keyed under
+      // [KEY, 'restaurants'/'featured'/'nearby']).
+      qc.getQueriesData<{ items: { id: string; liked: boolean; likeCount: number }[] }>({
+        queryKey: [KEY, 'featured'],
+      }).forEach(([key, data]) => data && qc.setQueryData(key, { ...data, items: data.items.map(patch) }));
+      qc.getQueriesData<{ items: { id: string; liked: boolean; likeCount: number }[] }>({
+        queryKey: [KEY, 'nearby'],
+      }).forEach(([key, data]) => data && qc.setQueryData(key, { ...data, items: data.items.map(patch) }));
+      qc.getQueriesData<{ pages: food.RestaurantPage[]; pageParams: unknown[] }>({
+        queryKey: [KEY, 'restaurants'],
+      }).forEach(([key, data]) => {
+        if (!data) return;
+        qc.setQueryData(key, { ...data, pages: data.pages.map((p) => ({ ...p, items: p.items.map(patch) })) });
+      });
+
+      // Single-restaurant detail reads.
+      qc.getQueriesData<{ id: string; liked: boolean; likeCount: number }>({
+        queryKey: [KEY, 'restaurant', id],
+      }).forEach(([key, data]) => data && qc.setQueryData(key, patch(data)));
+
+      return {};
+    },
+    onSettled: (_d, _e, vars) => {
+      qc.invalidateQueries({ queryKey: [KEY, 'restaurants'] });
+      qc.invalidateQueries({ queryKey: [KEY, 'featured'] });
+      qc.invalidateQueries({ queryKey: [KEY, 'nearby'] });
+      qc.invalidateQueries({ queryKey: [KEY, 'restaurant', vars.id] });
+    },
   });
 }
 

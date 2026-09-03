@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text, StyleSheet, ActivityIndicator } from 'react-native';
+import { View, Text, StyleSheet, ActivityIndicator, Pressable } from 'react-native';
 import * as Icons from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
@@ -16,6 +16,12 @@ interface Props {
   icon?: string;                 // lucide name (empty/error)
   actionLabel?: string;
   onAction?: () => void;
+  // Optional second action, rendered under the primary one as a quieter link.
+  // Empty states are often the ONLY place a feature is discoverable — a merchant
+  // with no orders is exactly who needs to hear they can promote themselves —
+  // and that offer must not compete with the primary next step.
+  secondaryActionLabel?: string;
+  onSecondaryAction?: () => void;
   compact?: boolean;             // render inline (no flex:1 centering)
   hideIcon?: boolean;            // omit the leading icon (empty/error only)
 }
@@ -24,7 +30,7 @@ interface Props {
  * Shared loading / empty / error state block, reusable across modules so each
  * screen renders states consistently instead of re-styling them inline.
  */
-export default function StateView({ kind, title, message, icon, actionLabel, onAction, compact, hideIcon }: Props) {
+export default function StateView({ kind, title, message, icon, actionLabel, onAction, secondaryActionLabel, onSecondaryAction, compact, hideIcon }: Props) {
   const IconComponent =
     (Icons as unknown as Record<string, Icons.LucideIcon>)[icon ?? ''] ??
     (kind === 'error' ? Icons.CloudOff : Icons.Inbox);
@@ -61,6 +67,13 @@ export default function StateView({ kind, title, message, icon, actionLabel, onA
 }
 
 const styles = StyleSheet.create({
+  secondaryAction: { paddingVertical: Spacing.xs, paddingHorizontal: Spacing.sm },
+  secondaryActionLabel: {
+    ...Typography.bodySm,
+    color: Colors.primary,
+    fontWeight: '600',
+    textAlign: 'center',
+  },
   wrap: {
     flex: 1,
     alignItems: 'center',

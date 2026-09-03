@@ -1543,6 +1543,8 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		restGroup.PATCH("/:id/staff/:userId", restaurantHandler.SetStaffStatus)
 		restGroup.GET("/earnings", restaurantHandler.Earnings) // caller's food-delivery earnings
 		restGroup.GET("/:id", restaurantHandler.GetRestaurant)
+		restGroup.POST("/:id/like", restaurantHandler.LikeRestaurant)
+		restGroup.DELETE("/:id/like", restaurantHandler.UnlikeRestaurant)
 
 		// Store management (owner only): edit profile + operational open/close.
 		restGroup.PATCH("/:id", restaurantHandler.UpdateRestaurant)

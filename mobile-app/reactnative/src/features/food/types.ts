@@ -47,6 +47,12 @@ export interface Restaurant {
   isOpen: boolean;
   address?: string;
   location?: LatLng | null;
+  /** Live COUNT(*) of likes — never client-computed, always server-supplied. */
+  likeCount: number;
+  /** Whether the authenticated caller has liked this restaurant. */
+  liked: boolean;
+  /** Active paid RESTAURANT_TOP placement, right now (see the Featured section). */
+  isFeatured?: boolean;
 }
 
 /**
