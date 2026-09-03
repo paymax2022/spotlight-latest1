@@ -1,0 +1,68 @@
+# Called by ci.yml, which is the single pipeline for a push or PR. Like the other
+# module lanes this has no push/pull_request trigger of its own — ci.yml decides
+# whether the module changed (scripts/ci/changed-modules.py, driven by
+# .github/module-filters.json) and calls this as a reusable workflow, so its jobs
+# report inside that one run. Paths live ONLY in module-filters.json.
+name: Commerce CI
+
+# Covers restaurant (food delivery) and marketplace TOGETHER, in one lane, for a
+# hard reason: GitHub allows a caller at most 20 unique reusable workflows and
+# ci.yml was already at 19. Two separate lanes would have been 21 and broken the
+# pipeline at startup — scripts/ci/test-changed-modules.py asserts the cap so
+# that fails loudly rather than mysteriously. If these ever need splitting, a
+# slot has to be freed first (merge two related lanes, or move shared steps into
+# a _reusable-*.yml that several callers share).
+#
+# Why this lane exists at all: these were the two largest untested backend
+# packages on a develop push — restaurant has 61 test files, the biggest suite in
+# the repo, and marketplace 6. Neither had a lane, so `go test` ran for them only
+# INCIDENTALLY, when some unrelated module's path gate happened to fire on the
+# same push and that module's lane ran the repo-wide suite. A push touching only
+# restaurant or marketplace paths ran no Go test at all. That is how
+# 4cb6541b (boost pricing) shipped a broken live-DB fixture unnoticed.
+#
+# There is deliberately NO migration-guard job here. ci.yml already calls
+# _reusable-migration-guard.yml unconditionally on every push, and that guard is
+# the correct one: it scans only the migrations ADDED/MODIFIED in the push, plus
+# checks for duplicate versions. A per-module copy (as the older lanes carry)
+# scans the module's whole migration history instead, which fails on legacy
+# files that predate the rule — the commerce set has four such statements today
+# (constraint drops in restaurant_promos/orders, a DROP CONSTRAINT IF EXISTS on
+# mkt_listings, and a target_id TYPE change), so a copied guard would have
+# reddened develop on the first commerce change rather than catching anything
+# new.
+#
+# NOTE this lane does NOT close the live-DB gap: like every other module lane it
+# sets no TEST_DATABASE_URL and stands up no Postgres, so `*_live_db_test.go`
+# still skips here. Only integration-verify.yml runs those, and it triggers on
+# push to main + pull_request. A green Commerce CI means the unit and handler
+# suites passed, not the live-DB ones.
+
+on:
+  workflow_call:
+  workflow_dispatch:
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.x'
+          cache-dependency-path: backend/go.sum
+      - name: Build (whole backend — catches route wiring / import breaks)
+        run: go build ./...
+      - name: Vet (restaurant + marketplace and their sub-packages)
+        run: go vet ./internal/restaurant/... ./internal/marketplace/...
+      # Verbose for these two so a failure names the test, which is the point of
+      # the lane: these are the packages whose failures used to be invisible.
+      - name: Test (restaurant — orders, settlement split, fees, dispatch)
+        run: go test ./internal/restaurant/... -count=1 -v
+      - name: Test (marketplace — listings, boosts, moderation, search)
+        run: go test ./internal/marketplace/... -count=1 -v
+      - name: Test (all — regression)
+        run: go test ./... -count=1

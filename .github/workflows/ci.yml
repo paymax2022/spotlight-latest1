@@ -166,6 +166,7 @@ jobs:
     outputs:
       association: ${{ steps.route.outputs.association }}
       connect: ${{ steps.route.outputs.connect }}
+      commerce: ${{ steps.route.outputs.commerce }}
       crowdfunding: ${{ steps.route.outputs.crowdfunding }}
       crypto_backend: ${{ steps.route.outputs.crypto_backend }}
       doctor: ${{ steps.route.outputs.doctor }}
@@ -213,6 +214,12 @@ jobs:
     needs: changes
     if: needs.changes.outputs.connect == 'true'
     uses: ./.github/workflows/connect-ci.yml
+
+  commerce:
+    name: Commerce CI
+    needs: changes
+    if: needs.changes.outputs.commerce == 'true'
+    uses: ./.github/workflows/commerce-ci.yml
 
   crowdfunding:
     name: Crowdfunding CI
