@@ -2,6 +2,7 @@
 
 import { useEffect, useState, type PropsWithChildren } from 'react';
 import { startAdminSessionSync, syncAdminSession } from '@/features/auth/adminSession';
+import { PropertyPicker } from './_ui';
 
 /**
  * Keeps the hotelier extranet's Bearer token fresh.
@@ -46,5 +47,12 @@ export default function ExtranetLayout({ children }: PropsWithChildren) {
   useEffect(() => startAdminSessionSync(), []);
 
   if (!checked) return null;
-  return <>{children}</>;
+  return (
+    <>
+      <div style={{ padding: '0.5rem 0.5rem 0' }}>
+        <PropertyPicker />
+      </div>
+      {children}
+    </>
+  );
 }
