@@ -115,14 +115,18 @@ jobs:
         run: |
           cd backend
           set -o pipefail
-          go test ./internal/savings/... ./internal/handlers/... ./internal/trading/wallet/... \
-            -race -v -run 'TestLiveDB_|TestAdminConsole_' 2>&1 | tee /tmp/livedb-test.log
+          go test ./internal/savings/... ./internal/handlers/... ./internal/trading/wallet/... ./tests/voting/... \
+            -race -v -run 'TestLiveDB_|TestAdminConsole_|TestTally_|TestRegistration_|TestMirror_' 2>&1 | tee /tmp/livedb-test.log
           for t in TestLiveDB_BalanceForOwner_RejectsNonOwner \
                    TestLiveDB_TargetBalanceForMember_RejectsNonMember \
                    TestLiveDB_PenaltyRate_IsServerSideNotCallerSupplied \
                    TestLiveDB_TradingWallet_MoneyPath \
                    TestAdminConsole_Dashboard \
-                   TestAdminConsole_GetOrders; do
+                   TestAdminConsole_GetOrders \
+                   TestTally_CountsThePurchaseWhenTheWebhookCreditsIt \
+                   TestTally_RefusesToReCreditAfterARefundAndRecordsWhy \
+                   TestRegistration_RejectsASecondLiveApplicationForTheSameContest \
+                   TestMirror_CreatesTheLegacyRowSoTheContestCanHoldPackages; do
             grep -q -- "--- PASS: $t" /tmp/livedb-test.log \
               || { echo "::error::$t did not run (skipped?) — live-DB coverage is not gating"; exit 1; }
           done
