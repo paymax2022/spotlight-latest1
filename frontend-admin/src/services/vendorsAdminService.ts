@@ -242,9 +242,14 @@ export async function setVendorStatus(
   vendorId: string,
   status: VendorStatus,
 ): Promise<{ status: VendorStatus }> {
+  // Real, verified live endpoint (see the comment above) — fixture mode
+  // refuses loudly instead of reporting a write it did not perform. See
+  // docs/audit/ADMIN_SIMULATED_WRITES.md.
   if (USE_FIXTURES) {
-    await new Promise((r) => setTimeout(r, 300));
-    return { status };
+    throw new Error(
+      'Setting vendor status is unavailable in fixture mode: this console will not report a write it did not perform. ' +
+      'Set NEXT_PUBLIC_VENDORS_ADMIN_USE_MOCK=false to make this change against the live backend.',
+    );
   }
   const res = await fetch(
     `${financeApiBase()}/estate/${encodeURIComponent(estateId)}/vendors/${encodeURIComponent(vendorId)}/verify`,

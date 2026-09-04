@@ -46,6 +46,20 @@ function authHeaders(): Record<string, string> {
 }
 const delay = (ms = 240) => new Promise((r) => setTimeout(r, ms));
 
+// Every write below has a real, RBAC-gated live endpoint (verified against
+// backend/internal/health/triage/{care,governance}/handler.go) so fixture mode
+// has nothing to add and refuses loudly instead of reporting a write it did
+// not perform. Two of them (acknowledgeEscalation, resolveEscalation) used to
+// go further and fabricate compliance language — "Written to immutable audit
+// (SC-12)" — about an audit entry that was never written; that class of claim
+// is exactly what docs/audit/ADMIN_SIMULATED_WRITES.md calls "the most
+// dangerous strings in this codebase," and it wasn't caught by
+// scripts/ci/check-simulated-writes.py's claim-pattern check because the
+// wording ("Written to" vs. the pattern's "Recorded to") didn't match.
+const NOT_IN_FIXTURE_MODE =
+  'is unavailable in fixture mode: this console will not report a write it did not perform. ' +
+  'Set NEXT_PUBLIC_HEALTH_USE_MOCK=false to make this change against the live backend.';
+
 async function getJson<T>(path: string): Promise<T> {
   const res = await fetch(`${adminBase()}${path}`, { headers: authHeaders() });
   if (!res.ok) throw new Error(`Request failed (${res.status})`);
@@ -59,7 +73,6 @@ async function sendJson<T>(method: 'POST' | 'PATCH' | 'PUT', path: string, body:
   return (j?.data ?? j) as T;
 }
 
-const auditId = () => `aud_${Math.random().toString(36).slice(2, 10)}`;
 const iso = (hoursAgo: number) => new Date(Date.now() - hoursAgo * 3_600_000).toISOString();
 
 // Disposition-level display labels (NEVER use "diagnosis" — SC-1).
@@ -176,18 +189,12 @@ export async function listEscalations(opts?: { state?: string; q?: string }): Pr
 }
 
 export async function acknowledgeEscalation(id: string, handoffNote?: string): Promise<EscalationActionResult> {
-  if (USE_MOCK) {
-    await delay();
-    return { id, state: 'acknowledged', audit_id: auditId(), message: `Escalation ${id} acknowledged by clinician (human-in-the-loop, SC-5). Hand-off note recorded. Written to immutable audit (SC-12).` };
-  }
+  if (USE_MOCK) throw new Error(`Acknowledging an escalation ${NOT_IN_FIXTURE_MODE}`);
   return sendJson<EscalationActionResult>('POST', `/escalations/${id}/ack`, { handoff_note: handoffNote });
 }
 
 export async function resolveEscalation(id: string, handoffNote?: string): Promise<EscalationActionResult> {
-  if (USE_MOCK) {
-    await delay();
-    return { id, state: 'resolved', audit_id: auditId(), message: `Escalation ${id} resolved by clinician after hand-off to in-person/urgent care (SC-5). Written to immutable audit (SC-12).` };
-  }
+  if (USE_MOCK) throw new Error(`Resolving an escalation ${NOT_IN_FIXTURE_MODE}`);
   return sendJson<EscalationActionResult>('POST', `/escalations/${id}/resolve`, { handoff_note: handoffNote });
 }
 
@@ -226,14 +233,7 @@ export async function listContent(opts?: { state?: string; kind?: string; langua
 }
 
 export async function createContent(input: ClinicalContentInput): Promise<ClinicalContentItem> {
-  if (USE_MOCK) {
-    await delay();
-    return {
-      id: `cnt_${Math.random().toString(36).slice(2, 8)}`,
-      title: input.title, kind: input.kind, language: input.language, state: 'draft', version: 1,
-      body_preview: input.body_preview, reviewer_id: null, signed_off_at: null, author_id: 'me', updated_at: new Date().toISOString(),
-    };
-  }
+  if (USE_MOCK) throw new Error(`Creating clinical content ${NOT_IN_FIXTURE_MODE}`);
   return sendJson<ClinicalContentItem>('POST', '/content', input);
 }
 
@@ -241,20 +241,7 @@ export async function createContent(input: ClinicalContentInput): Promise<Clinic
 // clinician sign-off (SC-6): the mock blocks publish unless the item is APPROVED
 // (i.e. a reviewer has signed off in CLINICAL_REVIEW → APPROVED).
 export async function governContent(id: string, action: GovernanceAction): Promise<GovernanceResult> {
-  if (USE_MOCK) {
-    await delay();
-    const item = CONTENT.find((c) => c.id === id);
-    if (action === 'publish' && item && !item.reviewer_id) {
-      return { id, state: item.state, version: item.version, audit_id: auditId(), message: `Fixture — nothing was saved. Publish blocked — clinical content requires a licensed-clinician sign-off before publish (SC-6). Move it through CLINICAL_REVIEW → APPROVED first. (SC-12).` };
-    }
-    const next: GovernanceState =
-      action === 'submit' ? 'clinical_review'
-      : action === 'approve' ? 'approved'
-      : action === 'publish' ? 'published'
-      : 'deprecated';
-    const signNote = action === 'approve' ? ' Clinician sign-off recorded (SC-6).' : '';
-    return { id, state: next, version: item ? item.version + (action === 'publish' ? 1 : 0) : 1, audit_id: auditId(), message: `Fixture — nothing was saved. Content ${id}: ${action} applied → ${next.toUpperCase()}.${signNote} Versioned & auditable (SC-6). (SC-12).` };
-  }
+  if (USE_MOCK) throw new Error(`Governing clinical content ${NOT_IN_FIXTURE_MODE}`);
   return sendJson<GovernanceResult>('POST', `/content/${id}/${action}`, {});
 }
 
@@ -283,38 +270,21 @@ export async function listRedFlagRules(opts?: { state?: string; q?: string }): P
   const qs = new URLSearchParams();
   if (opts?.state) qs.set('state', opts.state);
   if (opts?.q) qs.set('q', opts.q);
-  return getJson<RedFlagRule[]>(`/red-flag-rules${qs.toString() ? `?${qs}` : ''}`);
+  // backend: GET /rules (governance.Handler.ListRules) — the OLD /red-flag-rules
+  // path here matched no route; fixed to the real one.
+  return getJson<RedFlagRule[]>(`/rules${qs.toString() ? `?${qs}` : ''}`);
 }
 
 export async function createRedFlagRule(input: RedFlagRuleInput): Promise<RedFlagRule> {
-  if (USE_MOCK) {
-    await delay();
-    return {
-      id: `rfr_${Math.random().toString(36).slice(2, 8)}`,
-      name: input.name, state: 'draft', version: 1, escalate_to: input.escalate_to,
-      condition: input.condition, rationale: input.rationale, reviewer_id: null, signed_off_at: null,
-      author_id: 'me', updated_at: new Date().toISOString(),
-    };
-  }
-  return sendJson<RedFlagRule>('POST', '/red-flag-rules', input);
+  if (USE_MOCK) throw new Error(`Creating a red-flag rule ${NOT_IN_FIXTURE_MODE}`);
+  return sendJson<RedFlagRule>('POST', '/rules', input);
 }
 
 export async function governRedFlagRule(id: string, action: GovernanceAction): Promise<GovernanceResult> {
-  if (USE_MOCK) {
-    await delay();
-    const item = RULES.find((r) => r.id === id);
-    if (action === 'publish' && item && !item.reviewer_id) {
-      return { id, state: item.state, version: item.version, audit_id: auditId(), message: `Fixture — nothing was saved. Publish blocked — a red-flag rule requires a licensed-clinician sign-off before publish (SC-6). Move it through CLINICAL_REVIEW → APPROVED first. (SC-12).` };
-    }
-    const next: GovernanceState =
-      action === 'submit' ? 'clinical_review'
-      : action === 'approve' ? 'approved'
-      : action === 'publish' ? 'published'
-      : 'deprecated';
-    const signNote = action === 'approve' ? ' Clinician sign-off recorded (SC-6).' : '';
-    return { id, state: next, version: item ? item.version + (action === 'publish' ? 1 : 0) : 1, audit_id: auditId(), message: `Fixture — nothing was saved. Red-flag rule ${id}: ${action} applied → ${next.toUpperCase()}.${signNote} Rules can only RAISE urgency (SC-2); versioned & auditable (SC-6). (SC-12).` };
-  }
-  return sendJson<GovernanceResult>('POST', `/red-flag-rules/${id}/${action}`, {});
+  if (USE_MOCK) throw new Error(`Governing a red-flag rule ${NOT_IN_FIXTURE_MODE}`);
+  // backend: POST /rules/:id/:action (governance.Handler.RuleLifecycle) — the OLD
+  // /red-flag-rules/:id/:action path here matched no route; fixed to the real one.
+  return sendJson<GovernanceResult>('POST', `/rules/${id}/${action}`, {});
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -348,10 +318,7 @@ const VALIDATION: ValidationRun = {
 };
 
 export async function runValidation(): Promise<ValidationRun> {
-  if (USE_MOCK) {
-    await delay(600);
-    return { ...VALIDATION, run_id: `val_${Date.now()}`, ran_at: new Date().toISOString(), by_language: { en: { ...VALIDATION.by_language.en }, pcm: { ...VALIDATION.by_language.pcm } } };
-  }
+  if (USE_MOCK) throw new Error(`Running the validation harness ${NOT_IN_FIXTURE_MODE}`);
   return sendJson<ValidationRun>('POST', '/validation/run', {});
 }
 

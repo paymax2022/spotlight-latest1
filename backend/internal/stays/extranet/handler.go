@@ -28,6 +28,8 @@ func mapErr(c *gin.Context, err error) {
 		c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
 	case errors.Is(err, ErrNotFound):
 		c.JSON(http.StatusNotFound, gin.H{"error": "not found"})
+	case errors.Is(err, ErrInviteNotValid):
+		c.JSON(http.StatusBadRequest, gin.H{"error": "this invite is not valid"})
 	default:
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 	}
@@ -73,6 +75,11 @@ func (h *Handler) Register(g *gin.RouterGroup) {
 	// Account / staff.
 	g.GET("/properties/:propertyId/staff", h.ListStaff)
 	g.POST("/properties/:propertyId/staff", h.UpsertStaff)
+	g.POST("/properties/:propertyId/staff/invite", h.InviteStaffByEmail)
+	// Not property-scoped: the token names the property, and the invitee is by
+	// definition not yet staff there (same shape as the restaurant module's
+	// /staff/accept — the one staff route that isn't outlet-scoped).
+	g.POST("/staff/invite/accept", h.AcceptStaffInvite)
 }
 
 // MyProperties: GET /me/properties
@@ -361,6 +368,45 @@ func (h *Handler) UpsertStaff(c *gin.Context) {
 		return
 	}
 	if err := h.svc.UpsertStaff(c.Request.Context(), uid(c), c.Param("propertyId"), b.UserID, b.Role, b.Status); err != nil {
+		mapErr(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": gin.H{"ok": true}})
+}
+
+// InviteStaffByEmail: POST /properties/:propertyId/staff/invite {name, email, role}
+// Grants immediately if a platform user already owns the email; otherwise
+// creates a pending invite and emails an accept link. See staff_invite.go.
+func (h *Handler) InviteStaffByEmail(c *gin.Context) {
+	var b struct {
+		Name  string `json:"name"`
+		Email string `json:"email" binding:"required"`
+		Role  string `json:"role"`
+	}
+	if err := c.ShouldBindJSON(&b); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	out, err := h.svc.InviteStaffByEmail(c.Request.Context(), uid(c), c.Param("propertyId"), b.Name, b.Email, b.Role)
+	if err != nil {
+		mapErr(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": out})
+}
+
+// AcceptStaffInvite: POST /staff/invite/accept {token}
+// The invitee must already be signed in — the invite's email is matched
+// against their own authenticated identity, never a client-supplied value.
+func (h *Handler) AcceptStaffInvite(c *gin.Context) {
+	var b struct {
+		Token string `json:"token" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&b); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if err := h.svc.AcceptStaffInvite(c.Request.Context(), uid(c), c.GetString("user_email"), b.Token); err != nil {
 		mapErr(c, err)
 		return
 	}

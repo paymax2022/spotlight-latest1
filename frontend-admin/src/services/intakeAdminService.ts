@@ -253,32 +253,35 @@ export function getAnalytics(): Promise<IntakeAnalytics> {
 // to the matching admin endpoint. Server RBAC (health.admin.intake) is
 // authoritative; the UI gates are convenience only.
 
+const NO_BACKEND_YET =
+  'has no backend yet (see the comment on the live-mode call below). ' +
+  'This console cannot perform this action until that endpoint is built.';
+
 type IntakeAction =
-  | { kind: 'publish-schema'; body: { fields: IntakeSchemaField[] } }
   | { kind: 'upsert-rule'; body: RedFlagRule }
-  | { kind: 'toggle-rule'; code: string }
+  | { kind: 'toggle-rule'; code: string; active: boolean }
   | { kind: 'add-vocab'; body: VocabEntry }
   | { kind: 'add-consent'; body: ConsentVersion }
   | { kind: 'save-config'; key: string; body: Record<string, unknown> };
 
 async function postAction(action: IntakeAction): Promise<{ ok: true }> {
   if (USE_FIXTURES) {
-    await new Promise((r) => setTimeout(r, 300));
-    return { ok: true };
+    throw new Error(
+      `Intake admin action "${action.kind}" is unavailable in fixture mode: this console will not report a ` +
+      'write it did not perform. Set NEXT_PUBLIC_INTAKE_ADMIN_USE_MOCK=false to make this change against the live backend.',
+    );
   }
   let path = '';
+  let method: 'POST' | 'PUT' = 'POST';
   let payload: unknown = {};
   switch (action.kind) {
-    case 'publish-schema':
-      path = '/schema';
-      payload = action.body;
-      break;
     case 'upsert-rule':
       path = '/rules';
       payload = action.body;
       break;
     case 'toggle-rule':
       path = `/rules/${encodeURIComponent(action.code)}/toggle`;
+      payload = { active: action.active };
       break;
     case 'add-vocab':
       path = '/vocab';
@@ -290,28 +293,35 @@ async function postAction(action: IntakeAction): Promise<{ ok: true }> {
       break;
     case 'save-config':
       path = `/config/${encodeURIComponent(action.key)}`;
-      payload = action.body;
+      method = 'PUT';
+      payload = { value: action.body };
       break;
   }
   const res = await fetch(`${adminApiBase()}${BASE}${path}`, {
-    method: 'POST',
+    method,
     headers: authHeaders(),
     body: JSON.stringify(payload),
   });
-  if (!res.ok) throw new Error(`POST ${path} failed: ${res.status}`);
+  if (!res.ok) throw new Error(`${method} ${path} failed: ${res.status}`);
   return { ok: true };
 }
 
-export function publishSchema(fields: IntakeSchemaField[]): Promise<{ ok: true }> {
-  return postAction({ kind: 'publish-schema', body: { fields } });
+export async function publishSchema(_fields: IntakeSchemaField[]): Promise<{ ok: true }> {
+  // The only real "publish schema" route is the unrelated shared-platform
+  // healthintake.PublishSchema (POST /intake/schemas, body {slug, version,
+  // kind, fields}) — a different schema entity for member-facing dynamic
+  // forms, not this admin UI's pre-consult IntakeSchemaField array. Routing
+  // there would silently create the wrong record. There is no admin route
+  // for the pre-consult schema this UI edits.
+  throw new Error(`Publishing the intake schema ${NO_BACKEND_YET}`);
 }
 
 export function upsertRule(rule: RedFlagRule): Promise<{ ok: true }> {
   return postAction({ kind: 'upsert-rule', body: rule });
 }
 
-export function toggleRule(code: string): Promise<{ ok: true }> {
-  return postAction({ kind: 'toggle-rule', code });
+export function toggleRule(code: string, active: boolean): Promise<{ ok: true }> {
+  return postAction({ kind: 'toggle-rule', code, active });
 }
 
 export function addVocab(entry: VocabEntry): Promise<{ ok: true }> {

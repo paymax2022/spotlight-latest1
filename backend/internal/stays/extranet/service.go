@@ -22,11 +22,16 @@ type Service struct {
 	repo  *Repository
 	authz *AuthZ
 	allot ari.Allotment // re-opens allotment on hotel cancel / no-show
+
+	mailer       StaffInviteMailer // staff-invite email delivery (see staff_invite.go)
+	adminBaseURL string            // frontend-admin origin, for building accept links
 }
 
-// NewService constructs the extranet service.
-func NewService(repo *Repository, authz *AuthZ, allot ari.Allotment) *Service {
-	return &Service{repo: repo, authz: authz, allot: allot}
+// NewService constructs the extranet service. mailer/adminBaseURL back the
+// email-based staff invite flow (staff_invite.go) — pass extranet.NewResendStaffInviteMailer
+// and cfg.AdminAppBaseURL from the caller.
+func NewService(repo *Repository, authz *AuthZ, allot ari.Allotment, mailer StaffInviteMailer, adminBaseURL string) *Service {
+	return &Service{repo: repo, authz: authz, allot: allot, mailer: mailer, adminBaseURL: adminBaseURL}
 }
 
 // guard performs the object-level scope check (used by every mutating op).

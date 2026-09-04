@@ -36,6 +36,16 @@ function authHeaders(): Record<string, string> {
 
 const delay = (ms = 280) => new Promise((r) => setTimeout(r, ms));
 
+// Every write below has a verified live endpoint (see the header comment above),
+// so fixture mode has nothing to add and refuses loudly instead of reporting a
+// write it did not perform — the same treatment runSettlement's fixture branch
+// already needed once (it used to return the literal 3, rendered as "3
+// settlements processed" while nothing ran). See
+// docs/audit/ADMIN_SIMULATED_WRITES.md.
+const NOT_IN_FIXTURE_MODE =
+  'is unavailable in fixture mode: this console will not report a write it did not perform. ' +
+  'Unset NEXT_PUBLIC_INVEST_ADMIN_USE_MOCK (or set it to false — the default) to make this change against the live backend.';
+
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(base() + path, {
     ...init,
@@ -86,16 +96,12 @@ export async function listAssets(): Promise<AdminStockAsset[]> {
 }
 
 export async function updateAsset(id: string, patch: AssetUpdate): Promise<AdminStockAsset> {
-  if (USE_MOCK) {
-    await delay();
-    const a = MOCK_ASSETS.find((x) => x.id === id)!;
-    return { ...a, ...patch };
-  }
+  if (USE_MOCK) throw new Error(`Updating an asset ${NOT_IN_FIXTURE_MODE}`);
   return req<AdminStockAsset>(`/assets/${id}`, { method: 'PATCH', headers: { 'Idempotency-Key': operationKey('invest:asset-update', id) }, body: JSON.stringify(patch) });
 }
 
 export async function createAsset(payload: Partial<AdminStockAsset>): Promise<AdminStockAsset> {
-  if (USE_MOCK) { await delay(); return { ...(MOCK_ASSETS[0]), ...payload, id: 'new' } as AdminStockAsset; }
+  if (USE_MOCK) throw new Error(`Creating an asset ${NOT_IN_FIXTURE_MODE}`);
   return req<AdminStockAsset>('/assets', { method: 'POST', headers: { 'Idempotency-Key': operationKey('invest:asset-create', payload.symbol ?? '') }, body: JSON.stringify(payload) });
 }
 
@@ -123,7 +129,7 @@ export async function getPendingSettlements(): Promise<{ due: AdminOrder[]; pend
 }
 
 export async function runSettlement(): Promise<number> {
-  if (USE_MOCK) { await delay(); return 3; }
+  if (USE_MOCK) throw new Error(`Running settlement ${NOT_IN_FIXTURE_MODE}`);
   const res = await req<{ processed: number }>('/settlement/run', { method: 'POST', headers: { 'Idempotency-Key': operationKey('invest:settlement-run') } });
   return res.processed;
 }
@@ -134,7 +140,7 @@ export async function getFees(): Promise<FeeConfig> {
 }
 
 export async function updateFees(fc: FeeConfig & { reason?: string }): Promise<FeeConfig> {
-  if (USE_MOCK) { await delay(); return { commission_bps: fc.commission_bps, min_fee_kobo: fc.min_fee_kobo }; }
+  if (USE_MOCK) throw new Error(`Updating fee config ${NOT_IN_FIXTURE_MODE}`);
   return req<FeeConfig>('/fees', { method: 'PUT', headers: { 'Idempotency-Key': operationKey('invest:fees-update', fc.commission_bps) }, body: JSON.stringify(fc) });
 }
 
@@ -149,7 +155,7 @@ export async function listDividends(): Promise<Dividend[]> {
 }
 
 export async function createDividend(payload: { symbol: string; amount_per_share_kobo: number; ex_date?: string; record_date?: string; payment_date?: string; source?: string }): Promise<{ id: string }> {
-  if (USE_MOCK) { await delay(); return { id: 'new' }; }
+  if (USE_MOCK) throw new Error(`Creating a dividend ${NOT_IN_FIXTURE_MODE}`);
   return req<{ id: string }>('/dividends', { method: 'POST', headers: { 'Idempotency-Key': operationKey('invest:dividend-create', payload.symbol) }, body: JSON.stringify(payload) });
 }
 
@@ -159,7 +165,7 @@ export async function listCorporateActions(): Promise<CorporateAction[]> {
 }
 
 export async function createCorporateAction(payload: { symbol: string; type: string; title: string; description?: string; effective_date?: string; record_date?: string; payment_date?: string; source?: string }): Promise<{ id: string }> {
-  if (USE_MOCK) { await delay(); return { id: 'new' }; }
+  if (USE_MOCK) throw new Error(`Creating a corporate action ${NOT_IN_FIXTURE_MODE}`);
   return req<{ id: string }>('/corporate-actions', { method: 'POST', headers: { 'Idempotency-Key': operationKey('invest:corporate-action-create', payload.symbol) }, body: JSON.stringify(payload) });
 }
 
