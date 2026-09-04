@@ -174,6 +174,7 @@ func (s *Service) GetListing(ctx context.Context, id string) (*Listing, error) {
 		return nil, err
 	}
 	s.attachThumbs(ctx, []*Listing{l})
+	s.attachFullMedia(ctx, l)
 	return l, nil
 }
 

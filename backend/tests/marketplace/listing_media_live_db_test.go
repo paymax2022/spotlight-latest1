@@ -91,6 +91,45 @@ func TestLiveDB_ListingMedia_PersistedAndReadBack(t *testing.T) {
 	}
 }
 
+// TestLiveDB_ListingMedia_DetailGalleryReturnsAllPhotosInOrder pins the
+// listing DETAIL screen's gallery, a separate gap from the card thumbnail
+// above: even after thumbnails started working, the detail screen
+// (app/marketplace/listing/[id].tsx) reads a `media` array with one entry per
+// photo — nothing on the backend ever populated it, only ever the single
+// first-photo ThumbURL cards use. A listing with real photos still rendered
+// an empty gallery on its own detail page.
+//
+// No presigner is configured in this harness (see liveMktService), so a
+// signed URL is empty by design here — this asserts every ROW reached
+// Listing.Media, in the right order, which is the part that was missing
+// entirely; the presign call itself (presignThumb) is exercised by
+// attachThumbs already and is unchanged by this fix.
+func TestLiveDB_ListingMedia_DetailGalleryReturnsAllPhotosInOrder(t *testing.T) {
+	svc, pool := liveMktService(t)
+	ctx := context.Background()
+
+	seller := seedTrustedSeller(t, ctx, pool)
+	testsupport.CleanupUser(t, pool, seller)
+	cat := seedRiskTier0Category(t, ctx, pool)
+
+	keys := []string{mediaKey(seller), mediaKey(seller), mediaKey(seller)}
+	l := createWithMedia(t, ctx, svc, seller, cat, keys)
+
+	repo := mkt.NewRepository(pool)
+	rows, err := repo.ListMediaForListing(ctx, l.ID)
+	if err != nil {
+		t.Fatalf("list media for listing: %v", err)
+	}
+	if len(rows) != len(keys) {
+		t.Fatalf("gallery rows: got %d want %d — detail screen would still show an empty gallery", len(rows), len(keys))
+	}
+	for i, r := range rows {
+		if r.Key != keys[i] {
+			t.Errorf("gallery photo %d: got key %q want %q — gallery order is wrong", i, r.Key, keys[i])
+		}
+	}
+}
+
 func TestLiveDB_ListingMedia_RejectsJunkAndForeignKeys(t *testing.T) {
 	svc, pool := liveMktService(t)
 	ctx := context.Background()

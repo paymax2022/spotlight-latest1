@@ -146,6 +146,38 @@ func (r *Repository) ThumbKeysFor(ctx context.Context, listingIDs []string) (map
 	return out, rows.Err()
 }
 
+// mediaRow is one raw mkt_listing_media row, before presigning.
+type mediaRow struct {
+	ID        string
+	Key       string // url_thumb/url_card/url_full are the same object today
+	Blurhash  string
+	SortOrder int
+}
+
+// ListMediaForListing returns every photo on ONE listing, in gallery order.
+// Unlike ThumbKeysFor (one key per listing, for a page of cards), this is for
+// the detail screen's full gallery — every row, for a single listing.
+func (r *Repository) ListMediaForListing(ctx context.Context, listingID string) ([]mediaRow, error) {
+	rows, err := r.db.Query(ctx, `
+		SELECT id, url_thumb, blurhash, sort_order
+		FROM public.mkt_listing_media
+		WHERE listing_id = $1
+		ORDER BY sort_order, created_at`, listingID)
+	if err != nil {
+		return nil, wrapInternal("list listing media for detail", err)
+	}
+	defer rows.Close()
+	var out []mediaRow
+	for rows.Next() {
+		var m mediaRow
+		if err := rows.Scan(&m.ID, &m.Key, &m.Blurhash, &m.SortOrder); err != nil {
+			return nil, wrapInternal("scan listing media for detail", err)
+		}
+		out = append(out, m)
+	}
+	return out, rows.Err()
+}
+
 // GetListing loads a listing by id.
 func (r *Repository) GetListing(ctx context.Context, id string) (*Listing, error) {
 	row := r.db.QueryRow(ctx, `SELECT `+listingCols+` FROM public.mkt_listings WHERE id=$1`, id)
