@@ -115,18 +115,31 @@ jobs:
         run: |
           cd backend
           set -o pipefail
-          go test ./internal/savings/... ./internal/handlers/... ./internal/trading/wallet/... ./tests/voting/... \
-            -race -v -run 'TestLiveDB_|TestAdminConsole_|TestTally_|TestRegistration_|TestMirror_' 2>&1 | tee /tmp/livedb-test.log
+          # NOTE: ./tests/voting/... and the Tally/Registration/Mirror canaries were
+          # removed here — that package has never existed and those four Go tests are
+          # on no branch in this repo. They were added in 1ac4694e alongside 6995b8a7
+          # deleting the three frontend-web TypeScript specs that covered the same
+          # ground (connect-tally-trigger, vote-package-ladder,
+          # one-application-per-contest), i.e. a port that deleted the old tests and
+          # never wrote the new ones. `go test` then failed the whole step with
+          # "lstat ./tests/voting/: no such file or directory" before any canary ran.
+          #
+          # A canary naming a test that does not exist gates NOTHING while looking
+          # strict — the failure mode this step exists to prevent. So it now asserts
+          # only on tests that are real. Do NOT re-add a name here until the test
+          # exists; the vote-credit coverage debt is tracked separately, and the
+          # deleted connect-tally spec is worth reading first (git show 21f77f8b:
+          # frontend-web/tests/integration/voting/connect-tally-trigger.test.ts) —
+          # it documents why that projection is driven from vote_transactions rather
+          # than a route, since four entry points reach it.
+          go test ./internal/savings/... ./internal/handlers/... ./internal/trading/wallet/... \
+            -race -v -run 'TestLiveDB_|TestAdminConsole_' 2>&1 | tee /tmp/livedb-test.log
           for t in TestLiveDB_BalanceForOwner_RejectsNonOwner \
                    TestLiveDB_TargetBalanceForMember_RejectsNonMember \
                    TestLiveDB_PenaltyRate_IsServerSideNotCallerSupplied \
                    TestLiveDB_TradingWallet_MoneyPath \
                    TestAdminConsole_Dashboard \
-                   TestAdminConsole_GetOrders \
-                   TestTally_CountsThePurchaseWhenTheWebhookCreditsIt \
-                   TestTally_RefusesToReCreditAfterARefundAndRecordsWhy \
-                   TestRegistration_RejectsASecondLiveApplicationForTheSameContest \
-                   TestMirror_CreatesTheLegacyRowSoTheContestCanHoldPackages; do
+                   TestAdminConsole_GetOrders; do
             grep -q -- "--- PASS: $t" /tmp/livedb-test.log \
               || { echo "::error::$t did not run (skipped?) — live-DB coverage is not gating"; exit 1; }
           done
