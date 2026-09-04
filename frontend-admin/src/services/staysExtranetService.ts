@@ -67,6 +67,19 @@ async function sendJson<T>(method: 'POST' | 'PATCH' | 'PUT', path: string, body:
   return (j?.data ?? j) as T;
 }
 
+// The Go backend nests staff/property routes under /properties/:propertyId/*
+// (backend/internal/stays/extranet/handler.go). This resolves the signed-in
+// hotelier's own property id via /me/properties — the one live-correct route
+// that needs no propertyId itself — and caches it for the session.
+let cachedPropertyId: string | null = null;
+async function activePropertyId(): Promise<string> {
+  if (cachedPropertyId) return cachedPropertyId;
+  const rows = await getJson<Array<{ id: string }>>('/me/properties');
+  if (!rows?.length) throw new Error('No property found for this hotelier account.');
+  cachedPropertyId = rows[0].id;
+  return cachedPropertyId;
+}
+
 // ── Display helpers: kobo → ₦ ────────────────────────────────────────────────
 export function formatNaira(kobo: number): string {
   const naira = (kobo ?? 0) / 100;
@@ -589,9 +602,27 @@ export async function listStaff(): Promise<StaffMember[]> {
   if (USE_MOCK) { await delay(); return STAFF; }
   return getJson<StaffMember[]>('/staff');
 }
-export async function inviteStaff(name: string, email: string, role: StaffMember['role']): Promise<StaffMember> {
+// Backend roles (stays_hotelier_profile CHECK constraint) vs this UI's StaffRole
+// naming. OWNER is deliberately absent: it mirrors the property creator and is
+// never grantable through an invite (backend rejects it — see staff_invite.go).
+const STAFF_ROLE_TO_BACKEND: Record<Exclude<StaffMember['role'], 'owner'>, string> = {
+  revenue_manager: 'MANAGER',
+  front_desk: 'FRONT_DESK',
+};
+
+// Invites via POST /properties/:propertyId/staff/invite {name, email, role}. If
+// a Paymax platform user already owns that email the grant lands immediately
+// (status 'active'); otherwise the backend emails a signup/accept link and the
+// grant lands once they accept (status 'invited' here in the meantime).
+export async function inviteStaff(name: string, email: string, role: Exclude<StaffMember['role'], 'owner'>): Promise<StaffMember> {
   if (USE_MOCK) { await delay(); return { id: `st_${Date.now()}`, name, email, role, status: 'invited', last_active: null }; }
-  return sendJson<StaffMember>('POST', '/staff', { name, email, role });
+  const propertyId = await activePropertyId();
+  const res = await sendJson<{ email: string; role: string; status: 'active' | 'invited' }>(
+    'POST',
+    `/properties/${propertyId}/staff/invite`,
+    { name, email, role: STAFF_ROLE_TO_BACKEND[role] },
+  );
+  return { id: `st_${Date.now()}`, name, email, role, status: res.status, last_active: null };
 }
 export async function getSettings(): Promise<ExtranetSettings> {
   if (USE_MOCK) { await delay(); return SETTINGS; }
