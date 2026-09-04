@@ -1,5 +1,5 @@
 # Multi-stage build for the Next.js admin dashboard. Deploy target: Railway.
-FROM node:20-alpine AS builder
+FROM node:26-alpine AS builder
 WORKDIR /app
 
 # Railway injects service variables into Docker builds only when declared as
@@ -43,7 +43,7 @@ RUN mkdir -p public
 ENV NODE_OPTIONS=--max-old-space-size=2048
 RUN npm run build
 
-FROM node:20-alpine AS runtime
+FROM node:26-alpine AS runtime
 WORKDIR /app
 
 ENV NODE_ENV=production
