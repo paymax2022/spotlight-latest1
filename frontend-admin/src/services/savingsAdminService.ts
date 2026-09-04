@@ -34,6 +34,15 @@ function authHeaders(): Record<string, string> {
 }
 const delay = (ms = 240) => new Promise((r) => setTimeout(r, ms));
 
+// Verified against backend/internal/savings (Handler.Register): the only
+// admin route registered is GET /circles/:id. No force-unlock or default-
+// handling mutation exists anywhere in the module — grepped for "ForceUnlock"/
+// "force-unlock"/"/defaults", zero hits; VaultService only has Deposit/
+// Withdraw/EarlyBreak/TransitionState, none exposed admin-side.
+const NO_BACKEND_YET =
+  'has no backend yet (see the comment on the live-mode call below). ' +
+  'This console cannot perform this action until that endpoint is built.';
+
 async function getJson<T>(path: string): Promise<T> {
   const res = await fetch(`${adminBase()}${path}`, { headers: authHeaders() });
   if (!res.ok) throw new Error(`Request failed (${res.status})`);
@@ -136,10 +145,13 @@ export async function listVaults(opts?: { status?: string; q?: string }): Promis
   return getJson<VaultRecord[]>(`/vaults${qs.toString() ? `?${qs}` : ''}`);
 }
 export async function forceUnlock(vaultId: string, reason: string): Promise<ForceUnlockResult> {
-  if (USE_MOCK) {
-    await delay();
-    return { vault_id: vaultId, status: 'open', audit_id: `aud_${Math.random().toString(36).slice(2, 10)}`, message: `Vault ${vaultId} force-unlocked. Funds returned at principal (NL-2: zero yield). Action recorded to immutable audit.` };
-  }
+  // No backend at all — see the comment above. The OLD fixture message here
+  // also fabricated a compliance claim ("Action recorded to immutable
+  // audit") — exactly the pattern docs/audit/ADMIN_SIMULATED_WRITES.md calls
+  // "the most dangerous strings in this codebase", missed by the checker's
+  // claim-pattern regex only because of a lowercase "recorded" vs its
+  // capitalized "Recorded". Removed regardless.
+  if (USE_MOCK) throw new Error(`Force-unlocking a vault ${NO_BACKEND_YET}`);
   return sendJson<ForceUnlockResult>('POST', `/vaults/${vaultId}/force-unlock`, { reason });
 }
 
@@ -249,15 +261,13 @@ export async function listDefaults(opts?: { status?: string; q?: string }): Prom
   return getJson<DefaultRecord[]>(`/defaults${qs.toString() ? `?${qs}` : ''}`);
 }
 export async function handleDefault(id: string, action: DefaultAction, note?: string): Promise<DefaultActionResult> {
-  if (USE_MOCK) {
-    await delay();
-    const status =
-      action === 'recover' ? 'recovered'
-      : action === 'remove' ? 'defaulted'
-      : action === 'dismiss' ? 'dismissed'
-      : action === 'grace' ? 'grace'
-      : 'make_good';
-    return { id, status, audit_id: `aud_${Math.random().toString(36).slice(2, 10)}`, message: `Fixture — nothing was saved. Default ${id}: ${action} applied (NL-7: peer rotation — Paymax never advances credit).` };
-  }
+  // No admin action exists for any of the 5 values: AjoService has a private
+  // markDefault invoked automatically by the cycle scheduler (not admin-
+  // triggerable), and the closest real capability — MakeGood
+  // (POST /savings/circles/:id/make-good) — is a MEMBER self-service route
+  // keyed on the caller's own session, not an admin action on someone else's
+  // behalf. None of grace/make_good/remove/recover/dismiss has a usable
+  // backend verb today.
+  if (USE_MOCK) throw new Error(`Handling a savings default ${NO_BACKEND_YET}`);
   return sendJson<DefaultActionResult>('POST', `/defaults/${id}/handle`, { action, note });
 }

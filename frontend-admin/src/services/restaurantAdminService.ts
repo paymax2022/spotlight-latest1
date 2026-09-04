@@ -72,6 +72,14 @@ function authHeaders(): Record<string, string> {
 
 const delay = (ms = 280) => new Promise((r) => setTimeout(r, ms));
 
+// Money-path writes must not report success from fixture mode: it is exactly
+// the "reviewer approved a restaurant, kyb_status never moved" failure this
+// file's header comment describes, one level down. See
+// docs/audit/ADMIN_SIMULATED_WRITES.md.
+const NOT_IN_FIXTURE_MODE =
+  'is unavailable in fixture mode: this console will not report a write it did not perform. ' +
+  'Set NEXT_PUBLIC_RESTAURANT_ADMIN_USE_MOCK=false to make this change against the live backend.';
+
 // (There was a base()-relative `req` helper here. Its only caller was the old
 // owner-scoped listOrders; everything else goes through reqAt with an explicit
 // root, because the member and admin roots are different hosts of truth.)
@@ -360,12 +368,7 @@ export async function getRestaurantDetail(id: string): Promise<RestaurantDetail>
 }
 
 export async function updateRestaurant(id: string, patch: UpdateRestaurantRequest): Promise<Restaurant> {
-  if (USE_MOCK) {
-    await delay();
-    const r = MOCK_RESTAURANTS.find((x) => x.id === id)!;
-    Object.assign(r, patch);
-    return r;
-  }
+  if (USE_MOCK) throw new Error(`Updating a restaurant ${NOT_IN_FIXTURE_MODE}`);
   return reqAt<Restaurant>(`${storeBase()}/${encodeURIComponent(id)}`, {
     method: 'PATCH',
     body: JSON.stringify(patch),
@@ -374,12 +377,7 @@ export async function updateRestaurant(id: string, patch: UpdateRestaurantReques
 
 /** Operator force-open / force-close. */
 export async function setRestaurantAvailability(id: string, isOpen: boolean): Promise<Restaurant> {
-  if (USE_MOCK) {
-    await delay();
-    const r = MOCK_RESTAURANTS.find((x) => x.id === id)!;
-    r.is_open = isOpen;
-    return r;
-  }
+  if (USE_MOCK) throw new Error(`Changing restaurant availability ${NOT_IN_FIXTURE_MODE}`);
   return reqAt<Restaurant>(`${storeBase()}/${encodeURIComponent(id)}/availability`, {
     method: 'PATCH',
     body: JSON.stringify({ is_open: isOpen }),
@@ -387,12 +385,7 @@ export async function setRestaurantAvailability(id: string, isOpen: boolean): Pr
 }
 
 export async function createMenuCategory(restaurantId: string, name: string): Promise<MenuCategory> {
-  if (USE_MOCK) {
-    await delay();
-    const c: MenuCategory = { id: `c-${MOCK_MENU.length + 1}`, restaurant_id: restaurantId, name, items: [] };
-    MOCK_MENU.push(c);
-    return c;
-  }
+  if (USE_MOCK) throw new Error(`Creating a menu category ${NOT_IN_FIXTURE_MODE}`);
   return reqAt<MenuCategory>(`${storeBase()}/${encodeURIComponent(restaurantId)}/menu/categories`, {
     method: 'POST',
     body: JSON.stringify({ name }),
@@ -400,12 +393,7 @@ export async function createMenuCategory(restaurantId: string, name: string): Pr
 }
 
 export async function deleteMenuCategory(restaurantId: string, categoryId: string): Promise<void> {
-  if (USE_MOCK) {
-    await delay();
-    const i = MOCK_MENU.findIndex((c) => c.id === categoryId);
-    if (i >= 0) MOCK_MENU.splice(i, 1);
-    return;
-  }
+  if (USE_MOCK) throw new Error(`Deleting a menu category ${NOT_IN_FIXTURE_MODE}`);
   await reqAt<{ deleted: boolean }>(
     `${storeBase()}/${encodeURIComponent(restaurantId)}/menu/categories/${encodeURIComponent(categoryId)}`,
     { method: 'DELETE' },
@@ -413,12 +401,7 @@ export async function deleteMenuCategory(restaurantId: string, categoryId: strin
 }
 
 export async function createMenuItem(restaurantId: string, req: CreateMenuItemRequest): Promise<MenuItem> {
-  if (USE_MOCK) {
-    await delay();
-    const it: MenuItem = { id: `i-${Date.now()}`, restaurant_id: restaurantId, is_available: true, ...req };
-    MOCK_MENU.find((c) => c.id === req.category_id)?.items?.push(it);
-    return it;
-  }
+  if (USE_MOCK) throw new Error(`Creating a menu item ${NOT_IN_FIXTURE_MODE}`);
   return reqAt<MenuItem>(`${storeBase()}/${encodeURIComponent(restaurantId)}/menu/items`, {
     method: 'POST',
     body: JSON.stringify(req),
@@ -430,14 +413,7 @@ export async function updateMenuItem(
   itemId: string,
   patch: UpdateMenuItemRequest,
 ): Promise<MenuItem> {
-  if (USE_MOCK) {
-    await delay();
-    for (const c of MOCK_MENU) {
-      const it = c.items?.find((x) => x.id === itemId);
-      if (it) { Object.assign(it, patch); return it; }
-    }
-    throw new Error('item not found');
-  }
+  if (USE_MOCK) throw new Error(`Updating a menu item ${NOT_IN_FIXTURE_MODE}`);
   return reqAt<MenuItem>(
     `${storeBase()}/${encodeURIComponent(restaurantId)}/menu/items/${encodeURIComponent(itemId)}`,
     { method: 'PATCH', body: JSON.stringify(patch) },
@@ -445,14 +421,7 @@ export async function updateMenuItem(
 }
 
 export async function deleteMenuItem(restaurantId: string, itemId: string): Promise<void> {
-  if (USE_MOCK) {
-    await delay();
-    for (const c of MOCK_MENU) {
-      const i = c.items?.findIndex((x) => x.id === itemId) ?? -1;
-      if (i >= 0) { c.items!.splice(i, 1); return; }
-    }
-    return;
-  }
+  if (USE_MOCK) throw new Error(`Deleting a menu item ${NOT_IN_FIXTURE_MODE}`);
   await reqAt<{ deleted: boolean }>(
     `${storeBase()}/${encodeURIComponent(restaurantId)}/menu/items/${encodeURIComponent(itemId)}`,
     { method: 'DELETE' },
@@ -634,15 +603,7 @@ export async function listDispatchQueue(params: AdminDispatchQuery = {}): Promis
 // dispatch route POST /api/restaurant/admin/orders/:id/assign (body {rider_id}),
 // which returns {ok:true}.
 export async function assignRider(orderId: string, riderId: string): Promise<{ ok: true }> {
-  if (USE_MOCK) {
-    await delay();
-    const d = MOCK_DISPATCH.find((o) => o.id === orderId);
-    const r = MOCK_RIDERS.find((x) => x.id === riderId);
-    // Assigning a rider moves dispatch_status, not the order's own status — the
-    // kitchen state (ready/preparing) is unchanged by who picks it up.
-    if (d && r) { d.rider_id = riderId; d.rider_name = r.name; d.dispatch_status = 'assigned'; r.status = 'on_delivery'; r.active_order_id = orderId; }
-    return { ok: true };
-  }
+  if (USE_MOCK) throw new Error(`Assigning a rider ${NOT_IN_FIXTURE_MODE}`);
   // TARGET: POST /api/restaurant/admin/orders/:id/assign (restaurant.admin.dispatch)
   return reqAt<{ ok: true }>(`${adminBase()}/orders/${orderId}/assign`, {
     method: 'POST',
@@ -653,15 +614,7 @@ export async function assignRider(orderId: string, riderId: string): Promise<{ o
 // Re-run automatic dispatch for a stuck (no_rider) order. CONSUMES the live
 // POST /api/finance/restaurant/orders/:orderId/dispatch route.
 export async function redispatchOrder(orderId: string): Promise<{ ok: true }> {
-  if (USE_MOCK) {
-    await delay();
-    const d = MOCK_DISPATCH.find((o) => o.id === orderId);
-    // Re-dispatch restarts courier SOURCING; it does not touch the kitchen
-    // state. Setting status='ready' here modelled the wrong column — the real
-    // call moves dispatch_status back to 'searching' and leaves status alone.
-    if (d) { d.dispatch_status = 'searching'; d.rider_id = null; d.rider_name = null; d.waiting_minutes = 0; }
-    return { ok: true };
-  }
+  if (USE_MOCK) throw new Error(`Re-dispatching an order ${NOT_IN_FIXTURE_MODE}`);
   // adminBase(), NOT base(). The member route
   // /api/finance/restaurant/orders/:id/dispatch is owner-gated in its handler
   // (`only the restaurant may re-dispatch`) and an operator is never the owner,
@@ -714,7 +667,7 @@ export async function decideListing(
   if (decision !== 'approve' && !reason.trim()) {
     throw new Error('A reason is required to reject or request changes.');
   }
-  if (USE_MOCK) { await delay(); return { ok: true }; }
+  if (USE_MOCK) throw new Error(`Deciding a listing ${NOT_IN_FIXTURE_MODE}`);
   return reqAt<{ ok: true }>(`${adminBase()}/listings/${id}/decision`, {
     method: 'POST',
     body: JSON.stringify({ decision, reason: reason.trim() }),
@@ -742,16 +695,7 @@ export async function decideApplication(
   note: string,
 ): Promise<{ ok: true }> {
   if (decision === 'reject' && !note.trim()) throw new Error('A reviewer note is required to reject.');
-  if (USE_MOCK) {
-    await delay();
-    const a = MOCK_APPLICATIONS.find((x) => x.id === id);
-    if (a) {
-      a.status = decision === 'approve' ? 'approved' : 'rejected';
-      a.reviewed_at = new Date().toISOString();
-      a.review_note = note.trim() || null;
-    }
-    return { ok: true };
-  }
+  if (USE_MOCK) throw new Error(`Deciding an application ${NOT_IN_FIXTURE_MODE}`);
   // TARGET: POST /api/restaurant/admin/onboarding/:id/{approve|reject}
   return reqAt<{ ok: true }>(`${adminBase()}/onboarding/${id}/${decision}`, {
     method: 'POST',
@@ -884,21 +828,7 @@ export async function buildPayoutRun(input: {
   providerType: PayeeType;
   providerId: string;
 }): Promise<PayoutRun> {
-  if (USE_MOCK) {
-    await delay();
-    const run: PayoutRun = {
-      id: `pr-${input.providerType}-${input.periodKey}`,
-      payee_type: input.providerType,
-      period_start: input.periodKey,
-      period_end: input.periodKey,
-      status: 'draft',
-      lines_count: 0,
-      total_net_kobo: 0,
-      created_at: new Date().toISOString(),
-    };
-    MOCK_PAYOUT_RUNS.unshift(run);
-    return run;
-  }
+  if (USE_MOCK) throw new Error(`Building a payout run ${NOT_IN_FIXTURE_MODE}`);
   const run = await reqAt<ApiPayoutRun>(`${adminBase()}/payouts/build`, {
     method: 'POST',
     body: JSON.stringify({
@@ -912,12 +842,7 @@ export async function buildPayoutRun(input: {
 
 // Process a pending payout run. Money path: requires Idempotency-Key server-side.
 export async function processPayoutRun(runId: string): Promise<{ ok: true }> {
-  if (USE_MOCK) {
-    await delay();
-    const p = MOCK_PAYOUT_RUNS.find((x) => x.id === runId);
-    if (p) { p.status = 'processing'; p.processed_at = new Date().toISOString(); }
-    return { ok: true };
-  }
+  if (USE_MOCK) throw new Error(`Processing a payout run ${NOT_IN_FIXTURE_MODE}`);
   // TARGET: POST /api/restaurant/admin/payouts/:id/process (restaurant.admin.payouts)
   return reqAt<{ ok: true }>(`${adminBase()}/payouts/${runId}/process`, {
     method: 'POST',
@@ -951,17 +876,14 @@ export async function resolveDispute(id: string, req: ResolveDisputeRequest): Pr
     if (req.refund_kobo == null || !Number.isInteger(req.refund_kobo) || req.refund_kobo <= 0) {
       throw new Error('Refund amount must be a positive integer (kobo).');
     }
-    const d = MOCK_DISPUTES.find((x) => x.id === id);
-    if (d && req.refund_kobo > d.refundable_kobo) {
-      throw new Error(`Refund exceeds refundable amount (${nairaLabel(d.refundable_kobo)}).`);
+    if (USE_MOCK) {
+      const d = MOCK_DISPUTES.find((x) => x.id === id);
+      if (d && req.refund_kobo > d.refundable_kobo) {
+        throw new Error(`Refund exceeds refundable amount (${nairaLabel(d.refundable_kobo)}).`);
+      }
     }
   }
-  if (USE_MOCK) {
-    await delay();
-    const d = MOCK_DISPUTES.find((x) => x.id === id);
-    if (d) { d.status = 'resolved'; d.resolution = req.resolution; d.admin_note = req.admin_note.trim(); d.updated_at = new Date().toISOString(); }
-    return { ok: true };
-  }
+  if (USE_MOCK) throw new Error(`Resolving a dispute ${NOT_IN_FIXTURE_MODE}`);
   // CONSUMES live POST /api/finance/admin/disputes/:id/resolve
   // (body { resolution, admin_note }; server binds adminID from JWT, posts the
   // reversing ledger entry on refund).

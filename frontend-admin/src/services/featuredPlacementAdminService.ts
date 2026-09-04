@@ -180,28 +180,20 @@ export async function getCampaign(id: string): Promise<Campaign> {
   return (data.campaign ?? data) as Campaign;
 }
 
+// All four actions have real, verified live endpoints (POST /placement/admin/
+// campaigns/:id/{approve,reject,request-info,suspend}), so fixture mode
+// refuses loudly instead of reporting a decision it did not perform. See
+// docs/audit/ADMIN_SIMULATED_WRITES.md.
 async function postAction(
   id: string,
   action: 'approve' | 'reject' | 'request-info' | 'suspend',
   body: Record<string, unknown> = {},
 ): Promise<Campaign> {
   if (USE_FIXTURES) {
-    await new Promise((r) => setTimeout(r, 350));
-    const campaign = fixtureCampaign(id);
-    const nextState: CampaignState =
-      action === 'approve'
-        ? 'PENDING_PAYMENT'
-        : action === 'reject'
-          ? 'REJECTED'
-          : action === 'request-info'
-            ? 'NEEDS_MORE_INFO'
-            : 'SUSPENDED';
-    return {
-      ...campaign,
-      state: nextState,
-      review_reason: (body.reason as string) ?? campaign.review_reason ?? null,
-      updated_at: new Date().toISOString(),
-    };
+    throw new Error(
+      `Placement ${action} is unavailable in fixture mode: this console will not report a write it did not perform. ` +
+      'Set NEXT_PUBLIC_FEATURED_PLACEMENT_ADMIN_USE_MOCK=false to make this change against the live backend.',
+    );
   }
   const res = await fetch(
     `${adminApiBase()}/placement/admin/campaigns/${encodeURIComponent(id)}/${action}`,

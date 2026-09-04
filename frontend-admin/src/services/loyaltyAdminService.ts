@@ -37,6 +37,15 @@ function authHeaders(): Record<string, string> {
 }
 const delay = (ms = 240) => new Promise((r) => setTimeout(r, ms));
 
+// Verified against backend/internal/loyalty (handler.go Register): the ONLY
+// admin route registered is GET /memberships/:userId. No earn-rules or tiers
+// mutation route exists anywhere in backend/internal/loyalty or the points
+// module it delegates to — grepped both for "earn-rules"/"earn_rules"/
+// "EarnRule"/"tiers/:id"/"UpdateTier", zero hits beyond read-side model code.
+const NO_BACKEND_YET =
+  'has no backend yet (see the comment on the live-mode call below). ' +
+  'This console cannot perform this action until that endpoint is built.';
+
 async function getJson<T>(path: string): Promise<T> {
   const res = await fetch(`${adminBase()}${path}`, { headers: authHeaders() });
   if (!res.ok) throw new Error(`Request failed (${res.status})`);
@@ -137,11 +146,7 @@ export async function listEarnRules(opts?: { module?: string; status?: string; q
   return getJson<EarnRule[]>(`/earn-rules${qs.toString() ? `?${qs}` : ''}`);
 }
 export async function updateEarnRule(id: string, patch: EarnRuleUpdate): Promise<EarnRuleResult> {
-  if (USE_MOCK) {
-    await delay();
-    const cur = EARN_RULES.find((r) => r.id === id);
-    return { id, config_version: (cur?.config_version ?? 1) + 1, audit_id: `aud_${Math.random().toString(36).slice(2, 10)}`, message: `Fixture — nothing was saved. Earn rule ${id} updated — new versioned config saved. Points are NON-CASH (NL-4).` };
-  }
+  if (USE_MOCK) throw new Error(`Updating an earn rule ${NO_BACKEND_YET}`);
   return sendJson<EarnRuleResult>('PATCH', `/earn-rules/${id}`, patch);
 }
 
@@ -158,11 +163,7 @@ export async function listTiers(): Promise<TierConfig[]> {
   return getJson<TierConfig[]>('/tiers');
 }
 export async function updateTier(id: string, patch: TierUpdate): Promise<TierResult> {
-  if (USE_MOCK) {
-    await delay();
-    const cur = TIERS.find((t) => t.id === id);
-    return { id, config_version: (cur?.config_version ?? 1) + 1, audit_id: `aud_${Math.random().toString(36).slice(2, 10)}`, message: `Fixture — nothing was saved. Tier ${id} config updated. Members re-evaluated on next earn.` };
-  }
+  if (USE_MOCK) throw new Error(`Updating a loyalty tier ${NO_BACKEND_YET}`);
   return sendJson<TierResult>('PATCH', `/tiers/${id}`, patch);
 }
 

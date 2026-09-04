@@ -49,6 +49,20 @@ function authHeaders(): Record<string, string> {
 }
 const delay = (ms = 240) => new Promise((r) => setTimeout(r, ms));
 
+// Verified against backend/internal/health/lab/{handler,admin}.go: the entire
+// admin surface is 4 routes — list orders, custody audit, list escalations
+// (all reads), and POST /tests/:id/deactivate. None of the 6 writes below have
+// a matching route; each says so on its own throw. Their old fixture branches
+// were all prefixed "Fixture — nothing was saved" (an honest disclaimer, not a
+// fabricated claim), but several then went on to say things like "KYC + AML
+// gate (HL-10) passed" — wording docs/audit/ADMIN_SIMULATED_WRITES.md's
+// claim-pattern check does not catch (it looks for "NL-\d+", not "HL-\d+"),
+// the same near-miss found in healthTriageAdminService.ts. Removed regardless
+// of whether the checker would have caught it. See that doc for the pattern.
+const NO_BACKEND_YET =
+  'has no backend yet (see the comment on the live-mode call below). ' +
+  'This console cannot perform this action until that endpoint is built.';
+
 async function getJson<T>(path: string): Promise<T> {
   const res = await fetch(`${adminBase()}${path}`, { headers: authHeaders() });
   if (!res.ok) throw new Error(`Request failed (${res.status})`);
@@ -68,7 +82,6 @@ export function formatNaira(kobo: number): string {
   return `₦${naira.toLocaleString('en-NG', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
-const auditId = () => `aud_${Math.random().toString(36).slice(2, 10)}`;
 const iso = (hoursAgo: number) => new Date(Date.now() - hoursAgo * 3_600_000).toISOString();
 const dateStr = (daysAgo: number) => new Date(Date.now() - daysAgo * 86_400_000).toISOString().slice(0, 10);
 
@@ -157,20 +170,7 @@ export async function listMlscnApplications(opts?: { status?: string; q?: string
   return getJson<MlscnApplication[]>(`/mlscn/applications${qs.toString() ? `?${qs}` : ''}`);
 }
 export async function decideMlscn(id: string, decision: MlscnDecision, note?: string): Promise<MlscnDecisionResult> {
-  if (USE_MOCK) {
-    await delay();
-    const app = MLSCN_APPS.find((a) => a.id === id);
-    if (decision === 'approve' && app && (!app.lab_verified || !app.scientist_verified)) {
-      return { id, status: 'needs_info', capability_granted: false, audit_id: auditId(), message: `Fixture — nothing was saved. Approval blocked — MLSCN facility or medical-laboratory-scientist licence not verified (HL-2). Supply stays credential-gated and fail-closed. (HL-12).` };
-    }
-    const status =
-      decision === 'approve' ? 'approved'
-      : decision === 'reject' ? 'rejected'
-      : decision === 'need_info' ? 'needs_info'
-      : decision === 'suspend' ? 'suspended'
-      : 'approved'; // reinstate
-    return { id, status, capability_granted: decision === 'approve', audit_id: auditId(), message: `Fixture — nothing was saved. MLSCN application ${id}: ${decision} applied. ${decision === 'approve' ? 'Provider lab capability idempotently granted and discoverability unlocked (HL-2). ' : ''}State machine SUBMITTED→UNDER_REVIEW→${status.toUpperCase()} enforced. (HL-12).` };
-  }
+  if (USE_MOCK) throw new Error(`Deciding an MLSCN application ${NO_BACKEND_YET}`);
   return sendJson<MlscnDecisionResult>('POST', `/mlscn/applications/${id}/decision`, { decision, note });
 }
 
@@ -205,15 +205,11 @@ export async function listCatalog(opts?: { status?: string; category?: string; q
   return getJson<LabCatalogItem[]>(`/catalog${qs.toString() ? `?${qs}` : ''}`);
 }
 export async function governTest(id: string, action: LabCatalogGovernanceAction, note?: string): Promise<LabCatalogGovernanceResult> {
-  if (USE_MOCK) {
-    await delay();
-    const item = CATALOG.find((c) => c.id === id);
-    if (action === 'approve' && item && !item.loinc_code) {
-      return { id, status: 'pending', audit_id: auditId(), message: `Fixture — nothing was saved. Approval blocked — test has no LOINC mapping; a governed test definition is required before listing. (HL-12).` };
-    }
-    const status = action === 'approve' ? 'approved' : action === 'reject' ? 'rejected' : 'suspended';
-    return { id, status, audit_id: auditId(), message: `Fixture — nothing was saved. Test catalog item ${id}: ${action} applied. Test-definition governance enforced. (HL-12).` };
-  }
+  // The only real catalog-governance route is POST /tests/:id/deactivate — a
+  // single narrow action, no body, and a different path than this general
+  // {action, note} → /catalog/:id/govern shape. Not just missing; the wrong
+  // shape even for the one action ("suspend") that might otherwise map.
+  if (USE_MOCK) throw new Error(`Governing a catalog test ${NO_BACKEND_YET}`);
   return sendJson<LabCatalogGovernanceResult>('POST', `/catalog/${id}/govern`, { action, note });
 }
 
@@ -268,10 +264,9 @@ export async function getCustodyChain(id: string): Promise<CustodyChain> {
   return getJson<CustodyChain>(`/custody/${id}`);
 }
 export async function flagCustodyBreak(id: string, reason: string): Promise<CustodyBreakResult> {
-  if (USE_MOCK) {
-    await delay();
-    return { id, status: 'breached', chain_intact: false, recollect_order_ref: `recollect_${Math.random().toString(36).slice(2, 7)}`, audit_id: auditId(), message: `Fixture — nothing was saved. Custody break flagged on sample ${id}: ${reason}. Chain marked BROKEN → recollection mandated; no result will release on this sample (HL-6). (HL-12).` };
-  }
+  // AdminCustodyAudit (GET /custody-audit) is read-only; no break-flagging
+  // action exists anywhere in backend/internal/health/lab.
+  if (USE_MOCK) throw new Error(`Flagging a custody break ${NO_BACKEND_YET}`);
   return sendJson<CustodyBreakResult>('POST', `/custody/${id}/break`, { reason });
 }
 
@@ -304,24 +299,8 @@ export async function listResultsAudit(opts?: { status?: string; abnormal?: stri
   return getJson<ResultAuditItem[]>(`/results${qs.toString() ? `?${qs}` : ''}`);
 }
 export async function releaseResult(id: string, action: ResultReleaseAction, note?: string): Promise<ResultReleaseResult> {
-  if (USE_MOCK) {
-    await delay();
-    const r = RESULTS.find((x) => x.id === id);
-    if (action === 'release' && r && !r.chain_intact) {
-      return { id, status: 'processing', audit_id: auditId(), message: `Fixture — nothing was saved. Release blocked — chain-of-custody is broken on this sample; no result may be released without an unbroken chain (HL-6). Recollection required. (HL-12).` };
-    }
-    if (action === 'release' && r && !r.signed_off) {
-      return { id, status: 'result_ready', audit_id: auditId(), message: `Fixture — nothing was saved. Release blocked — result not yet signed off by a registered medical laboratory scientist. (HL-12).` };
-    }
-    if (action === 'release' && r && !r.consent_on_file) {
-      return { id, status: 'result_ready', audit_id: auditId(), message: `Fixture — nothing was saved. Release blocked — NDPA consent not on file; health data may not be released to the patient vault without explicit consent (HL-8). (HL-12).` };
-    }
-    if (action === 'release' && r && r.abnormal_flag === 'critical' && r.status !== 'escalated') {
-      return { id, status: 'escalated', audit_id: auditId(), message: `Fixture — nothing was saved. Release routed through escalation — a critical value must complete the human escalation path before release; it is never released silently (HL-7). (HL-12).` };
-    }
-    const status = action === 'release' ? 'released' : action === 'amend' ? 'amended' : 'processing';
-    return { id, status, audit_id: auditId(), message: `Fixture — nothing was saved. Result ${id}: ${action} applied. Chain-of-custody (HL-6), scientist sign-off and NDPA consent (HL-8) gates passed. (HL-12).` };
-  }
+  // No result-release route exists anywhere in backend/internal/health/lab.
+  if (USE_MOCK) throw new Error(`Releasing a result ${NO_BACKEND_YET}`);
   return sendJson<ResultReleaseResult>('POST', `/results/${id}/release`, { action, note });
 }
 
@@ -353,11 +332,9 @@ export async function listEscalations(opts?: { status?: string; severity?: strin
   return getJson<Escalation[]>(`/escalations${qs.toString() ? `?${qs}` : ''}`);
 }
 export async function resolveEscalation(id: string, action: EscalationResolveAction, note?: string): Promise<EscalationResolveResult> {
-  if (USE_MOCK) {
-    await delay();
-    const status = action === 'acknowledge' ? 'acknowledged' : action === 'resolve' ? 'resolved' : 'closed';
-    return { id, status, audit_id: auditId(), message: `Fixture — nothing was saved. Critical-result escalation ${id}: ${action} applied by a named human owner — the escalation path is never closed silently (HL-7). (HL-12).` };
-  }
+  // AdminEscalations (GET /escalations) is read-only; no resolve action exists
+  // anywhere in backend/internal/health/lab.
+  if (USE_MOCK) throw new Error(`Resolving an escalation ${NO_BACKEND_YET}`);
   return sendJson<EscalationResolveResult>('POST', `/escalations/${id}/resolve`, { action, note });
 }
 
@@ -415,17 +392,9 @@ export async function listPayouts(opts?: { payout_status?: string; q?: string })
   return getJson<LabPayoutRecord[]>(`/payouts${qs.toString() ? `?${qs}` : ''}`);
 }
 export async function decidePayout(id: string, decision: LabPayoutDecision, note?: string): Promise<LabPayoutDecisionResult> {
-  if (USE_MOCK) {
-    await delay();
-    const p = PAYOUTS.find((x) => x.id === id);
-    if (decision === 'approve' && p && !p.kyc_verified) {
-      return { id, payout_status: 'kyc_hold', audit_id: auditId(), message: `Fixture — nothing was saved. Payout blocked — lab ${id} KYC tier insufficient (HL-10). Payout stays fail-closed until KYC clears. (HL-12).` };
-    }
-    if (decision === 'approve' && p?.aml_flag) {
-      return { id, payout_status: 'kyc_hold', audit_id: auditId(), message: `Fixture — nothing was saved. Payout held — AML flag on settlement requires clearance before release (HL-10). (HL-12).` };
-    }
-    return { id, payout_status: decision === 'approve' ? 'approved' : 'rejected', audit_id: auditId(), message: `Fixture — nothing was saved. Lab ${id} payout ${decision === 'approve' ? 'approved' : 'rejected'}. KYC + AML gate (HL-10) passed. (HL-12).` };
-  }
+  // No payout route exists anywhere in backend/internal/health/lab — the
+  // entire admin surface is 4 read/deactivate routes; nothing money-related.
+  if (USE_MOCK) throw new Error(`Deciding a lab payout ${NO_BACKEND_YET}`);
   return sendJson<LabPayoutDecisionResult>('POST', `/payouts/${id}/decision`, { decision, note });
 }
 

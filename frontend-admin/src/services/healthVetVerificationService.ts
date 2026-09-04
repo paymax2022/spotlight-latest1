@@ -101,21 +101,10 @@ export async function getVerificationDocUrl(docId: string): Promise<{ url: strin
 }
 
 export async function decideVerification(id: string, input: VcnDecisionInput): Promise<VcnVerificationRecord> {
-  if (USE_MOCK) {
-    await delay();
-    const base = RECORDS.find((r) => r.id === id) ?? RECORDS[0];
-    const status =
-      input.action === 'approve' ? 'VERIFIED'
-      : input.action === 'reject' ? 'REJECTED'
-      : 'NEEDS_INFO';
-    return {
-      ...base,
-      status,
-      licence_expiry: input.action === 'approve' ? (input.licence_expiry ?? base.licence_expiry) : base.licence_expiry,
-      notes: input.notes ?? base.notes,
-      reviewer_id: 'ops_admin_1',
-      decided_at: new Date().toISOString(),
-    };
-  }
+  // Real, verified live endpoint (POST /verification/:id/decision,
+  // backend/internal/health/credential/handler.go Decide) — fixture mode
+  // refuses loudly instead of reporting a decision it did not perform. See
+  // docs/audit/ADMIN_SIMULATED_WRITES.md.
+  if (USE_MOCK) throw new Error(`Deciding a VCN verification is unavailable in fixture mode: this console will not report a write it did not perform. Set NEXT_PUBLIC_HEALTH_USE_MOCK=false to make this change against the live backend.`);
   return sendJson<VcnVerificationRecord>('POST', `/verification/${id}/decision`, input);
 }

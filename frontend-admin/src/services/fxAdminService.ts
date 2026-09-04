@@ -1,7 +1,12 @@
 // ── Admin — FX Orchestration service ─────────────────────────────────────────
-// Mock-backed (no backend endpoints yet). Mirrors crowdfundingAdminService /
-// fintechService shape: flip USE_MOCK to false and the fetch branches hit
-// /api/fx/admin/... All money is integer minor units.
+// Mock-backed. No backend endpoints exist yet — /api/fx/admin/... is not
+// registered anywhere in the Go service (verified by grep; the closest thing
+// is /api/finance/admin/fx/markup, a narrower, unrelated surface). Shaped
+// after crowdfundingAdminService / fintechService so that once the admin
+// control-plane is built, flipping NEXT_PUBLIC_FX_ADMIN_USE_MOCK=false and
+// pointing adminBase() at the real routes is the only change needed — but
+// until then every mutation below refuses honestly rather than reporting a
+// success it did not perform. All money is integer minor units.
 
 import { env } from '@/config/env';
 import { operationKey } from './idempotency';
@@ -31,6 +36,31 @@ function authHeaders(): Record<string, string> {
   return token ? { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' } : { 'Content-Type': 'application/json' };
 }
 const delay = (ms = 300) => new Promise((r) => setTimeout(r, ms));
+
+// Unlike association/restaurant, there is NO backend for any FX admin write —
+// /api/fx/admin/... does not exist anywhere in the Go service (confirmed by
+// grep; the only related route is /api/finance/admin/fx/markup, a different,
+// narrower surface). So there is no "set NEXT_PUBLIC_FX_ADMIN_USE_MOCK=false
+// to reach the real endpoint" escape hatch here — flipping that flag was ALSO
+// dishonest: every "live" branch below called fetch(...) and then returned
+// `{ ok: true }` unconditionally, discarding the response and its status code,
+// so a 404 (the only possible outcome today) was reported as success too.
+// Both paths now fail honestly instead of fabricating a result. See
+// docs/audit/ADMIN_SIMULATED_WRITES.md.
+const NO_BACKEND_YET =
+  'has no backend yet: /api/fx/admin/... does not exist on the Go service. ' +
+  'This console cannot perform this action until that surface is built.';
+
+async function reqLive<T>(url: string, init: RequestInit): Promise<T> {
+  const res = await fetch(url, init);
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body?.error || body?.message || `Request failed (${res.status})`);
+  return (body?.data ?? body) as T;
+}
+async function writeLive(url: string, init: RequestInit): Promise<{ ok: boolean }> {
+  await reqLive(url, init);
+  return { ok: true };
+}
 
 // ─── Mock datasets ────────────────────────────────────────────────────────────
 
@@ -126,13 +156,13 @@ const TXNS: FxTxDetail[] = [
   },
 ];
 
-let WEIGHTS: RoutingWeights[] = [
+const WEIGHTS: RoutingWeights[] = [
   { corridor: 'USD-NGN', tier: 'All tiers', wCost: 0.45, wCover: 0.2, wLiq: 0.2, wRel: 0.15, enabled: { eversend: true, maplerad: true }, bias: 'auto' },
   { corridor: 'USD-XAF', tier: 'All tiers', wCost: 0.3, wCover: 0.35, wLiq: 0.2, wRel: 0.15, enabled: { eversend: false, maplerad: true }, bias: 'maplerad' },
   { corridor: 'EUR-NGN', tier: 'All tiers', wCost: 0.5, wCover: 0.2, wLiq: 0.2, wRel: 0.1, enabled: { eversend: true, maplerad: true }, bias: 'eversend' },
 ];
 
-let PROVIDERS: ProviderConfig[] = [
+const PROVIDERS: ProviderConfig[] = [
   {
     provider: 'eversend', displayName: 'Eversend', enabled: true,
     corridors: ['USD-NGN', 'EUR-NGN', 'USD-GHS', 'USD-KES'], rails: ['bank_transfer', 'mobile_money', 'iban', 'stablecoin'],
@@ -147,7 +177,7 @@ let PROVIDERS: ProviderConfig[] = [
   },
 ];
 
-let FLOATS: FloatBucket[] = [
+const FLOATS: FloatBucket[] = [
   { provider: 'eversend', currency: 'USD', balanceMinor: 820_000_00, lowWaterMinor: 200_000_00, highWaterMinor: 1_000_000_00, status: 'healthy' },
   { provider: 'eversend', currency: 'NGN', balanceMinor: 180_000_000_00, lowWaterMinor: 250_000_000_00, highWaterMinor: 900_000_000_00, status: 'low' },
   { provider: 'maplerad', currency: 'USD', balanceMinor: 96_000_00, lowWaterMinor: 150_000_00, highWaterMinor: 800_000_00, status: 'critical' },
@@ -159,7 +189,7 @@ const REBALANCES: RebalanceEvent[] = [
   { id: 'rb2', from: 'maplerad', to: 'eversend', currency: 'NGN', amountMinor: 80_000_000_00, path: 'fiat', status: 'pending', createdAt: '2026-06-19T09:30:00Z' },
 ];
 
-let SPREADS: SpreadRule[] = [
+const SPREADS: SpreadRule[] = [
   { id: 'sp1', corridor: 'USD-NGN', tier: 'Retail', bps: 120, fixedMinor: 0, minBps: 80, maxBps: 200, version: 4, updatedAt: '2026-06-15T12:00:00Z', active: true },
   { id: 'sp2', corridor: 'USD-NGN', tier: 'Business', bps: 75, fixedMinor: 0, minBps: 50, maxBps: 150, version: 2, updatedAt: '2026-06-12T12:00:00Z', active: true },
   { id: 'sp3', corridor: 'USD-XAF', tier: 'Retail', bps: 150, fixedMinor: 50, minBps: 100, maxBps: 250, version: 1, updatedAt: '2026-06-10T12:00:00Z', active: true },
@@ -172,7 +202,7 @@ const RECON_RUNS: ReconRun[] = [
   { id: 'run3', provider: 'eversend', date: '2026-06-17', matched: 690, breaks: 0, status: 'clean' },
 ];
 
-let RECON_BREAKS: ReconBreak[] = [
+const RECON_BREAKS: ReconBreak[] = [
   { id: 'bk1', runId: 'run1', provider: 'eversend', reference: 'PMX-TR-77410', type: 'fee', expectedMinor: 1_05, actualMinor: 1_20, currency: 'USD', status: 'open', createdAt: '2026-06-18T23:10:00Z' },
   { id: 'bk2', runId: 'run2', provider: 'maplerad', reference: 'PMX-TR-77512', type: 'rate', expectedMinor: 60_250_00, actualMinor: 60_010_00, currency: 'XAF', status: 'investigating', createdAt: '2026-06-18T23:14:00Z' },
   { id: 'bk3', runId: 'run2', provider: 'maplerad', reference: 'PMX-CV-90044', type: 'timing', expectedMinor: 0, actualMinor: 0, currency: 'USD', status: 'open', createdAt: '2026-06-18T23:20:00Z' },
@@ -218,15 +248,13 @@ export async function getTransaction(id: string): Promise<FxTxDetail> {
 }
 
 export async function retryTransaction(id: string): Promise<{ ok: boolean }> {
-  if (USE_MOCK) { await delay(500); const t = TXNS.find((x) => x.id === id); if (t) t.status = 'processing'; return { ok: true }; }
-  await fetch(`${adminBase()}/transactions/${id}/retry`, { method: 'POST', headers: { ...authHeaders(), 'Idempotency-Key': operationKey('fx:transaction-retry', id) } });
-  return { ok: true };
+  if (USE_MOCK) throw new Error(`Retrying a transaction ${NO_BACKEND_YET}`);
+  return writeLive(`${adminBase()}/transactions/${id}/retry`, { method: 'POST', headers: { ...authHeaders(), 'Idempotency-Key': operationKey('fx:transaction-retry', id) } });
 }
 
 export async function forceReverseTransaction(id: string): Promise<{ ok: boolean }> {
-  if (USE_MOCK) { await delay(500); const t = TXNS.find((x) => x.id === id); if (t) t.status = 'reversed'; return { ok: true }; }
-  await fetch(`${adminBase()}/transactions/${id}/reverse`, { method: 'POST', headers: { ...authHeaders(), 'Idempotency-Key': operationKey('fx:transaction-reverse', id) } });
-  return { ok: true };
+  if (USE_MOCK) throw new Error(`Reversing a transaction ${NO_BACKEND_YET}`);
+  return writeLive(`${adminBase()}/transactions/${id}/reverse`, { method: 'POST', headers: { ...authHeaders(), 'Idempotency-Key': operationKey('fx:transaction-reverse', id) } });
 }
 
 // ─── Routing ──────────────────────────────────────────────────────────────────
@@ -238,24 +266,13 @@ export async function getRoutingWeights(): Promise<RoutingWeights[]> {
 }
 
 export async function saveRoutingWeights(rows: RoutingWeights[]): Promise<{ ok: boolean }> {
-  if (USE_MOCK) { await delay(400); WEIGHTS = rows; return { ok: true }; }
-  await fetch(`${adminBase()}/routing`, { method: 'PUT', headers: { ...authHeaders(), 'Idempotency-Key': operationKey('fx:routing-save') }, body: JSON.stringify(rows) });
-  return { ok: true };
+  if (USE_MOCK) throw new Error(`Saving routing weights ${NO_BACKEND_YET}`);
+  return writeLive(`${adminBase()}/routing`, { method: 'PUT', headers: { ...authHeaders(), 'Idempotency-Key': operationKey('fx:routing-save') }, body: JSON.stringify(rows) });
 }
 
 export async function simulateRoute(corridor: string, amountUsdCents: number): Promise<RouteSimResult> {
-  if (USE_MOCK) {
-    await delay(450);
-    const big = amountUsdCents > 500_000_00;
-    const ranked: RouteSimResult['ranked'] = [
-      { provider: 'eversend' as Provider, allInRate: 1581.43, score: big ? 0.94 : 0.9, viable: true },
-      { provider: 'maplerad' as Provider, allInRate: 1576.1, score: big ? 0.88 : 0.92, viable: true, note: big ? 'Deeper book preferred for large ticket' : 'Lower fixed fee for small ticket' },
-    ];
-    ranked.sort((a, b) => b.score - a.score);
-    return { corridor, amountUsdCents, ranked };
-  }
-  const res = await fetch(`${adminBase()}/routing/simulate`, { method: 'POST', headers: { ...authHeaders(), 'Idempotency-Key': operationKey('fx:route-simulate', corridor) }, body: JSON.stringify({ corridor, amountUsdCents }) });
-  return res.json();
+  if (USE_MOCK) throw new Error(`Simulating a route ${NO_BACKEND_YET}`);
+  return reqLive<RouteSimResult>(`${adminBase()}/routing/simulate`, { method: 'POST', headers: { ...authHeaders(), 'Idempotency-Key': operationKey('fx:route-simulate', corridor) }, body: JSON.stringify({ corridor, amountUsdCents }) });
 }
 
 // ─── Providers ────────────────────────────────────────────────────────────────
@@ -267,15 +284,13 @@ export async function getProviders(): Promise<ProviderConfig[]> {
 }
 
 export async function toggleProvider(provider: Provider, enabled: boolean): Promise<{ ok: boolean }> {
-  if (USE_MOCK) { await delay(300); PROVIDERS = PROVIDERS.map((p) => (p.provider === provider ? { ...p, enabled } : p)); return { ok: true }; }
-  await fetch(`${adminBase()}/providers/${provider}`, { method: 'PATCH', headers: { ...authHeaders(), 'Idempotency-Key': operationKey('fx:provider-toggle', provider) }, body: JSON.stringify({ enabled }) });
-  return { ok: true };
+  if (USE_MOCK) throw new Error(`Toggling a provider ${NO_BACKEND_YET}`);
+  return writeLive(`${adminBase()}/providers/${provider}`, { method: 'PATCH', headers: { ...authHeaders(), 'Idempotency-Key': operationKey('fx:provider-toggle', provider) }, body: JSON.stringify({ enabled }) });
 }
 
 export async function setBreaker(provider: Provider, state: ProviderConfig['breaker']): Promise<{ ok: boolean }> {
-  if (USE_MOCK) { await delay(300); PROVIDERS = PROVIDERS.map((p) => (p.provider === provider ? { ...p, breaker: state } : p)); return { ok: true }; }
-  await fetch(`${adminBase()}/providers/${provider}/breaker`, { method: 'POST', headers: { ...authHeaders(), 'Idempotency-Key': operationKey('fx:provider-breaker', provider) }, body: JSON.stringify({ state }) });
-  return { ok: true };
+  if (USE_MOCK) throw new Error(`Setting a provider breaker ${NO_BACKEND_YET}`);
+  return writeLive(`${adminBase()}/providers/${provider}/breaker`, { method: 'POST', headers: { ...authHeaders(), 'Idempotency-Key': operationKey('fx:provider-breaker', provider) }, body: JSON.stringify({ state }) });
 }
 
 // ─── Treasury ─────────────────────────────────────────────────────────────────
@@ -293,13 +308,8 @@ export async function getRebalances(): Promise<RebalanceEvent[]> {
 }
 
 export async function rebalanceNow(bucket: FloatBucket, path: 'fiat' | 'stablecoin'): Promise<{ ok: boolean }> {
-  if (USE_MOCK) {
-    await delay(600);
-    FLOATS = FLOATS.map((f) => (f.provider === bucket.provider && f.currency === bucket.currency ? { ...f, balanceMinor: f.lowWaterMinor + (f.highWaterMinor - f.lowWaterMinor) / 2, status: 'healthy' } : f));
-    return { ok: true };
-  }
-  await fetch(`${adminBase()}/treasury/rebalance`, { method: 'POST', headers: { ...authHeaders(), 'Idempotency-Key': operationKey('fx:treasury-rebalance', bucket.provider, bucket.currency) }, body: JSON.stringify({ provider: bucket.provider, currency: bucket.currency, path }) });
-  return { ok: true };
+  if (USE_MOCK) throw new Error(`Rebalancing treasury ${NO_BACKEND_YET}`);
+  return writeLive(`${adminBase()}/treasury/rebalance`, { method: 'POST', headers: { ...authHeaders(), 'Idempotency-Key': operationKey('fx:treasury-rebalance', bucket.provider, bucket.currency) }, body: JSON.stringify({ provider: bucket.provider, currency: bucket.currency, path }) });
 }
 
 // ─── Spread ───────────────────────────────────────────────────────────────────
@@ -311,13 +321,8 @@ export async function getSpreadRules(): Promise<SpreadRule[]> {
 }
 
 export async function updateSpreadRule(id: string, patch: Partial<SpreadRule>): Promise<{ ok: boolean }> {
-  if (USE_MOCK) {
-    await delay(350);
-    SPREADS = SPREADS.map((s) => (s.id === id ? { ...s, ...patch, version: s.version + 1, updatedAt: new Date().toISOString() } : s));
-    return { ok: true };
-  }
-  await fetch(`${adminBase()}/spread/${id}`, { method: 'PATCH', headers: { ...authHeaders(), 'Idempotency-Key': operationKey('fx:spread-update', id) }, body: JSON.stringify(patch) });
-  return { ok: true };
+  if (USE_MOCK) throw new Error(`Updating a spread rule ${NO_BACKEND_YET}`);
+  return writeLive(`${adminBase()}/spread/${id}`, { method: 'PATCH', headers: { ...authHeaders(), 'Idempotency-Key': operationKey('fx:spread-update', id) }, body: JSON.stringify(patch) });
 }
 
 // ─── Reconciliation ───────────────────────────────────────────────────────────
@@ -335,14 +340,13 @@ export async function getReconBreaks(): Promise<ReconBreak[]> {
 }
 
 export async function resolveReconBreak(id: string, status: ReconBreak['status']): Promise<{ ok: boolean }> {
-  if (USE_MOCK) { await delay(300); RECON_BREAKS = RECON_BREAKS.map((b) => (b.id === id ? { ...b, status } : b)); return { ok: true }; }
-  await fetch(`${adminBase()}/recon/breaks/${id}`, { method: 'PATCH', headers: { ...authHeaders(), 'Idempotency-Key': operationKey('fx:recon-break-resolve', id) }, body: JSON.stringify({ status }) });
-  return { ok: true };
+  if (USE_MOCK) throw new Error(`Resolving a reconciliation break ${NO_BACKEND_YET}`);
+  return writeLive(`${adminBase()}/recon/breaks/${id}`, { method: 'PATCH', headers: { ...authHeaders(), 'Idempotency-Key': operationKey('fx:recon-break-resolve', id) }, body: JSON.stringify({ status }) });
 }
 
 // ─── G. Customers (KYC/KYB) ───────────────────────────────────────────────────
 
-let CUSTOMERS: CustomerDetail[] = [
+const CUSTOMERS: CustomerDetail[] = [
   {
     id: 'cus_91', name: 'Acme Ltd', email: 'ops@acme.example', type: 'business', verification: 'review', tier: 2,
     country: 'NG', balanceUsdCents: 3_420_00, createdAt: '2026-05-30T10:00:00Z',
@@ -389,18 +393,13 @@ export async function getCustomer(id: string): Promise<CustomerDetail> {
 }
 
 export async function setCustomerVerification(id: string, verification: CustomerVerification): Promise<{ ok: boolean }> {
-  if (USE_MOCK) {
-    await delay(350);
-    CUSTOMERS = CUSTOMERS.map((c) => (c.id === id ? { ...c, verification, tier: verification === 'approved' ? Math.max(c.tier, 1) : c.tier } : c));
-    return { ok: true };
-  }
-  await fetch(`${adminBase()}/customers/${id}/verification`, { method: 'PATCH', headers: { ...authHeaders(), 'Idempotency-Key': operationKey('fx:customer-verification', id) }, body: JSON.stringify({ verification }) });
-  return { ok: true };
+  if (USE_MOCK) throw new Error(`Setting customer verification ${NO_BACKEND_YET}`);
+  return writeLive(`${adminBase()}/customers/${id}/verification`, { method: 'PATCH', headers: { ...authHeaders(), 'Idempotency-Key': operationKey('fx:customer-verification', id) }, body: JSON.stringify({ verification }) });
 }
 
 // ─── H. Compliance & Risk ─────────────────────────────────────────────────────
 
-let ALERTS: ScreeningAlert[] = [
+const ALERTS: ScreeningAlert[] = [
   { id: 'al1', customer: 'QuickCoin Traders', kind: 'sanctions', reference: null, detail: 'Name match (82%) against OFAC SDN list.', severity: 'high', status: 'open', createdAt: '2026-06-19T08:00:00Z' },
   { id: 'al2', customer: 'Jane Doe', kind: 'velocity', reference: 'PMX-TR-77810', detail: '5 payouts in 10 minutes exceeds velocity rule.', severity: 'medium', status: 'in_review', createdAt: '2026-06-19T09:10:00Z' },
   { id: 'al3', customer: 'Acme Ltd', kind: 'aml_rule', reference: 'PMX-CV-90021', detail: 'Large conversion just below reporting threshold.', severity: 'low', status: 'open', createdAt: '2026-06-19T10:25:00Z' },
@@ -414,14 +413,13 @@ export async function getScreeningAlerts(): Promise<ScreeningAlert[]> {
 }
 
 export async function setAlertStatus(id: string, status: CaseStatus, reason?: string): Promise<{ ok: boolean }> {
-  if (USE_MOCK) { await delay(300); ALERTS = ALERTS.map((a) => (a.id === id ? { ...a, status } : a)); return { ok: true }; }
-  await fetch(`${adminBase()}/compliance/alerts/${id}`, { method: 'PATCH', headers: { ...authHeaders(), 'Idempotency-Key': operationKey('fx:alert-status', id) }, body: JSON.stringify({ status, reason }) });
-  return { ok: true };
+  if (USE_MOCK) throw new Error(`Setting an alert status ${NO_BACKEND_YET}`);
+  return writeLive(`${adminBase()}/compliance/alerts/${id}`, { method: 'PATCH', headers: { ...authHeaders(), 'Idempotency-Key': operationKey('fx:alert-status', id) }, body: JSON.stringify({ status, reason }) });
 }
 
 // ─── L. Webhooks & Developer ──────────────────────────────────────────────────
 
-let ENDPOINTS: WebhookEndpoint[] = [
+const ENDPOINTS: WebhookEndpoint[] = [
   { id: 'wh1', customer: 'Acme Ltd', url: 'https://acme.example/hooks/paymax', events: ['transfer.paid', 'conversion.settled', 'collection.received'], enabled: true, sandbox: false },
   { id: 'wh2', customer: 'Jane Doe', url: 'https://jane.example/pmx', events: ['transfer.paid', 'transfer.failed'], enabled: true, sandbox: true },
 ];
@@ -452,15 +450,13 @@ export async function getWebhookDeliveries(): Promise<WebhookDelivery[]> {
 }
 
 export async function replayDelivery(id: string): Promise<{ ok: boolean }> {
-  if (USE_MOCK) { await delay(400); const d = DELIVERIES.find((x) => x.id === id); if (d) { d.status = 'delivered'; d.responseCode = 200; d.attempts += 1; } return { ok: true }; }
-  await fetch(`${adminBase()}/webhooks/deliveries/${id}/replay`, { method: 'POST', headers: { ...authHeaders(), 'Idempotency-Key': operationKey('fx:webhook-replay', id) } });
-  return { ok: true };
+  if (USE_MOCK) throw new Error(`Replaying a webhook delivery ${NO_BACKEND_YET}`);
+  return writeLive(`${adminBase()}/webhooks/deliveries/${id}/replay`, { method: 'POST', headers: { ...authHeaders(), 'Idempotency-Key': operationKey('fx:webhook-replay', id) } });
 }
 
 export async function toggleEndpoint(id: string, enabled: boolean): Promise<{ ok: boolean }> {
-  if (USE_MOCK) { await delay(250); ENDPOINTS = ENDPOINTS.map((e) => (e.id === id ? { ...e, enabled } : e)); return { ok: true }; }
-  await fetch(`${adminBase()}/webhooks/endpoints/${id}`, { method: 'PATCH', headers: { ...authHeaders(), 'Idempotency-Key': operationKey('fx:webhook-endpoint-toggle', id) }, body: JSON.stringify({ enabled }) });
-  return { ok: true };
+  if (USE_MOCK) throw new Error(`Toggling a webhook endpoint ${NO_BACKEND_YET}`);
+  return writeLive(`${adminBase()}/webhooks/endpoints/${id}`, { method: 'PATCH', headers: { ...authHeaders(), 'Idempotency-Key': operationKey('fx:webhook-endpoint-toggle', id) }, body: JSON.stringify({ enabled }) });
 }
 
 export async function getApiKeys(): Promise<ApiKey[]> {
@@ -539,7 +535,7 @@ export async function getBeneficiaryIssues(): Promise<BeneficiaryValidationIssue
 
 // ─── K. Cards ─────────────────────────────────────────────────────────────────
 
-let ISSUED_CARDS: IssuedCard[] = [
+const ISSUED_CARDS: IssuedCard[] = [
   { id: 'ic1', customer: 'Acme Ltd', brand: 'visa', currency: 'USD', last4: '4242', status: 'active', provider: 'maplerad', balanceMinor: 420_00, spentMinor: 86_40, createdAt: '2026-04-20T10:00:00Z' },
   { id: 'ic2', customer: 'Acme Ltd', brand: 'mastercard', currency: 'USD', last4: '5588', status: 'frozen', provider: 'maplerad', balanceMinor: 1_250_00, spentMinor: 0, createdAt: '2026-05-30T10:00:00Z' },
   { id: 'ic3', customer: 'Jane Doe', brand: 'visa', currency: 'USD', last4: '9012', status: 'active', provider: 'maplerad', balanceMinor: 60_00, spentMinor: 44_10, createdAt: '2026-06-12T10:00:00Z' },
@@ -556,9 +552,8 @@ export async function getIssuedCards(): Promise<IssuedCard[]> {
   return res.json();
 }
 export async function setIssuedCardStatus(id: string, status: IssuedCardStatus): Promise<{ ok: boolean }> {
-  if (USE_MOCK) { await delay(300); ISSUED_CARDS = ISSUED_CARDS.map((c) => (c.id === id ? { ...c, status } : c)); return { ok: true }; }
-  await fetch(`${adminBase()}/cards/${id}`, { method: 'PATCH', headers: { ...authHeaders(), 'Idempotency-Key': operationKey('fx:card-status', id) }, body: JSON.stringify({ status }) });
-  return { ok: true };
+  if (USE_MOCK) throw new Error(`Setting an issued card status ${NO_BACKEND_YET}`);
+  return writeLive(`${adminBase()}/cards/${id}`, { method: 'PATCH', headers: { ...authHeaders(), 'Idempotency-Key': operationKey('fx:card-status', id) }, body: JSON.stringify({ status }) });
 }
 export async function getSuspiciousCardActivity(): Promise<SuspiciousCardActivity[]> {
   if (USE_MOCK) { await delay(); return SUSPICIOUS; }
@@ -568,7 +563,7 @@ export async function getSuspiciousCardActivity(): Promise<SuspiciousCardActivit
 
 // ─── N. Settings: catalogues + feature flags ──────────────────────────────────
 
-let CATALOGUE: FxSettingsCatalogue = {
+const CATALOGUE: FxSettingsCatalogue = {
   corridors: [
     { corridor: 'USD-NGN', enabled: true, defaultProvider: 'auto' },
     { corridor: 'EUR-NGN', enabled: true, defaultProvider: 'eversend' },
@@ -612,19 +607,16 @@ export async function getCatalogue(): Promise<FxSettingsCatalogue> {
 }
 
 export async function toggleFlag(key: string, enabled: boolean): Promise<{ ok: boolean }> {
-  if (USE_MOCK) { await delay(250); CATALOGUE = { ...CATALOGUE, flags: CATALOGUE.flags.map((f) => (f.key === key ? { ...f, enabled } : f)) }; return { ok: true }; }
-  await fetch(`${adminBase()}/settings/flags/${key}`, { method: 'PATCH', headers: { ...authHeaders(), 'Idempotency-Key': operationKey('fx:flag-toggle', key) }, body: JSON.stringify({ enabled }) });
-  return { ok: true };
+  if (USE_MOCK) throw new Error(`Toggling a feature flag ${NO_BACKEND_YET}`);
+  return writeLive(`${adminBase()}/settings/flags/${key}`, { method: 'PATCH', headers: { ...authHeaders(), 'Idempotency-Key': operationKey('fx:flag-toggle', key) }, body: JSON.stringify({ enabled }) });
 }
 
 export async function toggleCorridor(corridor: string, enabled: boolean): Promise<{ ok: boolean }> {
-  if (USE_MOCK) { await delay(250); CATALOGUE = { ...CATALOGUE, corridors: CATALOGUE.corridors.map((c) => (c.corridor === corridor ? { ...c, enabled } : c)) }; return { ok: true }; }
-  await fetch(`${adminBase()}/settings/corridors/${corridor}`, { method: 'PATCH', headers: { ...authHeaders(), 'Idempotency-Key': operationKey('fx:corridor-toggle', corridor) }, body: JSON.stringify({ enabled }) });
-  return { ok: true };
+  if (USE_MOCK) throw new Error(`Toggling a corridor ${NO_BACKEND_YET}`);
+  return writeLive(`${adminBase()}/settings/corridors/${corridor}`, { method: 'PATCH', headers: { ...authHeaders(), 'Idempotency-Key': operationKey('fx:corridor-toggle', corridor) }, body: JSON.stringify({ enabled }) });
 }
 
 export async function toggleCurrency(code: string, enabled: boolean): Promise<{ ok: boolean }> {
-  if (USE_MOCK) { await delay(250); CATALOGUE = { ...CATALOGUE, currencies: CATALOGUE.currencies.map((c) => (c.code === code ? { ...c, enabled } : c)) }; return { ok: true }; }
-  await fetch(`${adminBase()}/settings/currencies/${code}`, { method: 'PATCH', headers: { ...authHeaders(), 'Idempotency-Key': operationKey('fx:currency-toggle', code) }, body: JSON.stringify({ enabled }) });
-  return { ok: true };
+  if (USE_MOCK) throw new Error(`Toggling a currency ${NO_BACKEND_YET}`);
+  return writeLive(`${adminBase()}/settings/currencies/${code}`, { method: 'PATCH', headers: { ...authHeaders(), 'Idempotency-Key': operationKey('fx:currency-toggle', code) }, body: JSON.stringify({ enabled }) });
 }

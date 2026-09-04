@@ -37,6 +37,19 @@ function authHeaders(): Record<string, string> {
 }
 const delay = (ms = 240) => new Promise((r) => setTimeout(r, ms));
 
+// Verified against the real Go routes: backend/internal/referral/{campaigns,risk,
+// attribution}/handlers.go + backend/internal/app/referral_{routes,econ_routes,
+// trust_routes}.go. Functions with a real route throw NOT_IN_FIXTURE_MODE;
+// functions with no reachable route throw NO_BACKEND_YET instead, since
+// flipping the mock flag would not reach a working call either way. See
+// docs/audit/ADMIN_SIMULATED_WRITES.md.
+const NOT_IN_FIXTURE_MODE =
+  'is unavailable in fixture mode: this console will not report a write it did not perform. ' +
+  'Set NEXT_PUBLIC_REFERRAL_USE_MOCK=false to make this change against the live backend.';
+const NO_BACKEND_YET =
+  'has no backend yet (see the comment on the live-mode call below). ' +
+  'This console cannot perform this action until that endpoint is built.';
+
 async function getJson<T>(path: string): Promise<T> {
   const res = await fetch(`${adminBase()}${path}`, { headers: authHeaders() });
   if (!res.ok) throw new Error(`Request failed (${res.status})`);
@@ -254,7 +267,10 @@ export async function getAttributionConfig(): Promise<AttributionConfig> {
 }
 
 export async function updateAttributionConfig(cfg: AttributionConfig): Promise<AttributionConfig> {
-  if (USE_MOCK) { await delay(); return { ...cfg, updated_at: new Date().toISOString() }; }
+  // No backend at all: the referral admin group has PUT /config (a general
+  // ProgramConfig, a different type from AttributionConfig) but no
+  // /attribution/config route of its own anywhere in backend/internal/referral.
+  if (USE_MOCK) throw new Error(`Updating attribution config ${NO_BACKEND_YET}`);
   return sendJson<AttributionConfig>('PUT', '/attribution/config', cfg);
 }
 
@@ -273,13 +289,20 @@ export async function getCampaign(id: string): Promise<CampaignDetail | null> {
 }
 
 export async function createCampaign(draft: CampaignDraft): Promise<{ id: string }> {
-  if (USE_MOCK) { await delay(); return { id: `cmp_${Math.floor(Math.random() * 9000 + 1000)}` }; }
+  if (USE_MOCK) throw new Error(`Creating a campaign ${NOT_IN_FIXTURE_MODE}`);
   return sendJson<{ id: string }>('POST', '/campaigns', draft);
 }
 
 export async function setCampaignStatus(id: string, status: CampaignDetail['status']): Promise<{ ok: true }> {
-  if (USE_MOCK) { await delay(); return { ok: true }; }
-  return sendJson<{ ok: true }>('PATCH', `/campaigns/${id}/status`, { status });
+  if (USE_MOCK) throw new Error(`Setting a campaign status ${NOT_IN_FIXTURE_MODE}`);
+  // backend: campaign lifecycle is split into discrete POST verbs, not a status
+  // PATCH: POST /campaigns/:id/{activate,pause,end} (campaigns.Handler.Admin*).
+  // "throttled" needs a throttle percentage this function's signature doesn't
+  // carry (POST /campaigns/:id/throttle requires {pct}); "draft"/"scheduled"
+  // have no admin action at all. Map the three that do.
+  const verb = status === 'active' ? 'activate' : status === 'paused' ? 'pause' : status === 'ended' ? 'end' : null;
+  if (!verb) throw new Error(`Cannot set campaign status to "${status}" directly — no matching admin action exists.`);
+  return sendJson<{ ok: true }>('POST', `/campaigns/${id}/${verb}`, {});
 }
 
 export async function listRewardLedger(filters?: { state?: string; kind?: string }): Promise<RewardLedgerEntry[]> {
@@ -303,7 +326,11 @@ export async function getRewardEntry(id: string): Promise<RewardLedgerEntry | nu
 }
 
 export async function manualGrant(input: ManualGrantInput): Promise<{ id: string }> {
-  if (USE_MOCK) { await delay(); return { id: `rwd_${Math.floor(Math.random() * 9000 + 1000)}` }; }
+  // No backend at all: the reward ledger defines a KindManual entry kind
+  // (backend/internal/referral/ledger/service.go) but no handler or route
+  // anywhere in backend/internal/referral lets an admin create one via the API
+  // — only reads (AdminList) are wired.
+  if (USE_MOCK) throw new Error(`Granting a manual reward ${NO_BACKEND_YET}`);
   // Money mutation: backend requires an Idempotency-Key + audit event.
   const res = await fetch(`${adminBase()}/rewards/grant`, {
     method: 'POST',
@@ -316,11 +343,15 @@ export async function manualGrant(input: ManualGrantInput): Promise<{ id: string
 }
 
 export async function executeClawback(input: ClawbackInput): Promise<{ ok: true }> {
-  if (USE_MOCK) { await delay(); return { ok: true }; }
-  const res = await fetch(`${adminBase()}/rewards/${input.reward_id}/clawback`, {
+  if (USE_MOCK) throw new Error(`Executing a clawback ${NOT_IN_FIXTURE_MODE}`);
+  // backend: POST /risk/clawbacks (risk.Handler.ExecuteClawback), NOT
+  // /rewards/:id/clawback — the reward id and reason travel in the body as
+  // {reward_id, reason_code, idempotency_key}, not a path param + {reason}.
+  const idempotencyKey = crypto.randomUUID();
+  const res = await fetch(`${adminBase()}/risk/clawbacks`, {
     method: 'POST',
-    headers: { ...authHeaders(), 'Idempotency-Key': crypto.randomUUID() },
-    body: JSON.stringify({ reason: input.reason }),
+    headers: { ...authHeaders(), 'Idempotency-Key': idempotencyKey },
+    body: JSON.stringify({ reward_id: input.reward_id, reason_code: input.reason, idempotency_key: idempotencyKey }),
   });
   if (!res.ok) throw new Error(`Request failed (${res.status})`);
   return { ok: true };
@@ -337,6 +368,12 @@ export async function listReassignments(status?: string): Promise<Reassignment[]
 }
 
 export async function decideReassignment(input: ReassignDecision): Promise<{ ok: true }> {
-  if (USE_MOCK) { await delay(); return { ok: true }; }
+  // No backend at all: the real endpoint (POST /reassignments,
+  // attribution.Handler.Reassign) executes a reassignment immediately in one
+  // step (attribution_id, to_party, reason, cosigned_by) — there is no
+  // "pending reassignment awaiting approve/reject" concept anywhere in
+  // backend/internal/referral/attribution for this {id, decision, cosigner_id,
+  // note} shape to decide on.
+  if (USE_MOCK) throw new Error(`Deciding a reassignment ${NO_BACKEND_YET}`);
   return sendJson<{ ok: true }>('POST', `/attribution/reassignments/${input.id}/decide`, input);
 }

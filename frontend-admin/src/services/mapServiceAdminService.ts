@@ -31,6 +31,15 @@ function authHeaders(): Record<string, string> {
 }
 const delay = (ms = 240) => new Promise((r) => setTimeout(r, ms));
 
+// reviewContribution has a real, verified live endpoint (POST /contributions/:id/review,
+// backend/internal/maps/routes_v2.go reviewContribution, feature-flag gated on
+// FeatureMapsV2Enabled), so fixture mode has nothing to add and refuses loudly
+// instead of reporting a review it did not perform. See
+// docs/audit/ADMIN_SIMULATED_WRITES.md.
+const NOT_IN_FIXTURE_MODE =
+  'is unavailable in fixture mode: this console will not report a write it did not perform. ' +
+  'Set NEXT_PUBLIC_MAPS_USE_MOCK=false to make this change against the live backend.';
+
 async function getJson<T>(path: string): Promise<T> {
   const res = await fetch(`${adminBase()}${path}`, { headers: authHeaders() });
   if (!res.ok) throw new Error(`Request failed (${res.status})`);
@@ -136,14 +145,6 @@ export async function listContributions(status: ContributionStatus = 'pending'):
 }
 
 export async function reviewContribution(id: string, input: ContributionReviewInput): Promise<ContributionCandidate> {
-  if (USE_MOCK) {
-    await delay();
-    const base = MOCK_CONTRIBUTIONS.find((c) => c.id === id) ?? MOCK_CONTRIBUTIONS[0];
-    return {
-      ...base,
-      status: input.action === 'approve' ? 'approved' : 'rejected',
-      reviewer_id: 'ops_admin_1',
-    };
-  }
+  if (USE_MOCK) throw new Error(`Reviewing a map contribution ${NOT_IN_FIXTURE_MODE}`);
   return sendJson<ContributionCandidate>('POST', `/contributions/${id}/review`, input);
 }

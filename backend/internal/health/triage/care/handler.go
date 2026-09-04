@@ -176,9 +176,12 @@ func RegisterHealthTriageCare(member, admin *gin.RouterGroup, pool *pgxpool.Pool
 		member.GET("/health/triage/referrals", h.ListReferrals)
 	}
 	if admin != nil {
-		admin.GET("/health/triage/escalations", guard("health.triage.review"), h.AdminListEscalations)
-		admin.POST("/health/triage/escalations/:id/ack", guard("health.triage.review"), h.AdminAcknowledge)
-		admin.POST("/health/triage/escalations/:id/resolve", guard("health.triage.review"), h.AdminResolve)
+		// admin is already rooted at /api/health/triage/admin (adminGroupTop5 in
+		// health_triage_routes.go) — these used to re-prepend "/health/triage",
+		// doubling the segment and 404ing every escalation admin call.
+		admin.GET("/escalations", guard("health.triage.review"), h.AdminListEscalations)
+		admin.POST("/escalations/:id/ack", guard("health.triage.review"), h.AdminAcknowledge)
+		admin.POST("/escalations/:id/resolve", guard("health.triage.review"), h.AdminResolve)
 	}
 	log.Println("[health.triage.care] care-routing + escalation routes registered — refer/pay/emergency + escalations")
 }

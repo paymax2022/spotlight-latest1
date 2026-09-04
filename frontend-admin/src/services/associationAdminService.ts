@@ -280,7 +280,7 @@ export async function listApprovals(opts?: { jurisdiction?: string }): Promise<A
   return getJson<ApprovalRecord[]>(`/approvals?${qs}`);
 }
 export async function decideApplication(id: string, decision: ApprovalDecision, note?: string): Promise<{ ok: boolean }> {
-  if (USE_MOCK) { await delay(); return { ok: true }; }
+  if (USE_MOCK) throw new Error(`Deciding an application ${NOT_IN_FIXTURE_MODE}`);
   // Idempotency-Key: the contract declares one on this endpoint and approving an
   // application can settle a registration fee — a double-submitted approval must
   // not be able to post twice. This console was sending the decision WITHOUT the
@@ -360,7 +360,7 @@ export async function listOfflinePayments(): Promise<OfflinePayment[]> {
   return getJson<OfflinePayment[]>(`/finance/offline?${withOrg(new URLSearchParams())}`);
 }
 export async function decideOfflinePayment(id: string, decision: ApprovalDecision, note?: string): Promise<{ ok: boolean }> {
-  if (USE_MOCK) { await delay(); return { ok: true }; }
+  if (USE_MOCK) throw new Error(`Deciding an offline payment ${NOT_IN_FIXTURE_MODE}`);
   // Backend contract (handler_actions.go DecideOfflinePayment): POST body is
   // { approve: boolean }, keyed on Idempotency-Key (money path — NL-6/NL-8).
   // note has nowhere to go on this endpoint — it isn't part of the request.
@@ -452,19 +452,19 @@ export async function getMember(id: string): Promise<MemberDetail> {
 
 // Member actions ARE under /admin/members/:id/* (routes.go lines 79-88).
 export async function suspendMember(id: string, reason: string): Promise<MemberActionResult> {
-  if (USE_MOCK) { await delay(); return { ok: true }; }
+  if (USE_MOCK) throw new Error(`Suspending a member ${NOT_IN_FIXTURE_MODE}`);
   return sendJson<MemberActionResult>('POST', `/members/${id}/suspend`, { reason });
 }
 export async function restoreMember(id: string): Promise<MemberActionResult> {
-  if (USE_MOCK) { await delay(); return { ok: true }; }
+  if (USE_MOCK) throw new Error(`Restoring a member ${NOT_IN_FIXTURE_MODE}`);
   return sendJson<MemberActionResult>('POST', `/members/${id}/restore`, {});
 }
 export async function transferMember(id: string, chapter: string): Promise<MemberActionResult> {
-  if (USE_MOCK) { await delay(); return { ok: true }; }
+  if (USE_MOCK) throw new Error(`Transferring a member ${NOT_IN_FIXTURE_MODE}`);
   return sendJson<MemberActionResult>('POST', `/members/${id}/transfer`, { chapter });
 }
 export async function assignMemberRole(id: string, role: string): Promise<MemberActionResult> {
-  if (USE_MOCK) { await delay(); return { ok: true }; }
+  if (USE_MOCK) throw new Error(`Assigning a member role ${NOT_IN_FIXTURE_MODE}`);
   return sendJson<MemberActionResult>('POST', `/members/${id}/role`, { role });
 }
 
@@ -517,10 +517,7 @@ export async function previewImport(orgId: string, file: File): Promise<ImportPr
 }
 
 export async function confirmImport(sendInvites: boolean): Promise<ImportConfirmResult> {
-  if (USE_MOCK) {
-    await delay();
-    return { imported: MOCK_IMPORT_PREVIEW.valid, skipped: MOCK_IMPORT_PREVIEW.duplicates + MOCK_IMPORT_PREVIEW.invalid, invited: sendInvites ? MOCK_IMPORT_PREVIEW.valid : 0, batchId: `batch_${Math.random().toString(36).slice(2, 10)}` };
-  }
+  if (USE_MOCK) throw new Error(`Confirming a member import ${NOT_IN_FIXTURE_MODE}`);
   return sendJson<ImportConfirmResult>('POST', '/import/confirm', { sendInvites });
 }
 
@@ -655,7 +652,6 @@ const mockElections: AdminElectionDetail[] = [
   },
 ];
 const mockTally: Record<string, number> = { c_pres_a: 128, c_pres_b: 74, c_sec_a: 190 };
-let mockSeq = 2;
 
 function mockSummary(e: AdminElectionDetail): AdminElectionSummary {
   return { id: e.id, title: e.title, status: e.status, votingOpensAt: e.votingOpensAt, votingClosesAt: e.votingClosesAt, positionCount: e.positions.length };
@@ -693,55 +689,34 @@ export async function getElectionTally(id: string): Promise<AdminPositionResult[
   return getJson<AdminPositionResult[]>(`/elections/${id}/tally`, 'module');
 }
 export async function createElection(input: CreateElectionInput): Promise<{ id: string }> {
-  if (USE_MOCK) {
-    await delay();
-    const id = `elec_mock_${mockSeq++}`;
-    mockElections.unshift({
-      id, title: input.title, description: input.description ?? '', status: 'DRAFT',
-      votingOpensAt: input.votingOpensAt ?? null, votingClosesAt: input.votingClosesAt ?? null,
-      positions: input.positions.map((p, i) => ({ id: `${id}_p${i}`, title: p.title, seats: p.seats || 1, role: p.role || '', candidates: [] })),
-    });
-    return { id };
-  }
+  if (USE_MOCK) throw new Error(`Creating an election ${NOT_IN_FIXTURE_MODE}`);
   const orgId = getSelectedOrgId();
   const qs = orgId ? `?org_id=${encodeURIComponent(orgId)}` : '';
   return sendJson<{ id: string }>('POST', `/elections${qs}`, input, { base: 'module' });
 }
 export async function addElectionCandidate(id: string, input: { positionId: string; membershipId: string; manifesto?: string }): Promise<{ id: string }> {
-  if (USE_MOCK) {
-    await delay();
-    const e = mockElections.find((x) => x.id === id);
-    const p = e?.positions.find((pp) => pp.id === input.positionId);
-    const cid = `c_${Math.random().toString(36).slice(2, 8)}`;
-    p?.candidates.push({ id: cid, name: input.membershipId, manifesto: input.manifesto ?? '', status: 'APPROVED' });
-    return { id: cid };
-  }
+  if (USE_MOCK) throw new Error(`Adding an election candidate ${NOT_IN_FIXTURE_MODE}`);
   return sendJson<{ id: string }>('POST', `/elections/${id}/candidates`, input, { base: 'module' });
 }
-function mockTransition(id: string, from: ElectionStatus[], to: ElectionStatus) {
-  const e = mockElections.find((x) => x.id === id);
-  if (!e || !from.includes(e.status)) throw new Error(`Invalid state: election is ${e?.status ?? 'missing'}`);
-  e.status = to;
-}
 export async function openElection(id: string): Promise<void> {
-  if (USE_MOCK) { await delay(); mockTransition(id, ['DRAFT', 'NOMINATION'], 'VOTING'); return; }
+  if (USE_MOCK) throw new Error(`Opening an election ${NOT_IN_FIXTURE_MODE}`);
   await sendJson('POST', `/elections/${id}/open`, {}, { base: 'module' });
 }
 export async function closeElection(id: string): Promise<void> {
-  if (USE_MOCK) { await delay(); mockTransition(id, ['VOTING'], 'CLOSED'); return; }
+  if (USE_MOCK) throw new Error(`Closing an election ${NOT_IN_FIXTURE_MODE}`);
   await sendJson('POST', `/elections/${id}/close`, {}, { base: 'module' });
 }
 export async function publishElectionResults(id: string): Promise<AdminPositionResult[]> {
-  if (USE_MOCK) { await delay(); mockTransition(id, ['CLOSED'], 'PUBLISHED'); return mockPositionResults(mockElections.find((x) => x.id === id)!); }
+  if (USE_MOCK) throw new Error(`Publishing election results ${NOT_IN_FIXTURE_MODE}`);
   return sendJson<AdminPositionResult[]>('POST', `/elections/${id}/publish`, {}, { base: 'module' });
 }
+// Not in the audit's flagged list — the checker's heuristic treats ANY throw inside a
+// fixture block as proof the branch is honest, but this one only throws on the
+// not-yet-published guard; the success path below it still fabricated a handover
+// result. Same defect class as restaurantAdminService.ts's old updateMenuItem. Fixed
+// alongside its siblings above rather than left for the checker to eventually catch.
 export async function handoverElection(id: string): Promise<ElectionHandoverResult> {
-  if (USE_MOCK) {
-    await delay();
-    const e = mockElections.find((x) => x.id === id);
-    if (!e || e.status !== 'PUBLISHED') throw new Error('Handover requires a published election');
-    return { positions: mockPositionResults(e).filter((p) => e.positions.find((pp) => pp.id === p.positionId)?.role).map((p) => ({ positionId: p.positionId, title: p.title, role: e.positions.find((pp) => pp.id === p.positionId)?.role || '', winners: p.results.filter((r) => r.isWinner).map((r) => r.name), revoked: 1 })) };
-  }
+  if (USE_MOCK) throw new Error(`Handing over an election ${NOT_IN_FIXTURE_MODE}`);
   return sendJson<ElectionHandoverResult>('POST', `/elections/${id}/handover`, {}, { base: 'module' });
 }
 

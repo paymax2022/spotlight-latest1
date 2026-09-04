@@ -63,7 +63,10 @@ export function formatNaira(kobo: number): string {
   return `₦${naira.toLocaleString('en-NG', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
-const auditId = () => `aud_${Math.random().toString(36).slice(2, 10)}`;
+const NO_BACKEND_YET =
+  'has no backend yet (see the comment on the live-mode call below). ' +
+  'This console cannot perform this action until that endpoint is built.';
+
 const iso = (hoursAgo: number) => new Date(Date.now() - hoursAgo * 3_600_000).toISOString();
 const dateStr = (daysAgo: number) => new Date(Date.now() - daysAgo * 86_400_000).toISOString().slice(0, 10);
 
@@ -146,20 +149,10 @@ export async function listPcnApplications(opts?: { status?: string; q?: string }
   return getJson<PcnApplication[]>(`/pcn/applications${qs.toString() ? `?${qs}` : ''}`);
 }
 export async function decidePcn(id: string, decision: PcnDecision, note?: string): Promise<PcnDecisionResult> {
-  if (USE_MOCK) {
-    await delay();
-    const app = PCN_APPS.find((a) => a.id === id);
-    if (decision === 'approve' && app && (!app.premises_verified || !app.pharmacist_verified)) {
-      return { id, status: 'needs_info', capability_granted: false, audit_id: auditId(), message: `Fixture — nothing was saved. Approval blocked — PCN premises or superintendent-pharmacist licence not verified (HL-2). Supply stays credential-gated and fail-closed. (HL-12).` };
-    }
-    const status =
-      decision === 'approve' ? 'approved'
-      : decision === 'reject' ? 'rejected'
-      : decision === 'need_info' ? 'needs_info'
-      : decision === 'suspend' ? 'suspended'
-      : 'approved'; // reinstate
-    return { id, status, capability_granted: decision === 'approve', audit_id: auditId(), message: `Fixture — nothing was saved. PCN application ${id}: ${decision} applied. ${decision === 'approve' ? 'Provider pharmacy capability idempotently granted and discoverability unlocked (HL-2). ' : ''}State machine SUBMITTED→UNDER_REVIEW→${status.toUpperCase()} enforced. (HL-12).` };
-  }
+  // No PCN application table, service, or handler exists anywhere in
+  // backend/internal/health/pharmacy — only a "future adapter" comment
+  // reference. There is nothing this can call yet.
+  if (USE_MOCK) throw new Error(`Deciding a PCN application ${NO_BACKEND_YET}`);
   return sendJson<PcnDecisionResult>('POST', `/pcn/applications/${id}/decision`, { decision, note });
 }
 
@@ -194,18 +187,9 @@ export async function listCatalog(opts?: { status?: string; pom?: string; q?: st
   return getJson<CatalogItem[]>(`/catalog${qs.toString() ? `?${qs}` : ''}`);
 }
 export async function governCatalogItem(id: string, action: CatalogGovernanceAction, note?: string): Promise<CatalogGovernanceResult> {
-  if (USE_MOCK) {
-    await delay();
-    const item = CATALOG.find((c) => c.id === id);
-    if (action === 'approve' && item && (!item.nafdac_valid || !item.nafdac_reg_no)) {
-      return { id, status: 'rejected', audit_id: auditId(), message: `Fixture — nothing was saved. Approval blocked — product has no valid NAFDAC registration (HL-5). Unregistered items are rejected at write, not merely hidden. (HL-12).` };
-    }
-    if (action === 'approve' && item?.controlled) {
-      return { id, status: 'rejected', audit_id: auditId(), message: `Fixture — nothing was saved. Approval blocked — controlled substance excluded at MVP (HL-4). (HL-12).` };
-    }
-    const status = action === 'approve' ? 'approved' : action === 'reject' ? 'rejected' : 'suspended';
-    return { id, status, audit_id: auditId(), message: `Fixture — nothing was saved. Catalog item ${id}: ${action} applied. NAFDAC governance (HL-5) enforced. (HL-12).` };
-  }
+  // NAFDAC gating (HL-5) is enforced inline at write time in the backend;
+  // there is no separate governance entity or /catalog/:id/govern route.
+  if (USE_MOCK) throw new Error(`Governing a catalog item ${NO_BACKEND_YET}`);
   return sendJson<CatalogGovernanceResult>('POST', `/catalog/${id}/govern`, { action, note });
 }
 
@@ -344,10 +328,10 @@ export async function listRecalls(opts?: { status?: string; severity?: string; q
   return getJson<RecallRecord[]>(`/recalls${qs.toString() ? `?${qs}` : ''}`);
 }
 export async function createRecall(input: CreateRecallInput): Promise<CreateRecallResult> {
-  if (USE_MOCK) {
-    await delay();
-    return { id: `rcl_${Math.random().toString(36).slice(2, 8)}`, status: 'open', audit_id: auditId(), message: `Fixture — nothing was saved. Recall opened for "${input.product_name}" batch ${input.batch_no} (${input.severity}). Affected batch quarantined; patient notification dispatched. (HL-12).` };
-  }
+  // Only real recall-adjacent capability is AdminRecallProduct (deactivate
+  // by product id, no body). There is no RecallRecord entity, batch/severity
+  // tracking, or /recalls route backing this shape.
+  if (USE_MOCK) throw new Error(`Opening a recall ${NO_BACKEND_YET}`);
   return sendJson<CreateRecallResult>('POST', '/recalls', input);
 }
 
@@ -377,17 +361,10 @@ export async function listPayouts(opts?: { payout_status?: string; q?: string })
   return getJson<PayoutRecord[]>(`/payouts${qs.toString() ? `?${qs}` : ''}`);
 }
 export async function decidePayout(id: string, decision: PayoutDecision, note?: string): Promise<PayoutDecisionResult> {
-  if (USE_MOCK) {
-    await delay();
-    const p = PAYOUTS.find((x) => x.id === id);
-    if (decision === 'approve' && p && !p.kyc_verified) {
-      return { id, payout_status: 'kyc_hold', audit_id: auditId(), message: `Fixture — nothing was saved. Payout blocked — pharmacy ${id} KYC tier insufficient (HL-10). Payout stays fail-closed until KYC clears. (HL-12).` };
-    }
-    if (decision === 'approve' && p?.aml_flag) {
-      return { id, payout_status: 'kyc_hold', audit_id: auditId(), message: `Fixture — nothing was saved. Payout held — AML flag on settlement requires clearance before release (HL-10). (HL-12).` };
-    }
-    return { id, payout_status: decision === 'approve' ? 'approved' : 'rejected', audit_id: auditId(), message: `Fixture — nothing was saved. Pharmacy ${id} payout ${decision === 'approve' ? 'approved' : 'rejected'}. KYC + AML gate (HL-10) passed. (HL-12).` };
-  }
+  // No payout-decision route exists; payout is fully automatic on order
+  // completion in backend/internal/health/pharmacy — there is no
+  // admin-reviewable pending state to approve/reject.
+  if (USE_MOCK) throw new Error(`Deciding a payout ${NO_BACKEND_YET}`);
   return sendJson<PayoutDecisionResult>('POST', `/payouts/${id}/decision`, { decision, note });
 }
 

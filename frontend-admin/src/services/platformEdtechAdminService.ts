@@ -43,6 +43,19 @@ function authHeaders(): Record<string, string> {
 }
 const delay = (ms = 200) => new Promise((r) => setTimeout(r, ms));
 
+// Verified against backend/internal/app/academy_platform_routes.go +
+// backend/internal/academy/platform/{handlers,actions,feature_flags}.go.
+// Every write below has a real endpoint (some of the route file's own "no
+// store → no-op" comments were stale — the flag store is real and persists);
+// fixture mode has nothing to add and refuses loudly instead of reporting a
+// write it did not perform. See docs/audit/ADMIN_SIMULATED_WRITES.md.
+const NOT_IN_FIXTURE_MODE =
+  'is unavailable in fixture mode: this console will not report a write it did not perform. ' +
+  'Set NEXT_PUBLIC_EDTECH_PLATFORM_USE_MOCK=false to make this change against the live backend.';
+const NO_BACKEND_YET =
+  'has no backend yet (see the comment on the live-mode call below). ' +
+  'This console cannot perform this action until that endpoint is built.';
+
 async function getJson<T>(path: string): Promise<T> {
   const res = await fetch(`${base()}${path}`, { headers: authHeaders(), cache: 'no-store' });
   if (!res.ok) throw new Error(`Request failed (${res.status})`);
@@ -68,7 +81,7 @@ function trendKobo(n: number, base: number, jitter: number) {
 }
 
 // ── Shared mock school set (SU-01) ────────────────────────────────────────────
-let MOCK_SCHOOLS: PlatformSchool[] = [
+const MOCK_SCHOOLS: PlatformSchool[] = [
   { id: 'sch_001', name: 'Bright Future Academy', state: 'Lagos', owner_identity_id: 'id_9a1', verification_tier: 'verified', status: 'active', students: 1240, gmv_kobo: naira(48_500_000), trust_score: 87, gov_sync_opt_in: true, created_at: iso(24 * 210) },
   { id: 'sch_002', name: 'Crescent Model College', state: 'Kano', owner_identity_id: 'id_4c2', verification_tier: 'basic', status: 'active', students: 860, gmv_kobo: naira(21_300_000), trust_score: 74, gov_sync_opt_in: false, created_at: iso(24 * 160) },
   { id: 'sch_003', name: 'Green Valley Schools', state: 'Rivers', owner_identity_id: 'id_7d3', verification_tier: 'premium', status: 'active', students: 2010, gmv_kobo: naira(96_800_000), trust_score: 92, gov_sync_opt_in: true, created_at: iso(24 * 320) },
@@ -84,7 +97,7 @@ export async function listPlatformSchools(): Promise<PlatformSchool[]> {
 }
 
 // ════════════════════ SU-02 — School Verification Queue ══════════════════════
-let MOCK_VERIFICATIONS: VerificationSubmission[] = [
+const MOCK_VERIFICATIONS: VerificationSubmission[] = [
   { id: 'ver_01', school_id: 'sch_004', school_name: 'Unity Comprehensive', requested_tier: 'verified', cac_number: 'RC-1839221', cac_doc_url: '/mock/cac/unity.pdf', references: [{ name: 'Mrs A. Bello', role: 'PTA Chair', phone: '0803...' }, { name: 'Mr K. Ojo', role: 'LGA Education Officer', phone: '0812...' }], submitted_at: iso(30), status: 'pending' },
   { id: 'ver_02', school_id: 'sch_002', school_name: 'Crescent Model College', requested_tier: 'premium', cac_number: 'RC-2201004', cac_doc_url: '/mock/cac/crescent.pdf', references: [{ name: 'Alh. M. Sani', role: 'Proprietor', phone: '0806...' }], submitted_at: iso(52), status: 'pending' },
   { id: 'ver_03', school_id: 'sch_005', school_name: 'Royal Heritage Int’l', requested_tier: 'verified', cac_number: 'RC-9930210', cac_doc_url: '/mock/cac/royal.pdf', references: [{ name: 'Dr N. Eze', role: 'Head Teacher', phone: '0705...' }], submitted_at: iso(120), status: 'rejected', reviewer: 'ops@paymax', decided_at: iso(90), reason: 'CAC document did not match declared proprietor.' },
@@ -94,17 +107,7 @@ export async function listVerificationQueue(): Promise<VerificationSubmission[]>
   return getJson<VerificationSubmission[]>('/verification-queue');
 }
 export async function reviewVerification(input: VerificationReviewInput): Promise<VerificationSubmission> {
-  if (USE_MOCK) {
-    await delay();
-    MOCK_VERIFICATIONS = MOCK_VERIFICATIONS.map((v) => v.id === input.id
-      ? { ...v, status: input.decision === 'approve' ? 'approved' : 'rejected', reviewer: 'you@paymax', decided_at: new Date().toISOString(), reason: input.reason }
-      : v);
-    if (input.decision === 'approve' && input.granted_tier) {
-      const sub = MOCK_VERIFICATIONS.find((v) => v.id === input.id);
-      if (sub) MOCK_SCHOOLS = MOCK_SCHOOLS.map((s) => s.id === sub.school_id ? { ...s, verification_tier: input.granted_tier!, status: s.status === 'draft' ? 'active' : s.status } : s);
-    }
-    return MOCK_VERIFICATIONS.find((v) => v.id === input.id)!;
-  }
+  if (USE_MOCK) throw new Error(`Reviewing a verification submission ${NOT_IN_FIXTURE_MODE}`);
   return sendJson<VerificationSubmission>('POST', `/verification-queue/${input.id}/review`, input);
 }
 
@@ -129,7 +132,7 @@ export async function getCollectionsOverview(): Promise<CollectionsOverview> {
 }
 
 // ════════════════════ SU-04 — Fraud & Risk Queue ═════════════════════════════
-let MOCK_RISK: RiskCase[] = [
+const MOCK_RISK: RiskCase[] = [
   { id: 'rsk_01', kind: 'anomalous_payment', school_id: 'sch_003', school_name: 'Green Valley Schools', severity: 'high', amount_kobo: naira(1_450_000), summary: '32 fee payments from a single card in 4 minutes.', opened_at: iso(9), status: 'open' },
   { id: 'rsk_02', kind: 'disputed_promotion', school_id: 'sch_001', school_name: 'Bright Future Academy', severity: 'low', summary: 'Guardian disputes a repeat decision recorded before the second approval.', opened_at: iso(40), status: 'investigating' },
   { id: 'rsk_03', kind: 'chargeback', school_id: 'sch_005', school_name: 'Royal Heritage Int’l', severity: 'critical', amount_kobo: naira(320_000), summary: 'Chargeback on a term-fee payment; funds already applied to invoice.', opened_at: iso(70), status: 'open' },
@@ -139,11 +142,10 @@ export async function listRiskCases(): Promise<RiskCase[]> {
   return getJson<RiskCase[]>('/risk');
 }
 export async function actionRiskCase(input: RiskActionInput): Promise<RiskCase> {
-  if (USE_MOCK) {
-    await delay();
-    MOCK_RISK = MOCK_RISK.map((r) => r.id === input.id ? { ...r, status: input.status } : r);
-    return MOCK_RISK.find((r) => r.id === input.id)!;
-  }
+  if (USE_MOCK) throw new Error(`Actioning a risk case ${NOT_IN_FIXTURE_MODE}`);
+  // backend: POST /risk/:id/action (platform.Handler.ActionRiskCase) — audit-only by
+  // design (no risk-case status table exists yet); it records the decision to the
+  // immutable audit log and echoes it back rather than persisting a status column.
   return sendJson<RiskCase>('POST', `/risk/${input.id}/action`, input);
 }
 
@@ -195,7 +197,7 @@ export async function searchAuditLog(q: { module?: string; entity?: string; scho
 }
 
 // ════════════ SU-06 — Competition & Tournament Ops (E12 Schools Cup) ═════════
-let MOCK_COMPETITIONS: Competition[] = [
+const MOCK_COMPETITIONS: Competition[] = [
   { id: 'cmp_01', name: 'Spotlight Schools Cup 2027 — National', scope: 'national', status: 'open_registration', participating_schools: 128, sponsor: 'Paymax Foundation', start_date: dstr(30), end_date: dstr(75), broadcast_ready: false },
   { id: 'cmp_02', name: 'Lagos Inter-School Maths Challenge', scope: 'state', status: 'in_progress', participating_schools: 40, sponsor: 'GTBank', start_date: dstr(-5), end_date: dstr(10), broadcast_ready: true },
   { id: 'cmp_03', name: 'Rivers City Quiz Bowl', scope: 'city', status: 'results_pending', participating_schools: 16, start_date: dstr(-20), end_date: dstr(-2), broadcast_ready: true },
@@ -205,17 +207,28 @@ export async function listCompetitions(): Promise<Competition[]> {
   if (USE_MOCK) { await delay(); return [...MOCK_COMPETITIONS]; }
   return getJson<Competition[]>('/competitions');
 }
+// Target status → state-machine event name (backend/internal/academy/fees/
+// statemachine/competition.go). The backend fires named EVENTS, not target
+// statuses — sending { to: 'in_progress' } as the body (the old behaviour)
+// bound to nothing, since the handler only reads an `event` field.
+const COMPETITION_EVENT: Partial<Record<CompetitionTransitionInput['to'], string>> = {
+  open_registration: 'open_registration',
+  registration_closed: 'close_registration',
+  in_progress: 'start',
+  results_pending: 'pend_results',
+  completed: 'complete',
+  archived: 'archive',
+};
+
 export async function transitionCompetition(input: CompetitionTransitionInput): Promise<Competition> {
-  if (USE_MOCK) {
-    await delay();
-    MOCK_COMPETITIONS = MOCK_COMPETITIONS.map((c) => c.id === input.id ? { ...c, status: input.to } : c);
-    return MOCK_COMPETITIONS.find((c) => c.id === input.id)!;
-  }
-  return sendJson<Competition>('POST', `/competitions/${input.id}/transition`, input);
+  if (USE_MOCK) throw new Error(`Transitioning a competition ${NOT_IN_FIXTURE_MODE}`);
+  const event = COMPETITION_EVENT[input.to];
+  if (!event) throw new Error(`"${input.to}" has no matching transition event — draft is the initial state and cannot be entered via a transition.`);
+  return sendJson<Competition>('POST', `/competitions/${input.id}/transition`, { event });
 }
 
 // ════════════════════ SU-07 — School Trust Score Admin ══════════════════════
-let MOCK_TRUST: TrustScoreRow[] = MOCK_SCHOOLS.map((s) => ({
+const MOCK_TRUST: TrustScoreRow[] = MOCK_SCHOOLS.map((s) => ({
   school_id: s.id, school_name: s.name, score: s.trust_score,
   components: [
     { label: 'Collection reliability', weight: 0.35, value: Math.min(100, s.trust_score + 3) },
@@ -230,11 +243,7 @@ export async function listTrustScores(): Promise<TrustScoreRow[]> {
   return getJson<TrustScoreRow[]>('/trust-scores');
 }
 export async function overrideTrustScore(input: TrustScoreOverrideInput): Promise<TrustScoreRow> {
-  if (USE_MOCK) {
-    await delay();
-    MOCK_TRUST = MOCK_TRUST.map((t) => t.school_id === input.school_id ? { ...t, score: input.score, overridden: true, override_reason: input.reason, updated_at: new Date().toISOString() } : t);
-    return MOCK_TRUST.find((t) => t.school_id === input.school_id)!;
-  }
+  if (USE_MOCK) throw new Error(`Overriding a trust score ${NOT_IN_FIXTURE_MODE}`);
   return sendJson<TrustScoreRow>('POST', `/trust-scores/${input.school_id}/override`, input);
 }
 
@@ -253,7 +262,7 @@ export async function listScholarshipPledges(): Promise<ScholarshipPledge[]> {
 }
 
 // ════════════════════ SU-09 — Support Ticket Queue ══════════════════════════
-let MOCK_TICKETS: SupportTicket[] = [
+const MOCK_TICKETS: SupportTicket[] = [
   { id: 'tkt_01', subject: 'Payment applied to wrong invoice', origin: 'parent', school_name: 'Bright Future Academy', priority: 'high', status: 'open', opened_at: iso(4), last_update_at: iso(4) },
   { id: 'tkt_02', subject: 'Cannot generate data export (SF-10)', origin: 'school_admin', school_name: 'Green Valley Schools', priority: 'low', status: 'in_review', opened_at: iso(28), last_update_at: iso(10) },
   { id: 'tkt_03', subject: 'Promotion stuck at computed — second approver missing', origin: 'school_admin', school_name: 'Crescent Model College', priority: 'critical', status: 'escalated', opened_at: iso(50), last_update_at: iso(6) },
@@ -263,16 +272,15 @@ export async function listSupportTickets(): Promise<SupportTicket[]> {
   return getJson<SupportTicket[]>('/support-tickets');
 }
 export async function actionSupportTicket(input: TicketActionInput): Promise<SupportTicket> {
-  if (USE_MOCK) {
-    await delay();
-    MOCK_TICKETS = MOCK_TICKETS.map((t) => t.id === input.id ? { ...t, status: input.status, last_update_at: new Date().toISOString() } : t);
-    return MOCK_TICKETS.find((t) => t.id === input.id)!;
-  }
+  // No backend at all: SU-09 has no backing table (academy_platform_routes.go's
+  // own comment says so) — only GET /support-tickets (documented empty) is
+  // registered; there is no action route to mutate a ticket's status.
+  if (USE_MOCK) throw new Error(`Actioning a support ticket ${NO_BACKEND_YET}`);
   return sendJson<SupportTicket>('POST', `/support-tickets/${input.id}/action`, input);
 }
 
 // ════════════════ SU-10 — Feature Flag & Tenant Configuration ════════════════
-let MOCK_FLAGS: FeatureFlag[] = [
+const MOCK_FLAGS: FeatureFlag[] = [
   { key: 'FEATURE_ACADEMY_FEES_ENABLED', label: 'Academy Fees module', description: 'Master flag for the EdTech fees domain.', scope_type: 'global', scope_ref: '', enabled: true, updated_at: iso(24 * 30) },
   { key: 'fees.installments', label: 'Installment payments (Model A)', description: 'Guardian-pays-school-over-time only. Never Paymax fronting fees.', scope_type: 'tier', scope_ref: 'verified', enabled: true, updated_at: iso(24 * 12) },
   { key: 'competition.schools_cup', label: 'Schools Cup (E12)', description: 'Cross-school tournament pipeline.', scope_type: 'region', scope_ref: 'Lagos', enabled: true, updated_at: iso(24 * 5) },
@@ -283,11 +291,19 @@ export async function listFeatureFlags(): Promise<FeatureFlag[]> {
   return getJson<FeatureFlag[]>('/flags');
 }
 export async function toggleFeatureFlag(input: FlagToggleInput): Promise<FeatureFlag> {
-  if (USE_MOCK) {
-    await delay();
-    MOCK_FLAGS = MOCK_FLAGS.map((f) => (f.key === input.key && f.scope_type === input.scope_type && f.scope_ref === input.scope_ref)
-      ? { ...f, enabled: input.enabled, updated_at: new Date().toISOString() } : f);
-    return MOCK_FLAGS.find((f) => f.key === input.key && f.scope_type === input.scope_type && f.scope_ref === input.scope_ref)!;
+  if (USE_MOCK) throw new Error(`Toggling a feature flag ${NOT_IN_FIXTURE_MODE}`);
+  // backend: POST /flags/toggle (platform.Handler.ToggleFlag → academy_feature_flags,
+  // a real per-key upsert — a route.go comment calling this "no override store, no-op"
+  // was stale). But the store is GLOBAL ONLY: scope_type/scope_ref are accepted in the
+  // body and silently DROPPED (the handler hardcodes "scope_type": "global" in its
+  // response, never reads them into the query). Toggling a tier/region/school-scoped
+  // flag here would silently flip it for EVERYONE instead of the intended scope — the
+  // opposite of what the operator asked for. Refuse rather than do that.
+  if (input.scope_type !== 'global') {
+    throw new Error(
+      `This backend only supports global feature flags — scoping to ${input.scope_type}:${input.scope_ref} is not ` +
+      'possible today. Toggling would silently apply globally instead, which is not what you asked for.',
+    );
   }
   return sendJson<FeatureFlag>('POST', '/flags/toggle', input);
 }

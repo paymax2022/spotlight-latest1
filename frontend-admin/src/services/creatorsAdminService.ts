@@ -40,6 +40,21 @@ function authHeaders(): Record<string, string> {
 }
 const delay = (ms = 240) => new Promise((r) => setTimeout(r, ms));
 
+// Verified against backend/internal/creators/handler.go. The admin group here
+// is mounted at /api/creators/admin, but the module's own route registration
+// re-adds a "/creators" segment on top of that (admin.POST("/creators/:creatorId/
+// approve", ...) etc.) — so real paths are /api/creators/admin/creators/...,
+// not /api/creators/admin/... directly. Functions with a real route throw
+// NOT_IN_FIXTURE_MODE; functions with no reachable route throw NO_BACKEND_YET
+// instead, since flipping the mock flag would not reach a working call either
+// way. See docs/audit/ADMIN_SIMULATED_WRITES.md.
+const NOT_IN_FIXTURE_MODE =
+  'is unavailable in fixture mode: this console will not report a write it did not perform. ' +
+  'Set NEXT_PUBLIC_CREATORS_USE_MOCK=false to make this change against the live backend.';
+const NO_BACKEND_YET =
+  'has no backend yet (see the comment on the live-mode call below). ' +
+  'This console cannot perform this action until that endpoint is built.';
+
 async function getJson<T>(path: string): Promise<T> {
   const res = await fetch(`${adminBase()}${path}`, { headers: authHeaders() });
   if (!res.ok) throw new Error(`Request failed (${res.status})`);
@@ -143,20 +158,16 @@ export async function listCreatorVerifications(opts?: { status?: string; q?: str
   return getJson<CreatorVerificationItem[]>(`/verifications${qs.toString() ? `?${qs}` : ''}`);
 }
 export async function decideCreator(id: string, decision: CreatorDecision, note?: string): Promise<CreatorDecisionResult> {
-  if (USE_MOCK) {
-    await delay();
-    const v = VERIFICATIONS.find((x) => x.id === id);
-    if (decision === 'approve' && v && !v.kyc_verified) {
-      return { id, status: 'in_review', audit_id: aud(), message: `Fixture — nothing was saved. Verification blocked — creator ${id} KYC tier insufficient (NL-10).` };
-    }
-    const status =
-      decision === 'approve' ? 'approved'
-      : decision === 'reject' ? 'rejected'
-      : decision === 'suspend' ? 'suspended'
-      : 'in_review';
-    return { id, status, audit_id: aud(), message: `Fixture — nothing was saved. Creator ${id}: ${decision.replace('_', ' ')} applied.` };
+  if (USE_MOCK) throw new Error(`Deciding a creator verification ${NOT_IN_FIXTURE_MODE}`);
+  // backend: only two verbs exist — POST /creators/:creatorId/approve (AdminApprove)
+  // and POST /creators/:creatorId/suspend (AdminSuspend), both with NO body (uid
+  // comes from auth context). "reject" and "request_changes" have no backend
+  // equivalent — Service has no Reject method at all.
+  if (decision === 'reject' || decision === 'request_changes') {
+    throw new Error(`Deciding "${decision}" on a creator verification ${NO_BACKEND_YET}`);
   }
-  return sendJson<CreatorDecisionResult>('POST', `/verifications/${id}/decide`, { decision, note });
+  const verb = decision === 'approve' ? 'approve' : 'suspend';
+  return sendJson<CreatorDecisionResult>('POST', `/creators/${id}/${verb}`, {});
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -188,14 +199,18 @@ export async function listContentModeration(opts?: { status?: string; age_rating
   return getJson<ContentModItem[]>(`/content${qs.toString() ? `?${qs}` : ''}`);
 }
 export async function moderateContent(id: string, action: ContentModAction, age_rating?: AgeRating, note?: string): Promise<ContentModResult> {
-  if (USE_MOCK) {
-    await delay();
-    const c = CONTENT.find((x) => x.id === id);
-    const status = action === 'approve' ? 'approved' : action === 'reject' ? 'rejected' : 'flagged';
-    const rating = age_rating ?? c?.age_rating ?? 'all';
-    return { id, status, age_rating: rating, audit_id: aud(), message: `Fixture — nothing was saved. Content ${id}: ${action} applied with age rating "${rating}" (NL-11 age controls).` };
-  }
-  return sendJson<ContentModResult>('POST', `/content/${id}/moderate`, { action, age_rating, note });
+  if (USE_MOCK) throw new Error(`Moderating content ${NOT_IN_FIXTURE_MODE}`);
+  // backend: POST /creators/content/:contentId/moderate (AdminModerate), body
+  // {decision: "APPROVED"|"REJECTED", reason} — the OLD /content/:id/moderate
+  // path, {action, age_rating, note} fields, and lowercase action values all
+  // matched nothing. "flag" has no backend equivalent (ModerationState is only
+  // PENDING/APPROVED/REJECTED); age_rating is not accepted by this endpoint at
+  // all — it is never persisted server-side regardless of what's sent.
+  if (action === 'flag') throw new Error(`Flagging content ${NO_BACKEND_YET}`);
+  return sendJson<ContentModResult>('POST', `/creators/content/${id}/moderate`, {
+    decision: action === 'approve' ? 'APPROVED' : 'REJECTED',
+    reason: note,
+  });
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -263,7 +278,7 @@ export async function decidePayout(id: string, decision: PayoutDecision, note?: 
 // ════════════════════════════════════════════════════════════════════════════
 // F · Fee config
 // ════════════════════════════════════════════════════════════════════════════
-let FEE_CONFIG: CreatorFeeConfig = {
+const FEE_CONFIG: CreatorFeeConfig = {
   generated_at: iso(0.2),
   tip_fee_bps: 100,
   subscription_fee_bps: 1000,
@@ -279,11 +294,10 @@ export async function getFeeConfig(): Promise<CreatorFeeConfig> {
   return getJson<CreatorFeeConfig>('/fees');
 }
 export async function updateFeeConfig(patch: Partial<CreatorFeeConfig>, note?: string): Promise<CreatorFeeConfigResult> {
-  if (USE_MOCK) {
-    await delay();
-    FEE_CONFIG = { ...FEE_CONFIG, ...patch, updated_by_masked: 'admin:you•••', updated_at: new Date().toISOString(), generated_at: new Date().toISOString() };
-    return { config: { ...FEE_CONFIG }, audit_id: aud(), message: `Fixture — nothing was saved. Fee config updated.` };
-  }
+  // No backend at all: no fee-config route (GET or PATCH) exists anywhere in
+  // backend/internal/creators — grepped for "fee config"/"FeeConfig"/
+  // "tip_fee"/"subscription_fee"/"gated_content_fee", zero matches.
+  if (USE_MOCK) throw new Error(`Updating creator fee config ${NO_BACKEND_YET}`);
   return sendJson<CreatorFeeConfigResult>('PATCH', '/fees', { ...patch, note });
 }
 
@@ -315,10 +329,9 @@ export async function listCreatorFraud(opts?: { status?: string; kind?: string; 
   return getJson<CreatorFraudSignal[]>(`/fraud${qs.toString() ? `?${qs}` : ''}`);
 }
 export async function decideCreatorFraud(id: string, action: CreatorFraudAction, note?: string): Promise<CreatorFraudActionResult> {
-  if (USE_MOCK) {
-    await delay();
-    const status = action === 'investigate' ? 'investigating' : action === 'clear' ? 'cleared' : 'blocked';
-    return { id, status, audit_id: aud(), message: `Fixture — nothing was saved. Fraud signal ${id}: ${action} applied.` };
-  }
+  // No backend at all: grepped backend/internal/creators for "fraud" — zero
+  // matches anywhere in handler.go/service.go/model.go. No fraud queue, no
+  // fraud action verb, nothing wired.
+  if (USE_MOCK) throw new Error(`Actioning a creator fraud signal ${NO_BACKEND_YET}`);
   return sendJson<CreatorFraudActionResult>('POST', `/fraud/${id}/action`, { action, note });
 }

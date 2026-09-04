@@ -245,11 +245,20 @@ export async function getProviderHealth(): Promise<ProviderHealth[]> {
   return Array.isArray(data) ? data : data.data ?? [];
 }
 
-// One funnel for the two sensitive money-moving writes.
+// One funnel for the two sensitive money-moving writes. Both have real,
+// verified live endpoints (POST /finance/admin/transfers/:id/{retry,reverse}),
+// so fixture mode refuses loudly instead of reporting a transfer action it did
+// not perform. See docs/audit/ADMIN_SIMULATED_WRITES.md.
+// NOTE: the real Reverse handler does not bind a JSON body at all — the
+// `reason` sent below is silently discarded server-side with no audit trail
+// of it. Not the simulated-write bug this pass fixes, but worth a backend
+// follow-up (accept + record the reason).
 async function postAction(id: string, action: 'retry' | 'reverse', body?: Record<string, unknown>): Promise<void> {
   if (USE_FIXTURES) {
-    await delay(null);
-    return;
+    throw new Error(
+      `Transfer ${action} is unavailable in fixture mode: this console will not report a write it did not perform. ` +
+      'Set NEXT_PUBLIC_TRANSFERS_ADMIN_USE_MOCK=false to make this change against the live backend.',
+    );
   }
   const res = await fetch(
     `${adminApiBase()}/finance/admin/transfers/${encodeURIComponent(id)}/${action}`,

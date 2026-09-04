@@ -1,8 +1,9 @@
 // ── Admin — Paymax Mobility Event Transport service ──────────────────────────
-// Event transport offers · bookings. Mock-backed (Go backend admin endpoints not
-// live yet). Mirrors mobilityModesAdminService: flip USE_MOCK to false and the
-// fetch branches hit /api/finance/admin/transport/events/* per
-// BUILD-CONTRACT-LOGISTICS-EVENT.
+// Event transport offers · bookings. Mock by default; flip USE_MOCK to false
+// and the fetch branches hit /api/finance/admin/transport/events/*. This route
+// IS live — registered under FeatureTransportModesEnabled, same as the sibling
+// mobilityModesAdminService.ts — the OLD "Go backend admin endpoints not live
+// yet" claim here was stale.
 // All money is integer minor units (kobo). Every mutation is server-audited.
 
 import { env } from '@/config/env';
@@ -29,9 +30,28 @@ function authHeaders(): Record<string, string> {
 }
 const delay = (ms = 300) => new Promise((r) => setTimeout(r, ms));
 
+// Real, verified live endpoint (PATCH /events/offers/:id/status,
+// backend/internal/transport/admin_logistics_event.go AdminEventOfferStatus,
+// same FeatureTransportModesEnabled block as mobilityModesAdminService.ts) —
+// fixture mode refuses loudly instead of reporting a write it did not
+// perform, and the live branch now actually checks the response instead of
+// discarding it (the same "reports success on a failed fetch" bug
+// mobilityModesAdminService.ts had). See docs/audit/ADMIN_SIMULATED_WRITES.md.
+const NOT_IN_FIXTURE_MODE =
+  'is unavailable in fixture mode: this console will not report a write it did not perform. ' +
+  'Set NEXT_PUBLIC_MOBILITY_MODES_USE_MOCK=false to make this change against the live backend.';
+async function writeOk(url: string, init: RequestInit): Promise<{ ok: boolean }> {
+  const res = await fetch(url, init);
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body?.error || body?.message || `Request failed (${res.status})`);
+  }
+  return { ok: true };
+}
+
 // ─── Mock datasets ────────────────────────────────────────────────────────────
 
-let OFFERS: EventOfferRow[] = [
+const OFFERS: EventOfferRow[] = [
   { id: 'evo_1001', eventId: 'evt_5001', organizerName: 'Spotlight Live Events', type: 'fan_bus', title: 'Burna Boy Concert — Fan Bus (Mainland)', venue: 'Eko Convention Centre, VI', capacity: 50, bookedCount: 50, fareKobo: 5_000_00, departureTime: '2026-06-25T16:00:00Z', busScheduleId: 'sch_1', status: 'full', createdAt: '2026-06-10T09:00:00Z', updatedAt: '2026-06-21T10:00:00Z' },
   { id: 'evo_1002', eventId: 'evt_5001', organizerName: 'Spotlight Live Events', type: 'group_ride', title: 'Burna Boy Concert — Group Ride (Lekki)', venue: 'Eko Convention Centre, VI', capacity: 6, bookedCount: 3, fareKobo: 8_000_00, departureTime: '2026-06-25T17:00:00Z', busScheduleId: null, status: 'open', createdAt: '2026-06-11T09:00:00Z', updatedAt: '2026-06-20T14:00:00Z' },
   { id: 'evo_1003', eventId: 'evt_5002', organizerName: 'AfroNation NG', type: 'shuttle', title: 'AfroNation Lagos — Airport Shuttle', venue: 'Tarkwa Bay', capacity: 30, bookedCount: 12, fareKobo: 3_500_00, departureTime: '2026-07-02T10:00:00Z', busScheduleId: null, status: 'open', createdAt: '2026-06-12T09:00:00Z', updatedAt: '2026-06-19T11:00:00Z' },
@@ -61,13 +81,8 @@ export async function getEventOffers(status?: EventOfferStatus | ''): Promise<Ev
 }
 
 export async function setEventOfferStatus(id: string, patch: ModeStatusPatch): Promise<{ ok: boolean }> {
-  if (USE_MOCK) {
-    await delay(400);
-    OFFERS = OFFERS.map((o) => (o.id === id ? { ...o, status: patch.status as EventOfferStatus, updatedAt: new Date().toISOString() } : o));
-    return { ok: true };
-  }
-  await fetch(`${adminBase()}/events/offers/${id}/status`, { method: 'PATCH', headers: authHeaders(), body: JSON.stringify(patch) });
-  return { ok: true };
+  if (USE_MOCK) throw new Error(`Setting an event offer status ${NOT_IN_FIXTURE_MODE}`);
+  return writeOk(`${adminBase()}/events/offers/${id}/status`, { method: 'PATCH', headers: authHeaders(), body: JSON.stringify(patch) });
 }
 
 // ─── Bookings (read-only) ─────────────────────────────────────────────────────
