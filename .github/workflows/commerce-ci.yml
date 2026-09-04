@@ -13,13 +13,26 @@ name: Commerce CI
 # slot has to be freed first (merge two related lanes, or move shared steps into
 # a _reusable-*.yml that several callers share).
 #
-# Why this lane exists at all: these were the two largest untested backend
-# packages on a develop push — restaurant has 61 test files, the biggest suite in
-# the repo, and marketplace 6. Neither had a lane, so `go test` ran for them only
-# INCIDENTALLY, when some unrelated module's path gate happened to fire on the
-# same push and that module's lane ran the repo-wide suite. A push touching only
-# restaurant or marketplace paths ran no Go test at all. That is how
-# 4cb6541b (boost pricing) shipped a broken live-DB fixture unnoticed.
+# Why this lane exists. Restaurant (61 test files, the biggest suite in the repo)
+# and marketplace (6) had no lane of their own, but — correcting the rationale
+# this file shipped with — their tests were NOT going unrun. 13 of the 15 module
+# lanes end with a repo-wide `go test ./... -count=1`, and fx's filter in
+# module-filters.json leads with `backend/**` (it is the only module with that
+# glob). So ANY backend change fires FX CI and with it the whole Go suite:
+# a restaurant-only backend push already selects both fx and this lane.
+#
+# The real reason to own a lane: that coverage is CONTINGENT. It exists because
+# one unrelated module happens to claim `backend/**`. Narrowing fx to its own
+# paths would read as a tidy-up and would silently strip repo-wide Go coverage
+# from every backend push, with nothing failing to announce it. This lane makes
+# the coverage explicit and owned, and runs the two packages with -v so a failure
+# names the test instead of being one line inside a repo-wide run.
+#
+# It is also NOT what would have caught 4cb6541b (boost pricing). Marketplace's
+# tests did execute on that commit — the run shows `FX CI / backend -> success` —
+# and the live-DB test that later failed ran and SKIPPED for want of
+# TEST_DATABASE_URL. Reading "marketplace has a lane now" as "that would have
+# been caught" is wrong: it would skip here too, for the same reason.
 #
 # There is deliberately NO migration-guard job here. ci.yml already calls
 # _reusable-migration-guard.yml unconditionally on every push, and that guard is
