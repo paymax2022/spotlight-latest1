@@ -292,7 +292,7 @@ jobs:
       # `railway up` uploads the checked-out tree, which is what ci.yml already
       # does to deploy this service, so it is the mechanism known to actually ship.
       - name: Check out the staging branch
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           ref: staging
 
@@ -431,7 +431,7 @@ jobs:
       # UPLOAD the tree. `redeploy --from-source` re-deploys the same pinned commit
       # and would ship none of the proxy code.
       - name: Check out the staging branch
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           ref: staging
 
@@ -519,7 +519,7 @@ jobs:
       # so the service MUST be rebuilt from source for the value to reach the
       # bundle - this is the trap that shipped a localhost fallback twice.
       - name: Check out the staging branch
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           ref: staging
 
