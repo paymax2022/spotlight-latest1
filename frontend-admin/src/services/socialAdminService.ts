@@ -34,6 +34,18 @@ function authHeaders(): Record<string, string> {
 }
 const delay = (ms = 240) => new Promise((r) => setTimeout(r, ms));
 
+// Verified against backend/internal/social (Handler.Register): the only admin
+// route registered is GET /splits/:id. No reversal, cashtag-review, or
+// velocity-limits mutation exists anywhere in the module or in the ledger
+// service it would depend on — grepped for "Reverse" as a ledger method
+// (zero matches, the ledger has no reversal capability at all), "/cashtags"
+// (the cashtag package only implements Claim/Resolve/HandleFor, no admin
+// moderation), and "/limits" (AML config is a static Go struct literal with
+// no persisted/dynamic store or setter). See docs/audit/ADMIN_SIMULATED_WRITES.md.
+const NO_BACKEND_YET =
+  'has no backend yet (see the comment on the live-mode call below). ' +
+  'This console cannot perform this action until that endpoint is built.';
+
 async function getJson<T>(path: string): Promise<T> {
   const res = await fetch(`${adminBase()}${path}`, { headers: authHeaders() });
   if (!res.ok) throw new Error(`Request failed (${res.status})`);
@@ -112,10 +124,13 @@ export async function getLimits(): Promise<SocialLimits> {
   return getJson<SocialLimits>('/limits');
 }
 export async function updateLimits(limits: VelocityLimit[]): Promise<UpdateLimitsResult> {
-  if (USE_MOCK) {
-    await delay();
-    return { updated: limits.length, audit_id: `aud_${Math.random().toString(36).slice(2, 10)}`, message: `${limits.length} limit rule(s) updated (NL-10). Before/after recorded to immutable audit.` };
-  }
+  // The OLD fixture message here also fabricated a compliance claim ("Before/
+  // after recorded to immutable audit") — the same pattern
+  // docs/audit/ADMIN_SIMULATED_WRITES.md calls "the most dangerous strings in
+  // this codebase", missed by the checker's claim-pattern regex only because
+  // of a lowercase "recorded" vs its capitalized "Recorded". Removed
+  // regardless — see the comment above for why there's no backend to reach.
+  if (USE_MOCK) throw new Error(`Updating velocity limits ${NO_BACKEND_YET}`);
   return sendJson<UpdateLimitsResult>('PUT', '/limits', { limits });
 }
 
@@ -145,10 +160,7 @@ export async function listReversals(opts?: { status?: string; q?: string }): Pro
   return getJson<ReversalRecord[]>(`/reversals${qs.toString() ? `?${qs}` : ''}`);
 }
 export async function reverseTxn(id: string, reason: string): Promise<ReverseTxnResult> {
-  if (USE_MOCK) {
-    await delay();
-    return { id, status: 'reversed', reversing_entry_id: `led_${Math.random().toString(36).slice(2, 10)}`, audit_id: `aud_${Math.random().toString(36).slice(2, 10)}`, message: `Fixture — nothing was saved. Reversal ${id} posted as a balanced reversing ledger entry (NL-8: no balance is mutated directly).` };
-  }
+  if (USE_MOCK) throw new Error(`Reversing a transaction ${NO_BACKEND_YET}`);
   return sendJson<ReverseTxnResult>('POST', `/reversals/${id}/reverse`, { reason });
 }
 
@@ -207,14 +219,6 @@ export async function listCashtags(opts?: { status?: string; q?: string }): Prom
   return getJson<CashtagRecord[]>(`/cashtags${qs.toString() ? `?${qs}` : ''}`);
 }
 export async function reviewCashtag(id: string, decision: CashtagDecision, note?: string): Promise<CashtagReviewResult> {
-  if (USE_MOCK) {
-    await delay();
-    const status =
-      decision === 'suspend' ? 'suspended'
-      : decision === 'release_handle' ? 'reserved'
-      : decision === 'verify' ? 'verified'
-      : 'active';
-    return { id, status, audit_id: `aud_${Math.random().toString(36).slice(2, 10)}`, message: `Fixture — nothing was saved. Cashtag ${id}: ${decision} applied. Impersonation guard enforced.` };
-  }
+  if (USE_MOCK) throw new Error(`Reviewing a cashtag ${NO_BACKEND_YET}`);
   return sendJson<CashtagReviewResult>('POST', `/cashtags/${id}/review`, { decision, note });
 }

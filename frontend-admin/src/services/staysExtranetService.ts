@@ -54,6 +54,34 @@ function authHeaders(): Record<string, string> {
 }
 const delay = (ms = 240) => new Promise((r) => setTimeout(r, ms));
 
+// IMPORTANT — this file's live paths are not just "simulated writes", they are
+// mostly unreachable as currently coded. Every backend extranet route requires
+// a property id in the URL path (POST /properties/:propertyId/room-types,
+// PATCH /properties/:propertyId, etc. — see backend/internal/stays/extranet/
+// handler.go Register() and backend/internal/stays/ari/handler.go
+// RegisterExtranet()), because a hotelier can own MORE THAN ONE property. This
+// file has no concept of "the current property" at all — PROPERTY_ID below is
+// a MOCK-ONLY fixture constant, never read by any live-mode call — so every
+// getJson/sendJson call here hits a flat path like `/room-types` that matches
+// no route on the backend and would 404. `respondReview` also had an
+// independent one-word path mismatch (/respond vs the real /response),
+// unrelated to the property-scoping gap; that one is fixed to the real path.
+// The rest need a "which property is this?" resolution mechanism — the same
+// kind of thing associationAdminService.ts's org picker solved — before their
+// live calls can work at all. That is a design decision, not a mechanical
+// fix, so fixture mode refuses honestly rather than papering over it, and
+// the live calls are left exactly as they were (still wrong, but not this
+// task's to silently "fix" into a different wrong shape). See
+// docs/audit/ADMIN_SIMULATED_WRITES.md and CLAUDE.md's "do not invent a
+// fallback that silently succeeds" instruction.
+const NOT_IN_FIXTURE_MODE =
+  'is unavailable in fixture mode: this console will not report a write it did not perform. ' +
+  'Set NEXT_PUBLIC_STAYS_USE_MOCK=false to make this change against the live backend.';
+const NOT_PROPERTY_SCOPED =
+  'is unavailable in fixture mode. Even with NEXT_PUBLIC_STAYS_USE_MOCK=false this call would ' +
+  'still fail today: the live endpoint needs a property id in the URL that this service never ' +
+  'resolves (see the file-level comment above). Fixture mode will not report a write it did not perform.';
+
 async function getJson<T>(path: string): Promise<T> {
   const res = await fetch(`${extranetBase()}${path}`, { headers: authHeaders() });
   if (!res.ok) throw new Error(`Request failed (${res.status})`);
@@ -425,7 +453,10 @@ export async function getBusinessVerification(): Promise<BusinessVerification> {
   return getJson<BusinessVerification>('/verification/business');
 }
 export async function submitForReview(): Promise<VerificationStatus> {
-  if (USE_MOCK) { await delay(); return { ...VERIFICATION, overall: 'submitted', submitted_for_review_at: new Date().toISOString() }; }
+  // No backend at all: there is no verification/submit route anywhere in
+  // backend/internal/stays/extranet (confirmed by grep) — not just missing
+  // property scoping like most of this file's other writes.
+  if (USE_MOCK) throw new Error(`Submitting for review ${NOT_IN_FIXTURE_MODE}`);
   return sendJson<VerificationStatus>('POST', '/verification/submit', {});
 }
 
@@ -435,7 +466,7 @@ export async function getProperty(): Promise<PropertyProfile> {
   return getJson<PropertyProfile>('/property');
 }
 export async function updateContent(patch: Partial<PropertyProfile>): Promise<PropertyProfile> {
-  if (USE_MOCK) { await delay(); return { ...PROFILE, ...patch }; }
+  if (USE_MOCK) throw new Error(`Updating property content ${NOT_PROPERTY_SCOPED}`);
   return sendJson<PropertyProfile>('PATCH', '/property', patch);
 }
 export async function getPhotos(): Promise<PhotoAsset[]> {
@@ -447,7 +478,9 @@ export async function getAmenities(): Promise<AmenityGroup[]> {
   return getJson<AmenityGroup[]>('/amenities');
 }
 export async function updateAmenities(groups: AmenityGroup[]): Promise<AmenityGroup[]> {
-  if (USE_MOCK) { await delay(); return groups; }
+  // No backend at all: no amenities route anywhere in backend/internal/stays
+  // (confirmed by grep) — not just missing property scoping.
+  if (USE_MOCK) throw new Error(`Updating amenities ${NOT_IN_FIXTURE_MODE}`);
   return sendJson<AmenityGroup[]>('PUT', '/amenities', groups);
 }
 export async function listRoomTypes(): Promise<RoomType[]> {
@@ -455,7 +488,9 @@ export async function listRoomTypes(): Promise<RoomType[]> {
   return getJson<RoomType[]>('/room-types');
 }
 export async function upsertRoomType(rt: Partial<RoomType>): Promise<RoomType> {
-  if (USE_MOCK) { await delay(); return { id: rt.id ?? `rt_${Date.now()}`, name: rt.name ?? 'New room type', max_occupancy: rt.max_occupancy ?? 2, beds: rt.beds ?? '1 Queen', size_sqm: rt.size_sqm ?? 24, count: rt.count ?? 1, smoking: rt.smoking ?? false, status: rt.status ?? 'active' }; }
+  // Also no UPDATE path on the backend even once property-scoped — only
+  // POST /properties/:propertyId/room-types (create) exists.
+  if (USE_MOCK) throw new Error(`Saving a room type ${NOT_PROPERTY_SCOPED}`);
   return sendJson<RoomType>('POST', '/room-types', rt);
 }
 export async function listRatePlans(): Promise<RatePlan[]> {
@@ -463,7 +498,9 @@ export async function listRatePlans(): Promise<RatePlan[]> {
   return getJson<RatePlan[]>('/rate-plans');
 }
 export async function upsertRatePlan(rp: Partial<RatePlan>): Promise<RatePlan> {
-  if (USE_MOCK) { await delay(); return { id: rp.id ?? `rp_${Date.now()}`, room_type_id: rp.room_type_id ?? 'rt_std', name: rp.name ?? 'New rate plan', board: rp.board ?? 'room_only', refundable: rp.refundable ?? true, cancellation_window_hours: rp.cancellation_window_hours ?? 24, mobile_rate: rp.mobile_rate ?? false, derived_from: rp.derived_from ?? null, derived_adjustment_pct: rp.derived_adjustment_pct ?? null, loyalty_opt_in: rp.loyalty_opt_in ?? false, base_rate_kobo: rp.base_rate_kobo ?? 90_000_00, currency: rp.currency ?? 'NGN', status: rp.status ?? 'active' }; }
+  // Also no UPDATE path on the backend even once property-scoped — only
+  // POST /properties/:propertyId/rate-plans (create) exists.
+  if (USE_MOCK) throw new Error(`Saving a rate plan ${NOT_PROPERTY_SCOPED}`);
   return sendJson<RatePlan>('POST', '/rate-plans', rp);
 }
 export async function getCalendar(month: string): Promise<CalendarData> {
@@ -471,13 +508,10 @@ export async function getCalendar(month: string): Promise<CalendarData> {
   return getJson<CalendarData>(`/calendar?month=${encodeURIComponent(month)}`);
 }
 export async function bulkEditCalendar(payload: BulkEditPayload): Promise<{ updated_cells: number }> {
-  if (USE_MOCK) {
-    await delay();
-    const [yf, mf, df] = payload.date_from.split('-').map(Number);
-    const [yt, mt, dt] = payload.date_to.split('-').map(Number);
-    const days = Math.max(1, Math.round((Date.UTC(yt, mt - 1, dt) - Date.UTC(yf, mf - 1, df)) / 86_400_000) + 1);
-    return { updated_cells: days * payload.room_type_ids.length };
-  }
+  // The backend splits this into TWO endpoints scoped by id, not one flat
+  // combined route: POST /rate-plans/:ratePlanId/calendar/bulk (rates) and
+  // POST /room-types/:roomTypeId/availability/bulk (availability).
+  if (USE_MOCK) throw new Error(`Bulk-editing the calendar ${NOT_PROPERTY_SCOPED}`);
   return sendJson<{ updated_cells: number }>('POST', '/calendar/bulk-edit', payload);
 }
 export async function getRestrictions(): Promise<Restriction[]> {
@@ -485,7 +519,7 @@ export async function getRestrictions(): Promise<Restriction[]> {
   return getJson<Restriction[]>('/restrictions');
 }
 export async function updateRestrictions(rows: Restriction[]): Promise<Restriction[]> {
-  if (USE_MOCK) { await delay(); return rows; }
+  if (USE_MOCK) throw new Error(`Updating restrictions ${NOT_PROPERTY_SCOPED}`);
   return sendJson<Restriction[]>('PUT', '/restrictions', rows);
 }
 
@@ -495,7 +529,10 @@ export async function listPromotions(): Promise<Promotion[]> {
   return getJson<Promotion[]>('/promotions');
 }
 export async function upsertPromotion(p: Partial<Promotion>): Promise<Promotion> {
-  if (USE_MOCK) { await delay(); return { id: p.id ?? `promo_${Date.now()}`, name: p.name ?? 'New promotion', type: p.type ?? 'early_bird', discount_pct: p.discount_pct ?? 0.1, date_from: p.date_from ?? dateStr(0), date_to: p.date_to ?? dateAhead(30), min_los: p.min_los ?? null, advance_days: p.advance_days ?? null, last_minute_hours: p.last_minute_hours ?? null, applies_to_rate_plans: p.applies_to_rate_plans ?? [], status: p.status ?? 'scheduled', redemptions: p.redemptions ?? 0 }; }
+  // Also no field-update path on the backend even once property-scoped — only
+  // POST /properties/:propertyId/promotions (create) and
+  // POST .../promotions/:promoId/active (status toggle) exist.
+  if (USE_MOCK) throw new Error(`Saving a promotion ${NOT_PROPERTY_SCOPED}`);
   return sendJson<Promotion>('POST', '/promotions', p);
 }
 export async function getLoyaltyOptIn(): Promise<LoyaltyOptIn> {
@@ -503,7 +540,9 @@ export async function getLoyaltyOptIn(): Promise<LoyaltyOptIn> {
   return getJson<LoyaltyOptIn>('/loyalty');
 }
 export async function updateLoyaltyOptIn(ratePlanId: string, optedIn: boolean): Promise<LoyaltyOptIn> {
-  if (USE_MOCK) { await delay(); return { ...LOYALTY, enrolled_rate_plans: LOYALTY.enrolled_rate_plans.map((r) => r.rate_plan_id === ratePlanId ? { ...r, opted_in: optedIn, earn_rate_pct: optedIn ? 0.05 : 0 } : r) }; }
+  // No backend at all: no loyalty route anywhere in backend/internal/stays
+  // (confirmed by grep) — not just missing property scoping.
+  if (USE_MOCK) throw new Error(`Updating loyalty opt-in ${NOT_IN_FIXTURE_MODE}`);
   return sendJson<LoyaltyOptIn>('PATCH', '/loyalty', { rate_plan_id: ratePlanId, opted_in: optedIn });
 }
 export async function getVisibilityBooster(): Promise<VisibilityBooster> {
@@ -525,11 +564,11 @@ export async function getReservation(id: string): Promise<ReservationDetail | nu
   return getJson<ReservationDetail>(`/reservations/${id}`);
 }
 export async function modifyReservation(payload: ModifyReservationPayload): Promise<ManualActionResult> {
-  if (USE_MOCK) {
-    await delay();
-    const map: Record<string, ManualActionResult['status']> = { cancel: 'cancelled_by_hotel', mark_no_show: 'no_show', modify_dates: 'confirmed', modify_room: 'confirmed' };
-    return { reservation_id: payload.reservation_id, status: map[payload.action] ?? 'confirmed', message: `Reservation ${payload.action.replace(/_/g, ' ')} applied.` };
-  }
+  // The backend has no generic /modify action either: only
+  // POST .../reservations/:reservationId/no-show and .../cancel exist
+  // (MarkNoShow, CancelByHotel) — modify_dates/modify_room have no endpoint
+  // at all, on top of the missing property scoping every other write here has.
+  if (USE_MOCK) throw new Error(`Modifying a reservation ${NOT_PROPERTY_SCOPED}`);
   return sendJson<ManualActionResult>('POST', `/reservations/${payload.reservation_id}/modify`, payload);
 }
 export async function markNoShow(reservationId: string, reason?: string): Promise<ManualActionResult> {
@@ -544,8 +583,13 @@ export async function listReviews(): Promise<Review[]> {
   return getJson<Review[]>('/reviews');
 }
 export async function respondReview(reviewId: string, response: string): Promise<Review> {
-  if (USE_MOCK) { await delay(); const r = REVIEWS.find((x) => x.id === reviewId)!; return { ...r, response, responded_at: new Date().toISOString() }; }
-  return sendJson<Review>('POST', `/reviews/${reviewId}/respond`, { response });
+  if (USE_MOCK) throw new Error(`Responding to a review ${NOT_IN_FIXTURE_MODE}`);
+  // backend: POST /reviews/:reviewId/response (reviews.Handler.Respond) — no
+  // property id needed (reviewId alone is enough to resolve authorization).
+  // The old "/respond" here was a one-word path typo; this is the ONE write
+  // in this file whose fix is a mechanical path correction rather than a
+  // property-scoping redesign — see the file-level comment above.
+  return sendJson<Review>('POST', `/reviews/${reviewId}/response`, { response });
 }
 
 // E · Finance
@@ -570,7 +614,9 @@ export async function getBankSettings(): Promise<BankSettings> {
   return getJson<BankSettings>('/bank');
 }
 export async function updateBankSettings(patch: Partial<BankSettings>): Promise<BankSettings> {
-  if (USE_MOCK) { await delay(); return { ...BANK_SETTINGS, ...patch }; }
+  // No backend at all: no bank-settings route anywhere in backend/internal/
+  // stays (confirmed by grep) — not just missing property scoping.
+  if (USE_MOCK) throw new Error(`Updating bank settings ${NOT_IN_FIXTURE_MODE}`);
   return sendJson<BankSettings>('PATCH', '/bank', patch);
 }
 
@@ -629,6 +675,9 @@ export async function getSettings(): Promise<ExtranetSettings> {
   return getJson<ExtranetSettings>('/settings');
 }
 export async function updateSettings(patch: Partial<ExtranetSettings>): Promise<ExtranetSettings> {
-  if (USE_MOCK) { await delay(); return { ...SETTINGS, ...patch }; }
+  // No backend at all: no generic settings route anywhere in
+  // backend/internal/stays (confirmed by grep) — not just missing property
+  // scoping.
+  if (USE_MOCK) throw new Error(`Updating extranet settings ${NOT_IN_FIXTURE_MODE}`);
   return sendJson<ExtranetSettings>('PATCH', '/settings', patch);
 }

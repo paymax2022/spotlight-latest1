@@ -38,6 +38,19 @@ function authHeaders(): Record<string, string> {
 }
 const delay = (ms = 240) => new Promise((r) => setTimeout(r, ms));
 
+// Verified against backend/internal/top5events (handler.go:64-66 — the ENTIRE
+// admin surface is just 3 routes: POST /:id/approve, POST /:id/suspend, POST
+// /:id/vendors/:vendorId/settle). Functions with a real route throw
+// NOT_IN_FIXTURE_MODE; functions with no reachable route throw NO_BACKEND_YET
+// instead, since flipping the mock flag would not reach a working call either
+// way. See docs/audit/ADMIN_SIMULATED_WRITES.md.
+const NOT_IN_FIXTURE_MODE =
+  'is unavailable in fixture mode: this console will not report a write it did not perform. ' +
+  'Set NEXT_PUBLIC_EVENTS_USE_MOCK=false to make this change against the live backend.';
+const NO_BACKEND_YET =
+  'has no backend yet (see the comment on the live-mode call below). ' +
+  'This console cannot perform this action until that endpoint is built.';
+
 async function getJson<T>(path: string): Promise<T> {
   const res = await fetch(`${adminBase()}${path}`, { headers: authHeaders() });
   if (!res.ok) throw new Error(`Request failed (${res.status})`);
@@ -133,16 +146,16 @@ export async function listEventApprovals(opts?: { status?: string; q?: string })
   return getJson<EventApprovalItem[]>(`/approvals${qs.toString() ? `?${qs}` : ''}`);
 }
 export async function decideEvent(id: string, decision: EventApprovalDecision, note?: string): Promise<EventDecisionResult> {
-  if (USE_MOCK) {
-    await delay();
-    const status =
-      decision === 'approve' ? 'approved'
-      : decision === 'reject' ? 'draft'
-      : decision === 'suspend' ? 'suspended'
-      : 'submitted';
-    return { id, status, audit_id: `aud_${Math.random().toString(36).slice(2, 10)}`, message: `Fixture — nothing was saved. Event ${id}: ${decision} applied.` };
+  if (USE_MOCK) throw new Error(`Deciding an event ${NOT_IN_FIXTURE_MODE}`);
+  // backend: only two verbs exist — POST /:id/approve and POST /:id/suspend
+  // (top5events.Handler.{Approve,Suspend}), both with no body. "reject" and
+  // "request_changes" have no backend equivalent — the service only has
+  // Approve/Suspend state-transition methods.
+  if (decision === 'reject' || decision === 'request_changes') {
+    throw new Error(`Deciding "${decision}" on an event ${NO_BACKEND_YET}`);
   }
-  return sendJson<EventDecisionResult>('POST', `/approvals/${id}/decide`, { decision, note });
+  const verb = decision === 'approve' ? 'approve' : 'suspend';
+  return sendJson<EventDecisionResult>('POST', `/${id}/${verb}`, {});
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -277,14 +290,16 @@ export async function listVendors(opts?: { payout_status?: string; q?: string })
   return getJson<VendorRecord[]>(`/vendors${qs.toString() ? `?${qs}` : ''}`);
 }
 export async function decideVendorPayout(id: string, decision: 'approve' | 'reject', note?: string): Promise<VendorPayoutResult> {
-  if (USE_MOCK) {
-    await delay();
-    const v = VENDORS.find((x) => x.id === id);
-    if (decision === 'approve' && v && !v.kyc_verified) {
-      return { id, payout_status: 'kyc_hold', audit_id: `aud_${Math.random().toString(36).slice(2, 10)}`, message: `Fixture — nothing was saved. Payout blocked — vendor ${id} KYC tier insufficient (NL-10). Payout stays fail-closed until KYC clears.` };
-    }
-    return { id, payout_status: decision === 'approve' ? 'approved' : 'rejected', audit_id: `aud_${Math.random().toString(36).slice(2, 10)}`, message: `Fixture — nothing was saved. Vendor ${id} payout ${decision === 'approve' ? 'approved' : 'rejected'}.` };
-  }
+  // No "decide" concept exists: the real capability is POST
+  // /:eventId/vendors/:vendorId/settle (top5events.Handler.SettleVendor) — an
+  // UNCONDITIONAL, irreversible pay-now action requiring BOTH the event id and
+  // vendor id plus an Idempotency-Key header, with no request body and no
+  // "decision" parameter at all (it fails closed on missing KYC, but there is
+  // no separate approve/reject step). This function only has the vendor id in
+  // scope, and "reject" has no backend equivalent regardless. Treated as a
+  // genuine gap rather than silently firing an irreversible settlement in
+  // place of what the UI presents as a reviewable decision.
+  if (USE_MOCK) throw new Error(`Deciding a vendor payout ${NO_BACKEND_YET}`);
   return sendJson<VendorPayoutResult>('POST', `/vendors/${id}/payout`, { decision, note });
 }
 
@@ -310,11 +325,12 @@ export async function getSettlement(): Promise<Settlement> {
   return getJson<Settlement>('/settlement');
 }
 export async function resolveSettlementBreak(id: string, action: 'investigate' | 'resolve' | 'reconcile', note?: string): Promise<SettlementResolveResult> {
-  if (USE_MOCK) {
-    await delay();
-    const status = action === 'investigate' ? 'investigating' : action === 'resolve' ? 'resolved' : 'reconciled';
-    return { id, status, audit_id: `aud_${Math.random().toString(36).slice(2, 10)}`, message: `Fixture — nothing was saved. Settlement break ${id}: ${action} applied. Ledger projection reconciled (NL-8).` };
-  }
+  // No backend at all: grepped backend/internal/top5events for "settlement
+  // break"/"break"/"reconcil" — only order-payment reconciliation exists
+  // (StartPendingOrderReconciler), unrelated to settlement breaks. No GET
+  // /settlement either — the events admin group has exactly 3 routes total
+  // (approve/suspend/vendor-settle).
+  if (USE_MOCK) throw new Error(`Resolving a settlement break ${NO_BACKEND_YET}`);
   return sendJson<SettlementResolveResult>('POST', `/settlement/${id}/resolve`, { action, note });
 }
 
@@ -346,10 +362,8 @@ export async function listEventFraud(opts?: { status?: string; kind?: string; q?
   return getJson<EventFraudSignal[]>(`/fraud${qs.toString() ? `?${qs}` : ''}`);
 }
 export async function decideEventFraud(id: string, action: EventFraudAction, note?: string): Promise<EventFraudActionResult> {
-  if (USE_MOCK) {
-    await delay();
-    const status = action === 'investigate' ? 'investigating' : action === 'clear' ? 'cleared' : 'blocked';
-    return { id, status, audit_id: `aud_${Math.random().toString(36).slice(2, 10)}`, message: `Fixture — nothing was saved. Fraud signal ${id}: ${action} applied.` };
-  }
+  // No backend at all: grepped backend/internal/top5events for "fraud" — zero
+  // matches. No fraud queue or action verb exists anywhere in the module.
+  if (USE_MOCK) throw new Error(`Actioning an event fraud signal ${NO_BACKEND_YET}`);
   return sendJson<EventFraudActionResult>('POST', `/fraud/${id}/action`, { action, note });
 }

@@ -78,6 +78,26 @@ async function sendJson<T>(method: 'POST' | 'PATCH' | 'PUT', path: string, body:
   return (j?.data ?? j) as T;
 }
 
+// Verified against the real Go routes: backend/internal/stays/admin/handler.go
+// (property moderation, mapping decisions, supplier config, reservation search)
+// plus the settlement/reviews admin routes mounted on the same /api/stays/admin
+// group (backend/internal/stays/settlement/handler.go RegisterAdmin,
+// backend/internal/stays/reviews/handler.go RegisterAdmin). That combined
+// surface is much narrower than this file's fixtures imagine — no refunds,
+// KYC, markup-rules, or generic reservation "manual action" route exists
+// anywhere in the stays backend, and "reconciliation" here doesn't match the
+// real "remittances" subsystem's shape closely enough to just repoint the URL.
+// Functions with a real route throw NOT_IN_FIXTURE_MODE; functions with no
+// reachable route throw NO_BACKEND_YET instead, since flipping the mock flag
+// would not reach a working call either way. See
+// docs/audit/ADMIN_SIMULATED_WRITES.md.
+const NOT_IN_FIXTURE_MODE =
+  'is unavailable in fixture mode: this console will not report a write it did not perform. ' +
+  'Set NEXT_PUBLIC_STAYS_USE_MOCK=false to make this change against the live backend.';
+const NO_BACKEND_YET =
+  'has no backend yet (see the comment on the live-mode call below). ' +
+  'This console cannot perform this action until that endpoint is built.';
+
 // ── Display helper: kobo → ₦ ─────────────────────────────────────────────────
 export function formatNaira(kobo: number): string {
   const naira = (kobo ?? 0) / 100;
@@ -198,8 +218,10 @@ export async function getMappingQueue(opts?: { status?: string }): Promise<Mappi
   return getJson<MappingRecord[]>(`/mapping${qs}`);
 }
 export async function resolveMapping(id: string, payload: { status: MappingStatus; note?: string }): Promise<MappingResolution> {
-  if (USE_MOCK) { await delay(); return { id, status: payload.status, resolved_at: new Date().toISOString() }; }
-  return sendJson<MappingResolution>('POST', `/mapping/${encodeURIComponent(id)}/resolve`, payload);
+  if (USE_MOCK) throw new Error(`Resolving a mapping ${NOT_IN_FIXTURE_MODE}`);
+  // backend: POST /mapping-queue/:id/decision (staysadmin.Handler.DecideMapping) — the OLD
+  // /mapping/:id/resolve path here matched no route; fixed to the real one.
+  return sendJson<MappingResolution>('POST', `/mapping-queue/${encodeURIComponent(id)}/decision`, payload);
 }
 
 const MODERATION: ModerationItem[] = [
@@ -220,8 +242,10 @@ export async function listModeration(opts?: { status?: string }): Promise<Modera
   return getJson<ModerationItem[]>(`/moderation${qs}`);
 }
 export async function approveProperty(id: string, payload: { status: ModerationStatus; note?: string }): Promise<ModerationDecision> {
-  if (USE_MOCK) { await delay(); return { id, status: payload.status, decided_at: new Date().toISOString() }; }
-  return sendJson<ModerationDecision>('POST', `/moderation/${encodeURIComponent(id)}/decide`, payload);
+  if (USE_MOCK) throw new Error(`Deciding a property listing ${NOT_IN_FIXTURE_MODE}`);
+  // backend: POST /properties/:id/status (staysadmin.Handler.ModerateProperty) — the OLD
+  // /moderation/:id/decide path here matched no route; fixed to the real one.
+  return sendJson<ModerationDecision>('POST', `/properties/${encodeURIComponent(id)}/status`, payload);
 }
 
 const CONTENT_QA: ContentQaItem[] = [
@@ -391,11 +415,10 @@ export async function getReservation(id: string): Promise<ReservationDetail> {
   return getJson<ReservationDetail>(`/reservations/${encodeURIComponent(id)}`);
 }
 export async function manualAction(id: string, payload: { action: ManualActionType; reason: string }): Promise<ManualActionResult> {
-  if (USE_MOCK) {
-    await delay();
-    const newState: Record<ManualActionType, ReservationDetail['state']> = { confirm: 'CONFIRMED', force_cancel: 'CANCELLED_BY_HOTEL', rebook: 'CONFIRMED', release_hold: 'VOID' };
-    return { reservation_id: id, action: payload.action, new_state: newState[payload.action], ledger_ref: payload.action === 'release_hold' ? 'led_release_new' : 'led_new', performed_at: new Date().toISOString() };
-  }
+  // No backend at all: the reservations admin surface only has GET /reservations
+  // (AdminSearch) — no manual-action mutation route exists anywhere in
+  // backend/internal/stays.
+  if (USE_MOCK) throw new Error(`Applying a manual reservation action ${NO_BACKEND_YET}`);
   return sendJson<ManualActionResult>('POST', `/reservations/${encodeURIComponent(id)}/manual-action`, payload);
 }
 
@@ -421,7 +444,9 @@ export async function listRefunds(opts?: { status?: string; fast_path?: boolean 
   return getJson<RefundRequest[]>(`/refunds${s ? `?${s}` : ''}`);
 }
 export async function decideRefund(id: string, payload: { decision: RefundStatus; note?: string }): Promise<RefundDecision> {
-  if (USE_MOCK) { await delay(); return { id, status: payload.decision, decided_at: new Date().toISOString() }; }
+  // No backend at all: no refunds route anywhere in backend/internal/stays
+  // (confirmed by grep).
+  if (USE_MOCK) throw new Error(`Deciding a refund ${NO_BACKEND_YET}`);
   return sendJson<RefundDecision>('POST', `/refunds/${encodeURIComponent(id)}/decide`, payload);
 }
 
@@ -480,7 +505,13 @@ export async function getReconciliation(opts?: { status?: string; break_type?: s
   return getJson<ReconciliationSummary>(`/reconciliation${s ? `?${s}` : ''}`);
 }
 export async function resolveBreak(id: string, payload: { resolution: string; status: BreakStatus; note?: string }): Promise<BreakResolution> {
-  if (USE_MOCK) { await delay(); return { id, status: payload.status, resolved_at: new Date().toISOString() }; }
+  // The real backend has no "/reconciliation" subsystem at all — the closest thing is
+  // POST /remittances/:id/resolve (staysettlement.Handler, backend/internal/stays/
+  // settlement/handler.go RegisterAdmin), a differently-named, differently-shaped
+  // concept (remittance-line resolution, not a generic reconciliation break). Left as
+  // a documented gap rather than repointing the URL at something that may not mean
+  // the same thing.
+  if (USE_MOCK) throw new Error(`Resolving a reconciliation break ${NO_BACKEND_YET}`);
   return sendJson<BreakResolution>('POST', `/reconciliation/${encodeURIComponent(id)}/resolve`, payload);
 }
 
@@ -516,7 +547,9 @@ export async function getMarkupRules(): Promise<MarkupRule[]> {
   return getJson<MarkupRule[]>('/markup-rules');
 }
 export async function updateMarkupRules(rules: MarkupRule[]): Promise<MarkupRule[]> {
-  if (USE_MOCK) { await delay(); return rules.map((r) => ({ ...r, updated_at: new Date().toISOString() })); }
+  // No backend at all: no markup-rules route anywhere in backend/internal/stays
+  // (confirmed by grep).
+  if (USE_MOCK) throw new Error(`Updating markup rules ${NO_BACKEND_YET}`);
   return sendJson<MarkupRule[]>('PUT', '/markup-rules', { rules });
 }
 
@@ -611,7 +644,7 @@ export async function listReviews(opts?: { status?: string }): Promise<Review[]>
   return getJson<Review[]>(`/reviews${qs}`);
 }
 export async function moderateReview(id: string, payload: { status: ReviewStatus; note?: string }): Promise<ReviewModeration> {
-  if (USE_MOCK) { await delay(); return { id, status: payload.status, decided_at: new Date().toISOString() }; }
+  if (USE_MOCK) throw new Error(`Moderating a review ${NOT_IN_FIXTURE_MODE}`);
   return sendJson<ReviewModeration>('POST', `/reviews/${encodeURIComponent(id)}/moderate`, payload);
 }
 
@@ -731,7 +764,9 @@ export async function listKyc(opts?: { status?: string }): Promise<KycCase[]> {
   return getJson<KycCase[]>(`/kyc${qs}`);
 }
 export async function decideKyc(id: string, payload: { status: KycStatus; note?: string }): Promise<KycDecision> {
-  if (USE_MOCK) { await delay(); return { id, status: payload.status, decided_at: new Date().toISOString() }; }
+  // No backend at all: no KYC route anywhere in backend/internal/stays (confirmed
+  // by grep) — stays has no KYC subsystem of its own.
+  if (USE_MOCK) throw new Error(`Deciding a KYC case ${NO_BACKEND_YET}`);
   return sendJson<KycDecision>('POST', `/kyc/${encodeURIComponent(id)}/decide`, payload);
 }
 

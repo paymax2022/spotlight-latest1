@@ -103,6 +103,13 @@ function delay<T>(value: T): Promise<T> {
   return new Promise((resolve) => setTimeout(() => resolve(value), 120));
 }
 
+// All three writes below have real, verified live endpoints, so fixture mode
+// has nothing to add and refuses loudly instead of reporting a decision it
+// did not perform. See docs/audit/ADMIN_SIMULATED_WRITES.md.
+const NOT_IN_FIXTURE_MODE =
+  'is unavailable in fixture mode: this console will not report a write it did not perform. ' +
+  'Set NEXT_PUBLIC_KYC_ADMIN_USE_MOCK=false to make this change against the live backend.';
+
 // Derive a queue row from a session + its checks (worst failing check first).
 function toReviewItem(session: VerificationSession): KycReviewItem {
   const checks = FIXTURE_CHECKS[session.id] ?? [];
@@ -160,10 +167,7 @@ export async function getCase(id: string): Promise<KycCaseDetail> {
 
 // One funnel for the two case decisions (both require a reason for the audit log).
 async function postDecision(id: string, action: 'approve' | 'reject', reason: string): Promise<void> {
-  if (USE_FIXTURES) {
-    await delay(null);
-    return;
-  }
+  if (USE_FIXTURES) throw new Error(`Deciding a KYC case ${NOT_IN_FIXTURE_MODE}`);
   const res = await fetch(
     `${kycAdminBase()}/kyc/cases/${encodeURIComponent(id)}/${action}`,
     {
@@ -187,10 +191,7 @@ export async function rejectCase(id: string, reason: string): Promise<void> {
 // currently exposes approve/reject; we tag the reason so the state machine can
 // route to a re-submit prompt rather than a hard decline.
 export async function requestResubmit(id: string, reason: string): Promise<void> {
-  if (USE_FIXTURES) {
-    await delay(null);
-    return;
-  }
+  if (USE_FIXTURES) throw new Error(`Requesting a KYC re-submit ${NOT_IN_FIXTURE_MODE}`);
   const res = await fetch(
     `${kycAdminBase()}/kyc/cases/${encodeURIComponent(id)}/reject`,
     {
@@ -232,9 +233,7 @@ export async function updateRoutingRule(
   checkType: CheckType,
   rule: { ordered_providers: string[]; threshold: number; enabled: boolean },
 ): Promise<KycRoutingRule> {
-  if (USE_FIXTURES) {
-    return delay({ check_type: checkType, ...rule });
-  }
+  if (USE_FIXTURES) throw new Error(`Updating a KYC routing rule ${NOT_IN_FIXTURE_MODE}`);
   const res = await fetch(`${kycAdminBase()}/kyc/routing-rules/${encodeURIComponent(checkType)}`, {
     method: 'PUT',
     headers: authHeaders(),
