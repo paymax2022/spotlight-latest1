@@ -47,7 +47,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
-        with: { node-version: '20' }
+        with:
+          node-version: '20'
+          # Without this the RN dependency tree is installed from scratch every
+          # run: npm ci measured 276-421s here against 5-6s for the typecheck it
+          # exists to enable. ci.yml's own mobile job has had the cache all along;
+          # these lanes were simply never given it.
+          cache: npm
+          cache-dependency-path: mobile-app/reactnative/package-lock.json
       - run: npm ci
       - name: Typecheck connect module (scoped)
         run: npx tsc --noEmit -p tsconfig.connectcheck.json

@@ -51,6 +51,12 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
+          # Without this the RN dependency tree is installed from scratch every
+          # run: npm ci measured 421s here against 6s for the typecheck it exists
+          # to enable. ci.yml's own mobile job has had the cache all along; these
+          # lanes were simply never given it.
+          cache: npm
+          cache-dependency-path: mobile-app/reactnative/package-lock.json
       - run: npm ci || npm install
       - name: Typecheck crowdfunding screens + feature
         run: npx tsc -p tsconfig.crowdfunding.json
