@@ -2,10 +2,16 @@
 // Mock by default (mirrors staysAdminService). Flip with
 // NEXT_PUBLIC_STAYS_USE_MOCK=false to hit the live Go backend at
 // /api/stays/extranet/*. RBAC: stays.hotelier.* + staff roles.
-// OBJECT-SCOPED: every call resolves to the signed-in hotelier's OWN property.
+// MULTI-PROPERTY: a hotelier can own more than one property — the backend is
+// built for it (repository.go MyProperties has no LIMIT 1; PRD §21 authorizes
+// "Own property/properties"). Every live call below is scoped to whichever
+// property is selected via the module-level picker singleton below (see
+// "Property picker"), modeled on associationAdminService's org picker. This
+// file used to hardcode a single PROPERTY_ID constant that no live call ever
+// read, so every live request omitted :propertyId entirely and 404'd.
 // Money is BIGINT kobo (minor units) and settled in Naira (NGN).
 
-import { env } from '@/config/env';
+import { apiRoot } from '@/config/env';
 import type {
   VerificationStatus,
   BusinessVerification,
@@ -16,9 +22,11 @@ import type {
   RoomType,
   RatePlan,
   CalendarData,
+  CalendarCell,
   BulkEditPayload,
   Restriction,
   Promotion,
+  PromotionType,
   LoyaltyOptIn,
   VisibilityBooster,
   Opportunity,
@@ -42,8 +50,16 @@ import type {
 
 const USE_MOCK = (process.env.NEXT_PUBLIC_STAYS_USE_MOCK ?? 'true').toLowerCase() !== 'false';
 
+// apiRoot() strips a trailing /api/v1 (if present) before appending the
+// module's absolute path — same fix associationAdminService's adminBase()
+// applies. The old `env.apiBaseUrl.replace(/\/api\/v1\/?$/, '/api/stays/extranet')`
+// only matched while apiBaseUrl ended in /api/v1; once it became the
+// same-origin proxy path (<origin>/api/admin-proxy, no /api/v1 suffix) the
+// regex stopped matching and extranetBase() silently returned the proxy
+// origin with NO module prefix at all — every live call 404'd before it ever
+// got to the missing-propertyId problem this file otherwise fixes.
 function extranetBase(): string {
-  return env.apiBaseUrl.replace(/\/api\/v1\/?$/, '/api/stays/extranet');
+  return `${apiRoot()}/api/stays/extranet`;
 }
 function authHeaders(): Record<string, string> {
   if (typeof window === 'undefined') return {};
@@ -67,6 +83,72 @@ async function sendJson<T>(method: 'POST' | 'PATCH' | 'PUT', path: string, body:
   return (j?.data ?? j) as T;
 }
 
+// ── Property picker ──────────────────────────────────────────────────────────
+// Every live route below except GET /me/properties itself requires :propertyId
+// in the path (backend/internal/stays/extranet/handler.go + ari/handler.go —
+// every handler resolves the property from the URL, never implicitly). This
+// module-level singleton (localStorage-backed, so it survives navigation
+// across the ~30 extranet pages) is the selection; useSelectedProperty() /
+// <PropertyPicker/> in app/extranet/_ui.tsx are the reactive React wrapper and
+// UI, mirroring getSelectedOrgId/setSelectedOrgId/onSelectedOrgChange +
+// useSelectedOrg()/<OrgPicker/> in associationAdminService.ts + its _ui.tsx.
+const PROPERTY_STORAGE_KEY = 'stays_extranet_selected_property';
+let selectedPropertyId: string | null = null;
+let propertyHydrated = false;
+const propertyListeners = new Set<(id: string | null) => void>();
+
+export function getSelectedPropertyId(): string | null {
+  if (!propertyHydrated) {
+    propertyHydrated = true;
+    if (typeof window !== 'undefined') selectedPropertyId = localStorage.getItem(PROPERTY_STORAGE_KEY);
+  }
+  return selectedPropertyId;
+}
+export function setSelectedPropertyId(id: string | null): void {
+  selectedPropertyId = id;
+  propertyHydrated = true;
+  if (typeof window !== 'undefined') {
+    if (id) localStorage.setItem(PROPERTY_STORAGE_KEY, id);
+    else localStorage.removeItem(PROPERTY_STORAGE_KEY);
+  }
+  propertyListeners.forEach((fn) => fn(id));
+}
+export function onSelectedPropertyChange(fn: (id: string | null) => void): () => void {
+  propertyListeners.add(fn);
+  return () => propertyListeners.delete(fn);
+}
+/** Every live-mode function below calls this instead of taking a propertyId param directly. */
+function requirePropertyId(): string {
+  const id = getSelectedPropertyId();
+  if (!id) throw new Error('No property selected. Choose a property from the picker at the top of the page.');
+  return id;
+}
+
+/** One row of GET /me/properties (repository.go MyProperties — a plain untyped map, not a Go struct). */
+export interface MyPropertyOption {
+  id: string;
+  name: string;
+  city: string;
+  status: string;
+  /** The caller's grant role on this property, e.g. 'OWNER' — UPPERCASE (stays_hotelier_profile.role), unlike StaffMember.role which is lowercase. */
+  role: string;
+}
+/** GET /me/properties — every property the signed-in hotelier holds an ACTIVE grant on. */
+export async function listMyProperties(): Promise<MyPropertyOption[]> {
+  if (USE_MOCK) { await delay(); return [{ id: PROPERTY_ID, name: PROFILE.name, city: PROFILE.city, status: PROFILE.status, role: 'OWNER' }]; }
+  return getJson<MyPropertyOption[]>('/me/properties');
+}
+
+/**
+ * A control with no backend route anywhere in backend/internal/stays. Thrown
+ * instead of faking success (the docs/audit/ADMIN_SIMULATED_WRITES.md defect)
+ * or letting the call 404 with no explanation. Fixing this needs either a new
+ * Go endpoint or a product decision to remove the control.
+ */
+function notOnBackend(what: string): never {
+  throw new Error(`${what} is unavailable: no backend endpoint exists for this yet.`);
+}
+
 // ── Display helpers: kobo → ₦ ────────────────────────────────────────────────
 export function formatNaira(kobo: number): string {
   const naira = (kobo ?? 0) / 100;
@@ -84,7 +166,7 @@ const dateStr = (daysAgo: number) => new Date(Date.now() - daysAgo * 86_400_000)
 const dateAhead = (days: number) => new Date(Date.now() + days * 86_400_000).toISOString().slice(0, 10);
 
 // ════════════════════════════════════════════════════════════════════════════
-// DEMO PROPERTY (object-scoped to one Nigerian hotel)
+// DEMO PROPERTY (object-scoped to one Nigerian hotel) — MOCK MODE ONLY
 // ════════════════════════════════════════════════════════════════════════════
 const PROPERTY_ID = 'prop_lekki_grand_001';
 
@@ -399,63 +481,315 @@ const SETTINGS: ExtranetSettings = {
 };
 
 // ════════════════════════════════════════════════════════════════════════════
+// Live-mode response/request adapters — the Go structs below (repository.go /
+// ari/model.go / reviews/model.go) are narrower than the TS types above (no
+// `name` on a rate plan, no guest contact fields on a reservation, no photos/
+// amenities/loyalty model at all, etc). Fields the backend does not track are
+// filled with a documented neutral default rather than invented data.
+// ════════════════════════════════════════════════════════════════════════════
+
+interface GoProperty { id: string; name: string; description: string; address: string; city: string; star_rating: number; property_type: string; status: string; updated_at: string }
+function propertyFromGo(g: GoProperty): PropertyProfile {
+  return {
+    property_id: g.id,
+    name: g.name ?? '',
+    type: (g.property_type as PropertyProfile['type']) || 'hotel',
+    star_rating: g.star_rating ?? 0,
+    description: g.description ?? '',
+    short_tagline: '', // not tracked by stays_property
+    address_line: g.address ?? '',
+    city: g.city ?? '',
+    state: '', // not tracked
+    country: 'Nigeria', // Stays is Nigeria-only today
+    geo: { lat: 0, lng: 0 }, // not tracked
+    check_in_from: '', // not tracked
+    check_out_until: '', // not tracked
+    contact_phone: '', // not tracked
+    contact_email: '', // not tracked
+    currency: 'NGN',
+    status: (g.status as PropertyProfile['status']) || 'draft',
+  };
+}
+
+interface GoRoomType { id: string; name: string; occupancy: number; bedding: string; size_sqm: number }
+function roomTypeFromGo(g: GoRoomType): RoomType {
+  return {
+    id: g.id,
+    name: g.name ?? '',
+    max_occupancy: g.occupancy ?? 2,
+    beds: g.bedding ?? '',
+    size_sqm: g.size_sqm ?? 0,
+    count: 0, // physical room count isn't a stays_room_type column — tracked per-day via availability allotment instead
+    smoking: false, // not tracked
+    status: 'active', // not tracked (no status column on stays_room_type)
+  };
+}
+
+interface GoRatePlan { id: string; room_type_id: string; rate_plan_type: string; board: string; refundable: boolean; base_sell_rate_kobo: number; currency: string }
+function ratePlanFromGo(g: GoRatePlan): RatePlan {
+  return {
+    id: g.id,
+    room_type_id: g.room_type_id,
+    // stays_rate_plan has no display name — synthesize one from what it does store.
+    name: `${g.rate_plan_type || 'BAR'} · ${g.board || 'room_only'}`.replace(/_/g, ' '),
+    board: (g.board as RatePlan['board']) || 'room_only',
+    refundable: g.refundable ?? true,
+    cancellation_window_hours: 0, // not tracked
+    mobile_rate: false, // not tracked
+    derived_from: null, // not tracked as a plan-to-plan link (see ApplyDerivedRate, which is a one-off calendar op, not a stored link)
+    derived_adjustment_pct: null,
+    loyalty_opt_in: false, // not tracked — see getLoyaltyOptIn()
+    base_rate_kobo: g.base_sell_rate_kobo ?? 0,
+    currency: (g.currency as RatePlan['currency']) || 'NGN',
+    status: 'active', // not tracked
+  };
+}
+
+interface GoReservationRow { id: string; state: string; check_in: string; check_out: string; rooms: number; gross_amount_kobo: number; currency: string; supplier_ref: string | null; guest_name: string; created_at: string }
+function nightsBetween(from: string, to: string): number {
+  const n = Math.round((new Date(to).getTime() - new Date(from).getTime()) / 86_400_000);
+  return n > 0 ? n : 0;
+}
+function reservationSummaryFromGo(g: GoReservationRow): ReservationSummary {
+  return {
+    id: g.id,
+    ref: g.supplier_ref || g.id, // stays_reservation has no separate human-facing ref column
+    guest_name: g.guest_name || '',
+    room_type_name: '', // ReservationRow doesn't carry room_type_id, let alone a joined name
+    rate_plan_name: '',
+    check_in: g.check_in,
+    check_out: g.check_out,
+    nights: nightsBetween(g.check_in, g.check_out),
+    guests: g.rooms ?? 0, // no separate guest-count column; `rooms` is the closest tracked quantity
+    status: (g.state || '').toLowerCase() as ReservationSummary['status'],
+    payment_status: 'paid', // not tracked by stays_reservation — Go has no payment-status model on this row
+    total_kobo: g.gross_amount_kobo ?? 0,
+    currency: (g.currency as ReservationSummary['currency']) || 'NGN',
+    channel: 'paymax_app', // not tracked
+    created_at: g.created_at,
+  };
+}
+interface GoReservationDetail extends GoReservationRow { property_id: string; room_type_id: string; rate_plan_id: string; net_rate_kobo: number; commission_kobo: number; occupancy: Record<string, unknown> }
+function reservationDetailFromGo(g: GoReservationDetail): ReservationDetail {
+  return {
+    ...reservationSummaryFromGo(g),
+    guest_email: '', // not tracked on stays_reservation (guest contact lives on stays_reservation_guest, not selected by this query)
+    guest_phone: '',
+    guest_country: '',
+    special_requests: null,
+    board: 'room_only',
+    deposit_kobo: 0,
+    balance_due_kobo: Math.max(0, (g.gross_amount_kobo ?? 0) - (g.net_rate_kobo ?? 0)),
+    commission_kobo: g.commission_kobo ?? 0,
+    net_to_hotel_kobo: g.net_rate_kobo ?? 0,
+    loyalty_member: false, // not tracked
+    timeline: [], // no event-log model on this endpoint
+  };
+}
+
+interface GoPayout { id: string; amount_kobo: number; currency: string; status: string; hold_reason: string; created_at: string }
+function payoutFromGo(g: GoPayout): Payout {
+  return {
+    id: g.id,
+    period: g.created_at.slice(0, 10), // stays_hotel_payout has no period range, only a single created_at
+    gross_kobo: g.amount_kobo ?? 0,
+    commission_kobo: 0, // not broken out on this row — commission lives in the separate /commission ledger
+    net_kobo: g.amount_kobo ?? 0,
+    currency: (g.currency as Payout['currency']) || 'NGN',
+    status: (g.status || '').toLowerCase() as Payout['status'],
+    paid_at: (g.status || '').toUpperCase() === 'PAID' ? g.created_at : null,
+    reference: g.hold_reason || null,
+  };
+}
+
+interface GoStaffRow { id: string; user_id: string; role: string; status: string }
+function staffFromGo(g: GoStaffRow): StaffMember {
+  return {
+    id: g.id,
+    name: g.user_id, // stays_hotelier_profile has no display name/email — only the platform user_id
+    email: '',
+    role: (g.role || '').toLowerCase() as StaffMember['role'],
+    status: (g.status || '').toLowerCase() as StaffMember['status'],
+    last_active: null, // not tracked
+  };
+}
+
+interface GoReview { id: string; reservation_id: string; property_id: string; guest_user_id: string; overall_score: number; title: string; body: string; status: string; created_at: string }
+function reviewFromGo(g: GoReview): Review {
+  const statusMap: Record<string, Review['status']> = { PUBLISHED: 'published', PENDING: 'pending', FLAGGED: 'flagged', HIDDEN: 'flagged' };
+  return {
+    id: g.id,
+    guest_name: '', // stays_review stores guest_user_id, not a display name
+    reservation_ref: g.reservation_id,
+    rating: g.overall_score ?? 0,
+    title: g.title ?? '',
+    body: g.body ?? '',
+    created_at: g.created_at,
+    response: null, // ListForHotelier doesn't join the separate Response row
+    responded_at: null,
+    status: statusMap[(g.status || '').toUpperCase()] ?? 'pending',
+  };
+}
+
+interface GoPromotion { id: string; property_id: string; rate_plan_id: string | null; name: string; promo_type: string; discount_bps: number; discount_kobo: number; min_los: number; lead_days: number; date_from: string; date_to: string; active: boolean; created_at: string }
+function promotionFromGo(g: GoPromotion): Promotion {
+  const typeMap: Record<string, PromotionType> = { EARLY_BIRD: 'early_bird', LAST_MINUTE: 'last_minute', LOS: 'los' };
+  const today = new Date().toISOString().slice(0, 10);
+  return {
+    id: g.id,
+    name: g.name ?? '',
+    type: typeMap[g.promo_type] ?? 'early_bird', // Go also allows PERCENT/FIXED, which have no frontend PromotionType equivalent
+    discount_pct: (g.discount_bps ?? 0) / 10_000,
+    date_from: g.date_from,
+    date_to: g.date_to,
+    min_los: g.min_los || null,
+    advance_days: g.lead_days || null,
+    last_minute_hours: null, // not tracked separately from lead_days
+    // Go's rate_plan_id is a single nullable id (null = ALL plans); the frontend
+    // models a list. null becomes [] here, which reads as "no plans" rather
+    // than the backend's actual "every plan" meaning — a real gap, not a typo.
+    applies_to_rate_plans: g.rate_plan_id ? [g.rate_plan_id] : [],
+    status: g.active ? 'active' : (g.date_from > today ? 'scheduled' : 'ended'),
+    redemptions: 0, // not tracked by this endpoint
+  };
+}
+function promotionToGoBody(p: Partial<Promotion>): { rate_plan_id?: string | null; name: string; promo_type: string; discount_bps: number; min_los: number; lead_days: number; date_from: string; date_to: string; active: boolean } {
+  const typeMap: Partial<Record<PromotionType, string>> = { early_bird: 'EARLY_BIRD', last_minute: 'LAST_MINUTE', los: 'LOS' };
+  const goType = p.type ? typeMap[p.type] : undefined;
+  if (!goType) throw new Error(`Promotion type "${p.type}" has no backend equivalent (Go promo_type is PERCENT | FIXED | EARLY_BIRD | LAST_MINUTE | LOS — there is no MOBILE type).`);
+  return {
+    rate_plan_id: p.applies_to_rate_plans?.[0] ?? null,
+    name: p.name ?? '',
+    promo_type: goType,
+    discount_bps: Math.round((p.discount_pct ?? 0) * 10_000),
+    min_los: p.min_los ?? 0,
+    lead_days: p.advance_days ?? 0,
+    date_from: p.date_from ?? dateStr(0),
+    date_to: p.date_to ?? dateAhead(30),
+    active: p.status === 'active',
+  };
+}
+
+interface GoRateDay { rate_plan_id: string; date: string; price_kobo: number; currency: string; min_los: number; max_los: number; cta: boolean; ctd: boolean; stop_sell: boolean }
+interface GoAvailabilityDay { room_type_id: string; date: string; allotment: number; sold: number; stop_sell: boolean }
+
+// ════════════════════════════════════════════════════════════════════════════
 // Public API — mock-backed with live fallthrough
 // ════════════════════════════════════════════════════════════════════════════
 
 // A · Onboarding & verification
 export async function getVerificationStatus(): Promise<VerificationStatus> {
   if (USE_MOCK) { await delay(); return VERIFICATION; }
-  return getJson<VerificationStatus>('/verification');
+  // No KYC/verification-checklist model exists anywhere in backend/internal/stays —
+  // CreateProperty + UpdateContent exist, but there is no submitted/reviewed/
+  // checklist state machine to read back.
+  return notOnBackend('Verification status');
 }
 export async function getBusinessVerification(): Promise<BusinessVerification> {
   if (USE_MOCK) { await delay(); return BUSINESS_VERIFICATION; }
-  return getJson<BusinessVerification>('/verification/business');
+  return notOnBackend('Business verification');
 }
 export async function submitForReview(): Promise<VerificationStatus> {
   if (USE_MOCK) { await delay(); return { ...VERIFICATION, overall: 'submitted', submitted_for_review_at: new Date().toISOString() }; }
-  return sendJson<VerificationStatus>('POST', '/verification/submit', {});
+  return notOnBackend('Submitting a property for review');
 }
 
 // B · Content & inventory
 export async function getProperty(): Promise<PropertyProfile> {
   if (USE_MOCK) { await delay(); return PROFILE; }
-  return getJson<PropertyProfile>('/property');
+  return propertyFromGo(await getJson<GoProperty>(`/properties/${requirePropertyId()}`));
 }
 export async function updateContent(patch: Partial<PropertyProfile>): Promise<PropertyProfile> {
   if (USE_MOCK) { await delay(); return { ...PROFILE, ...patch }; }
-  return sendJson<PropertyProfile>('PATCH', '/property', patch);
+  const pid = requirePropertyId();
+  const body = {
+    name: patch.name,
+    description: patch.description,
+    address: patch.address_line,
+    city: patch.city,
+    star_rating: patch.star_rating,
+    property_type: patch.type,
+  };
+  await sendJson('PATCH', `/properties/${pid}`, body);
+  return propertyFromGo(await getJson<GoProperty>(`/properties/${pid}`));
 }
 export async function getPhotos(): Promise<PhotoAsset[]> {
   if (USE_MOCK) { await delay(); return PHOTOS; }
-  return getJson<PhotoAsset[]>('/photos');
+  return notOnBackend('Property photos');
 }
 export async function getAmenities(): Promise<AmenityGroup[]> {
   if (USE_MOCK) { await delay(); return AMENITIES; }
-  return getJson<AmenityGroup[]>('/amenities');
+  return notOnBackend('Amenities');
 }
 export async function updateAmenities(groups: AmenityGroup[]): Promise<AmenityGroup[]> {
   if (USE_MOCK) { await delay(); return groups; }
-  return sendJson<AmenityGroup[]>('PUT', '/amenities', groups);
+  return notOnBackend('Updating amenities');
 }
 export async function listRoomTypes(): Promise<RoomType[]> {
   if (USE_MOCK) { await delay(); return ROOM_TYPES; }
-  return getJson<RoomType[]>('/room-types');
+  const rows = await getJson<GoRoomType[]>(`/properties/${requirePropertyId()}/room-types`);
+  return rows.map(roomTypeFromGo);
 }
 export async function upsertRoomType(rt: Partial<RoomType>): Promise<RoomType> {
   if (USE_MOCK) { await delay(); return { id: rt.id ?? `rt_${Date.now()}`, name: rt.name ?? 'New room type', max_occupancy: rt.max_occupancy ?? 2, beds: rt.beds ?? '1 Queen', size_sqm: rt.size_sqm ?? 24, count: rt.count ?? 1, smoking: rt.smoking ?? false, status: rt.status ?? 'active' }; }
-  return sendJson<RoomType>('POST', '/room-types', rt);
+  if (rt.id) return notOnBackend('Updating a room type (only creation has a backend route)');
+  const pid = requirePropertyId();
+  const { id } = await sendJson<{ id: string }>('POST', `/properties/${pid}/room-types`, { name: rt.name, occupancy: rt.max_occupancy, bedding: rt.beds });
+  const rows = await getJson<GoRoomType[]>(`/properties/${pid}/room-types`);
+  const created = rows.find((r) => r.id === id);
+  return created ? roomTypeFromGo(created) : { ...rt, id } as RoomType;
 }
 export async function listRatePlans(): Promise<RatePlan[]> {
   if (USE_MOCK) { await delay(); return RATE_PLANS; }
-  return getJson<RatePlan[]>('/rate-plans');
+  const rows = await getJson<GoRatePlan[]>(`/properties/${requirePropertyId()}/rate-plans`);
+  return rows.map(ratePlanFromGo);
 }
 export async function upsertRatePlan(rp: Partial<RatePlan>): Promise<RatePlan> {
   if (USE_MOCK) { await delay(); return { id: rp.id ?? `rp_${Date.now()}`, room_type_id: rp.room_type_id ?? 'rt_std', name: rp.name ?? 'New rate plan', board: rp.board ?? 'room_only', refundable: rp.refundable ?? true, cancellation_window_hours: rp.cancellation_window_hours ?? 24, mobile_rate: rp.mobile_rate ?? false, derived_from: rp.derived_from ?? null, derived_adjustment_pct: rp.derived_adjustment_pct ?? null, loyalty_opt_in: rp.loyalty_opt_in ?? false, base_rate_kobo: rp.base_rate_kobo ?? 90_000_00, currency: rp.currency ?? 'NGN', status: rp.status ?? 'active' }; }
-  return sendJson<RatePlan>('POST', '/rate-plans', rp);
+  if (rp.id) return notOnBackend('Updating a rate plan (only creation has a backend route)');
+  const pid = requirePropertyId();
+  const { id } = await sendJson<{ id: string }>('POST', `/properties/${pid}/rate-plans`, {
+    room_type_id: rp.room_type_id,
+    rate_plan_type: rp.derived_from ? 'DERIVED' : 'BAR',
+    board: rp.board,
+    refundable: rp.refundable,
+    base_sell_rate_kobo: rp.base_rate_kobo,
+    currency: rp.currency ?? 'NGN',
+  });
+  const rows = await getJson<GoRatePlan[]>(`/properties/${pid}/rate-plans`);
+  const created = rows.find((r) => r.id === id);
+  return created ? ratePlanFromGo(created) : { ...rp, id } as RatePlan;
 }
 export async function getCalendar(month: string): Promise<CalendarData> {
   if (USE_MOCK) { await delay(); return buildCalendar(month); }
-  return getJson<CalendarData>(`/calendar?month=${encodeURIComponent(month)}`);
+  const pid = requirePropertyId();
+  const from = `${month}-01`;
+  const to = new Date(Number(month.slice(0, 4)), Number(month.slice(5, 7)), 0).toISOString().slice(0, 10);
+  const [roomTypes, ratePlans] = await Promise.all([listRoomTypes(), listRatePlans()]);
+  const rows = await Promise.all(roomTypes.map(async (rt): Promise<{ room_type_id: string; room_type_name: string; cells: CalendarCell[] }> => {
+    // A room type can have several rate plans; the calendar grid shows one price
+    // per cell, so (as in mock mode's buildCalendar) this uses the first plan.
+    const plan = ratePlans.find((p) => p.room_type_id === rt.id);
+    const [rateDays, availDays] = await Promise.all([
+      plan ? getJson<GoRateDay[]>(`/rate-plans/${plan.id}/calendar?from=${from}&to=${to}`) : Promise.resolve<GoRateDay[]>([]),
+      getJson<GoAvailabilityDay[]>(`/room-types/${rt.id}/availability?from=${from}&to=${to}`),
+    ]);
+    const rateByDate = new Map(rateDays.map((d) => [d.date, d]));
+    const cells: CalendarCell[] = availDays.map((a) => {
+      const r = rateByDate.get(a.date);
+      return {
+        date: a.date,
+        available: Math.max(0, (a.allotment ?? 0) - (a.sold ?? 0)),
+        rate_kobo: r?.price_kobo ?? 0,
+        min_los: r?.min_los ?? 1,
+        cta: r?.cta ?? false,
+        ctd: r?.ctd ?? false,
+        stop_sell: a.stop_sell || (r?.stop_sell ?? false),
+      };
+    });
+    return { room_type_id: rt.id, room_type_name: rt.name, cells };
+  }));
+  return { property_id: pid, month, currency: 'NGN', rows };
 }
 export async function bulkEditCalendar(payload: BulkEditPayload): Promise<{ updated_cells: number }> {
   if (USE_MOCK) {
@@ -465,51 +799,118 @@ export async function bulkEditCalendar(payload: BulkEditPayload): Promise<{ upda
     const days = Math.max(1, Math.round((Date.UTC(yt, mt - 1, dt) - Date.UTC(yf, mf - 1, df)) / 86_400_000) + 1);
     return { updated_cells: days * payload.room_type_ids.length };
   }
-  return sendJson<{ updated_cells: number }>('POST', '/calendar/bulk-edit', payload);
+  const ratePlans = await listRatePlans();
+  const hasRateFields = payload.rate_kobo !== undefined || payload.min_los !== undefined || payload.cta !== undefined || payload.ctd !== undefined;
+  const hasAvailFields = payload.available !== undefined || payload.stop_sell !== undefined;
+  let updated = 0;
+  await Promise.all(payload.room_type_ids.map(async (roomTypeId) => {
+    if (hasAvailFields) {
+      const r = await sendJson<{ updated: number }>('POST', `/room-types/${roomTypeId}/availability/bulk`, {
+        date_from: payload.date_from,
+        date_to: payload.date_to,
+        allotment: payload.available,
+        stop_sell: payload.stop_sell,
+      });
+      updated += r.updated ?? 0;
+    }
+    if (hasRateFields) {
+      const plan = ratePlans.find((p) => p.room_type_id === roomTypeId);
+      if (!plan) return; // no rate plan on this room type — nothing to price
+      const r = await sendJson<{ updated: number }>('POST', `/rate-plans/${plan.id}/calendar/bulk`, {
+        date_from: payload.date_from,
+        date_to: payload.date_to,
+        price_kobo: payload.rate_kobo,
+        min_los: payload.min_los,
+        cta: payload.cta,
+        ctd: payload.ctd,
+        stop_sell: payload.stop_sell,
+      });
+      updated += r.updated ?? 0;
+    }
+  }));
+  return { updated_cells: updated };
 }
 export async function getRestrictions(): Promise<Restriction[]> {
   if (USE_MOCK) { await delay(); return RESTRICTIONS; }
-  return getJson<Restriction[]>('/restrictions');
+  // There is no "current default restriction" endpoint — SetRestrictions only
+  // writes a date-range edit. This reads TODAY's rate-calendar cell per room
+  // type's first rate plan as a stand-in snapshot.
+  const [roomTypes, ratePlans] = await Promise.all([listRoomTypes(), listRatePlans()]);
+  const today = new Date().toISOString().slice(0, 10);
+  return Promise.all(roomTypes.map(async (rt): Promise<Restriction> => {
+    const plan = ratePlans.find((p) => p.room_type_id === rt.id);
+    if (!plan) return { room_type_id: rt.id, room_type_name: rt.name, min_los: 1, max_los: 0, cta: false, ctd: false, stop_sell: false };
+    const days = await getJson<GoRateDay[]>(`/rate-plans/${plan.id}/calendar?from=${today}&to=${today}`);
+    const d = days[0];
+    return { room_type_id: rt.id, room_type_name: rt.name, min_los: d?.min_los ?? 1, max_los: d?.max_los ?? 0, cta: d?.cta ?? false, ctd: d?.ctd ?? false, stop_sell: d?.stop_sell ?? false };
+  }));
 }
 export async function updateRestrictions(rows: Restriction[]): Promise<Restriction[]> {
   if (USE_MOCK) { await delay(); return rows; }
-  return sendJson<Restriction[]>('PUT', '/restrictions', rows);
+  const ratePlans = await listRatePlans();
+  const dateFrom = new Date().toISOString().slice(0, 10);
+  const dateTo = dateAhead(365);
+  await Promise.all(rows.map(async (row) => {
+    const plan = ratePlans.find((p) => p.room_type_id === row.room_type_id);
+    if (!plan) return; // no rate plan on this room type — nothing to restrict
+    // SetRestrictions is a date-range write, not a persistent per-room-type
+    // default; applying it forward from today for a year is this console's
+    // best approximation of "set the standing restriction".
+    await sendJson('POST', `/rate-plans/${plan.id}/restrictions`, {
+      date_from: dateFrom,
+      date_to: dateTo,
+      min_los: row.min_los,
+      max_los: row.max_los || undefined,
+      cta: row.cta,
+      ctd: row.ctd,
+      stop_sell: row.stop_sell,
+    });
+  }));
+  return rows;
 }
 
 // C · Promotions & visibility
 export async function listPromotions(): Promise<Promotion[]> {
   if (USE_MOCK) { await delay(); return PROMOTIONS; }
-  return getJson<Promotion[]>('/promotions');
+  const rows = await getJson<GoPromotion[]>(`/properties/${requirePropertyId()}/promotions`);
+  return rows.map(promotionFromGo);
 }
 export async function upsertPromotion(p: Partial<Promotion>): Promise<Promotion> {
   if (USE_MOCK) { await delay(); return { id: p.id ?? `promo_${Date.now()}`, name: p.name ?? 'New promotion', type: p.type ?? 'early_bird', discount_pct: p.discount_pct ?? 0.1, date_from: p.date_from ?? dateStr(0), date_to: p.date_to ?? dateAhead(30), min_los: p.min_los ?? null, advance_days: p.advance_days ?? null, last_minute_hours: p.last_minute_hours ?? null, applies_to_rate_plans: p.applies_to_rate_plans ?? [], status: p.status ?? 'scheduled', redemptions: p.redemptions ?? 0 }; }
-  return sendJson<Promotion>('POST', '/promotions', p);
+  if (p.id) return notOnBackend('Updating a promotion (only creation and the active/inactive toggle have backend routes)');
+  const pid = requirePropertyId();
+  const { id } = await sendJson<{ id: string }>('POST', `/properties/${pid}/promotions`, promotionToGoBody(p));
+  const rows = await getJson<GoPromotion[]>(`/properties/${pid}/promotions`);
+  const created = rows.find((r) => r.id === id);
+  return created ? promotionFromGo(created) : { ...p, id } as Promotion;
 }
 export async function getLoyaltyOptIn(): Promise<LoyaltyOptIn> {
   if (USE_MOCK) { await delay(); return LOYALTY; }
-  return getJson<LoyaltyOptIn>('/loyalty');
+  return notOnBackend('Loyalty opt-in');
 }
 export async function updateLoyaltyOptIn(ratePlanId: string, optedIn: boolean): Promise<LoyaltyOptIn> {
   if (USE_MOCK) { await delay(); return { ...LOYALTY, enrolled_rate_plans: LOYALTY.enrolled_rate_plans.map((r) => r.rate_plan_id === ratePlanId ? { ...r, opted_in: optedIn, earn_rate_pct: optedIn ? 0.05 : 0 } : r) }; }
-  return sendJson<LoyaltyOptIn>('PATCH', '/loyalty', { rate_plan_id: ratePlanId, opted_in: optedIn });
+  return notOnBackend('Updating loyalty opt-in');
 }
 export async function getVisibilityBooster(): Promise<VisibilityBooster> {
   if (USE_MOCK) { await delay(); return VISIBILITY; }
-  return getJson<VisibilityBooster>('/visibility');
+  return notOnBackend('Visibility Booster (Phase 3 feature)');
 }
 export async function listOpportunities(): Promise<Opportunity[]> {
   if (USE_MOCK) { await delay(); return OPPORTUNITIES; }
-  return getJson<Opportunity[]>('/opportunities');
+  return notOnBackend('Opportunities / insights feed');
 }
 
 // D · Reservations & guests
 export async function listReservations(): Promise<ReservationSummary[]> {
   if (USE_MOCK) { await delay(); return RESERVATIONS.map(({ guest_email, guest_phone, guest_country, special_requests, board, deposit_kobo, balance_due_kobo, commission_kobo, net_to_hotel_kobo, loyalty_member, timeline, ...s }) => s); }
-  return getJson<ReservationSummary[]>('/reservations');
+  const rows = await getJson<GoReservationRow[]>(`/properties/${requirePropertyId()}/reservations`);
+  return rows.map(reservationSummaryFromGo);
 }
 export async function getReservation(id: string): Promise<ReservationDetail | null> {
   if (USE_MOCK) { await delay(); return RESERVATIONS.find((r) => r.id === id) ?? null; }
-  return getJson<ReservationDetail>(`/reservations/${id}`);
+  const row = await getJson<GoReservationDetail>(`/properties/${requirePropertyId()}/reservations/${id}`);
+  return reservationDetailFromGo(row);
 }
 export async function modifyReservation(payload: ModifyReservationPayload): Promise<ManualActionResult> {
   if (USE_MOCK) {
@@ -517,66 +918,107 @@ export async function modifyReservation(payload: ModifyReservationPayload): Prom
     const map: Record<string, ManualActionResult['status']> = { cancel: 'cancelled_by_hotel', mark_no_show: 'no_show', modify_dates: 'confirmed', modify_room: 'confirmed' };
     return { reservation_id: payload.reservation_id, status: map[payload.action] ?? 'confirmed', message: `Reservation ${payload.action.replace(/_/g, ' ')} applied.` };
   }
-  return sendJson<ManualActionResult>('POST', `/reservations/${payload.reservation_id}/modify`, payload);
+  const pid = requirePropertyId();
+  switch (payload.action) {
+    case 'mark_no_show':
+      await sendJson('POST', `/properties/${pid}/reservations/${payload.reservation_id}/no-show`, {});
+      return { reservation_id: payload.reservation_id, status: 'no_show', message: 'Reservation marked no-show.' };
+    case 'cancel':
+      await sendJson('POST', `/properties/${pid}/reservations/${payload.reservation_id}/cancel`, { reason: payload.reason });
+      return { reservation_id: payload.reservation_id, status: 'cancelled_by_hotel', message: 'Reservation cancelled.' };
+    case 'modify_dates':
+    case 'modify_room':
+      // No backend route exists for changing dates/room on an existing
+      // reservation — only no-show and cancel are implemented.
+      return notOnBackend(`Reservation "${payload.action}"`);
+    default:
+      return notOnBackend(`Reservation action "${payload.action}"`);
+  }
 }
 export async function markNoShow(reservationId: string, reason?: string): Promise<ManualActionResult> {
   return modifyReservation({ reservation_id: reservationId, action: 'mark_no_show', reason });
 }
 export async function listMessages(): Promise<GuestMessage[]> {
   if (USE_MOCK) { await delay(); return MESSAGES; }
-  return getJson<GuestMessage[]>('/messages');
+  // The backend only exposes a per-reservation thread (GET
+  // .../reservations/:id/messages) — there is no cross-reservation inbox
+  // endpoint to list against, and fanning this out over every reservation
+  // client-side would be an unbounded N+1 rather than a real inbox feature.
+  return notOnBackend('A cross-reservation message inbox');
 }
 export async function listReviews(): Promise<Review[]> {
   if (USE_MOCK) { await delay(); return REVIEWS; }
-  return getJson<Review[]>('/reviews');
+  const rows = await getJson<GoReview[]>(`/properties/${requirePropertyId()}/reviews`);
+  return rows.map(reviewFromGo);
 }
 export async function respondReview(reviewId: string, response: string): Promise<Review> {
   if (USE_MOCK) { await delay(); const r = REVIEWS.find((x) => x.id === reviewId)!; return { ...r, response, responded_at: new Date().toISOString() }; }
-  return sendJson<Review>('POST', `/reviews/${reviewId}/respond`, { response });
+  // POST /reviews/:reviewId/response only returns {id}, not the updated review
+  // (there is no single-review GET to refetch from either) — the caller's own
+  // input is all we can honestly report back.
+  await sendJson('POST', `/reviews/${reviewId}/response`, { body: response });
+  return { id: reviewId, guest_name: '', reservation_ref: '', rating: 0, title: '', body: '', created_at: new Date().toISOString(), response, responded_at: new Date().toISOString(), status: 'published' };
 }
 
 // E · Finance
 export async function getPayouts(): Promise<Payout[]> {
   if (USE_MOCK) { await delay(); return PAYOUTS; }
-  return getJson<Payout[]>('/payouts');
+  const rows = await getJson<GoPayout[]>(`/properties/${requirePropertyId()}/payouts`);
+  return rows.map(payoutFromGo);
 }
 export async function getInvoices(): Promise<Invoice[]> {
   if (USE_MOCK) { await delay(); return INVOICES; }
-  return getJson<Invoice[]>('/invoices');
+  return notOnBackend('Invoices');
 }
 export async function getCommission(): Promise<CommissionOverview> {
   if (USE_MOCK) { await delay(); return COMMISSION; }
-  return getJson<CommissionOverview>('/commission');
+  // /commission returns a raw, unwindowed ledger list, not a computed 30-day
+  // summary — this sums what the endpoint returns rather than a true 30d window.
+  const rows = await getJson<{ amount_kobo: number }[]>(`/properties/${requirePropertyId()}/commission`);
+  const commission = rows.reduce((s, r) => s + (r.amount_kobo ?? 0), 0);
+  return { rate_pct: 0, gmv_30d_kobo: 0, commission_30d_kobo: commission, net_30d_kobo: 0, currency: 'NGN', by_rate_plan: [] };
 }
 export async function getDepositRecon(): Promise<DepositReconRow[]> {
   if (USE_MOCK) { await delay(); return DEPOSIT_RECON; }
-  return getJson<DepositReconRow[]>('/deposit-recon');
+  return notOnBackend('Deposit reconciliation');
 }
 export async function getBankSettings(): Promise<BankSettings> {
   if (USE_MOCK) { await delay(); return BANK_SETTINGS; }
-  return getJson<BankSettings>('/bank');
+  return notOnBackend('Bank settings');
 }
 export async function updateBankSettings(patch: Partial<BankSettings>): Promise<BankSettings> {
   if (USE_MOCK) { await delay(); return { ...BANK_SETTINGS, ...patch }; }
-  return sendJson<BankSettings>('PATCH', '/bank', patch);
+  return notOnBackend('Updating bank settings');
 }
 
 // F · Analytics
 export async function getPerformance(): Promise<PerformanceAnalytics> {
   if (USE_MOCK) { await delay(); return PERFORMANCE; }
-  return getJson<PerformanceAnalytics>('/analytics/performance');
+  const to = new Date().toISOString().slice(0, 10);
+  const from = dateStr(30); // last 30 days
+  const a = await getJson<{ occupancy_pct: number; revenue_kobo: number; adr_kobo: number; revpar_kobo: number }>(
+    `/properties/${requirePropertyId()}/analytics?from=${from}&to=${to}`,
+  );
+  return {
+    currency: 'NGN',
+    occupancy_pct: (a.occupancy_pct ?? 0) / 100, // Go returns 0..100, this type is 0..1
+    adr_kobo: a.adr_kobo ?? 0,
+    revpar_kobo: a.revpar_kobo ?? 0,
+    total_revenue_30d_kobo: a.revenue_kobo ?? 0,
+    trend: [], // the endpoint returns one aggregate over the window, no daily series
+  };
 }
 export async function getConversion(): Promise<ConversionFunnel> {
   if (USE_MOCK) { await delay(); return CONVERSION; }
-  return getJson<ConversionFunnel>('/analytics/conversion');
+  return notOnBackend('Conversion funnel analytics');
 }
 export async function getBookerInsights(): Promise<BookerInsights> {
   if (USE_MOCK) { await delay(); return BOOKERS; }
-  return getJson<BookerInsights>('/analytics/bookers');
+  return notOnBackend('Booker insights analytics');
 }
 export async function getMarketContext(): Promise<MarketContext> {
   if (USE_MOCK) { await delay(); return MARKET; }
-  return getJson<MarketContext>('/analytics/market');
+  return notOnBackend('Market / competitive-set analytics');
 }
 // Convenience aggregate (mirrors staysAdminService getAnalytics naming).
 export async function getAnalytics(): Promise<{ performance: PerformanceAnalytics; conversion: ConversionFunnel; bookers: BookerInsights; market: MarketContext }> {
@@ -587,17 +1029,22 @@ export async function getAnalytics(): Promise<{ performance: PerformanceAnalytic
 // G · Account & staff
 export async function listStaff(): Promise<StaffMember[]> {
   if (USE_MOCK) { await delay(); return STAFF; }
-  return getJson<StaffMember[]>('/staff');
+  const rows = await getJson<GoStaffRow[]>(`/properties/${requirePropertyId()}/staff`);
+  return rows.map(staffFromGo);
 }
 export async function inviteStaff(name: string, email: string, role: StaffMember['role']): Promise<StaffMember> {
   if (USE_MOCK) { await delay(); return { id: `st_${Date.now()}`, name, email, role, status: 'invited', last_active: null }; }
-  return sendJson<StaffMember>('POST', '/staff', { name, email, role });
+  // UpsertStaff (POST .../staff) grants a role to an EXISTING platform user_id —
+  // it has no email-invite path (no lookup-by-email, no invite-token flow). Name
+  // and email are the console's only inputs here, so this would either need a
+  // new invite-by-email endpoint or a UI change to collect a user_id instead.
+  return notOnBackend('Inviting staff by name/email (the backend grants roles by user_id, not by email invite)');
 }
 export async function getSettings(): Promise<ExtranetSettings> {
   if (USE_MOCK) { await delay(); return SETTINGS; }
-  return getJson<ExtranetSettings>('/settings');
+  return notOnBackend('Extranet notification/channel settings');
 }
 export async function updateSettings(patch: Partial<ExtranetSettings>): Promise<ExtranetSettings> {
   if (USE_MOCK) { await delay(); return { ...SETTINGS, ...patch }; }
-  return sendJson<ExtranetSettings>('PATCH', '/settings', patch);
+  return notOnBackend('Updating extranet settings');
 }

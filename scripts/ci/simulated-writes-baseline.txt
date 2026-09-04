@@ -244,16 +244,10 @@ staysAdminService.ts::resolveBreak
 staysAdminService.ts::resolveMapping
 staysAdminService.ts::updateMarkupRules
 staysExtranetService.ts::bulkEditCalendar
-staysExtranetService.ts::inviteStaff
 staysExtranetService.ts::modifyReservation
 staysExtranetService.ts::respondReview
-staysExtranetService.ts::submitForReview
-staysExtranetService.ts::updateAmenities
-staysExtranetService.ts::updateBankSettings
 staysExtranetService.ts::updateContent
-staysExtranetService.ts::updateLoyaltyOptIn
 staysExtranetService.ts::updateRestrictions
-staysExtranetService.ts::updateSettings
 staysExtranetService.ts::upsertPromotion
 staysExtranetService.ts::upsertRatePlan
 staysExtranetService.ts::upsertRoomType

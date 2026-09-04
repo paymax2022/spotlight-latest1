@@ -1,7 +1,12 @@
 'use client';
 
 import Link from 'next/link';
+import { useEffect, useState } from 'react';
 import type { CSSProperties, PropsWithChildren, ReactNode } from 'react';
+import {
+  listMyProperties, getSelectedPropertyId, setSelectedPropertyId, onSelectedPropertyChange,
+  type MyPropertyOption,
+} from '@/services/staysExtranetService';
 
 // Shared presentational helpers for the Paymax Stays HOTELIER EXTRANET — mirrors
 // the ops console kit (app/admin/stays/_ui.tsx) inline-style convention so both
@@ -118,6 +123,70 @@ export function ExtranetTabs({ active }: { active: string }) {
       {tabs.map((t) => (
         <Link key={t.key} href={t.href} style={{ textDecoration: 'none', padding: '0.35rem 0.7rem', borderRadius: '0.375rem', fontSize: '0.85rem', fontWeight: 600, color: active === t.key ? '#fff' : '#374151', background: active === t.key ? '#340075' : '#f3f4f6' }}>{t.label}</Link>
       ))}
+    </div>
+  );
+}
+
+// ── Property picker ──────────────────────────────────────────────────────────
+// Every live call in staysExtranetService.ts is scoped to ONE property, chosen
+// here (a hotelier can hold ACTIVE grants on more than one — see
+// staysExtranetService.ts's "Property picker" comment). Selection lives in
+// that module's localStorage-backed singleton; this hook just makes it
+// reactive for React, mirroring useSelectedOrg()/<OrgPicker/> in
+// app/admin/association/_ui.tsx.
+export function useSelectedProperty(): string | null {
+  const [propertyId, setPropertyId] = useState<string | null>(null);
+  useEffect(() => {
+    setPropertyId(getSelectedPropertyId());
+    return onSelectedPropertyChange(setPropertyId);
+  }, []);
+  return propertyId;
+}
+
+export function PropertyPicker() {
+  const propertyId = useSelectedProperty();
+  const [properties, setProperties] = useState<MyPropertyOption[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    listMyProperties()
+      .then((rows) => {
+        if (cancelled) return;
+        setProperties(rows);
+        // Most hoteliers own exactly one property — land on a working console
+        // rather than an empty "pick one" state, same reasoning as
+        // <OrgPicker/> auto-selecting the first organisation.
+        if (!getSelectedPropertyId() && rows.length > 0) setSelectedPropertyId(rows[0].id);
+      })
+      .catch(() => setProperties([]))
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, []);
+
+  // Nothing to pick between — stay out of the way for the common single-property case.
+  if (!loading && properties.length <= 1) return null;
+
+  return (
+    <div style={{ display: 'flex', gap: '0.6rem', alignItems: 'center', marginBottom: '1rem' }}>
+      <label style={{ fontSize: '0.75rem', fontWeight: 600, color: '#6b7280' }}>Property</label>
+      <select
+        value={propertyId ?? ''}
+        onChange={(e) => {
+          setSelectedPropertyId(e.target.value || null);
+          // Every page fetches on mount with no dependency on the property id
+          // (there was none to depend on before this picker existed) — a
+          // reload is the simplest way to make every page re-fetch under the
+          // newly selected property without threading it through ~30 pages.
+          window.location.reload();
+        }}
+        style={{ padding: '0.35rem 0.5rem', borderRadius: '0.375rem', border: '1px solid #d1d5db', fontSize: '0.85rem', minWidth: 240 }}
+      >
+        {properties.length === 0 && <option value="">{loading ? 'Loading properties…' : 'No properties found'}</option>}
+        {properties.map((p) => (
+          <option key={p.id} value={p.id}>{p.name} · {p.city}</option>
+        ))}
+      </select>
     </div>
   );
 }
