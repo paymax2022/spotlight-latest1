@@ -661,7 +661,7 @@ const STAFF_ROLE_TO_BACKEND: Record<Exclude<StaffMember['role'], 'owner'>, strin
 // (status 'active'); otherwise the backend emails a signup/accept link and the
 // grant lands once they accept (status 'invited' here in the meantime).
 export async function inviteStaff(name: string, email: string, role: Exclude<StaffMember['role'], 'owner'>): Promise<StaffMember> {
-  if (USE_MOCK) { await delay(); return { id: `st_${Date.now()}`, name, email, role, status: 'invited', last_active: null }; }
+  if (USE_MOCK) throw new Error(`Inviting a staff member ${NOT_IN_FIXTURE_MODE}`);
   const propertyId = await activePropertyId();
   const res = await sendJson<{ email: string; role: string; status: 'active' | 'invited' }>(
     'POST',
