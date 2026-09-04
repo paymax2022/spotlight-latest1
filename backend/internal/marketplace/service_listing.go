@@ -442,7 +442,17 @@ func (s *Service) RejectListing(ctx context.Context, adminID, id, reasonCode str
 	if err := guardListingTransition(l.Status, ListingRemovedPolicy); err != nil {
 		return nil, err
 	}
-	if err := s.repo.SetListingStatus(ctx, id, ListingPendingReview, ListingRemovedPolicy, &reasonCode); err != nil {
+	// The from-state is the status we just READ and just guarded, not a fixed
+	// pending_review. SetListingStatus updates `WHERE status = from`, so hardcoding
+	// pending_review meant rejecting an ACTIVE listing matched zero rows and came
+	// back as ErrConflict ("conflicting concurrent write") — pointing at a race
+	// that was not happening, on the one moderation action you most need to work:
+	// pulling a live, selling, prohibited listing. active → removed_policy is an
+	// explicit edge in the FSM and the guard above allows it, so the write must
+	// too; the boost cascade below never ran either, since the error returned
+	// first. RemoveListing has always passed l.Status — this now matches it.
+	prior := l.Status
+	if err := s.repo.SetListingStatus(ctx, id, prior, ListingRemovedPolicy, &reasonCode); err != nil {
 		return nil, err
 	}
 	l.Status = ListingRemovedPolicy
@@ -466,7 +476,11 @@ func (s *Service) RejectListing(ctx context.Context, adminID, id, reasonCode str
 
 	_ = s.writeAudit(ctx, AuditEntry{
 		AdminID: adminID, Action: "mkt.listing.reject", TargetType: "listing", TargetID: id, ReasonCode: reasonCode,
-		BeforeState: map[string]any{"status": string(ListingPendingReview)},
+		// The real prior status, for the same reason: an audit row asserting
+		// "before: pending_review" for a listing rejected while active is a false
+		// record of a moderation decision, and moderation audit is what gets read
+		// back when a removal is disputed.
+		BeforeState: map[string]any{"status": string(prior)},
 		AfterState:  map[string]any{"status": string(ListingRemovedPolicy), "reason_code": reasonCode},
 	})
 	s.notifySafe(ctx, l.SellerID, "mkt.listing.rejected", "Your listing was removed: "+reasonCode)

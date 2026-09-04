@@ -85,18 +85,6 @@ func TestLiveDB_BoostOnRejectedListing_AutoRefundsSeller(t *testing.T) {
 
 	boostID := seedActiveBoost(t, ctx, pool, listing.ID, seller, "vip", "now()+interval '6 days'")
 
-	// Precondition, set directly: RejectListing only writes from pending_review
-	// (service_listing.go passes that as the from-state to SetListingStatus, and
-	// the UPDATE is `WHERE status = from`). The FSM permits active →
-	// removed_policy and the guard lets it through, so rejecting a LIVE listing
-	// currently fails with a misleading "conflicting concurrent write" and the
-	// cascade below never runs. That is a separate defect from the one this test
-	// covers; putting the listing where reject actually works keeps this test
-	// about the boost cascade rather than about that bug.
-	if _, err := pool.Exec(ctx,
-		`UPDATE mkt_listings SET status='pending_review'::listing_status WHERE id=$1::uuid`, listing.ID); err != nil {
-		t.Fatalf("precondition: move listing to pending_review: %v", err)
-	}
 	before, err := svc.GetBoost(ctx, boostID)
 	if err != nil {
 		t.Fatalf("get boost: %v", err)
@@ -173,4 +161,70 @@ func verifiedIDBadge(t *testing.T, ctx context.Context, pool *pgxpool.Pool, user
 		t.Fatalf("read trust_scores: %v", err)
 	}
 	return badge
+}
+
+// TestLiveDB_RejectListing_WorksOnALiveListing is the regression test for the
+// from-state bug this suite uncovered.
+//
+// RejectListing hardcoded pending_review as the from-state it wrote against,
+// while SetListingStatus updates `WHERE status = from`. Rejecting an ACTIVE
+// listing therefore matched zero rows and surfaced as ErrConflict, "conflicting
+// concurrent write" — a race that was not happening. The FSM lists
+// active → removed_policy as a legal edge and the guard allowed it, so the
+// failure was purely the write disagreeing with the rule it had just enforced.
+//
+// It mattered most in the worst case: a live, selling, prohibited listing could
+// not be pulled, and because the error returned before the §8 cascade, its paid
+// boost kept promoting it.
+func TestLiveDB_RejectListing_WorksOnALiveListing(t *testing.T) {
+	svc, pool := liveMktService(t)
+	ctx := context.Background()
+
+	seller := seedLedgerCapableSeller(t, ctx, pool)
+	admin := seedTrustedSeller(t, ctx, pool)
+	cat := seedRiskTier0Category(t, ctx, pool)
+	listing := activate(t, ctx, svc, seller, admin, cat, "Live and prohibited", 250000)
+	// Read the ROW, not activate()'s return value: it hands back the object from
+	// CreateListing (still draft) while submit+approve moved the row to active.
+	if got := listingStatus(t, ctx, pool, listing.ID); got != string(mkt.ListingActive) {
+		t.Fatalf("precondition: listing should be active in the DB, got %s", got)
+	}
+
+	out, err := svc.RejectListing(ctx, admin, listing.ID, "prohibited_item")
+	if err != nil {
+		t.Fatalf("rejecting an ACTIVE listing must succeed (FSM allows active → removed_policy): %v", err)
+	}
+	if out.Status != mkt.ListingRemovedPolicy {
+		t.Errorf("status = %s, want %s", out.Status, mkt.ListingRemovedPolicy)
+	}
+
+	if got := listingStatus(t, ctx, pool, listing.ID); got != string(mkt.ListingRemovedPolicy) {
+		t.Errorf("persisted status = %s, want %s — the row itself must have moved", got, mkt.ListingRemovedPolicy)
+	}
+
+	// The audit trail must record where it actually came from. Recording
+	// "pending_review" for a listing rejected while live is a false record of a
+	// moderation decision, and this is the row read back when a seller disputes.
+	var before string
+	if err := pool.QueryRow(ctx,
+		`SELECT COALESCE(before_state->>'status','') FROM mkt_admin_audit_log
+		  WHERE target_id = $1 AND action = 'mkt.listing.reject'
+		  ORDER BY created_at DESC LIMIT 1`, listing.ID).Scan(&before); err != nil {
+		t.Fatalf("read audit row: %v", err)
+	}
+	if before != string(mkt.ListingActive) {
+		t.Errorf("audit before_state = %q, want %q", before, mkt.ListingActive)
+	}
+}
+
+// listingStatus reads a listing's persisted status. Tests assert on this rather
+// than on a returned struct: activate() hands back CreateListing's object, which
+// is still `draft` after submit+approve have moved the row on.
+func listingStatus(t *testing.T, ctx context.Context, pool *pgxpool.Pool, id string) string {
+	t.Helper()
+	var st string
+	if err := pool.QueryRow(ctx, `SELECT status::text FROM mkt_listings WHERE id=$1::uuid`, id).Scan(&st); err != nil {
+		t.Fatalf("read listing status: %v", err)
+	}
+	return st
 }
