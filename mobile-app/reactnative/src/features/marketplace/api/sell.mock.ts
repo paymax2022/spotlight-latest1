@@ -437,6 +437,55 @@ export async function mockUpdateListing(id: string, input: UpdateListingInput): 
   return next;
 }
 
+const MAX_MOCK_LISTING_PHOTOS = 10;
+
+/** Active listing photo edits re-enter review, mirroring the live backend's
+ *  edit-after-approve re-moderation so the demo doesn't lie about the flow. */
+function reModerateIfActive(l: Listing): Listing {
+  return l.status === 'active' ? { ...l, status: 'pending_review' } : l;
+}
+
+export async function mockAddListingMedia(id: string, mediaIds: string[]): Promise<Listing> {
+  await mockDelay(260);
+  const existing = listingStore.get(id);
+  if (!existing) throw Object.assign(new Error('Listing not found'), { code: 'LISTING_NOT_FOUND', status: 404 });
+  if (existing.media.length + mediaIds.length > MAX_MOCK_LISTING_PHOTOS) {
+    throw Object.assign(new Error(`a listing can have at most ${MAX_MOCK_LISTING_PHOTOS} photos`), { code: 'VALIDATION', status: 422, field: 'media_ids' });
+  }
+  const appended = mediaIds.map((mid, i) => ({
+    id: mid, urlThumb: mid, urlCard: mid, urlFull: mid, blurhash: '', sortOrder: existing.media.length + i,
+  }));
+  const next = reModerateIfActive({ ...existing, media: [...existing.media, ...appended], updatedAt: now() });
+  listingStore.set(id, next);
+  return next;
+}
+
+export async function mockRemoveListingMedia(id: string, mediaId: string): Promise<Listing> {
+  await mockDelay(220);
+  const existing = listingStore.get(id);
+  if (!existing) throw Object.assign(new Error('Listing not found'), { code: 'LISTING_NOT_FOUND', status: 404 });
+  if (!existing.media.some((m) => m.id === mediaId)) {
+    throw Object.assign(new Error('photo not found on this listing'), { code: 'NOT_FOUND', status: 404 });
+  }
+  const next = reModerateIfActive({ ...existing, media: existing.media.filter((m) => m.id !== mediaId), updatedAt: now() });
+  listingStore.set(id, next);
+  return next;
+}
+
+export async function mockReorderListingMedia(id: string, mediaIds: string[]): Promise<Listing> {
+  await mockDelay(220);
+  const existing = listingStore.get(id);
+  if (!existing) throw Object.assign(new Error('Listing not found'), { code: 'LISTING_NOT_FOUND', status: 404 });
+  const byId = new Map(existing.media.map((m) => [m.id, m]));
+  if (mediaIds.length !== existing.media.length || mediaIds.some((mid) => !byId.has(mid))) {
+    throw Object.assign(new Error('reorder must include every existing photo exactly once'), { code: 'VALIDATION', status: 422, field: 'media_ids' });
+  }
+  const reordered = mediaIds.map((mid, i) => ({ ...byId.get(mid)!, sortOrder: i }));
+  const next: Listing = { ...existing, media: reordered, updatedAt: now() };
+  listingStore.set(id, next);
+  return next;
+}
+
 /** Submit a draft → moderation. Auto-approve low-risk categories to 'active'. */
 export async function mockSubmitListing(id: string): Promise<Listing> {
   await mockDelay(420);

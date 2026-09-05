@@ -239,6 +239,36 @@ func (s *Service) attachThumbs(ctx context.Context, listings []*Listing) {
 	}
 }
 
+// attachFullMedia fills Media with every photo on a SINGLE listing, for the
+// detail screen's gallery. Deliberately separate from attachThumbs (which runs
+// on pages of results and only ever needs one thumbnail per card) — a detail
+// view is one listing, so one extra query here costs nothing search/list can't
+// afford to pay per row.
+func (s *Service) attachFullMedia(ctx context.Context, l *Listing) {
+	if l == nil || s.thumbs == nil || !s.thumbs.Configured() {
+		return
+	}
+	rows, err := s.repo.ListMediaForListing(ctx, l.ID)
+	if err != nil {
+		// Display-only, same contract as attachThumbs: a listing must still load
+		// if its gallery lookup fails.
+		log.Printf("[marketplace] full media lookup failed for listing %s: %v", l.ID, err)
+		return
+	}
+	media := make([]ListingMediaItem, 0, len(rows))
+	for _, r := range rows {
+		url := s.presignThumb(r.Key)
+		if url == "" {
+			continue
+		}
+		media = append(media, ListingMediaItem{
+			ID: r.ID, URLThumb: url, URLCard: url, URLFull: url,
+			Blurhash: r.Blurhash, SortOrder: r.SortOrder,
+		})
+	}
+	l.Media = media
+}
+
 func (s *Service) Search(ctx context.Context, req any) (any, error) {
 	if s.searcher != nil {
 		return s.searcher.Search(ctx, req)

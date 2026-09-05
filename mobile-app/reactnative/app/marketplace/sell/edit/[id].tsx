@@ -8,7 +8,8 @@
 // approved ad; a price-only edit stays live. The screen surfaces that up front.
 import React, { useEffect, useMemo, useState } from 'react';
 import { View, Text, ScrollView, StyleSheet, Pressable, TextInput } from 'react-native';
-import { alertAsync } from '@/lib/confirm';
+import * as ImagePicker from 'expo-image-picker';
+import { confirmAsync, alertAsync } from '@/lib/confirm';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import { goBack } from '@/lib/navigation';
@@ -18,14 +19,29 @@ import { Spacing } from '@/constants/spacing';
 import { Radius } from '@/constants/radius';
 import PrimaryButton from '@/components/PrimaryButton';
 import { MarketColors, formatNaira, conditionLabel } from '@/features/marketplace';
-import { estimateFairPriceBand } from '@/features/marketplace/api/sell.api';
-import { useSellListing, useSellCategory, useUpdateListing } from '@/features/marketplace/sell.hooks';
+import { estimateFairPriceBand, uploadListingImage } from '@/features/marketplace/api/sell.api';
+import {
+  useSellListing,
+  useSellCategory,
+  useUpdateListing,
+  useAddListingMedia,
+  useRemoveListingMedia,
+  useReorderListingMedia,
+} from '@/features/marketplace/sell.hooks';
 import AttributeFields, { normalizeSchema, missingRequired } from '@/features/marketplace/components/sell/AttributeFields';
 import { checkBannedPatterns, countWords } from '@/features/marketplace/components/sell/ComposerValidation';
 import FairPriceMeter from '@/features/marketplace/components/sell/FairPriceMeter';
+import PhotoStrip, { type ComposerPhoto } from '@/features/marketplace/components/sell/PhotoStrip';
 import { HomeMenuButton } from '@/components/HomeMenu';
 
 const MIN_DESC_WORDS = 8;
+
+function phashOf(uri: string): string {
+  // Same stand-in as the composer (features/sell/compose.tsx phashOf) — normalized
+  // uri for a same-session duplicate hint; the server's DUPLICATE_PHOTO check is
+  // authoritative.
+  return uri.split('?')[0];
+}
 
 export default function EditListingScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -33,6 +49,9 @@ export default function EditListingScreen() {
   const listing = listingQuery.data;
   const categoryQuery = useSellCategory(listing?.categoryId ?? null);
   const update = useUpdateListing();
+  const addMedia = useAddListingMedia();
+  const removeMedia = useRemoveListingMedia();
+  const reorderMedia = useReorderListingMedia();
 
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
@@ -41,6 +60,12 @@ export default function EditListingScreen() {
   const [showErrors, setShowErrors] = useState(false);
   const [hydrated, setHydrated] = useState(false);
 
+  // Photo management (LM-002) — same capability as the create wizard's
+  // PhotoStrip, but against an existing listing: add, remove, reorder.
+  const [photos, setPhotos] = useState<ComposerPhoto[]>([]);
+  const [originalIds, setOriginalIds] = useState<Set<string>>(new Set());
+  const [originalOrder, setOriginalOrder] = useState<string[]>([]);
+
   // Hydrate the form once, when the listing arrives.
   useEffect(() => {
     if (listing && !hydrated) {
@@ -48,9 +73,96 @@ export default function EditListingScreen() {
       setDescription(listing.description);
       setPriceInput(String(Math.round(listing.priceKobo / 100)));
       setAttrs({ ...(listing.attrs ?? {}) });
+      const media = [...(listing.media ?? [])].sort((a, b) => a.sortOrder - b.sortOrder);
+      setPhotos(media.map((m) => ({ id: m.id, uri: m.urlCard || m.urlThumb || m.urlFull, phash: m.blurhash || m.id })));
+      setOriginalIds(new Set(media.map((m) => m.id)));
+      setOriginalOrder(media.map((m) => m.id));
       setHydrated(true);
     }
   }, [listing, hydrated]);
+
+  // ── Photo capture (mirrors sell/compose.tsx addPhotos) ──
+  const addPhotos = async (fromCamera: boolean) => {
+    const perm = fromCamera
+      ? await ImagePicker.requestCameraPermissionsAsync()
+      : await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!perm.granted) {
+      if (fromCamera) {
+        const ok = await confirmAsync({
+          title: 'Camera unavailable',
+          message: "We couldn't open the camera. Pick photos from your gallery instead.",
+          confirmLabel: 'Open gallery',
+        });
+        if (ok) addPhotos(false);
+      } else {
+        alertAsync({ title: 'Permission needed', message: 'Allow photo access to add listing photos.' });
+      }
+      return;
+    }
+    const remaining = 10 - photos.length;
+    if (remaining <= 0) return;
+    const result = fromCamera
+      ? await ImagePicker.launchCameraAsync({ quality: 0.7 })
+      : await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], quality: 0.7, allowsMultipleSelection: true, selectionLimit: remaining });
+    if (result.canceled || !result.assets?.length) return;
+
+    const added: ComposerPhoto[] = result.assets.map((a) => ({
+      id: `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+      uri: a.uri,
+      phash: phashOf(a.uri),
+      uploading: true,
+    }));
+    setPhotos((prev) => [...prev, ...added]);
+
+    for (const p of added) {
+      uploadListingImage({ uri: p.uri, name: `${p.id}.jpg`, mimeType: 'image/jpeg' })
+        .then((fileUrl) => setPhotos((prev) => prev.map((x) => (x.id === p.id ? { ...x, uploading: false, fileUrl } : x))))
+        .catch(() => setPhotos((prev) => prev.map((x) => (x.id === p.id ? { ...x, uploading: false } : x))));
+    }
+  };
+
+  // Reconciles local photo state against the server: removes dropped photos,
+  // appends new ones, then reorders if the final arrangement (which may
+  // interleave surviving originals with newly-added photos) doesn't match
+  // what remove+append alone would produce.
+  async function reconcilePhotos(): Promise<boolean> {
+    if (!id) return false;
+    if (photos.some((p) => p.uploading)) {
+      await alertAsync({ title: 'Photos still uploading', message: 'Give it a second for your photos to finish uploading.' });
+      return false;
+    }
+    const minPhotos = categoryQuery.data?.minPhotos ?? 1;
+    if (photos.length < minPhotos) {
+      await alertAsync({ title: 'Add more photos', message: `This category needs at least ${minPhotos} photo${minPhotos === 1 ? '' : 's'}.` });
+      return false;
+    }
+
+    const currentIds = new Set(photos.map((p) => p.id));
+    const removedIds = originalOrder.filter((oid) => !currentIds.has(oid));
+    const newPhotos = photos.filter((p) => !originalIds.has(p.id));
+
+    for (const rid of removedIds) {
+      await removeMedia.mutateAsync({ id, mediaId: rid });
+    }
+
+    const idMap = new Map<string, string>();
+    if (newPhotos.length > 0) {
+      const fileUrls = newPhotos.map((p) => p.fileUrl ?? p.id);
+      const updated = await addMedia.mutateAsync({ id, mediaIds: fileUrls });
+      const appended = updated.media.slice(updated.media.length - newPhotos.length);
+      newPhotos.forEach((p, i) => idMap.set(p.id, appended[i]?.id ?? p.id));
+    }
+
+    const remainingOriginalOrder = originalOrder.filter((oid) => currentIds.has(oid));
+    const naturalOrder = [...remainingOriginalOrder, ...newPhotos.map((p) => idMap.get(p.id) as string)];
+    const desiredOrder = photos.map((p) => idMap.get(p.id) ?? p.id);
+    const orderChanged = desiredOrder.length !== naturalOrder.length || desiredOrder.some((v, i) => v !== naturalOrder[i]);
+
+    if (orderChanged && desiredOrder.length > 0) {
+      await reorderMedia.mutateAsync({ id, mediaIds: desiredOrder });
+    }
+    return true;
+  }
 
   const schema = useMemo(() => normalizeSchema(categoryQuery.data?.attributeSchema), [categoryQuery.data]);
   const priceKobo = Math.round((Number(priceInput.replace(/[^0-9.]/g, '')) || 0) * 100);
@@ -62,7 +174,20 @@ export default function EditListingScreen() {
   const titleValid = title.trim().length >= 1 && title.trim().length <= 100;
   const descValid = descWords >= MIN_DESC_WORDS;
   const priceValid = priceKobo > 0;
-  const canSave = hydrated && titleValid && descValid && priceValid && bannedMatches.length === 0 && requiredMissing.length === 0 && !update.isPending;
+  const photosValid = photos.length >= (categoryQuery.data?.minPhotos ?? 1) && !photos.some((p) => p.uploading);
+  const savingPhotos = addMedia.isPending || removeMedia.isPending || reorderMedia.isPending;
+  const canSave = hydrated && titleValid && descValid && priceValid && photosValid && bannedMatches.length === 0 && requiredMissing.length === 0 && !update.isPending && !savingPhotos;
+
+  // Adding or removing a photo re-moderates an active listing on the backend
+  // (remoderatePhotosEdit), same as a title/description/attrs edit — a pure
+  // reorder does not.
+  const photosAddedOrRemoved = useMemo(() => {
+    if (!hydrated) return false;
+    const currentIds = new Set(photos.map((p) => p.id));
+    const removed = originalOrder.some((oid) => !currentIds.has(oid));
+    const added = photos.some((p) => !originalIds.has(p.id));
+    return removed || added;
+  }, [photos, originalOrder, originalIds, hydrated]);
 
   // Whether this save changes moderation-relevant content (→ re-review if live).
   const contentChanged = useMemo(() => {
@@ -70,9 +195,10 @@ export default function EditListingScreen() {
     return (
       title.trim() !== listing.title.trim() ||
       description.trim() !== listing.description.trim() ||
-      JSON.stringify(attrs) !== JSON.stringify(listing.attrs ?? {})
+      JSON.stringify(attrs) !== JSON.stringify(listing.attrs ?? {}) ||
+      photosAddedOrRemoved
     );
-  }, [listing, title, description, attrs]);
+  }, [listing, title, description, attrs, photosAddedOrRemoved]);
   const willReReview = !!listing && listing.status === 'active' && contentChanged;
 
   function onChangeAttr(key: string, value: unknown) {
@@ -83,6 +209,8 @@ export default function EditListingScreen() {
     setShowErrors(true);
     if (!canSave || !id) return;
     try {
+      const photosOk = await reconcilePhotos();
+      if (!photosOk) return;
       await update.mutateAsync({
         id,
         input: { title: title.trim(), description: description.trim(), priceKobo, attrs },
@@ -138,6 +266,22 @@ export default function EditListingScreen() {
           </View>
         ) : null}
 
+        {/* Photos */}
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Photos</Text>
+          <PhotoStrip
+            photos={photos}
+            onReorder={terminal ? () => {} : setPhotos}
+            onRemove={terminal ? () => {} : (pid) => setPhotos((prev) => prev.filter((p) => p.id !== pid))}
+            onAddCamera={terminal ? () => {} : () => addPhotos(true)}
+            onAddGallery={terminal ? () => {} : () => addPhotos(false)}
+            maxPhotos={terminal ? photos.length : 10}
+          />
+          {showErrors && photos.length < (categoryQuery.data?.minPhotos ?? 1) ? (
+            <Text style={styles.errorText}>This category needs at least {categoryQuery.data?.minPhotos ?? 1} photo{(categoryQuery.data?.minPhotos ?? 1) === 1 ? '' : 's'}.</Text>
+          ) : null}
+        </View>
+
         {/* Title */}
         <Field label="Title" error={showErrors && !titleValid ? 'Title must be 1–100 characters.' : null}>
           <TextInput style={styles.input} value={title} onChangeText={setTitle} maxLength={100} editable={!terminal} placeholder="What are you selling?" placeholderTextColor={MarketColors.muted} />
@@ -173,7 +317,7 @@ export default function EditListingScreen() {
         ) : null}
 
         <View style={{ height: Spacing.lg }} />
-        <PrimaryButton label={update.isPending ? 'Saving…' : 'Save changes'} onPress={onSave} disabled={!canSave || terminal} />
+        <PrimaryButton label={update.isPending || savingPhotos ? 'Saving…' : 'Save changes'} onPress={onSave} disabled={!canSave || terminal} />
         <Pressable style={styles.cancel} onPress={() => goBack('/marketplace/sell')}><Text style={styles.cancelText}>Cancel</Text></Pressable>
       </ScrollView>
     </SafeAreaView>

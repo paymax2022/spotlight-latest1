@@ -138,7 +138,29 @@ type Listing struct {
 	// mkt_listing_media, because the objects live in a PRIVATE R2 bucket and a raw
 	// object key is not fetchable by the client.
 	ThumbURL string `json:"thumb_url,omitempty"`
-	Version  int    `json:"-"` // optimistic-lock companion (mkt_listings not shown; additive)
+	// Media is the full photo gallery for the LISTING DETAIL screen only (never
+	// populated on search/list results — those need one card thumbnail, not a
+	// whole gallery's worth of presigned URLs per row). The mobile detail screen
+	// (app/marketplace/listing/[id].tsx) has always read `media` expecting this
+	// shape; nothing on the backend ever populated it, so the gallery always
+	// rendered its zero-photos placeholder even once ThumbURL started working
+	// for cards. Attached by Service.attachFullMedia from mkt_listing_media.
+	Media   []ListingMediaItem `json:"media,omitempty"`
+	Version int                `json:"-"` // optimistic-lock companion (mkt_listings not shown; additive)
+}
+
+// ListingMediaItem is one presigned photo on a listing's detail gallery.
+// url_thumb/url_card/url_full are the same underlying object today (see
+// InsertListingMedia) — each is presigned from that one key rather than
+// signed three times, since a later derivative pipeline can only ever make
+// the three diverge, never require three separate reads now.
+type ListingMediaItem struct {
+	ID        string `json:"id"`
+	URLThumb  string `json:"url_thumb"`
+	URLCard   string `json:"url_card"`
+	URLFull   string `json:"url_full"`
+	Blurhash  string `json:"blurhash"`
+	SortOrder int    `json:"sort_order"`
 }
 
 // Order mirrors mkt_orders (the critical-path escrow row).

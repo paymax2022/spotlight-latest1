@@ -124,6 +124,68 @@ func (h *Handler) UpdateListing(c *gin.Context) {
 	respond(c, http.StatusOK, l)
 }
 
+// AddListingMediaRequest is POST /listings/:id/media.
+type AddListingMediaRequest struct {
+	MediaIDs []string `json:"media_ids" binding:"required"`
+}
+
+// AddListingMedia POST /listings/:id/media
+func (h *Handler) AddListingMedia(c *gin.Context) {
+	uid, ok := requireUser(c)
+	if !ok {
+		return
+	}
+	var in AddListingMediaRequest
+	if err := c.ShouldBindJSON(&in); err != nil {
+		fail(c, fieldErr(CodeValidation, err.Error(), "media_ids"))
+		return
+	}
+	l, err := h.svc.AddListingMedia(c.Request.Context(), uid, c.Param("id"), in.MediaIDs)
+	if err != nil {
+		fail(c, err)
+		return
+	}
+	respond(c, http.StatusOK, l)
+}
+
+// RemoveListingMedia DELETE /listings/:id/media/:mediaId
+func (h *Handler) RemoveListingMedia(c *gin.Context) {
+	uid, ok := requireUser(c)
+	if !ok {
+		return
+	}
+	l, err := h.svc.RemoveListingMedia(c.Request.Context(), uid, c.Param("id"), c.Param("mediaId"))
+	if err != nil {
+		fail(c, err)
+		return
+	}
+	respond(c, http.StatusOK, l)
+}
+
+// ReorderListingMediaRequest is PUT /listings/:id/media/reorder.
+type ReorderListingMediaRequest struct {
+	MediaIDs []string `json:"media_ids" binding:"required"`
+}
+
+// ReorderListingMedia PUT /listings/:id/media/reorder
+func (h *Handler) ReorderListingMedia(c *gin.Context) {
+	uid, ok := requireUser(c)
+	if !ok {
+		return
+	}
+	var in ReorderListingMediaRequest
+	if err := c.ShouldBindJSON(&in); err != nil {
+		fail(c, fieldErr(CodeValidation, err.Error(), "media_ids"))
+		return
+	}
+	l, err := h.svc.ReorderListingMedia(c.Request.Context(), uid, c.Param("id"), in.MediaIDs)
+	if err != nil {
+		fail(c, err)
+		return
+	}
+	respond(c, http.StatusOK, l)
+}
+
 // SubmitListing POST /listings/:id/submit
 func (h *Handler) SubmitListing(c *gin.Context) {
 	uid, ok := requireUser(c)
