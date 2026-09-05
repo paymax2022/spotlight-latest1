@@ -329,7 +329,7 @@ func (h *Handler) DeclineOffer(c *gin.Context) {
 	respond(c, http.StatusOK, o)
 }
 
-// ListOffers GET /offers?listingId=… — negotiation history for a listing, scoped
+// ListOffers GET /offers?listing_id=… — negotiation history for a listing, scoped
 // to the caller: the listing's seller sees every offer; a buyer sees only their own.
 func (h *Handler) ListOffers(c *gin.Context) {
 	uid, ok := requireUser(c)

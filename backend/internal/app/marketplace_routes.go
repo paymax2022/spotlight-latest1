@@ -291,7 +291,7 @@ func RegisterMarketplace(
 	m.DELETE("/listings/:id", h.DeleteListing)
 
 	// Offers
-	m.GET("/offers", h.ListOffers) // ?listingId= — negotiation history (participant-scoped)
+	m.GET("/offers", h.ListOffers) // ?listing_id= — negotiation history (participant-scoped)
 	m.POST("/offers", h.CreateOffer)
 	m.POST("/offers/:id/accept", h.AcceptOffer)
 	m.POST("/offers/:id/counter", h.CounterOffer)
