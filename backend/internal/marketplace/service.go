@@ -269,6 +269,48 @@ func (s *Service) attachFullMedia(ctx context.Context, l *Listing) {
 	l.Media = media
 }
 
+// attachMediaForPage is attachFullMedia's batched counterpart, for a PAGE of
+// listings rather than one — the "My Listings" screen (SellerListings) reads
+// listing.media[] per card, same as the detail gallery, not thumb_url like
+// search/browse cards do. One extra query for the whole page, like attachThumbs.
+func (s *Service) attachMediaForPage(ctx context.Context, listings []*Listing) {
+	if len(listings) == 0 || s.thumbs == nil || !s.thumbs.Configured() {
+		return
+	}
+	ids := make([]string, 0, len(listings))
+	for _, l := range listings {
+		if l != nil {
+			ids = append(ids, l.ID)
+		}
+	}
+	rowsByListing, err := s.repo.MediaForListings(ctx, ids)
+	if err != nil {
+		log.Printf("[marketplace] page media lookup failed for %d listing(s): %v", len(ids), err)
+		return
+	}
+	for _, l := range listings {
+		if l == nil {
+			continue
+		}
+		rows := rowsByListing[l.ID]
+		if len(rows) == 0 {
+			continue
+		}
+		media := make([]ListingMediaItem, 0, len(rows))
+		for _, r := range rows {
+			url := s.presignThumb(r.Key)
+			if url == "" {
+				continue
+			}
+			media = append(media, ListingMediaItem{
+				ID: r.ID, URLThumb: url, URLCard: url, URLFull: url,
+				Blurhash: r.Blurhash, SortOrder: r.SortOrder,
+			})
+		}
+		l.Media = media
+	}
+}
+
 func (s *Service) Search(ctx context.Context, req any) (any, error) {
 	if s.searcher != nil {
 		return s.searcher.Search(ctx, req)
@@ -373,11 +415,14 @@ func (s *Service) SellerListings(ctx context.Context, sellerID string, limit, of
 	}
 	// This is the "My listings" screen — the one a seller checks right after
 	// uploading photos, so it is the last place that should show a placeholder.
+	// attachThumbs covers thumb_url; attachMediaForPage additionally covers
+	// media[], which is what the screen actually reads for its card photo.
 	ptrs := make([]*Listing, len(ls))
 	for i := range ls {
 		ptrs[i] = &ls[i]
 	}
 	s.attachThumbs(ctx, ptrs)
+	s.attachMediaForPage(ctx, ptrs)
 	return ls, nil
 }
 
