@@ -2,6 +2,7 @@ package marketplace
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"strings"
 	"time"
@@ -248,6 +249,142 @@ func (s *Service) UpdateListing(ctx context.Context, sellerID, id string, in Upd
 // listing must re-enter pending_review. Pure/testable.
 func requiresRemoderation(in UpdateListingInput) bool {
 	return in.Title != nil || in.Description != nil || in.Attrs != nil
+}
+
+// maxListingPhotos mirrors the compose wizard's own selectionLimit — a
+// client-side cap is advisory only, so the API enforces it too.
+const maxListingPhotos = 10
+
+// remoderatePhotosEdit re-enters an ACTIVE listing into pending_review after a
+// photo add/remove — the same trust rationale UpdateListing already applies to
+// an edited title/description/attrs (EDIT-AFTER-APPROVE RE-MODERATION,
+// LM-002/MOD-010/EC-010): a seller could otherwise bait-and-switch an approved
+// ad's photos without the content going back through review. l reflects the
+// listing's status BEFORE this edit; a non-active listing is left untouched —
+// there is no live search listing to protect.
+func (s *Service) remoderatePhotosEdit(ctx context.Context, l *Listing, actorID, auditAction string) error {
+	if l.Status != ListingActive {
+		return nil
+	}
+	if err := guardListingTransition(ListingActive, ListingPendingReview); err != nil {
+		return err
+	}
+	reason := "photos_edited"
+	if err := s.repo.SetListingStatus(ctx, l.ID, ListingActive, ListingPendingReview, &reason); err != nil {
+		return err
+	}
+	_ = s.repo.InsertOutbox(ctx, nil, l.ID, OutboxDelete, map[string]any{"listing_id": l.ID})
+	_ = s.writeAudit(ctx, AuditEntry{
+		AdminID: actorID, Action: auditAction, TargetType: "listing", TargetID: l.ID, ReasonCode: reason,
+		BeforeState: map[string]any{"status": string(ListingActive)},
+		AfterState:  map[string]any{"status": string(ListingPendingReview)},
+	})
+	s.notifySafe(ctx, l.SellerID, "mkt.listing.remoderation", "Your edit is under review before your listing goes live again.")
+	return nil
+}
+
+// listingWithMedia re-fetches a listing plus its presigned gallery, the shape
+// every media-mutating endpoint below returns so a client can render the new
+// state without a second round trip.
+func (s *Service) listingWithMedia(ctx context.Context, id string) (*Listing, error) {
+	updated, err := s.repo.GetListing(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	s.attachThumbs(ctx, []*Listing{updated})
+	s.attachFullMedia(ctx, updated)
+	return updated, nil
+}
+
+// AddListingMedia appends new photos to an existing listing (OLA: owner-only).
+// mediaIDs are fresh presign fileUrls, exactly like CreateListingInput.MediaIDs
+// — ownedMediaKeys applies the identical ownership/shape check so a caller
+// cannot claim another seller's object or replay a failed-upload local id.
+func (s *Service) AddListingMedia(ctx context.Context, sellerID, id string, mediaIDs []string) (*Listing, error) {
+	l, err := s.repo.GetListing(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if l.SellerID != sellerID {
+		return nil, ErrForbidden
+	}
+	keys := ownedMediaKeys(sellerID, mediaIDs)
+	if len(keys) == 0 {
+		return nil, fieldErr(CodeValidation, "no valid photo to add", "media_ids")
+	}
+	existing, err := s.repo.ListMediaForListing(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if len(existing)+len(keys) > maxListingPhotos {
+		return nil, fieldErr(CodeValidation, fmt.Sprintf("a listing can have at most %d photos", maxListingPhotos), "media_ids")
+	}
+	if err := s.repo.AppendListingMedia(ctx, id, keys, len(existing)); err != nil {
+		return nil, err
+	}
+	if err := s.remoderatePhotosEdit(ctx, l, sellerID, "mkt.listing.photo_added"); err != nil {
+		return nil, err
+	}
+	return s.listingWithMedia(ctx, id)
+}
+
+// RemoveListingMedia deletes one photo from a listing (OLA: owner-only).
+func (s *Service) RemoveListingMedia(ctx context.Context, sellerID, id, mediaID string) (*Listing, error) {
+	l, err := s.repo.GetListing(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if l.SellerID != sellerID {
+		return nil, ErrForbidden
+	}
+	n, err := s.repo.DeleteListingMedia(ctx, id, mediaID)
+	if err != nil {
+		return nil, err
+	}
+	if n == 0 {
+		return nil, newErr(404, CodeNotFound, "photo not found on this listing")
+	}
+	if err := s.remoderatePhotosEdit(ctx, l, sellerID, "mkt.listing.photo_removed"); err != nil {
+		return nil, err
+	}
+	return s.listingWithMedia(ctx, id)
+}
+
+// ReorderListingMedia rewrites the gallery order (OLA: owner-only). Purely
+// cosmetic — it changes no content a moderator approved, so unlike add/remove
+// it never re-enters review. orderedMediaIDs must be exactly the listing's
+// current photo ids, each once; anything else is rejected rather than
+// silently dropping or duplicating a photo.
+func (s *Service) ReorderListingMedia(ctx context.Context, sellerID, id string, orderedMediaIDs []string) (*Listing, error) {
+	l, err := s.repo.GetListing(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if l.SellerID != sellerID {
+		return nil, ErrForbidden
+	}
+	existing, err := s.repo.ListMediaForListing(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	existingIDs := make(map[string]bool, len(existing))
+	for _, m := range existing {
+		existingIDs[m.ID] = true
+	}
+	if len(orderedMediaIDs) != len(existing) {
+		return nil, fieldErr(CodeValidation, "reorder must include every existing photo exactly once", "media_ids")
+	}
+	seen := make(map[string]bool, len(orderedMediaIDs))
+	for _, mid := range orderedMediaIDs {
+		if !existingIDs[mid] || seen[mid] {
+			return nil, fieldErr(CodeValidation, "reorder must include every existing photo exactly once", "media_ids")
+		}
+		seen[mid] = true
+	}
+	if err := s.repo.ReorderListingMedia(ctx, id, orderedMediaIDs); err != nil {
+		return nil, err
+	}
+	return s.listingWithMedia(ctx, id)
 }
 
 // SubmitListing runs the §2.1 submit guard and either auto-approves (risk_tier 0 AND

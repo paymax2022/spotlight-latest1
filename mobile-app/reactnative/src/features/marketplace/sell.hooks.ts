@@ -85,6 +85,29 @@ export function useUpdateListing() {
   });
 }
 
+// ─── Photo management on an existing listing (edit screen, LM-002) ──────────
+function useListingMediaMutation<TArgs extends { id: string }>(
+  mutationFn: (args: TArgs) => Promise<import('./types').Listing>,
+) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn,
+    onSuccess: (listing) => {
+      qc.setQueryData(SELL_KEYS.listing(listing.id), listing);
+      qc.invalidateQueries({ queryKey: SELL_KEYS.myListings });
+    },
+  });
+}
+
+export const useAddListingMedia = () =>
+  useListingMediaMutation(({ id, mediaIds }: { id: string; mediaIds: string[] }) => sellApi.addListingMedia(id, mediaIds));
+
+export const useRemoveListingMedia = () =>
+  useListingMediaMutation(({ id, mediaId }: { id: string; mediaId: string }) => sellApi.removeListingMedia(id, mediaId));
+
+export const useReorderListingMedia = () =>
+  useListingMediaMutation(({ id, mediaIds }: { id: string; mediaIds: string[] }) => sellApi.reorderListingMedia(id, mediaIds));
+
 export function useSubmitListing() {
   const qc = useQueryClient();
   return useMutation({

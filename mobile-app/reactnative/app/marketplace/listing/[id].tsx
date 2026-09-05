@@ -6,7 +6,7 @@
 // non-binding price proposal, plus tertiary tap-to-reveal Call. Sold/expired
 // shows a banner over a dimmed gallery, never a 404.
 import React, { useEffect, useState } from 'react';
-import { Linking, View, Text, StyleSheet, Pressable, ScrollView, Image, Dimensions } from 'react-native';
+import { Linking, View, Text, StyleSheet, Pressable, ScrollView, Image, useWindowDimensions } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import { goBack } from '@/lib/navigation';
@@ -26,10 +26,15 @@ import * as accountApi from '@/features/marketplace/api/account.api';
 import SellerTrustCard from '@/features/marketplace/components/SellerTrustCard';
 import { HomeMenuButton } from '@/components/HomeMenu';
 
-const { width } = Dimensions.get('window');
-
 export default function ListingDetail() {
   const { id } = useLocalSearchParams<{ id: string }>();
+  // Dimensions.get('window') read once at module scope froze at 0 on web: it
+  // runs before the RN-Web root has synced with the real window size, and
+  // being a plain const, it never updates after. Every gallery/slide size
+  // below derived from it, so the whole gallery silently laid out at 0x0 —
+  // invisible until a listing actually had photos to render into it.
+  // useWindowDimensions() reads live and re-renders on resize.
+  const { width } = useWindowDimensions();
   const listing = useListing(id!);
   const [saved, setSaved] = useState(false);
   const [revealedPhone, setRevealedPhone] = useState<string | null>(null);
@@ -133,13 +138,13 @@ export default function ListingDetail() {
 
       <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
         {/* Gallery */}
-        <View style={[styles.gallery, unavailable && styles.galleryDimmed]}>
+        <View style={[styles.gallery, { width, height: width * 0.9 }, unavailable && styles.galleryDimmed]}>
           {media.length > 0 ? (
             <>
               <ScrollView horizontal pagingEnabled showsHorizontalScrollIndicator={false} onMomentumScrollEnd={(e) => setGallery(Math.round(e.nativeEvent.contentOffset.x / width))}>
                 {media.map((m) => (
-                  <View key={m.id} style={styles.slide}>
-                    {m.urlFull ? <Image source={{ uri: m.urlFull }} style={StyleSheet.absoluteFill} /> : <View style={styles.slidePlaceholder} />}
+                  <View key={m.id} style={[styles.slide, { width, height: width * 0.9 }]}>
+                    {m.urlFull ? <Image source={{ uri: m.urlFull }} style={StyleSheet.absoluteFill} /> : <View style={[styles.slidePlaceholder, { width, height: width * 0.9 }]} />}
                   </View>
                 ))}
               </ScrollView>
@@ -148,7 +153,7 @@ export default function ListingDetail() {
               ) : null}
             </>
           ) : (
-            <View style={styles.slidePlaceholder} />
+            <View style={[styles.slidePlaceholder, { width, height: width * 0.9 }]} />
           )}
           {unavailable ? (
             <View style={styles.soldBanner}><Text style={styles.soldBannerText}>{l.status === 'sold' ? 'Sold' : 'No longer available'}</Text></View>
@@ -287,10 +292,10 @@ const styles = StyleSheet.create({
   topBarRight: { flexDirection: 'row', gap: Spacing.xs },
   roundBtn: { width: 38, height: 38, borderRadius: 19, backgroundColor: 'rgba(255,255,255,0.9)', alignItems: 'center', justifyContent: 'center', ...shadow1 },
   scroll: { paddingBottom: 120 },
-  gallery: { width, height: width * 0.9, backgroundColor: MarketColors.surfaceAlt },
+  gallery: { backgroundColor: MarketColors.surfaceAlt },
   galleryDimmed: { opacity: 0.55 },
-  slide: { width, height: width * 0.9 },
-  slidePlaceholder: { width, height: width * 0.9, backgroundColor: MarketColors.surfaceAlt },
+  slide: {},
+  slidePlaceholder: { backgroundColor: MarketColors.surfaceAlt },
   dots: { position: 'absolute', bottom: 12, alignSelf: 'center', flexDirection: 'row', gap: 6 },
   dot: { width: 6, height: 6, borderRadius: 3, backgroundColor: 'rgba(255,255,255,0.6)' },
   dotActive: { backgroundColor: '#FFFFFF', width: 16 },

@@ -155,3 +155,179 @@ func TestLiveDB_ListingMedia_RejectsJunkAndForeignKeys(t *testing.T) {
 		t.Errorf("stored %d media row(s) from unowned/junk ids — none should persist", n)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// LIVE-DB tests for EDITING photos on an existing listing (add/remove/reorder).
+// The edit screen (app/marketplace/sell/edit/[id].tsx) only ever touched
+// title/description/price/attrs — photos were create-only. These pin the new
+// AddListingMedia/RemoveListingMedia/ReorderListingMedia service methods.
+// ---------------------------------------------------------------------------
+
+func TestLiveDB_ListingMedia_AddAppendsOrderedAndCaps(t *testing.T) {
+	svc, pool := liveMktService(t)
+	ctx := context.Background()
+
+	seller := seedTrustedSeller(t, ctx, pool)
+	testsupport.CleanupUser(t, pool, seller)
+	cat := seedRiskTier0Category(t, ctx, pool)
+
+	l := createWithMedia(t, ctx, svc, seller, cat, []string{mediaKey(seller)})
+
+	more := []string{mediaKey(seller), mediaKey(seller)}
+	if _, err := svc.AddListingMedia(ctx, seller, l.ID, more); err != nil {
+		t.Fatalf("add media: %v", err)
+	}
+	// Appended, not reordered: the original photo stays first. No presigner is
+	// configured in this harness (see liveMktService), so Listing.Media is
+	// empty by design — assert against the row store directly, same as the
+	// other tests in this file.
+	rows, err := mkt.NewRepository(pool).ListMediaForListing(ctx, l.ID)
+	if err != nil {
+		t.Fatalf("list media: %v", err)
+	}
+	if len(rows) != 3 || rows[0].SortOrder != 0 || rows[1].SortOrder != 1 || rows[2].SortOrder != 2 {
+		t.Fatalf("append did not produce sequential sort_order: %+v", rows)
+	}
+
+	// A non-owner may not add photos to someone else's listing (IDOR).
+	stranger := uuid.New().String()
+	if _, err := svc.AddListingMedia(ctx, stranger, l.ID, []string{mediaKey(stranger)}); err == nil {
+		t.Error("a non-owner adding photos must be forbidden")
+	}
+
+	// The cap is enforced server-side, not just by the client's selectionLimit.
+	l2 := createWithMedia(t, ctx, svc, seller, cat, []string{mediaKey(seller)})
+	nine := make([]string, 9)
+	for i := range nine {
+		nine[i] = mediaKey(seller)
+	}
+	if _, err := svc.AddListingMedia(ctx, seller, l2.ID, nine); err != nil {
+		t.Fatalf("add 9 more photos (1+9=10, exactly at the cap): %v", err)
+	}
+	if _, err := svc.AddListingMedia(ctx, seller, l2.ID, []string{mediaKey(seller)}); err == nil {
+		t.Error("adding an 11th photo must be rejected — the cap is not just client-side")
+	}
+}
+
+func TestLiveDB_ListingMedia_RemoveDeletesAndRejectsUnknown(t *testing.T) {
+	svc, pool := liveMktService(t)
+	ctx := context.Background()
+
+	seller := seedTrustedSeller(t, ctx, pool)
+	testsupport.CleanupUser(t, pool, seller)
+	cat := seedRiskTier0Category(t, ctx, pool)
+
+	l := createWithMedia(t, ctx, svc, seller, cat, []string{mediaKey(seller), mediaKey(seller)})
+	rows, err := mkt.NewRepository(pool).ListMediaForListing(ctx, l.ID)
+	if err != nil || len(rows) != 2 {
+		t.Fatalf("setup: expected 2 media rows, got %d (err=%v)", len(rows), err)
+	}
+
+	if _, err := svc.RemoveListingMedia(ctx, seller, l.ID, rows[0].ID); err != nil {
+		t.Fatalf("remove media: %v", err)
+	}
+	remaining, err := mkt.NewRepository(pool).ListMediaForListing(ctx, l.ID)
+	if err != nil {
+		t.Fatalf("list media after remove: %v", err)
+	}
+	if len(remaining) != 1 || remaining[0].ID != rows[1].ID {
+		t.Fatalf("media after remove: got %+v, want only %s left", remaining, rows[1].ID)
+	}
+
+	// Removing it again (already gone) must fail, not silently succeed.
+	if _, err := svc.RemoveListingMedia(ctx, seller, l.ID, rows[0].ID); err == nil {
+		t.Error("removing an already-removed photo must return an error, not a silent no-op")
+	}
+
+	// A non-owner may not remove a photo from someone else's listing.
+	stranger := uuid.New().String()
+	if _, err := svc.RemoveListingMedia(ctx, stranger, l.ID, rows[1].ID); err == nil {
+		t.Error("a non-owner removing a photo must be forbidden")
+	}
+}
+
+func TestLiveDB_ListingMedia_ReorderRewritesSortOrderAndValidatesSet(t *testing.T) {
+	svc, pool := liveMktService(t)
+	ctx := context.Background()
+
+	seller := seedTrustedSeller(t, ctx, pool)
+	testsupport.CleanupUser(t, pool, seller)
+	cat := seedRiskTier0Category(t, ctx, pool)
+
+	l := createWithMedia(t, ctx, svc, seller, cat, []string{mediaKey(seller), mediaKey(seller), mediaKey(seller)})
+	rows, err := mkt.NewRepository(pool).ListMediaForListing(ctx, l.ID)
+	if err != nil || len(rows) != 3 {
+		t.Fatalf("setup: expected 3 media rows, got %d (err=%v)", len(rows), err)
+	}
+	original := []string{rows[0].ID, rows[1].ID, rows[2].ID}
+	reversed := []string{original[2], original[1], original[0]}
+
+	if _, err := svc.ReorderListingMedia(ctx, seller, l.ID, reversed); err != nil {
+		t.Fatalf("reorder: %v", err)
+	}
+	afterRows, err := mkt.NewRepository(pool).ListMediaForListing(ctx, l.ID)
+	if err != nil {
+		t.Fatalf("list media after reorder: %v", err)
+	}
+	got := []string{afterRows[0].ID, afterRows[1].ID, afterRows[2].ID}
+	if len(afterRows) != 3 || got[0] != reversed[0] || got[1] != reversed[1] || got[2] != reversed[2] {
+		t.Fatalf("reorder did not apply: got order %v, want %v", got, reversed)
+	}
+
+	// Missing a photo, or repeating one, must be rejected rather than silently
+	// dropping a photo from the gallery or duplicating a sort_order.
+	if _, err := svc.ReorderListingMedia(ctx, seller, l.ID, []string{original[0], original[1]}); err == nil {
+		t.Error("reorder missing a photo must be rejected")
+	}
+	if _, err := svc.ReorderListingMedia(ctx, seller, l.ID, []string{original[0], original[0], original[1]}); err == nil {
+		t.Error("reorder repeating a photo must be rejected")
+	}
+	if _, err := svc.ReorderListingMedia(ctx, seller, l.ID, []string{original[0], original[1], uuid.New().String()}); err == nil {
+		t.Error("reorder including a photo id from outside this listing must be rejected")
+	}
+}
+
+// TestLiveDB_ListingMedia_AddRemoveReModerateActiveListing proves photo edits
+// get the SAME re-moderation treatment as a title/description/attrs edit
+// (TestLiveDB_EditAfterApprove_ReModeration) — a seller cannot swap an
+// approved ad's photos without the listing going back through review.
+func TestLiveDB_ListingMedia_AddRemoveReModerateActiveListing(t *testing.T) {
+	svc, pool := liveMktService(t)
+	ctx := context.Background()
+	cat := seedRiskTier0Category(t, ctx, pool)
+	seller := uuid.New().String()
+	admin := uuid.New().String()
+
+	l := activate(t, ctx, svc, seller, admin, cat, "Clean Toyota Corolla 2015 Lagos", 500000000)
+
+	added, err := svc.AddListingMedia(ctx, seller, l.ID, []string{mediaKey(seller)})
+	if err != nil {
+		t.Fatalf("add media to active listing: %v", err)
+	}
+	if added.Status != mkt.ListingPendingReview {
+		t.Fatalf("adding a photo to a live listing = status %s, want pending_review (re-moderation)", added.Status)
+	}
+	var audits int
+	_ = pool.QueryRow(ctx, `SELECT count(*) FROM mkt_admin_audit_log WHERE target_id=$1 AND action='mkt.listing.photo_added'`, l.ID).Scan(&audits)
+	if audits < 1 {
+		t.Error("adding a photo to a live listing must write an audit event")
+	}
+
+	// Re-activate, then prove REMOVE re-moderates too. No presigner is
+	// configured in this harness, so added.Media is empty by design — fetch
+	// the row id from the store instead.
+	if _, err := svc.ApproveListing(ctx, admin, l.ID, "re-approved for remove test"); err != nil {
+		t.Fatalf("re-approve: %v", err)
+	}
+	rows, err := mkt.NewRepository(pool).ListMediaForListing(ctx, l.ID)
+	if err != nil || len(rows) != 1 {
+		t.Fatalf("expected 1 media row before remove, got %d (err=%v)", len(rows), err)
+	}
+	removed, err := svc.RemoveListingMedia(ctx, seller, l.ID, rows[0].ID)
+	if err != nil {
+		t.Fatalf("remove media from active listing: %v", err)
+	}
+	if removed.Status != mkt.ListingPendingReview {
+		t.Fatalf("removing a photo from a live listing = status %s, want pending_review (re-moderation)", removed.Status)
+	}
+}

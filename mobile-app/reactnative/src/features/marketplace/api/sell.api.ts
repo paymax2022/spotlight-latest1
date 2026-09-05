@@ -115,6 +115,27 @@ export async function updateListing(id: string, input: UpdateListingInput): Prom
   return mktPut<Listing>(`/listings/${id}`, input);
 }
 
+// ─── Photo management on an existing listing (edit screen) ──────────────────
+// The compose wizard sets photos once at create time via CreateListingInput.
+// mediaIds. The edit screen (LM-002) needs to add/remove/reorder photos on a
+// listing that already exists — three endpoints, same ownership + re-moderation
+// rules the backend already applies to a title/description/attrs edit.
+
+export async function addListingMedia(id: string, mediaIds: string[]): Promise<Listing> {
+  if (MKT_USE_MOCK) return S.mockAddListingMedia(id, mediaIds);
+  return mktPost<Listing>(`/listings/${id}/media`, { mediaIds });
+}
+
+export async function removeListingMedia(id: string, mediaId: string): Promise<Listing> {
+  if (MKT_USE_MOCK) return S.mockRemoveListingMedia(id, mediaId);
+  return mktDelete<Listing>(`/listings/${id}/media/${mediaId}`);
+}
+
+export async function reorderListingMedia(id: string, mediaIds: string[]): Promise<Listing> {
+  if (MKT_USE_MOCK) return S.mockReorderListingMedia(id, mediaIds);
+  return mktPut<Listing>(`/listings/${id}/media/reorder`, { mediaIds });
+}
+
 export async function submitListing(id: string): Promise<Listing> {
   if (MKT_USE_MOCK) return S.mockSubmitListing(id);
   return mktPost<Listing>(`/listings/${id}/submit`);

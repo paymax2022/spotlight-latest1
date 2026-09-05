@@ -178,6 +178,65 @@ func (r *Repository) ListMediaForListing(ctx context.Context, listingID string) 
 	return out, rows.Err()
 }
 
+// AppendListingMedia adds photos to an EXISTING listing, starting at
+// startSortOrder — the edit-screen counterpart of InsertListingMedia (create),
+// which always starts a fresh listing's photos at 0. Kept separate rather than
+// adding an offset parameter to InsertListingMedia so the create path, already
+// covered by TestLiveDB_ListingMedia_PersistedAndReadBack, is untouched.
+func (r *Repository) AppendListingMedia(ctx context.Context, listingID string, keys []string, startSortOrder int) error {
+	if len(keys) == 0 {
+		return nil
+	}
+	batch := &pgx.Batch{}
+	for i, k := range keys {
+		batch.Queue(`
+			INSERT INTO public.mkt_listing_media
+				(listing_id, url_thumb, url_card, url_full, blurhash, perceptual_hash, sort_order)
+			VALUES ($1,$2,$2,$2,'','',$3)`, listingID, k, startSortOrder+i)
+	}
+	br := r.db.SendBatch(ctx, batch)
+	defer br.Close()
+	for range keys {
+		if _, err := br.Exec(); err != nil {
+			return wrapInternal("append listing media", err)
+		}
+	}
+	return nil
+}
+
+// DeleteListingMedia removes one photo. Scoped to (id AND listing_id) so a
+// caller can never delete another listing's row by guessing a media id — the
+// handler's ownership check is on the LISTING, not on each photo, so the id
+// alone is not enough to prove the caller may touch it.
+func (r *Repository) DeleteListingMedia(ctx context.Context, listingID, mediaID string) (int64, error) {
+	ct, err := r.db.Exec(ctx, `DELETE FROM public.mkt_listing_media WHERE id=$1 AND listing_id=$2`, mediaID, listingID)
+	if err != nil {
+		return 0, wrapInternal("delete listing media", err)
+	}
+	return ct.RowsAffected(), nil
+}
+
+// ReorderListingMedia rewrites sort_order to match orderedIDs' position. The
+// caller (Service.ReorderListingMedia) has already validated that orderedIDs
+// is exactly the existing set for this listing, once each — this only writes.
+func (r *Repository) ReorderListingMedia(ctx context.Context, listingID string, orderedIDs []string) error {
+	if len(orderedIDs) == 0 {
+		return nil
+	}
+	batch := &pgx.Batch{}
+	for i, id := range orderedIDs {
+		batch.Queue(`UPDATE public.mkt_listing_media SET sort_order=$1 WHERE id=$2 AND listing_id=$3`, i, id, listingID)
+	}
+	br := r.db.SendBatch(ctx, batch)
+	defer br.Close()
+	for range orderedIDs {
+		if _, err := br.Exec(); err != nil {
+			return wrapInternal("reorder listing media", err)
+		}
+	}
+	return nil
+}
+
 // GetListing loads a listing by id.
 func (r *Repository) GetListing(ctx context.Context, id string) (*Listing, error) {
 	row := r.db.QueryRow(ctx, `SELECT `+listingCols+` FROM public.mkt_listings WHERE id=$1`, id)
