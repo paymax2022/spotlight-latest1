@@ -11,7 +11,7 @@ import (
 // same helper the other member handlers use) and every service call is participant-
 // scoped — a non-participant gets THREAD_NOT_FOUND, never another party's data.
 
-// CreateThread POST /threads — body {listingId, message?}. Opens (or returns) the 1:1
+// CreateThread POST /threads — body {listing_id, message?}. Opens (or returns) the 1:1
 // conversation between the caller (buyer) and the listing's seller; sends the optional
 // first message when present. Returns the caller-relative DealThread.
 func (h *Handler) CreateThread(c *gin.Context) {
@@ -19,15 +19,12 @@ func (h *Handler) CreateThread(c *gin.Context) {
 	if !ok {
 		return
 	}
-	var body struct {
-		ListingID string `json:"listingId"`
-		Message   string `json:"message"`
-	}
+	var body createThreadRequest
 	if err := c.ShouldBindJSON(&body); err != nil {
 		fail(c, fieldErr(CodeValidation, err.Error(), ""))
 		return
 	}
-	t, err := h.svc.StartOrGetThread(c.Request.Context(), uid, body.ListingID, body.Message)
+	t, err := h.svc.StartOrGetThread(c.Request.Context(), uid, body.listingID(), body.Message)
 	if err != nil {
 		fail(c, err)
 		return

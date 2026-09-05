@@ -268,8 +268,11 @@ type BoostQuote struct {
 	EndsAt       time.Time `json:"ends_at"`
 }
 
-// Offer mirrors mkt_offers. JSON is camelCase to match the mobile Offer type
-// (src/features/marketplace/types.ts) — the only consumer of this shape.
+// Offer mirrors mkt_offers. RESPONSE JSON is camelCase, which is harmless: the
+// mobile client deep-camels every response, so either casing arrives correctly.
+// Do NOT copy this casing onto a REQUEST struct — the same client deep-SNAKES
+// every outbound body, so a camelCase request field can never be populated.
+// Doing exactly that silently broke offers/counter/threads (see handler.go).
 type Offer struct {
 	ID             string    `json:"id"`
 	ListingID      string    `json:"listingId"`
