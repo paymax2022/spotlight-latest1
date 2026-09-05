@@ -7,6 +7,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"spotlight/backend/internal/config"
 	financeledger "spotlight/backend/internal/finance/ledger"
 	"spotlight/backend/internal/middleware"
 	"spotlight/backend/internal/services"
@@ -38,7 +39,7 @@ import (
 // Secrets are read from the environment by the orchestrator and passed via the pool/
 // rbac wiring; the supplier-webhook HMAC secret is read here from the environment
 // (NEVER hard-coded / logged): STAYS_SUPPLIER_WEBHOOK_SECRET.
-func RegisterStaysExtranet(member *gin.RouterGroup, admin *gin.RouterGroup, extranetGroup *gin.RouterGroup, webhooks *gin.RouterGroup, pool *pgxpool.Pool, rbac services.RBACService) {
+func RegisterStaysExtranet(member *gin.RouterGroup, admin *gin.RouterGroup, extranetGroup *gin.RouterGroup, webhooks *gin.RouterGroup, pool *pgxpool.Pool, rbac services.RBACService, cfg config.Config) {
 	if pool == nil {
 		log.Println("[stays-extranet] nil pool — skipping SB1 stays routes")
 		return
@@ -50,7 +51,8 @@ func RegisterStaysExtranet(member *gin.RouterGroup, admin *gin.RouterGroup, extr
 	ariSvc := ari.NewService(ari.NewRepository(pool))
 	authz := extranet.NewAuthZ(pool)
 
-	extranetSvc := extranet.NewService(extranet.NewRepository(pool), authz, ariSvc)
+	staffInviteMailer := extranet.NewResendStaffInviteMailer(cfg.ResendAPIKey, cfg.ResendFromEmail)
+	extranetSvc := extranet.NewService(extranet.NewRepository(pool), authz, ariSvc, staffInviteMailer, cfg.AdminAppBaseURL)
 	reviewsSvc := reviews.NewService(reviews.NewRepository(pool), authz)
 	settlementSvc := staysettlement.NewService(staysettlement.NewRepository(pool), ledgerSvc)
 	webhookSvc := supplierwebhooks.NewService(pool, ariSvc, getEnvSupplierSecret())

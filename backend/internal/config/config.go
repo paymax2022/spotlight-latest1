@@ -497,6 +497,9 @@ type Config struct {
 
 	ResendAPIKey    string
 	ResendFromEmail string // must be @spotlightng.com — the only domain verified on the Resend account
+	// AdminAppBaseURL: origin of frontend-admin, used to build links inside
+	// transactional emails (e.g. the hotelier staff invite accept link).
+	AdminAppBaseURL string
 	// Termii: SMS delivery. Key from termii.com dashboard.
 	TermiiAPIKey   string
 	TermiiSenderID string // approved sender ID
@@ -779,6 +782,7 @@ func Load() Config {
 
 		ResendAPIKey:    getEnv("RESEND_API_KEY", ""),
 		ResendFromEmail: getEnv("RESEND_FROM_EMAIL", "Spotlight <no-reply@spotlightng.com>"),
+		AdminAppBaseURL: getEnv("ADMIN_APP_BASE_URL", "https://admin.spotlightng.com"),
 		TermiiAPIKey:    getEnv("TERMII_API_KEY", ""),
 		TermiiSenderID:  getEnv("TERMII_SENDER_ID", "Paymax"),
 		ExpoPushToken:   getEnv("EXPO_PUSH_TOKEN", ""),

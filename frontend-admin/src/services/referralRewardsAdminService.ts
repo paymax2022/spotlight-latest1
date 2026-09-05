@@ -37,6 +37,15 @@ function authHeaders(): Record<string, string> {
 }
 const delay = (ms = 220) => new Promise((r) => setTimeout(r, ms));
 
+// All three writes below have real, verified live endpoints (backend/internal/
+// finance/referrals/rewards_handler.go — a different module from referralAdminService
+// / referralAdminOpsService, which target backend/internal/referral), so fixture
+// mode has nothing to add and refuses loudly instead of reporting a write it
+// did not perform. See docs/audit/ADMIN_SIMULATED_WRITES.md.
+const NOT_IN_FIXTURE_MODE =
+  'is unavailable in fixture mode: this console will not report a write it did not perform. ' +
+  'Set NEXT_PUBLIC_REFERRAL_REWARDS_USE_MOCK=false to make this change against the live backend.';
+
 async function getJson<T>(path: string): Promise<T> {
   const res = await fetch(`${adminBase()}${path}`, { headers: authHeaders() });
   if (!res.ok) throw new Error(`Request failed (${res.status})`);
@@ -141,13 +150,7 @@ export async function getProgramConfig(): Promise<ProgramConfig> {
   return getJson<ProgramConfig>('/config');
 }
 export async function publishProgramConfig(input: ConfigPublishInput): Promise<ConfigPublishResult> {
-  if (USE_MOCK) {
-    await delay();
-    return {
-      config: { ...MOCK_CONFIG, ...input, version: MOCK_CONFIG.version + 1, effective_from: input.effective_from ?? new Date().toISOString() },
-      warning: 'Changes apply to future transactions only — already-computed rewards are never recomputed.',
-    };
-  }
+  if (USE_MOCK) throw new Error(`Publishing program config ${NOT_IN_FIXTURE_MODE}`);
   // Config publish is not a money mutation, but the backend versions forward-only.
   return sendJson<ConfigPublishResult>('PUT', '/config', input);
 }
@@ -165,7 +168,7 @@ export async function getFraudQueue(status?: string): Promise<FraudFlag[]> {
   return j.flags ?? [];
 }
 export async function actionFraudFlag(input: FraudActionInput): Promise<{ ok: true }> {
-  if (USE_MOCK) { await delay(); return { ok: true }; }
+  if (USE_MOCK) throw new Error(`Actioning a fraud flag ${NOT_IN_FIXTURE_MODE}`);
   return sendJson<{ ok: true }>('POST', '/fraud-queue', input);
 }
 
@@ -194,7 +197,7 @@ export async function getReferrerCase(referrerId: string): Promise<ReferrerCase>
   return getJson<ReferrerCase>(`/${encodeURIComponent(referrerId)}/case`);
 }
 export async function adjustReferrerCase(referrerId: string, input: CaseAdjustmentInput): Promise<{ ok: true }> {
-  if (USE_MOCK) { await delay(); return { ok: true }; }
+  if (USE_MOCK) throw new Error(`Adjusting a referrer case ${NOT_IN_FIXTURE_MODE}`);
   // Money mutation: backend requires an Idempotency-Key + audit event.
   return sendJson<{ ok: true }>('POST', `/${encodeURIComponent(referrerId)}/case`, input, {
     'Idempotency-Key': crypto.randomUUID(),

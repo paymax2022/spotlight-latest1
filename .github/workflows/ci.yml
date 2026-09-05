@@ -166,6 +166,8 @@ jobs:
     outputs:
       association: ${{ steps.route.outputs.association }}
       connect: ${{ steps.route.outputs.connect }}
+      commerce: ${{ steps.route.outputs.commerce }}
+      live_db: ${{ steps.dbscope.outputs.hit }}
       crowdfunding: ${{ steps.route.outputs.crowdfunding }}
       crypto_backend: ${{ steps.route.outputs.crypto_backend }}
       doctor: ${{ steps.route.outputs.doctor }}
@@ -197,6 +199,117 @@ jobs:
             --sha "$GITHUB_SHA" \
             --base "$BASE"
 
+      # Gates the live-DB job below. Deliberately NOT a module filter: those are
+      # keyed to a <module>-ci.yml lane (scripts/ci/test-changed-modules.py
+      # enforces the pairing) and this is a job, not a lane. Mirrors
+      # changed-modules.py's range logic INCLUDING its fail-open behaviour — if
+      # the diff cannot be established we run the job rather than silently skip
+      # the only thing that executes the live-DB suites.
+      - name: Does this push touch Go, migrations or CI itself?
+        id: dbscope
+        env:
+          EVENT: ${{ github.event_name }}
+          BEFORE: ${{ github.event.before }}
+          BASE: ${{ github.base_ref }}
+        run: |
+          set -u
+          ZERO=0000000000000000000000000000000000000000
+          if [ "$EVENT" = "pull_request" ] && [ -n "${BASE:-}" ] \
+             && git rev-parse --verify "origin/$BASE" >/dev/null 2>&1; then
+            FILES=$(git diff --name-only "origin/$BASE...HEAD")
+          elif [ -n "${BEFORE:-}" ] && [ "$BEFORE" != "$ZERO" ] \
+             && git rev-parse --verify "$BEFORE" >/dev/null 2>&1; then
+            FILES=$(git diff --name-only "$BEFORE" "$GITHUB_SHA")
+          else
+            echo "::warning::could not determine changed files; running the live-DB job"
+            echo "hit=true" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          # Makefile (migrate-up), scripts/ci (the compat prelude) and the
+          # workflows themselves are included so a change to the machinery
+          # exercises it, rather than shipping an unrun job.
+          if printf '%s\n' "$FILES" | grep -qE '^(backend/|supabase/migrations/|Makefile|scripts/ci/|[.]github/workflows/)'; then
+            echo "hit=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "hit=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  # ── live-DB suites ──────────────────────────────────────────────────────────
+  # The gap this closes: every live-DB suite gates on TEST_DATABASE_URL and none
+  # falls back to DATABASE_URL (enforced by scripts/ci/check-live-db-gate.sh), but
+  # nothing in this pipeline SET it — so ~124 test files skipped on every push and
+  # gated nothing. integration-verify.yml does set it, but triggers on push to
+  # main + pull_request, and work here lands by pushing straight to develop, so in
+  # practice those suites first ran at promotion, with days of accumulated
+  # regressions surfacing at once against whoever happened to promote.
+  #
+  # A lighter cousin of integration-verify: same Postgres recipe, but no -race,
+  # no docker build and no frontend bootstrap, so it can afford to run per push.
+  # integration-verify stays the heavier gate on main.
+  live-db:
+    name: live-DB suites (Postgres + migrations)
+    needs: changes
+    if: needs.changes.outputs.live_db == 'true'
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        # PostGIS image: the first migration (20260101000000_enable_extensions)
+        # runs CREATE EXTENSION postgis, which plain postgres cannot satisfy.
+        # PG17 matches production.
+        image: postgis/postgis:17-3.4
+        env:
+          POSTGRES_USER: paymax
+          POSTGRES_PASSWORD: paymax
+          POSTGRES_DB: paymax
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U paymax" --health-interval 10s
+          --health-timeout 5s --health-retries 5
+    env:
+      DATABASE_URL: postgres://paymax:paymax@localhost:5432/paymax?sslmode=disable
+      # The whole point of this job. Both names address the same ephemeral
+      # container — never a developer's DATABASE_URL, which is the production
+      # pooler.
+      TEST_DATABASE_URL: postgres://paymax:paymax@localhost:5432/paymax?sslmode=disable
+      RAILS_MODE: fake # FAKEs only — no external provider secrets in CI
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25.x"
+          cache-dependency-path: backend/go.sum
+      # A full-schema drop needs a lock per object and the ~400-migration schema
+      # blows the default 64. ALTER SYSTEM needs a restart to take effect.
+      - name: Raise Postgres lock table
+        run: |
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c "ALTER SYSTEM SET max_locks_per_transaction = 512;"
+          docker restart ${{ job.services.postgres.id }}
+          timeout 90 bash -c 'until pg_isready -h localhost -p 5432 -U paymax >/dev/null 2>&1; do sleep 1; done'
+      # Migrations assume the surface Supabase provides at runtime (auth schema,
+      # auth.uid()/role(), storage, anon/authenticated/service_role).
+      - name: Supabase-compat prelude (plain-Postgres shim)
+        run: psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -q -f scripts/ci/supabase-compat-prelude.sql
+      - name: Migrations apply cleanly (real Postgres)
+        run: make migrate-up
+      - name: go test ./... (live-DB suites now execute)
+        working-directory: backend
+        run: go test ./... -count=1
+      # Without this the job could go green while every live-DB test skipped —
+      # the exact failure being fixed, just relocated. Assert at least one really
+      # ran and that nothing skipped for want of the variable.
+      - name: Assert the live-DB suites actually ran
+        working-directory: backend
+        run: |
+          set -o pipefail
+          go test ./tests/marketplace/... -run TestLiveDB -count=1 -v 2>&1 | tee /tmp/livedb.log
+          if grep -q "TEST_DATABASE_URL not set" /tmp/livedb.log || grep -q "no TEST_DATABASE_URL" /tmp/livedb.log; then
+            echo "::error::live-DB tests skipped despite TEST_DATABASE_URL being set"; exit 1
+          fi
+          RAN=$(grep -c "^=== RUN   TestLiveDB" /tmp/livedb.log || true)
+          echo "live-DB tests executed: $RAN"
+          if [ "$RAN" -lt 1 ]; then
+            echo "::error::no live-DB test executed — the gate is not doing anything"; exit 1
+          fi
+
   # The module lanes, called as reusable workflows so their jobs report inside
   # THIS run. One push = one pipeline, instead of fourteen queued in parallel.
   # NOTE: GitHub allows at most 20 unique reusable workflows per caller. This
@@ -213,6 +326,12 @@ jobs:
     needs: changes
     if: needs.changes.outputs.connect == 'true'
     uses: ./.github/workflows/connect-ci.yml
+
+  commerce:
+    name: Commerce CI
+    needs: changes
+    if: needs.changes.outputs.commerce == 'true'
+    uses: ./.github/workflows/commerce-ci.yml
 
   crowdfunding:
     name: Crowdfunding CI

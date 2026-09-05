@@ -474,7 +474,7 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		// documented path 404'd and only the doubled one answered. A provider
 		// cannot discover that, so every real MyCover delivery would have been
 		// lost, and silently: the provider sees a 404 and we see nothing at all.
-		insuranceWebhooks := r.Group("") // provider-signed, no user auth
+		insuranceWebhooks := r.Group("")                                                // provider-signed, no user auth
 		insuranceSvcs = RegisterInsurance(finance, insuranceAdmin, pool, rbac)          // gateway/catalog/policy/quote/saga/consent
 		RegisterInsuranceClaims(finance, insuranceAdmin, insuranceWebhooks, pool, rbac) // claims/embedded/webhooks/reconciliation
 	}
@@ -497,9 +497,9 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		staysAdmin.Use(middleware.RequireAuthContext(supabase, rbac), requireUserID())
 		staysExtranet := r.Group("/api/stays/extranet")
 		staysExtranet.Use(middleware.RequireAuthContext(supabase, rbac), requireUserID())
-		staysWebhooks := r.Group("/internal/webhooks")                                           // provider-signed, no user auth
-		RegisterStays(staysMember, staysAdmin, pool, rbac, cfg)                                  // supply-gateway/search/prebook→book saga/pricing
-		RegisterStaysExtranet(staysMember, staysAdmin, staysExtranet, staysWebhooks, pool, rbac) // ari/extranet/settlement/reviews/webhooks
+		staysWebhooks := r.Group("/internal/webhooks")                                                // provider-signed, no user auth
+		RegisterStays(staysMember, staysAdmin, pool, rbac, cfg)                                       // supply-gateway/search/prebook→book saga/pricing
+		RegisterStaysExtranet(staysMember, staysAdmin, staysExtranet, staysWebhooks, pool, rbac, cfg) // ari/extranet/settlement/reviews/webhooks
 	}
 
 	// --- Featured Placement (paid landing-page promotion; booking over scarce ad

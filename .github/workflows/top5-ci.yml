@@ -34,8 +34,11 @@ jobs:
         run: go vet ./internal/scheduler/... ./internal/escrow/... ./internal/cashtag/... ./internal/savings/... ./internal/social/... ./internal/credential/... ./internal/points/... ./internal/top5events/... ./internal/loyalty/... ./internal/creators/... ./internal/p2pmarket/... ./internal/spray/...
       - name: Test (state machines, escrow, Ajo no-yield/no-guarantor, residual refund, QR single-use, dispute arbitration)
         run: go test ./internal/{scheduler,escrow,cashtag,savings,social,credential,points,top5events,loyalty,creators,p2pmarket,spray}/... -count=1 -v
-      - name: Test (all — regression)
-        run: go test ./... -count=1
+      # Repo-wide `go test ./...` removed: ci.yml's ungated `backend` job now runs
+      # the whole backend suite against a real Postgres, so this lane repeating it
+      # WITHOUT a database was both slower and weaker — every live-DB suite skipped
+      # here while reporting "ok". The scoped run above stays: it is fast, it is
+      # verbose, and it names this module when it fails.
 
   migration-guard:
     runs-on: ubuntu-latest

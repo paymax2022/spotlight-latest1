@@ -60,6 +60,15 @@ function delay<T>(value: T): Promise<T> {
   return new Promise((resolve) => setTimeout(() => resolve(value), 120));
 }
 
+// Every write below has a real, RBAC-gated live endpoint (verified against
+// backend/internal/app/arena_routes.go, admin.POST(...) for every path used
+// here — behind FeatureArenaEnabled, normal deployment config, not a gap), so
+// fixture mode has nothing to add and refuses loudly instead of reporting a
+// write it did not perform. See docs/audit/ADMIN_SIMULATED_WRITES.md.
+const NOT_IN_FIXTURE_MODE =
+  'is unavailable in fixture mode: this console will not report a write it did not perform. ' +
+  'Set NEXT_PUBLIC_ARENA_ADMIN_USE_MOCK=false to make this change against the live backend.';
+
 const now = Date.now();
 const iso = (minsAgo: number) => new Date(now - minsAgo * 60_000).toISOString();
 
@@ -203,9 +212,7 @@ export async function getCompetition(id: string): Promise<Competition> {
 // ─── A1 — Competition config ─────────────────────────────────────────────────
 
 export async function createCompetition(input: { slug: string; name: string }): Promise<Competition> {
-  if (USE_FIXTURES) {
-    return delay({ id: `cmp_${Math.random().toString(36).slice(2, 8)}`, slug: input.slug, name: input.name, status: 'DRAFT', config_version: null, created_at: new Date().toISOString(), updated_at: new Date().toISOString() });
-  }
+  if (USE_FIXTURES) throw new Error(`Creating a competition ${NOT_IN_FIXTURE_MODE}`);
   const res = await fetch(`${arenaAdminBase()}/competitions`, { method: 'POST', headers: authHeaders(), body: JSON.stringify(input) });
   if (!res.ok) throw new Error(`Create competition failed: ${res.status}`);
   return res.json();
@@ -242,9 +249,7 @@ export async function publishConfig(
   id: string,
   config: { rails: RailConfig[]; award_bindings: AwardBinding[]; screening_schema_version: string; rubric_version: string; exam_schema_version: string },
 ): Promise<CompetitionConfig> {
-  if (USE_FIXTURES) {
-    return delay({ competition_id: id, ...config, published: true, config_version: (FIXTURE_CONFIG[id]?.config_version ?? 0) + 1 });
-  }
+  if (USE_FIXTURES) throw new Error(`Publishing a competition config ${NOT_IN_FIXTURE_MODE}`);
   const res = await fetch(`${arenaAdminBase()}/competitions/${encodeURIComponent(id)}/config/publish`, { method: 'POST', headers: authHeaders(), body: JSON.stringify(config) });
   if (!res.ok) throw new Error(`Publish config failed: ${res.status}`);
   return res.json();
@@ -267,7 +272,7 @@ export async function decideScreening(
   decision: ScreeningDecision,
   reason: string,
 ): Promise<void> {
-  if (USE_FIXTURES) { await delay(null); return; }
+  if (USE_FIXTURES) throw new Error(`Deciding screening ${NOT_IN_FIXTURE_MODE}`);
   const res = await fetch(
     `${arenaAdminBase()}/competitions/${encodeURIComponent(competitionId)}/screening/${encodeURIComponent(contestantId)}/decide`,
     { method: 'POST', headers: authHeaders(), body: JSON.stringify({ decision, reason }) },
@@ -295,7 +300,7 @@ export async function runTransition(
   to: ContestantState,
   reason: string,
 ): Promise<void> {
-  if (USE_FIXTURES) { await delay(null); return; }
+  if (USE_FIXTURES) throw new Error(`Running a lifecycle transition ${NOT_IN_FIXTURE_MODE}`);
   const res = await fetch(
     `${arenaAdminBase()}/competitions/${encodeURIComponent(competitionId)}/transitions/${encodeURIComponent(contestantId)}`,
     { method: 'POST', headers: authHeaders(), body: JSON.stringify({ to, reason }) },
@@ -369,7 +374,7 @@ export async function getPot(competitionId: string): Promise<PotView> {
 }
 
 export async function finalizeAwards(competitionId: string): Promise<void> {
-  if (USE_FIXTURES) { await delay(null); return; }
+  if (USE_FIXTURES) throw new Error(`Finalizing awards ${NOT_IN_FIXTURE_MODE}`);
   const res = await fetch(`${arenaAdminBase()}/competitions/${encodeURIComponent(competitionId)}/awards/finalize`, { method: 'POST', headers: authHeaders(), body: '{}' });
   if (!res.ok) throw new Error(`Awards finalize failed: ${res.status}`);
 }
@@ -379,7 +384,7 @@ export async function finalizeAwards(competitionId: string): Promise<void> {
 // + audited (NDC-4). This one call registers the caller's approval + executes if
 // the threshold is met server-side.
 export async function disbursePot(competitionId: string, splits: PotSplit[]): Promise<void> {
-  if (USE_FIXTURES) { await delay(null); return; }
+  if (USE_FIXTURES) throw new Error(`Disbursing the pot ${NOT_IN_FIXTURE_MODE}`);
   const res = await fetch(
     `${arenaAdminBase()}/competitions/${encodeURIComponent(competitionId)}/pot/disburse`,
     { method: 'POST', headers: authHeaders(), body: JSON.stringify({ splits }) },
@@ -407,9 +412,7 @@ export async function listCredentialVerifyLogs(competitionId: string): Promise<C
 
 // Issue only from Merit-derived state (NDC-7 — independently revocable).
 export async function issueCredential(competitionId: string, userId: string, type: CredentialType): Promise<Credential> {
-  if (USE_FIXTURES) {
-    return delay({ id: `cred_${Math.random().toString(36).slice(2, 8)}`, user_id: userId, type, status: 'ISSUED', verifiable_hash: `vh:${Math.random().toString(16).slice(2, 10)}…new`, issued_at: new Date().toISOString() });
-  }
+  if (USE_FIXTURES) throw new Error(`Issuing a credential ${NOT_IN_FIXTURE_MODE}`);
   const res = await fetch(
     `${arenaAdminBase()}/competitions/${encodeURIComponent(competitionId)}/credentials/issue`,
     { method: 'POST', headers: authHeaders(), body: JSON.stringify({ user_id: userId, type }) },
@@ -419,7 +422,7 @@ export async function issueCredential(competitionId: string, userId: string, typ
 }
 
 export async function revokeCredential(competitionId: string, credentialId: string, reason: string): Promise<void> {
-  if (USE_FIXTURES) { await delay(null); return; }
+  if (USE_FIXTURES) throw new Error(`Revoking a credential ${NOT_IN_FIXTURE_MODE}`);
   const res = await fetch(
     `${arenaAdminBase()}/competitions/${encodeURIComponent(competitionId)}/credentials/${encodeURIComponent(credentialId)}/revoke`,
     { method: 'POST', headers: authHeaders(), body: JSON.stringify({ reason }) },
@@ -430,7 +433,7 @@ export async function revokeCredential(competitionId: string, credentialId: stri
 // ─── A3 — Proctor console (scaffold, service wired) ──────────────────────────
 
 export async function proctorAttest(competitionId: string, input: ProctorAttestInput): Promise<void> {
-  if (USE_FIXTURES) { await delay(null); return; }
+  if (USE_FIXTURES) throw new Error(`Recording a proctor attestation ${NOT_IN_FIXTURE_MODE}`);
   const res = await fetch(`${arenaAdminBase()}/competitions/${encodeURIComponent(competitionId)}/proctor/attest`, { method: 'POST', headers: authHeaders(), body: JSON.stringify(input) });
   if (!res.ok) throw new Error(`Proctor attest failed: ${res.status}`);
 }
@@ -438,7 +441,7 @@ export async function proctorAttest(competitionId: string, input: ProctorAttestI
 // ─── A4 — Judge console (scaffold, service wired) ────────────────────────────
 
 export async function judgeScore(competitionId: string, input: JudgeScoreInput): Promise<void> {
-  if (USE_FIXTURES) { await delay(null); return; }
+  if (USE_FIXTURES) throw new Error(`Submitting a judge score ${NOT_IN_FIXTURE_MODE}`);
   const res = await fetch(`${arenaAdminBase()}/competitions/${encodeURIComponent(competitionId)}/judge/score`, { method: 'POST', headers: authHeaders(), body: JSON.stringify(input) });
   if (!res.ok) throw new Error(`Judge score failed: ${res.status}`);
 }
@@ -527,10 +530,7 @@ export async function importQuizBank(
   competitionId: string,
   opts?: { bankKey?: string; rubricVersion?: string },
 ): Promise<QuizImportResult> {
-  if (USE_FIXTURES) {
-    FIXTURE_QUIZ_IMPORTED.add(competitionId);
-    return delay({ imported: FIXTURE_QUIZ.length, stages: ([1, 2, 3] as QuizStage[]).map((stage) => ({ stage, count: FIXTURE_QUIZ.filter((q) => q.stage === stage).length })) });
-  }
+  if (USE_FIXTURES) throw new Error(`Importing the quiz bank ${NOT_IN_FIXTURE_MODE}`);
   const body = { bankKey: opts?.bankKey ?? DEFAULT_QUIZ_BANK_KEY, rubricVersion: opts?.rubricVersion ?? DEFAULT_QUIZ_RUBRIC_VERSION };
   const res = await fetch(`${arenaAdminBase()}/competitions/${encodeURIComponent(competitionId)}/questions/import`, { method: 'POST', headers: authHeaders(), body: JSON.stringify(body) });
   if (!res.ok) throw new Error(`Quiz bank import failed: ${res.status}`);

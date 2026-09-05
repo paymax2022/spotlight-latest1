@@ -51,6 +51,13 @@ function delay<T = void>(value?: T, ms = 220): Promise<T> {
   return new Promise((r) => setTimeout(() => r(value as T), ms));
 }
 
+// adminConfigAsset has a real, verified live endpoint (see the header comment
+// above), so fixture mode has nothing to add and refuses loudly instead of
+// reporting a write it did not perform. See docs/audit/ADMIN_SIMULATED_WRITES.md.
+const NOT_IN_FIXTURE_MODE =
+  'is unavailable in fixture mode: this console will not report a write it did not perform. ' +
+  'Unset NEXT_PUBLIC_CRYPTO_ADMIN_USE_MOCK (or set it to false — the default) to make this change against the live backend.';
+
 async function parseErrorMessage(res: Response, fallback: string): Promise<string> {
   try {
     const body = await res.json();
@@ -111,22 +118,7 @@ export async function adminConfigAsset(input: CryptoAssetConfigRequest): Promise
   if (!input.symbol || !input.symbol.trim()) throw new Error('symbol is required.');
   if (!input.name || !input.name.trim()) throw new Error('name is required.');
   if (!input.minor_unit_scale || input.minor_unit_scale <= 0) throw new Error('minor_unit_scale must be a positive integer.');
-  if (USE_MOCK) {
-    await delay();
-    const existing = MOCK_ASSETS.find((a) => a.symbol === input.symbol.trim().toUpperCase());
-    const updated: CryptoAsset = {
-      id: existing?.id ?? `ast_${input.symbol.trim().toLowerCase()}`,
-      symbol: input.symbol.trim().toUpperCase(),
-      name: input.name.trim(),
-      minor_unit_scale: input.minor_unit_scale,
-      is_active: input.is_active,
-      created_at: existing?.created_at ?? new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-    };
-    if (existing) Object.assign(existing, updated);
-    else MOCK_ASSETS.push(updated);
-    return updated;
-  }
+  if (USE_MOCK) throw new Error(`Configuring a crypto asset ${NOT_IN_FIXTURE_MODE}`);
   const res = await fetch(`${base()}/assets`, {
     method: 'POST', headers: authHeaders(), body: JSON.stringify(input),
   });

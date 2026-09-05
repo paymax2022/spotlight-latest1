@@ -63,6 +63,15 @@ function authHeaders(): Record<string, string> {
 }
 const delay = (ms = 300) => new Promise((r) => setTimeout(r, ms));
 
+// Every write below has a real live endpoint (verified against
+// backend/internal/crowdfunding/adminext/routes.go and the cfAdmin group in
+// finance_routes.go), so fixture mode has nothing to add and refuses loudly
+// instead of reporting a write it did not perform. See
+// docs/audit/ADMIN_SIMULATED_WRITES.md.
+const NOT_IN_FIXTURE_MODE =
+  'is unavailable in fixture mode: this console will not report a write it did not perform. ' +
+  'Set NEXT_PUBLIC_CF_USE_MOCK=false to make this change against the live backend.';
+
 // ─── Mock dataset ─────────────────────────────────────────────────────────────
 
 const MOCK_CAMPAIGNS: CfReviewCampaign[] = [
@@ -240,20 +249,7 @@ export async function getReviewCampaign(id: string): Promise<CfReviewCampaign> {
 }
 
 export async function decideCampaign(id: string, decision: CfReviewDecision, note: string): Promise<void> {
-  if (USE_MOCK) {
-    await delay(500);
-    const c = MOCK_CAMPAIGNS.find((x) => x.id === id);
-    if (c) {
-      c.status =
-        decision === 'APPROVE' ? 'ACTIVE'
-        : decision === 'REJECT' ? 'REJECTED'
-        : decision === 'REQUEST_CHANGES' ? 'CHANGES_REQUESTED'
-        : decision === 'FREEZE' ? 'FROZEN'
-        : 'ACTIVE';
-      c.adminNote = note || c.adminNote;
-    }
-    return;
-  }
+  if (USE_MOCK) throw new Error(`Deciding a campaign ${NOT_IN_FIXTURE_MODE}`);
   const res = await fetch(`${adminBase()}/campaigns/${encodeURIComponent(id)}/decision`, {
     method: 'POST', headers: { ...authHeaders(), 'Idempotency-Key': operationKey('crowdfunding:campaign-decision', id) }, body: JSON.stringify({ decision, note }),
   });
@@ -271,12 +267,7 @@ export async function listWithdrawals(status?: string): Promise<CfWithdrawal[]> 
 }
 
 export async function decideWithdrawal(id: string, approve: boolean, note: string): Promise<void> {
-  if (USE_MOCK) {
-    await delay(500);
-    const w = MOCK_WITHDRAWALS.find((x) => x.id === id);
-    if (w) { w.status = approve ? 'APPROVED' : 'REJECTED'; w.note = note || w.note; }
-    return;
-  }
+  if (USE_MOCK) throw new Error(`Deciding a withdrawal ${NOT_IN_FIXTURE_MODE}`);
   const res = await fetch(`${adminBase()}/withdrawals/${encodeURIComponent(id)}/${approve ? 'approve' : 'reject'}`, {
     method: 'POST', headers: { ...authHeaders(), 'Idempotency-Key': operationKey('crowdfunding:withdrawal-decision', id) }, body: JSON.stringify({ note }),
   });
@@ -291,12 +282,7 @@ export async function listFraudAlerts(): Promise<CfFraudAlert[]> {
 }
 
 export async function setCampaignFreeze(campaignId: string, freeze: boolean, note: string): Promise<void> {
-  if (USE_MOCK) {
-    await delay(400);
-    const f = MOCK_FRAUD.find((x) => x.campaignId === campaignId);
-    if (f) f.status = freeze ? 'FROZEN' : 'INVESTIGATING';
-    return;
-  }
+  if (USE_MOCK) throw new Error(`${freeze ? 'Freezing' : 'Unfreezing'} a campaign ${NOT_IN_FIXTURE_MODE}`);
   const res = await fetch(`${adminBase()}/campaigns/${encodeURIComponent(campaignId)}/${freeze ? 'freeze' : 'unfreeze'}`, {
     method: 'POST', headers: { ...authHeaders(), 'Idempotency-Key': operationKey('crowdfunding:campaign-freeze', campaignId) }, body: JSON.stringify({ note }),
   });
@@ -345,12 +331,7 @@ export async function listRefunds(status?: string): Promise<CfRefundRequest[]> {
 }
 
 export async function decideRefund(id: string, approve: boolean, note: string): Promise<void> {
-  if (USE_MOCK) {
-    await delay(500);
-    const r = MOCK_REFUNDS.find((x) => x.id === id);
-    if (r) r.status = approve ? 'APPROVED' : 'REJECTED';
-    return;
-  }
+  if (USE_MOCK) throw new Error(`Deciding a refund ${NOT_IN_FIXTURE_MODE}`);
   const res = await fetch(`${adminBase()}/refunds/${encodeURIComponent(id)}/${approve ? 'approve' : 'reject'}`, {
     method: 'POST', headers: { ...authHeaders(), 'Idempotency-Key': operationKey('crowdfunding:refund-decision', id) }, body: JSON.stringify({ note }),
   });
@@ -380,12 +361,7 @@ export async function listDisputes(status?: string): Promise<CfDispute[]> {
 }
 
 export async function resolveDispute(id: string, resolution: CfDisputeResolution, note: string): Promise<void> {
-  if (USE_MOCK) {
-    await delay(500);
-    const d = MOCK_DISPUTES.find((x) => x.id === id);
-    if (d) { d.status = 'RESOLVED'; d.resolution = resolution; d.adminNote = note; }
-    return;
-  }
+  if (USE_MOCK) throw new Error(`Resolving a dispute ${NOT_IN_FIXTURE_MODE}`);
   const res = await fetch(`${adminBase()}/disputes/${encodeURIComponent(id)}/resolve`, {
     method: 'POST', headers: { ...authHeaders(), 'Idempotency-Key': operationKey('crowdfunding:dispute-resolve', id) }, body: JSON.stringify({ resolution, note }),
   });
@@ -425,7 +401,7 @@ export async function getCategories(): Promise<CfCategoryConfig[]> {
 }
 
 export async function toggleCategory(id: string, field: 'enabled' | 'requiresEnhancedReview', value: boolean): Promise<void> {
-  if (USE_MOCK) { await delay(250); const c = MOCK_CATEGORIES.find((x) => x.id === id); if (c) c[field] = value; return; }
+  if (USE_MOCK) throw new Error(`Updating a category ${NOT_IN_FIXTURE_MODE}`);
   const res = await fetch(`${adminBase()}/config/categories/${encodeURIComponent(id)}`, {
     method: 'PATCH', headers: { ...authHeaders(), 'Idempotency-Key': operationKey('crowdfunding:category-toggle', id) }, body: JSON.stringify({ [field]: value }),
   });
@@ -440,7 +416,7 @@ export async function getFees(): Promise<CfFeeConfig> {
 }
 
 export async function updateFees(fees: CfFeeConfig): Promise<void> {
-  if (USE_MOCK) { await delay(400); Object.assign(MOCK_FEES, fees); return; }
+  if (USE_MOCK) throw new Error(`Updating fee config ${NOT_IN_FIXTURE_MODE}`);
   const res = await fetch(`${adminBase()}/config/fees`, { method: 'PUT', headers: { ...authHeaders(), 'Idempotency-Key': operationKey('crowdfunding:fees-update', fees.platformFeeBps) }, body: JSON.stringify(fees) });
   if (!res.ok) throw new Error(`Fee update failed: ${res.status}`);
 }
@@ -453,7 +429,7 @@ export async function getFeatureFlags(): Promise<CfFeatureFlag[]> {
 }
 
 export async function toggleFeatureFlag(key: string, enabled: boolean): Promise<void> {
-  if (USE_MOCK) { await delay(250); const f = MOCK_FLAGS.find((x) => x.key === key); if (f && !f.locked) f.enabled = enabled; return; }
+  if (USE_MOCK) throw new Error(`Toggling a feature flag ${NOT_IN_FIXTURE_MODE}`);
   const res = await fetch(`${adminBase()}/config/flags/${encodeURIComponent(key)}`, {
     method: 'PATCH', headers: { ...authHeaders(), 'Idempotency-Key': operationKey('crowdfunding:flag-toggle', key) }, body: JSON.stringify({ enabled }),
   });
@@ -492,12 +468,7 @@ export async function listKycCases(status?: string): Promise<CfKycCase[]> {
 }
 
 export async function decideKyc(id: string, approve: boolean, note: string): Promise<void> {
-  if (USE_MOCK) {
-    await delay(500);
-    const k = MOCK_KYC.find((x) => x.id === id);
-    if (k) k.status = approve ? 'APPROVED' : 'REJECTED';
-    return;
-  }
+  if (USE_MOCK) throw new Error(`Deciding a KYC case ${NOT_IN_FIXTURE_MODE}`);
   const res = await fetch(`${adminBase()}/kyc/${encodeURIComponent(id)}/${approve ? 'approve' : 'reject'}`, {
     method: 'POST', headers: { ...authHeaders(), 'Idempotency-Key': operationKey('crowdfunding:kyc-decision', id) }, body: JSON.stringify({ note }),
   });
@@ -553,7 +524,7 @@ export async function listDataRequests(): Promise<CfDataRequest[]> {
 }
 
 export async function fulfilDataRequest(id: string): Promise<void> {
-  if (USE_MOCK) { await delay(400); const d = MOCK_DATA_REQUESTS.find((x) => x.id === id); if (d) d.status = 'COMPLETED'; return; }
+  if (USE_MOCK) throw new Error(`Fulfilling a data request ${NOT_IN_FIXTURE_MODE}`);
   const res = await fetch(`${adminBase()}/compliance/data-requests/${encodeURIComponent(id)}/fulfil`, { method: 'POST', headers: { ...authHeaders(), 'Idempotency-Key': operationKey('crowdfunding:data-request-fulfil', id) } });
   if (!res.ok) throw new Error(`Fulfil failed: ${res.status}`);
 }
@@ -617,15 +588,7 @@ export async function listUsers(role?: string, status?: string, search?: string)
 }
 
 export async function setUserStatus(id: string, status: 'ACTIVE' | 'SUSPENDED' | 'RESTRICTED', note: string): Promise<void> {
-  if (USE_MOCK) {
-    await delay(500);
-    const u = MOCK_USERS.find((x) => x.id === id);
-    if (u) {
-      u.status = status;
-      u.activity = [{ id: `a${Date.now()}`, action: status === 'SUSPENDED' ? 'account.suspend' : status === 'ACTIVE' ? 'account.restore' : 'account.restrict', detail: note || '—', createdAt: new Date().toISOString() }, ...u.activity];
-    }
-    return;
-  }
+  if (USE_MOCK) throw new Error(`Setting user status ${NOT_IN_FIXTURE_MODE}`);
   const res = await fetch(`${adminBase()}/users/${encodeURIComponent(id)}/status`, { method: 'POST', headers: { ...authHeaders(), 'Idempotency-Key': operationKey('crowdfunding:user-status', id) }, body: JSON.stringify({ status, note }) });
   if (!res.ok) throw new Error(`Status update failed: ${res.status}`);
 }

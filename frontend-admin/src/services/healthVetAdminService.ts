@@ -64,6 +64,10 @@ export function formatNaira(kobo: number): string {
   return `₦${naira.toLocaleString('en-NG', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
+const NO_BACKEND_YET =
+  'has no backend yet (see the comment on the live-mode call below). ' +
+  'This console cannot perform this action until that endpoint is built.';
+
 const auditId = () => `aud_${Math.random().toString(36).slice(2, 10)}`;
 const iso = (hoursAgo: number) => new Date(Date.now() - hoursAgo * 3_600_000).toISOString();
 const dateStr = (daysAgo: number) => new Date(Date.now() - daysAgo * 86_400_000).toISOString().slice(0, 10);
@@ -148,20 +152,11 @@ export async function listVcnApplications(opts?: { status?: string; q?: string }
   return getJson<VcnApplication[]>(`/vcn/applications${qs.toString() ? `?${qs}` : ''}`);
 }
 export async function decideVcn(id: string, decision: VcnDecision, note?: string): Promise<VcnDecisionResult> {
-  if (USE_MOCK) {
-    await delay();
-    const app = VCN_APPS.find((a) => a.id === id);
-    if (decision === 'approve' && app && !app.vcn_verified) {
-      return { id, status: 'needs_info', capability_granted: false, audit_id: auditId(), message: `Fixture — nothing was saved. Approval blocked — VCN practising licence not verified (HL-2). Supply stays credential-gated and fail-closed. (HL-12).` };
-    }
-    const status =
-      decision === 'approve' ? 'approved'
-      : decision === 'reject' ? 'rejected'
-      : decision === 'need_info' ? 'needs_info'
-      : decision === 'suspend' ? 'suspended'
-      : 'approved'; // reinstate
-    return { id, status, capability_granted: decision === 'approve', audit_id: auditId(), message: `Fixture — nothing was saved. VCN application ${id}: ${decision} applied. ${decision === 'approve' ? 'Provider vet capability idempotently granted and discoverability unlocked (HL-2). ' : ''}State machine SUBMITTED→UNDER_REVIEW→${status.toUpperCase()} enforced. (HL-12).` };
-  }
+  // A real, correctly-wired VCN decision endpoint exists via
+  // healthVetVerificationService.ts::decideVerification, but its
+  // VcnApplication shape doesn't match this file's — the two data models
+  // aren't reconciled, so this can't be silently redirected to that route.
+  if (USE_MOCK) throw new Error(`Deciding a VCN application ${NO_BACKEND_YET}`);
   return sendJson<VcnDecisionResult>('POST', `/vcn/applications/${id}/decision`, { decision, note });
 }
 
@@ -195,16 +190,16 @@ export async function listServices(opts?: { status?: string; mode?: string; q?: 
   return getJson<VetService[]>(`/services${qs.toString() ? `?${qs}` : ''}`);
 }
 export async function governService(id: string, action: VetServiceGovernanceAction, note?: string): Promise<VetServiceGovernanceResult> {
+  // Only 'suspend' maps to a real route (POST /services/:id/deactivate, no
+  // body). There is no pending/approval state machine server-side, so
+  // 'approve' and 'reject' have nothing to call.
   if (USE_MOCK) {
+    if (action !== 'suspend') throw new Error(`Governance action "${action}" ${NO_BACKEND_YET}`);
     await delay();
-    const item = SERVICES.find((s) => s.id === id);
-    if (action === 'approve' && item && item.platform_fee_pct > 0.1) {
-      return { id, status: 'pending', audit_id: auditId(), message: `Fixture — nothing was saved. Approval blocked — platform fee ${(item.platform_fee_pct * 100).toFixed(0)}% exceeds the governed 10% take-rate ceiling; fee policy must be corrected before listing. (HL-12).` };
-    }
-    const status = action === 'approve' ? 'approved' : action === 'reject' ? 'rejected' : 'suspended';
-    return { id, status, audit_id: auditId(), message: `Fixture — nothing was saved. Service ${id}: ${action} applied. Service/fee governance enforced. (HL-12).` };
+    return { id, status: 'suspended', audit_id: auditId(), message: `Fixture — nothing was saved. Service ${id}: suspend applied.` };
   }
-  return sendJson<VetServiceGovernanceResult>('POST', `/services/${id}/govern`, { action, note });
+  if (action !== 'suspend') throw new Error(`Governance action "${action}" ${NO_BACKEND_YET}`);
+  return sendJson<VetServiceGovernanceResult>('POST', `/services/${id}/deactivate`, {});
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -324,17 +319,10 @@ export async function listPayouts(opts?: { payout_status?: string; q?: string })
   return getJson<VetPayoutRecord[]>(`/payouts${qs.toString() ? `?${qs}` : ''}`);
 }
 export async function decidePayout(id: string, decision: VetPayoutDecision, note?: string): Promise<VetPayoutDecisionResult> {
-  if (USE_MOCK) {
-    await delay();
-    const p = PAYOUTS.find((x) => x.id === id);
-    if (decision === 'approve' && p && !p.kyc_verified) {
-      return { id, payout_status: 'kyc_hold', audit_id: auditId(), message: `Fixture — nothing was saved. Payout blocked — vet ${id} KYC tier insufficient (HL-10). Payout stays fail-closed until KYC clears. (HL-12).` };
-    }
-    if (decision === 'approve' && p?.aml_flag) {
-      return { id, payout_status: 'kyc_hold', audit_id: auditId(), message: `Fixture — nothing was saved. Payout held — AML flag on settlement requires clearance before release (HL-10). (HL-12).` };
-    }
-    return { id, payout_status: decision === 'approve' ? 'approved' : 'rejected', audit_id: auditId(), message: `Fixture — nothing was saved. Vet ${id} payout ${decision === 'approve' ? 'approved' : 'rejected'}. KYC + AML gate (HL-10) passed. Settled funds are the escrow released on consult completion (HL-9). (HL-12).` };
-  }
+  // No payout-decision route exists; payout is fully automatic on consult
+  // completion in backend/internal/health/vet — there is no
+  // admin-reviewable pending state to approve/reject.
+  if (USE_MOCK) throw new Error(`Deciding a payout ${NO_BACKEND_YET}`);
   return sendJson<VetPayoutDecisionResult>('POST', `/payouts/${id}/decision`, { decision, note });
 }
 
@@ -366,16 +354,9 @@ export async function listModeration(opts?: { status?: string; severity?: string
   return getJson<ModerationItem[]>(`/moderation${qs.toString() ? `?${qs}` : ''}`);
 }
 export async function moderate(id: string, action: ModerationAction, note?: string): Promise<ModerationResult> {
-  if (USE_MOCK) {
-    await delay();
-    const status =
-      action === 'investigate' ? 'investigating'
-      : action === 'resolve' ? 'resolved'
-      : action === 'ignore' ? 'ignored'
-      : 'resolved'; // suspend_provider closes the moderation item
-    const extra = action === 'suspend_provider' ? ' Provider vet capability suspended — discoverability revoked pending review (HL-2).' : '';
-    return { id, status, audit_id: auditId(), message: `Fixture — nothing was saved. Moderation ${id}: ${action.replace(/_/g, ' ')} applied.${extra} (HL-12).` };
-  }
+  // No moderation concept exists anywhere in backend/internal/health — no
+  // table, service, or route backs a moderation queue or action.
+  if (USE_MOCK) throw new Error(`Applying a moderation action ${NO_BACKEND_YET}`);
   return sendJson<ModerationResult>('POST', `/moderation/${id}/action`, { action, note });
 }
 

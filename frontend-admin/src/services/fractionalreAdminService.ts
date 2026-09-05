@@ -40,6 +40,14 @@ function idemKey(): string {
 
 const delay = (ms = 280) => new Promise((r) => setTimeout(r, ms));
 
+// Every write below has a real, RBAC-gated live endpoint (verified against
+// backend/internal/fractionalre/routes.go — the admin control plane is fully
+// built), so fixture mode has nothing to add and refuses loudly instead of
+// reporting a write it did not perform. See docs/audit/ADMIN_SIMULATED_WRITES.md.
+const NOT_IN_FIXTURE_MODE =
+  'is unavailable in fixture mode: this console will not report a write it did not perform. ' +
+  'Set NEXT_PUBLIC_FRACTIONALRE_ADMIN_USE_MOCK=false to make this change against the live backend.';
+
 async function req<T>(path: string, init?: RequestInit & { money?: boolean }): Promise<T> {
   const extra = init?.money ? { 'Idempotency-Key': idemKey() } : undefined;
   const res = await fetch(adminBase() + path, { ...init, headers: authHeaders(extra), cache: 'no-store' });
@@ -260,17 +268,7 @@ export async function listAssets(status?: string): Promise<AdminAsset[]> {
   return req<AdminAsset[]>(`/assets${qs}`);
 }
 export async function createAsset(input: CreateAssetInput): Promise<AdminAsset> {
-  if (USE_MOCK) {
-    await delay();
-    return {
-      ...ASSETS[3], id: `ast-${Date.now()}`, name: input.name, type: input.type, location: input.location,
-      totalValueKobo: input.totalValueKobo, unitPriceKobo: input.unitPriceKobo,
-      totalUnits: input.unitPriceKobo ? Math.floor(input.totalValueKobo / input.unitPriceKobo) : 0,
-      unitsSold: 0, status: 'Draft', titleVerified: false, sponsorId: input.sponsorId,
-      returnsModel: { targetYieldBps: input.targetYieldBps, tenorMonths: input.tenorMonths, distributionFrequency: 'quarterly' },
-      mediaUrls: input.mediaUrls ?? [], documents: [], createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
-    };
-  }
+  if (USE_MOCK) throw new Error(`Creating an asset ${NOT_IN_FIXTURE_MODE}`);
   return req<AdminAsset>('/assets', { method: 'POST', body: JSON.stringify(input) });
 }
 export async function getAsset(id: string): Promise<AdminAsset> {
@@ -278,11 +276,11 @@ export async function getAsset(id: string): Promise<AdminAsset> {
   return req<AdminAsset>(`/assets/${id}`);
 }
 export async function patchAsset(id: string, patch: AssetPatch): Promise<AdminAsset> {
-  if (USE_MOCK) { await delay(); const a = ASSETS.find((x) => x.id === id) ?? ASSETS[0]; return { ...a, ...patch, returnsModel: { ...a.returnsModel, ...(patch.returnsModel || {}) } }; }
+  if (USE_MOCK) throw new Error(`Updating an asset ${NOT_IN_FIXTURE_MODE}`);
   return req<AdminAsset>(`/assets/${id}`, { method: 'PATCH', body: JSON.stringify(patch) });
 }
 export async function titleVerify(id: string, input: TitleVerifyInput): Promise<TitleVerification> {
-  if (USE_MOCK) { await delay(); return { assetId: id, checklist: input.checklist, registryCheckRef: input.registryCheckRef, decision: input.decision, verifierId: 'current-verifier', decidedAt: new Date().toISOString() }; }
+  if (USE_MOCK) throw new Error(`Recording title verification ${NOT_IN_FIXTURE_MODE}`);
   return req<TitleVerification>(`/assets/${id}/title-verify`, { method: 'POST', body: JSON.stringify(input) });
 }
 export async function getTitleVerification(id: string): Promise<TitleVerification> {
@@ -290,13 +288,13 @@ export async function getTitleVerification(id: string): Promise<TitleVerificatio
   return req<TitleVerification>(`/assets/${id}/title-verify`);
 }
 export async function transitionAsset(id: string, input: AssetTransitionInput): Promise<AdminAsset> {
-  if (USE_MOCK) { await delay(); const a = ASSETS.find((x) => x.id === id) ?? ASSETS[0]; return { ...a, status: input.toStatus, updatedAt: new Date().toISOString() }; }
+  if (USE_MOCK) throw new Error(`Transitioning an asset ${NOT_IN_FIXTURE_MODE}`);
   return req<AdminAsset>(`/assets/${id}/transition`, { method: 'POST', body: JSON.stringify(input) });
 }
 
 // Rounds (9.C) — close/refund are money/maker-checker
 export async function createRound(assetId: string, input: CreateRoundInput): Promise<AdminRound> {
-  if (USE_MOCK) { await delay(); return { ...ROUNDS[2], ...input, id: `rnd-${Date.now()}`, assetId, escrowAccountRef: input.escrowAccountRef ?? `ESC-${assetId}`, status: 'Draft', raisedKobo: 0, investorCount: 0, watchers: 0, extensionsUsed: 0, createdAt: new Date().toISOString() }; }
+  if (USE_MOCK) throw new Error(`Creating a round ${NOT_IN_FIXTURE_MODE}`);
   return req<AdminRound>(`/assets/${assetId}/rounds`, { method: 'POST', body: JSON.stringify(input) });
 }
 export async function listRounds(status?: string): Promise<AdminRound[]> {
@@ -309,19 +307,19 @@ export async function getRound(id: string): Promise<AdminRound> {
   return req<AdminRound>(`/rounds/${id}`);
 }
 export async function extendRound(id: string, input: ExtendRoundInput): Promise<AdminRound> {
-  if (USE_MOCK) { await delay(); const r = ROUNDS.find((x) => x.id === id) ?? ROUNDS[0]; return { ...r, closesAt: input.newClosesAt, extensionsUsed: r.extensionsUsed + 1 }; }
+  if (USE_MOCK) throw new Error(`Extending a round ${NOT_IN_FIXTURE_MODE}`);
   return req<AdminRound>(`/rounds/${id}/extend`, { method: 'POST', body: JSON.stringify(input) });
 }
 export async function closeRound(id: string, reason: string): Promise<MakerCheckerResult> {
-  if (USE_MOCK) { await delay(); return { id, status: 'Closing', pendingApproval: true, maker: 'current-user' }; }
+  if (USE_MOCK) throw new Error(`Closing a round ${NOT_IN_FIXTURE_MODE}`);
   return req<MakerCheckerResult>(`/rounds/${id}/close`, { method: 'POST', money: true, body: JSON.stringify({ reason }) });
 }
 export async function refundRound(id: string, reason: string): Promise<MakerCheckerResult> {
-  if (USE_MOCK) { await delay(); return { id, status: 'Refunding', pendingApproval: true, maker: 'current-user' }; }
+  if (USE_MOCK) throw new Error(`Refunding a round ${NOT_IN_FIXTURE_MODE}`);
   return req<MakerCheckerResult>(`/rounds/${id}/refund`, { method: 'POST', money: true, body: JSON.stringify({ reason }) });
 }
 export async function allocateRound(id: string): Promise<MakerCheckerResult> {
-  if (USE_MOCK) { await delay(); return { id, status: 'Allocated', pendingApproval: false }; }
+  if (USE_MOCK) throw new Error(`Allocating a round ${NOT_IN_FIXTURE_MODE}`);
   return req<MakerCheckerResult>(`/rounds/${id}/allocate`, { method: 'POST', money: true, body: JSON.stringify({}) });
 }
 
@@ -331,7 +329,7 @@ export async function getCapTable(assetId: string): Promise<CapTable> {
   return req<CapTable>(`/assets/${assetId}/cap-table`);
 }
 export async function transferUnits(input: TransferUnitsInput): Promise<MakerCheckerResult> {
-  if (USE_MOCK) { await delay(); return { id: `xfer-${Date.now()}`, status: 'PendingApproval', pendingApproval: true, maker: 'current-user' }; }
+  if (USE_MOCK) throw new Error(`Transferring units ${NOT_IN_FIXTURE_MODE}`);
   return req<MakerCheckerResult>('/cap-table/transfer', { method: 'POST', money: true, body: JSON.stringify(input) });
 }
 
@@ -350,11 +348,11 @@ export async function getInvestorLimit(id: string): Promise<InvestorLimit> {
   return req<InvestorLimit>(`/investors/${id}/limit`);
 }
 export async function overrideLimit(id: string, input: LimitOverrideInput): Promise<InvestorLimit> {
-  if (USE_MOCK) { await delay(); const l = investorDetail(id).limit; return { ...l, annualCapKobo: input.newAnnualCapKobo, remainingAllowanceKobo: Math.max(0, input.newAnnualCapKobo - l.investedThisYearKobo), overrideActive: true, breached: false }; }
+  if (USE_MOCK) throw new Error(`Overriding an investor limit ${NOT_IN_FIXTURE_MODE}`);
   return req<InvestorLimit>(`/investors/${id}/limit-override`, { method: 'POST', body: JSON.stringify(input) });
 }
 export async function classifyInvestor(id: string, input: ClassifyInvestorInput): Promise<AdminInvestorDetail> {
-  if (USE_MOCK) { await delay(); return { ...investorDetail(id), classification: input.classification }; }
+  if (USE_MOCK) throw new Error(`Classifying an investor ${NOT_IN_FIXTURE_MODE}`);
   return req<AdminInvestorDetail>(`/investors/${id}/classify`, { method: 'POST', body: JSON.stringify(input) });
 }
 
@@ -364,7 +362,7 @@ export async function listKycQueue(): Promise<KycQueueItem[]> {
   return req<KycQueueItem[]>('/kyc/queue');
 }
 export async function decideKyc(userId: string, input: KycDecisionInput): Promise<{ userId: string; decision: string }> {
-  if (USE_MOCK) { await delay(); return { userId, decision: input.decision }; }
+  if (USE_MOCK) throw new Error(`Deciding a KYC review ${NOT_IN_FIXTURE_MODE}`);
   return req<{ userId: string; decision: string }>(`/kyc/${userId}/decision`, { method: 'POST', body: JSON.stringify(input) });
 }
 export async function getComplianceDashboard(): Promise<ComplianceDashboard> {
@@ -374,7 +372,7 @@ export async function getComplianceDashboard(): Promise<ComplianceDashboard> {
 
 // Distributions (9.G)
 export async function scheduleDistribution(input: ScheduleDistributionInput): Promise<AdminDistribution> {
-  if (USE_MOCK) { await delay(); return { id: `dst-${Date.now()}`, assetId: input.assetId, assetName: ASSETS.find((a) => a.id === input.assetId)?.name ?? '', period: input.period, grossAmountKobo: input.grossAmountKobo, source: input.source, status: 'Draft', createdAt: new Date().toISOString() }; }
+  if (USE_MOCK) throw new Error(`Scheduling a distribution ${NOT_IN_FIXTURE_MODE}`);
   return req<AdminDistribution>('/distributions', { method: 'POST', money: true, body: JSON.stringify(input) });
 }
 export async function listDistributions(): Promise<AdminDistribution[]> {
@@ -386,11 +384,11 @@ export async function previewDistribution(id: string): Promise<DistributionPrevi
   return req<DistributionPreview>(`/distributions/${id}/preview`);
 }
 export async function submitDistribution(id: string, input: DistributionDecisionInput): Promise<AdminDistribution> {
-  if (USE_MOCK) { await delay(); const d = DISTRIBUTIONS.find((x) => x.id === id) ?? DISTRIBUTIONS[0]; return { ...d, status: 'PendingApproval', maker: 'current-user' }; }
+  if (USE_MOCK) throw new Error(`Submitting a distribution ${NOT_IN_FIXTURE_MODE}`);
   return req<AdminDistribution>(`/distributions/${id}/submit`, { method: 'POST', money: true, body: JSON.stringify(input) });
 }
 export async function approveDistribution(id: string, input: DistributionDecisionInput): Promise<AdminDistribution> {
-  if (USE_MOCK) { await delay(); const d = DISTRIBUTIONS.find((x) => x.id === id) ?? DISTRIBUTIONS[0]; return { ...d, status: 'Approved', checker: 'current-user', approvedAt: new Date().toISOString() }; }
+  if (USE_MOCK) throw new Error(`Approving a distribution ${NOT_IN_FIXTURE_MODE}`);
   return req<AdminDistribution>(`/distributions/${id}/approve`, { method: 'POST', money: true, body: JSON.stringify(input) });
 }
 
@@ -400,11 +398,11 @@ export async function listMarketListings(): Promise<SecondaryListing[]> {
   return req<SecondaryListing[]>('/market/listings');
 }
 export async function haltListing(id: string, reason: string): Promise<{ id: string; status: string }> {
-  if (USE_MOCK) { await delay(); return { id, status: 'halted' }; }
+  if (USE_MOCK) throw new Error(`Halting a listing ${NOT_IN_FIXTURE_MODE}`);
   return req<{ id: string; status: string }>(`/market/listings/${id}/halt`, { method: 'POST', body: JSON.stringify({ reason }) });
 }
 export async function setMarketControls(controls: MarketControls): Promise<MarketControls> {
-  if (USE_MOCK) { await delay(); return { ...controls }; }
+  if (USE_MOCK) throw new Error(`Updating market controls ${NOT_IN_FIXTURE_MODE}`);
   return req<MarketControls>('/market/controls', { method: 'PUT', body: JSON.stringify(controls) });
 }
 export async function getMarketControls(): Promise<MarketControls> {
@@ -418,7 +416,7 @@ export async function listSponsors(): Promise<AdminSponsor[]> {
   return req<AdminSponsor[]>('/sponsors');
 }
 export async function createSponsor(input: CreateSponsorInput): Promise<AdminSponsor> {
-  if (USE_MOCK) { await delay(); return { id: `spn-${Date.now()}`, ...input, trackRecord: input.trackRecord ?? 'New sponsor', kybStatus: 'pending', assetsSubmitted: 0, totalRaisedKobo: 0, submittedAt: new Date().toISOString() }; }
+  if (USE_MOCK) throw new Error(`Creating a sponsor ${NOT_IN_FIXTURE_MODE}`);
   return req<AdminSponsor>('/sponsors', { method: 'POST', body: JSON.stringify(input) });
 }
 
@@ -428,7 +426,7 @@ export async function getEscrow(): Promise<EscrowAccount[]> {
   return req<EscrowAccount[]>('/finance/escrow');
 }
 export async function refund(roundId: string, reason: string): Promise<RefundResult> {
-  if (USE_MOCK) { await delay(); return { roundId, refundedKobo: 245_000_000_00, investorCount: 312, status: 'PendingApproval', pendingApproval: true }; }
+  if (USE_MOCK) throw new Error(`Issuing a refund ${NOT_IN_FIXTURE_MODE}`);
   return req<RefundResult>(`/finance/refunds/${roundId}`, { method: 'POST', money: true, body: JSON.stringify({ reason }) });
 }
 export async function getFees(): Promise<FeeRevenue> {
@@ -442,7 +440,7 @@ export async function listDocuments(): Promise<DocumentRecord[]> {
   return req<DocumentRecord[]>('/documents');
 }
 export async function presignDocument(name: string, kind: string): Promise<PresignResult> {
-  if (USE_MOCK) { await delay(); return { uploadUrl: 'https://example.com/upload/mock', fileUrl: `https://example.com/docs/${encodeURIComponent(name)}`, expiresAt: fut(0.01) }; }
+  if (USE_MOCK) throw new Error(`Presigning a document upload ${NOT_IN_FIXTURE_MODE}`);
   return req<PresignResult>('/documents/presign', { method: 'POST', body: JSON.stringify({ name, kind }) });
 }
 

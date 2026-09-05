@@ -87,6 +87,13 @@ function authHeaders(): Record<string, string> {
 }
 const delay = (ms = 220) => new Promise((r) => setTimeout(r, ms));
 
+// Both writes below have real, verified live endpoints (see the header comment
+// above), so fixture mode has nothing to add and refuses loudly instead of
+// reporting a write it did not perform. See docs/audit/ADMIN_SIMULATED_WRITES.md.
+const NOT_IN_FIXTURE_MODE =
+  'is unavailable in fixture mode: this console will not report a write it did not perform. ' +
+  'Set NEXT_PUBLIC_BUSINESS_USE_MOCK=false to make this change against the live backend.';
+
 async function getJson<T>(path: string): Promise<T> {
   const res = await fetch(`${businessBase()}${path}`, { headers: authHeaders() });
   if (!res.ok) throw new Error(`Request failed (${res.status})`);
@@ -226,22 +233,13 @@ export async function get(id: string): Promise<Business> {
 
 // POST /api/business/admin/:id/approve → { data: business } (manual override → success terminal)
 export async function approve(id: string): Promise<Business> {
-  if (USE_MOCK) {
-    await delay();
-    const base = MOCK_BUSINESSES.find((b) => b.id === id) ?? MOCK_BUSINESSES[0];
-    const terminal: BusinessStatus = base.mode === 'verify_existing' ? 'verified' : 'registered';
-    return { ...base, status: terminal, registeredAt: terminal === 'registered' ? new Date().toISOString() : base.registeredAt, updatedAt: new Date().toISOString() };
-  }
+  if (USE_MOCK) throw new Error(`Approving a business ${NOT_IN_FIXTURE_MODE}`);
   return sendJson<Business>('POST', `/admin/${encodeURIComponent(id)}/approve`, {});
 }
 
 // POST /api/business/admin/:id/reject { reason } → { data: business }
 export async function reject(id: string, reason: string): Promise<Business> {
-  if (USE_MOCK) {
-    await delay();
-    const base = MOCK_BUSINESSES.find((b) => b.id === id) ?? MOCK_BUSINESSES[0];
-    return { ...base, status: 'rejected', metadata: { ...(base.metadata ?? {}), rejectReason: reason }, updatedAt: new Date().toISOString() };
-  }
+  if (USE_MOCK) throw new Error(`Rejecting a business ${NOT_IN_FIXTURE_MODE}`);
   return sendJson<Business>('POST', `/admin/${encodeURIComponent(id)}/reject`, { reason });
 }
 

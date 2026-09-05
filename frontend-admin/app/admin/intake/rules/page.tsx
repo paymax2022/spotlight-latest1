@@ -78,11 +78,11 @@ export default function RulesPage() {
     } finally { setBusy(false); }
   };
 
-  const onToggle = async (code: string) => {
+  const onToggle = async (code: string, nextActive: boolean) => {
     setBusy(true); setError(''); setMessage('');
     try {
-      await toggleRule(code);
-      setRules((rs) => rs.map((r) => (r.code === code ? { ...r, active: !r.active } : r)));
+      await toggleRule(code, nextActive);
+      setRules((rs) => rs.map((r) => (r.code === code ? { ...r, active: nextActive } : r)));
       setMessage(`Toggled rule ${code}.`);
     } catch (e) {
       setError(`Toggle failed: ${String(e)}`);
@@ -160,7 +160,7 @@ export default function RulesPage() {
                   <td style={tdCell}><Badge text={r.active ? 'active' : 'inactive'} color={r.active ? colors.success : colors.secondary} /></td>
                   <td style={tdCell}>
                     <Button variant="outline" sm disabled={!canManage} onClick={() => edit(r)}>Edit</Button>{' '}
-                    <Button variant="outline" sm disabled={busy || !canManage} onClick={() => void onToggle(r.code)}>{r.active ? 'Disable' : 'Enable'}</Button>
+                    <Button variant="outline" sm disabled={busy || !canManage} onClick={() => void onToggle(r.code, !r.active)}>{r.active ? 'Disable' : 'Enable'}</Button>
                   </td>
                 </tr>
               ))}

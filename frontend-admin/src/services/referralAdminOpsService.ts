@@ -52,6 +52,20 @@ function authHeaders(): Record<string, string> {
 }
 const delay = (ms = 240) => new Promise((r) => setTimeout(r, ms));
 
+// Verified against the real Go routes: backend/internal/referral/{risk,merchant,
+// analytics}/handlers.go. Functions with a real route throw NOT_IN_FIXTURE_MODE;
+// functions with no reachable route throw NO_BACKEND_YET instead, since
+// flipping the mock flag would not reach a working call either way. See
+// docs/audit/ADMIN_SIMULATED_WRITES.md — and the "Ambassador approval queue
+// (live)" section below, which already documents the same pattern for
+// decideApplication.
+const NOT_IN_FIXTURE_MODE =
+  'is unavailable in fixture mode: this console will not report a write it did not perform. ' +
+  'Set NEXT_PUBLIC_REFERRAL_USE_MOCK=false to make this change against the live backend.';
+const NO_BACKEND_YET =
+  'has no backend yet (see the comment on the live-mode call below). ' +
+  'This console cannot perform this action until that endpoint is built.';
+
 async function getJson<T>(path: string): Promise<T> {
   const res = await fetch(`${adminBase()}${path}`, { headers: authHeaders() });
   if (!res.ok) throw new Error(`Request failed (${res.status})`);
@@ -464,16 +478,23 @@ export async function listClawbacks(status?: string): Promise<ClawbackRecord[]> 
   return getJson<ClawbackRecord[]>(`/risk/clawbacks${status && status !== 'all' ? `?status=${encodeURIComponent(status)}` : ''}`);
 }
 export async function executeClawbackOps(rewardId: string, reason: string): Promise<{ ok: true }> {
-  if (USE_MOCK) { await delay(); return { ok: true }; }
-  return sendJson<{ ok: true }>('POST', `/risk/rewards/${rewardId}/clawback`, { reason }, true);
+  if (USE_MOCK) throw new Error(`Executing a clawback ${NOT_IN_FIXTURE_MODE}`);
+  // backend: POST /risk/clawbacks (risk.Handler.ExecuteClawback), NOT
+  // /risk/rewards/:id/clawback — the reward id and reason travel in the body as
+  // {reward_id, reason_code}, not a path param + {reason}.
+  return sendJson<{ ok: true }>('POST', '/risk/clawbacks', { reward_id: rewardId, reason_code: reason }, true);
 }
 export async function listReviewQueue(): Promise<ReviewItem[]> {
   if (USE_MOCK) { await delay(); return [...REVIEW_QUEUE]; }
   return getJson<ReviewItem[]>('/risk/review-queue');
 }
 export async function decideReview(id: string, decision: 'approved' | 'rejected', note: string): Promise<{ ok: true }> {
-  if (USE_MOCK) { await delay(); return { ok: true }; }
-  return sendJson<{ ok: true }>('POST', `/risk/review-queue/${id}/decide`, { decision, note }, true);
+  if (USE_MOCK) throw new Error(`Deciding a review ${NOT_IN_FIXTURE_MODE}`);
+  // backend: risk review decisions are split into discrete POST verbs, not a
+  // combined /decide route — POST /risk/review-queue/:id/{approve,reject}
+  // (risk.Handler.{ApproveReview,RejectReview}).
+  const verb = decision === 'approved' ? 'approve' : 'reject';
+  return sendJson<{ ok: true }>('POST', `/risk/review-queue/${id}/${verb}`, { note }, true);
 }
 
 // ─── COMPLIANCE (A-CMPL) ──────────────────────────────────────────────────────
@@ -516,8 +537,10 @@ export async function getReferralUser360(id: string): Promise<ReferralUser360 | 
   return getJson<ReferralUser360>(`/users/${id}`);
 }
 export async function interveneUser(input: InterveneInput): Promise<{ ok: true }> {
-  if (USE_MOCK) { await delay(); return { ok: true }; }
-  // Money-affecting / account-state mutation: audited + idempotent.
+  // No backend at all: the referral users admin surface has exactly one route,
+  // GET /users/:id/referral-360 (analytics.Handler.User360, a read) — no
+  // intervention/mutation action exists anywhere in backend/internal/referral.
+  if (USE_MOCK) throw new Error(`Intervening on a user ${NO_BACKEND_YET}`);
   return sendJson<{ ok: true }>('POST', `/users/${input.user_id}/intervene`, input, true);
 }
 
@@ -563,7 +586,12 @@ export async function listApplications(status?: string): Promise<AmbassadorAppli
   return getJson<AmbassadorApplication[]>(`/ambassadors/applications${status && status !== 'all' ? `?status=${encodeURIComponent(status)}` : ''}`);
 }
 export async function decideApplication(id: string, decision: 'approved' | 'rejected', note: string): Promise<{ ok: true }> {
-  if (USE_MOCK) { await delay(); return { ok: true }; }
+  // No backend at all for this shape — see the "Ambassador approval queue
+  // (live)" section below: setAmbassadorStatus() is the real, verified
+  // replacement (POST /network/ambassadors/:id/status), but it serves a
+  // differently-shaped row and is wired to a different page. Not repointed
+  // here for the same reason that comment gives.
+  if (USE_MOCK) throw new Error(`Deciding an ambassador application ${NO_BACKEND_YET}`);
   return sendJson<{ ok: true }>('POST', `/ambassadors/applications/${id}/decide`, { decision, note }, true);
 }
 export async function listNetworks(): Promise<AgentNetwork[]> {
@@ -585,7 +613,10 @@ export async function getMerchant(id: string): Promise<MerchantDetail | null> {
   return getJson<MerchantDetail>(`/merchants/${id}`);
 }
 export async function approveMerchantCampaign(merchantId: string, campaignId: string, note: string): Promise<{ ok: true }> {
-  if (USE_MOCK) { await delay(); return { ok: true }; }
+  // No "approve" action exists: the merchant admin surface has POST /campaigns
+  // (create), /campaigns/:mcid/fund, and /campaigns/:mcid/settle
+  // (merchant.Handler.{CreateCampaign,Fund,Settle}) — no separate approval step.
+  if (USE_MOCK) throw new Error(`Approving a merchant campaign ${NO_BACKEND_YET}`);
   return sendJson<{ ok: true }>('POST', `/merchants/${merchantId}/campaigns/${campaignId}/approve`, { note }, true);
 }
 
