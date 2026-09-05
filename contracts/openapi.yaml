@@ -13356,6 +13356,26 @@ paths:
 
   # ── Offers ─────────────────────────────────────────────────────────────
   /v1/marketplace/offers:
+    get:
+      operationId: mktListOffers
+      summary: Negotiation history for a listing
+      description: >-
+        Participant-scoped: the listing's seller sees every offer on it, any
+        other caller sees only their own.
+      tags: [Marketplace]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: listing_id, in: query, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: Offers on the listing, oldest first
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/MktOffer' }
+        '400': { $ref: '#/components/responses/MktBadRequest' }
+        '401': { $ref: '#/components/responses/MktUnauthorized' }
     post:
       operationId: mktCreateOffer
       summary: Make an offer on a listing

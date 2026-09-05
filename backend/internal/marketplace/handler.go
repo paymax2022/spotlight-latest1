@@ -269,16 +269,12 @@ func (h *Handler) CreateOffer(c *gin.Context) {
 	if !ok {
 		return
 	}
-	var body struct {
-		ListingID      string `json:"listingId"`
-		OfferPriceKobo int64  `json:"priceKobo"`
-		Message        string `json:"message"`
-	}
+	var body createOfferRequest // wire_requests.go — snake_case, per the contract
 	if err := c.ShouldBindJSON(&body); err != nil {
 		fail(c, fieldErr(CodeValidation, err.Error(), ""))
 		return
 	}
-	o, err := h.svc.CreateOffer(c.Request.Context(), uid, body.ListingID, body.OfferPriceKobo, body.Message)
+	o, err := h.svc.CreateOffer(c.Request.Context(), uid, body.listingID(), body.priceKobo(), body.Message)
 	if err != nil {
 		fail(c, err)
 		return
@@ -306,14 +302,12 @@ func (h *Handler) CounterOffer(c *gin.Context) {
 	if !ok {
 		return
 	}
-	var body struct {
-		OfferPriceKobo int64 `json:"priceKobo"`
-	}
+	var body counterOfferRequest
 	if err := c.ShouldBindJSON(&body); err != nil {
 		fail(c, fieldErr(CodeValidation, err.Error(), ""))
 		return
 	}
-	o, err := h.svc.CounterOffer(c.Request.Context(), uid, c.Param("id"), body.OfferPriceKobo)
+	o, err := h.svc.CounterOffer(c.Request.Context(), uid, c.Param("id"), body.priceKobo())
 	if err != nil {
 		fail(c, err)
 		return
@@ -342,9 +336,9 @@ func (h *Handler) ListOffers(c *gin.Context) {
 	if !ok {
 		return
 	}
-	listingID := c.Query("listingId")
+	listingID := listingIDQuery(c) // wire_requests.go
 	if listingID == "" {
-		fail(c, fieldErr(CodeValidation, "listingId is required", "listingId"))
+		fail(c, fieldErr(CodeValidation, "listing_id is required", "listing_id"))
 		return
 	}
 	offers, err := h.svc.ListOffersForListing(c.Request.Context(), uid, listingID)
