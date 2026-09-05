@@ -90,9 +90,7 @@
     "@playwright/test": "^1.56.0",
     "@types/react": "~19.1.10",
     "babel-preset-expo": "~54.0.10",
+    "eas-cli": "^23.2.0",
     "typescript": "~5.9.2"
-  },
-  "overrides": {
-    "browserslist": "^4.28.8"
   }
 }
