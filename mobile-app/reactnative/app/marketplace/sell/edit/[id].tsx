@@ -31,7 +31,7 @@ import {
 import AttributeFields, { normalizeSchema, missingRequired } from '@/features/marketplace/components/sell/AttributeFields';
 import { checkBannedPatterns, countWords } from '@/features/marketplace/components/sell/ComposerValidation';
 import FairPriceMeter from '@/features/marketplace/components/sell/FairPriceMeter';
-import PhotoStrip, { type ComposerPhoto } from '@/features/marketplace/components/sell/PhotoStrip';
+import PhotoStrip, { type ComposerPhoto, extensionForMime } from '@/features/marketplace/components/sell/PhotoStrip';
 import { HomeMenuButton } from '@/components/HomeMenu';
 
 const MIN_DESC_WORDS = 8;
@@ -111,11 +111,16 @@ export default function EditListingScreen() {
       uri: a.uri,
       phash: phashOf(a.uri),
       uploading: true,
+      // See PhotoStrip.ComposerPhoto.mimeType: a pick is not always a JPEG, and
+      // presigning/uploading under the wrong declared type stores real PNG bytes
+      // under a .jpg key with Content-Type: image/jpeg — native decoders reject it.
+      mimeType: a.mimeType || 'image/jpeg',
     }));
     setPhotos((prev) => [...prev, ...added]);
 
     for (const p of added) {
-      uploadListingImage({ uri: p.uri, name: `${p.id}.jpg`, mimeType: 'image/jpeg' })
+      const mimeType = p.mimeType || 'image/jpeg';
+      uploadListingImage({ uri: p.uri, name: `${p.id}.${extensionForMime(mimeType)}`, mimeType })
         .then((fileUrl) => setPhotos((prev) => prev.map((x) => (x.id === p.id ? { ...x, uploading: false, fileUrl } : x))))
         .catch(() => setPhotos((prev) => prev.map((x) => (x.id === p.id ? { ...x, uploading: false } : x))));
     }

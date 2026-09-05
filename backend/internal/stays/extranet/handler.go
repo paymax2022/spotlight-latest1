@@ -43,6 +43,12 @@ func (h *Handler) Register(g *gin.RouterGroup) {
 	// Self-list a new property (hotel/shortlet/apartment); grants the caller OWNER.
 	g.POST("/properties", h.CreateProperty)
 
+	// Onboarding & go-live verification — scoped to the caller's primary property
+	// (no :propertyId in these routes; ResolvePrimaryProperty picks it).
+	g.GET("/verification", h.GetVerificationStatus)
+	g.GET("/verification/business", h.GetBusinessVerification)
+	g.POST("/verification/submit", h.SubmitForReview)
+
 	// Property content.
 	g.GET("/properties/:propertyId", h.GetProperty)
 	g.PATCH("/properties/:propertyId", h.UpdateContent)

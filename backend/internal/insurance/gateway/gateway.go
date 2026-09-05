@@ -114,6 +114,26 @@ var ErrProviderFloatExhausted = fmt.Errorf("insurance gateway: provider prefunde
 // is never auto-retried, which is the safe default for silence.
 var ErrProviderRejected = fmt.Errorf("insurance gateway: provider rejected the request")
 
+// ValidationRejection is a provider refusal caused by the APPLICANT'S ANSWERS
+// rather than by us or by an outage — a missing NIN, a malformed email, a value
+// under the insurer's floor.
+//
+// It exists so feature code can tell "your form is wrong" apart from "the
+// provider is down" WITHOUT importing a specific adapter. Both unwrap to
+// ErrProviderRejected, but only this one is the member's to fix, and only this
+// one should be shown to them as form errors. Answering a rejected application
+// with a 500 tells the client nothing is actionable: the person sees a generic
+// failure, retypes everything, and hits the same wall.
+type ValidationRejection interface {
+	error
+	// Validation reports that this refusal is about the submitted values.
+	Validation() bool
+	// ValidationMessages returns the provider's per-field complaints, verbatim.
+	// Callers attribute each message to a field; they are NOT rewritten here,
+	// because the insurer's wording is what the applicant must satisfy.
+	ValidationMessages() []string
+}
+
 // Resolve returns the UnderwriterGateway and the per-product routing descriptor
 // for a Paymax product_code. The product → provider mapping AND the per-product
 // buy path / pricing model live entirely in the catalog data; this function

@@ -3,6 +3,7 @@ package policy
 import (
 	"errors"
 	"net/http"
+	"spotlight/backend/internal/insurance/gateway"
 	"strconv"
 
 	"github.com/gin-gonic/gin"
@@ -32,6 +33,25 @@ func mapErr(c *gin.Context, err error) {
 	case errors.Is(err, ErrBadState):
 		c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
 	default:
+		// A provider rejecting the ANSWERS is the applicant's to fix, so it is a
+		// 422 carrying the insurer's own wording — the client attributes each
+		// message to the field named in its leading token and shows it on that
+		// input. Everything else falls through to 500 below, because an outage or
+		// a scope problem is ours and retrying the same form will not help.
+		var vr gateway.ValidationRejection
+		if errors.As(err, &vr) && vr.Validation() {
+			msgs := vr.ValidationMessages()
+			c.JSON(http.StatusUnprocessableEntity, gin.H{"error": gin.H{
+				"code": "provider_validation",
+				// Both are sent: `fields` highlights the offending inputs, and
+				// `message` keeps every complaint visible — including any the
+				// expander could not attribute, which would otherwise vanish.
+				"code_detail": "insurer rejected the submitted answers",
+				"fields":      validationFields(msgs),
+				"message":     msgs,
+			}})
+			return
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 	}
 }

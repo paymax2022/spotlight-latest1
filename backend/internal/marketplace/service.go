@@ -269,6 +269,48 @@ func (s *Service) attachFullMedia(ctx context.Context, l *Listing) {
 	l.Media = media
 }
 
+// attachMediaForPage is attachFullMedia's batched counterpart, for a PAGE of
+// listings rather than one — the "My Listings" screen (SellerListings) reads
+// listing.media[] per card, same as the detail gallery, not thumb_url like
+// search/browse cards do. One extra query for the whole page, like attachThumbs.
+func (s *Service) attachMediaForPage(ctx context.Context, listings []*Listing) {
+	if len(listings) == 0 || s.thumbs == nil || !s.thumbs.Configured() {
+		return
+	}
+	ids := make([]string, 0, len(listings))
+	for _, l := range listings {
+		if l != nil {
+			ids = append(ids, l.ID)
+		}
+	}
+	rowsByListing, err := s.repo.MediaForListings(ctx, ids)
+	if err != nil {
+		log.Printf("[marketplace] page media lookup failed for %d listing(s): %v", len(ids), err)
+		return
+	}
+	for _, l := range listings {
+		if l == nil {
+			continue
+		}
+		rows := rowsByListing[l.ID]
+		if len(rows) == 0 {
+			continue
+		}
+		media := make([]ListingMediaItem, 0, len(rows))
+		for _, r := range rows {
+			url := s.presignThumb(r.Key)
+			if url == "" {
+				continue
+			}
+			media = append(media, ListingMediaItem{
+				ID: r.ID, URLThumb: url, URLCard: url, URLFull: url,
+				Blurhash: r.Blurhash, SortOrder: r.SortOrder,
+			})
+		}
+		l.Media = media
+	}
+}
+
 func (s *Service) Search(ctx context.Context, req any) (any, error) {
 	if s.searcher != nil {
 		return s.searcher.Search(ctx, req)
@@ -373,11 +415,14 @@ func (s *Service) SellerListings(ctx context.Context, sellerID string, limit, of
 	}
 	// This is the "My listings" screen — the one a seller checks right after
 	// uploading photos, so it is the last place that should show a placeholder.
+	// attachThumbs covers thumb_url; attachMediaForPage additionally covers
+	// media[], which is what the screen actually reads for its card photo.
 	ptrs := make([]*Listing, len(ls))
 	for i := range ls {
 		ptrs[i] = &ls[i]
 	}
 	s.attachThumbs(ctx, ptrs)
+	s.attachMediaForPage(ctx, ptrs)
 	return ls, nil
 }
 
@@ -404,13 +449,18 @@ func (s *Service) VerifyBusiness(ctx context.Context, userID string) error {
 
 // CreateOffer places a pending offer on a listing.
 func (s *Service) CreateOffer(ctx context.Context, buyerID, listingID string, offerKobo int64, message string) (*Offer, error) {
-	// Guard before the fetch. offerKobo is already checked below, but listingID
-	// was not, so an absent or misspelled field — listing_id instead of listingId
-	// is the easy slip, since the RESPONSE is camelCase — reached the repository
-	// as an empty string and surfaced as 500 "invalid input syntax for type uuid".
-	// A missing field is the caller's error and should name the field.
+	// Guard before the fetch: an empty listingID reached the repository and
+	// surfaced as 500 "invalid input syntax for type uuid".
+	//
+	// This guard was originally added believing the caller was misspelling
+	// listingId as listing_id. That had it backwards — snake_case IS the wire
+	// name (contracts/openapi.yaml), and the mobile client cannot send anything
+	// else, since it snake-cases every outbound body. The real fault was the
+	// handler reading camelCase, so this guard converted a 500 into a 400 and
+	// left the endpoint just as unreachable. Handler fixed; guard kept, because
+	// an empty listing ID is still a caller error worth naming.
 	if strings.TrimSpace(listingID) == "" {
-		return nil, fieldErr(CodeValidation, "listingId is required", "listingId")
+		return nil, fieldErr(CodeValidation, "listing_id is required", "listing_id")
 	}
 	l, err := s.repo.GetListing(ctx, listingID)
 	if err != nil {

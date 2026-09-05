@@ -99,8 +99,13 @@ export async function uploadListingImage(file: { uri: string; name: string; mime
       headers: { 'Content-Type': file.mimeType },
     });
     if (!res.ok) throw new Error(`Image upload failed (${res.status})`);
+    return fileUrl;
   }
-  return fileUrl;
+  // Mock mode never actually stores anything — the mock fileUrl is a fake
+  // object key ("marketplace/listings/…") with nothing behind it, so using it
+  // as the mediaId made every mock-created listing render an unloadable image.
+  // The local picked uri IS the photo, so return that instead.
+  return file.uri;
 }
 
 // ─── Listing lifecycle ────────────────────────────────────────────────────────

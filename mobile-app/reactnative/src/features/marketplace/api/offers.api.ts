@@ -59,16 +59,20 @@ export async function sendMessage(threadId: string, text: string): Promise<M.Moc
 // ── Offers (first-class) ─────────────────────────────────────────────────────
 export async function listOffers(listingId: string): Promise<Offer[]> {
   if (MKT_USE_MOCK) return M.mockListOffers(listingId);
-  // Live: GET /offers?listingId — participant-scoped negotiation history.
+  // Live: GET /offers?listing_id — participant-scoped negotiation history.
+  // mktGet snake-cases params, so `listingId` here goes out as `listing_id`.
   return arr(await mktGet<Offer[]>('/offers', { listingId }));
 }
 
-/** POST /offers {listingId, priceKobo, message?} */
+/** POST /offers {listing_id, offer_price_kobo, message?} — mktPost snake-cases the body. */
 export async function createOffer(input: CreateOfferInput): Promise<Offer> {
   if (MKT_USE_MOCK) return M.mockCreateOffer(input);
   return mktPost<Offer>('/offers', {
     listingId: input.listingId,
-    priceKobo: input.offerPriceKobo,
+    // offerPriceKobo, not priceKobo: the contract field is offer_price_kobo
+    // (MktOfferCreateRequest). Renaming it here sent price_kobo, which the
+    // handler did not read.
+    offerPriceKobo: input.offerPriceKobo,
     message: input.message,
   });
 }
@@ -79,10 +83,10 @@ export async function acceptOffer(offerId: string): Promise<Offer> {
   return mktPost<Offer>(`/offers/${offerId}/accept`);
 }
 
-/** POST /offers/:id/counter {priceKobo} */
+/** POST /offers/:id/counter {offer_price_kobo} */
 export async function counterOffer(offerId: string, priceKobo: number): Promise<Offer> {
   if (MKT_USE_MOCK) return M.mockCounterOffer(offerId, priceKobo);
-  return mktPost<Offer>(`/offers/${offerId}/counter`, { priceKobo });
+  return mktPost<Offer>(`/offers/${offerId}/counter`, { offerPriceKobo: priceKobo });
 }
 
 /** POST /offers/:id/decline */

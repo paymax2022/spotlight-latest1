@@ -304,6 +304,17 @@ func (e *APIError) Error() string {
 // surface these to the member as form errors.
 func (e *APIError) Validation() bool { return e.StatusCode == http.StatusBadRequest }
 
+// ValidationMessages satisfies gateway.ValidationRejection, so the policy layer
+// can surface these as form errors without importing this package. Returns nil
+// when this is not a validation rejection, so a transport or entitlement failure
+// can never be mistaken for something the applicant can fix.
+func (e *APIError) ValidationMessages() []string {
+	if !e.Validation() {
+		return nil
+	}
+	return e.Messages
+}
+
 // ════════════════════════════════════════════════════════════════════════════
 // CATALOG — GET /products/get-all-products
 // ════════════════════════════════════════════════════════════════════════════

@@ -178,6 +178,37 @@ func (r *Repository) ListMediaForListing(ctx context.Context, listingID string) 
 	return out, rows.Err()
 }
 
+// MediaForListings is the batched counterpart of ListMediaForListing — every
+// photo, for a PAGE of listings, in one query. For "My Listings" (SellerListings):
+// that screen renders a card per listing straight after the seller uploads
+// photos (same "must not show a placeholder" reasoning as attachThumbs), but
+// unlike search/browse it reads listing.media[] like the detail gallery does,
+// not thumb_url — so neither existing attach path covers it.
+func (r *Repository) MediaForListings(ctx context.Context, listingIDs []string) (map[string][]mediaRow, error) {
+	out := make(map[string][]mediaRow, len(listingIDs))
+	if len(listingIDs) == 0 {
+		return out, nil
+	}
+	rows, err := r.db.Query(ctx, `
+		SELECT listing_id, id, url_thumb, blurhash, sort_order
+		FROM public.mkt_listing_media
+		WHERE listing_id = ANY($1)
+		ORDER BY listing_id, sort_order, created_at`, listingIDs)
+	if err != nil {
+		return nil, wrapInternal("list listing media for page", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var listingID string
+		var m mediaRow
+		if err := rows.Scan(&listingID, &m.ID, &m.Key, &m.Blurhash, &m.SortOrder); err != nil {
+			return nil, wrapInternal("scan listing media for page", err)
+		}
+		out[listingID] = append(out[listingID], m)
+	}
+	return out, rows.Err()
+}
+
 // AppendListingMedia adds photos to an EXISTING listing, starting at
 // startSortOrder — the edit-screen counterpart of InsertListingMedia (create),
 // which always starts a fresh listing's photos at 0. Kept separate rather than

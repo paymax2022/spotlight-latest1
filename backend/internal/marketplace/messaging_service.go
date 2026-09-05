@@ -23,7 +23,7 @@ func (s *Service) StartOrGetThread(ctx context.Context, buyerID, listingID, firs
 		return nil, ErrUnauthenticated
 	}
 	if strings.TrimSpace(listingID) == "" {
-		return nil, fieldErr(CodeValidation, "listingId is required", "listingId")
+		return nil, fieldErr(CodeValidation, "listing_id is required", "listing_id")
 	}
 	tr, err := s.repo.GetOrCreateThread(ctx, listingID, buyerID)
 	if err != nil {
