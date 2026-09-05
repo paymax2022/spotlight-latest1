@@ -901,6 +901,35 @@ func (r *Repository) ActiveBoostsForListing(ctx context.Context, listingID strin
 	return out, rows.Err()
 }
 
+// BoostsAwaitingRefund returns boosts stranded mid-rejection: moved to
+// rejected_with_reason but never stamped with a refund_ref.
+//
+// That pair IS the durable record of "refund owed". RejectBoost writes the status
+// first and posts the reversal second, so a ledger failure between the two leaves
+// exactly this shape — the seller no longer promoted, and still charged. Nothing
+// else produces it for long: a healthy rejection passes through the state inside
+// one call, and the retry is idempotent if it races that window.
+func (r *Repository) BoostsAwaitingRefund(ctx context.Context, limit int) ([]Boost, error) {
+	rows, err := r.db.Query(ctx, `SELECT `+boostCols+`
+		FROM public.mkt_boosts
+		WHERE status = 'rejected_with_reason' AND refund_ref IS NULL
+		ORDER BY created_at
+		LIMIT $1`, limit)
+	if err != nil {
+		return nil, wrapInternal("boosts awaiting refund", err)
+	}
+	defer rows.Close()
+	var out []Boost
+	for rows.Next() {
+		b, serr := scanBoost(rows)
+		if serr != nil {
+			return nil, wrapInternal("scan boost", serr)
+		}
+		out = append(out, *b)
+	}
+	return out, rows.Err()
+}
+
 // GetBoost loads a boost by id.
 func (r *Repository) GetBoost(ctx context.Context, id string) (*Boost, error) {
 	row := r.db.QueryRow(ctx, `SELECT `+boostCols+` FROM public.mkt_boosts WHERE id=$1`, id)

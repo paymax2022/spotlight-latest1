@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"math"
 	"time"
 
@@ -255,6 +256,50 @@ func (s *Service) RejectBoost(ctx context.Context, adminID, boostID, reasonCode 
 	})
 	s.notifySafe(ctx, b.SellerID, "mkt.boost.refunded", "Your boost was rejected and refunded: "+reasonCode)
 	return b, nil
+}
+
+// RetryStuckBoostRefunds completes refunds that RejectBoost started and could not
+// finish. Cron helper, alongside ExpireDueListings/CompleteDueBoosts. Returns the
+// number of boosts brought to auto_refunded.
+//
+// WHY THIS EXISTS. RejectBoost sets the status BEFORE posting the reversal, so a
+// ledger failure between the two strands the boost in rejected_with_reason with no
+// refund_ref: the seller has stopped being promoted and is still charged. The
+// §8 cascade in RejectListing is deliberately best-effort — a refund hiccup must
+// never stop a policy-violating listing being pulled — but "best effort" was the
+// whole story: the only trace was a log line, with no retry and no reconciliation,
+// so the money simply stayed with the platform until someone read the logs.
+//
+// Safe to run concurrently with a healthy rejection passing through the same
+// state. The refund reference is derived from the boost id, and PostReversal
+// treats a duplicate as success, so the ledger effect happens once however many
+// times this runs; the status move is a compare-and-set from
+// rejected_with_reason, so only one writer wins.
+func (s *Service) RetryStuckBoostRefunds(ctx context.Context) (int, error) {
+	stuck, err := s.repo.BoostsAwaitingRefund(ctx, 200)
+	if err != nil {
+		return 0, err
+	}
+	fixed := 0
+	for i := range stuck {
+		b := stuck[i]
+		refundRef := boostRefundKey(b.ID)
+		if b.PriceKobo > 0 {
+			if _, perr := s.postBoostRefund(ctx, b.SellerID, b.ID, b.PriceKobo); perr != nil {
+				// Still owed. Leave the row exactly as it is so the next run
+				// retries it — clearing or advancing it here would lose the only
+				// record that the seller is owed money.
+				log.Printf("[marketplace] stuck boost refund %s still failing: %v", b.ID, perr)
+				continue
+			}
+		}
+		if serr := s.repo.SetBoostStatus(ctx, b.ID, BoostRejectedWithReason, BoostAutoRefunded, nil, &refundRef); serr != nil {
+			log.Printf("[marketplace] stuck boost %s refunded but status move failed: %v", b.ID, serr)
+			continue
+		}
+		fixed++
+	}
+	return fixed, nil
 }
 
 // UpsertBoostPackage creates or edits a boost package's price/duration/weight/
