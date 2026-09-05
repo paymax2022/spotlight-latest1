@@ -37,10 +37,7 @@ func offersRouter(svc *mkt.Service, uid string) *gin.Engine {
 	return r
 }
 
-// Named TestLiveDB_* deliberately: CI's anti-skip canary and the live-DB job
-// both select with -run 'TestLiveDB_', so a _LiveDB SUFFIX name is excluded
-// from them and can skip forever while the package still reports ok.
-func TestLiveDB_OffersHTTP_ClientWireShape(t *testing.T) {
+func TestOffersHTTP_ClientWireShape_LiveDB(t *testing.T) {
 	ctx := context.Background()
 	_, pool := liveConnectService(t)
 	svc, seller, listingID := seedActiveOwnedListing(t, ctx)

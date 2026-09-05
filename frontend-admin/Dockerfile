@@ -50,19 +50,14 @@ ENV NODE_ENV=production
 # Local default only -- Railway injects PORT at runtime and overrides this.
 ENV PORT=3001
 
-COPY --from=builder --chown=node:node /app/public ./public
-COPY --from=builder --chown=node:node /app/.next ./.next
-COPY --from=builder --chown=node:node /app/node_modules ./node_modules
-COPY --from=builder --chown=node:node /app/package*.json ./
+COPY --from=builder /app/public ./public
+COPY --from=builder /app/.next ./.next
+COPY --from=builder /app/node_modules ./node_modules
+COPY --from=builder /app/package*.json ./
 # `next start` reads next.config.mjs at runtime; without it the server silently
 # falls back to Next defaults.
-COPY --from=builder --chown=node:node /app/next.config.mjs ./
+COPY --from=builder /app/next.config.mjs ./
 
-# Run as the built-in non-root `node` user (trivy DS-0002). The COPYs above use
-# --chown because Next writes to .next/cache at runtime; root-owned files would
-# turn a clean image into a runtime permission failure. The service binds a
-# high port, so nothing here needs privilege.
-USER node
 EXPOSE 8080
 
 # Bind whatever port Railway assigns. The package.json `start` script hardcodes

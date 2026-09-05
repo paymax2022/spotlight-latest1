@@ -58,8 +58,6 @@
     "react-modal-video": {
       "react": "$react",
       "react-dom": "$react-dom"
-    },
-    "browserslist": "^4.28.8",
-    "fast-uri": "^3.1.7"
+    }
   }
 }
