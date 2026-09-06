@@ -76,6 +76,7 @@ export default function DealRoom() {
   const alreadyReviewed = !!existingReviewQ.data;
   const [reviewOpen, setReviewOpen] = useState(false);
   const [reviewRating, setReviewRating] = useState(0);
+  const [reviewProductRating, setReviewProductRating] = useState(0);
   const [reviewText, setReviewText] = useState('');
 
   const handleMarkMet = async () => {
@@ -91,11 +92,17 @@ export default function DealRoom() {
   const handleSubmitReview = () => {
     if (reviewRating < 1) return;
     submitReview.mutate(
-      { rating: reviewRating, tags: [], text: reviewText.trim() || undefined },
+      {
+        rating: reviewRating,
+        productQualityRating: reviewProductRating > 0 ? reviewProductRating : undefined,
+        tags: [],
+        text: reviewText.trim() || undefined,
+      },
       {
         onSuccess: () => {
           setReviewOpen(false);
           setReviewRating(0);
+          setReviewProductRating(0);
           setReviewText('');
         },
       },
@@ -333,6 +340,18 @@ export default function DealRoom() {
                     size={32}
                     color={n <= reviewRating ? MarketColors.brand : MarketColors.border}
                     fill={n <= reviewRating ? MarketColors.brand : 'transparent'}
+                  />
+                </Pressable>
+              ))}
+            </View>
+            <Text style={styles.reviewSub}>Was the item as described?</Text>
+            <View style={styles.starRow}>
+              {[1, 2, 3, 4, 5].map((n) => (
+                <Pressable key={n} onPress={() => setReviewProductRating(n)} hitSlop={6} accessibilityLabel={`${n} star, item quality`}>
+                  <Star
+                    size={26}
+                    color={n <= reviewProductRating ? MarketColors.brand : MarketColors.border}
+                    fill={n <= reviewProductRating ? MarketColors.brand : 'transparent'}
                   />
                 </Pressable>
               ))}

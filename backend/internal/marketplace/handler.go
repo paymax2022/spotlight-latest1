@@ -229,6 +229,19 @@ func (h *Handler) ResumeListing(c *gin.Context) {
 }
 
 // MarkSoldListing POST /listings/:id/mark-sold
+func (h *Handler) RenewListing(c *gin.Context) {
+	uid, ok := requireUser(c)
+	if !ok {
+		return
+	}
+	l, err := h.svc.RenewListing(c.Request.Context(), uid, c.Param("id"))
+	if err != nil {
+		fail(c, err)
+		return
+	}
+	respond(c, http.StatusOK, l)
+}
+
 func (h *Handler) MarkSoldListing(c *gin.Context) {
 	uid, ok := requireUser(c)
 	if !ok {
@@ -573,6 +586,40 @@ func (h *Handler) SellerProfile(c *gin.Context) {
 func (h *Handler) SellerListings(c *gin.Context) {
 	limit, offset := pageParams(c)
 	ls, err := h.svc.SellerListings(c.Request.Context(), c.Param("id"), limit, offset)
+	if err != nil {
+		fail(c, err)
+		return
+	}
+	respond(c, http.StatusOK, ls)
+}
+
+// MyListings GET /listings/mine (authenticated) — the seller's own "My
+// Listings" screen, every status. SellerListings above is the public
+// storefront counterpart and only ever returns active listings; this is the
+// one place a seller sees their drafts/pending_review/paused/removed rows.
+// CancelBoost POST /boosts/:id/cancel (seller) — stops the caller's own active
+// boost early, with a prorated refund. See RejectBoost (admin group) for the
+// full-refund policy-violation counterpart.
+func (h *Handler) CancelBoost(c *gin.Context) {
+	uid, ok := requireUser(c)
+	if !ok {
+		return
+	}
+	b, err := h.svc.CancelBoost(c.Request.Context(), uid, c.Param("id"))
+	if err != nil {
+		fail(c, err)
+		return
+	}
+	respond(c, http.StatusOK, b)
+}
+
+func (h *Handler) MyListings(c *gin.Context) {
+	uid, ok := requireUser(c)
+	if !ok {
+		return
+	}
+	limit, offset := pageParams(c)
+	ls, err := h.svc.MyListingsForSeller(c.Request.Context(), uid, limit, offset)
 	if err != nil {
 		fail(c, err)
 		return

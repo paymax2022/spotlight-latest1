@@ -488,6 +488,41 @@ func (s *Service) ResumeListing(ctx context.Context, sellerID, id string) (*List
 	return s.sellerListingTransition(ctx, sellerID, id, ListingPaused, ListingActive)
 }
 
+// RenewListing (seller) expired → active, pushing expires_at out another 60
+// days. The FSM has always documented expired → active as "renew"
+// (fsm_listing.go), and the mobile client has called POST /listings/:id/renew
+// since the Sell group was built, but no handler/route/service method ever
+// existed for it — every renew attempt on an expired listing 404ed, same class
+// of gap as MarkSoldListing's history (see its doc comment).
+func (s *Service) RenewListing(ctx context.Context, sellerID, id string) (*Listing, error) {
+	l, err := s.repo.GetListing(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if l.SellerID != sellerID {
+		return nil, ErrForbidden
+	}
+	// Renew is specifically expired → active. guardListingTransition(l.Status,
+	// ListingActive) alone would also pass for draft/pending_review (their own,
+	// differently-gated paths to active) — checking the FROM status explicitly
+	// here is what keeps renew from becoming a moderation bypass.
+	if l.Status != ListingExpired {
+		return nil, newErr(422, CodeListingNotActive, "only an expired listing can be renewed")
+	}
+	if err := guardListingTransition(l.Status, ListingActive); err != nil {
+		return nil, err
+	}
+	if err := s.repo.RenewListing(ctx, id, l.Status, ListingActive); err != nil {
+		return nil, err
+	}
+	l.Status = ListingActive
+	l.ExpiresAt = time.Now().Add(60 * 24 * time.Hour)
+	if op, emit := listingOutboxOp(ListingActive); emit {
+		_ = s.repo.InsertOutbox(ctx, nil, id, op, s.searchPayload(ctx, l))
+	}
+	return l, nil
+}
+
 // DeleteListing (owner) any → removed_user, removing from search.
 func (s *Service) DeleteListing(ctx context.Context, sellerID, id string) (*Listing, error) {
 	l, err := s.repo.GetListing(ctx, id)

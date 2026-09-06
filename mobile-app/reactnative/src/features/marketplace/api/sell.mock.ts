@@ -632,3 +632,24 @@ export async function mockGetBoost(id: string): Promise<Boost> {
   if (!b) throw Object.assign(new Error('Boost not found'), { code: 'BOOST_NOT_FOUND', status: 404 });
   return b;
 }
+
+/** Mirrors the backend's proratedBoostRefund: the fraction of the price for
+ *  time remaining between now and endsAt, out of the full startsAt→endsAt
+ *  window. Mock-only stand-in so the Stop-boost UI is exercisable offline. */
+export async function mockCancelBoost(id: string): Promise<Boost> {
+  await mockDelay(320);
+  const b = boostStore.get(id);
+  if (!b) throw Object.assign(new Error('Boost not found'), { code: 'BOOST_NOT_FOUND', status: 404 });
+  if (b.status !== 'active') {
+    throw Object.assign(new Error(`cannot cancel a boost in status ${b.status}`), { code: 'INVALID_BOOST_TRANSITION', status: 409 });
+  }
+  let refundedKobo = 0;
+  if (b.startsAt && b.endsAt) {
+    const total = new Date(b.endsAt).getTime() - new Date(b.startsAt).getTime();
+    const remaining = Math.max(0, Math.min(total, new Date(b.endsAt).getTime() - Date.now()));
+    if (total > 0) refundedKobo = Math.floor(b.priceKobo * (remaining / total));
+  }
+  const cancelled: Boost = { ...b, status: 'auto_refunded', rejectionReasonCode: 'seller_cancelled', refundedKobo };
+  boostStore.set(id, cancelled);
+  return cancelled;
+}

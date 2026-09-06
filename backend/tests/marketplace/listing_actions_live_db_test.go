@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -111,5 +112,59 @@ func TestListingActions_PauseThenResume(t *testing.T) {
 	}
 	if resumed.Status != mkt.ListingActive {
 		t.Errorf("status = %q, want active", resumed.Status)
+	}
+}
+
+// Renew had no route, handler, or service method at all — the FSM has always
+// documented expired → active as "renew" (fsm_listing.go) and the mobile
+// client has called POST /listings/:id/renew since the Sell group was built,
+// but nothing on the backend ever implemented it, so every renew 404ed and an
+// expired listing had no way back to active. Same class of gap as MarkSold's
+// history (see its doc comment above).
+func TestListingActions_Renew(t *testing.T) {
+	ctx := context.Background()
+	_, pool := liveConnectService(t)
+	svc, seller, id := seedActiveOwnedListing(t, ctx)
+
+	if _, err := pool.Exec(ctx, `UPDATE public.mkt_listings SET status='expired', expires_at=now()-interval '1 day' WHERE id=$1`, id); err != nil {
+		t.Fatalf("stage expired: %v", err)
+	}
+
+	renewed, err := svc.RenewListing(ctx, seller, id)
+	if err != nil {
+		t.Fatalf("RenewListing: %v", err)
+	}
+	if renewed.Status != mkt.ListingActive {
+		t.Errorf("status = %q, want active", renewed.Status)
+	}
+	if !renewed.ExpiresAt.After(time.Now().Add(59 * 24 * time.Hour)) {
+		t.Errorf("expires_at = %v, want pushed out ~60 days from renewal, not left in the past", renewed.ExpiresAt)
+	}
+}
+
+// A listing that is NOT expired (e.g. still active, or merely paused) must not
+// be renewable — renew is specifically the expired → active edge, not a
+// generic "force to active" escape hatch that could bypass moderation on a
+// draft/pending_review listing.
+func TestListingActions_RenewRejectsNonExpired(t *testing.T) {
+	ctx := context.Background()
+	svc, seller, id := seedActiveOwnedListing(t, ctx)
+
+	if _, err := svc.RenewListing(ctx, seller, id); err == nil {
+		t.Fatal("renewed a listing that was still active")
+	}
+}
+
+// Only the owner may renew it.
+func TestListingActions_RenewRejectsNonOwner(t *testing.T) {
+	ctx := context.Background()
+	svc, _, id := seedActiveOwnedListing(t, ctx)
+	_, pool := liveConnectService(t)
+
+	if _, err := pool.Exec(ctx, `UPDATE public.mkt_listings SET status='expired', expires_at=now()-interval '1 day' WHERE id=$1`, id); err != nil {
+		t.Fatalf("stage expired: %v", err)
+	}
+	if _, err := svc.RenewListing(ctx, uuid.NewString(), id); err == nil {
+		t.Fatal("a stranger renewed someone else's listing")
 	}
 }

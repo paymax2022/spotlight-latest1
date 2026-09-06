@@ -242,11 +242,12 @@ func (s *Service) RejectBoost(ctx context.Context, adminID, boostID, reasonCode 
 			return nil, err
 		}
 	}
-	if err := s.repo.SetBoostStatus(ctx, boostID, BoostRejectedWithReason, BoostAutoRefunded, nil, &refundRef); err != nil {
+	if err := s.repo.setBoostStatusWithRefund(ctx, boostID, BoostRejectedWithReason, BoostAutoRefunded, nil, &refundRef, &b.PriceKobo); err != nil {
 		return nil, err
 	}
 	b.Status = BoostAutoRefunded
 	b.RefundRef = &refundRef
+	b.RefundedKobo = &b.PriceKobo
 
 	_ = s.writeAudit(ctx, AuditEntry{
 		AdminID: adminID, Action: "mkt.boost.reject", TargetType: "boost", TargetID: boostID, ReasonCode: reasonCode,
@@ -255,6 +256,93 @@ func (s *Service) RejectBoost(ctx context.Context, adminID, boostID, reasonCode 
 	})
 	s.notifySafe(ctx, b.SellerID, "mkt.boost.refunded", "Your boost was rejected and refunded: "+reasonCode)
 	return b, nil
+}
+
+// CancelBoost (seller) stops their own active boost early: active →
+// cancelled_by_seller → auto_refunded, with a PRORATED refund for the unused
+// remainder of the period. The seller-facing counterpart to RejectBoost
+// (admin, mandatory reason code, FULL refund, policy violation) — same
+// "stop it and pay back the ledger" shape, but the seller chose this, not a
+// moderator, so no reason code is required and the refund reflects only the
+// days not yet delivered.
+func (s *Service) CancelBoost(ctx context.Context, sellerID, boostID string) (*Boost, error) {
+	b, err := s.repo.GetBoost(ctx, boostID)
+	if err != nil {
+		return nil, err
+	}
+	if b.SellerID != sellerID {
+		return nil, ErrForbidden
+	}
+	if err := guardBoostTransition(b.Status, BoostCancelledBySeller); err != nil {
+		return nil, err
+	}
+	from := b.Status
+	cancelReason := "seller_cancelled"
+	if err := s.repo.SetBoostStatus(ctx, boostID, from, BoostCancelledBySeller, &cancelReason, nil); err != nil {
+		return nil, err
+	}
+
+	refundKobo := proratedBoostRefund(b, time.Now())
+	refundRef := boostRefundKey(boostID)
+	if refundKobo > 0 {
+		if _, err := s.postBoostRefund(ctx, b.SellerID, boostID, refundKobo); err != nil {
+			return nil, err
+		}
+	}
+	if err := s.repo.setBoostStatusWithRefund(ctx, boostID, BoostCancelledBySeller, BoostAutoRefunded, nil, &refundRef, &refundKobo); err != nil {
+		return nil, err
+	}
+	b.Status = BoostAutoRefunded
+	b.RefundRef = &refundRef
+	b.RefundedKobo = &refundKobo
+
+	_ = s.writeAudit(ctx, AuditEntry{
+		AdminID: sellerID, Action: "mkt.boost.cancel", TargetType: "boost", TargetID: boostID, ReasonCode: cancelReason,
+		BeforeState: map[string]any{"status": string(from)},
+		AfterState:  map[string]any{"status": string(BoostAutoRefunded), "refund_kobo": refundKobo},
+	})
+	s.notifySafe(ctx, b.SellerID, "mkt.boost.cancelled", fmt.Sprintf("Your boost was cancelled and %s refunded for the unused days.", formatKobo(refundKobo)))
+	return b, nil
+}
+
+// proratedBoostRefund computes what a seller gets back for cancelling an
+// active boost early: the fraction of the ORIGINAL price corresponding to the
+// time between now and ends_at, out of the boost's total starts_at→ends_at
+// window. Pure and DB-free so the money math itself has an executed test
+// independent of CancelBoost's DB/ledger plumbing (mirrors customBoostDuration
+// above).
+//
+// Rounds DOWN (integer division truncates) — a platform financial calculation
+// must never round in the payer's favor by accident. Clamped to [0, PriceKobo]
+// so clock skew or a boost already past ends_at can never refund more than
+// was paid or go negative.
+func proratedBoostRefund(b *Boost, now time.Time) int64 {
+	if b == nil || b.StartsAt == nil || b.EndsAt == nil || b.PriceKobo <= 0 {
+		return 0
+	}
+	total := b.EndsAt.Sub(*b.StartsAt)
+	if total <= 0 {
+		return 0
+	}
+	remaining := b.EndsAt.Sub(now)
+	if remaining <= 0 {
+		return 0
+	}
+	if remaining > total {
+		remaining = total
+	}
+	refund := int64(float64(b.PriceKobo) * (float64(remaining) / float64(total)))
+	if refund > b.PriceKobo {
+		refund = b.PriceKobo
+	}
+	return refund
+}
+
+// formatKobo renders kobo as a naira string for a user-facing notification
+// message ONLY — never used for money math, which stays integer kobo
+// throughout (CLAUDE.md money rule).
+func formatKobo(kobo int64) string {
+	return fmt.Sprintf("₦%.2f", float64(kobo)/100)
 }
 
 // UpsertBoostPackage creates or edits a boost package's price/duration/weight/

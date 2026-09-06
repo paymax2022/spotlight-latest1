@@ -60,6 +60,7 @@ export type BoostStatus =
   | 'active'
   | 'completed'
   | 'rejected_with_reason'
+  | 'cancelled_by_seller'
   | 'auto_refunded';
 
 /** KYCTier in model.go — trust gate for the buy/sell CTAs. */
@@ -285,6 +286,10 @@ export interface Review {
   revieweeId?: string;
   reviewerName?: string;
   rating: number | null;
+  /** the second sub-score: how the buyer rated the ITEM, separate from
+   *  `rating` (the overall/counterparty score). Null when skipped, or on a
+   *  review submitted before this field existed. */
+  productQualityRating?: number | null;
   comment: string | null;
   tags?: string[];
   sellerReply: string | null;
@@ -410,6 +415,10 @@ export interface Boost {
   weight: number;
   status: BoostStatus;
   rejectionReasonCode: string | null;
+  /** the ACTUAL amount refunded — not always priceKobo. RejectBoost (admin)
+   *  refunds in full; a seller's own cancelBoost prorates for the unused
+   *  days. Only present once status is 'auto_refunded'. */
+  refundedKobo?: number | null;
   startsAt: string | null;
   endsAt: string | null;
   createdAt?: string;

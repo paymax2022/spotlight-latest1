@@ -130,6 +130,14 @@ export default function SellerProfileScreen() {
                     ))}
                   </View>
                 </View>
+                {r.productQualityRating ? (
+                  <View style={styles.reviewStars}>
+                    <Text style={styles.reviewCommentMuted}>Item as described: </Text>
+                    {Array.from({ length: 5 }).map((_, i) => (
+                      <Star key={i} size={10} color={MarketColors.warn} fill={i < r.productQualityRating! ? MarketColors.warn : 'transparent'} />
+                    ))}
+                  </View>
+                ) : null}
                 {r.comment ? <Text style={styles.reviewComment}>{r.comment}</Text> : <Text style={styles.reviewCommentMuted}>Rated, no comment left.</Text>}
                 {r.tags && r.tags.length > 0 ? (
                   <View style={styles.tagRow}>

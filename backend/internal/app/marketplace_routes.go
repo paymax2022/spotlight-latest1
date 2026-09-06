@@ -281,11 +281,16 @@ func RegisterMarketplace(
 	m.Use(auth())
 
 	// Listings
+	// /my-listings, NOT /listings/mine — same class of Gin radix-router conflict
+	// as /media/presign above: a static segment at the position /listings/:id
+	// already claims as a param panics at startup, not silently.
+	m.GET("/my-listings", h.MyListings)
 	m.POST("/listings", h.CreateListing)
 	m.PUT("/listings/:id", h.UpdateListing)
 	m.POST("/listings/:id/submit", h.SubmitListing)
 	m.POST("/listings/:id/pause", h.PauseListing)
 	m.POST("/listings/:id/resume", h.ResumeListing)
+	m.POST("/listings/:id/renew", h.RenewListing)
 	m.POST("/listings/:id/mark-sold", h.MarkSoldListing)
 	m.POST("/listings/:id/contact", h.RevealSellerContact)
 	m.DELETE("/listings/:id", h.DeleteListing)
@@ -319,6 +324,7 @@ func RegisterMarketplace(
 	// Boosts
 	m.POST("/boosts", h.CreateBoost)
 	m.GET("/boosts/:id", h.GetBoost)
+	m.POST("/boosts/:id/cancel", h.CancelBoost)
 
 	// Messaging (ADR-023 listings-and-connect "connect" model; non-money metadata).
 	// Persistent 1:1 buyer↔seller threads about a listing — replaces the mobile's

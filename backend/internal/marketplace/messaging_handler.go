@@ -133,15 +133,16 @@ func (h *Handler) SubmitDealReview(c *gin.Context) {
 		return
 	}
 	var body struct {
-		Rating int      `json:"rating"`
-		Tags   []string `json:"tags"`
-		Text   string   `json:"text"`
+		Rating               int      `json:"rating"`
+		ProductQualityRating *int     `json:"product_quality_rating"`
+		Tags                 []string `json:"tags"`
+		Text                 string   `json:"text"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
 		fail(c, fieldErr(CodeValidation, err.Error(), ""))
 		return
 	}
-	rv, err := h.svc.SubmitDealReview(c.Request.Context(), uid, c.Param("id"), body.Rating, body.Tags, body.Text)
+	rv, err := h.svc.SubmitDealReview(c.Request.Context(), uid, c.Param("id"), body.Rating, body.ProductQualityRating, body.Tags, body.Text)
 	if err != nil {
 		fail(c, err)
 		return
