@@ -12,6 +12,7 @@
 // and REQUIRES reason_code — enforced here (defense-in-depth) and in the UI.
 
 import { env } from '@/config/env';
+import { resolveUseMock } from '@/config/useMock';
 import type {
   ScheduledBookingRow, ScheduledBookingDetail, ScheduledFilter,
   ScheduledStatus, ScheduledMode,
@@ -19,7 +20,7 @@ import type {
 } from '@/types/scheduledMobility';
 
 // Mock by default; flip once the admin control-plane is wired to the Go backend.
-const USE_MOCK = (process.env.NEXT_PUBLIC_SCHEDULED_ADMIN_USE_MOCK ?? 'true').toLowerCase() !== 'false';
+const USE_MOCK = resolveUseMock(process.env.NEXT_PUBLIC_SCHEDULED_ADMIN_USE_MOCK);
 
 function adminBase(): string {
   // env.apiBaseUrl defaults to .../api/v1 ; scheduled admin ops live under

@@ -8,8 +8,9 @@
 // Money is BIGINT kobo (minor units) throughout.
 
 import { env } from '@/config/env';
+import { resolveUseMock } from '@/config/useMock';
 
-export const USE_MOCK = (process.env.NEXT_PUBLIC_SPRAY_ADMIN_USE_MOCK ?? 'true').toLowerCase() !== 'false';
+export const USE_MOCK = resolveUseMock(process.env.NEXT_PUBLIC_SPRAY_ADMIN_USE_MOCK);
 /** Named so the fixture banner can cite the exact switch. */
 export const USE_MOCK_ENV = 'NEXT_PUBLIC_SPRAY_ADMIN_USE_MOCK';
 

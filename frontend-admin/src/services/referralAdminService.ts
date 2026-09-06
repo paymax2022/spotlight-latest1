@@ -5,6 +5,7 @@
 // orchestrator. Money is BIGINT kobo throughout.
 
 import { env } from '@/config/env';
+import { resolveUseMock } from '@/config/useMock';
 import type {
   ReferralDashboard,
   ProgramConfig,
@@ -23,7 +24,7 @@ import type {
   ReassignDecision,
 } from '@/types/referralAdmin';
 
-export const USE_MOCK = (process.env.NEXT_PUBLIC_REFERRAL_USE_MOCK ?? 'true').toLowerCase() !== 'false';
+export const USE_MOCK = resolveUseMock(process.env.NEXT_PUBLIC_REFERRAL_USE_MOCK);
 /** Named so the fixture banner can cite the exact switch. */
 export const USE_MOCK_ENV = 'NEXT_PUBLIC_REFERRAL_USE_MOCK';
 

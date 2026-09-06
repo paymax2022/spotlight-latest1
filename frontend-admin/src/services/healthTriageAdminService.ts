@@ -15,6 +15,7 @@
 // SENSITIVITY first (SC-3). Every state change writes an immutable audit (SC-12).
 
 import { env } from '@/config/env';
+import { resolveUseMock } from '@/config/useMock';
 import type {
   TriageSession,
   TriageSessionStats,
@@ -32,7 +33,7 @@ import type {
   GovernanceState,
 } from '@/types/healthTriageAdmin';
 
-const USE_MOCK = (process.env.NEXT_PUBLIC_HEALTH_USE_MOCK ?? 'true').toLowerCase() !== 'false';
+const USE_MOCK = resolveUseMock(process.env.NEXT_PUBLIC_HEALTH_USE_MOCK);
 
 function adminBase(): string {
   return env.apiBaseUrl.replace(/\/api\/v1\/?$/, '/api/health/triage/admin');

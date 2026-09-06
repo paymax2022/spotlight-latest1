@@ -9,6 +9,7 @@
 
 import { env } from '@/config/env';
 import { operationKey } from './idempotency';
+import { resolveUseMock } from '@/config/useMock';
 import type {
   EscrowDashboard,
   DisputeListItem,
@@ -20,7 +21,7 @@ import type {
   EscrowFraudActionResult,
 } from '@/types/escrowAdmin';
 
-export const USE_MOCK = (process.env.NEXT_PUBLIC_SOCIAL_USE_MOCK ?? 'true').toLowerCase() !== 'false';
+export const USE_MOCK = resolveUseMock(process.env.NEXT_PUBLIC_SOCIAL_USE_MOCK);
 /** Named so the fixture banner can cite the exact switch. */
 export const USE_MOCK_ENV = 'NEXT_PUBLIC_SOCIAL_USE_MOCK';
 

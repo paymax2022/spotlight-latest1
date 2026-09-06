@@ -11,8 +11,9 @@
 // (see toBps/toKobo) — floats never cross the wire for money.
 
 import { env } from '@/config/env';
+import { resolveUseMock } from '@/config/useMock';
 
-const USE_MOCK = (process.env.NEXT_PUBLIC_COMMISSION_USE_MOCK ?? 'true').toLowerCase() !== 'false';
+const USE_MOCK = resolveUseMock(process.env.NEXT_PUBLIC_COMMISSION_USE_MOCK);
 
 // ── Domain types (mirror commission/model.go JSON tags — camelCase) ───────────
 export type FeeModel = 'commission' | 'platform_charge' | 'fixed' | 'commission_plus_fee' | 'none';

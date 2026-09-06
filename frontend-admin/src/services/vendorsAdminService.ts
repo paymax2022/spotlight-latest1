@@ -1,5 +1,6 @@
 import { env } from '@/config/env';
 import { operationKey } from './idempotency';
+import { resolveUseMock } from '@/config/useMock';
 import type {
   VendorRow,
   VendorFilters,
@@ -28,8 +29,7 @@ function authHeaders(): Record<string, string> {
   return { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
 }
 
-const USE_FIXTURES =
-  (process.env.NEXT_PUBLIC_VENDORS_ADMIN_USE_MOCK ?? 'true').toLowerCase() !== 'false';
+const USE_FIXTURES = resolveUseMock(process.env.NEXT_PUBLIC_VENDORS_ADMIN_USE_MOCK);
 
 // ── Fixtures ─────────────────────────────────────────────────────────────────
 

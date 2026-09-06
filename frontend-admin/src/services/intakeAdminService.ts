@@ -1,4 +1,5 @@
 import { env } from '@/config/env';
+import { resolveUseMock } from '@/config/useMock';
 import type {
   IntakeSchema,
   IntakeSchemaField,
@@ -31,8 +32,7 @@ function authHeaders(): Record<string, string> {
 // Mock by default; flip with NEXT_PUBLIC_INTAKE_ADMIN_USE_MOCK=false once the
 // live Go admin endpoints (/api/health/admin/intake/*) are deployed. Matches the
 // onboarding/nutrition/mobility admin-service convention.
-const USE_FIXTURES =
-  (process.env.NEXT_PUBLIC_INTAKE_ADMIN_USE_MOCK ?? 'true').toLowerCase() !== 'false';
+const USE_FIXTURES = resolveUseMock(process.env.NEXT_PUBLIC_INTAKE_ADMIN_USE_MOCK);
 
 const BASE = '/health/admin/intake';
 

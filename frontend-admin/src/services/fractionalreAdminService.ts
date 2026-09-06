@@ -6,6 +6,7 @@
 // RBAC: gated by fractionalre.* permission slugs server-side.
 
 import { env } from '@/config/env';
+import { resolveUseMock } from '@/config/useMock';
 import type {
   FractionalReDashboard, AdminAsset, CreateAssetInput, AssetPatch, TitleVerification,
   TitleVerifyInput, AssetTransitionInput, AdminRound, CreateRoundInput, ExtendRoundInput,
@@ -16,7 +17,7 @@ import type {
   EscrowAccount, FeeRevenue, RefundResult, DocumentRecord, PresignResult, AuditEntry,
 } from '@/types/fractionalreAdmin';
 
-const USE_MOCK = (process.env.NEXT_PUBLIC_FRACTIONALRE_ADMIN_USE_MOCK ?? 'true').toLowerCase() !== 'false';
+const USE_MOCK = resolveUseMock(process.env.NEXT_PUBLIC_FRACTIONALRE_ADMIN_USE_MOCK);
 
 // env.apiBaseUrl ends with /api/v1 — strip it and target /api/finance.
 function adminBase(): string {

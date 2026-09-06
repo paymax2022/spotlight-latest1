@@ -5,12 +5,13 @@
 
 import { env } from '@/config/env';
 import { operationKey } from './idempotency';
+import { resolveUseMock } from '@/config/useMock';
 import type {
   RealtorOverview, AdminListing, ModerationStatus,
   VerificationRequest, VerificationStatus, AdminPayment, EscrowAccount,
 } from '@/types/realtorAdmin';
 
-const USE_MOCK = (process.env.NEXT_PUBLIC_REALTOR_ADMIN_USE_MOCK ?? 'true').toLowerCase() !== 'false';
+const USE_MOCK = resolveUseMock(process.env.NEXT_PUBLIC_REALTOR_ADMIN_USE_MOCK);
 
 function adminBase(): string {
   return env.apiBaseUrl.replace(/\/api\/v1\/?$/, '/api/realtor/admin');

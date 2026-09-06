@@ -6,6 +6,7 @@
 // the sidebar gates the nav entries. Money is BIGINT kobo throughout.
 
 import { apiV1 } from '@/config/env';
+import { resolveUseMock } from '@/config/useMock';
 import type {
   ProgramConfig,
   ConfigPublishInput,
@@ -21,8 +22,7 @@ import type {
   ModuleStatus,
 } from '@/types/referralRewardsAdmin';
 
-const USE_MOCK =
-  (process.env.NEXT_PUBLIC_REFERRAL_REWARDS_USE_MOCK ?? 'true').toLowerCase() !== 'false';
+const USE_MOCK = resolveUseMock(process.env.NEXT_PUBLIC_REFERRAL_REWARDS_USE_MOCK);
 
 function adminBase(): string {
   // apiV1() = http://host/api/v1 → http://host/api/v1/admin/referrals

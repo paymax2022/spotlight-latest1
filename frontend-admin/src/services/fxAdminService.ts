@@ -10,6 +10,7 @@
 
 import { env } from '@/config/env';
 import { operationKey } from './idempotency';
+import { resolveUseMock } from '@/config/useMock';
 import type {
   FxOverview, FxTxSummary, FxTxDetail, FxTxFilter,
   RoutingWeights, RouteSimResult, ProviderConfig, FloatBucket, RebalanceEvent,
@@ -25,7 +26,7 @@ import type {
 
 // Mock by default; flip with NEXT_PUBLIC_FX_ADMIN_USE_MOCK=false once the admin
 // control-plane endpoints are live on the Go backend.
-const USE_MOCK = (process.env.NEXT_PUBLIC_FX_ADMIN_USE_MOCK ?? 'true').toLowerCase() !== 'false';
+const USE_MOCK = resolveUseMock(process.env.NEXT_PUBLIC_FX_ADMIN_USE_MOCK);
 
 function adminBase(): string {
   return env.apiBaseUrl.replace(/\/api\/v1\/?$/, '/api/fx/admin');

@@ -6,6 +6,7 @@
 // always disclosed (PRD §5 dual-rail, §12 money/recon).
 
 import { env } from '@/config/env';
+import { resolveUseMock } from '@/config/useMock';
 import type {
   StaysDashboard,
   Supplier,
@@ -51,7 +52,7 @@ import type {
   NotificationTemplate,
 } from '@/types/staysAdmin';
 
-export const USE_MOCK = (process.env.NEXT_PUBLIC_STAYS_USE_MOCK ?? 'true').toLowerCase() !== 'false';
+export const USE_MOCK = resolveUseMock(process.env.NEXT_PUBLIC_STAYS_USE_MOCK);
 /** Named so the fixture banner can cite the exact switch. */
 export const USE_MOCK_ENV = 'NEXT_PUBLIC_STAYS_USE_MOCK';
 

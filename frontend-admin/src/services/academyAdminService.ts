@@ -8,6 +8,7 @@
 // backend. Every state-change is audit-logged server-side.
 
 import { env } from '@/config/env';
+import { resolveUseMock } from '@/config/useMock';
 import type {
   AcademyDashboard,
   CurriculumTree, CurriculumTopic, CurriculumVersion, CurriculumVersionInput,
@@ -37,7 +38,7 @@ import type {
   BiDashboard, BiCohortRow, BiDateRange, BiExportInput, BiExportResult, BiSeriesPoint,
 } from '@/types/academyAdmin';
 
-const USE_MOCK = (process.env.NEXT_PUBLIC_ACADEMY_USE_MOCK ?? 'true').toLowerCase() !== 'false';
+const USE_MOCK = resolveUseMock(process.env.NEXT_PUBLIC_ACADEMY_USE_MOCK);
 
 function adminBase(): string {
   return env.apiBaseUrl.replace(/\/api\/v1\/?$/, '/api/academy');

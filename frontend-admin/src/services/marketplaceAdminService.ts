@@ -42,8 +42,7 @@ function delay<T>(value: T): Promise<T> {
 // Backend / feature flag (FEATURE_MARKETPLACE_ENABLED) may not be live yet —
 // default to deterministic fixtures unless explicitly disabled, so every screen
 // renders. Mirrors arenaAdminService / featuredPlacementAdminService.
-const USE_FIXTURES =
-  (process.env.NEXT_PUBLIC_MARKETPLACE_ADMIN_USE_MOCK ?? 'true').toLowerCase() !== 'false';
+const USE_FIXTURES = resolveUseMock(process.env.NEXT_PUBLIC_MARKETPLACE_ADMIN_USE_MOCK);
 
 async function parseErrorMessage(res: Response, fallback: string): Promise<string> {
   try {
@@ -647,6 +646,7 @@ export async function createAnnouncement(data: any): Promise<any> {
 // ─────────────────────────────────────────────────────────────────────────────
 
 import type { AuditLog } from '@/types/marketplaceAdmin';
+import { resolveUseMock } from '@/config/useMock';
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8091/api/v1';
 
