@@ -1,5 +1,6 @@
 import { errorResponse, handleApiError, successResponse } from '@/src/lib/api/responses';
 import { assertAdminPermission } from '@/src/server/admin/auth';
+import { allowedCategorySlugs } from '@/src/server/contests/categories';
 import {
   deleteRegistrationContest,
   getRegistrationContestBySlug,
@@ -13,20 +14,6 @@ import {
 } from '@/src/server/registration-v2/contest-store';
 import type { ContestCategory, ContestRegistrationDefinition, ContestType } from '@/src/features/registration/types';
 import { sanitizeContestFormSchema } from '@/src/features/registration/field-catalog';
-
-const allowedCategories: ContestCategory[] = [
-  'music',
-  'acting',
-  'comedy_content',
-  'dance',
-  'film_production',
-  'stem_innovation',
-  'sme_pitch',
-  'school_campus',
-  'open_mic',
-  'general_reality_show',
-  'other',
-];
 
 const allowedTypes: ContestType[] = [
   'online_contest',
@@ -51,7 +38,12 @@ function toSlug(raw: string) {
     .replace(/-+/g, '-');
 }
 
-function normalizeContestPayload(body: Record<string, unknown>): Partial<ContestRegistrationDefinition> {
+// allowedCategories is passed in rather than read here so this stays a pure
+// sync normalizer; the DB read happens once in the handler.
+function normalizeContestPayload(
+  body: Record<string, unknown>,
+  allowedCategories: string[],
+): Partial<ContestRegistrationDefinition> {
   const title = String(body.title || '').trim();
   const slug = toSlug(String(body.slug || title));
   const contestCategory = String(body.contestCategory || '').trim() as ContestCategory;
@@ -138,7 +130,7 @@ export async function PATCH(request: Request, ctx: { params: Promise<{ slug: str
   try {
     await assertAdminPermission(request, 'programs:manage');
     const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
-    const patch = normalizeContestPayload(body);
+    const patch = normalizeContestPayload(body, await allowedCategorySlugs());
 
     let memoryResult: ContestRegistrationDefinition | null = null;
     try {

@@ -1,4 +1,9 @@
-export type ContestCategory =
+/**
+ * The categories that shipped hardcoded. Still worth naming: they are what the
+ * contest_categories table is seeded with, and keeping them as literals means
+ * editors still autocomplete them.
+ */
+export type KnownContestCategory =
   | 'music'
   | 'acting'
   | 'comedy_content'
@@ -10,6 +15,18 @@ export type ContestCategory =
   | 'open_mic'
   | 'general_reality_show'
   | 'other';
+
+/**
+ * A contest category slug. Admins can now create categories (see
+ * public.contest_categories and /api/admin/contest-categories), so this is no
+ * longer a closed set and pretending otherwise would make the type lie about
+ * values that already exist in the database. `string & {}` keeps autocomplete
+ * for the known slugs while accepting an admin-created one.
+ *
+ * What a category is allowed to be is enforced at runtime against the table —
+ * see allowedCategorySlugs() in src/server/contests/categories.ts — not here.
+ */
+export type ContestCategory = KnownContestCategory | (string & {});
 
 export type ContestType =
   | 'online_contest'
