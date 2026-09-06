@@ -25,7 +25,6 @@ const IS_PROD = process.env.NODE_ENV === 'production';
 // the entry here. { FLAG: reason }
 const MOCK_ALLOWLIST = {
   NEXT_PUBLIC_FX_ADMIN_USE_MOCK: 'FX admin endpoints not built yet (mock-only).',
-  NEXT_PUBLIC_RESTAURANT_ADMIN_USE_MOCK: 'Restaurant admin ops routes not built yet.',
   NEXT_PUBLIC_GROUPS_ADMIN_USE_MOCK: 'Groups (savings pools) has NO admin route group in Go — only 5 member endpoints exist under /api/finance/groups. The pages render a SampleDataBanner while this is allowlisted.',
 };
 

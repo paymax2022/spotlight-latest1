@@ -4,7 +4,7 @@
  *
  * THE DEFECT. 48 admin services resolved their mock flag as
  *
- *     const USE_MOCK = (process.env.NEXT_PUBLIC_X_USE_MOCK ?? 'true').toLowerCase() !== 'false';
+ *     const USE_MOCK = (process.env.NEXT_PUBLIC_<MODULE>_USE_MOCK ?? 'true').toLowerCase() !== 'false';
  *
  * which never consults NODE_ENV. A production build with the variable unset —
  * the default state for ~34 of them — served fabricated data to operators, on a
