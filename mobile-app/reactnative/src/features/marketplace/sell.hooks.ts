@@ -215,3 +215,15 @@ export function usePurchaseBoost(listingId: string) {
     onSuccess: (boost) => qc.setQueryData(SELL_KEYS.boost(boost.id), boost),
   });
 }
+
+// Stop the caller's own active boost early (prorated refund on the backend).
+// No Idempotency-Key: unlike a purchase, a retried cancel on an
+// already-cancelled boost is safely rejected server-side (FSM guard), not a
+// double charge, so there is nothing to dedupe against.
+export function useCancelBoost() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => sellApi.cancelBoost(id),
+    onSuccess: (boost) => qc.setQueryData(SELL_KEYS.boost(boost.id), boost),
+  });
+}

@@ -177,12 +177,20 @@ export async function deleteListing(id: string): Promise<{ ok: boolean }> {
   return mktDelete<{ ok: boolean }>(`/listings/${id}`);
 }
 
-/** The signed-in seller's own listings — GET /sellers/:id/listings with the
- *  current user id (full Listing rows so My Listings can show status + stats). */
+/** The signed-in seller's own listings — GET /my-listings (authenticated; the
+ *  seller is resolved server-side from the Bearer, every status included).
+ *
+ *  This used to call the PUBLIC GET /sellers/:id/listings with a client-only
+ *  `mine=1` flag the backend never read — that endpoint has always returned
+ *  every status regardless, which is exactly right for a seller checking their
+ *  own drafts/paused/pending_review listings but was ALSO exposing those same
+ *  non-active rows to any buyer browsing that seller's storefront. The public
+ *  endpoint now only returns active listings; this authenticated one is where
+ *  the seller's own full-status view moved to. */
 export async function getMyListings(sellerId: string | null): Promise<Listing[]> {
   if (MKT_USE_MOCK) return S.mockMyListings();
   if (!sellerId) return [];
-  return arr(await mktGet<Listing[]>(`/sellers/${sellerId}/listings`, { mine: 1 }));
+  return arr(await mktGet<Listing[]>('/my-listings'));
 }
 
 // ─── Boosts (money path — POST /boosts carries an Idempotency-Key) ───────────
@@ -210,6 +218,14 @@ export async function createBoost(input: CreateBoostInput, idempotencyKey: strin
 export async function getBoost(id: string): Promise<Boost> {
   if (MKT_USE_MOCK) return S.mockGetBoost(id);
   return mktGet<Boost>(`/boosts/${id}`);
+}
+
+/** Stop the caller's own active boost early — a prorated refund posts for the
+ *  unused days (see backend CancelBoost). Distinct from an admin's RejectBoost
+ *  (full refund, policy violation), which this seller-facing action is not. */
+export async function cancelBoost(id: string): Promise<Boost> {
+  if (MKT_USE_MOCK) return S.mockCancelBoost(id);
+  return mktPost<Boost>(`/boosts/${id}/cancel`);
 }
 
 // ── Seller contact reveal ────────────────────────────────────────────────────

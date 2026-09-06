@@ -51,7 +51,7 @@ const (
 	DisputeAppealed       DisputeStatus = "appealed"
 )
 
-// BoostStatus: purchased,active,completed,rejected_with_reason,auto_refunded
+// BoostStatus: purchased,active,completed,rejected_with_reason,cancelled_by_seller,auto_refunded
 type BoostStatus string
 
 const (
@@ -59,7 +59,12 @@ const (
 	BoostActive             BoostStatus = "active"
 	BoostCompleted          BoostStatus = "completed"
 	BoostRejectedWithReason BoostStatus = "rejected_with_reason"
-	BoostAutoRefunded       BoostStatus = "auto_refunded"
+	// BoostCancelledBySeller is the seller-initiated counterpart to
+	// BoostRejectedWithReason (admin, policy violation, mandatory reason code) —
+	// same "stop an active boost early" shape, same auto_refunded destination,
+	// but the seller chose to stop it, not a moderator.
+	BoostCancelledBySeller BoostStatus = "cancelled_by_seller"
+	BoostAutoRefunded      BoostStatus = "auto_refunded"
 )
 
 // KYCTier: tier0_browse,tier1_buy,tier2_sell,tier3_business
@@ -225,6 +230,11 @@ type Boost struct {
 	Status              BoostStatus `json:"status"`
 	RejectionReasonCode *string     `json:"rejection_reason_code,omitempty"`
 	RefundRef           *string     `json:"refund_ref,omitempty"`
+	// RefundedKobo is the ACTUAL amount refunded, set only once a refund has
+	// posted. Not always PriceKobo: RejectBoost (admin) refunds in full, but
+	// CancelBoost (seller) prorates for the unused days — the client must read
+	// this, not assume PriceKobo, once Status is BoostAutoRefunded.
+	RefundedKobo *int64 `json:"refunded_kobo,omitempty"`
 	StartsAt            *time.Time  `json:"starts_at,omitempty"`
 	EndsAt              *time.Time  `json:"ends_at,omitempty"`
 	CreatedAt           time.Time   `json:"created_at"`

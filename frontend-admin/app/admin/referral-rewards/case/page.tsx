@@ -7,7 +7,10 @@
 
 import { useState } from 'react';
 import Link from 'next/link';
-import { getReferrerCase, adjustReferrerCase, formatNaira, formatPct } from '@/services/referralRewardsAdminService';
+import {
+  getReferrerCase, adjustReferrerCase, setReferrerCode, formatNaira, formatPct,
+  REFERRAL_CODE_MIN, REFERRAL_CODE_MAX, REFERRAL_CODE_PATTERN, ReferralCodeTakenError,
+} from '@/services/referralRewardsAdminService';
 import type { ReferrerCase } from '@/types/referralRewardsAdmin';
 import { Page, PageHeader, Card, Button, Input, Badge, colors, tint, thCell, tdCell } from '@/components/ui/vuexy';
 import { timeAgo } from '../_ui';
@@ -79,6 +82,37 @@ export default function ReferralRewardsCasePage() {
     try { setData(await getReferrerCase(query.trim())); }
     catch (e) { setError(String(e)); }
     finally { setLoading(false); }
+  }
+
+  const [codeInput, setCodeInput] = useState('');
+  const [savingCode, setSavingCode] = useState(false);
+  const [codeMsg, setCodeMsg] = useState<string | null>(null);
+  const [codeErr, setCodeErr] = useState<string | null>(null);
+
+  async function saveCode() {
+    if (!data) return;
+    // Uppercase before validating and sending, so the field behaves the same way
+    // the server does — it normalises too, and a user typing lowercase should not
+    // see a rejection the server would not have made.
+    const code = codeInput.trim().toUpperCase();
+    setCodeMsg(null); setCodeErr(null);
+    if (!REFERRAL_CODE_PATTERN.test(code)) {
+      setCodeErr(`Use ${REFERRAL_CODE_MIN}-${REFERRAL_CODE_MAX} characters, letters and numbers only.`);
+      return;
+    }
+    setSavingCode(true);
+    try {
+      const res = await setReferrerCode(data.referrer_id, code);
+      setCodeMsg(`Referral code is now ${res.code}.`);
+      setCodeInput('');
+      setData(await getReferrerCase(data.referrer_id));
+    } catch (e) {
+      // A taken code is a normal outcome to recover from, not a failure — say so
+      // plainly and leave what they typed in the box to edit.
+      setCodeErr(e instanceof ReferralCodeTakenError
+        ? `${code} is already in use by another referrer. Try a different one.`
+        : String(e));
+    } finally { setSavingCode(false); }
   }
 
   async function adjust() {
@@ -179,6 +213,30 @@ export default function ReferralRewardsCasePage() {
                 </tbody>
               </table>
             )}
+          </Card>
+
+          <Card title="Referral code" style={{ marginBottom: 16 }}>
+            <p style={{ fontSize: 13, color: colors.text, marginTop: 0 }}>
+              {REFERRAL_CODE_MIN}–{REFERRAL_CODE_MAX} characters, letters and numbers. Codes are
+              checked for duplicates before saving — including against legacy codes, since a
+              code shared by two referrers would send one person&apos;s rewards to the other.
+            </p>
+            <div style={{ display: 'grid', gridTemplateColumns: '200px auto 1fr', gap: 12, alignItems: 'flex-end' }}>
+              <div>
+                <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: colors.text, marginBottom: 4 }}>New code</label>
+                <Input
+                  value={codeInput}
+                  maxLength={REFERRAL_CODE_MAX}
+                  onChange={(e) => setCodeInput(e.target.value.toUpperCase())}
+                  placeholder="e.g. SALES"
+                />
+              </div>
+              <Button variant="primary" onClick={saveCode} disabled={savingCode || !codeInput.trim()}>
+                {savingCode ? 'Checking…' : 'Save code'}
+              </Button>
+            </div>
+            {codeMsg && <div style={{ marginTop: 12, fontSize: 13, color: colors.info }}>{codeMsg}</div>}
+            {codeErr && <div style={{ marginTop: 12, fontSize: 13, color: colors.danger }}>{codeErr}</div>}
           </Card>
 
           <Card title="Manual adjustment (Support Lead)">

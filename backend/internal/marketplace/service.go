@@ -408,15 +408,34 @@ func (s *Service) SellerProfile(ctx context.Context, sellerID string) (*TrustPro
 }
 
 // SellerListings returns a seller's listings.
+// SellerListings is the PUBLIC storefront read (GET /sellers/:id/listings, no
+// auth) — a buyer browsing a seller's portfolio, so only ever active listings
+// (never a draft/pending_review/paused/removed_user row a buyer has no
+// business seeing). This route has no auth middleware at all (base group,
+// marketplace_routes.go), so there is no caller identity to compare against
+// :id here — see MyListingsForSeller for the seller's own, all-statuses view.
 func (s *Service) SellerListings(ctx context.Context, sellerID string, limit, offset int) ([]Listing, error) {
-	ls, err := s.repo.ListSellerListings(ctx, sellerID, limit, offset)
+	return s.sellerListingsWithMedia(ctx, sellerID, limit, offset, true)
+}
+
+// MyListingsForSeller is the AUTHENTICATED self-view (GET /listings/mine) —
+// the seller managing their own listings needs every status (draft awaiting
+// submit, pending_review, paused, expired, sold, removed) to act on it, which
+// is exactly what a buyer must never see through SellerListings above.
+func (s *Service) MyListingsForSeller(ctx context.Context, sellerID string, limit, offset int) ([]Listing, error) {
+	return s.sellerListingsWithMedia(ctx, sellerID, limit, offset, false)
+}
+
+func (s *Service) sellerListingsWithMedia(ctx context.Context, sellerID string, limit, offset int, onlyActive bool) ([]Listing, error) {
+	ls, err := s.repo.ListSellerListings(ctx, sellerID, limit, offset, onlyActive)
 	if err != nil {
 		return nil, err
 	}
-	// This is the "My listings" screen — the one a seller checks right after
-	// uploading photos, so it is the last place that should show a placeholder.
-	// attachThumbs covers thumb_url; attachMediaForPage additionally covers
-	// media[], which is what the screen actually reads for its card photo.
+	// This backs the "My listings" screen too — the one a seller checks right
+	// after uploading photos, so it is the last place that should show a
+	// placeholder. attachThumbs covers thumb_url; attachMediaForPage
+	// additionally covers media[], which is what the screen actually reads for
+	// its card photo.
 	ptrs := make([]*Listing, len(ls))
 	for i := range ls {
 		ptrs[i] = &ls[i]
@@ -426,9 +445,15 @@ func (s *Service) SellerListings(ctx context.Context, sellerID string, limit, of
 	return ls, nil
 }
 
-// SellerReviews returns a seller's visible reviews.
-func (s *Service) SellerReviews(ctx context.Context, sellerID string, limit, offset int) ([]Review, error) {
-	return s.repo.ListSellerReviews(ctx, sellerID, limit, offset)
+// SellerReviews returns a seller's visible reviews — mkt_deal_reviews
+// (thread-keyed, ADR-023), NOT the dead order-keyed mkt_reviews table
+// ListSellerReviews still reads. Every review since ADR-023 removed escrow
+// orders has been written via SubmitDealReview into mkt_deal_reviews; the old
+// table has taken no new rows since, so a seller's real reviews were never
+// reaching this endpoint (and the JSON shape didn't even match the mobile
+// Review type's camelCase contract — see ListRevieweeDealReviews's doc).
+func (s *Service) SellerReviews(ctx context.Context, sellerID string, limit, offset int) ([]DealReview, error) {
+	return s.repo.ListRevieweeDealReviews(ctx, sellerID, limit, offset)
 }
 
 // ─── Verification (delegates to KYC provider elsewhere; badges are PERMANENT) ──

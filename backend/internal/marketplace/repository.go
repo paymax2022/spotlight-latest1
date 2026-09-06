@@ -302,6 +302,27 @@ func (r *Repository) SetListingStatus(ctx context.Context, id string, from, to L
 	return nil
 }
 
+// RenewListing flips an expired listing back to active AND pushes expires_at out
+// another 60 days (matching mkt_listings.expires_at's own creation-time default,
+// 20260905000000_marketplace_v1.sql:123) — a status-only flip would leave
+// expires_at in the past, so the very next expiry sweep (ExpireDueListings)
+// would immediately re-expire it.
+func (r *Repository) RenewListing(ctx context.Context, id string, from, to ListingStatus) error {
+	ct, err := r.db.Exec(ctx, `
+		UPDATE public.mkt_listings
+		SET status=$2::listing_status,
+		    expires_at = now() + interval '60 days',
+		    updated_at=now()
+		WHERE id=$1 AND status=$3::listing_status`, id, string(to), string(from))
+	if err != nil {
+		return wrapInternal("renew listing", err)
+	}
+	if ct.RowsAffected() == 0 {
+		return ErrConflict
+	}
+	return nil
+}
+
 // UpdateListingMutable updates the editable subset of a listing (title/desc/price/attrs).
 func (r *Repository) UpdateListingMutable(ctx context.Context, id string, in UpdateListingInput) error {
 	var attrs any
@@ -336,12 +357,21 @@ func (r *Repository) CountNonTerminalOrdersForListing(ctx context.Context, listi
 	return n, err
 }
 
-// ListSellerListings returns a seller's listings newest-first.
-func (r *Repository) ListSellerListings(ctx context.Context, sellerID string, limit, offset int) ([]Listing, error) {
+// ListSellerListings returns a seller's listings, newest first. onlyActive
+// scopes this to the PUBLIC storefront view (a buyer browsing a seller's
+// portfolio must only ever see what's actually for sale, never a draft,
+// pending_review, paused, or removed_user row); the seller's own "My
+// Listings" management screen calls this with onlyActive=false via
+// MyListingsForSeller/an authenticated caller, since it needs every status to
+// manage the listing lifecycle.
+func (r *Repository) ListSellerListings(ctx context.Context, sellerID string, limit, offset int, onlyActive bool) ([]Listing, error) {
 	limit = clampLimit(limit)
-	rows, err := r.db.Query(ctx, `SELECT `+listingCols+`
-		FROM public.mkt_listings WHERE seller_id=$1 ORDER BY created_at DESC LIMIT $2 OFFSET $3`,
-		sellerID, limit, offset)
+	q := `SELECT ` + listingCols + ` FROM public.mkt_listings WHERE seller_id=$1`
+	if onlyActive {
+		q += ` AND status='active'::listing_status`
+	}
+	q += ` ORDER BY created_at DESC LIMIT $2 OFFSET $3`
+	rows, err := r.db.Query(ctx, q, sellerID, limit, offset)
 	if err != nil {
 		return nil, wrapInternal("list seller listings", err)
 	}
@@ -877,14 +907,14 @@ func (r *Repository) DisputeQueue(ctx context.Context, status string, limit, off
 // ─── Boosts ──────────────────────────────────────────────────────────────────
 
 const boostCols = `id, listing_id, seller_id, tier, duration_days, price_kobo, weight,
-	ledger_charge_ref, status, rejection_reason_code, refund_ref, starts_at, ends_at, created_at`
+	ledger_charge_ref, status, rejection_reason_code, refund_ref, refunded_kobo, starts_at, ends_at, created_at`
 
 func scanBoost(row pgx.Row) (*Boost, error) {
 	var b Boost
 	var status string
 	if err := row.Scan(
 		&b.ID, &b.ListingID, &b.SellerID, &b.Tier, &b.DurationDays, &b.PriceKobo, &b.Weight,
-		&b.LedgerChargeRef, &status, &b.RejectionReasonCode, &b.RefundRef, &b.StartsAt, &b.EndsAt, &b.CreatedAt,
+		&b.LedgerChargeRef, &status, &b.RejectionReasonCode, &b.RefundRef, &b.RefundedKobo, &b.StartsAt, &b.EndsAt, &b.CreatedAt,
 	); err != nil {
 		return nil, err
 	}
@@ -949,7 +979,7 @@ func (r *Repository) GetBoost(ctx context.Context, id string) (*Boost, error) {
 // (mkt_boosts b LEFT JOIN mkt_listings l): `id` exists in both tables, so every
 // column must be table-qualified to avoid an ambiguous-column error.
 const boostColsB = `b.id, b.listing_id, b.seller_id, b.tier, b.duration_days, b.price_kobo, b.weight,
-	b.ledger_charge_ref, b.status, b.rejection_reason_code, b.refund_ref, b.starts_at, b.ends_at, b.created_at`
+	b.ledger_charge_ref, b.status, b.rejection_reason_code, b.refund_ref, b.refunded_kobo, b.starts_at, b.ends_at, b.created_at`
 
 // AdminBoostRow is the admin boost-console read-model: the full boost row plus the
 // joined listing title. The embedded Boost inlines the SAME snake_case JSON keys
@@ -967,7 +997,7 @@ func scanAdminBoost(row pgx.Row) (*AdminBoostRow, error) {
 	var status string
 	if err := row.Scan(
 		&b.ID, &b.ListingID, &b.SellerID, &b.Tier, &b.DurationDays, &b.PriceKobo, &b.Weight,
-		&b.LedgerChargeRef, &status, &b.RejectionReasonCode, &b.RefundRef, &b.StartsAt, &b.EndsAt, &b.CreatedAt,
+		&b.LedgerChargeRef, &status, &b.RejectionReasonCode, &b.RefundRef, &b.RefundedKobo, &b.StartsAt, &b.EndsAt, &b.CreatedAt,
 		&b.ListingTitle,
 	); err != nil {
 		return nil, err
@@ -1109,12 +1139,23 @@ func (r *Repository) ListBoosts(ctx context.Context, status string, limit, offse
 // SetBoostStatus performs a guarded boost transition, optionally recording rejection
 // reason + refund ref.
 func (r *Repository) SetBoostStatus(ctx context.Context, id string, from, to BoostStatus, rejectionReason, refundRef *string) error {
+	return r.setBoostStatusWithRefund(ctx, id, from, to, rejectionReason, refundRef, nil)
+}
+
+// setBoostStatusWithRefund additionally stamps refunded_kobo — the ACTUAL
+// amount posted, since RejectBoost refunds in full but CancelBoost prorates
+// (see Boost.RefundedKobo doc comment). Split from SetBoostStatus so every
+// OTHER caller (both non-refund transitions and the first leg of a
+// reject/cancel, before the refund amount is known) keeps the simpler
+// 5-argument signature.
+func (r *Repository) setBoostStatusWithRefund(ctx context.Context, id string, from, to BoostStatus, rejectionReason, refundRef *string, refundedKobo *int64) error {
 	ct, err := r.db.Exec(ctx, `
 		UPDATE public.mkt_boosts SET
 			status=$3,
 			rejection_reason_code=COALESCE($4, rejection_reason_code),
-			refund_ref=COALESCE($5, refund_ref)
-		WHERE id=$1 AND status=$2`, id, string(from), string(to), rejectionReason, refundRef)
+			refund_ref=COALESCE($5, refund_ref),
+			refunded_kobo=COALESCE($6, refunded_kobo)
+		WHERE id=$1 AND status=$2`, id, string(from), string(to), rejectionReason, refundRef, refundedKobo)
 	if err != nil {
 		return wrapInternal("set boost status", err)
 	}
