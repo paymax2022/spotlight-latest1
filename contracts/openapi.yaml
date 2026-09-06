@@ -14689,7 +14689,7 @@ paths:
                 properties:
                   code: { type: string, example: SALES }
                   referrer_id: { type: string, format: uuid }
-        '400': { description: Code is empty, wrong length, or contains characters outside A-Z0-9 }
+        '400': { description: 'Code is empty, wrong length, or contains characters outside A-Z0-9' }
         '403': { description: Missing referral.admin.case }
         '409': { description: That referral code is already in use }
   /api/v1/admin/referrals/milestones-log:
