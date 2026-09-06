@@ -70,10 +70,12 @@ const MOCK_SUMMARY: DashboardSummary = {
   rankTier: 'Rising',
 };
 
+// Fixture mirrors the live shape: 5 characters, A-Z0-9. A 9-character mock made
+// the screen look fine in fixture mode while live users saw an 11-character code.
 const MOCK_MY_CODE: MyCode = {
-  code: 'CHIDI-PAY',
-  link: 'https://spotlight.ng/join?ref=CHIDI-PAY',
-  shortLink: 'https://spot.ng/r/chidi',
+  code: 'JIDE4',
+  link: 'https://spotlight.ng/j/JIDE4',
+  shortLink: 'https://spotlight.ng/j/JIDE4',
 };
 
 const MOCK_ACTIVITY: ActivityItem[] = [
