@@ -10,7 +10,9 @@
 import { env } from '@/config/env';
 import { operationKey } from './idempotency';
 
-const USE_MOCK = (process.env.NEXT_PUBLIC_P2PMARKET_ADMIN_USE_MOCK ?? 'true').toLowerCase() !== 'false';
+export const USE_MOCK = (process.env.NEXT_PUBLIC_P2PMARKET_ADMIN_USE_MOCK ?? 'true').toLowerCase() !== 'false';
+/** Named so the fixture banner can cite the exact switch. */
+export const USE_MOCK_ENV = 'NEXT_PUBLIC_P2PMARKET_ADMIN_USE_MOCK';
 
 // Admin (arbitration) lives at /api/p2p/admin/*.
 function adminBase(): string {
