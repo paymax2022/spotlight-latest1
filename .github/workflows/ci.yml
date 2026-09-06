@@ -84,7 +84,11 @@ jobs:
     uses: ./.github/workflows/_reusable-frontend-web.yml
 
   frontend-admin:
-    name: frontend-admin (type-check + mock-flag gate)
+    # NAME IS LOAD-BEARING: .github/required-checks.txt pins this exact string
+    # for branch protection on develop. Renaming it means the old context never
+    # reports and every PR sits on "Expected — waiting for status" forever, so
+    # the extra gate below is described in the command, not in the job name.
+    name: frontend-admin (type-check)
     uses: ./.github/workflows/_reusable-node-typecheck.yml
     with:
       working-directory: frontend-admin
