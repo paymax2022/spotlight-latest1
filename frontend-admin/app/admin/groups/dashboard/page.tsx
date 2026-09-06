@@ -3,6 +3,8 @@
 import { useEffect, useState } from 'react';
 import { getGroupsDashboard, formatNaira, type GroupsDashboard } from '@/services/groupsAdminService';
 import { PageHeader, GroupsTabs, Card, Kpi, Badge, DisclosureNote, SampleDataBanner, StateBlock, btn, th, td, timeAgo } from '../_ui';
+import { FixtureBanner } from '../../_shared/ui';
+import { USE_MOCK, USE_MOCK_ENV } from '@/services/groupsAdminService';
 
 export default function GroupsDashboardPage() {
   const [data, setData] = useState<GroupsDashboard | null>(null);
@@ -24,6 +26,7 @@ export default function GroupsDashboardPage() {
         subtitle="Group savings / contribution pools — pooled balances, dues collection and membership across the groups book."
         action={<button onClick={load} style={btn()}>Refresh</button>}
       />
+      <FixtureBanner active={USE_MOCK} envVar={USE_MOCK_ENV} />
       <GroupsTabs active="overview" />
 
       <SampleDataBanner />

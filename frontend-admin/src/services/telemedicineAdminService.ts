@@ -9,7 +9,9 @@
 
 import { env } from '@/config/env';
 
-const USE_MOCK = (process.env.NEXT_PUBLIC_TELEMEDICINE_ADMIN_USE_MOCK ?? 'true').toLowerCase() !== 'false';
+export const USE_MOCK = (process.env.NEXT_PUBLIC_TELEMEDICINE_ADMIN_USE_MOCK ?? 'true').toLowerCase() !== 'false';
+/** Named so the fixture banner can cite the exact switch. */
+export const USE_MOCK_ENV = 'NEXT_PUBLIC_TELEMEDICINE_ADMIN_USE_MOCK';
 
 // Telemedicine reads live at /api/v1/telemedicine/* (mobile-facing), not an admin group.
 function readBase(): string {

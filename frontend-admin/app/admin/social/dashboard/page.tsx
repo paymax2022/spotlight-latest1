@@ -5,6 +5,8 @@ import { getSocialDashboard, formatNaira } from '@/services/socialAdminService';
 import type { SocialDashboard } from '@/types/socialAdmin';
 import { SocialTabs, Kpi, DisclosureNote, StateBlock, timeAgo } from '../../savings/_ui';
 import { Page, PageHeader, Card, Button, Badge, colors, thCell, tdCell } from '@/components/ui/vuexy';
+import { FixtureBanner } from '../../_shared/ui';
+import { USE_MOCK, USE_MOCK_ENV } from '@/services/socialAdminService';
 
 function statusColor(kind: string): string {
   switch (kind) {
@@ -40,6 +42,7 @@ export default function SocialDashboardPage() {
   return (
     <Page>
       <PageHeader title="Social Pay overview" subtitle="P2P volume, split-bill and group-pool activity, plus reversal / dispute / AML watch across the social-payments rail." actions={<Button variant="outline" onClick={load}>Refresh</Button>} />
+      <FixtureBanner active={USE_MOCK} envVar={USE_MOCK_ENV} />
       <SocialTabs active="overview" />
       <DisclosureNote>NL-10 — every P2P send is checked against KYC-tier velocity / AML limits, fail-closed. NL-8 — money is a ledger; reversals are reversing entries only, never balance edits. NL-12 — every reversal, limit change and dispute decision is recorded to the immutable audit log.</DisclosureNote>
 
