@@ -33,6 +33,7 @@ func seedOrgOfType(t *testing.T, ctx context.Context, pool *pgxpool.Pool, name, 
 		VALUES ($1, $2, 'Professional', '', $3, 'ADMIN', true)`, orgID, name, groupType); err != nil {
 		t.Fatalf("seed org (%s): %v", groupType, err)
 	}
+	t.Cleanup(func() { deleteOrganisation(context.Background(), pool, orgID) })
 	return orgID
 }
 

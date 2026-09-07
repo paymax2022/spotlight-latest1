@@ -13,74 +13,82 @@ import (
 // it, so a live-DB test does not leave an association behind in the shared
 // local database.
 //
-// Two levels deep, for the same reason testsupport.unwindDependants is: a
-// direct referrer is usually blocked by its OWN dependants — assoc_memberships
-// cannot go while assoc_member_roles and assoc_dues_invoices point at it — so a
-// single level leaves the organisation undeletable. Seventeen tables reference
-// assoc_organisations directly and none of those FKs cascade.
+// Depth-first over the real foreign-key graph, not a fixed number of levels.
+// The first version unwound two levels and still could not delete anything with
+// dues attached, because the chain is four deep:
 //
-// The table set is read from pg_catalog rather than hardcoded, so a new
-// association table needs no change here. Failures per table are swallowed and
-// the loop repeats: ordering between dependants is not knowable up front, so it
-// converges by repetition instead.
+//	assoc_organisations -> assoc_memberships -> assoc_dues_invoices
+//	                    -> assoc_payments -> assoc_revenue_splits
+//
+// (one chain, five tables — the split across two lines is wrapping, not a fork)
+//
+// Children come from pg_catalog, so a new association table needs no change
+// here. ledger_entries is never touched: ledger rows are immutable by rule.
 func deleteOrganisation(ctx context.Context, pool *pgxpool.Pool, orgID string) {
 	if pool == nil || orgID == "" {
 		return
 	}
-	// Validated, not escaped: a DO block cannot take bind parameters, so the id
-	// is interpolated and must be provably a UUID first.
 	if _, err := uuid.Parse(orgID); err != nil {
 		return
 	}
-	_, _ = pool.Exec(ctx, fmt.Sprintf(orgUnwindSQL, orgID))
+	cascadeDelete(ctx, pool, "assoc_organisations", "id", []string{orgID}, 0)
 	_, _ = pool.Exec(ctx, `DELETE FROM assoc_organisations WHERE id=$1`, orgID)
 }
 
-// %[1]s is the (UUID-validated) organisation id.
-const orgUnwindSQL = `
-DO $orgunwind$
-DECLARE c record; pass int := 0;
-BEGIN
-  WHILE pass < 6 LOOP
-    pass := pass + 1;
+// cascadeDelete removes every row that transitively references
+// table.keyCol IN ids, deepest first. It does NOT delete the parent rows
+// themselves — that is the caller's job once the children are gone.
+func cascadeDelete(ctx context.Context, pool *pgxpool.Pool, table, keyCol string, ids []string, depth int) {
+	// The association graph is a handful of levels deep; the bound is a stop
+	// against a cycle, not a real limit.
+	if len(ids) == 0 || depth > 8 {
+		return
+	}
 
-    -- Second level: dependants of the tables that reference the organisation.
-    FOR c IN
-      SELECT child.conrelid::regclass AS tbl, catt.attname AS col,
-             parent.conrelid::regclass AS parent_tbl, patt.attname AS parent_col,
-             pkatt.attname AS parent_key
-        FROM pg_constraint parent
-        JOIN pg_attribute patt ON patt.attrelid = parent.conrelid AND patt.attnum = parent.conkey[1]
-        JOIN pg_constraint child ON child.confrelid = parent.conrelid AND child.contype = 'f'
-        JOIN pg_attribute catt ON catt.attrelid = child.conrelid AND catt.attnum = child.conkey[1]
-        JOIN pg_attribute pkatt ON pkatt.attrelid = child.confrelid AND pkatt.attnum = child.confkey[1]
-       WHERE parent.contype = 'f' AND parent.confrelid = 'assoc_organisations'::regclass
-         -- Ledger entries are immutable by rule; never delete them.
-         AND child.conrelid::regclass::text <> 'ledger_entries'
-    LOOP
-      BEGIN
-        EXECUTE format('DELETE FROM %%s WHERE %%I IN (SELECT %%I FROM %%s WHERE %%I = %%L)',
-                       c.tbl, c.col, c.parent_key, c.parent_tbl, c.parent_col, '%[1]s');
-      EXCEPTION WHEN others THEN NULL;
-      END;
-    END LOOP;
+	type child struct{ table, col string }
+	var children []child
+	rows, err := pool.Query(ctx, `
+		SELECT fk.conrelid::regclass::text, att.attname
+		  FROM pg_constraint fk
+		  JOIN pg_attribute att ON att.attrelid = fk.conrelid AND att.attnum = fk.conkey[1]
+		  JOIN pg_attribute pk  ON pk.attrelid  = fk.confrelid AND pk.attnum  = fk.confkey[1]
+		 WHERE fk.contype = 'f'
+		   AND fk.confrelid = $1::regclass
+		   AND pk.attname = $2
+		   AND fk.conrelid::regclass::text NOT LIKE '%ledger_entries'`,
+		table, keyCol)
+	if err != nil {
+		return
+	}
+	for rows.Next() {
+		var c child
+		if err := rows.Scan(&c.table, &c.col); err == nil {
+			children = append(children, c)
+		}
+	}
+	rows.Close()
 
-    -- First level: the direct referrers.
-    FOR c IN
-      SELECT fk.conrelid::regclass AS tbl, att.attname AS col
-        FROM pg_constraint fk
-        JOIN pg_attribute att ON att.attrelid = fk.conrelid AND att.attnum = fk.conkey[1]
-       WHERE fk.contype = 'f' AND fk.confrelid = 'assoc_organisations'::regclass
-         AND fk.conrelid::regclass::text <> 'ledger_entries'
-    LOOP
-      BEGIN
-        EXECUTE format('DELETE FROM %%s WHERE %%I = %%L', c.tbl, c.col, '%[1]s');
-      EXCEPTION WHEN others THEN NULL;
-      END;
-    END LOOP;
-  END LOOP;
-END
-$orgunwind$;`
+	for _, c := range children {
+		// Recurse on the child's own key before deleting it, so its dependants
+		// go first. A table with no `id` column cannot be recursed into that
+		// way; deleting it directly is still right when nothing references it.
+		var childIDs []string
+		idRows, err := pool.Query(ctx,
+			fmt.Sprintf(`SELECT id::text FROM %s WHERE %s = ANY($1)`, c.table, c.col), ids)
+		if err == nil {
+			for idRows.Next() {
+				var id string
+				if err := idRows.Scan(&id); err == nil {
+					childIDs = append(childIDs, id)
+				}
+			}
+			idRows.Close()
+			cascadeDelete(ctx, pool, c.table, "id", childIDs, depth+1)
+		}
+		_, _ = pool.Exec(ctx,
+			fmt.Sprintf(`DELETE FROM %s WHERE %s = ANY($1)`, c.table, c.col), ids)
+	}
+}
 
 // seedFounder used to leave its organisation AND its founder behind on every
 // call: it returned pool.Close as the whole teardown and registered the user
@@ -127,5 +135,72 @@ func TestLiveDB_SeedFounder_LeavesNothingBehind(t *testing.T) {
 	if usersAfter != usersBefore {
 		t.Errorf("auth.users %d -> %d: seedFounder left %d user(s) behind",
 			usersBefore, usersAfter, usersAfter-usersBefore)
+	}
+}
+
+// seedOrganisation backs 63 call sites, so it is the one whose teardown is worth
+// pinning: a regression here re-leaks most of the suite at once. It also proves
+// the cascade reaches the bottom of the chain — the two-level version this
+// replaced could not delete an organisation that had dues on it, because
+// assoc_revenue_splits sits four levels below assoc_organisations.
+func TestLiveDB_SeedOrganisation_LeavesNothingBehind(t *testing.T) {
+	ctx := context.Background()
+	pool := liveDBPool(t)
+	t.Cleanup(pool.Close)
+
+	var orgsBefore, ledgerBefore int
+	if err := pool.QueryRow(ctx, `SELECT
+		(SELECT count(*) FROM assoc_organisations),
+		(SELECT count(*) FROM ledger_entries)`).Scan(&orgsBefore, &ledgerBefore); err != nil {
+		t.Fatalf("count: %v", err)
+	}
+
+	func() {
+		orgID := seedOrganisation(t, ctx, pool, "cleanupguard "+uuid.New().String())
+		_, membershipID := seedActiveMembership(t, ctx, pool, orgID)
+		// Build the full four-level chain the old unwind could not clear:
+		//   organisation -> membership -> dues invoice -> payment -> revenue split
+		// An invoice alone only reaches three levels, which a two-level cascade
+		// still clears — so the fixture has to go all the way down or the guard
+		// passes against the very bug it exists to catch.
+		invoiceID := seedDuesInvoice(t, ctx, pool, membershipID, 5_000_00)
+		var paymentID string
+		if err := pool.QueryRow(ctx, `
+			INSERT INTO assoc_payments (id, invoice_id, membership_id, amount_kobo, method, reference, status)
+			VALUES (gen_random_uuid(), $1, $2, 5000000, 'WALLET', $3, 'SUCCESS') RETURNING id::text`,
+			invoiceID, membershipID, "cleanupguard-"+uuid.New().String()[:8]).Scan(&paymentID); err != nil {
+			t.Fatalf("seed payment: %v", err)
+		}
+		if _, err := pool.Exec(ctx, `
+			INSERT INTO assoc_revenue_splits (id, payment_id, label, amount_kobo)
+			VALUES (gen_random_uuid(), $1, 'ORGANISATION', 5000000)`, paymentID); err != nil {
+			t.Fatalf("seed revenue split: %v", err)
+		}
+		deleteOrganisation(ctx, pool, orgID)
+
+		var left int
+		if err := pool.QueryRow(ctx,
+			`SELECT count(*) FROM assoc_organisations WHERE id=$1`, orgID).Scan(&left); err != nil {
+			t.Fatalf("recount: %v", err)
+		}
+		if left != 0 {
+			t.Errorf("deleteOrganisation left the organisation behind — the cascade did not reach the bottom")
+		}
+	}()
+
+	var orgsAfter, ledgerAfter int
+	if err := pool.QueryRow(ctx, `SELECT
+		(SELECT count(*) FROM assoc_organisations),
+		(SELECT count(*) FROM ledger_entries)`).Scan(&orgsAfter, &ledgerAfter); err != nil {
+		t.Fatalf("recount: %v", err)
+	}
+	if orgsAfter != orgsBefore {
+		t.Errorf("assoc_organisations %d -> %d: %d left behind", orgsBefore, orgsAfter, orgsAfter-orgsBefore)
+	}
+	// Ledger entries are immutable by rule. Cleanup must never remove one; it is
+	// the reason some seeded users cannot be deleted at all, and that is correct.
+	if ledgerAfter < ledgerBefore {
+		t.Errorf("ledger_entries %d -> %d: cleanup deleted immutable ledger rows",
+			ledgerBefore, ledgerAfter)
 	}
 }

@@ -92,6 +92,7 @@ func TestPublishOrganisation_FoundersOwnTheirOrg(t *testing.T) {
 	if err != nil {
 		t.Fatalf("publish: %v", err)
 	}
+	t.Cleanup(func() { deleteOrganisation(ctx, pool, res.OrganisationID) })
 
 	var status, standing, role, jurisdiction string
 	if err := pool.QueryRow(ctx, `
@@ -159,6 +160,12 @@ func TestPublishOrganisation_IdempotentReplay(t *testing.T) {
 	if err != nil {
 		t.Fatalf("replayed publish: %v", err)
 	}
+	// Both ids are asserted equal below; clean both anyway, so a regression that
+	// DOES create a second organisation cannot also leak it.
+	t.Cleanup(func() {
+		deleteOrganisation(ctx, pool, first.OrganisationID)
+		deleteOrganisation(ctx, pool, second.OrganisationID)
+	})
 	if first.OrganisationID != second.OrganisationID {
 		t.Fatalf("replay created a second organisation: %s vs %s", first.OrganisationID, second.OrganisationID)
 	}
@@ -194,6 +201,7 @@ func TestPublishOrganisation_PersistsWizardConfiguration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("publish: %v", err)
 	}
+	t.Cleanup(func() { deleteOrganisation(ctx, pool, res.OrganisationID) })
 
 	var rules int
 	if err := pool.QueryRow(ctx,
@@ -268,6 +276,7 @@ func TestSubmitApplication_CreatesMembership(t *testing.T) {
 		orgID, "Open Join "+uuid.New().String()[:8]); err != nil {
 		t.Fatalf("seed org: %v", err)
 	}
+	t.Cleanup(func() { deleteOrganisation(ctx, pool, orgID) })
 
 	applicant := uuid.New().String()
 	if _, err := pool.Exec(ctx, `INSERT INTO auth.users (id, email) VALUES ($1,$2) ON CONFLICT DO NOTHING`,
@@ -332,6 +341,10 @@ func TestGetAuditLog_DoesNotLeakAcrossOrganisations(t *testing.T) {
 	if err != nil {
 		t.Fatalf("publish B: %v", err)
 	}
+	t.Cleanup(func() {
+		deleteOrganisation(ctx, pool, orgA.OrganisationID)
+		deleteOrganisation(ctx, pool, orgB.OrganisationID)
+	})
 
 	entries, err := svc.GetAuditLog(ctx, founder, "", orgA.OrganisationID)
 	if err != nil {

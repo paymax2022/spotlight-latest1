@@ -450,8 +450,15 @@ export async function getPackages(): Promise<TestPackage[]> {
     await delay();
     return MOCK_PACKAGES;
   }
-  const { data } = await api.get<TestPackage[]>(`${LAB_API}/packages`);
-  return data;
+  // Same envelope as getTests: {"success":true,"packages":[...]}. NOTE: the Go
+  // rows are the raw catalog shape (id/name/description/price_kobo/test_ids/
+  // tat_hours) — they do NOT carry the presentation-only fields this screen's
+  // TestPackage type also declares (listPriceKobo, testCount, tat as a string,
+  // popular, imageColor). This unwrap only fixes the "packages is not an
+  // array" crash; mapping/deriving those display fields from the real rows is
+  // separate follow-up work, not done here.
+  const { data } = await api.get<{ success: boolean; packages: TestPackage[] }>(`${LAB_API}/packages`);
+  return data.packages ?? [];
 }
 
 export async function getPackage(id: string): Promise<TestPackage> {
@@ -503,8 +510,16 @@ export async function getOrders(): Promise<LabOrder[]> {
     await delay();
     return MOCK_ORDERS;
   }
-  const { data } = await api.get<LabOrder[]>(`${LAB_API}/orders`);
-  return data;
+  // Same envelope as getTests/getPackages: {"success":true,"orders":[...]}.
+  // NOTE: the Go rows are the raw order shape (patient_id/lab_provider_id/
+  // state/total_kobo/...) and do NOT carry every field this screen's LabOrder
+  // type declares (labName, subtotalKobo/collectionFeeKobo split, location,
+  // paymentHeld, phlebotomist*, resultId, hasCritical) — those are UI-only
+  // concepts the backend doesn't compute yet. This unwrap only fixes the
+  // "orders is not an array" crash; enriching/mapping to the full LabOrder
+  // shape is separate follow-up work, not done here.
+  const { data } = await api.get<{ success: boolean; orders: LabOrder[] }>(`${LAB_API}/orders`);
+  return data.orders ?? [];
 }
 
 export async function getOrder(id: string): Promise<LabOrder> {

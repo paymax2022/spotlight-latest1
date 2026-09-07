@@ -26,7 +26,9 @@ func TestCommitteeLifecycle_OwnerOnly_LiveDB(t *testing.T) {
 	founder, orgID, svc, done := seedFounder(t, ctx, "cmtercb")
 	defer done()
 	pool := liveDBPool(t)
-	defer pool.Close()
+	// t.Cleanup, not defer: deferred calls run BEFORE t.Cleanup callbacks, so a
+	// deferred close shuts the pool under any fixture teardown registered later.
+	t.Cleanup(pool.Close)
 
 	purpose := "Reviews the annual audit"
 	req := association.CommitteeRequest{Name: "Audit Committee", Description: &purpose}
@@ -82,7 +84,9 @@ func TestCommitteeRoster_ChapterAdminKeepsIt_LiveDB(t *testing.T) {
 	founder, orgID, svc, done := seedFounder(t, ctx, "cmterost")
 	defer done()
 	pool := liveDBPool(t)
-	defer pool.Close()
+	// t.Cleanup, not defer: deferred calls run BEFORE t.Cleanup callbacks, so a
+	// deferred close shuts the pool under any fixture teardown registered later.
+	t.Cleanup(pool.Close)
 
 	committeeID, err := svc.CreateCommittee(ctx, founder, orgID,
 		association.CommitteeRequest{Name: "Welfare Committee"})

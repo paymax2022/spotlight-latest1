@@ -114,6 +114,7 @@ type Service struct {
 	rxItems    RxItems            // optional; nil ⇒ dispensed-item↔Rx match check is skipped (DP-002)
 	proofRec   ProofRecorder      // optional (DP-006); nil ⇒ proofs not stored (delivery still allowed)
 	proofVer   ProofVerifier      // optional (DP-006); nil ⇒ proofs recorded but not verified
+	rxLister   RxLister           // optional, injected via SetRxLister; nil ⇒ MyPrescriptions fails closed
 }
 
 func NewService(db *pgxpool.Pool, escrow EscrowHolder, rx RxGate, verifier RxVerifier, dispatch Dispatcher, prov ProviderGate, payout PayoutGate, audit Auditor) *Service {
@@ -126,6 +127,45 @@ func NewService(db *pgxpool.Pool, escrow EscrowHolder, rx RxGate, verifier RxVer
 
 // SetReviewCaseOpener injects the optional symptom-search seam at wiring time.
 func (s *Service) SetReviewCaseOpener(r ReviewCaseOpener) { s.reviews = r }
+
+// SetRxLister injects the optional "list my prescriptions" seam at wiring
+// time (mirrors SetReviewCaseOpener — added as a setter rather than a
+// NewService positional param so existing call sites, including the live-DB
+// test fixtures that construct a read-only Service with a run of nils,
+// need no change).
+func (s *Service) SetRxLister(r RxLister) { s.rxLister = r }
+
+// PrescriptionSummary is a patient's own prescription row for the pharmacy
+// "My Prescriptions" list — a narrow read model local to this package,
+// decoupled from healthrx's own Prescription type (mirrors the RxGate/
+// RxVerifier seam pattern: pharmacy never imports healthrx's concrete types).
+type PrescriptionSummary struct {
+	ID                 string    `json:"id"`
+	State              string    `json:"state"`
+	PrescriberID       string    `json:"prescriber_id"`
+	PharmacyProviderID *string   `json:"pharmacy_provider_id,omitempty"`
+	RejectReason       string    `json:"reject_reason"`
+	ItemCount          int       `json:"item_count"`
+	CreatedAt          time.Time `json:"created_at"`
+}
+
+// RxLister is the narrow seam into healthrx for the pharmacy "My
+// Prescriptions" list (GET /pharmacy/prescriptions) — the mobile client has
+// called this since the Sell group's pharmacy vertical was built, but no
+// route/handler/service method ever existed for it (only the single-item
+// GET /prescriptions/:id path existed, requiring an id the patient does not
+// yet have on first load).
+type RxLister interface {
+	ListForPatient(ctx context.Context, patientID string) ([]PrescriptionSummary, error)
+}
+
+// MyPrescriptions returns the caller's own prescriptions, most recent first.
+func (s *Service) MyPrescriptions(ctx context.Context, patientID string) ([]PrescriptionSummary, error) {
+	if s.rxLister == nil {
+		return nil, fmt.Errorf("pharmacy: rx lister not configured")
+	}
+	return s.rxLister.ListForPatient(ctx, patientID)
+}
 
 // CommissionRecorder is the nil-safe seam into the central Commission & Profit
 // module (§ profit registry). app-wiring injects a thin adapter over the finance
@@ -292,6 +332,20 @@ func (s *Service) ListProducts(ctx context.Context, pharmacyProviderID, nameQuer
 		// Match either the medicine name or the owning pharmacy's name.
 		where += fmt.Sprintf(" AND (pr.name ILIKE '%%'||$%d||'%%' OR hp.display_name ILIKE '%%'||$%d||'%%')", len(args), len(args))
 	}
+	// TWO nullable columns are read into plain Go strings here:
+	// pharmacy_provider_id (uuid) and nafdac_ref (text). pgx fails the whole scan
+	// on either — "cannot scan NULL into *string" — and because that happens
+	// per-row inside the loop, ONE such product returned 500 for the entire
+	// catalog rather than omitting itself. Every product in the local database has
+	// both NULL, so the catalog was completely unreachable.
+	//
+	// The LEFT JOIN and the COALESCE on display_name beside them already
+	// anticipate an unresolvable provider; these columns simply were not given the
+	// same treatment. Empty string is the signal the name already uses.
+	//
+	// Note nafdac_ref is documented on the struct as "HL-5: required" but the
+	// column is nullable and no row has one — a data/schema question this does not
+	// settle, and deliberately: a catalog that 500s hides it instead of showing it.
 	q := fmt.Sprintf(`
 		SELECT pr.id, COALESCE(pr.pharmacy_provider_id::text, ''), COALESCE(hp.display_name, ''), pr.name, COALESCE(pr.nafdac_ref, ''),
 		       pr.nafdac_status, pr.rx_required, pr.is_controlled, pr.price_kobo, pr.stock_qty, pr.active, pr.created_at
@@ -320,8 +374,10 @@ func (s *Service) ListProducts(ctx context.Context, pharmacyProviderID, nameQuer
 // owning pharmacy's display name. Mirrors ListProducts' shape (LEFT JOIN
 // health_providers) so the detail screen has the same attribution as the list.
 func (s *Service) GetProduct(ctx context.Context, id string) (*Product, error) {
+	// Same nullable-provider handling as ListProducts — a detail page must not 500
+	// on a product the list can show.
 	const q = `
-		SELECT pr.id, pr.pharmacy_provider_id, COALESCE(hp.display_name, ''), pr.name, pr.nafdac_ref,
+		SELECT pr.id, COALESCE(pr.pharmacy_provider_id::text, ''), COALESCE(hp.display_name, ''), pr.name, COALESCE(pr.nafdac_ref, ''),
 		       pr.nafdac_status, pr.rx_required, pr.is_controlled, pr.price_kobo, pr.stock_qty, pr.active, pr.created_at
 		FROM pharmacy_products pr
 		LEFT JOIN health_providers hp ON hp.id = pr.pharmacy_provider_id

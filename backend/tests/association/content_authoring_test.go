@@ -251,6 +251,7 @@ func TestRunDues_RaisesInvoicesAndIsReplaySafe(t *testing.T) {
 	if err != nil {
 		t.Fatalf("publish: %v", err)
 	}
+	t.Cleanup(func() { deleteOrganisation(ctx, pool, res.OrganisationID) })
 	orgID := res.OrganisationID
 
 	// The draft's single category is ₦2,000.00 = 200000 kobo, and the founder is
@@ -328,6 +329,7 @@ func TestCreateTask_RejectsCrossOrgAssignee(t *testing.T) {
 	if err != nil {
 		t.Fatalf("publish: %v", err)
 	}
+	t.Cleanup(func() { deleteOrganisation(ctx, pool, mine.OrganisationID) })
 	other := seedOrganisation(t, ctx, pool, "Other Org "+uuid.New().String()[:8])
 	_, foreignMembership := seedActiveMembership(t, ctx, pool, other)
 
@@ -400,6 +402,7 @@ func TestFullDuesLifecycle_RunThenPayPostsBalancedLedger(t *testing.T) {
 	if err != nil {
 		t.Fatalf("publish: %v", err)
 	}
+	t.Cleanup(func() { deleteOrganisation(ctx, pool, org.OrganisationID) })
 
 	const duesKobo int64 = 200000 // the draft's single category, in kobo
 	run, err := svc.RunDues(ctx, founder, org.OrganisationID, association.DuesRunRequest{
