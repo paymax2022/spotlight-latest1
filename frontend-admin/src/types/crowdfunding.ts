@@ -472,3 +472,11 @@ export interface CfCampaignFunding {
   milestoneCount: number;
   milestonesReleased: number;
 }
+
+/** One page of crowdfunding users plus the count matching the current filters. */
+export interface CfUsersPage {
+  users: CfUser[];
+  total: number;
+  page: number;
+  limit: number;
+}
