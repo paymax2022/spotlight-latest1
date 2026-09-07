@@ -76,8 +76,10 @@ func (s *Service) AdminListPending(ctx context.Context, status string) ([]AdminC
 		// The console's "All" tab. It used to send an empty status, which landed
 		// on the default above — so the tab labelled All showed only the pending
 		// queue, and an operator reading it would conclude the platform had four
-		// campaigns. An empty Status means "no status predicate" downstream.
+		// campaigns. Empty Status is NOT "no filter": downstream it selects the
+		// public guard (ACTIVE + not paused), so this needs the explicit flag.
 		q.Status = ""
+		q.AllStatuses = true
 	}
 
 	where, args := buildDiscoveryWhere(q, 1)
