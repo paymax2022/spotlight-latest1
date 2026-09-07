@@ -744,6 +744,18 @@ func (s *Service) ListUsers(ctx context.Context, role, status, search string, pa
 	}
 	result := UsersPage{Users: out, Total: total, Page: page, Limit: limit}
 	if len(out) == 0 {
+		// COUNT(*) OVER() rides on the returned rows, so an empty page carries no
+		// total — and a page PAST the end is empty while the filter still matches
+		// plenty. Reporting 0 there would tell the console "no users" whenever the
+		// last row on the final page is suspended or filtered away. Count
+		// separately, with the same filters and no LIMIT.
+		countQ := fmt.Sprintf("WITH base AS (%s) SELECT COUNT(*) FROM base", userBaseCTE)
+		if len(conds) > 0 {
+			countQ += " WHERE " + strings.Join(conds, " AND ")
+		}
+		if err := s.db.QueryRow(ctx, countQ, args...).Scan(&result.Total); err != nil {
+			return UsersPage{}, err
+		}
 		return result, nil
 	}
 	// Activity is composed live from the same two real sources every total on
