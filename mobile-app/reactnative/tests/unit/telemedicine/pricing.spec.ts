@@ -17,6 +17,8 @@ import assert from 'node:assert/strict';
 import {
   readBookingQuote,
   mapDoctorMoney,
+  mapDoctor,
+  initialsFrom,
   mapAppointmentMoney,
   withDemoQuote,
   slotToISO,
@@ -178,5 +180,82 @@ describe('slotToISO', () => {
     }
     assert.equal(slotToISO(undefined, '09:00 AM'), undefined);
     assert.equal(slotToISO('not-a-date', '09:00 AM'), undefined);
+  });
+});
+
+// ── mapDoctor ────────────────────────────────────────────────────────────────
+// The bug these guard: mapDoctorMoney spread the raw payload and mapped money
+// ONLY, so against the live backend (EXPO_PUBLIC_TELEMEDICINE_USE_MOCK=false)
+// every camelCase field on Doctor was undefined. `isOnline` undefined meant the
+// landing screen's "Available now" list — which filters on it — was permanently
+// empty, reading as "no doctors online" rather than as a mapping bug.
+//
+// Fixture is the LITERAL shape from backend/internal/telemedicine/model.go
+// Doctor json tags, so this fails if the two drift apart again.
+const GO_DOCTOR = {
+  id: 'd-1',
+  user_id: 'u-1',
+  name: 'Dr. Amaka Obi',
+  specialty: 'general',
+  sub_specialty: 'family_medicine',
+  about: 'Family physician.',
+  consult_fee_kobo: 350_000,
+  is_available: true,
+  is_online: true,
+  is_hmo_verified: true,
+  is_featured: true,
+  experience_years: 12,
+  rating: 4.9,
+  review_count: 312,
+};
+
+describe('mapDoctor (live snake_case → app camelCase)', () => {
+  it('maps the fields the doctor list and cards actually read', () => {
+    const d = mapDoctor(GO_DOCTOR);
+    assert.equal(d.isOnline, true, 'isOnline drives the Available-now list');
+    assert.equal(d.yearsExperience, 12);
+    assert.equal(d.reviewCount, 312);
+    assert.equal(d.rating, 4.9);
+    assert.equal(d.featured, true);
+    assert.equal(d.feeKobo, 350_000);
+  });
+
+  it('derives display fields the backend does not send', () => {
+    const d = mapDoctor(GO_DOCTOR);
+    assert.equal(d.initials, 'AO', 'honorific must not become an initial');
+    assert.deepEqual(d.specialties, ['General', 'Family Medicine']);
+    assert.ok(d.avatarColor && d.avatarColor.startsWith('#'));
+  });
+
+  it('gives the same doctor the same avatar colour every time', () => {
+    assert.equal(mapDoctor(GO_DOCTOR).avatarColor, mapDoctor({ ...GO_DOCTOR }).avatarColor);
+  });
+
+  it('NEVER invents a next-available time', () => {
+    // This is a medical booking screen: a fabricated slot is a promise the
+    // system cannot keep. Absent must stay absent.
+    assert.equal(mapDoctor(GO_DOCTOR).nextAvailable, undefined);
+  });
+
+  it('treats a doctor with no is_featured as not featured', () => {
+    const { is_featured, ...rest } = GO_DOCTOR;
+    void is_featured;
+    assert.equal(mapDoctor(rest).featured, false);
+  });
+
+  it('survives a junk payload without throwing', () => {
+    const d = mapDoctor({});
+    assert.equal(d.isOnline, false);
+    assert.equal(d.rating, 0);
+    assert.equal(d.initials, '?');
+  });
+});
+
+describe('initialsFrom', () => {
+  it('strips honorifics and takes first + last', () => {
+    assert.equal(initialsFrom('Dr. Amaka Obi'), 'AO');
+    assert.equal(initialsFrom('Prof Tunde Bello'), 'TB');
+    assert.equal(initialsFrom('Ngozi'), 'N');
+    assert.equal(initialsFrom(''), '?');
   });
 });
