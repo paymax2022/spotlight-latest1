@@ -58,6 +58,29 @@ type AdminDashboard struct {
 	DefaultsOpen  int64 `json:"defaults_open"`
 	MembersAtRisk int64 `json:"members_at_risk"`
 	MissedTotal   int64 `json:"missed_contributions_total"`
+	// Peer exposure across every member behind on contributions: missed x the
+	// circle's contribution. NL-7 — Paymax is never the lender, so this is what
+	// members owe each other, not a platform receivable.
+	DefaultExposureKobo int64 `json:"default_exposure_kobo"`
+
+	TargetsTotal      int64 `json:"targets_total"`
+	TargetsOpen       int64 `json:"targets_open"` // OPEN or REACHED — still gathering/holding
+	TargetBalanceKobo int64 `json:"target_balance_kobo"`
+
+	// Ledger-side customer money across all three products. Deliberately NOT
+	// called "float liability": that figure is ledger vs CUSTODY, nothing here
+	// can see custody, and so reconciliation is not something this endpoint can
+	// honestly report. The fixture reported it anyway.
+	LedgerBalanceKobo int64 `json:"ledger_balance_kobo"`
+
+	ProductMix []ProductMixRow `json:"product_mix"`
+}
+
+// ProductMixRow is one product's share of the customer money held.
+type ProductMixRow struct {
+	Product     string `json:"product"` // vault | circle | target
+	Count       int64  `json:"count"`
+	BalanceKobo int64  `json:"balance_kobo"`
 }
 
 func (r *AdminRepository) Dashboard(ctx context.Context) (AdminDashboard, error) {
@@ -82,12 +105,40 @@ func (r *AdminRepository) Dashboard(ctx context.Context) (AdminDashboard, error)
 		  (SELECT count(*) FROM public.ajo_members WHERE state='DEFAULTED'),
 		  -- Not yet defaulted but has missed at least one contribution.
 		  (SELECT count(*) FROM public.ajo_members WHERE state<>'DEFAULTED' AND missed_count > 0),
-		  (SELECT COALESCE(SUM(missed_count),0) FROM public.ajo_members)
+		  (SELECT COALESCE(SUM(missed_count),0) FROM public.ajo_members),
+		  (SELECT COALESCE(SUM(m.missed_count::bigint * c.contribution_kobo), 0)
+		     FROM public.ajo_members m JOIN public.ajo_circles c ON c.id = m.circle_id),
+		  (SELECT count(*) FROM public.group_targets),
+		  -- OPEN|REACHED are the states where money is still being gathered or
+		  -- held; RELEASED/CLOSED are finished. There is NO 'ACTIVE' state here —
+		  -- guessing one would have matched nothing and reported it as zero.
+		  (SELECT count(*) FROM public.group_targets WHERE state IN ('OPEN','REACHED')),
+		  (SELECT COALESCE(SUM(CASE WHEN direction='CREDIT' THEN amount_kobo ELSE -amount_kobo END), 0)
+		     FROM public.group_target_ledger)
 	`).Scan(&d.VaultsTotal, &d.VaultsLocked, &d.VaultsFlex, &d.VaultsMatured, &d.VaultBalanceKobo,
 		&d.CirclesTotal, &d.CirclesForming, &d.CirclesActive,
 		&d.PayoutQueueCount, &d.PayoutQueueValueKobo, &d.Collections30dKobo,
-		&d.MembersTotal, &d.DefaultsOpen, &d.MembersAtRisk, &d.MissedTotal)
-	return d, err
+		&d.MembersTotal, &d.DefaultsOpen, &d.MembersAtRisk, &d.MissedTotal,
+		&d.DefaultExposureKobo, &d.TargetsTotal, &d.TargetsOpen, &d.TargetBalanceKobo)
+	if err != nil {
+		return d, err
+	}
+
+	// Circle money in flight: collected but not yet paid out.
+	var circleHeld int64
+	if err := r.pool.QueryRow(ctx, `
+		SELECT COALESCE(SUM(collected_kobo), 0) FROM public.ajo_cycles WHERE status IN ('PENDING','RUNNING')
+	`).Scan(&circleHeld); err != nil {
+		return d, err
+	}
+
+	d.LedgerBalanceKobo = d.VaultBalanceKobo + d.TargetBalanceKobo + circleHeld
+	d.ProductMix = []ProductMixRow{
+		{Product: "vault", Count: d.VaultsTotal, BalanceKobo: d.VaultBalanceKobo},
+		{Product: "circle", Count: d.CirclesTotal, BalanceKobo: circleHeld},
+		{Product: "target", Count: d.TargetsTotal, BalanceKobo: d.TargetBalanceKobo},
+	}
+	return d, nil
 }
 
 type AdminVault struct {
