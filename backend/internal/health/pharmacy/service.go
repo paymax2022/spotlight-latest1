@@ -292,6 +292,20 @@ func (s *Service) ListProducts(ctx context.Context, pharmacyProviderID, nameQuer
 		// Match either the medicine name or the owning pharmacy's name.
 		where += fmt.Sprintf(" AND (pr.name ILIKE '%%'||$%d||'%%' OR hp.display_name ILIKE '%%'||$%d||'%%')", len(args), len(args))
 	}
+	// TWO nullable columns are read into plain Go strings here:
+	// pharmacy_provider_id (uuid) and nafdac_ref (text). pgx fails the whole scan
+	// on either — "cannot scan NULL into *string" — and because that happens
+	// per-row inside the loop, ONE such product returned 500 for the entire
+	// catalog rather than omitting itself. Every product in the local database has
+	// both NULL, so the catalog was completely unreachable.
+	//
+	// The LEFT JOIN and the COALESCE on display_name beside them already
+	// anticipate an unresolvable provider; these columns simply were not given the
+	// same treatment. Empty string is the signal the name already uses.
+	//
+	// Note nafdac_ref is documented on the struct as "HL-5: required" but the
+	// column is nullable and no row has one — a data/schema question this does not
+	// settle, and deliberately: a catalog that 500s hides it instead of showing it.
 	q := fmt.Sprintf(`
 		SELECT pr.id, COALESCE(pr.pharmacy_provider_id::text, ''), COALESCE(hp.display_name, ''), pr.name, COALESCE(pr.nafdac_ref, ''),
 		       pr.nafdac_status, pr.rx_required, pr.is_controlled, pr.price_kobo, pr.stock_qty, pr.active, pr.created_at
@@ -320,8 +334,10 @@ func (s *Service) ListProducts(ctx context.Context, pharmacyProviderID, nameQuer
 // owning pharmacy's display name. Mirrors ListProducts' shape (LEFT JOIN
 // health_providers) so the detail screen has the same attribution as the list.
 func (s *Service) GetProduct(ctx context.Context, id string) (*Product, error) {
+	// Same nullable-provider handling as ListProducts — a detail page must not 500
+	// on a product the list can show.
 	const q = `
-		SELECT pr.id, pr.pharmacy_provider_id, COALESCE(hp.display_name, ''), pr.name, pr.nafdac_ref,
+		SELECT pr.id, COALESCE(pr.pharmacy_provider_id::text, ''), COALESCE(hp.display_name, ''), pr.name, COALESCE(pr.nafdac_ref, ''),
 		       pr.nafdac_status, pr.rx_required, pr.is_controlled, pr.price_kobo, pr.stock_qty, pr.active, pr.created_at
 		FROM pharmacy_products pr
 		LEFT JOIN health_providers hp ON hp.id = pr.pharmacy_provider_id
