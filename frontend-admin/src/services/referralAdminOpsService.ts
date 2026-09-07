@@ -5,6 +5,7 @@
 // orchestrator. Money is BIGINT kobo throughout.
 
 import { env } from '@/config/env';
+import { resolveUseMock } from '@/config/useMock';
 import type {
   Payout,
   Reconciliation,
@@ -38,7 +39,7 @@ import type {
   MerchantDetail,
 } from '@/types/referralAdminOps';
 
-const USE_MOCK = (process.env.NEXT_PUBLIC_REFERRAL_USE_MOCK ?? 'true').toLowerCase() !== 'false';
+const USE_MOCK = resolveUseMock(process.env.NEXT_PUBLIC_REFERRAL_USE_MOCK);
 
 function adminBase(): string {
   return env.apiBaseUrl.replace(/\/api\/v1\/?$/, '/api/referral/admin');

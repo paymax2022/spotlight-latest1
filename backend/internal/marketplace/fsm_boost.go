@@ -4,9 +4,10 @@ import "net/http"
 
 // Boost FSM (§2.4). Explicit guarded transitions only.
 //
-//	purchased            → active (auto on purchase) | rejected_with_reason
-//	active               → completed (ends_at passed) | rejected_with_reason
-//	rejected_with_reason → auto_refunded (automatic refund ledger tx)
+//	purchased             → active (auto on purchase) | rejected_with_reason
+//	active                → completed (ends_at passed) | rejected_with_reason | cancelled_by_seller
+//	rejected_with_reason  → auto_refunded (automatic refund ledger tx)
+//	cancelled_by_seller   → auto_refunded (automatic PRORATED refund ledger tx)
 //	(terminal: completed, auto_refunded)
 
 var boostTransitions = map[BoostStatus]map[BoostStatus]bool{
@@ -17,8 +18,12 @@ var boostTransitions = map[BoostStatus]map[BoostStatus]bool{
 	BoostActive: {
 		BoostCompleted:          true,
 		BoostRejectedWithReason: true,
+		BoostCancelledBySeller:  true,
 	},
 	BoostRejectedWithReason: {
+		BoostAutoRefunded: true,
+	},
+	BoostCancelledBySeller: {
 		BoostAutoRefunded: true,
 	},
 	// terminals

@@ -170,6 +170,7 @@ func TestAddCommitteeMembers_DropsForeignMemberships(t *testing.T) {
 	if err != nil {
 		t.Fatalf("publish: %v", err)
 	}
+	t.Cleanup(func() { deleteOrganisation(ctx, pool, resB.OrganisationID) })
 	_, foreign := seedMember(t, ctx, pool, resB.OrganisationID, "@cmteforeign.test")
 
 	var committeeID string

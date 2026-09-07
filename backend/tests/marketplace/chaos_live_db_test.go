@@ -228,3 +228,84 @@ func listingStatus(t *testing.T, ctx context.Context, pool *pgxpool.Pool, id str
 	}
 	return st
 }
+
+// TestLiveDB_RetryStuckBoostRefunds_PaysBackAStrandedSeller covers the recovery
+// path for the §8 cascade's best-effort failure.
+//
+// RejectBoost writes the status BEFORE posting the reversal, so a ledger failure
+// between the two leaves the boost in rejected_with_reason with no refund_ref:
+// the seller has stopped being promoted and is still charged. I watched this
+// happen for real while writing the cascade test — the refund failed on a foreign
+// key and the boost sat stranded, its only trace a log line. Nothing retried it.
+//
+// The stranded shape is seeded directly rather than by breaking the ledger,
+// because what needs proving is that the recovery finds and settles that row —
+// not the particular way a refund can fail.
+func TestLiveDB_RetryStuckBoostRefunds_PaysBackAStrandedSeller(t *testing.T) {
+	svc, pool := liveMktService(t)
+	ctx := context.Background()
+
+	seller := seedLedgerCapableSeller(t, ctx, pool)
+	admin := seedTrustedSeller(t, ctx, pool)
+	cat := seedRiskTier0Category(t, ctx, pool)
+	listing := activate(t, ctx, svc, seller, admin, cat, "Stranded refund", 300000)
+	boostID := seedActiveBoost(t, ctx, pool, listing.ID, seller, "vip", "now()+interval '5 days'")
+
+	// Exactly what a mid-rejection ledger failure leaves behind.
+	if _, err := pool.Exec(ctx,
+		`UPDATE mkt_boosts SET status='rejected_with_reason'::boost_status, refund_ref=NULL WHERE id=$1::uuid`,
+		boostID); err != nil {
+		t.Fatalf("seed stranded boost: %v", err)
+	}
+	before, err := svc.GetBoost(ctx, boostID)
+	if err != nil {
+		t.Fatalf("get boost: %v", err)
+	}
+	balBefore := walletBalanceKobo(t, ctx, pool, seller)
+
+	n, err := svc.RetryStuckBoostRefunds(ctx)
+	if err != nil {
+		t.Fatalf("retry stuck refunds: %v", err)
+	}
+	if n < 1 {
+		t.Fatalf("retry reported %d refunds, want at least the one seeded here", n)
+	}
+
+	after, err := svc.GetBoost(ctx, boostID)
+	if err != nil {
+		t.Fatalf("get boost after retry: %v", err)
+	}
+	if after.Status != mkt.BoostAutoRefunded {
+		t.Errorf("status = %s, want %s", after.Status, mkt.BoostAutoRefunded)
+	}
+	if after.RefundRef == nil || *after.RefundRef == "" {
+		t.Error("RefundRef still empty — the refund must become traceable")
+	}
+	if got, want := walletBalanceKobo(t, ctx, pool, seller)-balBefore, before.PriceKobo; got != want {
+		t.Errorf("seller wallet moved %d kobo, want +%d", got, want)
+	}
+
+	// Idempotence, tested against the case that can actually double-pay.
+	//
+	// Simply calling the sweep twice proves nothing: after the first pass the row
+	// is auto_refunded, so the second finds no work and the wallet cannot move
+	// whatever the implementation does. (My first version of this assertion
+	// passed even with a deliberately non-deterministic refund reference.) The
+	// real exposure is a row that is stuck AGAIN — a concurrent sweep, or a
+	// retry racing a healthy RejectBoost through the same state. Putting it back
+	// into the stranded shape reproduces that, and only the deterministic
+	// reference plus PostReversal's duplicate tolerance prevents a second payout.
+	balAfterFirst := walletBalanceKobo(t, ctx, pool, seller)
+	if _, err := pool.Exec(ctx,
+		`UPDATE mkt_boosts SET status='rejected_with_reason'::boost_status, refund_ref=NULL WHERE id=$1::uuid`,
+		boostID); err != nil {
+		t.Fatalf("re-strand boost: %v", err)
+	}
+	if _, err := svc.RetryStuckBoostRefunds(ctx); err != nil {
+		t.Fatalf("second retry: %v", err)
+	}
+	if got := walletBalanceKobo(t, ctx, pool, seller); got != balAfterFirst {
+		t.Errorf("the seller was paid twice (%d -> %d) — one boost, one refund, however often the cron runs",
+			balAfterFirst, got)
+	}
+}

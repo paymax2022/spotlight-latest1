@@ -256,13 +256,26 @@ func (r *Repository) PostReversalPair(ctx context.Context, creditAccountID, debi
 		VALUES ($1, $2, $3, $4, $5)`
 
 	// Restore balance to the user wallet — REVERSAL_DEBIT reads as +balance.
+	// A duplicate idempotency_key means this exact reversal was already posted
+	// (replay) — surface the typed ErrDuplicate, mirroring PostJournal above,
+	// so callers (e.g. marketplace CancelBoost/RejectBoost) can treat the
+	// retry as a no-op instead of a hard failure. Without this, a caller's
+	// Redis-lock-based dedup is the ONLY thing standing between a replay and a
+	// raw wrapped error — and that lock does not always answer (Redis unset,
+	// unreachable, or its TTL elapsed between two attempts).
 	if _, err := tx.Exec(ctx, insertEntry,
 		creditAccountID, string(EntryReversalDebit), amountKobo, reference, idempotencyKey+":rev_debit"); err != nil {
+		if isUniqueViolation(err) {
+			return ErrDuplicate
+		}
 		return fmt.Errorf("ledger: insert reversal debit: %w", err)
 	}
 	// Drain the suspense hold — REVERSAL_CREDIT reads as -balance.
 	if _, err := tx.Exec(ctx, insertEntry,
 		debitAccountID, string(EntryReversalCredit), amountKobo, reference, idempotencyKey+":rev_credit"); err != nil {
+		if isUniqueViolation(err) {
+			return ErrDuplicate
+		}
 		return fmt.Errorf("ledger: insert reversal credit: %w", err)
 	}
 	return tx.Commit(ctx)

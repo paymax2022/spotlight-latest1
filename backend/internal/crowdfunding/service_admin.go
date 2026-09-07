@@ -3,6 +3,7 @@ package crowdfunding
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -67,8 +68,18 @@ type AdminCampaignSummary struct {
 
 func (s *Service) AdminListPending(ctx context.Context, status string) ([]AdminCampaignSummary, error) {
 	q := CampaignQuery{Status: status}
-	if status == "" {
+	switch strings.ToUpper(strings.TrimSpace(status)) {
+	case "":
+		// Unchanged default: a caller that names no status wants the queue.
 		q.Status = "PENDING_REVIEW"
+	case "ALL":
+		// The console's "All" tab. It used to send an empty status, which landed
+		// on the default above — so the tab labelled All showed only the pending
+		// queue, and an operator reading it would conclude the platform had four
+		// campaigns. Empty Status is NOT "no filter": downstream it selects the
+		// public guard (ACTIVE + not paused), so this needs the explicit flag.
+		q.Status = ""
+		q.AllStatuses = true
 	}
 
 	where, args := buildDiscoveryWhere(q, 1)

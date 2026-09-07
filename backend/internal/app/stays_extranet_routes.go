@@ -107,6 +107,7 @@ func RegisterStaysExtranet(member *gin.RouterGroup, admin *gin.RouterGroup, extr
 	if admin != nil {
 		settlementHandler.RegisterAdmin(admin, guard)
 		reviewsHandler.RegisterAdmin(admin, guard)
+		extranetHandler.RegisterAdmin(admin, guard)
 	}
 
 	// --- webhooks: /internal/webhooks/* (HMAC-verified; no member JWT) ---

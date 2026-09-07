@@ -103,6 +103,11 @@ func seedOrganisation(t *testing.T, ctx context.Context, pool *pgxpool.Pool, nam
 	if err != nil {
 		t.Fatalf("seed organisation: %v", err)
 	}
+	// Registered AFTER the caller's t.Cleanup(pool.Close), so it runs BEFORE it
+	// (LIFO) and still has an open pool. A `defer pool.Close()` in the caller
+	// would invert that and silently no-op this — there are none left in this
+	// package, and that is why.
+	t.Cleanup(func() { deleteOrganisation(context.Background(), pool, orgID) })
 	return orgID
 }
 
@@ -793,6 +798,7 @@ func TestLiveDB_PublishOrganisation_PersistsFullGraphAndAudit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("PublishOrganisation: %v", err)
 	}
+	t.Cleanup(func() { deleteOrganisation(ctx, pool, result.OrganisationID) })
 	if result.OrganisationID == "" {
 		t.Fatal("PublishOrganisation returned an empty organisation id")
 	}

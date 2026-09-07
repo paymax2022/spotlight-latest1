@@ -239,6 +239,78 @@ func (s *Service) attachThumbs(ctx context.Context, listings []*Listing) {
 	}
 }
 
+// attachFullMedia fills Media with every photo on a SINGLE listing, for the
+// detail screen's gallery. Deliberately separate from attachThumbs (which runs
+// on pages of results and only ever needs one thumbnail per card) — a detail
+// view is one listing, so one extra query here costs nothing search/list can't
+// afford to pay per row.
+func (s *Service) attachFullMedia(ctx context.Context, l *Listing) {
+	if l == nil || s.thumbs == nil || !s.thumbs.Configured() {
+		return
+	}
+	rows, err := s.repo.ListMediaForListing(ctx, l.ID)
+	if err != nil {
+		// Display-only, same contract as attachThumbs: a listing must still load
+		// if its gallery lookup fails.
+		log.Printf("[marketplace] full media lookup failed for listing %s: %v", l.ID, err)
+		return
+	}
+	media := make([]ListingMediaItem, 0, len(rows))
+	for _, r := range rows {
+		url := s.presignThumb(r.Key)
+		if url == "" {
+			continue
+		}
+		media = append(media, ListingMediaItem{
+			ID: r.ID, URLThumb: url, URLCard: url, URLFull: url,
+			Blurhash: r.Blurhash, SortOrder: r.SortOrder,
+		})
+	}
+	l.Media = media
+}
+
+// attachMediaForPage is attachFullMedia's batched counterpart, for a PAGE of
+// listings rather than one — the "My Listings" screen (SellerListings) reads
+// listing.media[] per card, same as the detail gallery, not thumb_url like
+// search/browse cards do. One extra query for the whole page, like attachThumbs.
+func (s *Service) attachMediaForPage(ctx context.Context, listings []*Listing) {
+	if len(listings) == 0 || s.thumbs == nil || !s.thumbs.Configured() {
+		return
+	}
+	ids := make([]string, 0, len(listings))
+	for _, l := range listings {
+		if l != nil {
+			ids = append(ids, l.ID)
+		}
+	}
+	rowsByListing, err := s.repo.MediaForListings(ctx, ids)
+	if err != nil {
+		log.Printf("[marketplace] page media lookup failed for %d listing(s): %v", len(ids), err)
+		return
+	}
+	for _, l := range listings {
+		if l == nil {
+			continue
+		}
+		rows := rowsByListing[l.ID]
+		if len(rows) == 0 {
+			continue
+		}
+		media := make([]ListingMediaItem, 0, len(rows))
+		for _, r := range rows {
+			url := s.presignThumb(r.Key)
+			if url == "" {
+				continue
+			}
+			media = append(media, ListingMediaItem{
+				ID: r.ID, URLThumb: url, URLCard: url, URLFull: url,
+				Blurhash: r.Blurhash, SortOrder: r.SortOrder,
+			})
+		}
+		l.Media = media
+	}
+}
+
 func (s *Service) Search(ctx context.Context, req any) (any, error) {
 	if s.searcher != nil {
 		return s.searcher.Search(ctx, req)
@@ -336,24 +408,52 @@ func (s *Service) SellerProfile(ctx context.Context, sellerID string) (*TrustPro
 }
 
 // SellerListings returns a seller's listings.
+// SellerListings is the PUBLIC storefront read (GET /sellers/:id/listings, no
+// auth) — a buyer browsing a seller's portfolio, so only ever active listings
+// (never a draft/pending_review/paused/removed_user row a buyer has no
+// business seeing). This route has no auth middleware at all (base group,
+// marketplace_routes.go), so there is no caller identity to compare against
+// :id here — see MyListingsForSeller for the seller's own, all-statuses view.
 func (s *Service) SellerListings(ctx context.Context, sellerID string, limit, offset int) ([]Listing, error) {
-	ls, err := s.repo.ListSellerListings(ctx, sellerID, limit, offset)
+	return s.sellerListingsWithMedia(ctx, sellerID, limit, offset, true)
+}
+
+// MyListingsForSeller is the AUTHENTICATED self-view (GET /listings/mine) —
+// the seller managing their own listings needs every status (draft awaiting
+// submit, pending_review, paused, expired, sold, removed) to act on it, which
+// is exactly what a buyer must never see through SellerListings above.
+func (s *Service) MyListingsForSeller(ctx context.Context, sellerID string, limit, offset int) ([]Listing, error) {
+	return s.sellerListingsWithMedia(ctx, sellerID, limit, offset, false)
+}
+
+func (s *Service) sellerListingsWithMedia(ctx context.Context, sellerID string, limit, offset int, onlyActive bool) ([]Listing, error) {
+	ls, err := s.repo.ListSellerListings(ctx, sellerID, limit, offset, onlyActive)
 	if err != nil {
 		return nil, err
 	}
-	// This is the "My listings" screen — the one a seller checks right after
-	// uploading photos, so it is the last place that should show a placeholder.
+	// This backs the "My listings" screen too — the one a seller checks right
+	// after uploading photos, so it is the last place that should show a
+	// placeholder. attachThumbs covers thumb_url; attachMediaForPage
+	// additionally covers media[], which is what the screen actually reads for
+	// its card photo.
 	ptrs := make([]*Listing, len(ls))
 	for i := range ls {
 		ptrs[i] = &ls[i]
 	}
 	s.attachThumbs(ctx, ptrs)
+	s.attachMediaForPage(ctx, ptrs)
 	return ls, nil
 }
 
-// SellerReviews returns a seller's visible reviews.
-func (s *Service) SellerReviews(ctx context.Context, sellerID string, limit, offset int) ([]Review, error) {
-	return s.repo.ListSellerReviews(ctx, sellerID, limit, offset)
+// SellerReviews returns a seller's visible reviews — mkt_deal_reviews
+// (thread-keyed, ADR-023), NOT the dead order-keyed mkt_reviews table
+// ListSellerReviews still reads. Every review since ADR-023 removed escrow
+// orders has been written via SubmitDealReview into mkt_deal_reviews; the old
+// table has taken no new rows since, so a seller's real reviews were never
+// reaching this endpoint (and the JSON shape didn't even match the mobile
+// Review type's camelCase contract — see ListRevieweeDealReviews's doc).
+func (s *Service) SellerReviews(ctx context.Context, sellerID string, limit, offset int) ([]DealReview, error) {
+	return s.repo.ListRevieweeDealReviews(ctx, sellerID, limit, offset)
 }
 
 // ─── Verification (delegates to KYC provider elsewhere; badges are PERMANENT) ──
@@ -374,13 +474,18 @@ func (s *Service) VerifyBusiness(ctx context.Context, userID string) error {
 
 // CreateOffer places a pending offer on a listing.
 func (s *Service) CreateOffer(ctx context.Context, buyerID, listingID string, offerKobo int64, message string) (*Offer, error) {
-	// Guard before the fetch. offerKobo is already checked below, but listingID
-	// was not, so an absent or misspelled field — listing_id instead of listingId
-	// is the easy slip, since the RESPONSE is camelCase — reached the repository
-	// as an empty string and surfaced as 500 "invalid input syntax for type uuid".
-	// A missing field is the caller's error and should name the field.
+	// Guard before the fetch: an empty listingID reached the repository and
+	// surfaced as 500 "invalid input syntax for type uuid".
+	//
+	// This guard was originally added believing the caller was misspelling
+	// listingId as listing_id. That had it backwards — snake_case IS the wire
+	// name (contracts/openapi.yaml), and the mobile client cannot send anything
+	// else, since it snake-cases every outbound body. The real fault was the
+	// handler reading camelCase, so this guard converted a 500 into a 400 and
+	// left the endpoint just as unreachable. Handler fixed; guard kept, because
+	// an empty listing ID is still a caller error worth naming.
 	if strings.TrimSpace(listingID) == "" {
-		return nil, fieldErr(CodeValidation, "listingId is required", "listingId")
+		return nil, fieldErr(CodeValidation, "listing_id is required", "listing_id")
 	}
 	l, err := s.repo.GetListing(ctx, listingID)
 	if err != nil {

@@ -56,7 +56,7 @@ func main() {
 	svc := marketplace.NewService(pool, led, (*goredis.Client)(nil))
 
 	var wg sync.WaitGroup
-	wg.Add(2)
+	wg.Add(3)
 	go runLoop(ctx, &wg, "listing-auto-expire", 5*time.Minute, func(c context.Context) {
 		if n, err := svc.ExpireDueListings(c); err != nil {
 			log.Printf("marketplace-cron: expire-listings: %v", err)
@@ -69,6 +69,17 @@ func main() {
 			log.Printf("marketplace-cron: boost-completion: %v", err)
 		} else if n > 0 {
 			log.Printf("marketplace-cron: boost-completion: completed %d boost(s)", n)
+		}
+	})
+	// Money owed back to a seller, so it runs more often than the housekeeping
+	// jobs. RejectBoost sets the status before posting the reversal; a ledger
+	// failure between the two leaves the seller un-promoted AND still charged,
+	// and until this existed the only trace was a log line nobody reads.
+	go runLoop(ctx, &wg, "boost-refund-retry", time.Minute, func(c context.Context) {
+		if n, err := svc.RetryStuckBoostRefunds(c); err != nil {
+			log.Printf("marketplace-cron: boost-refund-retry: %v", err)
+		} else if n > 0 {
+			log.Printf("marketplace-cron: boost-refund-retry: refunded %d stranded boost(s)", n)
 		}
 	})
 

@@ -437,6 +437,55 @@ export async function mockUpdateListing(id: string, input: UpdateListingInput): 
   return next;
 }
 
+const MAX_MOCK_LISTING_PHOTOS = 10;
+
+/** Active listing photo edits re-enter review, mirroring the live backend's
+ *  edit-after-approve re-moderation so the demo doesn't lie about the flow. */
+function reModerateIfActive(l: Listing): Listing {
+  return l.status === 'active' ? { ...l, status: 'pending_review' } : l;
+}
+
+export async function mockAddListingMedia(id: string, mediaIds: string[]): Promise<Listing> {
+  await mockDelay(260);
+  const existing = listingStore.get(id);
+  if (!existing) throw Object.assign(new Error('Listing not found'), { code: 'LISTING_NOT_FOUND', status: 404 });
+  if (existing.media.length + mediaIds.length > MAX_MOCK_LISTING_PHOTOS) {
+    throw Object.assign(new Error(`a listing can have at most ${MAX_MOCK_LISTING_PHOTOS} photos`), { code: 'VALIDATION', status: 422, field: 'media_ids' });
+  }
+  const appended = mediaIds.map((mid, i) => ({
+    id: mid, urlThumb: mid, urlCard: mid, urlFull: mid, blurhash: '', sortOrder: existing.media.length + i,
+  }));
+  const next = reModerateIfActive({ ...existing, media: [...existing.media, ...appended], updatedAt: now() });
+  listingStore.set(id, next);
+  return next;
+}
+
+export async function mockRemoveListingMedia(id: string, mediaId: string): Promise<Listing> {
+  await mockDelay(220);
+  const existing = listingStore.get(id);
+  if (!existing) throw Object.assign(new Error('Listing not found'), { code: 'LISTING_NOT_FOUND', status: 404 });
+  if (!existing.media.some((m) => m.id === mediaId)) {
+    throw Object.assign(new Error('photo not found on this listing'), { code: 'NOT_FOUND', status: 404 });
+  }
+  const next = reModerateIfActive({ ...existing, media: existing.media.filter((m) => m.id !== mediaId), updatedAt: now() });
+  listingStore.set(id, next);
+  return next;
+}
+
+export async function mockReorderListingMedia(id: string, mediaIds: string[]): Promise<Listing> {
+  await mockDelay(220);
+  const existing = listingStore.get(id);
+  if (!existing) throw Object.assign(new Error('Listing not found'), { code: 'LISTING_NOT_FOUND', status: 404 });
+  const byId = new Map(existing.media.map((m) => [m.id, m]));
+  if (mediaIds.length !== existing.media.length || mediaIds.some((mid) => !byId.has(mid))) {
+    throw Object.assign(new Error('reorder must include every existing photo exactly once'), { code: 'VALIDATION', status: 422, field: 'media_ids' });
+  }
+  const reordered = mediaIds.map((mid, i) => ({ ...byId.get(mid)!, sortOrder: i }));
+  const next: Listing = { ...existing, media: reordered, updatedAt: now() };
+  listingStore.set(id, next);
+  return next;
+}
+
 /** Submit a draft → moderation. Auto-approve low-risk categories to 'active'. */
 export async function mockSubmitListing(id: string): Promise<Listing> {
   await mockDelay(420);
@@ -582,4 +631,25 @@ export async function mockGetBoost(id: string): Promise<Boost> {
   const b = boostStore.get(id);
   if (!b) throw Object.assign(new Error('Boost not found'), { code: 'BOOST_NOT_FOUND', status: 404 });
   return b;
+}
+
+/** Mirrors the backend's proratedBoostRefund: the fraction of the price for
+ *  time remaining between now and endsAt, out of the full startsAt→endsAt
+ *  window. Mock-only stand-in so the Stop-boost UI is exercisable offline. */
+export async function mockCancelBoost(id: string): Promise<Boost> {
+  await mockDelay(320);
+  const b = boostStore.get(id);
+  if (!b) throw Object.assign(new Error('Boost not found'), { code: 'BOOST_NOT_FOUND', status: 404 });
+  if (b.status !== 'active') {
+    throw Object.assign(new Error(`cannot cancel a boost in status ${b.status}`), { code: 'INVALID_BOOST_TRANSITION', status: 409 });
+  }
+  let refundedKobo = 0;
+  if (b.startsAt && b.endsAt) {
+    const total = new Date(b.endsAt).getTime() - new Date(b.startsAt).getTime();
+    const remaining = Math.max(0, Math.min(total, new Date(b.endsAt).getTime() - Date.now()));
+    if (total > 0) refundedKobo = Math.floor(b.priceKobo * (remaining / total));
+  }
+  const cancelled: Boost = { ...b, status: 'auto_refunded', rejectionReasonCode: 'seller_cancelled', refundedKobo };
+  boostStore.set(id, cancelled);
+  return cancelled;
 }

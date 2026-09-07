@@ -23,7 +23,9 @@ import { resolveUseMock } from '@/config/useMock';
 // mock in dev and LIVE in prod, and this module is on the documented
 // MOCK_ALLOWLIST in scripts/check-mock-flags.mjs precisely because it has no
 // backend yet — an explicit opt-in that CI can see, rather than a silent default.
-const USE_MOCK = resolveUseMock(process.env.NEXT_PUBLIC_GROUPS_ADMIN_USE_MOCK);
+export const USE_MOCK = resolveUseMock(process.env.NEXT_PUBLIC_GROUPS_ADMIN_USE_MOCK);
+/** Named so the fixture banner can cite the exact switch. */
+export const USE_MOCK_ENV = 'NEXT_PUBLIC_GROUPS_ADMIN_USE_MOCK';
 
 /**
  * True when this console is serving fixtures rather than backend data. Exported

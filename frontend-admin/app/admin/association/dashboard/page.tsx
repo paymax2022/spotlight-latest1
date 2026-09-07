@@ -4,6 +4,8 @@ import { useEffect, useState } from 'react';
 import { getAssociationKpis, listAuditLog, formatNaira, type AssociationKpis, type AuditLogEntry } from '@/services/associationAdminService';
 import { AssociationTabs, Kpi, DisclosureNote, StateBlock, OrgPicker, useSelectedOrg, timeAgo } from '../_ui';
 import { Page, PageHeader, Card, Button, Badge, colors, thCell, tdCell } from '@/components/ui/vuexy';
+import { FixtureBanner } from '../../_shared/ui';
+import { USE_MOCK, USE_MOCK_ENV } from '@/services/associationAdminService';
 
 function actionColor(action: string) {
   if (/approve|activate|restore|publish/.test(action)) return colors.success;
@@ -35,6 +37,7 @@ export default function AssociationDashboardPage() {
         subtitle="Association membership, application approvals and dues collection for the selected organisation."
         actions={<Button variant="outline" onClick={load}>Refresh</Button>}
       />
+      <FixtureBanner active={USE_MOCK} envVar={USE_MOCK_ENV} />
       <AssociationTabs active="overview" />
       <OrgPicker />
 

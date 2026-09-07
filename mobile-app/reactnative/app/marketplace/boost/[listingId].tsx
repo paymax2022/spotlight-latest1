@@ -11,11 +11,12 @@
 // Entry: My Listings "Boost" button (purchase); a boost-expiry notification or a
 // just-completed purchase (status, via ?boostId).
 import React, { useEffect, useState } from 'react';
-import { View, Text, ScrollView, StyleSheet, Pressable, Alert } from 'react-native';
+import { View, Text, ScrollView, StyleSheet, Pressable } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import { goBack } from '@/lib/navigation';
-import { X, Zap, Wallet, CheckCircle2, AlertTriangle, RefreshCw, ArrowUpRight, TrendingUp } from 'lucide-react-native';
+import { confirmAsync, alertAsync } from '@/lib/confirm';
+import { X, Zap, Wallet, CheckCircle2, AlertTriangle, RefreshCw, ArrowUpRight, TrendingUp, XCircle } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
 import { Spacing } from '@/constants/spacing';
@@ -28,7 +29,7 @@ import TimePickerField from '@/components/TimePickerField';
 import { usePurchasePayment, PaymentSheet } from '@/features/payments';
 import { MarketColors, formatNaira } from '@/features/marketplace';
 import type { Boost, BoostTier } from '@/features/marketplace';
-import { useBoostTiers, useBoost, useBoostQuote, usePurchaseBoost } from '@/features/marketplace/sell.hooks';
+import { useBoostTiers, useBoost, useBoostQuote, usePurchaseBoost, useCancelBoost } from '@/features/marketplace/sell.hooks';
 
 function track(event: string, props: Record<string, unknown>) {
   if (__DEV__) console.log(`[analytics] ${event}`, props);
@@ -216,10 +217,30 @@ function BoostPurchase({ listingId, onPurchased }: { listingId: string; onPurcha
 // ── Screen 17 — Boost status ──
 function BoostStatus({ boostId }: { boostId: string }) {
   const boostQuery = useBoost(boostId);
+  const cancelBoost = useCancelBoost();
   const [remaining, setRemaining] = useState('');
 
   const boost = boostQuery.data;
   const endsAt = boost?.endsAt ?? null;
+
+  const handleStopBoost = async () => {
+    if (!boost) return;
+    const estimate = estimateProratedRefund(boost);
+    const ok = await confirmAsync({
+      title: 'Stop this boost?',
+      message: estimate > 0
+        ? `Your listing will stop being promoted right away. You'll get back about ${formatNaira(estimate)} for the days you haven't used yet.`
+        : "Your listing will stop being promoted right away. There's nothing left to refund — the boost has essentially run its course.",
+      confirmLabel: 'Stop boost',
+      destructive: true,
+    });
+    if (!ok) return;
+    try {
+      await cancelBoost.mutateAsync(boost.id);
+    } catch (e) {
+      await alertAsync({ title: 'Could not stop boost', message: e instanceof Error ? e.message : 'Please try again.' });
+    }
+  };
 
   // Live countdown for an active boost.
   useEffect(() => {
@@ -252,10 +273,14 @@ function BoostStatus({ boostId }: { boostId: string }) {
         <StateView kind="error" title="Couldn't load boost" actionLabel="Retry" onAction={() => boostQuery.refetch()} />
       ) : (
         <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
-          {boost.status === 'rejected_with_reason' || boost.status === 'auto_refunded' ? (
+          {boost.status === 'rejected_with_reason' ? (
             <RejectedState boost={boost} />
+          ) : boost.status === 'auto_refunded' ? (
+            boost.rejectionReasonCode === 'seller_cancelled'
+              ? <CancelledState boost={boost} />
+              : <RejectedState boost={boost} />
           ) : (
-            <ActiveState boost={boost} remaining={remaining} />
+            <ActiveState boost={boost} remaining={remaining} onStop={handleStopBoost} stopping={cancelBoost.isPending} />
           )}
           <View style={styles.footer2}>
             <PrimaryButton label="Back to my listings" variant="secondary" onPress={() => router.replace('/marketplace/sell' as never)} />
@@ -266,7 +291,19 @@ function BoostStatus({ boostId }: { boostId: string }) {
   );
 }
 
-function ActiveState({ boost, remaining }: { boost: Boost; remaining: string }) {
+// estimateProratedRefund mirrors the backend's proratedBoostRefund (service_boost.go)
+// for display only — the authoritative amount is whatever CancelBoost actually
+// posts and returns as refundedKobo. Used to preview "about ₦X back" before the
+// seller confirms stopping the boost.
+function estimateProratedRefund(boost: Boost): number {
+  if (!boost.startsAt || !boost.endsAt || boost.priceKobo <= 0) return 0;
+  const total = new Date(boost.endsAt).getTime() - new Date(boost.startsAt).getTime();
+  if (total <= 0) return 0;
+  const remaining = Math.max(0, Math.min(total, new Date(boost.endsAt).getTime() - Date.now()));
+  return Math.floor(boost.priceKobo * (remaining / total));
+}
+
+function ActiveState({ boost, remaining, onStop, stopping }: { boost: Boost; remaining: string; onStop: () => void; stopping: boolean }) {
   // Performance delta stub — with no baseline in the payload, present a plain
   // placeholder rather than an invented number.
   return (
@@ -290,6 +327,37 @@ function ActiveState({ boost, remaining }: { boost: Boost; remaining: string }) 
       <InfoRow label="Amount paid" value={formatNaira(boost.priceKobo)} />
       {boost.startsAt ? <InfoRow label="Started" value={new Date(boost.startsAt).toLocaleDateString()} /> : null}
       {boost.endsAt ? <InfoRow label="Ends" value={new Date(boost.endsAt).toLocaleDateString()} /> : null}
+
+      <Pressable style={styles.retryRow} onPress={onStop} disabled={stopping} accessibilityRole="button">
+        <XCircle size={16} color={MarketColors.danger} />
+        <Text style={[styles.retryText, { color: MarketColors.danger }]}>{stopping ? 'Stopping…' : 'Stop boost'}</Text>
+      </Pressable>
+    </>
+  );
+}
+
+function CancelledState({ boost }: { boost: Boost }) {
+  const refunded = boost.refundedKobo ?? 0;
+  return (
+    <>
+      <View style={styles.statusHero}>
+        <View style={[styles.statusIcon, styles.statusIconWarn]}><XCircle size={28} color={MarketColors.warnText} /></View>
+        <Text style={styles.statusTitle}>Boost stopped</Text>
+        <Text style={styles.statusSub}>You cancelled this boost early</Text>
+      </View>
+
+      <View style={styles.refundCard}>
+        <CheckCircle2 size={18} color={MarketColors.ok} />
+        <Text style={styles.refundText}>
+          {refunded > 0
+            ? `${formatNaira(refunded)} for the unused days was automatically refunded to your wallet.`
+            : 'The boost had essentially run its course, so there was nothing left to refund.'}
+        </Text>
+      </View>
+
+      <InfoRow label="Tier" value={boost.tier} />
+      <InfoRow label="Amount paid" value={formatNaira(boost.priceKobo)} />
+      <InfoRow label="Amount refunded" value={formatNaira(refunded)} />
     </>
   );
 }

@@ -6,6 +6,7 @@
 // the sidebar gates the nav entries. Money is BIGINT kobo throughout.
 
 import { apiV1 } from '@/config/env';
+import { resolveUseMock } from '@/config/useMock';
 import type {
   ProgramConfig,
   ConfigPublishInput,
@@ -21,8 +22,7 @@ import type {
   ModuleStatus,
 } from '@/types/referralRewardsAdmin';
 
-const USE_MOCK =
-  (process.env.NEXT_PUBLIC_REFERRAL_REWARDS_USE_MOCK ?? 'true').toLowerCase() !== 'false';
+const USE_MOCK = resolveUseMock(process.env.NEXT_PUBLIC_REFERRAL_REWARDS_USE_MOCK);
 
 function adminBase(): string {
   // apiV1() = http://host/api/v1 → http://host/api/v1/admin/referrals
@@ -202,6 +202,31 @@ export async function adjustReferrerCase(referrerId: string, input: CaseAdjustme
   return sendJson<{ ok: true }>('POST', `/${encodeURIComponent(referrerId)}/case`, input, {
     'Idempotency-Key': crypto.randomUUID(),
   });
+}
+
+// ─── Referral code (admin-chosen) ────────────────────────────────────────────
+/** 3-5 chars of A-Z0-9; the server normalises to uppercase and enforces this too. */
+export const REFERRAL_CODE_MAX = 5;
+export const REFERRAL_CODE_MIN = 3;
+export const REFERRAL_CODE_PATTERN = /^[A-Z0-9]{3,5}$/;
+
+/** Thrown when the chosen code already belongs to someone (HTTP 409). */
+export class ReferralCodeTakenError extends Error {
+  constructor() { super('That referral code is already in use.'); this.name = 'ReferralCodeTakenError'; }
+}
+
+export async function setReferrerCode(referrerId: string, code: string): Promise<{ code: string }> {
+  if (USE_MOCK) throw new Error(`Editing a referral code ${NOT_IN_FIXTURE_MODE}`);
+  try {
+    return await sendJson<{ code: string }>('PUT', `/${encodeURIComponent(referrerId)}/code`, { code });
+  } catch (e) {
+    // 409 is a distinct outcome, not a generic failure: the admin needs to be
+    // told the code is taken so they can pick another, rather than shown a
+    // "something went wrong" that reads as a bug.
+    const msg = e instanceof Error ? e.message : String(e);
+    if (/\b409\b|already in use/i.test(msg)) throw new ReferralCodeTakenError();
+    throw e;
+  }
 }
 
 // ─── A6 Milestone log ─────────────────────────────────────────────────────────

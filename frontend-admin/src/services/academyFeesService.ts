@@ -12,6 +12,7 @@
 // review), SF-11 (opt-in, immutably-logged government export).
 
 import { env } from '@/config/env';
+import { resolveUseMock } from '@/config/useMock';
 import type {
   FeesSchool, FeesSchoolInput,
   FeesSession, FeesSessionInput,
@@ -27,7 +28,7 @@ import type {
   SchoolRoleGrant, RoleAssignInput, RoleRevokeInput, SchoolRole,
 } from '@/types/academyFees';
 
-const USE_MOCK = (process.env.NEXT_PUBLIC_ACADEMY_USE_MOCK ?? 'true').toLowerCase() !== 'false';
+const USE_MOCK = resolveUseMock(process.env.NEXT_PUBLIC_ACADEMY_USE_MOCK);
 
 function adminBase(): string {
   return env.apiBaseUrl.replace(/\/api\/v1\/?$/, '/api/academy');

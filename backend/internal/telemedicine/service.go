@@ -149,6 +149,16 @@ func (s *Service) ListDoctors(ctx context.Context, q ListDoctorsQuery) ([]Doctor
 		args = append(args, "%"+strings.ToLower(q.Search)+"%")
 		filters = append(filters, fmt.Sprintf("(LOWER(d.name) LIKE $%d OR LOWER(d.specialty) LIKE $%d)", len(args), len(args)))
 	}
+	if q.MinRating > 0 {
+		args = append(args, q.MinRating)
+		filters = append(filters, fmt.Sprintf("d.rating >= $%d", len(args)))
+	}
+	// Featured is a stored editorial flag, never derived. When nothing is
+	// featured this correctly returns an empty list and the app hides its
+	// Featured section — that is the intended outcome, not a failure.
+	if q.Featured {
+		filters = append(filters, "d.is_featured = TRUE")
+	}
 
 	orderBy := "d.name"
 	if q.TopRated {
@@ -159,7 +169,7 @@ func (s *Service) ListDoctors(ctx context.Context, q ListDoctorsQuery) ([]Doctor
 	sql := fmt.Sprintf(`
 		SELECT d.id, d.user_id, d.name, d.specialty, d.sub_specialty, d.bio, d.about,
 		       d.consult_fee_kobo, d.avatar_url, d.is_available, d.is_online, d.is_hmo_verified,
-		       d.experience_years, d.rating, d.review_count, d.patients_count, d.success_rate,
+		       d.experience_years, d.rating, d.review_count, d.patients_count, d.success_rate, d.is_featured,
 		       d.mdcn_number, d.phone, d.education, d.created_at
 		FROM doctors d
 		WHERE %s
@@ -179,7 +189,7 @@ func (s *Service) GetDoctor(ctx context.Context, id string) (*Doctor, error) {
 	const q = `
 		SELECT d.id, d.user_id, d.name, d.specialty, d.sub_specialty, d.bio, d.about,
 		       d.consult_fee_kobo, d.avatar_url, d.is_available, d.is_online, d.is_hmo_verified,
-		       d.experience_years, d.rating, d.review_count, d.patients_count, d.success_rate,
+		       d.experience_years, d.rating, d.review_count, d.patients_count, d.success_rate, d.is_featured,
 		       d.mdcn_number, d.phone, d.education, d.created_at
 		FROM doctors d WHERE d.id = $1`
 	rows, err := s.db.Query(ctx, q, id)
@@ -751,7 +761,7 @@ func scanDoctors(rows pgRows, platformFeeBp int) ([]Doctor, error) {
 		if err := rows.Scan(
 			&d.ID, &d.UserID, &d.Name, &d.Specialty, &subSpec, &d.Bio, &d.About,
 			&d.ConsultFeeKobo, &d.AvatarURL, &d.IsAvailable, &d.IsOnline, &d.IsHMOVerified,
-			&d.ExperienceYears, &d.Rating, &d.ReviewCount, &d.PatientsCount, &d.SuccessRate,
+			&d.ExperienceYears, &d.Rating, &d.ReviewCount, &d.PatientsCount, &d.SuccessRate, &d.IsFeatured,
 			&mdcn, &phone, &educationJSON, &d.CreatedAt,
 		); err != nil {
 			return nil, err

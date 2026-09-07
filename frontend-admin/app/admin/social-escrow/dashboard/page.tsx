@@ -5,6 +5,8 @@ import { getEscrowDashboard, formatNaira } from '@/services/escrowAdminService';
 import type { EscrowDashboard } from '@/types/escrowAdmin';
 import { PageHeader, EscrowTabs, Card, Kpi, Badge, DisclosureNote, StateBlock, btn, th, td, timeAgo, pct } from '../../creators/_ui';
 import { colors } from '@/components/ui/vuexy';
+import { FixtureBanner } from '../../_shared/ui';
+import { USE_MOCK, USE_MOCK_ENV } from '@/services/escrowAdminService';
 
 export default function EscrowDashboardPage() {
   const [data, setData] = useState<EscrowDashboard | null>(null);
@@ -28,6 +30,7 @@ export default function EscrowDashboardPage() {
         subtitle="Holds, releases, refunds and open disputes across the P2P marketplace escrow rail. Reconciles the ledger held-balance projection against the custodial account."
         action={<button onClick={load} style={btn()}>Refresh</button>}
       />
+      <FixtureBanner active={USE_MOCK} envVar={USE_MOCK_ENV} />
       <EscrowTabs active="overview" />
 
       <DisclosureNote>

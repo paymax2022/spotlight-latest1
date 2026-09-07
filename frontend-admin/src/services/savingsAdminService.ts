@@ -8,6 +8,7 @@
 
 import { env } from '@/config/env';
 import { operationKey } from './idempotency';
+import { resolveUseMock } from '@/config/useMock';
 import type {
   SavingsDashboard,
   VaultRecord,
@@ -18,9 +19,15 @@ import type {
   DefaultRecord,
   DefaultAction,
   DefaultActionResult,
+  LiveSavingsDashboard,
+  LiveVault,
+  LiveCircle,
+  LiveDefault,
 } from '@/types/savingsAdmin';
 
-const USE_MOCK = (process.env.NEXT_PUBLIC_SAVINGS_USE_MOCK ?? 'true').toLowerCase() !== 'false';
+export const USE_MOCK = resolveUseMock(process.env.NEXT_PUBLIC_SAVINGS_USE_MOCK);
+/** Named so the fixture banner can cite the exact switch. */
+export const USE_MOCK_ENV = 'NEXT_PUBLIC_SAVINGS_USE_MOCK';
 
 function adminBase(): string {
   return env.apiBaseUrl.replace(/\/api\/v1\/?$/, '/api/savings/admin');
@@ -270,4 +277,70 @@ export async function handleDefault(id: string, action: DefaultAction, note?: st
   // backend verb today.
   if (USE_MOCK) throw new Error(`Handling a savings default ${NO_BACKEND_YET}`);
   return sendJson<DefaultActionResult>('POST', `/defaults/${id}/handle`, { action, note });
+}
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// LIVE admin API — backend/internal/savings/admin_{repository,handler}.go
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// These call real endpoints and carry NO fixture branch. If the backend is down
+// or the caller lacks savings.admin.view, they throw and the page shows the
+// failure — which is the point. Nothing here can quietly substitute invented
+// numbers, so a green screen means the data is real.
+//
+// The handlers wrap their payload in a named key ({success, dashboard}, {…,
+// vaults}) rather than {data}, so each unwrap names its own key instead of
+// relying on getJson's generic `j?.data ?? j` fallback — which would have
+// returned the whole envelope and rendered undefined everywhere.
+
+async function liveGet<T>(path: string, key: string): Promise<T> {
+  const res = await fetch(`${adminBase()}${path}`, { headers: authHeaders() });
+  if (!res.ok) {
+    // Surface the real reason. 403 here almost always means the signed-in admin
+    // lacks savings.admin.view, which is a permissions problem, not an outage.
+    let detail = '';
+    try { detail = ((await res.json()) as { error?: string })?.error ?? ''; } catch { /* not JSON */ }
+    throw new Error(`GET /api/savings/admin${path} failed (${res.status})${detail ? `: ${detail}` : ''}`);
+  }
+  const body = (await res.json()) as Record<string, unknown>;
+  return body[key] as T;
+}
+
+export async function getLiveSavingsDashboard(): Promise<LiveSavingsDashboard> {
+  return liveGet<LiveSavingsDashboard>('/dashboard', 'dashboard');
+}
+
+export async function listLiveVaults(state?: string, limit = 100): Promise<LiveVault[]> {
+  const q = new URLSearchParams();
+  if (state) q.set('state', state);
+  q.set('limit', String(limit));
+  return (await liveGet<LiveVault[]>(`/vaults?${q}`, 'vaults')) ?? [];
+}
+
+export async function listLiveCircles(state?: string, limit = 100): Promise<LiveCircle[]> {
+  const q = new URLSearchParams();
+  if (state) q.set('state', state);
+  q.set('limit', String(limit));
+  return (await liveGet<LiveCircle[]>(`/circles?${q}`, 'circles')) ?? [];
+}
+
+export async function listLiveDefaults(limit = 100): Promise<LiveDefault[]> {
+  return (await liveGet<LiveDefault[]>(`/defaults?limit=${limit}`, 'defaults')) ?? [];
+}
+
+/**
+ * Float reconciliation is NOT available and cannot be faked.
+ *
+ * It compares the ledger against CUSTODY (bank / virtual-account balances).
+ * Nothing in the savings tables can see custody, so any delta this console
+ * displayed would have been arithmetic on one side of a two-sided comparison.
+ * The fixture showed "balanced".
+ */
+export async function getLiveFloatRecon(): Promise<never> {
+  throw new Error(
+    'Float reconciliation needs a custody balance source (bank / VA), which the ' +
+    'savings backend does not expose. No endpoint exists, and a ledger-only delta ' +
+    'would report "balanced" without ever having compared anything.',
+  );
 }

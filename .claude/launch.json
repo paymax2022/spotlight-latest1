@@ -128,6 +128,26 @@
       "cwd": "mobile-app/reactnative",
       "port": 8086,
       "description": "Expo web on :8086 for this worktree, cache-cleared so EXPO_PUBLIC_API_BASE_URL=:3010 / EXPO_PUBLIC_MARKETPLACE_USE_MOCK=false actually take effect."
+    },
+    {
+      "name": "backend-worktree-env",
+      "runtimeExecutable": "bash",
+      "runtimeArgs": [
+        "/private/tmp/claude-501/-Users-paymax-Desktop-wordpress-spotlight-new--claude-worktrees-elastic-margulis-e09928/8d7db648-5917-4721-a4c6-f166f2886358/scratchpad/run-backend.sh"
+      ],
+      "cwd": "backend",
+      "port": 8092,
+      "description": "Go backend on :8092 via a wrapper that EXPORTS backend/.env. The binary does not read .env itself, so plain `go run ./cmd/server` starts with DATABASE_URL unset \u2014 finance/telemedicine routes are skipped and it binds :8080 instead of APP_PORT."
+    },
+    {
+      "name": "mobile-worktree-mock",
+      "runtimeExecutable": "bash",
+      "runtimeArgs": [
+        "/private/tmp/claude-501/-Users-paymax-Desktop-wordpress-spotlight-new--claude-worktrees-elastic-margulis-e09928/8d7db648-5917-4721-a4c6-f166f2886358/scratchpad/run-expo.sh"
+      ],
+      "cwd": "mobile-app/reactnative",
+      "port": 8086,
+      "description": "Expo web on :8086 for this worktree with TELEMEDICINE mock data ON, cache cleared (EXPO_PUBLIC_* is baked into the bundle)."
     }
   ]
 }

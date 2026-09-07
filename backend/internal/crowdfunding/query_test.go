@@ -144,3 +144,27 @@ func TestMobileStatus(t *testing.T) {
 		t.Error("ACTIVE should pass through")
 	}
 }
+
+// The admin "All" listing must drop the review_status predicate WITHOUT
+// dropping the public guard for everyone else. Both halves are asserted here
+// because the first attempt at this expressed "all statuses" as an empty
+// Status, which silently selected the public branch instead — an admin listing
+// that quietly behaved like public discovery, returning only ACTIVE campaigns.
+func TestBuildDiscoveryWhere_AllStatusesIsAdminOnly(t *testing.T) {
+	all, _ := buildDiscoveryWhere(CampaignQuery{AllStatuses: true}, 1)
+	if strings.Contains(all, "review_status") {
+		t.Errorf("AllStatuses must not filter on review_status: %q", all)
+	}
+	if strings.Contains(all, "paused_at") {
+		t.Errorf("AllStatuses is an admin listing; a paused campaign must still appear: %q", all)
+	}
+	if !strings.Contains(all, "deleted_at IS NULL") {
+		t.Errorf("soft-deleted campaigns stay hidden everywhere: %q", all)
+	}
+
+	// The default (no status, no flag) is the public path and must be unchanged.
+	pub, _ := buildDiscoveryWhere(CampaignQuery{}, 1)
+	if !strings.Contains(pub, "review_status = 'ACTIVE'") || !strings.Contains(pub, "paused_at IS NULL") {
+		t.Errorf("public default must still hide non-active and paused campaigns: %q", pub)
+	}
+}

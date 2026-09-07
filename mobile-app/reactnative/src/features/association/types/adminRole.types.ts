@@ -27,6 +27,14 @@ export interface AdminAccess {
     manageMembers:  boolean;     // suspend/restore/transfer/assign-role
     manageFinance:  boolean;
     importMembers:  boolean;
+    /**
+     * Committee LIFECYCLE — create, rename, delete. Narrower than
+     * manageMembers on purpose: running a committee's roster stays with
+     * manageMembers so a chapter admin can do the day-to-day work, while
+     * creating or destroying a committee is the organisation owner's call.
+     * Older backends omit this; treat a missing value as false.
+     */
+    manageCommittees?: boolean;
   };
 }
 

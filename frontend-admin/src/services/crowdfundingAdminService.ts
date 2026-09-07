@@ -32,6 +32,11 @@ import type {
   CfFeatureRequest,
   CfFeatureRequestStatus,
   CfFeatureRequestCampaignStatus,
+  CfDirectoryPage,
+  CfDirectoryFilter,
+  CfBackersPage,
+  CfCampaignFunding,
+  CfUsersPage,
 } from '@/types/crowdfunding';
 
 // Mock is the default. Set NEXT_PUBLIC_CF_USE_MOCK=false to hit the live Go backend
@@ -573,6 +578,46 @@ const MOCK_USERS: CfUser[] = [
   },
 ];
 
+/**
+ * One page of users. The endpoint used to answer a bare LIMIT 200 with no
+ * offset and no total, so past 200 active people the tail was invisible and
+ * nothing on screen said so.
+ */
+export async function listUsersPage(
+  role?: string, status?: string, search?: string, page = 1, limit = 25,
+): Promise<CfUsersPage> {
+  if (USE_MOCK) {
+    await delay();
+    const all = MOCK_USERS.filter((u) =>
+      (!role || u.role === role) &&
+      (!status || u.status === status) &&
+      (!search || u.name.toLowerCase().includes(search.toLowerCase()) || u.email.toLowerCase().includes(search.toLowerCase())),
+    );
+    // The fixture paginates too — a mock that always returns everything would
+    // hide a paging bug until production.
+    const start = (page - 1) * limit;
+    return { users: all.slice(start, start + limit), total: all.length, page, limit };
+  }
+  const p = new URLSearchParams({
+    role: role ?? '', status: status ?? '', search: search ?? '',
+    page: String(page), limit: String(limit),
+  });
+  const res = await fetch(`${adminBase()}/users?${p.toString()}`, { cache: 'no-store', headers: authHeaders() });
+  if (res.status === 401) throw new Error('Users failed: 401 — sign in again.');
+  if (res.status === 403) throw new Error('Users failed: 403 — needs crowdfunding.admin.review.');
+  if (!res.ok) throw new Error(`Users failed: ${res.status}`);
+  const body = await res.json();
+  return {
+    users: body.users ?? [],
+    // Older backends answer without these; fall back to the page itself so the
+    // UI degrades to "one page" instead of rendering NaN.
+    total: typeof body.total === 'number' ? body.total : (body.users?.length ?? 0),
+    page: typeof body.page === 'number' ? body.page : page,
+    limit: typeof body.limit === 'number' ? body.limit : limit,
+  };
+}
+
+/** Unpaginated convenience kept for existing callers; returns the first page. */
 export async function listUsers(role?: string, status?: string, search?: string): Promise<CfUser[]> {
   if (USE_MOCK) {
     await delay();
@@ -825,4 +870,53 @@ export async function decideFeatureRequest(id: string, approve: boolean, note: s
   const body = (await res.json().catch(() => ({}))) as { error?: string };
   if (!res.ok) throw new Error(body?.error || `Feature request ${approve ? 'approval' : 'rejection'} failed (${res.status})`);
   return mapFeatureRequest(unwrapRequest(body));
+}
+
+// ─── Campaign directory ───────────────────────────────────────────────────────
+// Every campaign, not just the review queue, with the funding figures the queue
+// never carried. Live-only by design: there is no fixture for these and this
+// console does not invent campaign or money numbers — see NOT_IN_FIXTURE_MODE.
+
+function directoryQuery(f: CfDirectoryFilter): string {
+  const p = new URLSearchParams();
+  if (f.status) p.set('status', f.status);
+  if (f.reviewStatus) p.set('reviewStatus', f.reviewStatus);
+  if (f.category) p.set('category', f.category);
+  if (f.q) p.set('q', f.q);
+  if (f.flag) p.set('flag', f.flag);
+  if (f.sort) p.set('sort', f.sort);
+  if (f.page) p.set('page', String(f.page));
+  if (f.limit) p.set('limit', String(f.limit));
+  const qs = p.toString();
+  return qs ? `?${qs}` : '';
+}
+
+export async function listCampaignDirectory(f: CfDirectoryFilter = {}): Promise<CfDirectoryPage> {
+  if (USE_MOCK) throw new Error(`The campaign directory ${NOT_IN_FIXTURE_MODE}`);
+  const res = await fetch(`${adminBase()}/campaign-directory${directoryQuery(f)}`, {
+    cache: 'no-store', headers: authHeaders(),
+  });
+  if (res.status === 401) throw new Error('Campaign directory failed: 401 — sign in again.');
+  if (res.status === 403) throw new Error('Campaign directory failed: 403 — needs crowdfunding.admin.review.');
+  if (!res.ok) throw new Error(`Campaign directory failed: ${res.status}`);
+  return res.json();
+}
+
+export async function listCampaignBackers(campaignId: string, page = 1, limit = 50): Promise<CfBackersPage> {
+  if (USE_MOCK) throw new Error(`Campaign backers ${NOT_IN_FIXTURE_MODE}`);
+  const res = await fetch(
+    `${adminBase()}/campaigns/${encodeURIComponent(campaignId)}/backers?page=${page}&limit=${limit}`,
+    { cache: 'no-store', headers: authHeaders() },
+  );
+  if (!res.ok) throw new Error(`Backers failed: ${res.status}`);
+  return res.json();
+}
+
+export async function getCampaignFunding(campaignId: string): Promise<CfCampaignFunding> {
+  if (USE_MOCK) throw new Error(`Campaign funding ${NOT_IN_FIXTURE_MODE}`);
+  const res = await fetch(`${adminBase()}/campaigns/${encodeURIComponent(campaignId)}/funding`, {
+    cache: 'no-store', headers: authHeaders(),
+  });
+  if (!res.ok) throw new Error(`Funding failed: ${res.status}`);
+  return res.json();
 }

@@ -670,7 +670,23 @@ const userBaseCTE = `
 
 // ListUsers returns crowdfunding users (with recent activity), derived live —
 // see userBaseCTE.
-func (s *Service) ListUsers(ctx context.Context, role, status, search string) ([]User, error) {
+// UsersPage is one page of users plus the count of everything the FILTERS match
+// — not the count of the page, and not the count of all users. Paging must never
+// change the headline number.
+type UsersPage struct {
+	Users []User `json:"users"`
+	Total int    `json:"total"`
+	Page  int    `json:"page"`
+	Limit int    `json:"limit"`
+}
+
+// ListUsers returns one page of crowdfunding users.
+//
+// There is no standalone user table: the population is derived from activity —
+// campaign creators unioned with contributors (see userBaseCTE). It used to
+// return a bare LIMIT 200 with no offset and no total, so beyond 200 active
+// people the tail was simply invisible, with nothing on screen saying so.
+func (s *Service) ListUsers(ctx context.Context, role, status, search string, page, limit int) (UsersPage, error) {
 	q := userBaseCTE
 	conds := []string{}
 	args := []any{}
@@ -686,24 +702,36 @@ func (s *Service) ListUsers(ctx context.Context, role, status, search string) ([
 		args = append(args, "%"+strings.ToLower(search)+"%")
 		conds = append(conds, fmt.Sprintf("(LOWER(name) LIKE $%d OR LOWER(email) LIKE $%d)", len(args), len(args)))
 	}
-	q = fmt.Sprintf("WITH base AS (%s) SELECT * FROM base", q)
+	if page < 1 {
+		page = 1
+	}
+	if limit <= 0 || limit > 200 {
+		limit = 25
+	}
+	offset := (page - 1) * limit
+
+	// COUNT(*) OVER() is evaluated AFTER the WHERE, so the total reflects the
+	// filters and not the whole table — the bug that makes a filtered list say
+	// "1 of 8,163".
+	q = fmt.Sprintf("WITH base AS (%s) SELECT *, COUNT(*) OVER() AS total_rows FROM base", q)
 	if len(conds) > 0 {
 		q += " WHERE " + strings.Join(conds, " AND ")
 	}
-	q += ` ORDER BY last_active_at DESC LIMIT 200`
+	q += fmt.Sprintf(` ORDER BY last_active_at DESC LIMIT %d OFFSET %d`, limit, offset)
 	rows, err := s.db.Query(ctx, q, args...)
 	if err != nil {
-		return nil, err
+		return UsersPage{}, err
 	}
 	defer rows.Close()
 	out := []User{}
 	ids := []string{}
+	total := 0
 	for rows.Next() {
 		var u User
 		var joinedAt, lastActiveAt time.Time
 		if err := rows.Scan(&u.ID, &u.Name, &u.Email, &u.Role, &u.Type, &u.Verification, &u.Status, &u.RiskLevel,
-			&u.CampaignsCreated, &u.TotalRaisedKobo, &u.TotalContributedKobo, &joinedAt, &lastActiveAt); err != nil {
-			return nil, err
+			&u.CampaignsCreated, &u.TotalRaisedKobo, &u.TotalContributedKobo, &joinedAt, &lastActiveAt, &total); err != nil {
+			return UsersPage{}, err
 		}
 		u.JoinedAt = rfc3339(joinedAt)
 		u.LastActiveAt = rfc3339(lastActiveAt)
@@ -712,10 +740,23 @@ func (s *Service) ListUsers(ctx context.Context, role, status, search string) ([
 		ids = append(ids, u.ID)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, err
+		return UsersPage{}, err
 	}
+	result := UsersPage{Users: out, Total: total, Page: page, Limit: limit}
 	if len(out) == 0 {
-		return out, nil
+		// COUNT(*) OVER() rides on the returned rows, so an empty page carries no
+		// total — and a page PAST the end is empty while the filter still matches
+		// plenty. Reporting 0 there would tell the console "no users" whenever the
+		// last row on the final page is suspended or filtered away. Count
+		// separately, with the same filters and no LIMIT.
+		countQ := fmt.Sprintf("WITH base AS (%s) SELECT COUNT(*) FROM base", userBaseCTE)
+		if len(conds) > 0 {
+			countQ += " WHERE " + strings.Join(conds, " AND ")
+		}
+		if err := s.db.QueryRow(ctx, countQ, args...).Scan(&result.Total); err != nil {
+			return UsersPage{}, err
+		}
+		return result, nil
 	}
 	// Activity is composed live from the same two real sources every total on
 	// this page is derived from — campaign creation and contributions — capped
@@ -730,7 +771,7 @@ func (s *Service) ListUsers(ctx context.Context, role, status, search string) ([
 		 WHERE co.contributor_id = ANY($1))
 		ORDER BY created_at DESC`, ids)
 	if err != nil {
-		return out, nil // tolerate — totals still stand, only the drawer's activity log is empty
+		return result, nil // tolerate — totals still stand, only the drawer's activity log is empty
 	}
 	defer actRows.Close()
 	byUser := map[string][]UserActivity{}
@@ -739,7 +780,7 @@ func (s *Service) ListUsers(ctx context.Context, role, status, search string) ([
 		var userID string
 		var createdAt time.Time
 		if err := actRows.Scan(&a.ID, &userID, &a.Action, &a.Detail, &createdAt); err != nil {
-			return nil, err
+			return UsersPage{}, err
 		}
 		if len(byUser[userID]) >= 20 {
 			continue // cap per user; query is ordered globally so later rows are older
@@ -752,7 +793,8 @@ func (s *Service) ListUsers(ctx context.Context, role, status, search string) ([
 			out[i].Activity = acts
 		}
 	}
-	return out, nil
+	result.Users = out
+	return result, nil
 }
 
 // SetUserStatus applies a guarded user status change (ACTIVE/SUSPENDED/RESTRICTED)

@@ -40,6 +40,17 @@ func (s *Service) requireOrgAdmin(ctx context.Context, adminID, orgID string) er
 	return s.requireCapInOrg(ctx, adminID, orgID, func(c AdminCapabilities) bool { return c.ManageMembers })
 }
 
+// requireCommitteeAdmin gates the committee LIFECYCLE — create, rename, delete.
+//
+// Separate from requireOrgAdmin on purpose. All three used to sit behind
+// ManageMembers, which meant a CHAPTER_ADMIN could delete any committee in the
+// organisation — and deleting one takes every assoc_committee_members row with
+// it. Committee ROSTER work stays on requireOrgAdmin; only creating and
+// destroying committees is reserved to the owner.
+func (s *Service) requireCommitteeAdmin(ctx context.Context, adminID, orgID string) error {
+	return s.requireCapInOrg(ctx, adminID, orgID, func(c AdminCapabilities) bool { return c.ManageCommittees })
+}
+
 // GetAdminOrganisation returns the full admin detail for one organisation,
 // including its chapters, committees, dues tiers, rules and chapter leaders.
 func (s *Service) GetAdminOrganisation(ctx context.Context, adminID, orgID string) (*AdminOrganisationDetail, error) {
@@ -503,7 +514,7 @@ func (s *Service) DeleteChapter(ctx context.Context, adminID, chapterID string) 
 }
 
 func (s *Service) CreateCommittee(ctx context.Context, adminID, orgID string, req CommitteeRequest) (string, error) {
-	if err := s.requireOrgAdmin(ctx, adminID, orgID); err != nil {
+	if err := s.requireCommitteeAdmin(ctx, adminID, orgID); err != nil {
 		return "", err
 	}
 	id := uuid.New().String()
@@ -529,7 +540,7 @@ func (s *Service) UpdateCommittee(ctx context.Context, adminID, committeeID stri
 	if err != nil {
 		return err
 	}
-	if err := s.requireOrgAdmin(ctx, adminID, orgID); err != nil {
+	if err := s.requireCommitteeAdmin(ctx, adminID, orgID); err != nil {
 		return err
 	}
 	tx, err := s.db.Begin(ctx)
@@ -554,7 +565,7 @@ func (s *Service) DeleteCommittee(ctx context.Context, adminID, committeeID stri
 	if err != nil {
 		return err
 	}
-	if err := s.requireOrgAdmin(ctx, adminID, orgID); err != nil {
+	if err := s.requireCommitteeAdmin(ctx, adminID, orgID); err != nil {
 		return err
 	}
 	tx, err := s.db.Begin(ctx)

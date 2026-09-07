@@ -241,12 +241,15 @@ func (h *Handler) FulfilDataRequest(c *gin.Context) {
 
 // ListUsers — GET /users.
 func (h *Handler) ListUsers(c *gin.Context) {
-	items, err := h.svc.ListUsers(c.Request.Context(), c.Query("role"), c.Query("status"), c.Query("search"))
+	page, err := h.svc.ListUsers(c.Request.Context(), c.Query("role"), c.Query("status"), c.Query("search"),
+		atoiOr(c.Query("page"), 1), atoiOr(c.Query("limit"), 25))
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"users": items})
+	// The "users" key is preserved so any existing caller reading it keeps
+	// working; total/page/limit are additive.
+	c.JSON(http.StatusOK, gin.H{"users": page.Users, "total": page.Total, "page": page.Page, "limit": page.Limit})
 }
 
 // SetUserStatus — POST /users/:id/status.

@@ -10,20 +10,7 @@ import {
 } from '@/src/server/registration-v2/contest-store';
 import { publishContestToVotingPlane } from '@/src/server/registration-v2/publish-to-voting';
 import { createAdminClient } from '@/lib/supabase/server';
-
-const allowedCategories: ContestCategory[] = [
-  'music',
-  'acting',
-  'comedy_content',
-  'dance',
-  'film_production',
-  'stem_innovation',
-  'sme_pitch',
-  'school_campus',
-  'open_mic',
-  'general_reality_show',
-  'other',
-];
+import { allowedCategorySlugs } from '@/src/server/contests/categories';
 
 const allowedTypes: ContestType[] = [
   'online_contest',
@@ -85,6 +72,10 @@ export async function POST(request: Request) {
 
     if (!title) return errorResponse('Contest title is required.', 400);
     if (!slug) return errorResponse('Contest slug is required.', 400);
+    // Categories are admin-managed rows now, not a const in this file. Active
+    // only, so deactivating one stops new contests using it while leaving the
+    // contests already filed under it alone.
+    const allowedCategories = await allowedCategorySlugs();
     if (!allowedCategories.includes(contestCategory)) return errorResponse('Invalid contest category.', 400);
     if (!allowedTypes.includes(contestType)) return errorResponse('Invalid contest type.', 400);
     if (!seasonOrEdition) return errorResponse('Season / edition is required.', 400);

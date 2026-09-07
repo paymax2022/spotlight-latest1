@@ -17,6 +17,7 @@
 //   /api/academy/admin/platform/<module> — gated academy.fees.* + platform_edtech_admin.
 
 import { env } from '@/config/env';
+import { resolveUseMock } from '@/config/useMock';
 import type {
   PlatformSchool, VerificationSubmission, VerificationReviewInput,
   CollectionsOverview, RiskCase, RiskActionInput,
@@ -27,8 +28,7 @@ import type {
   FeatureFlag, FlagToggleInput, CompliancePosture,
 } from '@/types/platformEdtechAdmin';
 
-const USE_MOCK =
-  (process.env.NEXT_PUBLIC_EDTECH_PLATFORM_USE_MOCK ?? 'true').toLowerCase() !== 'false';
+const USE_MOCK = resolveUseMock(process.env.NEXT_PUBLIC_EDTECH_PLATFORM_USE_MOCK);
 
 function base(): string {
   // …/api/v1 → …/api/academy/admin/platform (the platform oversight admin group)

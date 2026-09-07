@@ -13356,6 +13356,26 @@ paths:
 
   # ── Offers ─────────────────────────────────────────────────────────────
   /v1/marketplace/offers:
+    get:
+      operationId: mktListOffers
+      summary: Negotiation history for a listing
+      description: >-
+        Participant-scoped: the listing's seller sees every offer on it, any
+        other caller sees only their own.
+      tags: [Marketplace]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: listing_id, in: query, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: Offers on the listing, oldest first
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/MktOffer' }
+        '400': { $ref: '#/components/responses/MktBadRequest' }
+        '401': { $ref: '#/components/responses/MktUnauthorized' }
     post:
       operationId: mktCreateOffer
       summary: Make an offer on a listing
@@ -14629,6 +14649,49 @@ paths:
               schema: { $ref: '#/components/schemas/SuccessResponse' }
         '400': { description: reason is required }
         '403': { description: Missing referral.admin.case (Support Lead) }
+  /api/v1/admin/referrals/{referrerId}/code:
+    put:
+      operationId: setReferralReferrerCode
+      summary: Set a referrer's referral code (admin-chosen, must be unique)
+      description: >-
+        Replaces a referrer's generated code with a chosen one, 3-5 characters of
+        A-Z0-9 (normalised to uppercase). Returns 409 when the code already
+        belongs to another user. Uniqueness is checked across BOTH referral_links
+        and the legacy finance_referral_codes, because attribution resolves
+        referral_links first and falls back to the legacy table — a code
+        duplicated across the two would silently redirect the legacy owner's
+        referrals to the new holder.
+      tags: [Referral Admin]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: referrerId, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [code]
+              properties:
+                code:
+                  type: string
+                  minLength: 3
+                  maxLength: 5
+                  pattern: '^[A-Za-z0-9]{3,5}$'
+                  example: SALES
+      responses:
+        '200':
+          description: Code updated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code: { type: string, example: SALES }
+                  referrer_id: { type: string, format: uuid }
+        '400': { description: 'Code is empty, wrong length, or contains characters outside A-Z0-9' }
+        '403': { description: Missing referral.admin.case }
+        '409': { description: That referral code is already in use }
   /api/v1/admin/referrals/milestones-log:
     get:
       operationId: getReferralMilestonesLog

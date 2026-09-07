@@ -146,6 +146,128 @@ func (r *Repository) ThumbKeysFor(ctx context.Context, listingIDs []string) (map
 	return out, rows.Err()
 }
 
+// mediaRow is one raw mkt_listing_media row, before presigning.
+type mediaRow struct {
+	ID        string
+	Key       string // url_thumb/url_card/url_full are the same object today
+	Blurhash  string
+	SortOrder int
+}
+
+// ListMediaForListing returns every photo on ONE listing, in gallery order.
+// Unlike ThumbKeysFor (one key per listing, for a page of cards), this is for
+// the detail screen's full gallery — every row, for a single listing.
+func (r *Repository) ListMediaForListing(ctx context.Context, listingID string) ([]mediaRow, error) {
+	rows, err := r.db.Query(ctx, `
+		SELECT id, url_thumb, blurhash, sort_order
+		FROM public.mkt_listing_media
+		WHERE listing_id = $1
+		ORDER BY sort_order, created_at`, listingID)
+	if err != nil {
+		return nil, wrapInternal("list listing media for detail", err)
+	}
+	defer rows.Close()
+	var out []mediaRow
+	for rows.Next() {
+		var m mediaRow
+		if err := rows.Scan(&m.ID, &m.Key, &m.Blurhash, &m.SortOrder); err != nil {
+			return nil, wrapInternal("scan listing media for detail", err)
+		}
+		out = append(out, m)
+	}
+	return out, rows.Err()
+}
+
+// MediaForListings is the batched counterpart of ListMediaForListing — every
+// photo, for a PAGE of listings, in one query. For "My Listings" (SellerListings):
+// that screen renders a card per listing straight after the seller uploads
+// photos (same "must not show a placeholder" reasoning as attachThumbs), but
+// unlike search/browse it reads listing.media[] like the detail gallery does,
+// not thumb_url — so neither existing attach path covers it.
+func (r *Repository) MediaForListings(ctx context.Context, listingIDs []string) (map[string][]mediaRow, error) {
+	out := make(map[string][]mediaRow, len(listingIDs))
+	if len(listingIDs) == 0 {
+		return out, nil
+	}
+	rows, err := r.db.Query(ctx, `
+		SELECT listing_id, id, url_thumb, blurhash, sort_order
+		FROM public.mkt_listing_media
+		WHERE listing_id = ANY($1)
+		ORDER BY listing_id, sort_order, created_at`, listingIDs)
+	if err != nil {
+		return nil, wrapInternal("list listing media for page", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var listingID string
+		var m mediaRow
+		if err := rows.Scan(&listingID, &m.ID, &m.Key, &m.Blurhash, &m.SortOrder); err != nil {
+			return nil, wrapInternal("scan listing media for page", err)
+		}
+		out[listingID] = append(out[listingID], m)
+	}
+	return out, rows.Err()
+}
+
+// AppendListingMedia adds photos to an EXISTING listing, starting at
+// startSortOrder — the edit-screen counterpart of InsertListingMedia (create),
+// which always starts a fresh listing's photos at 0. Kept separate rather than
+// adding an offset parameter to InsertListingMedia so the create path, already
+// covered by TestLiveDB_ListingMedia_PersistedAndReadBack, is untouched.
+func (r *Repository) AppendListingMedia(ctx context.Context, listingID string, keys []string, startSortOrder int) error {
+	if len(keys) == 0 {
+		return nil
+	}
+	batch := &pgx.Batch{}
+	for i, k := range keys {
+		batch.Queue(`
+			INSERT INTO public.mkt_listing_media
+				(listing_id, url_thumb, url_card, url_full, blurhash, perceptual_hash, sort_order)
+			VALUES ($1,$2,$2,$2,'','',$3)`, listingID, k, startSortOrder+i)
+	}
+	br := r.db.SendBatch(ctx, batch)
+	defer br.Close()
+	for range keys {
+		if _, err := br.Exec(); err != nil {
+			return wrapInternal("append listing media", err)
+		}
+	}
+	return nil
+}
+
+// DeleteListingMedia removes one photo. Scoped to (id AND listing_id) so a
+// caller can never delete another listing's row by guessing a media id — the
+// handler's ownership check is on the LISTING, not on each photo, so the id
+// alone is not enough to prove the caller may touch it.
+func (r *Repository) DeleteListingMedia(ctx context.Context, listingID, mediaID string) (int64, error) {
+	ct, err := r.db.Exec(ctx, `DELETE FROM public.mkt_listing_media WHERE id=$1 AND listing_id=$2`, mediaID, listingID)
+	if err != nil {
+		return 0, wrapInternal("delete listing media", err)
+	}
+	return ct.RowsAffected(), nil
+}
+
+// ReorderListingMedia rewrites sort_order to match orderedIDs' position. The
+// caller (Service.ReorderListingMedia) has already validated that orderedIDs
+// is exactly the existing set for this listing, once each — this only writes.
+func (r *Repository) ReorderListingMedia(ctx context.Context, listingID string, orderedIDs []string) error {
+	if len(orderedIDs) == 0 {
+		return nil
+	}
+	batch := &pgx.Batch{}
+	for i, id := range orderedIDs {
+		batch.Queue(`UPDATE public.mkt_listing_media SET sort_order=$1 WHERE id=$2 AND listing_id=$3`, i, id, listingID)
+	}
+	br := r.db.SendBatch(ctx, batch)
+	defer br.Close()
+	for range orderedIDs {
+		if _, err := br.Exec(); err != nil {
+			return wrapInternal("reorder listing media", err)
+		}
+	}
+	return nil
+}
+
 // GetListing loads a listing by id.
 func (r *Repository) GetListing(ctx context.Context, id string) (*Listing, error) {
 	row := r.db.QueryRow(ctx, `SELECT `+listingCols+` FROM public.mkt_listings WHERE id=$1`, id)
@@ -173,6 +295,27 @@ func (r *Repository) SetListingStatus(ctx context.Context, id string, from, to L
 		WHERE id=$1 AND status=$3::listing_status`, id, string(to), string(from), moderationReason)
 	if err != nil {
 		return wrapInternal("set listing status", err)
+	}
+	if ct.RowsAffected() == 0 {
+		return ErrConflict
+	}
+	return nil
+}
+
+// RenewListing flips an expired listing back to active AND pushes expires_at out
+// another 60 days (matching mkt_listings.expires_at's own creation-time default,
+// 20260905000000_marketplace_v1.sql:123) — a status-only flip would leave
+// expires_at in the past, so the very next expiry sweep (ExpireDueListings)
+// would immediately re-expire it.
+func (r *Repository) RenewListing(ctx context.Context, id string, from, to ListingStatus) error {
+	ct, err := r.db.Exec(ctx, `
+		UPDATE public.mkt_listings
+		SET status=$2::listing_status,
+		    expires_at = now() + interval '60 days',
+		    updated_at=now()
+		WHERE id=$1 AND status=$3::listing_status`, id, string(to), string(from))
+	if err != nil {
+		return wrapInternal("renew listing", err)
 	}
 	if ct.RowsAffected() == 0 {
 		return ErrConflict
@@ -214,12 +357,21 @@ func (r *Repository) CountNonTerminalOrdersForListing(ctx context.Context, listi
 	return n, err
 }
 
-// ListSellerListings returns a seller's listings newest-first.
-func (r *Repository) ListSellerListings(ctx context.Context, sellerID string, limit, offset int) ([]Listing, error) {
+// ListSellerListings returns a seller's listings, newest first. onlyActive
+// scopes this to the PUBLIC storefront view (a buyer browsing a seller's
+// portfolio must only ever see what's actually for sale, never a draft,
+// pending_review, paused, or removed_user row); the seller's own "My
+// Listings" management screen calls this with onlyActive=false via
+// MyListingsForSeller/an authenticated caller, since it needs every status to
+// manage the listing lifecycle.
+func (r *Repository) ListSellerListings(ctx context.Context, sellerID string, limit, offset int, onlyActive bool) ([]Listing, error) {
 	limit = clampLimit(limit)
-	rows, err := r.db.Query(ctx, `SELECT `+listingCols+`
-		FROM public.mkt_listings WHERE seller_id=$1 ORDER BY created_at DESC LIMIT $2 OFFSET $3`,
-		sellerID, limit, offset)
+	q := `SELECT ` + listingCols + ` FROM public.mkt_listings WHERE seller_id=$1`
+	if onlyActive {
+		q += ` AND status='active'::listing_status`
+	}
+	q += ` ORDER BY created_at DESC LIMIT $2 OFFSET $3`
+	rows, err := r.db.Query(ctx, q, sellerID, limit, offset)
 	if err != nil {
 		return nil, wrapInternal("list seller listings", err)
 	}
@@ -755,14 +907,14 @@ func (r *Repository) DisputeQueue(ctx context.Context, status string, limit, off
 // ─── Boosts ──────────────────────────────────────────────────────────────────
 
 const boostCols = `id, listing_id, seller_id, tier, duration_days, price_kobo, weight,
-	ledger_charge_ref, status, rejection_reason_code, refund_ref, starts_at, ends_at, created_at`
+	ledger_charge_ref, status, rejection_reason_code, refund_ref, refunded_kobo, starts_at, ends_at, created_at`
 
 func scanBoost(row pgx.Row) (*Boost, error) {
 	var b Boost
 	var status string
 	if err := row.Scan(
 		&b.ID, &b.ListingID, &b.SellerID, &b.Tier, &b.DurationDays, &b.PriceKobo, &b.Weight,
-		&b.LedgerChargeRef, &status, &b.RejectionReasonCode, &b.RefundRef, &b.StartsAt, &b.EndsAt, &b.CreatedAt,
+		&b.LedgerChargeRef, &status, &b.RejectionReasonCode, &b.RefundRef, &b.RefundedKobo, &b.StartsAt, &b.EndsAt, &b.CreatedAt,
 	); err != nil {
 		return nil, err
 	}
@@ -810,6 +962,35 @@ func (r *Repository) ActiveBoostsForListing(ctx context.Context, listingID strin
 	return out, rows.Err()
 }
 
+// BoostsAwaitingRefund returns boosts stranded mid-rejection: moved to
+// rejected_with_reason but never stamped with a refund_ref.
+//
+// That pair IS the durable record of "refund owed". RejectBoost writes the status
+// first and posts the reversal second, so a ledger failure between the two leaves
+// exactly this shape — the seller no longer promoted, and still charged. Nothing
+// else produces it for long: a healthy rejection passes through the state inside
+// one call, and the retry is idempotent if it races that window.
+func (r *Repository) BoostsAwaitingRefund(ctx context.Context, limit int) ([]Boost, error) {
+	rows, err := r.db.Query(ctx, `SELECT `+boostCols+`
+		FROM public.mkt_boosts
+		WHERE status = 'rejected_with_reason' AND refund_ref IS NULL
+		ORDER BY created_at
+		LIMIT $1`, limit)
+	if err != nil {
+		return nil, wrapInternal("boosts awaiting refund", err)
+	}
+	defer rows.Close()
+	var out []Boost
+	for rows.Next() {
+		b, serr := scanBoost(rows)
+		if serr != nil {
+			return nil, wrapInternal("scan boost", serr)
+		}
+		out = append(out, *b)
+	}
+	return out, rows.Err()
+}
+
 // GetBoost loads a boost by id.
 func (r *Repository) GetBoost(ctx context.Context, id string) (*Boost, error) {
 	row := r.db.QueryRow(ctx, `SELECT `+boostCols+` FROM public.mkt_boosts WHERE id=$1`, id)
@@ -827,7 +1008,7 @@ func (r *Repository) GetBoost(ctx context.Context, id string) (*Boost, error) {
 // (mkt_boosts b LEFT JOIN mkt_listings l): `id` exists in both tables, so every
 // column must be table-qualified to avoid an ambiguous-column error.
 const boostColsB = `b.id, b.listing_id, b.seller_id, b.tier, b.duration_days, b.price_kobo, b.weight,
-	b.ledger_charge_ref, b.status, b.rejection_reason_code, b.refund_ref, b.starts_at, b.ends_at, b.created_at`
+	b.ledger_charge_ref, b.status, b.rejection_reason_code, b.refund_ref, b.refunded_kobo, b.starts_at, b.ends_at, b.created_at`
 
 // AdminBoostRow is the admin boost-console read-model: the full boost row plus the
 // joined listing title. The embedded Boost inlines the SAME snake_case JSON keys
@@ -845,7 +1026,7 @@ func scanAdminBoost(row pgx.Row) (*AdminBoostRow, error) {
 	var status string
 	if err := row.Scan(
 		&b.ID, &b.ListingID, &b.SellerID, &b.Tier, &b.DurationDays, &b.PriceKobo, &b.Weight,
-		&b.LedgerChargeRef, &status, &b.RejectionReasonCode, &b.RefundRef, &b.StartsAt, &b.EndsAt, &b.CreatedAt,
+		&b.LedgerChargeRef, &status, &b.RejectionReasonCode, &b.RefundRef, &b.RefundedKobo, &b.StartsAt, &b.EndsAt, &b.CreatedAt,
 		&b.ListingTitle,
 	); err != nil {
 		return nil, err
@@ -987,12 +1168,23 @@ func (r *Repository) ListBoosts(ctx context.Context, status string, limit, offse
 // SetBoostStatus performs a guarded boost transition, optionally recording rejection
 // reason + refund ref.
 func (r *Repository) SetBoostStatus(ctx context.Context, id string, from, to BoostStatus, rejectionReason, refundRef *string) error {
+	return r.setBoostStatusWithRefund(ctx, id, from, to, rejectionReason, refundRef, nil)
+}
+
+// setBoostStatusWithRefund additionally stamps refunded_kobo — the ACTUAL
+// amount posted, since RejectBoost refunds in full but CancelBoost prorates
+// (see Boost.RefundedKobo doc comment). Split from SetBoostStatus so every
+// OTHER caller (both non-refund transitions and the first leg of a
+// reject/cancel, before the refund amount is known) keeps the simpler
+// 5-argument signature.
+func (r *Repository) setBoostStatusWithRefund(ctx context.Context, id string, from, to BoostStatus, rejectionReason, refundRef *string, refundedKobo *int64) error {
 	ct, err := r.db.Exec(ctx, `
 		UPDATE public.mkt_boosts SET
 			status=$3,
 			rejection_reason_code=COALESCE($4, rejection_reason_code),
-			refund_ref=COALESCE($5, refund_ref)
-		WHERE id=$1 AND status=$2`, id, string(from), string(to), rejectionReason, refundRef)
+			refund_ref=COALESCE($5, refund_ref),
+			refunded_kobo=COALESCE($6, refunded_kobo)
+		WHERE id=$1 AND status=$2`, id, string(from), string(to), rejectionReason, refundRef, refundedKobo)
 	if err != nil {
 		return wrapInternal("set boost status", err)
 	}

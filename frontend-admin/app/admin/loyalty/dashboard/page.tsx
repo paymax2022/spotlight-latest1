@@ -5,6 +5,8 @@ import { getLoyaltyDashboard, formatNaira, formatPoints } from '@/services/loyal
 import type { LoyaltyDashboard } from '@/types/loyaltyAdmin';
 import { PageHeader, LoyaltyTabs, Card, Kpi, Badge, DisclosureNote, StateBlock, timeAgo, pct } from '../../events/_ui';
 import { Button, colors, thCell, tdCell } from '@/components/ui/vuexy';
+import { FixtureBanner } from '../../_shared/ui';
+import { USE_MOCK, USE_MOCK_ENV } from '@/services/loyaltyAdminService';
 
 export default function LoyaltyDashboardPage() {
   const [data, setData] = useState<LoyaltyDashboard | null>(null);
@@ -24,6 +26,7 @@ export default function LoyaltyDashboardPage() {
   return (
     <div style={{ padding: '0.5rem 0.5rem 2rem' }}>
       <PageHeader title="Loyalty overview" subtitle="Points liability (non-cash), tier distribution, earn/redeem trend and redemption fraud across all live modules." action={<Button variant="outline" sm onClick={load}>Refresh</Button>} />
+      <FixtureBanner active={USE_MOCK} envVar={USE_MOCK_ENV} />
       <LoyaltyTabs active="overview" />
 
       <DisclosureNote>

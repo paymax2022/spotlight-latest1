@@ -512,8 +512,14 @@ export async function getPrescriptions(): Promise<Prescription[]> {
     await delay();
     return [...MOCK_PRESCRIPTIONS].sort((a, b) => +new Date(b.uploadedAt) - +new Date(a.uploadedAt));
   }
-  const { data } = await api.get<Prescription[]>(`${PHARMACY_API}/prescriptions`);
-  return data;
+  // Route didn't exist at all before this change — backend now wraps the list
+  // as {"success":true,"prescriptions":[...]} like every other list handler.
+  // The rows are PrescriptionSummary (id/state/prescriber_id/item_count/...),
+  // not the richer Prescription shape this screen declares (drugName, image,
+  // pharmacyName, etc.) — mapping/enriching to that full shape is separate
+  // follow-up work, not done here.
+  const { data } = await api.get<{ success: boolean; prescriptions: Prescription[] }>(`${PHARMACY_API}/prescriptions`);
+  return data.prescriptions ?? [];
 }
 
 export async function getPrescription(id: string): Promise<Prescription> {

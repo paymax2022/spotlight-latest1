@@ -144,13 +144,14 @@ func TestConnectFlow_LiveDB(t *testing.T) {
 	}
 
 	// ── Reviews are gated on the "mark met" signal ──────────────────────────────
-	if _, rerr := svc.SubmitDealReview(ctx, buyer, thread.ID, 5, nil, "great"); rerr == nil {
+	if _, rerr := svc.SubmitDealReview(ctx, buyer, thread.ID, 5, nil, nil, "great"); rerr == nil {
 		t.Fatalf("review before mark-met: want error, got nil")
 	}
 	if merr := svc.MarkDealMet(ctx, buyer, thread.ID); merr != nil {
 		t.Fatalf("mark met: %v", merr)
 	}
-	review, err := svc.SubmitDealReview(ctx, buyer, thread.ID, 5, []string{"friendly"}, "Great deal, smooth meetup")
+	productQuality := 4
+	review, err := svc.SubmitDealReview(ctx, buyer, thread.ID, 5, &productQuality, []string{"friendly"}, "Great deal, smooth meetup")
 	if err != nil {
 		t.Fatalf("submit review after met: %v", err)
 	}
@@ -166,7 +167,10 @@ func TestConnectFlow_LiveDB(t *testing.T) {
 	if got.Rating == nil || *got.Rating != 5 {
 		t.Fatalf("review rating not persisted as 5: %+v", got.Rating)
 	}
-	if _, derr := svc.SubmitDealReview(ctx, buyer, thread.ID, 4, nil, "again"); !errors.Is(derr, mkt.ErrReviewExists) {
+	if got.ProductQualityRating == nil || *got.ProductQualityRating != 4 {
+		t.Fatalf("review product_quality_rating not persisted as 4: %+v", got.ProductQualityRating)
+	}
+	if _, derr := svc.SubmitDealReview(ctx, buyer, thread.ID, 4, nil, nil, "again"); !errors.Is(derr, mkt.ErrReviewExists) {
 		t.Fatalf("duplicate review: want ErrReviewExists, got %v", derr)
 	}
 }

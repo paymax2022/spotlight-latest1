@@ -41,6 +41,7 @@ const reviews: Review[] = [];
 export async function mockSubmitReview(
   dealId: string,
   rating: number,
+  productQualityRating: number | undefined,
   tags: string[],
   text?: string,
 ): Promise<Review> {
@@ -51,6 +52,7 @@ export async function mockSubmitReview(
     reviewerId: MOCK_ME,
     reviewerName: 'You',
     rating,
+    productQualityRating: productQualityRating ?? null,
     comment: text ?? null,
     tags,
     sellerReply: null,

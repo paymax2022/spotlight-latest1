@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"math"
 	"time"
 
@@ -242,11 +243,12 @@ func (s *Service) RejectBoost(ctx context.Context, adminID, boostID, reasonCode 
 			return nil, err
 		}
 	}
-	if err := s.repo.SetBoostStatus(ctx, boostID, BoostRejectedWithReason, BoostAutoRefunded, nil, &refundRef); err != nil {
+	if err := s.repo.setBoostStatusWithRefund(ctx, boostID, BoostRejectedWithReason, BoostAutoRefunded, nil, &refundRef, &b.PriceKobo); err != nil {
 		return nil, err
 	}
 	b.Status = BoostAutoRefunded
 	b.RefundRef = &refundRef
+	b.RefundedKobo = &b.PriceKobo
 
 	_ = s.writeAudit(ctx, AuditEntry{
 		AdminID: adminID, Action: "mkt.boost.reject", TargetType: "boost", TargetID: boostID, ReasonCode: reasonCode,
@@ -255,6 +257,145 @@ func (s *Service) RejectBoost(ctx context.Context, adminID, boostID, reasonCode 
 	})
 	s.notifySafe(ctx, b.SellerID, "mkt.boost.refunded", "Your boost was rejected and refunded: "+reasonCode)
 	return b, nil
+}
+
+// CancelBoost (seller) stops their own active boost early: active →
+// cancelled_by_seller → auto_refunded, with a PRORATED refund for the unused
+// remainder of the period. The seller-facing counterpart to RejectBoost
+// (admin, mandatory reason code, FULL refund, policy violation) — same
+// "stop it and pay back the ledger" shape, but the seller chose this, not a
+// moderator, so no reason code is required and the refund reflects only the
+// days not yet delivered.
+func (s *Service) CancelBoost(ctx context.Context, sellerID, boostID string) (*Boost, error) {
+	b, err := s.repo.GetBoost(ctx, boostID)
+	if err != nil {
+		return nil, err
+	}
+	if b.SellerID != sellerID {
+		return nil, ErrForbidden
+	}
+	if err := guardBoostTransition(b.Status, BoostCancelledBySeller); err != nil {
+		return nil, err
+	}
+	from := b.Status
+	cancelReason := "seller_cancelled"
+	if err := s.repo.SetBoostStatus(ctx, boostID, from, BoostCancelledBySeller, &cancelReason, nil); err != nil {
+		return nil, err
+	}
+
+	refundKobo := proratedBoostRefund(b, time.Now())
+	refundRef := boostRefundKey(boostID)
+	if refundKobo > 0 {
+		if _, err := s.postBoostRefund(ctx, b.SellerID, boostID, refundKobo); err != nil {
+			return nil, err
+		}
+	}
+	if err := s.repo.setBoostStatusWithRefund(ctx, boostID, BoostCancelledBySeller, BoostAutoRefunded, nil, &refundRef, &refundKobo); err != nil {
+		return nil, err
+	}
+	b.Status = BoostAutoRefunded
+	b.RefundRef = &refundRef
+	b.RefundedKobo = &refundKobo
+
+	_ = s.writeAudit(ctx, AuditEntry{
+		AdminID: sellerID, Action: "mkt.boost.cancel", TargetType: "boost", TargetID: boostID, ReasonCode: cancelReason,
+		BeforeState: map[string]any{"status": string(from)},
+		AfterState:  map[string]any{"status": string(BoostAutoRefunded), "refund_kobo": refundKobo},
+	})
+	s.notifySafe(ctx, b.SellerID, "mkt.boost.cancelled", fmt.Sprintf("Your boost was cancelled and %s refunded for the unused days.", formatKobo(refundKobo)))
+	return b, nil
+}
+
+// proratedBoostRefund computes what a seller gets back for cancelling an
+// active boost early: the fraction of the ORIGINAL price corresponding to the
+// time between now and ends_at, out of the boost's total starts_at→ends_at
+// window. Pure and DB-free so the money math itself has an executed test
+// independent of CancelBoost's DB/ledger plumbing (mirrors customBoostDuration
+// above).
+//
+// Rounds DOWN (integer division truncates) — a platform financial calculation
+// must never round in the payer's favor by accident. Clamped to [0, PriceKobo]
+// so clock skew or a boost already past ends_at can never refund more than
+// was paid or go negative.
+func proratedBoostRefund(b *Boost, now time.Time) int64 {
+	if b == nil || b.StartsAt == nil || b.EndsAt == nil || b.PriceKobo <= 0 {
+		return 0
+	}
+	total := b.EndsAt.Sub(*b.StartsAt)
+	if total <= 0 {
+		return 0
+	}
+	remaining := b.EndsAt.Sub(now)
+	if remaining <= 0 {
+		return 0
+	}
+	if remaining > total {
+		remaining = total
+	}
+	refund := int64(float64(b.PriceKobo) * (float64(remaining) / float64(total)))
+	if refund > b.PriceKobo {
+		refund = b.PriceKobo
+	}
+	return refund
+}
+
+// formatKobo renders kobo as a naira string for a user-facing notification
+// message ONLY — never used for money math, which stays integer kobo
+// throughout (CLAUDE.md money rule).
+func formatKobo(kobo int64) string {
+	return fmt.Sprintf("₦%.2f", float64(kobo)/100)
+}
+
+// RetryStuckBoostRefunds completes refunds that RejectBoost started and could not
+// finish. Cron helper, alongside ExpireDueListings/CompleteDueBoosts. Returns the
+// number of boosts brought to auto_refunded.
+//
+// SCOPE: rejected_with_reason only, deliberately. CancelBoost stranding the same
+// way (cancelled_by_seller with no refund_ref) is a real and adjacent gap, but it
+// cannot be settled by this sweep: its refund is PRORATED to the moment of
+// cancellation, and recomputing proration when the sweep runs yields a smaller
+// figure than was owed — the sweep would underpay the seller and stamp the row as
+// settled. Fixing that needs the owed amount persisted BEFORE the ledger call, so
+// it is left alone here rather than half-handled.
+//
+// WHY THIS EXISTS. RejectBoost sets the status BEFORE posting the reversal, so a
+// ledger failure between the two strands the boost in rejected_with_reason with no
+// refund_ref: the seller has stopped being promoted and is still charged. The
+// §8 cascade in RejectListing is deliberately best-effort — a refund hiccup must
+// never stop a policy-violating listing being pulled — but "best effort" was the
+// whole story: the only trace was a log line, with no retry and no reconciliation,
+// so the money simply stayed with the platform until someone read the logs.
+//
+// Safe to run concurrently with a healthy rejection passing through the same
+// state. The refund reference is derived from the boost id, and PostReversal
+// treats a duplicate as success, so the ledger effect happens once however many
+// times this runs; the status move is a compare-and-set from
+// rejected_with_reason, so only one writer wins.
+func (s *Service) RetryStuckBoostRefunds(ctx context.Context) (int, error) {
+	stuck, err := s.repo.BoostsAwaitingRefund(ctx, 200)
+	if err != nil {
+		return 0, err
+	}
+	fixed := 0
+	for i := range stuck {
+		b := stuck[i]
+		refundRef := boostRefundKey(b.ID)
+		if b.PriceKobo > 0 {
+			if _, perr := s.postBoostRefund(ctx, b.SellerID, b.ID, b.PriceKobo); perr != nil {
+				// Still owed. Leave the row exactly as it is so the next run
+				// retries it — clearing or advancing it here would lose the only
+				// record that the seller is owed money.
+				log.Printf("[marketplace] stuck boost refund %s still failing: %v", b.ID, perr)
+				continue
+			}
+		}
+		if serr := s.repo.SetBoostStatus(ctx, b.ID, BoostRejectedWithReason, BoostAutoRefunded, nil, &refundRef); serr != nil {
+			log.Printf("[marketplace] stuck boost %s refunded but status move failed: %v", b.ID, serr)
+			continue
+		}
+		fixed++
+	}
+	return fixed, nil
 }
 
 // UpsertBoostPackage creates or edits a boost package's price/duration/weight/

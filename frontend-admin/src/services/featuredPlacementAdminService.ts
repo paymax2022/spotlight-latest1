@@ -1,4 +1,5 @@
 import { env } from '@/config/env';
+import { resolveUseMock } from '@/config/useMock';
 import type {
   Campaign,
   CampaignState,
@@ -22,8 +23,7 @@ function authHeaders(): Record<string, string> {
 // Mock by default; flip with NEXT_PUBLIC_FEATURED_PLACEMENT_ADMIN_USE_MOCK=false
 // once the live Go admin endpoints (/api/placement/admin/*) are deployed.
 // Matches the onboarding/fx/mobility/realtor admin-service convention.
-const USE_FIXTURES =
-  (process.env.NEXT_PUBLIC_FEATURED_PLACEMENT_ADMIN_USE_MOCK ?? 'true').toLowerCase() !== 'false';
+const USE_FIXTURES = resolveUseMock(process.env.NEXT_PUBLIC_FEATURED_PLACEMENT_ADMIN_USE_MOCK);
 
 // ── Fixtures ────────────────────────────────────────────────────────────────
 

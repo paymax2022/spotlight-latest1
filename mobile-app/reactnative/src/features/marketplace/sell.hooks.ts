@@ -85,6 +85,29 @@ export function useUpdateListing() {
   });
 }
 
+// ─── Photo management on an existing listing (edit screen, LM-002) ──────────
+function useListingMediaMutation<TArgs extends { id: string }>(
+  mutationFn: (args: TArgs) => Promise<import('./types').Listing>,
+) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn,
+    onSuccess: (listing) => {
+      qc.setQueryData(SELL_KEYS.listing(listing.id), listing);
+      qc.invalidateQueries({ queryKey: SELL_KEYS.myListings });
+    },
+  });
+}
+
+export const useAddListingMedia = () =>
+  useListingMediaMutation(({ id, mediaIds }: { id: string; mediaIds: string[] }) => sellApi.addListingMedia(id, mediaIds));
+
+export const useRemoveListingMedia = () =>
+  useListingMediaMutation(({ id, mediaId }: { id: string; mediaId: string }) => sellApi.removeListingMedia(id, mediaId));
+
+export const useReorderListingMedia = () =>
+  useListingMediaMutation(({ id, mediaIds }: { id: string; mediaIds: string[] }) => sellApi.reorderListingMedia(id, mediaIds));
+
 export function useSubmitListing() {
   const qc = useQueryClient();
   return useMutation({
@@ -189,6 +212,18 @@ export function usePurchaseBoost(listingId: string) {
         throw e;
       }
     },
+    onSuccess: (boost) => qc.setQueryData(SELL_KEYS.boost(boost.id), boost),
+  });
+}
+
+// Stop the caller's own active boost early (prorated refund on the backend).
+// No Idempotency-Key: unlike a purchase, a retried cancel on an
+// already-cancelled boost is safely rejected server-side (FSM guard), not a
+// double charge, so there is nothing to dedupe against.
+export function useCancelBoost() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => sellApi.cancelBoost(id),
     onSuccess: (boost) => qc.setQueryData(SELL_KEYS.boost(boost.id), boost),
   });
 }

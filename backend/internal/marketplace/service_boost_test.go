@@ -251,6 +251,77 @@ func TestPostBoostRefund_IdempotentSinglePosting(t *testing.T) {
 	}
 }
 
+// ── proratedBoostRefund (seller-cancel refund money-math) ─────────────────────
+
+func TestProratedBoostRefund_HalfwayThroughIsHalfThePrice(t *testing.T) {
+	starts := time.Date(2027, 1, 1, 0, 0, 0, 0, time.UTC)
+	ends := time.Date(2027, 1, 11, 0, 0, 0, 0, time.UTC) // 10-day boost
+	now := time.Date(2027, 1, 6, 0, 0, 0, 0, time.UTC)   // exactly halfway
+	b := &Boost{PriceKobo: 100000, StartsAt: &starts, EndsAt: &ends}
+
+	got := proratedBoostRefund(b, now)
+	if want := int64(50000); got != want {
+		t.Errorf("refund = %d, want %d (exactly half the price for exactly half the days remaining)", got, want)
+	}
+}
+
+func TestProratedBoostRefund_RoundsDownNeverInSellersFavor(t *testing.T) {
+	starts := time.Date(2027, 1, 1, 0, 0, 0, 0, time.UTC)
+	ends := time.Date(2027, 1, 4, 0, 0, 0, 0, time.UTC) // 3-day boost
+	now := time.Date(2027, 1, 2, 0, 0, 0, 0, time.UTC)  // 1 of 3 days elapsed, 2 remaining
+	b := &Boost{PriceKobo: 100, StartsAt: &starts, EndsAt: &ends}
+
+	// Exact fraction is 2/3 * 100 = 66.66...; must truncate to 66, never round
+	// up to 67 (that would refund the seller a fraction of a kobo they didn't
+	// pay back to the platform, forbidden under CLAUDE.md's integer-kobo rule).
+	got := proratedBoostRefund(b, now)
+	if want := int64(66); got != want {
+		t.Errorf("refund = %d, want %d (truncated, not rounded up)", got, want)
+	}
+}
+
+func TestProratedBoostRefund_AlreadyEndedRefundsNothing(t *testing.T) {
+	starts := time.Date(2027, 1, 1, 0, 0, 0, 0, time.UTC)
+	ends := time.Date(2027, 1, 4, 0, 0, 0, 0, time.UTC)
+	now := time.Date(2027, 1, 10, 0, 0, 0, 0, time.UTC) // well past ends_at
+	b := &Boost{PriceKobo: 100000, StartsAt: &starts, EndsAt: &ends}
+
+	if got := proratedBoostRefund(b, now); got != 0 {
+		t.Errorf("refund = %d, want 0 — nothing left to refund once ends_at has passed", got)
+	}
+}
+
+func TestProratedBoostRefund_NotYetStartedRefundsFullPrice(t *testing.T) {
+	starts := time.Date(2027, 1, 5, 0, 0, 0, 0, time.UTC)
+	ends := time.Date(2027, 1, 10, 0, 0, 0, 0, time.UTC)
+	now := time.Date(2027, 1, 1, 0, 0, 0, 0, time.UTC) // before starts_at (clock skew / edge case)
+	b := &Boost{PriceKobo: 75000, StartsAt: &starts, EndsAt: &ends}
+
+	// remaining > total is clamped to total, so this refunds the full price —
+	// never MORE than what was paid, even though naive subtraction would say so.
+	if got := proratedBoostRefund(b, now); got != 75000 {
+		t.Errorf("refund = %d, want the full price 75000, clamped rather than over-refunding", got)
+	}
+}
+
+func TestProratedBoostRefund_ZeroPriceOrMissingDatesRefundsNothing(t *testing.T) {
+	starts := time.Date(2027, 1, 1, 0, 0, 0, 0, time.UTC)
+	ends := time.Date(2027, 1, 10, 0, 0, 0, 0, time.UTC)
+	now := time.Date(2027, 1, 5, 0, 0, 0, 0, time.UTC)
+
+	cases := []*Boost{
+		{PriceKobo: 0, StartsAt: &starts, EndsAt: &ends},
+		{PriceKobo: 100000, StartsAt: nil, EndsAt: &ends},
+		{PriceKobo: 100000, StartsAt: &starts, EndsAt: nil},
+		nil,
+	}
+	for i, b := range cases {
+		if got := proratedBoostRefund(b, now); got != 0 {
+			t.Errorf("case %d: refund = %d, want 0", i, got)
+		}
+	}
+}
+
 // ── customBoostDuration (custom date-range pricing money-math) ────────────────
 
 func TestCustomBoostDuration_RoundsPartDayUp(t *testing.T) {

@@ -6,6 +6,7 @@
 // Money is BIGINT kobo (minor units) and settled in Naira (NGN).
 
 import { env } from '@/config/env';
+import { resolveUseMock } from '@/config/useMock';
 import type {
   VerificationStatus,
   BusinessVerification,
@@ -40,7 +41,7 @@ import type {
   ExtranetSettings,
 } from '@/types/staysExtranet';
 
-const USE_MOCK = (process.env.NEXT_PUBLIC_STAYS_USE_MOCK ?? 'true').toLowerCase() !== 'false';
+const USE_MOCK = resolveUseMock(process.env.NEXT_PUBLIC_STAYS_USE_MOCK);
 
 function extranetBase(): string {
   return env.apiBaseUrl.replace(/\/api\/v1\/?$/, '/api/stays/extranet');
