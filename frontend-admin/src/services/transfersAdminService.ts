@@ -1,5 +1,6 @@
 import { env } from '@/config/env';
 import { operationKey } from './idempotency';
+import { resolveUseMock } from '@/config/useMock';
 import type {
   Transfer,
   ProviderHealth,
@@ -7,8 +8,7 @@ import type {
 } from '@/types/transfersAdmin';
 
 // Backend may not be running — default to fixtures unless explicitly disabled.
-const USE_FIXTURES =
-  (process.env.NEXT_PUBLIC_TRANSFERS_ADMIN_USE_MOCK ?? 'true') !== 'false';
+const USE_FIXTURES = resolveUseMock(process.env.NEXT_PUBLIC_TRANSFERS_ADMIN_USE_MOCK);
 
 // Go backend mounts finance admin routes under /api/finance/admin/...
 // env.apiBaseUrl looks like http://localhost:8080/api/v1 → /api.

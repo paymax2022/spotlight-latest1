@@ -1,15 +1,44 @@
 'use client';
 
 import Link from 'next/link';
-import { useEffect, useState, type CSSProperties } from 'react';
+import { useCallback, useEffect, useMemo, useState, type CSSProperties } from 'react';
 import type { AdminMenuCounts } from '@/types/admin';
-import { getAdminMenuCounts } from '@/services/adminApiClient';
+import type { AdminOverview, OverviewModule } from '@/types/adminOverview';
+import { getAdminMenuCounts, getAdminOverview } from '@/services/adminApiClient';
 import { canManageStem, canReadStem, getCurrentStemRole } from '@/config/stemAccess';
 import { quickLinks } from './quickLinks';
 
-// Vuexy-style palette mirroring the production admin (frontend-web/app/admin).
-// frontend-admin ships no CSS framework, so the dashboard is styled inline — the
-// house convention across every admin page here.
+/**
+ * THE REDESIGN, AND WHY.
+ *
+ * What this replaced: eight counters — contestants, open mic, auditions, reality
+ * TV, academy, SME pitch, STEM, bootcamp — under the heading "Spotlight
+ * Analytics". Every one belonged to the legacy programme business, while the
+ * console behind it now houses ~79 route groups covering wallets, marketplace,
+ * restaurant, stays, health, insurance, crowdfunding, crypto and more. An admin
+ * opening this page learned how many contestants existed and nothing about the
+ * money moving through the platform.
+ *
+ * Three principles drive the new layout:
+ *
+ * 1. WORK FIRST, VOLUME SECOND. "20 live listings" is trivia; "11 listings
+ *    awaiting moderation" is a job. Every module reports a queue, the queues with
+ *    work outstanding are hoisted to the top, and each one links to the FILTERED
+ *    view rather than the module's front door — so the dashboard ends at the work
+ *    itself, not one more click away from it.
+ *
+ * 2. UNKNOWN IS NOT ZERO. A module whose count could not be read renders "—" and
+ *    is named in a degraded-modules line. Rendering it as 0 would tell an on-call
+ *    admin that a queue is empty when it was never actually read.
+ *
+ * 3. NOTHING DECORATIVE. The old card carried a progress bar hardcoded to 72% —
+ *    it looked like a measurement and was a literal constant. Everything drawn
+ *    here is a number the backend returned.
+ *
+ * The legacy programme counters are NOT deleted; they move into the Programs
+ * group, which is what they always were — one domain among many.
+ */
+
 const C = {
   primary: '#7367f0',
   primaryDark: '#655bd8',
@@ -28,7 +57,8 @@ function rgba(hex: string, a: number): string {
   return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${a})`;
 }
 
-function fmtNum(n?: number): string {
+/** null renders as an em dash — never as 0. See principle 2 above. */
+function fmt(n: number | null | undefined): string {
   return typeof n === 'number' ? n.toLocaleString('en-NG') : '—';
 }
 
@@ -41,7 +71,11 @@ const card: CSSProperties = {
 };
 const sectionTitle: CSSProperties = { margin: 0, fontSize: 17, fontWeight: 700, color: C.text };
 
+/** Domain order — money and live commerce before programmes. */
+const GROUP_ORDER = ['Money', 'Commerce', 'Travel', 'Health', 'Community', 'Programs'];
+
 export function AdminDashboard() {
+  const [overview, setOverview] = useState<AdminOverview | null>(null);
   const [counts, setCounts] = useState<AdminMenuCounts | null>(null);
   const [loaded, setLoaded] = useState(false);
   const [failed, setFailed] = useState(false);
@@ -53,100 +87,185 @@ export function AdminDashboard() {
     return true;
   });
 
-  useEffect(() => {
-    let alive = true;
-    getAdminMenuCounts()
-      .then((c) => { if (alive) { setCounts(c); setLoaded(true); } })
-      .catch(() => { if (alive) { setFailed(true); setLoaded(true); } });
-    return () => { alive = false; };
+  const load = useCallback(() => {
+    setLoaded(false);
+    setFailed(false);
+    // Independent on purpose: the legacy programme counters come from a different
+    // endpoint, and one being down must not blank the other.
+    Promise.allSettled([getAdminOverview(), getAdminMenuCounts()]).then(([o, c]) => {
+      const ov = o.status === 'fulfilled' ? o.value : null;
+      setOverview(ov);
+      setCounts(c.status === 'fulfilled' ? c.value : null);
+      setFailed(!ov);
+      setLoaded(true);
+    });
   }, []);
 
-  const total = counts
-    ? counts.contestants + counts.auditions + counts.academy + counts.reality_tv +
-      counts.sme_pitch + counts.stem + counts.bootcamp + counts.open_mic
-    : undefined;
+  useEffect(load, [load]);
 
-  const heroStats = [
-    { label: 'Contestants', value: counts?.contestants, sub: 'Registered' },
-    { label: 'Open Mic', value: counts?.open_mic, sub: 'Submissions' },
-    { label: 'Auditions', value: counts?.auditions, sub: 'In queue' },
-    { label: 'Reality TV', value: counts?.reality_tv, sub: 'Active' },
-  ];
+  const modules = useMemo<OverviewModule[]>(() => {
+    const live = overview?.modules ?? [];
+    if (!counts) return live;
+    // The legacy programme counters, folded in as a peer domain rather than as
+    // the headline. Their queue is the registration review backlog, which the
+    // overview endpoint already reports, so these carry volume only.
+    const programme: OverviewModule[] = [
+      { key: 'contestants', label: 'Contestants', group: 'Programs', href: '/admin/contests',
+        volume: { label: 'Registered', value: counts.contestants ?? null },
+        attention: { label: '', value: 0, href: '/admin/contests', severity: 'warn' } },
+      { key: 'open-mic', label: 'Open Mic', group: 'Programs', href: '/admin/open-mic',
+        volume: { label: 'Submissions', value: counts.open_mic ?? null },
+        attention: { label: '', value: 0, href: '/admin/open-mic', severity: 'warn' } },
+      { key: 'auditions', label: 'Auditions', group: 'Programs', href: '/admin/competitions',
+        volume: { label: 'In queue', value: counts.auditions ?? null },
+        attention: { label: '', value: 0, href: '/admin/competitions', severity: 'warn' } },
+      { key: 'academy', label: 'Academy', group: 'Programs', href: '/admin/academy',
+        volume: { label: 'Applications', value: counts.academy ?? null },
+        attention: { label: '', value: 0, href: '/admin/academy', severity: 'warn' } },
+    ];
+    return [...live, ...programme];
+  }, [overview, counts]);
 
-  const statCards = [
-    { label: 'Academy', value: counts?.academy, icon: '🎓', tint: C.primary },
-    { label: 'SME Pitch', value: counts?.sme_pitch, icon: '💼', tint: C.cyan },
-    { label: 'STEM', value: counts?.stem, icon: '🔬', tint: C.orange },
-    { label: 'Bootcamp', value: counts?.bootcamp, icon: '🚀', tint: C.green },
-  ];
+  /** Only modules with work outstanding, worst first. */
+  const needsAttention = useMemo(
+    () =>
+      modules
+        .filter((m) => typeof m.attention.value === 'number' && m.attention.value > 0)
+        .sort((a, b) => {
+          if (a.attention.severity !== b.attention.severity) return a.attention.severity === 'critical' ? -1 : 1;
+          return (b.attention.value ?? 0) - (a.attention.value ?? 0);
+        }),
+    [modules],
+  );
+
+  /** Named explicitly so "could not read" never hides behind a zero. */
+  const degraded = useMemo(
+    () => modules.filter((m) => m.volume.value === null || m.attention.value === null),
+    [modules],
+  );
+
+  const grouped = useMemo(() => {
+    const by = new Map<string, OverviewModule[]>();
+    for (const m of modules) by.set(m.group, [...(by.get(m.group) ?? []), m]);
+    return [...by.entries()].sort(
+      (a, b) => (GROUP_ORDER.indexOf(a[0]) + 1 || 99) - (GROUP_ORDER.indexOf(b[0]) + 1 || 99),
+    );
+  }, [modules]);
+
+  const criticalTotal = needsAttention
+    .filter((m) => m.attention.severity === 'critical')
+    .reduce((sum, m) => sum + (m.attention.value ?? 0), 0);
 
   return (
     <div style={{ color: C.text, background: C.bg, minHeight: '100%', margin: -24, padding: 24 }}>
-      <div style={{ marginBottom: 20 }}>
-        <h1 style={{ margin: 0, fontSize: 23, fontWeight: 800 }}>Spotlight Analytics</h1>
-        <p style={{ margin: '4px 0 0', color: C.muted }}>Programs, contests, voting and applicant operations.</p>
+      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 16, marginBottom: 20 }}>
+        <div>
+          <h1 style={{ margin: 0, fontSize: 23, fontWeight: 800 }}>Operations</h1>
+          <p style={{ margin: '4px 0 0', color: C.muted }}>
+            Queues and volume across every module. Metrics link to the work, not the front door.
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={load}
+          style={{ background: '#fff', border: `1px solid ${C.border}`, borderRadius: 8, padding: '8px 14px',
+            fontSize: 13, fontWeight: 600, color: C.text, cursor: 'pointer' }}
+        >
+          {loaded ? 'Refresh' : 'Loading…'}
+        </button>
       </div>
 
-      {/* Hero + operations overview */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0,2fr) minmax(0,1fr)', gap: 16, marginBottom: 16 }}>
-        <div style={{ position: 'relative', overflow: 'hidden', borderRadius: 12, padding: 20, color: '#fff', minHeight: 208, background: `linear-gradient(135deg, ${C.primary} 0%, ${C.primaryDark} 100%)`, boxShadow: '0 12px 34px rgba(115,103,240,0.28)' }}>
-          <div style={{ fontSize: 12, opacity: 0.85, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.6 }}>Live overview</div>
-          <div style={{ fontSize: 32, fontWeight: 800, marginTop: 6 }}>
-            {loaded ? fmtNum(total) : '—'}
-            <span style={{ fontSize: 14, fontWeight: 600, opacity: 0.85 }}> total entities</span>
+      {/* ---- Needs attention: the reason to open this page at all. ---- */}
+      <section style={{ ...card, marginBottom: 16, borderLeft: `4px solid ${criticalTotal > 0 ? C.red : C.green}` }}>
+        <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 12 }}>
+          <h2 style={sectionTitle}>Needs attention</h2>
+          <span style={{ fontSize: 12, color: C.muted }}>
+            {overview?.generated_at ? `as of ${new Date(overview.generated_at).toLocaleTimeString('en-NG')}` : ''}
+          </span>
+        </div>
+
+        {!loaded ? (
+          <p style={{ color: C.muted, margin: '12px 0 0', fontSize: 13 }}>Reading queues…</p>
+        ) : failed ? (
+          <p style={{ color: C.red, margin: '12px 0 0', fontSize: 13 }}>
+            The overview API did not answer, so no queue is being reported here. This is not an all-clear —
+            check the backend is running before treating it as one.
+          </p>
+        ) : needsAttention.length === 0 ? (
+          <p style={{ color: C.muted, margin: '12px 0 0', fontSize: 13 }}>
+            Every queue that answered is empty{degraded.length > 0 ? `, but ${degraded.length} module(s) could not be read — see below.` : '.'}
+          </p>
+        ) : (
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(268px, 1fr))', gap: 12, marginTop: 14 }}>
+            {needsAttention.map((m) => {
+              const tint = m.attention.severity === 'critical' ? C.red : C.orange;
+              return (
+                <Link
+                  key={m.key}
+                  href={m.attention.href}
+                  style={{ textDecoration: 'none', color: 'inherit', display: 'block', border: `1px solid ${rgba(tint, 0.35)}`,
+                    background: rgba(tint, 0.06), borderRadius: 10, padding: '12px 14px' }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
+                    <span style={{ fontSize: 13, fontWeight: 700 }}>{m.label}</span>
+                    <span style={{ fontSize: 22, fontWeight: 800, color: tint }}>{fmt(m.attention.value)}</span>
+                  </div>
+                  <div style={{ fontSize: 12, color: C.muted, marginTop: 2 }}>{m.attention.label}</div>
+                  <div style={{ fontSize: 12, color: tint, fontWeight: 600, marginTop: 8 }}>Open queue →</div>
+                </Link>
+              );
+            })}
           </div>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12, marginTop: 26, maxWidth: 640 }}>
-            {heroStats.map((s) => (
-              <div key={s.label}>
-                <div style={{ fontSize: 12, opacity: 0.82, fontWeight: 600 }}>{s.label}</div>
-                <div style={{ display: 'inline-block', marginTop: 8, background: 'rgba(255,255,255,0.16)', borderRadius: 8, padding: '6px 12px', fontWeight: 800 }}>
-                  {loaded ? fmtNum(s.value) : '—'}
-                </div>
-                <div style={{ fontSize: 11, opacity: 0.75, marginTop: 4 }}>{s.sub}</div>
+        )}
+      </section>
+
+      {/* ---- Everything, by domain. ---- */}
+      {grouped.map(([group, mods]) => (
+        <section key={group} style={{ marginBottom: 16 }}>
+          <h2 style={{ ...sectionTitle, fontSize: 14, textTransform: 'uppercase', letterSpacing: 0.6, color: C.muted, marginBottom: 10 }}>
+            {group}
+          </h2>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(232px, 1fr))', gap: 14 }}>
+            {mods.map((m) => (
+              <div key={m.key} style={card}>
+                <Link href={m.href} style={{ textDecoration: 'none', color: C.text, fontSize: 14, fontWeight: 700 }}>
+                  {m.label}
+                </Link>
+                <div style={{ fontSize: 27, fontWeight: 800, marginTop: 8 }}>{loaded ? fmt(m.volume.value) : '—'}</div>
+                <div style={{ fontSize: 12, color: C.muted }}>{m.volume.label}</div>
+
+                {m.attention.label ? (
+                  <Link
+                    href={m.attention.href}
+                    style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8,
+                      marginTop: 12, paddingTop: 10, borderTop: `1px solid ${C.border}`, textDecoration: 'none' }}
+                  >
+                    <span style={{ fontSize: 12, color: C.muted }}>{m.attention.label}</span>
+                    <span style={{ fontSize: 13, fontWeight: 800,
+                      color: (m.attention.value ?? 0) > 0
+                        ? (m.attention.severity === 'critical' ? C.red : C.orange)
+                        : C.muted }}>
+                      {loaded ? fmt(m.attention.value) : '—'}
+                    </span>
+                  </Link>
+                ) : null}
               </div>
             ))}
           </div>
-          <div aria-hidden style={{ position: 'absolute', right: 44, bottom: 26, width: 122, height: 122, borderRadius: '50%', background: 'radial-gradient(circle at 35% 35%, rgba(255,255,255,0.5), rgba(255,255,255,0.08) 30%, rgba(47,43,61,0.16) 31%, rgba(47,43,61,0.06) 100%)', boxShadow: 'inset -20px -22px 40px rgba(47,43,61,0.18)' }} />
-        </div>
+        </section>
+      ))}
 
-        <div style={card}>
-          <div style={{ color: C.muted, fontSize: 13 }}>Operations Overview</div>
-          <div style={{ fontSize: 30, fontWeight: 800, marginTop: 4 }}>{loaded ? fmtNum(total) : '—'}</div>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginTop: 16 }}>
-            <MiniStat icon="✅" tint={C.cyan} value={loaded ? fmtNum(counts?.contestants) : '—'} label="Contestants" />
-            <MiniStat icon="🎤" tint={C.orange} value={loaded ? fmtNum(counts?.open_mic) : '—'} label="Open Mic" />
-          </div>
-          <div style={{ marginTop: 18, height: 8, borderRadius: 999, overflow: 'hidden', background: C.border }}>
-            <div style={{ height: '100%', width: '72%', background: `linear-gradient(90deg, ${C.cyan}, ${C.primary})` }} />
-          </div>
-        </div>
-      </div>
-
-      {/* Stat cards */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 16, marginBottom: 16 }}>
-        {statCards.map((s) => (
-          <div key={s.label} style={card}>
-            <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12 }}>
-              <div>
-                <div style={{ fontSize: 13, color: C.muted }}>{s.label}</div>
-                <div style={{ fontSize: 28, fontWeight: 800, marginTop: 8 }}>{loaded ? fmtNum(s.value) : '—'}</div>
-              </div>
-              <div style={{ width: 42, height: 42, borderRadius: 9, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: 19, background: rgba(s.tint, 0.13) }}>{s.icon}</div>
-            </div>
-          </div>
-        ))}
-      </div>
-
-      {/* Quick actions + status */}
+      {/* ---- Quick actions + honest status. ---- */}
       <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0,2fr) minmax(0,1fr)', gap: 16 }}>
         <div style={card}>
-          <h2 style={sectionTitle}>Quick Actions</h2>
+          <h2 style={sectionTitle}>Quick actions</h2>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 14 }}>
             {visibleQuickLinks.map((item) => (
               <Link
                 key={item.href}
                 href={item.href}
-                style={{ textDecoration: 'none', color: C.primary, border: `1px solid ${rgba(C.primary, 0.5)}`, borderRadius: 6, padding: '7px 11px', fontSize: 12, fontWeight: 600, background: rgba(C.primary, 0.05) }}
+                style={{ textDecoration: 'none', color: C.primary, border: `1px solid ${rgba(C.primary, 0.5)}`,
+                  borderRadius: 6, padding: '7px 11px', fontSize: 12, fontWeight: 600, background: rgba(C.primary, 0.05) }}
               >
                 {item.label}
               </Link>
@@ -155,30 +274,32 @@ export function AdminDashboard() {
         </div>
 
         <div style={card}>
-          <h2 style={sectionTitle}>System Status</h2>
+          <h2 style={sectionTitle}>Data status</h2>
           <ul style={{ margin: '14px 0 0', paddingLeft: 18, color: C.muted, fontSize: 13, lineHeight: 1.9 }}>
             <li>
-              Live counts:{' '}
+              Overview API:{' '}
               <strong style={{ color: failed ? C.red : C.green }}>
-                {!loaded ? 'loading…' : failed ? 'API unreachable' : 'connected'}
+                {!loaded ? 'loading…' : failed ? 'unreachable' : 'connected'}
               </strong>
-              {failed ? ' — check the backend API is running.' : ''}
             </li>
-            <li>{visibleQuickLinks.length} modules available for your role (<strong style={{ color: C.text }}>{role}</strong>).</li>
-            <li>Review pending applications and reconcile payments regularly.</li>
+            <li>
+              {modules.length} module{modules.length === 1 ? '' : 's'} reporting
+              {degraded.length > 0 ? (
+                <>
+                  ,{' '}
+                  <strong style={{ color: C.orange }}>
+                    {degraded.length} could not be read
+                  </strong>{' '}
+                  ({degraded.map((m) => m.label).join(', ')}) — shown as “—”, not as zero.
+                </>
+              ) : (
+                ', all answered.'
+              )}
+            </li>
+            <li>Signed in as <strong style={{ color: C.text }}>{role}</strong>.</li>
           </ul>
         </div>
       </div>
-    </div>
-  );
-}
-
-function MiniStat({ icon, tint, value, label }: { icon: string; tint: string; value: string; label: string }) {
-  return (
-    <div>
-      <div style={{ width: 32, height: 32, borderRadius: 7, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: 15, background: rgba(tint, 0.14) }}>{icon}</div>
-      <div style={{ fontWeight: 800, marginTop: 8, color: C.text }}>{value}</div>
-      <div style={{ fontSize: 12, color: C.muted }}>{label}</div>
     </div>
   );
 }

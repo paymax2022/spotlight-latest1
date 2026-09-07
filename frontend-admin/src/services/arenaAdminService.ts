@@ -1,4 +1,5 @@
 import { env } from '@/config/env';
+import { resolveUseMock } from '@/config/useMock';
 import type {
   Competition,
   CompetitionConfig,
@@ -33,8 +34,7 @@ import type {
 //
 // Backend / feature flag may not be running — default to deterministic fixtures
 // unless explicitly disabled, so every screen renders. Mirrors kycAdminService.
-const USE_FIXTURES =
-  (process.env.NEXT_PUBLIC_ARENA_ADMIN_USE_MOCK ?? 'true') !== 'false';
+const USE_FIXTURES = resolveUseMock(process.env.NEXT_PUBLIC_ARENA_ADMIN_USE_MOCK);
 
 // env.apiBaseUrl looks like http://localhost:8080/api/v1 → /api/arena/admin
 // (and /api/arena for the public GETs).

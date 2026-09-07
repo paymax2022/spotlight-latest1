@@ -11,13 +11,14 @@
 // (HL-8 / NDPA). The doctor never sees the MDCN portal.
 
 import { env } from '@/config/env';
+import { resolveUseMock } from '@/config/useMock';
 import type {
   MdcnReviewRecord,
   MdcnQueueItem,
   MdcnDecisionInput,
 } from '@/types/healthDoctorVerification';
 
-const USE_MOCK = (process.env.NEXT_PUBLIC_HEALTH_USE_MOCK ?? 'true').toLowerCase() !== 'false';
+const USE_MOCK = resolveUseMock(process.env.NEXT_PUBLIC_HEALTH_USE_MOCK);
 
 function adminBase(): string {
   return env.apiBaseUrl.replace(/\/api\/v1\/?$/, '/api/health/doctor/admin');

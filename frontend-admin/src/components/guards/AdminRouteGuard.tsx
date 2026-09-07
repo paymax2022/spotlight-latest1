@@ -5,6 +5,8 @@ import { usePathname, useRouter } from 'next/navigation';
 import type { AuthUser } from '@/features/auth/rbac';
 import { isRouteAllowed } from '@/features/auth/routeGuard';
 import { startAdminSessionSync, syncAdminSession } from '@/features/auth/adminSession';
+import { AdminShell } from '@/components/layouts/AdminShell';
+import { PublicAdminShell } from '@/components/layouts/PublicAdminShell';
 
 // Public admin routes render WITHOUT a session. They live under app/admin/ so
 // they inherit this guard; without this exemption the guard swallows the login
@@ -78,7 +80,12 @@ export function AdminRouteGuard({ children }: { children: React.ReactNode }) {
   // session that goes stale while a page sits idle heals itself.
   useEffect(() => (isPublic ? undefined : startAdminSessionSync()), [isPublic]);
 
-  if (isPublic) return <>{children}</>; // render login/unauthorized freely
+  // Public routes render BARE: no sidebar, no operator identity, no Log out.
+  // The sidebar hydrates from localStorage rather than from a live session, so
+  // rendering it here showed a signed-in shell to a signed-out visitor (and
+  // leaked the previous operator's email plus the whole nav tree to anyone who
+  // opened the login page).
+  if (isPublic) return <PublicAdminShell>{children}</PublicAdminShell>;
   if (!ready) return null;
-  return <>{children}</>;
+  return <AdminShell>{children}</AdminShell>;
 }

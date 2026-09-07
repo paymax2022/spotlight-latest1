@@ -6,6 +6,7 @@
 // residual refund), NL-10 (KYC payout gate), NL-12 (immutable audit).
 
 import { env } from '@/config/env';
+import { resolveUseMock } from '@/config/useMock';
 import type {
   EventsDashboard,
   EventApprovalItem,
@@ -24,7 +25,9 @@ import type {
   EventFraudActionResult,
 } from '@/types/eventsAdmin';
 
-const USE_MOCK = (process.env.NEXT_PUBLIC_EVENTS_USE_MOCK ?? 'true').toLowerCase() !== 'false';
+export const USE_MOCK = resolveUseMock(process.env.NEXT_PUBLIC_EVENTS_USE_MOCK);
+/** Named so the fixture banner can cite the exact switch. */
+export const USE_MOCK_ENV = 'NEXT_PUBLIC_EVENTS_USE_MOCK';
 
 function adminBase(): string {
   return env.apiBaseUrl.replace(/\/api\/v1\/?$/, '/api/events/admin');

@@ -293,7 +293,7 @@ func (s *Service) ListProducts(ctx context.Context, pharmacyProviderID, nameQuer
 		where += fmt.Sprintf(" AND (pr.name ILIKE '%%'||$%d||'%%' OR hp.display_name ILIKE '%%'||$%d||'%%')", len(args), len(args))
 	}
 	q := fmt.Sprintf(`
-		SELECT pr.id, pr.pharmacy_provider_id, COALESCE(hp.display_name, ''), pr.name, pr.nafdac_ref,
+		SELECT pr.id, COALESCE(pr.pharmacy_provider_id::text, ''), COALESCE(hp.display_name, ''), pr.name, COALESCE(pr.nafdac_ref, ''),
 		       pr.nafdac_status, pr.rx_required, pr.is_controlled, pr.price_kobo, pr.stock_qty, pr.active, pr.created_at
 		FROM pharmacy_products pr
 		LEFT JOIN health_providers hp ON hp.id = pr.pharmacy_provider_id
@@ -1333,7 +1333,7 @@ func (s *Service) EarningsForOwner(ctx context.Context, ownerID string) (*Pharma
 // levels are commercially sensitive, and an owner of nothing gets nothing.
 func (s *Service) ListProductsForOwner(ctx context.Context, ownerID string) ([]Product, error) {
 	const q = `
-		SELECT pr.id, pr.pharmacy_provider_id, COALESCE(hp.display_name, ''), pr.name, pr.nafdac_ref,
+		SELECT pr.id, pr.pharmacy_provider_id, COALESCE(hp.display_name, ''), pr.name, COALESCE(pr.nafdac_ref, ''),
 		       pr.nafdac_status, pr.rx_required, pr.is_controlled, pr.price_kobo, pr.stock_qty,
 		       pr.active, pr.created_at
 		FROM pharmacy_products pr

@@ -5,6 +5,8 @@ import { getLabDashboard, formatNaira } from '@/services/healthLabAdminService';
 import type { LabDashboard } from '@/types/healthLabAdmin';
 import { LabTabs, Kpi, DisclosureNote, StateBlock, timeAgo, pct } from '../../_ui';
 import { Page, PageHeader, Card, Button, Badge, colors, thCell, tdCell } from '@/components/ui/vuexy';
+import { FixtureBanner } from '../../../_shared/ui';
+import { USE_MOCK, USE_MOCK_ENV } from '@/services/healthLabAdminService';
 
 function statusColor(status: string): string {
   const v = status.toLowerCase();
@@ -36,6 +38,7 @@ export default function LabDashboardPage() {
         subtitle="Orders, GMV, turnaround time (TAT), chain-of-custody integrity, critical-result escalation, results release controls and held→released payment flow across the MLSCN-verified lab network."
         actions={<Button variant="outline" onClick={load}>Refresh</Button>}
       />
+      <FixtureBanner active={USE_MOCK} envVar={USE_MOCK_ENV} />
       <LabTabs active="overview" />
 
       <DisclosureNote>

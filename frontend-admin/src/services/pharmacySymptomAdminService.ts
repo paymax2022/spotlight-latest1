@@ -11,6 +11,7 @@
 // licensed pharmacist approves it here — approvals go live immediately.
 
 import { env } from '@/config/env';
+import { resolveUseMock } from '@/config/useMock';
 
 // ── URL constants (single place to fix if backend paths differ) ──────────────
 // Base mirrors healthPharmacyAdminService: env.apiBaseUrl ends with /api/v1 and
@@ -22,7 +23,7 @@ export const URL_REVIEW_DECISION = (id: string) => `/symptom/reviews/${encodeURI
 export const URL_MAPPINGS = '/symptom/mappings'; // GET ?entity=term|cluster · POST {entity, action, payload}
 export const URL_METRICS = '/symptom/metrics'; // GET — safety-KPI strip (PRD §9)
 
-const USE_MOCK = (process.env.NEXT_PUBLIC_HEALTH_USE_MOCK ?? 'true').toLowerCase() !== 'false';
+const USE_MOCK = resolveUseMock(process.env.NEXT_PUBLIC_HEALTH_USE_MOCK);
 
 function adminBase(): string {
   return env.apiBaseUrl.replace(/\/api\/v1\/?$/, ADMIN_BASE_SUFFIX);

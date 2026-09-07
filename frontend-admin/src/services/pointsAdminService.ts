@@ -9,8 +9,11 @@
 // via a self-award endpoint (NL-4). Ledger listing here is mock-only.
 
 import { env } from '@/config/env';
+import { resolveUseMock } from '@/config/useMock';
 
-const USE_MOCK = (process.env.NEXT_PUBLIC_POINTS_ADMIN_USE_MOCK ?? 'true').toLowerCase() !== 'false';
+export const USE_MOCK = resolveUseMock(process.env.NEXT_PUBLIC_POINTS_ADMIN_USE_MOCK);
+/** Named so the fixture banner can cite the exact switch. */
+export const USE_MOCK_ENV = 'NEXT_PUBLIC_POINTS_ADMIN_USE_MOCK';
 
 // Points admin oversight lives under the loyalty admin group at /api/loyalty/admin/*.
 function adminBase(): string {

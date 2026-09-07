@@ -78,7 +78,8 @@ func RegisterSavings(member *gin.RouterGroup, adminGroup *gin.RouterGroup, cfg c
 		return middleware.RequirePermission(rbac, permission)
 	}
 
-	handler := savings.NewHandler(vaultSvc, ajoSvc, targetSvc)
+	handler := savings.NewHandler(vaultSvc, ajoSvc, targetSvc).
+		WithAdmin(savings.NewAdminHandler(savings.NewAdminRepository(pool)))
 	handler.Register(member, adminGroup, guard)
 
 	log.Println("[savings] routes registered — vaults / ajo / group-target + scheduler handlers live")

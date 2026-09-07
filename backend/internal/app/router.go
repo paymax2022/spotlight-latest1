@@ -389,6 +389,16 @@ func NewRouter(cfg config.Config) *gin.Engine {
 		v1 := r.Group("/api/v1")
 		adminStore := handlers.NewAdminStore(sharedPool)
 		adminConsoleHandler := handlers.NewAdminConsoleHandler(adminStore)
+
+		// Cross-module operations overview for the web console dashboard.
+		// Deliberately on RequireAdmin (the x-admin-api-key gate that
+		// frontend-admin's server-side proxy attaches) rather than the
+		// X-Admin-Role header the mobile admin console uses — the browser
+		// never holds the key, and the proxy is what supplies it.
+		overviewGroup := v1.Group("/admin")
+		overviewGroup.Use(middleware.RequireAdmin(cfg.AdminAPIKey, cfg.AppEnv))
+		overviewGroup.GET("/overview", handlers.NewAdminOverviewHandler(sharedPool).Overview)
+
 		adminConsole := v1.Group("/admin")
 		adminConsole.Use(middleware.RequireAdminConsoleRole())
 		adminConsole.GET("/dashboard", adminConsoleHandler.Dashboard)

@@ -7,6 +7,7 @@
 // NL-12 (immutable audit on every state change).
 
 import { env } from '@/config/env';
+import { resolveUseMock } from '@/config/useMock';
 import type {
   SocialDashboard,
   SocialLimits,
@@ -20,7 +21,9 @@ import type {
   CashtagReviewResult,
 } from '@/types/socialAdmin';
 
-const USE_MOCK = (process.env.NEXT_PUBLIC_SOCIAL_USE_MOCK ?? 'true').toLowerCase() !== 'false';
+export const USE_MOCK = resolveUseMock(process.env.NEXT_PUBLIC_SOCIAL_USE_MOCK);
+/** Named so the fixture banner can cite the exact switch. */
+export const USE_MOCK_ENV = 'NEXT_PUBLIC_SOCIAL_USE_MOCK';
 
 function adminBase(): string {
   return env.apiBaseUrl.replace(/\/api\/v1\/?$/, '/api/social/admin');

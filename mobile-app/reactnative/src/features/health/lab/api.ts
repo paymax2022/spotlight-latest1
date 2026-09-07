@@ -425,8 +425,13 @@ export async function getTests(query?: CatalogQuery): Promise<LabTest[]> {
     }
     return rows;
   }
-  const { data } = await api.get<LabTest[]>(`${LAB_API}/tests`, { params: query });
-  return data;
+  // The Go handler wraps the array: {"success":true,"tests":[...]}, not a bare
+  // array — returning `data` verbatim handed the caller that whole envelope
+  // typed (wrongly) as LabTest[], so `(tests ?? []).slice(...)` in
+  // app/health/lab/index.tsx crashed with "slice is not a function" on every
+  // successful load.
+  const { data } = await api.get<{ success: boolean; tests: LabTest[] }>(`${LAB_API}/tests`, { params: query });
+  return data.tests ?? [];
 }
 
 export async function getTest(id: string): Promise<LabTest> {

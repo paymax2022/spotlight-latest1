@@ -374,3 +374,101 @@ export interface CfFeatureRequest {
   /** When the request was actioned. Null while PENDING. */
   decidedAt: string | null;
 }
+
+// ─── Campaign directory ───────────────────────────────────────────────────────
+// The "every campaign" surface. Distinct from CfReviewCampaign, which is only
+// the moderation queue (PENDING_REVIEW) and carries no funding figures.
+
+export interface CfDirectoryRow {
+  id: string;
+  title: string;
+  category: string;
+  type: string;
+  status: string;
+  reviewStatus: string;
+  creatorId: string;
+  creatorName: string;
+  goalKobo: number;
+  raisedKobo: number;
+  percentOfGoal: number;
+  /** DISTINCT contributors. */
+  backerCount: number;
+  contributionCount: number;
+  /** The denormalised campaigns.contributor_count, shown when it disagrees. */
+  storedContributorCount: number;
+  verified: boolean;
+  featured: boolean;
+  trending: boolean;
+  urgent: boolean;
+  frozen: boolean;
+  riskLevel: string;
+  riskScore: number;
+  deadline: string;
+  createdAt: string;
+}
+
+export interface CfDirectoryPage {
+  rows: CfDirectoryRow[];
+  total: number;
+  page: number;
+  limit: number;
+}
+
+export interface CfDirectoryFilter {
+  status?: string;
+  reviewStatus?: string;
+  category?: string;
+  q?: string;
+  flag?: '' | 'featured' | 'verified' | 'trending' | 'urgent' | 'frozen';
+  sort?: '' | 'recent' | 'raised' | 'goal' | 'backers' | 'deadline';
+  page?: number;
+  limit?: number;
+}
+
+export interface CfBacker {
+  contributionId: string;
+  contributorId: string;
+  contributorName: string;
+  contributorEmail: string;
+  amountKobo: number;
+  status: string;
+  createdAt: string;
+}
+
+export interface CfBackersPage {
+  backers: CfBacker[];
+  total: number;
+  page: number;
+  limit: number;
+  raisedKobo: number;
+  backerCount: number;
+}
+
+export interface CfStatusBreakdown {
+  status: string;
+  count: number;
+  amountKobo: number;
+}
+
+/**
+ * Per-campaign money. Refunds and settlements are deliberately absent: neither
+ * table carries a campaign_id in this schema, so they cannot be attributed to a
+ * campaign without guessing on the title. They live on the finance pages.
+ */
+export interface CfCampaignFunding {
+  campaignId: string;
+  goalKobo: number;
+  raisedKobo: number;
+  backerCount: number;
+  contributionCount: number;
+  averageContributionKobo: number;
+  largestContributionKobo: number;
+  firstContributionAt: string;
+  lastContributionAt: string;
+  byStatus: CfStatusBreakdown[];
+  withdrawnKobo: number;
+  withdrawalCount: number;
+  pendingWithdrawalKobo: number;
+  milestoneCount: number;
+  milestonesReleased: number;
+}

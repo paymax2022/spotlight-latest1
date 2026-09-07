@@ -5,6 +5,7 @@
 // All money is integer minor units (kobo). Every mutation is server-audited.
 
 import { env } from '@/config/env';
+import { resolveUseMock } from '@/config/useMock';
 import type {
   MobilityDashboard,
   DriverSummary, DriverDetail, DriverVerificationDecision, DriverVerificationStatus,
@@ -17,7 +18,7 @@ import type {
 
 // Mock by default; flip with NEXT_PUBLIC_MOBILITY_ADMIN_USE_MOCK=false once the
 // admin control-plane endpoints are live on the Go backend.
-const USE_MOCK = (process.env.NEXT_PUBLIC_MOBILITY_ADMIN_USE_MOCK ?? 'true').toLowerCase() !== 'false';
+const USE_MOCK = resolveUseMock(process.env.NEXT_PUBLIC_MOBILITY_ADMIN_USE_MOCK);
 
 function adminBase(): string {
   // env.apiBaseUrl defaults to .../api/v1 ; admin transport lives under /api/finance/admin/transport

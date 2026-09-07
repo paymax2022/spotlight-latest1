@@ -17,6 +17,7 @@
 // by slug out of the in-memory catalog) keeps working unchanged.
 
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
+import { resolveCategoryLabel } from '@/src/server/contests/categories';
 import type { ContestRegistrationDefinition } from '@/src/features/registration/types';
 
 // Lazy + memoized for the same reason as supabase-store: a module-level
@@ -54,6 +55,21 @@ export function categoryLabel(slug: string): string {
 }
 
 /**
+ * The label to store for a contest's category.
+ *
+ * CATEGORY_LABEL above only knows the eleven categories that were hardcoded, and
+ * its `?? 'Other'` meant a contest created under an admin-made category was
+ * silently filed as "Other" — the API answered 201 while the category the admin
+ * chose was thrown away. Managed categories (public.contest_categories) are
+ * consulted first; the static map stays as the fallback for the original slugs
+ * and for when the lookup fails.
+ */
+export async function resolveContestCategoryLabel(slug: string): Promise<string> {
+  const managed = await resolveCategoryLabel(slug);
+  return managed ?? categoryLabel(slug);
+}
+
+/**
  * Persist a contest definition to public.contests.
  *
  * status is 'active' so the contest is visible immediately — that is the point of
@@ -75,7 +91,7 @@ export async function persistContestDefinition(
       name: def.title,
       slug: def.slug,
       description: '',
-      category: categoryLabel(def.contestCategory),
+      category: await resolveContestCategoryLabel(def.contestCategory),
       // UPCOMING, not active — and not 'draft' either.
       //
       // 'active' was wrong: the contests -> connect_contests mirror maps it to
@@ -143,7 +159,7 @@ export async function updateContestDefinition(
     .update({
       name: def.title,
       slug: def.slug,
-      category: categoryLabel(def.contestCategory),
+      category: await resolveContestCategoryLabel(def.contestCategory),
       contest_type: def.contestType,
       location_scope: def.regionScope,
       entry_fee_ngn: def.isPaid ? Math.max(0, Math.round(def.registrationFeeNgn ?? 0)) : 0,

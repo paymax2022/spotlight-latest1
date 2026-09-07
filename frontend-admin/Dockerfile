@@ -18,11 +18,28 @@ ARG SUPABASE_SERVICE_ROLE_KEY
 # set only as a Railway service variable never reaches the bundle and silently
 # becomes the localhost fallback - a dead link from any other machine, which
 # reads as an application bug rather than a missing ARG.
+# Modules that are allowlisted to run on FIXTURES in production because their
+# admin backend does not exist yet (scripts/check-mock-flags.mjs MOCK_ALLOWLIST).
+# Since 9e71741e an unset *_USE_MOCK flag resolves LIVE in production, so without
+# these the console would call endpoints that are not there and show errors where
+# it used to show sample data. Defaulted to 'true' HERE, in the image, rather than
+# left to a Railway service variable: NEXT_PUBLIC_* is inlined at build time, so a
+# value set only at runtime never reaches the bundle — the same trap documented
+# for NEXT_PUBLIC_WEB_APP_BASE_URL above.
+#
+# BURN THESE DOWN. When the backend lands: delete the ARG/ENV pair here, remove
+# the module from MOCK_ALLOWLIST, and let it default live.
+#   FX     — service calls /api/fx/admin/*; backend has only /api/finance/admin/fx/markup.
+#   GROUPS — backend has member routes under /api/finance/groups and no admin group.
+ARG NEXT_PUBLIC_FX_ADMIN_USE_MOCK=true
+ARG NEXT_PUBLIC_GROUPS_ADMIN_USE_MOCK=true
 ARG NEXT_PUBLIC_WEB_APP_BASE_URL
 ENV NEXT_PUBLIC_SUPABASE_URL=${NEXT_PUBLIC_SUPABASE_URL}
 ENV NEXT_PUBLIC_SUPABASE_ANON_KEY=${NEXT_PUBLIC_SUPABASE_ANON_KEY}
 ENV SUPABASE_SERVICE_ROLE_KEY=${SUPABASE_SERVICE_ROLE_KEY}
 ENV NEXT_PUBLIC_WEB_APP_BASE_URL=${NEXT_PUBLIC_WEB_APP_BASE_URL}
+ENV NEXT_PUBLIC_FX_ADMIN_USE_MOCK=${NEXT_PUBLIC_FX_ADMIN_USE_MOCK}
+ENV NEXT_PUBLIC_GROUPS_ADMIN_USE_MOCK=${NEXT_PUBLIC_GROUPS_ADMIN_USE_MOCK}
 
 # Install dependencies from the lockfile first so this layer caches across
 # source-only changes.

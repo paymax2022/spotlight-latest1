@@ -1,4 +1,5 @@
 import { env } from '@/config/env';
+import { resolveUseMock } from '@/config/useMock';
 import type {
   TradingKycRecord, TradingKycStatus, TradingKycEvent, TradingKycBypassRequest, TradingBypassEntry,
   StrategyPromotion, PromotionEvent, PromoteRequest, ReadinessRequest, DemoteRequest, TradingStage,
@@ -29,7 +30,7 @@ export function formatKobo(kobo: number | null | undefined): string {
   return `₦${(kobo / 100).toLocaleString('en-NG', { minimumFractionDigits: 2 })}`;
 }
 
-const USE_FIXTURES = (process.env.NEXT_PUBLIC_TRADING_ADMIN_USE_MOCK ?? 'true').toLowerCase() !== 'false';
+const USE_FIXTURES = resolveUseMock(process.env.NEXT_PUBLIC_TRADING_ADMIN_USE_MOCK);
 
 // Every write below has a real, RBAC-gated live endpoint (verified against
 // backend/internal/trading/routes.go), so fixture mode has nothing to add and

@@ -8,6 +8,7 @@
 // Mock by default (NEXT_PUBLIC_MAPS_USE_MOCK); flip to false to hit the live Go backend.
 
 import { env } from '@/config/env';
+import { resolveUseMock } from '@/config/useMock';
 import type {
   MapDashboard,
   ResolutionEvent,
@@ -17,7 +18,7 @@ import type {
   ContributionStatus,
 } from '@/types/mapServiceAdmin';
 
-const USE_MOCK = (process.env.NEXT_PUBLIC_MAPS_USE_MOCK ?? 'true').toLowerCase() !== 'false';
+const USE_MOCK = resolveUseMock(process.env.NEXT_PUBLIC_MAPS_USE_MOCK);
 
 function adminBase(): string {
   return env.apiBaseUrl.replace(/\/api\/v1\/?$/, '/api/maps/admin');

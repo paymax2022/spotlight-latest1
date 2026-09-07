@@ -84,11 +84,19 @@ jobs:
     uses: ./.github/workflows/_reusable-frontend-web.yml
 
   frontend-admin:
+    # NAME IS LOAD-BEARING: .github/required-checks.txt pins this exact string
+    # for branch protection on develop. Renaming it means the old context never
+    # reports and every PR sits on "Expected — waiting for status" forever, so
+    # the extra gate below is described in the command, not in the job name.
     name: frontend-admin (type-check)
     uses: ./.github/workflows/_reusable-node-typecheck.yml
     with:
       working-directory: frontend-admin
-      typecheck-command: npm run type-check
+      # NODE_ENV=production makes the gate model PRODUCTION resolution, which is
+      # the case that matters: an unset flag must resolve LIVE there. Chained
+      # here rather than added to the reusable workflow because that one also
+      # runs the mobile app, which has no such script.
+      typecheck-command: npm run type-check && NODE_ENV=production npm run check:mock-flags
 
   # The mobile app's whole-app tsc, ONCE. Ten module lanes each ran this same
   # `tsc --noEmit -p tsconfig.json` over the entire RN app, so a single broken

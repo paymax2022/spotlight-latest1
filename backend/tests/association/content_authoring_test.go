@@ -35,13 +35,31 @@ func seedFounder(t *testing.T, ctx context.Context, label string) (userID, orgID
 		pool.Close()
 		t.Fatalf("seed auth.users: %v", err)
 	}
-	testsupport.CleanupUser(t, pool, userID)
 	res, err := svc.PublishOrganisation(ctx, userID, newTestDraft(label+" "+uuid.New().String()[:8]))
 	if err != nil {
+		testsupport.DeleteUser(context.Background(), pool, userID)
 		pool.Close()
 		t.Fatalf("publish: %v", err)
 	}
-	return userID, res.OrganisationID, svc, pool.Close
+	// Teardown runs INSIDE the returned closure, in this order, deliberately.
+	//
+	// It used to return pool.Close alone and register the user teardown with
+	// testsupport.CleanupUser (a t.Cleanup). Every caller does `defer done()`,
+	// and Go runs deferred calls BEFORE t.Cleanup callbacks — so the pool was
+	// already shut when the user delete fired, and it silently no-opped against
+	// a dead pool. The organisation had no teardown at all. Between them this
+	// left 19 auth.users rows and 149 assoc_organisations rows in the shared
+	// local database.
+	//
+	// Doing the work here keeps the pool open for it and makes the order
+	// explicit: the organisation first (its memberships reference the founder),
+	// then the founder, then close.
+	return userID, res.OrganisationID, svc, func() {
+		bg := context.Background()
+		deleteOrganisation(bg, pool, res.OrganisationID)
+		testsupport.DeleteUser(bg, pool, userID)
+		pool.Close()
+	}
 }
 
 func rfc3339In(d time.Duration) string { return time.Now().Add(d).UTC().Format(time.RFC3339) }

@@ -1,5 +1,6 @@
 import { env } from '@/config/env';
 import { operationKey } from './idempotency';
+import { resolveUseMock } from '@/config/useMock';
 import type {
   KycReviewItem,
   KycCaseDetail,
@@ -17,8 +18,7 @@ import type {
 //
 // Backend / flag may not be running — default to deterministic fixtures unless
 // explicitly disabled, so every screen renders. Mirrors transfersAdminService.
-const USE_FIXTURES =
-  (process.env.NEXT_PUBLIC_KYC_ADMIN_USE_MOCK ?? 'true') !== 'false';
+const USE_FIXTURES = resolveUseMock(process.env.NEXT_PUBLIC_KYC_ADMIN_USE_MOCK);
 
 // Go backend finance admin routes live at /api/finance/admin/...
 // env.apiBaseUrl looks like http://localhost:8080/api/v1 → /api/finance/admin.
