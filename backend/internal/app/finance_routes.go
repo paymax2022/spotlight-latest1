@@ -513,6 +513,11 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 	if cfg.FeaturePlacementEnabled && pool != nil {
 		placementMember := finance // member.Group("/placement") is created inside RegisterPlacement
 		placementAdmin := r.Group("/api/placement/admin")
+		// RequireAuthContext validates the bearer token and mirrors user_id into the
+		// gin context; requireUserID then fail-closes if it is missing. WITHOUT this
+		// line every route in the group 401s even with a valid token — and on mobile a
+		// 401 signs the user out, so the screen appears to log them out on open.
+		placementAdmin.Use(mapsAuth())
 		placementAdmin.Use(requireUserID())
 		// BARE /api/finance, not /api/finance/placement: RegisterPlacement adds the
 		// "/placement" segment itself (placement_routes.go, `public.Group`), so
@@ -1723,6 +1728,11 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 	// the shared LLM client (claude-sonnet-4-6); empty key → deterministic mock.
 	if cfg.FeatureNutritionEnabled && pool != nil {
 		nutritionAdmin := r.Group("/api/nutrition/admin")
+		// RequireAuthContext validates the bearer token and mirrors user_id into the
+		// gin context; requireUserID then fail-closes if it is missing. WITHOUT this
+		// line every route in the group 401s even with a valid token — and on mobile a
+		// 401 signs the user out, so the screen appears to log them out on open.
+		nutritionAdmin.Use(mapsAuth())
 		nutritionAdmin.Use(requireUserID())
 		registerNutritionRoutes(finance, nutritionAdmin, pool, rbac, cfg.AnthropicAPIKey)
 	}
@@ -1753,6 +1763,11 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 
 		// Mobile-facing /api/v1/telemedicine/... (matches mobile API client)
 		v1Tele := r.Group("/api/v1/telemedicine")
+		// RequireAuthContext validates the bearer token and mirrors user_id into the
+		// gin context; requireUserID then fail-closes if it is missing. WITHOUT this
+		// line every route in the group 401s even with a valid token — and on mobile a
+		// 401 signs the user out, so the screen appears to log them out on open.
+		v1Tele.Use(mapsAuth())
 		v1Tele.Use(requireUserID())
 		v1Tele.GET("/specialties", telemedHandler.ListSpecialties)
 		v1Tele.GET("/doctors", telemedHandler.ListDoctors)
@@ -1785,6 +1800,11 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		pharmacySvc := pharmacy.NewService(pool)
 		pharmacyHandler := pharmacy.NewHandler(pharmacySvc)
 		v1Pharm := r.Group("/api/v1/pharmacy")
+		// RequireAuthContext validates the bearer token and mirrors user_id into the
+		// gin context; requireUserID then fail-closes if it is missing. WITHOUT this
+		// line every route in the group 401s even with a valid token — and on mobile a
+		// 401 signs the user out, so the screen appears to log them out on open.
+		v1Pharm.Use(mapsAuth())
 		v1Pharm.Use(requireUserID())
 		v1Pharm.GET("/products", pharmacyHandler.ListProducts)
 		v1Pharm.GET("/cart", pharmacyHandler.GetCart)
@@ -2207,6 +2227,11 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		dpGroup.POST("", disputesHandler.Open)
 		dpGroup.GET("", disputesHandler.List)
 		adminFinanceDisputes := r.Group("/api/finance/admin/disputes")
+		// RequireAuthContext validates the bearer token and mirrors user_id into the
+		// gin context; requireUserID then fail-closes if it is missing. WITHOUT this
+		// line every route in the group 401s even with a valid token — and on mobile a
+		// 401 signs the user out, so the screen appears to log them out on open.
+		adminFinanceDisputes.Use(mapsAuth())
 		adminFinanceDisputes.Use(requireUserID())
 		adminFinanceDisputes.POST("/:id/resolve", disputesHandler.AdminResolve)
 	}
@@ -2252,6 +2277,11 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 	// requireUserID() still aborts first, and these still 401 — this only decides what
 	// they become when they wake up.
 	adminFinance := r.Group("/api/finance/admin")
+	// RequireAuthContext validates the bearer token and mirrors user_id into the
+	// gin context; requireUserID then fail-closes if it is missing. WITHOUT this
+	// line every route in the group 401s even with a valid token — and on mobile a
+	// 401 signs the user out, so the screen appears to log them out on open.
+	adminFinance.Use(mapsAuth())
 	adminFinance.Use(requireUserID())
 	if cfg.FeatureKYCEnabled {
 		adminFinance.GET("/kyc/pending", middleware.RequirePermission(rbac, "finance.admin.kyc"), kycHandler.ListPending)
