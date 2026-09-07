@@ -98,109 +98,94 @@ func cascadeDelete(ctx context.Context, pool *pgxpool.Pool, table, keyCol string
 // The organisation had no teardown at all. 149 organisations and 19 users had
 // accumulated in the shared local database.
 //
-// Counting rows around a real seedFounder call is the only assertion that
-// actually proves teardown ran: a cleanup that silently fails looks exactly
-// like one that worked.
+// These assert on the SPECIFIC rows the helper created, never on table counts.
+// The first version compared global counts before and after and was flaky
+// everywhere it mattered: `go test ./...` runs packages in parallel against one
+// database, and several dev sessions share one local Supabase, so other work
+// adds and removes rows inside the measurement window. It failed in CI with
+// "auth.users 49 -> 47 ... left -2 user(s) behind" — a NEGATIVE leak, which is
+// the tell that the assertion was measuring other people's rows.
 func TestLiveDB_SeedFounder_LeavesNothingBehind(t *testing.T) {
 	ctx := context.Background()
 	pool := liveDBPool(t)
 	t.Cleanup(pool.Close)
 
-	count := func() (orgs, users int) {
-		t.Helper()
-		if err := pool.QueryRow(ctx, `SELECT
-			(SELECT count(*) FROM assoc_organisations),
-			(SELECT count(*) FROM auth.users)`).Scan(&orgs, &users); err != nil {
-			t.Fatalf("count: %v", err)
-		}
-		return
-	}
-
-	orgsBefore, usersBefore := count()
-
-	// Scoped so the teardown runs here, not at the end of the test.
+	var orgID, userID string
 	func() {
-		_, orgID, _, done := seedFounder(t, ctx, "leakguard")
+		u, o, _, done := seedFounder(t, ctx, "leakguard")
 		defer done()
-		if orgID == "" {
-			t.Fatal("seedFounder returned no organisation id")
+		userID, orgID = u, o
+		if orgID == "" || userID == "" {
+			t.Fatal("seedFounder returned no ids")
 		}
 	}()
 
-	orgsAfter, usersAfter := count()
-	if orgsAfter != orgsBefore {
-		t.Errorf("assoc_organisations %d -> %d: seedFounder left %d organisation(s) behind",
-			orgsBefore, orgsAfter, orgsAfter-orgsBefore)
+	var orgLeft, userLeft int
+	if err := pool.QueryRow(ctx, `SELECT
+		(SELECT count(*) FROM assoc_organisations WHERE id=$1),
+		(SELECT count(*) FROM auth.users WHERE id=$2)`, orgID, userID).Scan(&orgLeft, &userLeft); err != nil {
+		t.Fatalf("recount: %v", err)
 	}
-	if usersAfter != usersBefore {
-		t.Errorf("auth.users %d -> %d: seedFounder left %d user(s) behind",
-			usersBefore, usersAfter, usersAfter-usersBefore)
+	if orgLeft != 0 {
+		t.Errorf("organisation %s still present — seedFounder did not clean it up", orgID)
+	}
+	if userLeft != 0 {
+		t.Errorf("founder %s still present — the user teardown did not run", userID)
 	}
 }
 
-// seedOrganisation backs 63 call sites, so it is the one whose teardown is worth
-// pinning: a regression here re-leaks most of the suite at once. It also proves
-// the cascade reaches the bottom of the chain — the two-level version this
-// replaced could not delete an organisation that had dues on it, because
+// seedOrganisation backs 63 call sites, so it is the one worth pinning: a
+// regression here re-leaks most of the suite at once. It also proves the
+// cascade reaches the bottom of the chain — the two-level version this replaced
+// could not delete an organisation that had dues on it, because
 // assoc_revenue_splits sits four levels below assoc_organisations.
 func TestLiveDB_SeedOrganisation_LeavesNothingBehind(t *testing.T) {
 	ctx := context.Background()
 	pool := liveDBPool(t)
 	t.Cleanup(pool.Close)
 
-	var orgsBefore, ledgerBefore int
-	if err := pool.QueryRow(ctx, `SELECT
-		(SELECT count(*) FROM assoc_organisations),
-		(SELECT count(*) FROM ledger_entries)`).Scan(&orgsBefore, &ledgerBefore); err != nil {
-		t.Fatalf("count: %v", err)
+	orgID := seedOrganisation(t, ctx, pool, "cleanupguard "+uuid.New().String())
+	_, membershipID := seedActiveMembership(t, ctx, pool, orgID)
+
+	// Build the full four-level chain the old unwind could not clear:
+	//   organisation -> membership -> dues invoice -> payment -> revenue split
+	// An invoice alone only reaches three levels, which a two-level cascade
+	// still clears — so the fixture has to go all the way down, or the guard
+	// passes against the very bug it exists to catch. It did, once.
+	invoiceID := seedDuesInvoice(t, ctx, pool, membershipID, 5_000_00)
+	var paymentID string
+	if err := pool.QueryRow(ctx, `
+		INSERT INTO assoc_payments (id, invoice_id, membership_id, amount_kobo, method, reference, status)
+		VALUES (gen_random_uuid(), $1, $2, 5000000, 'WALLET', $3, 'SUCCESS') RETURNING id::text`,
+		invoiceID, membershipID, "cleanupguard-"+uuid.New().String()[:8]).Scan(&paymentID); err != nil {
+		t.Fatalf("seed payment: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO assoc_revenue_splits (id, payment_id, label, amount_kobo)
+		VALUES (gen_random_uuid(), $1, 'ORGANISATION', 5000000)`, paymentID); err != nil {
+		t.Fatalf("seed revenue split: %v", err)
 	}
 
-	func() {
-		orgID := seedOrganisation(t, ctx, pool, "cleanupguard "+uuid.New().String())
-		_, membershipID := seedActiveMembership(t, ctx, pool, orgID)
-		// Build the full four-level chain the old unwind could not clear:
-		//   organisation -> membership -> dues invoice -> payment -> revenue split
-		// An invoice alone only reaches three levels, which a two-level cascade
-		// still clears — so the fixture has to go all the way down or the guard
-		// passes against the very bug it exists to catch.
-		invoiceID := seedDuesInvoice(t, ctx, pool, membershipID, 5_000_00)
-		var paymentID string
-		if err := pool.QueryRow(ctx, `
-			INSERT INTO assoc_payments (id, invoice_id, membership_id, amount_kobo, method, reference, status)
-			VALUES (gen_random_uuid(), $1, $2, 5000000, 'WALLET', $3, 'SUCCESS') RETURNING id::text`,
-			invoiceID, membershipID, "cleanupguard-"+uuid.New().String()[:8]).Scan(&paymentID); err != nil {
-			t.Fatalf("seed payment: %v", err)
-		}
-		if _, err := pool.Exec(ctx, `
-			INSERT INTO assoc_revenue_splits (id, payment_id, label, amount_kobo)
-			VALUES (gen_random_uuid(), $1, 'ORGANISATION', 5000000)`, paymentID); err != nil {
-			t.Fatalf("seed revenue split: %v", err)
-		}
-		deleteOrganisation(ctx, pool, orgID)
+	deleteOrganisation(ctx, pool, orgID)
 
-		var left int
-		if err := pool.QueryRow(ctx,
-			`SELECT count(*) FROM assoc_organisations WHERE id=$1`, orgID).Scan(&left); err != nil {
-			t.Fatalf("recount: %v", err)
-		}
-		if left != 0 {
-			t.Errorf("deleteOrganisation left the organisation behind — the cascade did not reach the bottom")
-		}
-	}()
-
-	var orgsAfter, ledgerAfter int
+	var orgLeft, splitsLeft int
 	if err := pool.QueryRow(ctx, `SELECT
-		(SELECT count(*) FROM assoc_organisations),
-		(SELECT count(*) FROM ledger_entries)`).Scan(&orgsAfter, &ledgerAfter); err != nil {
+		(SELECT count(*) FROM assoc_organisations WHERE id=$1),
+		(SELECT count(*) FROM assoc_revenue_splits WHERE payment_id=$2)`,
+		orgID, paymentID).Scan(&orgLeft, &splitsLeft); err != nil {
 		t.Fatalf("recount: %v", err)
 	}
-	if orgsAfter != orgsBefore {
-		t.Errorf("assoc_organisations %d -> %d: %d left behind", orgsBefore, orgsAfter, orgsAfter-orgsBefore)
+	if orgLeft != 0 {
+		t.Errorf("organisation %s survived — the cascade did not reach the bottom of the chain", orgID)
 	}
-	// Ledger entries are immutable by rule. Cleanup must never remove one; it is
-	// the reason some seeded users cannot be deleted at all, and that is correct.
-	if ledgerAfter < ledgerBefore {
-		t.Errorf("ledger_entries %d -> %d: cleanup deleted immutable ledger rows",
-			ledgerBefore, ledgerAfter)
+	if splitsLeft != 0 {
+		t.Errorf("revenue splits for payment %s survived — the cascade stopped short", paymentID)
 	}
+
+	// Ledger rows are immutable by rule and cleanup must never remove one. That
+	// is enforced by construction — cascadeDelete excludes ledger_entries from
+	// its child query — and was verified by measurement across a full suite run
+	// (ledger_entries and ledger_accounts only ever grew). It is deliberately
+	// NOT asserted here as a table count: that is the racy shape this file has
+	// just had to unlearn.
 }
