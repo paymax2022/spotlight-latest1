@@ -54,6 +54,7 @@ func TestPublishOrganisation_PersistsIdentityFields(t *testing.T) {
 	if err != nil {
 		t.Fatalf("publish: %v", err)
 	}
+	t.Cleanup(func() { deleteOrganisation(ctx, pool, res.OrganisationID) })
 
 	var acronym, location, website, logoURL *string
 	var foundedYear *int
@@ -112,6 +113,7 @@ func TestPublishOrganisation_OptionalIdentityFieldsMayBeBlank(t *testing.T) {
 	if err != nil {
 		t.Fatalf("publish: %v — acronym, location and website are optional", err)
 	}
+	t.Cleanup(func() { deleteOrganisation(ctx, pool, res.OrganisationID) })
 
 	var acronym, location, website *string
 	if err := pool.QueryRow(ctx, `
@@ -203,8 +205,11 @@ func TestPublishOrganisation_AcceptsBoundaryFoundedYears(t *testing.T) {
 		y := year
 		draft := newTestDraft("Bounds " + uuid.New().String()[:8])
 		draft.FoundedYear = &y
-		if _, err := svc.PublishOrganisation(ctx, userID, draft); err != nil {
+		res, err := svc.PublishOrganisation(ctx, userID, draft)
+		if err != nil {
 			t.Errorf("founded year %d rejected: %v — the bounds must be inclusive", y, err)
+			continue
 		}
+		t.Cleanup(func() { deleteOrganisation(ctx, pool, res.OrganisationID) })
 	}
 }
