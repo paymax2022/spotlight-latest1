@@ -103,6 +103,7 @@ const navItemsBase: NavItem[] = [
   { label: 'Rate Card', href: '/admin/commission', section: 'Commission' },
   { label: 'Profit Dashboard', href: '/admin/commission/profit', section: 'Commission' },
   { label: 'CF Overview', href: '/admin/crowdfunding', section: 'Crowdfunding', permissions: ['crowdfunding.view'] },
+  { label: 'All Campaigns', href: '/admin/crowdfunding/campaigns', section: 'Crowdfunding', permissions: ['crowdfunding.review'] },
   { label: 'Campaign Review', href: '/admin/crowdfunding/review', section: 'Crowdfunding', permissions: ['crowdfunding.review'] },
   { label: 'Users & Creators', href: '/admin/crowdfunding/users', section: 'Crowdfunding', permissions: ['crowdfunding.users'] },
   { label: 'KYC / KYB', href: '/admin/crowdfunding/kyc', section: 'Crowdfunding', permissions: ['crowdfunding.kyc'] },
