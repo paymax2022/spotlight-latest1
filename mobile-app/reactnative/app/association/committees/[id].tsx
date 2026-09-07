@@ -2,7 +2,7 @@ import React from 'react';
 import { View, Text, Image, ScrollView, Pressable, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
-import { MessageCircle, CalendarDays, ListTodo, FileText, Check, Clock, Crown, Pencil, X, UserMinus } from 'lucide-react-native';
+import { MessageCircle, CalendarDays, ListTodo, FileText, Check, Clock, Crown, Pencil, X, UserMinus, Trash2 } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
 import { Spacing } from '@/constants/spacing';
@@ -11,7 +11,9 @@ import { shadow1 } from '@/constants/shadows';
 import ScreenHeader from '@/components/ScreenHeader';
 import StateView from '@/components/StateView';
 import PrimaryButton from '@/components/PrimaryButton';
-import { useCommittee, useRequestJoinCommittee } from '@/features/association/hooks/useCommunity';
+import { useCommittee, useRequestJoinCommittee, useUpdateCommittee, useDeleteCommittee } from '@/features/association/hooks/useCommunity';
+import CommitteeFormModal from '@/features/association/components/CommitteeFormModal';
+import { canManageCommittees } from '@/features/association/utils/committeePermissions';
 import { useAdminAccess } from '@/features/association/hooks/useAdminMembers';
 import { useQueryClient } from '@tanstack/react-query';
 import { decideCommitteeRequest, removeCommitteeMember } from '@/features/association/api/authoring.api';
@@ -24,6 +26,13 @@ export default function CommitteeDetail() {
   const join = useRequestJoinCommittee();
   const access = useAdminAccess();
   const isAdmin = Boolean(access.data?.isAdmin);
+  // Roster work (approve/decline/remove) rides on isAdmin. Renaming or deleting
+  // the committee itself is the owner's, gated on the narrower capability —
+  // the server enforces the same split via requireCommitteeAdmin.
+  const canManage = canManageCommittees(access.data);
+  const update = useUpdateCommittee();
+  const del = useDeleteCommittee();
+  const [editOpen, setEditOpen] = React.useState(false);
   const qc = useQueryClient();
   const [busy, setBusy] = React.useState(false);
 
@@ -48,6 +57,35 @@ export default function CommitteeDetail() {
       await alertAsync({ title: "Couldn't save that", message: 'Please try again.' });
     } finally {
       setBusy(false);
+    }
+  };
+
+  const saveEdit = async (input: { name: string; description?: string | null }) => {
+    try {
+      await update.mutateAsync({ id: id as string, input });
+      setEditOpen(false);
+    } catch {
+      await alertAsync({ title: "Couldn't save that", message: 'Please try again.' });
+    }
+  };
+
+  const destroy = async (name: string, memberCount: number) => {
+    const ok = await confirmAsync({
+      title: `Delete ${name}?`,
+      // Say what actually happens: DeleteCommittee drops every
+      // assoc_committee_members row along with the committee.
+      message: memberCount > 0
+        ? `This committee and its ${memberCount} member${memberCount === 1 ? '' : 's'} will be removed. This cannot be undone.`
+        : 'This committee will be removed. This cannot be undone.',
+      confirmLabel: 'Delete',
+      destructive: true,
+    });
+    if (!ok) return;
+    try {
+      await del.mutateAsync(id as string);
+      router.back();
+    } catch {
+      await alertAsync({ title: "Couldn't delete that committee", message: 'Please try again.' });
     }
   };
 
@@ -101,7 +139,39 @@ export default function CommitteeDetail() {
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
-      <ScreenHeader title="Committee" />
+      <ScreenHeader
+        title="Committee"
+        rightSlot={canManage ? (
+          <View style={styles.ownerActions}>
+            <Pressable
+              onPress={() => setEditOpen(true)}
+              hitSlop={8}
+              accessibilityRole="button"
+              accessibilityLabel={`Edit ${c.name}`}
+              style={({ pressed }) => [styles.headerBtn, pressed && styles.pressedBtn]}
+            >
+              <Pencil size={18} color={Colors.primary} strokeWidth={2.2} />
+            </Pressable>
+            <Pressable
+              onPress={() => destroy(c.name, c.memberCount ?? 0)}
+              disabled={del.isPending}
+              hitSlop={8}
+              accessibilityRole="button"
+              accessibilityLabel={`Delete ${c.name}`}
+              style={({ pressed }) => [styles.headerBtn, pressed && styles.pressedBtn]}
+            >
+              <Trash2 size={18} color={Colors.error} strokeWidth={2.2} />
+            </Pressable>
+          </View>
+        ) : undefined}
+      />
+      <CommitteeFormModal
+        visible={editOpen}
+        initial={{ name: c.name, description: c.purpose }}
+        busy={update.isPending}
+        onCancel={() => setEditOpen(false)}
+        onSubmit={saveEdit}
+      />
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scroll}>
         <Text style={styles.name}>{c.name}</Text>
         <Text style={styles.purpose}>{c.purpose} · {formatCount(c.memberCount, 'members')}</Text>
@@ -226,6 +296,9 @@ const styles = StyleSheet.create({
   memberRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm, paddingVertical: Spacing.sm },
   pendingTag: { ...Typography.labelSm, color: Colors.gold },
   adminActions: { flexDirection: 'row', gap: 4 },
+  ownerActions: { flexDirection: 'row', alignItems: 'center', gap: 2 },
+  headerBtn: { padding: 4 },
+  pressedBtn: { opacity: 0.6 },
   iconBtn: {
     width: 30, height: 30, borderRadius: Radius.full, alignItems: 'center', justifyContent: 'center',
     backgroundColor: Colors.surfaceContainerLowest, borderWidth: 1, borderColor: Colors.outlineVariant,
