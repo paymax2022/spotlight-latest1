@@ -2,6 +2,7 @@ package services
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -20,6 +21,29 @@ type captured struct {
 	path  string
 	body  map[string]any
 	calls int
+
+	// How the stub answers GET /auth/v1/settings. Zero values mean "200, signups
+	// open", which is what every pre-existing test expects.
+	sStatus int
+	sBody   string
+}
+
+func (c *captured) settingsStatus() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.sStatus == 0 {
+		return http.StatusOK
+	}
+	return c.sStatus
+}
+
+func (c *captured) settingsBody() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.sBody == "" {
+		return `{"disable_signup":false,"mailer_autoconfirm":false}`
+	}
+	return c.sBody
 }
 
 func (c *captured) snapshot() (string, map[string]any, int) {
@@ -32,6 +56,11 @@ func (c *captured) snapshot() (string, map[string]any, int) {
 func gotrueStub(t *testing.T, cap *captured) *httptest.Server {
 	t.Helper()
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/auth/v1/settings" {
+			w.WriteHeader(cap.settingsStatus())
+			_, _ = w.Write([]byte(cap.settingsBody()))
+			return
+		}
 		if !strings.Contains(r.URL.Path, "/auth/v1/") {
 			// PostgREST calls (the phone patch). Not under test.
 			w.WriteHeader(http.StatusOK)
@@ -53,7 +82,21 @@ func gotrueStub(t *testing.T, cap *captured) *httptest.Server {
 
 func registerWith(t *testing.T, otpEnabled bool) (string, map[string]any) {
 	t.Helper()
+	path, body, err := registerRaw(t, otpEnabled, nil)
+	if err != nil {
+		t.Fatalf("RegisterUser: %v", err)
+	}
+	return path, body
+}
+
+// registerRaw returns the error too, and lets a test choose how the stub answers
+// GET /auth/v1/settings.
+func registerRaw(t *testing.T, otpEnabled bool, settings func(*captured)) (string, map[string]any, error) {
+	t.Helper()
 	cap := &captured{}
+	if settings != nil {
+		settings(cap)
+	}
 	srv := gotrueStub(t, cap)
 	defer srv.Close()
 
@@ -62,17 +105,12 @@ func registerWith(t *testing.T, otpEnabled bool) (string, map[string]any) {
 		nil,
 		config.Config{FeatureOTPEmailEnabled: otpEnabled},
 	)
-	if _, err := svc.RegisterUser(domain.RegisterRequest{
+	_, err := svc.RegisterUser(domain.RegisterRequest{
 		Email: "Ada@Example.com", Password: "correct-horse-battery",
 		FirstName: "Ada", LastName: "Lovelace",
-	}); err != nil {
-		t.Fatalf("RegisterUser: %v", err)
-	}
-	path, body, calls := cap.snapshot()
-	if calls == 0 {
-		t.Fatal("RegisterUser made no GoTrue call")
-	}
-	return path, body
+	})
+	path, body, _ := cap.snapshot()
+	return path, body, err
 }
 
 // With the OTP feature ON the account must be created through the ADMIN endpoint,
@@ -133,4 +171,66 @@ func keysOf(m map[string]any) []string {
 		out = append(out, k)
 	}
 	return out
+}
+
+// ── the project signup policy on the admin path ─────────────────────────────
+
+// /auth/v1/admin/users is NOT gated by the project's enable_signup switch — that
+// is the price of a creation call that sends no mail. So a project that closed
+// registrations would keep creating accounts through it, silently, with the
+// operator believing the door was shut.
+func TestRegisterRefusesWhenTheProjectHasClosedSignups(t *testing.T) {
+	path, _, err := registerRaw(t, true, func(c *captured) {
+		c.sBody = `{"disable_signup":true,"mailer_autoconfirm":false}`
+	})
+	if !errors.Is(err, ErrSignupDisabled) {
+		t.Fatalf("error = %v, want ErrSignupDisabled", err)
+	}
+	if path == "/auth/v1/admin/users" {
+		t.Fatal("an account was created despite the project having closed signups")
+	}
+}
+
+// Fails CLOSED. /settings and /admin/users are the same service, so a settings
+// read that fails means the create would very likely fail too — and treating the
+// error as "signups are open" would let a partial outage reopen a door the
+// project deliberately closed.
+func TestRegisterRefusesWhenTheSignupPolicyCannotBeRead(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		status int
+		body   string
+	}{
+		{"settings endpoint errors", http.StatusInternalServerError, `{}`},
+		{"settings body is not json", http.StatusOK, `<html>gateway</html>`},
+		// The field being renamed or dropped must not read as "open".
+		{"disable_signup field is absent", http.StatusOK, `{"mailer_autoconfirm":false}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path, _, err := registerRaw(t, true, func(c *captured) {
+				c.sStatus, c.sBody = tc.status, tc.body
+			})
+			if !errors.Is(err, ErrSignupDisabled) {
+				t.Fatalf("error = %v, want ErrSignupDisabled", err)
+			}
+			if path == "/auth/v1/admin/users" {
+				t.Fatal("an account was created without confirming the signup policy")
+			}
+		})
+	}
+}
+
+// With the flag off we use /auth/v1/signup, which GoTrue gates itself. Checking
+// again here would be a second opinion on a question the endpoint already
+// answers — and one extra round trip on the shipped path.
+func TestRegisterDoesNotReadTheSignupPolicyOnTheSignupPath(t *testing.T) {
+	path, _, err := registerRaw(t, false, func(c *captured) {
+		c.sStatus, c.sBody = http.StatusInternalServerError, `{}`
+	})
+	if err != nil {
+		t.Fatalf("RegisterUser: %v — an unreadable /settings must not affect the /signup path", err)
+	}
+	if path != "/auth/v1/signup" {
+		t.Fatalf("path = %s, want /auth/v1/signup", path)
+	}
 }

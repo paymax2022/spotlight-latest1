@@ -116,9 +116,28 @@ the new user; flag off → Supabase's "Your Spotlight verification code" arrives
 
 - GoTrue's `sign_in_sign_ups` rate limit does not apply. `/api/auth/register`
   already carries `middleware.AuthRateLimiter` (`AUTH_RATE_LIMIT_PER_MIN`).
-- GoTrue's own `enable_signup` switch does not apply. **If you ever close signups
-  at the project level, close this path too** — the admin endpoint will keep
-  creating accounts.
+- GoTrue's own `enable_signup` switch does not apply to the admin endpoint, so
+  `RegisterUser` enforces it itself: before creating, it reads
+  `GET /auth/v1/settings` and refuses with `403 signup_disabled` when
+  `disable_signup` is true. GoTrue's own answer is the single source of truth —
+  a mirrored flag in our config would drift from the project's real policy.
+
+  It is read on **every attempt**, not cached: registration is already throttled
+  per IP by `middleware.AuthRateLimiter`, and a cache is a window in which a door
+  the project just closed is still open.
+
+  It **fails closed**. If `/settings` cannot be read — unreachable, non-JSON, or
+  missing the `disable_signup` field — registration is refused. `/settings` and
+  `/admin/users` are the same service, so a settings read that fails is a strong
+  signal the create would fail too, and treating the error as "signups are open"
+  would let a partial outage reopen a door that was deliberately shut. The
+  missing-field case matters on its own: decoding into a plain `bool` would read
+  a renamed or dropped field as `false`, which is exactly how a policy gate stops
+  working with nobody noticing.
+
+  With the flag off nothing changes — `/auth/v1/signup` is gated by GoTrue itself,
+  and checking again would be a second opinion plus a round trip on the shipped
+  path.
 
 **Nothing here touches the cloud projects.** `supabase/config.toml` configures
 LOCAL only, and the suppression above is application code, so it takes effect on

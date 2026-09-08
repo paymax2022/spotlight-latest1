@@ -150,8 +150,20 @@ func (h *AuthHandler) Register(c *gin.Context) {
 	res, err := h.auth.RegisterUser(in)
 	if err != nil {
 		h.audit.LogAction("", "", "register.failed", "auth", "user", "", nil, map[string]any{"email": in.Email}, c.ClientIP(), c.Request.UserAgent(), "medium")
-		// Deliberately generic: echoing "already registered" would let anyone test
-		// which addresses have accounts.
+
+		// Signups being closed is a PROJECT-WIDE policy, not a fact about this
+		// address, so saying so leaks nothing and telling the user their "details"
+		// are wrong would send them round a loop they cannot win. Every other
+		// failure stays deliberately generic — echoing "already registered" would
+		// let anyone test which addresses have accounts.
+		if errors.Is(err, services.ErrSignupDisabled) {
+			c.JSON(http.StatusForbidden, gin.H{
+				"success": false,
+				"code":    "signup_disabled",
+				"error":   "New registrations are currently closed. Please try again later.",
+			})
+			return
+		}
 		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": "Registration failed. Please check your details and try again."})
 		return
 	}
