@@ -52,6 +52,10 @@ on:
         description: 'Set NEXT_PUBLIC_WEB_APP_BASE_URL on frontend-admin and REBUILD it'
         type: boolean
         default: false
+      set_insurance_key:
+        description: 'Write INSURANCE_MYCOVER_API_KEY to the backend from the repo secret, then redeploy'
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -545,3 +549,70 @@ jobs:
             sleep 15
           done
           echo "  timed out waiting for the rebuild"; exit 1
+
+  set-insurance-key:
+    # Writes the MyCover provider credential to the staging backend.
+    #
+    # WHY THIS EXISTS
+    # Setting this one variable by hand cost four rounds of dashboard-reading and
+    # still never reached the service: it went to the wrong environment, then
+    # carried a trailing newline, then landed somewhere that was not project
+    # e7dca861 / service backend. Meanwhile an EMPTY key makes VerifyWebhook fail
+    # closed BEFORE it computes a digest, so the failure logs nothing at all and
+    # is indistinguishable from a wrong key. This removes the human step that
+    # kept going wrong, and names the target service explicitly.
+    #
+    # The value comes from the repo secret and is piped via --stdin exactly as
+    # ADMIN_API_KEY is: it never appears in a command line, a process list or
+    # `set -x` output, and is never echoed. That discipline exists because --kv
+    # printed raw values and leaked a key on run 32545670584.
+    #
+    # It must be the MCASECK_* key for the SAME MyCover account whose dashboard
+    # the webhook URL is registered in. A key from another account verifies
+    # nothing, and the resulting mismatch reads as a broken recipe rather than a
+    # wrong secret.
+    if: ${{ inputs.confirm == 'SET' && inputs.set_insurance_key }}
+    runs-on: ubuntu-latest
+    environment: staging
+    env:
+      RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN_STAGING }}
+      PROJECT: e7dca861-3667-4d9a-8090-6d2f4d179ec2
+      ENVIRONMENT: staging
+    steps:
+      - name: Check the Railway token is present
+        run: ': "${RAILWAY_TOKEN:?missing secret RAILWAY_TOKEN_STAGING}"'
+
+      - name: Check the provider key secret is present
+        env:
+          MYCOVER_KEY: ${{ secrets.INSURANCE_MYCOVER_API_KEY }}
+        run: ': "${MYCOVER_KEY:?missing secret INSURANCE_MYCOVER_API_KEY - add it under repo Settings > Secrets and variables > Actions}"'
+
+      - name: Install Railway CLI
+        run: npm install --global @railway/cli@5.40.1
+
+      # --skip-deploys on the write, then ONE explicit redeploy below. The adapter
+      # reads os.Getenv once at startup, so a value only takes effect on a fresh
+      # process; a write that silently does not restart is exactly why this looked
+      # set-but-broken.
+      - name: Write the key to the backend service
+        env:
+          MYCOVER_KEY: ${{ secrets.INSURANCE_MYCOVER_API_KEY }}
+        run: |
+          set -euo pipefail
+          # Strip trailing whitespace defensively. A pasted secret often carries a
+          # newline; it is invisible in every UI and changes the HMAC completely.
+          CLEAN="$(printf '%s' "$MYCOVER_KEY" | tr -d '\r\n')"
+          printf '%s' "$CLEAN" | railway variable set INSURANCE_MYCOVER_API_KEY --stdin \
+            --service backend --environment "$ENVIRONMENT" --project "$PROJECT" --skip-deploys
+          unset CLEAN
+          echo "  key written to backend (value never printed)"
+
+      - name: Redeploy the backend so a fresh process reads it
+        run: |
+          set -euo pipefail
+          railway redeploy --service backend --environment "$ENVIRONMENT" \
+            --project "$PROJECT" --yes
+          echo "  redeploy TRIGGERED - not live until the build reaches SUCCESS."
+          echo "  Verify with the staging-inspect workflow, which reports"
+          echo "    INSURANCE_MYCOVER_API_KEY = set (len N, sha256 XXXXXXXXXXXX)"
+          echo "  without ever printing the value."

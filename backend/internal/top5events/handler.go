@@ -34,6 +34,7 @@ type GuardFunc func(permission string) gin.HandlerFunc
 func (h *Handler) Register(member, admin *gin.RouterGroup, guard GuardFunc) {
 	// Organiser CMS (organiser capability; object-level authZ in the service).
 	member.GET("", h.ListEvents)
+	member.GET("/organiser/mine", h.ListMyOrganiserEvents)
 	member.POST("", h.CreateEvent)
 	member.GET("/:id", h.GetEvent)
 	member.POST("/:id/submit", h.Submit)
@@ -42,6 +43,8 @@ func (h *Handler) Register(member, admin *gin.RouterGroup, guard GuardFunc) {
 	member.POST("/:id/tiers", h.AddTier)
 	member.POST("/:id/promos", h.AddPromo)
 	member.POST("/:id/vendors", h.AddVendor)
+	member.GET("/:id/vendors", h.Vendors)
+	member.GET("/:id/attendees", h.Attendees)
 
 	// Ticketing.
 	member.POST("/:id/purchase", h.Purchase)
@@ -61,6 +64,7 @@ func (h *Handler) Register(member, admin *gin.RouterGroup, guard GuardFunc) {
 	member.POST("/:id/wallet", h.OpenWallet)
 	member.POST("/wallet/:walletId/topup", h.TopUp)
 	member.GET("/wallet/:walletId", h.GetWallet)
+	member.GET("/wallet/:walletId/entries", h.WalletEntries)
 	member.POST("/wallet/:walletId/close", h.CloseWallet)
 
 	// Vendor POS-lite tap-charge.
@@ -128,6 +132,22 @@ func (h *Handler) ListEvents(c *gin.Context) {
 		}
 	}
 	out, err := h.svc.ListEvents(c.Request.Context(), userID, filter)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "events": out})
+}
+
+// ListMyOrganiserEvents backs the organiser dashboard: the caller's own events
+// (any state) with real ticket/revenue aggregates, replacing the mobile
+// client's previous derive-from-an-unscoped-discovery-call workaround.
+func (h *Handler) ListMyOrganiserEvents(c *gin.Context) {
+	u, ok := uid(c)
+	if !ok {
+		return
+	}
+	out, err := h.svc.ListMyOrganiserEvents(c.Request.Context(), u)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -347,6 +367,27 @@ func (h *Handler) ListStewards(c *gin.Context) {
 	respond(c, out, err)
 }
 
+// Attendees backs the organiser/steward check-in roster — same authorization
+// as Scan, since this is the list a steward checks people in against.
+func (h *Handler) Attendees(c *gin.Context) {
+	u, ok := uid(c)
+	if !ok {
+		return
+	}
+	out, err := h.svc.AttendeesForEvent(c.Request.Context(), u, c.Param("id"))
+	respond(c, out, err)
+}
+
+// Vendors is a public (any authenticated attendee) identity-only vendor list
+// for tap-to-pay — {id, name, active} only, no ownership gate.
+func (h *Handler) Vendors(c *gin.Context) {
+	if _, ok := uid(c); !ok {
+		return
+	}
+	out, err := h.svc.VendorsForEvent(c.Request.Context(), c.Param("id"))
+	respond(c, out, err)
+}
+
 // --- Cashless wallet ---
 
 func (h *Handler) OpenWallet(c *gin.Context) {
@@ -392,6 +433,17 @@ func (h *Handler) GetWallet(c *gin.Context) {
 		return
 	}
 	out, err := h.svc.GetWallet(c.Request.Context(), u, c.Param("walletId"))
+	respond(c, out, err)
+}
+
+// WalletEntries lists an event-wallet's ledger history — owner-only, matching
+// GetWallet's authorization exactly.
+func (h *Handler) WalletEntries(c *gin.Context) {
+	u, ok := uid(c)
+	if !ok {
+		return
+	}
+	out, err := h.svc.WalletEntries(c.Request.Context(), u, c.Param("walletId"))
 	respond(c, out, err)
 }
 

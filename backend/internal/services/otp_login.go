@@ -111,3 +111,16 @@ func (b *otpAuthBridge) SetPassword(ctx context.Context, email, newPassword stri
 	}
 	return true, nil
 }
+
+// SetOTPOperational tells the auth service that server-issued OTP is not merely
+// flagged on but actually wired, so registration may use the silent admin
+// creation path.
+//
+// A no-op on any other AuthService implementation, and false by default, so the
+// fail-safe direction is /auth/v1/signup — which always sends a confirmation
+// email the user can act on.
+func SetOTPOperational(auth AuthService, operational bool) {
+	if svc, ok := auth.(*authService); ok && svc != nil {
+		svc.otpOperational = operational
+	}
+}

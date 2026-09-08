@@ -29,6 +29,19 @@ type AuthService interface {
 }
 
 type authService struct {
+	// otpOperational is true only when the OTP service was ACTUALLY BUILT — flag
+	// on AND pepper AND Brevo credentials AND a database. It is not the flag.
+	//
+	// Branching on the flag alone produced accounts nobody could ever verify: with
+	// the flag on but credentials missing, this service took the silent admin
+	// creation path (so GoTrue sent nothing) while the register handler, which
+	// checks the WIRED ISSUER rather than the flag, sent nothing either. The
+	// account existed, unconfirmed, with no code and no way to request one —
+	// /api/auth/otp/request answers 503 in that state. Login refused it forever.
+	//
+	// The two decisions must be made from the same signal, so this carries it.
+	otpOperational bool
+
 	supabase *integrations.SupabaseRestClient
 	rbac     RBACService
 	cfg      config.Config
@@ -142,7 +155,7 @@ func (s *authService) RegisterUser(in domain.RegisterRequest) (*RegisterResult, 
 	// is created nameless.
 	path := "/auth/v1/signup"
 	payload := map[string]any{"email": email, "password": in.Password, "data": meta}
-	if s.cfg.FeatureOTPEmailEnabled {
+	if s.otpOperational {
 		// The admin endpoint is not gated by the project's enable_signup switch —
 		// that is the price of a creation call that sends no mail. Enforce the
 		// policy here instead, from GoTrue's own /settings, so there is one source

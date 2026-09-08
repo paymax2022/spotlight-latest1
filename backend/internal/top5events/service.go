@@ -1246,7 +1246,12 @@ func (s *Service) walletBalanceTx(ctx context.Context, tx pgx.Tx, walletID strin
 }
 
 func (s *Service) loadWallet(ctx context.Context, walletID string) (*EventWallet, error) {
-	const q = `SELECT id, event_id, owner_id, state, COALESCE(credential_id,''), created_at FROM event_wallets WHERE id=$1`
+	// credential_id is a uuid column — COALESCE(credential_id,'') fails type
+	// unification against the '' literal (invalid input syntax for type uuid)
+	// whenever the column is actually NULL, i.e. every event-wallet that was
+	// never issued a wallet-band credential. The ::text cast (already used the
+	// same way for event_tickets/event_vendors elsewhere in this file) avoids it.
+	const q = `SELECT id, event_id, owner_id, state, COALESCE(credential_id::text,''), created_at FROM event_wallets WHERE id=$1`
 	var w EventWallet
 	var state string
 	if err := s.db.QueryRow(ctx, q, walletID).Scan(&w.ID, &w.EventID, &w.OwnerID, &state, &w.CredentialID, &w.CreatedAt); err != nil {

@@ -538,6 +538,12 @@ type Config struct {
 	OTPMaxSendsPerHour       int
 	OTPMaxSendsPerIPPerHour  int
 	OTPMaxVerifyPerIPPerHour int
+
+	// SignupRateLimitPer5Min replaces GoTrue's sign_in_sign_ups limit on the
+	// admin creation path, which that endpoint does not enforce. Defaulted to
+	// GoTrue's own default (30 per 5 minutes per IP) so switching creation paths
+	// does not quietly change the budget.
+	SignupRateLimitPer5Min int
 	// AdminAppBaseURL: origin of frontend-admin, used to build links inside
 	// transactional emails (e.g. the hotelier staff invite accept link).
 	AdminAppBaseURL string
@@ -840,6 +846,7 @@ func Load() Config {
 		OTPMaxSendsPerHour:       getEnvInt("OTP_MAX_SENDS_PER_HOUR", 5),
 		OTPMaxSendsPerIPPerHour:  getEnvInt("OTP_MAX_SENDS_PER_IP_PER_HOUR", 20),
 		OTPMaxVerifyPerIPPerHour: getEnvInt("OTP_MAX_VERIFY_PER_IP_PER_HOUR", 20),
+		SignupRateLimitPer5Min:   getEnvInt("AUTH_SIGNUP_RATE_LIMIT_PER_5MIN", 30),
 		AdminAppBaseURL:          getEnv("ADMIN_APP_BASE_URL", "https://admin.spotlightng.com"),
 		TermiiAPIKey:             getEnv("TERMII_API_KEY", ""),
 		TermiiSenderID:           getEnv("TERMII_SENDER_ID", "Paymax"),
