@@ -1340,6 +1340,77 @@ func (s *Service) ListForOwner(ctx context.Context, ownerID, state string, limit
 	return out, rows.Err()
 }
 
+// maxPatientOrderPage bounds a client-supplied page size for a patient's own
+// order history, same rationale as maxOwnerOrderPage.
+const maxPatientOrderPage = 200
+const defaultPatientOrderPage = 50
+
+// ListForPatient returns the caller's own orders, newest first, optionally
+// narrowed to one state.
+//
+// This is the patient-facing counterpart to ListForOwner. Before it existed,
+// the mobile "my orders" screen called GET /orders — the same path the
+// pharmacist inbox (ListForOwner) is bound to — so a patient either got an
+// empty list (if they owned no pharmacy) or, worse, another business's
+// fulfilment queue (if they happened to also own one). Registered as
+// /orders/mine, a sibling of the existing /products/mine convention, so it
+// never collides with the owner inbox at /orders.
+//
+// pickup_code IS selected here, unlike ListForOwner: it is the patient's own
+// counter credential, and this is the patient reading their own order.
+func (s *Service) ListForPatient(ctx context.Context, patientID, state string, limit, offset int) ([]Order, error) {
+	if limit <= 0 {
+		limit = defaultPatientOrderPage
+	}
+	if limit > maxPatientOrderPage {
+		limit = maxPatientOrderPage
+	}
+	if offset < 0 {
+		offset = 0
+	}
+
+	const q = `
+		SELECT id, patient_id, pharmacy_provider_id, prescription_id, state, fulfilment_method,
+		       total_kobo, escrow_id, delivery_ref, pickup_code, idempotency_key, created_at
+		FROM pharmacy_orders
+		WHERE patient_id = $1
+		  AND ($2 = '' OR state = $2)
+		ORDER BY created_at DESC
+		LIMIT $3 OFFSET $4`
+
+	rows, err := s.db.Query(ctx, q, patientID, state, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	// Non-nil so the handler serialises [] rather than null for a patient with
+	// no orders yet.
+	out := []Order{}
+	for rows.Next() {
+		var o Order
+		var st, method string
+		if err := rows.Scan(&o.ID, &o.PatientID, &o.PharmacyProviderID, &o.PrescriptionID, &st,
+			&method, &o.TotalKobo, &o.EscrowID, &o.DeliveryRef, &o.PickupCode, &o.IdempotencyKey, &o.CreatedAt); err != nil {
+			return nil, err
+		}
+		o.State = OrderState(st)
+		o.FulfilmentMethod = FulfilmentMethod(method)
+		out = append(out, o)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	for i := range out {
+		lines, err := s.loadLines(ctx, out[i].ID)
+		if err != nil {
+			return nil, err
+		}
+		out[i].Lines = lines
+	}
+	return out, nil
+}
+
 // EarningsForOwner totals what this owner's pharmacies have been paid and what is
 // still held for them.
 //
