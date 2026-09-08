@@ -190,3 +190,53 @@ func (c *SupabaseRestClient) authHeaders(req *http.Request) {
 	req.Header.Set("Authorization", "Bearer "+c.apiKey)
 	req.Header.Set("Content-Type", "application/json")
 }
+
+// SignupDisabled reports whether the project has closed new sign-ups.
+//
+// GET /auth/v1/settings is GoTrue's own answer, so this cannot drift from the
+// project's actual policy the way a mirrored flag in our config would. The
+// endpoint is unauthenticated (it is what client SDKs read to decide which
+// providers to show); the apikey header is sent anyway to match every other call
+// here.
+//
+// The caller decides what a read failure means. It should mean "refuse": this
+// endpoint and /auth/v1/admin/users are the same service, so a settings read
+// that fails is a strong signal the create would fail too, and treating the
+// error as "signups are open" would let a partial outage reopen a door the
+// project deliberately closed.
+func (c *SupabaseRestClient) SignupDisabled(ctx context.Context) (bool, error) {
+	if strings.TrimSpace(c.baseURL) == "" {
+		return false, fmt.Errorf("supabase: not configured")
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
+		strings.TrimRight(c.baseURL, "/")+"/auth/v1/settings", nil)
+	if err != nil {
+		return false, err
+	}
+	req.Header.Set("apikey", c.apiKey)
+	req.Header.Set("accept", "application/json")
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return false, fmt.Errorf("supabase: read auth settings: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		msg, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<10))
+		return false, fmt.Errorf("supabase: auth settings returned %d: %s", resp.StatusCode, strings.TrimSpace(string(msg)))
+	}
+
+	// Decoded into a pointer so a RENAMED or absent field is an error rather than
+	// a silent false. "The field is missing, so signups must be open" is exactly
+	// how a policy gate stops working without anyone noticing.
+	var settings struct {
+		DisableSignup *bool `json:"disable_signup"`
+	}
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&settings); err != nil {
+		return false, fmt.Errorf("supabase: decode auth settings: %w", err)
+	}
+	if settings.DisableSignup == nil {
+		return false, fmt.Errorf("supabase: auth settings has no disable_signup field")
+	}
+	return *settings.DisableSignup, nil
+}

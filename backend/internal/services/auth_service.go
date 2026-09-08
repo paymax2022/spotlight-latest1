@@ -2,6 +2,7 @@ package services
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -88,6 +89,10 @@ func parseSignupResponse(body []byte) *RegisterResult {
 // extractSignupUserID is retained for callers that only need the id.
 func extractSignupUserID(body []byte) string { return parseSignupResponse(body).UserID }
 
+// ErrSignupDisabled is returned when the project has closed new sign-ups and the
+// admin creation path — which GoTrue does not gate for us — refuses on its behalf.
+var ErrSignupDisabled = errors.New("signups are disabled")
+
 func (s *authService) RegisterUser(in domain.RegisterRequest) (*RegisterResult, error) {
 	// Only when the client actually sent it — see domain.RegisterRequest.
 	if strings.TrimSpace(in.ConfirmPassword) != "" && in.Password != in.ConfirmPassword {
@@ -138,6 +143,28 @@ func (s *authService) RegisterUser(in domain.RegisterRequest) (*RegisterResult, 
 	path := "/auth/v1/signup"
 	payload := map[string]any{"email": email, "password": in.Password, "data": meta}
 	if s.cfg.FeatureOTPEmailEnabled {
+		// The admin endpoint is not gated by the project's enable_signup switch —
+		// that is the price of a creation call that sends no mail. Enforce the
+		// policy here instead, from GoTrue's own /settings, so there is one source
+		// of truth rather than a mirrored flag that drifts.
+		//
+		// Read on every attempt rather than cached: registration is already
+		// throttled per IP by middleware.AuthRateLimiter, and a cache is a window
+		// in which a door the project just closed is still open.
+		//
+		// Fails CLOSED. /settings and /admin/users are the same service, so a
+		// settings read that fails is a strong signal the create would fail too;
+		// treating the error as "signups are open" would let a partial outage
+		// reopen the door.
+		disabled, err := s.supabase.SignupDisabled(context.Background())
+		if err != nil {
+			log.Printf("[auth] register: could not read the project signup policy, refusing: %v", err)
+			return nil, ErrSignupDisabled
+		}
+		if disabled {
+			return nil, ErrSignupDisabled
+		}
+
 		path = "/auth/v1/admin/users"
 		payload = map[string]any{
 			"email":         email,
