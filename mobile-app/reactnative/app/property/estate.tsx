@@ -14,6 +14,7 @@ import { shadow1 } from '@/constants/shadows';
 import ScreenHeader from '@/components/ScreenHeader';
 import SectionHeader from '@/components/SectionHeader';
 import ContextSwitcher from '@/components/ContextSwitcher';
+import PromoBanner from '@/components/PromoBanner';
 
 // Estate & Visitor Access sub-hub. Reuses the EXISTING estate-ops screens by
 // routing to their established top-level routes — no logic is duplicated here.
@@ -45,6 +46,17 @@ export default function EstateHub() {
       />
 
       <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
+        {/* Hero banner */}
+        <View style={styles.bannerBleed}>
+          <PromoBanner
+            title="AI-powered estate notes"
+            subtitle="Let AI draft your meeting minutes and announcements in seconds."
+            cta="Try AI Notes"
+            badge="NEW"
+            onPress={() => router.push('/ai-notes' as never)}
+          />
+        </View>
+
         {/* Primary access pillars */}
         <SectionHeader title="Access" style={styles.section} />
         <View style={styles.accessList}>
@@ -96,6 +108,7 @@ export default function EstateHub() {
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: Colors.background },
   scroll: { paddingHorizontal: Spacing.containerMargin, paddingBottom: Spacing.xxl, gap: Spacing.sm },
+  bannerBleed: { marginHorizontal: -Spacing.containerMargin },
   section: { paddingHorizontal: 0, marginTop: Spacing.sm },
   pressed: { opacity: 0.8 },
   accessList: { gap: Spacing.sm },

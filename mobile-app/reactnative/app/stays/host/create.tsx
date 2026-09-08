@@ -48,8 +48,8 @@ export default function CreatePropertyScreen() {
       <ScreenHeader title="List a property" />
       <ScrollView contentContainerStyle={styles.body} keyboardShouldPersistTaps="handled">
         <Text style={styles.lead}>
-          Add your hotel or shortlet apartment to start taking bookings. It starts as a draft — you
-          add rooms and rates next, then submit for review to go live.
+          Add your hotel or shortlet apartment to start taking bookings. It starts as a draft — next
+          you'll add photos, amenities, room types, rates and policies, then submit for review to go live.
         </Text>
 
         <Field label="Property name" value={name} onChangeText={setName} placeholder="Sunset Shortlets Lekki" />
