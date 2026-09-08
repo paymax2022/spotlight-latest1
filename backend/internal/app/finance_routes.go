@@ -57,6 +57,7 @@ import (
 	platformCrypto "spotlight/backend/internal/platform/crypto"
 	"spotlight/backend/internal/platform/queue"
 	"spotlight/backend/internal/platform/r2"
+	"spotlight/backend/internal/platform/realtime"
 	platformRedis "spotlight/backend/internal/platform/redis"
 	platformWS "spotlight/backend/internal/platform/ws"
 	"spotlight/backend/internal/property"
@@ -87,7 +88,7 @@ import (
 // emitter into Phase-1 revenue modules wired OUTSIDE this function — currently the
 // Marketplace (RegisterMarketplace). Modules built INSIDE this function (the Maplerad
 // bills domain) are wired with it directly here.
-func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrations.SupabaseRestClient, rbac services.RBACService, pool *pgxpool.Pool) *referrals.RewardService {
+func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrations.SupabaseRestClient, rbac services.RBACService, pool *pgxpool.Pool, rtHub *realtime.Hub) *referrals.RewardService {
 	if cfg.DatabaseURL == "" {
 		log.Println("[finance] DATABASE_URL not set — skipping financial routes")
 		return nil
@@ -578,7 +579,7 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		eventsAdmin := r.Group("/api/events/admin")
 		eventsAdmin.Use(mapsAuth())
 		eventsAdmin.Use(requireUserID())
-		RegisterEvents(finance.Group("/events"), eventsAdmin, cfg, pool, rbac)
+		RegisterEvents(finance.Group("/events"), eventsAdmin, cfg, pool, rbac, rtHub)
 	}
 	if cfg.FeatureLoyaltyEnabled && pool != nil {
 		RegisterLoyalty(finance.Group("/loyalty"), adminGroupTop5(r, "/api/loyalty/admin"), pool, rbac)
