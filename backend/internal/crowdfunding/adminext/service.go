@@ -52,37 +52,128 @@ func (s *Service) audit(ctx context.Context, tx pgx.Tx, actor, action, target st
 
 // ─── Finance summary ─────────────────────────────────────────────────────────
 
-// GetFinanceSummary derives money figures live from campaigns/contributions plus
-// the refunds/settlement admin tables. Never reads a stored balance.
+// The three derived finance queries are exported so the live-DB regression test
+// executes the SAME SQL the console serves rather than a copy of it. A copied
+// query drifts from the implementation silently, and the whole point of these
+// three is that a wrong number here looks exactly like a right one.
+const (
+	// SQLPlatformRevenue reads REALIZED crowdfunding revenue out of the central
+	// commission registry. It replaced `GmvKobo / 40` — an assumed 2.5% — while
+	// crowdfunding.PlatformFeePct, the only authority for the split, is 10%.
+	SQLPlatformRevenue = `
+		SELECT COALESCE(SUM(spotlight_revenue_kobo),0)
+		FROM commission_earnings
+		WHERE source_module = 'crowdfunding'`
+
+	// SQLReconciliationGaps counts released contributions whose revenue was never
+	// booked, and the gross behind them. It replaced a hardcoded 0.
+	SQLReconciliationGaps = `
+		SELECT COUNT(*), COALESCE(SUM(c.amount_kobo),0)
+		  FROM contributions c
+		 WHERE c.status = 'released'
+		   AND NOT EXISTS (
+		         SELECT 1 FROM commission_earnings e
+		          WHERE e.source_module = 'crowdfunding'
+		            AND e.source_ref = c.id::text
+		       )`
+
+	// SQLDemoRowCounts reports how much of the refund queue and settlement table
+	// is seed data (see migration 20270191000000).
+	SQLDemoRowCounts = `
+		SELECT
+		  (SELECT COUNT(*) FROM cf_refunds     WHERE is_demo),
+		  (SELECT COUNT(*) FROM cf_settlements WHERE is_demo)`
+)
+
+// GetFinanceSummary derives money figures live from campaigns/contributions, the
+// central commission registry, and the refunds/settlement admin tables. Never
+// reads a stored balance.
+//
+// Every query below is checked. They used to be `_ = s.db.QueryRow(...)`, which
+// meant a failed or timed-out query left the destination at its zero value and
+// the console rendered a clean ₦0 across the board — a broken database and a
+// quiet day were indistinguishable on a page whose whole purpose is spotting the
+// difference. A finance summary that cannot be produced must fail loudly.
 func (s *Service) GetFinanceSummary(ctx context.Context) (*FinanceSummary, error) {
 	out := &FinanceSummary{}
 
 	// GMV + escrow from the contributions ledger.
-	_ = s.db.QueryRow(ctx, `
+	if err := s.db.QueryRow(ctx, `
 		SELECT
 			COALESCE(SUM(amount_kobo) FILTER (WHERE status IN ('escrowed','released')),0),
 			COALESCE(SUM(amount_kobo) FILTER (WHERE status='escrowed'),0)
-		FROM contributions`).Scan(&out.GmvKobo, &out.EscrowKobo)
-	out.PlatformRevenueKobo = out.GmvKobo / 40 // 2.5% indicative platform fee
+		FROM contributions`).Scan(&out.GmvKobo, &out.EscrowKobo); err != nil {
+		return nil, fmt.Errorf("finance summary: gmv/escrow: %w", err)
+	}
+
+	// Platform revenue: what was actually booked, not a percentage of GMV.
+	//
+	// This was `out.GmvKobo / 40` — an assumed 2.5%. The only authority for the
+	// crowdfunding split is crowdfunding.PlatformFeePct = 0.10, and the money path
+	// posts that 10% through settlement.Split and records the realized profit into
+	// commission_earnings. So the card understated booked revenue fourfold, and
+	// being a constant divided into GMV it would have kept doing so through any
+	// fee change. Reading the registry means the number is measured, and it is the
+	// same figure the central commission reporting shows.
+	//
+	// A module with no earnings rows now reads ₦0 rather than a plausible-looking
+	// fraction of GMV. That is the point: unbooked revenue is a real condition,
+	// and ReconciliationMismatches below names it instead of papering over it.
+	if err := s.db.QueryRow(ctx, SQLPlatformRevenue).Scan(&out.PlatformRevenueKobo); err != nil {
+		return nil, fmt.Errorf("finance summary: platform revenue: %w", err)
+	}
 
 	// Refunds pending (REQUESTED) from the admin refunds table.
-	_ = s.db.QueryRow(ctx, `
+	if err := s.db.QueryRow(ctx, `
 		SELECT COALESCE(SUM(amount_kobo),0), COUNT(*)
-		FROM cf_refunds WHERE status='REQUESTED'`).Scan(&out.RefundsPendingKobo, &out.RefundsPendingCount)
+		FROM cf_refunds WHERE status='REQUESTED'`).Scan(&out.RefundsPendingKobo, &out.RefundsPendingCount); err != nil {
+		return nil, fmt.Errorf("finance summary: refunds pending: %w", err)
+	}
 
 	// Settled this month from settled batches.
-	_ = s.db.QueryRow(ctx, `
+	if err := s.db.QueryRow(ctx, `
 		SELECT COALESCE(SUM(net_kobo),0)
 		FROM cf_settlements
-		WHERE status='SETTLED' AND created_at >= date_trunc('month', NOW())`).Scan(&out.SettledThisMonthKobo)
+		WHERE status='SETTLED' AND created_at >= date_trunc('month', NOW())`).Scan(&out.SettledThisMonthKobo); err != nil {
+		return nil, fmt.Errorf("finance summary: settled this month: %w", err)
+	}
 
 	// Chargebacks: derived from rejected refunds that were already processed
 	// (indicative). Kept simple + deterministic.
-	_ = s.db.QueryRow(ctx, `
+	if err := s.db.QueryRow(ctx, `
 		SELECT COALESCE(SUM(amount_kobo),0), COUNT(*)
-		FROM cf_refunds WHERE status='REJECTED'`).Scan(&out.ChargebacksKobo, &out.ChargebacksCount)
+		FROM cf_refunds WHERE status='REJECTED'`).Scan(&out.ChargebacksKobo, &out.ChargebacksCount); err != nil {
+		return nil, fmt.Errorf("finance summary: chargebacks: %w", err)
+	}
 
-	out.ReconciliationMismatches = 0
+	// Reconciliation: released contributions whose revenue was never booked.
+	//
+	// This field was the literal 0. The card reads as the result of a check, so it
+	// told every operator the books balanced without ever looking.
+	//
+	// The condition it now checks is a real, known failure mode rather than a
+	// hypothetical one. Contribute() settles the 90/10 split and then calls
+	// recordCommissionSafe, which is best-effort by design: a registry failure is
+	// logged and swallowed so it can never fail or reverse a release (see
+	// crowdfunding/service.go). That is the right call for the money path and it
+	// leaves exactly this residue — the contributor was charged, the creator was
+	// paid, and Spotlight's cut exists in the ledger with no earnings row naming
+	// it. Nothing else in the system notices.
+	//
+	// Gross rather than the missing fee: computing the unbooked fee would mean
+	// assuming a rate, which is the habit this change is removing.
+	if err := s.db.QueryRow(ctx, SQLReconciliationGaps).Scan(&out.ReconciliationMismatches, &out.UnbookedGrossKobo); err != nil {
+		return nil, fmt.Errorf("finance summary: reconciliation: %w", err)
+	}
+
+	// How much of the refund queue and settlement table is seed data. Both tables
+	// have exactly one writer in the repository — the 20260622050000 seed block —
+	// so today this is all of it; the console says so rather than presenting
+	// fixtures beside live GMV in identical styling.
+	if err := s.db.QueryRow(ctx, SQLDemoRowCounts).Scan(&out.DemoRefundRows, &out.DemoSettlementRows); err != nil {
+		return nil, fmt.Errorf("finance summary: demo row counts: %w", err)
+	}
+
 	return out, nil
 }
 
@@ -90,7 +181,7 @@ func (s *Service) GetFinanceSummary(ctx context.Context) (*FinanceSummary, error
 
 // ListRefunds returns refund requests, optionally filtered by status.
 func (s *Service) ListRefunds(ctx context.Context, status string) ([]RefundRequest, error) {
-	q := `SELECT id, reference, campaign_title, contributor_name, amount_kobo, reason, status, requested_at, refund_eligible
+	q := `SELECT id, reference, campaign_title, contributor_name, amount_kobo, reason, status, requested_at, refund_eligible, is_demo
 	      FROM cf_refunds`
 	args := []any{}
 	if status != "" {
@@ -108,7 +199,7 @@ func (s *Service) ListRefunds(ctx context.Context, status string) ([]RefundReque
 		var r RefundRequest
 		var requestedAt time.Time
 		if err := rows.Scan(&r.ID, &r.Reference, &r.CampaignTitle, &r.ContributorName,
-			&r.AmountKobo, &r.Reason, &r.Status, &requestedAt, &r.RefundEligible); err != nil {
+			&r.AmountKobo, &r.Reason, &r.Status, &requestedAt, &r.RefundEligible, &r.IsDemo); err != nil {
 			return nil, err
 		}
 		r.RequestedAt = rfc3339(requestedAt)
@@ -160,7 +251,7 @@ func (s *Service) DecideRefund(ctx context.Context, id, adminID string, approve 
 // ListSettlements returns settlement batches, newest first.
 func (s *Service) ListSettlements(ctx context.Context) ([]SettlementBatch, error) {
 	rows, err := s.db.Query(ctx,
-		`SELECT id, reference, payout_count, gross_kobo, fee_kobo, net_kobo, status, created_at
+		`SELECT id, reference, payout_count, gross_kobo, fee_kobo, net_kobo, status, created_at, is_demo
 		 FROM cf_settlements ORDER BY created_at DESC`)
 	if err != nil {
 		return nil, err
@@ -170,7 +261,7 @@ func (s *Service) ListSettlements(ctx context.Context) ([]SettlementBatch, error
 	for rows.Next() {
 		var b SettlementBatch
 		var createdAt time.Time
-		if err := rows.Scan(&b.ID, &b.Reference, &b.PayoutCount, &b.GrossKobo, &b.FeeKobo, &b.NetKobo, &b.Status, &createdAt); err != nil {
+		if err := rows.Scan(&b.ID, &b.Reference, &b.PayoutCount, &b.GrossKobo, &b.FeeKobo, &b.NetKobo, &b.Status, &createdAt, &b.IsDemo); err != nil {
 			return nil, err
 		}
 		b.CreatedAt = rfc3339(createdAt)
