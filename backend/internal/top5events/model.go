@@ -120,6 +120,18 @@ type Ticket struct {
 	CreatedAt     time.Time   `json:"created_at"`
 }
 
+// Steward is a per-event grant letting someone other than the organiser call
+// Scan for that specific event (e.g. door staff). Object-level authZ, same
+// philosophy as organiser ownership — not a platform-wide RBAC permission, since
+// scanning rights are inherently scoped to one event. Only the organiser may
+// grant/revoke; AddedBy is audit-only, never an authorization input.
+type Steward struct {
+	EventID   string    `json:"event_id"`
+	UserID    string    `json:"user_id"`
+	AddedBy   string    `json:"added_by"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
 // Order is a checkout aggregate (one or more tickets paid via wallet.Debit).
 type Order struct {
 	ID             string    `json:"id"`

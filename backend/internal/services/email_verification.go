@@ -54,19 +54,12 @@ func (v *supabaseEmailVerifier) ConfirmEmail(ctx context.Context, email string) 
 		return false, nil
 	}
 
-	var id string
-	var alreadyConfirmed bool
-	err := v.db.QueryRow(ctx, `
-		SELECT id::text, email_confirmed_at IS NOT NULL
-		  FROM auth.users
-		 WHERE lower(email) = $1
-		   AND deleted_at IS NULL
-		 LIMIT 1`, email).Scan(&id, &alreadyConfirmed)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return false, nil // no account — an ordinary outcome, not a failure
-	}
+	id, alreadyConfirmed, err := authUserByEmail(ctx, v.db, email)
 	if err != nil {
 		return false, err
+	}
+	if id == "" {
+		return false, nil // no account — an ordinary outcome, not a failure
 	}
 	if alreadyConfirmed {
 		// Re-confirming is harmless, but skipping the round trip means a user who
@@ -77,4 +70,33 @@ func (v *supabaseEmailVerifier) ConfirmEmail(ctx context.Context, email string) 
 		return false, err
 	}
 	return true, nil
+}
+
+// authUserByEmail resolves a GoTrue user from a lowercased address.
+//
+// SQL rather than GoTrue's admin list endpoint: PostgREST cannot reach the auth
+// schema, and the admin list filter has changed shape across GoTrue versions. It
+// is defined once and shared, because two copies of "how we find a user" drift,
+// and the way they drift is that one of them stops lowercasing and silently
+// reports "no account" for every address a client sent in mixed case.
+//
+// Returns ("", false, nil) when there is no such user.
+func authUserByEmail(ctx context.Context, db *pgxpool.Pool, email string) (id string, confirmed bool, err error) {
+	email = strings.ToLower(strings.TrimSpace(email))
+	if email == "" || db == nil {
+		return "", false, nil
+	}
+	err = db.QueryRow(ctx, `
+		SELECT id::text, email_confirmed_at IS NOT NULL
+		  FROM auth.users
+		 WHERE lower(email) = $1
+		   AND deleted_at IS NULL
+		 LIMIT 1`, email).Scan(&id, &confirmed)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, err
+	}
+	return id, confirmed, nil
 }

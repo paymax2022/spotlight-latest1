@@ -59,3 +59,184 @@ func (c *SupabaseRestClient) AdminConfirmEmail(ctx context.Context, userID strin
 	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4<<10))
 	return nil
 }
+
+// AdminSetPassword replaces a user's password.
+//
+// Through the admin API for the same reason AdminConfirmEmail is: GoTrue owns
+// the credential columns, and it re-hashes, bumps the identity row and
+// invalidates outstanding recovery tokens as a side effect. A direct UPDATE
+// would set a column and leave every one of those undone.
+//
+// The password is never logged, and it is not included in any error returned
+// here — errors from this function are safe to log verbatim.
+func (c *SupabaseRestClient) AdminSetPassword(ctx context.Context, userID, password string) error {
+	if strings.TrimSpace(userID) == "" {
+		return fmt.Errorf("supabase: empty user id")
+	}
+	if password == "" {
+		return fmt.Errorf("supabase: empty password")
+	}
+	return c.adminUserPatch(ctx, userID, map[string]any{"password": password}, "set password")
+}
+
+// MintSessionByEmail issues a session for an existing user WITHOUT a password.
+//
+// It is the second half of the login step-up: the password was already checked
+// by the normal login path, the session GoTrue minted there was deliberately
+// thrown away, and this re-issues one once the emailed code has been redeemed.
+// Re-minting rather than parking the first session means no access or refresh
+// token is ever written to our storage waiting for a second factor.
+//
+// The mechanism is GoTrue's own admin magiclink: generate_link returns an
+// email_otp WITHOUT sending any mail (verified against the local mail catcher —
+// generate_link produced zero messages), and that otp is then redeemed at
+// /verify for a real session. It is the only supported way to obtain a session
+// for a user whose password we do not hold.
+//
+// ⚠️ This function is an authentication bypass by construction: anything that
+// can call it can log in as anyone. Its ONLY caller must be a path that has
+// already established both factors.
+func (c *SupabaseRestClient) MintSessionByEmail(ctx context.Context, email string) (map[string]any, error) {
+	email = strings.ToLower(strings.TrimSpace(email))
+	if email == "" {
+		return nil, fmt.Errorf("supabase: empty email")
+	}
+	if strings.TrimSpace(c.baseURL) == "" || strings.TrimSpace(c.apiKey) == "" {
+		return nil, fmt.Errorf("supabase: not configured")
+	}
+
+	var link struct {
+		EmailOTP string `json:"email_otp"`
+	}
+	if err := c.authPost(ctx, "/auth/v1/admin/generate_link",
+		map[string]any{"type": "magiclink", "email": email}, &link); err != nil {
+		return nil, fmt.Errorf("supabase: generate_link: %w", err)
+	}
+	if strings.TrimSpace(link.EmailOTP) == "" {
+		// A GoTrue version that stops returning email_otp would otherwise show up
+		// as a 400 from /verify with no explanation.
+		return nil, fmt.Errorf("supabase: generate_link returned no email_otp")
+	}
+
+	var session map[string]any
+	if err := c.authPost(ctx, "/auth/v1/verify",
+		map[string]any{"type": "magiclink", "email": email, "token": link.EmailOTP}, &session); err != nil {
+		return nil, fmt.Errorf("supabase: verify magiclink: %w", err)
+	}
+	if s, _ := session["access_token"].(string); strings.TrimSpace(s) == "" {
+		return nil, fmt.Errorf("supabase: verify returned no access_token")
+	}
+	return session, nil
+}
+
+// adminUserPatch PUTs a partial update to one user.
+func (c *SupabaseRestClient) adminUserPatch(ctx context.Context, userID string, body map[string]any, what string) error {
+	if strings.TrimSpace(c.baseURL) == "" || strings.TrimSpace(c.apiKey) == "" {
+		return fmt.Errorf("supabase: not configured")
+	}
+	raw, err := json.Marshal(body)
+	if err != nil {
+		return err
+	}
+	u := strings.TrimRight(c.baseURL, "/") + "/auth/v1/admin/users/" + strings.TrimSpace(userID)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, u, bytes.NewReader(raw))
+	if err != nil {
+		return err
+	}
+	c.authHeaders(req)
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return fmt.Errorf("supabase: %s: %w", what, err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		msg, _ := io.ReadAll(io.LimitReader(resp.Body, 2<<10))
+		return fmt.Errorf("supabase: %s failed: %d: %s", what, resp.StatusCode, strings.TrimSpace(string(msg)))
+	}
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4<<10))
+	return nil
+}
+
+// authPost posts JSON to a GoTrue path and decodes the response.
+func (c *SupabaseRestClient) authPost(ctx context.Context, path string, body map[string]any, out any) error {
+	raw, err := json.Marshal(body)
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
+		strings.TrimRight(c.baseURL, "/")+path, bytes.NewReader(raw))
+	if err != nil {
+		return err
+	}
+	c.authHeaders(req)
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		msg, _ := io.ReadAll(io.LimitReader(resp.Body, 2<<10))
+		return fmt.Errorf("status %d: %s", resp.StatusCode, strings.TrimSpace(string(msg)))
+	}
+	if out == nil {
+		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4<<10))
+		return nil
+	}
+	return json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(out)
+}
+
+func (c *SupabaseRestClient) authHeaders(req *http.Request) {
+	req.Header.Set("apikey", c.apiKey)
+	req.Header.Set("Authorization", "Bearer "+c.apiKey)
+	req.Header.Set("Content-Type", "application/json")
+}
+
+// SignupDisabled reports whether the project has closed new sign-ups.
+//
+// GET /auth/v1/settings is GoTrue's own answer, so this cannot drift from the
+// project's actual policy the way a mirrored flag in our config would. The
+// endpoint is unauthenticated (it is what client SDKs read to decide which
+// providers to show); the apikey header is sent anyway to match every other call
+// here.
+//
+// The caller decides what a read failure means. It should mean "refuse": this
+// endpoint and /auth/v1/admin/users are the same service, so a settings read
+// that fails is a strong signal the create would fail too, and treating the
+// error as "signups are open" would let a partial outage reopen a door the
+// project deliberately closed.
+func (c *SupabaseRestClient) SignupDisabled(ctx context.Context) (bool, error) {
+	if strings.TrimSpace(c.baseURL) == "" {
+		return false, fmt.Errorf("supabase: not configured")
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
+		strings.TrimRight(c.baseURL, "/")+"/auth/v1/settings", nil)
+	if err != nil {
+		return false, err
+	}
+	req.Header.Set("apikey", c.apiKey)
+	req.Header.Set("accept", "application/json")
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return false, fmt.Errorf("supabase: read auth settings: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		msg, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<10))
+		return false, fmt.Errorf("supabase: auth settings returned %d: %s", resp.StatusCode, strings.TrimSpace(string(msg)))
+	}
+
+	// Decoded into a pointer so a RENAMED or absent field is an error rather than
+	// a silent false. "The field is missing, so signups must be open" is exactly
+	// how a policy gate stops working without anyone noticing.
+	var settings struct {
+		DisableSignup *bool `json:"disable_signup"`
+	}
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&settings); err != nil {
+		return false, fmt.Errorf("supabase: decode auth settings: %w", err)
+	}
+	if settings.DisableSignup == nil {
+		return false, fmt.Errorf("supabase: auth settings has no disable_signup field")
+	}
+	return *settings.DisableSignup, nil
+}

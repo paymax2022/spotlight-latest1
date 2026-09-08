@@ -1,12 +1,13 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import * as api from './api';
-import type { CreateEventInput, PurchaseTicketInput, GiftTicketInput, TopUpSource } from './types';
+import type { CreateEventInput, PurchaseTicketInput, GiftTicketInput, TopUpSource, GateToken, Gate } from './types';
 
 const KEYS = {
   events:    (params?: { category?: string; state?: string }) => ['events', 'list', params ?? {}] as const,
   event:     (id: string) => ['events', 'event', id] as const,
   tickets:   ['events', 'tickets'] as const,
   ticket:    (id: string) => ['events', 'ticket', id] as const,
+  ticketToken: (id: string) => ['events', 'ticket', id, 'token'] as const,
   wallet:    (walletId: string) => ['events', 'wallet', walletId] as const,
   walletEntries: (walletId: string) => ['events', 'wallet', walletId, 'entries'] as const,
   vendors:   (id: string) => ['events', 'vendors', id] as const,
@@ -27,6 +28,17 @@ export const useMyTickets = () =>
 
 export const useTicket = (id: string) =>
   useQuery({ queryKey: KEYS.ticket(id), queryFn: () => api.getTicket(id), enabled: !!id });
+
+// Polls just under the server's 30s RotateTTL so the rendered QR/pass changes on
+// the same schedule the gate's window-staleness check enforces.
+export const useTicketToken = (id: string) =>
+  useQuery({
+    queryKey: KEYS.ticketToken(id),
+    queryFn: () => api.getTicketToken(id),
+    enabled: !!id,
+    refetchInterval: 25_000,
+    staleTime: 0,
+  });
 
 // walletId is the EventWallet.id (not the eventId) — screens must open the
 // wallet first (useOpenEventWallet) and pass its id down.
@@ -126,6 +138,6 @@ export function useCloseEventWallet(walletId: string) {
 
 export function useValidateScan() {
   return useMutation({
-    mutationFn: (credentialId: string) => api.validateScan(credentialId),
+    mutationFn: ({ token, gate }: { token: GateToken; gate: Gate }) => api.validateScan(token, gate),
   });
 }
