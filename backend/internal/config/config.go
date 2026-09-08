@@ -497,6 +497,53 @@ type Config struct {
 
 	ResendAPIKey    string
 	ResendFromEmail string // must be @spotlightng.com — the only domain verified on the Resend account
+
+	// ── Brevo: server-issued email OTP ───────────────────────────────────────
+	// Brevo joins Resend rather than replacing it. Resend is the fire-and-forget
+	// notification path where a silent failure is tolerable; an undelivered OTP
+	// is a failed login, so that path reports and classifies its failures.
+	//
+	// FeatureOTPEmailEnabled defaults OFF and the routes 503 until it is on. No
+	// Brevo credentials exist in this repo or any .env today — the account,
+	// sender domain and template have to be provisioned before this can be
+	// switched on anywhere. See docs/audit/USER_MANAGEMENT_AUDIT.md B1.
+	FeatureOTPEmailEnabled bool
+	// FeatureOTPLoginMFAEnabled turns a correct password into a code challenge
+	// instead of a session. SEPARATE from FeatureOTPEmailEnabled on purpose:
+	// enabling server-issued OTP should not silently add a second factor to
+	// every login.
+	//
+	// ⚠️ It fails CLOSED, which is the point of a second factor and also means an
+	// email outage is a TOTAL LOGIN OUTAGE for everyone. There is no enrolment,
+	// no opt-out and no recovery code: a user who loses access to their mailbox
+	// cannot sign in. Read docs/runbooks/otp-email-brevo.md before enabling it.
+	FeatureOTPLoginMFAEnabled bool
+	BrevoAPIKey               string
+	BrevoSenderName           string
+	BrevoSenderEmail          string
+	BrevoOTPTemplateID        int64
+	BrevoTimeoutSeconds       int
+
+	// OTPPepper is the server-side HMAC key for code and identifier hashing.
+	// REQUIRED whenever the feature is on: otp.NewService refuses to construct
+	// without it, and the routes then answer 503 misconfigured rather than
+	// storing digests that a rainbow table reverses. Generate with
+	// `openssl rand -base64 32`. Rotating it invalidates every in-flight code,
+	// which is acceptable.
+	OTPPepper                string
+	OTPLength                int
+	OTPTTLMinutes            int
+	OTPMaxAttempts           int
+	OTPResendCooldownSeconds int
+	OTPMaxSendsPerHour       int
+	OTPMaxSendsPerIPPerHour  int
+	OTPMaxVerifyPerIPPerHour int
+
+	// SignupRateLimitPer5Min replaces GoTrue's sign_in_sign_ups limit on the
+	// admin creation path, which that endpoint does not enforce. Defaulted to
+	// GoTrue's own default (30 per 5 minutes per IP) so switching creation paths
+	// does not quietly change the budget.
+	SignupRateLimitPer5Min int
 	// AdminAppBaseURL: origin of frontend-admin, used to build links inside
 	// transactional emails (e.g. the hotelier staff invite accept link).
 	AdminAppBaseURL string
@@ -782,9 +829,27 @@ func Load() Config {
 
 		ResendAPIKey:    getEnv("RESEND_API_KEY", ""),
 		ResendFromEmail: getEnv("RESEND_FROM_EMAIL", "Spotlight <no-reply@spotlightng.com>"),
-		AdminAppBaseURL: getEnv("ADMIN_APP_BASE_URL", "https://admin.spotlightng.com"),
-		TermiiAPIKey:    getEnv("TERMII_API_KEY", ""),
-		TermiiSenderID:  getEnv("TERMII_SENDER_ID", "Paymax"),
-		ExpoPushToken:   getEnv("EXPO_PUSH_TOKEN", ""),
+
+		FeatureOTPEmailEnabled:    getEnvBool("FEATURE_OTP_EMAIL_ENABLED", false),
+		FeatureOTPLoginMFAEnabled: getEnvBool("FEATURE_OTP_LOGIN_MFA_ENABLED", false),
+		BrevoAPIKey:               getEnv("BREVO_API_KEY", ""),
+		BrevoSenderName:           getEnv("BREVO_SENDER_NAME", "Spotlight"),
+		BrevoSenderEmail:          getEnv("BREVO_SENDER_EMAIL", ""),
+		BrevoOTPTemplateID:        int64(getEnvInt("BREVO_OTP_TEMPLATE_ID", 0)),
+		BrevoTimeoutSeconds:       getEnvInt("BREVO_TIMEOUT_SECONDS", 10),
+
+		OTPPepper:                getEnv("OTP_PEPPER", ""),
+		OTPLength:                getEnvInt("OTP_LENGTH", 6),
+		OTPTTLMinutes:            getEnvInt("OTP_TTL_MINUTES", 10),
+		OTPMaxAttempts:           getEnvInt("OTP_MAX_ATTEMPTS", 5),
+		OTPResendCooldownSeconds: getEnvInt("OTP_RESEND_COOLDOWN_SECONDS", 60),
+		OTPMaxSendsPerHour:       getEnvInt("OTP_MAX_SENDS_PER_HOUR", 5),
+		OTPMaxSendsPerIPPerHour:  getEnvInt("OTP_MAX_SENDS_PER_IP_PER_HOUR", 20),
+		OTPMaxVerifyPerIPPerHour: getEnvInt("OTP_MAX_VERIFY_PER_IP_PER_HOUR", 20),
+		SignupRateLimitPer5Min:   getEnvInt("AUTH_SIGNUP_RATE_LIMIT_PER_5MIN", 30),
+		AdminAppBaseURL:          getEnv("ADMIN_APP_BASE_URL", "https://admin.spotlightng.com"),
+		TermiiAPIKey:             getEnv("TERMII_API_KEY", ""),
+		TermiiSenderID:           getEnv("TERMII_SENDER_ID", "Paymax"),
+		ExpoPushToken:            getEnv("EXPO_PUSH_TOKEN", ""),
 	}
 }

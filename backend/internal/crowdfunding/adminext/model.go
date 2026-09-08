@@ -22,6 +22,11 @@ type RefundRequest struct {
 	Status          string `json:"status"`
 	RequestedAt     string `json:"requestedAt"`
 	RefundEligible  bool   `json:"refundEligible"`
+	// IsDemo marks a row created by the crowdfunding seed migration rather than
+	// by a real refund. Nothing in the codebase inserts into cf_refunds outside
+	// that seed, so today every row is a demo row; the console renders the flag
+	// per row so real rows appear correctly the moment a pipeline creates them.
+	IsDemo bool `json:"isDemo"`
 }
 
 // SettlementBatch matches CfSettlementBatch.
@@ -34,19 +39,40 @@ type SettlementBatch struct {
 	NetKobo     int64  `json:"netKobo"`
 	Status      string `json:"status"`
 	CreatedAt   string `json:"createdAt"`
+	// IsDemo — see RefundRequest.IsDemo. cf_settlements has the same single
+	// writer (the seed migration).
+	IsDemo bool `json:"isDemo"`
 }
 
 // FinanceSummary matches CfFinanceSummary.
 type FinanceSummary struct {
-	GmvKobo                  int64 `json:"gmvKobo"`
-	PlatformRevenueKobo      int64 `json:"platformRevenueKobo"`
-	RefundsPendingKobo       int64 `json:"refundsPendingKobo"`
-	RefundsPendingCount      int   `json:"refundsPendingCount"`
-	ChargebacksKobo          int64 `json:"chargebacksKobo"`
-	ChargebacksCount         int   `json:"chargebacksCount"`
-	EscrowKobo               int64 `json:"escrowKobo"`
-	SettledThisMonthKobo     int64 `json:"settledThisMonthKobo"`
-	ReconciliationMismatches int   `json:"reconciliationMismatches"`
+	GmvKobo int64 `json:"gmvKobo"`
+	// PlatformRevenueKobo is REALIZED revenue read from commission_earnings
+	// (source_module='crowdfunding'), not a percentage applied to GMV. It was
+	// previously GmvKobo/40 — an assumed 2.5% — while the only authority for the
+	// crowdfunding split, crowdfunding.PlatformFeePct, is 10%. The card therefore
+	// understated booked revenue fourfold and would not have moved if the fee
+	// changed.
+	PlatformRevenueKobo  int64 `json:"platformRevenueKobo"`
+	RefundsPendingKobo   int64 `json:"refundsPendingKobo"`
+	RefundsPendingCount  int   `json:"refundsPendingCount"`
+	ChargebacksKobo      int64 `json:"chargebacksKobo"`
+	ChargebacksCount     int   `json:"chargebacksCount"`
+	EscrowKobo           int64 `json:"escrowKobo"`
+	SettledThisMonthKobo int64 `json:"settledThisMonthKobo"`
+	// ReconciliationMismatches counts released contributions with no
+	// commission_earnings row — money that moved without its revenue being
+	// booked. It used to be the literal 0, so the one card an operator would read
+	// as "the books balance" could never say anything else.
+	ReconciliationMismatches int `json:"reconciliationMismatches"`
+	// UnbookedGrossKobo is the gross contribution value behind those mismatches.
+	// Gross, deliberately: the unbooked FEE would have to be assumed, and an
+	// assumed number is what this change is removing.
+	UnbookedGrossKobo int64 `json:"unbookedGrossKobo"`
+	// DemoRefundRows / DemoSettlementRows let the console state how much of what
+	// it is showing is seed data rather than leaving the operator to guess.
+	DemoRefundRows     int `json:"demoRefundRows"`
+	DemoSettlementRows int `json:"demoSettlementRows"`
 }
 
 // ─── Disputes ────────────────────────────────────────────────────────────────

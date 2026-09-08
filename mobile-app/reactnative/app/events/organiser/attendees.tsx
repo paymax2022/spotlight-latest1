@@ -29,8 +29,8 @@ export default function Attendees() {
 
   const list = useMemo(() => {
     let arr = data ?? [];
-    if (filter === 'checked-in') arr = arr.filter((a) => a.checkedIn);
-    if (filter === 'pending') arr = arr.filter((a) => !a.checkedIn);
+    if (filter === 'checked-in') arr = arr.filter((a) => a.checked_in);
+    if (filter === 'pending') arr = arr.filter((a) => !a.checked_in);
     if (q.trim()) {
       const s = q.toLowerCase();
       arr = arr.filter((a) => a.name.toLowerCase().includes(s) || a.cashtag.toLowerCase().includes(s));
@@ -38,7 +38,7 @@ export default function Attendees() {
     return arr;
   }, [data, filter, q]);
 
-  const checkedIn = (data ?? []).filter((a) => a.checkedIn).length;
+  const checkedIn = (data ?? []).filter((a) => a.checked_in).length;
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
@@ -61,9 +61,9 @@ export default function Attendees() {
               <View style={styles.avatar}><Text style={styles.avatarText}>{a.name.charAt(0)}</Text></View>
               <View style={{ flex: 1 }}>
                 <Text style={styles.name}>{a.name}</Text>
-                <Text style={styles.sub}>{a.cashtag} · {a.tierName}</Text>
+                <Text style={styles.sub}>{a.cashtag} · {a.tier_name}</Text>
               </View>
-              {a.checkedIn ? (
+              {a.checked_in ? (
                 <View style={styles.statusIn}><CheckCircle2 size={18} color={EventColors.ok} /><Text style={styles.statusInText}>In</Text></View>
               ) : (
                 <View style={styles.statusOut}><Circle size={18} color={EventColors.muted} /><Text style={styles.statusOutText}>Pending</Text></View>

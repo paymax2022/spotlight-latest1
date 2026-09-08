@@ -165,6 +165,7 @@ func RegisterMarketplace(
 	rbac services.RBACService,
 	pool *pgxpool.Pool,
 	redis *goredis.Client,
+	rtHub *realtime.Hub,
 	referralRewards *referrals.RewardService,
 ) *marketplace.Service {
 	if pool == nil {
@@ -177,11 +178,13 @@ func RegisterMarketplace(
 
 	svc := marketplace.NewService(pool, ledgerSvc, redis)
 
-	// ── Realtime (SSE) live-push seam for chat. The hub fans events across backend
-	// instances via Redis pub/sub (in-process when redis is nil). Best-effort + nil-safe:
-	// a missed push is caught by the clients' polling fallback. The SSE stream route is
-	// registered below behind FEATURE_REALTIME_ENABLED.
-	rtHub := realtime.NewHub(redis)
+	// ── Realtime (SSE) live-push seam for chat. Shared hub built once at the router
+	// level (so other modules — events' check-in feed — can share the same
+	// /api/v1/realtime/stream connection) and passed in here. Fans events across
+	// backend instances via Redis pub/sub (in-process when redis is nil).
+	// Best-effort + nil-safe: a missed push is caught by the clients' polling
+	// fallback. The SSE stream route is registered below behind
+	// FEATURE_REALTIME_ENABLED.
 	svc.WithRealtime(rtHub)
 
 	// ── Central Commission & Profit recording (§ profit registry) ──

@@ -13,6 +13,7 @@ import (
 	"spotlight/backend/internal/integrations"
 	"spotlight/backend/internal/middleware"
 	platformDB "spotlight/backend/internal/platform/db"
+	"spotlight/backend/internal/platform/realtime"
 	platformRedis "spotlight/backend/internal/platform/redis"
 	"spotlight/backend/internal/repositories"
 	"spotlight/backend/internal/services"
@@ -63,6 +64,9 @@ func NewRouter(cfg config.Config) *gin.Engine {
 	{
 		public := v1.Group("/public")
 		public.GET("/health", health.PublicHealth)
+		// Unauthenticated on purpose: the point is to verify a deploy from OUTSIDE,
+		// which is exactly the situation where you have no credentials to hand.
+		public.GET("/build", health.Build)
 
 		auth := v1.Group("/auth")
 		auth.GET("/health", health.GenericHealth)
@@ -366,10 +370,43 @@ func NewRouter(cfg config.Config) *gin.Engine {
 		}
 	}
 
+	// Shared SSE hub (one instance, one /api/v1/realtime/stream route regardless
+	// of which module publishes) — was previously built locally inside
+	// RegisterMarketplace, which meant marketplace was the only module that
+	// could ever reach the mobile client's one SSE connection. Built here so
+	// events (and any future module) can share it. Nil-Redis-safe (falls back
+	// to in-process fan-out); see platform/realtime.Hub's own doc comment.
+	rtHub := realtime.NewHub(sharedRedis)
+
+	// Server-issued email OTP (Brevo). Always registered so the surface answers
+	// 503-with-a-reason rather than 404; the service inside is nil unless
+	// FEATURE_OTP_EMAIL_ENABLED is on AND the pool, pepper and Brevo credentials
+	// are all present. See otp_routes.go.
+	//
+	// The returned issuer is what makes Register send a code. It is nil when the
+	// feature is closed, and WithOTPIssuer(nil) leaves Register exactly as it
+	// shipped — verification stays entirely with Supabase Auth.
+	if issuer, verifier, setter, signupGate := registerOTPRoutes(r, cfg, sharedPool, supabase, authService); issuer != nil {
+		authHandler.
+			WithOTPIssuer(issuer).
+			WithOTPVerifier(verifier).
+			WithPasswordSetter(setter).
+			WithSignupGate(signupGate).
+			// Login step-up is its own flag: server-issued OTP must not silently
+			// become a second factor on every login.
+			WithLoginMFA(cfg.FeatureOTPLoginMFAEnabled)
+
+		// Registration may take the silent admin creation path ONLY now that the
+		// OTP service actually exists. Keyed off the same signal the handler uses,
+		// because branching on the flag alone created accounts with no
+		// confirmation email AND no code — unverifiable forever.
+		services.SetOTPOperational(authService, true)
+	}
+
 	// Finance modules — wired only when the shared pool is present. Returns the
 	// Direct Referral Rewards engine service (nil when flag-off) so Phase-1 revenue
 	// modules wired below (Marketplace) can emit purchase events (PRD §2.5/§7.1).
-	referralRewardsSvc := registerFinanceRoutes(r, cfg, supabase, rbacService, sharedPool)
+	referralRewardsSvc := registerFinanceRoutes(r, cfg, supabase, rbacService, sharedPool, rtHub)
 
 	// Paymax Connect module — wired only when FEATURE_CONNECT_ENABLED + shared pool.
 	registerConnectRoutes(r, cfg, supabase, rbacService, sharedPool)
@@ -471,7 +508,7 @@ func NewRouter(cfg config.Config) *gin.Engine {
 	// default off. Reuses the finance double-entry ledger for escrow; app-wiring
 	// injects Agent B's *search.Client via svc.SetSearcher when search is available.
 	if cfg.FeatureMarketplaceEnabled {
-		RegisterMarketplace(r, cfg, supabase, rbacService, sharedPool, sharedRedis, referralRewardsSvc)
+		RegisterMarketplace(r, cfg, supabase, rbacService, sharedPool, sharedRedis, rtHub, referralRewardsSvc)
 	}
 
 	// Paymax Invest · Learn Center (education-first literacy) under /api/v1/learn/*

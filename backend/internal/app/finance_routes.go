@@ -57,6 +57,7 @@ import (
 	platformCrypto "spotlight/backend/internal/platform/crypto"
 	"spotlight/backend/internal/platform/queue"
 	"spotlight/backend/internal/platform/r2"
+	"spotlight/backend/internal/platform/realtime"
 	platformRedis "spotlight/backend/internal/platform/redis"
 	platformWS "spotlight/backend/internal/platform/ws"
 	"spotlight/backend/internal/property"
@@ -87,7 +88,7 @@ import (
 // emitter into Phase-1 revenue modules wired OUTSIDE this function — currently the
 // Marketplace (RegisterMarketplace). Modules built INSIDE this function (the Maplerad
 // bills domain) are wired with it directly here.
-func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrations.SupabaseRestClient, rbac services.RBACService, pool *pgxpool.Pool) *referrals.RewardService {
+func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrations.SupabaseRestClient, rbac services.RBACService, pool *pgxpool.Pool, rtHub *realtime.Hub) *referrals.RewardService {
 	if cfg.DatabaseURL == "" {
 		log.Println("[finance] DATABASE_URL not set — skipping financial routes")
 		return nil
@@ -568,7 +569,17 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		RegisterSocialPay(finance.Group("/social"), adminGroupTop5(r, "/api/social/admin"), pool, rbac)
 	}
 	if cfg.FeatureEventsEnabled && pool != nil {
-		RegisterEvents(finance.Group("/events"), adminGroupTop5(r, "/api/events/admin"), cfg, pool, rbac)
+		// adminGroupTop5 only calls requireUserID(), which reads c.GetString("user_id")
+		// but never sets it — RequireAuthContext is what populates that (and the RBAC
+		// context GetAuthenticatedUser needs). Without mapsAuth() here, every route
+		// under /api/events/admin — including approve/suspend/settle — 401s for every
+		// caller, including super-admin. Same fix already applied to tAdmin above and
+		// several other admin groups in this file; adminGroupTop5's other 13 call
+		// sites still have this gap and are a separate follow-up.
+		eventsAdmin := r.Group("/api/events/admin")
+		eventsAdmin.Use(mapsAuth())
+		eventsAdmin.Use(requireUserID())
+		RegisterEvents(finance.Group("/events"), eventsAdmin, cfg, pool, rbac, rtHub)
 	}
 	if cfg.FeatureLoyaltyEnabled && pool != nil {
 		RegisterLoyalty(finance.Group("/loyalty"), adminGroupTop5(r, "/api/loyalty/admin"), pool, rbac)
@@ -2289,6 +2300,10 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		adminFinance.POST("/kyc/users/:user_id/reject", middleware.RequirePermission(rbac, "finance.admin.kyc"), kycHandler.Reject)
 	}
 	if cfg.FeatureWalletEnabled {
+		// Reuses finance.admin.transfers rather than a dedicated finance.admin.wallets
+		// permission — both would be granted to exactly the same two roles
+		// (super-admin + system-admin; see 20260920000100_rbac_seed_gaps.sql), and no
+		// separate finance-ops/compliance role exists yet to justify splitting them.
 		adminFinance.GET("/wallets/:user_id/balance", middleware.RequirePermission(rbac, "finance.admin.transfers"), walletHandler.AdminGetBalance)
 		adminFinance.GET("/wallets/:user_id/transactions", middleware.RequirePermission(rbac, "finance.admin.transfers"), walletHandler.AdminListTransactions)
 	}

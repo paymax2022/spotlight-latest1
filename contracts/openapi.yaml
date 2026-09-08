@@ -4173,6 +4173,176 @@ security:
 # ── KYC endpoints ─────────────────────────────────────────────────────────────
 
 paths:
+  /api/auth/reset-password:
+    post:
+      operationId: resetPasswordWithCode
+      summary: Complete a password reset with an emailed code
+      description: >
+        Requires `email` + `code` + `newPassword`. The former `{token, newPassword}`
+        form is REFUSED with 400: it was answered with "Password reset successful"
+        for any non-empty token while changing nothing, which is the same defect
+        the audit removed as B4 on verify-email. No client used it — web and
+        mobile both complete resets through Supabase's own recovery session.
+
+
+        Answers identically whether or not an account exists for the address.
+        Gated behind FEATURE_OTP_EMAIL_ENABLED; 503 when closed.
+      tags: [OTP]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, code, newPassword]
+              properties:
+                email: { type: string, format: email }
+                code: { type: string, example: "482913" }
+                newPassword: { type: string, minLength: 8 }
+      responses:
+        '200': { description: "Password reset (or the address has no account — indistinguishable by design)" }
+        '400': { description: "Invalid or expired code, or the removed token-only form" }
+        '403': { description: Account suspended or locked }
+        '429': { description: Attempt ceiling reached }
+        '500': { description: "The code was consumed but the password could not be set" }
+        '503': { description: Feature disabled }
+
+  # ╔══════════════════════════════════════════════════════════════════════╗
+  # ║ SERVER-ISSUED EMAIL OTP (Brevo)                                        ║
+  # ║ Feature flag: FEATURE_OTP_EMAIL_ENABLED (default OFF).                 ║
+  # ║ When OFF — or ON with OTP_PEPPER / Brevo credentials missing — both    ║
+  # ║ endpoints return 503 naming the reason. They are never 404.            ║
+  # ║                                                                        ║
+  # ║ This is a SECOND OTP system. Supabase Auth still mints and mails its   ║
+  # ║ own codes (docs/audit/USER_MANAGEMENT_AUDIT.md B1), so while that      ║
+  # ║ project mailer is enabled a registering user receives TWO codes from   ║
+  # ║ two systems, redeemed at two different endpoints. Turning it off is a  ║
+  # ║ prerequisite for enabling this anywhere real.                          ║
+  # ║                                                                        ║
+  # ║ REGISTRATION IS WIRED: POST /api/auth/register issues a verify_email   ║
+  # ║ code when signup returns no session, and redeeming that code confirms  ║
+  # ║ the account in GoTrue so login stops answering 403 email_not_confirmed.║
+  # ║ Issuing is best-effort — the account already exists, so a send failure ║
+  # ║ never fails registration; the user asks again at /otp/request.         ║
+  # ║                                                                        ║
+  # ║ LOGIN IS A STEP-UP, NOT PASSWORDLESS. With                             ║
+  # ║ FEATURE_OTP_LOGIN_MFA_ENABLED on, POST /api/auth/login returns         ║
+  # ║ mfaRequired and NO tokens; redeeming the login code here mints the     ║
+  # ║ session. login codes are therefore NOT self-issuable — /otp/request    ║
+  # ║ refuses purpose=login, because anything that can mint a login code can ║
+  # ║ log in without a password. To resend, submit the password again.       ║
+  # ║ ⚠️ Login MFA fails closed: an email outage is a total login outage.     ║
+  # ║                                                                        ║
+  # ║ PASSWORD RESET is wired at /api/auth/reset-password (code form).       ║
+  # ║                                                                        ║
+  # ║ Both endpoints are unauthenticated and answer identically whether or   ║
+  # ║ not an account exists — otherwise they enumerate users.                ║
+  # ╚══════════════════════════════════════════════════════════════════════╝
+  /api/auth/otp/request:
+    post:
+      operationId: requestEmailOTP
+      summary: Send a one-time code to an email address
+      description: >
+        Always answers 200 with the same message whether or not the address
+        belongs to a user, and whether or not delivery succeeded. Reporting
+        either would turn this into a user-enumeration oracle. 429 is the one
+        exception: a caller who is rate limited already knows they asked, and
+        needs to be told to wait.
+      tags: [OTP]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, purpose]
+              properties:
+                email: { type: string, format: email }
+                purpose:
+                  type: string
+                  enum: [verify_email, password_reset]
+                  description: >
+                    Scopes the code; a code for one purpose cannot complete another.
+                    `login` is deliberately absent — a login code mints a session, so
+                    it is issued only by POST /api/auth/login after the password, never
+                    on request. Asking for one here returns 400.
+
+                name:
+                  type: string
+                  description: Optional display name for the email greeting. Defaults to "there".
+      responses:
+        '200':
+          description: Accepted (says nothing about whether the address exists)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean, example: true }
+                  message: { type: string, example: "if an account exists for that address, a code has been sent" }
+                  expiresInSeconds: { type: integer, example: 600 }
+        '400': { description: Malformed address or unknown purpose }
+        '429': { description: Send budget or resend cooldown exceeded }
+        '503': { description: "Feature disabled, or enabled but misconfigured (body names which)" }
+  /api/auth/otp/verify:
+    post:
+      operationId: verifyEmailOTP
+      summary: Verify a one-time code
+      description: >
+        On success the code is consumed and cannot be replayed. A wrong code, an
+        unknown address and a mismatched purpose all return the same 400
+        "invalid code" — distinguishing them would leak which addresses are real.
+        Expiry and lockout are distinguished because the user must be told to
+        request a new code.
+
+
+        purpose=verify_email additionally confirms the account in GoTrue, which
+        is what lets the user log in. The response does NOT say whether an
+        account was found: the request endpoint accepts any address on purpose,
+        so reporting the lookup outcome would rebuild the enumeration oracle. A
+        500 here means the code was spent but activation failed — the user's next
+        step is a new code.
+      tags: [OTP]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, code, purpose]
+              properties:
+                email: { type: string, format: email }
+                code: { type: string, example: "482913" }
+                purpose:
+                  type: string
+                  enum: [login, verify_email, password_reset]
+      responses:
+        '200':
+          description: >
+            The caller controls the mailbox. For verify_email the account is now
+            confirmed. For login a SESSION is returned, in the same three shapes
+            POST /api/auth/login uses. For password_reset the code is simply
+            consumed — the new password is submitted to /api/auth/reset-password.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean, example: true }
+                  verified: { type: boolean, example: true }
+                  purpose: { type: string, example: login }
+                  session:
+                    type: object
+                    description: login only — the minted session
+                    nullable: true
+                  access_token: { type: string, description: login only }
+                  refresh_token: { type: string, description: login only }
+        '400': { description: Invalid or expired code }
+        '403': { description: "login only: the account was suspended or locked between the two factors" }
+        '429': { description: "Attempt ceiling reached, or per-IP verify budget exceeded" }
+        '500': { description: "The code was consumed but the account could not be confirmed, or the session could not be minted" }
+        '503': { description: "Feature disabled, or enabled but misconfigured" }
+
   # ╔══════════════════════════════════════════════════════════════════════╗
   # ║ SESSION HARDENING — #19 (refresh rotation + suspicious-login response)  ║
   # ║ Feature flag: FEATURE_SESSION_HARDENING_ENABLED (default OFF).          ║

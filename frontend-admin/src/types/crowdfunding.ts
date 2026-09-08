@@ -131,6 +131,11 @@ export interface CfRefundRequest {
   status: CfRefundStatus;
   requestedAt: string;
   refundEligible: boolean;
+  /** True for rows created by the crowdfunding seed migration rather than by a
+   *  real refund. cf_refunds has exactly one writer in the repo (that seed), so
+   *  today every row is a demo row — the page labels them instead of showing
+   *  fixtures beside live GMV in identical styling. */
+  isDemo: boolean;
 }
 
 export type CfSettlementStatus = 'PENDING' | 'PROCESSING' | 'SETTLED' | 'FAILED';
@@ -144,10 +149,13 @@ export interface CfSettlementBatch {
   netKobo: number;
   status: CfSettlementStatus;
   createdAt: string;
+  /** See CfRefundRequest.isDemo — cf_settlements has the same single writer. */
+  isDemo: boolean;
 }
 
 export interface CfFinanceSummary {
   gmvKobo: number;
+  /** Realized revenue read from commission_earnings, not a % applied to GMV. */
   platformRevenueKobo: number;
   refundsPendingKobo: number;
   refundsPendingCount: number;
@@ -155,7 +163,13 @@ export interface CfFinanceSummary {
   chargebacksCount: number;
   escrowKobo: number;
   settledThisMonthKobo: number;
+  /** Released contributions with no commission_earnings row — money that moved
+   *  without its revenue being booked. Was previously hardcoded to 0. */
   reconciliationMismatches: number;
+  /** Gross contribution value behind those mismatches. */
+  unbookedGrossKobo: number;
+  demoRefundRows: number;
+  demoSettlementRows: number;
 }
 
 // ─── Support & disputes ───────────────────────────────────────────────────────

@@ -18,6 +18,8 @@ import type {
   Attendee,
   ScanResult,
   TopUpSource,
+  GateToken,
+  Gate,
 } from './types';
 
 const delay = (ms = 280) => new Promise((r) => setTimeout(r, ms));
@@ -136,10 +138,10 @@ const MOCK_VENUE: VenueZone[] = [
 ];
 
 const MOCK_ATTENDEES: Attendee[] = [
-  { id: 'a1', name: 'Bisi Adeyemi', cashtag: '@bisi',  tierName: 'VIP',     ticketId: 'tk_a1', state: 'ISSUED', checkedIn: true,  checkedInAtISO: hoursFromNow(-1) },
-  { id: 'a2', name: 'Tunde Okafor', cashtag: '@tunde', tierName: 'Regular', ticketId: 'tk_a2', state: 'ISSUED', checkedIn: false, checkedInAtISO: null },
-  { id: 'a3', name: 'Chidi Nwosu',  cashtag: '@chidi', tierName: 'Regular', ticketId: 'tk_a3', state: 'USED',   checkedIn: true,  checkedInAtISO: hoursFromNow(-2) },
-  { id: 'a4', name: 'Ada Eze',      cashtag: '@ada',   tierName: 'Table for 5', ticketId: 'tk_a4', state: 'ISSUED', checkedIn: false, checkedInAtISO: null },
+  { id: 'a1', name: 'Bisi Adeyemi', cashtag: '@bisi',  tier_name: 'VIP',     ticket_id: 'tk_a1', state: 'ISSUED', checked_in: true,  checked_in_at: hoursFromNow(-1) },
+  { id: 'a2', name: 'Tunde Okafor', cashtag: '@tunde', tier_name: 'Regular', ticket_id: 'tk_a2', state: 'ISSUED', checked_in: false, checked_in_at: null },
+  { id: 'a3', name: 'Chidi Nwosu',  cashtag: '@chidi', tier_name: 'Regular', ticket_id: 'tk_a3', state: 'USED',   checked_in: true,  checked_in_at: hoursFromNow(-2) },
+  { id: 'a4', name: 'Ada Eze',      cashtag: '@ada',   tier_name: 'Table for 5', ticket_id: 'tk_a4', state: 'ISSUED', checked_in: false, checked_in_at: null },
 ];
 
 function summaryOf(e: EventDetail): EventSummary {
@@ -197,6 +199,18 @@ export async function getTicket(id: string): Promise<Ticket> {
   return t;
 }
 
+// Live, server-issued rotating gate token for the caller's own ticket — replaces
+// any client-computed QR rotation. Re-fetch on an interval just under the
+// server's RotateTTL (30s) so the rendered pass changes on the same schedule
+// Scan's window-staleness check enforces (see useTicketToken in hooks.ts).
+export async function getTicketToken(ticketId: string): Promise<GateToken> {
+  if (USE_MOCK) {
+    await delay(120);
+    return { cid: 'mock-credential', w: Math.floor(Date.now() / 30000), n: 'mock-nonce', sig: 'mock-sig' };
+  }
+  return unwrap(await api.get(`${API_BASE}/tickets/${ticketId}/token`));
+}
+
 export async function getEventWallet(walletId: string): Promise<EventWallet> {
   if (USE_MOCK) { await delay(); return MOCK_WALLET; }
   return unwrap(await api.get(`${API_BASE}/wallet/${walletId}`));
@@ -210,12 +224,29 @@ export async function openEventWallet(eventId: string): Promise<EventWallet> {
   return unwrap(await api.post(`${API_BASE}/${eventId}/wallet`, {}));
 }
 
-// NOTE: the backend route table has no GET list-vendors endpoint (only
-// POST /:id/vendors to register one). Tap-to-pay's vendor menu is therefore
-// mock-only display data until that read endpoint lands; see report.
+// GET /:id/vendors now exists (identity only: {id, name, active} — see
+// backend/internal/top5events Vendor model) and is used by organiser-facing
+// vendor management. Tap-to-pay's menu STAYS mock-only on purpose: pricing,
+// emoji, and priced menu items (EventVendorDisplay.items, which
+// picked-quantity × priceKobo actually drives the charge amount from) have no
+// backend concept at all — no vendor-item/price table exists — so wiring the
+// real identity-only endpoint here would remove the mock items without
+// anything to replace them, breaking the one thing this screen needs to
+// charge anyone. See listOrganiserVendors for the real, identity-only read.
 export async function listVendors(_eventId: string): Promise<EventVendorDisplay[]> {
-  if (USE_MOCK) { await delay(); return MOCK_VENDORS; }
+  await delay();
   return MOCK_VENDORS;
+}
+
+// Real, identity-only vendor list ({id, name, active}) — for organiser-facing
+// vendor management, not tap-to-pay (see listVendors above for why that stays
+// mock-only).
+export async function listOrganiserVendors(eventId: string): Promise<{ id: string; name: string; active: boolean }[]> {
+  if (USE_MOCK) {
+    await delay();
+    return MOCK_VENDORS.map((v) => ({ id: v.id, name: v.name, active: true }));
+  }
+  return pickList(await api.get(`${API_BASE}/${eventId}/vendors`), 'vendors');
 }
 
 // NOTE: no venue-map endpoint exists on the backend route table at all.
@@ -225,30 +256,26 @@ export async function getVenueMap(_eventId: string): Promise<VenueZone[]> {
   return MOCK_VENUE;
 }
 
-// NOTE: no organiser-stats aggregate endpoint exists. Derived client-side from
-// the organiser's own events (there's also no "my organiser events" filter on
-// GET /api/finance/events — this lists ALL events and would need server-side
-// organiser scoping to be correct in production; see report).
+// GET /organiser/mine — server-scoped + aggregated (real tickets_sold/gross_kobo
+// per event, computed in SQL), replacing the previous client-side derive from
+// an unscoped listEvents() call.
 export async function listOrganiserEvents(): Promise<OrganiserEventStats[]> {
   if (USE_MOCK) {
     await delay();
     return MOCK_EVENTS.map((e) => {
-      const ticketsSold = e.tiers.reduce((s, t) => s + t.sold, 0);
-      const ticketsTotal = e.tiers.reduce((s, t) => s + t.capacity, 0) || null;
-      const grossKobo = e.tiers.reduce((s, t) => s + t.sold * t.price_kobo, 0);
-      return { event: summaryOf(e), ticketsSold, ticketsTotal, grossKobo };
+      const tickets_sold = e.tiers.reduce((s, t) => s + t.sold, 0);
+      const tickets_total = e.tiers.reduce((s, t) => s + t.capacity, 0) || null;
+      const gross_kobo = e.tiers.reduce((s, t) => s + t.sold * t.price_kobo, 0);
+      return { event: summaryOf(e), tickets_sold, tickets_total, gross_kobo };
     });
   }
-  const events = await listEvents();
-  return events.map((event) => ({ event, ticketsSold: 0, ticketsTotal: null, grossKobo: 0 }));
+  return pickList(await api.get(`${API_BASE}/organiser/mine`), 'events');
 }
 
-// NOTE: no attendees-list endpoint exists on the backend route table.
-// Mock-only; the screen shows an "unavailable" empty state when USE_MOCK is
-// false — see report.
-export async function listAttendees(_eventId: string): Promise<Attendee[]> {
+// GET /:id/attendees — organiser/steward-gated real endpoint.
+export async function listAttendees(eventId: string): Promise<Attendee[]> {
   if (USE_MOCK) { await delay(); return MOCK_ATTENDEES; }
-  return [];
+  return pickList(await api.get(`${API_BASE}/${eventId}/attendees`), 'attendees');
 }
 
 // ── Mutations (each money mutation carries an Idempotency-Key) ────────────────
@@ -374,27 +401,34 @@ export async function closeEventWallet(walletId: string): Promise<{ ok: boolean;
 
 // Wallet transaction history — no dedicated list endpoint on the route table;
 // derived from mock ledger entries in mock mode, empty otherwise (see report).
-export async function listWalletEntries(_walletId: string): Promise<EventWalletEntry[]> {
+// GET /wallet/:walletId/entries — ownership-or-organiser-gated real endpoint.
+export async function listWalletEntries(walletId: string): Promise<EventWalletEntry[]> {
   if (USE_MOCK) { await delay(); return MOCK_WALLET_ENTRIES; }
-  return [];
+  return pickList(await api.get(`${API_BASE}/wallet/${walletId}/entries`), 'entries');
 }
 
-// Steward scan validation (offline-tolerant). Live calls fall back to a local
-// manifest when the network is unreachable.
-export async function validateScan(credentialId: string): Promise<ScanResult> {
+// Steward scan validation (offline-tolerant). Takes the REAL decoded gate token
+// (from the camera's QR scan, JSON.parse'd — see app/events/steward/scan.tsx)
+// plus which gate is scanning; POSTs the shape the backend actually expects
+// ({token, gate}), matching backend/internal/top5events's scanRequest exactly.
+// The previous version sent {credential_id: string} — a request shape the
+// backend never accepted, so live check-in was broken end to end.
+export async function validateScan(token: GateToken, gate: Gate): Promise<ScanResult> {
   if (USE_MOCK) {
     await delay(180);
-    const code = credentialId.trim();
-    const att = MOCK_ATTENDEES.find((a) => a.ticketId.toLowerCase() === code.toLowerCase());
-    if (code.toUpperCase().includes('USED') || att?.state === 'USED') return { outcome: 'already-used', ticket_id: att?.ticketId, holderName: att?.name, tierName: att?.tierName, offline: false };
-    if (code.length > 0) return { outcome: 'valid', ticket_id: att?.ticketId ?? 'tk_scan', holderName: att?.name ?? 'Guest', tierName: att?.tierName ?? 'Regular', offline: false };
+    const code = token.cid.trim();
+    const att = MOCK_ATTENDEES.find((a) => a.ticket_id.toLowerCase() === code.toLowerCase());
+    if (code.toUpperCase().includes('USED') || att?.state === 'USED') return { outcome: 'already-used', ticket_id: att?.ticket_id, holderName: att?.name, tierName: att?.tier_name, offline: false };
+    if (code.length > 0) return { outcome: 'valid', ticket_id: att?.ticket_id ?? 'tk_scan', holderName: att?.name ?? 'Guest', tierName: att?.tier_name ?? 'Regular', offline: false };
     return { outcome: 'invalid', offline: false };
   }
   try {
-    return unwrap(await api.post(`${API_BASE}/scan`, { credential_id: credentialId }, { headers: { 'Idempotency-Key': idempotencyKey() } }));
+    return unwrap(await api.post(`${API_BASE}/scan`, { token, gate }, { headers: { 'Idempotency-Key': idempotencyKey() } }));
   } catch {
-    // Offline fallback: optimistic accept of well-formed codes, queued for sync.
-    const valid = credentialId.trim().length > 0;
+    // Offline fallback: optimistic accept of a well-formed token, queued for
+    // sync — the real single-use/replay check only happens server-side, so this
+    // is a UX affordance for a flaky gate connection, not a security guarantee.
+    const valid = !!(token.cid && token.sig);
     return { outcome: valid ? 'valid' : 'invalid', offline: true };
   }
 }

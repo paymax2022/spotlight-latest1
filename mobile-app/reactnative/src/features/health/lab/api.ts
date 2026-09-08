@@ -413,6 +413,70 @@ const MOCK_CHECKLIST: CollectionChecklistItem[] = [
   { id: 'c6', label: 'Confirm patient comfort & apply dressing', done: false, required: false },
 ];
 
+// Deterministic thumbnail tint so the same catalog row always renders the same
+// colour (the backend catalog carries no image/colour of its own).
+const CATALOG_TINTS = [
+  Colors.iconBgPurple, Colors.iconBgBlue, Colors.iconBgTeal,
+  Colors.iconBgOrange, Colors.iconBgGold, Colors.iconBgGreen,
+];
+function tintForId(id: string): string {
+  let h = 0;
+  for (let i = 0; i < id.length; i++) h = (h + id.charCodeAt(i)) % CATALOG_TINTS.length;
+  return CATALOG_TINTS[h];
+}
+
+const SAMPLE_TYPE_FROM_SPECIMEN: Record<string, LabTest['sampleType']> = {
+  BLOOD: 'blood', URINE: 'urine', STOOL: 'stool', SWAB: 'swab', SALIVA: 'saliva',
+};
+function tatLabel(hours: number): string {
+  if (!hours || hours <= 0) return 'Contact lab';
+  if (hours <= 24) return 'Same day';
+  if (hours <= 48) return '24-48 hrs';
+  return `${Math.ceil(hours / 24)} days`;
+}
+
+// Maps the backend's minimal money-path Test row (snake_case; see Go
+// healthlab.Test) onto the richer mobile LabTest display shape. The backend
+// carries no category, free-text description, home-collection flag, or
+// fasting flag — category/homeCollection default to the least presumptive
+// value and fastingRequired is inferred from the real prep-instructions text
+// (a check, not an invention) rather than left to crash the fasting-prep UI.
+function mapTest(raw: any): LabTest {
+  const prep: string = raw.prep_instructions ?? '';
+  return {
+    id: raw.id,
+    name: raw.name ?? '',
+    code: raw.code ?? '',
+    category: 'wellness',
+    priceKobo: raw.price_kobo ?? 0,
+    description: raw.ref_range ? `Reference range: ${raw.ref_range}` : '',
+    sampleType: SAMPLE_TYPE_FROM_SPECIMEN[String(raw.specimen ?? '').toUpperCase()] ?? 'blood',
+    prep,
+    fastingRequired: /fast/i.test(prep),
+    tat: tatLabel(raw.tat_hours ?? 0),
+    homeCollection: false,
+    imageColor: tintForId(String(raw.id ?? '')),
+  };
+}
+
+function mapPackage(raw: any): TestPackage {
+  const prep: string = raw.prep_instructions ?? '';
+  const testIds: string[] = raw.test_ids ?? [];
+  return {
+    id: raw.id,
+    name: raw.name ?? '',
+    description: raw.description ?? '',
+    priceKobo: raw.price_kobo ?? 0,
+    listPriceKobo: raw.price_kobo ?? 0,
+    testIds,
+    testCount: testIds.length,
+    tat: tatLabel(raw.tat_hours ?? 0),
+    prep,
+    fastingRequired: /fast/i.test(prep),
+    imageColor: tintForId(String(raw.id ?? '')),
+  };
+}
+
 // ── Catalog ───────────────────────────────────────────────────────────────────
 export async function getTests(query?: CatalogQuery): Promise<LabTest[]> {
   if (USE_MOCK) {
@@ -425,13 +489,8 @@ export async function getTests(query?: CatalogQuery): Promise<LabTest[]> {
     }
     return rows;
   }
-  // The Go handler wraps the array: {"success":true,"tests":[...]}, not a bare
-  // array — returning `data` verbatim handed the caller that whole envelope
-  // typed (wrongly) as LabTest[], so `(tests ?? []).slice(...)` in
-  // app/health/lab/index.tsx crashed with "slice is not a function" on every
-  // successful load.
-  const { data } = await api.get<{ success: boolean; tests: LabTest[] }>(`${LAB_API}/tests`, { params: query });
-  return data.tests ?? [];
+  const { data } = await api.get<{ tests?: unknown[] }>(`${LAB_API}/tests`, { params: query });
+  return (data.tests ?? []).map(mapTest);
 }
 
 export async function getTest(id: string): Promise<LabTest> {
@@ -450,15 +509,8 @@ export async function getPackages(): Promise<TestPackage[]> {
     await delay();
     return MOCK_PACKAGES;
   }
-  // Same envelope as getTests: {"success":true,"packages":[...]}. NOTE: the Go
-  // rows are the raw catalog shape (id/name/description/price_kobo/test_ids/
-  // tat_hours) — they do NOT carry the presentation-only fields this screen's
-  // TestPackage type also declares (listPriceKobo, testCount, tat as a string,
-  // popular, imageColor). This unwrap only fixes the "packages is not an
-  // array" crash; mapping/deriving those display fields from the real rows is
-  // separate follow-up work, not done here.
-  const { data } = await api.get<{ success: boolean; packages: TestPackage[] }>(`${LAB_API}/packages`);
-  return data.packages ?? [];
+  const { data } = await api.get<{ packages?: unknown[] }>(`${LAB_API}/packages`);
+  return (data.packages ?? []).map(mapPackage);
 }
 
 export async function getPackage(id: string): Promise<TestPackage> {
@@ -504,22 +556,45 @@ export async function getPhlebotomist(orderId: string): Promise<Phlebotomist> {
   return data;
 }
 
+const COLLECTION_MODE_FROM_METHOD: Record<string, LabOrder['collectionMode']> = {
+  HOME: 'home', WALK_IN: 'walk_in',
+};
+const HELD_STATES = new Set(['CREATED', 'SCHEDULED', 'SAMPLE_COLLECTED', 'IN_TRANSIT', 'ACCESSIONED', 'PROCESSING', 'RESULT_READY', 'ESCALATED']);
+
+// Maps the backend's Order row (snake_case; see Go healthlab.Order) onto the
+// richer mobile LabOrder shape. labName/location/scheduledFor/custody are not
+// on this row (they live on the Lab/Sample entities behind their own reads),
+// so they default to empty/absent rather than being invented — the home
+// screen's active-order card only reads id/status/lines/labName and already
+// tolerates an empty labName.
+function mapOrder(raw: any): LabOrder {
+  const lines: any[] = raw.lines ?? [];
+  return {
+    id: raw.id,
+    status: raw.state,
+    labId: raw.lab_provider_id ?? '',
+    labName: '',
+    collectionMode: COLLECTION_MODE_FROM_METHOD[raw.collection_method] ?? 'walk_in',
+    lines: lines.map((l) => ({ refId: l.test_id, kind: 'test', name: l.test_name ?? '', priceKobo: l.unit_price_kobo ?? 0 })),
+    subtotalKobo: raw.total_kobo ?? 0,
+    collectionFeeKobo: 0,
+    totalKobo: raw.total_kobo ?? 0,
+    paymentHeld: !!raw.escrow_id && HELD_STATES.has(raw.state),
+    createdAt: raw.created_at,
+    location: '',
+    resultId: raw.result_record_id ?? undefined,
+    custody: [],
+  };
+}
+
 // ── Orders ──────────────────────────────────────────────────────────────────
 export async function getOrders(): Promise<LabOrder[]> {
   if (USE_MOCK) {
     await delay();
     return MOCK_ORDERS;
   }
-  // Same envelope as getTests/getPackages: {"success":true,"orders":[...]}.
-  // NOTE: the Go rows are the raw order shape (patient_id/lab_provider_id/
-  // state/total_kobo/...) and do NOT carry every field this screen's LabOrder
-  // type declares (labName, subtotalKobo/collectionFeeKobo split, location,
-  // paymentHeld, phlebotomist*, resultId, hasCritical) — those are UI-only
-  // concepts the backend doesn't compute yet. This unwrap only fixes the
-  // "orders is not an array" crash; enriching/mapping to the full LabOrder
-  // shape is separate follow-up work, not done here.
-  const { data } = await api.get<{ success: boolean; orders: LabOrder[] }>(`${LAB_API}/orders`);
-  return data.orders ?? [];
+  const { data } = await api.get<{ orders?: unknown[] }>(`${LAB_API}/orders`);
+  return (data.orders ?? []).map(mapOrder);
 }
 
 export async function getOrder(id: string): Promise<LabOrder> {
@@ -528,8 +603,9 @@ export async function getOrder(id: string): Promise<LabOrder> {
     const o = MOCK_ORDERS.find((x) => x.id === id) ?? MOCK_ORDERS[0];
     return o;
   }
-  const { data } = await api.get<LabOrder>(`${LAB_API}/orders/${id}`);
-  return data;
+  const { data } = await api.get<{ order?: unknown }>(`${LAB_API}/orders/${id}`);
+  if (!data.order) throw new Error('Order not found');
+  return mapOrder(data.order);
 }
 
 export async function createOrder(input: CreateOrderInput): Promise<LabOrder> {

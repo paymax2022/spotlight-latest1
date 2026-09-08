@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useState } from 'react';
 import { View, Text, ScrollView, StyleSheet, Modal, Pressable } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLocalSearchParams, router } from 'expo-router';
@@ -12,30 +12,28 @@ import StateView from '@/components/StateView';
 import PrimaryButton from '@/components/PrimaryButton';
 import TextInputField from '@/components/TextInputField';
 import TicketPass from '@/features/events/components/TicketPass';
-import { useTicket, useGiftTicket, useEvent } from '@/features/events/hooks';
+import { useTicket, useTicketToken, useGiftTicket, useEvent } from '@/features/events/hooks';
 import { EventColors } from '@/features/events/constants/events.constants';
 
 export default function TicketPassScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const { data: t, isLoading, isError, refetch } = useTicket(id ?? '');
+  const { data: gateToken } = useTicketToken(id ?? '');
   const gift = useGiftTicket(id ?? '');
   const { data: event } = useEvent(t?.event_id ?? '');
 
-  const [nonce, setNonce] = useState(0);
   const [showTransfer, setShowTransfer] = useState(false);
   const [cashtag, setCashtag] = useState('');
   const [err, setErr] = useState<string | null>(null);
 
-  // Rotating QR: refresh the payload every 6s (anti-screenshot placeholder).
-  useEffect(() => {
-    const iv = setInterval(() => setNonce((n) => n + 1), 6000);
-    return () => clearInterval(iv);
-  }, []);
-
   if (isLoading) return <Shell><StateView kind="loading" message="Loading pass…" /></Shell>;
   if (isError || !t) return <Shell><StateView kind="error" title="Couldn't load pass" message="Please try again." actionLabel="Retry" onAction={() => refetch()} /></Shell>;
 
-  const qrPayload = `${t.credential_id}.${Math.floor(Date.now() / 6000)}.${nonce}`;
+  // The real, server-issued rotating token (see getTicketToken/useTicketToken) —
+  // JSON-serialized so a scanner's JSON.parse round-trips it straight into the
+  // shape POST /scan expects (backend/internal/credential.Token's cid/w/n/sig).
+  // Empty until the first fetch resolves; TicketPass should treat that as loading.
+  const qrPayload = gateToken ? JSON.stringify(gateToken) : '';
   const canTransfer = t.state === 'ISSUED';
   const tier = event?.tiers.find((x) => x.id === t.tier_id);
 
