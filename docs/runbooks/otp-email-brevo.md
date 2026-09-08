@@ -178,7 +178,7 @@ cloud copies of the email templates.
 | `FEATURE_OTP_EMAIL_ENABLED` | — | `false` | Master switch. |
 | `FEATURE_OTP_LOGIN_MFA_ENABLED` | — | `false` | Second factor on login. **Fails closed — see the warning above.** Ignored unless the master switch is on. |
 | `AUTH_SIGNUP_RATE_LIMIT_PER_5MIN` | — | `30` | Per-IP signup budget replacing GoTrue's `sign_in_sign_ups` on the admin creation path. Shared across replicas. |
-| `BREVO_API_KEY` | when on | — | From the Brevo dashboard. |
+| `BREVO_API_KEY` | when on | — | Must be an **API key** (`xkeysib-…`), NOT an SMTP key — see below. |
 | `BREVO_SENDER_EMAIL` | when on | — | Must be on a domain verified in Brevo. |
 | `BREVO_SENDER_NAME` | — | `Spotlight` | |
 | `BREVO_OTP_TEMPLATE_ID` | when on | — | Numeric ID of the transactional template. |
@@ -191,6 +191,30 @@ cloud copies of the email templates.
 | `OTP_MAX_SENDS_PER_HOUR` | — | `5` | Per address. |
 | `OTP_MAX_SENDS_PER_IP_PER_HOUR` | — | `20` | |
 | `OTP_MAX_VERIFY_PER_IP_PER_HOUR` | — | `20` | |
+
+### ⚠️ Brevo issues TWO kinds of credential and only one of them works here
+
+Brevo's dashboard has a single "SMTP & API" page offering both:
+
+| Credential | Looks like | Works with |
+|---|---|---|
+| **API key** | `xkeysib-…` | `POST https://api.brevo.com/v3/smtp/email` — **what this module uses** |
+| **SMTP key** | `xsmtpsib-…` | `smtp-relay.brevo.com:587` only |
+
+An SMTP key in `BREVO_API_KEY` fails with `401 unauthorized — Key not found`,
+which is **byte-identical to the message a completely absent key produces**, so
+the natural conclusion ("my key is wrong / not provisioned yet") is right about
+the symptom and wrong about the cause. Verified: an `xsmtpsib-` key against
+`GET /v3/account` returns exactly that.
+
+Get the API key from **Brevo → SMTP & API → API keys** (not the SMTP tab).
+
+**An SMTP key is still useful, elsewhere.** Supabase Auth needs custom SMTP to
+send anything reliably on the cloud projects (audit blocker B1), and that is what
+the password-reset **link** depends on. Point Supabase's SMTP settings at
+`smtp-relay.brevo.com:587` with the Brevo login and the SMTP key. Note the local
+`[auth.email.smtp]` block in `supabase/config.toml` should stay commented out —
+local mail should keep going to the catcher on :54324, not to a real provider.
 
 ### `OTP_PEPPER` is not optional
 
@@ -309,6 +333,40 @@ each issue. Expiry is enforced **on read** as well, so a sweep that has not run
 cannot make a stale code verify.
 
 ---
+
+## What is still missing before any of this can be switched on
+
+Ordered by what blocks what. Items 1-4 are the module; 5 is what makes the
+product work end to end.
+
+1. **A Brevo API key** (`xkeysib-…`). An SMTP key does not authenticate against
+   the REST API — see the warning above.
+2. **A verified sender domain in Brevo**, with SPF, DKIM and DMARC. Brevo's
+   verification is separate from Resend's; `scripts/ci/check-email-sender.py`
+   pins `spotlightng.com` for the *Resend* account only. Prefer a subdomain
+   (`mail.spotlightng.com`) so transactional reputation is isolated.
+3. **A transactional template**, and its numeric id in `BREVO_OTP_TEMPLATE_ID`.
+   It must read `{{ params.OTP }}`, `{{ params.NAME }}` and
+   `{{ params.EXPIRY_MINUTES }}` — renaming one ships a blank code and nothing on
+   our side fails.
+4. **`OTP_PEPPER`** (`openssl rand -base64 32`), per environment.
+5. **Client work — nothing calls these endpoints yet.** This is the big one:
+   `POST /api/auth/otp/{request,verify}` and the code form of
+   `/api/auth/reset-password` have **no caller** in mobile or web. Mobile still
+   calls `supabase.auth.verifyOtp` and `supabase.auth.resend` directly.
+
+   That is not merely "unused". With `FEATURE_OTP_EMAIL_ENABLED` on, registration
+   takes the silent admin path, so **GoTrue never mints a confirmation code** —
+   and `supabase.auth.verifyOtp` has nothing to verify. **Enabling the flag before
+   the clients are repointed breaks mobile registration.** `supabase.auth.resend`
+   is an escape hatch that works, but only by sending Supabase's own email again,
+   which puts the two-systems problem straight back.
+
+   So: repoint the clients first, or keep the flag off.
+
+Separately, and not blocking the OTP module: **Supabase SMTP** (audit B1) is what
+the password-reset LINK needs on the cloud projects, and the cloud copies of the
+email templates (B6) are still the dashboard's default.
 
 ## Rollout
 
