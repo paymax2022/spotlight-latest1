@@ -9,6 +9,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"spotlight/backend/internal/otp"
+	"spotlight/backend/internal/services"
 )
 
 // OTPHandler exposes the server-issued email OTP surface.
@@ -22,10 +23,21 @@ type OTPHandler struct {
 	// from "flag is on but the pepper is missing" without reading the logs of a
 	// process they may not have access to.
 	reason string
+	// verifier confirms the account behind an address once a verify_email code is
+	// redeemed. Nil means codes still verify but nothing is activated — which is
+	// the correct behaviour for the login and password-reset purposes, and a
+	// misconfiguration for verify_email (reported, never silent).
+	verifier services.EmailVerifier
 }
 
 func NewOTPHandler(svc *otp.Service, reason string) *OTPHandler {
 	return &OTPHandler{svc: svc, reason: reason}
+}
+
+// WithEmailVerifier wires account confirmation into the verify_email purpose.
+func (h *OTPHandler) WithEmailVerifier(v services.EmailVerifier) *OTPHandler {
+	h.verifier = v
+	return h
 }
 
 func (h *OTPHandler) guard(c *gin.Context) bool {
@@ -135,6 +147,39 @@ func (h *OTPHandler) VerifyOTP(c *gin.Context) {
 	err := h.svc.Verify(c.Request.Context(), email, purpose, code, c.ClientIP())
 	switch {
 	case err == nil:
+		// The code is already consumed at this point. For verify_email that is
+		// only half the job: the account still has to be confirmed in GoTrue, or
+		// the user has proved control of their mailbox and still cannot log in.
+		if purpose == otp.PurposeVerifyEmail {
+			if h.verifier == nil {
+				// The code was spent and nothing can act on it. Refusing loudly
+				// beats a cheerful 200 that leaves the account unusable.
+				logOTPFailure("verify", purpose, errors.New("no email verifier is wired"))
+				c.JSON(http.StatusInternalServerError, gin.H{
+					"success": false, "error": "could not activate your account, please request a new code"})
+				return
+			}
+			confirmed, cErr := h.verifier.ConfirmEmail(c.Request.Context(), email)
+			if cErr != nil {
+				// The code is gone and the account is not confirmed. Say so: the
+				// user's next step is a new code, and pretending this succeeded
+				// would leave them unable to log in with no explanation.
+				logOTPFailure("verify.confirm", purpose, cErr)
+				c.JSON(http.StatusInternalServerError, gin.H{
+					"success": false, "error": "could not activate your account, please request a new code"})
+				return
+			}
+			// confirmed == false means there is no account for this address. That
+			// fact is NOT returned. The request endpoint accepts any address on
+			// purpose, so surfacing "there was nothing to confirm" would put the
+			// enumeration oracle straight back — weakened by needing a valid code,
+			// but there is no reason to hand it over. A client that just
+			// registered knows what to do next; one that did not, does not need
+			// to be told.
+			_ = confirmed
+			c.JSON(http.StatusOK, gin.H{"success": true, "verified": true, "purpose": purpose})
+			return
+		}
 		c.JSON(http.StatusOK, gin.H{"success": true, "verified": true, "purpose": purpose})
 	case errors.Is(err, otp.ErrTooManyAttempts):
 		c.JSON(http.StatusTooManyRequests, gin.H{

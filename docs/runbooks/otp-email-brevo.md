@@ -12,18 +12,40 @@ that credentials were already in place; that was checked and is not the case.
 
 It is a second OTP system.
 
-Today every OTP a user receives is minted and mailed by **Supabase Auth**, not by
-our code. `docs/audit/USER_MANAGEMENT_AUDIT.md` records why that path is broken:
-no custom SMTP on either cloud project (B1), and a project-wide budget of two
-emails per hour. This module gives us an OTP path we own end to end — our
-generation, our storage, our transport, our rate limits.
+Supabase Auth still mints and mails its own codes. `docs/audit/USER_MANAGEMENT_AUDIT.md`
+records why that path is broken: no custom SMTP on either cloud project (B1), and
+a project-wide budget of two emails per hour. This module gives us an OTP path we
+own end to end — our generation, our storage, our transport, our rate limits.
 
-**Verifying a code here proves control of a mailbox and nothing else.** It does
-not confirm a GoTrue user, and it does not issue a session. Registration, login
-and password reset all still run through Supabase. Connecting them is a separate,
-deliberate decision — and the audit is explicit that two coexisting verification
-paradigms is the state to get out of, so whichever one wins should win on
-purpose rather than by accretion.
+### Registration is wired
+
+`POST /api/auth/register` issues a `verify_email` code whenever Supabase signup
+returns **no session** (i.e. the project requires confirmation). Redeeming that
+code at `POST /api/auth/otp/verify` confirms the account in GoTrue, which is what
+stops login answering `403 email_not_confirmed`.
+
+Two properties worth knowing:
+
+- **Issuing is best-effort.** By the time we try to send, the account already
+  exists. A send failure is logged and the registration still returns 201 —
+  failing it would bounce the user back to a register form that answers
+  "registration failed" for an account that is genuinely theirs, with no way
+  forward. A user who gets no code asks again at `POST /api/auth/otp/request`,
+  which shares the same store and the same send budget.
+- **Verifying still does not issue a session.** It confirms the account; the
+  client then logs in with the password the user just chose. `login` and
+  `password_reset` codes prove mailbox control and activate nothing.
+
+### ⚠️ Prerequisite: turn off Supabase's confirmation mailer first
+
+While `mailer_autoconfirm = false` **and** Supabase's own confirmation email is
+enabled on the project, a registering user receives **two codes from two systems**,
+each redeemed at a different endpoint. Both work; the experience is incoherent.
+
+Disable the Supabase confirmation email (or accept the duplicate knowingly)
+before enabling `FEATURE_OTP_EMAIL_ENABLED` anywhere real. This is the
+"two coexisting verification paradigms" state the audit says to get out of — so
+whichever system wins should win on purpose rather than by accretion.
 
 ---
 
@@ -122,6 +144,26 @@ An OTP that lands in spam is an outage that pages nobody.
 
 ---
 
+## How confirmation works
+
+`services.NewSupabaseEmailVerifier` reads the user id from `auth.users` by
+lowercased email (PostgREST cannot reach the `auth` schema, and GoTrue's admin
+list filters differ across versions), then confirms through GoTrue's admin API:
+`PUT /auth/v1/admin/users/{id}` with `{"email_confirm": true}`.
+
+The write goes through GoTrue, not a direct `UPDATE auth.users`, because GoTrue
+owns that schema — `confirmed_at` is generated, and identity rows carry their own
+state, so a direct write can produce an account that looks confirmed to us and
+unconfirmed to the thing that issues sessions.
+
+**This needs the SERVICE ROLE key.** With an anon key GoTrue answers 401 and the
+symptom is a user who redeems a valid code and still cannot log in.
+
+`backend/tests/otp/confirm_email_live_db_test.go` asserts the observable outcome
+(`email_confirmed_at` goes from NULL to set) rather than the call succeeding —
+GoTrue accepts a wrong body key with a 200 and confirms nothing, which was
+verified by mutating the key and watching the test fail.
+
 ## Storage
 
 Postgres, not Redis — deliberately, and against the implementation brief.
@@ -151,8 +193,8 @@ cannot make a stale code verify.
 | 1. Merge with the flag off | Build green; endpoints answer 503 `feature_disabled` |
 | 2. Provision Brevo: account, sender domain, SPF/DKIM/DMARC, template | Test send received, **not** in spam |
 | 3. Set the env keys in one non-production environment; flag on | `POST /api/auth/otp/request` returns 200; a code arrives |
-| 4. Exercise the full matrix on a real device | Verify, replay, wrong code ×5, expiry, cooldown |
-| 5. Decide, explicitly, whether this replaces the Supabase path | Written decision — do not let both run indefinitely |
+| 4. Exercise the full matrix on a real device | Register -> code -> verify -> **login succeeds**; then replay, wrong code x5, expiry, cooldown |
+| 5. Turn off Supabase's own confirmation mailer | Registering users receive exactly ONE code |
 | 6. Enable in production | Success rate at baseline |
 
 **Keep the Supabase path available for one release after any cutover.** If Brevo
