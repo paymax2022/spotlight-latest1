@@ -294,6 +294,36 @@ func (s *Service) DiscoverVets(ctx context.Context, lat, lng *float64, radiusM f
 
 // ─── Services / fees governance ──────────────────────────────────────────────
 
+// ListServicesForProvider returns a provider's ACTIVE priced services (name,
+// visit type, fee) — the public/discoverable menu a pet owner picks from before
+// booking (see Book/BookInput, which requires a service_id and prices the
+// appointment server-side from the pinned row, never a client-sent fee). No
+// object-level gate: this is the same discoverable-commercial-info tier as
+// DiscoverVets, not a vet-owner-only read (that's UpsertService).
+func (s *Service) ListServicesForProvider(ctx context.Context, providerID string) ([]VetService, error) {
+	const q = `
+		SELECT id, provider_id, code, name, visit_type, price_kobo, active, created_at
+		FROM vet_services
+		WHERE provider_id = $1 AND active = true
+		ORDER BY price_kobo ASC`
+	rows, err := s.db.Query(ctx, q, providerID)
+	if err != nil {
+		return nil, fmt.Errorf("vet: list services: %w", err)
+	}
+	defer rows.Close()
+	out := make([]VetService, 0)
+	for rows.Next() {
+		var v VetService
+		var visitType string
+		if err := rows.Scan(&v.ID, &v.ProviderID, &v.Code, &v.Name, &visitType, &v.PriceKobo, &v.Active, &v.CreatedAt); err != nil {
+			return nil, err
+		}
+		v.VisitType = VisitType(visitType)
+		out = append(out, v)
+	}
+	return out, rows.Err()
+}
+
 // UpsertService writes a vet service+fee. HL-2: only the verified vet owner may
 // list services for that provider. Price is positive kobo (NL-8).
 func (s *Service) UpsertService(ctx context.Context, ownerID string, v VetService) (*VetService, error) {

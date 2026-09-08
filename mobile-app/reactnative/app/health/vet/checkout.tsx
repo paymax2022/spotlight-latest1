@@ -23,13 +23,13 @@ export default function CheckoutScreen() {
   const params = useLocalSearchParams<{
     vetId: string;
     petId: string;
+    serviceId: string;
     type: string;
     scheduledFor: string;
     slotLabel?: string;
     reason?: string;
     location?: string;
     feeKobo?: string;
-    homeFeeKobo?: string;
   }>();
   const type = (params.type as AppointmentType) ?? 'tele';
   const { data: vet, isLoading } = useVet(params.vetId);
@@ -37,9 +37,10 @@ export default function CheckoutScreen() {
   const createAppt = useCreateAppointment();
   const pay = usePurchasePayment<Appointment>();
 
-  const feeKobo = Number(params.feeKobo ?? vet?.consultFeeKobo ?? 0);
-  const homeFeeKobo = type === 'home' ? Number(params.homeFeeKobo ?? vet?.homeVisitFeeKobo ?? 0) : 0;
-  const totalKobo = feeKobo + homeFeeKobo;
+  // book.tsx always resolves one priced VetService and passes its full price
+  // here — the backend prices the whole booking (tele/home/clinic alike) from
+  // that single service, never from a separate consult+home-visit split.
+  const totalKobo = Number(params.feeKobo ?? 0);
 
   const typeMeta = APPT_TYPE_META[type];
   const TypeIcon = (Icons as unknown as Record<string, Icons.LucideIcon>)[typeMeta.icon] ?? Icons.Video;
@@ -54,11 +55,12 @@ export default function CheckoutScreen() {
         createAppt.mutateAsync({
           petId: params.petId,
           vetId: params.vetId,
+          serviceId: params.serviceId,
           type,
           scheduledFor: params.scheduledFor,
           reason: params.reason ?? 'Consultation',
-          feeKobo,
-          homeVisitFeeKobo: homeFeeKobo,
+          feeKobo: totalKobo,
+          homeVisitFeeKobo: 0,
           location: params.location || undefined,
           idempotencyKey,
         }),
@@ -119,15 +121,9 @@ export default function CheckoutScreen() {
         <Text style={styles.sectionTitle}>Payment summary</Text>
         <View style={[styles.summary, shadow1]}>
           <View style={styles.sumRow}>
-            <Text style={styles.sumLabel}>Consult fee</Text>
-            <Text style={styles.sumVal}>{formatNaira(feeKobo)}</Text>
+            <Text style={styles.sumLabel}>{typeMeta.label}</Text>
+            <Text style={styles.sumVal}>{formatNaira(totalKobo)}</Text>
           </View>
-          {homeFeeKobo ? (
-            <View style={styles.sumRow}>
-              <Text style={styles.sumLabel}>Home visit</Text>
-              <Text style={styles.sumVal}>{formatNaira(homeFeeKobo)}</Text>
-            </View>
-          ) : null}
           <View style={styles.divider} />
           <View style={styles.sumRow}>
             <Text style={styles.totalLabel}>Total</Text>

@@ -110,6 +110,20 @@ export interface VetQuery {
   species?: PetSpecies;
 }
 
+// ── Priced services (the menu a pet owner picks from before booking) ────────
+// Mirrors backend/internal/health/vet/model.go VetService. The appointment
+// total is computed server-side from the pinned service price — Book requires
+// a serviceId, never a client-sent fee (see CreateAppointmentInput below).
+export interface VetService {
+  id: string;
+  providerId: string;
+  code: string;
+  name: string;
+  visitType: AppointmentType;
+  priceKobo: number;
+  active: boolean;
+}
+
 // ── Availability / slots ─────────────────────────────────────────────────────
 export interface AvailabilitySlot {
   id: string;
@@ -162,9 +176,12 @@ export interface Appointment {
 export interface CreateAppointmentInput {
   petId: string;
   vetId: string;
+  /** The priced VetService being booked — Go prices the appointment from this, never from feeKobo/homeVisitFeeKobo below. */
+  serviceId: string;
   type: AppointmentType;
   scheduledFor: string;
   reason: string;
+  /** Display-only estimate for the checkout summary; the backend ignores this and prices from serviceId. */
   feeKobo: number;
   homeVisitFeeKobo: number;
   location?: string;

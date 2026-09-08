@@ -105,6 +105,7 @@ func RegisterHealthVet(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pg
 	vg.GET("/pets", h.ListPets)                              // owner reads own pets (HL-8)
 	vg.POST("/pets/:id/vaccinations", h.ScheduleVaccination) // reminder via scheduler
 	vg.GET("/vets", h.DiscoverVets)                          // map/list discovery (HL-2, PostGIS)
+	vg.GET("/vets/:providerId/services", h.ListServices)     // priced service menu — pick before booking
 	vg.POST("/services", h.UpsertService)                    // verified vet owner; fee governance
 	vg.POST("/appointments", h.Book)                         // tele/home/clinic; payment HELD (HL-9)
 	vg.GET("/appointments/:id", h.Get)                       // object-level authZ

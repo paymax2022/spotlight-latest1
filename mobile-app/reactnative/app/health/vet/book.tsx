@@ -12,7 +12,7 @@ import ScreenHeader from '@/components/ScreenHeader';
 import StateView from '@/components/StateView';
 import PrimaryButton from '@/components/PrimaryButton';
 import TextInputField from '@/components/TextInputField';
-import { useVet, useAvailability } from '@/features/health/vet/hooks';
+import { useVet, useAvailability, useVetServices } from '@/features/health/vet/hooks';
 import { APPT_TYPE_META } from '@/features/health/vet/constants';
 import { formatNaira } from '@/features/health/constants/health.constants';
 import type { AppointmentType } from '@/features/health/vet/types';
@@ -21,22 +21,30 @@ export default function BookScreen() {
   const { vetId, petId, reason } = useLocalSearchParams<{ vetId: string; petId: string; reason?: string }>();
   const { data: vet, isLoading, isError, refetch } = useVet(vetId);
   const { data: days } = useAvailability(vetId);
+  const { data: services } = useVetServices(vetId);
 
   const [type, setType] = useState<AppointmentType | null>(null);
   const [slotId, setSlotId] = useState<string | null>(null);
   const [slotIso, setSlotIso] = useState<string | null>(null);
   const [slotLabel, setSlotLabel] = useState<string>('');
   const [address, setAddress] = useState('');
+  const [serviceId, setServiceId] = useState<string | null>(null);
 
   // default type to vet's first supported once loaded
   React.useEffect(() => {
     if (vet && !type) setType(vet.types[0]);
   }, [vet, type]);
 
-  const fee = useMemo(() => {
-    if (!vet || !type) return 0;
-    return type === 'home' ? vet.consultFeeKobo + vet.homeVisitFeeKobo : vet.consultFeeKobo;
-  }, [vet, type]);
+  // The backend prices a booking from a picked VetService, not a client fee
+  // (see createAppointment in features/health/vet/api.ts) — every visit type
+  // must resolve to exactly one service before checkout is reachable.
+  const servicesForType = useMemo(() => (services ?? []).filter((s) => s.active && s.visitType === type), [services, type]);
+  React.useEffect(() => {
+    setServiceId(servicesForType.length === 1 ? servicesForType[0].id : null);
+  }, [servicesForType]);
+
+  const selectedService = servicesForType.find((s) => s.id === serviceId);
+  const fee = selectedService?.priceKobo ?? 0;
 
   if (isLoading) {
     return (
@@ -60,7 +68,7 @@ export default function BookScreen() {
     slots: d.slots.filter((s) => !type || s.type === type),
   }));
 
-  const canContinue = type && slotIso && (type !== 'home' || address.trim().length > 3);
+  const canContinue = type && slotIso && serviceId && (type !== 'home' || address.trim().length > 3);
 
   const onContinue = () => {
     router.push({
@@ -68,13 +76,13 @@ export default function BookScreen() {
       params: {
         vetId: vet.id,
         petId,
+        serviceId: serviceId!,
         type: type!,
         scheduledFor: slotIso!,
         slotLabel,
         reason: reason ?? 'Consultation',
         location: type === 'home' ? address.trim() : '',
-        feeKobo: String(vet.consultFeeKobo),
-        homeFeeKobo: String(vet.homeVisitFeeKobo),
+        feeKobo: String(fee),
       },
     });
   };
@@ -106,6 +114,33 @@ export default function BookScreen() {
             );
           })}
         </View>
+
+        {/* Service (drives the price the backend actually charges) */}
+        {type ? (
+          <>
+            <Text style={styles.sectionTitle}>Select a service</Text>
+            {servicesForType.length === 0 ? (
+              <Text style={styles.noSlots}>This vet has no priced {APPT_TYPE_META[type].label.toLowerCase()} service yet.</Text>
+            ) : (
+              <View style={styles.slotWrap}>
+                {servicesForType.map((s) => {
+                  const active = serviceId === s.id;
+                  return (
+                    <Pressable
+                      key={s.id}
+                      onPress={() => setServiceId(s.id)}
+                      style={[styles.slot, active && styles.slotActive]}
+                    >
+                      <Text style={[styles.slotText, active && styles.slotTextActive]}>
+                        {s.name} · {formatNaira(s.priceKobo)}
+                      </Text>
+                    </Pressable>
+                  );
+                })}
+              </View>
+            )}
+          </>
+        ) : null}
 
         {/* Slots */}
         <Text style={styles.sectionTitle}>Pick a time</Text>

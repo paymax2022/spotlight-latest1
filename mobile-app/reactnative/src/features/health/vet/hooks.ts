@@ -14,6 +14,7 @@ import {
   getVets,
   getVet,
   getAvailability,
+  getVetServices,
   getReviews,
   submitReview,
   getAppointments,
@@ -154,6 +155,15 @@ export function useAvailability(vetId?: string) {
     queryFn: () => getAvailability(vetId as string),
     enabled: Boolean(vetId),
     staleTime: 30_000,
+  });
+}
+
+export function useVetServices(vetId?: string) {
+  return useQuery({
+    queryKey: [KEY, 'services', vetId],
+    queryFn: () => getVetServices(vetId as string),
+    enabled: Boolean(vetId),
+    staleTime: 60_000,
   });
 }
 

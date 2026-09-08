@@ -15,6 +15,7 @@ import type {
   VaccinationEntry,
   Vet,
   VetQuery,
+  VetService,
   AppointmentType,
   AvailabilityDay,
   Appointment,
@@ -534,6 +535,19 @@ function vetFromGo(g: GoVetResult): Vet {
   };
 }
 
+interface GoVetService { id: string; provider_id: string; code: string; name: string; visit_type: string; price_kobo: number; active: boolean; created_at: string }
+function vetServiceFromGo(g: GoVetService): VetService {
+  return {
+    id: g.id,
+    providerId: g.provider_id,
+    code: g.code ?? '',
+    name: g.name ?? '',
+    visitType: (g.visit_type || '').toLowerCase() as AppointmentType,
+    priceKobo: g.price_kobo ?? 0,
+    active: g.active,
+  };
+}
+
 interface GoAppointment { id: string; provider_id: string; owner_id: string; pet_id: string; service_id: string; visit_type: string; state: string; pay_state: string; total_kobo: number; escrow_id?: string | null; consult_id?: string | null; delivery_ref?: string | null; slot_start: string; slot_end: string; created_at: string }
 async function appointmentFromGo(g: GoAppointment): Promise<Appointment> {
   // Go tracks ids only (no joined display names) — a best-effort lookup against
@@ -690,7 +704,40 @@ export async function getVet(id: string): Promise<Vet> {
   // No GET /vets/:id route — composed from the discovery list.
   const v = (await getVets()).find((x) => x.id === id);
   if (!v) throw new Error('Vet not found');
-  return v;
+  // Fees aren't part of vet discovery (see vetFromGo) — the services menu is the
+  // only place they live, so a representative consult/home-visit price is
+  // filled in here from it for the vet profile / booking-preview screens.
+  const services = await getVetServices(id).catch(() => [] as VetService[]);
+  const cheapestOfType = (t: AppointmentType) =>
+    services.filter((s) => s.active && s.visitType === t).sort((a, b) => a.priceKobo - b.priceKobo)[0];
+  const consult = cheapestOfType('tele') ?? cheapestOfType('clinic');
+  const home = cheapestOfType('home');
+  return {
+    ...v,
+    consultFeeKobo: consult?.priceKobo ?? v.consultFeeKobo,
+    homeVisitFeeKobo: home?.priceKobo ?? v.homeVisitFeeKobo,
+  };
+}
+
+/** GET /vets/:providerId/services — the priced menu a pet owner picks from before booking. */
+export async function getVetServices(providerId: string): Promise<VetService[]> {
+  if (USE_MOCK) {
+    await delay();
+    const vet = MOCK_VETS.find((v) => v.id === providerId);
+    if (!vet) return [];
+    const MOCK_SERVICE_NAME: Record<AppointmentType, string> = { tele: 'Tele-consult', home: 'Home visit', clinic: 'Clinic visit' };
+    return vet.types.map((t) => ({
+      id: `svc_${providerId}_${t}`,
+      providerId,
+      code: t.toUpperCase(),
+      name: MOCK_SERVICE_NAME[t],
+      visitType: t,
+      priceKobo: t === 'home' ? vet.consultFeeKobo + vet.homeVisitFeeKobo : vet.consultFeeKobo,
+      active: true,
+    }));
+  }
+  const { data } = await api.get<{ services: GoVetService[] }>(`${VET_API}/vets/${providerId}/services`);
+  return (data.services ?? []).map(vetServiceFromGo);
 }
 
 export async function getAvailability(vetId: string): Promise<AvailabilityDay[]> {
@@ -767,14 +814,28 @@ export async function createAppointment(input: CreateAppointmentInput): Promise<
     MOCK_APPOINTMENTS = [appt, ...MOCK_APPOINTMENTS];
     return appt;
   }
-  // POST /appointments (Book) requires a service_id — Go prices the appointment
-  // server-side from a governed VetService row, never from a client-sent fee
-  // (BookInput has no fee fields at all). There is no member-facing endpoint to
-  // list a provider's priced services (POST /services is create/update-only,
-  // vet-side), so this screen has no legal way to obtain a service_id to book
-  // against — booking needs a new "list services for a vet" endpoint before it
-  // can go live, not just a URL fix.
-  return notOnBackend('Booking an appointment');
+  // POST /appointments (Book) prices the appointment server-side from the
+  // pinned service (input.serviceId) — feeKobo/homeVisitFeeKobo above are
+  // display-only. Book also requires an explicit slot_end (a time range, not
+  // just a start); there is no slot-duration model in AvailabilitySlot yet, so
+  // a fixed per-type duration is used as the best available approximation.
+  const durationMin = input.type === 'home' ? 45 : 30;
+  const start = new Date(input.scheduledFor);
+  const end = new Date(start.getTime() + durationMin * 60_000);
+  const { data } = await api.post<{ appointment: GoAppointment }>(
+    `${VET_API}/appointments`,
+    {
+      provider_id: input.vetId,
+      pet_id: input.petId,
+      service_id: input.serviceId,
+      visit_type: input.type.toUpperCase(),
+      slot_start: start.toISOString(),
+      slot_end: end.toISOString(),
+      idempotency_key: input.idempotencyKey,
+    },
+    { headers: { 'Idempotency-Key': input.idempotencyKey } },
+  );
+  return appointmentFromGo(data.appointment);
 }
 
 export async function rescheduleAppointment(input: RescheduleInput): Promise<Appointment> {

@@ -94,6 +94,17 @@ func (h *Handler) DiscoverVets(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"success": true, "vets": vets})
 }
 
+// ListServices — GET /vets/:providerId/services  (public menu; a pet owner picks
+// one of these before booking — see Book, which requires a service_id)
+func (h *Handler) ListServices(c *gin.Context) {
+	services, err := h.svc.ListServicesForProvider(c.Request.Context(), c.Param("providerId"))
+	if err != nil {
+		fail(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "services": services})
+}
+
 // UpsertService — POST /services  (verified vet owner; fee governance, HL-2)
 func (h *Handler) UpsertService(c *gin.Context) {
 	id := uid(c)
