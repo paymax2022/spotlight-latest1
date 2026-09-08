@@ -21,6 +21,8 @@ import (
 	"spotlight/backend/internal/finance/ledger"
 	"spotlight/backend/internal/finance/settlement"
 	"spotlight/backend/internal/finance/tiers"
+
+	"spotlight/backend/internal/testsupport"
 )
 
 func schedPool(t *testing.T) *pgxpool.Pool {
@@ -41,7 +43,7 @@ func schedPool(t *testing.T) *pgxpool.Pool {
 
 func TestLiveDB_ScheduledAndGroup(t *testing.T) {
 	pool := schedPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	led := ledger.NewService(ledger.NewRepository(pool), (*goredis.Client)(nil))
 	svc := NewService(pool, settlement.NewService(pool, led)).WithLedger(led).WithTiers(tiers.NewService(pool))
@@ -51,6 +53,7 @@ func TestLiveDB_ScheduledAndGroup(t *testing.T) {
 	friend := uuid.New().String()
 	for _, u := range []string{owner, host, friend} {
 		_, _ = pool.Exec(ctx, `INSERT INTO auth.users (id,email) VALUES ($1,$2) ON CONFLICT DO NOTHING`, u, u+"@seed.test")
+		testsupport.CleanupUser(t, pool, u)
 	}
 	// The host pays for the finalized group order, and that escrow is tier-gated
 	// (fail-closed). Tier 3 is unlimited — this test is about the group flow, not caps.

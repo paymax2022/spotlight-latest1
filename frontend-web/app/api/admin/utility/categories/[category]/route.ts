@@ -2,7 +2,8 @@ import { successResponse, handleApiError } from '@/src/lib/api/responses';
 import { adminUpdateUtilityRow } from '@/src/server/utility/service';
 import { auditUtilityAdminAction, requireUtilityManager, utilityAdminUnavailableResponse } from '../../_utils';
 
-export async function PATCH(request: Request, { params }: { params: { category: string } }) {
+export async function PATCH(request: Request, ctx: { params: Promise<{ category: string }> }) {
+  const params = await ctx.params;
   const unavailable = utilityAdminUnavailableResponse();
   if (unavailable) return unavailable;
 

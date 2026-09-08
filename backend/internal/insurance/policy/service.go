@@ -40,6 +40,11 @@ type Service struct {
 
 	// quoteTTL caps how long a cached/issued quote is valid.
 	quoteTTL time.Duration
+	// float is the provider prefunded-wallet breaker. Optional (nil-safe).
+	float *catalog.FloatService
+	// binds is the OUTBOUND idempotency register. MyCover offers no idempotency
+	// of its own, so this is what stops a retry buying a second policy.
+	binds *BindRegistry
 }
 
 // Deps bundles the service dependencies.
@@ -53,6 +58,13 @@ type Deps struct {
 	Notifier Notifier
 	Auditor  Auditor
 	QuoteTTL time.Duration
+	// Float is the provider prefunded-wallet breaker. Optional: when nil the
+	// saga still auto-reverses, it just loses the stampede brake.
+	Float *catalog.FloatService
+	// Binds is the outbound purchase idempotency register. Unlike Float this is
+	// NOT optional in effect: without it a retried bind can double-purchase, so
+	// the saga refuses to call the provider when it is absent.
+	Binds *BindRegistry
 }
 
 // NewService constructs the policy service.
@@ -71,6 +83,8 @@ func NewService(d Deps) *Service {
 		notify:   d.Notifier,
 		audit:    d.Auditor,
 		quoteTTL: ttl,
+		float:    d.Float,
+		binds:    d.Binds,
 	}
 }
 
@@ -95,6 +109,11 @@ type QuoteResult struct {
 	ProviderQuoteRef string         `json:"provider_quote_ref"`
 	ExpiresAt        time.Time      `json:"expires_at"`
 	Terms            map[string]any `json:"terms,omitempty"`
+	// Inputs are the product-specific answers captured at quote time. They are
+	// replayed verbatim on bind because per-product provider purchase endpoints
+	// validate the full field set. They contain member PII and are NEVER
+	// serialised to the client — the json tag is "-" deliberately.
+	Inputs map[string]any `json:"-"`
 }
 
 // CreateQuote is the thin quote engine: route → provider quote → normalise →
@@ -113,14 +132,15 @@ func (s *Service) CreateQuote(ctx context.Context, userID, productCode string, s
 	if err != nil {
 		return nil, err
 	}
-	gw, providerProductCode, err := s.router.Resolve(ctx, productCode)
+	gw, providerProduct, err := s.router.Resolve(ctx, productCode)
 	if err != nil {
 		return nil, err
 	}
 
 	currency := "NGN"
 	q, err := gw.GetQuote(ctx, gateway.QuoteRequest{
-		ProviderProductCode: providerProductCode,
+		ProviderProductCode: providerProduct.Code,
+		Product:             providerProduct,
 		Currency:            currency,
 		SumInsuredKobo:      sumInsuredKobo,
 		Inputs:              inputs,
@@ -138,7 +158,7 @@ func (s *Service) CreateQuote(ctx context.Context, userID, productCode string, s
 		underwriter = prod.UnderwriterDisplay // provider-sourced display fallback
 	}
 
-	quoteID, err := s.repo.insertQuote(ctx, userID, productCode, prod.Provider, q, expires)
+	quoteID, err := s.repo.insertQuote(ctx, userID, productCode, prod.Provider, q, inputs, expires)
 	if err != nil {
 		return nil, err
 	}
@@ -228,6 +248,29 @@ func (s *Service) BindFromQuote(ctx context.Context, userID, quoteID, idempotenc
 		return nil, err
 	}
 
+	// (2b) PROVIDER FLOAT BREAKER — checked BEFORE any money moves.
+	//
+	// MyCover settles binds against a PREFUNDED distributor wallet, not a
+	// per-transaction charge. When that float empties, every bind fails at once.
+	// The auto-reverse below would still make each individual member whole, but
+	// debiting and reversing every member in the queue is an incident, not a
+	// recovery — each one watches money leave their wallet for cover that was
+	// never going to be issued.
+	//
+	// So once the provider has told us the float is empty, refuse here, before
+	// the debit, until an operator tops it up. No money moves and the member gets
+	// a truthful "temporarily unavailable" instead of a debit-and-refund.
+	if s.float != nil {
+		if fErr := s.float.Guard(ctx, qr.Provider); fErr != nil {
+			_ = s.transition(ctx, p, StatePaymentFailed)
+			_ = s.transition(ctx, p, StateVoid)
+			s.auditSafe(ctx, userID, "insurance.bind_blocked_provider_float", map[string]any{
+				"policy_id": p.ID, "provider": qr.Provider,
+			})
+			return p, fErr
+		}
+	}
+
 	// (3) Idempotent premium debit → AccountProviderClearing (pass-through).
 	clearing, err := s.ledger.GetOrCreateStandingAccount(ctx, ledger.AccountProviderClearing)
 	if err != nil {
@@ -256,21 +299,79 @@ func (s *Service) BindFromQuote(ctx context.Context, userID, quoteID, idempotenc
 	}
 
 	// (4) Bind at the provider (idempotent on idempotencyKey).
-	gw, providerProductCode, err := s.router.Resolve(ctx, qr.ProductCode)
+	gw, providerProduct, err := s.router.Resolve(ctx, qr.ProductCode)
 	if err != nil {
 		return s.autoReverse(ctx, p, idempotencyKey, premiumRef, clearing.ID, err)
 	}
+	// ── OUTBOUND IDEMPOTENCY ──────────────────────────────────────────────
+	// MyCover documents no idempotency mechanism on its purchase endpoint, so a
+	// retry would create a SECOND policy and debit our float twice. Claim the key
+	// before the call: the claim is an INSERT on a unique key, so a replay or a
+	// concurrent attempt cannot reach the provider at all.
+	//
+	// This fails CLOSED. A refused purchase is recoverable; a duplicate one is
+	// not, so the saga will not call the provider without the guard in place.
+	claim, claimErr := s.binds.Claim(ctx, idempotencyKey, qr.Provider, qr.ProductCode, p.ID)
+	if claimErr != nil {
+		return s.autoReverse(ctx, p, idempotencyKey, premiumRef, clearing.ID, claimErr)
+	}
+	if !claim.Fresh {
+		// This exact purchase already went through. Return the SAME policy rather
+		// than buying a second one — that is what idempotency means here.
+		log.Printf("[insurance] bind replay for key %s — returning the existing provider policy %s",
+			idempotencyKey, claim.ProviderPolicyRef)
+		if err := s.repo.SetBound(ctx, p.ID, claim.ProviderPolicyRef, qr.Underwriter, qr.CommissionKobo, nil, nil, nil, p.Version); err != nil {
+			return nil, fmt.Errorf("policy: bind replay persist: %w", err)
+		}
+		return s.repo.Get(ctx, p.ID)
+	}
+
 	bound, bindErr := gw.BindPolicy(ctx, gateway.BindRequest{
-		ProviderProductCode: providerProductCode,
+		ProviderProductCode: providerProduct.Code,
+		Product:             providerProduct,
 		ProviderQuoteRef:    qr.ProviderQuoteRef,
 		Currency:            qr.Currency,
 		SumInsuredKobo:      qr.SumInsuredKobo,
 		PremiumKobo:         qr.PremiumKobo,
 		PolicyholderRef:     "ph:" + p.ID, // opaque ref, NOT the auth user id
 		IdempotencyKey:      idempotencyKey,
+		// Replay the quote-time answers: per-product provider purchase endpoints
+		// validate the FULL field set, so a bind with no inputs is rejected.
+		Inputs: qr.Inputs,
 	})
 	if bindErr != nil {
+		// Release or lock the idempotency key according to WHAT WE KNOW.
+		//
+		// A provider REJECTION (validation, empty float) is a definite negative:
+		// nothing was created, so the key is released and a retry is safe. A
+		// TRANSPORT error is not — the request may or may not have been
+		// processed, and the error does not say. That outcome is recorded as
+		// unknown and locked, because retrying might buy a second policy and
+		// giving up might strand the member. It needs reconciliation, not a guess.
+		if providerAnswered(bindErr) {
+			s.binds.Failed(ctx, idempotencyKey, bindErr.Error())
+		} else {
+			s.binds.Unknown(ctx, idempotencyKey, bindErr.Error())
+		}
+
+		// An empty provider float is a TREASURY outage, not this member's fault.
+		// Trip the breaker so the next member is refused before their money moves,
+		// then auto-reverse this one — they are already debited and must be made
+		// whole regardless.
+		if s.float != nil && errors.Is(bindErr, gateway.ErrProviderFloatExhausted) {
+			s.float.RecordFloatExhausted(ctx, qr.Provider, bindErr.Error())
+			s.auditSafe(ctx, userID, "insurance.provider_float_exhausted", map[string]any{
+				"policy_id": p.ID, "provider": qr.Provider,
+			})
+		}
 		return s.autoReverse(ctx, p, idempotencyKey, premiumRef, clearing.ID, bindErr)
+	}
+	s.binds.Succeeded(ctx, idempotencyKey, bound.ProviderPolicyRef, bound.PremiumKobo)
+
+	// A bind that went through is PROOF the float has money in it — the only
+	// evidence-based way back to "ok".
+	if s.float != nil {
+		s.float.RecordBindSucceeded(ctx, qr.Provider)
 	}
 
 	// SUCCESS: record provider ref + disclosure + cert; move to ACTIVE.
@@ -472,4 +573,34 @@ func (s *Service) notifySafe(ctx context.Context, userID, kind, message string) 
 	if s.notify != nil {
 		s.notify.Notify(ctx, userID, kind, message)
 	}
+}
+
+// providerAnswered reports whether a bind error represents a DEFINITE provider
+// rejection (the provider replied and refused) as opposed to a transport failure
+// where the outcome is genuinely unknown.
+//
+// This distinction decides whether a retry is safe, so it is deliberately
+// conservative: only errors we can positively identify as provider replies count
+// as answered. Anything unrecognised — a timeout, a reset connection, a context
+// deadline — is treated as UNKNOWN, which locks the idempotency key for
+// reconciliation instead of authorising a possible double purchase.
+func providerAnswered(err error) bool {
+	if err == nil {
+		return false
+	}
+	// Adapters wrap ErrProviderRejected around every error they KNOW was a reply
+	// — a validation 4xx, an empty float, an unsupported operation — and around
+	// their own pre-flight refusals, which never reached the provider at all.
+	// Either way nothing was created, so a retry is safe.
+	//
+	// Everything else (timeout, reset connection, context deadline) falls
+	// through to false and is treated as an UNKNOWN outcome. Silence is never
+	// read as success or as failure.
+	if errors.Is(err, gateway.ErrProviderRejected) {
+		return true
+	}
+	if errors.Is(err, gateway.ErrNoProvider) {
+		return true
+	}
+	return false
 }

@@ -2,6 +2,7 @@ import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
 import { Spacing } from '@/constants/spacing';
@@ -23,7 +24,7 @@ export default function RoleSwitcher() {
   const { data, isLoading, isError, refetch } = useRoleContext();
   const setRole = useSetActiveRole();
 
-  const close = () => { if (router.canGoBack()) router.back(); else router.replace('/referral/(tabs)/home'); };
+  const close = () => { if (router.canGoBack()) goBack('/referral'); else router.replace('/referral/(tabs)/home'); };
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>

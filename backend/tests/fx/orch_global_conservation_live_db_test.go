@@ -93,7 +93,7 @@ func orchGlobalResiduals(t *testing.T, ctx context.Context, pool *pgxpool.Pool) 
 func TestOrchGlobalConservation_EveryCurrencyBalances(t *testing.T) {
 	ctx := context.Background()
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 
 	residuals := orchGlobalResiduals(t, ctx, pool)
 	if len(residuals) == 0 {
@@ -120,7 +120,7 @@ func TestOrchGlobalConservation_EveryCurrencyBalances(t *testing.T) {
 func TestOrchGlobalConservation_CheckViewAgrees(t *testing.T) {
 	ctx := context.Background()
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 
 	want := map[string]int64{}
 	for _, r := range orchGlobalResiduals(t, ctx, pool) {

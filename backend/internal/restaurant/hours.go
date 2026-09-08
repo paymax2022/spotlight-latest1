@@ -160,7 +160,7 @@ func validateAndNormalize(in []BusinessHourInput) ([]BusinessHour, error) {
 // transaction — an idempotent PUT. Passing an empty list clears the schedule (the
 // restaurant reverts to being governed solely by its is_open switch).
 func (s *Service) SetBusinessHours(ctx context.Context, restaurantID, userID string, in []BusinessHourInput) ([]BusinessHour, error) {
-	if err := s.assertOwner(ctx, restaurantID, userID); err != nil {
+	if err := s.AssertStaffPermission(ctx, restaurantID, userID, PermManageStore); err != nil {
 		return nil, err
 	}
 	normalized, err := validateAndNormalize(in)

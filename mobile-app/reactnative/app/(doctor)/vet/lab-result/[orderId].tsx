@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { View, Text, ScrollView, StyleSheet, Pressable, Modal, TextInput } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import { ArrowDown, ArrowUp, Minus, Sparkles, FlaskConical, AlertTriangle, FileText, X, Check } from 'lucide-react-native';
 import type { LucideIcon } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
@@ -40,7 +41,7 @@ export default function PetLabResultScreen() {
     try {
       await markReviewed.mutateAsync({ resultId: result.id });
       await alertAsync({ title: 'Marked as reviewed', message: 'This result has been marked as reviewed.' });
-      router.back();
+      goBack('/vet');
     } catch {
       alertAsync({ title: 'Failed', message: 'Please try again.' });
     }

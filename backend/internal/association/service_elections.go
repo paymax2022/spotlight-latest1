@@ -135,6 +135,9 @@ func (s *Service) requireElectionOfficer(ctx context.Context, userID, orgID stri
 	if orgID == "" {
 		return ErrForbidden
 	}
+	if s.isPlatformSuperAdmin(ctx, userID) {
+		return nil
+	}
 	var n int
 	if err := s.db.QueryRow(ctx, `
 		SELECT count(*) FROM assoc_member_roles r
@@ -172,9 +175,12 @@ func parseTimePtr(iso *string) *time.Time {
 
 // ─── officer: create / candidates / lifecycle ─────────────────────────────────
 
-// CreateElection creates a DRAFT election with its positions in the officer's org.
-func (s *Service) CreateElection(ctx context.Context, userID string, in CreateElectionInput) (string, error) {
-	_, orgID, err := s.primaryMembership(ctx, userID)
+// CreateElection creates a DRAFT election with its positions in the resolved
+// org (see resolveOrgID — orgIDOverride is the admin console's org picker;
+// empty falls back to the caller's own primary membership, unchanged for a
+// real officer using the mobile in-app admin surface).
+func (s *Service) CreateElection(ctx context.Context, userID, orgIDOverride string, in CreateElectionInput) (string, error) {
+	orgID, err := s.resolveOrgID(ctx, userID, orgIDOverride)
 	if err != nil {
 		return "", err
 	}
@@ -559,10 +565,28 @@ func (s *Service) PublishResults(ctx context.Context, userID, electionID string)
 
 // ─── voter-facing reads ───────────────────────────────────────────────────────
 
-func (s *Service) ListElections(ctx context.Context, userID string) ([]ElectionSummary, error) {
-	_, orgID, err := s.primaryMembership(ctx, userID)
-	if err != nil {
-		return nil, err
+// ListElections is voter-facing: any member (not just an officer) may list
+// their own org's elections to vote in them. orgIDOverride is the admin
+// console's org picker — authorized via resolveOrgID (platform super-admin,
+// or a real admin role specifically IN that org). An empty override keeps
+// the original primaryMembership fallback untouched: a real member with no
+// admin role at all could always list their own org's elections, and
+// resolveOrgID's fallback (assoc_member_roles, admin roles only) would
+// wrongly exclude them.
+func (s *Service) ListElections(ctx context.Context, userID, orgIDOverride string) ([]ElectionSummary, error) {
+	var orgID string
+	if orgIDOverride != "" {
+		var err error
+		orgID, err = s.resolveOrgID(ctx, userID, orgIDOverride)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		var err error
+		_, orgID, err = s.primaryMembership(ctx, userID)
+		if err != nil {
+			return nil, err
+		}
 	}
 	rows, err := s.db.Query(ctx, `
 		SELECT e.id, e.title, e.status, e.voting_opens_at::text, e.voting_closes_at::text,
@@ -731,6 +755,9 @@ type HandoverResult struct {
 func (s *Service) requireSeniorOfficer(ctx context.Context, userID, orgID string) error {
 	if orgID == "" {
 		return ErrForbidden
+	}
+	if s.isPlatformSuperAdmin(ctx, userID) {
+		return nil
 	}
 	var n int
 	if err := s.db.QueryRow(ctx, `

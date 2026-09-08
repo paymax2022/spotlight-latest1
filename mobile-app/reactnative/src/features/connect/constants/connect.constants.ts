@@ -1,3 +1,4 @@
+import { mockAllowed } from '@/config/mockPolicy';
 import { Colors } from '@/constants/colors';
 import { getDevUrl } from '@/lib/devUrl';
 import type { TierBenefit } from '../types/connect.types';
@@ -5,7 +6,7 @@ import type { TierBenefit } from '../types/connect.types';
 // Flip to false once the live Go-backend /connect endpoints are reachable from
 // the app (or set EXPO_PUBLIC_CONNECT_USE_MOCK=false). Mirrors the visitor/realtor
 // mock-first convention.
-export const USE_MOCK = (process.env.EXPO_PUBLIC_CONNECT_USE_MOCK ?? 'true') !== 'false';
+export const USE_MOCK = mockAllowed(process.env.EXPO_PUBLIC_CONNECT_USE_MOCK, true);
 
 // Connect talks DIRECTLY to the Go backend, bypassing the frontend-web :3000
 // gateway so the app does NOT depend on that server being up. The shared axios

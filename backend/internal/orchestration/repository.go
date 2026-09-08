@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"sort"
+	"strings"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -24,38 +26,60 @@ func NewSQLStore(db *pgxpool.Pool) Store { return &sqlStore{db: db} }
 func feesJSON(fees []Fee) string         { b, _ := json.Marshal(fees); return string(b) }
 func historyJSON(h []StatusEvent) string { b, _ := json.Marshal(h); return string(b) }
 
+// Balance reads ONE currency's spendable balance from whichever pot holds it —
+// the main platform ledger for NGN, orch_balances otherwise. All the routing
+// lives in customer_wallet.go so a read and a write can never disagree.
 func (s *sqlStore) Balance(ctx context.Context, customer, currency string) (int64, error) {
-	var bal int64
-	err := s.db.QueryRow(ctx, `SELECT balance_minor FROM orch_balances WHERE customer_id=$1 AND currency=$2`, customer, currency).Scan(&bal)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return 0, nil
-	}
-	return bal, err
+	return customerBalance(ctx, s.db, customer, currency)
 }
 
+// Balances lists every wallet the customer holds, main-ledger NGN included (and
+// always present, even at zero, so the FX screen can render a funding CTA).
 func (s *sqlStore) Balances(ctx context.Context, customer string) ([]Money, error) {
-	rows, err := s.db.Query(ctx, `SELECT currency, balance_minor FROM orch_balances WHERE customer_id=$1 ORDER BY currency`, customer)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var out []Money
-	for rows.Next() {
-		var m Money
-		if err := rows.Scan(&m.Currency, &m.AmountMinor); err != nil {
-			return nil, err
-		}
-		out = append(out, m)
-	}
-	return out, rows.Err()
+	return customerBalances(ctx, s.db, customer)
 }
 
-func (s *sqlStore) SeedBalance(ctx context.Context, customer, currency string, amt int64) error {
+// OpenWallet makes a currency visible to the customer at a zero balance so the
+// wallet survives a refetch. Previously the endpoint fabricated an
+// {available: 0} response and persisted nothing, so a newly "added" wallet
+// vanished on the next load and there was no way to hold a non-NGN currency.
+//
+// NGN is a no-op: its wallet is the main ledger account, created on demand.
+func (s *sqlStore) OpenWallet(ctx context.Context, customer, currency string) error {
+	cur := strings.ToUpper(strings.TrimSpace(currency))
+	if isMainLedgerCurrency(cur) {
+		_, _, err := mainWalletAccountID(ctx, s.db, customer)
+		return err
+	}
 	_, err := s.db.Exec(ctx, `
-		INSERT INTO orch_balances (customer_id, currency, balance_minor) VALUES ($1,$2,$3)
-		ON CONFLICT (customer_id, currency) DO UPDATE SET balance_minor = orch_balances.balance_minor + EXCLUDED.balance_minor, updated_at = now()`,
-		customer, currency, amt)
+		INSERT INTO orch_balances (customer_id, currency, balance_minor) VALUES ($1,$2,0)
+		ON CONFLICT (customer_id, currency) DO NOTHING`, customer, cur)
 	return err
+}
+
+// SeedBalance credits an opening balance (dev/onboarding helper). It routes
+// through the same pot selector as real money so that "seed then convert" keeps
+// working end to end — seeding NGN into orch_balances while conversions spend
+// the main ledger would make every seeded fixture unspendable.
+func (s *sqlStore) SeedBalance(ctx context.Context, customer, currency string, amt int64) error {
+	if amt <= 0 {
+		return NewError(ErrInvalidRequest, "invalid_amount", "Seed amount must be a positive minor-unit value.")
+	}
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	if err := lockCustomerWallet(ctx, tx, customer); err != nil {
+		return err
+	}
+	// Seeding twice credits twice — matching the additive behaviour this helper
+	// has always had — so the idempotency key must be unique per call.
+	idem := "seed:" + customer + ":" + strings.ToUpper(currency) + ":" + uuid.NewString()
+	if err := creditCustomerWallet(ctx, tx, customer, currency, amt, "fx-seed:"+customer, idem); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
 // entryLeg is one side of a double-entry posting into orch_ledger_entries. The
@@ -106,25 +130,19 @@ func (s *sqlStore) ApplyConversion(ctx context.Context, c *Conversion, sourceTot
 	}
 	defer tx.Rollback(ctx)
 
-	var bal int64
-	err = tx.QueryRow(ctx, `SELECT balance_minor FROM orch_balances WHERE customer_id=$1 AND currency=$2 FOR UPDATE`, c.CustomerID, c.Source.Currency).Scan(&bal)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return NewError(ErrInsufficientBalance, "insufficient_balance", "Insufficient "+c.Source.Currency+" balance.")
-	}
-	if err != nil {
+	// One advisory lock, taken FIRST and before any row lock, so concurrent FX
+	// conversions and wallet transfers for this customer serialise instead of
+	// both reading a pre-debit balance (see lockCustomerWallet).
+	if err = lockCustomerWallet(ctx, tx, c.CustomerID); err != nil {
 		return err
 	}
-	if bal < sourceTotalMinor {
-		return NewError(ErrInsufficientBalance, "insufficient_balance", "Insufficient "+c.Source.Currency+" balance.")
-	}
-
-	if _, err = tx.Exec(ctx, `UPDATE orch_balances SET balance_minor = balance_minor - $3, updated_at=now() WHERE customer_id=$1 AND currency=$2`, c.CustomerID, c.Source.Currency, sourceTotalMinor); err != nil {
+	// Debit source / credit destination through the pot selector: NGN moves in
+	// the main ledger, every other currency in orch_balances. The sufficiency
+	// check happens inside the debit, under this lock, in this transaction.
+	if err = debitCustomerWallet(ctx, tx, c.CustomerID, c.Source.Currency, sourceTotalMinor, c.Reference, c.IdempotencyKey+":src"); err != nil {
 		return err
 	}
-	if _, err = tx.Exec(ctx, `
-		INSERT INTO orch_balances (customer_id, currency, balance_minor) VALUES ($1,$2,$3)
-		ON CONFLICT (customer_id, currency) DO UPDATE SET balance_minor = orch_balances.balance_minor + EXCLUDED.balance_minor, updated_at=now()`,
-		c.CustomerID, c.Destination.Currency, c.Destination.AmountMinor); err != nil {
+	if err = creditCustomerWallet(ctx, tx, c.CustomerID, c.Destination.Currency, c.Destination.AmountMinor, c.Reference, c.IdempotencyKey+":dst"); err != nil {
 		return err
 	}
 
@@ -170,15 +188,12 @@ func (s *sqlStore) ApplyTransfer(ctx context.Context, t *Transfer, sourceTotalMi
 	}
 	defer tx.Rollback(ctx)
 
-	var bal int64
-	err = tx.QueryRow(ctx, `SELECT balance_minor FROM orch_balances WHERE customer_id=$1 AND currency=$2 FOR UPDATE`, t.CustomerID, t.Source.Currency).Scan(&bal)
-	if errors.Is(err, pgx.ErrNoRows) || (err == nil && bal < sourceTotalMinor) {
-		return NewError(ErrInsufficientBalance, "insufficient_balance", "Insufficient "+t.Source.Currency+" balance.")
-	}
-	if err != nil {
+	if err = lockCustomerWallet(ctx, tx, t.CustomerID); err != nil {
 		return err
 	}
-	if _, err = tx.Exec(ctx, `UPDATE orch_balances SET balance_minor = balance_minor - $3, updated_at=now() WHERE customer_id=$1 AND currency=$2`, t.CustomerID, t.Source.Currency, sourceTotalMinor); err != nil {
+	// Payout funding goes through the same pot selector as a conversion, so a
+	// NGN payout draws down the wallet the rest of the app shows.
+	if err = debitCustomerWallet(ctx, tx, t.CustomerID, t.Source.Currency, sourceTotalMinor, t.Reference, t.IdempotencyKey+":out"); err != nil {
 		return err
 	}
 	// Double-entry, balanced within the source currency (ADR-029). A payout only ever
@@ -256,11 +271,116 @@ func (s *sqlStore) TransferByIdem(ctx context.Context, key string) (*Transfer, b
 
 func (s *sqlStore) SaveCollection(ctx context.Context, va *VirtualAccount) error {
 	details, _ := json.Marshal(va.Details)
+	ref := strings.TrimSpace(va.ProviderRef)
+	if ref == "" {
+		// Older adapters put the handle only in details; keep the column populated
+		// so every account stays matchable by an inbound webhook.
+		if n, ok := va.Details["account_number"].(string); ok {
+			ref = n
+		}
+	}
+	var providerRef *string
+	if ref != "" {
+		providerRef = &ref
+	}
 	_, err := s.db.Exec(ctx, `
-		INSERT INTO orch_collections (id, customer_id, currency, type, provider, status, details, created_at)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
-		va.ID, va.CustomerID, va.Currency, va.Type, va.Provider, va.Status, string(details), va.CreatedAt)
+		INSERT INTO orch_collections (id, customer_id, currency, type, provider, status, details, provider_ref, created_at)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+		va.ID, va.CustomerID, va.Currency, va.Type, va.Provider, va.Status, string(details), providerRef, va.CreatedAt)
 	return err
+}
+
+// VirtualAccountByProviderRef finds the virtual account an inbound deposit was
+// paid into, by the handle the provider quotes back in its webhook.
+//
+// ok=false means the deposit does not match anything we provisioned. The caller
+// MUST NOT credit in that case — an unmatched reference has no owner and no
+// currency, and guessing either is how orphan credits happen (QA WH-INT-003).
+func (s *sqlStore) VirtualAccountByProviderRef(ctx context.Context, provider, ref string) (*VirtualAccount, bool, error) {
+	ref = strings.TrimSpace(ref)
+	if ref == "" {
+		return nil, false, nil
+	}
+	va := &VirtualAccount{}
+	var detailsB []byte
+	// Matched on the dedicated column first, then on the legacy jsonb key, so
+	// accounts provisioned before the backfill still resolve.
+	err := s.db.QueryRow(ctx, `
+		SELECT id, customer_id, currency, type, provider, status, details, COALESCE(provider_ref,''), created_at
+		FROM orch_collections
+		WHERE provider=$1 AND (provider_ref=$2 OR details->>'account_number'=$2)
+		ORDER BY created_at DESC LIMIT 1`, provider, ref).Scan(
+		&va.ID, &va.CustomerID, &va.Currency, &va.Type, &va.Provider, &va.Status, &detailsB, &va.ProviderRef, &va.CreatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	_ = json.Unmarshal(detailsB, &va.Details)
+	return va, true, nil
+}
+
+// ApplyCollection credits an inbound deposit into the customer's wallet and
+// records it, atomically. Returns applied=false for a redelivered webhook.
+//
+// Idempotency is the unique (provider, provider_event_id) index: the event row
+// is inserted FIRST with ON CONFLICT DO NOTHING, and a zero row count means this
+// deposit was already credited, so the transaction commits without moving money.
+// The wallet lock is taken before that, so two concurrent redeliveries serialise
+// rather than racing between the check and the credit.
+func (s *sqlStore) ApplyCollection(ctx context.Context, c *CollectionCredit) (bool, error) {
+	if c.AmountMinor <= 0 {
+		return false, NewError(ErrInvalidRequest, "invalid_amount", "Collection amount must be a positive minor-unit value.")
+	}
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback(ctx)
+
+	if err = lockCustomerWallet(ctx, tx, c.CustomerID); err != nil {
+		return false, err
+	}
+
+	var nullable = func(v string) *string {
+		if strings.TrimSpace(v) == "" {
+			return nil
+		}
+		return &v
+	}
+	tag, err := tx.Exec(ctx, `
+		INSERT INTO orch_collection_events
+			(id, customer_id, virtual_account_id, currency, amount_minor, provider, provider_event_id, provider_ref, sender_name, reference, created_at)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+		ON CONFLICT (provider, provider_event_id) DO NOTHING`,
+		c.ID, c.CustomerID, c.VirtualAccountID, strings.ToUpper(c.Currency), c.AmountMinor,
+		c.Provider, c.ProviderEventID, nullable(c.ProviderRef), nullable(c.SenderName), nullable(c.Reference), c.CreatedAt)
+	if err != nil {
+		return false, err
+	}
+	if tag.RowsAffected() == 0 {
+		return false, tx.Commit(ctx) // already credited — a redelivery, not an error
+	}
+
+	// Credit through the same pot selector as every other FX money path: NGN
+	// lands in the main platform ledger, other currencies in orch_balances.
+	if err = creditCustomerWallet(ctx, tx, c.CustomerID, c.Currency, c.AmountMinor, "fx-collection:"+c.ID, c.ID); err != nil {
+		return false, err
+	}
+
+	// Double-entry, balanced within the credited currency (ADR-029). The deposit
+	// arrives out of the provider's float, so provider_clearing is the counter-leg:
+	//   DR provider_clearing  amount
+	//   CR customer_balance   amount
+	legs := []entryLeg{
+		{"provider_clearing", c.Currency, "DEBIT", c.AmountMinor, ":in-clearing"},
+		{"customer_balance", c.Currency, "CREDIT", c.AmountMinor, ":in"},
+	}
+	if err = postLedgerLegs(ctx, tx, c.CustomerID, c.ID, c.ID, legs); err != nil {
+		return false, err
+	}
+	return true, tx.Commit(ctx)
 }
 
 func (s *sqlStore) SaveQuote(ctx context.Context, q *Quote) error {
@@ -311,17 +431,42 @@ func (s *sqlStore) Transactions(ctx context.Context, customer string) ([]TxView,
 	}
 	tr.Close()
 
-	col, err := s.db.Query(ctx, `SELECT id, currency, status, created_at FROM orch_collections WHERE customer_id=$1`, customer)
+	// Inbound DEPOSITS, from orch_collection_events.
+	//
+	// This used to list orch_collections — one row per virtual ACCOUNT, which is
+	// not a transaction: it had no amount, and it left Destination.Currency as "".
+	// The mobile TransactionRow formats that leg through CURRENCIES[currency], so
+	// an empty code was `undefined.decimals` and the resulting crash blanked the
+	// WHOLE FX screen for any customer who had ever provisioned an account. It
+	// also emitted the account's "active" as a status, which is not a member of
+	// the client's TxStatus union.
+	//
+	// A deposit is money arriving 1:1 — no conversion — so both legs carry the
+	// same amount and currency.
+	col, err := s.db.Query(ctx, `
+		SELECT id, COALESCE(reference,''), currency, amount_minor, provider, COALESCE(sender_name,''), created_at
+		FROM orch_collection_events WHERE customer_id=$1`, customer)
 	if err != nil {
 		return nil, err
 	}
 	for col.Next() {
 		var v TxView
-		if err := col.Scan(&v.ID, &v.Source.Currency, &v.Status, &v.CreatedAt); err != nil {
+		var currency, sender string
+		var amount int64
+		if err := col.Scan(&v.ID, &v.Reference, &currency, &amount, &v.Route.Provider, &sender, &v.CreatedAt); err != nil {
 			col.Close()
 			return nil, err
 		}
-		v.Reference, v.Type, v.Title = v.ID, "collection", "Collection account · "+v.Source.Currency
+		if v.Reference == "" {
+			v.Reference = v.ID
+		}
+		v.Type, v.Direction, v.Status = "collection", "in", "successful"
+		v.Source = NewMoney(amount, currency)
+		v.Destination = NewMoney(amount, currency)
+		v.Title = "Deposit · " + currency
+		if sender != "" {
+			v.Title = "Deposit from " + sender
+		}
 		out = append(out, v)
 	}
 	col.Close()

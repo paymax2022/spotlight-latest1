@@ -5,6 +5,8 @@ import { getCreatorsDashboard, formatNaira } from '@/services/creatorsAdminServi
 import type { CreatorsDashboard } from '@/types/creatorsAdmin';
 import { PageHeader, CreatorsTabs, Card, Kpi, Badge, DisclosureNote, StateBlock, btn, th, td, timeAgo, pct } from '../_ui';
 import { colors } from '@/components/ui/vuexy';
+import { FixtureBanner } from '../../_shared/ui';
+import { USE_MOCK, USE_MOCK_ENV } from '@/services/creatorsAdminService';
 
 export default function CreatorsDashboardPage() {
   const [data, setData] = useState<CreatorsDashboard | null>(null);
@@ -28,6 +30,7 @@ export default function CreatorsDashboardPage() {
         subtitle="Creator earnings (tips, subscriptions, gated content), payout liability, moderation backlog and abuse signals across the Creator storefront rails."
         action={<button onClick={load} style={btn()}>Refresh</button>}
       />
+      <FixtureBanner active={USE_MOCK} envVar={USE_MOCK_ENV} />
       <CreatorsTabs active="overview" />
 
       <DisclosureNote>

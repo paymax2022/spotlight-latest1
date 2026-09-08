@@ -2,6 +2,7 @@ import React, { useMemo } from 'react';
 import { View, Text, ScrollView, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import { AlertTriangle, CircleSlash, Flag, CheckCircle2, CloudOff } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
@@ -42,7 +43,7 @@ export default function SubmitConfirm() {
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
-      <ScreenHeader title="Submit exam" subtitle="Review before you finish" onBack={() => router.back()} />
+      <ScreenHeader title="Submit exam" subtitle="Review before you finish" onBack={() => goBack('/learn/academy/exam')} />
       <ScrollView contentContainerStyle={styles.scroll}>
         <View style={styles.summaryRow}>
           <SummaryStat icon={CheckCircle2} color={Colors.teal} value={stats.answered} label="Answered" />
@@ -74,7 +75,7 @@ export default function SubmitConfirm() {
         <Text style={styles.note}>Once submitted, the server confirms your time and score. Attempts are immutable.</Text>
       </ScrollView>
       <View style={styles.footer}>
-        <PrimaryButton label="Back to questions" variant="secondary" onPress={() => router.back()} />
+        <PrimaryButton label="Back to questions" variant="secondary" onPress={() => goBack('/learn/academy/exam')} />
         <PrimaryButton label={offline ? 'Submit (will sync)' : 'Submit exam'} onPress={doSubmit} loading={submit.isPending} />
       </View>
     </SafeAreaView>

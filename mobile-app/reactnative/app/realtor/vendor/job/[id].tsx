@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { View, Text, Image, ScrollView, StyleSheet, Pressable } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import { Camera, X, MapPin } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
@@ -34,7 +35,7 @@ export default function VendorJobDetailScreen() {
     return <SafeAreaView style={styles.safe} edges={['top']}><ScreenHeader title="Job" /><StateView kind="loading" /></SafeAreaView>;
   }
   if (!job.data) {
-    return <SafeAreaView style={styles.safe} edges={['top']}><ScreenHeader title="Job" /><StateView kind="error" title="Job not found" actionLabel="Back" onAction={() => router.back()} /></SafeAreaView>;
+    return <SafeAreaView style={styles.safe} edges={['top']}><ScreenHeader title="Job" /><StateView kind="error" title="Job not found" actionLabel="Back" onAction={() => goBack('/realtor')} /></SafeAreaView>;
   }
 
   const r = job.data;

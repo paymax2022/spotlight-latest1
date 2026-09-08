@@ -57,6 +57,21 @@ type Block struct {
 	CreatedAt     time.Time `json:"created_at"`
 }
 
+// ─── Followed sellers (mkt_seller_follows, § Mobile-UX-Flows LD-005) ─────────
+
+// FollowedSeller is a follow row enriched with the followed seller's display
+// name/avatar (public.user_profiles) and live trust signals — never a stored
+// snapshot, so an unfollow-refollow or a name change is always current.
+type FollowedSeller struct {
+	ID             string    `json:"id"`
+	SellerID       string    `json:"seller_id"`
+	SellerName     string    `json:"seller_name"`
+	AvatarURL      *string   `json:"avatar_url,omitempty"`
+	TrustScore     float64   `json:"trust_score"`
+	ActiveListings int       `json:"active_listings"`
+	FollowedAt     time.Time `json:"followed_at"`
+}
+
 // ─── Notification preferences (mkt_notification_prefs) ───────────────────────
 
 // NotificationPrefs mirrors mkt_notification_prefs (one row per user). Every

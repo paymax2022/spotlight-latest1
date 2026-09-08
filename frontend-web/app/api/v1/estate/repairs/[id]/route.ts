@@ -8,7 +8,8 @@ import { mapRepair } from '../route';
 const COLS = 'id, estate_id, reporter_id, category, description, urgency, status, cost_estimate_kobo, created_at';
 
 // GET /api/v1/estate/repairs/[id]
-export async function GET(request: Request, { params }: { params: { id: string } }) {
+export async function GET(request: Request, ctx: { params: Promise<{ id: string }> }) {
+  const params = await ctx.params;
   try {
     const user = await requireRequestUser(request);
     const supabase = createAdminClient();

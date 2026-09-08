@@ -6,6 +6,7 @@
 // Flip EXPO_PUBLIC_PROPERTY_USE_MOCK=false to go live. Mirrors the visitor/
 // realtor mock-flag convention.
 
+import { mockAllowed } from '@/config/mockPolicy';
 import { api } from '@/api/client';
 import type {
   ActiveContextRef,
@@ -21,7 +22,7 @@ import {
 } from './mock';
 
 export const USE_MOCK =
-  (process.env.EXPO_PUBLIC_PROPERTY_USE_MOCK ?? 'true') !== 'false';
+  mockAllowed(process.env.EXPO_PUBLIC_PROPERTY_USE_MOCK, true);
 
 const wait = (ms = 280) => new Promise<void>((r) => setTimeout(r, ms));
 

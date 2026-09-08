@@ -144,7 +144,7 @@ const styles = StyleSheet.create({
   amountLabel: { ...Typography.labelMd, color: Colors.onSurfaceVariant, textAlign: 'center' },
   amountInputRow: { flexDirection: 'row', alignItems: 'center', marginTop: Spacing.sm },
   currency: { ...Typography.headlineLg, color: Colors.onSurface },
-  amountInput: { ...Typography.displayLg, fontSize: 44, color: Colors.onSurface, minWidth: 120, textAlign: 'center', padding: 0 },
+  amountInput: { ...Typography.displayLg, fontSize: 44, letterSpacing: -0.88, color: Colors.onSurface, minWidth: 120, textAlign: 'center', padding: 0 },
   hint: { ...Typography.labelSm, color: Colors.onSurfaceVariant, marginTop: Spacing.xs },
   err: { ...Typography.labelSm, color: Colors.error, marginTop: Spacing.xs },
   note: { ...Typography.labelSm, color: Colors.onSurfaceVariant, paddingHorizontal: Spacing.containerMargin, marginTop: Spacing.lg },

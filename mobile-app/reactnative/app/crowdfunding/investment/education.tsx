@@ -2,6 +2,7 @@ import React from 'react';
 import { ScrollView, View, Text, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import { Clock } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
@@ -16,7 +17,7 @@ export default function InvestorEducationScreen() {
   const { data, isLoading, isError, refetch } = useEducation();
   const complete = useCompleteOnboardingStep();
 
-  const finish = () => complete.mutate({ step: 'education' }, { onSuccess: () => router.back() });
+  const finish = () => complete.mutate({ step: 'education' }, { onSuccess: () => goBack('/crowdfunding/investment') });
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>

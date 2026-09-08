@@ -70,7 +70,10 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
           full_name: metadata?.fullName || '',
           avatar_url: metadata?.avatarUrl || '',
         },
-        emailRedirectTo: `${window.location.origin}/auth/callback`,
+        // No emailRedirectTo: verification is CODES, not links (2026-08-25), and
+        // /auth/callback does not exist — the only route under app/auth is
+        // reset-password. Callers route to /verify-email when no session comes back.
+        
       },
     });
     if (error) throw error;

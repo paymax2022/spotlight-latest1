@@ -8,6 +8,7 @@
 //  • every money mutation (request/accept-counter/rate) carries an Idempotency-Key;
 //  • fare floors/ceilings/commission come from the SERVER — never computed here.
 
+import { mockAllowed } from '@/config/mockPolicy';
 import { api } from '@/api/client';
 import type {
   MobilityHome,
@@ -49,7 +50,7 @@ import {
 
 // ─── Feature flag: mock by default; flip to hit the Go backend ─────────────────
 const USE_MOCK =
-  (process.env.EXPO_PUBLIC_MOBILITY_USE_MOCK ?? 'true').toLowerCase() !== 'false';
+  mockAllowed(process.env.EXPO_PUBLIC_MOBILITY_USE_MOCK, true);
 
 // Go backend mounts the mobility + driver route groups directly under
 // /api/finance (siblings of the legacy /transport group). The frontend-web Next
@@ -432,7 +433,9 @@ export async function submitDriverOnboarding(draft: OnboardingSubmitDraft): Prom
 // presigned R2 PUT URL from the backend, then the caller PUTs the file binary to
 // it and submits the resulting object key via uploadDriverDocument(). No storage
 // backend is invented here — this reuses the same R2 presign pattern (Cloudflare
-// R2, bucket spotlight-open-mic) the rest of the app uses.
+// R2, whichever bucket R2_BUCKET names) the rest of the app uses. The bucket is
+// deliberately not written down here: it is environment config, and the last
+// name hardcoded in prose outlived the bucket itself.
 //
 // Request body is snake_case; the response is camelCase (matches the rest of the
 // mobility contract). In mock mode we return a mock:// URL so the client PUT is a

@@ -169,7 +169,7 @@ export const FIELD_CATALOG: CatalogField[] = [
   { key: 'compliance.backgroundCheckAgreement', label: 'I agree to background checks if selected', type: 'checkbox', step: 'category_specific', group: 'Compliance' },
 
   { key: 'payment.feeAmount', label: 'Registration fee amount', type: 'number', step: 'category_specific', group: 'Payment', readOnly: true, helpText: 'Set from the contest fee; contestant cannot edit.', defaultRequired: true },
-  { key: 'payment.method', label: 'Payment method', type: 'select', step: 'category_specific', group: 'Payment', options: ['Card', 'Bank Transfer', 'USSD', 'Wallet', 'Waiver'], defaultRequired: true },
+  { key: 'payment.method', label: 'Payment method', type: 'select', step: 'category_specific', group: 'Payment', options: ['Card', 'Bank Transfer', 'USSD', 'Wallet', 'Waiver'], defaultRequired: false },
   { key: 'payment.transactionReference', label: 'Transaction reference', type: 'text', step: 'category_specific', group: 'Payment' },
 
   { key: 'audition.format', label: 'Preferred audition format', type: 'select', step: 'category_specific', group: 'Audition', options: ['Online video submission', 'Live virtual audition', 'Physical audition', 'Regional audition', 'Callback audition', 'Portfolio review'], defaultRequired: true },

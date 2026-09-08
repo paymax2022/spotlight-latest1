@@ -13,12 +13,28 @@ export interface AdminAccess {
   role:         AdminRole;
   roleLabel:    string;
   jurisdiction: 'CHAPTER' | 'NATIONAL' | 'GLOBAL';
+  /**
+   * The organisation this admin administers, when the DTO reports it. Every
+   * org-scoped admin call is scoped with this — the client never guesses an
+   * org id.
+   */
+  organisationId?: string | null;
+  /** Display name for that organisation, when the DTO reports it. */
+  organisationName?: string | null;
   /** Coarse capability flags the UI gates on. */
   can: {
     approveMembers: boolean;
     manageMembers:  boolean;     // suspend/restore/transfer/assign-role
     manageFinance:  boolean;
     importMembers:  boolean;
+    /**
+     * Committee LIFECYCLE — create, rename, delete. Narrower than
+     * manageMembers on purpose: running a committee's roster stays with
+     * manageMembers so a chapter admin can do the day-to-day work, while
+     * creating or destroying a committee is the organisation owner's call.
+     * Older backends omit this; treat a missing value as false.
+     */
+    manageCommittees?: boolean;
   };
 }
 

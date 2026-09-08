@@ -22,16 +22,16 @@ export default function Preferences() {
   const onNext = () =>
     save.mutate(
       { preferences: { showMe, distanceKm, verifiedOnly } },
-      { onSuccess: () => router.push('/connect/onboarding/verify-intro') },
+      { onSuccess: () => router.replace('/connect/onboarding/complete') },
     );
 
   return (
     <OnboardingStep
       step={5}
-      totalSteps={8}
+      totalSteps={5}
       title="Discovery preferences"
       subtitle="Fine-tune who you see. You can change these anytime in settings."
-      primaryLabel="Continue"
+      primaryLabel="Finish"
       onPrimary={onNext}
       primaryLoading={save.isPending}
     >

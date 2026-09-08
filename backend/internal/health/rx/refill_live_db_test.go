@@ -8,6 +8,8 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"spotlight/backend/internal/testsupport"
 )
 
 // DP-004 live-DB integration test for prescription refills.
@@ -56,7 +58,9 @@ func TestRefills_LiveDB(t *testing.T) {
 		}
 	}
 	seed(`INSERT INTO auth.users (id, email) VALUES ($1,$2) ON CONFLICT DO NOTHING`, prescriberID, prescriberID+"@seed.test")
+	testsupport.CleanupUser(t, pool, prescriberID)
 	seed(`INSERT INTO auth.users (id, email) VALUES ($1,$2) ON CONFLICT DO NOTHING`, patientID, patientID+"@seed.test")
+	testsupport.CleanupUser(t, pool, patientID)
 	// A prescription already dispensed once (initial fill done), 2 refills authorized,
 	// no POM items so the refill needs no separate verification.
 	seed(`INSERT INTO public.health_prescriptions (id, prescriber_id, patient_id, state, refills_authorized, refills_used, dispensed_at)

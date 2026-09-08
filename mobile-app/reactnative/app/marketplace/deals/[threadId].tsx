@@ -9,6 +9,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { View, Text, StyleSheet, Pressable, FlatList, TextInput, KeyboardAvoidingView, Platform, Modal } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import { ArrowLeft, Send, HandCoins, Handshake, CheckCircle2, Star } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
@@ -39,6 +40,7 @@ import ScamWarningBanner from '@/features/marketplace/components/ScamWarningBann
 import MeetupModeSheet from '@/features/marketplace/components/MeetupModeSheet';
 import { detectScamHint } from '@/features/marketplace/transact.constants';
 import { confirmAsync } from '@/lib/confirm';
+import { HomeMenuButton } from '@/components/HomeMenu';
 
 type Item = { kind: 'msg'; msg: MockMessage } | { kind: 'offer'; offer: Offer };
 
@@ -74,6 +76,7 @@ export default function DealRoom() {
   const alreadyReviewed = !!existingReviewQ.data;
   const [reviewOpen, setReviewOpen] = useState(false);
   const [reviewRating, setReviewRating] = useState(0);
+  const [reviewProductRating, setReviewProductRating] = useState(0);
   const [reviewText, setReviewText] = useState('');
 
   const handleMarkMet = async () => {
@@ -89,11 +92,17 @@ export default function DealRoom() {
   const handleSubmitReview = () => {
     if (reviewRating < 1) return;
     submitReview.mutate(
-      { rating: reviewRating, tags: [], text: reviewText.trim() || undefined },
+      {
+        rating: reviewRating,
+        productQualityRating: reviewProductRating > 0 ? reviewProductRating : undefined,
+        tags: [],
+        text: reviewText.trim() || undefined,
+      },
       {
         onSuccess: () => {
           setReviewOpen(false);
           setReviewRating(0);
+          setReviewProductRating(0);
           setReviewText('');
         },
       },
@@ -335,6 +344,18 @@ export default function DealRoom() {
                 </Pressable>
               ))}
             </View>
+            <Text style={styles.reviewSub}>Was the item as described?</Text>
+            <View style={styles.starRow}>
+              {[1, 2, 3, 4, 5].map((n) => (
+                <Pressable key={n} onPress={() => setReviewProductRating(n)} hitSlop={6} accessibilityLabel={`${n} star, item quality`}>
+                  <Star
+                    size={26}
+                    color={n <= reviewProductRating ? MarketColors.brand : MarketColors.border}
+                    fill={n <= reviewProductRating ? MarketColors.brand : 'transparent'}
+                  />
+                </Pressable>
+              ))}
+            </View>
             <TextInput
               style={styles.reviewInput}
               value={reviewText}
@@ -365,13 +386,14 @@ export default function DealRoom() {
 function Header({ title, subtitle }: { title: string; subtitle?: string }) {
   return (
     <View style={styles.header}>
-      <Pressable onPress={() => router.back()} hitSlop={10} style={styles.iconBtn} accessibilityLabel="Go back">
+      <Pressable onPress={() => goBack('/marketplace/deals')} hitSlop={10} style={styles.iconBtn} accessibilityLabel="Go back">
         <ArrowLeft size={22} color={Colors.onSurface} />
       </Pressable>
       <View style={{ flex: 1 }}>
         <Text style={styles.headerTitle} numberOfLines={1}>{title}</Text>
         {subtitle ? <Text style={styles.headerSub} numberOfLines={1}>{subtitle}</Text> : null}
       </View>
+      <HomeMenuButton />
     </View>
   );
 }

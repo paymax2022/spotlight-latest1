@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { View, Text, StyleSheet, ScrollView } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
 import { Spacing } from '@/constants/spacing';
@@ -94,7 +95,7 @@ export default function NetworkFiltersScreen() {
       </ScrollView>
 
       <View style={styles.footer}>
-        <PrimaryButton label="Apply" onPress={() => router.back()} />
+        <PrimaryButton label="Apply" onPress={() => goBack('/connect')} />
       </View>
     </SafeAreaView>
   );

@@ -30,7 +30,20 @@ interface Props {
   onUpload: (file: { uri: string; name: string; mimeType: string }) => Promise<UploadedFileValue>;
 }
 
-export default function FieldRenderer({ field, value, error, onChange, onUpload }: Props) {
+export default function FieldRenderer(props: Props) {
+  const node = renderField(props);
+  if (!node || !props.field.readOnly || !props.field.helpText) return node;
+  // A locked field shows its value, so `helpText` never reaches the placeholder
+  // — say WHY it is locked underneath it instead, or it just looks broken.
+  return (
+    <View>
+      {node}
+      <Text style={styles.lockedNote}>{props.field.helpText}</Text>
+    </View>
+  );
+}
+
+function renderField({ field, value, error, onChange, onUpload }: Props) {
   switch (field.type) {
     case 'password':
       // Account credentials are handled by the app's auth, not the wizard.
@@ -277,6 +290,12 @@ const styles = StyleSheet.create({
   filePlaceholder: { ...Typography.bodyMd, color: Colors.onSurfaceVariant, flex: 1 },
   fileName: { ...Typography.bodyMd, color: Colors.onSurface, flex: 1 },
 
+  lockedNote: {
+    ...Typography.caption,
+    color: Colors.onSurfaceVariant,
+    marginTop: -Spacing.sm,
+    marginBottom: Spacing.md,
+  },
   unsupported: {
     padding: Spacing.md, borderRadius: Radius.md, backgroundColor: Colors.errorContainer, marginBottom: Spacing.md,
   },

@@ -33,6 +33,21 @@ func NewService(router *gateway.Router, repo *Repository, claimSync ClaimSync) *
 	return &Service{router: router, repo: repo, claims: claimSync}
 }
 
+// SignatureHeaderFor returns the HTTP header the named aggregator delivers its
+// webhook signature in, or "" when the provider is unknown or declares none.
+// The handler uses it to read the right header instead of guessing one from the
+// route.
+func (s *Service) SignatureHeaderFor(provider string) string {
+	if s == nil || s.router == nil {
+		return ""
+	}
+	gw, ok := s.router.Adapter(provider)
+	if !ok {
+		return ""
+	}
+	return gw.WebhookSignatureHeader()
+}
+
 // Sentinel errors.
 var (
 	ErrUnknownProvider = fmt.Errorf("webhooks: unknown provider")

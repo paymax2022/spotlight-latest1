@@ -9,7 +9,8 @@ const COLS = 'id, estate_id, reporter_id, category, description, urgency, status
 const STATUSES = ['reported', 'inspection', 'assigned', 'in_progress', 'completed', 'reopened', 'cancelled'];
 
 // POST /api/v1/estate/repairs/[id]/updates
-export async function POST(request: Request, { params }: { params: { id: string } }) {
+export async function POST(request: Request, ctx: { params: Promise<{ id: string }> }) {
+  const params = await ctx.params;
   try {
     const user = await requireRequestUser(request);
     const supabase = createAdminClient();

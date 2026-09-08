@@ -53,6 +53,8 @@ import (
 	"spotlight/backend/internal/finance/fx"
 	"spotlight/backend/internal/finance/ledger"
 	"spotlight/backend/internal/provider/maplerad"
+
+	"spotlight/backend/internal/testsupport"
 )
 
 // liveDBPool connects using TEST_DATABASE_URL, or skips.
@@ -86,6 +88,7 @@ func seedUser(t *testing.T, ctx context.Context, pool *pgxpool.Pool) string {
 	if _, err := pool.Exec(ctx, `INSERT INTO auth.users (id, email) VALUES ($1, $2) ON CONFLICT DO NOTHING`, id, id+"@seed.test"); err != nil {
 		t.Fatalf("seed auth.users: %v", err)
 	}
+	testsupport.CleanupUser(t, pool, id)
 	t.Cleanup(func() {
 		ctx := context.Background()
 		_, _ = pool.Exec(ctx, `DELETE FROM public.fx_conversions WHERE user_id=$1`, id)
@@ -183,7 +186,7 @@ func mapleradTestServer(t *testing.T) *httptest.Server {
 //	    currency_wallets balance unchanged, and no extra ledger legs (RISK-FX-2).
 func TestLiveDB_FXConvert_BothLegsPosted_MirrorCredited_ReplayNoDoubleCredit(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	led := newLiveLedger(pool)
 

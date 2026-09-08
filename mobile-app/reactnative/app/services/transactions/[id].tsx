@@ -4,6 +4,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import { ArrowLeft, CheckCircle2, Clock, Receipt, RefreshCw, XCircle } from 'lucide-react-native';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import PrimaryButton from '@/components/PrimaryButton';
@@ -16,6 +17,7 @@ import { shadow1 } from '@/constants/shadows';
 import { getTransactionById, retryTransaction } from '@/api/transactions.api';
 import { getErrorMessage } from '@/utils/errorMapper';
 import { TransactionStatus } from '@/types/transaction';
+import { HomeMenuButton } from '@/components/HomeMenu';
 
 const STATUS_COLOR: Record<TransactionStatus, string> = {
   SUCCESSFUL: '#16A34A',
@@ -89,13 +91,16 @@ export default function TransactionDetailScreen() {
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
       <View style={styles.topBar}>
-        <Pressable onPress={() => router.back()} style={styles.iconBtn}>
+        <Pressable onPress={() => goBack('/services/transactions')} style={styles.iconBtn}>
           <ArrowLeft size={22} color={Colors.primary} strokeWidth={2.2} />
         </Pressable>
         <Text style={styles.topTitle}>Transaction Detail</Text>
-        <Pressable onPress={() => refetch()} style={styles.iconBtn}>
-          <RefreshCw size={20} color={Colors.primary} strokeWidth={2} />
-        </Pressable>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+          <Pressable onPress={() => refetch()} style={styles.iconBtn}>
+            <RefreshCw size={20} color={Colors.primary} strokeWidth={2} />
+          </Pressable>
+          <HomeMenuButton />
+        </View>
       </View>
 
       {isLoading ? (

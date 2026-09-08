@@ -2,6 +2,7 @@ package restaurant
 
 import (
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -20,13 +21,81 @@ func ownerErrStatus(err error) int {
 // ── Reads ─────────────────────────────────────────────────────────────────────
 
 // ListRestaurants → GET /restaurant (discovery list of open restaurants).
+//
+// Paged: ?limit (default 20, max 50) & ?offset, with ?q and ?cuisine applied in
+// SQL before the page is cut. It used to return every open row — 2,016 of them —
+// and let the client filter in memory; see discovery_page.go for why both moved
+// server-side together.
+//
+// The body still carries `restaurants`, so a client that only reads that key
+// keeps working (it simply receives the first page).
 func (h *Handler) ListRestaurants(c *gin.Context) {
-	list, err := h.svc.ListOpenRestaurants(c.Request.Context())
+	page, err := h.svc.ListOpenRestaurantsPage(c.Request.Context(), DiscoveryParams{
+		Query:   c.Query("q"),
+		Cuisine: c.Query("cuisine"),
+		Sort:    c.Query("sort"),
+		Limit:   queryInt(c, "limit"),
+		Offset:  queryInt(c, "offset"),
+		// ?promo=1 backs the "Offers" browse tile.
+		PromoOnly: c.Query("promo") == "1" || c.Query("promo") == "true",
+		// ?featured=1 backs a "Featured" section.
+		FeaturedOnly: c.Query("featured") == "1" || c.Query("featured") == "true",
+		// ?near_lat & ?near_lng back ?sort=distance (see discoveryOrderBy). Only
+		// consulted together — a lone coordinate is not a location.
+		NearLat: queryFloat(c, "near_lat"),
+		NearLng: queryFloat(c, "near_lng"),
+		// ?min_price & ?max_price (kobo) back a price-range filter.
+		MinPriceKobo: queryInt64Ptr(c, "min_price"),
+		MaxPriceKobo: queryInt64Ptr(c, "max_price"),
+		// callerUserID marks which rows THIS caller liked (see attachLikedFlags).
+	}, c.GetString("user_id"))
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"restaurants": list})
+	c.JSON(http.StatusOK, page)
+}
+
+// queryInt reads an optional non-negative integer query param. An absent or
+// unparseable value yields 0, which every caller treats as "use the default" —
+// a bad ?limit must not 400 a browse request.
+func queryInt(c *gin.Context, key string) int {
+	n, err := strconv.Atoi(c.Query(key))
+	if err != nil || n < 0 {
+		return 0
+	}
+	return n
+}
+
+// queryFloat reads an optional query param as a float, or nil if absent/
+// unparseable — same "never 400 a browse request" policy as queryInt. nil is
+// the signal discoveryOrderBy's distance sort treats as "no location given".
+func queryFloat(c *gin.Context, key string) *float64 {
+	raw := c.Query(key)
+	if raw == "" {
+		return nil
+	}
+	v, err := strconv.ParseFloat(raw, 64)
+	if err != nil {
+		return nil
+	}
+	return &v
+}
+
+// queryInt64Ptr reads an optional query param as an int64 (kobo amounts don't
+// fit queryInt's plain int/"0 means default" convention — 0 is a real,
+// meaningful minimum price), or nil if absent/unparseable/negative. nil is
+// the signal buildDiscoveryWhere treats as "no bound on this side".
+func queryInt64Ptr(c *gin.Context, key string) *int64 {
+	raw := c.Query(key)
+	if raw == "" {
+		return nil
+	}
+	v, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil || v < 0 {
+		return nil
+	}
+	return &v
 }
 
 // GetRestaurant → GET /restaurant/:id (restaurant detail + menu).
@@ -37,6 +106,28 @@ func (h *Handler) GetRestaurant(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, detail)
+}
+
+// LikeRestaurant → POST /restaurant/:id/like. Idempotent (see
+// Service.LikeRestaurant) — liking twice is a 200, not a 409.
+func (h *Handler) LikeRestaurant(c *gin.Context) {
+	userID := c.GetString("user_id")
+	if err := h.svc.LikeRestaurant(c.Request.Context(), userID, c.Param("id")); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"liked": true})
+}
+
+// UnlikeRestaurant → DELETE /restaurant/:id/like. Idempotent — unliking
+// something never liked is a 200, not a 404.
+func (h *Handler) UnlikeRestaurant(c *gin.Context) {
+	userID := c.GetString("user_id")
+	if err := h.svc.UnlikeRestaurant(c.Request.Context(), userID, c.Param("id")); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"liked": false})
 }
 
 // GetOrder → GET /restaurant/orders/:orderId (participant-scoped).
@@ -125,6 +216,89 @@ func (h *Handler) Earnings(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": e})
+}
+
+// ListStaff → GET /restaurant/:id/staff
+func (h *Handler) ListStaff(c *gin.Context) {
+	list, err := h.svc.ListStaff(c.Request.Context(), c.Param("id"), c.GetString("user_id"))
+	if err != nil {
+		c.JSON(ownerErrStatus(err), gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"staff": list})
+}
+
+// InviteStaff → POST /restaurant/:id/staff {user_id, role}
+//
+// The response carries the invite token ONCE. It is not recoverable afterwards —
+// only its hash is stored — so the client must hand it to the invitee there and
+// then.
+func (h *Handler) InviteStaff(c *gin.Context) {
+	var body struct {
+		UserID string `json:"user_id" binding:"required"`
+		Role   string `json:"role" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	inv, err := h.svc.InviteStaff(c.Request.Context(), c.Param("id"), c.GetString("user_id"),
+		body.UserID, StaffRole(body.Role))
+	if err != nil {
+		c.JSON(ownerErrStatus(err), gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusCreated, gin.H{"invite": inv})
+}
+
+// SetStaffStatus → PATCH /restaurant/:id/staff/:userId {status}
+func (h *Handler) SetStaffStatus(c *gin.Context) {
+	var body struct {
+		Status string `json:"status" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if err := h.svc.SetStaffStatus(c.Request.Context(), c.Param("id"), c.GetString("user_id"),
+		c.Param("userId"), StaffStatus(body.Status)); err != nil {
+		c.JSON(ownerErrStatus(err), gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true})
+}
+
+// AcceptStaffInvite → POST /restaurant/staff/accept {token}
+//
+// Not scoped to a restaurant: the token identifies the outlet, and the invitee is
+// by definition not yet staff there, so no outlet-level guard could pass.
+func (h *Handler) AcceptStaffInvite(c *gin.Context) {
+	var body struct {
+		Token string `json:"token" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if err := h.svc.AcceptStaffInvite(c.Request.Context(), body.Token, c.GetString("user_id")); err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true})
+}
+
+// PayoutReadiness → GET /restaurant/payout-readiness
+//
+// The capability↔KYB bridge, per outlet: can this shop be paid, why not, and how
+// much has already settled behind the gate. Scoped by ownership server-side.
+func (h *Handler) PayoutReadiness(c *gin.Context) {
+	userID := c.GetString("user_id")
+	list, err := h.svc.PayoutReadinessForOwner(c.Request.Context(), userID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"outlets": list})
 }
 
 // MyRestaurants → GET /restaurant/mine (the caller's own stores).
@@ -364,6 +538,43 @@ func (h *Handler) RateOrder(c *gin.Context) {
 // the server pushes "order.status", "order.location", and "order.message"
 // events for orders the user participates in (delivery is per-user, so no
 // per-order subscription is needed).
+// ServeUserWS → GET /restaurant/ws — the caller's own realtime stream.
+//
+// See ADR-049 for the full decision record.
+//
+// WHY THIS EXISTS
+// The hub is keyed by USER id: Realtime.publish resolves an order's participants
+// and calls hub.SendToUser(uid, …). ServeOrderWS's :orderId is therefore only an
+// authorization gate — once connected you already receive every frame addressed
+// to you, for any order. That left the merchant queue unable to hear about a NEW
+// order, because subscribing required an order id the merchant did not yet have;
+// it polled every 6s instead.
+//
+// This endpoint drops the order gate and keeps the identity. It cannot widen
+// what anyone sees: SendToUser only ever delivers frames already destined for
+// this user, so the socket carries exactly the caller's own events — strictly
+// narrower than what an order-scoped socket already hands them.
+func (h *Handler) ServeUserWS(c *gin.Context) {
+	uid := c.GetString("user_id")
+	if uid == "" {
+		// Same fallback as ServeOrderWS: WS clients cannot set Authorization
+		// across the proxy hop, so accept the short-lived HMAC ticket — here one
+		// minted for the USER scope rather than for a single order.
+		if sub, ok := validateWSTicket(c.Query("ticket"), WSScopeUser); ok {
+			uid = sub
+		}
+	}
+	if uid == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
+		return
+	}
+	if h.hub == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "realtime not configured"})
+		return
+	}
+	_ = h.hub.ServeHTTP(c.Writer, c.Request, uid)
+}
+
 func (h *Handler) ServeOrderWS(c *gin.Context) {
 	uid := c.GetString("user_id")
 	if uid == "" {

@@ -1,6 +1,7 @@
 package engage
 
 import (
+	"errors"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -120,4 +121,38 @@ func (h *Handler) UpdateNotificationPrefs(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, saved)
+}
+
+// RecordCampaignEvent — POST /campaigns/:id/events.
+//
+// Records a VIEW or SHARE for a campaign. Fire-and-forget from the client's
+// point of view: analytics must never block or fail a user action, so a bad
+// payload is a 400 but a storage failure is still reported honestly rather than
+// silently swallowed.
+func (h *Handler) RecordCampaignEvent(c *gin.Context) {
+	campaignID := c.Param("id")
+
+	var body struct {
+		Type        string `json:"type"`
+		Source      string `json:"source"`
+		AnonymousID string `json:"anonymousId"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid body"})
+		return
+	}
+
+	// user_id is set by auth middleware when present; campaign pages are public,
+	// so an absent user is an anonymous view rather than an error.
+	userID := c.GetString("user_id")
+
+	if err := h.svc.RecordCampaignEvent(c.Request.Context(), campaignID, body.Type, body.Source, userID, body.AnonymousID); err != nil {
+		if errors.Is(err, ErrInvalidEvent) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "type must be VIEW or SHARE"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"ok": true})
 }

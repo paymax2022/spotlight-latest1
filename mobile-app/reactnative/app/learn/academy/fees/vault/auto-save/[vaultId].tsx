@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { View, Text, Pressable, ScrollView, StyleSheet, Switch } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import { Repeat } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
@@ -42,7 +43,7 @@ export default function AutoSaveRules() {
     return (
       <SafeAreaView style={styles.safe} edges={['top']}>
         <ScreenHeader title="Auto-save" />
-        <StateView kind="error" title="Vault not found" actionLabel="Go back" onAction={() => router.back()} />
+        <StateView kind="error" title="Vault not found" actionLabel="Go back" onAction={() => goBack('/learn/academy/fees/vault')} />
       </SafeAreaView>
     );
   }
@@ -59,7 +60,7 @@ export default function AutoSaveRules() {
       { vaultId: vault.id, rule: { cadence, amountKobo, enabled } },
       {
         onSuccess: () => {
-          alertAsync({ title: 'Auto-save updated', message: enabled ? `We'll save ${formatNaira(amountKobo)} ${cadence}.` : 'Auto-save turned off.', buttonLabel: 'Done' }).then(() => router.back());
+          alertAsync({ title: 'Auto-save updated', message: enabled ? `We'll save ${formatNaira(amountKobo)} ${cadence}.` : 'Auto-save turned off.', buttonLabel: 'Done' }).then(() => goBack('/learn/academy/fees/vault'));
         },
         onError: (e) => alertAsync({ title: 'Could not update', message: (e as Error).message }),
       },

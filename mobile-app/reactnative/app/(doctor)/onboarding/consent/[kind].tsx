@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { View, Text, ScrollView, StyleSheet, Pressable } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import { Check, FileWarning } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Radius } from '@/constants/radius';
@@ -46,7 +47,7 @@ export default function ConsentScreen() {
     try {
       // Versioned acceptance: send the exact version the user is accepting.
       await accept.mutateAsync({ kind, version: doc.version });
-      router.back();
+      goBack('/onboarding');
     } catch {
       setError('Could not record your acceptance. Please try again.');
     }
@@ -108,7 +109,7 @@ export default function ConsentScreen() {
           <View style={styles.footer}>
             <PrimaryButton
               label={alreadyAccepted ? 'Accepted — done' : 'Accept & continue'}
-              onPress={alreadyAccepted ? () => router.back() : handleAccept}
+              onPress={alreadyAccepted ? () => goBack('/onboarding') : handleAccept}
               loading={accept.isPending}
               disabled={!alreadyAccepted && !agreed}
             />

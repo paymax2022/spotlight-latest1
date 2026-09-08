@@ -37,6 +37,10 @@ info:
 servers:
   - url: /api/finance/restaurant
     description: Go backend (Gin) — restaurant / delivery module
+  - url: /api/restaurant/admin
+    description: >
+      Operator surface, mounted on a DIFFERENT root and fail-closed behind RBAC.
+      Paths documented against it are prefixed `x-admin:` in their description.
 
 security:
   - bearerAuth: []
@@ -49,7 +53,10 @@ tags:
   - name: rider
     description: Rider / courier endpoints (offers, accept, location, active)
   - name: admin
-    description: Read-only admin monitoring (lists restaurants and orders)
+    description: >
+      Platform-operator surfaces under /api/restaurant/admin, fail-closed behind
+      RBAC (restaurant.manage / restaurant.admin.*). NOT reachable on the member
+      root above.
 
 components:
   securitySchemes:
@@ -95,9 +102,22 @@ components:
       properties:
         error: { type: string }
     OrderStatus:
-      type: string
-      description: Order lifecycle state.
-      enum: [placed, accepted, preparing, ready, assigned, picked_up, delivered, cancelled, refunded, no_rider]
+      description: >
+        Order lifecycle state. Identical to AdminOrderStatus — the member and
+        admin surfaces read the same `orders.status` column, so there is one
+        vocabulary, not two.
+
+
+        This enum previously read
+        `[placed, accepted, preparing, ready, assigned, picked_up, delivered, cancelled, refunded, no_rider]`,
+        which was the ADMIN CONSOLE's invented list, not the column's. Five of
+        those values — placed, accepted, assigned, refunded, no_rider — are
+        rejected outright by the `orders_status_check` CHECK constraint, so the
+        contract was documenting states no order can ever be in, while five real
+        ones (pending, confirmed, rejected, dispatch_failed, delivery_failed)
+        went undocumented.
+      allOf:
+        - $ref: '#/components/schemas/AdminOrderStatus'
     Restaurant:
       type: object
       properties:
@@ -113,6 +133,209 @@ components:
         rating: { type: number, description: Average restaurant star rating }
         rating_count: { type: integer }
         created_at: { type: string, format: date-time }
+        min_order_kobo: { $ref: '#/components/schemas/Money' }
+        packaging_fee_kobo: { $ref: '#/components/schemas/Money' }
+        prep_time_minutes: { type: integer, description: "Kitchen prep time; the client's ETA is derived from it." }
+        geo_lat: { type: number }
+        geo_lng: { type: number }
+        has_promo:
+          type: boolean
+          description: >
+            True when the restaurant has an offer that is live right now. Only the
+            flag is exposed, never the offer's terms — a discount is validated and
+            priced server-side at order placement.
+    RestaurantPage:
+      type: object
+      description: One page of the discovery list plus the totals a client needs to keep paging.
+      properties:
+        restaurants: { type: array, items: { $ref: '#/components/schemas/Restaurant' } }
+        total: { type: integer, description: 'Restaurants matching the filters — not just the returned page.' }
+        limit: { type: integer }
+        offset: { type: integer }
+        has_more: { type: boolean }
+    AdminRestaurantRow:
+      description: >
+        A register row: the public Restaurant plus the operational columns the
+        storefront never exposes.
+      allOf:
+        - $ref: '#/components/schemas/Restaurant'
+        - type: object
+          properties:
+            kyb_status: { type: string }
+            listing_review_status: { type: string, enum: [DRAFT, PENDING_REVIEW, APPROVED, CHANGES_REQUESTED, REJECTED] }
+            listing_review_reason: { type: string }
+            updated_at: { type: string, format: date-time }
+            menu_item_count: { type: integer }
+    AdminRestaurantPage:
+      type: object
+      properties:
+        restaurants: { type: array, items: { $ref: '#/components/schemas/AdminRestaurantRow' } }
+        total: { type: integer, description: 'Rows matching the current filters.' }
+        open_total: { type: integer, description: 'How many of those are open.' }
+        limit: { type: integer }
+        offset: { type: integer }
+        has_more: { type: boolean }
+    AdminOrderStatus:
+      type: string
+      description: >
+        The authoritative order vocabulary, mirroring the `orders_status_check`
+        CHECK constraint on `orders.status` (and `restaurant.AdminOrderStatuses`
+        in Go).
+
+
+        This is NOT the legacy `OrderStatus` enum above. The admin console had
+        invented its own list — `placed`, `accepted`, `assigned`, `refunded`,
+        `no_rider` — none of which are values this column can hold, so five of its
+        ten filter chips could never match a row, while five real states
+        (`pending`, `confirmed`, `rejected`, `dispatch_failed`, `delivery_failed`)
+        had no chip at all. An unrecognised `?status=` is rejected with a 400.
+      enum: [pending, confirmed, preparing, ready, picked_up, delivered, cancelled, rejected, dispatch_failed, delivery_failed]
+    AdminRider:
+      type: object
+      description: One courier on the dispatch roster, from the shared transport `drivers` pool.
+      properties:
+        id: { type: string, format: uuid, description: 'drivers.user_id — the same id carried on orders.rider_id.' }
+        name: { type: string }
+        phone: { type: string }
+        vehicle: { type: string, enum: [bike, car, foot] }
+        status: { type: string, enum: [available, on_delivery, offline, suspended], description: 'Derived from the driver status, verification state, and whether a non-terminal order is held.' }
+        active_order_id: { type: string, format: uuid, description: 'The non-terminal order this rider is carrying, if any.' }
+        lat: { type: number }
+        lng: { type: number }
+        rating: { type: number }
+        last_seen_at: { type: string, format: date-time }
+    AdminRiderPage:
+      type: object
+      description: One page of the rider roster plus counts over the whole filtered set.
+      properties:
+        riders: { type: array, items: { $ref: '#/components/schemas/AdminRider' } }
+        total: { type: integer, description: 'Riders matching the current filters — not just the returned page.' }
+        limit: { type: integer }
+        offset: { type: integer }
+        has_more: { type: boolean }
+        status_counts:
+          type: object
+          additionalProperties: { type: integer }
+          description: >
+            Every rider status and its count under the current filters EXCLUDING the
+            status filter itself, so the tabs show what selecting them would yield.
+            Statuses with no matching riders are present with a 0. Returned because a
+            console that counts the page it rendered reports "available among the 25 on
+            screen" while appearing to report the platform.
+    AdminDispatchPage:
+      type: object
+      description: One page of the dispatch queue plus aggregates over the whole filtered set.
+      properties:
+        orders: { type: array, items: { $ref: '#/components/schemas/AdminDispatchOrder' } }
+        total: { type: integer }
+        limit: { type: integer }
+        offset: { type: integer }
+        has_more: { type: boolean }
+        dispatch_counts:
+          type: object
+          additionalProperties: { type: integer }
+          description: 'Every dispatch_status and its count under the current filters excluding the dispatch filter itself.'
+        stalled_total: { type: integer, description: 'Orders still searching past the threshold, counted over the whole filtered set.' }
+        stalled_after_minutes:
+          type: integer
+          description: >
+            The SERVER's stall threshold, in minutes. Returned so the console renders
+            this number rather than keeping its own copy to drift out of sync with the
+            filter the server actually applies.
+    AdminDispatchOrder:
+      type: object
+      description: An order awaiting or undergoing courier dispatch.
+      properties:
+        id: { type: string, format: uuid }
+        restaurant_id: { type: string, format: uuid }
+        restaurant_name: { type: string }
+        status: { $ref: '#/components/schemas/AdminOrderStatus' }
+        dispatch_status:
+          type: string
+          enum: [none, searching, assigned, delivered]
+          description: >
+            Courier-sourcing state — what this board is actually about. The query
+            filtered on this column but never projected it, so the console could not
+            tell "ready, nobody looking yet" from "actively searching" from "assigned",
+            and its own type declared a field the server never sent.
+        rider_id: { type: string, format: uuid, description: 'The rider who ACCEPTED, if any.' }
+        rider_name: { type: string }
+        rider_candidate_id: { type: string, format: uuid, description: 'A rider this order was OFFERED to who has not accepted yet. Without it an offer in flight looks identical to no offer at all.' }
+        dispatch_attempts: { type: integer, description: 'How many sourcing rounds have run.' }
+        first_offered_at: { type: string, format: date-time }
+        delivery_address: { type: string }
+        total_kobo: { $ref: '#/components/schemas/Money' }
+        delivery_fee_kobo: { $ref: '#/components/schemas/Money' }
+        ready_at: { type: string, format: date-time }
+        created_at: { type: string, format: date-time }
+        waiting_minutes: { type: integer, description: 'Minutes since ready_at, or since created_at when the kitchen has not marked it ready.' }
+    AdminOrderRow:
+      type: object
+      description: >
+        One row of the platform-wide feed: the order, plus the restaurant and rider
+        names an operator would otherwise need a second lookup to resolve. All
+        money is integer kobo and is a display-only projection of what was already
+        charged — this endpoint posts no ledger entries and moves no money.
+      properties:
+        id: { type: string, format: uuid, description: Order id. }
+        restaurant_id: { type: string, format: uuid, description: Restaurant that received the order. }
+        restaurant_name: { type: string, description: 'Joined from restaurants.name so the console need not resolve ids.' }
+        customer_id: { type: string, format: uuid, description: User who placed the order. }
+        rider_id: { type: string, format: uuid, nullable: true, description: 'Assigned rider; absent while the order is unassigned.' }
+        rider_name: { type: string, nullable: true, description: 'Joined from drivers.name for the assigned rider; absent when unassigned.' }
+        status: { $ref: '#/components/schemas/AdminOrderStatus' }
+        dispatch_status:
+          type: string
+          enum: [none, searching, assigned, delivered]
+          description: 'Courier-side state, independent of the order status. NULL in the database is projected as `none`.'
+        status_reason: { type: string, nullable: true, description: 'Operator-visible why for a rejected or failed order.' }
+        item_count: { type: integer, description: 'SUM(order_items.quantity) — the number of things being delivered, not the number of distinct lines.' }
+        subtotal_kobo: { $ref: '#/components/schemas/Money' }
+        delivery_fee_kobo: { $ref: '#/components/schemas/Money' }
+        service_fee_kobo: { $ref: '#/components/schemas/Money' }
+        packaging_fee_kobo: { $ref: '#/components/schemas/Money' }
+        surge_kobo: { $ref: '#/components/schemas/Money' }
+        tip_kobo: { $ref: '#/components/schemas/Money' }
+        discount_kobo: { $ref: '#/components/schemas/Money' }
+        total_kobo: { $ref: '#/components/schemas/Money' }
+        delivery_address: { type: string, description: Destination address as captured at placement. }
+        created_at: { type: string, format: date-time, description: When the order was placed. }
+        updated_at: { type: string, format: date-time, description: Last state change. }
+        ready_at: { type: string, format: date-time, nullable: true, description: When the kitchen marked it ready. }
+        delivered_at: { type: string, format: date-time, nullable: true, description: When delivery completed. }
+        disputed_at: { type: string, format: date-time, nullable: true, description: When a dispute was raised against this order. }
+        age_minutes:
+          type: integer
+          description: >
+            How long the order has been open, computed server-side so every
+            operator's console agrees regardless of clock skew. Zero once the order
+            reaches a terminal state — a delivered order is not waiting.
+    AdminOrderPage:
+      type: object
+      description: >
+        One page of the feed plus aggregates computed over the WHOLE filtered set.
+
+
+        The aggregates are returned here rather than summed by the client because
+        the console's KPI tiles used to count the array they held: once the feed is
+        paged, "active orders" would have meant "active orders among the 25
+        currently on screen".
+      properties:
+        orders: { type: array, items: { $ref: '#/components/schemas/AdminOrderRow' }, description: The requested page of rows. }
+        total: { type: integer, description: 'Orders matching the full filter set (status included) — the basis for paging arithmetic.' }
+        limit: { type: integer, description: Page size actually applied after clamping. }
+        offset: { type: integer, description: Page offset actually applied. }
+        has_more: { type: boolean, description: True when offset + returned rows is still short of total. }
+        status_counts:
+          type: object
+          additionalProperties: { type: integer }
+          description: >
+            Every status and its count under the current filters EXCLUDING the
+            status filter itself, so the status tabs keep showing what selecting
+            them would yield instead of collapsing to the one in effect. Statuses
+            with no matching rows are present with a 0, never absent.
+        active_total: { type: integer, description: 'Sum of status_counts over the pre-terminal states (pending, confirmed, preparing, ready, picked_up).' }
+        gross_delivered_kobo: { $ref: '#/components/schemas/Money' }
     MenuCategory:
       type: object
       properties:
@@ -265,15 +488,28 @@ paths:
         '200': { description: Restaurant created, content: { application/json: { schema: { $ref: '#/components/schemas/Restaurant' } } } }
         '401': { description: Not authenticated }
     get:
-      tags: [customer, admin]
-      summary: List restaurants (browse / admin monitoring)
+      tags: [customer]
+      summary: Browse open restaurants (paged)
+      description: >
+        Customer discovery. Only OPEN restaurants, and — when listing moderation is
+        enabled — only APPROVED listings. Every filter is applied in SQL BEFORE the
+        page is cut, so a client must not narrow the result locally: that would hide
+        matches sitting on a later page.
+
+
+        Operators must NOT use this endpoint to enumerate restaurants; it cannot see
+        closed or unreviewed shops. Use GET /api/restaurant/admin/restaurants.
       parameters:
-        - { name: cuisine, in: query, schema: { type: string } }
-        - { name: q, in: query, schema: { type: string }, description: Free-text search }
+        - { name: cuisine, in: query, schema: { type: string }, description: 'Exact (case-insensitive) cuisine tag. "all" or omitted = no filter.' }
+        - { name: q, in: query, schema: { type: string }, description: 'Free-text search over name, description and cuisine.' }
+        - { name: promo, in: query, schema: { type: string, enum: ['1', 'true'] }, description: 'Keep only restaurants running a live offer.' }
+        - { name: sort, in: query, schema: { type: string, enum: [newest, rating, name, eta], default: newest }, description: 'eta sorts by kitchen prep time.' }
+        - { name: limit, in: query, schema: { type: integer, default: 20, maximum: 50 }, description: 'Page size.' }
+        - { name: offset, in: query, schema: { type: integer, default: 0 }, description: 'Page offset. Page with the offset the server reports, never a locally accumulated count.' }
       responses:
         '200':
-          description: Restaurant list
-          content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Restaurant' } } } }
+          description: One page of open restaurants
+          content: { application/json: { schema: { $ref: '#/components/schemas/RestaurantPage' } } }
         '401': { description: Not authenticated }
   /{id}:
     get:
@@ -749,3 +985,181 @@ paths:
       responses:
         '101': { description: Switching Protocols (WS upgrade) }
         '401': { description: Not authenticated }
+  /restaurants:
+    get:
+      tags: [admin]
+      summary: 'x-admin: the operator restaurant register (paged)'
+      description: >
+        Served on the ADMIN root (`GET /api/restaurant/admin/restaurants`), fail-closed
+        behind RBAC `restaurant.manage`.
+
+
+        Unlike customer discovery this applies NO availability filter and NO listing
+        moderation gate — every row in `restaurants` is visible, which is the point: a
+        console that lists shops off the discovery endpoint cannot see the closed or
+        unreviewed ones, and those are the rows an operator needs to act on.
+      parameters:
+        - { name: q, in: query, schema: { type: string }, description: 'Free-text search over name, address and cuisine.' }
+        - { name: status, in: query, schema: { type: string, enum: [open, closed, all], default: all }, description: 'Availability filter. Default shows closed shops too.' }
+        - { name: review, in: query, schema: { type: string, enum: [DRAFT, PENDING_REVIEW, APPROVED, CHANGES_REQUESTED, REJECTED] }, description: 'Filter by listing_review_status.' }
+        - { name: sort, in: query, schema: { type: string, enum: [newest, name, rating, updated], default: newest }, description: 'Ordering; every option ends in a unique tiebreaker so pages cannot repeat or skip rows.' }
+        - { name: limit, in: query, schema: { type: integer, default: 25, maximum: 200 }, description: 'Page size.' }
+        - { name: offset, in: query, schema: { type: integer, default: 0 }, description: 'Page offset.' }
+      responses:
+        '200':
+          description: One page of the register
+          content: { application/json: { schema: { $ref: '#/components/schemas/AdminRestaurantPage' } } }
+        '401': { description: Not authenticated }
+        '403': { description: Missing the restaurant.manage permission }
+  # NOTE: keyed `/admin/orders` rather than `/orders` because the member root
+  # already documents `/orders` above and both servers share one `paths:` map — a
+  # second `/orders:` key is a duplicate mapping key and the file stops parsing.
+  # The path-item `servers` below pins the base so the resolved URL is still
+  # exactly `/api/restaurant/admin/orders`, the same surface as `/restaurants`.
+  /admin/orders:
+    servers:
+      - url: /api/restaurant
+        description: Go backend (Gin) — admin surface root for the order feed
+    get:
+      tags: [admin]
+      summary: 'x-admin: the platform-wide order feed (paged + aggregated)'
+      description: >
+        Served on the ADMIN root (`GET /api/restaurant/admin/orders`), fail-closed
+        behind RBAC `restaurant.manage`. Every order on the platform, joined to its
+        restaurant and rider, filtered and paged in SQL.
+
+
+        WHY THIS EXISTS: the ops console had no admin order feed at all. It read the
+        owner-scoped MEMBER route `GET /api/finance/restaurant/orders?role=restaurant`,
+        whose query is `JOIN restaurants r ON r.id = o.restaurant_id WHERE r.owner_id = $1`
+        — so an operator saw the orders of restaurants they personally own, which is
+        none. 2,174 orders existed and the console could see zero of them. That
+        handler also ignored `?status` outright, so the filter chips did nothing even
+        where rows were returned.
+
+
+        READ-ONLY. It projects money (integer kobo) for display and moves none: no
+        ledger entries, no state transitions, so no `Idempotency-Key` applies here.
+        Order mutations keep going through the existing member / rider / dispatch
+        routes.
+
+
+        Aggregates (`status_counts`, `active_total`, `gross_delivered_kobo`) are
+        computed over the whole filtered set with the status predicate removed, so
+        the status tabs show the counts selecting them would yield.
+      parameters:
+        - { name: q, in: query, schema: { type: string }, description: 'Free-text search over order id prefix, restaurant name and delivery address. The uuid is cast to text first, so a partial id such as `3f2a` matches.' }
+        - { name: status, in: query, schema: { $ref: '#/components/schemas/AdminOrderStatus' }, description: 'Exact order status; omit for any. A value outside the enum is a 400, never a silently empty page.' }
+        - { name: dispatch, in: query, schema: { type: string, enum: [none, searching, assigned, delivered] }, description: 'Filter by courier dispatch_status; omit for any.' }
+        - { name: restaurant_id, in: query, schema: { type: string, format: uuid }, description: Restrict the feed to one restaurant. }
+        - { name: rider_id, in: query, schema: { type: string, format: uuid }, description: Restrict the feed to one rider. }
+        - { name: unassigned, in: query, schema: { type: boolean, default: false }, description: 'Dispatch worklist: orders with no rider that are NOT already delivered, cancelled or rejected. An unassigned closed order is not a dispatch problem.' }
+        - { name: sort, in: query, schema: { type: string, enum: [newest, oldest, total, updated], default: newest }, description: 'Ordering; every option ends in a unique `o.id` tiebreaker so pages cannot repeat or skip rows.' }
+        - { name: limit, in: query, schema: { type: integer, default: 25, maximum: 200 }, description: 'Page size. Values <= 0 or above the maximum fall back to the default.' }
+        - { name: offset, in: query, schema: { type: integer, default: 0 }, description: 'Page offset; negative values floor at 0.' }
+      responses:
+        '200':
+          description: One page of the platform-wide order feed plus its aggregates
+          content: { application/json: { schema: { $ref: '#/components/schemas/AdminOrderPage' } } }
+        '400': { description: Unknown status filter }
+        '401': { description: Not authenticated }
+        '403': { description: Missing the restaurant.manage permission }
+  # Dispatch-board surfaces, also on the ADMIN root. Same `/admin/...` keying and
+  # `servers` override as /admin/orders above, and for the same reason: the member
+  # root already owns bare `/orders`, and one duplicate mapping key stops the whole
+  # file parsing.
+  /admin/riders:
+    servers:
+      - url: /api/restaurant
+        description: Go backend (Gin) — admin surface root for the dispatch board
+    get:
+      tags: [admin]
+      summary: 'x-admin: the rider roster'
+      description: >
+        Couriers available to food delivery, read from the shared transport `drivers`
+        pool, each with the order they are currently carrying. Fail-closed behind RBAC
+        `restaurant.admin.dispatch`.
+
+
+        A rider counts as on_delivery only while holding a NON-terminal order. That
+        predicate used to read `status NOT IN ('delivered','cancelled')` — written
+        before the lifecycle gained rejected / dispatch_failed / delivery_failed — so a
+        rider whose last job ended in one of those three would have been pinned
+        on_delivery forever and never offered another.
+      parameters:
+        - { name: status, in: query, schema: { type: string, enum: [available, on_delivery, offline, suspended] }, description: 'Filter by the derived rider status; omit for any. A value outside the enum is a 400, never a silently empty roster.' }
+        - { name: vehicle, in: query, schema: { type: string, enum: [bike, car, foot] }, description: 'Filter by vehicle type.' }
+        - { name: q, in: query, schema: { type: string }, description: 'Free-text search over rider name and phone.' }
+        - { name: sort, in: query, schema: { type: string, enum: [recent, name, rating], default: recent }, description: 'Ordering; every option ends in a unique user_id tiebreaker so pages cannot repeat or skip riders.' }
+        - { name: limit, in: query, schema: { type: integer, default: 25, maximum: 200 }, description: 'Page size.' }
+        - { name: offset, in: query, schema: { type: integer, default: 0 }, description: 'Page offset.' }
+      responses:
+        '200':
+          description: One page of the rider roster plus status counts
+          content: { application/json: { schema: { $ref: '#/components/schemas/AdminRiderPage' } } }
+        '400': { description: Unknown rider status filter }
+        '401': { description: Not authenticated }
+        '403': { description: Missing the restaurant.admin.dispatch permission }
+  /admin/dispatch/queue:
+    servers:
+      - url: /api/restaurant
+        description: Go backend (Gin) — admin surface root for the dispatch board
+    get:
+      tags: [admin]
+      summary: 'x-admin: orders awaiting or undergoing courier dispatch'
+      description: >
+        Orders that still need a courier or are mid-delivery. Fail-closed behind RBAC
+        `restaurant.admin.dispatch`.
+
+
+        Only OPEN orders appear. The predicate previously excluded just delivered and
+        cancelled, so an order that had been searching or assigned when it closed as
+        rejected / dispatch_failed / delivery_failed stayed on the board permanently —
+        183 of 345 rows, burying the orders a dispatcher could still act on. An order
+        whose sourcing has already given up needs a refund or a dispute, not a rider.
+      parameters:
+        - { name: dispatch, in: query, schema: { type: string, enum: [none, searching, assigned, delivered] }, description: 'Filter by courier dispatch_status; omit for any. A value outside the enum is a 400.' }
+        - { name: q, in: query, schema: { type: string }, description: 'Free-text search over order id prefix, restaurant name and delivery address.' }
+        - { name: restaurant_id, in: query, schema: { type: string, format: uuid }, description: 'Restrict the queue to one restaurant.' }
+        - { name: stalled, in: query, schema: { type: boolean, default: false }, description: 'Only orders still SEARCHING past stalled_after_minutes. An assigned order is not stalled however long it takes — a rider already has it.' }
+        - { name: sort, in: query, schema: { type: string, enum: [waiting, newest, oldest], default: waiting }, description: 'Default is longest-waiting first: a dispatch board is worked worst-first, not newest-first.' }
+        - { name: limit, in: query, schema: { type: integer, default: 25, maximum: 200 }, description: 'Page size.' }
+        - { name: offset, in: query, schema: { type: integer, default: 0 }, description: 'Page offset.' }
+      responses:
+        '200':
+          description: One page of the dispatch queue plus its aggregates
+          content: { application/json: { schema: { $ref: '#/components/schemas/AdminDispatchPage' } } }
+        '400': { description: Unknown dispatch status filter }
+        '401': { description: Not authenticated }
+        '403': { description: Missing the restaurant.admin.dispatch permission }
+  /admin/orders/{id}/dispatch:
+    servers:
+      - url: /api/restaurant
+        description: Go backend (Gin) — admin surface root for the dispatch board
+    post:
+      tags: [admin]
+      summary: 'x-admin: re-run courier sourcing for an order'
+      description: >
+        Re-runs auto-dispatch for an order still looking for a rider. Fail-closed behind
+        RBAC `restaurant.admin.dispatch`.
+
+
+        Exists because the member route `POST /api/finance/restaurant/orders/{orderId}/dispatch`
+        is OWNER-gated in its handler (`only the restaurant may re-dispatch`) and a
+        platform operator is never the owner — so the ops console's Re-dispatch button
+        could only ever answer 403, on the one intervention a dispatcher exists to make.
+        RBAC is the boundary here, as it is for the admin store routes; the same
+        idempotent DispatchOrder runs underneath, so this is not a second sourcing path.
+
+
+        Restarts courier SOURCING only: `dispatch_status` returns to searching and the
+        kitchen `status` is untouched.
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid }, description: Order id. }
+      responses:
+        '200':
+          description: Sourcing restarted
+          content: { application/json: { schema: { type: object, properties: { ok: { type: boolean } } } } }
+        '400': { description: 'Order is not in a state that can be dispatched' }
+        '401': { description: Not authenticated }
+        '403': { description: Missing the restaurant.admin.dispatch permission }

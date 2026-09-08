@@ -1,7 +1,9 @@
 import React, { useState } from 'react';
+import PhoneNumberInput from '@/components/PhoneNumberInput';
 import { View, Text, StyleSheet, ScrollView, KeyboardAvoidingView, Platform } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
 import { Spacing } from '@/constants/spacing';
@@ -30,7 +32,7 @@ export default function VendorOnboardScreen() {
         phone: phone.trim() || undefined,
         specialties: specialties.split(',').map((s) => s.trim()).filter(Boolean),
       },
-      { onSuccess: () => router.back() },
+      { onSuccess: () => goBack('/vendors') },
     );
   };
 
@@ -57,7 +59,7 @@ export default function VendorOnboardScreen() {
             })}
           </View>
 
-          <TextInputField label="Phone (optional)" value={phone} onChangeText={setPhone} placeholder="+234…" keyboardType="phone-pad" />
+          <PhoneNumberInput label="Phone (optional)" value={phone} onChange={({ e164, nsn }) => (setPhone)(e164 || nsn)} />
           <TextInputField label="Specialties (comma-separated)" value={specialties} onChangeText={setSpecialties} placeholder="e.g. leaks, water heaters" />
 
           <Text style={styles.hint}>You'll be listed as “pending” until an estate admin verifies your business.</Text>

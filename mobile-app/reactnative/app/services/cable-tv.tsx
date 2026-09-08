@@ -1,9 +1,11 @@
 import React, { useRef, useState } from 'react';
+import PhoneNumberInput from '@/components/PhoneNumberInput';
 import {
   View, Text, ScrollView, StyleSheet, Pressable, Platform, Modal, ActivityIndicator, Linking,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import { LinearGradient } from 'expo-linear-gradient';
 import { ArrowLeft, CircleHelp, CheckCircle2, ShieldCheck, X, CheckCircle } from 'lucide-react-native';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
@@ -26,6 +28,7 @@ import { getWallet } from '@/api/wallet.api';
 import { getErrorMessage } from '@/utils/errorMapper';
 import { generateIdempotencyKey } from '@/utils/idempotency';
 import { CableProvider, CablePackage, SmartCardValidation } from '@/types/billing';
+import { HomeMenuButton } from '@/components/HomeMenu';
 
 const schema = z.object({
   smartCardNumber: z.string().min(8, 'Enter a valid smart card number'),
@@ -195,13 +198,16 @@ export default function CableTvScreen() {
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
       <View style={styles.topBar}>
-        <Pressable onPress={() => router.back()} style={styles.iconBtn}>
+        <Pressable onPress={() => goBack('/services')} style={styles.iconBtn}>
           <ArrowLeft size={22} color={Colors.primary} strokeWidth={2.2} />
         </Pressable>
         <Text style={styles.topTitle}>Cable TV Payment</Text>
-        <Pressable style={styles.iconBtn}>
-          <CircleHelp size={21} color={Colors.primary} strokeWidth={2} />
-        </Pressable>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+          <Pressable style={styles.iconBtn}>
+            <CircleHelp size={21} color={Colors.primary} strokeWidth={2} />
+          </Pressable>
+          <HomeMenuButton />
+        </View>
       </View>
 
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.content}>
@@ -297,14 +303,7 @@ export default function CableTvScreen() {
               name="customerPhone"
               control={control}
               render={({ field }) => (
-                <TextInputField
-                  label="Customer Phone Number"
-                  placeholder="0801 234 5678"
-                  keyboardType="phone-pad"
-                  error={errors.customerPhone?.message}
-                  value={field.value}
-                  onChangeText={field.onChange}
-                />
+                <PhoneNumberInput label="Customer Phone Number" value={field.value} onChange={({ e164, nsn }) => (field.onChange)(e164 || nsn)} error={errors.customerPhone?.message} />
               )}
             />
           </View>

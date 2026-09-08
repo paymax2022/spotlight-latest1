@@ -2,6 +2,7 @@ import React from 'react';
 import { View, Text, ScrollView, StyleSheet, Pressable } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import { ArrowLeft, Plus, PiggyBank, Repeat, Target, ChevronRight } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
@@ -15,6 +16,7 @@ import AjoCircleCard from '@/features/savings/components/AjoCircleCard';
 import DisclosureBanner from '@/features/savings/components/DisclosureBanner';
 import { useSavingsSummary, useVaults, useCircles, useTargets } from '@/features/savings/hooks';
 import { SavingsColors, formatNaira, NO_YIELD_DISCLOSURE } from '@/features/savings/constants/savings.constants';
+import { HomeMenuButton } from '@/components/HomeMenu';
 
 export default function SavingsHome() {
   const summary = useSavingsSummary();
@@ -30,16 +32,19 @@ export default function SavingsHome() {
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
       <View style={styles.header}>
-        <Pressable onPress={() => router.back()} hitSlop={10} style={styles.iconBtn} accessibilityLabel="Go back">
+        <Pressable onPress={() => goBack('/')} hitSlop={10} style={styles.iconBtn} accessibilityLabel="Go back">
           <ArrowLeft size={22} color={Colors.onSurface} strokeWidth={2} />
         </Pressable>
         <View style={styles.headerTitleWrap}>
           <Text style={styles.eyebrow}>Paymax</Text>
           <Text style={styles.headerTitle}>Savings</Text>
         </View>
-        <Pressable onPress={() => router.push('/savings/vault/create')} hitSlop={10} style={styles.iconBtn} accessibilityLabel="Create vault">
-          <Plus size={22} color={Colors.onSurface} strokeWidth={2} />
-        </Pressable>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+          <Pressable onPress={() => router.push('/savings/vault/create')} hitSlop={10} style={styles.iconBtn} accessibilityLabel="Create vault">
+            <Plus size={22} color={Colors.onSurface} strokeWidth={2} />
+          </Pressable>
+          <HomeMenuButton />
+        </View>
       </View>
 
       {loading ? (
@@ -149,7 +154,7 @@ const styles = StyleSheet.create({
   scroll: { paddingHorizontal: Spacing.containerMargin, gap: Spacing.md, paddingTop: Spacing.sm },
   totalCard: { backgroundColor: Colors.primary, borderRadius: Radius.xl, padding: Spacing.lg, gap: Spacing.sm },
   totalLabel: { ...Typography.labelMd, color: Colors.inversePrimary },
-  totalAmount: { ...Typography.displayLg, color: Colors.onPrimary, fontSize: 36, lineHeight: 42 },
+  totalAmount: { ...Typography.displayLg, color: Colors.onPrimary, fontSize: 36, letterSpacing: -0.72, lineHeight: 42 },
   statsRow: { flexDirection: 'row', gap: Spacing.lg, marginTop: Spacing.sm },
   stat: { gap: 2 },
   statValue: { ...Typography.titleLg, color: Colors.onPrimary },

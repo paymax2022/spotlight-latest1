@@ -18,6 +18,7 @@ vi.mock('@/src/server/wallet/service', () => ({
 
 import {
   provisionVirtualAccount,
+  getOrProvisionVirtualAccount,
   getVirtualAccount,
 } from '@/src/server/virtual-accounts/service';
 import { handleDvaTransferWebhook } from '@/src/server/virtual-accounts/webhook';
@@ -189,6 +190,102 @@ describe('provisionVirtualAccount', () => {
 
     const result = await provisionVirtualAccount(USER_ID, 'u@example.com', 'John', 'Doe');
     expect(result.account_number).toBe('1234567890');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// getOrProvisionVirtualAccount
+// ---------------------------------------------------------------------------
+
+describe('getOrProvisionVirtualAccount', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    process.env.PAYSTACK_SECRET_KEY = 'sk_test_abc';
+    process.env.PAYSTACK_DVA_BANK = 'wema-bank';
+  });
+
+  it('returns the existing account without touching user_profiles or Paystack', async () => {
+    const { maybySingle } = setupMock();
+    maybySingle.mockResolvedValueOnce({ data: DVA_ROW, error: null }); // getVirtualAccount
+
+    global.fetch = vi.fn();
+
+    const result = await getOrProvisionVirtualAccount(USER_ID, 'fallback@example.com');
+
+    expect(result.account_number).toBe('1234567890');
+    expect(global.fetch).not.toHaveBeenCalled();
+  });
+
+  it('provisions using the profile name when none exists yet', async () => {
+    const { maybySingle, insertFn } = setupMock();
+    maybySingle
+      .mockResolvedValueOnce({ data: null, error: null }) // getVirtualAccount: none yet
+      .mockResolvedValueOnce({                             // user_profiles lookup
+        data: { email: 'jane@example.com', first_name: 'Jane', last_name: 'Doe', full_name: 'Jane Doe' },
+        error: null,
+      })
+      .mockResolvedValueOnce({ data: null, error: null }); // provisionVirtualAccount's own getVirtualAccount check
+    insertFn.mockResolvedValueOnce({ error: null });
+
+    global.fetch = vi.fn()
+      .mockResolvedValueOnce(mockPaystackCustomer())
+      .mockResolvedValueOnce(mockPaystackDva());
+
+    const result = await getOrProvisionVirtualAccount(USER_ID, 'fallback@example.com');
+
+    expect(result.account_number).toBe('1234567890');
+  });
+
+  it('falls back to splitting full_name when first/last name are both empty', async () => {
+    const { maybySingle, insertFn } = setupMock();
+    maybySingle
+      .mockResolvedValueOnce({ data: null, error: null })
+      .mockResolvedValueOnce({
+        data: { email: 'jane@example.com', first_name: null, last_name: null, full_name: 'Jane Doe' },
+        error: null,
+      })
+      .mockResolvedValueOnce({ data: null, error: null });
+    insertFn.mockResolvedValueOnce({ error: null });
+
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(mockPaystackCustomer())
+      .mockResolvedValueOnce(mockPaystackDva());
+    global.fetch = fetchMock;
+
+    await getOrProvisionVirtualAccount(USER_ID, 'fallback@example.com');
+
+    const customerCall = fetchMock.mock.calls[0];
+    const customerBody = JSON.parse(customerCall[1].body);
+    expect(customerBody).toMatchObject({ email: 'jane@example.com', first_name: 'Jane', last_name: 'Doe' });
+  });
+
+  it('uses the fallback email when user_profiles has none', async () => {
+    const { maybySingle, insertFn } = setupMock();
+    maybySingle
+      .mockResolvedValueOnce({ data: null, error: null })
+      .mockResolvedValueOnce({ data: { email: null, first_name: null, last_name: null, full_name: null }, error: null })
+      .mockResolvedValueOnce({ data: null, error: null });
+    insertFn.mockResolvedValueOnce({ error: null });
+
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(mockPaystackCustomer())
+      .mockResolvedValueOnce(mockPaystackDva());
+    global.fetch = fetchMock;
+
+    await getOrProvisionVirtualAccount(USER_ID, 'fallback@example.com');
+
+    const customerBody = JSON.parse(fetchMock.mock.calls[0][1].body);
+    expect(customerBody.email).toBe('fallback@example.com');
+  });
+
+  it('throws when neither user_profiles nor the caller has an email', async () => {
+    const { maybySingle } = setupMock();
+    maybySingle
+      .mockResolvedValueOnce({ data: null, error: null })
+      .mockResolvedValueOnce({ data: { email: null, first_name: null, last_name: null, full_name: null }, error: null });
+
+    const { ApiError } = await import('@/src/lib/api/responses');
+    await expect(getOrProvisionVirtualAccount(USER_ID, undefined)).rejects.toThrow(ApiError);
   });
 });
 

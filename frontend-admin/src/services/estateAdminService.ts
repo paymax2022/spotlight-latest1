@@ -14,6 +14,7 @@
 //   GET  /api/finance/property/rent-passport/lookup/:userId  (perm: property.manage)
 
 import { env } from '@/config/env';
+import { resolveUseMock } from '@/config/useMock';
 import type {
   EstateKpis, EstateActivity, AdminResident, AdminDuesInvoice,
   AdminGate, AdminGuardShift, AdminIncident, AdminVendor,
@@ -25,7 +26,7 @@ import type {
   OversightElection, ElectionResultRow, ElectionAudit,
 } from '@/types/estateAdmin';
 
-const USE_MOCK = (process.env.NEXT_PUBLIC_ESTATE_ADMIN_USE_MOCK ?? 'true').toLowerCase() !== 'false';
+const USE_MOCK = resolveUseMock(process.env.NEXT_PUBLIC_ESTATE_ADMIN_USE_MOCK);
 
 // The canonical Go backend mounts finance verticals under /api/finance, while
 // env.apiBaseUrl ends with /api/v1. Strip the version suffix and target /api/finance.

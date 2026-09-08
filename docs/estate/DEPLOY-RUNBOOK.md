@@ -45,7 +45,7 @@ and run the guard (already in the repo):
 cd mobile-app/reactnative
 cp .env.production.example .env.production
 # set EXPO_PUBLIC_API_BASE_URL to the deployed backend
-node scripts/check-estate-mocks.mjs .env.production   # fails if any flag != false
+node scripts/check-env-mocks.mjs .env.production   # fails if any flag != false
 ```
 The guard covers all 18 estate (+ visitor/election) flags so none can be missed.
 

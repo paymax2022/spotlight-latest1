@@ -1,3 +1,4 @@
+import { mockAllowed } from '@/config/mockPolicy';
 import { Colors } from '@/constants/colors';
 
 // ── Direct Referral Rewards — module constants ───────────────────────────────
@@ -7,7 +8,7 @@ import { Colors } from '@/constants/colors';
 // Mock-first: the mock layer is ON by default so the whole flow walks offline
 // (hub → share → referrals → earnings → milestone). Set
 // EXPO_PUBLIC_REFERRAL_USE_MOCK=false to hit the live engine via the proxy.
-export const USE_MOCK = process.env.EXPO_PUBLIC_REFERRAL_USE_MOCK !== 'false';
+export const USE_MOCK = mockAllowed(process.env.EXPO_PUBLIC_REFERRAL_USE_MOCK, true);
 
 // Referral engine namespace — the frontend-web catch-all proxy at
 // /api/v1/referrals/<...> forwards to the Go backend /v1/referrals/<...>.

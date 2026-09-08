@@ -1,13 +1,14 @@
-import React, { useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { View, Text, ScrollView, StyleSheet, Pressable, ActivityIndicator, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import * as Icons from 'lucide-react-native';
 import StateView from '@/components/StateView';
 import PrimaryButton from '@/components/PrimaryButton';
 import AddressAutocompleteInput, { type SelectedAddress } from '@/components/AddressAutocompleteInput';
 import { withPlusCode } from '@/lib/addressLookup';
-import type { CartPackage, LatLng } from '@/features/food/types';
+import type { LatLng } from '@/features/food/types';
 import { Colors } from '@/constants/colors';
 import { Radius } from '@/constants/radius';
 import { Spacing } from '@/constants/spacing';
@@ -15,13 +16,18 @@ import { Typography } from '@/constants/typography';
 import { shadow1 } from '@/constants/shadows';
 import { usePlaceOrder, useDeliveryQuote } from '@/features/food/hooks';
 import {
-  useCartStore, cartSubtotalKobo, cartItemCount, cartPackageCount, cartPackagingKobo,
+  useCartStore, cartSubtotalKobo, cartItemCount, cartPackageCount,
   aggregateCartLines, cartPackagesPayload, MAX_SAME_FOOD_PER_PACKAGE,
 } from '@/features/food/cartStore';
+import { resolveRestaurantName, groupPackagesByRestaurant, UNKNOWN_RESTAURANT_ID } from '@/features/food/restaurantName';
 import { formatNaira } from '@/features/food/utils';
-import { useRestaurant } from '@/features/food/hooks';
+import { resolveDeliveryFee } from '@/features/food/deliveryFee';
+import { resolvePackagingFee } from '@/features/food/packagingFee';
+import { estimateTotalKobo } from '@/features/food/estimate';
+import { useRestaurant, useRestaurantNames, useCartRestaurantAvailability } from '@/features/food/hooks';
 import { usePurchasePayment, PaymentSheet } from '@/features/payments';
 import { CartNutritionSummary } from '@/features/nutrition';
+import { HomeMenuButton } from '@/components/HomeMenu';
 
 function Line({ label, value, strong }: { label: string; value: string; strong?: boolean }) {
   return (
@@ -42,8 +48,90 @@ function SubLine({ label, value, strong }: { label: string; value: string; stron
 }
 
 export default function CheckoutScreen() {
-  const { packages, restaurantId, restaurantName, clear, addItem, decrementItem, addPackage, removePackage } = useCartStore();
-  const { data: restaurant } = useRestaurant(restaurantId ?? undefined);
+  const { packages, restaurantId, restaurantName, clear, addItem, decrementItem, addPackage, removePackage, removeRestaurants } = useCartStore();
+  const { data: restaurant, isError: restaurantUnavailable, isPending: restaurantLoading } = useRestaurant(restaurantId ?? undefined);
+
+  // Every kitchen in the cart, checked for existence — not just the primary, and
+  // not just the ones that need naming: a kitchen can be perfectly nameable from
+  // a captured line and still have been deleted since the cart was built.
+  // The cart-level restaurantId is in here too, and that is the point. It is the
+  // field useRestaurant (packaging) and useDeliveryQuote (delivery) are aimed at,
+  // and being "first restaurant added, never updated" it can name a kitchen with
+  // nothing left in the cart. Checking only the lines left a dead pointer
+  // undetected and never re-derived, so BOTH fees sat at "—" forever with
+  // nothing on screen explaining why.
+  const cartRestaurantIds = useMemo(
+    () =>
+      [...new Set([
+        ...packages.flatMap((p) => p.lines.map((l) => l.restaurantId)),
+        restaurantId,
+      ])].filter((x): x is string => !!x),
+    [packages, restaurantId],
+  );
+  const goneRestaurantIdList = useCartRestaurantAvailability(cartRestaurantIds);
+
+  // Remove them. A cart persists locally AND on the server, so it outlives the
+  // menu it was built from; the food of a deleted kitchen sits here looking
+  // ordinary — named, priced, adding to the total — while PlaceOrder can never
+  // accept it and its delivery leg can never be quoted. Only a 404 gets here
+  // (see availability.ts); a server error leaves the cart alone.
+  const [prunedNotice, setPrunedNotice] = useState<string | null>(null);
+  useEffect(() => {
+    if (goneRestaurantIdList.length === 0) return;
+    const out = removeRestaurants(goneRestaurantIdList);
+    // Only speak up when food the customer chose actually left the cart. A
+    // silent re-point (or dropping an empty pack) removes nothing they can
+    // miss, and saying so would describe a loss that did not happen.
+    if (out.removedItemCount === 0) return;
+    const names = out.removedNames.join(', ');
+    setPrunedNotice(
+      `${names} ${out.removedIds.length > 1 ? 'are' : 'is'} no longer available, so ` +
+        `${out.removedItemCount} item${out.removedItemCount === 1 ? '' : 's'} ` +
+        `${out.removedItemCount === 1 ? 'was' : 'were'} removed from your order.`,
+    );
+  }, [goneRestaurantIdList, removeRestaurants]);
+
+  // Names for the OTHER restaurants in a multi-restaurant cart. Lines added in
+  // this session carry their own name; the per-id lookup below covers carts
+  // hydrated from storage or the server, whose lines predate that field.
+  //
+  // This used to seed the map from the WHOLE discovery list. That list is now
+  // paged, so it would have named only the restaurants that happened to be on
+  // page 1 — and the by-id fetch already covers every case it did, without
+  // depending on a shop being open or on the first page.
+  const restaurantNameById = useMemo(() => {
+    const m = new Map<string, string>();
+    // The cart's primary restaurant is known to the store even when discovery
+    // does not list it (e.g. it has since closed).
+    if (restaurantId && restaurantName) m.set(restaurantId, restaurantName);
+    return m;
+  }, [restaurantId, restaurantName]);
+
+  // The cart's restaurant groups, in render order. Lifted out of the JSX so the
+  // unresolved ids below can be computed before rendering.
+  const restaurantGroups = useMemo(() => groupPackagesByRestaurant(packages, restaurantId), [packages, restaurantId]);
+
+  // Ids that neither a captured line name nor the cart's own primary restaurant
+  // can name. Fetched by id, which has no is_open filter and no paging — a cart
+  // outlives opening hours, and discovery is `WHERE is_open = TRUE`. Usually
+  // empty, in which case no request is made.
+  const unresolvedRestaurantIds = useMemo(
+    () =>
+      restaurantGroups
+        .filter(({ rid, packages: ps }) => {
+          if (!rid || rid === UNKNOWN_RESTAURANT_ID) return false; // nothing to fetch
+          if (restaurantNameById.has(rid)) return false;
+          return !ps.some((p) => p.lines.some((l) => l.restaurantName?.trim()));
+        })
+        .map(({ rid }) => rid),
+    [restaurantGroups, restaurantNameById],
+  );
+  const fetchedNames = useRestaurantNames(unresolvedRestaurantIds);
+
+  const lookupRestaurantName = useCallback(
+    (id: string) => restaurantNameById.get(id) ?? fetchedNames.get(id),
+    [restaurantNameById, fetchedNames],
+  );
   const placeOrder = usePlaceOrder();
   // Two-option checkout modal: Pay with Wallet, or Pay with Card/Transfer (Paystack gateway).
   const pay = usePurchasePayment<Awaited<ReturnType<typeof placeOrder.mutateAsync>>>();
@@ -60,20 +148,42 @@ export default function CheckoutScreen() {
   // authoritative on placeOrder — this only drives the pre-payment estimate.
   const quoteQ = useDeliveryQuote(restaurantId ?? undefined, addressLocation);
   const quote = quoteQ.data;
-  // Use the quoted fee once we have a confident (non-fallback) quote; otherwise
-  // fall back to the restaurant's flat fee and label it as an estimate.
-  const flatFee = restaurant?.deliveryFeeKobo ?? 0;
-  const haveQuote = Boolean(addressLocation) && Boolean(quote) && !quote!.flat_fallback;
-  const deliveryFee = haveQuote ? quote!.delivery_fee_kobo : flatFee;
-  const deliveryEstimated = !haveQuote;
-  // Service fee shown as an estimate; the SERVER computes the authoritative total.
-  const serviceFee = Math.round(subtotal * 0.05);
+  // A quote is a SERVER price and is always used; flat_fallback only means it is
+  // not distance-based. The old rule discarded a flat-fallback quote in favour of
+  // restaurant.deliveryFeeKobo — a field with no column and no DTO behind it —
+  // so the fee rendered as ₦0 for every restaurant without coordinates while
+  // PlaceOrder still charged the real one.
+  const deliveryQuoteView = resolveDeliveryFee(quote);
+  const deliveryFee = deliveryQuoteView.feeKobo;
+  const deliveryKnown = deliveryQuoteView.known;
+  const deliveryEstimated = deliveryQuoteView.estimated;
+  const deliveryCalculating = Boolean(addressLocation) && quoteQ.isPending && !quote;
+  // An address IS set and the quote came back an error — telling the buyer to
+  // "add your address" here sends them to fix something that is not wrong.
+  const deliveryFailed = Boolean(addressLocation) && quoteQ.isError && !quote;
+  // Only a distance-based quote carries a breakdown worth showing.
+  const haveQuote = deliveryKnown && !deliveryEstimated;
   // Mandatory take-away packaging — one pack fee PER takeaway package the customer
   // added (the package is the container). Cannot be removed.
-  const packFee = restaurant?.packagingFeeKobo ?? 0;
+  // Unknown is not free. `restaurant?.packagingFeeKobo ?? 0` rendered ₦0 whenever
+  // the restaurant had not loaded, and the server charges the real per-pack fee
+  // regardless — so the estimate was short by exactly that amount.
+  const packagingView = resolvePackagingFee(packages, restaurant?.packagingFeeKobo);
+  const packagingFee = packagingView.feeKobo;
+  const packagingKnown = packagingView.known;
   const packCount = cartPackageCount(packages);
-  const packagingFee = cartPackagingKobo(packages, packFee);
-  const estTotal = subtotal + deliveryFee + serviceFee + packagingFee;
+  // No service fee. Checkout used to add a hardcoded 5%, which the server does
+  // not charge — it prices service fee from the restaurant's own service_fee_bp
+  // (0 for every restaurant, and never exposed to the client). That invented
+  // ₦560 on a real ₦12,801.40 order. See estimate.ts.
+  const estTotal = estimateTotalKobo({
+    subtotalKobo: subtotal,
+    deliveryKobo: deliveryFee,
+    packagingKobo: packagingFee,
+  });
+  // The estimate is missing a component the server will still charge. Say so
+  // rather than presenting a total that reads as complete.
+  const estIncomplete = !deliveryKnown || !packagingKnown;
   const count = cartItemCount(packages);
   // Aggregated lines (across packages) drive pricing + the nutrition summary.
   const aggregated = useMemo(() => aggregateCartLines(packages), [packages]);
@@ -100,6 +210,10 @@ export default function CheckoutScreen() {
 
   const onPlace = () => {
     if (!restaurantId || !address.trim() || belowMin || placeOrder.isPending || paid) return;
+    // PlaceOrder reads the restaurant row for pricing and open-hours; if we could
+    // not load it, the order cannot be placed and taking a payment first would
+    // charge for something the server is about to refuse.
+    if (restaurantUnavailable) return;
     // Open the two-option modal. Wallet pays from balance; Card/Transfer charges
     // on the Paystack gateway. Either way placeOrder (the fulfilment) runs on
     // confirmation, with its own Idempotency-Key.
@@ -161,11 +275,14 @@ export default function CheckoutScreen() {
     return (
       <SafeAreaView style={s.safe} edges={['top']}>
         <View style={s.topBar}>
-          <Pressable onPress={() => router.back()} style={s.iconButton} accessibilityLabel="Go back">
+          <Pressable onPress={() => goBack('/food')} style={s.iconButton} accessibilityLabel="Go back">
             <Icons.ArrowLeft size={22} color={Colors.primary} strokeWidth={2.2} />
           </Pressable>
           <Text style={s.topTitle}>Checkout</Text>
-          <View style={s.iconButton} />
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+            <View style={s.iconButton} />
+            <HomeMenuButton />
+          </View>
         </View>
         <StateView kind="empty" icon="ShoppingCart" title="Your cart is empty" message="Add items from a restaurant to get started." actionLabel="Browse restaurants" onAction={() => router.replace('/food')} />
       </SafeAreaView>
@@ -175,35 +292,52 @@ export default function CheckoutScreen() {
   return (
     <SafeAreaView style={s.safe} edges={['top']}>
       <View style={s.topBar}>
-        <Pressable onPress={() => router.back()} style={s.iconButton} accessibilityLabel="Go back">
+        <Pressable onPress={() => goBack('/food')} style={s.iconButton} accessibilityLabel="Go back">
           <Icons.ArrowLeft size={22} color={Colors.primary} strokeWidth={2.2} />
         </Pressable>
         <Text style={s.topTitle}>Checkout</Text>
-        <View style={s.iconButton} />
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+          <View style={s.iconButton} />
+          <HomeMenuButton />
+        </View>
       </View>
 
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={s.content}>
+        {/* An order cannot be placed for a restaurant the server cannot load, and
+            its delivery fee cannot be quoted either — which is what "the fee is
+            not computing" looks like from the outside. Say so ABOVE the prices,
+            not after the total. */}
+        {/* What was removed, and why. The cart quietly shrinking is worse than the
+            stale lines it replaces — the customer picked that food and has no
+            other way to learn it went. */}
+        {prunedNotice ? <Text style={s.blocker}>{prunedNotice}</Text> : null}
+
+        {/* Still reachable when the PRIMARY restaurant fails for a reason that is
+            not a 404 (a 500, say): nothing is removed in that case, so the order
+            cannot proceed and the screen has to say so rather than sit there. */}
+        {restaurantUnavailable && !prunedNotice ? (
+          <Text style={s.blocker}>
+            {restaurantName ? `We couldn't load "${restaurantName}"` : "We couldn't load this restaurant"}
+            , so this order can't be placed and its delivery fee can't be priced. Try again in a moment.
+          </Text>
+        ) : null}
         {/* Group items by restaurant and display */}
         {(() => {
-          // Create a map of restaurant -> packages
-          const byRestaurant = new Map<string, CartPackage[]>();
-          for (const pkg of packages) {
-            if (pkg.lines.length === 0) continue;
-            // Get the restaurant ID from the first item in the package
-            const rid = pkg.lines[0]?.restaurantId || restaurantId || 'unknown';
-            if (!byRestaurant.has(rid)) byRestaurant.set(rid, []);
-            byRestaurant.get(rid)!.push(pkg);
-          }
-
-          const restaurants = Array.from(byRestaurant.entries());
-          return restaurants.length === 0 ? null : (
+          // Grouping is memoized above (restaurantGroups) so the screen can
+          // resolve names for closed/unlisted restaurants before rendering.
+          return restaurantGroups.length === 0 ? null : (
             <View>
-              {restaurants.map(([rid, rPackages], restIndex) => (
+              {restaurantGroups.map(({ rid, packages: rPackages }, restIndex) => (
                 <View key={rid} style={restIndex > 0 && { marginTop: Spacing.lg }}>
                   {/* Restaurant name header */}
                   <View style={s.restaurantSection}>
                     <Text style={s.restaurantSectionTitle}>
-                      {restaurantName && rid === restaurantId ? restaurantName : `Restaurant ${restIndex + 1}`}
+                      {resolveRestaurantName(
+                        rPackages.flatMap((p) => p.lines),
+                        rid,
+                        restIndex,
+                        lookupRestaurantName,
+                      )}
                     </Text>
                   </View>
 
@@ -255,7 +389,7 @@ export default function CheckoutScreen() {
         })()}
 
         <View style={s.packActionsRow}>
-          <Pressable style={[s.actionButton, s.actionButtonAdd]} onPress={() => addPackage()} accessibilityRole="button">
+          <Pressable style={[s.actionButton, s.actionButtonAdd]} onPress={() => addPackage(restaurantId ?? undefined, restaurantName ?? undefined)} accessibilityRole="button">
             <Icons.Plus size={16} color={Colors.primary} strokeWidth={2.6} />
             <Text style={s.actionButtonText}>Add another pack</Text>
           </Pressable>
@@ -293,14 +427,22 @@ export default function CheckoutScreen() {
           <Line label={`Subtotal (${count} item${count > 1 ? 's' : ''})`} value={formatNaira(subtotal)} />
           <Line
             label={
-              deliveryEstimated
-                ? 'Delivery fee (estimated — add your address)'
-                : 'Delivery fee'
+              deliveryFailed
+                ? "Delivery fee (couldn't be priced)"
+                : !deliveryKnown
+                  ? 'Delivery fee (add your address)'
+                  : deliveryEstimated
+                    ? 'Delivery fee (estimated)'
+                    : 'Delivery fee'
             }
             value={
-              addressLocation && quoteQ.isPending && !quote
+              deliveryCalculating
                 ? 'Calculating…'
-                : formatNaira(deliveryFee)
+                : // Never render ₦0 for a fee nobody has quoted: the customer
+                  // would read "free delivery" and then be charged at checkout.
+                  deliveryKnown
+                  ? formatNaira(deliveryFee)
+                  : '—'
             }
           />
           {/* Distance/time delivery breakdown — only when we have a real quote.
@@ -338,12 +480,17 @@ export default function CheckoutScreen() {
               <SubLine label="Delivery total" value={formatNaira(quote.breakdown.total_kobo)} strong />
             </View>
           ) : null}
-          <Line label={`Takeaway packaging (${packCount} pack${packCount > 1 ? 's' : ''})`} value={formatNaira(packagingFee)} />
-          <Line label="Service fee" value={formatNaira(serviceFee)} />
+          <Line
+            label={`Takeaway packaging (${packCount} pack${packCount > 1 ? 's' : ''})`}
+            value={packagingKnown ? formatNaira(packagingFee) : restaurantLoading ? 'Calculating…' : '—'}
+          />
           <View style={s.divider} />
           <Line label="Estimated total" value={formatNaira(estTotal)} strong />
           <Text style={s.note}>
-            {deliveryEstimated
+            {estIncomplete
+              ? 'This estimate is missing a charge the server will still apply, so the final amount will be higher. '
+              : ''}
+            {deliveryEstimated && !deliveryFailed
               ? 'Add your delivery address to get an exact distance-based delivery fee. '
               : ''}
             Takeaway packaging is required so the restaurant can pack your order. Final total is confirmed by the server when you place the order.
@@ -364,7 +511,7 @@ export default function CheckoutScreen() {
           label={`Pay & place order · ${formatNaira(estTotal)}`}
           onPress={onPlace}
           loading={placeOrder.isPending}
-          disabled={!address.trim() || belowMin}
+          disabled={!address.trim() || belowMin || restaurantUnavailable}
         />
         <Text style={s.payHint}>You'll be taken to the secure payment gateway (Paystack) to complete payment.</Text>
       </View>
@@ -419,6 +566,7 @@ const s = StyleSheet.create({
   qty: { ...Typography.labelMd, color: Colors.onSurface, minWidth: 16, textAlign: 'center' },
   itemPrice: { ...Typography.labelMd, color: Colors.onSurface, minWidth: 72, textAlign: 'right' },
   sectionLabel: { ...Typography.labelMd, color: Colors.onSurfaceVariant, marginTop: Spacing.lg, marginBottom: Spacing.sm },
+  blocker: { ...Typography.bodySm, color: Colors.error, backgroundColor: Colors.errorContainer, borderRadius: Radius.md, padding: Spacing.md, marginBottom: Spacing.sm },
   priceRow: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 4 },
   priceLabel: { ...Typography.bodyMd, color: Colors.onSurfaceVariant },
   priceLabelStrong: { ...Typography.labelLg, color: Colors.onSurface },

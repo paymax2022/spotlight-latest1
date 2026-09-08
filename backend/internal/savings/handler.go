@@ -17,10 +17,21 @@ type Handler struct {
 	vaults  *VaultService
 	ajo     *AjoService
 	targets *TargetService
+	// adminH serves the read-only ops console. Optional: nil leaves the admin
+	// routes unregistered rather than panicking, which is what a caller built
+	// without a pool should get.
+	adminH *AdminHandler
 }
 
 func NewHandler(v *VaultService, a *AjoService, t *TargetService) *Handler {
 	return &Handler{vaults: v, ajo: a, targets: t}
+}
+
+// WithAdmin attaches the read-only admin surface. Separate from NewHandler so
+// every existing caller and test keeps compiling unchanged.
+func (h *Handler) WithAdmin(a *AdminHandler) *Handler {
+	h.adminH = a
+	return h
 }
 
 func userID(c *gin.Context) string { return c.GetString("user_id") }
@@ -488,7 +499,19 @@ func (h *Handler) Register(member *gin.RouterGroup, admin *gin.RouterGroup, guar
 	g.GET("/targets/:id/balance", h.TargetBalance)
 
 	// Admin (ops): read-only oversight gated by savings.admin.*
+	//
+	// ⚠️ h.GetCircle is the MEMBER handler and enforces "only members may view
+	// circle detail" — so mounting it here 403'd every admin who was not
+	// themselves in the circle, i.e. all of them. It was the only admin route
+	// savings had, and it did not work for its intended callers. Kept mounted for
+	// compatibility, with the admin-scoped list/detail beside it.
 	if admin != nil && guard != nil {
 		admin.GET("/circles/:id", guard("savings.admin.view"), h.GetCircle)
+		if h.adminH != nil {
+			admin.GET("/dashboard", guard("savings.admin.view"), h.adminH.Dashboard)
+			admin.GET("/vaults", guard("savings.admin.view"), h.adminH.Vaults)
+			admin.GET("/circles", guard("savings.admin.view"), h.adminH.Circles)
+			admin.GET("/defaults", guard("savings.admin.view"), h.adminH.Defaults)
+		}
 	}
 }

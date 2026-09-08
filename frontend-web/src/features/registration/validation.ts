@@ -185,6 +185,27 @@ export function validateStepData(step: RegistrationStep, formData: Record<string
     }
   }
 
+  // payment.method is enforced HERE — at payment time — rather than by being a
+  // required field on the wizard step that happens to contain it.
+  //
+  // It was `required: true`, and the only writer of the value is the
+  // payment-success path (applyRegistrationPaymentSuccess), which runs AFTER the
+  // wizard. The step therefore gated on a value that could not exist yet. On web
+  // the wizard renders the select and the applicant picks one, which hid the
+  // circularity; the mobile wizard deliberately omits payment fields (it has a
+  // dedicated payment screen), so there the step was impossible to pass — Save &
+  // continue looked inert, because validation failed on a field never rendered.
+  //
+  // Keyed off the field's presence rather than a step key: it lives on
+  // `category_specific` in the shipped forms, while the `step.key === 'payment'`
+  // branch above only fires for form shapes that have a dedicated payment step.
+  if (step.fields.some((field) => field.key === 'payment.method')) {
+    const paymentStatus = getString(formData['payment.paymentStatus']);
+    if (paymentStatus === 'paid' && !getString(formData['payment.method'])) {
+      errors['payment.method'] = 'Payment method is required once payment is recorded.';
+    }
+  }
+
   return {
     isValid: Object.keys(errors).length === 0,
     errors,

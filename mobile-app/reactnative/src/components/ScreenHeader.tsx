@@ -5,6 +5,7 @@ import { router } from 'expo-router';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
 import { Spacing } from '@/constants/spacing';
+import { HomeMenuButton } from '@/components/HomeMenu';
 
 interface Props {
   title?: string;
@@ -42,7 +43,10 @@ export default function ScreenHeader({ title, subtitle, onBack, rightSlot, showB
         {subtitle ? <Text style={styles.subtitle} numberOfLines={1}>{subtitle}</Text> : null}
       </View>
 
+      {/* The screen's own actions stay first; the global home menu sits outboard
+          of them so it never covers what the screen put there. */}
       <View style={styles.rightSlot}>{rightSlot}</View>
+      <HomeMenuButton />
     </View>
   );
 }

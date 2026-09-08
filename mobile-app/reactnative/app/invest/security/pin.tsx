@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { View, Text, TextInput, ScrollView, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import { Lock, ShieldCheck } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
@@ -29,7 +30,7 @@ export default function SetPINScreen() {
   async function submit() {
     try {
       await setPin.mutateAsync({ pin, currentPin: hasPin ? current : undefined });
-      alertAsync({ title: 'PIN saved', message: 'Your transaction PIN is set. You can now confirm orders.' }).then(() => router.back());
+      alertAsync({ title: 'PIN saved', message: 'Your transaction PIN is set. You can now confirm orders.' }).then(() => goBack('/invest'));
     } catch (e: any) {
       alertAsync({ title: 'Could not save PIN', message: e?.response?.data?.error ?? 'Please try again.' });
     }

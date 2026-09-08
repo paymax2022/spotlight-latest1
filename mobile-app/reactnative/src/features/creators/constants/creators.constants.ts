@@ -1,8 +1,9 @@
+import { mockAllowed } from '@/config/mockPolicy';
 import { Colors } from '@/constants/colors';
 
 // Flip to false once the live /api/v1/creators endpoints are reachable
 // (or set EXPO_PUBLIC_CREATORS_USE_MOCK=false). Mock-first convention.
-export const USE_MOCK = (process.env.EXPO_PUBLIC_CREATORS_USE_MOCK ?? 'true') !== 'false';
+export const USE_MOCK = mockAllowed(process.env.EXPO_PUBLIC_CREATORS_USE_MOCK, true);
 
 // Creators REST namespace. Served directly by the Go backend (Gin) under the
 // authenticated finance member group — NOT the frontend-web /api/v1 proxy.

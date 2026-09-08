@@ -47,6 +47,8 @@ import (
 	"spotlight/backend/internal/invest"
 	"spotlight/backend/internal/maps"
 	"spotlight/backend/internal/middleware"
+	"spotlight/backend/internal/modules"
+	"spotlight/backend/internal/modules/modulegate"
 	"spotlight/backend/internal/notifications"
 	"spotlight/backend/internal/onboarding"
 	"spotlight/backend/internal/orchestration"
@@ -69,8 +71,8 @@ import (
 	"spotlight/backend/internal/repositories"
 	"spotlight/backend/internal/restaurant"
 	"spotlight/backend/internal/services"
-	"spotlight/backend/internal/trading"
 	"spotlight/backend/internal/telemedicine"
+	"spotlight/backend/internal/trading"
 	"spotlight/backend/internal/transport"
 	"spotlight/backend/internal/votebridge"
 	"spotlight/backend/internal/webhooks"
@@ -94,6 +96,13 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		log.Println("[finance] no database pool — skipping financial routes")
 		return nil
 	}
+
+	// Shared by every browser-facing WebSocket hub built below (restaurant,
+	// transport, doctor) so their Origin enforcement can never drift from the
+	// HTTP CORS allowlist. See platform/ws.New's doc comment for why this is
+	// required at all: nhooyr's default check rejects any Origin that isn't
+	// byte-identical to this server's own host, which no real frontend ever is.
+	wsOriginAllowed := middleware.AllowedOriginChecker(cfg.CORSAllowOrigins, cfg.AppEnv)
 
 	// Direct Referral Rewards engine service, captured below when the flag is on and
 	// threaded into the revenue modules that emit purchase events (PRD §2.5/§7.1).
@@ -301,6 +310,45 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 	finance.Use(middleware.RequireAuthContext(supabase, rbac))
 	finance.Use(requireUserID())
 
+	// --- Platform module registry (+ its server-side gate) ---
+	// The registry decides which modules an environment publishes. Its routes were
+	// written but never mounted, so GET /api/v1/modules/visibility answered 404 and
+	// every client fell back to "unknown ⇒ show everything" — publication state had no
+	// effect anywhere. Mounting it is what makes the admin console and the mobile/web
+	// gates real. Staging and production were seeded to match their pre-mount behaviour
+	// (migration 20261216000000), so this wiring is a no-op for users on deploy.
+	modRegistrySvc := modules.NewService(pool, modules.Environment(cfg.AppEnv), func(envFlag string) bool {
+		// The FEATURE_* kill switch for this process, read from the environment. It
+		// gates INDEPENDENTLY of publication: a module must be both published for the
+		// tier AND flag-enabled here to be visible.
+		return os.Getenv(envFlag) == "true"
+	})
+	modPublic := r.Group("/api/v1")
+	modAdmin := r.Group("/api/v1/admin")
+	modAdmin.Use(mapsAuth())
+	modAdmin.Use(requireUserID())
+	modules.Register(modPublic, modAdmin, pool, rbac,
+		modules.Environment(cfg.AppEnv), func(envFlag string) bool { return os.Getenv(envFlag) == "true" })
+
+	// Per-user effective access. Authenticated and user-scoped: the id comes from the
+	// validated token, never from the client. The unauthenticated /modules/visibility
+	// above stays the environment-level list.
+	finance.GET("/modules/access", modules.NewHandler(modRegistrySvc).MyAccess)
+
+	// Server-side enforcement, mounted AFTER auth so an unauthenticated caller still
+	// gets 401 rather than 503 (and cannot probe which modules exist).
+	//
+	// DEFAULTS TO OBSERVE-ONLY. With FEATURE_MODULE_GATE_ENFORCE unset it resolves the
+	// module for each request and LOGS what it would have refused, refusing nothing.
+	// The route map is hand-built from gin Group() registrations and has never met real
+	// traffic; a wrong prefix would 503 a working endpoint, so it earns enforcement by
+	// running silently first. Unmapped paths and every /admin surface are always allowed.
+	finance.Use(modulegate.New(modRegistrySvc, modulegate.Options{
+		Enabled: cfg.FeatureModuleGateEnforce,
+	}))
+	log.Printf("[modules] registry mounted (env=%s); server gate enforce=%v",
+		cfg.AppEnv, cfg.FeatureModuleGateEnforce)
+
 	// --- Transfer routes (wallet-to-wallet + wallet-to-bank) ---
 	// Routes are always mounted; the handler returns 503 per family when the
 	// corresponding go-live flag is off (gate: flag=false → 503). All money
@@ -399,13 +447,36 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 	// admin under /api/insurance/admin/* (RBAC insurance.*); provider webhooks
 	// under /internal/webhooks/{mycover,octamile} (UNauthenticated — signature
 	// verified inside the gateway). Reuses wallet/ledger/settlement/kyc.
+	//
+	// insuranceSvcs is captured here (function scope, not the if-block below) so
+	// the transport/parcel wiring further down can reuse the SAME policy/catalog
+	// services for real Goods-in-Transit cover, instead of constructing a second,
+	// redundant set. Stays nil when insurance is disabled — every consumer must
+	// treat that as "insurance unavailable", never dereference without a check.
+	var insuranceSvcs *InsuranceServices
 	if cfg.FeatureInsuranceEnabled && pool != nil {
-		insuranceMember := finance.Group("/insurance")
+		// Pass the bare finance group: RegisterInsurance/RegisterInsuranceClaims
+		// each add the "/insurance" segment themselves (mg := member.Group("/insurance")),
+		// so finance.Group("/insurance") here double-mounted every member route at
+		// /api/finance/insurance/insurance/* instead of /api/finance/insurance/*
+		// (the client contract) — same class of bug documented for savings above.
 		insuranceAdmin := r.Group("/api/insurance/admin")
+		// RequireAuthContext MUST come before requireUserID: requireUserID only
+		// reads the user_id that RequireAuthContext populates, so without it every
+		// admin route 401s even with a valid token. Same bug as referral (line ~414)
+		// and the finance group before it — see the note above line 284.
+		insuranceAdmin.Use(middleware.RequireAuthContext(supabase, rbac))
 		insuranceAdmin.Use(requireUserID())
-		insuranceWebhooks := r.Group("/internal/webhooks")                                      // provider-signed, no user auth
-		RegisterInsurance(insuranceMember, insuranceAdmin, pool, rbac)                          // gateway/catalog/policy/quote/saga/consent
-		RegisterInsuranceClaims(insuranceMember, insuranceAdmin, insuranceWebhooks, pool, rbac) // claims/embedded/webhooks/reconciliation
+		// Pass the ROOT group, for the same reason the member group is passed bare:
+		// webhooks.Register adds "/internal/webhooks" itself (g := webhooks.Group(
+		// "/internal/webhooks")), so naming the segment here too mounted every
+		// provider callback at /internal/webhooks/internal/webhooks/* — the
+		// documented path 404'd and only the doubled one answered. A provider
+		// cannot discover that, so every real MyCover delivery would have been
+		// lost, and silently: the provider sees a 404 and we see nothing at all.
+		insuranceWebhooks := r.Group("")                                                // provider-signed, no user auth
+		insuranceSvcs = RegisterInsurance(finance, insuranceAdmin, pool, rbac)          // gateway/catalog/policy/quote/saga/consent
+		RegisterInsuranceClaims(finance, insuranceAdmin, insuranceWebhooks, pool, rbac) // claims/embedded/webhooks/reconciliation
 	}
 
 	// --- Hotel Booking / Stays (Property Suite, dual-rail supply gateway) ---
@@ -417,12 +488,18 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 	if cfg.FeatureStaysEnabled && pool != nil {
 		staysMember := finance.Group("/stays")
 		staysAdmin := r.Group("/api/stays/admin")
-		staysAdmin.Use(requireUserID())
+		// staysAdmin/staysExtranet are mounted on the ROOT engine, not on `finance`
+		// (which already carries RequireAuthContext), so without it explicitly here
+		// requireUserID() checks a user_id that nothing ever set — every call 401s
+		// "authentication required" even with a valid Bearer token. Same shape as
+		// the admin-group auth-ordering bug fixed at 13c3e691; this pair inherited
+		// it because RegisterStaysExtranet/RegisterStays predate that fix.
+		staysAdmin.Use(middleware.RequireAuthContext(supabase, rbac), requireUserID())
 		staysExtranet := r.Group("/api/stays/extranet")
-		staysExtranet.Use(requireUserID())
-		staysWebhooks := r.Group("/internal/webhooks")                                           // provider-signed, no user auth
-		RegisterStays(staysMember, staysAdmin, pool, rbac, cfg)                                  // supply-gateway/search/prebook→book saga/pricing
-		RegisterStaysExtranet(staysMember, staysAdmin, staysExtranet, staysWebhooks, pool, rbac) // ari/extranet/settlement/reviews/webhooks
+		staysExtranet.Use(middleware.RequireAuthContext(supabase, rbac), requireUserID())
+		staysWebhooks := r.Group("/internal/webhooks")                                                // provider-signed, no user auth
+		RegisterStays(staysMember, staysAdmin, pool, rbac, cfg)                                       // supply-gateway/search/prebook→book saga/pricing
+		RegisterStaysExtranet(staysMember, staysAdmin, staysExtranet, staysWebhooks, pool, rbac, cfg) // ari/extranet/settlement/reviews/webhooks
 	}
 
 	// --- Featured Placement (paid landing-page promotion; booking over scarce ad
@@ -436,8 +513,21 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 	if cfg.FeaturePlacementEnabled && pool != nil {
 		placementMember := finance // member.Group("/placement") is created inside RegisterPlacement
 		placementAdmin := r.Group("/api/placement/admin")
+		// RequireAuthContext validates the bearer token and mirrors user_id into the
+		// gin context; requireUserID then fail-closes if it is missing. WITHOUT this
+		// line every route in the group 401s even with a valid token — and on mobile a
+		// 401 signs the user out, so the screen appears to log them out on open.
+		placementAdmin.Use(mapsAuth())
 		placementAdmin.Use(requireUserID())
-		placementPublic := r.Group("/api/finance/placement") // unauthenticated landing/events
+		// BARE /api/finance, not /api/finance/placement: RegisterPlacement adds the
+		// "/placement" segment itself (placement_routes.go, `public.Group`), so
+		// passing it here mounted the public routes at
+		// /api/finance/placement/placement/landing. The frontend proxy calls
+		// /api/finance/placement/landing, so every request 404'd — invisibly,
+		// because the module is flag-gated off by default and the routes were
+		// never registered to be noticed. Same double-mount the savings comment
+		// below warns about.
+		placementPublic := r.Group("/api/finance") // unauthenticated landing/events
 		RegisterPlacement(placementMember, placementAdmin, placementPublic, pool, rbac, ledgerSvc, walletSvc, tiersSvc)
 	}
 
@@ -938,6 +1028,18 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 	// --- Association (group membership) money-path + approvals ---
 	if cfg.FeatureAssociationsEnabled {
 		assocSvc := association.NewService(pool, ledgerSvc)
+		// Membership-card HMAC key. SetCardSigningSecret existed but was called
+		// from nowhere, so every card in every environment was signed with the
+		// dev constant baked into this repo — forgeable for any known membership
+		// id. Outside development a missing secret must stop the process rather
+		// than silently fall back to that constant.
+		if cfg.AssocCardSigningSecret != "" {
+			assocSvc.SetCardSigningSecret(cfg.AssocCardSigningSecret)
+		} else if cfg.AppEnv != "development" {
+			log.Fatalf("[association] ASSOC_CARD_SIGNING_SECRET is required when APP_ENV=%q — refusing to sign membership cards with the public dev key", cfg.AppEnv)
+		} else {
+			log.Println("[association] WARNING: ASSOC_CARD_SIGNING_SECRET unset — using the public dev card key (development only)")
+		}
 		// Central Commission & Profit recording (§ profit registry). When the
 		// commission feature is on, inject a nil-safe recorder so realized profit on a
 		// settled dues payment (the RevenueSplit's 5% platform fee) lands in
@@ -949,7 +1051,24 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 			assocSvc.SetCommissionRecorder(commissionRecorderAdapter{svc: commission.NewService(commission.NewRepository(pool), nil)})
 			log.Println("[association] commission recording wired → Community/Group Membership (earning-row only; no ledger re-post)")
 		}
-		assocHandler := association.NewHandler(assocSvc)
+		// Backend-owned presigned R2 uploads for organisation logos. The wizard
+		// used to store the image picker's device-local file:// URI verbatim, so
+		// an uploaded logo rendered only on the founder's own phone. The
+		// presigner is attached to BOTH sides: the handler mints upload URLs, and
+		// the service signs stored object keys back into viewable URLs on read
+		// (the bucket is not public, so a key alone renders nothing). Unconfigured
+		// creds → the upload endpoint fails closed with 503 and reads pass stored
+		// values through unchanged. Bucket default mirrors CLAUDE.md.
+		assocPresigner := r2.New(r2.Config{
+			AccountEndpoint: cfg.R2AccountEndpoint,
+			Bucket:          cfg.R2Bucket,
+			AccessKeyID:     cfg.R2AccessKeyID,
+			SecretAccessKey: cfg.R2SecretAccessKey,
+			Region:          cfg.R2Region,
+		})
+		assocSvc.WithPresigner(assocPresigner)
+		assocHandler := association.NewHandler(assocSvc).
+			WithPresigner(assocPresigner, cfg.R2Bucket)
 		association.RegisterRoutes(finance.Group("/associations"), assocHandler)
 	}
 
@@ -1319,20 +1438,34 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 
 		// Domain packages (parallel build) — each registers its routes on the
 		// shared crowdfunding group. All use the ':id' param on /campaigns/:id/*.
-		cfwallet.Register(cfGroup, pool)
+		cfwallet.Register(cfGroup, pool, ledgerSvc)
 		cfengage.Register(cfGroup, pool)
 		cfcreator.Register(cfGroup, pool)
 		cfinvestment.Register(cfGroup, pool)
 		cfcsr.Register(cfGroup, pool)
 
 		// Admin review group (matches the admin web client's /api/crowdfunding/admin base).
+		//
+		// RequireAuthContext validates the bearer token and SETS user_id; requireUserID
+		// then fail-closes if it is missing. Without the first, user_id is never set
+		// and every route here answered 401 even with a valid token — so the admin
+		// review console could never load a real campaign and fell back to fixtures.
+		// This is the identical omission already fixed for the finance group above.
+		//
+		// Authorization, not just authentication. Reading the queue and DECIDING on a
+		// campaign are separate permissions, mirroring escrow.admin.view /
+		// escrow.admin.resolve: an ops reviewer who may triage submissions should not
+		// thereby be able to release one to the public or freeze someone's fundraiser.
+		// Both are seeded and granted to super-admin and system-admin by
+		// 20261229000000_crowdfunding_admin_permissions.sql.
 		cfAdmin := r.Group("/api/crowdfunding/admin")
+		cfAdmin.Use(middleware.RequireAuthContext(supabase, rbac))
 		cfAdmin.Use(requireUserID())
-		cfAdmin.GET("/stats", cfHandler.AdminStats)
-		cfAdmin.GET("/campaigns", cfHandler.AdminListPending)
-		cfAdmin.GET("/campaigns/:id", cfHandler.AdminGetCampaign)
-		cfAdmin.POST("/campaigns/:id/decision", cfHandler.AdminDecide)
-		cfadminext.RegisterAdmin(cfAdmin, pool, ledgerSvc)
+		cfAdmin.GET("/stats", middleware.RequirePermission(rbac, "crowdfunding.admin.review"), cfHandler.AdminStats)
+		cfAdmin.GET("/campaigns", middleware.RequirePermission(rbac, "crowdfunding.admin.review"), cfHandler.AdminListPending)
+		cfAdmin.GET("/campaigns/:id", middleware.RequirePermission(rbac, "crowdfunding.admin.review"), cfHandler.AdminGetCampaign)
+		cfAdmin.POST("/campaigns/:id/decision", middleware.RequirePermission(rbac, "crowdfunding.admin.decide"), cfHandler.AdminDecide)
+		cfadminext.RegisterAdmin(cfAdmin, pool, ledgerSvc, kycSvc, rbac)
 	}
 
 	// --- Restaurant & Delivery routes ---
@@ -1391,7 +1524,7 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		// Real-time per-order channel: status changes, rider location, and chat
 		// messages fan out to the order's three participants over the WS hub
 		// (Redis pub/sub fans out across instances).
-		restaurantHub := platformWS.New()
+		restaurantHub := platformWS.New(wsOriginAllowed)
 		restaurantRT := restaurant.NewRealtime(restaurantHub, redisClient, restaurantSvc.OrderParties)
 		restaurantRT.Start(ctx)
 		restaurantSvc = restaurantSvc.WithRealtime(restaurantRT)
@@ -1403,8 +1536,20 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		restGroup.GET("", restaurantHandler.ListRestaurants)
 		restGroup.POST("", restaurantHandler.Create)
 		restGroup.GET("/mine", restaurantHandler.MyRestaurants) // caller's own stores (static sibling of :id)
-		restGroup.GET("/earnings", restaurantHandler.Earnings)  // caller's food-delivery earnings
+		// Static sibling of :id, like /mine. Owner-scoped payout readiness — the
+		// bridge between the merchant capability and per-outlet KYB (PY-007).
+		restGroup.GET("/payout-readiness", restaurantHandler.PayoutReadiness)
+		// Staff. accept is a STATIC sibling of :id and must precede it — and it is
+		// intentionally not outlet-scoped: the token names the outlet, and the
+		// invitee is not yet staff there, so no per-outlet guard could pass.
+		restGroup.POST("/staff/accept", restaurantHandler.AcceptStaffInvite)
+		restGroup.GET("/:id/staff", restaurantHandler.ListStaff)
+		restGroup.POST("/:id/staff", restaurantHandler.InviteStaff)
+		restGroup.PATCH("/:id/staff/:userId", restaurantHandler.SetStaffStatus)
+		restGroup.GET("/earnings", restaurantHandler.Earnings) // caller's food-delivery earnings
 		restGroup.GET("/:id", restaurantHandler.GetRestaurant)
+		restGroup.POST("/:id/like", restaurantHandler.LikeRestaurant)
+		restGroup.DELETE("/:id/like", restaurantHandler.UnlikeRestaurant)
 
 		// Store management (owner only): edit profile + operational open/close.
 		restGroup.PATCH("/:id", restaurantHandler.UpdateRestaurant)
@@ -1452,6 +1597,11 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		// still enforces order participation. Registered once here only.
 		restPublicWS := r.Group("/api/finance/restaurant")
 		restPublicWS.GET("/orders/:orderId/ws", restaurantHandler.ServeOrderWS)
+		// User-scoped stream (static sibling of the ":id" param on this prefix).
+		// Backs the merchant order queue, which cannot subscribe per-order to an
+		// order it has not been told about yet. See ServeUserWS for why this
+		// exposes nothing new.
+		restPublicWS.GET("/ws", restaurantHandler.ServeUserWS)
 
 		// Ratings.
 		restGroup.POST("/orders/:orderId/rate", restaurantHandler.RateOrder)
@@ -1489,6 +1639,11 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		// Mounted under the static "restaurants" segment so they cannot collide with
 		// the sibling ":id" params on /orders, /onboarding and /payouts.
 		restStore := restAdmin.Group("/restaurants", middleware.RequirePermission(rbac, "restaurant.manage"))
+		// The register itself. The console previously listed restaurants off the
+		// CUSTOMER discovery endpoint, which is is_open=TRUE — so 211 of the 2,227
+		// rows (closed shops, listings awaiting review) were invisible to ops while
+		// the page's total implied it was showing them all.
+		restStore.GET("", restaurantHandler.AdminListRestaurants)
 		restStore.GET("/:id", restaurantHandler.AdminGetRestaurant)
 		restStore.PATCH("/:id", restaurantHandler.AdminUpdateRestaurant)
 		restStore.PATCH("/:id/availability", restaurantHandler.AdminSetAvailability)
@@ -1498,9 +1653,27 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		restStore.PATCH("/:id/menu/items/:itemId", restaurantHandler.AdminUpdateItem)
 		restStore.DELETE("/:id/menu/items/:itemId", restaurantHandler.AdminDeleteItem)
 
+		// Listing moderation (foodhub A6). "listings/pending" is a static sibling of
+		// the ":id" params registered elsewhere in this group, which Gin allows.
+		restAdmin.GET("/listings/pending", middleware.RequirePermission(rbac, "restaurant.admin.onboarding"), restaurantHandler.AdminModerationQueue)
+		restAdmin.POST("/listings/:id/decision", middleware.RequirePermission(rbac, "restaurant.admin.onboarding"), restaurantHandler.AdminDecideListing)
+		// Shops with no identifiable merchant (foodhub §5.4).
+		restAdmin.GET("/restaurants/unclaimed", middleware.RequirePermission(rbac, "restaurant.admin.onboarding"), restaurantHandler.AdminUnclaimedRestaurants)
+		// The platform-wide ORDER FEED. Until this existed the console read the
+		// MEMBER route `/api/finance/restaurant/orders?role=restaurant`, which is
+		// scoped to restaurants the CALLER owns — so an operator saw their own
+		// (zero) orders rather than the platform's, and that handler ignored the
+		// ?status filter entirely. Read-only; order mutations stay on the member,
+		// rider and dispatch routes.
+		restAdmin.GET("/orders", middleware.RequirePermission(rbac, "restaurant.manage"), restaurantHandler.AdminListOrders)
 		restAdmin.GET("/riders", middleware.RequirePermission(rbac, "restaurant.admin.dispatch"), restaurantHandler.AdminListRiders)
 		restAdmin.GET("/dispatch/queue", middleware.RequirePermission(rbac, "restaurant.admin.dispatch"), restaurantHandler.AdminDispatchQueue)
 		restAdmin.POST("/orders/:id/assign", middleware.RequirePermission(rbac, "restaurant.admin.dispatch"), restaurantHandler.AdminAssignRider)
+		// Operator re-dispatch. The member route at
+		// /api/finance/restaurant/orders/:orderId/dispatch is owner-gated in its
+		// handler, so the ops console's Re-dispatch button could only ever 403.
+		// Same idempotent DispatchOrder underneath; RBAC is the boundary.
+		restAdmin.POST("/orders/:id/dispatch", middleware.RequirePermission(rbac, "restaurant.admin.dispatch"), restaurantHandler.AdminRedispatch)
 		restAdmin.GET("/onboarding", middleware.RequirePermission(rbac, "restaurant.admin.onboarding"), restaurantHandler.AdminListApplications)
 		// Single wildcard segment handles all three shapes the admin UI may post:
 		//   /onboarding/:id/decision  (body {decision, note})
@@ -1555,6 +1728,11 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 	// the shared LLM client (claude-sonnet-4-6); empty key → deterministic mock.
 	if cfg.FeatureNutritionEnabled && pool != nil {
 		nutritionAdmin := r.Group("/api/nutrition/admin")
+		// RequireAuthContext validates the bearer token and mirrors user_id into the
+		// gin context; requireUserID then fail-closes if it is missing. WITHOUT this
+		// line every route in the group 401s even with a valid token — and on mobile a
+		// 401 signs the user out, so the screen appears to log them out on open.
+		nutritionAdmin.Use(mapsAuth())
 		nutritionAdmin.Use(requireUserID())
 		registerNutritionRoutes(finance, nutritionAdmin, pool, rbac, cfg.AnthropicAPIKey)
 	}
@@ -1562,7 +1740,7 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 	// --- Telemedicine routes ---
 	if cfg.FeatureTelemedicineEnabled {
 		settlementSvcT := settlement.NewService(pool, ledgerSvc)
-		// Platform booking fee (ADR-040), default OFF. Off resolves to a 0-bp rate,
+		// Platform booking fee (ADR-044), default OFF. Off resolves to a 0-bp rate,
 		// which prices and escrows exactly as the module did before the fee existed.
 		platformFeeBp := 0
 		if cfg.FeatureTelemedicinePlatformFeeEnabled {
@@ -1585,6 +1763,11 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 
 		// Mobile-facing /api/v1/telemedicine/... (matches mobile API client)
 		v1Tele := r.Group("/api/v1/telemedicine")
+		// RequireAuthContext validates the bearer token and mirrors user_id into the
+		// gin context; requireUserID then fail-closes if it is missing. WITHOUT this
+		// line every route in the group 401s even with a valid token — and on mobile a
+		// 401 signs the user out, so the screen appears to log them out on open.
+		v1Tele.Use(mapsAuth())
 		v1Tele.Use(requireUserID())
 		v1Tele.GET("/specialties", telemedHandler.ListSpecialties)
 		v1Tele.GET("/doctors", telemedHandler.ListDoctors)
@@ -1617,6 +1800,11 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		pharmacySvc := pharmacy.NewService(pool)
 		pharmacyHandler := pharmacy.NewHandler(pharmacySvc)
 		v1Pharm := r.Group("/api/v1/pharmacy")
+		// RequireAuthContext validates the bearer token and mirrors user_id into the
+		// gin context; requireUserID then fail-closes if it is missing. WITHOUT this
+		// line every route in the group 401s even with a valid token — and on mobile a
+		// 401 signs the user out, so the screen appears to log them out on open.
+		v1Pharm.Use(mapsAuth())
 		v1Pharm.Use(requireUserID())
 		v1Pharm.GET("/products", pharmacyHandler.ListProducts)
 		v1Pharm.GET("/cart", pharmacyHandler.GetCart)
@@ -1675,6 +1863,18 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 			transportSvc = transportSvc.WithMaps(transport.NewMapServiceBridge(mapSvc))
 			log.Println("[transport] dispatch using provider-agnostic MapService")
 		}
+		// Real Goods-in-Transit cover for parcels (MyCover-backed), via the SAME
+		// policy/catalog/consent services /api/finance/insurance/* uses — nil-safe:
+		// when insurance is disabled (insuranceSvcs == nil), parcels book/deliver
+		// exactly as before this feature existed.
+		if insuranceSvcs != nil {
+			transportSvc = transportSvc.WithInsurance(&insuranceBinderAdapter{
+				policy:  insuranceSvcs.Policy,
+				catalog: insuranceSvcs.Catalog,
+				consent: insuranceSvcs.Consent,
+			})
+			log.Println("[transport] parcel insurance wired to the real MyCover-backed policy saga")
+		}
 		// ── Central Commission & Profit recording (§ profit registry) ──
 		// When the commission feature is on, inject a nil-safe recorder so realized
 		// transport profit lands in commission_earnings for the profit report. Each
@@ -1710,7 +1910,7 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 
 		// Real-time trip tracking: driver GPS → MatchToRoad snap → rider+driver
 		// over WebSocket (Redis pub/sub fans out across instances).
-		transportHub := platformWS.New()
+		transportHub := platformWS.New(wsOriginAllowed)
 		var trackMaps maps.MapService
 		if mapSvc != nil {
 			trackMaps = mapSvc
@@ -1801,7 +2001,7 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		adminTr := r.Group("/api/finance/admin/transport")
 		adminTr.Use(mapsAuth())
 		adminTr.Use(requireUserID())
-		adminTr.Use(middleware.RequireAdmin(cfg.AdminAPIKey))
+		adminTr.Use(middleware.RequireAdmin(cfg.AdminAPIKey, cfg.AppEnv))
 		adminTr.GET("/dashboard", middleware.RequirePermission(rbac, mobilityViewPerm), transportAdmin.Dashboard)
 		adminTr.GET("/drivers", middleware.RequirePermission(rbac, mobilityViewPerm), transportAdmin.ListDrivers)
 		adminTr.GET("/drivers/:id", middleware.RequirePermission(rbac, mobilityViewPerm), transportAdmin.DriverDetail)
@@ -2027,6 +2227,11 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		dpGroup.POST("", disputesHandler.Open)
 		dpGroup.GET("", disputesHandler.List)
 		adminFinanceDisputes := r.Group("/api/finance/admin/disputes")
+		// RequireAuthContext validates the bearer token and mirrors user_id into the
+		// gin context; requireUserID then fail-closes if it is missing. WITHOUT this
+		// line every route in the group 401s even with a valid token — and on mobile a
+		// 401 signs the user out, so the screen appears to log them out on open.
+		adminFinanceDisputes.Use(mapsAuth())
 		adminFinanceDisputes.Use(requireUserID())
 		adminFinanceDisputes.POST("/:id/resolve", disputesHandler.AdminResolve)
 	}
@@ -2049,16 +2254,43 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 	}
 
 	// --- Admin finance routes ---
+	//
+	// These five are UNREACHABLE today and have been: requireUserID() reads
+	// c.GetString("user_id"), which is populated by RequireAuthContext — and this
+	// group hangs off the bare engine, not off the authenticated `finance` group,
+	// so nothing ever sets it. Verified against the running server: every route
+	// here answers 401 to a valid admin token, not only to an anonymous caller.
+	//
+	// Nothing calls them. The admin console's KYC screens use the separate, RBAC-gated
+	// /api/finance/admin/kyc group registered above (finance.admin.kyc), which is why
+	// the console works despite these being dead.
+	//
+	// They are left registered rather than deleted because the admin wallet-lookup
+	// work in PR #91 is still open against this surface — deleting it would collide.
+	// But dead-and-open is a trap: the obvious "fix" for a 401 is to attach auth to
+	// the group, and doing that alone would have published KYC APPROVAL and any user's
+	// balance and transaction history to every signed-in caller. That is exactly how
+	// the crowdfunding admin surface came to be readable by campaign owners.
+	//
+	// So the permissions go on NOW, while the routes are dormant: whoever wires the
+	// auth inherits a closed door instead of an open one. No behaviour changes today —
+	// requireUserID() still aborts first, and these still 401 — this only decides what
+	// they become when they wake up.
 	adminFinance := r.Group("/api/finance/admin")
+	// RequireAuthContext validates the bearer token and mirrors user_id into the
+	// gin context; requireUserID then fail-closes if it is missing. WITHOUT this
+	// line every route in the group 401s even with a valid token — and on mobile a
+	// 401 signs the user out, so the screen appears to log them out on open.
+	adminFinance.Use(mapsAuth())
 	adminFinance.Use(requireUserID())
 	if cfg.FeatureKYCEnabled {
-		adminFinance.GET("/kyc/pending", kycHandler.ListPending)
-		adminFinance.POST("/kyc/users/:user_id/approve", kycHandler.Approve)
-		adminFinance.POST("/kyc/users/:user_id/reject", kycHandler.Reject)
+		adminFinance.GET("/kyc/pending", middleware.RequirePermission(rbac, "finance.admin.kyc"), kycHandler.ListPending)
+		adminFinance.POST("/kyc/users/:user_id/approve", middleware.RequirePermission(rbac, "finance.admin.kyc"), kycHandler.Approve)
+		adminFinance.POST("/kyc/users/:user_id/reject", middleware.RequirePermission(rbac, "finance.admin.kyc"), kycHandler.Reject)
 	}
 	if cfg.FeatureWalletEnabled {
-		adminFinance.GET("/wallets/:user_id/balance", walletHandler.AdminGetBalance)
-		adminFinance.GET("/wallets/:user_id/transactions", walletHandler.AdminListTransactions)
+		adminFinance.GET("/wallets/:user_id/balance", middleware.RequirePermission(rbac, "finance.admin.transfers"), walletHandler.AdminGetBalance)
+		adminFinance.GET("/wallets/:user_id/transactions", middleware.RequirePermission(rbac, "finance.admin.transfers"), walletHandler.AdminListTransactions)
 	}
 
 	// --- Merchant Onboarding & Role-Upgrade routes ---
@@ -2130,7 +2362,7 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 			VideoSDKAPIKey:      cfg.VideoSDKAPIKey,
 			VideoSDKSecret:      cfg.VideoSDKSecret,
 		})
-		doctorHub := platformWS.New()
+		doctorHub := platformWS.New(wsOriginAllowed)
 
 		doctorSvc := doctor.NewService(pool, ledgerSvc, tiersSvc, redisClient).WithRealtime(rtcIssuer, doctorHub)
 		// Central Commission & Profit registry: record realized Spotlight profit at the

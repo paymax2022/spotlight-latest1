@@ -4,6 +4,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import { ArrowLeft, Trophy, EyeOff } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
@@ -17,6 +18,7 @@ import TopThreePodium from '@/features/voting/components/TopThreePodium';
 import LeaderboardRow from '@/features/voting/components/LeaderboardRow';
 import ContestStatusBadge from '@/features/voting/components/ContestStatusBadge';
 import CountdownTimer from '@/features/voting/components/CountdownTimer';
+import { HomeMenuButton } from '@/components/HomeMenu';
 
 export default function LeaderboardScreen() {
   const { contestId } = useLocalSearchParams<{ contestId: string }>();
@@ -41,18 +43,21 @@ export default function LeaderboardScreen() {
     <SafeAreaView style={styles.safe} edges={['top']}>
       {/* Header */}
       <View style={styles.header}>
-        <Pressable onPress={() => router.back()} style={styles.backBtn}>
+        <Pressable onPress={() => goBack('/voting')} style={styles.backBtn}>
           <ArrowLeft size={22} color={Colors.onSurface} strokeWidth={2} />
         </Pressable>
         <View style={styles.titleBlock}>
           <Text style={styles.title}>Leaderboard</Text>
           {contest && <Text style={styles.subtitle} numberOfLines={1}>{contest.title}</Text>}
         </View>
-        {contest && <ContestStatusBadge status={contest.status} size="sm" />}
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+          {contest && <ContestStatusBadge status={contest.status} size="sm" />}
+          <HomeMenuButton />
+        </View>
       </View>
 
       {/* Countdown */}
-      {contest?.status === 'LIVE' && (
+      {contest?.status === 'LIVE' && contest.endsAt && (
         <View style={styles.countdownRow}>
           <Text style={styles.countdownLabel}>Voting closes in</Text>
           <CountdownTimer endsAt={contest.endsAt} color={Colors.primary} />

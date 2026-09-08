@@ -37,7 +37,7 @@ export default function UploadDocuments() {
     );
   }
 
-  const docReqs = org.data.requirements.filter((r) => r.type === 'DOCUMENT');
+  const docReqs = (org.data.requirements ?? []).filter((r) => r.type === 'DOCUMENT');
   const requiredIds = docReqs.filter((r) => r.required).map((r) => r.id);
   const allRequiredDone = requiredIds.every((rid) => files[rid]);
 

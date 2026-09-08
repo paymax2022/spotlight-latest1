@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { View, Text, ScrollView, StyleSheet, Alert, ActivityIndicator } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import { CircleCheck } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
@@ -64,7 +65,7 @@ export default function SendMoney() {
           <View style={styles.successIcon}><CircleCheck size={40} color={SocialColors.ok} /></View>
           <Text style={styles.successTitle}>{formatNaira(amountKobo)} sent</Text>
           <Text style={styles.successSub}>to {recipient?.displayName ?? target}</Text>
-          <PrimaryButton label="Done" onPress={() => router.dismissAll?.() ?? router.back()} style={{ marginTop: Spacing.lg }} />
+          <PrimaryButton label="Done" onPress={() => router.dismissAll?.() ?? goBack('/social')} style={{ marginTop: Spacing.lg }} />
         </View>
       </SafeAreaView>
     );

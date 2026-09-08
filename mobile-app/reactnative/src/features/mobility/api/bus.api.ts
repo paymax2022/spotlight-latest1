@@ -3,6 +3,7 @@
 // settle operator on issue) and carries an Idempotency-Key. Fares are
 // admin-approved on the SERVER — never computed here.
 
+import { mockAllowed } from '@/config/mockPolicy';
 import { api } from '@/api/client';
 import type {
   BusRoute,
@@ -32,7 +33,7 @@ import {
 } from './busProvider.mock';
 
 const USE_MOCK =
-  (process.env.EXPO_PUBLIC_BUS_USE_MOCK ?? process.env.EXPO_PUBLIC_MOBILITY_USE_MOCK ?? 'true').toLowerCase() !== 'false';
+  mockAllowed(process.env.EXPO_PUBLIC_BUS_USE_MOCK ?? process.env.EXPO_PUBLIC_MOBILITY_USE_MOCK, true);
 
 const BASE = '/api/v1';
 const delay = (ms = 320) => new Promise((r) => setTimeout(r, ms));

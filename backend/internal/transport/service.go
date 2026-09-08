@@ -35,6 +35,7 @@ type Service struct {
 	tiers      tierLimiter // fail-closed KYC-tier / daily-spend gate on rider money moves
 	maps       MapsAdapter
 	commission CommissionRecorder // optional; nil ⇒ realized-profit recording is a no-op
+	insurance  InsuranceBinder    // optional; nil ⇒ parcels book/deliver with no real cover
 }
 
 // NewService wires the transport service. A MockMaps adapter is used when none

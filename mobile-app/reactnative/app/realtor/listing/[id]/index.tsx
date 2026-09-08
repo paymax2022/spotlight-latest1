@@ -2,6 +2,7 @@ import React from 'react';
 import { View, Text, Image, ScrollView, StyleSheet, Pressable, FlatList } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import {
   ArrowLeft, Share2, Heart, BedDouble, Bath, Maximize, MapPin, ShieldCheck,
   Star, MessageCircle, ChevronRight, Images, Flag,
@@ -22,6 +23,7 @@ import DetailRow from '@/features/realtor/components/DetailRow';
 import { useListing, useSimilarListings } from '@/features/realtor/hooks/useRealtor';
 import { priceLabelFull, formatNaira, bedBathLabel, timeAgo } from '@/features/realtor/utils/realtorFormatters';
 import { PROPERTY_TYPE_LABEL, FURNISHING_LABEL, MODE_LABEL } from '@/features/realtor/constants/realtor.constants';
+import { HomeMenuButton } from '@/components/HomeMenu';
 
 export default function ListingDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -70,7 +72,7 @@ export default function ListingDetailScreen() {
         </Pressable>
 
         <SafeAreaView edges={['top']} style={styles.headerOverlay} pointerEvents="box-none">
-          <Pressable onPress={() => router.back()} style={styles.circleBtn} hitSlop={8} accessibilityLabel="Go back">
+          <Pressable onPress={() => goBack('/realtor')} style={styles.circleBtn} hitSlop={8} accessibilityLabel="Go back">
             <ArrowLeft size={20} color={Colors.onSurface} strokeWidth={2} />
           </Pressable>
           <View style={styles.headerActions}>
@@ -80,6 +82,7 @@ export default function ListingDetailScreen() {
             <Pressable style={styles.circleBtn} hitSlop={8} onPress={() => setSaved((s) => !s)} accessibilityLabel={saved ? 'Remove from saved' : 'Save listing'}>
               <Heart size={18} color={saved ? Colors.gold : Colors.onSurface} fill={saved ? Colors.gold : 'transparent'} strokeWidth={2} />
             </Pressable>
+            <HomeMenuButton />
           </View>
         </SafeAreaView>
 
@@ -216,9 +219,11 @@ function Fact({ icon, value, label }: { icon: React.ReactNode; value: string; la
 function FloatingBack() {
   return (
     <SafeAreaView edges={['top']} style={styles.headerOverlay} pointerEvents="box-none">
-      <Pressable onPress={() => router.back()} style={styles.circleBtn} hitSlop={8} accessibilityLabel="Go back">
+      <Pressable onPress={() => goBack('/realtor')} style={styles.circleBtn} hitSlop={8} accessibilityLabel="Go back">
         <ArrowLeft size={20} color={Colors.onSurface} strokeWidth={2} />
       </Pressable>
+      <View style={{ flex: 1 }} />
+      <HomeMenuButton />
     </SafeAreaView>
   );
 }

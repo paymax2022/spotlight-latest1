@@ -11,6 +11,7 @@ import (
 	financeledger "spotlight/backend/internal/finance/ledger"
 	"spotlight/backend/internal/finance/settlement"
 	"spotlight/backend/internal/middleware"
+	"spotlight/backend/internal/platform/r2"
 	"spotlight/backend/internal/services"
 	"spotlight/backend/internal/stays/adapters"
 	staysadmin "spotlight/backend/internal/stays/admin"
@@ -54,7 +55,13 @@ func RegisterStays(member *gin.RouterGroup, adminGroup *gin.RouterGroup, pool *p
 	// NOT via any third-party bedbank/aggregator API. All supply is the DIRECT rail:
 	// stays_property / stays_room_type / stays_rate_plan + the hotelier extranet
 	// (ARI push). The gateway resolves every request to the Direct adapter.
-	directGW := adapters.NewDirect(pool)
+	directGW := adapters.NewDirect(pool).WithPhotoPresigner(r2.New(r2.Config{
+		AccountEndpoint: cfg.R2AccountEndpoint,
+		Bucket:          cfg.R2Bucket,
+		AccessKeyID:     cfg.R2AccessKeyID,
+		SecretAccessKey: cfg.R2SecretAccessKey,
+		Region:          cfg.R2Region,
+	}))
 	resolver := gateway.StaticRailResolver{Bindings: map[gateway.SourceRail]string{
 		gateway.RailDirect: directGW.Name(),
 	}}
@@ -122,7 +129,11 @@ func RegisterStays(member *gin.RouterGroup, adminGroup *gin.RouterGroup, pool *p
 	adminHandler := staysadmin.NewHandler(pool)
 
 	// --- Member routes (/api/finance/stays) ---
-	mg := member.Group("/stays")
+	// member is ALREADY scoped to /api/finance/stays by the caller (see the doc
+	// comment above) — grouping "/stays" again here doubled every path to
+	// /api/finance/stays/stays/*, 404ing every real client while curl-shaped
+	// manual testing against the doubled path masked it.
+	mg := member
 	// Search + content.
 	mg.GET("/search", searchHandler.Search)
 	mg.GET("/properties/:rail/:supplier/:ref", searchHandler.Content)

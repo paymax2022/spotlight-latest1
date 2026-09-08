@@ -53,8 +53,24 @@ export const PAYMENT_METHODS: {
 ];
 
 /** Platform fee = 2.5% of contribution; payment processing = 1.5% + ₦100 flat. */
-export const PLATFORM_FEE_BPS = 250;   // basis points (2.5%)
-export const PAYMENT_FEE_BPS = 150;    // 1.5%
-export const PAYMENT_FEE_FLAT_KOBO = 10_000; // ₦100
+/**
+ * The platform's cut of a contribution, in basis points.
+ *
+ * This MIRRORS `crowdfunding.PlatformFeePct` in
+ * backend/internal/crowdfunding/service.go, which is the authority — that
+ * constant is what settlement actually splits by. It was 250 here (2.5%) while
+ * the server took 10%, and the client added its number ON TOP of the charge
+ * while the server deducts it from the creator's payout, so the checkout quote
+ * disagreed with the debit in both the rate and the direction.
+ *
+ * Only ever display this. It is not part of what the contributor pays.
+ */
+export const PLATFORM_FEE_BPS = 1_000; // 10% — deducted from the creator's payout
+
+// NOTE: there is no contributor-facing payment-processing fee. The client used
+// to add 1.5% + ₦100 for the card rail, but nothing collected it: the card rail
+// topped the wallet up by the inflated total and then spent only the
+// contribution, stranding the difference in the contributor's own wallet. It
+// was never platform revenue, so it is simply gone rather than moved.
 
 export const CROWDFUNDING_FEATURE_FLAG = 'crowdfunding';

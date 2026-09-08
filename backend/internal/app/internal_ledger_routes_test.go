@@ -35,6 +35,8 @@ import (
 
 	"spotlight/backend/internal/config"
 	financeledger "spotlight/backend/internal/finance/ledger"
+
+	"spotlight/backend/internal/testsupport"
 )
 
 const testServiceToken = "test-service-token-abc123"
@@ -61,6 +63,7 @@ func seedAuthUser(t *testing.T, pool *pgxpool.Pool) string {
 		`INSERT INTO auth.users (id, email) VALUES ($1,$2)`, uid, "il-"+uid+"@test.local"); err != nil {
 		t.Fatalf("seed auth user: %v", err)
 	}
+	testsupport.CleanupUser(t, pool, uid)
 	return uid
 }
 
@@ -94,7 +97,7 @@ func postJournal(t *testing.T, r *gin.Engine, token string, body map[string]any)
 
 func TestInternalLedgerAPI_PostMovesBalance_Integration(t *testing.T) {
 	pool := internalLedgerPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	r, ledgerSvc := newInternalLedgerRouter(pool)
 	ctx := context.Background()
 
@@ -204,7 +207,7 @@ func TestInternalLedgerAPI_PostMovesBalance_Integration(t *testing.T) {
 // missing and a wrong token BEFORE any ledger mutation runs.
 func TestInternalLedgerAPI_ServiceTokenGuard_Integration(t *testing.T) {
 	pool := internalLedgerPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	r, _ := newInternalLedgerRouter(pool)
 	uid := seedAuthUser(t, pool)
 

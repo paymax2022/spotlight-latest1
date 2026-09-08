@@ -2,6 +2,7 @@ import React, { useRef, useState } from 'react';
 import { View, Text, ScrollView, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import { Banknote, CircleCheck } from 'lucide-react-native';
 import ScreenHeader from '@/components/ScreenHeader';
 import StateView from '@/components/StateView';
@@ -39,7 +40,7 @@ export default function CashCapture() {
     return (
       <SafeAreaView style={styles.safe} edges={['top']}>
         <ScreenHeader title="Capture cash" />
-        <StateView kind="error" title="Customer not found" actionLabel="Back" onAction={() => router.back()} />
+        <StateView kind="error" title="Customer not found" actionLabel="Back" onAction={() => goBack('/insurance')} />
       </SafeAreaView>
     );
   }

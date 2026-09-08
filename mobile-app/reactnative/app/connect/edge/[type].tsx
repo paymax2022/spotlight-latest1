@@ -1,5 +1,6 @@
 import React from 'react';
 import { router, useLocalSearchParams } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import ConnectEdgeState from '@/features/connect/components/ConnectEdgeState';
 
 type EdgeConfig = {
@@ -33,9 +34,9 @@ export default function ConnectEdgeScreen() {
       message={cfg.message}
       tone={cfg.tone}
       primaryLabel={cfg.primaryLabel}
-      onPrimary={cfg.primaryLabel ? () => (cfg.primaryHref ? router.replace(cfg.primaryHref as never) : router.back()) : undefined}
+      onPrimary={cfg.primaryLabel ? () => (cfg.primaryHref ? router.replace(cfg.primaryHref as never) : goBack('/connect')) : undefined}
       secondaryLabel="Go back"
-      onSecondary={() => router.back()}
+      onSecondary={() => goBack('/connect')}
     />
   );
 }

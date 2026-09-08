@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { ScrollView, View, Text, Pressable, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import { Flag, Ban, Heart, MapPin, CircleCheck, Check } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
@@ -70,7 +71,7 @@ export default function SafetyHub() {
               label="Done"
               onPress={() => {
                 // After a block/unmatch the thread is gone — return to inbox.
-                if (result.action === 'report') router.back();
+                if (result.action === 'report') goBack('/connect');
                 else router.replace('/connect/messaging/inbox');
               }}
             />

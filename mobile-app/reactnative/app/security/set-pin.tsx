@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { View, Text, StyleSheet, Pressable, ActivityIndicator } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { ShieldCheck, X } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
@@ -32,8 +33,14 @@ export default function SetTransactionPinScreen() {
   const statusQuery = useQuery({ queryKey: PIN_STATUS_KEY, queryFn: getPinStatus });
   const hasPin = statusQuery.data?.hasPin ?? false;
 
-  // In manage mode with an existing PIN we require the current PIN first.
-  const initialPhase: Phase = mode === 'manage' && hasPin ? 'current' : 'create';
+  // An existing PIN ALWAYS has to be verified first, in either mode. This used
+  // to be gated on `mode === 'manage'`, which meant the required-mode gate sent
+  // a bare {pin} to POST /transfers/pin while a PIN already existed. The backend
+  // treats that as a change-PIN attempt, verifies the (absent) current PIN,
+  // fails, returns 403 — and COUNTS IT AS A WRONG GUESS. Five of those lock the
+  // user out of transfers entirely, from a screen that never asked for the PIN
+  // it was checking against.
+  const initialPhase: Phase = hasPin ? 'current' : 'create';
   const [phase, setPhase] = useState<Phase>(initialPhase);
   const [current, setCurrent] = useState('');
   const [pin, setPin] = useState('');
@@ -41,10 +48,10 @@ export default function SetTransactionPinScreen() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
-  // Once status resolves, require the current PIN first when changing an existing
-  // one (manage mode). Only nudges the initial 'create' phase, never mid-flow.
+  // Once status resolves, require the current PIN first when one already exists.
+  // Only nudges the initial 'create' phase, never mid-flow.
   useEffect(() => {
-    if (!statusQuery.isLoading && mode === 'manage' && hasPin) {
+    if (!statusQuery.isLoading && hasPin) {
       setPhase((p) => (p === 'create' ? 'current' : p));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -56,7 +63,7 @@ export default function SetTransactionPinScreen() {
     // then refresh from source.
     qc.setQueryData(PIN_STATUS_KEY, { hasPin: true });
     qc.invalidateQueries({ queryKey: PIN_STATUS_KEY });
-    if (mode === 'manage') router.back();
+    if (mode === 'manage') goBack('/');
     // Required-mode gate: return the user to wherever they were blocked and let
     // them continue; fall back to home when there's nothing to resume.
     else resumeOrFallback('/(tabs)/home');
@@ -67,8 +74,11 @@ export default function SetTransactionPinScreen() {
     setBusy(true);
     try {
       await verifyPin(current);
+      // Deliberately KEEP `current`: SetPin re-verifies it server-side before
+      // overwriting. Clearing it here is what made every PIN CHANGE fail — the
+      // request went out as a bare {pin} and the backend scored the missing
+      // current PIN as a wrong guess.
       setPhase('create');
-      setCurrent('');
     } catch {
       setError('Incorrect PIN. Please try again.');
       setCurrent('');
@@ -90,9 +100,20 @@ export default function SetTransactionPinScreen() {
       setPin(''); setConfirm(''); setPhase('create');
       return;
     }
+    // Last line of defence. `hasPin ? current : undefined` is not enough on its
+    // own: if the status query resolves to true only AFTER this screen reached
+    // the confirm phase, `current` is still empty and the request goes out bare
+    // — which the server scores as a wrong guess and counts toward the lockout.
+    // Refuse to send it at all; bounce back and ask for the current PIN.
+    if (hasPin && current.length !== 4) {
+      setError('Enter your current PIN first.');
+      setPin(''); setConfirm(''); setPhase('current');
+      return;
+    }
     setBusy(true);
     try {
-      await createPin(pin);
+      await createPin(pin, hasPin ? current : undefined);
+      setCurrent('');
       finish();
     } catch (e) {
       setError((e as Error)?.message ?? 'Could not set your PIN. Please try again.');
@@ -115,7 +136,7 @@ export default function SetTransactionPinScreen() {
     <SafeAreaView style={styles.safe} edges={['top', 'bottom']}>
       {/* Manage mode gets a cancel affordance; required mode is blocking. */}
       {mode === 'manage' ? (
-        <Pressable onPress={() => router.back()} style={styles.close} hitSlop={10} accessibilityLabel="Close">
+        <Pressable onPress={() => goBack('/')} style={styles.close} hitSlop={10} accessibilityLabel="Close">
           <X size={22} color={Colors.onSurfaceVariant} strokeWidth={2} />
         </Pressable>
       ) : null}

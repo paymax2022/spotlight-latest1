@@ -24,10 +24,17 @@ export type { TopupStatus };
  * following wallet debit on insufficient funds. Rounding to whole naira was a
  * second defect: a ₦333.33 purchase could only ever top up ₦333.
  */
-export async function startCardTopup(amountKobo: number): Promise<{ authorizationUrl: string; reference: string }> {
+export async function startCardTopup(
+  amountKobo: number,
+  domain?: string,
+): Promise<{ authorizationUrl: string; reference: string }> {
   // purpose: 'checkout' — this funds the purchase in flight, not the wallet as an
   // end in itself, and the server gates the two differently (ADR-042).
-  return initiateFunding({ amountKobo, purpose: 'checkout' });
+  //
+  // `domain` says WHAT is being bought. Without it the card rail files every
+  // module checkout as an indistinguishable wallet top-up, and neither the
+  // customer's statement nor the ledger can say where the money went.
+  return initiateFunding({ amountKobo, purpose: 'checkout', domain });
 }
 
 /** Poll a top-up intent's status until the webhook credits the wallet. */

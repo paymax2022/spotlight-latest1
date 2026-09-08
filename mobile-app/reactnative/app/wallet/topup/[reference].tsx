@@ -13,6 +13,7 @@ import { Spacing } from '@/constants/spacing';
 import { Typography } from '@/constants/typography';
 import { shadow1 } from '@/constants/shadows';
 import { getTopupStatus } from '@/features/payments';
+import { HomeMenuButton } from '@/components/HomeMenu';
 
 // Top-up status screen. Wallet funding is confirmed asynchronously by the
 // Paystack webhook (which credits the ledger), so after the in-app SDK checkout
@@ -80,9 +81,12 @@ export default function TopupStatusScreen() {
           <ArrowLeft size={22} color={Colors.primary} strokeWidth={2.2} />
         </Pressable>
         <Text style={styles.topTitle}>Wallet Funding</Text>
-        <Pressable onPress={() => refetch()} style={styles.iconBtn}>
-          <RefreshCw size={20} color={Colors.primary} strokeWidth={2} />
-        </Pressable>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+          <Pressable onPress={() => refetch()} style={styles.iconBtn}>
+            <RefreshCw size={20} color={Colors.primary} strokeWidth={2} />
+          </Pressable>
+          <HomeMenuButton />
+        </View>
       </View>
 
       {isLoading ? (

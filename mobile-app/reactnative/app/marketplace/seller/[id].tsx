@@ -9,6 +9,7 @@ import React from 'react';
 import { View, Text, StyleSheet, Pressable, ScrollView } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import { ArrowLeft, MessageCircle, Star, ShieldCheck, BadgeCheck, PackageCheck, Flag } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
@@ -18,6 +19,7 @@ import StateView from '@/components/StateView';
 import { MarketColors, formatNaira } from '@/features/marketplace';
 import { useSellerProfile, useSellerListings, useSellerReviews } from '@/features/marketplace/hooks';
 import ListingCard from '@/features/marketplace/components/ListingCard';
+import { HomeMenuButton } from '@/components/HomeMenu';
 
 export default function SellerProfileScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -31,8 +33,11 @@ export default function SellerProfileScreen() {
   if (profile.isError || !profile.data) {
     return (
       <SafeAreaView style={styles.safe} edges={['top']}>
-        <View style={styles.topRow}><Pressable onPress={() => router.back()} hitSlop={10}><ArrowLeft size={22} color={Colors.onSurface} /></Pressable></View>
-        <StateView kind="error" title="Couldn't load seller" actionLabel="Retry" onAction={() => profile.refetch()} />
+        <View style={styles.topRow}><Pressable onPress={() => goBack('/marketplace')} hitSlop={10}><ArrowLeft size={22} color={Colors.onSurface} /></Pressable></View>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+          <StateView kind="error" title="Couldn't load seller" actionLabel="Retry" onAction={() => profile.refetch()} />
+          <HomeMenuButton />
+        </View>
       </SafeAreaView>
     );
   }
@@ -43,19 +48,22 @@ export default function SellerProfileScreen() {
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
       <View style={styles.topRow}>
-        <Pressable onPress={() => router.back()} hitSlop={10} accessibilityLabel="Back"><ArrowLeft size={22} color={Colors.onSurface} /></Pressable>
+        <Pressable onPress={() => goBack('/marketplace')} hitSlop={10} accessibilityLabel="Back"><ArrowLeft size={22} color={Colors.onSurface} /></Pressable>
         <Text style={styles.topTitle}>Seller</Text>
-        <Pressable
-          hitSlop={8}
-          accessibilityLabel="Report seller"
-          onPress={() =>
-            router.push(
-              `/marketplace/account/report?targetType=seller&targetId=${id}&targetName=${encodeURIComponent(p.name)}&sellerId=${id}` as never,
-            )
-          }
-        >
-          <Flag size={18} color={Colors.onSurface} />
-        </Pressable>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+          <Pressable
+            hitSlop={8}
+            accessibilityLabel="Report seller"
+            onPress={() =>
+              router.push(
+                `/marketplace/account/report?targetType=seller&targetId=${id}&targetName=${encodeURIComponent(p.name)}&sellerId=${id}` as never,
+              )
+            }
+          >
+            <Flag size={18} color={Colors.onSurface} />
+          </Pressable>
+          <HomeMenuButton />
+        </View>
       </View>
 
       <ScrollView contentContainerStyle={styles.scroll}>
@@ -122,6 +130,14 @@ export default function SellerProfileScreen() {
                     ))}
                   </View>
                 </View>
+                {r.productQualityRating ? (
+                  <View style={styles.reviewStars}>
+                    <Text style={styles.reviewCommentMuted}>Item as described: </Text>
+                    {Array.from({ length: 5 }).map((_, i) => (
+                      <Star key={i} size={10} color={MarketColors.warn} fill={i < r.productQualityRating! ? MarketColors.warn : 'transparent'} />
+                    ))}
+                  </View>
+                ) : null}
                 {r.comment ? <Text style={styles.reviewComment}>{r.comment}</Text> : <Text style={styles.reviewCommentMuted}>Rated, no comment left.</Text>}
                 {r.tags && r.tags.length > 0 ? (
                   <View style={styles.tagRow}>

@@ -15,6 +15,13 @@ type CampaignQuery struct {
 	Search       string
 	Sort         string // recommended | trending | newest | ending_soon | most_funded | least_funded
 	Status       string // review_status filter (admin)
+	// AllStatuses is the ADMIN "every status" listing. It exists because an empty
+	// Status cannot mean that: empty selects the public default below
+	// (review_status='ACTIVE' AND paused_at IS NULL), which is what stops public
+	// discovery returning drafts and pending submissions. Overloading empty to
+	// mean "no filter" would silently turn that guard off for every public
+	// caller, so the admin case gets its own flag instead.
+	AllStatuses bool
 }
 
 // buildDiscoveryWhere builds the WHERE clause + ordered args for a discovery query.
@@ -54,11 +61,30 @@ func buildDiscoveryWhere(q CampaignQuery, startIdx int) (string, []any) {
 	if q.UrgentOnly {
 		conds = append(conds, "c.urgent = TRUE")
 	}
+	// A soft-deleted campaign is gone from EVERY surface, admin listings
+	// included — deleted_at is the owner's "this campaign no longer exists",
+	// and the row survives only to keep its contributions/review history and
+	// its ledger references resolvable.
+	conds = append(conds, "c.deleted_at IS NULL")
+
 	if q.Status != "" {
 		add("c.review_status = $%d", q.Status)
-	} else if q.Collection != "" || q.Search != "" || q.Category != "" {
-		// Public discovery only shows live campaigns.
-		conds = append(conds, "c.review_status = 'ACTIVE'")
+	} else if q.AllStatuses {
+		// Admin, every status: no review_status predicate and no paused_at term,
+		// matching the explicit-status admin branch above (an operator must still
+		// see paused campaigns). deleted_at is still excluded, above.
+	} else {
+		// Public discovery only shows live campaigns — unconditionally, so an
+		// unfiltered call (no collection/category/search, i.e. "give me every
+		// active campaign") doesn't fall through with no review_status guard at
+		// all and return PENDING_REVIEW/DRAFT/etc. campaigns to the public.
+		//
+		// Owner-paused campaigns drop out here too. The pause lives in
+		// paused_at rather than review_status (see migration 20270112000000),
+		// so it needs its own term — without it, pause would hide nothing.
+		// The admin branch above deliberately does NOT filter on paused_at: an
+		// operator listing by status must still see a paused campaign.
+		conds = append(conds, "c.review_status = 'ACTIVE'", "c.paused_at IS NULL")
 	}
 	if q.Search != "" {
 		// Two placeholders reference the same positional arg ($i) — valid in Postgres.

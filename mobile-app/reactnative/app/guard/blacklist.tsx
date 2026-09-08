@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import PhoneNumberInput from '@/components/PhoneNumberInput';
 import { View, Text, ScrollView, StyleSheet, Pressable, KeyboardAvoidingView, Platform } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { ShieldAlert, Plus, Trash2, X, Phone, IdCard, Car } from 'lucide-react-native';
@@ -75,7 +76,7 @@ export default function BlacklistScreen() {
                 );
               })}
             </View>
-            <TextInputField label="Value" placeholder={kind === 'phone' ? '+234…' : kind === 'plate' ? 'LAS-123-AA' : 'ID number'} value={value} onChangeText={setValue} autoCapitalize="characters" />
+            <PhoneNumberInput label="Value" value={value} onChange={({ e164, nsn }) => (setValue)(e164 || nsn)} />
             <TextInputField label="Name (optional)" placeholder="Visitor name" value={name} onChangeText={setName} autoCapitalize="words" />
             <TextInputField label="Reason" placeholder="Why is this person blacklisted?" value={reason} onChangeText={setReason} multiline numberOfLines={3} style={styles.reasonInput} />
             {error ? <Text style={styles.error}>{error}</Text> : null}

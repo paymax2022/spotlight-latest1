@@ -4,6 +4,7 @@
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import * as merchant from './api';
+import type { StaffMember } from './types';
 import type { CreateStoreInput, UpdateStoreInput } from './types';
 
 const KEY = 'restaurant-merchant';
@@ -30,6 +31,37 @@ export function useCreateStore() {
   return useMutation({
     mutationFn: (input: CreateStoreInput) => merchant.createStore(input),
     onSuccess: () => qc.invalidateQueries({ queryKey: [KEY] }),
+  });
+}
+
+/** Per-outlet payout readiness for the signed-in owner. */
+export function usePayoutReadiness() {
+  return useQuery({ queryKey: [KEY, 'payout-readiness'], queryFn: merchant.getPayoutReadiness, staleTime: 60_000 });
+}
+
+export function useStaff(restaurantId: string) {
+  return useQuery({
+    queryKey: [KEY, 'staff', restaurantId],
+    queryFn: () => merchant.listStaff(restaurantId),
+    enabled: Boolean(restaurantId),
+  });
+}
+
+export function useInviteStaff(restaurantId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (v: { userId: string; role: StaffMember['role'] }) =>
+      merchant.inviteStaff(restaurantId, v.userId, v.role),
+    onSuccess: () => qc.invalidateQueries({ queryKey: [KEY, 'staff', restaurantId] }),
+  });
+}
+
+export function useSetStaffStatus(restaurantId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (v: { userId: string; status: StaffMember['status'] }) =>
+      merchant.setStaffStatus(restaurantId, v.userId, v.status),
+    onSuccess: () => qc.invalidateQueries({ queryKey: [KEY, 'staff', restaurantId] }),
   });
 }
 

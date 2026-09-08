@@ -1,215 +1,148 @@
 'use client';
 
-import { useState, useMemo } from 'react';
-import { Page, PageHeader, Card, Button, Input, Badge, colors, tint, thCell, tdCell } from '@/components/ui/vuexy';
+import { useState, useEffect, useCallback, Suspense } from 'react';
+import { useSearchParams } from 'next/navigation';
+import { Page, PageHeader, Card, colors, tint, thCell, tdCell } from '@/components/ui/vuexy';
+import { listVotingContests, getContestRoster } from '@/services/competitionsService';
+import type { VotingContest, ContestRosterEntry } from '@/types/competitions';
 
-type LeaderboardEntry = {
-  rank: number;
-  name: string;
-  score: number;
-  prizeAmount: number;
-  status: 'claimed' | 'pending' | 'forfeited';
-};
+// Real leaderboard — GET /api/v1/connect/contests/:id/contestants, already
+// ranked by total votes server-side. Previously this page picked from a
+// MOCK_DATA map keyed by fake slugs ('open-mic-q3' etc.) with invented
+// participant names, scores and prize amounts; "Publish Results" and "Send"
+// prize buttons only called alert(). There is no prize-distribution /
+// claim-tracking feature anywhere in the real backend, so that part of the
+// old UI is gone rather than faked — this shows exactly what the backend
+// tracks: free/paid/total votes per contestant, ranked.
 
-type CompetitionStats = {
-  totalParticipants: number;
-  totalPrizePool: number;
-  pendingClaims: number;
-  leaderboard: LeaderboardEntry[];
-};
+function CompetitionsResultsContent() {
+  const searchParams = useSearchParams();
+  const initialContestId = searchParams.get('contestId') ?? '';
 
-const MOCK_DATA: Record<string, CompetitionStats> = {
-  'open-mic-q3': {
-    totalParticipants: 342,
-    totalPrizePool: 500000,
-    pendingClaims: 2,
-    leaderboard: [
-      { rank: 1, name: 'Chioma Okonkwo', score: 92, prizeAmount: 150000, status: 'claimed' },
-      { rank: 2, name: 'Amara Ejiro', score: 89, prizeAmount: 100000, status: 'pending' },
-      { rank: 3, name: 'Tunde Adeyemi', score: 85, prizeAmount: 75000, status: 'claimed' },
-      { rank: 4, name: 'Zainab Hassan', score: 81, prizeAmount: 50000, status: 'pending' },
-      { rank: 5, name: 'Chidi Nwankwo', score: 78, prizeAmount: 25000, status: 'claimed' },
-    ]
-  },
-  'reality-tv-s2': {
-    totalParticipants: 128,
-    totalPrizePool: 2000000,
-    pendingClaims: 1,
-    leaderboard: [
-      { rank: 1, name: 'Ada Okafor', score: 95, prizeAmount: 750000, status: 'claimed' },
-      { rank: 2, name: 'Emeka Nwosu', score: 88, prizeAmount: 500000, status: 'pending' },
-      { rank: 3, name: 'Funmi Adeleke', score: 82, prizeAmount: 300000, status: 'claimed' },
-      { rank: 4, name: 'Karim Hassan', score: 79, prizeAmount: 200000, status: 'claimed' },
-      { rank: 5, name: 'Zara Okoye', score: 75, prizeAmount: 100000, status: 'claimed' },
-    ]
-  },
-  'multi-skill': {
-    totalParticipants: 215,
-    totalPrizePool: 750000,
-    pendingClaims: 3,
-    leaderboard: [
-      { rank: 1, name: 'Victor Okoro', score: 91, prizeAmount: 250000, status: 'claimed' },
-      { rank: 2, name: 'Blessing Ifukor', score: 87, prizeAmount: 150000, status: 'pending' },
-      { rank: 3, name: 'Chukwu Eze', score: 84, prizeAmount: 100000, status: 'pending' },
-      { rank: 4, name: 'Linda Opara', score: 80, prizeAmount: 75000, status: 'claimed' },
-      { rank: 5, name: 'Segun Adebayo', score: 76, prizeAmount: 50000, status: 'pending' },
-    ]
-  }
-};
+  const [contests, setContests] = useState<VotingContest[]>([]);
+  const [selectedContestId, setSelectedContestId] = useState(initialContestId);
+  const [roster, setRoster] = useState<ContestRosterEntry[]>([]);
+  const [loadingContests, setLoadingContests] = useState(true);
+  const [loadingRoster, setLoadingRoster] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-export default function ResultsPage() {
-  const [selectedCompetition, setSelectedCompetition] = useState('open-mic-q3');
-  const [selectedEntry, setSelectedEntry] = useState<LeaderboardEntry | null>(null);
-  const [sendingId, setSendingId] = useState<number | null>(null);
+  useEffect(() => {
+    (async () => {
+      setLoadingContests(true);
+      try {
+        const list = await listVotingContests();
+        setContests(list);
+        if (!selectedContestId && list.length > 0) setSelectedContestId(list[0].id);
+      } catch (e) {
+        setError(e instanceof Error ? e.message : 'Failed to load contests');
+      } finally {
+        setLoadingContests(false);
+      }
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    })();
+  }, []);
 
-  const competitionData = useMemo(() => MOCK_DATA[selectedCompetition as keyof typeof MOCK_DATA] || MOCK_DATA['open-mic-q3'], [selectedCompetition]);
-  const totalPrizeDistributed = competitionData.leaderboard.reduce((sum, e) => sum + e.prizeAmount, 0);
+  const loadRoster = useCallback(async (contestId: string) => {
+    if (!contestId) { setRoster([]); return; }
+    setLoadingRoster(true);
+    setError(null);
+    try {
+      setRoster(await getContestRoster(contestId));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to load leaderboard');
+    } finally {
+      setLoadingRoster(false);
+    }
+  }, []);
 
-  const handlePublish = () => {
-    alert(`Results published for ${Object.entries(MOCK_DATA).find(([k]) => k === selectedCompetition)?.[1] ? 'selected competition' : 'competition'}!`);
-  };
+  useEffect(() => { void loadRoster(selectedContestId); }, [selectedContestId, loadRoster]);
 
-  const handleSend = (rank: number) => {
-    setSendingId(rank);
-    setTimeout(() => {
-      alert(`Prize sent to participant at rank ${rank}!`);
-      setSendingId(null);
-    }, 500);
-  };
+  const selectedContest = contests.find((c) => c.id === selectedContestId) ?? null;
 
   return (
     <Page>
       <PageHeader
         title="Results & Leaderboard"
-        subtitle="View final standings, manage prize distribution, and publish results."
-        actions={<Button variant="primary" onClick={handlePublish}>Publish Results</Button>}
+        subtitle="Live vote tallies per contestant, ranked by total votes. Served from the Go backend's voting engine."
       />
 
-      {/* Competition Selector */}
-      <Card title="Select Competition" style={{ marginBottom: 16 }}>
-        <select
-          value={selectedCompetition}
-          onChange={(e) => setSelectedCompetition(e.target.value)}
-          style={{
-            padding: '0.4rem 0.55rem', border: `1px solid ${colors.inputBorder}`, borderRadius: '0.375rem',
-            fontSize: '0.85rem', background: colors.card, cursor: 'pointer', color: colors.text, width: '100%', maxWidth: 300
-          }}
-        >
-          <option value="open-mic-q3">Open Mic Q3 2024</option>
-          <option value="reality-tv-s2">Reality TV Season 2</option>
-          <option value="multi-skill">Multi-Skill Challenge</option>
-        </select>
+      {error && <p style={{ color: colors.danger }}>{error}</p>}
+
+      <Card title="Select contest" style={{ marginBottom: 16 }}>
+        {loadingContests ? (
+          <p style={{ color: colors.muted, margin: 0 }}>Loading contests…</p>
+        ) : contests.length === 0 ? (
+          <p style={{ color: colors.muted, margin: 0 }}>No contests found.</p>
+        ) : (
+          <select
+            value={selectedContestId}
+            onChange={(e) => setSelectedContestId(e.target.value)}
+            style={{
+              padding: '0.4rem 0.55rem', border: `1px solid ${colors.inputBorder}`, borderRadius: '0.375rem',
+              fontSize: '0.85rem', background: colors.card, cursor: 'pointer', color: colors.text, width: '100%', maxWidth: 400,
+            }}
+          >
+            {contests.map((c) => <option key={c.id} value={c.id}>{c.title}</option>)}
+          </select>
+        )}
       </Card>
 
-      {/* Summary Stats */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 16, marginBottom: 24 }}>
-        <div style={{ border: `1px solid ${colors.border}`, borderRadius: '0.5rem', padding: '1rem', background: colors.card }}>
-          <div style={{ fontSize: '0.75rem', color: colors.muted, marginBottom: '0.5rem', textTransform: 'uppercase', fontWeight: 600 }}>Total Participants</div>
-          <div style={{ fontSize: '1.75rem', fontWeight: 700, color: colors.text }}>{competitionData.totalParticipants}</div>
+      {selectedContest && (
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 16, marginBottom: 24 }}>
+          <div style={{ border: `1px solid ${colors.border}`, borderRadius: '0.5rem', padding: '1rem', background: colors.card }}>
+            <div style={{ fontSize: '0.75rem', color: colors.muted, marginBottom: '0.5rem', textTransform: 'uppercase', fontWeight: 600 }}>Contestants</div>
+            <div style={{ fontSize: '1.75rem', fontWeight: 700, color: colors.text }}>{selectedContest.contestant_count}</div>
+          </div>
+          <div style={{ border: `1px solid ${colors.border}`, borderRadius: '0.5rem', padding: '1rem', background: colors.card }}>
+            <div style={{ fontSize: '0.75rem', color: colors.muted, marginBottom: '0.5rem', textTransform: 'uppercase', fontWeight: 600 }}>Total Votes</div>
+            <div style={{ fontSize: '1.75rem', fontWeight: 700, color: colors.text }}>{selectedContest.total_votes.toLocaleString()}</div>
+          </div>
         </div>
-        <div style={{ border: `1px solid ${colors.border}`, borderRadius: '0.5rem', padding: '1rem', background: colors.card }}>
-          <div style={{ fontSize: '0.75rem', color: colors.muted, marginBottom: '0.5rem', textTransform: 'uppercase', fontWeight: 600 }}>Total Prize Pool</div>
-          <div style={{ fontSize: '1.75rem', fontWeight: 700, color: colors.text }}>₦{(competitionData.totalPrizePool / 1000000).toFixed(0)}M</div>
-        </div>
-        <div style={{ border: `1px solid ${colors.border}`, borderRadius: '0.5rem', padding: '1rem', background: colors.card }}>
-          <div style={{ fontSize: '0.75rem', color: colors.muted, marginBottom: '0.5rem', textTransform: 'uppercase', fontWeight: 600 }}>Distributed</div>
-          <div style={{ fontSize: '1.75rem', fontWeight: 700, color: colors.success }}>₦{(totalPrizeDistributed / 1000000).toFixed(1)}M</div>
-        </div>
-        <div style={{ border: `1px solid ${colors.border}`, borderRadius: '0.5rem', padding: '1rem', background: colors.card }}>
-          <div style={{ fontSize: '0.75rem', color: colors.muted, marginBottom: '0.5rem', textTransform: 'uppercase', fontWeight: 600 }}>Pending Claims</div>
-          <div style={{ fontSize: '1.75rem', fontWeight: 700, color: colors.warning }}>{competitionData.pendingClaims}</div>
-        </div>
-      </div>
+      )}
 
-      {/* Leaderboard */}
-      <Card title="Final Standings" style={{ padding: 0, overflow: 'hidden' }}>
+      <Card title="Leaderboard" style={{ padding: 0, overflow: 'hidden' }}>
         <table style={{ borderCollapse: 'collapse', width: '100%' }}>
           <thead>
             <tr>
               <th style={thCell}>Rank</th>
-              <th style={thCell}>Participant</th>
-              <th style={thCell}>Score</th>
-              <th style={thCell}>Prize Amount</th>
-              <th style={thCell}>Claim Status</th>
-              <th style={thCell}>Actions</th>
+              <th style={thCell}>Contestant</th>
+              <th style={thCell}>Free Votes</th>
+              <th style={thCell}>Paid Votes</th>
+              <th style={thCell}>Total Votes</th>
+              <th style={thCell}>Status</th>
             </tr>
           </thead>
           <tbody>
-            {competitionData.leaderboard.map((entry) => (
-              <tr key={entry.rank} style={{ background: entry.rank === 1 ? tint(colors.warning, 0.06) : 'transparent' }}>
-                <td style={tdCell}>
-                  <span style={{ fontSize: '1.25rem', fontWeight: 700, color: colors.primary }}>#{entry.rank}</span>
-                </td>
-                <td style={tdCell}><strong>{entry.name}</strong></td>
-                <td style={tdCell}>{entry.score}%</td>
-                <td style={tdCell}>₦{(entry.prizeAmount / 1000).toFixed(0)}K</td>
-                <td style={tdCell}>
-                  <Badge
-                    text={entry.status === 'claimed' ? 'Claimed' : entry.status === 'pending' ? 'Pending Claim' : 'Forfeited'}
-                    color={entry.status === 'claimed' ? colors.success : entry.status === 'pending' ? colors.warning : colors.danger}
-                  />
-                </td>
-                <td style={tdCell}>
-                  <div style={{ display: 'flex', gap: 6 }}>
-                    <Button variant="outline" sm onClick={() => setSelectedEntry(entry)}>Details</Button>
-                    {entry.status === 'pending' && <Button variant="primary" sm onClick={() => handleSend(entry.rank)} disabled={sendingId === entry.rank}>{sendingId === entry.rank ? 'Sending...' : 'Send'}</Button>}
-                  </div>
-                </td>
-              </tr>
-            ))}
+            {loadingRoster ? (
+              <tr><td style={{ ...tdCell, color: colors.muted }} colSpan={6}>Loading…</td></tr>
+            ) : roster.length === 0 ? (
+              <tr><td style={{ ...tdCell, color: colors.muted }} colSpan={6}>No contestants yet.</td></tr>
+            ) : (
+              roster.map((entry) => (
+                <tr key={entry.contestant_id} style={{ background: entry.rank === 1 ? tint(colors.warning, 0.06) : 'transparent' }}>
+                  <td style={tdCell}><span style={{ fontSize: '1.1rem', fontWeight: 700, color: colors.primary }}>#{entry.rank}</span></td>
+                  <td style={tdCell}>
+                    <strong>{entry.name}</strong>
+                    {entry.stage_name ? <div style={{ fontSize: 12, color: colors.muted }}>&ldquo;{entry.stage_name}&rdquo;</div> : null}
+                  </td>
+                  <td style={tdCell}>{entry.free_votes.toLocaleString()}</td>
+                  <td style={tdCell}>{entry.paid_votes.toLocaleString()}</td>
+                  <td style={tdCell}><strong>{entry.total_votes.toLocaleString()}</strong></td>
+                  <td style={tdCell}>{entry.is_active ? entry.status : `${entry.status} (inactive)`}</td>
+                </tr>
+              ))
+            )}
           </tbody>
         </table>
       </Card>
-
-      {/* Entry Details Modal */}
-      {selectedEntry && (
-        <div style={{
-          position: 'fixed',
-          top: 0,
-          left: 0,
-          right: 0,
-          bottom: 0,
-          background: 'rgba(0,0,0,0.5)',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          zIndex: 1000,
-          padding: '1rem'
-        }}>
-          <Card style={{ maxWidth: '500px', width: '100%' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
-              <h2 style={{ margin: 0, fontSize: '1.25rem', color: colors.text }}>Participant Details</h2>
-              <button
-                onClick={() => setSelectedEntry(null)}
-                style={{
-                  background: 'none',
-                  border: 'none',
-                  fontSize: '1.5rem',
-                  cursor: 'pointer',
-                  color: colors.muted,
-                }}
-              >
-                ✕
-              </button>
-            </div>
-            <div style={{ display: 'grid', gap: '0.75rem', fontSize: '0.85rem' }}>
-              <div><span style={{ color: colors.muted }}>Rank:</span> <strong>#{selectedEntry.rank}</strong></div>
-              <div><span style={{ color: colors.muted }}>Name:</span> <strong>{selectedEntry.name}</strong></div>
-              <div><span style={{ color: colors.muted }}>Score:</span> <strong>{selectedEntry.score}%</strong></div>
-              <div><span style={{ color: colors.muted }}>Prize Amount:</span> <strong>₦{(selectedEntry.prizeAmount / 1000).toFixed(0)}K</strong></div>
-              <div><span style={{ color: colors.muted }}>Claim Status:</span>
-                <Badge
-                  text={selectedEntry.status === 'claimed' ? 'Claimed' : selectedEntry.status === 'pending' ? 'Pending Claim' : 'Forfeited'}
-                  color={selectedEntry.status === 'claimed' ? colors.success : selectedEntry.status === 'pending' ? colors.warning : colors.danger}
-                />
-              </div>
-            </div>
-            <div style={{ marginTop: '1rem', display: 'flex', gap: '0.75rem' }}>
-              <Button variant="outline" onClick={() => setSelectedEntry(null)}>Close</Button>
-            </div>
-          </Card>
-        </div>
-      )}
     </Page>
+  );
+}
+
+export default function CompetitionsResultsPage() {
+  return (
+    <Suspense fallback={<Page><p style={{ color: colors.muted }}>Loading…</p></Page>}>
+      <CompetitionsResultsContent />
+    </Suspense>
   );
 }

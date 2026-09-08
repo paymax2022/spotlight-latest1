@@ -38,12 +38,55 @@ export async function getVirtualAccount(userId: string): Promise<VirtualAccountR
 // ---------------------------------------------------------------------------
 
 /**
+ * Provision-on-read: fetch the user's virtual account, auto-provisioning it
+ * first if it doesn't exist yet. Requires KYC tier 1 (enforced by the caller:
+ * requireKycTier(userId, 1) — same gate the plain GET already required, so
+ * calling this in place of getVirtualAccount widens nothing).
+ *
+ * This is the actual trigger for provisionVirtualAccount below: nothing else
+ * in this codebase calls it. The account never existed until a user's first
+ * GET /api/v1/virtual-accounts/me after reaching tier 1 (comment on
+ * provisionVirtualAccount describes an admin-approval-time trigger that was
+ * never wired — this fixes the same gap without coupling KYC approval, an
+ * unrelated admin action, to Paystack's availability).
+ */
+export async function getOrProvisionVirtualAccount(
+  userId: string,
+  fallbackEmail?: string,
+): Promise<VirtualAccountRow> {
+  const existing = await getVirtualAccount(userId);
+  if (existing) return existing;
+
+  const supabase = createAdminClient();
+  const { data } = await supabase
+    .from('user_profiles')
+    .select('email, first_name, last_name, full_name')
+    .eq('id', userId)
+    .maybeSingle();
+
+  const row = (data ?? {}) as Record<string, unknown>;
+  const email = (row.email as string) || fallbackEmail;
+  if (!email) throw new ApiError('An email address is required to open a virtual account.', 422);
+
+  let firstName = (row.first_name as string) || '';
+  let lastName = (row.last_name as string) || '';
+  if (!firstName && !lastName) {
+    // Split full_name as a fallback so Paystack still gets two non-empty
+    // names — a customer record with no name at all is a Paystack rejection,
+    // not a graceful degradation, so it must not be reachable.
+    const full = ((row.full_name as string) || email.split('@')[0] || 'Paymax User').trim();
+    const parts = full.split(/\s+/);
+    firstName = parts[0] || 'Paymax';
+    lastName = parts.slice(1).join(' ') || 'User';
+  }
+
+  return provisionVirtualAccount(userId, email, firstName, lastName);
+}
+
+/**
  * Provision a Paystack Dedicated Virtual Account for a user.
  * Idempotent — returns the existing account if already provisioned.
  * Requires KYC tier 1 (enforced by the caller: requireKycTier(userId, 1)).
- *
- * Auto-trigger: this function should be called by the admin KYC approval route
- * after setting kyc_tier to 1. See docs/adr/ADR-003.
  */
 export async function provisionVirtualAccount(
   userId: string,
@@ -175,7 +218,13 @@ interface DvaResult {
 }
 
 async function createPaystackDva(customerCode: string): Promise<DvaResult> {
-  const preferredBank = process.env.PAYSTACK_DVA_BANK ?? 'wema-bank';
+  // Paystack's test-mode sandbox only simulates DVA issuance through its own
+  // "test-bank" — real partner banks (wema-bank, titan-paystack, ...) 404/reject
+  // with "not available in test mode" there, even though they're the correct
+  // choice in live mode. Key off the secret key prefix so this self-corrects
+  // per environment without needing a separate env var in every deploy.
+  const isTestMode = getPaystackSecretKey().startsWith('sk_test_');
+  const preferredBank = process.env.PAYSTACK_DVA_BANK ?? (isTestMode ? 'test-bank' : 'wema-bank');
 
   const result = await paystackPost<{
     status: boolean;

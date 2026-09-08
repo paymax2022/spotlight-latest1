@@ -22,12 +22,13 @@
 // NOTE: registration endpoints live on the Next.js server (NOT the Go /api/v1),
 // so paths are passed through unprefixed (e.g. '/api/registration/contests').
 
+import { mockAllowed } from '@/config/mockPolicy';
 import { Platform } from 'react-native';
 import { api } from '@/api/client';
 import { createSupabaseClient } from '@/lib/supabase';
 
 export const REGISTRATION_USE_MOCK =
-  (process.env.EXPO_PUBLIC_REGISTRATION_USE_MOCK ?? 'false').toLowerCase() === 'true';
+  mockAllowed(process.env.EXPO_PUBLIC_REGISTRATION_USE_MOCK, false);
 
 // Mock-latency helper so loading states render in mock mode.
 export const waitMock = <T>(value: T, ms = 320): Promise<T> =>

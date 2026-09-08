@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { View, Text, ScrollView, StyleSheet, KeyboardAvoidingView, Platform } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import { ShieldCheck } from 'lucide-react-native';
 
 import { Colors } from '@/constants/colors';
@@ -51,7 +52,7 @@ export default function ShareResultsScreen() {
           title="Shared securely"
           message="Access has been granted and logged. You can revoke this consent at any time from your privacy settings."
           actionLabel="Done"
-          onAction={() => router.back()}
+          onAction={() => goBack('/health/lab')}
         />
       </SafeAreaView>
     );

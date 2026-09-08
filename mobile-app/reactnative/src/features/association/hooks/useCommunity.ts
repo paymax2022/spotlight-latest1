@@ -5,6 +5,7 @@ import {
   getCommittees, getCommittee, requestJoinCommittee,
   getEvents, getEvent, rsvpEvent, registerEvent, submitEventFeedback,
 } from '../api/community.api';
+import { createCommittee, updateCommittee, deleteCommittee, type CommitteeInput } from '../api/authoring.api';
 import type { EventRsvp } from '../types/community.types';
 
 const KEY = 'association';
@@ -27,6 +28,43 @@ export function useRequestJoinCommittee() {
     mutationFn: (id: string) => requestJoinCommittee(id),
     onSuccess: (_d, id) => {
       qc.invalidateQueries({ queryKey: [KEY, 'committee', id] });
+      qc.invalidateQueries({ queryKey: [KEY, 'committees'] });
+    },
+  });
+}
+
+// ─── Committee lifecycle (owner only) ────────────────────────────
+// Server-gated on the manageCommittees capability. Screens hide these behind
+// the same flag, but the server is the gate that counts.
+
+export function useCreateCommittee() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ orgId, input }: { orgId: string; input: CommitteeInput }) =>
+      createCommittee(orgId, input),
+    onSuccess: () => qc.invalidateQueries({ queryKey: [KEY, 'committees'] }),
+  });
+}
+
+export function useUpdateCommittee() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, input }: { id: string; input: CommitteeInput }) => updateCommittee(id, input),
+    onSuccess: (_d, { id }) => {
+      qc.invalidateQueries({ queryKey: [KEY, 'committee', id] });
+      qc.invalidateQueries({ queryKey: [KEY, 'committees'] });
+    },
+  });
+}
+
+export function useDeleteCommittee() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => deleteCommittee(id),
+    // The detail query is dropped rather than refetched: the row is gone, and
+    // refetching it would 404 on a screen that is already navigating away.
+    onSuccess: (_d, id) => {
+      qc.removeQueries({ queryKey: [KEY, 'committee', id] });
       qc.invalidateQueries({ queryKey: [KEY, 'committees'] });
     },
   });
@@ -61,6 +99,11 @@ export function useRegisterEvent() {
     onSuccess: (_d, id) => {
       qc.invalidateQueries({ queryKey: [KEY, 'event', id] });
       qc.invalidateQueries({ queryKey: [KEY, 'events'] });
+      // Registering for a PAID event raises a dues invoice. The payment screen
+      // reads that invoice out of the dues list, so leaving the dues cache
+      // stale would send the member to "we couldn't find this invoice" for the
+      // invoice that had just been created for them.
+      qc.invalidateQueries({ queryKey: [KEY, 'dues'] });
     },
   });
 }

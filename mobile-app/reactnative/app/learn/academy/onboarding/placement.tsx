@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { View, Text, StyleSheet, ScrollView, Pressable } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import { Colors } from '@/constants/colors';
 import { Spacing } from '@/constants/spacing';
 import { Radius } from '@/constants/radius';
@@ -66,7 +67,7 @@ export default function PlacementScreen() {
     return (
       <Shell>
         <StateView kind="error" title="No class selected" message="Go back and pick your class first."
-          actionLabel="Back" onAction={() => router.back()} />
+          actionLabel="Back" onAction={() => goBack('/learn/academy')} />
       </Shell>
     );
   }

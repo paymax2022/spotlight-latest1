@@ -5,6 +5,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import {
   ArrowLeft, BadgeCheck, Phone, Video, ShieldAlert,
   Send, Sparkles, MapPin, Lock,
@@ -17,6 +18,7 @@ import StateView from '@/components/StateView';
 import { ConnectColors } from '@/features/connect/constants/connect.constants';
 import { useThread, useSendMessage } from '@/features/connect/messaging/hooks';
 import type { Message, ThreadDetail } from '@/features/connect/messaging/types';
+import { HomeMenuButton } from '@/components/HomeMenu';
 
 // MS-02 — Thread / conversation. THE core safety screen.
 // §4 GATE: a Date thread that is not a confirmed mutual match HARD-LOCKS the
@@ -132,7 +134,7 @@ export default function MessageThread() {
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
       <View style={styles.header}>
-        <Pressable onPress={() => router.back()} hitSlop={10} style={styles.headerBtn}>
+        <Pressable onPress={() => goBack('/connect')} hitSlop={10} style={styles.headerBtn}>
           <ArrowLeft size={22} color={Colors.onSurface} strokeWidth={2} />
         </Pressable>
 
@@ -196,6 +198,7 @@ export default function MessageThread() {
         ) : (
           <View style={styles.headerBtn} />
         )}
+        <HomeMenuButton />
       </View>
 
       {thread.isLoading ? (

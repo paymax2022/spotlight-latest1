@@ -111,7 +111,7 @@ export const useReviewForDeal = (dealId: string) =>
 export function useSubmitReview(dealId: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (input: { rating: number; tags: string[]; text?: string }) => meetupApi.submitReview(dealId, input),
+    mutationFn: (input: { rating: number; productQualityRating?: number; tags: string[]; text?: string }) => meetupApi.submitReview(dealId, input),
     onSuccess: (review) => qc.setQueryData(TX_KEYS.review(dealId), review),
   });
 }

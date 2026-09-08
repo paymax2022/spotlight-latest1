@@ -2,6 +2,7 @@ import { errorResponse, handleApiError, successResponse } from '@/src/lib/api/re
 import { assertAdminPermission } from '@/src/server/admin/auth';
 import { saveAcademyBatch, getAcademyAdminDashboard } from '@/src/server/services/academy/service';
 import { createAdminClient } from '@/lib/supabase/server';
+import { replaceBatchAreas } from '@/src/server/services/academy/batchAreas';
 import type { AcademyBatchMutationInput } from '@/src/lib/validation/academy';
 
 function getBatchFeeFields(body: Record<string, unknown>) {
@@ -17,6 +18,7 @@ function getBatchFeeFields(body: Record<string, unknown>) {
 
   return extra;
 }
+
 
 export async function GET(request: Request) {
   try {
@@ -41,6 +43,8 @@ export async function POST(request: Request) {
     if (Object.keys(extra).length > 0) {
       await supabase.from('academy_batches').update(extra).eq('id', (batch as any).id);
     }
+
+    await replaceBatchAreas(supabase, String((batch as any).id), body.interest_area_slugs);
 
     return successResponse({ success: true, batch }, 201);
   } catch (error) {

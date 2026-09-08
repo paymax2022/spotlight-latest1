@@ -39,7 +39,10 @@ export default function ApplicationDetail() {
   }
 
   const a = app.data;
-  const slaBreached = a.slaHoursLeft < 0;
+  // The live DTO may omit slaHoursLeft — rendering it raw produced "NaNh left".
+  const slaHours = typeof a.slaHoursLeft === 'number' && Number.isFinite(a.slaHoursLeft) ? a.slaHoursLeft : null;
+  const slaBreached = slaHours !== null && slaHours < 0;
+  const documents = a.documents ?? [];
 
   const onDecide = async (decision: ApprovalDecision) => {
     const verb = decision === 'APPROVE' ? 'Approve' : decision === 'REJECT' ? 'Reject' : 'Request info from';
@@ -62,7 +65,11 @@ export default function ApplicationDetail() {
         <View style={[styles.slaCard, slaBreached ? styles.slaBad : styles.slaOk]}>
           {slaBreached ? <AlertTriangle size={16} color={Colors.error} strokeWidth={2} /> : <Clock size={16} color={Colors.gold} strokeWidth={2} />}
           <Text style={[styles.slaText, { color: slaBreached ? Colors.error : Colors.gold }]}>
-            {slaBreached ? `SLA breached by ${Math.abs(a.slaHoursLeft)}h` : `${a.slaHoursLeft}h left to review`}
+            {slaHours === null
+              ? 'Awaiting review'
+              : slaBreached
+                ? `SLA breached by ${Math.abs(slaHours)}h`
+                : `${slaHours}h left to review`}
           </Text>
           <Text style={styles.slaSub}>Submitted {formatDateTime(a.submittedAt)}</Text>
         </View>
@@ -86,7 +93,9 @@ export default function ApplicationDetail() {
         {/* Documents */}
         <Text style={styles.sectionTitle}>Documents</Text>
         <View style={[styles.card, shadow1]}>
-          {a.documents.map((d, i) => (
+          {documents.length === 0 ? (
+            <Text style={styles.emptyText}>No documents were submitted with this application.</Text>
+          ) : documents.map((d, i) => (
             <View key={d.id} style={[styles.docRow, i > 0 && styles.docDivider]}>
               {d.verified ? <FileCheck2 size={16} color={Colors.teal} strokeWidth={2} /> : <FileX2 size={16} color={Colors.gold} strokeWidth={2} />}
               <Text style={styles.docName}>{d.name}</Text>
@@ -139,6 +148,7 @@ const styles = StyleSheet.create({
   docDivider: { borderTopWidth: 1, borderTopColor: Colors.outlineVariant },
   docName: { ...Typography.bodyMd, color: Colors.onSurface, flex: 1 },
   docStatus: { ...Typography.labelSm, fontWeight: '600' as const },
+  emptyText: { ...Typography.bodySm, color: Colors.onSurfaceVariant },
   footer: { paddingHorizontal: Spacing.containerMargin, paddingTop: Spacing.sm, paddingBottom: Spacing.lg, backgroundColor: Colors.background, borderTopWidth: 1, borderTopColor: Colors.outlineVariant, gap: Spacing.xs },
   footerBtns: { flexDirection: 'row', gap: Spacing.sm },
   footerBtn: { flex: 1 },

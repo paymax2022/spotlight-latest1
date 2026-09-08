@@ -15,7 +15,8 @@ import {
 // Idempotent: an already-completed intent (or a re-check while still
 // pending) returns its settled status without re-charging or re-verifying
 // Paystack unnecessarily.
-export async function GET(request: Request, { params }: { params: { id: string } }) {
+export async function GET(request: Request, ctx: { params: Promise<{ id: string }> }) {
+  const params = await ctx.params;
   try {
     const { user } = await requireUser(request);
 
@@ -30,8 +31,8 @@ export async function GET(request: Request, { params }: { params: { id: string }
     const reference = searchParams.get('reference') || '';
     if (!reference) return errorResponse('reference is required.', 400);
 
-    const intent = getRegistrationPaymentIntentByReference(reference);
-    if (!intent || intent.applicationId !== params.id || intent.userId !== user.id) {
+    const intent = await getRegistrationPaymentIntentByReference(reference);
+    if (!intent || intent.applicationId !== params.id) {
       return errorResponse('Payment intent not found.', 404);
     }
 
@@ -54,12 +55,12 @@ export async function GET(request: Request, { params }: { params: { id: string }
     }
 
     if (verification.amountKobo < intent.amountKobo) {
-      markRegistrationPaymentIntentStatus(intent.id, 'failed', 'Paystack amount is lower than the registration fee.');
+      await markRegistrationPaymentIntentStatus(intent.id, 'failed', 'Paystack amount is lower than the registration fee.');
       return NextResponse.json({ success: true, status: 'FAILED', reference });
     }
 
-    applyRegistrationPaymentSuccess(params.id, { reference, method: 'PAYSTACK' });
-    markRegistrationPaymentIntentStatus(intent.id, 'completed');
+    await applyRegistrationPaymentSuccess(params.id, { reference, method: 'PAYSTACK' });
+    await markRegistrationPaymentIntentStatus(intent.id, 'completed');
 
     return NextResponse.json({ success: true, status: 'SUCCESSFUL', reference });
   } catch (error) {

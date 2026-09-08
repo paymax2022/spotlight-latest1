@@ -68,7 +68,7 @@ func (s *Service) ListItemModifierGroups(ctx context.Context, itemID string) ([]
 // Ownership of the restaurant is checked first, then the item→restaurant link, so a
 // cross-restaurant itemID can never be modified.
 func (s *Service) assertItemOwned(ctx context.Context, restaurantID, userID, itemID string) error {
-	if err := s.assertOwner(ctx, restaurantID, userID); err != nil {
+	if err := s.AssertStaffPermission(ctx, restaurantID, userID, PermManageMenu); err != nil {
 		return err
 	}
 	var owned bool

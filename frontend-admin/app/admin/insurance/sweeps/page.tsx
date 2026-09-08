@@ -1,86 +1,29 @@
 'use client';
 
-import { useEffect, useState } from 'react';
-import { getSweeps } from '@/services/insuranceAdminService';
-import type { SweepsMonitor } from '@/types/insuranceAdmin';
-import { InsuranceTabs, Kpi, StateBlock, timeAgo } from '../_ui';
-import { Page, PageHeader, Card, Button, Badge, colors, thCell, tdCell } from '@/components/ui/vuexy';
+import { PageHeader, InsuranceTabs, UnbuiltSurface } from '../_ui';
+import { probe } from '@/services/insuranceAdminService';
 
-function runStatusColor(status: string): string {
-  if (status === 'completed') return colors.success;
-  if (status === 'running') return colors.warning;
-  return colors.danger;
-}
-
-export default function SweepsPage() {
-  const [data, setData] = useState<SweepsMonitor | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-
-  async function load() {
-    setLoading(true); setError(null);
-    try { setData(await getSweeps()); }
-    catch (e) { setError(String(e)); }
-    finally { setLoading(false); }
-  }
-  useEffect(() => { load(); }, []);
-
+/**
+ * Lapse & renewal sweeps — no backend endpoint exists for this surface yet.
+ *
+ * See UnbuiltSurface in _ui.tsx for why the page probes live instead of
+ * rendering fixtures.
+ */
+export default function InsuranceSweepsPage() {
   return (
-    <Page>
-      <PageHeader
-        title="Lapse & renewal sweeps"
-        subtitle="Scheduled jobs that flag policies entering renewal windows and process grace-expired lapses."
-        actions={<Button variant="outline" onClick={load}>Refresh</Button>}
-      />
+    <div style={{ padding: '0.5rem 0.5rem 2rem' }}>
+      <PageHeader title="Lapse & renewal sweeps" subtitle="The scheduled jobs that expire and renew cover." />
       <InsuranceTabs active="ops" />
-
-      <StateBlock loading={loading} error={error} empty={!data} emptyText="No sweep data available.">
-        {data && (
-          <>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: 12, marginBottom: 20 }}>
-              <Kpi label="Renewals due (7d)" value={data.renewals_due_7d.toLocaleString('en-NG')} />
-              <Kpi label="Renewals due (30d)" value={data.renewals_due_30d.toLocaleString('en-NG')} />
-              <Kpi label="Lapses pending" value={data.lapses_pending.toLocaleString('en-NG')} accent={data.lapses_pending > 0 ? colors.warning : undefined} />
-              <Kpi label="Next run" value={timeAgo(data.next_run_at)} accent={colors.primary} />
-            </div>
-
-            <Card title="Recent runs">
-              {data.recent_runs.length === 0 ? <p style={{ color: colors.muted }}>No recent runs.</p> : (
-                <div style={{ overflowX: 'auto' }}>
-                  <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                    <thead>
-                      <tr>
-                        <th style={thCell}>Kind</th>
-                        <th style={thCell}>Status</th>
-                        <th style={thCell}>Scanned</th>
-                        <th style={thCell}>Affected</th>
-                        <th style={thCell}>Notified</th>
-                        <th style={thCell}>Errors</th>
-                        <th style={thCell}>Window</th>
-                        <th style={thCell}>Ran</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {data.recent_runs.map((r) => (
-                        <tr key={r.id}>
-                          <td style={tdCell}><Badge text={r.kind} color={r.kind === 'renewal' ? colors.info : colors.danger} /></td>
-                          <td style={tdCell}><Badge text={r.status} color={runStatusColor(r.status)} /></td>
-                          <td style={tdCell}>{r.scanned.toLocaleString('en-NG')}</td>
-                          <td style={tdCell}>{r.affected.toLocaleString('en-NG')}</td>
-                          <td style={tdCell}>{r.notified.toLocaleString('en-NG')}</td>
-                          <td style={{ ...tdCell, color: r.errors > 0 ? colors.danger : colors.text, fontWeight: r.errors > 0 ? 700 : 400 }}>{r.errors}</td>
-                          <td style={tdCell}>{r.window}</td>
-                          <td style={tdCell}>{timeAgo(r.ran_at)}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-            </Card>
-          </>
-        )}
-      </StateBlock>
-    </Page>
+      <UnbuiltSurface
+        endpoint="/api/insurance/admin/sweeps"
+        purpose="Cover ends on a date. Something has to notice that date and act — lapse the policy, notify the customer, or take the renewal premium. This screen monitors those runs. A silent sweep failure is the kind of fault that surfaces as a customer discovering at claim time that their cover quietly ended."
+        requires={[
+          'Recent run history per sweep kind, with scanned, affected, notified and error counts.',
+          'The next scheduled run, so a stalled scheduler is visible as a stale timestamp.',
+          'Policies currently inside the renewal window and those already past expiry without being lapsed.',
+        ]}
+        probeFn={() => probe('/sweeps')}
+      />
+    </div>
   );
 }

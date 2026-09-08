@@ -41,7 +41,7 @@ func buildOpenElection(t *testing.T, ctx context.Context, pool *pgxpool.Pool, sv
 	_, candMembA := seedActiveMembership(t, ctx, pool, org)
 	_, candMembB := seedActiveMembership(t, ctx, pool, org)
 
-	electionID, err := svc.CreateElection(ctx, officer, association.CreateElectionInput{
+	electionID, err := svc.CreateElection(ctx, officer, "", association.CreateElectionInput{
 		Title:     "Exco Election",
 		Positions: []association.CreatePositionInput{{Title: "Chairperson", Seats: 1}},
 	})
@@ -68,7 +68,7 @@ func buildOpenElection(t *testing.T, ctx context.Context, pool *pgxpool.Pool, sv
 
 func TestLiveDB_Election_FullFlow_TallyWinnerImmutableResults(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	svc := newLiveAssociationService(pool)
 	ctx := context.Background()
 	f := buildOpenElection(t, ctx, pool, svc)
@@ -148,7 +148,7 @@ func TestLiveDB_Election_FullFlow_TallyWinnerImmutableResults(t *testing.T) {
 
 func TestLiveDB_Election_OneMemberOneVote_Idempotent(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	svc := newLiveAssociationService(pool)
 	ctx := context.Background()
 	f := buildOpenElection(t, ctx, pool, svc)
@@ -180,7 +180,7 @@ func TestLiveDB_Election_OneMemberOneVote_Idempotent(t *testing.T) {
 
 func TestLiveDB_Election_ConcurrentDoubleVote_ExactlyOne(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	svc := newLiveAssociationService(pool)
 	ctx := context.Background()
 	f := buildOpenElection(t, ctx, pool, svc)
@@ -211,7 +211,7 @@ func TestLiveDB_Election_ConcurrentDoubleVote_ExactlyOne(t *testing.T) {
 
 func TestLiveDB_Election_BallotSecrecy_NoVoterChoiceLink(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 
 	// The anonymous-choice table must have NO voter/membership reference, and the
@@ -240,7 +240,7 @@ func TestLiveDB_Election_BallotSecrecy_NoVoterChoiceLink(t *testing.T) {
 
 func TestLiveDB_Election_Eligibility_FailClosed(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	svc := newLiveAssociationService(pool)
 	ctx := context.Background()
 	f := buildOpenElection(t, ctx, pool, svc)
@@ -273,14 +273,14 @@ func TestLiveDB_Election_Eligibility_FailClosed(t *testing.T) {
 
 func TestLiveDB_Election_VotingWindow_FailClosed(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	svc := newLiveAssociationService(pool)
 	ctx := context.Background()
 
 	org := seedOrganisation(t, ctx, pool, "WinOrg "+uuid.New().String())
 	officer := seedAdminRole(t, ctx, pool, org, "NATIONAL_ADMIN")
 	_, candM := seedActiveMembership(t, ctx, pool, org)
-	electionID, err := svc.CreateElection(ctx, officer, association.CreateElectionInput{
+	electionID, err := svc.CreateElection(ctx, officer, "", association.CreateElectionInput{
 		Title: "Windowed", Positions: []association.CreatePositionInput{{Title: "Sec", Seats: 1}},
 	})
 	if err != nil {
@@ -312,14 +312,14 @@ func TestLiveDB_Election_VotingWindow_FailClosed(t *testing.T) {
 
 func TestLiveDB_Election_OfficerOnly_Authz(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	svc := newLiveAssociationService(pool)
 	ctx := context.Background()
 	f := buildOpenElection(t, ctx, pool, svc)
 
 	// Plain member of the org cannot administer.
 	plain, _ := seedActiveMembership(t, ctx, pool, f.org)
-	if _, err := svc.CreateElection(ctx, plain, association.CreateElectionInput{Title: "X", Positions: []association.CreatePositionInput{{Title: "P"}}}); err == nil {
+	if _, err := svc.CreateElection(ctx, plain, "", association.CreateElectionInput{Title: "X", Positions: []association.CreatePositionInput{{Title: "P"}}}); err == nil {
 		t.Fatal("plain member created an election (want forbidden)")
 	}
 	if _, err := svc.Tally(ctx, plain, f.electionID); err == nil {

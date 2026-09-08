@@ -3,12 +3,14 @@ package adminext
 import (
 	"context"
 	"fmt"
+	"log"
 	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	financekyc "spotlight/backend/internal/finance/kyc"
 	financeledger "spotlight/backend/internal/finance/ledger"
 )
 
@@ -18,6 +20,7 @@ import (
 type Service struct {
 	db     *pgxpool.Pool
 	ledger *financeledger.Service // optional; required only for the withdrawal payout money-path
+	kyc    *financekyc.Service    // optional; required only for the KYC queue (reuses the platform's shared KYC, not a bespoke crowdfunding dataset)
 }
 
 // NewService constructs the admin service. The finance ledger is optional here;
@@ -28,6 +31,12 @@ func NewService(db *pgxpool.Pool) *Service { return &Service{db: db} }
 // (ApproveWithdrawal). Non-breaking: existing NewService(db) callers keep a nil
 // ledger and the money-path fails closed until one is wired.
 func (s *Service) WithLedger(l *financeledger.Service) *Service { s.ledger = l; return s }
+
+// WithKYC injects the platform's shared KYC service. Crowdfunding creators go
+// through the same tiered identity verification as every other vertical
+// (finance/kyc) rather than a crowdfunding-specific KYC/KYB dataset — see
+// ListKyc/DecideKyc below.
+func (s *Service) WithKYC(k *financekyc.Service) *Service { s.kyc = k; return s }
 
 // rfc3339 formats a timestamp the way the TS client expects.
 func rfc3339(t time.Time) string { return t.UTC().Format(time.RFC3339) }
@@ -400,13 +409,35 @@ func (s *Service) SetCampaignFreeze(ctx context.Context, campaignID, adminID str
 		return err
 	}
 	// Best-effort: also flip the campaign review_status if the table/row exists.
-	reviewStatus := "ACTIVE"
+	//
+	// Freeze REMEMBERS the status it replaced, and unfreeze restores it. Writing
+	// ACTIVE unconditionally on unfreeze meant freezing a PENDING_REVIEW campaign
+	// and releasing it silently approved the campaign — live, with no review
+	// decision and nothing in the audit trail claiming one.
 	if freeze {
-		reviewStatus = "FROZEN"
+		// COALESCE keeps the ORIGINAL value if this row is already frozen, so a
+		// second freeze cannot overwrite the memory with 'FROZEN' itself.
+		_, _ = tx.Exec(ctx, `
+			UPDATE campaigns
+			   SET pre_freeze_review_status = CASE
+			         WHEN review_status = 'FROZEN' THEN pre_freeze_review_status
+			         ELSE review_status
+			       END,
+			       review_status = 'FROZEN',
+			       admin_note = COALESCE(NULLIF($1,''), admin_note),
+			       updated_at = NOW()
+			 WHERE id = $2`, note, campaignID)
+	} else {
+		// Fall back to ACTIVE when nothing was remembered — a campaign frozen
+		// before this column existed, which is exactly the old behaviour.
+		_, _ = tx.Exec(ctx, `
+			UPDATE campaigns
+			   SET review_status = COALESCE(NULLIF(pre_freeze_review_status,''), 'ACTIVE'),
+			       pre_freeze_review_status = NULL,
+			       admin_note = COALESCE(NULLIF($1,''), admin_note),
+			       updated_at = NOW()
+			 WHERE id = $2`, note, campaignID)
 	}
-	_, _ = tx.Exec(ctx,
-		`UPDATE campaigns SET review_status=$1, admin_note=COALESCE(NULLIF($2,''), admin_note), updated_at=NOW() WHERE id=$3`,
-		reviewStatus, note, campaignID)
 
 	action := "campaign.unfreeze"
 	if freeze {
@@ -420,110 +451,108 @@ func (s *Service) SetCampaignFreeze(ctx context.Context, campaignID, adminID str
 
 // ─── KYC / KYB ───────────────────────────────────────────────────────────────
 
-// ListKyc returns KYC/KYB cases (with their docs), optionally filtered.
-func (s *Service) ListKyc(ctx context.Context, kind, status string) ([]KycCase, error) {
-	q := `SELECT id, kind, status, applicant_name, applicant_type, email, id_label, bank_label,
-	             submitted_at, duplicate_identity, duplicate_bank, risk_level
-	      FROM cf_kyc_cases`
-	conds := []string{}
-	args := []any{}
-	if kind != "" {
-		args = append(args, kind)
-		conds = append(conds, fmt.Sprintf("kind=$%d", len(args)))
+// ListKyc returns the pending-verification queue, sourced from the platform's
+// shared finance/kyc profiles (user_profiles.kyc_*) rather than a crowdfunding-
+// specific dataset. Only the PENDING queue is derived today — approved/rejected
+// history lives in kyc_events, which this endpoint doesn't surface.
+func (s *Service) ListKyc(ctx context.Context, status string) ([]KycCase, error) {
+	if status != "" && status != "PENDING" {
+		return []KycCase{}, nil
 	}
-	if status != "" {
-		args = append(args, status)
-		conds = append(conds, fmt.Sprintf("status=$%d", len(args)))
+	if s.kyc == nil {
+		return nil, fmt.Errorf("adminext: kyc service not wired")
 	}
-	if len(conds) > 0 {
-		q += " WHERE " + strings.Join(conds, " AND ")
-	}
-	q += ` ORDER BY submitted_at DESC`
-	rows, err := s.db.Query(ctx, q, args...)
+	profiles, err := s.kyc.ListPending(ctx, 200, 0)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
 	out := []KycCase{}
-	ids := []string{}
-	for rows.Next() {
-		var k KycCase
-		var submittedAt time.Time
-		if err := rows.Scan(&k.ID, &k.Kind, &k.Status, &k.ApplicantName, &k.ApplicantType,
-			&k.Email, &k.IDLabel, &k.BankLabel, &submittedAt, &k.DuplicateIdentity, &k.DuplicateBank, &k.RiskLevel); err != nil {
-			return nil, err
-		}
-		k.SubmittedAt = rfc3339(submittedAt)
-		k.Documents = []KycDoc{}
-		out = append(out, k)
-		ids = append(ids, k.ID)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	if len(out) == 0 {
+	if len(profiles) == 0 {
 		return out, nil
 	}
-	// Attach docs in a second query.
-	docRows, err := s.db.Query(ctx,
-		`SELECT id, case_id, label, type, verified FROM cf_kyc_docs WHERE case_id = ANY($1) ORDER BY label`, ids)
-	if err != nil {
-		return out, nil // tolerate missing docs
+	ids := make([]string, len(profiles))
+	for i, p := range profiles {
+		ids[i] = p.UserID
 	}
-	defer docRows.Close()
-	byCase := map[string][]KycDoc{}
-	for docRows.Next() {
-		var d KycDoc
-		var caseID string
-		if err := docRows.Scan(&d.ID, &caseID, &d.Label, &d.Type, &d.Verified); err != nil {
-			return nil, err
+	type identity struct{ name, email string }
+	byID := map[string]identity{}
+	rows, err := s.db.Query(ctx,
+		`SELECT id, COALESCE(NULLIF(raw_user_meta_data->>'full_name',''), email), email FROM auth.users WHERE id = ANY($1)`, ids)
+	if err == nil {
+		defer rows.Close()
+		for rows.Next() {
+			var id, name, email string
+			if err := rows.Scan(&id, &name, &email); err == nil {
+				byID[id] = identity{name: name, email: email}
+			}
 		}
-		byCase[caseID] = append(byCase[caseID], d)
 	}
-	for i := range out {
-		if docs := byCase[out[i].ID]; docs != nil {
-			out[i].Documents = docs
+	for _, p := range profiles {
+		info := byID[p.UserID]
+		tier := 1
+		if p.RequestedTier != nil {
+			tier = *p.RequestedTier
 		}
+		var submittedAt string
+		if p.SubmittedAt != nil {
+			submittedAt = rfc3339(*p.SubmittedAt)
+		}
+		var verifiedAt *string
+		if p.VerifiedAt != nil {
+			v := rfc3339(*p.VerifiedAt)
+			verifiedAt = &v
+		}
+		out = append(out, KycCase{
+			ID: p.UserID, Status: "PENDING", ApplicantName: info.name, ApplicantType: "Individual",
+			Email: info.email, Tier: tier, DocumentType: p.DocumentType,
+			SubmittedAt: submittedAt, VerifiedAt: verifiedAt,
+		})
 	}
 	return out, nil
 }
 
-// DecideKyc applies a guarded PENDING→APPROVED/REJECTED transition.
-// A note is REQUIRED to reject. Writes an audit row.
+// DecideKyc approves (tier upgrade) or rejects a pending KYC submission via the
+// platform's shared finance/kyc service, then best-effort records a crowdfunding
+// admin audit row. A note is REQUIRED to reject.
 func (s *Service) DecideKyc(ctx context.Context, id, adminID string, approve bool, note string) error {
 	if !approve && strings.TrimSpace(note) == "" {
 		return fmt.Errorf("adminext: a note is required to reject a KYC case")
 	}
-	tx, err := s.db.Begin(ctx)
-	if err != nil {
-		return err
+	if s.kyc == nil {
+		return fmt.Errorf("adminext: kyc service not wired")
 	}
-	defer tx.Rollback(ctx)
-
-	var current, applicant string
-	if err := tx.QueryRow(ctx, `SELECT status, applicant_name FROM cf_kyc_cases WHERE id=$1 FOR UPDATE`, id).Scan(&current, &applicant); err != nil {
+	profile, err := s.kyc.GetProfile(ctx, id)
+	if err != nil {
 		return fmt.Errorf("adminext: kyc case not found")
 	}
-	if current != "PENDING" {
-		return fmt.Errorf("adminext: cannot decide a KYC case in %s state", current)
+	if profile.Status != financekyc.StatusPending {
+		return fmt.Errorf("adminext: cannot decide a KYC case in %s state", profile.Status)
 	}
-	next := "REJECTED"
-	if approve {
-		next = "APPROVED"
-	}
-	if _, err := tx.Exec(ctx,
-		`UPDATE cf_kyc_cases SET status=$1, admin_note=COALESCE(NULLIF($2,''), admin_note), decided_at=NOW() WHERE id=$3`,
-		next, note, id); err != nil {
-		return err
-	}
+	actorID := adminID
 	action := "kyc.reject"
 	if approve {
 		action = "kyc.approve"
+		tier := 1
+		if profile.RequestedTier != nil {
+			tier = *profile.RequestedTier
+		}
+		if _, err := s.kyc.Approve(ctx, id, tier, &actorID); err != nil {
+			return err
+		}
+	} else {
+		if err := s.kyc.Fail(ctx, id, &actorID); err != nil {
+			return err
+		}
 	}
-	if err := s.audit(ctx, tx, adminID, action, applicant); err != nil {
-		return err
+	var name string
+	_ = s.db.QueryRow(ctx, `SELECT COALESCE(NULLIF(raw_user_meta_data->>'full_name',''), email) FROM auth.users WHERE id=$1`, id).Scan(&name)
+	if name == "" {
+		name = id
 	}
-	return tx.Commit(ctx)
+	if _, err := s.db.Exec(ctx, `INSERT INTO cf_audit_logs (actor, action, target, ip) VALUES ($1,$2,$3,'')`, adminID, action, name); err != nil {
+		log.Printf("adminext: kyc decision audit write failed (state change already committed) actor=%s action=%s target=%s: %v", adminID, action, name, err)
+	}
+	return nil
 }
 
 // ─── Compliance ──────────────────────────────────────────────────────────────
@@ -531,11 +560,8 @@ func (s *Service) DecideKyc(ctx context.Context, id, adminID string, approve boo
 // GetComplianceSummary derives compliance counters from the cf_* tables.
 func (s *Service) GetComplianceSummary(ctx context.Context) (*ComplianceSummary, error) {
 	out := &ComplianceSummary{RetentionPolicyDays: 2555, LastRegulatoryExport: "2026-05-31T00:00:00Z"}
-	_ = s.db.QueryRow(ctx, `
-		SELECT
-			COUNT(*) FILTER (WHERE kind='KYC' AND status='PENDING'),
-			COUNT(*) FILTER (WHERE kind='KYB' AND status='PENDING')
-		FROM cf_kyc_cases`).Scan(&out.PendingKyc, &out.PendingKyb)
+	_ = s.db.QueryRow(ctx, `SELECT COUNT(*) FROM user_profiles WHERE kyc_status = 'pending'`).Scan(&out.PendingKyc)
+	out.PendingKyb = 0 // the platform's shared KYC (finance/kyc) has no business-entity tier — see adminext.KycCase
 	_ = s.db.QueryRow(ctx, `SELECT COUNT(*) FROM cf_data_requests WHERE status <> 'COMPLETED'`).Scan(&out.OpenDataRequests)
 	_ = s.db.QueryRow(ctx, `SELECT COUNT(*) FROM cf_audit_logs WHERE created_at >= date_trunc('day', NOW())`).Scan(&out.AuditEventsToday)
 	out.InvestmentEnabled = false
@@ -611,11 +637,79 @@ func (s *Service) FulfilDataRequest(ctx context.Context, id, adminID string) err
 
 // ─── Users ───────────────────────────────────────────────────────────────────
 
-// ListUsers returns users (with recent activity), optionally filtered.
-func (s *Service) ListUsers(ctx context.Context, role, status, search string) ([]User, error) {
-	q := `SELECT id, name, email, role, type, verification, status, risk_level,
-	             campaigns_created, total_raised_kobo, total_contributed_kobo, joined_at, last_active_at
-	      FROM cf_admin_users`
+// userBaseCTE derives every crowdfunding user (creator and/or contributor) live
+// from campaigns/contributions/auth.users — there is no standalone user
+// registry. The only genuinely admin-authored fact, a suspend/restrict
+// decision, comes from cf_user_moderation (absent row = ACTIVE, the default a
+// real account starts in). Verification reuses the platform's shared KYC
+// (user_profiles.kyc_*, see backend/internal/finance/kyc) rather than a
+// crowdfunding-specific verification field.
+const userBaseCTE = `
+	WITH creator_stats AS (
+		SELECT c.creator_id AS user_id,
+		       COUNT(*) AS campaigns_created,
+		       COALESCE(SUM((SELECT COALESCE(SUM(co.amount_kobo),0) FROM contributions co
+		                     WHERE co.campaign_id = c.id AND co.status IN ('escrowed','released'))), 0) AS total_raised_kobo,
+		       BOOL_OR(c.category = 'ngo') AS is_org,
+		       MAX(CASE c.risk_level WHEN 'HIGH' THEN 3 WHEN 'MEDIUM' THEN 2 ELSE 1 END) AS risk_rank,
+		       MAX(c.created_at) AS last_campaign_at
+		FROM campaigns c
+		GROUP BY c.creator_id
+	),
+	contributor_stats AS (
+		SELECT co.contributor_id AS user_id,
+		       COALESCE(SUM(co.amount_kobo),0) AS total_contributed_kobo,
+		       MAX(co.created_at) AS last_contribution_at
+		FROM contributions co
+		GROUP BY co.contributor_id
+	)
+	SELECT
+		u.id,
+		COALESCE(NULLIF(u.raw_user_meta_data->>'full_name',''), u.email) AS name,
+		u.email,
+		CASE WHEN cs.user_id IS NULL THEN 'CONTRIBUTOR' WHEN cs.is_org THEN 'ORGANISATION' ELSE 'CREATOR' END AS role,
+		CASE WHEN cs.is_org THEN 'NGO' ELSE 'Individual' END AS type,
+		CASE
+			WHEN up.kyc_status = 'verified' AND COALESCE(up.kyc_tier,0) >= 2 THEN 'FULL'
+			WHEN up.kyc_status = 'verified' AND cs.is_org THEN 'KYB'
+			WHEN up.kyc_status = 'verified' THEN 'KYC'
+			WHEN up.kyc_status IN ('submitted','pending') THEN 'EMAIL'
+			ELSE 'UNVERIFIED'
+		END AS verification,
+		COALESCE(mod.status, 'ACTIVE') AS status,
+		CASE COALESCE(cs.risk_rank, 1) WHEN 3 THEN 'HIGH' WHEN 2 THEN 'MEDIUM' ELSE 'LOW' END AS risk_level,
+		COALESCE(cs.campaigns_created, 0) AS campaigns_created,
+		COALESCE(cs.total_raised_kobo, 0) AS total_raised_kobo,
+		COALESCE(ct.total_contributed_kobo, 0) AS total_contributed_kobo,
+		u.created_at AS joined_at,
+		GREATEST(COALESCE(cs.last_campaign_at, u.created_at), COALESCE(ct.last_contribution_at, u.created_at)) AS last_active_at
+	FROM (SELECT user_id FROM creator_stats UNION SELECT user_id FROM contributor_stats) ids
+	JOIN auth.users u ON u.id = ids.user_id
+	LEFT JOIN creator_stats cs ON cs.user_id = ids.user_id
+	LEFT JOIN contributor_stats ct ON ct.user_id = ids.user_id
+	LEFT JOIN cf_user_moderation mod ON mod.user_id = ids.user_id
+	LEFT JOIN user_profiles up ON up.id = ids.user_id`
+
+// ListUsers returns crowdfunding users (with recent activity), derived live —
+// see userBaseCTE.
+// UsersPage is one page of users plus the count of everything the FILTERS match
+// — not the count of the page, and not the count of all users. Paging must never
+// change the headline number.
+type UsersPage struct {
+	Users []User `json:"users"`
+	Total int    `json:"total"`
+	Page  int    `json:"page"`
+	Limit int    `json:"limit"`
+}
+
+// ListUsers returns one page of crowdfunding users.
+//
+// There is no standalone user table: the population is derived from activity —
+// campaign creators unioned with contributors (see userBaseCTE). It used to
+// return a bare LIMIT 200 with no offset and no total, so beyond 200 active
+// people the tail was simply invisible, with nothing on screen saying so.
+func (s *Service) ListUsers(ctx context.Context, role, status, search string, page, limit int) (UsersPage, error) {
+	q := userBaseCTE
 	conds := []string{}
 	args := []any{}
 	if role != "" {
@@ -630,23 +724,36 @@ func (s *Service) ListUsers(ctx context.Context, role, status, search string) ([
 		args = append(args, "%"+strings.ToLower(search)+"%")
 		conds = append(conds, fmt.Sprintf("(LOWER(name) LIKE $%d OR LOWER(email) LIKE $%d)", len(args), len(args)))
 	}
+	if page < 1 {
+		page = 1
+	}
+	if limit <= 0 || limit > 200 {
+		limit = 25
+	}
+	offset := (page - 1) * limit
+
+	// COUNT(*) OVER() is evaluated AFTER the WHERE, so the total reflects the
+	// filters and not the whole table — the bug that makes a filtered list say
+	// "1 of 8,163".
+	q = fmt.Sprintf("WITH base AS (%s) SELECT *, COUNT(*) OVER() AS total_rows FROM base", q)
 	if len(conds) > 0 {
 		q += " WHERE " + strings.Join(conds, " AND ")
 	}
-	q += ` ORDER BY last_active_at DESC`
+	q += fmt.Sprintf(` ORDER BY last_active_at DESC LIMIT %d OFFSET %d`, limit, offset)
 	rows, err := s.db.Query(ctx, q, args...)
 	if err != nil {
-		return nil, err
+		return UsersPage{}, err
 	}
 	defer rows.Close()
 	out := []User{}
 	ids := []string{}
+	total := 0
 	for rows.Next() {
 		var u User
 		var joinedAt, lastActiveAt time.Time
 		if err := rows.Scan(&u.ID, &u.Name, &u.Email, &u.Role, &u.Type, &u.Verification, &u.Status, &u.RiskLevel,
-			&u.CampaignsCreated, &u.TotalRaisedKobo, &u.TotalContributedKobo, &joinedAt, &lastActiveAt); err != nil {
-			return nil, err
+			&u.CampaignsCreated, &u.TotalRaisedKobo, &u.TotalContributedKobo, &joinedAt, &lastActiveAt, &total); err != nil {
+			return UsersPage{}, err
 		}
 		u.JoinedAt = rfc3339(joinedAt)
 		u.LastActiveAt = rfc3339(lastActiveAt)
@@ -655,15 +762,38 @@ func (s *Service) ListUsers(ctx context.Context, role, status, search string) ([
 		ids = append(ids, u.ID)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, err
+		return UsersPage{}, err
 	}
+	result := UsersPage{Users: out, Total: total, Page: page, Limit: limit}
 	if len(out) == 0 {
-		return out, nil
+		// COUNT(*) OVER() rides on the returned rows, so an empty page carries no
+		// total — and a page PAST the end is empty while the filter still matches
+		// plenty. Reporting 0 there would tell the console "no users" whenever the
+		// last row on the final page is suspended or filtered away. Count
+		// separately, with the same filters and no LIMIT.
+		countQ := fmt.Sprintf("WITH base AS (%s) SELECT COUNT(*) FROM base", userBaseCTE)
+		if len(conds) > 0 {
+			countQ += " WHERE " + strings.Join(conds, " AND ")
+		}
+		if err := s.db.QueryRow(ctx, countQ, args...).Scan(&result.Total); err != nil {
+			return UsersPage{}, err
+		}
+		return result, nil
 	}
-	actRows, err := s.db.Query(ctx,
-		`SELECT id, user_id, action, detail, created_at FROM cf_user_activity WHERE user_id = ANY($1) ORDER BY created_at DESC`, ids)
+	// Activity is composed live from the same two real sources every total on
+	// this page is derived from — campaign creation and contributions — capped
+	// per user in Go since it's a UNION ALL ordered globally.
+	actRows, err := s.db.Query(ctx, `
+		(SELECT c.id, c.creator_id AS user_id, 'campaign.create' AS action, c.title AS detail, c.created_at
+		 FROM campaigns c WHERE c.creator_id = ANY($1))
+		UNION ALL
+		(SELECT co.id, co.contributor_id AS user_id, 'contribution.create' AS action,
+		        'Contributed to ' || camp.title AS detail, co.created_at
+		 FROM contributions co JOIN campaigns camp ON camp.id = co.campaign_id
+		 WHERE co.contributor_id = ANY($1))
+		ORDER BY created_at DESC`, ids)
 	if err != nil {
-		return out, nil
+		return result, nil // tolerate — totals still stand, only the drawer's activity log is empty
 	}
 	defer actRows.Close()
 	byUser := map[string][]UserActivity{}
@@ -672,7 +802,10 @@ func (s *Service) ListUsers(ctx context.Context, role, status, search string) ([
 		var userID string
 		var createdAt time.Time
 		if err := actRows.Scan(&a.ID, &userID, &a.Action, &a.Detail, &createdAt); err != nil {
-			return nil, err
+			return UsersPage{}, err
+		}
+		if len(byUser[userID]) >= 20 {
+			continue // cap per user; query is ordered globally so later rows are older
 		}
 		a.CreatedAt = rfc3339(createdAt)
 		byUser[userID] = append(byUser[userID], a)
@@ -682,11 +815,13 @@ func (s *Service) ListUsers(ctx context.Context, role, status, search string) ([
 			out[i].Activity = acts
 		}
 	}
-	return out, nil
+	result.Users = out
+	return result, nil
 }
 
-// SetUserStatus applies a guarded user status change (ACTIVE/SUSPENDED/RESTRICTED).
-// A note is REQUIRED for SUSPENDED/RESTRICTED. Records an activity row + audit row.
+// SetUserStatus applies a guarded user status change (ACTIVE/SUSPENDED/RESTRICTED)
+// by upserting the moderation overlay (cf_user_moderation) — see userBaseCTE.
+// A note is REQUIRED for SUSPENDED/RESTRICTED. Writes an audit row.
 func (s *Service) SetUserStatus(ctx context.Context, id, adminID, status, note string) error {
 	if !validUserStatus(status) {
 		return fmt.Errorf("adminext: invalid user status %q", status)
@@ -700,22 +835,19 @@ func (s *Service) SetUserStatus(ctx context.Context, id, adminID, status, note s
 	}
 	defer tx.Rollback(ctx)
 
-	var current, name string
-	if err := tx.QueryRow(ctx, `SELECT status, name FROM cf_admin_users WHERE id=$1 FOR UPDATE`, id).Scan(&current, &name); err != nil {
+	var name string
+	if err := tx.QueryRow(ctx,
+		`SELECT COALESCE(NULLIF(raw_user_meta_data->>'full_name',''), email) FROM auth.users WHERE id=$1`, id).Scan(&name); err != nil {
 		return fmt.Errorf("adminext: user not found")
 	}
-	if _, err := tx.Exec(ctx, `UPDATE cf_admin_users SET status=$1, last_active_at=NOW() WHERE id=$2`, status, id); err != nil {
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO cf_user_moderation (user_id, status, note, updated_by, updated_at)
+		VALUES ($1,$2,$3,$4,NOW())
+		ON CONFLICT (user_id) DO UPDATE SET status=EXCLUDED.status, note=EXCLUDED.note, updated_by=EXCLUDED.updated_by, updated_at=NOW()`,
+		id, status, note, adminID); err != nil {
 		return err
 	}
 	action := map[string]string{"SUSPENDED": "account.suspend", "ACTIVE": "account.restore", "RESTRICTED": "account.restrict"}[status]
-	detail := note
-	if detail == "" {
-		detail = "-"
-	}
-	if _, err := tx.Exec(ctx,
-		`INSERT INTO cf_user_activity (user_id, action, detail) VALUES ($1,$2,$3)`, id, action, detail); err != nil {
-		return err
-	}
 	if err := s.audit(ctx, tx, adminID, action, name); err != nil {
 		return err
 	}

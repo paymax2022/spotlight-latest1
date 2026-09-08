@@ -1,6 +1,7 @@
 // ── Crowdfunding — Corporate CSR (Section M) data layer ──────────────────────
 // Mock-backed. Money in kobo. Module entry gated by CSR_ENABLED.
 
+import { mockAllowed } from '@/config/mockPolicy';
 import { api } from '@/api/client';
 import { generateIdempotencyKey } from '@/utils/idempotency';
 import type {
@@ -13,7 +14,7 @@ import type {
   EmployeeGivingCampaign,
 } from '../types/csr.types';
 
-const USE_MOCK = process.env.EXPO_PUBLIC_CF_USE_MOCK !== 'false';
+const USE_MOCK = mockAllowed(process.env.EXPO_PUBLIC_CF_USE_MOCK, true);
 const delay = (ms = 320) => new Promise((r) => setTimeout(r, ms));
 
 const PROFILE: CsrProfile = {

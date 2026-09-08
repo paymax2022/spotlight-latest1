@@ -15,6 +15,8 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"spotlight/backend/internal/testsupport"
 )
 
 // Test that all admin console endpoints are accessible and return valid responses.
@@ -75,6 +77,7 @@ func seedAdminUser(t *testing.T, pool *pgxpool.Pool, label string) (id string, e
 		id, email); err != nil {
 		t.Fatalf("seed auth.users (%s): %v", label, err)
 	}
+	testsupport.CleanupUser(t, pool, id)
 	t.Cleanup(func() {
 		if _, err := pool.Exec(context.Background(),
 			`DELETE FROM auth.users WHERE id = $1`, id); err != nil {

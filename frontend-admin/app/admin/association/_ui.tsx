@@ -6,6 +6,10 @@ import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { hasAnyPermission, type AuthUser } from '@/features/auth/rbac';
 import { colors, tint } from '@/components/ui/vuexy';
+import {
+  listAdminOrganisations, getSelectedOrgId, setSelectedOrgId, onSelectedOrgChange,
+  type AdminOrgOption,
+} from '@/services/associationAdminService';
 
 export {
   card, btn, btnPrimary, btnDanger, th, td, input, label, select,
@@ -18,9 +22,23 @@ type Tab = { href: string; label: string; key: string };
 export function AssociationTabs({ active }: { active: string }) {
   const tabs: Tab[] = [
     { href: '/admin/association/dashboard', label: 'Overview', key: 'overview' },
+    // The organisation register. Every other tab below is scoped to ONE org via
+    // <OrgPicker/>; this is the only surface that lists them all and the only
+    // place an organisation's own record can be edited.
+    { href: '/admin/association/organisations', label: 'Organisations', key: 'organisations' },
     { href: '/admin/association/approvals', label: 'Approvals', key: 'approvals' },
     { href: '/admin/association/dues', label: 'Dues & finance', key: 'dues' },
     { href: '/admin/association/members', label: 'Members', key: 'members' },
+    // Content authoring. assoc_announcements / meetings / documents / events /
+    // tasks all had member-facing READ endpoints and no writer anywhere in the
+    // repo, so those five member screens rendered an empty state forever and
+    // content could only arrive by hand-written SQL. These five tabs are the
+    // writer; each is scoped to the organisation selected in <OrgPicker/>.
+    { href: '/admin/association/content/announcements', label: 'Announcements', key: 'announcements' },
+    { href: '/admin/association/content/meetings', label: 'Meetings', key: 'meetings' },
+    { href: '/admin/association/content/documents', label: 'Documents', key: 'documents' },
+    { href: '/admin/association/content/events', label: 'Events', key: 'events' },
+    { href: '/admin/association/content/tasks', label: 'Tasks', key: 'tasks' },
     { href: '/admin/association/elections', label: 'Elections', key: 'elections' },
     { href: '/admin/association/import', label: 'Import', key: 'import' },
     { href: '/admin/association/audit', label: 'Audit log', key: 'audit' },
@@ -30,6 +48,70 @@ export function AssociationTabs({ active }: { active: string }) {
       {tabs.map((t) => (
         <Link key={t.key} href={t.href} style={{ textDecoration: 'none', padding: '0.35rem 0.7rem', borderRadius: '0.375rem', fontSize: '0.85rem', fontWeight: 600, color: active === t.key ? '#fff' : colors.muted, background: active === t.key ? colors.primary : colors.bg }}>{t.label}</Link>
       ))}
+    </div>
+  );
+}
+
+// ── Org picker ────────────────────────────────────────────────────────────
+// Every admin read/write in this console is scoped to ONE association
+// organisation (backend resolveOrgID). Selection lives in
+// associationAdminService's module-level singleton (localStorage-backed, so
+// it survives navigation between these seven pages); this hook just makes
+// that reactive for React, and <OrgPicker/> is the UI to change it.
+export function useSelectedOrg(): string | null {
+  const [orgId, setOrgId] = useState<string | null>(null);
+  useEffect(() => {
+    setOrgId(getSelectedOrgId());
+    return onSelectedOrgChange(setOrgId);
+  }, []);
+  return orgId;
+}
+
+export function OrgPicker() {
+  const orgId = useSelectedOrg();
+  const [orgs, setOrgs] = useState<AdminOrgOption[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [search, setSearch] = useState('');
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    listAdminOrganisations(search || undefined)
+      .then((rows) => {
+        if (cancelled) return;
+        setOrgs(rows);
+        // Land on a working dashboard by default rather than an empty
+        // "select an org" state — the platform console has no org of its
+        // own to default to, unlike a real per-org officer.
+        if (!getSelectedOrgId() && rows.length > 0) setSelectedOrgId(rows[0].id);
+      })
+      .catch(() => setOrgs([]))
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [search]);
+
+  return (
+    <div style={{ display: 'flex', gap: '0.6rem', alignItems: 'center', marginBottom: '1rem', flexWrap: 'wrap' }}>
+      <label style={{ fontSize: '0.75rem', fontWeight: 600, color: colors.muted }}>Organisation</label>
+      <select
+        value={orgId ?? ''}
+        onChange={(e) => setSelectedOrgId(e.target.value || null)}
+        style={{ padding: '0.35rem 0.5rem', borderRadius: '0.375rem', border: `1px solid ${colors.border}`, fontSize: '0.85rem', minWidth: 280 }}
+      >
+        {orgs.length === 0 && <option value="">{loading ? 'Loading organisations…' : 'No organisations found'}</option>}
+        {orgs.map((o) => (
+          <option key={o.id} value={o.id}>
+            {o.name} · {o.memberCount.toLocaleString('en-NG')} members{o.verified ? '' : ' · unverified'}
+          </option>
+        ))}
+      </select>
+      <input
+        placeholder="Search organisations…"
+        value={search}
+        onChange={(e) => setSearch(e.target.value)}
+        style={{ padding: '0.35rem 0.5rem', borderRadius: '0.375rem', border: `1px solid ${colors.border}`, fontSize: '0.85rem', width: 220 }}
+      />
     </div>
   );
 }

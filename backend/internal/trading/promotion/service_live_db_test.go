@@ -34,7 +34,7 @@ func live(t *testing.T) (*Service, *pgxpool.Pool) {
 
 func TestPromotion_FullClimbAndGates_LiveDB(t *testing.T) {
 	s, pool := live(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	sid := "strat-" + uuid.NewString()
 	maker, checker := uuid.NewString(), uuid.NewString()

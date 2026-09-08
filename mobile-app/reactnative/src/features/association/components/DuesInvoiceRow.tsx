@@ -40,8 +40,14 @@ export default function DuesInvoiceRow({ invoice: inv, onPress }: Props) {
             <Text style={styles.cadence}> {cadence}</Text>
           ) : null}
         </Text>
+        {/*
+          `dueDate` is nullable — an event-registration invoice has none — so
+          both branches tolerate it rather than printing the epoch.
+        */}
         <Text style={[styles.due, inv.status === 'OVERDUE' && styles.dueOverdue]}>
-          {inv.status === 'PAID' ? `Paid · ${formatDate(inv.dueDate)}` : dueLabel(inv.dueDate)}
+          {inv.status === 'PAID'
+            ? (inv.dueDate ? `Paid · ${formatDate(inv.dueDate)}` : 'Paid')
+            : dueLabel(inv.dueDate)}
         </Text>
       </View>
 

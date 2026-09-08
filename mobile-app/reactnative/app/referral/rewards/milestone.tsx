@@ -2,6 +2,7 @@ import React from 'react';
 import { View, Text, Pressable, StyleSheet, Share } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import { Trophy, Share2, X } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
@@ -27,7 +28,7 @@ export default function MilestoneAchieved() {
 
   return (
     <SafeAreaView style={styles.safe} edges={['top', 'bottom']}>
-      <Pressable onPress={() => router.back()} hitSlop={12} style={styles.close} accessibilityRole="button" accessibilityLabel="Close">
+      <Pressable onPress={() => goBack('/referral/rewards')} hitSlop={12} style={styles.close} accessibilityRole="button" accessibilityLabel="Close">
         <X size={22} color={Colors.onPrimary} strokeWidth={2} />
       </Pressable>
 
@@ -51,7 +52,7 @@ export default function MilestoneAchieved() {
           <Share2 size={18} color={Colors.primary} strokeWidth={2} />
           <Text style={styles.shareText}>Share your win</Text>
         </Pressable>
-        <Pressable style={styles.doneBtn} onPress={() => router.back()} accessibilityRole="button">
+        <Pressable style={styles.doneBtn} onPress={() => goBack('/referral/rewards')} accessibilityRole="button">
           <Text style={styles.doneText}>Keep earning</Text>
         </Pressable>
       </View>

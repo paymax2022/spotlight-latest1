@@ -24,6 +24,8 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"spotlight/backend/internal/testsupport"
 )
 
 // newTestPool dials the LOCAL test database, or skips.
@@ -59,6 +61,7 @@ func newTestOwner(t *testing.T, pool *pgxpool.Pool) string {
 		id, "savings-test-"+id+"@example.invalid"); err != nil {
 		t.Fatalf("seed auth.users owner: %v", err)
 	}
+	testsupport.CleanupUser(t, pool, id)
 	return id
 }
 

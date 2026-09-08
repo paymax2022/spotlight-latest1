@@ -85,7 +85,7 @@ const styles = StyleSheet.create({
   scroll: { paddingHorizontal: Spacing.containerMargin, gap: Spacing.md, paddingTop: Spacing.sm },
   card: { backgroundColor: EventColors.surface, borderRadius: Radius.xl, padding: Spacing.lg, gap: Spacing.md, ...shadow1 },
   residualLabel: { ...Typography.labelMd, color: EventColors.muted },
-  residualValue: { ...Typography.displayLg, color: EventColors.brand, fontSize: 38, lineHeight: 44 },
+  residualValue: { ...Typography.displayLg, color: EventColors.brand, fontSize: 38, letterSpacing: -0.76, lineHeight: 44 },
   flowRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-around', marginTop: Spacing.sm },
   flowNode: { alignItems: 'center', gap: 4 },
   flowEmoji: { fontSize: 22 },

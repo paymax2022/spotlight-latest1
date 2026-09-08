@@ -79,7 +79,7 @@ const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: Colors.background },
   scroll: { padding: Spacing.containerMargin, paddingBottom: Spacing.xxl, gap: Spacing.md },
   hero: { borderRadius: Radius.xl, padding: Spacing.lg },
-  heroBal: { ...Typography.displayLg, color: Colors.onPrimary, fontSize: 40, lineHeight: 46, marginTop: Spacing.sm },
+  heroBal: { ...Typography.displayLg, color: Colors.onPrimary, fontSize: 40, letterSpacing: -0.8, lineHeight: 46, marginTop: Spacing.sm },
   heroLabel: { ...Typography.labelMd, color: Colors.inversePrimary },
   rewardRow: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: Spacing.sm },
   rewardText: { ...Typography.labelSm, color: Colors.gold },

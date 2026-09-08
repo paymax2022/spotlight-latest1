@@ -3,6 +3,8 @@
 import { useEffect, useState } from 'react';
 import { getSprayDashboard, formatNaira, type SprayDashboard } from '@/services/sprayAdminService';
 import { PageHeader, SprayTabs, Card, Kpi, Badge, DisclosureNote, StateBlock, btn, th, td, timeAgo } from '../_ui';
+import { FixtureBanner } from '../../_shared/ui';
+import { USE_MOCK, USE_MOCK_ENV } from '@/services/sprayAdminService';
 
 export default function SprayDashboardPage() {
   const [data, setData] = useState<SprayDashboard | null>(null);
@@ -24,6 +26,7 @@ export default function SprayDashboardPage() {
         subtitle="Event money-spraying — volume, unique sprayers and AML oversight across spray contexts."
         action={<button onClick={load} style={btn()}>Refresh</button>}
       />
+      <FixtureBanner active={USE_MOCK} envVar={USE_MOCK_ENV} />
       <SprayTabs active="overview" />
 
       <DisclosureNote>

@@ -4,7 +4,8 @@ import { assertAdminPermission } from '@/src/server/admin/auth';
 import { createAdminClient } from '@/lib/supabase/server';
 import { sendTransactionalEmail } from '@/src/lib/email/transactional';
 
-export async function POST(request: Request, { params }: { params: { planId: string } }) {
+export async function POST(request: Request, ctx: { params: Promise<{ planId: string }> }) {
+  const params = await ctx.params;
   try {
     await assertAdminPermission(request, 'programs:manage');
     const supabase = createAdminClient();

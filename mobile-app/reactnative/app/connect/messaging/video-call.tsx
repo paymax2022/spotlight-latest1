@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { View, Text, Image, Pressable, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import { Mic, MicOff, Video, VideoOff, PhoneOff } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
@@ -116,7 +117,7 @@ export default function VideoCall() {
           <Text style={styles.ctrlLabel}>{cameraOff ? 'Camera on' : 'Camera off'}</Text>
         </Pressable>
 
-        <Pressable style={[styles.ctrlBtn, styles.endBtn]} onPress={() => router.back()} accessibilityLabel="End call">
+        <Pressable style={[styles.ctrlBtn, styles.endBtn]} onPress={() => goBack('/connect')} accessibilityLabel="End call">
           <PhoneOff size={24} color={Colors.onPrimary} strokeWidth={2} />
         </Pressable>
       </View>

@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { View, Text, ScrollView, StyleSheet, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import { AtSign, CircleCheck } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
@@ -36,7 +37,7 @@ export default function CashtagSetup() {
     if (!valid) return;
     try {
       await setup.mutateAsync(handle);
-      router.back();
+      goBack('/social');
     } catch {
       Alert.alert('Could not save', 'That cashtag may be taken. Try another.');
     }

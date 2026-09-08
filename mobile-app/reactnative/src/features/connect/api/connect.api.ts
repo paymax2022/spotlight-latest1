@@ -266,14 +266,6 @@ export async function setIntents(intents: ConnectIntent[]): Promise<OnboardingDr
   return saveOnboardingDraft({ intents });
 }
 
-// Liveness capture (ON-12). Recorded in the local draft; full liveness verification
-// is a separate (optional) step and is not required to browse discovery (Tier 0).
-export async function submitLiveness(): Promise<OnboardingDraft> {
-  await delay(600);
-  draft = { ...draft, livenessState: 'passed' };
-  return { ...draft };
-}
-
 // BVN/NIN linkage (ON-13). Validated locally for shape; recorded in the draft.
 export async function linkIdentity(
   identityType: 'bvn' | 'nin',

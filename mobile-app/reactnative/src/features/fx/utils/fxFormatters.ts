@@ -21,18 +21,38 @@ import {
 
 // ─── Display ──────────────────────────────────────────────────────────────────
 
+/**
+ * Currency metadata that never returns undefined.
+ *
+ * `CURRENCIES[code]` is typed as total, but the codes actually arrive from the
+ * backend at runtime — and a row with an empty or unknown code used to make
+ * `meta.decimals` throw, which unmounted the whole FX screen behind a red box
+ * for a single malformed transaction. A display formatter must never be able to
+ * take the screen down: fall back to a 2-decimal fiat shape and show the raw
+ * code, so one bad row degrades to plain text instead of a blank app.
+ */
+function currencyMeta(currency: CurrencyCode) {
+  return (
+    CURRENCIES[currency] ?? {
+      code: currency, name: String(currency ?? ''), symbol: '',
+      flag: '', decimals: 2, kind: 'fiat' as const,
+    }
+  );
+}
+
 /** Format minor units as a localized major-unit string with the currency symbol. */
 export function formatMoney(amount: number, currency: CurrencyCode, opts?: { decimals?: boolean }): string {
-  const meta = CURRENCIES[currency];
-  const major = amount / 10 ** meta.decimals;
+  const meta = currencyMeta(currency);
+  const major = (Number.isFinite(amount) ? amount : 0) / 10 ** meta.decimals;
   const decimals = opts?.decimals === false ? 0 : meta.decimals;
   const body = major.toLocaleString('en-NG', {
     minimumFractionDigits: decimals,
     maximumFractionDigits: decimals,
   });
-  // Symbols that read better as suffixes for stablecoins/MoMo currencies.
-  if (meta.kind === 'stablecoin' || currency === 'KES' || currency === 'XAF') {
-    return `${body} ${meta.symbol}`;
+  // Symbols that read better as suffixes for stablecoins/MoMo currencies —
+  // and for an unknown code, where the trailing code IS the only label.
+  if (meta.kind === 'stablecoin' || currency === 'KES' || currency === 'XAF' || !meta.symbol) {
+    return `${body} ${meta.symbol || meta.code || ''}`.trim();
   }
   return `${meta.symbol}${body}`;
 }
@@ -43,7 +63,7 @@ export function formatMoneyObj(m: Money, opts?: { decimals?: boolean }): string 
 
 /** Compact display for cards: 1_250_000_00 NGN → "₦1.25M". */
 export function formatMoneyCompact(amount: number, currency: CurrencyCode): string {
-  const meta = CURRENCIES[currency];
+  const meta = currencyMeta(currency);
   const major = amount / 10 ** meta.decimals;
   const sym = meta.kind === 'stablecoin' ? '' : meta.symbol;
   const suffix = meta.kind === 'stablecoin' ? ` ${meta.symbol}` : '';
@@ -56,7 +76,7 @@ export function formatMoneyCompact(amount: number, currency: CurrencyCode): stri
 
 /** Rate display, e.g. "1 USD = ₦1,581.43". */
 export function formatRate(from: CurrencyCode, to: CurrencyCode, rate: number): string {
-  const toMeta = CURRENCIES[to];
+  const toMeta = currencyMeta(to); // pairs come from the backend rate board
   const safe = Number.isFinite(rate) ? rate : 0; // live payload may omit a leg
   const formatted = safe.toLocaleString('en-NG', { minimumFractionDigits: 2, maximumFractionDigits: 4 });
   return `1 ${from} = ${toMeta.symbol}${formatted}`;
@@ -70,7 +90,7 @@ export function formatPct(pct: number): string {
 
 /** Parse a user-typed major-unit string into integer minor units. */
 export function parseToMinor(input: string, currency: CurrencyCode): number {
-  const meta = CURRENCIES[currency];
+  const meta = currencyMeta(currency);
   const cleaned = input.replace(/[^0-9.]/g, '');
   if (!cleaned) return 0;
   const major = parseFloat(cleaned);
@@ -81,7 +101,7 @@ export function parseToMinor(input: string, currency: CurrencyCode): number {
 /** Minor units → plain major-unit string for editable inputs (no symbol/grouping). */
 export function minorToInput(amount: number, currency: CurrencyCode): string {
   if (!amount) return '';
-  const meta = CURRENCIES[currency];
+  const meta = currencyMeta(currency);
   return (amount / 10 ** meta.decimals).toString();
 }
 

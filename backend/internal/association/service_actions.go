@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 
 	"spotlight/backend/internal/finance/ledger"
 )
@@ -21,9 +22,52 @@ import (
 
 // primaryMembership resolves the caller's membership id + organisation id.
 func (s *Service) primaryMembership(ctx context.Context, userID string) (membershipID, orgID string, err error) {
-	const q = `SELECT id, organisation_id FROM assoc_memberships WHERE user_id=$1 ORDER BY created_at LIMIT 1`
+	// Prefer an ACTIVE membership, then PENDING, before anything else, and never
+	// pin the caller to a REMOVED/REJECTED row. A bare `ORDER BY created_at`
+	// pinned a multi-org member to their oldest organisation — including via a
+	// SUSPENDED membership — for chat, support, AI notes, settings and every
+	// ack/RSVP, which silently weakened every guard built on top of this.
+	const q = `
+		SELECT id, organisation_id FROM assoc_memberships
+		WHERE user_id=$1 AND status NOT IN ('REMOVED','REJECTED')
+		ORDER BY CASE status WHEN 'ACTIVE' THEN 0 WHEN 'PENDING' THEN 1 ELSE 2 END,
+		         created_at, id
+		LIMIT 1`
 	if err = s.db.QueryRow(ctx, q, userID).Scan(&membershipID, &orgID); err != nil {
 		return "", "", fmt.Errorf("association: membership not found: %w", err)
+	}
+	return membershipID, orgID, nil
+}
+
+// membershipForObject resolves the caller's membership in the organisation that
+// OWNS the given object, rather than whichever organisation happens to be their
+// primary one.
+//
+// The member-write endpoints below (announcement ack, meeting RSVP/check-in,
+// document ack, committee join, event RSVP/register/feedback) previously
+// resolved the caller's own primary membership and then wrote a join row keyed
+// by a caller-supplied object id, with no check that the object belonged to
+// that organisation. A member of org A could therefore RSVP to, check into and
+// issue themselves a ticket for org B's meetings and events, and inflate
+// another organisation's attendance counts.
+//
+// `table` is always an internal constant, never user input. Returns ErrForbidden
+// when the caller holds no usable membership in the owning org (fail-closed),
+// which is also the correct answer for a non-existent object id — existence is
+// not disclosed.
+func (s *Service) membershipForObject(ctx context.Context, userID, table, objectID string) (membershipID, orgID string, err error) {
+	q := fmt.Sprintf(`
+		SELECT m.id, m.organisation_id
+		FROM %s o
+		JOIN assoc_memberships m
+		  ON m.organisation_id = o.organisation_id
+		 AND m.user_id = $2
+		 AND m.status NOT IN ('REMOVED','REJECTED')
+		WHERE o.id = $1
+		ORDER BY CASE m.status WHEN 'ACTIVE' THEN 0 WHEN 'PENDING' THEN 1 ELSE 2 END, m.created_at, m.id
+		LIMIT 1`, table)
+	if err = s.db.QueryRow(ctx, q, objectID, userID).Scan(&membershipID, &orgID); err != nil {
+		return "", "", ErrForbidden
 	}
 	return membershipID, orgID, nil
 }
@@ -31,7 +75,7 @@ func (s *Service) primaryMembership(ctx context.Context, userID string) (members
 // ─── Engagement ───────────────────────────────────────────────────────────────
 
 func (s *Service) AcknowledgeAnnouncement(ctx context.Context, userID, announcementID string) error {
-	mid, _, err := s.primaryMembership(ctx, userID)
+	mid, _, err := s.membershipForObject(ctx, userID, "assoc_announcements", announcementID)
 	if err != nil {
 		return err
 	}
@@ -60,7 +104,7 @@ func (s *Service) MarkNotificationsRead(ctx context.Context, userID string) erro
 // ─── Meetings ─────────────────────────────────────────────────────────────────
 
 func (s *Service) RsvpMeeting(ctx context.Context, userID, meetingID, status string) error {
-	mid, _, err := s.primaryMembership(ctx, userID)
+	mid, _, err := s.membershipForObject(ctx, userID, "assoc_meetings", meetingID)
 	if err != nil {
 		return err
 	}
@@ -76,7 +120,7 @@ func (s *Service) RsvpMeeting(ctx context.Context, userID, meetingID, status str
 
 // CheckInMeeting is idempotent: a repeated call keeps the first check-in time.
 func (s *Service) CheckInMeeting(ctx context.Context, userID, meetingID string) error {
-	mid, _, err := s.primaryMembership(ctx, userID)
+	mid, _, err := s.membershipForObject(ctx, userID, "assoc_meetings", meetingID)
 	if err != nil {
 		return err
 	}
@@ -110,7 +154,7 @@ func (s *Service) UpdateTaskStatus(ctx context.Context, userID, taskID, status s
 // ─── Documents ────────────────────────────────────────────────────────────────
 
 func (s *Service) AcknowledgeDocument(ctx context.Context, userID, documentID string) error {
-	mid, _, err := s.primaryMembership(ctx, userID)
+	mid, _, err := s.membershipForObject(ctx, userID, "assoc_documents", documentID)
 	if err != nil {
 		return err
 	}
@@ -128,7 +172,7 @@ func (s *Service) AcknowledgeDocument(ctx context.Context, userID, documentID st
 // RequestJoinCommittee creates a PENDING committee-member row and audit-logs
 // the request. Idempotent (ON CONFLICT DO NOTHING).
 func (s *Service) RequestJoinCommittee(ctx context.Context, userID, committeeID string) error {
-	membershipID, orgID, err := s.primaryMembership(ctx, userID)
+	membershipID, orgID, err := s.membershipForObject(ctx, userID, "assoc_committees", committeeID)
 	if err != nil {
 		return err
 	}
@@ -154,7 +198,7 @@ func (s *Service) RequestJoinCommittee(ctx context.Context, userID, committeeID 
 // ─── Events ───────────────────────────────────────────────────────────────────
 
 func (s *Service) RsvpEvent(ctx context.Context, userID, eventID, rsvp string) error {
-	mid, _, err := s.primaryMembership(ctx, userID)
+	mid, _, err := s.membershipForObject(ctx, userID, "assoc_events", eventID)
 	if err != nil {
 		return err
 	}
@@ -168,26 +212,126 @@ func (s *Service) RsvpEvent(ctx context.Context, userID, eventID, rsvp string) e
 	return nil
 }
 
-// RegisterEvent marks the member registered and issues a ticket code. Idempotent.
-func (s *Service) RegisterEvent(ctx context.Context, userID, eventID string) (string, error) {
-	mid, _, err := s.primaryMembership(ctx, userID)
+// RegisterEvent registers the caller for an event. Idempotent.
+//
+// A PAID event now raises an invoice instead of issuing a free ticket:
+// assoc_events.paid / fee_kobo were read and rendered by three query paths but
+// nothing ever charged them, so every "paid" event handed out tickets for free.
+// The ticket is withheld until that invoice is settled through the existing
+// PayInvoice money path.
+func (s *Service) RegisterEvent(ctx context.Context, userID, eventID string) (*EventRegistrationResult, error) {
+	mid, orgID, err := s.membershipForObject(ctx, userID, "assoc_events", eventID)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
-	ticket := "SPOTLIGHT:EVT:" + eventID + ":ticket"
-	const q = `
-		INSERT INTO assoc_event_registrations (event_id, membership_id, registered, ticket_code)
-		VALUES ($1, $2, true, $3)
+	var paid bool
+	var feeKobo int64
+	var title string
+	var capacity *int
+	if err := s.db.QueryRow(ctx,
+		`SELECT paid, fee_kobo, title, capacity FROM assoc_events WHERE id=$1`, eventID,
+	).Scan(&paid, &feeKobo, &title, &capacity); err != nil {
+		return nil, fmt.Errorf("association: event not found: %w", err)
+	}
+
+	// Capacity is enforced against confirmed registrations only.
+	if capacity != nil && *capacity > 0 {
+		var taken int
+		if err := s.db.QueryRow(ctx,
+			`SELECT count(*) FROM assoc_event_registrations
+			  WHERE event_id=$1 AND registered=true AND membership_id <> $2`, eventID, mid).Scan(&taken); err != nil {
+			return nil, fmt.Errorf("association: event capacity: %w", err)
+		}
+		if taken >= *capacity {
+			return nil, fmt.Errorf("association: event is full")
+		}
+	}
+
+	// Per-member ticket. The previous code was "…:ticket" for every attendee of
+	// an event, so it identified the event but authenticated no one.
+	ticket := "SPOTLIGHT:EVT:" + eventID + ":" + mid
+
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("association: begin tx: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	if !paid || feeKobo <= 0 {
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO assoc_event_registrations (event_id, membership_id, registered, ticket_code, registered_at)
+			VALUES ($1,$2,true,$3,now())
+			ON CONFLICT (event_id, membership_id)
+			DO UPDATE SET registered = true, ticket_code = EXCLUDED.ticket_code,
+			              registered_at = COALESCE(assoc_event_registrations.registered_at, now())`,
+			eventID, mid, ticket); err != nil {
+			return nil, fmt.Errorf("association: register event: %w", err)
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return nil, fmt.Errorf("association: register event: commit: %w", err)
+		}
+		return &EventRegistrationResult{Registered: true, TicketCode: &ticket}, nil
+	}
+
+	// Paid event. Reuse an outstanding invoice rather than raising a second one
+	// for a member who taps Register twice.
+	var invoiceID, invoiceStatus string
+	err = tx.QueryRow(ctx, `
+		SELECT i.id::text, i.status
+		  FROM assoc_event_registrations r
+		  JOIN assoc_dues_invoices i ON i.id = r.invoice_id
+		 WHERE r.event_id=$1 AND r.membership_id=$2`, eventID, mid).Scan(&invoiceID, &invoiceStatus)
+	switch {
+	case err == nil && invoiceStatus == "PAID":
+		// Already settled — release the ticket.
+		if _, err := tx.Exec(ctx, `
+			UPDATE assoc_event_registrations
+			   SET registered=true, ticket_code=$3, registered_at=COALESCE(registered_at, now())
+			 WHERE event_id=$1 AND membership_id=$2`, eventID, mid, ticket); err != nil {
+			return nil, fmt.Errorf("association: release ticket: %w", err)
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return nil, fmt.Errorf("association: release ticket: commit: %w", err)
+		}
+		return &EventRegistrationResult{Registered: true, TicketCode: &ticket, InvoiceID: &invoiceID, AmountKobo: feeKobo}, nil
+	case err == nil:
+		// Outstanding invoice already raised; hand back the same one.
+		if err := tx.Commit(ctx); err != nil {
+			return nil, fmt.Errorf("association: event invoice: commit: %w", err)
+		}
+		return &EventRegistrationResult{Registered: false, PaymentRequired: true, InvoiceID: &invoiceID, AmountKobo: feeKobo}, nil
+	case !errors.Is(err, pgx.ErrNoRows):
+		return nil, fmt.Errorf("association: event invoice lookup: %w", err)
+	}
+
+	newInvoice := uuid.New().String()
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO assoc_dues_invoices
+		  (id, membership_id, title, amount_kobo, cadence, scope, status)
+		VALUES ($1,$2,$3,$4,'ONE_OFF','NATIONAL','DUE')`,
+		newInvoice, mid, "Event registration — "+title, feeKobo); err != nil {
+		return nil, fmt.Errorf("association: raise event invoice: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO assoc_event_registrations (event_id, membership_id, registered, invoice_id)
+		VALUES ($1,$2,false,$3)
 		ON CONFLICT (event_id, membership_id)
-		DO UPDATE SET registered = true, ticket_code = EXCLUDED.ticket_code`
-	if _, err := s.db.Exec(ctx, q, eventID, mid, ticket); err != nil {
-		return "", fmt.Errorf("association: register event: %w", err)
+		DO UPDATE SET invoice_id = EXCLUDED.invoice_id`,
+		eventID, mid, newInvoice); err != nil {
+		return nil, fmt.Errorf("association: register event: %w", err)
 	}
-	return ticket, nil
+	if err := s.audit(ctx, tx, orgID, userID, "EVENT_REGISTER_INVOICED", "event", eventID,
+		map[string]any{"invoiceId": newInvoice, "amountKobo": feeKobo}); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("association: register event: commit: %w", err)
+	}
+	return &EventRegistrationResult{Registered: false, PaymentRequired: true, InvoiceID: &newInvoice, AmountKobo: feeKobo}, nil
 }
 
 func (s *Service) SubmitEventFeedback(ctx context.Context, userID, eventID string, rating int, comment string) error {
-	mid, _, err := s.primaryMembership(ctx, userID)
+	mid, _, err := s.membershipForObject(ctx, userID, "assoc_events", eventID)
 	if err != nil {
 		return err
 	}
@@ -240,17 +384,17 @@ func (s *Service) DecideOfflinePayment(ctx context.Context, adminID, paymentID, 
 	}
 
 	if approve {
-		if _, err := tx.Exec(ctx, `UPDATE assoc_payments SET status='SUCCESS', approved_by=$2 WHERE id=$1`, paymentID, adminID); err != nil {
-			return fmt.Errorf("association: approve payment: %w", err)
-		}
-		if _, err := tx.Exec(ctx, `UPDATE assoc_dues_invoices SET status='PAID' WHERE id=$1`, invoiceID); err != nil {
-			return fmt.Errorf("association: mark invoice paid: %w", err)
-		}
-		// Commit DB changes before posting to ledger (ledger is its own tx).
-		if err := tx.Commit(ctx); err != nil {
-			return fmt.Errorf("association: commit approval: %w", err)
-		}
-
+		// Ledger FIRST, bookkeeping second. The previous order committed
+		// status='SUCCESS' / invoice='PAID' and only then posted the journal, so a
+		// ledger failure (or a crash in that window) left a durably PAID invoice
+		// with no ledger entries and no compensating path — and the error surfaced
+		// to the admin was indistinguishable from "nothing happened".
+		//
+		// PostJournal is idempotent on IdempotencyKey, so the reverse order is
+		// safe under retry: a replay posts nothing new and the bookkeeping below
+		// converges. Rolling back the tx on a ledger error now leaves no trace,
+		// which is the correct fail-closed outcome.
+		//
 		// Double-entry: DR provider_clearing (external cash received) → CR settlement.
 		clearing, err := s.ledger.GetOrCreateStandingAccount(ctx, ledger.AccountProviderClearing)
 		if err != nil {
@@ -269,6 +413,41 @@ func (s *Service) DecideOfflinePayment(ctx context.Context, adminID, paymentID, 
 		}); err != nil && !errors.Is(err, ledger.ErrDuplicate) {
 			return fmt.Errorf("association: offline payment ledger: %w", err)
 		}
+
+		if _, err := tx.Exec(ctx, `UPDATE assoc_payments SET status='SUCCESS', approved_by=$2 WHERE id=$1`, paymentID, adminID); err != nil {
+			return fmt.Errorf("association: approve payment: %w", err)
+		}
+		if _, err := tx.Exec(ctx, `UPDATE assoc_dues_invoices SET status='PAID' WHERE id=$1`, invoiceID); err != nil {
+			return fmt.Errorf("association: mark invoice paid: %w", err)
+		}
+		// Revenue split — previously written only by PayInvoice, so GetReceipt
+		// (which recomputes the split) silently disagreed with assoc_payments for
+		// every offline-approved payment. ON CONFLICT-free but guarded by the
+		// delete-then-insert below so a retry cannot double the split rows.
+		if _, err := tx.Exec(ctx, `DELETE FROM assoc_revenue_splits WHERE payment_id=$1`, paymentID); err != nil {
+			return fmt.Errorf("association: reset split: %w", err)
+		}
+		for _, line := range RevenueSplit(amountKobo) {
+			if _, err := tx.Exec(ctx,
+				`INSERT INTO assoc_revenue_splits (id, payment_id, label, amount_kobo) VALUES ($1,$2,$3,$4)`,
+				uuid.New().String(), paymentID, line.Label, line.AmountKobo); err != nil {
+				return fmt.Errorf("association: insert split: %w", err)
+			}
+		}
+		// The reject branch audited; the approve branch did not.
+		if err := s.audit(ctx, tx, payOrg, adminID, "OFFLINE_PAYMENT_APPROVE", "payment", paymentID,
+			map[string]any{"amountKobo": amountKobo, "invoiceId": invoiceID}); err != nil {
+			return err
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return fmt.Errorf("association: commit approval: %w", err)
+		}
+
+		// Realized platform profit, same treatment as the online dues path:
+		// the EXACT 5% platform share, keyed on the invoice id so retries and
+		// the online path never double-count. Best-effort — never fails the
+		// approval that already settled above.
+		s.recordCommissionSafe(ctx, "Community", "Group Membership", "", amountKobo, platformShareKobo(amountKobo), invoiceID, nil)
 		return nil
 	}
 
@@ -276,7 +455,7 @@ func (s *Service) DecideOfflinePayment(ctx context.Context, adminID, paymentID, 
 	if _, err := tx.Exec(ctx, `UPDATE assoc_payments SET status='FAILED' WHERE id=$1`, paymentID); err != nil {
 		return fmt.Errorf("association: reject payment: %w", err)
 	}
-	if err := s.audit(ctx, tx, "", adminID, "OFFLINE_PAYMENT_REJECTED", "payment", paymentID, nil); err != nil {
+	if err := s.audit(ctx, tx, payOrg, adminID, "OFFLINE_PAYMENT_REJECTED", "payment", paymentID, nil); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)
@@ -310,7 +489,7 @@ func (s *Service) memberStatusAction(ctx context.Context, adminID, memberID, sta
 	if _, err := tx.Exec(ctx, `UPDATE assoc_memberships SET status=$2 WHERE id=$1`, memberID, status); err != nil {
 		return fmt.Errorf("association: member status: %w", err)
 	}
-	if err := s.audit(ctx, tx, "", adminID, action, "member", memberID, meta); err != nil {
+	if err := s.audit(ctx, tx, memOrg, adminID, action, "member", memberID, meta); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)
@@ -340,7 +519,7 @@ func (s *Service) TransferMember(ctx context.Context, adminID, memberID, chapter
 	if _, err := tx.Exec(ctx, q, memberID, chapter); err != nil {
 		return fmt.Errorf("association: transfer member: %w", err)
 	}
-	if err := s.audit(ctx, tx, "", adminID, "MEMBER_TRANSFER", "member", memberID, map[string]any{"chapter": chapter}); err != nil {
+	if err := s.audit(ctx, tx, memOrg, adminID, "MEMBER_TRANSFER", "member", memberID, map[string]any{"chapter": chapter}); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)
@@ -367,11 +546,12 @@ func (s *Service) AssignRole(ctx context.Context, adminID, memberID, role string
 		return fmt.Errorf("association: begin tx: %w", err)
 	}
 	defer tx.Rollback(ctx)
-	const q = `INSERT INTO assoc_member_roles (id, membership_id, role, granted_by) VALUES ($1,$2,$3,$4)`
+	const q = `INSERT INTO assoc_member_roles (id, membership_id, role, granted_by) VALUES ($1,$2,$3,$4)
+		           ON CONFLICT (membership_id, role) DO UPDATE SET granted_by=EXCLUDED.granted_by, granted_at=now()`
 	if _, err := tx.Exec(ctx, q, uuid.New().String(), memberID, role, adminID); err != nil {
 		return fmt.Errorf("association: assign role: %w", err)
 	}
-	if err := s.audit(ctx, tx, "", adminID, "ROLE_ASSIGN", "member", memberID, map[string]any{"role": role}); err != nil {
+	if err := s.audit(ctx, tx, memOrg, adminID, "ROLE_ASSIGN", "member", memberID, map[string]any{"role": role}); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)

@@ -4,11 +4,15 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"spotlight/backend/internal/crowdfunding"
+	"spotlight/backend/internal/crowdfunding/engage"
 )
 
 // Service exposes the crowdfunding creator-dashboard slice over a pgx pool.
@@ -24,9 +28,13 @@ func NewService(db *pgxpool.Pool) *Service { return &Service{db: db} }
 // ErrNotFound is returned when an id resolves to no row.
 var ErrNotFound = errors.New("crowdfunding/creator: not found")
 
-// platformFeeBps is the indicative platform fee (2.5%) used to derive a
-// contribution's fee/total breakdown (the contributions table stores net kobo).
-const platformFeeBps = 250
+// The fee/total breakdown a contribution reports is READ FROM THE SETTLEMENT it
+// was escrowed under, never re-derived here. This file used to carry its own
+// `platformFeeBps = 250` and report fee = 2.5% of the amount with
+// total = amount + fee, which was wrong in both directions: the platform's cut
+// is crowdfunding.PlatformFeePct (10%), and it is DEDUCTED from the creator's
+// payout rather than added to the contributor's bill. A ₦1,000 contribution
+// therefore rendered as "₦1,025 total paid" against a ₦1,000 debit.
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
 
@@ -149,9 +157,11 @@ func (s *Service) ListContributions(ctx context.Context, userID, status string) 
 	const q = `
 		SELECT co.id::text, COALESCE(co.idempotency_key,''), co.campaign_id::text,
 		       COALESCE(c.title,''), c.cover_url, co.amount_kobo, co.status, co.created_at,
-		       EXISTS (SELECT 1 FROM cf_refund_requests r WHERE r.contribution_id = co.id) AS refund_requested
+		       EXISTS (SELECT 1 FROM cf_refund_requests r WHERE r.contribution_id = co.id) AS refund_requested,
+		       st.total_kobo, st.fee_kobo, st.provider_kobo, st.settled_at
 		FROM contributions co
 		JOIN campaigns c ON c.id = co.campaign_id
+		LEFT JOIN settlements st ON st.id = co.settlement_id
 		WHERE co.contributor_id = $1
 		ORDER BY co.created_at DESC
 		LIMIT 200`
@@ -175,17 +185,33 @@ func (s *Service) ListContributions(ctx context.Context, userID, status string) 
 	return out, rows.Err()
 }
 
-// GetContribution returns a single contribution by id (no owner scoping here —
-// the proxy auth layer gates the caller; expose only non-sensitive fields).
-func (s *Service) GetContribution(ctx context.Context, id string) (*Contribution, error) {
+// GetContribution returns a single contribution BELONGING TO contributorID.
+//
+// The owner predicate is the whole access control here. A contribution id is a
+// bare uuid the client holds after paying, and the previous "the proxy auth
+// layer gates the caller" reasoning only established that the caller is *some*
+// logged-in user — not that it is *this* contribution's contributor. Without
+// the predicate any authenticated account could read another person's
+// amount, campaign and payment reference from an id it happened to see.
+//
+// A row that exists but belongs to someone else returns ErrNotFound — the same
+// answer as a row that does not exist — so the endpoint never confirms the
+// existence of an id it will not serve. The owner is compared as text so that
+// an EMPTY contributorID (auth context missing) simply matches nothing and
+// answers 404 — comparing it as a uuid would raise a cast error and surface as
+// a 500, which fails closed too but reports a server fault for what is really
+// an unauthenticated read.
+func (s *Service) GetContribution(ctx context.Context, id, contributorID string) (*Contribution, error) {
 	const q = `
 		SELECT co.id::text, COALESCE(co.idempotency_key,''), co.campaign_id::text,
 		       COALESCE(c.title,''), c.cover_url, co.amount_kobo, co.status, co.created_at,
-		       EXISTS (SELECT 1 FROM cf_refund_requests r WHERE r.contribution_id = co.id) AS refund_requested
+		       EXISTS (SELECT 1 FROM cf_refund_requests r WHERE r.contribution_id = co.id) AS refund_requested,
+		       st.total_kobo, st.fee_kobo, st.provider_kobo, st.settled_at
 		FROM contributions co
 		JOIN campaigns c ON c.id = co.campaign_id
-		WHERE co.id = $1`
-	c, err := scanContribution(s.db.QueryRow(ctx, q, id).Scan)
+		LEFT JOIN settlements st ON st.id = co.settlement_id
+		WHERE co.id = $1 AND co.contributor_id::text = $2`
+	c, err := scanContribution(s.db.QueryRow(ctx, q, id, contributorID).Scan)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound
@@ -195,55 +221,102 @@ func (s *Service) GetContribution(ctx context.Context, id string) (*Contribution
 	return &c, nil
 }
 
-// scanContribution scans a contribution row and derives the fee/total breakdown
-// (the contributions table stores net kobo only) and the client status.
+// scanContribution scans a contribution row plus the settlement it was escrowed
+// under, and reports the money that actually moved.
 func scanContribution(scan func(dest ...any) error) (Contribution, error) {
 	var (
-		id, idemKey, campaignID, title string
-		cover                          *string
-		amount                         int64
-		rawStatus                      string
-		createdAt                      time.Time
-		refundRequested                bool
+		id, idemKey, campaignID, title   string
+		cover                            *string
+		amount                           int64
+		rawStatus                        string
+		createdAt                        time.Time
+		refundRequested                  bool
+		settTotal, settFee, settProvider *int64
+		settledAt                        *time.Time
 	)
-	if err := scan(&id, &idemKey, &campaignID, &title, &cover, &amount, &rawStatus, &createdAt, &refundRequested); err != nil {
+	if err := scan(&id, &idemKey, &campaignID, &title, &cover, &amount, &rawStatus, &createdAt, &refundRequested,
+		&settTotal, &settFee, &settProvider, &settledAt); err != nil {
 		return Contribution{}, err
 	}
-	fee := amount * platformFeeBps / 10000
+
+	// What the contributor was actually debited. The settlement row is the
+	// authority — Escrow re-reads total_kobo rather than echoing the caller's
+	// argument, so on a replay it can legitimately differ from
+	// contributions.amount_kobo, and the amount HELD is the amount charged.
+	paid := amount
+	if settTotal != nil {
+		paid = *settTotal
+	}
+
+	// fee_kobo / provider_kobo are written by Settle, not by Escrow — and they are
+	// NOT NULL DEFAULT 0, so an escrowed row carries a real, meaningless zero
+	// rather than a NULL. Nullness therefore cannot distinguish "not settled yet"
+	// from "settled with no fee"; settled_at can, because only Settle writes it.
+	// Reporting the default zero would tell the creator they are taking no
+	// deduction, so before settlement we project the split that Settle WILL apply.
+	// The projection reads the same constant the settlement splits by, so the two
+	// cannot drift the way the old hardcoded 2.5% did.
+	fee, net := int64(0), paid
+	if settledAt != nil && settFee != nil && settProvider != nil {
+		fee, net = *settFee, *settProvider
+	} else {
+		fee = int64(math.Round(float64(paid) * crowdfunding.PlatformFeePct))
+		net = paid - fee
+	}
+
 	return Contribution{
-		ID:              id,
-		Reference:       reference(id, idemKey),
-		CampaignID:      campaignID,
-		CampaignTitle:   title,
-		CampaignCover:   cover,
-		AmountKobo:      amount,
-		FeeKobo:         fee,
-		TotalKobo:       amount + fee,
-		Currency:        "NGN",
-		Status:          contributionStatus(rawStatus, refundRequested),
-		PaymentMethod:   "WALLET",
-		Anonymous:       false,
-		Message:         nil,
-		RewardTierTitle: nil,
-		CreatedAt:       rfc3339(createdAt),
-		RefundEligible:  rawStatus == "escrowed" && !refundRequested,
+		ID:                id,
+		Reference:         reference(id, idemKey),
+		CampaignID:        campaignID,
+		CampaignTitle:     title,
+		CampaignCover:     cover,
+		AmountKobo:        amount,
+		FeeKobo:           fee,
+		NetToCampaignKobo: net,
+		TotalKobo:         paid,
+		Currency:          "NGN",
+		Status:            contributionStatus(rawStatus, refundRequested),
+		PaymentMethod:     "WALLET",
+		Anonymous:         false,
+		Message:           nil,
+		RewardTierTitle:   nil,
+		CreatedAt:         rfc3339(createdAt),
+		RefundEligible:    rawStatus == "escrowed" && !refundRequested,
 	}, nil
 }
 
-// RequestRefund records a refund-request intent for a contribution. It NEVER
-// moves money — an admin processes the actual refund in a separate slice. The
-// insert is idempotent on the contribution (UNIQUE), so re-requesting is a no-op.
-func (s *Service) RequestRefund(ctx context.Context, contributionID, reason string) (map[string]any, error) {
+// RequestRefund records a refund-request intent for a contribution BELONGING TO
+// callerID. It NEVER moves money — an admin processes the actual refund in a
+// separate slice. The insert is idempotent on the contribution (UNIQUE), so
+// re-requesting is a no-op.
+//
+// The ownership predicate is load-bearing. This used to look the contribution up
+// by id alone and then take requester_id from the ROW, which meant it could
+// never misattribute a request — but any authenticated account could file one
+// against a stranger's contribution, and the ON CONFLICT branch let them
+// overwrite the reason on a request the real contributor had already filed. A
+// refund request is what an admin acts on, so that is someone else's money
+// dispute opened, or reworded, by a third party.
+//
+// Scoping the lookup is what makes the wrong write impossible rather than
+// merely unlikely: with the predicate in place, callerID and the row's
+// contributor_id are the same value by construction, so requester_id is written
+// from callerID directly and there is no longer a row-derived identity that can
+// disagree with the caller. A contribution owned by someone else answers
+// ErrNotFound — the same answer as one that does not exist — and an empty
+// callerID (auth context missing) matches nothing, so it fails closed.
+func (s *Service) RequestRefund(ctx context.Context, contributionID, callerID, reason string) (map[string]any, error) {
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
 		return nil, err
 	}
 	defer tx.Rollback(ctx)
 
-	var requesterID string
+	var exists bool
 	if err := tx.QueryRow(ctx,
-		`SELECT contributor_id::text FROM contributions WHERE id = $1`, contributionID,
-	).Scan(&requesterID); err != nil {
+		`SELECT TRUE FROM contributions WHERE id = $1 AND contributor_id::text = $2`,
+		contributionID, callerID,
+	).Scan(&exists); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound
 		}
@@ -254,7 +327,7 @@ func (s *Service) RequestRefund(ctx context.Context, contributionID, reason stri
 		INSERT INTO cf_refund_requests (contribution_id, requester_id, reason, status)
 		VALUES ($1, $2, $3, 'REFUND_REQUESTED')
 		ON CONFLICT (contribution_id) DO UPDATE SET reason = EXCLUDED.reason`,
-		contributionID, requesterID, reason,
+		contributionID, callerID, reason,
 	); err != nil {
 		return nil, fmt.Errorf("crowdfunding/creator: record refund request: %w", err)
 	}
@@ -337,9 +410,10 @@ func (s *Service) GetMyCampaigns(ctx context.Context, userID, status string) ([]
 		       c.currency,
 		       COALESCE((SELECT COUNT(DISTINCT co.contributor_id) FROM contributions co
 		                 WHERE co.campaign_id = c.id AND co.status IN ('escrowed','released')), 0),
-		       c.deadline, c.verified, c.featured, c.trending, c.urgent, c.location
+		       c.deadline, c.verified, c.featured, c.trending, c.urgent, c.location,
+		       c.paused_at,` + latestFeatureRequestStatusCol + `
 		FROM campaigns c
-		WHERE c.creator_id = $1`
+		WHERE c.creator_id = $1 AND c.deleted_at IS NULL`
 	args := []any{userID}
 	if status != "" {
 		q += ` AND c.review_status = $2`
@@ -359,14 +433,17 @@ func (s *Service) GetMyCampaigns(ctx context.Context, userID, status string) ([]
 		var (
 			sum      CampaignSummary
 			deadline time.Time
+			pausedAt *time.Time
 		)
 		if err := rows.Scan(
 			&sum.ID, &sum.Title, &sum.Summary, &sum.Type, &sum.Status,
 			&sum.Category, &sum.CoverImage, &sum.GoalKobo, &sum.RaisedKobo, &sum.Currency,
 			&sum.ContributorCount, &deadline, &sum.Verified, &sum.Featured, &sum.Trending, &sum.Urgent, &sum.Location,
+			&pausedAt, &sum.FeatureRequestStatus,
 		); err != nil {
 			return nil, err
 		}
+		sum.Paused = pausedAt != nil
 		sum.CategoryLabel = categoryLabel(sum.Category)
 		if !deadline.IsZero() {
 			sum.Deadline = ptr(rfc3339(deadline))
@@ -534,23 +611,88 @@ func (s *Service) GetCampaignAnalytics(ctx context.Context, campaignID string) (
 		avg = totalRaised / int64(contributorCount)
 	}
 
-	// Deterministic views/shares from the id so the dashboard is stable.
-	seed := idSeed(campaignID)
-	views := 1200 + seed%8000 + contributorCount*40
-	shares := 40 + seed%400
+	// Views / shares / traffic — real rows from cf_campaign_events.
+	//
+	// These were previously invented from a hash of the campaign id
+	//   views  := 1200 + idSeed(campaignID)%8000 + contributorCount*40
+	//   shares := 40 + idSeed(campaignID)%400
+	// with the traffic breakdown a fixed percentage split of that number. The
+	// figures moved when contributors changed, which is what made them read as
+	// real. They are now aggregated from recorded events, and a campaign with no
+	// traffic yet honestly reports zero.
+	var views, shares int
+	if err := s.db.QueryRow(ctx, `
+		SELECT
+			COUNT(*) FILTER (WHERE event_type = 'VIEW'),
+			COUNT(*) FILTER (WHERE event_type = 'SHARE')
+		FROM cf_campaign_events
+		WHERE campaign_id = $1`, campaignID).Scan(&views, &shares); err != nil {
+		return nil, err
+	}
 
+	// Conversion is contributors per view. Guarding on views keeps a campaign
+	// with contributions but no recorded views at 0 rather than dividing by zero
+	// or reporting an infinite rate.
 	conversion := 0.0
 	if views > 0 {
 		conversion = round2(float64(contributorCount) / float64(views) * 100)
 	}
 
-	// Fixed traffic-source breakdown scaled to total views.
-	traffic := []TrafficSource{
-		{Source: "WhatsApp", Visits: views * 38 / 100, Contributions: contributorCount * 40 / 100},
-		{Source: "Direct", Visits: views * 27 / 100, Contributions: contributorCount * 30 / 100},
-		{Source: "Instagram", Visits: views * 18 / 100, Contributions: contributorCount * 15 / 100},
-		{Source: "Twitter/X", Visits: views * 11 / 100, Contributions: contributorCount * 10 / 100},
-		{Source: "Other", Visits: views * 6 / 100, Contributions: contributorCount * 5 / 100},
+	// Traffic sources: visits are VIEW events grouped by channel; contributions
+	// are attributed LAST-TOUCH — each contribution is credited to the channel of
+	// that contributor's most recent view of this campaign before they gave.
+	// Anonymous views cannot be attributed to a contribution, so they count as
+	// visits only, which is the honest reading.
+	const trafficQ = `
+		WITH visits AS (
+			SELECT source, COUNT(*) AS visits
+			FROM cf_campaign_events
+			WHERE campaign_id = $1 AND event_type = 'VIEW'
+			GROUP BY source
+		),
+		attributed AS (
+			SELECT (
+				SELECT e.source
+				FROM cf_campaign_events e
+				WHERE e.campaign_id = co.campaign_id
+				  AND e.event_type = 'VIEW'
+				  AND e.actor_user_id = co.contributor_id
+				  AND e.created_at <= co.created_at
+				ORDER BY e.created_at DESC
+				LIMIT 1
+			) AS source
+			FROM contributions co
+			WHERE co.campaign_id = $1 AND co.status IN ('escrowed','released')
+		),
+		gave AS (
+			SELECT source, COUNT(*) AS contributions
+			FROM attributed
+			WHERE source IS NOT NULL
+			GROUP BY source
+		)
+		SELECT v.source, v.visits, COALESCE(g.contributions, 0)
+		FROM visits v
+		LEFT JOIN gave g ON g.source = v.source
+		ORDER BY v.visits DESC`
+
+	trafficRows, err := s.db.Query(ctx, trafficQ, campaignID)
+	if err != nil {
+		return nil, err
+	}
+	defer trafficRows.Close()
+
+	traffic := []TrafficSource{}
+	for trafficRows.Next() {
+		var key string
+		var ts TrafficSource
+		if err := trafficRows.Scan(&key, &ts.Visits, &ts.Contributions); err != nil {
+			return nil, err
+		}
+		ts.Source = engage.SourceLabel(key)
+		traffic = append(traffic, ts)
+	}
+	if err := trafficRows.Err(); err != nil {
+		return nil, err
 	}
 
 	return &CampaignAnalytics{
@@ -562,14 +704,6 @@ func (s *Service) GetCampaignAnalytics(ctx context.Context, campaignID string) (
 		DailyRaised:             daily,
 		TrafficSources:          traffic,
 	}, nil
-}
-
-func idSeed(id string) int {
-	sum := 0
-	for _, ch := range id {
-		sum += int(ch)
-	}
-	return sum
 }
 
 // ─── Milestones ──────────────────────────────────────────────────────────────

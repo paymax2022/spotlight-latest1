@@ -2,6 +2,7 @@ import React from 'react';
 import { View, Text, ScrollView, Pressable, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import { ArrowLeft, Bell, Plus, Wallet, Users, TrendingUp, ChevronRight, Eye } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
@@ -14,6 +15,7 @@ import PrimaryButton from '@/components/PrimaryButton';
 import CreatorCampaignRow from '@/features/crowdfunding/components/CreatorCampaignRow';
 import { useCreatorStats, useMyCampaigns, useCreatorContributions } from '@/features/crowdfunding/hooks/useCreator';
 import { formatNaira, formatNairaCompact, relativeTime, maskAnonymous } from '@/features/crowdfunding/utils/crowdfundingFormatters';
+import { HomeMenuButton } from '@/components/HomeMenu';
 
 export default function CreatorDashboard() {
   const stats = useCreatorStats();
@@ -25,17 +27,20 @@ export default function CreatorDashboard() {
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
       <View style={styles.header}>
-        <Pressable onPress={() => router.back()} hitSlop={10} style={styles.iconBtn} accessibilityLabel="Go back">
+        <Pressable onPress={() => goBack('/crowdfunding')} hitSlop={10} style={styles.iconBtn} accessibilityLabel="Go back">
           <ArrowLeft size={22} color={Colors.onSurface} strokeWidth={2} />
         </Pressable>
         <View style={styles.headerTitleWrap}>
           <Text style={styles.eyebrow}>Creator</Text>
           <Text style={styles.headerTitle}>Dashboard</Text>
         </View>
-        <Pressable onPress={() => router.push('/crowdfunding/creator/notifications')} hitSlop={10} style={styles.iconBtn} accessibilityLabel="Notifications">
-          <Bell size={20} color={Colors.onSurface} strokeWidth={2} />
-          <View style={styles.bellDot} />
-        </Pressable>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+          <Pressable onPress={() => router.push('/crowdfunding/creator/notifications')} hitSlop={10} style={styles.iconBtn} accessibilityLabel="Notifications">
+            <Bell size={20} color={Colors.onSurface} strokeWidth={2} />
+            <View style={styles.bellDot} />
+          </Pressable>
+          <HomeMenuButton />
+        </View>
       </View>
 
       {stats.isLoading ? (
@@ -84,7 +89,7 @@ export default function CreatorDashboard() {
               <StateView kind="empty" compact icon="Megaphone" title="No active campaigns" message="Launch a campaign to start raising." />
             ) : (
               active.map((c) => (
-                <CreatorCampaignRow key={c.id} campaign={c} onPress={() => router.push(`/crowdfunding/creator/performance/${c.id}`)} />
+                <CreatorCampaignRow key={c.id} campaign={c} onPress={() => router.push(`/crowdfunding/creator/campaign/${c.id}`)} />
               ))
             )}
           </View>

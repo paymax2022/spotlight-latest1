@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { View, Text, ScrollView, StyleSheet, Switch, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
 import { Spacing } from '@/constants/spacing';
@@ -46,7 +47,7 @@ export default function AutoSaveSetup() {
     if (enabled && amountKobo <= 0) return;
     try {
       await save.mutateAsync({ enabled, amountKobo, frequency: freq });
-      router.back();
+      goBack('/savings');
     } catch {
       Alert.alert('Could not save', 'Please try again.');
     }

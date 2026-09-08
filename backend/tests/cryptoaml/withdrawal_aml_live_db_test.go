@@ -48,6 +48,8 @@ import (
 
 	"spotlight/backend/internal/crypto"
 	"spotlight/backend/internal/finance/ledger"
+
+	"spotlight/backend/internal/testsupport"
 )
 
 // liveDBPool connects using TEST_DATABASE_URL, or skips.
@@ -94,6 +96,7 @@ func seedUser(t *testing.T, ctx context.Context, pool *pgxpool.Pool) string {
 	if _, err := pool.Exec(ctx, `INSERT INTO auth.users (id, email) VALUES ($1, $2) ON CONFLICT DO NOTHING`, id, id+"@seed.test"); err != nil {
 		t.Fatalf("seed auth.users: %v", err)
 	}
+	testsupport.CleanupUser(t, pool, id)
 	return id
 }
 
@@ -160,7 +163,7 @@ func holdingUnits(t *testing.T, ctx context.Context, svc *crypto.Service, userID
 // tx_hash), and the parked units left the holding.
 func TestLiveDB_Withdraw_ParksAtPendingReview_NoBroadcast(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	led := newLiveLedgerService(pool)
 	svc := newLiveCryptoService(pool, led)
 	ctx := context.Background()
@@ -235,7 +238,7 @@ func TestLiveDB_Withdraw_ParksAtPendingReview_NoBroadcast(t *testing.T) {
 // provider accepts), i.e. money is cleared to leave ONLY after the AML approval.
 func TestLiveDB_AdminApprove_AdvancesPastPendingReview_BroadcastFires(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	led := newLiveLedgerService(pool)
 	svc := newLiveCryptoService(pool, led)
 	ctx := context.Background()
@@ -292,7 +295,7 @@ func TestLiveDB_AdminApprove_AdvancesPastPendingReview_BroadcastFires(t *testing
 // compensating transition), with no broadcast.
 func TestLiveDB_AdminReject_FailsAndReturnsParkedUnits(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	led := newLiveLedgerService(pool)
 	svc := newLiveCryptoService(pool, led)
 	ctx := context.Background()

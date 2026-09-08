@@ -23,7 +23,7 @@ func (s *Service) StartOrGetThread(ctx context.Context, buyerID, listingID, firs
 		return nil, ErrUnauthenticated
 	}
 	if strings.TrimSpace(listingID) == "" {
-		return nil, fieldErr(CodeValidation, "listingId is required", "listingId")
+		return nil, fieldErr(CodeValidation, "listing_id is required", "listing_id")
 	}
 	tr, err := s.repo.GetOrCreateThread(ctx, listingID, buyerID)
 	if err != nil {
@@ -127,7 +127,9 @@ func (s *Service) GetDealReview(ctx context.Context, userID, threadID string) (D
 // marked met (else 409 CodeDealNotMet), rating in 1..5 (else fieldErr). The
 // reviewee is the caller-relative counterparty. A duplicate (already reviewed) is
 // mapped to 409 by the repo (ErrReviewExists). Returns the created Review.
-func (s *Service) SubmitDealReview(ctx context.Context, userID, threadID string, rating int, tags []string, comment string) (DealReview, error) {
+// productQualityRating is nil when the reviewer skipped the item-quality
+// sub-score (validated 1..5 when present, same range as the overall rating).
+func (s *Service) SubmitDealReview(ctx context.Context, userID, threadID string, rating int, productQualityRating *int, tags []string, comment string) (DealReview, error) {
 	if userID == "" {
 		return DealReview{}, ErrUnauthenticated
 	}
@@ -141,7 +143,10 @@ func (s *Service) SubmitDealReview(ctx context.Context, userID, threadID string,
 	if rating < 1 || rating > 5 {
 		return DealReview{}, fieldErr(CodeValidation, "rating must be between 1 and 5", "rating")
 	}
-	return s.repo.InsertDealReview(ctx, threadID, userID, thread.CounterpartyID, rating, strings.TrimSpace(comment), tags)
+	if productQualityRating != nil && (*productQualityRating < 1 || *productQualityRating > 5) {
+		return DealReview{}, fieldErr(CodeValidation, "product_quality_rating must be between 1 and 5", "product_quality_rating")
+	}
+	return s.repo.InsertDealReview(ctx, threadID, userID, thread.CounterpartyID, rating, productQualityRating, strings.TrimSpace(comment), tags)
 }
 
 // pushMessage best-effort live-delivers a new message to both participants (the

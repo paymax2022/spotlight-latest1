@@ -137,7 +137,7 @@ const styles = StyleSheet.create({
   },
   doneBody: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: Spacing.xl, gap: Spacing.md },
   doneIcon: { width: 88, height: 88, borderRadius: Radius.full, backgroundColor: Colors.iconBgTeal, alignItems: 'center', justifyContent: 'center' },
-  doneTick: { ...Typography.displayLg, color: Colors.tertiaryContainer, fontSize: 44, lineHeight: 52 },
+  doneTick: { ...Typography.displayLg, color: Colors.tertiaryContainer, fontSize: 44, letterSpacing: -0.88, lineHeight: 52 },
   doneTitle: { ...Typography.headlineMd, color: Colors.onSurface, textAlign: 'center' },
   doneSub: { ...Typography.bodyMd, color: Colors.onSurfaceVariant, textAlign: 'center' },
 });

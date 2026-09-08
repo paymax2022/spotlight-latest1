@@ -33,6 +33,7 @@ func seedOrgOfType(t *testing.T, ctx context.Context, pool *pgxpool.Pool, name, 
 		VALUES ($1, $2, 'Professional', '', $3, 'ADMIN', true)`, orgID, name, groupType); err != nil {
 		t.Fatalf("seed org (%s): %v", groupType, err)
 	}
+	t.Cleanup(func() { deleteOrganisation(context.Background(), pool, orgID) })
 	return orgID
 }
 
@@ -85,7 +86,7 @@ func seedOfflinePayment(t *testing.T, ctx context.Context, pool *pgxpool.Pool, m
 
 func TestLiveDB_IDOR_GetChatThread_CrossOrgForbidden(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	svc := newLiveAssociationService(pool)
 	ctx := context.Background()
 
@@ -107,7 +108,7 @@ func TestLiveDB_IDOR_GetChatThread_CrossOrgForbidden(t *testing.T) {
 
 func TestLiveDB_IDOR_SendChatMessage_CrossOrgForbidden(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	svc := newLiveAssociationService(pool)
 	ctx := context.Background()
 
@@ -137,7 +138,7 @@ func TestLiveDB_IDOR_SendChatMessage_CrossOrgForbidden(t *testing.T) {
 
 func TestLiveDB_IDOR_ReactToMessage_CrossOrgForbidden(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	svc := newLiveAssociationService(pool)
 	ctx := context.Background()
 
@@ -172,7 +173,7 @@ func TestLiveDB_IDOR_ReactToMessage_CrossOrgForbidden(t *testing.T) {
 
 func TestLiveDB_IDOR_GetAiNote_CrossOrgForbidden(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	svc := newLiveAssociationService(pool)
 	ctx := context.Background()
 
@@ -196,7 +197,7 @@ func TestLiveDB_IDOR_GetAiNote_CrossOrgForbidden(t *testing.T) {
 
 func TestLiveDB_IDOR_GetDirectory_ScopedToViewerOrg(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	svc := newLiveAssociationService(pool)
 	ctx := context.Background()
 
@@ -230,7 +231,7 @@ func TestLiveDB_IDOR_GetDirectory_ScopedToViewerOrg(t *testing.T) {
 
 func TestLiveDB_IDOR_GetMember_CrossOrgForbidden(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	svc := newLiveAssociationService(pool)
 	ctx := context.Background()
 
@@ -253,7 +254,7 @@ func TestLiveDB_IDOR_GetMember_CrossOrgForbidden(t *testing.T) {
 
 func TestLiveDB_IDOR_DecideApplication_RequiresSameOrgAdmin(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	svc := newLiveAssociationService(pool)
 	ctx := context.Background()
 
@@ -292,7 +293,7 @@ func TestLiveDB_IDOR_DecideApplication_RequiresSameOrgAdmin(t *testing.T) {
 
 func TestLiveDB_IDOR_DecideOfflinePayment_CrossOrgForbidden(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	svc := newLiveAssociationService(pool)
 	ctx := context.Background()
 
@@ -318,7 +319,7 @@ func TestLiveDB_IDOR_DecideOfflinePayment_CrossOrgForbidden(t *testing.T) {
 
 func TestLiveDB_IDOR_SuspendMember_CrossOrgForbidden(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	svc := newLiveAssociationService(pool)
 	ctx := context.Background()
 
@@ -341,7 +342,7 @@ func TestLiveDB_IDOR_SuspendMember_CrossOrgForbidden(t *testing.T) {
 
 func TestLiveDB_IDOR_AssignRole_CrossOrgForbidden(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	svc := newLiveAssociationService(pool)
 	ctx := context.Background()
 
@@ -366,7 +367,7 @@ func TestLiveDB_IDOR_AssignRole_CrossOrgForbidden(t *testing.T) {
 
 func TestLiveDB_IDOR_Discovery_HidesInviteOnly(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	svc := newLiveAssociationService(pool)
 	ctx := context.Background()
 
@@ -374,7 +375,7 @@ func TestLiveDB_IDOR_Discovery_HidesInviteOnly(t *testing.T) {
 	closedID := seedOrgOfType(t, ctx, pool, "Closed-"+tag, "CLOSED")
 	inviteID := seedOrgOfType(t, ctx, pool, "Invite-"+tag, "INVITE_ONLY")
 
-	list, err := svc.GetOrganisations(ctx, tag) // search term matches both by name
+	list, err := svc.GetOrganisations(ctx, tag, 0, 0) // search term matches both by name
 	if err != nil {
 		t.Fatalf("GetOrganisations: %v", err)
 	}
@@ -397,7 +398,7 @@ func TestLiveDB_IDOR_Discovery_HidesInviteOnly(t *testing.T) {
 
 func TestLiveDB_IDOR_GetOrganisation_InviteOnlyHiddenFromNonMember(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	svc := newLiveAssociationService(pool)
 	ctx := context.Background()
 

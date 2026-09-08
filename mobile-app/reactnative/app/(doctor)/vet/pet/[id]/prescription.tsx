@@ -2,6 +2,7 @@ import React, { useMemo, useState } from 'react';
 import { View, Text, ScrollView, StyleSheet, Pressable, Platform, KeyboardAvoidingView, Modal } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import { Plus, Trash2, Calculator, Sparkles, X, Search } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Radius } from '@/constants/radius';
@@ -73,7 +74,7 @@ export default function PetPrescriptionScreen() {
     try {
       const result = await create.mutateAsync({ petId, diagnosis, items });
       const ok = await confirmAsync({ title: 'Draft created', message: `${result.ref} is ready to issue.`, confirmLabel: 'Review & issue', cancelLabel: 'Done' });
-      if (ok) { router.push(`/(doctor)/vet/pet/${petId}/prescription/issue?prescriptionId=${result.prescriptionId}`); } else { router.back(); }
+      if (ok) { router.push(`/(doctor)/vet/pet/${petId}/prescription/issue?prescriptionId=${result.prescriptionId}`); } else { goBack('/vet'); }
     } catch {
       alertAsync({ title: 'Failed', message: 'Could not create the prescription. Please try again.' });
     }

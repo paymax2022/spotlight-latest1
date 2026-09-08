@@ -2,8 +2,6 @@ package referrals
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -334,22 +332,34 @@ func (s *RewardService) GetOrCreateLink(ctx context.Context, referrerID string) 
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return nil, fmt.Errorf("referrals: load link: %w", err)
 	}
-	code, err := generateRewardCode()
-	if err != nil {
-		return nil, err
-	}
+	// Retry on a code collision. At 11 characters a clash was negligible; at 5
+	// it is not (27^5 ~= 14.3M, and the birthday bound bites long before that),
+	// so a single attempt would surface as a hard 500 to an ordinary user just
+	// opening their own referral screen.
 	const ins = `
 		INSERT INTO referral_links (referrer_id, code) VALUES ($1,$2)
 		ON CONFLICT (referrer_id) DO NOTHING
 		RETURNING id, referrer_id, code, created_at`
-	err = s.db.QueryRow(ctx, ins, referrerID, code).Scan(&l.ID, &l.ReferrerID, &l.Code, &l.CreatedAt)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return s.GetOrCreateLink(ctx, referrerID) // lost the race — fetch
-	}
-	if err != nil {
+	for attempt := 0; attempt < codeIssueAttempts; attempt++ {
+		code, gerr := generateRewardCode()
+		if gerr != nil {
+			return nil, gerr
+		}
+		err = s.db.QueryRow(ctx, ins, referrerID, code).Scan(&l.ID, &l.ReferrerID, &l.Code, &l.CreatedAt)
+		if err == nil {
+			return &l, nil
+		}
+		if errors.Is(err, pgx.ErrNoRows) {
+			// ON CONFLICT (referrer_id) fired: this user's link already exists.
+			// Re-read rather than retry — a second code is not wanted.
+			return s.GetOrCreateLink(ctx, referrerID)
+		}
+		if isDuplicateCode(err) {
+			continue // that CODE is taken; draw another
+		}
 		return nil, fmt.Errorf("referrals: create link: %w", err)
 	}
-	return &l, nil
+	return nil, fmt.Errorf("referrals: no free referral code in %d attempts", codeIssueAttempts)
 }
 
 // Attribute applies a referral code at signup: resolves the code to a referrer and
@@ -1068,12 +1078,13 @@ func (s *RewardService) ModuleStatus(ctx context.Context) ([]ModuleRollup, error
 // small helpers.
 // ============================================================================
 
+// generateRewardCode issues a code in the shared 5-character shape (see code.go).
+//
+// It previously returned "R" + hex(5 bytes) = 11 characters, far too long to
+// read aloud or type — the complaint that prompted this change. Nothing depended
+// on the "R" prefix; it was never parsed anywhere.
 func generateRewardCode() (string, error) {
-	b := make([]byte, 5)
-	if _, err := rand.Read(b); err != nil {
-		return "", fmt.Errorf("referrals: generate code: %w", err)
-	}
-	return "R" + strings.ToUpper(hex.EncodeToString(b)), nil
+	return GenerateCode()
 }
 
 // maskContact masks an email/phone for privacy in the My Referrals list.

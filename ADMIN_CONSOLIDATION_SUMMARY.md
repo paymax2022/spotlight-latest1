@@ -1,3 +1,14 @@
+> **SUPERSEDED — 2026-08-27.** This document describes the original direction
+> (frontend-web absorbs frontend-admin, port 3001 retired). That attempt
+> stalled after the copy step; frontend-web/app/admin and frontend-admin/app/admin
+> then diverged on 9 pages while both kept receiving work. The direction has
+> since been reversed: **frontend-admin (3001) is the surviving console**, and
+> `frontend-web/app/admin` is being retired instead. See
+> [`docs/adr/ADR-047-admin-console-consolidation-path-a.md`](docs/adr/ADR-047-admin-console-consolidation-path-a.md)
+> for the current plan and status. Kept below for history only.
+
+---
+
 # 🏛️ Admin Portal Consolidation - Complete Summary
 
 ## Consolidation Status: ✅ 90% COMPLETE

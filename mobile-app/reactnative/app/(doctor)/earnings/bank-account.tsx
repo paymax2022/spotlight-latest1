@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { View, Text, ScrollView, StyleSheet, Platform, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import { BadgeCheck, Landmark } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Radius } from '@/constants/radius';
@@ -44,7 +45,7 @@ export default function BankAccountScreen() {
       const res = await update.mutateAsync({ bankName: bankName.trim(), accountNumber: accountNumber.trim() });
       setResolved(res.account);
       Alert.alert('Account updated', res.account.isVerified ? `Verified: ${res.account.accountName}` : 'Saved. Verification pending.');
-      router.back();
+      goBack('/earnings');
     } catch {
       Alert.alert('Update failed', 'Please try again in a moment.');
     }

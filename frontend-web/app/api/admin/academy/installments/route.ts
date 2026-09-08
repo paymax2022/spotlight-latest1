@@ -1,6 +1,12 @@
 import { errorResponse, handleApiError, successResponse } from '@/src/lib/api/responses';
 import { assertAdminPermission } from '@/src/server/admin/auth';
 import { createAdminClient } from '@/lib/supabase/server';
+import { summariseCompliance } from '@/src/server/services/academy/compliance';
+
+/** What academy_installment_plans.frequency actually accepts. */
+const PLAN_CADENCES = ['weekly', 'biweekly', 'monthly'];
+/** What academy_installment_plans.installments_count actually accepts. */
+const MAX_INSTALMENTS = 12;
 
 function nextDueDate(start: Date, index: number, frequency: string): Date {
   if (frequency === 'weekly')   { const d = new Date(start); d.setDate(d.getDate() + index * 7); return d; }
@@ -26,7 +32,17 @@ export async function GET(request: Request) {
 
     const { data, error } = await q;
     if (error) return errorResponse('Failed to load plans', 500);
-    return successResponse({ success: true, plans: data ?? [] });
+
+    // Compliance is DERIVED, never stored: a stored "overdue" flag is wrong the
+    // moment a due date passes with nobody looking at it. Computing it on read
+    // means the answer is always current.
+    const plans = (data ?? []).map((row) => {
+      const plan = row as Record<string, any>;
+      const payments: Array<Record<string, any>> = plan.academy_installment_payments ?? [];
+      return { ...plan, compliance: summariseCompliance(payments) };
+    });
+
+    return successResponse({ success: true, plans });
   } catch (error) {
     return handleApiError(error, 'Failed to load installment plans');
   }
@@ -45,6 +61,19 @@ export async function POST(request: Request) {
     if (!body.totalAmountNgn || body.totalAmountNgn <= 0) return errorResponse('totalAmountNgn required', 400);
     if (!body.installmentsCount || body.installmentsCount < 1) return errorResponse('installmentsCount required', 400);
 
+    // The plan table constrains both of these. Passing an out-of-range value
+    // through produced an opaque 500 from Postgres rather than telling the admin
+    // what they got wrong.
+    //   frequency          CHECK weekly | biweekly | monthly
+    //   installments_count CHECK 1..12
+    const frequency = String(body.frequency ?? 'monthly');
+    if (!PLAN_CADENCES.includes(frequency)) {
+      return errorResponse(`frequency must be one of: ${PLAN_CADENCES.join(', ')}`, 400);
+    }
+    if (body.installmentsCount > MAX_INSTALMENTS) {
+      return errorResponse(`installmentsCount must be ${MAX_INSTALMENTS} or fewer`, 400);
+    }
+
     const supabase = createAdminClient();
 
     const { data: plan, error: planErr } = await supabase
@@ -54,7 +83,7 @@ export async function POST(request: Request) {
         batch_id:          body.batchId ?? null,
         total_amount_ngn:  body.totalAmountNgn,
         installments_count: body.installmentsCount,
-        frequency:         body.frequency ?? 'monthly',
+        frequency,
         notes:             body.notes ?? null,
         created_by:        identity.actorId === 'system' ? null : identity.actorId,
       })

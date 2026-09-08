@@ -53,10 +53,19 @@ export default function LoginPage() {
     setBusy(true);
     setError('');
     try {
+      const normalized = email.trim().toLowerCase();
       const { error: e } = await supabase.auth.signInWithPassword({
-        email: email.trim().toLowerCase(),
+        email: normalized,
         password,
       });
+      // The password was RIGHT and only verification is missing — Supabase returns
+      // this code ONLY when the credentials check out. Sending them to enter their
+      // code beats showing a sign-in error they cannot act on, which is what an
+      // unverified account used to get.
+      if (e && (e as { code?: string }).code === 'email_not_confirmed') {
+        router.push(`/verify-email?email=${encodeURIComponent(normalized)}&next=${encodeURIComponent(next)}`);
+        return;
+      }
       if (e) throw e;
       router.replace(next);
     } catch (err) {
@@ -70,14 +79,22 @@ export default function LoginPage() {
     setBusy(true);
     setError('');
     try {
-      const { error: e } = await supabase.auth.signUp({
-        email: email.trim().toLowerCase(),
+      const normalized = email.trim().toLowerCase();
+      const { data, error: e } = await supabase.auth.signUp({
+        email: normalized,
         password,
         options: { data: { full_name: name.trim() || email } },
       });
       if (e) throw e;
-      setInfo('Account created! Please check your email to confirm, then sign in.');
-      setTab('signin');
+
+      // Confirmation is required on both cloud projects, so there is no session
+      // here and the old advice — "confirm, then sign in" — was a dead end:
+      // signing in before confirming fails. Send them to enter the code instead.
+      if (data?.session?.access_token) {
+        router.replace(next);
+        return;
+      }
+      router.push(`/verify-email?email=${encodeURIComponent(normalized)}&next=${encodeURIComponent(next)}`);
     } catch (err) {
       setError(toReadableAuthError(err, 'Sign up failed. Please try again.'));
     } finally {

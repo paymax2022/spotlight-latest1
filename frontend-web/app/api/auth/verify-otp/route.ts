@@ -11,10 +11,14 @@ export async function POST(request: Request) {
     }
 
     const anon = createAnonClient();
+    // 'signup', not 'email'. Supabase uses 'email' for an email-CHANGE
+    // confirmation and 'signup' for the code sent on registration, which is what
+    // this route is for. The mobile client already passes 'signup'; this route
+    // disagreed and has never had a caller, so the mismatch was never hit.
     const { data, error } = await anon.auth.verifyOtp({
       email,
       token: otp,
-      type: 'email',
+      type: 'signup',
     });
 
     if (error) {

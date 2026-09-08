@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-// These lock the two guards a ledger-auditor review added to the ADR-040 work.
+// These lock the two guards a ledger-auditor review added to the ADR-044 work.
 // Both defend the same money invariant from different sides: the amount the
 // appointment RECORDS must equal the amount that was actually ESCROWED. Correct
 // fee arithmetic does not give you that — the original implementation computed the

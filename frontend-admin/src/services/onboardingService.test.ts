@@ -68,3 +68,63 @@ describe('onboardingService.getApplication — live API shape (regression: D9)',
     await expect(getApplication('app-1')).rejects.toThrow(/500/);
   });
 });
+
+/**
+ * The reviewer console must talk to the real engine BY DEFAULT.
+ *
+ * In fixture mode `postAction` simulates a decision: it waits 350ms and returns
+ * an application echoing APPROVED. A reviewer sees success and nothing happens
+ * server-side — no role granted, no merchant profile activated, no workspace
+ * route written — while the real application stays SUBMITTED forever.
+ *
+ * A silent no-op that reports success is the worst shape a bug can take here, so
+ * the default is pinned rather than left to a comment.
+ */
+describe('onboardingService — talks to the live engine by default', () => {
+  beforeEach(() => {
+    vi.resetModules();
+    // Deliberately NOT stubbing NEXT_PUBLIC_ONBOARDING_ADMIN_USE_MOCK: this is
+    // about what an operator gets with nothing configured.
+    vi.unstubAllEnvs();
+  });
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.restoreAllMocks();
+  });
+
+  it('approve reaches the network instead of simulating a decision', async () => {
+    const fetchFn = vi.fn(async () => ({ ok: true, status: 200, json: async () => ({ data: { id: 'app-1', status: 'APPROVED' } }) }));
+    vi.stubGlobal('fetch', fetchFn);
+
+    const mod = await import('@/services/onboardingService');
+    await mod.approveApplication('app-1');
+
+    expect(fetchFn).toHaveBeenCalledTimes(1);
+    const url = String((fetchFn.mock.calls[0] as unknown[])[0]);
+    expect(url).toContain('/api/admin/onboarding/applications/app-1/approve');
+  });
+
+  it('the review queue reads the real queue, not fixtures', async () => {
+    const fetchFn = vi.fn(async () => ({ ok: true, status: 200, json: async () => ({ applications: [] }) }));
+    vi.stubGlobal('fetch', fetchFn);
+
+    const mod = await import('@/services/onboardingService');
+    const rows = await mod.listReviewQueue({});
+
+    expect(fetchFn).toHaveBeenCalledTimes(1);
+    // Fixtures are non-empty; an empty live response proves we read the network.
+    expect(rows).toEqual([]);
+  });
+
+  it('still renders fixtures when an operator explicitly asks for them', async () => {
+    vi.stubEnv('NEXT_PUBLIC_ONBOARDING_ADMIN_USE_MOCK', 'true');
+    const fetchFn = vi.fn();
+    vi.stubGlobal('fetch', fetchFn);
+
+    const mod = await import('@/services/onboardingService');
+    const rows = await mod.listReviewQueue({});
+
+    expect(fetchFn).not.toHaveBeenCalled();
+    expect(Array.isArray(rows)).toBe(true);
+  });
+});

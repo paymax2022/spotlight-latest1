@@ -9,28 +9,17 @@ import (
 
 // ── Discovery / reads ─────────────────────────────────────────────────────────
 
-// ListOpenRestaurants returns the discovery list of open restaurants.
+// ListOpenRestaurants returns the WHOLE discovery list of open restaurants,
+// unpaged. Retained for internal callers and tests that want the full set; the
+// HTTP handler serves ListOpenRestaurantsPage instead, because at 2,016 open
+// rows an unbounded list is a payload no client should be asked to render.
+//
+// The predicate, column list and ordering all come from discovery_page.go, so
+// this and the paged read cannot drift apart.
 func (s *Service) ListOpenRestaurants(ctx context.Context) ([]Restaurant, error) {
-	const q = `SELECT id, owner_id, name, COALESCE(description,''), address, logo_url, is_open, rating, COALESCE(cuisine,''), created_at,
-	                  min_order_kobo, packaging_fee_kobo, prep_time_minutes, geo_lat, geo_lng
-	           FROM restaurants WHERE is_open = TRUE ORDER BY created_at DESC`
-	rows, err := s.db.Query(ctx, q)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	// Non-nil so the handler serialises `[]` rather than `null` on an empty
-	// result — a JSON null breaks array-typed clients.
-	out := []Restaurant{}
-	for rows.Next() {
-		var r Restaurant
-		if err := rows.Scan(&r.ID, &r.OwnerID, &r.Name, &r.Description, &r.Address, &r.LogoURL, &r.IsOpen, &r.Rating, &r.Cuisine, &r.CreatedAt,
-			&r.MinOrderKobo, &r.PackagingFeeKobo, &r.PrepTimeMinutes, &r.GeoLat, &r.GeoLng); err != nil {
-			return nil, err
-		}
-		out = append(out, r)
-	}
-	return out, rows.Err()
+	where, args := buildDiscoveryWhere(DiscoveryParams{}, s.moderationOn)
+	orderBy, orderArgs := discoveryOrderBy("", nil, nil, len(args)+1)
+	return s.queryRestaurants(ctx, where, orderBy, args, orderArgs, 0, 0)
 }
 
 // RestaurantDetail is a restaurant plus its categorized menu.
@@ -44,11 +33,12 @@ func (s *Service) GetRestaurantDetail(ctx context.Context, restaurantID string) 
 	var r Restaurant
 	// Detail previously omitted rating and cuisine too, so a store page showed a
 	// zero rating even though the list showed the real one.
-	const qr = `SELECT id, owner_id, name, COALESCE(description,''), address, logo_url, is_open, rating, COALESCE(cuisine,''), created_at,
-	                   min_order_kobo, packaging_fee_kobo, prep_time_minutes, geo_lat, geo_lng
-	            FROM restaurants WHERE id=$1`
+	// Same column list (and same promo projection) as the discovery page, so a
+	// store shows the identical badge whether you reached it from the list or a
+	// deep link.
+	const qr = `SELECT ` + discoveryColumns + ` FROM restaurants r WHERE r.id=$1`
 	if err := s.db.QueryRow(ctx, qr, restaurantID).Scan(&r.ID, &r.OwnerID, &r.Name, &r.Description, &r.Address, &r.LogoURL, &r.IsOpen, &r.Rating, &r.Cuisine, &r.CreatedAt,
-		&r.MinOrderKobo, &r.PackagingFeeKobo, &r.PrepTimeMinutes, &r.GeoLat, &r.GeoLng); err != nil {
+		&r.MinOrderKobo, &r.PackagingFeeKobo, &r.PrepTimeMinutes, &r.GeoLat, &r.GeoLng, &r.HasPromo, &r.IsFeatured, &r.LikeCount); err != nil {
 		return nil, fmt.Errorf("restaurant: not found")
 	}
 
@@ -276,7 +266,7 @@ func (s *Service) assertOwner(ctx context.Context, restaurantID, userID string) 
 
 // CreateCategory adds a menu category (owner only).
 func (s *Service) CreateCategory(ctx context.Context, restaurantID, userID, name string) (*MenuCategory, error) {
-	if err := s.assertOwner(ctx, restaurantID, userID); err != nil {
+	if err := s.AssertStaffPermission(ctx, restaurantID, userID, PermManageMenu); err != nil {
 		return nil, err
 	}
 	c := &MenuCategory{ID: uuid.New().String(), RestaurantID: restaurantID, Name: name}
@@ -299,7 +289,7 @@ type CreateItemRequest struct {
 
 // CreateItem adds a menu item (owner only).
 func (s *Service) CreateItem(ctx context.Context, restaurantID, userID string, req CreateItemRequest) (*MenuItem, error) {
-	if err := s.assertOwner(ctx, restaurantID, userID); err != nil {
+	if err := s.AssertStaffPermission(ctx, restaurantID, userID, PermManageMenu); err != nil {
 		return nil, err
 	}
 	if err := validateItemPriceKobo(req.PriceKobo); err != nil {
@@ -334,7 +324,7 @@ type UpdateItemRequest struct {
 
 // UpdateItem updates an item's price/availability/dietary tags (owner only).
 func (s *Service) UpdateItem(ctx context.Context, restaurantID, userID, itemID string, req UpdateItemRequest) (*MenuItem, error) {
-	if err := s.assertOwner(ctx, restaurantID, userID); err != nil {
+	if err := s.AssertStaffPermission(ctx, restaurantID, userID, PermManageMenu); err != nil {
 		return nil, err
 	}
 	if req.PriceKobo != nil {
@@ -419,25 +409,45 @@ type UpdateRestaurantRequest struct {
 	Description *string `json:"description,omitempty"`
 	Address     *string `json:"address,omitempty"`
 	LogoURL     *string `json:"logo_url,omitempty"`
+	// PackagingFeeKobo is the price of ONE takeaway pack. The platform seeds ₦200,
+	// but the price is the owner's to set — including 0, for a restaurant that does
+	// not charge for packaging. A POINTER so that 0 is a real choice and not
+	// indistinguishable from "field omitted"; COALESCE below leaves it unchanged
+	// only when nil.
+	PackagingFeeKobo *int64 `json:"packaging_fee_kobo,omitempty"`
 }
 
 // UpdateRestaurant lets the owner edit their store's name/description/address/logo.
 // Changing the address re-geocodes the pin (best-effort, mirrors CreateRestaurant).
 func (s *Service) UpdateRestaurant(ctx context.Context, restaurantID, userID string, req UpdateRestaurantRequest) (*Restaurant, error) {
-	if err := s.assertOwner(ctx, restaurantID, userID); err != nil {
+	if err := s.AssertStaffPermission(ctx, restaurantID, userID, PermManageStore); err != nil {
 		return nil, err
 	}
 	if req.Name != nil && *req.Name == "" {
 		return nil, fmt.Errorf("restaurant: name cannot be empty")
 	}
+	// Packaging is money the customer will be charged on every future order, so the
+	// bounds are enforced here rather than left to the DB check alone: a negative
+	// price would subtract from the escrowed total and break settlement
+	// conservation, and an absurd one is a data-entry slip (kobo/naira confusion)
+	// that would otherwise be billed to real customers before anyone noticed.
+	if req.PackagingFeeKobo != nil {
+		if *req.PackagingFeeKobo < 0 {
+			return nil, fmt.Errorf("restaurant: packaging fee cannot be negative")
+		}
+		if *req.PackagingFeeKobo > maxPackagingFeePerPackKobo {
+			return nil, fmt.Errorf("restaurant: packaging fee per pack may not exceed %d kobo", maxPackagingFeePerPackKobo)
+		}
+	}
 	const q = `UPDATE restaurants
-	              SET name        = COALESCE($2, name),
-	                  description = COALESCE($3, description),
-	                  address     = COALESCE($4, address),
-	                  logo_url    = COALESCE($5, logo_url),
-	                  updated_at  = NOW()
+	              SET name               = COALESCE($2, name),
+	                  description        = COALESCE($3, description),
+	                  address            = COALESCE($4, address),
+	                  logo_url           = COALESCE($5, logo_url),
+	                  packaging_fee_kobo = COALESCE($6, packaging_fee_kobo),
+	                  updated_at         = NOW()
 	            WHERE id = $1`
-	if _, err := s.db.Exec(ctx, q, restaurantID, req.Name, req.Description, req.Address, req.LogoURL); err != nil {
+	if _, err := s.db.Exec(ctx, q, restaurantID, req.Name, req.Description, req.Address, req.LogoURL, req.PackagingFeeKobo); err != nil {
 		return nil, err
 	}
 	// Re-geocode when the address changed so "near me" stays correct. A geocode
@@ -456,7 +466,7 @@ func (s *Service) UpdateRestaurant(ctx context.Context, restaurantID, userID str
 // hours / pausing new orders). Eligibility/KYC gating is handled upstream by the
 // merchant-onboarding engine — reaching this endpoint requires owning the store.
 func (s *Service) SetAvailability(ctx context.Context, restaurantID, userID string, isOpen bool) (*Restaurant, error) {
-	if err := s.assertOwner(ctx, restaurantID, userID); err != nil {
+	if err := s.AssertStaffPermission(ctx, restaurantID, userID, PermManageStore); err != nil {
 		return nil, err
 	}
 	if _, err := s.db.Exec(ctx, `UPDATE restaurants SET is_open=$2, updated_at=NOW() WHERE id=$1`,
@@ -468,7 +478,7 @@ func (s *Service) SetAvailability(ctx context.Context, restaurantID, userID stri
 
 // DeleteItem removes a menu item (owner only).
 func (s *Service) DeleteItem(ctx context.Context, restaurantID, userID, itemID string) error {
-	if err := s.assertOwner(ctx, restaurantID, userID); err != nil {
+	if err := s.AssertStaffPermission(ctx, restaurantID, userID, PermManageMenu); err != nil {
 		return err
 	}
 	ct, err := s.db.Exec(ctx, `DELETE FROM menu_items WHERE id=$1 AND restaurant_id=$2`, itemID, restaurantID)
@@ -485,7 +495,7 @@ func (s *Service) DeleteItem(ctx context.Context, restaurantID, userID, itemID s
 // still has items is blocked to avoid orphaning them — the merchant removes or
 // re-homes the items first.
 func (s *Service) DeleteCategory(ctx context.Context, restaurantID, userID, categoryID string) error {
-	if err := s.assertOwner(ctx, restaurantID, userID); err != nil {
+	if err := s.AssertStaffPermission(ctx, restaurantID, userID, PermManageMenu); err != nil {
 		return err
 	}
 	var itemCount int

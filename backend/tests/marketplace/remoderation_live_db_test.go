@@ -39,6 +39,10 @@ func liveMktService(t *testing.T) (*mkt.Service, *pgxpool.Pool) {
 	if err := pool.Ping(context.Background()); err != nil {
 		t.Fatalf("ping: %v", err)
 	}
+	// Registered HERE, and first, so it runs LAST: cleanups are last-in-first-out,
+	// and every fixture teardown below needs the pool still open. A `defer
+	// pool.Close()` in the test would close it before any of them ran.
+	t.Cleanup(pool.Close)
 	led := ledger.NewService(ledger.NewRepository(pool), (*goredis.Client)(nil))
 	return mkt.NewService(pool, led, (*goredis.Client)(nil)), pool
 }
@@ -48,10 +52,17 @@ func seedRiskTier0Category(t *testing.T, ctx context.Context, pool *pgxpool.Pool
 	t.Helper()
 	id := uuid.New().String()
 	if _, err := pool.Exec(ctx,
+		// market_id must match the market the service stamps on listings
+		// (DefaultMarketID). Seeding 'paymax' here while CreateListing writes 'NG' is
+		// what produced 210 cross-market listings in the local database, and is now
+		// refused by mkt_listings_category_market_fk.
 		`INSERT INTO mkt_categories (id, market_id, slug, name, attribute_schema, risk_tier, commission_bps, is_active)
-		 VALUES ($1::uuid,'paymax','remod-'||$1::text,'Remod Test Cat','{}'::jsonb,0,0,true)`, id); err != nil {
+		 VALUES ($1::uuid,'NG','remod-'||$1::text,'Remod Test Cat','{}'::jsonb,0,0,true)`, id); err != nil {
 		t.Fatalf("seed category: %v", err)
 	}
+	// Without this the row survives the run and GET /categories serves it to the
+	// app as a real top-level marketplace tile named "Remod Test Cat".
+	cleanupCategory(t, pool, id)
 	return id
 }
 
@@ -60,10 +71,12 @@ func seedSchemaCategory(t *testing.T, ctx context.Context, pool *pgxpool.Pool, s
 	t.Helper()
 	id := uuid.New().String()
 	if _, err := pool.Exec(ctx,
+		// Same market as the listings this category will carry — see seedRiskTier0Category.
 		`INSERT INTO mkt_categories (id, market_id, slug, name, attribute_schema, risk_tier, commission_bps, is_active)
-		 VALUES ($1::uuid,'paymax','schema-'||$1::text,'Schema Cat',$2::jsonb,0,0,true)`, id, schema); err != nil {
+		 VALUES ($1::uuid,'NG','schema-'||$1::text,'Schema Cat',$2::jsonb,0,0,true)`, id, schema); err != nil {
 		t.Fatalf("seed schema category: %v", err)
 	}
+	cleanupCategory(t, pool, id)
 	return id
 }
 
@@ -106,7 +119,6 @@ func activate(t *testing.T, ctx context.Context, svc *mkt.Service, seller, admin
 
 func TestLiveDB_EditAfterApprove_ReModeration(t *testing.T) {
 	svc, pool := liveMktService(t)
-	defer pool.Close()
 	ctx := context.Background()
 	cat := seedRiskTier0Category(t, ctx, pool)
 	seller := uuid.New().String()
@@ -159,7 +171,6 @@ func TestLiveDB_EditAfterApprove_ReModeration(t *testing.T) {
 // transaction. A live listing NOT yet past expiry is left untouched (LM cron / EC-011).
 func TestLiveDB_AutoExpire_Atomic(t *testing.T) {
 	svc, pool := liveMktService(t)
-	defer pool.Close()
 	ctx := context.Background()
 	cat := seedRiskTier0Category(t, ctx, pool)
 	seller := uuid.New().String()
@@ -210,9 +221,23 @@ func seedActiveBoost(t *testing.T, ctx context.Context, pool *pgxpool.Pool, list
 	t.Helper()
 	id := uuid.New().String()
 	if _, err := pool.Exec(ctx,
-		`INSERT INTO mkt_boosts (id, market_id, listing_id, seller_id, tier, duration_days, price_kobo,
+		// weight is FROZEN onto the boost row at purchase time (see PurchaseBoost),
+		// and searchPayload now reads that column rather than deriving rank from
+		// the tier. A seed that omits it takes the DEFAULT 0, so the listing would
+		// index as unboosted and this test would assert against its own gap rather
+		// than the behaviour.
+		//
+		// Deliberately NOT wrapped in COALESCE(..., 0): the package row is a
+		// precondition (migration 20270168000000 seeds all five tiers), so if it is
+		// missing this must fail LOUDLY at seed time on the NOT NULL weight column.
+		// Defaulting to 0 would resurrect the exact failure this line fixes, and
+		// its message would point at the boost weight rather than at the absent
+		// package row.
+		`INSERT INTO mkt_boosts (id, market_id, listing_id, seller_id, tier, duration_days, price_kobo, weight,
 			ledger_charge_ref, status, starts_at, ends_at, created_at)
-		 VALUES ($1::uuid,'NG',$2::uuid,$3::uuid,$4,7,50000,'test:'||$1::text,'active'::boost_status,
+		 VALUES ($1::uuid,'NG',$2::uuid,$3::uuid,$4,7,50000,
+			(SELECT weight FROM public.mkt_boost_packages WHERE tier=$4),
+			'test:'||$1::text,'active'::boost_status,
 			now()-interval '1 day', `+endsAt+`, now())`, id, listingID, sellerID, tier); err != nil {
 		t.Fatalf("seed active boost: %v", err)
 	}
@@ -236,7 +261,6 @@ func latestUpsertBoostWeight(t *testing.T, ctx context.Context, pool *pgxpool.Po
 // expired boost to completed and re-indexes the listing so its weight drops to 0.
 func TestLiveDB_BoostSearchWeightAndCompletion(t *testing.T) {
 	svc, pool := liveMktService(t)
-	defer pool.Close()
 	ctx := context.Background()
 	cat := seedRiskTier0Category(t, ctx, pool)
 	admin := uuid.New().String()
@@ -297,7 +321,6 @@ const carSchemaJSON = `{
 // (LM-attr / MOD listing-quality). Exercised end-to-end through the real Service.
 func TestLiveDB_AttributeSchemaValidation(t *testing.T) {
 	svc, pool := liveMktService(t)
-	defer pool.Close()
 	ctx := context.Background()
 	cat := seedSchemaCategory(t, ctx, pool, carSchemaJSON)
 	seller := uuid.New().String()
@@ -335,7 +358,6 @@ func TestLiveDB_AttributeSchemaValidation(t *testing.T) {
 // a live listing, asserting search visibility follows (paused ⇒ delete, resumed ⇒ upsert).
 func TestLiveDB_PauseResumeLifecycle(t *testing.T) {
 	svc, pool := liveMktService(t)
-	defer pool.Close()
 	ctx := context.Background()
 	cat := seedRiskTier0Category(t, ctx, pool)
 	seller := uuid.New().String()
@@ -372,7 +394,6 @@ func TestLiveDB_PauseResumeLifecycle(t *testing.T) {
 // and a moderation reason is recorded. Clean content still auto-approves (MOD/EC trust).
 func TestLiveDB_AutoModDeniesAutoApprove(t *testing.T) {
 	svc, pool := liveMktService(t)
-	defer pool.Close()
 	ctx := context.Background()
 	cat := seedRiskTier0Category(t, ctx, pool)
 	seller := seedTrustedSeller(t, ctx, pool)

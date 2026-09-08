@@ -9,7 +9,7 @@
     "ios": "expo run:ios",
     "web": "expo start --web --port 8083",
     "uat:insurance": "EXPO_PUBLIC_INSURANCE_USE_MOCK=false expo start --web --port 8083",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "node --stack-size=15000 ./node_modules/typescript/bin/tsc --noEmit -p tsconfig.json",
     "check:confirm": "node scripts/check-no-alert-confirm.mjs",
     "test:payment-routes": "node scripts/smoke-payment-routes.mjs",
     "test:e2e": "playwright test",
@@ -18,9 +18,26 @@
     "test:insurance": "node --experimental-strip-types --test \"src/features/insurance/__tests__/*.test.ts\"",
     "test:wallet-idempotency": "node --experimental-strip-types --test \"src/features/connect/wallet/__tests__/*.test.ts\"",
     "test:registration": "node --experimental-strip-types --import ./tests/unit/register-ts-paths.mjs --test \"tests/unit/registration/*.spec.ts\"",
+    "test:voting": "node --experimental-strip-types --import ./tests/unit/register-ts-paths.mjs --test \"tests/unit/voting/*.spec.ts\"",
+    "test:crowdfunding": "node --experimental-strip-types --import ./tests/unit/register-ts-paths.mjs --test \"tests/unit/crowdfunding/*.spec.ts\"",
+    "test:auth": "node --experimental-strip-types --import ./tests/unit/register-ts-paths.mjs --test \"tests/unit/auth/*.spec.ts\"",
+    "test:account": "node --experimental-strip-types --import ./tests/unit/register-ts-paths.mjs --test \"tests/unit/account/*.spec.ts\"",
+    "test:connect": "node --experimental-strip-types --import ./tests/unit/register-ts-paths.mjs --test \"tests/unit/connect/*.spec.ts\"",
     "test:savings": "node --experimental-strip-types --import ./tests/unit/register-ts-paths.mjs --test \"tests/unit/savings/*.spec.ts\"",
     "test:telemedicine": "node --experimental-strip-types --import ./tests/unit/register-ts-paths.mjs --test \"tests/unit/telemedicine/*.spec.ts\"",
-    "test:payments": "node --experimental-strip-types --import ./tests/unit/register-ts-paths.mjs --test \"tests/unit/payments/*.spec.ts\""
+    "test:payments": "node --experimental-strip-types --import ./tests/unit/register-ts-paths.mjs --test \"tests/unit/payments/*.spec.ts\"",
+    "test:modules": "node --experimental-strip-types --import ./tests/unit/register-ts-paths.mjs --test \"tests/unit/modules/*.spec.ts\"",
+    "test:food": "node --experimental-strip-types --import ./tests/unit/register-ts-paths.mjs --test \"tests/unit/food/*.spec.ts\"",
+    "test:location": "node --experimental-strip-types --import ./tests/unit/register-ts-paths.mjs --test \"tests/unit/location/*.spec.ts\"",
+    "test:merchant2": "node --experimental-strip-types --import ./tests/unit/register-ts-paths.mjs --test \"tests/unit/merchant2/*.spec.ts\"",
+    "test:merchantws": "node --experimental-strip-types --import ./tests/unit/register-ts-paths.mjs --test \"tests/unit/merchantws/*.spec.ts\"",
+    "test:outlets": "node --experimental-strip-types --import ./tests/unit/register-ts-paths.mjs --test \"tests/unit/outlets/*.spec.ts\"",
+    "test:pharmacymerchant": "node --experimental-strip-types --import ./tests/unit/register-ts-paths.mjs --test \"tests/unit/pharmacymerchant/*.spec.ts\"",
+    "check:env-mocks": "node scripts/check-env-mocks.mjs",
+    "check:env-mocks:staging": "node scripts/check-env-mocks.mjs .env.staging",
+    "env:staging": "node scripts/use-env.mjs staging",
+    "env:develop": "node scripts/use-env.mjs development",
+    "env:which": "node scripts/use-env.mjs --which"
   },
   "dependencies": {
     "@expo-google-fonts/plus-jakarta-sans": "^0.4.2",
@@ -39,6 +56,7 @@
     "expo-contacts": "~15.0.11",
     "expo-device": "~8.0.10",
     "expo-document-picker": "~14.0.8",
+    "expo-file-system": "~19.0.24",
     "expo-font": "~14.0.12",
     "expo-image-picker": "~17.0.11",
     "expo-linear-gradient": "~15.0.7",
@@ -47,8 +65,10 @@
     "expo-notifications": "~0.32.17",
     "expo-router": "~6.0.23",
     "expo-secure-store": "~15.0.8",
+    "expo-sharing": "~14.0.8",
     "expo-splash-screen": "~31.0.13",
     "expo-status-bar": "~3.0.9",
+    "html2canvas": "^1.4.1",
     "lucide-react-native": "^0.525.0",
     "react": "19.1.0",
     "react-dom": "19.1.0",
@@ -60,6 +80,7 @@
     "react-native-sse": "^1.2.1",
     "react-native-svg": "15.12.1",
     "react-native-url-polyfill": "^3.0.0",
+    "react-native-view-shot": "4.0.3",
     "react-native-web": "^0.21.0",
     "react-native-webview": "13.15.0",
     "zod": "^3.24.2",
@@ -70,5 +91,8 @@
     "@types/react": "~19.1.10",
     "babel-preset-expo": "~54.0.10",
     "typescript": "~5.9.2"
+  },
+  "overrides": {
+    "browserslist": "^4.28.8"
   }
 }

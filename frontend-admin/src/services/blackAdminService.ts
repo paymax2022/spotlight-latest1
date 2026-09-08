@@ -8,6 +8,7 @@
 
 import { env } from '@/config/env';
 import { operationKey } from './idempotency';
+import { resolveUseMock } from '@/config/useMock';
 import type {
   BlackDashboard,
   BlackPerk,
@@ -16,7 +17,9 @@ import type {
   BlackSettlement,
 } from '@/types/blackAdmin';
 
-const USE_MOCK = (process.env.NEXT_PUBLIC_LOYALTY_USE_MOCK ?? 'true').toLowerCase() !== 'false';
+export const USE_MOCK = resolveUseMock(process.env.NEXT_PUBLIC_LOYALTY_USE_MOCK);
+/** Named so the fixture banner can cite the exact switch. */
+export const USE_MOCK_ENV = 'NEXT_PUBLIC_LOYALTY_USE_MOCK';
 
 function adminBase(): string {
   return env.apiBaseUrl.replace(/\/api\/v1\/?$/, '/api/loyalty/admin/black');
@@ -148,7 +151,7 @@ export async function upsertPerk(perk: Partial<BlackPerk> & { id?: string }, not
       updated_by_masked: 'admin:you•••',
       updated_at: new Date().toISOString(),
     };
-    return { perk: merged, audit_id: aud(), message: `Perk "${merged.name}" saved. Redeemable closed-loop via single-use credential — never cash (NL-3/NL-4). Recorded to immutable audit (NL-12).` };
+    return { perk: merged, audit_id: aud(), message: `Fixture — nothing was saved. Perk "${merged.name}" saved. Redeemable closed-loop via single-use credential — never cash (NL-3/NL-4).` };
   }
   return sendJson<BlackPerkUpsertResult>(perk.id ? 'PATCH' : 'POST', perk.id ? `/perks/${perk.id}` : '/perks', { ...perk, note });
 }

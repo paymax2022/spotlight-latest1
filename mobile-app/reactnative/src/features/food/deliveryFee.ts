@@ -70,6 +70,43 @@ export interface DeliveryQuote {
   breakdown?: DeliveryFeeBreakdown;
 }
 
+/** How the delivery fee should be shown, and what to add to the estimate. */
+export interface DeliveryFeeView {
+  /** Kobo to include in the estimated total. 0 only when `known` is false. */
+  feeKobo: number;
+  /** True when this is a real number the SERVER returned. */
+  known: boolean;
+  /** True when the number is not distance-based, so it may move at checkout. */
+  estimated: boolean;
+}
+
+/**
+ * Turn a quote into what the summary should display.
+ *
+ * The rule this encodes: a quote is a SERVER price and is always used.
+ * `flat_fallback` means "not distance-based" — it does NOT mean "discard".
+ *
+ * Checkout used to require `!flat_fallback` before trusting the quote and
+ * otherwise fell back to `restaurant.deliveryFeeKobo`, a field with no database
+ * column and no DTO behind it, so the fallback was always 0. The server returns
+ * flat_fallback whenever the restaurant has no coordinates — 653 of 697 in the
+ * dev DB — so the normal path threw away a real ₦500 and rendered ₦0, while
+ * PlaceOrder went on charging the server-computed fee.
+ *
+ * With no quote at all the fee is UNKNOWN, not free: callers must render that
+ * as a placeholder, never as ₦0.
+ */
+export function resolveDeliveryFee(quote?: DeliveryQuote | null): DeliveryFeeView {
+  if (!quote || typeof quote.delivery_fee_kobo !== 'number' || !Number.isFinite(quote.delivery_fee_kobo)) {
+    return { feeKobo: 0, known: false, estimated: true };
+  }
+  return {
+    feeKobo: Math.trunc(quote.delivery_fee_kobo),
+    known: true,
+    estimated: Boolean(quote.flat_fallback),
+  };
+}
+
 /**
  * Great-circle (straight-line) distance between two lat/lng points in kilometres.
  * Mirrors restaurant.HaversineKm.

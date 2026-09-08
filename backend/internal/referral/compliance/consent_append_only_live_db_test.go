@@ -27,6 +27,8 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"spotlight/backend/internal/referral/compliance"
+
+	"spotlight/backend/internal/testsupport"
 )
 
 // consentType must be one of the values allowed by referral_consents_consent_type_check.
@@ -57,6 +59,7 @@ func seedConsentUser(t *testing.T, ctx context.Context, pool *pgxpool.Pool) stri
 		id, id+"@consent.seed.test"); err != nil {
 		t.Fatalf("seed user: %v", err)
 	}
+	testsupport.CleanupUser(t, pool, id)
 	return id
 }
 
@@ -80,7 +83,7 @@ func record(t *testing.T, ctx context.Context, repo *compliance.Repository, user
 // on after a user withdrew.
 func TestLiveDB_Consent_AppendOnly(t *testing.T) {
 	pool := liveConsentPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	repo := compliance.NewRepository(pool)
 	userID := seedConsentUser(t, ctx, pool)
@@ -141,7 +144,7 @@ func TestLiveDB_Consent_AppendOnly(t *testing.T) {
 // is how a grant/withdraw pair once read back as the withdrawal.
 func TestLiveDB_Consent_OrdersBySeqNotCreatedAt(t *testing.T) {
 	pool := liveConsentPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	repo := compliance.NewRepository(pool)
 	userID := seedConsentUser(t, ctx, pool)
@@ -191,7 +194,7 @@ func TestLiveDB_Consent_OrdersBySeqNotCreatedAt(t *testing.T) {
 // neither a bug nor a console session can rewrite history.
 func TestLiveDB_Consent_ImmutableByTrigger(t *testing.T) {
 	pool := liveConsentPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	repo := compliance.NewRepository(pool)
 	userID := seedConsentUser(t, ctx, pool)

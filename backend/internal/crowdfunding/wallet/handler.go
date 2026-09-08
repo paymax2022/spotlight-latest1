@@ -65,8 +65,8 @@ func (h *Handler) GetBankAccounts(c *gin.Context) {
 }
 
 // SubmitWithdrawal — POST /campaigns/:id/withdrawal-request.
-// Money mutation entry point: requires an Idempotency-Key. Creates a PENDING
-// withdrawal request only — no money is moved here (admin approves later).
+// MONEY-PATH: requires an Idempotency-Key and pays out immediately (no
+// separate admin-approval step — see Service.SubmitWithdrawal).
 func (h *Handler) SubmitWithdrawal(c *gin.Context) {
 	userID := c.GetString("user_id")
 	campaignID := c.Param("id")
@@ -85,11 +85,14 @@ func (h *Handler) SubmitWithdrawal(c *gin.Context) {
 
 	res, err := h.svc.SubmitWithdrawal(c.Request.Context(), userID, campaignID, idempotencyKey, in)
 	if err != nil {
-		if errors.Is(err, ErrCampaignNotFound) {
+		switch {
+		case errors.Is(err, ErrCampaignNotFound):
 			c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
-			return
+		case errors.Is(err, ErrLedgerUnavailable):
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": err.Error()})
+		default:
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		}
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 	// Object returned directly to match the client unwrap.

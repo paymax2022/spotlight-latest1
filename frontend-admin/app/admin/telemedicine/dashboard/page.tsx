@@ -3,6 +3,8 @@
 import { useEffect, useState } from 'react';
 import { getTelemedDashboard, formatNaira, type TelemedDashboard } from '@/services/telemedicineAdminService';
 import { PageHeader, TelemedTabs, Card, Kpi, Badge, DisclosureNote, StateBlock, btn, th, td, timeAgo } from '../_ui';
+import { FixtureBanner } from '../../_shared/ui';
+import { USE_MOCK, USE_MOCK_ENV } from '@/services/telemedicineAdminService';
 
 export default function TelemedDashboardPage() {
   const [data, setData] = useState<TelemedDashboard | null>(null);
@@ -24,6 +26,7 @@ export default function TelemedDashboardPage() {
         subtitle="Clinician roster, consultation throughput and consult-fee revenue across the telemedicine book."
         action={<button onClick={load} style={btn()}>Refresh</button>}
       />
+      <FixtureBanner active={USE_MOCK} envVar={USE_MOCK_ENV} />
       <TelemedTabs active="overview" />
 
       <DisclosureNote>

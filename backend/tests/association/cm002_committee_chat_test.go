@@ -53,7 +53,7 @@ func seedCommitteeMember(t *testing.T, ctx context.Context, pool *pgxpool.Pool, 
 
 func TestLiveDB_CM002_ExecutiveThread_NonExecForbidden(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	svc := newLiveAssociationService(pool)
 	ctx := context.Background()
 
@@ -97,7 +97,7 @@ func TestLiveDB_CM002_ExecutiveThread_NonExecForbidden(t *testing.T) {
 
 func TestLiveDB_CM002_CommitteeThread_NonMemberForbidden(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	svc := newLiveAssociationService(pool)
 	ctx := context.Background()
 
@@ -148,7 +148,7 @@ func TestLiveDB_CM002_CommitteeThread_NonMemberForbidden(t *testing.T) {
 
 func TestLiveDB_CM002_CommitteeThread_NullCommitteeFallsBackToOrg(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	svc := newLiveAssociationService(pool)
 	ctx := context.Background()
 
@@ -165,7 +165,7 @@ func TestLiveDB_CM002_CommitteeThread_NullCommitteeFallsBackToOrg(t *testing.T) 
 
 func TestLiveDB_CM002_GeneralThread_OrgMemberStillAllowed(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	svc := newLiveAssociationService(pool)
 	ctx := context.Background()
 

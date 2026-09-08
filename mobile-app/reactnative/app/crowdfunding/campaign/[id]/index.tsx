@@ -1,7 +1,8 @@
-import React from 'react';
+import React, { useEffect, useRef } from 'react';
 import { View, Text, ScrollView, Image, Pressable, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import {
   ArrowLeft, Heart, Share2, Flag, ChevronRight, ShieldCheck, Receipt,
   Target, Megaphone, Users, FileText, HelpCircle, Gift, MapPin, Snowflake,
@@ -19,8 +20,10 @@ import CampaignStatusBadge from '@/features/crowdfunding/components/CampaignStat
 import VerificationBadge from '@/features/crowdfunding/components/VerificationBadge';
 import ContributorRow from '@/features/crowdfunding/components/ContributorRow';
 import { useCampaign, useCampaignContributors, useToggleSave } from '@/features/crowdfunding/hooks/useCrowdfunding';
+import { recordCampaignEvent } from '@/features/crowdfunding/api/crowdfunding.api';
 import { formatNaira, relativeTime } from '@/features/crowdfunding/utils/crowdfundingFormatters';
 import type { CampaignStatus, DisbursementModel } from '@/features/crowdfunding/types/crowdfunding.types';
+import { HomeMenuButton } from '@/components/HomeMenu';
 
 const DISBURSEMENT_LABEL: Record<DisbursementModel, string> = {
   IMMEDIATE: 'Funds released after admin-approved withdrawal',
@@ -41,6 +44,18 @@ const NOTICE: Partial<Record<CampaignStatus, { icon: React.ReactNode; title: str
 export default function CampaignDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const { data: c, isLoading, isError, refetch } = useCampaign(id);
+
+  // Record ONE view per mounted campaign — this is what the creator's Views,
+  // Conversion and traffic-source figures are computed from. The ref guards
+  // against React re-running the effect (StrictMode double-invoke, a refetch
+  // changing deps) turning a single visit into several. `source` stays 'direct'
+  // here; a deep link that carries a channel should pass it through instead.
+  const viewRecorded = useRef<string | null>(null);
+  useEffect(() => {
+    if (!id || viewRecorded.current === id) return;
+    viewRecorded.current = id;
+    void recordCampaignEvent(id, 'VIEW', 'direct');
+  }, [id]);
   const contributors = useCampaignContributors(id);
   const toggleSave = useToggleSave();
 
@@ -51,7 +66,7 @@ export default function CampaignDetailScreen() {
     return (
       <SafeAreaView style={styles.safe}>
         <FloatingBack />
-        <StateView kind="error" icon="FileQuestion" title="Campaign not found" message="This campaign may have been removed." actionLabel="Go back" onAction={() => router.back()} />
+        <StateView kind="error" icon="FileQuestion" title="Campaign not found" message="This campaign may have been removed." actionLabel="Go back" onAction={() => goBack('/crowdfunding')} />
       </SafeAreaView>
     );
   }
@@ -71,7 +86,7 @@ export default function CampaignDetailScreen() {
             <View style={[styles.coverImg, styles.coverPlaceholder]} />
           )}
           <SafeAreaView edges={['top']} style={styles.coverBar}>
-            <Pressable onPress={() => router.back()} style={styles.circleBtn} accessibilityLabel="Go back">
+            <Pressable onPress={() => goBack('/crowdfunding')} style={styles.circleBtn} accessibilityLabel="Go back">
               <ArrowLeft size={20} color={Colors.onSurface} strokeWidth={2} />
             </Pressable>
             <View style={styles.coverActions}>
@@ -81,6 +96,7 @@ export default function CampaignDetailScreen() {
               <Pressable onPress={() => toggleSave.mutate({ id: c.id, saved: !c.saved })} style={styles.circleBtn} accessibilityLabel={c.saved ? 'Unsave' : 'Save'}>
                 <Heart size={18} color={c.saved ? Colors.error : Colors.onSurface} fill={c.saved ? Colors.error : 'transparent'} strokeWidth={2} />
               </Pressable>
+              <HomeMenuButton />
             </View>
           </SafeAreaView>
           {c.media.length > 1 && (
@@ -163,7 +179,24 @@ export default function CampaignDetailScreen() {
             <NavRow icon={<Gift size={18} color={'#B65A00'} strokeWidth={2} />} label="Reward tiers" sub={`${c.rewardTiers.length} tiers available`} onPress={() => link('rewards')} />
           )}
           {c.documents.length > 0 && (
-            <NavRow icon={<FileText size={18} color={Colors.secondary} strokeWidth={2} />} label="Documents" sub={`${c.documents.length} verified file${c.documents.length === 1 ? '' : 's'}`} onPress={() => link('documents')} />
+            <NavRow
+              icon={<FileText size={18} color={Colors.secondary} strokeWidth={2} />}
+              label="Documents"
+              // Counts files, and says "verified" only about the ones that ARE.
+              // This used to read "N verified file(s)" for every document on the
+              // campaign — the word was part of the template, not a fact about the
+              // rows. It went unnoticed while `documents` was hardcoded empty and
+              // the row never rendered; the first real attachment made the page
+              // tell backers a document had been checked when nothing had checked
+              // it. `verified` is granted by review, and the copy has to mean it.
+              sub={(() => {
+                const total = c.documents.length;
+                const verified = c.documents.filter((d) => d.verified).length;
+                const files = `${total} file${total === 1 ? '' : 's'}`;
+                return verified > 0 ? `${files} · ${verified} verified` : files;
+              })()}
+              onPress={() => link('documents')}
+            />
           )}
 
           {/* Updates preview */}
@@ -191,7 +224,12 @@ export default function CampaignDetailScreen() {
           </SectionBlock>
 
           {/* Comments & Q&A */}
-          <NavRow icon={<MessageCircle size={18} color={Colors.secondary} strokeWidth={2} />} label="Comments & Q&A" sub="Ask the creator a question" onPress={() => link('comments')} />
+          <NavRow
+            icon={<MessageCircle size={18} color={Colors.secondary} strokeWidth={2} />}
+            label="Comments & Q&A"
+            sub={c.commentCount ? `${c.commentCount} comment${c.commentCount === 1 ? '' : 's'}` : 'Ask the creator a question'}
+            onPress={() => link('comments')}
+          />
 
           {/* FAQ */}
           {c.faqs.length > 0 && (
@@ -253,9 +291,11 @@ export default function CampaignDetailScreen() {
 function FloatingBack() {
   return (
     <SafeAreaView edges={['top']} style={styles.floatingBack}>
-      <Pressable onPress={() => router.back()} style={styles.circleBtn} accessibilityLabel="Go back">
+      <Pressable onPress={() => goBack('/crowdfunding')} style={styles.circleBtn} accessibilityLabel="Go back">
         <ArrowLeft size={20} color={Colors.onSurface} strokeWidth={2} />
       </Pressable>
+      <View style={{ flex: 1 }} />
+      <HomeMenuButton />
     </SafeAreaView>
   );
 }

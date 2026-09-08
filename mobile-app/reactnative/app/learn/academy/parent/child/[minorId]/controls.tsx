@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { View, Text, Pressable, ScrollView, StyleSheet, Switch } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import { Clock, ShieldCheck, Check } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
@@ -41,7 +42,7 @@ export default function UsageControlsScreen() {
 
   const save = () => {
     if (!draft) return;
-    update.mutate({ minorId, input: draft }, { onSuccess: () => { setSaved(true); setTimeout(() => router.back(), 900); } });
+    update.mutate({ minorId, input: draft }, { onSuccess: () => { setSaved(true); setTimeout(() => goBack('/learn/academy/parent'), 900); } });
   };
 
   return (

@@ -47,6 +47,7 @@ concurrency:
 
 permissions:
   contents: write
+  pull-requests: write
 
 jobs:
   assign:
@@ -56,8 +57,18 @@ jobs:
         with:
           fetch-depth: 0
           ref: develop
+          # ADR_ASSIGN_TOKEN, when set, is a PAT belonging to someone who can
+          # bypass develop's protection, which lets the renumber land directly.
+          # Unset, this falls back to GITHUB_TOKEN and the PR path below — so the
+          # workflow works with no secret configured, and simply gets quieter if
+          # one is added later.
+          token: ${{ secrets.ADR_ASSIGN_TOKEN || github.token }}
 
       - name: Assign numbers and rewrite references
+        env:
+          # `gh` in the PR fallback authenticates from this. Same token the
+          # checkout used, so the PR is opened by whoever the push tried to be.
+          GH_TOKEN: ${{ secrets.ADR_ASSIGN_TOKEN || github.token }}
         run: |
           set -euo pipefail
           shopt -s nullglob
@@ -125,7 +136,7 @@ jobs:
           flight cannot claim the same slot. See .github/workflows/adr-assign.yml."
 
           # Another merge may have landed while we were working; rebase onto it
-          # and retry once rather than clobbering.
+          # and retry rather than clobbering.
           for attempt in 1 2 3; do
             if git push origin HEAD:develop; then
               echo "pushed on attempt $attempt"
@@ -135,5 +146,41 @@ jobs:
             git fetch origin develop
             git rebase origin/develop
           done
-          echo "::error::Could not push the ADR renumber after 3 attempts."
+
+          # Direct push refused. Expected without ADR_ASSIGN_TOKEN: develop
+          # carries 9 required status checks, and a renumber touches only
+          # docs/adr/**, which ci.yml's push paths-ignore skips — so the bot's
+          # commit can never acquire the checks its own target branch demands.
+          # (enforce_admins is false, which is why a human PAT gets through and
+          # GITHUB_TOKEN does not.)
+          #
+          # ci.yml's pull_request trigger deliberately carries NO paths-ignore,
+          # precisely so a docs-only PR can still collect those checks. So open a
+          # PR instead of failing: the assignment is preserved and lands with one
+          # click, rather than being recomputed and lost on every future merge.
+          branch="chore/adr-assign-${GITHUB_SHA::7}"
+          if ! git push -f origin "HEAD:refs/heads/${branch}"; then
+            echo "::error::Could not push the ADR renumber to develop or to ${branch}."
+            exit 1
+          fi
+
+          if gh pr create --base develop --head "$branch" \
+              --title "chore(adr): assign ADR numbers" \
+              --body "Automated ADR renumber from ${GITHUB_SHA}.
+
+          Opened as a PR because the direct push to \`develop\` was refused by
+          branch protection — see the notes in .github/workflows/adr-assign.yml.
+          Set an \`ADR_ASSIGN_TOKEN\` secret (a PAT that can bypass protection)
+          to have future renumbers land without this step."; then
+            echo "::notice::ADR renumber opened as a PR on ${branch} — merge it to complete the assignment."
+            exit 0
+          fi
+
+          # A PR may already exist for this branch; that is success, not failure.
+          if gh pr view "$branch" --json number >/dev/null 2>&1; then
+            echo "::notice::ADR renumber PR already open for ${branch}."
+            exit 0
+          fi
+
+          echo "::error::Renumber pushed to ${branch}, but the PR could not be opened. Open it manually against develop."
           exit 1

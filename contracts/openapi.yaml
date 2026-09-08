@@ -3656,9 +3656,10 @@ components:
     MktBoostTier:
       type: object
       properties:
-        tier: { type: string, enum: [start, vip, vip_gold, diamond, enterprise] }
+        tier: { type: string, description: "A preset package tier, or 'custom' for a date-range boost." }
         duration_days: { type: integer }
         price_kobo: { type: integer, format: int64 }
+        weight: { type: number, description: "Additive search-rank weight (ES function_score boost_mode:sum)." }
 
     MktBoost:
       type: object
@@ -3666,9 +3667,10 @@ components:
         id: { type: string, format: uuid }
         listing_id: { type: string, format: uuid }
         seller_id: { type: string, format: uuid }
-        tier: { type: string, enum: [start, vip, vip_gold, diamond, enterprise] }
+        tier: { type: string, description: "A preset package tier, or 'custom' for a date-range boost." }
         duration_days: { type: integer }
         price_kobo: { type: integer, format: int64 }
+        weight: { type: number, description: "Search-rank weight frozen onto this boost at purchase time." }
         ledger_charge_ref: { type: string }
         status: { $ref: '#/components/schemas/MktBoostStatus' }
         rejection_reason_code: { type: string, nullable: true }
@@ -3678,10 +3680,65 @@ components:
 
     MktBoostPurchaseRequest:
       type: object
-      required: [listing_id, tier]
+      required: [listing_id]
+      description: >
+        Exactly ONE of `tier` (a preset package) or `ends_at` (a custom
+        date-range boost, priced by the admin-set ₦/day rate — starts
+        immediately at purchase time, ends_at rounds UP to the next whole day)
+        is expected. GET /boosts/quote resolves either into the same price
+        before the caller commits to this request.
       properties:
         listing_id: { type: string, format: uuid }
-        tier: { type: string, enum: [start, vip, vip_gold, diamond, enterprise] }
+        tier: { type: string, description: "A preset package tier from GET /boosts/tiers. Omit for a custom date-range boost." }
+        ends_at: { type: string, format: date-time, description: "Custom-boost end date+time. Omit tier when set." }
+
+    MktBoostQuote:
+      type: object
+      description: Server-authoritative price preview for a would-be boost purchase (GET /boosts/quote).
+      properties:
+        mode: { type: string, enum: [package, custom] }
+        tier: { type: string, nullable: true }
+        duration_days: { type: integer }
+        price_kobo: { type: integer, format: int64 }
+        weight: { type: number }
+        starts_at: { type: string, format: date-time }
+        ends_at: { type: string, format: date-time }
+
+    MktBoostPackage:
+      type: object
+      description: Admin-editable boost package (ADM-002/MO-002).
+      properties:
+        tier: { type: string }
+        label: { type: string }
+        duration_days: { type: integer }
+        price_kobo: { type: integer, format: int64 }
+        weight: { type: number }
+        is_active: { type: boolean }
+        updated_at: { type: string, format: date-time, nullable: true }
+        updated_by: { type: string, format: uuid, nullable: true }
+
+    MktBoostPackageUpsertRequest:
+      allOf:
+        - $ref: '#/components/schemas/MktBoostPackage'
+        - type: object
+          required: [tier, label, duration_days, price_kobo, reason_code]
+          properties:
+            reason_code: { type: string, description: Mandatory; every pricing change is audited. }
+
+    MktBoostDailyRate:
+      type: object
+      description: The single admin-set ₦/day rate used to price a custom date-range boost.
+      properties:
+        daily_rate_kobo: { type: integer, format: int64 }
+        updated_at: { type: string, format: date-time, nullable: true }
+        updated_by: { type: string, format: uuid, nullable: true }
+
+    MktBoostDailyRateSetRequest:
+      type: object
+      required: [daily_rate_kobo, reason_code]
+      properties:
+        daily_rate_kobo: { type: integer, format: int64 }
+        reason_code: { type: string, description: Mandatory; every pricing change is audited. }
 
     MktSavedSearch:
       type: object
@@ -5873,6 +5930,11 @@ paths:
     get:
       operationId: fxGetBalances
       summary: Customer multi-currency balances
+      description: >-
+        Every wallet the customer holds. NGN is the platform's main wallet — the
+        same ledger-projected balance the wallet, checkout and other NGN modules
+        read — and is always present, even at zero. Other currencies are the FX
+        pots the customer has opened. Amounts are integer minor units.
       tags: [FX Orchestration]
       security: [{ bearerAuth: [] }]
       responses:
@@ -5894,7 +5956,12 @@ paths:
                         ledger: { type: integer, format: int64, description: posted minor units }
     post:
       operationId: fxAddWallet
-      summary: Open (provision) a zero-balance wallet for a currency (no ledger)
+      summary: Open (provision) a wallet for a currency (persisted, no ledger entry)
+      description: >-
+        Provisioning only — no value moves, so no Idempotency-Key is required and
+        re-opening an existing wallet is a no-op that returns its current balance
+        rather than resetting it. NGN needs no provisioning (it is the main
+        wallet). Currency must be one of NGN, USD, EUR, GBP, GHS, KES.
       tags: [FX Orchestration]
       security: [{ bearerAuth: [] }]
       requestBody:
@@ -5904,17 +5971,69 @@ paths:
             schema:
               type: object
               required: [currency]
-              properties: { currency: { type: string, description: ISO-4217 } }
+              properties:
+                currency:
+                  type: string
+                  description: ISO-4217
+                  enum: [NGN, USD, EUR, GBP, GHS, KES]
       responses:
         '201':
-          description: Provisioned wallet
+          description: Provisioned wallet, carrying its stored balance
           content:
             application/json:
               schema: { $ref: '#/components/schemas/FxWalletBalance' }
+        '400':
+          description: Missing currency, or a currency wallets are not offered in
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FxError' }
+  /api/v1/fx/webhooks/{provider}:
+    post:
+      operationId: fxProviderWebhook
+      summary: Provider async callback — status updates and inbound collections
+      description: >-
+        Signature-verified (HMAC-SHA256 over the raw body, `Webhook-Signature`;
+        Maplerad may send `X-Maplerad-Signature`). Verification FAILS CLOSED — an
+        unconfigured `*_WEBHOOK_SECRET` rejects every delivery rather than
+        accepting unsigned ones.
+
+
+        Transfer and conversion events update the record's status. A collection
+        event (`collection.successful` / `collection.success` /
+        `virtual_account.credit`) is an inbound DEPOSIT: it is matched to the
+        virtual account it was paid into and credits that account's owner, once,
+        deduped on the provider event id. An unmatched reference is acknowledged
+        and credits nothing — a deposit with no owner is never guessed at. A
+        payload currency that disagrees with the account's own currency is
+        refused.
+      tags: [FX Orchestration]
+      security: []
+      parameters:
+        - { name: provider, in: path, required: true, schema: { type: string, enum: [maplerad, eversend] } }
+        - { name: Webhook-Signature, in: header, required: false, schema: { type: string }, description: "HMAC-SHA256 of the raw body, hex-encoded." }
+        - { name: X-Maplerad-Signature, in: header, required: false, schema: { type: string }, description: Alternate header name used by Maplerad. }
+      requestBody:
+        required: true
+        description: Raw provider event payload.
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: true }
+      responses:
+        '200':
+          description: Received (acknowledged even when nothing matched, to stop provider retries)
+        '401':
+          description: Signature verification failed
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FxError' }
   /api/v1/fx/transactions:
     get:
       operationId: fxListTransactions
       summary: Unified ledger view (conversions, transfers, collections)
+      description: >-
+        Conversions, payouts and inbound collection DEPOSITS. Every row carries a
+        currency on both money legs; a collection is money arriving 1:1, so its
+        source and destination are equal.
       tags: [FX Orchestration]
       security: [{ bearerAuth: [] }]
       responses:
@@ -6673,6 +6792,22 @@ paths:
                     capped rolling allowance when FEATURE_CHECKOUT_TOPUP_TIER0 is
                     on. Any unrecognised value is treated as `wallet`, so the
                     weaker gate can only be reached by asking for it explicitly.
+                checkout_domain:
+                  type: string
+                  pattern: '^[a-z][a-z0-9_]*$'
+                  maxLength: 48
+                  example: vote_purchase
+                  description: >-
+                    What the checkout is buying — `vote_purchase`, `food_order`,
+                    `ride`, and so on. Because the card rail funds the wallet and
+                    then spends it (ADR-041), without this every module checkout
+                    is recorded as an indistinguishable wallet top-up: it is
+                    persisted on the intent, sent to the PSP, and written onto the
+                    ledger entry's description so a statement can say what the
+                    money bought. Ignored unless `purpose` is `checkout`, since
+                    standalone funding is not buying anything. Not an enum — the
+                    set grows with every module, and a value outside the pattern
+                    is dropped as unlabelled rather than failing the payment.
       responses:
         '200':
           description: Paystack payment initialized
@@ -6868,7 +7003,20 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404':
-          description: No Paymax user found for this identifier
+          description: |
+            No Paymax user found for this identifier. Phone identifiers are matched on the
+            10-digit national significant number, so "08159491618", "8159491618" and
+            "+2348159491618" all resolve to the same account; a 404 means no account carries
+            that number, not that the caller used the wrong format.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '409':
+          description: |
+            More than one account carries this phone number, so the recipient is ambiguous
+            (code `ambiguous_recipient`). The transfer is refused rather than resolved to an
+            arbitrary account — a wallet credit cannot be clawed back. Requires operator
+            intervention to de-duplicate the accounts.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
@@ -6929,7 +7077,17 @@ paths:
               schema: { $ref: '#/components/schemas/Error' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404':
-          description: Recipient not found
+          description: |
+            Recipient not found. Phone identifiers are matched on the 10-digit national
+            significant number, so every spelling of one number resolves to one account.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '409':
+          description: |
+            More than one account carries this phone number (code `ambiguous_recipient`).
+            The transfer is refused before any debit — no money moves, and no ledger entry
+            is posted. Paying an arbitrary one of the matching accounts is unrecoverable.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
@@ -13198,6 +13356,26 @@ paths:
 
   # ── Offers ─────────────────────────────────────────────────────────────
   /v1/marketplace/offers:
+    get:
+      operationId: mktListOffers
+      summary: Negotiation history for a listing
+      description: >-
+        Participant-scoped: the listing's seller sees every offer on it, any
+        other caller sees only their own.
+      tags: [Marketplace]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: listing_id, in: query, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: Offers on the listing, oldest first
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/MktOffer' }
+        '400': { $ref: '#/components/responses/MktBadRequest' }
+        '401': { $ref: '#/components/responses/MktUnauthorized' }
     post:
       operationId: mktCreateOffer
       summary: Make an offer on a listing
@@ -13288,6 +13466,26 @@ paths:
           content:
             application/json:
               schema: { type: array, items: { $ref: '#/components/schemas/MktBoostTier' } }
+  /v1/marketplace/boosts/quote:
+    get:
+      operationId: mktGetBoostQuote
+      summary: Preview a boost's authoritative price before purchasing
+      description: >
+        Pass EITHER `tier` (a preset package) OR `ends_at` (a custom
+        date-range boost, RFC3339). Public — no auth required, pricing info
+        only. PurchaseBoost resolves the SAME quote server-side, so the price
+        shown here and what is actually charged can never drift.
+      tags: [Marketplace]
+      parameters:
+        - { name: tier, in: query, required: false, schema: { type: string } }
+        - { name: ends_at, in: query, required: false, schema: { type: string, format: date-time } }
+      responses:
+        '200':
+          description: Computed quote
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MktBoostQuote' }
+        '400': { $ref: '#/components/responses/MktBadRequest' }
   /v1/marketplace/boosts:
     post:
       operationId: mktPurchaseBoost
@@ -13603,6 +13801,79 @@ paths:
         '403': { $ref: '#/components/responses/MktForbidden' }
   # Admin orders/aging REMOVED (ADR-023): no orders to age. MktOrder schema +
   # orders.aging RBAC perm retained (additive-only), unreachable.
+
+  # ── Boost pricing (ADM-002/MO-002) ─────────────────────────────────────
+  /v1/marketplace/admin/pricing/boosts:
+    get:
+      operationId: mktAdminListBoostPackages
+      summary: List boost packages (admin pricing console)
+      tags: [MarketplaceAdmin]
+      security: [{ bearerAuth: [] }]
+      description: "Requires marketplace.admin.pricing"
+      responses:
+        '200':
+          description: Boost package list
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: '#/components/schemas/MktBoostPackage' } }
+        '403': { $ref: '#/components/responses/MktForbidden' }
+    put:
+      operationId: mktAdminUpsertBoostPackage
+      summary: Create or edit a boost package's price/duration/weight/active state
+      tags: [MarketplaceAdmin]
+      security: [{ bearerAuth: [] }]
+      description: >
+        Requires marketplace.admin.pricing. reason_code mandatory, every
+        change audited (mkt_admin_audit_log). Applies to NEW purchases only —
+        an already-purchased boost keeps its bought terms (ADM-001).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/MktBoostPackageUpsertRequest' }
+      responses:
+        '200':
+          description: Saved package
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MktBoostPackage' }
+        '400': { $ref: '#/components/responses/MktBadRequest' }
+        '403': { $ref: '#/components/responses/MktForbidden' }
+  /v1/marketplace/admin/pricing/boosts/daily-rate:
+    get:
+      operationId: mktAdminGetBoostDailyRate
+      summary: Get the custom-range boost ₦/day rate
+      tags: [MarketplaceAdmin]
+      security: [{ bearerAuth: [] }]
+      description: "Requires marketplace.admin.pricing"
+      responses:
+        '200':
+          description: Current daily rate
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MktBoostDailyRate' }
+        '403': { $ref: '#/components/responses/MktForbidden' }
+    put:
+      operationId: mktAdminSetBoostDailyRate
+      summary: Set the custom-range boost ₦/day rate
+      tags: [MarketplaceAdmin]
+      security: [{ bearerAuth: [] }]
+      description: >
+        Requires marketplace.admin.pricing. reason_code mandatory, every
+        change audited. Applies to NEW custom-boost purchases only.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/MktBoostDailyRateSetRequest' }
+      responses:
+        '200':
+          description: Updated rate
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MktBoostDailyRate' }
+        '400': { $ref: '#/components/responses/MktBadRequest' }
+        '403': { $ref: '#/components/responses/MktForbidden' }
 
   # ── Trust & Account gap endpoints (Mobile-UX-Flows.md §28–34; ADR-021) ──
   # Non-money metadata (no Idempotency-Key). Bearer auth; owner-scoped (OLA).
@@ -14378,6 +14649,49 @@ paths:
               schema: { $ref: '#/components/schemas/SuccessResponse' }
         '400': { description: reason is required }
         '403': { description: Missing referral.admin.case (Support Lead) }
+  /api/v1/admin/referrals/{referrerId}/code:
+    put:
+      operationId: setReferralReferrerCode
+      summary: Set a referrer's referral code (admin-chosen, must be unique)
+      description: >-
+        Replaces a referrer's generated code with a chosen one, 3-5 characters of
+        A-Z0-9 (normalised to uppercase). Returns 409 when the code already
+        belongs to another user. Uniqueness is checked across BOTH referral_links
+        and the legacy finance_referral_codes, because attribution resolves
+        referral_links first and falls back to the legacy table — a code
+        duplicated across the two would silently redirect the legacy owner's
+        referrals to the new holder.
+      tags: [Referral Admin]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: referrerId, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [code]
+              properties:
+                code:
+                  type: string
+                  minLength: 3
+                  maxLength: 5
+                  pattern: '^[A-Za-z0-9]{3,5}$'
+                  example: SALES
+      responses:
+        '200':
+          description: Code updated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code: { type: string, example: SALES }
+                  referrer_id: { type: string, format: uuid }
+        '400': { description: 'Code is empty, wrong length, or contains characters outside A-Z0-9' }
+        '403': { description: Missing referral.admin.case }
+        '409': { description: That referral code is already in use }
   /api/v1/admin/referrals/milestones-log:
     get:
       operationId: getReferralMilestonesLog

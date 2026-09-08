@@ -23,8 +23,10 @@ const allowedExtensions = new Set([
   '.pptx',
 ]);
 
-// Durable storage for registration uploads lives in Cloudflare R2 (bucket
-// `spotlight-open-mic`). The registration client posts the file buffer in a
+// Durable storage for registration uploads lives in Cloudflare R2, in whichever
+// bucket `R2_BUCKET`/`R2_BUCKET_NAME` names — src/lib/storage/r2.ts resolves it
+// and throws 'R2 storage is not configured.' when any piece is missing, so there
+// is no default to go stale. The registration client posts the file buffer in a
 // single multipart request, so we proxy that buffer to R2 here via a presigned
 // PUT, then hand back a stable retrieval route as `previewUrl` (it issues a
 // short-lived presigned GET on demand — see `[fileKey]/route.ts`).

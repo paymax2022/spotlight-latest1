@@ -40,15 +40,33 @@ type CategoryDTO struct {
 	CampaignCount int    `json:"campaignCount"`
 }
 
-// AdminStats matches the admin CfPlatformStats (subset that we can derive live).
+// CategoryStat is one row of AdminStats.CategoryBreakdown.
+type CategoryStat struct {
+	Category   string `json:"category"`
+	Count      int    `json:"count"`
+	RaisedKobo int64  `json:"raisedKobo"`
+}
+
+// AdminStats matches the admin CfPlatformStats. Every field is derived live
+// from a real table; PaymentSuccessRate is the one exception — there is no
+// payment-attempt/failure log for crowdfunding contributions (only successful
+// contributions are ever inserted), so it stays 0 rather than being computed
+// from an unrelated proxy (e.g. refund rate) that would misrepresent it.
 type AdminStats struct {
-	TotalCampaigns      int   `json:"totalCampaigns"`
-	ActiveCampaigns     int   `json:"activeCampaigns"`
-	PendingReview       int   `json:"pendingReview"`
-	RejectedCampaigns   int   `json:"rejectedCampaigns"`
-	TotalRaisedKobo     int64 `json:"totalRaisedKobo"`
-	PlatformRevenueKobo int64 `json:"platformRevenueKobo"`
-	EscrowKobo          int64 `json:"escrowKobo"`
+	TotalCampaigns         int            `json:"totalCampaigns"`
+	ActiveCampaigns        int            `json:"activeCampaigns"`
+	PendingReview          int            `json:"pendingReview"`
+	RejectedCampaigns      int            `json:"rejectedCampaigns"`
+	TotalRaisedKobo        int64          `json:"totalRaisedKobo"`
+	PlatformRevenueKobo    int64          `json:"platformRevenueKobo"`
+	EscrowKobo             int64          `json:"escrowKobo"`
+	WithdrawalsPending     int            `json:"withdrawalsPending"`
+	WithdrawalsPendingKobo int64          `json:"withdrawalsPendingKobo"`
+	RefundRequests         int            `json:"refundRequests"`
+	FraudAlerts            int            `json:"fraudAlerts"`
+	OpenTickets            int            `json:"openTickets"`
+	PaymentSuccessRate     float64        `json:"paymentSuccessRate"` // 0-100; see type comment
+	CategoryBreakdown      []CategoryStat `json:"categoryBreakdown"`
 }
 
 // reviewRow is the internal row scanned for list/detail queries.
@@ -80,6 +98,63 @@ type SubmitCampaignRequest struct {
 	DisbursementModel string  `json:"disbursementModel"`
 	CoverImageURL     *string `json:"coverImageUrl"`
 	SubmitForReview   bool    `json:"submitForReview"`
+	// Milestones the wizard collected. Until now the DTO accepted none of them, so
+	// the creator filled in a funding plan and the server dropped it on the floor —
+	// the client's own comment in crowdfunding.api.ts says exactly that.
+	Milestones []SubmitMilestoneRequest `json:"milestones"`
+	// Budget lines and reward tiers, the other two things the wizard collected and
+	// the server used to discard.
+	Budget      []SubmitBudgetItemRequest `json:"budget"`
+	RewardTiers []SubmitRewardTierRequest `json:"rewardTiers"`
+	// Who the campaign is for. Optional — plenty of campaigns raise for the
+	// creator themselves and the wizard lets them say so explicitly.
+	Beneficiary *SubmitBeneficiaryRequest `json:"beneficiary"`
+}
+
+// SubmitBeneficiaryRequest is the wizard's beneficiary step.
+//
+// `verified` is deliberately NOT a field. A backer reads that badge as "somebody
+// checked who this money is for"; it is granted by review, never asserted by the
+// person asking for the money — the same rule as a self-declared RELEASED
+// milestone or a self-declared reward claim count.
+type SubmitBeneficiaryRequest struct {
+	Name         string  `json:"name"`
+	Relationship string  `json:"relationship"`
+	Description  *string `json:"description"`
+}
+
+// SubmitBudgetItemRequest is one "use of funds" line from the create wizard.
+type SubmitBudgetItemRequest struct {
+	Label      string  `json:"label"`
+	AmountKobo int64   `json:"amountKobo"`
+	Note       *string `json:"note"`
+}
+
+// SubmitRewardTierRequest is one reward tier from the create wizard.
+//
+// `claimed` is deliberately NOT a field. How many backers took a tier is a fact
+// about what happened, derived from cf_reward_backers; letting a campaign state it
+// at creation would let it advertise social proof it has not earned, the same way
+// a self-declared RELEASED milestone would advertise money that never moved.
+type SubmitRewardTierRequest struct {
+	Title             string  `json:"title"`
+	AmountKobo        int64   `json:"amountKobo"`
+	Description       string  `json:"description"`
+	EstimatedDelivery *string `json:"estimatedDelivery"`
+	Limit             *int    `json:"limit"`
+	RequiresShipping  bool    `json:"requiresShipping"`
+}
+
+// SubmitMilestoneRequest is one milestone from the create wizard.
+//
+// Status is accepted but CONSTRAINED: see submitMilestoneStatus. RELEASED and
+// PENDING_REVIEW are states a milestone earns through review and disbursement,
+// never states a creator may declare about their own campaign.
+type SubmitMilestoneRequest struct {
+	Title      string  `json:"title"`
+	TargetKobo int64   `json:"targetKobo"`
+	Status     string  `json:"status"`
+	DueAt      *string `json:"dueAt"`
 }
 
 // ReviewDecisionRequest is the body for admin POST /campaigns/:id/decision.

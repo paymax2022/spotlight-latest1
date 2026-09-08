@@ -6,6 +6,7 @@ import React, { useMemo } from 'react';
 import { View, Text, StyleSheet, Pressable, FlatList, RefreshControl } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import { ArrowLeft, Bell, Tag, HandCoins, MessageCircle, TrendingDown, Search, Zap, Star, CheckCheck } from 'lucide-react-native';
 import { Typography } from '@/constants/typography';
 import { Spacing } from '@/constants/spacing';
@@ -13,6 +14,7 @@ import { Radius } from '@/constants/radius';
 import { MarketColors } from '@/features/marketplace';
 import { useNotifications, useMarkNotificationRead, useMarkAllNotificationsRead } from '@/features/marketplace/api/account.hooks';
 import type { MktNotification, MktNotificationType } from '@/features/marketplace/api/account.api';
+import { HomeMenuButton } from '@/components/HomeMenu';
 
 const ICON: Record<MktNotificationType, typeof Bell> = {
   listing_status: Tag,
@@ -50,14 +52,17 @@ export default function NotificationsFeedScreen() {
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
       <View style={styles.header}>
-        <Pressable onPress={() => router.back()} hitSlop={12} accessibilityLabel="Back"><ArrowLeft size={24} color={MarketColors.text} /></Pressable>
+        <Pressable onPress={() => goBack('/marketplace')} hitSlop={12} accessibilityLabel="Back"><ArrowLeft size={24} color={MarketColors.text} /></Pressable>
         <Text style={styles.headerTitle}>Notifications</Text>
-        {unread > 0 ? (
-          <Pressable onPress={() => markAll.mutate()} hitSlop={8} accessibilityLabel="Mark all read" style={styles.markAll}>
-            <CheckCheck size={16} color={MarketColors.brand} />
-            <Text style={styles.markAllText}>All read</Text>
-          </Pressable>
-        ) : <View style={{ width: 24 }} />}
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+          {unread > 0 ? (
+            <Pressable onPress={() => markAll.mutate()} hitSlop={8} accessibilityLabel="Mark all read" style={styles.markAll}>
+              <CheckCheck size={16} color={MarketColors.brand} />
+              <Text style={styles.markAllText}>All read</Text>
+            </Pressable>
+          ) : <View style={{ width: 24 }} />}
+          <HomeMenuButton />
+        </View>
       </View>
 
       {isLoading ? (

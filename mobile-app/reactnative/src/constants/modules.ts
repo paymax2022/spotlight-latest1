@@ -14,6 +14,7 @@
 
 import { Colors } from './colors';
 
+
 export type ServiceCategory =
   | 'financial'
   | 'investment'
@@ -21,6 +22,7 @@ export type ServiceCategory =
   | 'lifestyle'
   | 'health'
   | 'contest'
+  | 'academy'
   | 'property'
   | 'community';
 
@@ -98,7 +100,6 @@ export const SERVICE_MODULES: ServiceModule[] = [
   { id: 'crypto',          label: 'Crypto',          icon: 'Bitcoin',         iconColor: '#F7931A',         bgColor: 'rgba(247,147,26,0.10)', route: '/crypto',            category: 'investment', badge: 'New' },
   { id: 'learn',           label: 'Learn',           icon: 'GraduationCap',   iconColor: Colors.teal,       bgColor: Colors.iconBgTeal,   route: '/learn',                category: 'investment' },
   { id: 'invest-ai',       label: 'Invest AI',       icon: 'Sparkles',        iconColor: Colors.secondary,  bgColor: Colors.iconBgBlue,   route: '/invest-ai',            category: 'investment', badge: 'New' },
-  { id: 'academy',         label: 'StudyHub',        icon: 'BookOpenText',    iconColor: Colors.gold,       bgColor: Colors.iconBgGold,   route: '/learn/academy',        category: 'investment', badge: 'New' },
   { id: 'spotlight-wealth', label: 'Spotlight Wealth', icon: 'Trophy',        iconColor: Colors.gold,       bgColor: Colors.iconBgGold,   route: '/spotlight-wealth',     category: 'investment' },
   { id: 'fractionalre',    label: 'Real Estate Invest', icon: 'Building',     iconColor: Colors.teal,       bgColor: Colors.iconBgTeal,   route: '/fractionalre',         category: 'investment', badge: 'New' },
   // AI Trading — custodial, paper/eligibility-gated managed fund (member surface).
@@ -132,6 +133,18 @@ export const SERVICE_MODULES: ServiceModule[] = [
   // Naija Driver — the Arena competition engine (driver challenge). Routes to the
   // Arena spectator/contestant home (app/arena).
   { id: 'naija-driver',    label: 'Naija Driver',    icon: 'CarFront',        iconColor: '#F97316',         bgColor: 'rgba(249,115,22,0.08)', route: '/arena',            category: 'contest', badge: 'New' },
+
+  // ── Academy ───────────────────────────────────────────────────────────────────
+  // Film Academy used to sit under Contest, which described how it is RUN (an
+  // application + selection cycle) rather than what it IS. Learning now has its
+  // own band, shared with StudyHub, which moved here out of Investment.
+  //
+  // Film Academy is a NATIVE screen. The app and the web app are separate
+  // interfaces: a tile must never hand the user off to a browser. The screen
+  // calls the same academy endpoints the web uses (/api/academy/*) — sharing an
+  // API is fine, sharing an interface is not.
+  { id: 'film-academy',    label: 'Film Academy',    icon: 'Clapperboard',    iconColor: Colors.gold,       bgColor: Colors.iconBgGold,   route: '/film-academy',         category: 'academy', badge: 'New' },
+  { id: 'academy',         label: 'StudyHub',        icon: 'BookOpenText',    iconColor: Colors.gold,       bgColor: Colors.iconBgGold,   route: '/learn/academy',        category: 'academy', badge: 'New' },
 
   // ── Property Management (super-module) ────────────────────────────────────────
   // Per the new PRD, Property Management is a single top-level parent. Its four

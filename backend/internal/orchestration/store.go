@@ -3,6 +3,7 @@ package orchestration
 import (
 	"context"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 )
@@ -56,6 +57,20 @@ type Store interface {
 
 	// SeedBalance credits an opening balance (dev/onboarding helper).
 	SeedBalance(ctx context.Context, customerID, currency string, amountMinor int64) error
+
+	// OpenWallet makes a currency visible to the customer at a zero balance, so
+	// the wallet survives a refetch instead of being a response the server never
+	// remembered. Re-opening an existing wallet is a no-op, never a reset.
+	OpenWallet(ctx context.Context, customerID, currency string) error
+
+	// VirtualAccountByProviderRef resolves the virtual account an inbound deposit
+	// was paid into. ok=false means nothing matched — the caller must NOT credit,
+	// because an unmatched deposit has no owner and no currency to credit.
+	VirtualAccountByProviderRef(ctx context.Context, provider, ref string) (*VirtualAccount, bool, error)
+
+	// ApplyCollection credits an inbound deposit and records it, atomically.
+	// applied=false means a redelivered webhook that was already credited.
+	ApplyCollection(ctx context.Context, c *CollectionCredit) (applied bool, err error)
 }
 
 // --- in-memory implementation (dev/test; production uses the pgx store) ---
@@ -68,14 +83,18 @@ type memStore struct {
 	collections []*VirtualAccount
 	convByIdem  map[string]*Conversion
 	trByIdem    map[string]*Transfer
+	// collectionByEvent dedupes redelivered collection webhooks by
+	// provider:provider_event_id, mirroring the SQL store's unique index.
+	collectionByEvent map[string]*CollectionCredit
 }
 
 // NewMemStore returns an in-memory Store.
 func NewMemStore() Store {
 	return &memStore{
-		balances:   map[string]map[string]int64{},
-		convByIdem: map[string]*Conversion{},
-		trByIdem:   map[string]*Transfer{},
+		balances:          map[string]map[string]int64{},
+		convByIdem:        map[string]*Conversion{},
+		trByIdem:          map[string]*Transfer{},
+		collectionByEvent: map[string]*CollectionCredit{},
 	}
 }
 
@@ -114,6 +133,19 @@ func (m *memStore) SeedBalance(_ context.Context, customer, currency string, amt
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.credit(customer, currency, amt)
+	return nil
+}
+
+func (m *memStore) OpenWallet(_ context.Context, customer, currency string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	cur := strings.ToUpper(strings.TrimSpace(currency))
+	if m.balances[customer] == nil {
+		m.balances[customer] = map[string]int64{}
+	}
+	if _, ok := m.balances[customer][cur]; !ok {
+		m.balances[customer][cur] = 0
+	}
 	return nil
 }
 
@@ -158,6 +190,38 @@ func (m *memStore) TransferByIdem(_ context.Context, key string) (*Transfer, boo
 	defer m.mu.Unlock()
 	t, ok := m.trByIdem[key]
 	return t, ok, nil
+}
+
+func (m *memStore) VirtualAccountByProviderRef(_ context.Context, provider, ref string) (*VirtualAccount, bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if strings.TrimSpace(ref) == "" {
+		return nil, false, nil
+	}
+	for _, va := range m.collections {
+		if va.Provider == provider && (va.ProviderRef == ref || va.Details["account_number"] == ref) {
+			return va, true, nil
+		}
+	}
+	return nil, false, nil
+}
+
+func (m *memStore) ApplyCollection(_ context.Context, c *CollectionCredit) (bool, error) {
+	if c.AmountMinor <= 0 {
+		return false, NewError(ErrInvalidRequest, "invalid_amount", "Collection amount must be a positive minor-unit value.")
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	key := c.Provider + ":" + c.ProviderEventID
+	if m.collectionByEvent == nil {
+		m.collectionByEvent = map[string]*CollectionCredit{}
+	}
+	if _, seen := m.collectionByEvent[key]; seen {
+		return false, nil // redelivery
+	}
+	m.collectionByEvent[key] = c
+	m.credit(c.CustomerID, strings.ToUpper(c.Currency), c.AmountMinor)
+	return true, nil
 }
 
 func (m *memStore) SaveCollection(_ context.Context, va *VirtualAccount) error {

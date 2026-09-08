@@ -4,6 +4,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import { ArrowLeft, Clock, XCircle, RefreshCw } from 'lucide-react-native';
 import { useQuery } from '@tanstack/react-query';
 import PrimaryButton from '@/components/PrimaryButton';
@@ -13,6 +14,7 @@ import { Spacing } from '@/constants/spacing';
 import { Typography } from '@/constants/typography';
 import { shadow1 } from '@/constants/shadows';
 import { getUtilityPaystackIntent } from '@/api/billing.api';
+import { HomeMenuButton } from '@/components/HomeMenu';
 
 // Resolver screen for an in-app Paystack bill payment. A utility_paystack_intents
 // row is confirmed asynchronously by the Paystack webhook, which sets its status
@@ -49,9 +51,12 @@ export default function PaystackIntentScreen() {
           <ArrowLeft size={22} color={Colors.primary} strokeWidth={2.2} />
         </Pressable>
         <Text style={styles.topTitle}>Payment Status</Text>
-        <Pressable onPress={() => refetch()} style={styles.iconBtn}>
-          <RefreshCw size={20} color={Colors.primary} strokeWidth={2} />
-        </Pressable>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+          <Pressable onPress={() => refetch()} style={styles.iconBtn}>
+            <RefreshCw size={20} color={Colors.primary} strokeWidth={2} />
+          </Pressable>
+          <HomeMenuButton />
+        </View>
       </View>
 
       <View style={styles.content}>
@@ -93,7 +98,7 @@ export default function PaystackIntentScreen() {
         <View style={styles.actions}>
           {failed ? (
             <>
-              <PrimaryButton label="Try Again" onPress={() => router.back()} />
+              <PrimaryButton label="Try Again" onPress={() => goBack('/services')} />
               <PrimaryButton
                 label="View Transactions"
                 variant="secondary"

@@ -68,13 +68,25 @@ func NewRouter(cfg config.Config) *gin.Engine {
 		auth.GET("/health", health.GenericHealth)
 
 		apiAuth := r.Group("/api/auth")
-		apiAuth.POST("/register", authHandler.Register)
-		apiAuth.POST("/login", authHandler.Login)
+
+		// These endpoints are unauthenticated and internet-facing, and had NO
+		// throttle: account lockout defends one account being guessed at, but does
+		// nothing about a client sweeping many accounts. Password reset gets a
+		// tighter, hourly budget because each attempt spends from the project's
+		// small verification-email quota, so flooding it is a denial of service
+		// against everyone else's sign-up.
+		loginLimiter := middleware.NewAuthRateLimiter(cfg.AuthRateLimitPerMin, time.Minute)
+		resetLimiter := middleware.NewAuthRateLimiter(cfg.AuthResetRateLimitPerHour, time.Hour)
+
+		apiAuth.POST("/register", loginLimiter.Middleware(), authHandler.Register)
+		apiAuth.POST("/login", loginLimiter.Middleware(), authHandler.Login)
 		apiAuth.POST("/logout", authHandler.Logout)
-		apiAuth.POST("/request-password-reset", authHandler.RequestPasswordReset)
-		apiAuth.POST("/reset-password", authHandler.ResetPassword)
-		apiAuth.GET("/verify-email", authHandler.VerifyEmail)
-		apiAuth.POST("/resend-verification-link", authHandler.ResendVerificationLink)
+		apiAuth.POST("/request-password-reset", resetLimiter.Middleware(), authHandler.RequestPasswordReset)
+		apiAuth.POST("/reset-password", resetLimiter.Middleware(), authHandler.ResetPassword)
+		// Email verification is OTP CODES, not links (decided 2026-08-25). The former
+		// GET /verify-email and POST /resend-verification-link were removed: both were
+		// backed by no-op service methods that reported success without verifying
+		// anything, and neither had a single caller in web, mobile, or the contract.
 		apiAuthProtected := apiAuth.Group("")
 		apiAuthProtected.Use(middleware.RequireAuthContextWithSessions(supabase, rbacService, sessionService, cfg.FeatureSessionHardeningEnabled))
 		apiAuthProtected.GET("/me", authHandler.Me)
@@ -190,7 +202,7 @@ func NewRouter(cfg config.Config) *gin.Engine {
 		reports.GET("/buckets", stem.ReportBuckets)
 
 		adminGroup := v1.Group("/admin")
-		adminGroup.Use(middleware.RequireAdmin(cfg.AdminAPIKey))
+		adminGroup.Use(middleware.RequireAdmin(cfg.AdminAPIKey, cfg.AppEnv))
 		adminGroup.GET("/menu-counts", admin.MenuCounts)
 		adminGroup.GET("/leads", leads.List)
 		adminGroup.PATCH("/leads/:id", leads.UpdateStatus)
@@ -333,6 +345,15 @@ func NewRouter(cfg config.Config) *gin.Engine {
 		}
 	}
 
+	// Signup referral attribution. Wired HERE rather than where authHandler is
+	// built, because it needs the shared pool that is only created above — the
+	// same ordering constraint WithSessions works around.
+	if sharedPool != nil {
+		if attributor := NewSignupAttributor(sharedPool); attributor != nil {
+			authHandler.WithReferralAttribution(attributor)
+		}
+	}
+
 	// Shared Redis client for idempotency fast-paths (arena ledger, etc.). nil when
 	// REDIS_URL is unset or the connection fails — callers fall back to DB-unique
 	// constraints, so Redis is a latency optimization, never a correctness dependency.
@@ -368,6 +389,16 @@ func NewRouter(cfg config.Config) *gin.Engine {
 		v1 := r.Group("/api/v1")
 		adminStore := handlers.NewAdminStore(sharedPool)
 		adminConsoleHandler := handlers.NewAdminConsoleHandler(adminStore)
+
+		// Cross-module operations overview for the web console dashboard.
+		// Deliberately on RequireAdmin (the x-admin-api-key gate that
+		// frontend-admin's server-side proxy attaches) rather than the
+		// X-Admin-Role header the mobile admin console uses — the browser
+		// never holds the key, and the proxy is what supplies it.
+		overviewGroup := v1.Group("/admin")
+		overviewGroup.Use(middleware.RequireAdmin(cfg.AdminAPIKey, cfg.AppEnv))
+		overviewGroup.GET("/overview", handlers.NewAdminOverviewHandler(sharedPool).Overview)
+
 		adminConsole := v1.Group("/admin")
 		adminConsole.Use(middleware.RequireAdminConsoleRole())
 		adminConsole.GET("/dashboard", adminConsoleHandler.Dashboard)

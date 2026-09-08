@@ -53,7 +53,7 @@ export default function AdminCompetitionsPage() {
         subtitle="Manage competitions, participants, results, and voting across all contest types."
         actions={
           <div style={{ display: 'flex', gap: 8 }}>
-            <Link href="/admin/competitions/list">
+            <Link href="/admin/competitions/create">
               <Button variant="primary">Create Contest</Button>
             </Link>
             <Link href="/admin/competitions/settings">
@@ -118,14 +118,14 @@ export default function AdminCompetitionsPage() {
             </div>
           </Link>
 
-          <Link href="/admin/competitions/open-mic" style={{ textDecoration: 'none' }}>
+          <Link href="/admin/open-mic" style={{ textDecoration: 'none' }}>
             <div style={{ padding: 16, border: `1px solid ${colors.border}`, borderRadius: '0.5rem', background: tint(colors.secondary, 0.04), cursor: 'pointer', transition: 'all .15s' }}
               onMouseEnter={(e) => e.currentTarget.style.background = tint(colors.secondary, 0.08)}
               onMouseLeave={(e) => e.currentTarget.style.background = tint(colors.secondary, 0.04)}
             >
               <div style={{ fontSize: 20, marginBottom: 8 }}>🎤</div>
-              <div style={{ fontSize: 14, fontWeight: 600, color: colors.text, marginBottom: 4 }}>Open Mic Editions</div>
-              <div style={{ fontSize: 12, color: colors.muted }}>Create and manage editions</div>
+              <div style={{ fontSize: 14, fontWeight: 600, color: colors.text, marginBottom: 4 }}>Open Mic</div>
+              <div style={{ fontSize: 12, color: colors.muted }}>Contests, applications, submissions, finale &amp; payments</div>
             </div>
           </Link>
 

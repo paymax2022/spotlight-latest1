@@ -11,13 +11,14 @@
 // (HL-8 / NDPA). The doctor never sees the MDCN portal.
 
 import { env } from '@/config/env';
+import { resolveUseMock } from '@/config/useMock';
 import type {
   MdcnReviewRecord,
   MdcnQueueItem,
   MdcnDecisionInput,
 } from '@/types/healthDoctorVerification';
 
-const USE_MOCK = (process.env.NEXT_PUBLIC_HEALTH_USE_MOCK ?? 'true').toLowerCase() !== 'false';
+const USE_MOCK = resolveUseMock(process.env.NEXT_PUBLIC_HEALTH_USE_MOCK);
 
 function adminBase(): string {
   return env.apiBaseUrl.replace(/\/api\/v1\/?$/, '/api/health/doctor/admin');
@@ -118,22 +119,10 @@ export async function getDoctorVerificationDocUrl(docId: string): Promise<{ url:
 }
 
 export async function decideDoctorVerification(id: string, input: MdcnDecisionInput): Promise<MdcnReviewRecord> {
-  if (USE_MOCK) {
-    await delay();
-    const base = RECORDS.find((r) => r.verificationId === id) ?? RECORDS[0];
-    const status: MdcnReviewRecord['status'] =
-      input.action === 'approve' ? 'approved'
-      : input.action === 'reject' ? 'rejected'
-      : 'needs_info';
-    return {
-      ...base,
-      status,
-      discipline: input.action === 'approve' ? (input.discipline ?? base.discipline) : base.discipline,
-      licenceExpiry: input.action === 'approve' ? (input.licence_expiry ?? base.licenceExpiry) : base.licenceExpiry,
-      notes: input.notes ?? base.notes,
-      decidedAt: new Date().toISOString(),
-      documents: base.documents.map((d) => ({ ...d })),
-    };
-  }
+  // Real, verified live endpoint (POST /verification/:id/decision,
+  // backend/internal/doctor/handler_mdcn_review.go Decide) — fixture mode
+  // refuses loudly instead of reporting a decision it did not perform. See
+  // docs/audit/ADMIN_SIMULATED_WRITES.md.
+  if (USE_MOCK) throw new Error(`Deciding a doctor verification is unavailable in fixture mode: this console will not report a write it did not perform. Set NEXT_PUBLIC_HEALTH_USE_MOCK=false to make this change against the live backend.`);
   return sendJson<MdcnReviewRecord>('POST', `/verification/${id}/decision`, input);
 }

@@ -7,10 +7,39 @@ WORKDIR /app
 # during `next build`; Railway still injects the runtime values separately.
 ARG NEXT_PUBLIC_SUPABASE_URL
 ARG NEXT_PUBLIC_SUPABASE_ANON_KEY
+# NOTE: the admin key is deliberately NOT a build arg. It used to be
+# NEXT_PUBLIC_ADMIN_API_KEY, which Next inlines into the client bundle - so it
+# shipped to every browser that loaded the console and was never a secret.
+# It is now read at RUNTIME by app/api/admin-proxy as ADMIN_API_KEY (no
+# NEXT_PUBLIC_ prefix, so Next cannot inline it) and rotating it is a restart.
 ARG SUPABASE_SERVICE_ROLE_KEY
+# frontend-web's origin, used by the Film Academy bridge under /admin/academy.
+# It MUST be a build arg: Next inlines NEXT_PUBLIC_* at build time, so a value
+# set only as a Railway service variable never reaches the bundle and silently
+# becomes the localhost fallback - a dead link from any other machine, which
+# reads as an application bug rather than a missing ARG.
+# Modules that are allowlisted to run on FIXTURES in production because their
+# admin backend does not exist yet (scripts/check-mock-flags.mjs MOCK_ALLOWLIST).
+# Since 9e71741e an unset *_USE_MOCK flag resolves LIVE in production, so without
+# these the console would call endpoints that are not there and show errors where
+# it used to show sample data. Defaulted to 'true' HERE, in the image, rather than
+# left to a Railway service variable: NEXT_PUBLIC_* is inlined at build time, so a
+# value set only at runtime never reaches the bundle — the same trap documented
+# for NEXT_PUBLIC_WEB_APP_BASE_URL above.
+#
+# BURN THESE DOWN. When the backend lands: delete the ARG/ENV pair here, remove
+# the module from MOCK_ALLOWLIST, and let it default live.
+#   FX     — service calls /api/fx/admin/*; backend has only /api/finance/admin/fx/markup.
+#   GROUPS — backend has member routes under /api/finance/groups and no admin group.
+ARG NEXT_PUBLIC_FX_ADMIN_USE_MOCK=true
+ARG NEXT_PUBLIC_GROUPS_ADMIN_USE_MOCK=true
+ARG NEXT_PUBLIC_WEB_APP_BASE_URL
 ENV NEXT_PUBLIC_SUPABASE_URL=${NEXT_PUBLIC_SUPABASE_URL}
 ENV NEXT_PUBLIC_SUPABASE_ANON_KEY=${NEXT_PUBLIC_SUPABASE_ANON_KEY}
 ENV SUPABASE_SERVICE_ROLE_KEY=${SUPABASE_SERVICE_ROLE_KEY}
+ENV NEXT_PUBLIC_WEB_APP_BASE_URL=${NEXT_PUBLIC_WEB_APP_BASE_URL}
+ENV NEXT_PUBLIC_FX_ADMIN_USE_MOCK=${NEXT_PUBLIC_FX_ADMIN_USE_MOCK}
+ENV NEXT_PUBLIC_GROUPS_ADMIN_USE_MOCK=${NEXT_PUBLIC_GROUPS_ADMIN_USE_MOCK}
 
 # Install dependencies from the lockfile first so this layer caches across
 # source-only changes.
@@ -38,14 +67,19 @@ ENV NODE_ENV=production
 # Local default only -- Railway injects PORT at runtime and overrides this.
 ENV PORT=3001
 
-COPY --from=builder /app/public ./public
-COPY --from=builder /app/.next ./.next
-COPY --from=builder /app/node_modules ./node_modules
-COPY --from=builder /app/package*.json ./
+COPY --from=builder --chown=node:node /app/public ./public
+COPY --from=builder --chown=node:node /app/.next ./.next
+COPY --from=builder --chown=node:node /app/node_modules ./node_modules
+COPY --from=builder --chown=node:node /app/package*.json ./
 # `next start` reads next.config.mjs at runtime; without it the server silently
 # falls back to Next defaults.
-COPY --from=builder /app/next.config.mjs ./
+COPY --from=builder --chown=node:node /app/next.config.mjs ./
 
+# Run as the built-in non-root `node` user (trivy DS-0002). The COPYs above use
+# --chown because Next writes to .next/cache at runtime; root-owned files would
+# turn a clean image into a runtime permission failure. The service binds a
+# high port, so nothing here needs privilege.
+USER node
 EXPOSE 8080
 
 # Bind whatever port Railway assigns. The package.json `start` script hardcodes

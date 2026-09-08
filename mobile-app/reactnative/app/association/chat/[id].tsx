@@ -13,6 +13,7 @@ import ScreenHeader from '@/components/ScreenHeader';
 import StateView from '@/components/StateView';
 import MessageBubble from '@/features/association/components/MessageBubble';
 import { useChatThread, useSendMessage, useMuteThread, useReactMessage } from '@/features/association/hooks/useChat';
+import { useAssociationChatRealtime } from '@/features/association/hooks/useChatRealtime';
 import { pickDocument } from '@/features/association/utils/docPicker';
 import { POSTING_BLOCK_NOTICE, CHAT_SCOPE_LABEL } from '@/features/association/constants/chat.constants';
 import type { ChatMessage } from '@/features/association/types/chat.types';
@@ -20,6 +21,9 @@ import type { ChatMessage } from '@/features/association/types/chat.types';
 export default function ChatThreadScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const thread = useChatThread(id);
+  // Live delivery for this thread; without it a reply only appeared after
+  // leaving the screen and coming back.
+  useAssociationChatRealtime(id);
   const send = useSendMessage(id as string);
   const mute = useMuteThread(id as string);
   const react = useReactMessage(id as string);

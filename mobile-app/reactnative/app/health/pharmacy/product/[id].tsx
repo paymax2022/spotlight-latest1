@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { View, Text, ScrollView, StyleSheet, Pressable } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import { Pill, ShieldCheck, Star, Minus, Plus, ScrollText, ShoppingCart, Info } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
@@ -123,7 +124,7 @@ export default function ProductDetailScreen() {
               <PrimaryButton label="Out of stock" onPress={() => {}} disabled />
             ) : added ? (
               <View style={styles.footerRow}>
-                <PrimaryButton label="Keep shopping" variant="secondary" onPress={() => router.back()} style={styles.footerBtn} />
+                <PrimaryButton label="Keep shopping" variant="secondary" onPress={() => goBack('/health/pharmacy')} style={styles.footerBtn} />
                 <PrimaryButton label="Go to cart" onPress={() => router.push('/health/pharmacy/cart')} style={styles.footerBtn} />
               </View>
             ) : (

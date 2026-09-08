@@ -6,6 +6,7 @@
 
 import { env } from '@/config/env';
 import { operationKey } from './idempotency';
+import { resolveUseMock } from '@/config/useMock';
 import type {
   CfReviewCampaign,
   CfReviewDecision,
@@ -25,14 +26,40 @@ import type {
   CfDataRequest,
   CfComplianceSummary,
   CfUser,
+  CfFeaturedCampaign,
+  CfCampaignFlags,
+  CfFeaturedReport,
+  CfFeatureRequest,
+  CfFeatureRequestStatus,
+  CfFeatureRequestCampaignStatus,
+  CfDirectoryPage,
+  CfDirectoryFilter,
+  CfBackersPage,
+  CfCampaignFunding,
+  CfUsersPage,
 } from '@/types/crowdfunding';
 
 // Mock is the default. Set NEXT_PUBLIC_CF_USE_MOCK=false to hit the live Go backend
 // at /api/crowdfunding/admin/* (campaign review queue, decision, stats).
-const USE_MOCK = process.env.NEXT_PUBLIC_CF_USE_MOCK !== 'false';
+// Migrated to resolveUseMock now that the Go endpoints are confirmed live:
+// GET /api/crowdfunding/admin/campaigns returns real PENDING_REVIEW campaigns.
+// The old inline check defaulted to MOCK unless someone set the flag, which is
+// why a campaign submitted from the app never appeared in this console — the
+// page was showing fixtures and there was nothing to indicate it.
+const USE_MOCK = resolveUseMock(process.env.NEXT_PUBLIC_CF_USE_MOCK);
 
 function adminBase(): string {
-  return env.apiBaseUrl.replace(/\/api\/v1\/?$/, '/api/crowdfunding/admin');
+  // Strip a trailing /api/v1 (if present) to get the API ROOT, then append the
+  // module's absolute path — the same shape restaurantAdminService uses.
+  //
+  // This used to REPLACE /api/v1 with the module path, which silently produced a
+  // base with no module prefix at all once frontend-admin moved env.apiBaseUrl to
+  // the same-origin proxy (<origin>/api/admin-proxy): the regex no longer matched,
+  // so every call went to <proxy>/campaigns instead of
+  // <proxy>/api/crowdfunding/admin/campaigns, and 404'd. Stripping is a no-op when
+  // there is nothing to strip, so this form is correct for both base shapes.
+  const root = env.apiBaseUrl.replace(/\/api\/v1\/?$/, '');
+  return `${root}/api/crowdfunding/admin`;
 }
 function authHeaders(): Record<string, string> {
   if (typeof window === 'undefined') return {};
@@ -40,6 +67,15 @@ function authHeaders(): Record<string, string> {
   return token ? { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' } : { 'Content-Type': 'application/json' };
 }
 const delay = (ms = 300) => new Promise((r) => setTimeout(r, ms));
+
+// Every write below has a real live endpoint (verified against
+// backend/internal/crowdfunding/adminext/routes.go and the cfAdmin group in
+// finance_routes.go), so fixture mode has nothing to add and refuses loudly
+// instead of reporting a write it did not perform. See
+// docs/audit/ADMIN_SIMULATED_WRITES.md.
+const NOT_IN_FIXTURE_MODE =
+  'is unavailable in fixture mode: this console will not report a write it did not perform. ' +
+  'Set NEXT_PUBLIC_CF_USE_MOCK=false to make this change against the live backend.';
 
 // ─── Mock dataset ─────────────────────────────────────────────────────────────
 
@@ -218,20 +254,7 @@ export async function getReviewCampaign(id: string): Promise<CfReviewCampaign> {
 }
 
 export async function decideCampaign(id: string, decision: CfReviewDecision, note: string): Promise<void> {
-  if (USE_MOCK) {
-    await delay(500);
-    const c = MOCK_CAMPAIGNS.find((x) => x.id === id);
-    if (c) {
-      c.status =
-        decision === 'APPROVE' ? 'ACTIVE'
-        : decision === 'REJECT' ? 'REJECTED'
-        : decision === 'REQUEST_CHANGES' ? 'CHANGES_REQUESTED'
-        : decision === 'FREEZE' ? 'FROZEN'
-        : 'ACTIVE';
-      c.adminNote = note || c.adminNote;
-    }
-    return;
-  }
+  if (USE_MOCK) throw new Error(`Deciding a campaign ${NOT_IN_FIXTURE_MODE}`);
   const res = await fetch(`${adminBase()}/campaigns/${encodeURIComponent(id)}/decision`, {
     method: 'POST', headers: { ...authHeaders(), 'Idempotency-Key': operationKey('crowdfunding:campaign-decision', id) }, body: JSON.stringify({ decision, note }),
   });
@@ -249,12 +272,7 @@ export async function listWithdrawals(status?: string): Promise<CfWithdrawal[]> 
 }
 
 export async function decideWithdrawal(id: string, approve: boolean, note: string): Promise<void> {
-  if (USE_MOCK) {
-    await delay(500);
-    const w = MOCK_WITHDRAWALS.find((x) => x.id === id);
-    if (w) { w.status = approve ? 'APPROVED' : 'REJECTED'; w.note = note || w.note; }
-    return;
-  }
+  if (USE_MOCK) throw new Error(`Deciding a withdrawal ${NOT_IN_FIXTURE_MODE}`);
   const res = await fetch(`${adminBase()}/withdrawals/${encodeURIComponent(id)}/${approve ? 'approve' : 'reject'}`, {
     method: 'POST', headers: { ...authHeaders(), 'Idempotency-Key': operationKey('crowdfunding:withdrawal-decision', id) }, body: JSON.stringify({ note }),
   });
@@ -269,12 +287,7 @@ export async function listFraudAlerts(): Promise<CfFraudAlert[]> {
 }
 
 export async function setCampaignFreeze(campaignId: string, freeze: boolean, note: string): Promise<void> {
-  if (USE_MOCK) {
-    await delay(400);
-    const f = MOCK_FRAUD.find((x) => x.campaignId === campaignId);
-    if (f) f.status = freeze ? 'FROZEN' : 'INVESTIGATING';
-    return;
-  }
+  if (USE_MOCK) throw new Error(`${freeze ? 'Freezing' : 'Unfreezing'} a campaign ${NOT_IN_FIXTURE_MODE}`);
   const res = await fetch(`${adminBase()}/campaigns/${encodeURIComponent(campaignId)}/${freeze ? 'freeze' : 'unfreeze'}`, {
     method: 'POST', headers: { ...authHeaders(), 'Idempotency-Key': operationKey('crowdfunding:campaign-freeze', campaignId) }, body: JSON.stringify({ note }),
   });
@@ -323,12 +336,7 @@ export async function listRefunds(status?: string): Promise<CfRefundRequest[]> {
 }
 
 export async function decideRefund(id: string, approve: boolean, note: string): Promise<void> {
-  if (USE_MOCK) {
-    await delay(500);
-    const r = MOCK_REFUNDS.find((x) => x.id === id);
-    if (r) r.status = approve ? 'APPROVED' : 'REJECTED';
-    return;
-  }
+  if (USE_MOCK) throw new Error(`Deciding a refund ${NOT_IN_FIXTURE_MODE}`);
   const res = await fetch(`${adminBase()}/refunds/${encodeURIComponent(id)}/${approve ? 'approve' : 'reject'}`, {
     method: 'POST', headers: { ...authHeaders(), 'Idempotency-Key': operationKey('crowdfunding:refund-decision', id) }, body: JSON.stringify({ note }),
   });
@@ -358,12 +366,7 @@ export async function listDisputes(status?: string): Promise<CfDispute[]> {
 }
 
 export async function resolveDispute(id: string, resolution: CfDisputeResolution, note: string): Promise<void> {
-  if (USE_MOCK) {
-    await delay(500);
-    const d = MOCK_DISPUTES.find((x) => x.id === id);
-    if (d) { d.status = 'RESOLVED'; d.resolution = resolution; d.adminNote = note; }
-    return;
-  }
+  if (USE_MOCK) throw new Error(`Resolving a dispute ${NOT_IN_FIXTURE_MODE}`);
   const res = await fetch(`${adminBase()}/disputes/${encodeURIComponent(id)}/resolve`, {
     method: 'POST', headers: { ...authHeaders(), 'Idempotency-Key': operationKey('crowdfunding:dispute-resolve', id) }, body: JSON.stringify({ resolution, note }),
   });
@@ -403,7 +406,7 @@ export async function getCategories(): Promise<CfCategoryConfig[]> {
 }
 
 export async function toggleCategory(id: string, field: 'enabled' | 'requiresEnhancedReview', value: boolean): Promise<void> {
-  if (USE_MOCK) { await delay(250); const c = MOCK_CATEGORIES.find((x) => x.id === id); if (c) c[field] = value; return; }
+  if (USE_MOCK) throw new Error(`Updating a category ${NOT_IN_FIXTURE_MODE}`);
   const res = await fetch(`${adminBase()}/config/categories/${encodeURIComponent(id)}`, {
     method: 'PATCH', headers: { ...authHeaders(), 'Idempotency-Key': operationKey('crowdfunding:category-toggle', id) }, body: JSON.stringify({ [field]: value }),
   });
@@ -418,7 +421,7 @@ export async function getFees(): Promise<CfFeeConfig> {
 }
 
 export async function updateFees(fees: CfFeeConfig): Promise<void> {
-  if (USE_MOCK) { await delay(400); Object.assign(MOCK_FEES, fees); return; }
+  if (USE_MOCK) throw new Error(`Updating fee config ${NOT_IN_FIXTURE_MODE}`);
   const res = await fetch(`${adminBase()}/config/fees`, { method: 'PUT', headers: { ...authHeaders(), 'Idempotency-Key': operationKey('crowdfunding:fees-update', fees.platformFeeBps) }, body: JSON.stringify(fees) });
   if (!res.ok) throw new Error(`Fee update failed: ${res.status}`);
 }
@@ -431,7 +434,7 @@ export async function getFeatureFlags(): Promise<CfFeatureFlag[]> {
 }
 
 export async function toggleFeatureFlag(key: string, enabled: boolean): Promise<void> {
-  if (USE_MOCK) { await delay(250); const f = MOCK_FLAGS.find((x) => x.key === key); if (f && !f.locked) f.enabled = enabled; return; }
+  if (USE_MOCK) throw new Error(`Toggling a feature flag ${NOT_IN_FIXTURE_MODE}`);
   const res = await fetch(`${adminBase()}/config/flags/${encodeURIComponent(key)}`, {
     method: 'PATCH', headers: { ...authHeaders(), 'Idempotency-Key': operationKey('crowdfunding:flag-toggle', key) }, body: JSON.stringify({ enabled }),
   });
@@ -440,57 +443,37 @@ export async function toggleFeatureFlag(key: string, enabled: boolean): Promise<
 
 // ─── KYC / KYB ────────────────────────────────────────────────────────────────
 
+// Mirrors the platform's shared KYC (finance/kyc) — see CfKycCase.
 const MOCK_KYC: CfKycCase[] = [
   {
-    id: 'kc1', kind: 'KYC', status: 'PENDING', applicantName: 'Aisha Bello', applicantType: 'Individual',
-    email: 'aisha.bello@example.com', idLabel: 'NIN ••• 4821', bankLabel: 'GTBank ••• 4821',
-    submittedAt: '2026-06-18T11:00:00Z', duplicateIdentity: false, duplicateBank: false, riskLevel: 'LOW',
-    documents: [
-      { id: 'd1', label: 'Government ID (NIN)', type: 'image', verified: true },
-      { id: 'd2', label: 'Selfie verification', type: 'image', verified: true },
-    ],
+    id: 'kc1', status: 'PENDING', applicantName: 'Aisha Bello', applicantType: 'Individual',
+    email: 'aisha.bello@example.com', tier: 1, documentType: 'NIN',
+    submittedAt: '2026-06-18T11:00:00Z', verifiedAt: null,
   },
   {
-    id: 'kc2', kind: 'KYC', status: 'PENDING', applicantName: 'John Doe', applicantType: 'Individual',
-    email: 'jd1990@example.com', idLabel: 'NIN ••• 0012', bankLabel: 'Access ••• 0012',
-    submittedAt: '2026-06-18T20:30:00Z', duplicateIdentity: true, duplicateBank: true, riskLevel: 'HIGH',
-    documents: [{ id: 'd1', label: 'Government ID (NIN)', type: 'image', verified: false }],
+    id: 'kc2', status: 'PENDING', applicantName: 'John Doe', applicantType: 'Individual',
+    email: 'jd1990@example.com', tier: 2, documentType: 'BVN',
+    submittedAt: '2026-06-18T20:30:00Z', verifiedAt: null,
   },
   {
-    id: 'kc3', kind: 'KYB', status: 'PENDING', applicantName: 'Enugu Codes Initiative', applicantType: 'NGO',
-    email: 'hello@enugucodes.org', idLabel: 'RC 1456782', bankLabel: 'Zenith ••• 7740',
-    submittedAt: '2026-06-17T09:00:00Z', duplicateIdentity: false, duplicateBank: false, riskLevel: 'LOW',
-    documents: [
-      { id: 'd1', label: 'CAC registration', type: 'pdf', verified: true },
-      { id: 'd2', label: 'Board authorisation letter', type: 'pdf', verified: true },
-      { id: 'd3', label: 'Tax document (TIN)', type: 'pdf', verified: false },
-    ],
-  },
-  {
-    id: 'kc4', kind: 'KYB', status: 'APPROVED', applicantName: 'Niger Delta Relief Org', applicantType: 'NGO',
-    email: 'ops@ndrelief.org', idLabel: 'RC 998120', bankLabel: 'UBA ••• 3318',
-    submittedAt: '2026-06-15T10:00:00Z', duplicateIdentity: false, duplicateBank: false, riskLevel: 'LOW',
-    documents: [{ id: 'd1', label: 'CAC registration', type: 'pdf', verified: true }],
+    id: 'kc3', status: 'PENDING', applicantName: 'Adaeze Okonkwo', applicantType: 'Individual',
+    email: 'adaeze@example.com', tier: 1, documentType: 'NIN',
+    submittedAt: '2026-06-17T09:00:00Z', verifiedAt: null,
   },
 ];
 
-export async function listKycCases(kind?: string, status?: string): Promise<CfKycCase[]> {
+export async function listKycCases(status?: string): Promise<CfKycCase[]> {
   if (USE_MOCK) {
     await delay();
-    return MOCK_KYC.filter((k) => (!kind || k.kind === kind) && (!status || k.status === status));
+    return MOCK_KYC.filter((k) => !status || k.status === status);
   }
-  const res = await fetch(`${adminBase()}/kyc?kind=${kind ?? ''}&status=${status ?? ''}`, { cache: 'no-store', headers: authHeaders() });
+  const res = await fetch(`${adminBase()}/kyc?status=${status ?? ''}`, { cache: 'no-store', headers: authHeaders() });
   if (!res.ok) throw new Error(`KYC list failed: ${res.status}`);
   return (await res.json()).cases ?? [];
 }
 
 export async function decideKyc(id: string, approve: boolean, note: string): Promise<void> {
-  if (USE_MOCK) {
-    await delay(500);
-    const k = MOCK_KYC.find((x) => x.id === id);
-    if (k) k.status = approve ? 'APPROVED' : 'REJECTED';
-    return;
-  }
+  if (USE_MOCK) throw new Error(`Deciding a KYC case ${NOT_IN_FIXTURE_MODE}`);
   const res = await fetch(`${adminBase()}/kyc/${encodeURIComponent(id)}/${approve ? 'approve' : 'reject'}`, {
     method: 'POST', headers: { ...authHeaders(), 'Idempotency-Key': operationKey('crowdfunding:kyc-decision', id) }, body: JSON.stringify({ note }),
   });
@@ -517,8 +500,8 @@ export async function getComplianceSummary(): Promise<CfComplianceSummary> {
   if (USE_MOCK) {
     await delay();
     return {
-      pendingKyc: MOCK_KYC.filter((k) => k.kind === 'KYC' && k.status === 'PENDING').length,
-      pendingKyb: MOCK_KYC.filter((k) => k.kind === 'KYB' && k.status === 'PENDING').length,
+      pendingKyc: MOCK_KYC.filter((k) => k.status === 'PENDING').length,
+      pendingKyb: 0, // the platform's shared KYC has no business-entity tier
       openDataRequests: MOCK_DATA_REQUESTS.filter((d) => d.status !== 'COMPLETED').length,
       investmentEnabled: MOCK_FLAGS.find((f) => f.key === 'investment')?.enabled ?? false,
       retentionPolicyDays: 2555,
@@ -546,7 +529,7 @@ export async function listDataRequests(): Promise<CfDataRequest[]> {
 }
 
 export async function fulfilDataRequest(id: string): Promise<void> {
-  if (USE_MOCK) { await delay(400); const d = MOCK_DATA_REQUESTS.find((x) => x.id === id); if (d) d.status = 'COMPLETED'; return; }
+  if (USE_MOCK) throw new Error(`Fulfilling a data request ${NOT_IN_FIXTURE_MODE}`);
   const res = await fetch(`${adminBase()}/compliance/data-requests/${encodeURIComponent(id)}/fulfil`, { method: 'POST', headers: { ...authHeaders(), 'Idempotency-Key': operationKey('crowdfunding:data-request-fulfil', id) } });
   if (!res.ok) throw new Error(`Fulfil failed: ${res.status}`);
 }
@@ -595,6 +578,46 @@ const MOCK_USERS: CfUser[] = [
   },
 ];
 
+/**
+ * One page of users. The endpoint used to answer a bare LIMIT 200 with no
+ * offset and no total, so past 200 active people the tail was invisible and
+ * nothing on screen said so.
+ */
+export async function listUsersPage(
+  role?: string, status?: string, search?: string, page = 1, limit = 25,
+): Promise<CfUsersPage> {
+  if (USE_MOCK) {
+    await delay();
+    const all = MOCK_USERS.filter((u) =>
+      (!role || u.role === role) &&
+      (!status || u.status === status) &&
+      (!search || u.name.toLowerCase().includes(search.toLowerCase()) || u.email.toLowerCase().includes(search.toLowerCase())),
+    );
+    // The fixture paginates too — a mock that always returns everything would
+    // hide a paging bug until production.
+    const start = (page - 1) * limit;
+    return { users: all.slice(start, start + limit), total: all.length, page, limit };
+  }
+  const p = new URLSearchParams({
+    role: role ?? '', status: status ?? '', search: search ?? '',
+    page: String(page), limit: String(limit),
+  });
+  const res = await fetch(`${adminBase()}/users?${p.toString()}`, { cache: 'no-store', headers: authHeaders() });
+  if (res.status === 401) throw new Error('Users failed: 401 — sign in again.');
+  if (res.status === 403) throw new Error('Users failed: 403 — needs crowdfunding.admin.review.');
+  if (!res.ok) throw new Error(`Users failed: ${res.status}`);
+  const body = await res.json();
+  return {
+    users: body.users ?? [],
+    // Older backends answer without these; fall back to the page itself so the
+    // UI degrades to "one page" instead of rendering NaN.
+    total: typeof body.total === 'number' ? body.total : (body.users?.length ?? 0),
+    page: typeof body.page === 'number' ? body.page : page,
+    limit: typeof body.limit === 'number' ? body.limit : limit,
+  };
+}
+
+/** Unpaginated convenience kept for existing callers; returns the first page. */
 export async function listUsers(role?: string, status?: string, search?: string): Promise<CfUser[]> {
   if (USE_MOCK) {
     await delay();
@@ -610,15 +633,290 @@ export async function listUsers(role?: string, status?: string, search?: string)
 }
 
 export async function setUserStatus(id: string, status: 'ACTIVE' | 'SUSPENDED' | 'RESTRICTED', note: string): Promise<void> {
-  if (USE_MOCK) {
-    await delay(500);
-    const u = MOCK_USERS.find((x) => x.id === id);
-    if (u) {
-      u.status = status;
-      u.activity = [{ id: `a${Date.now()}`, action: status === 'SUSPENDED' ? 'account.suspend' : status === 'ACTIVE' ? 'account.restore' : 'account.restrict', detail: note || '—', createdAt: new Date().toISOString() }, ...u.activity];
-    }
-    return;
-  }
+  if (USE_MOCK) throw new Error(`Setting user status ${NOT_IN_FIXTURE_MODE}`);
   const res = await fetch(`${adminBase()}/users/${encodeURIComponent(id)}/status`, { method: 'POST', headers: { ...authHeaders(), 'Idempotency-Key': operationKey('crowdfunding:user-status', id) }, body: JSON.stringify({ status, note }) });
   if (!res.ok) throw new Error(`Status update failed: ${res.status}`);
+}
+
+// ─── Featured / promotion management ──────────────────────────────────────────
+//
+// Backed by GET   /api/crowdfunding/admin/featured
+//           PATCH /api/crowdfunding/admin/campaigns/:id/flags
+//           GET   /api/crowdfunding/admin/featured/report
+//
+// Placement rule enforced by the backend: a promotion flag may only be set TRUE on
+// an ACTIVE campaign — anything else is refused with a 4xx. Clearing a flag stays
+// legal at any status (that is how a frozen/completed campaign gets pulled off the
+// home rail), so the UI gates the ON direction only.
+
+const MOCK_FEATURED: CfFeaturedCampaign[] = [
+  { id: 'my1', title: 'Help Baby Zara Get Open-Heart Surgery', status: 'ACTIVE', category: 'Medical', featured: true, trending: true, urgent: true, verified: true, raisedKobo: 1_213_400_000, goalKobo: 1_850_000_000, contributorCount: 842, createdAt: '2026-05-20T09:00:00Z' },
+  { id: 'my2', title: 'New Borehole for Amaeze Community', status: 'ACTIVE', category: 'Community', featured: true, trending: false, urgent: false, verified: true, raisedKobo: 168_300_000, goalKobo: 240_000_000, contributorCount: 311, createdAt: '2026-04-10T00:00:00Z' },
+  { id: 'my3', title: 'Restock My Tailoring Shop After Fire', status: 'ACTIVE', category: 'SME', featured: false, trending: true, urgent: false, verified: false, raisedKobo: 41_200_000, goalKobo: 90_000_000, contributorCount: 74, createdAt: '2026-06-02T00:00:00Z' },
+  { id: 'rv3', title: 'Annual Coding Bootcamp Scholarships', status: 'CHANGES_REQUESTED', category: 'Education', featured: false, trending: false, urgent: false, verified: false, raisedKobo: 0, goalKobo: 150_000_000, contributorCount: 0, createdAt: '2026-06-12T08:00:00Z' },
+  { id: 'rv4', title: 'Flood Relief for Bayelsa Families', status: 'PENDING_REVIEW', category: 'Emergency', featured: false, trending: false, urgent: false, verified: false, raisedKobo: 0, goalKobo: 300_000_000, contributorCount: 0, createdAt: '2026-06-18T06:00:00Z' },
+  { id: 'my7', title: 'Emergency Medical Fund', status: 'FROZEN', category: 'Medical', featured: true, trending: false, urgent: true, verified: false, raisedKobo: 54_000_000, goalKobo: 120_000_000, contributorCount: 96, createdAt: '2026-06-15T00:00:00Z' },
+];
+
+export async function listFeaturedCampaigns(): Promise<CfFeaturedCampaign[]> {
+  if (USE_MOCK) { await delay(); return MOCK_FEATURED.map((c) => ({ ...c })); }
+  const res = await fetch(`${adminBase()}/featured`, { cache: 'no-store', headers: authHeaders() });
+  if (!res.ok) throw new Error(`Featured campaigns failed: ${res.status}`);
+  return (await res.json()).campaigns ?? [];
+}
+
+/**
+ * PATCH a subset of the promotion flags. Only the supplied keys change.
+ *
+ * Returns the campaign AS THE SERVER SEES IT — callers must render that rather
+ * than an optimistic local flip, so a refusal can never look like a success.
+ *
+ * The Idempotency-Key is derived from the campaign plus the DESIRED flag values,
+ * so a double-click dedupes at the backend while a different intent gets its own
+ * key. (These are placement flags, not a money mutation, but the admin API
+ * fail-closes without the header.)
+ */
+export async function setCampaignFlags(id: string, flags: CfCampaignFlags): Promise<CfFeaturedCampaign> {
+  const desired = Object.entries(flags)
+    .filter(([, v]) => typeof v === 'boolean')
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([k, v]) => `${k}=${v ? '1' : '0'}`);
+
+  if (USE_MOCK) {
+    await delay(400);
+    const c = MOCK_FEATURED.find((x) => x.id === id);
+    if (!c) throw new Error('Campaign not found');
+    // Mirror the backend rule, so mock mode cannot teach an operator a workflow
+    // that the live backend refuses.
+    if (c.status !== 'ACTIVE' && Object.values(flags).some(Boolean)) {
+      throw new Error(`only an ACTIVE campaign can be promoted (this one is ${c.status})`);
+    }
+    Object.assign(c, flags);
+    return { ...c };
+  }
+
+  const res = await fetch(`${adminBase()}/campaigns/${encodeURIComponent(id)}/flags`, {
+    method: 'PATCH',
+    headers: { ...authHeaders(), 'Idempotency-Key': operationKey('crowdfunding:campaign-flags', id, ...desired) },
+    body: JSON.stringify(flags),
+  });
+  const body = (await res.json().catch(() => ({}))) as { error?: string } & Partial<CfFeaturedCampaign>;
+  if (!res.ok) throw new Error(body?.error || `Flag update failed (${res.status})`);
+  return body as CfFeaturedCampaign;
+}
+
+export async function getFeaturedReport(): Promise<CfFeaturedReport> {
+  if (USE_MOCK) {
+    await delay();
+    return {
+      featuredCount: MOCK_FEATURED.filter((c) => c.featured).length,
+      trendingCount: MOCK_FEATURED.filter((c) => c.trending).length,
+      urgentCount: MOCK_FEATURED.filter((c) => c.urgent).length,
+      activeCount: MOCK_FEATURED.filter((c) => c.status === 'ACTIVE').length,
+      featured: MOCK_FEATURED.filter((c) => c.featured).map((c) => ({ id: c.id, title: c.title, raisedKobo: c.raisedKobo, contributorCount: c.contributorCount })),
+    };
+  }
+  const res = await fetch(`${adminBase()}/featured/report`, { cache: 'no-store', headers: authHeaders() });
+  if (!res.ok) throw new Error(`Featured report failed: ${res.status}`);
+  return res.json();
+}
+
+// ─── Feature requests (owner-initiated promotion requests) ───────────────────
+//
+// Backed by GET  /api/crowdfunding/admin/feature-requests
+//           POST /api/crowdfunding/admin/feature-requests/:id/approve
+//           POST /api/crowdfunding/admin/feature-requests/:id/reject   { note }
+//
+// Featuring is not self-serve — an owner can only REQUEST the editorial placement.
+// Approving sets the campaign's `featured` flag, so it inherits the placement rule
+// above: only an ACTIVE campaign can be promoted, and the backend refuses anything
+// else with 409 { error }. The UI gates on `campaignStatus` so an operator is never
+// offered an action guaranteed to fail — but it still surfaces a server error when
+// one arrives, because a campaign can leave ACTIVE between load and click.
+//
+// ⚠️ PROVISIONAL CONTRACT. The backend's feature-request storage is being designed
+// in parallel and the field names / id scheme may land differently. Everything that
+// depends on the wire shape is confined to mapFeatureRequest + the two unwrap
+// helpers below — reconciling means editing THIS block and nothing else.
+
+/** Reads the first present alias. Field-name drift degrades to a default, not a crash. */
+function rawStr(r: Record<string, unknown>, ...keys: string[]): string {
+  for (const k of keys) {
+    const v = r[k];
+    if (typeof v === 'string' && v.trim()) return v.trim();
+    if (typeof v === 'number' && Number.isFinite(v)) return String(v);
+  }
+  return '';
+}
+
+/** Money and counts are integers — parsed as integers, never floats. */
+function rawInt(r: Record<string, unknown>, ...keys: string[]): number {
+  for (const k of keys) {
+    const v = r[k];
+    if (typeof v === 'number' && Number.isFinite(v)) return Math.trunc(v);
+    if (typeof v === 'string' && /^-?\d+$/.test(v.trim())) return parseInt(v.trim(), 10);
+  }
+  return 0;
+}
+
+const REQUEST_STATUSES: readonly string[] = ['PENDING', 'APPROVED', 'REJECTED'];
+const CAMPAIGN_STATUSES: readonly string[] = [
+  'PENDING_REVIEW', 'CHANGES_REQUESTED', 'ACTIVE', 'COMPLETED', 'FROZEN', 'REJECTED',
+];
+
+/** The single place the feature-request wire shape is interpreted. */
+function mapFeatureRequest(raw: unknown): CfFeatureRequest {
+  const r = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
+  const status = rawStr(r, 'status', 'requestStatus', 'request_status').toUpperCase();
+  const campaignStatus = rawStr(r, 'campaignStatus', 'campaign_status').toUpperCase();
+  return {
+    id: rawStr(r, 'id', 'requestId', 'request_id'),
+    campaignId: rawStr(r, 'campaignId', 'campaign_id'),
+    campaignTitle: rawStr(r, 'campaignTitle', 'campaign_title', 'title') || '(untitled campaign)',
+    // An unrecognised status defaults to PENDING: a decided row wrongly shown as
+    // pending is corrected by the next refetch, whereas a pending row wrongly shown
+    // as decided hides real work from the queue.
+    status: (REQUEST_STATUSES.includes(status) ? status : 'PENDING') as CfFeatureRequestStatus,
+    // Fail-closed: anything unrecognised becomes UNKNOWN, which gates approval and
+    // says so, rather than silently mis-gating the row.
+    campaignStatus: (CAMPAIGN_STATUSES.includes(campaignStatus) ? campaignStatus : 'UNKNOWN') as CfFeatureRequestCampaignStatus,
+    raisedKobo: rawInt(r, 'raisedKobo', 'raised_kobo'),
+    goalKobo: rawInt(r, 'goalKobo', 'goal_kobo'),
+    contributorCount: rawInt(r, 'contributorCount', 'contributor_count', 'backers'),
+    requestedBy: rawStr(r, 'requestedBy', 'requested_by', 'requesterName', 'requester_name') || 'Unknown',
+    requestedAt: rawStr(r, 'requestedAt', 'requested_at', 'createdAt', 'created_at'),
+    note: rawStr(r, 'note', 'adminNote', 'admin_note', 'reason') || null,
+    decidedAt: rawStr(r, 'decidedAt', 'decided_at', 'reviewedAt', 'reviewed_at') || null,
+  };
+}
+
+/** Accepts { requests }, { data }, { items } or a bare array. */
+function unwrapRequestList(body: unknown): unknown[] {
+  if (Array.isArray(body)) return body;
+  const b = (body && typeof body === 'object' ? body : {}) as Record<string, unknown>;
+  for (const k of ['requests', 'featureRequests', 'feature_requests', 'data', 'items']) {
+    if (Array.isArray(b[k])) return b[k] as unknown[];
+  }
+  return [];
+}
+
+/** Accepts a bare request object or one wrapped in { request } / { data }. */
+function unwrapRequest(body: unknown): unknown {
+  const b = (body && typeof body === 'object' ? body : {}) as Record<string, unknown>;
+  for (const k of ['request', 'featureRequest', 'feature_request', 'data']) {
+    const v = b[k];
+    if (v && typeof v === 'object' && !Array.isArray(v)) return v;
+  }
+  return b;
+}
+
+const MOCK_FEATURE_REQUESTS: CfFeatureRequest[] = [
+  { id: 'fr1', campaignId: 'my2', campaignTitle: 'New Borehole for Amaeze Community', status: 'PENDING', campaignStatus: 'ACTIVE', raisedKobo: 168_300_000, goalKobo: 240_000_000, contributorCount: 311, requestedBy: 'Chinedu Okafor', requestedAt: '2026-06-20T08:15:00Z', note: null, decidedAt: null },
+  { id: 'fr2', campaignId: 'my3', campaignTitle: 'Restock My Tailoring Shop After Fire', status: 'PENDING', campaignStatus: 'ACTIVE', raisedKobo: 41_200_000, goalKobo: 90_000_000, contributorCount: 74, requestedBy: 'Ngozi Eze', requestedAt: '2026-06-21T14:02:00Z', note: null, decidedAt: null },
+  { id: 'fr3', campaignId: 'my7', campaignTitle: 'Emergency Medical Fund', status: 'PENDING', campaignStatus: 'FROZEN', raisedKobo: 54_000_000, goalKobo: 120_000_000, contributorCount: 96, requestedBy: 'Tunde Adeyemi', requestedAt: '2026-06-19T10:40:00Z', note: null, decidedAt: null },
+  { id: 'fr4', campaignId: 'rv4', campaignTitle: 'Flood Relief for Bayelsa Families', status: 'PENDING', campaignStatus: 'PENDING_REVIEW', raisedKobo: 0, goalKobo: 300_000_000, contributorCount: 0, requestedBy: 'Ibiso Amachree', requestedAt: '2026-06-22T06:30:00Z', note: null, decidedAt: null },
+  { id: 'fr5', campaignId: 'my1', campaignTitle: 'Help Baby Zara Get Open-Heart Surgery', status: 'APPROVED', campaignStatus: 'ACTIVE', raisedKobo: 1_213_400_000, goalKobo: 1_850_000_000, contributorCount: 842, requestedBy: 'Aisha Bello', requestedAt: '2026-06-10T09:00:00Z', note: null, decidedAt: '2026-06-11T09:30:00Z' },
+  { id: 'fr6', campaignId: 'my5', campaignTitle: 'Sponsor a Postgraduate Scholarship', status: 'REJECTED', campaignStatus: 'ACTIVE', raisedKobo: 3_100_000, goalKobo: 400_000_000, contributorCount: 12, requestedBy: 'Femi Balogun', requestedAt: '2026-06-08T11:00:00Z', note: 'Below the traction bar for the discovery rail — reapply past 25% of goal.', decidedAt: '2026-06-09T12:15:00Z' },
+];
+
+export async function listFeatureRequests(status?: string): Promise<CfFeatureRequest[]> {
+  if (USE_MOCK) {
+    await delay();
+    return MOCK_FEATURE_REQUESTS.filter((r) => !status || r.status === status).map((r) => ({ ...r }));
+  }
+  const qs = status ? `?status=${encodeURIComponent(status)}` : '';
+  const res = await fetch(`${adminBase()}/feature-requests${qs}`, { cache: 'no-store', headers: authHeaders() });
+  const body = (await res.json().catch(() => ({}))) as { error?: string };
+  if (!res.ok) throw new Error(body?.error || `Feature requests failed: ${res.status}`);
+  return unwrapRequestList(body).map(mapFeatureRequest);
+}
+
+/**
+ * Approve or reject one request. Returns the request AS THE SERVER SEES IT — the
+ * caller renders that and refetches, so a refusal can never look like a success.
+ *
+ * Approving also sets the campaign's `featured` flag server-side, so callers must
+ * reload the featured list and report too, not just the queue.
+ *
+ * The Idempotency-Key is derived from the request id plus the decision, so a
+ * double-click dedupes at the backend while a distinct decision gets a distinct key.
+ */
+export async function decideFeatureRequest(id: string, approve: boolean, note: string): Promise<CfFeatureRequest> {
+  if (USE_MOCK) {
+    await delay(400);
+    const r = MOCK_FEATURE_REQUESTS.find((x) => x.id === id);
+    if (!r) throw new Error('Feature request not found');
+    if (r.status !== 'PENDING') throw new Error(`this request was already ${r.status.toLowerCase()}`);
+    // Mirror the backend's 409 so mock mode cannot teach an operator a workflow the
+    // live backend refuses.
+    if (approve && r.campaignStatus !== 'ACTIVE') {
+      throw new Error(`only an ACTIVE campaign can be featured (this one is ${r.campaignStatus})`);
+    }
+    r.status = approve ? 'APPROVED' : 'REJECTED';
+    r.note = approve ? null : note.trim() || null;
+    r.decidedAt = new Date().toISOString();
+    if (approve) {
+      const c = MOCK_FEATURED.find((x) => x.id === r.campaignId);
+      if (c) c.featured = true;
+    }
+    return { ...r };
+  }
+
+  const res = await fetch(`${adminBase()}/feature-requests/${encodeURIComponent(id)}/${approve ? 'approve' : 'reject'}`, {
+    method: 'POST',
+    headers: { ...authHeaders(), 'Idempotency-Key': operationKey('crowdfunding:feature-request-decision', id, approve ? 'approve' : 'reject') },
+    ...(approve ? {} : { body: JSON.stringify({ note }) }),
+  });
+  const body = (await res.json().catch(() => ({}))) as { error?: string };
+  if (!res.ok) throw new Error(body?.error || `Feature request ${approve ? 'approval' : 'rejection'} failed (${res.status})`);
+  return mapFeatureRequest(unwrapRequest(body));
+}
+
+// ─── Campaign directory ───────────────────────────────────────────────────────
+// Every campaign, not just the review queue, with the funding figures the queue
+// never carried. Live-only by design: there is no fixture for these and this
+// console does not invent campaign or money numbers — see NOT_IN_FIXTURE_MODE.
+
+function directoryQuery(f: CfDirectoryFilter): string {
+  const p = new URLSearchParams();
+  if (f.status) p.set('status', f.status);
+  if (f.reviewStatus) p.set('reviewStatus', f.reviewStatus);
+  if (f.category) p.set('category', f.category);
+  if (f.q) p.set('q', f.q);
+  if (f.flag) p.set('flag', f.flag);
+  if (f.sort) p.set('sort', f.sort);
+  if (f.page) p.set('page', String(f.page));
+  if (f.limit) p.set('limit', String(f.limit));
+  const qs = p.toString();
+  return qs ? `?${qs}` : '';
+}
+
+export async function listCampaignDirectory(f: CfDirectoryFilter = {}): Promise<CfDirectoryPage> {
+  if (USE_MOCK) throw new Error(`The campaign directory ${NOT_IN_FIXTURE_MODE}`);
+  const res = await fetch(`${adminBase()}/campaign-directory${directoryQuery(f)}`, {
+    cache: 'no-store', headers: authHeaders(),
+  });
+  if (res.status === 401) throw new Error('Campaign directory failed: 401 — sign in again.');
+  if (res.status === 403) throw new Error('Campaign directory failed: 403 — needs crowdfunding.admin.review.');
+  if (!res.ok) throw new Error(`Campaign directory failed: ${res.status}`);
+  return res.json();
+}
+
+export async function listCampaignBackers(campaignId: string, page = 1, limit = 50): Promise<CfBackersPage> {
+  if (USE_MOCK) throw new Error(`Campaign backers ${NOT_IN_FIXTURE_MODE}`);
+  const res = await fetch(
+    `${adminBase()}/campaigns/${encodeURIComponent(campaignId)}/backers?page=${page}&limit=${limit}`,
+    { cache: 'no-store', headers: authHeaders() },
+  );
+  if (!res.ok) throw new Error(`Backers failed: ${res.status}`);
+  return res.json();
+}
+
+export async function getCampaignFunding(campaignId: string): Promise<CfCampaignFunding> {
+  if (USE_MOCK) throw new Error(`Campaign funding ${NOT_IN_FIXTURE_MODE}`);
+  const res = await fetch(`${adminBase()}/campaigns/${encodeURIComponent(campaignId)}/funding`, {
+    cache: 'no-store', headers: authHeaders(),
+  });
+  if (!res.ok) throw new Error(`Funding failed: ${res.status}`);
+  return res.json();
 }

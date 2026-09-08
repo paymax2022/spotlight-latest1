@@ -465,7 +465,11 @@ func (s *Service) CreateCollection(ctx context.Context, customerID string, req C
 	}
 	va := &VirtualAccount{
 		ID: newID("va"), CustomerID: customerID, Currency: currency, Type: req.Type,
-		Provider: prov.Name(), Status: "active", Details: res.Details, CreatedAt: s.now(),
+		Provider: prov.Name(), Status: "active",
+		// Persist the provider's handle. Dropping it here is what left an inbound
+		// deposit with no way to find its owner.
+		ProviderRef: res.ProviderRef,
+		Details:     res.Details, CreatedAt: s.now(),
 	}
 	if err := s.store.SaveCollection(ctx, va); err != nil {
 		return nil, asAPIError(err)
@@ -490,6 +494,18 @@ func (s *Service) pickCollectionProvider(accountType string) Provider {
 // Balances returns the customer's held balances (spec §5.6).
 func (s *Service) Balances(ctx context.Context, customerID string) ([]Money, error) {
 	return s.store.Balances(ctx, customerID)
+}
+
+// Balance returns one currency's held balance. Read-only — never the sufficiency
+// gate for a debit (see Store.Balance / customer_wallet.go).
+func (s *Service) Balance(ctx context.Context, customerID, currency string) (int64, error) {
+	return s.store.Balance(ctx, customerID, strings.ToUpper(currency))
+}
+
+// OpenWallet provisions a zero-balance wallet for a currency. Provisioning only:
+// no value moves, so no ledger entry and no idempotency key.
+func (s *Service) OpenWallet(ctx context.Context, customerID, currency string) error {
+	return s.store.OpenWallet(ctx, customerID, strings.ToUpper(currency))
 }
 
 // Transactions returns the unified ledger view (spec §5.6).

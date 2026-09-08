@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { View, Text, Pressable, ScrollView, StyleSheet, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import { CheckCircle2, Lock, ShieldAlert } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
@@ -43,7 +44,7 @@ export default function InstallmentSetup() {
     return (
       <SafeAreaView style={styles.safe} edges={['top']}>
         <ScreenHeader title="Installments" />
-        <StateView kind="error" title="Invoice not found" actionLabel="Go back" onAction={() => router.back()} />
+        <StateView kind="error" title="Invoice not found" actionLabel="Go back" onAction={() => goBack('/learn/academy/fees')} />
       </SafeAreaView>
     );
   }

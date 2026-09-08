@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { View, Text, StyleSheet, ScrollView } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import { CircleCheck } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
@@ -41,7 +42,7 @@ export default function AboutScreen() {
       {
         onSuccess: () => {
           setSaved(true);
-          setTimeout(() => router.back(), 900);
+          setTimeout(() => goBack('/connect/networking/profile'), 900);
         },
       },
     );

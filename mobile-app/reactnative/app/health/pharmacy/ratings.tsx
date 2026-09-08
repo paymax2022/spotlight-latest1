@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { View, Text, ScrollView, StyleSheet, Pressable, TextInput } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import { Star, CircleCheck } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
@@ -54,7 +55,7 @@ export default function RatingsScreen() {
           title="Review submitted"
           message="Thank you for helping other patients choose a trusted pharmacy."
           actionLabel="Done"
-          onAction={() => router.back()}
+          onAction={() => goBack('/health/pharmacy')}
         />
       </SafeAreaView>
     );

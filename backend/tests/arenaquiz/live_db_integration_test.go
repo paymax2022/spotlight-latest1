@@ -87,7 +87,7 @@ func newAttempt(idemKey string, score, total int, passed bool) quiz.AttemptRecor
 // score/total/passed (UNIQUE(idempotency_key) + ON CONFLICT DO NOTHING path).
 func TestLiveDB_InsertAttempt_Idempotent(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	repo := quiz.NewRepository(pool)
 	ctx := context.Background()
 
@@ -133,7 +133,7 @@ func TestLiveDB_InsertAttempt_Idempotent(t *testing.T) {
 // DELETE on a stored attempt (arena_block_mutation).
 func TestLiveDB_Attempt_Immutable(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	repo := quiz.NewRepository(pool)
 	ctx := context.Background()
 

@@ -7,6 +7,7 @@
 // mutation carries an Idempotency-Key header AND a `pin` in the body; the client
 // never computes fees, limits or allowances itself — the server is authoritative.
 
+import { mockAllowed } from '@/config/mockPolicy';
 import { api } from '@/api/client';
 import type {
   OfferingSummary, OfferingDetail, InvestorProfile, SuitabilityInput, SuitabilityResult,
@@ -23,7 +24,7 @@ import {
 } from './mock';
 
 export const USE_MOCK =
-  (process.env.EXPO_PUBLIC_FRACTIONALRE_USE_MOCK ?? 'true') !== 'false';
+  mockAllowed(process.env.EXPO_PUBLIC_FRACTIONALRE_USE_MOCK, true);
 
 // The Next.js gateway rewrites /api/finance/:path* verbatim to the Go backend
 // (frontend-web/next.config.mjs); the Go fractionalre investor surface is

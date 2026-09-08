@@ -71,9 +71,11 @@ jobs:
           service_account: ${{ secrets.GCP_DEPLOY_SERVICE_ACCOUNT }}
       - uses: google-github-actions/setup-gcloud@v2
       # Migrations run expand-first, decoupled from code that needs them (§10).
-      # TODO(you): wire supabase migration apply against the STAGING DB here
-      # (service-role creds from the staging Environment), e.g. `supabase db push`
-      # with a staging DATABASE_URL, or a dedicated migrate job/image.
+      # Staging migrations are applied by the `apply-staging` job in
+      # db-migrate.yml (push to `staging`, gated on DB_MIGRATE_STAGING_ENABLED),
+      # NOT here. Keeping the apply in one workflow means a single reviewed CLI
+      # pin governs both databases; a second apply path would let staging and
+      # production drift on how a migration applies.
       - name: Deploy to Cloud Run (staging)
         run: |
           gcloud run deploy "$SERVICE" \

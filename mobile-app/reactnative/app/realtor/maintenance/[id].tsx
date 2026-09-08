@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { View, Text, Image, ScrollView, StyleSheet, Pressable } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import { Check, Star, Phone, ShieldCheck } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
@@ -33,7 +34,7 @@ export default function MaintenanceDetailScreen() {
     return <SafeAreaView style={styles.safe} edges={['top']}><ScreenHeader title="Request" /><StateView kind="loading" /></SafeAreaView>;
   }
   if (req.isError || !req.data) {
-    return <SafeAreaView style={styles.safe} edges={['top']}><ScreenHeader title="Request" /><StateView kind="error" title="Request not found" actionLabel="Back" onAction={() => router.back()} /></SafeAreaView>;
+    return <SafeAreaView style={styles.safe} edges={['top']}><ScreenHeader title="Request" /><StateView kind="error" title="Request not found" actionLabel="Back" onAction={() => goBack('/realtor/maintenance')} /></SafeAreaView>;
   }
 
   const r = req.data;

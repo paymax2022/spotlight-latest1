@@ -54,15 +54,32 @@ function getVoteDateUTC(): string {
 
 export async function getVotingSettings(contestId: string): Promise<VotingSettings> {
   const supabase = createAdminClient();
+  // Fetched WITHOUT the status filter so the two very different causes can be
+  // told apart. Filtering in the query collapsed both into "Voting is not
+  // enabled for this contest", which is actively misleading: an admin who has
+  // ticked Enable Voting AND Enable Paid Voting reads it as a contradiction and
+  // has no way to discover that the settings row is merely still in draft.
   const { data, error } = await supabase
     .from('voting_settings')
     .select('*')
     .eq('contest_id', contestId)
-    .eq('status', 'active')
     .maybeSingle();
 
   if (error) throw new ApiError('Failed to load voting settings', 500);
-  if (!data) throw new ApiError('Voting is not enabled for this contest', 400);
+
+  if (!data) {
+    throw new ApiError('Voting has not been set up for this contest yet.', 400);
+  }
+
+  const status = (data as { status?: string }).status;
+  if (status !== 'active') {
+    throw new ApiError(
+      `Voting for this contest is still ${status ?? 'inactive'}. ` +
+        'Set its status to active in the voting settings to open it.',
+      400,
+    );
+  }
+
   return mapSettingsRow(data);
 }
 

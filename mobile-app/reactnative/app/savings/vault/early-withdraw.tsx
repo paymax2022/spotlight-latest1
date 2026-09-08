@@ -2,6 +2,7 @@ import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import { TriangleAlert, CircleCheck } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
@@ -32,7 +33,7 @@ export default function EarlyWithdraw() {
     try {
       await withdraw.mutateAsync();
       await alertAsync({ title: 'Done', message: `${formatNaira(q.netKobo)} sent to your wallet.` });
-      router.dismissAll?.() ?? router.back();
+      router.dismissAll?.() ?? goBack('/savings');
     } catch {
       alertAsync({ title: 'Could not withdraw', message: 'Please try again.' });
     }
@@ -66,7 +67,7 @@ export default function EarlyWithdraw() {
           onPress={confirm}
           loading={withdraw.isPending}
         />
-        <PrimaryButton label="Cancel" variant="ghost" onPress={() => router.back()} />
+        <PrimaryButton label="Cancel" variant="ghost" onPress={() => goBack('/savings')} />
       </View>
     </Shell>
   );

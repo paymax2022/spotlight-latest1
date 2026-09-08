@@ -35,8 +35,11 @@ jobs:
         run: go vet ./internal/insurance/... ./internal/provider/mycover/... ./internal/provider/octamile/...
       - name: Test (insurance — state machines, saga auto-reverse, idempotency)
         run: go test ./internal/insurance/... -count=1 -v
-      - name: Test (all — regression)
-        run: go test ./... -count=1
+      # Repo-wide `go test ./...` removed: ci.yml's ungated `backend` job now runs
+      # the whole backend suite against a real Postgres, so this lane repeating it
+      # WITHOUT a database was both slower and weaker — every live-DB suite skipped
+      # here while reporting "ok". The scoped run above stays: it is fast, it is
+      # verbose, and it names this module when it fails.
 
   migration-guard:
     runs-on: ubuntu-latest

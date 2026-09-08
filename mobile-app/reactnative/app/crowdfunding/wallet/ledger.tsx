@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { FlatList, View, Text, Pressable, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { router } from 'expo-router';
+import { router, useLocalSearchParams } from 'expo-router';
 import { ChevronRight } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
@@ -11,6 +11,7 @@ import ScreenHeader from '@/components/ScreenHeader';
 import StateView from '@/components/StateView';
 import SegmentedTabs from '@/features/crowdfunding/components/SegmentedTabs';
 import { useLedger } from '@/features/crowdfunding/hooks/useExtras';
+import { useDefaultCampaignId } from '@/features/crowdfunding/hooks/useCreator';
 import { formatNaira, relativeTime } from '@/features/crowdfunding/utils/crowdfundingFormatters';
 
 const TABS = [
@@ -23,13 +24,18 @@ const TABS = [
 
 export default function LedgerScreen() {
   const [tab, setTab] = useState('all');
-  const { data, isLoading, isError, refetch, isRefetching } = useLedger(undefined, tab === 'all' ? undefined : tab);
+  // Opened either from the wallet screen (which now always passes its own
+  // resolved campaign) or bare — fall back the same way the wallet does.
+  const { campaign: routeCampaign } = useLocalSearchParams<{ campaign?: string }>();
+  const defaultCampaign = useDefaultCampaignId();
+  const campaignId = routeCampaign ?? defaultCampaign.id;
+  const { data, isLoading, isError, refetch, isRefetching } = useLedger(campaignId, tab === 'all' ? undefined : tab);
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
       <ScreenHeader title="Ledger" subtitle="Every fund movement, immutable" />
       <View style={styles.tabs}><SegmentedTabs options={TABS} value={tab} onChange={setTab} scrollable /></View>
-      {isLoading ? (
+      {isLoading || (!routeCampaign && defaultCampaign.isLoading) ? (
         <StateView kind="loading" />
       ) : isError ? (
         <StateView kind="error" title="Couldn't load ledger" actionLabel="Retry" onAction={refetch} />

@@ -272,7 +272,15 @@ describe('KYC Tier Gate', () => {
       expect(tier).toBe(0);
     });
 
-    it('should handle database errors gracefully', async () => {
+    // Carried over from tests/unit/voting-bridge/kyc-gate.spec.ts, deleted because
+  // it targeted assertKycGate/getKycProfile — an API that exists on neither
+  // develop nor main. Its other three cases are covered above; this one is not,
+  // because the concept does not exist: nothing in voting-bridge/ or voting/
+  // checks account suspension, so a suspended user can currently vote. Left as a
+  // todo rather than a failing test, since it describes unbuilt behaviour.
+  it.todo('should block suspended users — no suspension check exists in the voting path today');
+
+  it('should handle database errors gracefully', async () => {
       const mockSupabase = {
         from: vi.fn().mockReturnThis(),
         select: vi.fn().mockReturnThis(),

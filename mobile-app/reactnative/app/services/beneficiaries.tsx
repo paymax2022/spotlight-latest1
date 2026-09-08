@@ -21,6 +21,8 @@ import { Spacing } from '@/constants/spacing';
 import { Typography } from '@/constants/typography';
 import { shadow1 } from '@/constants/shadows';
 import { router } from 'expo-router';
+import { goBack } from '@/lib/navigation';
+import { HomeMenuButton } from '@/components/HomeMenu';
 
 function BillerIcon({ name, color }: { name: string; color: string }) {
   const Cmp = (Icons as unknown as Record<string, Icons.LucideIcon>)[name] ?? Icons.Receipt;
@@ -62,18 +64,21 @@ export default function BeneficiariesScreen() {
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
       <View style={styles.topBar}>
-        <Pressable onPress={() => router.back()} style={styles.iconBtn} accessibilityRole="button" accessibilityLabel="Go back">
+        <Pressable onPress={() => goBack('/services')} style={styles.iconBtn} accessibilityRole="button" accessibilityLabel="Go back">
           <ArrowLeft size={22} color={Colors.primary} strokeWidth={2.2} />
         </Pressable>
         <Text style={styles.topTitle}>Beneficiaries</Text>
-        <Pressable
-          onPress={() => setAdding((v) => !v)}
-          style={styles.iconBtn}
-          accessibilityRole="button"
-          accessibilityLabel={adding ? 'Close add form' : 'Add beneficiary'}
-        >
-          <Plus size={20} color={Colors.primary} strokeWidth={2} />
-        </Pressable>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+          <Pressable
+            onPress={() => setAdding((v) => !v)}
+            style={styles.iconBtn}
+            accessibilityRole="button"
+            accessibilityLabel={adding ? 'Close add form' : 'Add beneficiary'}
+          >
+            <Plus size={20} color={Colors.primary} strokeWidth={2} />
+          </Pressable>
+          <HomeMenuButton />
+        </View>
       </View>
 
       <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.flex}>

@@ -4,10 +4,10 @@ import { useCallback, useEffect, useState } from 'react';
 import {
   listBoostPackages, upsertBoostPackage, getCommissionConfig, setCommissionConfig,
   listDiscountCodes, createDiscountCode, setDiscountCodeActive,
-  listFeaturedSlots, setFeaturedSlotCap, formatKobo,
+  listFeaturedSlots, setFeaturedSlotCap, getBoostDailyRate, setBoostDailyRate, formatKobo,
 } from '@/services/marketplaceAdminService';
 import type {
-  MktBoostPackage, MktCommissionConfig, MktDiscountCode, MktDiscountKind, MktFeaturedSlotConfig,
+  MktBoostPackage, MktBoostDailyRate, MktCommissionConfig, MktDiscountCode, MktDiscountKind, MktFeaturedSlotConfig,
 } from '@/types/marketplaceAdmin';
 import {
   PageHeader, MarketplaceTabs, Card, StatusBadge, DisclosureNote, AuditNote, PermissionBanner,
@@ -20,6 +20,7 @@ const nairaToKobo = (n: string) => Math.round((Number(n.replace(/[^0-9.]/g, ''))
 export default function PricingPage() {
   const { allowed: canEdit } = useMarketplacePermission(MARKETPLACE_PERMS.pricing);
   const [packages, setPackages] = useState<MktBoostPackage[]>([]);
+  const [dailyRate, setDailyRateState] = useState<MktBoostDailyRate | null>(null);
   const [commission, setCommission] = useState<MktCommissionConfig | null>(null);
   const [discounts, setDiscounts] = useState<MktDiscountCode[]>([]);
   const [slots, setSlots] = useState<MktFeaturedSlotConfig[]>([]);
@@ -31,8 +32,8 @@ export default function PricingPage() {
   const load = useCallback(async () => {
     setLoading(true); setError(null);
     try {
-      const [pk, cm, dc, sl] = await Promise.all([listBoostPackages(), getCommissionConfig(), listDiscountCodes(), listFeaturedSlots()]);
-      setPackages(pk); setCommission(cm); setDiscounts(dc); setSlots(sl);
+      const [pk, dr, cm, dc, sl] = await Promise.all([listBoostPackages(), getBoostDailyRate(), getCommissionConfig(), listDiscountCodes(), listFeaturedSlots()]);
+      setPackages(pk); setDailyRateState(dr); setCommission(cm); setDiscounts(dc); setSlots(sl);
     } catch (e) { setError(String(e)); } finally { setLoading(false); }
   }, []);
   useEffect(() => { void load(); }, [load]);
@@ -64,6 +65,11 @@ export default function PricingPage() {
           <BoostPackagesCard packages={packages} canEdit={canEdit} busy={busy}
             onSave={(pkg, reason) => run(`pkg:${pkg.tier}`, async () => { const s = await upsertBoostPackage(pkg, reason); setPackages((ps) => ps.map((p) => (p.tier === s.tier ? s : p))); setMsg(`Boost package “${s.label}” saved. Audit entry recorded.`); })}
           />
+          {dailyRate && (
+            <DailyRateCard rate={dailyRate} canEdit={canEdit} busy={busy === 'daily-rate'}
+              onSave={(kobo, reason) => run('daily-rate', async () => { const r = await setBoostDailyRate(kobo, reason); setDailyRateState(r); setMsg(`Custom-boost daily rate set to ${formatKobo(r.daily_rate_kobo)}/day. Audit entry recorded.`); })}
+            />
+          )}
           {commission && (
             <CommissionCard config={commission} canEdit={canEdit} busy={busy === 'commission'}
               onSave={(bps, reason) => run('commission', async () => { const c = await setCommissionConfig(bps, reason); setCommission(c); setMsg('Commission default saved. Audit entry recorded.'); })}
@@ -115,6 +121,37 @@ function BoostPackagesCard({ packages, canEdit, busy, onSave }: { packages: MktB
           })}
         </tbody>
       </table>
+    </Card>
+  );
+}
+
+// ── Custom-range daily rate (start date+time / end date+time boosts) ─────────
+function DailyRateCard({ rate, canEdit, busy, onSave }: { rate: MktBoostDailyRate; canEdit: boolean; busy: boolean; onSave: (dailyRateKobo: number, reason: string) => void }) {
+  const [naira, setNaira] = useState(String(rate.daily_rate_kobo / 100));
+  const [reason, setReason] = useState('');
+  return (
+    <Card title="Custom boost daily rate (MO-002)">
+      <p style={{ fontSize: '0.8rem', color: '#6b7280', marginTop: 0, marginBottom: '0.75rem' }}>
+        Prices a buyer&apos;s own start-date+time / end-date+time boost on the mobile Boost screen — duration (rounded up to whole days) × this rate.
+      </p>
+      <div style={{ display: 'flex', gap: '1rem', alignItems: 'flex-end', flexWrap: 'wrap' }}>
+        <div>
+          <label style={lbl()}>₦ per day</label>
+          <input style={{ ...input(), width: 120 }} value={naira} onChange={(e) => setNaira(e.target.value)} placeholder="e.g. 100" />
+        </div>
+        <div style={{ flex: 1, minWidth: 180 }}>
+          <label style={lbl()}>reason_code</label>
+          <input style={input()} value={reason} onChange={(e) => setReason(e.target.value)} placeholder="e.g. q3_boost_rate_change" />
+        </div>
+        <button
+          style={canEdit && reason.trim() && !busy ? btnPrimary() : btnDisabled()}
+          disabled={!canEdit || !reason.trim() || busy}
+          onClick={() => onSave(nairaToKobo(naira), reason.trim())}
+        >{busy ? '…' : 'Save'}</button>
+      </div>
+      <div style={{ fontSize: '0.75rem', color: '#9ca3af', marginTop: '0.6rem' }}>
+        Last changed {rate.updated_at ? fmtDate(rate.updated_at) : '—'}{rate.updated_by ? ` by ${rate.updated_by}` : ''}.
+      </div>
     </Card>
   );
 }

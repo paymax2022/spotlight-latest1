@@ -157,13 +157,28 @@ func TestOrder_TotalPayableKobo(t *testing.T) {
 	}
 }
 
-// TestBoostTiers_CatalogIsWellFormed locks the §2.4 boost catalog: every tier has
-// a positive price/duration and STRICTLY increasing weight as tier price
-// increases (the additive boost_weight that feeds the ES function_score
-// boost_mode:sum — a mis-ordered weight would let a cheaper tier out-rank a
-// pricier one, breaking the commercial model).
+// seedBoostPackageCatalog mirrors the INITIAL seed rows in
+// supabase/migrations/20270166000000_marketplace_boost_pricing_config.sql
+// (mkt_boost_packages). The catalog moved from a frozen Go slice into
+// admin-editable Postgres rows (ADM-002/MO-002) — an admin is now expected to
+// diverge from these over time via the pricing console, so this test only
+// guards the well-formedness of the seed migration's starting values, not live
+// DB state. If the seed literal there changes, mirror the change here too.
+var seedBoostPackageCatalog = []mkt.BoostTier{
+	{Tier: "start", DurationDays: 7, PriceKobo: 50000, Weight: 1.0},
+	{Tier: "vip", DurationDays: 14, PriceKobo: 200000, Weight: 2.0},
+	{Tier: "vip_gold", DurationDays: 30, PriceKobo: 500000, Weight: 3.0},
+	{Tier: "diamond", DurationDays: 30, PriceKobo: 1500000, Weight: 5.0},
+	{Tier: "enterprise", DurationDays: 60, PriceKobo: 5000000, Weight: 8.0},
+}
+
+// TestBoostTiers_CatalogIsWellFormed locks the §2.4 boost catalog's SEED shape:
+// every tier has a positive price/duration and STRICTLY increasing weight as
+// tier price increases (the additive boost_weight that feeds the ES
+// function_score boost_mode:sum — a mis-ordered weight would let a cheaper
+// tier out-rank a pricier one, breaking the commercial model).
 func TestBoostTiers_CatalogIsWellFormed(t *testing.T) {
-	tiers := mkt.BoostTiers
+	tiers := seedBoostPackageCatalog
 	if len(tiers) == 0 {
 		t.Fatal("BoostTiers must not be empty")
 	}

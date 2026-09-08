@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { View, Text, ScrollView, StyleSheet, Pressable } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import { Star, ChevronRight, Clock } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
@@ -37,7 +38,7 @@ export default function BusResultsScreen() {
       ) : routes.isError ? (
         <MobilityEdgeState kind={errKind(routes.error)} actionLabel="Retry" onAction={() => routes.refetch()} />
       ) : (routes.data?.length ?? 0) === 0 ? (
-        <MobilityEdgeState kind="empty" title="No buses found" message="No operators run this route on the selected date. Try another date or city." actionLabel="Change search" onAction={() => router.back()} />
+        <MobilityEdgeState kind="empty" title="No buses found" message="No operators run this route on the selected date. Try another date or city." actionLabel="Change search" onAction={() => goBack('/mobility/bus')} />
       ) : (
         <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scroll}>
           {routes.data!.map((r: BusRoute) => (

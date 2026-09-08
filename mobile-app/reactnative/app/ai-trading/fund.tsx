@@ -5,6 +5,7 @@ import React, { useState } from 'react';
 import { View, Text, StyleSheet, ScrollView, Pressable, TextInput } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import { ArrowLeft, Info } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
@@ -14,6 +15,7 @@ import PrimaryButton from '@/components/PrimaryButton';
 import { usePosition, useSubscribe } from '@/features/aitrading/hooks';
 import { formatNaira, formatUnits, UNIT_SCALE } from '@/features/aitrading/api';
 import { alertAsync } from '@/lib/confirm';
+import { HomeMenuButton } from '@/components/HomeMenu';
 
 export default function FundScreen() {
   const pos = usePosition();
@@ -30,7 +32,7 @@ export default function FundScreen() {
     try {
       const r = await subscribe.mutateAsync(kobo);
       await alertAsync({ title: 'Funded', message: `${formatUnits(r.unitsMinted)} units added at ${formatNaira(r.navPerUnitKobo)} each.`, buttonLabel: 'Done' });
-      router.back();
+      goBack('/ai-trading');
     } catch (e) {
       alertAsync({ title: 'Could not fund', message: e instanceof Error ? e.message : 'Please try again.' });
     }
@@ -39,9 +41,9 @@ export default function FundScreen() {
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
       <View style={styles.topBar}>
-        <Pressable onPress={() => router.back()} hitSlop={12} accessibilityLabel="Back"><ArrowLeft size={22} color={Colors.onSurface} /></Pressable>
+        <Pressable onPress={() => goBack('/ai-trading')} hitSlop={12} accessibilityLabel="Back"><ArrowLeft size={22} color={Colors.onSurface} /></Pressable>
         <Text style={styles.topTitle}>Fund trading wallet</Text>
-        <View style={{ width: 22 }} />
+        <HomeMenuButton />
       </View>
 
       <ScrollView contentContainerStyle={styles.body} keyboardShouldPersistTaps="handled">

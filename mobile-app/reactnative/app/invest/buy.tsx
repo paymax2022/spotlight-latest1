@@ -173,7 +173,7 @@ const styles = StyleSheet.create({
   amountLabel: { ...Typography.labelMd, color: Colors.onSurfaceVariant },
   amountInputRow: { flexDirection: 'row', alignItems: 'center', marginTop: Spacing.sm },
   currency: { ...Typography.headlineLg, color: Colors.onSurface },
-  amountInput: { ...Typography.displayLg, fontSize: 44, color: Colors.onSurface, minWidth: 120, textAlign: 'center', padding: 0 },
+  amountInput: { ...Typography.displayLg, fontSize: 44, letterSpacing: -0.88, color: Colors.onSurface, minWidth: 120, textAlign: 'center', padding: 0 },
   cashHint: { ...Typography.labelSm, color: Colors.onSurfaceVariant, marginTop: Spacing.xs },
   err: { ...Typography.labelSm, color: Colors.error, marginTop: Spacing.xs },
   reviewCard: {

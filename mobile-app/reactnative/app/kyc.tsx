@@ -5,6 +5,7 @@ import {
 import { alertAsync } from '@/lib/confirm';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import { ShieldCheck, ShieldAlert, ShieldQuestion, Clock } from 'lucide-react-native';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Colors } from '@/constants/colors';
@@ -170,7 +171,7 @@ export default function KycScreen() {
         ) : null}
 
         {data.status === 'verified' ? (
-          <PrimaryButton label="Done" onPress={() => router.back()} variant="secondary" />
+          <PrimaryButton label="Done" onPress={() => goBack('/')} variant="secondary" />
         ) : null}
       </ScrollView>
     </SafeAreaView>

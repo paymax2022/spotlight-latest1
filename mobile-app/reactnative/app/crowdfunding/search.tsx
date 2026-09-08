@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { View, Text, FlatList, StyleSheet, Pressable, Keyboard } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import { ArrowLeft } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
@@ -11,6 +12,7 @@ import SearchBar from '@/components/SearchBar';
 import StateView from '@/components/StateView';
 import CampaignCard from '@/features/crowdfunding/components/CampaignCard';
 import { useCampaigns, useToggleSave } from '@/features/crowdfunding/hooks/useCrowdfunding';
+import { HomeMenuButton } from '@/components/HomeMenu';
 
 const SUGGESTIONS = ['Medical', 'School fees', 'Flood relief', 'Church building', 'Startup', 'Film'];
 
@@ -24,12 +26,13 @@ export default function SearchScreen() {
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
       <View style={styles.topRow}>
-        <Pressable onPress={() => router.back()} hitSlop={10} style={styles.backBtn} accessibilityLabel="Go back">
+        <Pressable onPress={() => goBack('/crowdfunding')} hitSlop={10} style={styles.backBtn} accessibilityLabel="Go back">
           <ArrowLeft size={22} color={Colors.onSurface} strokeWidth={2} />
         </Pressable>
         <View style={styles.searchFlex}>
           <SearchBar placeholder="Search campaigns…" value={term} onChangeText={setTerm} />
         </View>
+        <HomeMenuButton />
       </View>
 
       {!hasQuery ? (

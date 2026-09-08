@@ -212,6 +212,13 @@ func (s *Service) SetPin(ctx context.Context, userID, newPIN, currentPIN string)
 		return err
 	}
 	if has {
+		// Refuse BEFORE Verify. Verify scores a wrong PIN against the lockout
+		// counter, so passing an empty current PIN through would let a caller
+		// that simply omitted the field burn the user's 5 attempts and lock
+		// them out of transfers. A missing field is a bad request, not a guess.
+		if currentPIN == "" {
+			return ErrPinCurrentRequired
+		}
 		if err := s.pins.Verify(ctx, userID, currentPIN); err != nil {
 			return err
 		}

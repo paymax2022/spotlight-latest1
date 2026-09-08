@@ -3,13 +3,14 @@ import { assertOpenMicReadAdmin } from '@/src/server/openmic/auth';
 import { listSubmissions } from '@/src/server/openmic/persistence';
 import { createR2DownloadUrl } from '@/src/lib/storage/r2';
 
-export async function GET(request: Request, context: { params: { id: string } }) {
+export async function GET(request: Request, context: { params: Promise<{ id: string }> }) {
+  const params = await context.params;
   try {
     await assertOpenMicReadAdmin(request);
     const { searchParams } = new URL(request.url);
     const disposition = searchParams.get('download') === '1' ? 'attachment' : 'inline';
     const submissions = await listSubmissions();
-    const submission = submissions.find((item) => item.id === context.params.id);
+    const submission = submissions.find((item) => item.id === params.id);
     if (!submission) return errorResponse('Submission not found', 404);
 
     if (!submission.songObjectKey) {

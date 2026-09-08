@@ -172,7 +172,7 @@ const styles = StyleSheet.create({
   doneBody: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: Spacing.lg, gap: Spacing.sm },
   doneIcon: { width: 76, height: 76, borderRadius: 38, backgroundColor: Colors.tertiaryFixed, alignItems: 'center', justifyContent: 'center', marginBottom: Spacing.sm },
   doneTitle: { ...Typography.headlineMd, color: Colors.onSurface },
-  doneFare: { ...Typography.displayLg, fontSize: 40, lineHeight: 46, color: Colors.primary, fontWeight: '800' as const },
+  doneFare: { ...Typography.displayLg, fontSize: 40, letterSpacing: -0.8, lineHeight: 46, color: Colors.primary, fontWeight: '800' as const },
   doneSub: { ...Typography.bodyMd, color: Colors.onSurfaceVariant, textAlign: 'center', lineHeight: 22, marginBottom: Spacing.lg },
   doneActions: { width: '100%', gap: Spacing.sm },
 });

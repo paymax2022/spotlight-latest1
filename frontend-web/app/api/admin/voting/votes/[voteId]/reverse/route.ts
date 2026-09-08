@@ -109,7 +109,15 @@ export async function POST(
 
     // Mark the linked transaction refunded (idempotent — already-refunded
     // transactions just re-set the same status).
-    if (v.transaction_id && walletRefund.amountKobo > 0) {
+    //
+    // This used to be gated on walletRefund.amountKobo > 0, which is only ever
+    // true for payment_provider='wallet'. A card-funded reversal therefore left
+    // vote_credit_status = 'credited', with two consequences: the connect tally
+    // trigger never removed the mirrored votes, so a refunded purchase kept its
+    // votes on the mobile roster permanently; and repair-connect-tally.sh, which
+    // selects on 'credited', would re-create a mirror row an operator had
+    // removed by hand. The status describes the vote, not the funding rail.
+    if (v.transaction_id) {
       await supabase
         .from('vote_transactions')
         .update({ payment_status: 'refunded', vote_credit_status: 'reversed', updated_at: new Date().toISOString() })

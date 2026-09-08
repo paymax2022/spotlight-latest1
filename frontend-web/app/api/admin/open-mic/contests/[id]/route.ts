@@ -4,10 +4,11 @@ import { getContestById, updateContest } from '@/src/server/openmic/persistence'
 import type { OpenMicContest } from '@/src/features/openmic/types';
 import { addAuditEvent } from '@/src/server/admin/audit';
 
-export async function GET(request: Request, context: { params: { id: string } }) {
+export async function GET(request: Request, context: { params: Promise<{ id: string }> }) {
+  const params = await context.params;
   try {
     await assertOpenMicReadAdmin(request);
-    const contest = await getContestById(context.params.id);
+    const contest = await getContestById(params.id);
     if (!contest) return errorResponse('Contest not found', 404);
     return successResponse({ success: true, contest });
   } catch (error) {
@@ -15,18 +16,19 @@ export async function GET(request: Request, context: { params: { id: string } })
   }
 }
 
-export async function PATCH(request: Request, context: { params: { id: string } }) {
+export async function PATCH(request: Request, context: { params: Promise<{ id: string }> }) {
+  const params = await context.params;
   try {
     const identity = await assertOpenMicAdmin(request);
     const body = (await request.json()) as Partial<OpenMicContest>;
-    const contest = await updateContest(context.params.id, body, identity.actorId);
+    const contest = await updateContest(params.id, body, identity.actorId);
     addAuditEvent({
       adminUser: identity.actorId || 'admin',
       role: identity.role,
       action: 'open_mic_contest_update',
       module: 'open_mic',
       entityType: 'contest',
-      entityId: context.params.id,
+      entityId: params.id,
       reason: 'Updated open mic contest configuration',
       newValue: body,
       ipAddress: request.headers.get('x-forwarded-for') || undefined,

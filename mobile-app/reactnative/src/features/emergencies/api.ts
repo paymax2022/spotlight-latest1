@@ -1,4 +1,5 @@
 // Estate Emergencies (Block 35) — types + dual mock/live api + constants.
+import { mockAllowed } from '@/config/mockPolicy';
 import { api } from '@/api/client';
 import { Colors } from '@/constants/colors';
 import { generateIdempotencyKey } from '@/utils/idempotency';
@@ -11,7 +12,7 @@ export interface EmergencyAlert {
 }
 export interface CreateEmergencyInput { kind: EmergencyKind; description?: string; location?: string; idempotencyKey: string; }
 
-export const USE_MOCK = (process.env.EXPO_PUBLIC_EMERGENCIES_USE_MOCK ?? 'true') !== 'false';
+export const USE_MOCK = mockAllowed(process.env.EXPO_PUBLIC_EMERGENCIES_USE_MOCK, true);
 
 // Emergencies/incidents are served by the resident-scoped frontend-web handlers
 // under /api/v1/estate/emergencies (GET list, POST create, POST /{id}/resolve).

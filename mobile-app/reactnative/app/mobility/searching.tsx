@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { View, Text, StyleSheet, ActivityIndicator, Animated, Easing, Pressable } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
 import { Spacing } from '@/constants/spacing';
@@ -75,7 +76,7 @@ export default function SearchingScreen() {
   useEffect(() => {
     const phase = trip.data?.phase;
     if (phase && phase !== 'requested' && phase !== 'fare_negotiating') {
-      if (['cancelled', 'no_show'].includes(phase)) { router.back(); return; }
+      if (['cancelled', 'no_show'].includes(phase)) { goBack('/mobility'); return; }
       router.replace(`/mobility/trip/${tripId}`);
     }
   }, [trip.data?.phase, tripId]);

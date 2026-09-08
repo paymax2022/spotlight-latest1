@@ -81,7 +81,9 @@ func RegisterHealthLab(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pg
 	lg := member.Group("/health/lab")
 	lg.GET("/tests", h.ListTests)                  // catalog: prep, TAT, price
 	lg.POST("/tests", h.UpsertTest)                // lab owner, HL-2 catalog governance
+	lg.GET("/packages", h.ListPackages)            // bundle catalog, same shape as ListTests
 	lg.POST("/orders", h.CreateOrder)              // patient, payment HELD (HL-9)
+	lg.GET("/orders", h.ListMyOrders)              // patient's own order history + active-order card
 	lg.GET("/orders/:id", h.Get)                   // object-level authZ
 	lg.GET("/orders/:id/results", h.Results)       // object-level authZ (HL-8)
 	lg.GET("/orders/:id/custody", h.Custody)       // chain-of-custody trail (HL-6/12)

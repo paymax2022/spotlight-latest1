@@ -54,7 +54,7 @@ const styles = StyleSheet.create({
   topRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   labelRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   label: { ...Typography.labelMd, color: Colors.inversePrimary },
-  points: { ...Typography.displayLg, color: Colors.onPrimary, fontSize: 40, lineHeight: 46 },
+  points: { ...Typography.displayLg, color: Colors.onPrimary, fontSize: 40, letterSpacing: -0.8, lineHeight: 46 },
   nonCash: { ...Typography.labelSm, color: Colors.inversePrimary },
   progressWrap: { marginTop: Spacing.md, gap: 6 },
   track: { height: 8, borderRadius: Radius.full, backgroundColor: 'rgba(255,255,255,0.2)', overflow: 'hidden' },

@@ -1,5 +1,6 @@
 import { env } from '@/config/env';
 import { operationKey } from './idempotency';
+import { resolveUseMock } from '@/config/useMock';
 import type {
   DeliveryFeeConfig,
   GetDeliveryConfigResponse,
@@ -23,8 +24,7 @@ function authHeaders(): Record<string, string> {
 // Mock by default; flip with NEXT_PUBLIC_DELIVERY_FEE_ADMIN_USE_MOCK=false once
 // the live Go admin endpoints (/api/restaurant/admin/delivery-config) are
 // deployed. Matches the nutrition/mobility admin-service convention.
-const USE_FIXTURES =
-  (process.env.NEXT_PUBLIC_DELIVERY_FEE_ADMIN_USE_MOCK ?? 'true').toLowerCase() !== 'false';
+const USE_FIXTURES = resolveUseMock(process.env.NEXT_PUBLIC_DELIVERY_FEE_ADMIN_USE_MOCK);
 
 // ── Money helpers (integer kobo ↔ naira) ─────────────────────────────────────
 
@@ -120,13 +120,15 @@ export async function getDeliveryConfig(
 export async function saveDeliveryConfig(
   body: PutDeliveryConfigBody,
 ): Promise<GetDeliveryConfigResponse> {
+  // Real, verified live endpoint (PUT /restaurant/admin/delivery-config,
+  // backend/internal/restaurant/handler.go PutDeliveryConfig) — fixture mode
+  // refuses loudly instead of reporting a write it did not perform. See
+  // docs/audit/ADMIN_SIMULATED_WRITES.md.
   if (USE_FIXTURES) {
-    await new Promise((r) => setTimeout(r, 350));
-    const { restaurant_id, ...config } = body;
-    return {
-      scope: restaurant_id && String(restaurant_id).trim() ? 'restaurant' : 'global',
-      config: config as DeliveryFeeConfig,
-    };
+    throw new Error(
+      'Saving delivery config is unavailable in fixture mode: this console will not report a write it did not perform. ' +
+      'Set NEXT_PUBLIC_DELIVERY_FEE_ADMIN_USE_MOCK=false to make this change against the live backend.',
+    );
   }
   const res = await fetch(`${adminApiBase()}/restaurant/admin/delivery-config`, {
     method: 'PUT',

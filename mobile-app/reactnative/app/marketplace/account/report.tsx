@@ -9,6 +9,7 @@ import React, { useMemo, useState } from 'react';
 import { View, Text, StyleSheet, ScrollView, Pressable, TextInput, Image } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import * as ImagePicker from 'expo-image-picker';
 import { Camera, ImagePlus, CircleCheck, Check } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
@@ -85,7 +86,7 @@ export default function ReportFlow() {
         message: "Thanks for flagging this. Our safety team reviews reports within 24 hours and will take action if our policies were broken.",
         buttonLabel: 'Done',
       });
-      router.back();
+      goBack('/marketplace/account');
     } catch (e) {
       alertAsync({ title: 'Could not submit', message: (e as Error)?.message ?? 'Please try again.' });
     }

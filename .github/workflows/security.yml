@@ -70,7 +70,17 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - uses: gitleaks/gitleaks-action@v2
+      # v3 is a Node 20 -> Node 24 runtime migration with no behaviour change.
+      # Not optional for long: GitHub removes Node 20 from hosted runners on
+      # 2026-09-16, which would break @v2 outright.
+      #
+      # ⚠️ This does NOT fix the current failure. gitleaks-action requires a
+      # licence for ORGANISATION accounts ("[paymax2022] is an organization"),
+      # and no GITLEAKS_LICENSE secret exists — so the scan aborts before
+      # looking at anything. Set that secret, or replace this action with the
+      # gitleaks CLI, which is free. Until then this job is a placeholder that
+      # reports a failure indistinguishable from a clean scan.
+      - uses: gitleaks/gitleaks-action@v3
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -80,7 +90,10 @@ jobs:
     continue-on-error: true  # advisory during launch — flip to blocking once the backlog is clean
     steps:
       - uses: actions/checkout@v4
-      - uses: aquasecurity/trivy-action@0.24.0
+      # 0.24.0 NEVER EXISTED — the tag 404s, so this step failed at "Set up job"
+      # and trivy scanned nothing at all while the run still showed a job for it.
+      # Upstream tags are v-prefixed; v0.36.0 is the current release.
+      - uses: aquasecurity/trivy-action@v0.36.0
         with:
           scan-type: fs
           scanners: vuln,secret,misconfig

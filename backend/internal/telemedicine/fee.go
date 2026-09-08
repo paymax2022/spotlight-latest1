@@ -18,7 +18,7 @@ var ErrQuoteMismatch = errors.New("telemedicine: booking quote is stale")
 // its own copy and compute the fee client-side, which meant the wallet rail debited
 // the consultation fee while the screen showed a higher total, and the card rail
 // collected the difference with no ledger entry at all. The app now renders the
-// quote this package returns and holds no rate of its own — see ADR-040.
+// quote this package returns and holds no rate of its own — see ADR-044.
 const PlatformFeeBp = 500
 
 // maxConsultFeeKobo bounds what this package will price. A consultation fee above
@@ -57,7 +57,7 @@ func QuoteFor(consultFeeKobo int64) BookingQuote {
 // QuoteAt is QuoteFor at an explicit rate, used to honour the
 // FEATURE_TELEMEDICINE_PLATFORM_FEE_ENABLED flag: the flag resolves to a rate of
 // PlatformFeeBp when on and 0 when off, and a 0-bp quote is exactly the
-// pre-ADR-040 behaviour — the patient pays the consultation fee alone and the
+// pre-ADR-044 behaviour — the patient pays the consultation fee alone and the
 // booking escrows it alone. A negative rate is treated as 0 (never a discount).
 func QuoteAt(consultFeeKobo int64, bp int) BookingQuote {
 	if bp < 0 {
@@ -84,7 +84,7 @@ func (q BookingQuote) Priceable() bool { return q.TotalKobo > 0 }
 // amount the CLIENT computed, at the PSP, before this server escrows anything — so
 // a client working from a stale quote (the doctor edited their fee after the
 // confirm screen loaded) would put the charged and escrowed amounts back out of
-// step, which is the exact defect ADR-040 removes.
+// step, which is the exact defect ADR-044 removes.
 //
 // The client sends the total it quoted the patient. A disagreement rejects the
 // booking before any money moves. Zero means the client did not quote a total

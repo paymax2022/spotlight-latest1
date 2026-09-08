@@ -2,6 +2,7 @@ import React from 'react';
 import { View, Text, ScrollView, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import { PartyPopper, Sparkles, Award, Check } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
@@ -60,7 +61,7 @@ export default function RankUpScreen() {
 
           <View style={styles.actions}>
             <PrimaryButton label="Share" onPress={() => router.push('/referral/invite/share-by-name' as never)} />
-            <PrimaryButton label="Back to missions" onPress={() => router.back()} variant="ghost" />
+            <PrimaryButton label="Back to missions" onPress={() => goBack('/referral')} variant="ghost" />
           </View>
         </ScrollView>
       )}

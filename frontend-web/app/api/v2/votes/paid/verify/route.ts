@@ -49,7 +49,7 @@ export async function POST(request: NextRequest) {
     if (!result.success) {
       return NextResponse.json(
         { error: result.error || 'Failed to verify vote' },
-        { status: 400 }
+        { status: result.statusCode ?? 400 }
       );
     }
 
@@ -107,7 +107,7 @@ export async function GET(request: NextRequest) {
     if (!result.success) {
       return NextResponse.json(
         { error: result.error || 'Failed to verify vote' },
-        { status: 400 }
+        { status: result.statusCode ?? 400 }
       );
     }
 

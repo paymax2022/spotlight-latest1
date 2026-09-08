@@ -14,7 +14,7 @@ export async function GET(
       return Response.json({ success: false, error: 'contestId is required' }, { status: 400 });
     }
 
-    const baseUrl = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://spotlightng.com';
+    const baseUrl = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://www.spotlightng.com';
 
     // Get contestant info for share message
     const supabase = createAdminClient();

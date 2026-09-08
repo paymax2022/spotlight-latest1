@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import PhoneNumberInput from '@/components/PhoneNumberInput';
 import { View, Text, ScrollView, StyleSheet, Pressable } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
@@ -87,7 +88,7 @@ export default function BatchCreateScreen() {
             </View>
             <TextInputField value={s.dropoff} onChangeText={(v) => update(s.key, { dropoff: v })} placeholder="Drop-off address" leftIcon={<MapPin size={18} color={Colors.primary} strokeWidth={2} />} />
             <TextInputField value={s.receiverName} onChangeText={(v) => update(s.key, { receiverName: v })} placeholder="Receiver name" />
-            <TextInputField value={s.receiverPhone} onChangeText={(v) => update(s.key, { receiverPhone: v })} placeholder="Receiver phone" keyboardType="phone-pad" />
+            <PhoneNumberInput value={s.receiverPhone} onChange={({ e164, nsn }) => ((v) => update(s.key, { receiverPhone: v }))(e164 || nsn)} />
             <View style={styles.sizeRow}>
               {LOGISTICS_SIZES.map((sz) => {
                 const active = s.size === sz.value;

@@ -3,13 +3,14 @@
 // AcademyColors which is built strictly on the base design tokens.
 // Money in kobo → display via formatNaira. Reward points are plain integers.
 
+import { mockAllowed } from '@/config/mockPolicy';
 import { Colors } from '@/constants/colors';
 import type { ExamSlug, MasteryState, OrderStatus } from './types';
 
 // Flip to false (or set EXPO_PUBLIC_ACADEMY_USE_MOCK=false) once the live
 // /api/finance/academy endpoints are reachable. Mock-first, mirroring the
 // health/connect/crowdfunding conventions — the app runs fully with no backend.
-export const USE_MOCK = (process.env.EXPO_PUBLIC_ACADEMY_USE_MOCK ?? 'true') !== 'false';
+export const USE_MOCK = mockAllowed(process.env.EXPO_PUBLIC_ACADEMY_USE_MOCK, true);
 
 // Member REST namespace. Confirmed against backend/internal/app/academy_routes.go
 // (RegisterAcademy: memberAcad := finance.Group("/academy") → most sub-packages

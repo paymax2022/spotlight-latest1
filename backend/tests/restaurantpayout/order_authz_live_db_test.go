@@ -33,7 +33,7 @@ func seedPendingOrder(t *testing.T, ctx context.Context, pool *pgxpool.Pool, res
 // Skips unless TEST_DATABASE_URL is set.
 func TestLiveDB_OrderStatusAuthz(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	svc := newLiveRestaurantService(pool, newLiveLedgerService(pool))
 

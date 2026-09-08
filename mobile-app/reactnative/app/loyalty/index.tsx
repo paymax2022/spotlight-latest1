@@ -2,6 +2,7 @@ import React from 'react';
 import { View, Text, ScrollView, StyleSheet, Pressable } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import { ArrowLeft, History, Gift, Crown, TrendingUp, Info, ChevronRight, Users } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
@@ -14,6 +15,7 @@ import PointsBalanceCard from '@/features/loyalty/components/PointsBalanceCard';
 import CatalogItemCard from '@/features/loyalty/components/CatalogItemCard';
 import { useLoyaltyAccount, useTiers, useCatalog } from '@/features/loyalty/hooks';
 import { LoyaltyColors, POINTS_NOT_CASH_DISCLOSURE } from '@/features/loyalty/constants/loyalty.constants';
+import { HomeMenuButton } from '@/components/HomeMenu';
 
 export default function LoyaltyHome() {
   const account = useLoyaltyAccount();
@@ -30,16 +32,19 @@ export default function LoyaltyHome() {
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
       <View style={styles.header}>
-        <Pressable onPress={() => router.back()} hitSlop={10} style={styles.iconBtn} accessibilityLabel="Go back">
+        <Pressable onPress={() => goBack('/')} hitSlop={10} style={styles.iconBtn} accessibilityLabel="Go back">
           <ArrowLeft size={22} color={Colors.onSurface} strokeWidth={2} />
         </Pressable>
         <View style={styles.headerTitleWrap}>
           <Text style={styles.eyebrow}>Paymax</Text>
           <Text style={styles.headerTitle}>Rewards</Text>
         </View>
-        <Pressable onPress={() => router.push('/loyalty/how-it-works')} hitSlop={10} style={styles.iconBtn} accessibilityLabel="How it works">
-          <Info size={22} color={Colors.onSurface} strokeWidth={2} />
-        </Pressable>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+          <Pressable onPress={() => router.push('/loyalty/how-it-works')} hitSlop={10} style={styles.iconBtn} accessibilityLabel="How it works">
+            <Info size={22} color={Colors.onSurface} strokeWidth={2} />
+          </Pressable>
+          <HomeMenuButton />
+        </View>
       </View>
 
       {loading ? (

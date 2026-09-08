@@ -24,7 +24,7 @@ export async function GET(request: Request) {
 
     const [totals, shareLink] = await Promise.all([
       getVoteTotals(contestId, (enrollment as any).id),
-      getOrCreateShareLink(contestId, (enrollment as any).id, process.env.NEXT_PUBLIC_SITE_URL ?? 'https://spotlightng.com'),
+      getOrCreateShareLink(contestId, (enrollment as any).id, process.env.NEXT_PUBLIC_SITE_URL ?? 'https://www.spotlightng.com'),
     ]);
 
     // Get rank context: how many votes to next rank

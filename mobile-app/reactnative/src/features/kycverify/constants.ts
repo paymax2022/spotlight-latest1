@@ -3,6 +3,7 @@
 // checklist (K2), the ordered wizard steps (K14 resume), and the human labels
 // from here so we ask ONLY for the target tier's required checks (UX rule).
 
+import { mockAllowed } from '@/config/mockPolicy';
 import type { CheckType, IdType, DocType, KycTier } from './types';
 
 export const CONSENT_VERSION = '2026-07-ndpa-cbn-v1';
@@ -11,7 +12,7 @@ export const CONSENT_VERSION = '2026-07-ndpa-cbn-v1';
 // results without a backend so the flow is walkable in dev. Set
 // EXPO_PUBLIC_KYC_VERIFY_USE_MOCK=false once the Go /api/finance/kyc backend is
 // live to hit the real multi-provider gateway.
-export const USE_MOCK = (process.env.EXPO_PUBLIC_KYC_VERIFY_USE_MOCK ?? 'true') !== 'false';
+export const USE_MOCK = mockAllowed(process.env.EXPO_PUBLIC_KYC_VERIFY_USE_MOCK, true);
 
 /** Ordered checks required to reach each tier. Data-only first, biometrics/doc after. */
 export const TIER_REQUIREMENTS: Record<Exclude<KycTier, 0>, CheckType[]> = {

@@ -67,6 +67,11 @@ func (h *Handler) ListDoctors(c *gin.Context) {
 	if me, err := strconv.Atoi(c.Query("min_experience")); err == nil {
 		q.MinExperience = me
 	}
+	// min_rating is a float ("4.5"), unlike the int filters above.
+	if mr, err := strconv.ParseFloat(c.Query("min_rating"), 64); err == nil {
+		q.MinRating = mr
+	}
+	q.Featured = c.Query("featured") == "true"
 	if l, err := strconv.Atoi(c.DefaultQuery("limit", "20")); err == nil {
 		q.Limit = l
 	}
@@ -132,7 +137,7 @@ func (h *Handler) BookAppointment(c *gin.Context) {
 	if err != nil {
 		// A stale client quote is a conflict, not a server fault: no money moved,
 		// and the fix is to re-read the doctor's booking quote — not to retry the
-		// same amount (ADR-040).
+		// same amount (ADR-044).
 		if errors.Is(err, ErrQuoteMismatch) {
 			c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
 			return

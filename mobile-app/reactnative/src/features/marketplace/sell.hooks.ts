@@ -43,6 +43,7 @@ export const SELL_KEYS = {
   listing: (id: string) => ['mkt', 'listing', id] as const,
   boostTiers: ['mkt', 'sell', 'boost-tiers'] as const,
   boost: (id: string) => ['mkt', 'sell', 'boost', id] as const,
+  boostQuote: (tier?: string, endsAt?: string) => ['mkt', 'sell', 'boost-quote', tier ?? '', endsAt ?? ''] as const,
 };
 
 // ─── Current seller id (for GET /sellers/:id/listings) ───────────────────────
@@ -83,6 +84,29 @@ export function useUpdateListing() {
     onSuccess: (listing) => qc.setQueryData(SELL_KEYS.listing(listing.id), listing),
   });
 }
+
+// ─── Photo management on an existing listing (edit screen, LM-002) ──────────
+function useListingMediaMutation<TArgs extends { id: string }>(
+  mutationFn: (args: TArgs) => Promise<import('./types').Listing>,
+) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn,
+    onSuccess: (listing) => {
+      qc.setQueryData(SELL_KEYS.listing(listing.id), listing);
+      qc.invalidateQueries({ queryKey: SELL_KEYS.myListings });
+    },
+  });
+}
+
+export const useAddListingMedia = () =>
+  useListingMediaMutation(({ id, mediaIds }: { id: string; mediaIds: string[] }) => sellApi.addListingMedia(id, mediaIds));
+
+export const useRemoveListingMedia = () =>
+  useListingMediaMutation(({ id, mediaId }: { id: string; mediaId: string }) => sellApi.removeListingMedia(id, mediaId));
+
+export const useReorderListingMedia = () =>
+  useListingMediaMutation(({ id, mediaIds }: { id: string; mediaIds: string[] }) => sellApi.reorderListingMedia(id, mediaIds));
 
 export function useSubmitListing() {
   const qc = useQueryClient();
@@ -152,21 +176,32 @@ export const useBoost = (id: string | null) =>
     enabled: !!id,
   });
 
+// Live price preview for a would-be boost purchase — pass exactly one of
+// tier/endsAt. Disabled until one is actually chosen, so the screen doesn't
+// fire a request for an incomplete selection.
+export const useBoostQuote = (params: { tier?: string; endsAt?: string }) =>
+  useQuery({
+    queryKey: SELL_KEYS.boostQuote(params.tier, params.endsAt),
+    queryFn: () => sellApi.getBoostQuote(params),
+    enabled: !!(params.tier || params.endsAt),
+  });
+
 /**
- * Purchase a boost (money path). The Idempotency-Key is persisted per
- * listingId+tier BEFORE the charge fires, so a retry after an app-kill reuses it
- * and the backend's dedupe window makes the retry a safe replay (never a
- * double-debit). Cleared on terminal success. On a 409 idempotency replay the
- * echoed original Boost is returned.
+ * Purchase a boost (money path). Pass either { tier } for a preset package or
+ * { endsAt } for a custom date-range boost. The Idempotency-Key is persisted
+ * per listingId+selection BEFORE the charge fires, so a retry after an
+ * app-kill reuses it and the backend's dedupe window makes the retry a safe
+ * replay (never a double-debit). Cleared on terminal success. On a 409
+ * idempotency replay the echoed original Boost is returned.
  */
 export function usePurchaseBoost(listingId: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (tier: string): Promise<Boost> => {
-      const operationKey = `boost:${listingId}:${tier}`;
+    mutationFn: async (selection: { tier?: string; endsAt?: string }): Promise<Boost> => {
+      const operationKey = `boost:${listingId}:${selection.tier ?? `custom:${selection.endsAt}`}`;
       const idemKey = await getOrCreateIdemKey(operationKey);
       try {
-        const boost = await sellApi.createBoost({ listingId, tier }, idemKey);
+        const boost = await sellApi.createBoost({ listingId, tier: selection.tier, endsAt: selection.endsAt }, idemKey);
         await clearIdemKey(operationKey);
         return boost;
       } catch (e) {
@@ -177,6 +212,18 @@ export function usePurchaseBoost(listingId: string) {
         throw e;
       }
     },
+    onSuccess: (boost) => qc.setQueryData(SELL_KEYS.boost(boost.id), boost),
+  });
+}
+
+// Stop the caller's own active boost early (prorated refund on the backend).
+// No Idempotency-Key: unlike a purchase, a retried cancel on an
+// already-cancelled boost is safely rejected server-side (FSM guard), not a
+// double charge, so there is nothing to dedupe against.
+export function useCancelBoost() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => sellApi.cancelBoost(id),
     onSuccess: (boost) => qc.setQueryData(SELL_KEYS.boost(boost.id), boost),
   });
 }

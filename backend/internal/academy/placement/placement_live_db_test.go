@@ -43,7 +43,7 @@ func correctOption(t *testing.T, ctx context.Context, pool *pgxpool.Pool, qid st
 
 func TestLiveDB_Placement_BuildAndScore(t *testing.T) {
 	pool := liveDB(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	svc := placement.NewService(pool)
 

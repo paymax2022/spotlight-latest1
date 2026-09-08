@@ -4,6 +4,7 @@ import {
   TextInput,
   Text,
   Pressable,
+  ScrollView,
   StyleSheet,
   ActivityIndicator,
   Platform,
@@ -26,6 +27,7 @@ import {
 } from '@/lib/addressLookup';
 import { useCurrentLocation } from '@/features/location/useCurrentLocation';
 import { getRecentAddresses, addRecentAddress, type RecentAddress } from '@/features/location/recentAddresses';
+import { shouldShowRecentChips } from '@/features/location/recentAddressChips';
 
 // @maplibre throws at module-init when the native binary is absent (Expo Go /
 // JS-only builds). Lazy-require the draggable PointAnnotation the same way
@@ -69,7 +71,10 @@ interface Props {
   enableMapConfirm?: boolean;
   /** Show the "use my current location" action (default true). */
   enableCurrentLocation?: boolean;
-  /** Show recent addresses when the field is focused & empty (default true). */
+  /**
+   * Offer previously used addresses (default true) — as a standing row of chips
+   * under the field, and in the dropdown when the field is focused & empty.
+   */
   enableRecents?: boolean;
 }
 
@@ -234,6 +239,17 @@ export default function AddressAutocompleteInput({
 
   const showRecents = enableRecents && focused && value.trim().length < 3 && recents.length > 0;
   const dropdownVisible = open && (suggestions.length > 0 || showRecents);
+
+  // Saved addresses as a standing row of chips, not only as a dropdown the user
+  // has to know to summon by focusing an empty field. See recentAddressChips.ts
+  // for why each condition is there.
+  const showRecentChips = shouldShowRecentChips({
+    enabled: enableRecents,
+    count: recents.length,
+    hasPin: Boolean(pin),
+    resolved,
+    dropdownVisible,
+  });
   const mapCenter = pin ?? near ?? { lat: 6.4541, lng: 3.3947 }; // Lagos default
 
   return (
@@ -298,6 +314,37 @@ export default function AddressAutocompleteInput({
           {suggestions.some((s) => s.source === 'proxy') ? (
             <Text style={styles.attribution}>Powered by Google</Text>
           ) : null}
+        </View>
+      )}
+
+      {showRecentChips && (
+        <View style={styles.recentBar}>
+          <View style={styles.recentHead}>
+            <Clock size={13} color={Colors.onSurfaceVariant} strokeWidth={2} />
+            <Text style={styles.recentHeadText}>Recent addresses</Text>
+          </View>
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            keyboardShouldPersistTaps="handled"
+            contentContainerStyle={styles.recentChips}
+          >
+            {recents.map((r) => (
+              <Pressable
+                key={`chip:${r.lat},${r.lng}`}
+                onPress={() => pickRecent(r)}
+                style={({ pressed }) => [styles.chip, pressed && styles.chipPressed]}
+                accessibilityRole="button"
+                // The chip shows only the first segment to stay compact, so the
+                // full address goes to the accessibility label.
+                accessibilityLabel={`Use recent address ${r.label}`}
+              >
+                <Text style={styles.chipText} numberOfLines={1}>
+                  {r.label.split(',')[0]}
+                </Text>
+              </Pressable>
+            ))}
+          </ScrollView>
         </View>
       )}
 
@@ -395,6 +442,22 @@ const styles = StyleSheet.create({
   rowSecondary: { ...Typography.caption, color: Colors.onSurfaceVariant },
   actionPrimary: { ...Typography.labelMd, color: Colors.primary },
   errorHint: { ...Typography.caption, color: Colors.error, paddingHorizontal: Spacing.md, paddingVertical: 6 },
+  recentBar: { marginTop: Spacing.sm, gap: 6 },
+  recentHead: { flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: Spacing.xs },
+  recentHeadText: { ...Typography.caption, color: Colors.onSurfaceVariant },
+  // paddingRight so the last chip clears the edge when the row scrolls.
+  recentChips: { gap: Spacing.xs, paddingHorizontal: Spacing.xs, paddingRight: Spacing.md },
+  chip: {
+    maxWidth: 200,
+    paddingHorizontal: Spacing.sm,
+    paddingVertical: 7,
+    borderRadius: Radius.full,
+    borderWidth: 1,
+    borderColor: Colors.surfaceContainerHigh,
+    backgroundColor: Colors.surfaceContainerLow,
+  },
+  chipPressed: { opacity: 0.7 },
+  chipText: { ...Typography.labelSm, color: Colors.onSurface },
   pinSummary: {
     flexDirection: 'row',
     alignItems: 'center',

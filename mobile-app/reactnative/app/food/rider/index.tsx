@@ -2,6 +2,7 @@ import React from 'react';
 import { View, Text, ScrollView, StyleSheet, Pressable, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import * as Icons from 'lucide-react-native';
 import StateView from '@/components/StateView';
 import PrimaryButton from '@/components/PrimaryButton';
@@ -13,6 +14,7 @@ import { shadow1 } from '@/constants/shadows';
 import { useRiderOffers, useRiderActive, useAcceptOffer } from '@/features/food/hooks';
 import { formatNaira, formatDistance, toFoodError } from '@/features/food/utils';
 import type { RiderOffer } from '@/features/food/types';
+import { HomeMenuButton } from '@/components/HomeMenu';
 
 function OfferCard({ offer, onAccept, accepting }: { offer: RiderOffer; onAccept: () => void; accepting: boolean }) {
   return (
@@ -67,11 +69,14 @@ export default function RiderOffersScreen() {
   return (
     <SafeAreaView style={s.safe} edges={['top']}>
       <View style={s.topBar}>
-        <Pressable onPress={() => router.back()} style={s.iconButton} accessibilityLabel="Go back">
+        <Pressable onPress={() => goBack('/food')} style={s.iconButton} accessibilityLabel="Go back">
           <Icons.ArrowLeft size={22} color={Colors.primary} strokeWidth={2.2} />
         </Pressable>
         <Text style={s.topTitle}>Rider · Offers</Text>
-        <View style={s.iconButton} />
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+          <View style={s.iconButton} />
+          <HomeMenuButton />
+        </View>
       </View>
 
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={s.content}>

@@ -80,6 +80,194 @@ func (r *Repository) InsertListing(ctx context.Context, l *Listing) (*Listing, e
 	return out, nil
 }
 
+// ─── Listing media ───────────────────────────────────────────────────────────
+
+// InsertListingMedia persists the photos a seller uploaded for a listing.
+//
+// This is what was missing: CreateListingInput has always carried MediaIDs and
+// the service parsed them, but nothing ever wrote a mkt_listing_media row — so
+// the table was empty for every listing ever created, and every card in the app
+// fell back to a placeholder.
+//
+// The three size variants are the same object today: the presign path stores one
+// upload per photo and there is no derivative pipeline yet. They are separate
+// columns so a later resizer can fill them in without a migration or a change
+// here; storing the same key three times is honest about that, where storing it
+// only in url_full would make the thumb read look broken instead of un-derived.
+func (r *Repository) InsertListingMedia(ctx context.Context, listingID string, keys []string) error {
+	if len(keys) == 0 {
+		return nil
+	}
+	batch := &pgx.Batch{}
+	for i, k := range keys {
+		batch.Queue(`
+			INSERT INTO public.mkt_listing_media
+				(listing_id, url_thumb, url_card, url_full, blurhash, perceptual_hash, sort_order)
+			VALUES ($1,$2,$2,$2,'','',$3)`, listingID, k, i)
+	}
+	br := r.db.SendBatch(ctx, batch)
+	defer br.Close()
+	for range keys {
+		if _, err := br.Exec(); err != nil {
+			return wrapInternal("insert listing media", err)
+		}
+	}
+	return nil
+}
+
+// ThumbKeysFor returns each listing's first photo key, for the listings given.
+//
+// Batched deliberately: the alternative is a correlated subselect inside
+// listingCols, but that constant is also fed through prefixCols (which splits on
+// commas to alias each column), so a subselect there would be silently mangled.
+// One extra query per page keeps every read path — search, my listings, detail,
+// saved items — on the same code and leaves the existing SQL untouched.
+func (r *Repository) ThumbKeysFor(ctx context.Context, listingIDs []string) (map[string]string, error) {
+	out := make(map[string]string, len(listingIDs))
+	if len(listingIDs) == 0 {
+		return out, nil
+	}
+	rows, err := r.db.Query(ctx, `
+		SELECT DISTINCT ON (listing_id) listing_id, url_thumb
+		FROM public.mkt_listing_media
+		WHERE listing_id = ANY($1)
+		ORDER BY listing_id, sort_order, created_at`, listingIDs)
+	if err != nil {
+		return nil, wrapInternal("list listing media", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id, key string
+		if err := rows.Scan(&id, &key); err != nil {
+			return nil, wrapInternal("scan listing media", err)
+		}
+		out[id] = key
+	}
+	return out, rows.Err()
+}
+
+// mediaRow is one raw mkt_listing_media row, before presigning.
+type mediaRow struct {
+	ID        string
+	Key       string // url_thumb/url_card/url_full are the same object today
+	Blurhash  string
+	SortOrder int
+}
+
+// ListMediaForListing returns every photo on ONE listing, in gallery order.
+// Unlike ThumbKeysFor (one key per listing, for a page of cards), this is for
+// the detail screen's full gallery — every row, for a single listing.
+func (r *Repository) ListMediaForListing(ctx context.Context, listingID string) ([]mediaRow, error) {
+	rows, err := r.db.Query(ctx, `
+		SELECT id, url_thumb, blurhash, sort_order
+		FROM public.mkt_listing_media
+		WHERE listing_id = $1
+		ORDER BY sort_order, created_at`, listingID)
+	if err != nil {
+		return nil, wrapInternal("list listing media for detail", err)
+	}
+	defer rows.Close()
+	var out []mediaRow
+	for rows.Next() {
+		var m mediaRow
+		if err := rows.Scan(&m.ID, &m.Key, &m.Blurhash, &m.SortOrder); err != nil {
+			return nil, wrapInternal("scan listing media for detail", err)
+		}
+		out = append(out, m)
+	}
+	return out, rows.Err()
+}
+
+// MediaForListings is the batched counterpart of ListMediaForListing — every
+// photo, for a PAGE of listings, in one query. For "My Listings" (SellerListings):
+// that screen renders a card per listing straight after the seller uploads
+// photos (same "must not show a placeholder" reasoning as attachThumbs), but
+// unlike search/browse it reads listing.media[] like the detail gallery does,
+// not thumb_url — so neither existing attach path covers it.
+func (r *Repository) MediaForListings(ctx context.Context, listingIDs []string) (map[string][]mediaRow, error) {
+	out := make(map[string][]mediaRow, len(listingIDs))
+	if len(listingIDs) == 0 {
+		return out, nil
+	}
+	rows, err := r.db.Query(ctx, `
+		SELECT listing_id, id, url_thumb, blurhash, sort_order
+		FROM public.mkt_listing_media
+		WHERE listing_id = ANY($1)
+		ORDER BY listing_id, sort_order, created_at`, listingIDs)
+	if err != nil {
+		return nil, wrapInternal("list listing media for page", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var listingID string
+		var m mediaRow
+		if err := rows.Scan(&listingID, &m.ID, &m.Key, &m.Blurhash, &m.SortOrder); err != nil {
+			return nil, wrapInternal("scan listing media for page", err)
+		}
+		out[listingID] = append(out[listingID], m)
+	}
+	return out, rows.Err()
+}
+
+// AppendListingMedia adds photos to an EXISTING listing, starting at
+// startSortOrder — the edit-screen counterpart of InsertListingMedia (create),
+// which always starts a fresh listing's photos at 0. Kept separate rather than
+// adding an offset parameter to InsertListingMedia so the create path, already
+// covered by TestLiveDB_ListingMedia_PersistedAndReadBack, is untouched.
+func (r *Repository) AppendListingMedia(ctx context.Context, listingID string, keys []string, startSortOrder int) error {
+	if len(keys) == 0 {
+		return nil
+	}
+	batch := &pgx.Batch{}
+	for i, k := range keys {
+		batch.Queue(`
+			INSERT INTO public.mkt_listing_media
+				(listing_id, url_thumb, url_card, url_full, blurhash, perceptual_hash, sort_order)
+			VALUES ($1,$2,$2,$2,'','',$3)`, listingID, k, startSortOrder+i)
+	}
+	br := r.db.SendBatch(ctx, batch)
+	defer br.Close()
+	for range keys {
+		if _, err := br.Exec(); err != nil {
+			return wrapInternal("append listing media", err)
+		}
+	}
+	return nil
+}
+
+// DeleteListingMedia removes one photo. Scoped to (id AND listing_id) so a
+// caller can never delete another listing's row by guessing a media id — the
+// handler's ownership check is on the LISTING, not on each photo, so the id
+// alone is not enough to prove the caller may touch it.
+func (r *Repository) DeleteListingMedia(ctx context.Context, listingID, mediaID string) (int64, error) {
+	ct, err := r.db.Exec(ctx, `DELETE FROM public.mkt_listing_media WHERE id=$1 AND listing_id=$2`, mediaID, listingID)
+	if err != nil {
+		return 0, wrapInternal("delete listing media", err)
+	}
+	return ct.RowsAffected(), nil
+}
+
+// ReorderListingMedia rewrites sort_order to match orderedIDs' position. The
+// caller (Service.ReorderListingMedia) has already validated that orderedIDs
+// is exactly the existing set for this listing, once each — this only writes.
+func (r *Repository) ReorderListingMedia(ctx context.Context, listingID string, orderedIDs []string) error {
+	if len(orderedIDs) == 0 {
+		return nil
+	}
+	batch := &pgx.Batch{}
+	for i, id := range orderedIDs {
+		batch.Queue(`UPDATE public.mkt_listing_media SET sort_order=$1 WHERE id=$2 AND listing_id=$3`, i, id, listingID)
+	}
+	br := r.db.SendBatch(ctx, batch)
+	defer br.Close()
+	for range orderedIDs {
+		if _, err := br.Exec(); err != nil {
+			return wrapInternal("reorder listing media", err)
+		}
+	}
+	return nil
+}
+
 // GetListing loads a listing by id.
 func (r *Repository) GetListing(ctx context.Context, id string) (*Listing, error) {
 	row := r.db.QueryRow(ctx, `SELECT `+listingCols+` FROM public.mkt_listings WHERE id=$1`, id)
@@ -107,6 +295,27 @@ func (r *Repository) SetListingStatus(ctx context.Context, id string, from, to L
 		WHERE id=$1 AND status=$3::listing_status`, id, string(to), string(from), moderationReason)
 	if err != nil {
 		return wrapInternal("set listing status", err)
+	}
+	if ct.RowsAffected() == 0 {
+		return ErrConflict
+	}
+	return nil
+}
+
+// RenewListing flips an expired listing back to active AND pushes expires_at out
+// another 60 days (matching mkt_listings.expires_at's own creation-time default,
+// 20260905000000_marketplace_v1.sql:123) — a status-only flip would leave
+// expires_at in the past, so the very next expiry sweep (ExpireDueListings)
+// would immediately re-expire it.
+func (r *Repository) RenewListing(ctx context.Context, id string, from, to ListingStatus) error {
+	ct, err := r.db.Exec(ctx, `
+		UPDATE public.mkt_listings
+		SET status=$2::listing_status,
+		    expires_at = now() + interval '60 days',
+		    updated_at=now()
+		WHERE id=$1 AND status=$3::listing_status`, id, string(to), string(from))
+	if err != nil {
+		return wrapInternal("renew listing", err)
 	}
 	if ct.RowsAffected() == 0 {
 		return ErrConflict
@@ -148,12 +357,21 @@ func (r *Repository) CountNonTerminalOrdersForListing(ctx context.Context, listi
 	return n, err
 }
 
-// ListSellerListings returns a seller's listings newest-first.
-func (r *Repository) ListSellerListings(ctx context.Context, sellerID string, limit, offset int) ([]Listing, error) {
+// ListSellerListings returns a seller's listings, newest first. onlyActive
+// scopes this to the PUBLIC storefront view (a buyer browsing a seller's
+// portfolio must only ever see what's actually for sale, never a draft,
+// pending_review, paused, or removed_user row); the seller's own "My
+// Listings" management screen calls this with onlyActive=false via
+// MyListingsForSeller/an authenticated caller, since it needs every status to
+// manage the listing lifecycle.
+func (r *Repository) ListSellerListings(ctx context.Context, sellerID string, limit, offset int, onlyActive bool) ([]Listing, error) {
 	limit = clampLimit(limit)
-	rows, err := r.db.Query(ctx, `SELECT `+listingCols+`
-		FROM public.mkt_listings WHERE seller_id=$1 ORDER BY created_at DESC LIMIT $2 OFFSET $3`,
-		sellerID, limit, offset)
+	q := `SELECT ` + listingCols + ` FROM public.mkt_listings WHERE seller_id=$1`
+	if onlyActive {
+		q += ` AND status='active'::listing_status`
+	}
+	q += ` ORDER BY created_at DESC LIMIT $2 OFFSET $3`
+	rows, err := r.db.Query(ctx, q, sellerID, limit, offset)
 	if err != nil {
 		return nil, wrapInternal("list seller listings", err)
 	}
@@ -162,10 +380,17 @@ func (r *Repository) ListSellerListings(ctx context.Context, sellerID string, li
 }
 
 // ModerationQueue returns pending_review listings for the admin moderation queue.
+//
+// The placeholders are $1/$2 and must stay that way: two arguments are passed, so
+// numbering them $2/$3 leaves $1 bound but unreferenced and Postgres cannot infer
+// its type — every call failed with 42P18 "could not determine data type of
+// parameter $1", 500ing the endpoint. It failed that way from the start, and the
+// symptom was an admin seeing no queue at all rather than an error they would
+// report: listings sat in pending_review with no surface that showed them.
 func (r *Repository) ModerationQueue(ctx context.Context, limit, offset int) ([]Listing, error) {
 	limit = clampLimit(limit)
 	rows, err := r.db.Query(ctx, `SELECT `+listingCols+`
-		FROM public.mkt_listings WHERE status='pending_review' ORDER BY created_at ASC LIMIT $2 OFFSET $3`,
+		FROM public.mkt_listings WHERE status='pending_review' ORDER BY created_at ASC LIMIT $1 OFFSET $2`,
 		limit, offset)
 	if err != nil {
 		return nil, wrapInternal("moderation queue", err)
@@ -681,15 +906,15 @@ func (r *Repository) DisputeQueue(ctx context.Context, status string, limit, off
 
 // ─── Boosts ──────────────────────────────────────────────────────────────────
 
-const boostCols = `id, listing_id, seller_id, tier, duration_days, price_kobo,
-	ledger_charge_ref, status, rejection_reason_code, refund_ref, starts_at, ends_at, created_at`
+const boostCols = `id, listing_id, seller_id, tier, duration_days, price_kobo, weight,
+	ledger_charge_ref, status, rejection_reason_code, refund_ref, refunded_kobo, starts_at, ends_at, created_at`
 
 func scanBoost(row pgx.Row) (*Boost, error) {
 	var b Boost
 	var status string
 	if err := row.Scan(
-		&b.ID, &b.ListingID, &b.SellerID, &b.Tier, &b.DurationDays, &b.PriceKobo,
-		&b.LedgerChargeRef, &status, &b.RejectionReasonCode, &b.RefundRef, &b.StartsAt, &b.EndsAt, &b.CreatedAt,
+		&b.ID, &b.ListingID, &b.SellerID, &b.Tier, &b.DurationDays, &b.PriceKobo, &b.Weight,
+		&b.LedgerChargeRef, &status, &b.RejectionReasonCode, &b.RefundRef, &b.RefundedKobo, &b.StartsAt, &b.EndsAt, &b.CreatedAt,
 	); err != nil {
 		return nil, err
 	}
@@ -701,10 +926,10 @@ func scanBoost(row pgx.Row) (*Boost, error) {
 func (r *Repository) InsertBoost(ctx context.Context, b *Boost) (*Boost, error) {
 	row := r.db.QueryRow(ctx, `
 		INSERT INTO public.mkt_boosts
-			(listing_id, seller_id, tier, duration_days, price_kobo, ledger_charge_ref, status, starts_at, ends_at)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+			(listing_id, seller_id, tier, duration_days, price_kobo, weight, ledger_charge_ref, status, starts_at, ends_at)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
 		RETURNING `+boostCols,
-		b.ListingID, b.SellerID, b.Tier, b.DurationDays, b.PriceKobo, b.LedgerChargeRef, string(b.Status), b.StartsAt, b.EndsAt,
+		b.ListingID, b.SellerID, b.Tier, b.DurationDays, b.PriceKobo, b.Weight, b.LedgerChargeRef, string(b.Status), b.StartsAt, b.EndsAt,
 	)
 	out, err := scanBoost(row)
 	if err != nil {
@@ -737,6 +962,35 @@ func (r *Repository) ActiveBoostsForListing(ctx context.Context, listingID strin
 	return out, rows.Err()
 }
 
+// BoostsAwaitingRefund returns boosts stranded mid-rejection: moved to
+// rejected_with_reason but never stamped with a refund_ref.
+//
+// That pair IS the durable record of "refund owed". RejectBoost writes the status
+// first and posts the reversal second, so a ledger failure between the two leaves
+// exactly this shape — the seller no longer promoted, and still charged. Nothing
+// else produces it for long: a healthy rejection passes through the state inside
+// one call, and the retry is idempotent if it races that window.
+func (r *Repository) BoostsAwaitingRefund(ctx context.Context, limit int) ([]Boost, error) {
+	rows, err := r.db.Query(ctx, `SELECT `+boostCols+`
+		FROM public.mkt_boosts
+		WHERE status = 'rejected_with_reason' AND refund_ref IS NULL
+		ORDER BY created_at
+		LIMIT $1`, limit)
+	if err != nil {
+		return nil, wrapInternal("boosts awaiting refund", err)
+	}
+	defer rows.Close()
+	var out []Boost
+	for rows.Next() {
+		b, serr := scanBoost(rows)
+		if serr != nil {
+			return nil, wrapInternal("scan boost", serr)
+		}
+		out = append(out, *b)
+	}
+	return out, rows.Err()
+}
+
 // GetBoost loads a boost by id.
 func (r *Repository) GetBoost(ctx context.Context, id string) (*Boost, error) {
 	row := r.db.QueryRow(ctx, `SELECT `+boostCols+` FROM public.mkt_boosts WHERE id=$1`, id)
@@ -753,8 +1007,8 @@ func (r *Repository) GetBoost(ctx context.Context, id string) (*Boost, error) {
 // boostColsB is boostCols qualified with the `b` alias, for the admin list JOIN
 // (mkt_boosts b LEFT JOIN mkt_listings l): `id` exists in both tables, so every
 // column must be table-qualified to avoid an ambiguous-column error.
-const boostColsB = `b.id, b.listing_id, b.seller_id, b.tier, b.duration_days, b.price_kobo,
-	b.ledger_charge_ref, b.status, b.rejection_reason_code, b.refund_ref, b.starts_at, b.ends_at, b.created_at`
+const boostColsB = `b.id, b.listing_id, b.seller_id, b.tier, b.duration_days, b.price_kobo, b.weight,
+	b.ledger_charge_ref, b.status, b.rejection_reason_code, b.refund_ref, b.refunded_kobo, b.starts_at, b.ends_at, b.created_at`
 
 // AdminBoostRow is the admin boost-console read-model: the full boost row plus the
 // joined listing title. The embedded Boost inlines the SAME snake_case JSON keys
@@ -771,14 +1025,109 @@ func scanAdminBoost(row pgx.Row) (*AdminBoostRow, error) {
 	var b AdminBoostRow
 	var status string
 	if err := row.Scan(
-		&b.ID, &b.ListingID, &b.SellerID, &b.Tier, &b.DurationDays, &b.PriceKobo,
-		&b.LedgerChargeRef, &status, &b.RejectionReasonCode, &b.RefundRef, &b.StartsAt, &b.EndsAt, &b.CreatedAt,
+		&b.ID, &b.ListingID, &b.SellerID, &b.Tier, &b.DurationDays, &b.PriceKobo, &b.Weight,
+		&b.LedgerChargeRef, &status, &b.RejectionReasonCode, &b.RefundRef, &b.RefundedKobo, &b.StartsAt, &b.EndsAt, &b.CreatedAt,
 		&b.ListingTitle,
 	); err != nil {
 		return nil, err
 	}
 	b.Status = BoostStatus(status)
 	return &b, nil
+}
+
+// ─── Boost pricing (ADM-002/MO-002) ────────────────────────────────────────────
+
+const boostPackageCols = `tier, label, duration_days, price_kobo, weight, is_active, updated_at, updated_by, created_at`
+
+func scanBoostPackage(row pgx.Row) (*BoostPackage, error) {
+	var p BoostPackage
+	if err := row.Scan(
+		&p.Tier, &p.Label, &p.DurationDays, &p.PriceKobo, &p.Weight, &p.IsActive,
+		&p.UpdatedAt, &p.UpdatedBy, &p.CreatedAt,
+	); err != nil {
+		return nil, err
+	}
+	return &p, nil
+}
+
+// ListBoostPackages returns every package — active AND inactive, so the admin
+// console can show and re-enable a disabled one — cheapest first.
+func (r *Repository) ListBoostPackages(ctx context.Context) ([]BoostPackage, error) {
+	rows, err := r.db.Query(ctx, `SELECT `+boostPackageCols+` FROM public.mkt_boost_packages ORDER BY price_kobo ASC`)
+	if err != nil {
+		return nil, wrapInternal("list boost packages", err)
+	}
+	defer rows.Close()
+	var out []BoostPackage
+	for rows.Next() {
+		p, serr := scanBoostPackage(rows)
+		if serr != nil {
+			return nil, wrapInternal("scan boost package", serr)
+		}
+		out = append(out, *p)
+	}
+	return out, rows.Err()
+}
+
+// GetBoostPackage loads one package by tier. Returns ErrBoostPackageNotFound
+// (a 400 INVALID_BOOST_TIER, matching the pre-migration lookup-miss behavior)
+// if no such tier exists — NOT a 404, since this is caller-input validation.
+func (r *Repository) GetBoostPackage(ctx context.Context, tier string) (*BoostPackage, error) {
+	row := r.db.QueryRow(ctx, `SELECT `+boostPackageCols+` FROM public.mkt_boost_packages WHERE tier=$1`, tier)
+	p, err := scanBoostPackage(row)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrBoostPackageNotFound
+		}
+		return nil, wrapInternal("get boost package", err)
+	}
+	return p, nil
+}
+
+// UpsertBoostPackage creates or updates a package's price/duration/weight/
+// active state (ADM-002 admin pricing console). Applies to NEW purchases only —
+// PurchaseBoost freezes duration_days/price_kobo/weight onto the boost row, so
+// an in-flight or already-purchased boost is untouched by a later edit here.
+func (r *Repository) UpsertBoostPackage(ctx context.Context, p BoostPackage, updatedBy string) (*BoostPackage, error) {
+	row := r.db.QueryRow(ctx, `
+		INSERT INTO public.mkt_boost_packages (tier, label, duration_days, price_kobo, weight, is_active, updated_by, updated_at)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,now())
+		ON CONFLICT (tier) DO UPDATE SET
+			label = EXCLUDED.label, duration_days = EXCLUDED.duration_days,
+			price_kobo = EXCLUDED.price_kobo, weight = EXCLUDED.weight,
+			is_active = EXCLUDED.is_active, updated_by = EXCLUDED.updated_by, updated_at = now()
+		RETURNING `+boostPackageCols,
+		p.Tier, p.Label, p.DurationDays, p.PriceKobo, p.Weight, p.IsActive, updatedBy,
+	)
+	out, err := scanBoostPackage(row)
+	if err != nil {
+		return nil, wrapInternal("upsert boost package", err)
+	}
+	return out, nil
+}
+
+// GetBoostDailyRate loads the singleton custom-range ₦/day rate.
+func (r *Repository) GetBoostDailyRate(ctx context.Context) (*BoostDailyRate, error) {
+	row := r.db.QueryRow(ctx, `SELECT daily_rate_kobo, updated_at, updated_by FROM public.mkt_boost_daily_rate WHERE id='default'`)
+	var d BoostDailyRate
+	if err := row.Scan(&d.DailyRateKobo, &d.UpdatedAt, &d.UpdatedBy); err != nil {
+		return nil, wrapInternal("get boost daily rate", err)
+	}
+	return &d, nil
+}
+
+// SetBoostDailyRate updates the singleton custom-range ₦/day rate (ADM-002).
+func (r *Repository) SetBoostDailyRate(ctx context.Context, kobo int64, updatedBy string) (*BoostDailyRate, error) {
+	row := r.db.QueryRow(ctx, `
+		UPDATE public.mkt_boost_daily_rate SET daily_rate_kobo=$1, updated_by=$2, updated_at=now()
+		WHERE id='default' RETURNING daily_rate_kobo, updated_at, updated_by`,
+		kobo, updatedBy,
+	)
+	var d BoostDailyRate
+	if err := row.Scan(&d.DailyRateKobo, &d.UpdatedAt, &d.UpdatedBy); err != nil {
+		return nil, wrapInternal("set boost daily rate", err)
+	}
+	return &d, nil
 }
 
 // ListBoosts returns boosts platform-wide for the admin boost console, newest-first,
@@ -819,12 +1168,23 @@ func (r *Repository) ListBoosts(ctx context.Context, status string, limit, offse
 // SetBoostStatus performs a guarded boost transition, optionally recording rejection
 // reason + refund ref.
 func (r *Repository) SetBoostStatus(ctx context.Context, id string, from, to BoostStatus, rejectionReason, refundRef *string) error {
+	return r.setBoostStatusWithRefund(ctx, id, from, to, rejectionReason, refundRef, nil)
+}
+
+// setBoostStatusWithRefund additionally stamps refunded_kobo — the ACTUAL
+// amount posted, since RejectBoost refunds in full but CancelBoost prorates
+// (see Boost.RefundedKobo doc comment). Split from SetBoostStatus so every
+// OTHER caller (both non-refund transitions and the first leg of a
+// reject/cancel, before the refund amount is known) keeps the simpler
+// 5-argument signature.
+func (r *Repository) setBoostStatusWithRefund(ctx context.Context, id string, from, to BoostStatus, rejectionReason, refundRef *string, refundedKobo *int64) error {
 	ct, err := r.db.Exec(ctx, `
 		UPDATE public.mkt_boosts SET
 			status=$3,
 			rejection_reason_code=COALESCE($4, rejection_reason_code),
-			refund_ref=COALESCE($5, refund_ref)
-		WHERE id=$1 AND status=$2`, id, string(from), string(to), rejectionReason, refundRef)
+			refund_ref=COALESCE($5, refund_ref),
+			refunded_kobo=COALESCE($6, refunded_kobo)
+		WHERE id=$1 AND status=$2`, id, string(from), string(to), rejectionReason, refundRef, refundedKobo)
 	if err != nil {
 		return wrapInternal("set boost status", err)
 	}
@@ -1064,9 +1424,14 @@ func (r *Repository) SetSavedSearchAlert(ctx context.Context, id string, enabled
 
 // ListCategories returns active categories for a market.
 func (r *Repository) ListCategories(ctx context.Context, marketID string) ([]Category, error) {
+	// Parents before their own children (parent_id NULLS FIRST), then the admin's
+	// sort_order, then name as a stable tiebreaker. The client builds the tree from
+	// this flat list, so a child arriving before its parent would be dropped.
 	rows, err := r.db.Query(ctx, `
-		SELECT id, market_id, parent_id, slug, name, attribute_schema, risk_tier, commission_bps, is_active
-		FROM public.mkt_categories WHERE market_id=$1 AND is_active=TRUE ORDER BY name`, marketID)
+		SELECT id, market_id, parent_id, slug, name, COALESCE(icon,''), sort_order,
+		       attribute_schema, risk_tier, commission_bps, is_active
+		FROM public.mkt_categories WHERE market_id=$1 AND is_active=TRUE
+		ORDER BY parent_id NULLS FIRST, sort_order, name`, marketID)
 	if err != nil {
 		return nil, wrapInternal("list categories", err)
 	}
@@ -1085,7 +1450,8 @@ func (r *Repository) ListCategories(ctx context.Context, marketID string) ([]Cat
 // GetCategory loads a category by id.
 func (r *Repository) GetCategory(ctx context.Context, id string) (*Category, error) {
 	row := r.db.QueryRow(ctx, `
-		SELECT id, market_id, parent_id, slug, name, attribute_schema, risk_tier, commission_bps, is_active
+		SELECT id, market_id, parent_id, slug, name, COALESCE(icon,''), sort_order,
+		       attribute_schema, risk_tier, commission_bps, is_active
 		FROM public.mkt_categories WHERE id=$1`, id)
 	c, err := scanCategory(row)
 	if err != nil {
@@ -1097,10 +1463,30 @@ func (r *Repository) GetCategory(ctx context.Context, id string) (*Category, err
 	return c, nil
 }
 
+// IsCategoryDescendantOfSlug reports whether categoryID or any of its
+// ancestors carries the given slug — e.g. whether a "Cars" listing sits under
+// "Vehicles". Walks up rather than assuming today's taxonomy depth, mirroring
+// the downward recursive walk in repository_account.go's category filter.
+func (r *Repository) IsCategoryDescendantOfSlug(ctx context.Context, categoryID, slug string) (bool, error) {
+	var exists bool
+	err := r.db.QueryRow(ctx, `
+		WITH RECURSIVE anc(id, parent_id, slug) AS (
+			SELECT id, parent_id, slug FROM public.mkt_categories WHERE id = $1
+			UNION ALL
+			SELECT c.id, c.parent_id, c.slug FROM public.mkt_categories c JOIN anc a ON c.id = a.parent_id
+		)
+		SELECT EXISTS (SELECT 1 FROM anc WHERE slug = $2)`, categoryID, slug).Scan(&exists)
+	if err != nil {
+		return false, wrapInternal("check category ancestor", err)
+	}
+	return exists, nil
+}
+
 func scanCategory(row pgx.Row) (*Category, error) {
 	var c Category
 	var schema []byte
-	if err := row.Scan(&c.ID, &c.MarketID, &c.ParentID, &c.Slug, &c.Name, &schema, &c.RiskTier, &c.CommissionBps, &c.IsActive); err != nil {
+	if err := row.Scan(&c.ID, &c.MarketID, &c.ParentID, &c.Slug, &c.Name, &c.Icon, &c.SortOrder,
+		&schema, &c.RiskTier, &c.CommissionBps, &c.IsActive); err != nil {
 		return nil, err
 	}
 	c.AttributeSchema = schema
@@ -1253,6 +1639,127 @@ type AuditRow struct {
 	BeforeState json.RawMessage `json:"before_state"`
 	AfterState  json.RawMessage `json:"after_state"`
 	CreatedAt   time.Time       `json:"created_at"`
+}
+
+// ─── Admin dashboard ─────────────────────────────────────────────────────────
+//
+// marketplace_metrics / marketplace_activity_stream (the tables the admin
+// dashboard was originally designed against) have no writer anywhere in this
+// codebase — nothing ever populates them. Rather than serve permanently-zero
+// rows from an unpopulated aggregate table, AdminMetrics/AdminActivityFeed
+// compute live from the real source tables (mkt_listings/mkt_offers/
+// mkt_messages/mkt_orders), the same "derive live, never read a stored
+// snapshot" pattern the finance summaries in this codebase already follow.
+
+// AdminMetrics is the live KPI snapshot for the admin dashboard.
+type AdminMetrics struct {
+	TotalActiveListings  int64 `json:"total_active_listings"`
+	ListingsCreatedToday int64 `json:"listings_created_today"`
+	TotalGMVKobo         int64 `json:"total_gmv_kobo"`
+	UniqueSellersToday   int64 `json:"unique_sellers_today"`
+	UniqueBuyersToday    int64 `json:"unique_buyers_today"`
+	MessagesSentToday    int64 `json:"messages_sent_today"`
+	OffersMadeToday      int64 `json:"offers_made_today"`
+	RecentActivityCount  int64 `json:"recent_activity_count"`
+}
+
+// AdminMetrics computes the live KPI snapshot in one round trip.
+//
+// ADR-023 removed escrow/orders entirely (see marketplace_routes.go and
+// service.go:~323) — mkt_orders has no writer left and can only ever read
+// back zero, so a "GMV" built on order totals would be permanently, silently
+// dead rather than merely empty-for-now. Boosts are documented elsewhere in
+// this package as "the SOLE live marketplace money path" (§2.4), so
+// total_gmv_kobo is real retained boost revenue (excludes rejected/refunded
+// boosts) — the true answer to "how much money has this marketplace made,"
+// just not textbook GMV terminology for an escrow-less listings marketplace.
+// "Sellers/buyers today" follow the same shift: scoped to who actually
+// listed/offered today, since there is no order to attribute activity to.
+func (r *Repository) AdminMetrics(ctx context.Context) (*AdminMetrics, error) {
+	var m AdminMetrics
+	err := r.db.QueryRow(ctx, `
+		SELECT
+			(SELECT count(*) FROM public.mkt_listings WHERE status = 'active'),
+			(SELECT count(*) FROM public.mkt_listings WHERE created_at >= date_trunc('day', now())),
+			(SELECT COALESCE(sum(price_kobo), 0) FROM public.mkt_boosts WHERE status IN ('purchased', 'active', 'completed')),
+			(SELECT count(DISTINCT seller_id) FROM public.mkt_listings WHERE created_at >= date_trunc('day', now())),
+			(SELECT count(DISTINCT buyer_id) FROM public.mkt_offers WHERE created_at >= date_trunc('day', now())),
+			(SELECT count(*) FROM public.mkt_messages WHERE created_at >= date_trunc('day', now())),
+			(SELECT count(*) FROM public.mkt_offers WHERE created_at >= date_trunc('day', now())),
+			(SELECT count(*) FROM public.mkt_listings WHERE created_at >= now() - interval '24 hours')
+				+ (SELECT count(*) FROM public.mkt_offers WHERE created_at >= now() - interval '24 hours')
+				+ (SELECT count(*) FROM public.mkt_messages WHERE created_at >= now() - interval '24 hours')
+	`).Scan(
+		&m.TotalActiveListings, &m.ListingsCreatedToday, &m.TotalGMVKobo,
+		&m.UniqueSellersToday, &m.UniqueBuyersToday,
+		&m.MessagesSentToday, &m.OffersMadeToday, &m.RecentActivityCount,
+	)
+	if err != nil {
+		return nil, wrapInternal("admin metrics", err)
+	}
+	return &m, nil
+}
+
+// AdminActivityRow is one synthesized activity-feed entry (matches
+// marketplace_activity_stream's column shape, which the frontend was already
+// built against, even though that table itself has no writer).
+type AdminActivityRow struct {
+	ID               string    `json:"id"`
+	EventType        string    `json:"event_type"`
+	EntityType       string    `json:"entity_type"`
+	EntityID         string    `json:"entity_id"`
+	ActorID          string    `json:"actor_id"`
+	DisplayText      string    `json:"display_text"`
+	ListingTitle     *string   `json:"listing_title,omitempty"`
+	ListingPriceKobo *int64    `json:"listing_price_kobo,omitempty"`
+	ActorName        string    `json:"actor_name"`
+	Severity         string    `json:"severity"`
+	CreatedAt        time.Time `json:"created_at"`
+}
+
+// AdminActivityFeed synthesizes a real activity feed from recent listing/
+// offer/boost rows (there is no dedicated event log — see the AdminMetrics
+// package note above; mkt_orders is excluded for the same ADR-023 reason:
+// it has no writer and would only ever contribute rows that don't exist).
+func (r *Repository) AdminActivityFeed(ctx context.Context, limit int) ([]AdminActivityRow, error) {
+	limit = clampLimit(limit)
+	rows, err := r.db.Query(ctx, `
+		SELECT 'listing.created' AS event_type, 'listing' AS entity_type, l.id::text AS entity_id,
+		       l.seller_id::text AS actor_id, ('New listing: ' || l.title) AS display_text,
+		       l.title AS listing_title, l.price_kobo AS listing_price_kobo, l.created_at
+		FROM public.mkt_listings l
+		UNION ALL
+		SELECT 'offer.made', 'offer', o.id::text, o.buyer_id::text,
+		       ('Offer made: ' || (o.offer_price_kobo / 100)::text || ' NGN'),
+		       lo.title, o.offer_price_kobo, o.created_at
+		FROM public.mkt_offers o LEFT JOIN public.mkt_listings lo ON lo.id = o.listing_id
+		UNION ALL
+		SELECT 'boost.purchased', 'boost', b.id::text, b.seller_id::text,
+		       ('Listing boosted: ' || COALESCE(lb.title, '')),
+		       lb.title, b.price_kobo, b.created_at
+		FROM public.mkt_boosts b LEFT JOIN public.mkt_listings lb ON lb.id = b.listing_id
+		ORDER BY created_at DESC
+		LIMIT $1
+	`, limit)
+	if err != nil {
+		return nil, wrapInternal("admin activity feed", err)
+	}
+	defer rows.Close()
+	out := []AdminActivityRow{}
+	for rows.Next() {
+		var a AdminActivityRow
+		if err := rows.Scan(
+			&a.EventType, &a.EntityType, &a.EntityID, &a.ActorID, &a.DisplayText,
+			&a.ListingTitle, &a.ListingPriceKobo, &a.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		a.ID = a.EntityID
+		a.ActorName = "Member"
+		a.Severity = "info"
+		out = append(out, a)
+	}
+	return out, rows.Err()
 }
 
 // ─── Transactions ────────────────────────────────────────────────────────────

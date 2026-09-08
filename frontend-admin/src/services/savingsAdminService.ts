@@ -8,6 +8,7 @@
 
 import { env } from '@/config/env';
 import { operationKey } from './idempotency';
+import { resolveUseMock } from '@/config/useMock';
 import type {
   SavingsDashboard,
   VaultRecord,
@@ -18,9 +19,15 @@ import type {
   DefaultRecord,
   DefaultAction,
   DefaultActionResult,
+  LiveSavingsDashboard,
+  LiveVault,
+  LiveCircle,
+  LiveDefault,
 } from '@/types/savingsAdmin';
 
-const USE_MOCK = (process.env.NEXT_PUBLIC_SAVINGS_USE_MOCK ?? 'true').toLowerCase() !== 'false';
+export const USE_MOCK = resolveUseMock(process.env.NEXT_PUBLIC_SAVINGS_USE_MOCK);
+/** Named so the fixture banner can cite the exact switch. */
+export const USE_MOCK_ENV = 'NEXT_PUBLIC_SAVINGS_USE_MOCK';
 
 function adminBase(): string {
   return env.apiBaseUrl.replace(/\/api\/v1\/?$/, '/api/savings/admin');
@@ -33,6 +40,15 @@ function authHeaders(): Record<string, string> {
     : { 'Content-Type': 'application/json' };
 }
 const delay = (ms = 240) => new Promise((r) => setTimeout(r, ms));
+
+// Verified against backend/internal/savings (Handler.Register): the only
+// admin route registered is GET /circles/:id. No force-unlock or default-
+// handling mutation exists anywhere in the module — grepped for "ForceUnlock"/
+// "force-unlock"/"/defaults", zero hits; VaultService only has Deposit/
+// Withdraw/EarlyBreak/TransitionState, none exposed admin-side.
+const NO_BACKEND_YET =
+  'has no backend yet (see the comment on the live-mode call below). ' +
+  'This console cannot perform this action until that endpoint is built.';
 
 async function getJson<T>(path: string): Promise<T> {
   const res = await fetch(`${adminBase()}${path}`, { headers: authHeaders() });
@@ -136,10 +152,13 @@ export async function listVaults(opts?: { status?: string; q?: string }): Promis
   return getJson<VaultRecord[]>(`/vaults${qs.toString() ? `?${qs}` : ''}`);
 }
 export async function forceUnlock(vaultId: string, reason: string): Promise<ForceUnlockResult> {
-  if (USE_MOCK) {
-    await delay();
-    return { vault_id: vaultId, status: 'open', audit_id: `aud_${Math.random().toString(36).slice(2, 10)}`, message: `Vault ${vaultId} force-unlocked. Funds returned at principal (NL-2: zero yield). Action recorded to immutable audit.` };
-  }
+  // No backend at all — see the comment above. The OLD fixture message here
+  // also fabricated a compliance claim ("Action recorded to immutable
+  // audit") — exactly the pattern docs/audit/ADMIN_SIMULATED_WRITES.md calls
+  // "the most dangerous strings in this codebase", missed by the checker's
+  // claim-pattern regex only because of a lowercase "recorded" vs its
+  // capitalized "Recorded". Removed regardless.
+  if (USE_MOCK) throw new Error(`Force-unlocking a vault ${NO_BACKEND_YET}`);
   return sendJson<ForceUnlockResult>('POST', `/vaults/${vaultId}/force-unlock`, { reason });
 }
 
@@ -249,15 +268,79 @@ export async function listDefaults(opts?: { status?: string; q?: string }): Prom
   return getJson<DefaultRecord[]>(`/defaults${qs.toString() ? `?${qs}` : ''}`);
 }
 export async function handleDefault(id: string, action: DefaultAction, note?: string): Promise<DefaultActionResult> {
-  if (USE_MOCK) {
-    await delay();
-    const status =
-      action === 'recover' ? 'recovered'
-      : action === 'remove' ? 'defaulted'
-      : action === 'dismiss' ? 'dismissed'
-      : action === 'grace' ? 'grace'
-      : 'make_good';
-    return { id, status, audit_id: `aud_${Math.random().toString(36).slice(2, 10)}`, message: `Default ${id}: ${action} applied (NL-7: peer rotation — Paymax never advances credit). Recorded to immutable audit.` };
-  }
+  // No admin action exists for any of the 5 values: AjoService has a private
+  // markDefault invoked automatically by the cycle scheduler (not admin-
+  // triggerable), and the closest real capability — MakeGood
+  // (POST /savings/circles/:id/make-good) — is a MEMBER self-service route
+  // keyed on the caller's own session, not an admin action on someone else's
+  // behalf. None of grace/make_good/remove/recover/dismiss has a usable
+  // backend verb today.
+  if (USE_MOCK) throw new Error(`Handling a savings default ${NO_BACKEND_YET}`);
   return sendJson<DefaultActionResult>('POST', `/defaults/${id}/handle`, { action, note });
+}
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// LIVE admin API — backend/internal/savings/admin_{repository,handler}.go
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// These call real endpoints and carry NO fixture branch. If the backend is down
+// or the caller lacks savings.admin.view, they throw and the page shows the
+// failure — which is the point. Nothing here can quietly substitute invented
+// numbers, so a green screen means the data is real.
+//
+// The handlers wrap their payload in a named key ({success, dashboard}, {…,
+// vaults}) rather than {data}, so each unwrap names its own key instead of
+// relying on getJson's generic `j?.data ?? j` fallback — which would have
+// returned the whole envelope and rendered undefined everywhere.
+
+async function liveGet<T>(path: string, key: string): Promise<T> {
+  const res = await fetch(`${adminBase()}${path}`, { headers: authHeaders() });
+  if (!res.ok) {
+    // Surface the real reason. 403 here almost always means the signed-in admin
+    // lacks savings.admin.view, which is a permissions problem, not an outage.
+    let detail = '';
+    try { detail = ((await res.json()) as { error?: string })?.error ?? ''; } catch { /* not JSON */ }
+    throw new Error(`GET /api/savings/admin${path} failed (${res.status})${detail ? `: ${detail}` : ''}`);
+  }
+  const body = (await res.json()) as Record<string, unknown>;
+  return body[key] as T;
+}
+
+export async function getLiveSavingsDashboard(): Promise<LiveSavingsDashboard> {
+  return liveGet<LiveSavingsDashboard>('/dashboard', 'dashboard');
+}
+
+export async function listLiveVaults(state?: string, limit = 100): Promise<LiveVault[]> {
+  const q = new URLSearchParams();
+  if (state) q.set('state', state);
+  q.set('limit', String(limit));
+  return (await liveGet<LiveVault[]>(`/vaults?${q}`, 'vaults')) ?? [];
+}
+
+export async function listLiveCircles(state?: string, limit = 100): Promise<LiveCircle[]> {
+  const q = new URLSearchParams();
+  if (state) q.set('state', state);
+  q.set('limit', String(limit));
+  return (await liveGet<LiveCircle[]>(`/circles?${q}`, 'circles')) ?? [];
+}
+
+export async function listLiveDefaults(limit = 100): Promise<LiveDefault[]> {
+  return (await liveGet<LiveDefault[]>(`/defaults?limit=${limit}`, 'defaults')) ?? [];
+}
+
+/**
+ * Float reconciliation is NOT available and cannot be faked.
+ *
+ * It compares the ledger against CUSTODY (bank / virtual-account balances).
+ * Nothing in the savings tables can see custody, so any delta this console
+ * displayed would have been arithmetic on one side of a two-sided comparison.
+ * The fixture showed "balanced".
+ */
+export async function getLiveFloatRecon(): Promise<never> {
+  throw new Error(
+    'Float reconciliation needs a custody balance source (bank / VA), which the ' +
+    'savings backend does not expose. No endpoint exists, and a ledger-only delta ' +
+    'would report "balanced" without ever having compared anything.',
+  );
 }

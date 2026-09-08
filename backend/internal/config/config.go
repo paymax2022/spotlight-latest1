@@ -154,15 +154,26 @@ type Config struct {
 	PaymaxWebhookSecret           string
 	FeatureGroupsEnabled          bool
 	FeatureAssociationsEnabled    bool
-	FeatureEventsEnabled          bool
-	FeatureEstateEnabled          bool
-	FeatureCrowdfundingEnabled    bool
-	FeatureRestaurantEnabled      bool
-	FeatureNutritionEnabled       bool // Nutrition Resolution Engine (NRE)
-	FeatureTelemedicineEnabled    bool
-	FeatureVoteBridgeEnabled      bool
-	FeatureTransportEnabled       bool
-	FeatureTransportModesEnabled  bool // parcel/bus/towing/movers/car-hire expansion
+
+	// AssocCardSigningSecret is the HMAC secret for digital membership cards.
+	// Empty outside development is a hard startup failure: the fallback is a
+	// constant compiled into this (public) repo, so anyone could forge a
+	// structurally valid card token for a known membership id.
+	AssocCardSigningSecret     string
+	FeatureEventsEnabled       bool
+	FeatureEstateEnabled       bool
+	FeatureCrowdfundingEnabled bool
+	FeatureRestaurantEnabled   bool
+	// FeatureModuleGateEnforce turns the server-side module gate from observe-only
+	// (logs what it would refuse) into enforcing (503s unpublished modules). Default
+	// false: the gate's route map is hand-built and must be validated against real
+	// traffic before it can refuse anything.
+	FeatureModuleGateEnforce     bool
+	FeatureNutritionEnabled      bool // Nutrition Resolution Engine (NRE)
+	FeatureTelemedicineEnabled   bool
+	FeatureVoteBridgeEnabled     bool
+	FeatureTransportEnabled      bool
+	FeatureTransportModesEnabled bool // parcel/bus/towing/movers/car-hire expansion
 	// Transport Trip Scheduling: schedule a future logistics movement (ride/parcel/
 	// airport/bus) that the transport-scheduler worker materializes + escrows at a
 	// lead time before pickup. DEFAULT OFF. Gates the member /api/finance/mobility/
@@ -195,9 +206,9 @@ type Config struct {
 
 	// Performance-fee terms for the fund, in basis points. TradingFeeBps must be
 	// in (0,10000] or PerformanceFee fails closed and charges nothing.
-	TradingFeeBps    int // e.g. 2000 = 20% performance fee
-	TradingHurdleBps int // 0 = pure high-water-mark, no hurdle
-	FeatureInvestPINDevBypass           bool // dev only: accept any well-formed PIN
+	TradingFeeBps             int  // e.g. 2000 = 20% performance fee
+	TradingHurdleBps          int  // 0 = pure high-water-mark, no hurdle
+	FeatureInvestPINDevBypass bool // dev only: accept any well-formed PIN
 	// Invest provider adapters — when a base URL is set the real HTTP adapter is
 	// used; otherwise the deterministic mock is used (mock-first, real last).
 	InvestMarketDataBaseURL   string
@@ -239,7 +250,7 @@ type Config struct {
 	FeatureCryptoEnabled bool
 
 	// FeatureTelemedicinePlatformFeeEnabled turns on the platform booking fee
-	// charged on top of a doctor's consultation fee (ADR-040). Default OFF: it is a
+	// charged on top of a doctor's consultation fee (ADR-044). Default OFF: it is a
 	// patient-visible price increase, so it is opt-in, and switching it off is the
 	// rollback — the app renders whatever quote the server returns, so no client
 	// release is needed either way.
@@ -323,18 +334,18 @@ type Config struct {
 	// Top-5 expansion modules (no-new-licence; ride existing wallet/ledger rails).
 	// DEFAULT OFF. Each gates /api/finance/<mod> + /api/<mod>/admin (internal/<mod>).
 	// (FeatureEventsEnabled is declared once above with the other module flags.)
-	FeatureSocialPayEnabled  bool // Social Payments & P2P Escrow
-	FeatureP2PMarketEnabled  bool // P2P Marketplace
-	FeatureSavingsEnabled    bool // Group & Goal Savings (Ajo/Esusu)
+	FeatureSocialPayEnabled bool // Social Payments & P2P Escrow
+	FeatureP2PMarketEnabled bool // P2P Marketplace
+	FeatureSavingsEnabled   bool // Group & Goal Savings (Ajo/Esusu)
 
 	// SavingsEarlyBreakPenaltyBps is the fee for breaking a LOCK vault before
 	// maturity, in basis points (1000 = 10%). MUST stay server-side: it used to
 	// be read from the request body, so a member could break a lock for free by
 	// sending 0.
 	SavingsEarlyBreakPenaltyBps int
-	FeatureCreatorsEnabled   bool // Creator & Talent Monetisation
-	FeatureLoyaltyEnabled    bool // Unified Loyalty & Paymax Black
-	FeatureCommissionEnabled bool // Central Commission & Profit management
+	FeatureCreatorsEnabled      bool // Creator & Talent Monetisation
+	FeatureLoyaltyEnabled       bool // Unified Loyalty & Paymax Black
+	FeatureCommissionEnabled    bool // Central Commission & Profit management
 
 	// Health verticals (marketplace; licensed partners deliver care). DEFAULT OFF.
 	// FeatureHealthEnabled gates the shared platform (internal/health/*); the
@@ -480,8 +491,15 @@ type Config struct {
 
 	// ── Notification providers ────────────────────────────────────────────────
 	// Resend: email delivery. Key from resend.com dashboard.
+	// Per-IP, per-route auth throttles. See middleware.AuthRateLimit.
+	AuthRateLimitPerMin       int
+	AuthResetRateLimitPerHour int
+
 	ResendAPIKey    string
-	ResendFromEmail string // e.g. "Paymax <noreply@mail.paymax.ng>"
+	ResendFromEmail string // must be @spotlightng.com — the only domain verified on the Resend account
+	// AdminAppBaseURL: origin of frontend-admin, used to build links inside
+	// transactional emails (e.g. the hotelier staff invite accept link).
+	AdminAppBaseURL string
 	// Termii: SMS delivery. Key from termii.com dashboard.
 	TermiiAPIKey   string
 	TermiiSenderID string // approved sender ID
@@ -611,10 +629,12 @@ func Load() Config {
 		PaymaxWebhookSecret:                   getEnv("PAYMAX_WEBHOOK_SECRET", ""),
 		FeatureGroupsEnabled:                  getEnvBool("FEATURE_GROUPS_ENABLED", false),
 		FeatureAssociationsEnabled:            getEnvBool("FEATURE_ASSOCIATIONS_ENABLED", false),
+		AssocCardSigningSecret:                getEnv("ASSOC_CARD_SIGNING_SECRET", ""),
 		FeatureEventsEnabled:                  getEnvBool("FEATURE_EVENTS_ENABLED", false),
 		FeatureEstateEnabled:                  getEnvBool("FEATURE_ESTATE_ENABLED", false),
 		FeatureCrowdfundingEnabled:            getEnvBool("FEATURE_CROWDFUNDING_ENABLED", false),
 		FeatureRestaurantEnabled:              getEnvBool("FEATURE_RESTAURANT_ENABLED", false),
+		FeatureModuleGateEnforce:              getEnvBool("FEATURE_MODULE_GATE_ENFORCE", false),
 		FeatureNutritionEnabled:               getEnvBool("FEATURE_NUTRITION_ENABLED", false),
 		FeatureTelemedicineEnabled:            getEnvBool("FEATURE_TELEMEDICINE_ENABLED", false),
 		FeatureVoteBridgeEnabled:              getEnvBool("FEATURE_VOTE_BRIDGE_ENABLED", false),
@@ -724,7 +744,14 @@ func Load() Config {
 		ConnectVerificationPepper: getEnv("CONNECT_VERIFICATION_PEPPER", ""),
 
 		R2AccountEndpoint: getEnv("R2_ACCOUNT_ENDPOINT", ""),
-		R2Bucket:          getEnv("R2_BUCKET", "spotlight-open-mic"),
+		// No default. The previous default was "spotlight-open-mic", a bucket that
+		// does not exist in the R2 account — and because Configured() only checks
+		// that the fields are non-empty, that default made the module look
+		// configured: presign answered 200 and the upload then died at the PUT with
+		// NoSuchBucket, which the client can only report as "couldn't be uploaded".
+		// Empty fails closed at Configured() instead, so an unset bucket says
+		// "uploads are not configured" up front.
+		R2Bucket:          getEnv("R2_BUCKET", ""),
 		R2AccessKeyID:     getEnv("R2_ACCESS_KEY_ID", ""),
 		R2SecretAccessKey: getEnv("R2_SECRET_ACCESS_KEY", ""),
 		R2Region:          getEnv("R2_REGION", "auto"),
@@ -747,8 +774,15 @@ func Load() Config {
 		BillingAPIKey:        getEnv("BILLING_API_KEY", ""),
 		BillingWebhookSecret: getEnv("BILLING_WEBHOOK_SECRET", ""),
 
+		// Auth throttling. Login/register/password-reset had no limit at all; these
+		// are per-IP-per-route budgets. Deliberately tight — a real person signs in a
+		// handful of times a minute, a credential-stuffer does not.
+		AuthRateLimitPerMin:       getEnvInt("AUTH_RATE_LIMIT_PER_MIN", 10),
+		AuthResetRateLimitPerHour: getEnvInt("AUTH_RESET_RATE_LIMIT_PER_HOUR", 5),
+
 		ResendAPIKey:    getEnv("RESEND_API_KEY", ""),
-		ResendFromEmail: getEnv("RESEND_FROM_EMAIL", "Paymax <noreply@mail.paymax.ng>"),
+		ResendFromEmail: getEnv("RESEND_FROM_EMAIL", "Spotlight <no-reply@spotlightng.com>"),
+		AdminAppBaseURL: getEnv("ADMIN_APP_BASE_URL", "https://admin.spotlightng.com"),
 		TermiiAPIKey:    getEnv("TERMII_API_KEY", ""),
 		TermiiSenderID:  getEnv("TERMII_SENDER_ID", "Paymax"),
 		ExpoPushToken:   getEnv("EXPO_PUSH_TOKEN", ""),

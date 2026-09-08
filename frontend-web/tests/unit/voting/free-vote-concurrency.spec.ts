@@ -9,10 +9,48 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { bridgedCastFreeVote } from '@/server/voting-bridge/bridge';
 import { createAdminClient } from '@/lib/supabase/admin';
+import { assertKycTier, KycGateError } from '@/server/voting-bridge/kyc-gate';
+import { castFreeVoteAtomic } from '@/server/voting-bridge/free-vote-atomic';
+import { fakeIdempotencyTable } from './_idempotency-fake';
 import { enableBridge } from '@/server/voting-bridge/feature-flag';
 
 // Mock Supabase client
 vi.mock('@/lib/supabase/admin');
+
+// The KYC tier gate is mocked at the module boundary rather than choreographed
+// through the Supabase stub below. bridgedCastFreeVote gained the
+// assertKycTier() call (bridge.ts step 2) in the same commit that added these
+// specs, so their stubs never arranged its three-query chain
+// (profiles -> contestants -> competitions); single() returned undefined, the
+// gate fail-closed on the TypeError, and every vote in this file was refused.
+// Mocking the gate keeps each test on its actual subject — idempotency, caching
+// and outbox behaviour — while the gate's own logic stays covered by
+// tests/unit/voting/kyc-gate.spec.ts.
+// The vote itself is the atomic claim now (bridge.ts step 3), not an INSERT
+// through the Supabase stub below. Mock it at the module boundary so these tests
+// stay on their subject — idempotency, caching, retry and outbox — and keep the
+// stub for what still goes through it: the bridge_idempotency_keys row. The
+// claim's own behaviour is covered by free-vote-atomic.spec.ts.
+vi.mock('@/server/voting-bridge/free-vote-atomic', () => ({
+  castFreeVoteAtomic: vi.fn(),
+}));
+
+/** What a successful claim returns; mirrors CastFreeVoteResponse. */
+const CLAIM_OK = {
+  success: true,
+  votesAdded: 1,
+  totalFreeVotesUsed: 1,
+  freeVotesRemaining: 2,
+  newTotalVotes: 0,
+  fraudStatus: 'clean' as const,
+  resetAt: '2026-01-02T00:00:00.000Z',
+  contestantId: '2',
+};
+
+vi.mock('@/server/voting-bridge/kyc-gate', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/server/voting-bridge/kyc-gate')>();
+  return { ...actual, assertKycTier: vi.fn() };
+});
 
 describe('Free Vote Concurrency', () => {
   const mockVoteRequest = {
@@ -31,46 +69,17 @@ describe('Free Vote Concurrency', () => {
   const idempotencyKey = 'request-abc-def-ghi-123';
 
   beforeEach(() => {
+    // Call history leaks between tests otherwise, which matters now that these
+    // specs assert HOW MANY times the claim ran. Implementations survive clear().
+    vi.clearAllMocks();
+    vi.mocked(assertKycTier).mockResolvedValue(true as never);
+    vi.mocked(castFreeVoteAtomic).mockResolvedValue(CLAIM_OK as never);
     enableBridge();
   });
 
   it('should insert exactly one vote when identical requests arrive concurrently', async () => {
-    // Setup mock Supabase
-    const mockSupabase = {
-      from: vi.fn().mockReturnThis(),
-      insert: vi.fn().mockReturnThis(),
-      update: vi.fn().mockReturnThis(),
-      select: vi.fn().mockReturnThis(),
-      eq: vi.fn().mockReturnThis(),
-      single: vi.fn(),
-    };
-
-    (createAdminClient as any).mockReturnValue(mockSupabase);
-
-    // Simulate the idempotency check: first call inserts, second call finds existing
-    let callCount = 0;
-    mockSupabase.insert.mockImplementation(() => {
-      callCount++;
-      if (callCount === 1) {
-        // First call: INSERT bridge_idempotency_keys succeeds
-        mockSupabase.select.mockReturnThis();
-        mockSupabase.single.mockResolvedValueOnce({
-          data: { response: {} },
-          error: null,
-        });
-      } else if (callCount === 2) {
-        // Second call (vote insert): would succeed on first request
-        mockSupabase.select.mockReturnThis();
-        mockSupabase.single.mockResolvedValueOnce({
-          data: { id: 'vote-uuid-1', total_votes: 42 },
-          error: null,
-        });
-      } else if (callCount === 3) {
-        // Update idempotency key
-        mockSupabase.eq.mockResolvedValueOnce({ error: null });
-      }
-      return mockSupabase;
-    });
+    const { client } = fakeIdempotencyTable();
+    (createAdminClient as any).mockReturnValue(client);
 
     // Send two identical requests concurrently
     const request1 = bridgedCastFreeVote(
@@ -89,60 +98,24 @@ describe('Free Vote Concurrency', () => {
 
     const [result1, result2] = await Promise.all([request1, request2]);
 
-    // Both should succeed
+    // Both callers get an answer...
     expect(result1.success).toBe(true);
     expect(result2.success).toBe(true);
 
-    // Both should have same vote ID (one from cache, one original)
-    expect(result1.voteId).toBe(result2.voteId || result1.voteId);
+    // ...but only ONE of them voted. This is the whole point of the file, and it
+    // is only expressible now that the vote is a single mockable call: before,
+    // the vote was an INSERT indistinguishable from the idempotency INSERT in
+    // the same stub.
+    expect(castFreeVoteAtomic).toHaveBeenCalledTimes(1);
 
-    // Vote count should be same
-    expect(result1.totalVotes).toBe(42);
+    // The duplicate is served the winner's allowance, not a fresh one.
+    expect(result2.freeVotesRemaining).toBe(CLAIM_OK.freeVotesRemaining);
   });
 
   it('should cache the response after first request completes', async () => {
-    const mockSupabase = {
-      from: vi.fn().mockReturnThis(),
-      insert: vi.fn().mockReturnThis(),
-      update: vi.fn().mockReturnThis(),
-      select: vi.fn().mockReturnThis(),
-      eq: vi.fn().mockReturnThis(),
-      single: vi.fn(),
-    };
+    const { client, rows } = fakeIdempotencyTable();
+    (createAdminClient as any).mockReturnValue(client);
 
-    (createAdminClient as any).mockReturnValue(mockSupabase);
-
-    const mockResponse = {
-      success: true,
-      voteId: 'vote-uuid-cached',
-      totalVotes: 42,
-    };
-
-    let callCount = 0;
-    mockSupabase.insert.mockImplementation(() => {
-      callCount++;
-      if (callCount === 1) {
-        // Idempotency check: no error (key inserted)
-        mockSupabase.select.mockReturnThis();
-        mockSupabase.single.mockResolvedValueOnce({
-          data: { response: {} },
-          error: null,
-        });
-      } else if (callCount === 2) {
-        // Vote insert succeeds
-        mockSupabase.select.mockReturnThis();
-        mockSupabase.single.mockResolvedValueOnce({
-          data: { id: mockResponse.voteId, total_votes: 42 },
-          error: null,
-        });
-      } else if (callCount === 3) {
-        // Update idempotency key with response
-        mockSupabase.eq.mockResolvedValueOnce({ error: null });
-      }
-      return mockSupabase;
-    });
-
-    // First request
     const result1 = await bridgedCastFreeVote(
       mockVoteRequest,
       userId,
@@ -151,10 +124,14 @@ describe('Free Vote Concurrency', () => {
     );
 
     expect(result1.success).toBe(true);
-    expect(result1.voteId).toBe(mockResponse.voteId);
+    // Asserted on the allowance, not a vote id: the atomic claim returns no id,
+    // so voteId left the v2 contract with it.
+    expect(result1.freeVotesRemaining).toBe(CLAIM_OK.freeVotesRemaining);
 
-    // Verify update was called to cache result
-    expect(mockSupabase.update).toHaveBeenCalled();
+    // The result was published against the key, so a later duplicate can be
+    // served from it rather than voting again.
+    expect(client.update).toHaveBeenCalled();
+    expect(rows.get(idempotencyKey)?.response).toMatchObject({ success: true });
   });
 
   it('should return cached result on second identical request', async () => {
@@ -223,21 +200,14 @@ describe('Free Vote Concurrency', () => {
   });
 
   it('should handle database errors gracefully', async () => {
-    const mockSupabase: Record<string, ReturnType<typeof vi.fn>> = {
-      from: vi.fn().mockReturnThis(),
-      select: vi.fn().mockReturnThis(),
-      single: vi.fn(),
-      insert: vi.fn().mockImplementationOnce(() => {
-        mockSupabase.select.mockReturnThis();
-        mockSupabase.single.mockResolvedValueOnce({
-          data: null,
-          error: { message: 'Database connection failed' },
-        });
-        return mockSupabase;
-      }),
-    };
+    const { client } = fakeIdempotencyTable();
+    (createAdminClient as any).mockReturnValue(client);
 
-    (createAdminClient as any).mockReturnValue(mockSupabase);
+    // The database failure now surfaces from the claim rather than from the
+    // vote INSERT the bridge no longer performs.
+    vi.mocked(castFreeVoteAtomic).mockRejectedValueOnce(
+      new Error('Database connection failed'),
+    );
 
     const result = await bridgedCastFreeVote(
       mockVoteRequest,

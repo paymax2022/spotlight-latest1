@@ -65,6 +65,35 @@ export async function revokeDevice(id: string): Promise<{ ok: true }> {
   return data;
 }
 
+/**
+ * Mock-mode counterpart of `registerDevice` (authoring.api.ts). It lives here
+ * because the mock device list is this module's private session state.
+ *
+ * Mirrors the server's idempotency: a match on (name, platform) touches the
+ * existing row instead of appending a duplicate each time the screen mounts.
+ */
+export async function registerMockDevice(
+  input: { name: string; platform: string; location?: string | null },
+): Promise<{ id: string }> {
+  await delay(200);
+  const existing = devices.find((d) => d.name === input.name && d.platform === input.platform);
+  if (existing) {
+    existing.lastActive = new Date().toISOString();
+    if (input.location) existing.location = input.location;
+    return { id: existing.id };
+  }
+  const created: Device = {
+    id: `dev_${Date.now()}`,
+    name: input.name,
+    platform: input.platform,
+    lastActive: new Date().toISOString(),
+    current: true,
+    location: input.location ?? null,
+  };
+  devices = [created, ...devices.map((d) => ({ ...d, current: false }))];
+  return { id: created.id };
+}
+
 // ─── Support ──────────────────────────────────────────────────────────────────
 
 export async function getFaqs(): Promise<FaqItem[]> {

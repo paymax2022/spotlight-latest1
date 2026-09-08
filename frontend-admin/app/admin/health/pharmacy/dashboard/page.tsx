@@ -5,6 +5,8 @@ import { getPharmacyDashboard, formatNaira } from '@/services/healthPharmacyAdmi
 import type { PharmacyDashboard } from '@/types/healthAdmin';
 import { PharmacyTabs, Kpi, DisclosureNote, StateBlock, timeAgo, pct } from '../../_ui';
 import { Page, PageHeader, Card, Button, Badge, colors, thCell, tdCell } from '@/components/ui/vuexy';
+import { FixtureBanner } from '../../../_shared/ui';
+import { USE_MOCK, USE_MOCK_ENV } from '@/services/healthPharmacyAdminService';
 
 function statusColor(status: string): string {
   const v = status.toLowerCase();
@@ -36,6 +38,7 @@ export default function PharmacyDashboardPage() {
         subtitle="Orders, GMV, Rx-verification SLA, credential/catalog governance and held→released payment flow across the PCN-verified pharmacy network."
         actions={<Button variant="outline" onClick={load}>Refresh</Button>}
       />
+      <FixtureBanner active={USE_MOCK} envVar={USE_MOCK_ENV} />
       <PharmacyTabs active="overview" />
 
       <DisclosureNote>

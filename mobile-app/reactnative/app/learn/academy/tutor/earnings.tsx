@@ -124,7 +124,7 @@ const styles = StyleSheet.create({
   scroll: { padding: Spacing.containerMargin, paddingBottom: Spacing.xxl, gap: Spacing.sm },
   balanceCard: { backgroundColor: Colors.surfaceContainerLowest, borderRadius: Radius.lg, padding: Spacing.lg, alignItems: 'center', gap: 2 },
   balanceLabel: { ...Typography.labelSm, color: Colors.onSurfaceVariant, textTransform: 'uppercase' },
-  balanceAmount: { ...Typography.displayLg, color: Colors.primary, fontSize: 36, lineHeight: 42 },
+  balanceAmount: { ...Typography.displayLg, color: Colors.primary, fontSize: 36, letterSpacing: -0.72, lineHeight: 42 },
   balanceMeta: { flexDirection: 'row', gap: Spacing.md, marginTop: Spacing.sm },
   metaItem: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   metaText: { ...Typography.caption, color: Colors.onSurfaceVariant },

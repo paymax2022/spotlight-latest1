@@ -4,15 +4,26 @@
  */
 
 import { createAdminClient } from '@/lib/supabase/admin';
-import { checkAndClaimIdempotencyKey, storeIdempotencyResult } from './idempotency';
+import { checkAndClaimIdempotencyKey, storeIdempotencyResult, releaseIdempotencyKey } from './idempotency';
 import { assertKycTier } from './kyc-gate';
 import { enqueueOutboxEvent } from './outbox';
 import { isBridgeEnabled } from './feature-flag';
+import { castFreeVoteAtomic } from './free-vote-atomic';
+// The legacy engine this bridge wraps. Imported, never edited — both live in
+// protected files (see .claude/hooks/protect-legacy.sh); free-vote-atomic.ts
+// already takes the same approach with their helpers.
+import { castFreeVote } from '@/src/server/voting/free-vote.service';
+import { verifyAndCreditPaidVote } from '@/src/server/voting/paid-vote.service';
+import type { FraudStatus } from '@/src/features/voting/types';
 
 export interface CastFreeVoteRequest {
   contestantId: string;
   contestId: string;
   shareCode?: string;
+  /** Defaults to 1. Forwarded to the atomic claim, which caps it against the day's allowance. */
+  voteQuantity?: number;
+  /** Email or phone, for contests whose freeVoteLimitScope is not 'user'. */
+  voterIdentifier?: string;
 }
 
 export interface VerifyPaidVoteRequest {
@@ -25,6 +36,40 @@ export interface VoteResponse {
   voteId?: string;
   totalVotes?: number;
   error?: string;
+  /**
+   * Free-vote allowance, from the atomic claim. `freeVotesRemaining` is what the
+   * vote modal renders after a successful vote — it read the field all along,
+   * while the direct-insert path never produced it, so every voter was told they
+   * had "undefined free votes remaining today".
+   */
+  votesAdded?: number;
+  totalFreeVotesUsed?: number;
+  freeVotesRemaining?: number;
+  fraudStatus?: FraudStatus;
+  /** ISO timestamp when this contestant's free votes reset. */
+  resetAt?: string;
+  /**
+   * HTTP status the caller should surface. The bridge's failure path used to
+   * flatten every throw into a bare message, so the route mapped all of them to
+   * 400 — a KYC rejection (403) and a rate/cap refusal (429) arrived
+   * indistinguishable from a malformed body. Carrying the code keeps the
+   * thrower's intent intact. Absent means "no opinion"; the route decides.
+   */
+  statusCode?: number;
+}
+
+/**
+ * The two error types thrown under the bridge disagree on the property name:
+ * ApiError (src/lib/api/responses) uses `status`, KycGateError
+ * (voting-bridge/kyc-gate) uses `statusCode`. Read both rather than picking one
+ * and silently dropping the other's intent.
+ */
+function statusOf(error: unknown): number | undefined {
+  if (!error || typeof error !== 'object') return undefined;
+  const e = error as { status?: unknown; statusCode?: unknown };
+  if (typeof e.statusCode === 'number') return e.statusCode;
+  if (typeof e.status === 'number') return e.status;
+  return undefined;
 }
 
 /**
@@ -41,14 +86,46 @@ export async function bridgedCastFreeVote(
     deviceFingerprint?: string;
   }
 ): Promise<VoteResponse> {
-  // Check if bridge is enabled (gradual rollout support)
+  // Gradual rollout: with the flag off the request is served by the legacy
+  // engine this bridge wraps.
+  //
+  // It previously returned "Bridge not enabled" and served nothing, despite the
+  // comment here promising a fallthrough — castFreeVote was not even imported.
+  // The flag DEFAULTS TO DISABLED (feature-flag.ts) and /api/v2/votes/free is
+  // what the vote modal calls, so any deployment without VOTES_BRIDGE_ENABLED
+  // set had free voting dead rather than merely un-bridged. A rollout flag that
+  // breaks the feature when off is not a rollout flag.
+  //
+  // The legacy path is the PRE-atomic one, so it carries the D-001/D-002/D-003
+  // races claim_free_vote fixes. That is the accepted meaning of "flag off",
+  // not a regression introduced here — turn the bridge on to get the atomic
+  // claim.
   if (!isBridgeEnabled()) {
-    // Fall through to original legacy function
-    // (imported from protected file — never edit directly)
-    return {
-      success: false,
-      error: 'Bridge not enabled'
-    };
+    try {
+      const legacy = await castFreeVote(
+        req,
+        context.ipAddress,
+        context.deviceFingerprint ?? '',
+        context.userAgent,
+        userId,
+      );
+      return {
+        success: true,
+        votesAdded: legacy.votesAdded,
+        totalFreeVotesUsed: legacy.totalFreeVotesUsed,
+        freeVotesRemaining: legacy.freeVotesRemaining,
+        fraudStatus: legacy.fraudStatus,
+        resetAt: legacy.resetAt,
+      };
+    } catch (error) {
+      // The legacy service THROWS ApiError; the bridge's contract is to return.
+      console.error('[VoteBridge] legacy castFreeVote error:', error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error',
+        statusCode: statusOf(error),
+      };
+    }
   }
 
   if (!idempotencyKey) {
@@ -58,43 +135,55 @@ export async function bridgedCastFreeVote(
     };
   }
 
+  // Whether THIS call owns the idempotency claim. Only the owner may release it:
+  // a 409 from checkAndClaimIdempotencyKey means someone else holds the claim,
+  // and releasing theirs would hand this duplicate a second vote.
+  let ownsClaim = false;
+
   try {
     // Step 1: Idempotency check — return cached result if exists
     const cached = await checkAndClaimIdempotencyKey(idempotencyKey);
     if (cached) {
       return cached as VoteResponse;
     }
+    ownsClaim = true;
 
     // Step 2: KYC tier gate (does not touch protected files)
     if (userId) {
       await assertKycTier(userId, req.contestantId);
     }
 
-    // Step 3: Create admin client and insert vote
-    const supabase = createAdminClient();
+    // Step 3: Atomic claim.
+    //
+    // This used to be a bare INSERT into `votes`, which enforced nothing: no
+    // daily cap, no timezone-correct day bucket, no totals upsert. The claim
+    // that does all three (claim_free_vote, row-locked; D-001/D-002/D-003) had
+    // been written, migrated and unit-tested, but nothing ever called it —
+    // castFreeVoteAtomic's only occurrence in the tree was its own definition.
+    // This is that missing call site.
+    //
+    // deviceFingerprint is passed through rather than defaulted to a placeholder:
+    // a contest whose freeVoteLimitScope is 'device' must refuse a vote it cannot
+    // attribute (the claim answers 400), because bucketing every fingerprint-less
+    // voter under one shared identifier would pool them into a single daily cap.
+    const claim = await castFreeVoteAtomic(
+      req,
+      context.ipAddress,
+      context.deviceFingerprint ?? '',
+      context.userAgent,
+      userId,
+    );
 
-    const { data, error } = await supabase
-      .from('votes')
-      .insert({
-        contestant_id: req.contestantId,
-        competition_id: req.contestId,
-        voter_id: userId,
-        vote_type: 'free',
-        ip_address: context.ipAddress,
-        user_agent: context.userAgent,
-        device_fingerprint: context.deviceFingerprint,
-      })
-      .select('id, total_votes')
-      .single();
-
-    if (error) {
-      throw error;
-    }
-
+    // newTotalVotes is deliberately not forwarded: the claim hardcodes it to 0
+    // ("caller can fetch from totals"), and echoing a known-zero running total is
+    // worse than omitting the field.
     const result: VoteResponse = {
       success: true,
-      voteId: data.id,
-      totalVotes: data.total_votes,
+      votesAdded: claim.votesAdded,
+      totalFreeVotesUsed: claim.totalFreeVotesUsed,
+      freeVotesRemaining: claim.freeVotesRemaining,
+      fraudStatus: claim.fraudStatus,
+      resetAt: claim.resetAt,
     };
 
     // Step 4: Store result against idempotency key
@@ -120,10 +209,17 @@ export async function bridgedCastFreeVote(
 
     return result;
   } catch (error) {
+    // Free the claim so a retry with the same key re-attempts rather than being
+    // refused forever by the 409 guard. The claim row is written before the vote
+    // and filled in after, so a failure leaves it holding the empty placeholder.
+    if (ownsClaim) {
+      await releaseIdempotencyKey(idempotencyKey);
+    }
     console.error('[VoteBridge] castFreeVote error:', error);
     return {
       success: false,
       error: error instanceof Error ? error.message : 'Unknown error',
+      statusCode: statusOf(error),
     };
   }
 }
@@ -140,11 +236,24 @@ export async function bridgedVerifyPaidVote(
     userAgent: string;
   }
 ): Promise<VoteResponse> {
+  // Same rollout contract as the free path: flag off means legacy, not broken.
   if (!isBridgeEnabled()) {
-    return {
-      success: false,
-      error: 'Bridge not enabled'
-    };
+    try {
+      const legacy = await verifyAndCreditPaidVote(
+        req,
+        userId,
+        context.ipAddress,
+        context.userAgent,
+      );
+      return { success: true, totalVotes: legacy.newTotalVotes };
+    } catch (error) {
+      console.error('[VoteBridge] legacy verifyAndCreditPaidVote error:', error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error',
+        statusCode: statusOf(error),
+      };
+    }
   }
 
   const supabase = createAdminClient();
@@ -241,6 +350,7 @@ export async function bridgedVerifyPaidVote(
     return {
       success: false,
       error: error instanceof Error ? error.message : 'Unknown error',
+      statusCode: statusOf(error),
     };
   }
 }

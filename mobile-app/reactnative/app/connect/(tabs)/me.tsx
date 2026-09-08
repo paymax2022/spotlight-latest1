@@ -8,8 +8,6 @@ import {
   Trophy,
   Wallet,
   ChevronRight,
-  BadgeCheck,
-  ScanFace,
   Flame,
   Star,
 } from 'lucide-react-native';
@@ -23,7 +21,6 @@ import { useMeSummary } from '@/features/connect/hooks/useConnect';
 import { ConnectColors } from '@/features/connect/constants/connect.constants';
 import { formatKobo } from '@/features/connect/constants/format';
 import TierLimitBar from '@/features/connect/components/TierLimitBar';
-import type { VerificationState } from '@/features/connect/types/connect.types';
 
 // ST-01 — Me / hub. Entry to profile, wallet/tier, gamification, settings.
 export default function MeTab() {
@@ -91,17 +88,6 @@ export default function MeTab() {
           </Pressable>
           <TierLimitBar tier={data.wallet.tier} />
 
-          {/* Verification status */}
-          <View style={styles.card}>
-            <Text style={styles.cardTitle}>Verification</Text>
-            <VerifRow
-              icon="ScanFace"
-              label="Liveness check"
-              state={data.verification.liveness}
-              onPress={() => router.push('/connect/onboarding/liveness')}
-            />
-          </View>
-
           {/* Gamification entry */}
           <Pressable
             style={styles.gamiCard}
@@ -147,32 +133,6 @@ function Stat({ icon, value, label }: { icon: React.ReactNode; value: string; la
       <Text style={styles.statValue}>{value}</Text>
       <Text style={styles.statLabel}>{label}</Text>
     </View>
-  );
-}
-
-function VerifRow({
-  icon,
-  label,
-  state,
-  onPress,
-}: {
-  icon: 'ScanFace' | 'BadgeCheck';
-  label: string;
-  state: VerificationState;
-  onPress: () => void;
-}) {
-  const Icon = icon === 'ScanFace' ? ScanFace : BadgeCheck;
-  const passed = state === 'passed';
-  return (
-    <Pressable style={styles.verifRow} onPress={onPress} accessibilityRole="button" accessibilityLabel={label}>
-      <Icon size={18} color={passed ? Colors.teal : Colors.outline} strokeWidth={2} />
-      <Text style={styles.verifLabel}>{label}</Text>
-      <View style={[styles.verifPill, passed ? styles.verifPillOk : styles.verifPillPending]}>
-        <Text style={[styles.verifPillText, passed ? styles.verifPillTextOk : styles.verifPillTextPending]}>
-          {passed ? 'Verified' : state === 'pending' ? 'Pending' : state === 'failed' ? 'Failed' : 'Verify'}
-        </Text>
-      </View>
-    </Pressable>
   );
 }
 
@@ -222,14 +182,6 @@ const styles = StyleSheet.create({
     gap: Spacing.xs,
   },
   cardTitle: { ...Typography.labelMd, color: Colors.onSurfaceVariant, marginBottom: Spacing.xs },
-  verifRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm, paddingVertical: Spacing.sm },
-  verifLabel: { ...Typography.labelLg, color: Colors.onSurface, flex: 1 },
-  verifPill: { paddingHorizontal: Spacing.sm, paddingVertical: 3, borderRadius: Radius.full },
-  verifPillOk: { backgroundColor: Colors.iconBgTeal },
-  verifPillPending: { backgroundColor: Colors.surfaceContainerHigh },
-  verifPillText: { ...Typography.caption },
-  verifPillTextOk: { color: Colors.teal },
-  verifPillTextPending: { color: Colors.onSurfaceVariant },
   gamiCard: {
     backgroundColor: Colors.surfaceContainerLowest,
     borderRadius: Radius.lg,

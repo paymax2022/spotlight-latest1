@@ -40,6 +40,8 @@ export default function PayInvoiceScreen() {
     );
   }
 
+  const split = invoice.split ?? [];
+
   const onPay = () => {
     checkout.start({
       amountKobo: invoice.amountKobo,
@@ -67,21 +69,25 @@ export default function PayInvoiceScreen() {
           </View>
         </View>
 
-        {/* Revenue split explainer */}
-        <View style={styles.splitCard}>
-          <Text style={styles.splitTitle}>Where your dues go</Text>
-          {[
-            { label: 'National body', pct: 0.5 },
-            { label: 'State chapter', pct: 0.3 },
-            { label: 'Local chapter', pct: 0.15 },
-            { label: 'Platform fee', pct: 0.05 },
-          ].map((s) => (
-            <View key={s.label} style={styles.splitRow}>
-              <Text style={styles.splitLabel}>{s.label}</Text>
-              <Text style={styles.splitValue}>{formatNaira(Math.round(invoice.amountKobo * s.pct))}</Text>
-            </View>
-          ))}
-        </View>
+        {/*
+          Revenue split explainer.
+
+          The split is computed server-side and is authoritative; the client
+          must never invent the percentages (this used to hardcode
+          50/30/15/5 and multiply locally, which is a made-up number shown to
+          the payer). When the invoice carries no split, omit the section.
+        */}
+        {split.length > 0 ? (
+          <View style={styles.splitCard}>
+            <Text style={styles.splitTitle}>Where your dues go</Text>
+            {split.map((s) => (
+              <View key={s.label} style={styles.splitRow}>
+                <Text style={styles.splitLabel}>{s.label}</Text>
+                <Text style={styles.splitValue}>{formatNaira(s.amountKobo)}</Text>
+              </View>
+            ))}
+          </View>
+        ) : null}
       </ScrollView>
 
       <View style={styles.footer}>

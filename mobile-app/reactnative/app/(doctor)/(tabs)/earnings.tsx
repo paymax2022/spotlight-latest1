@@ -204,7 +204,7 @@ const styles = StyleSheet.create({
   content:       { paddingHorizontal: Spacing.containerMargin, paddingTop: Spacing.sm, paddingBottom: Platform.OS === 'ios' ? 120 : 96 },
   balanceCard:   { borderRadius: Radius.xl, padding: Spacing.cardPadding, marginBottom: Spacing.lg, gap: 2 },
   balanceLabel:  { ...Typography.labelSm, color: 'rgba(255,255,255,0.7)' },
-  balanceValue:  { ...Typography.displayLg, fontSize: 36, lineHeight: 44, color: Colors.onPrimary },
+  balanceValue:  { ...Typography.displayLg, fontSize: 36, letterSpacing: -0.72, lineHeight: 44, color: Colors.onPrimary },
   balanceSub:    { ...Typography.labelMd, color: 'rgba(255,255,255,0.85)' },
   payoutBtnWrap: { marginTop: Spacing.md },
   statsRow:      { flexDirection: 'row', gap: Spacing.md, marginBottom: Spacing.md },

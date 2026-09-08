@@ -3,6 +3,18 @@ import { assertAdminPermission } from '@/src/server/admin/auth';
 import { createAdminClient } from '@/lib/supabase/server';
 import { appendAuditLog } from '@/src/server/voting/audit.service';
 
+/**
+ * A datetime-local input submits '' when left blank, and `?? null` does not catch
+ * an empty string — only null/undefined. Passing '' into a timestamptz column
+ * makes Postgres reject the whole insert, so leaving the optional availability
+ * dates blank failed to save at all.
+ */
+function optionalTimestamp(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  return trimmed === '' ? null : trimmed;
+}
+
 export async function GET(request: Request) {
   try {
     await assertAdminPermission(request, 'votes:manage');
@@ -15,7 +27,24 @@ export async function GET(request: Request) {
 
     const { data, error } = await query;
     if (error) return errorResponse('Failed to load packages', 500);
-    return successResponse({ success: true, packages: data ?? [] });
+
+    // vote_packages stores snake_case; the admin page reads camelCase. Returning
+    // rows raw meant pkg.isActive was ALWAYS undefined, so every package rendered
+    // greyed-out as inactive no matter what was saved — and pkg.startsAt/endsAt
+    // came back undefined, so editing a package silently cleared its dates.
+    // Same defect the voting-settings route already carries a note about.
+    const packages = (data ?? []).map((r) => ({
+      ...r,
+      isActive: r.is_active !== false,
+      isRecommended: Boolean(r.is_recommended),
+      bonusVotes: Number(r.bonus_votes ?? 0),
+      promoLabel: r.promo_label ?? '',
+      displayOrder: Number(r.display_order ?? 0),
+      startsAt: r.starts_at ?? null,
+      endsAt: r.ends_at ?? null,
+    }));
+
+    return successResponse({ success: true, packages });
   } catch (error) {
     return handleApiError(error, 'Failed to load vote packages');
   }
@@ -46,8 +75,8 @@ export async function POST(request: Request) {
         is_recommended: body.isRecommended ?? false,
         promo_label: body.promoLabel ?? null,
         display_order: body.displayOrder ?? 0,
-        starts_at: body.startsAt ?? null,
-        ends_at: body.endsAt ?? null,
+        starts_at: optionalTimestamp(body.startsAt),
+        ends_at: optionalTimestamp(body.endsAt),
       })
       .select('*')
       .single();
@@ -83,6 +112,13 @@ export async function PATCH(request: Request) {
       const camel = key.replace(/_([a-z])/g, (_, c) => c.toUpperCase());
       if (body[camel] !== undefined) updates[key] = body[camel];
       if (body[key] !== undefined) updates[key] = body[key];
+    }
+
+    // Same empty-string trap as the create path: editing a package and leaving
+    // the optional availability dates blank sent '' into a timestamptz column,
+    // which Postgres rejects — so the whole edit failed with a 500.
+    for (const key of ['starts_at', 'ends_at']) {
+      if (key in updates) updates[key] = optionalTimestamp(updates[key]);
     }
 
     const { data, error } = await supabase

@@ -1,5 +1,9 @@
 import { handleApiError, listResponse } from '@/src/lib/api/responses';
-import { listRegistrationApplications } from '@/src/server/registration/store';
+// ADMIN CONSOLIDATION, slice 5 (see docs/adr/ADR-047): registration/store is
+// the in-memory version nothing real ever writes to — real applications live
+// in Supabase (registration/supabase-store), which is what every applicant-
+// facing route already reads. This admin list was silently always empty.
+import { listRegistrationApplications } from '@/src/server/registration/supabase-store';
 import type { RegistrationListFilter } from '@/src/features/registration/types';
 import { assertAdminPermission } from '@/src/server/admin/auth';
 import { addAuditEvent } from '@/src/server/admin/audit';
@@ -25,7 +29,7 @@ export async function GET(request: Request) {
       defaultSortBy: 'updatedAt',
       defaultSortOrder: 'desc',
     });
-    const applications = listRegistrationApplications(filter);
+    const applications = await listRegistrationApplications(filter);
     const sorted = sortItems(applications, query);
     const { items, meta } = paginateItems(sorted, query);
 

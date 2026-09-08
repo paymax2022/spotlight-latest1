@@ -1,5 +1,6 @@
 import { env } from '@/config/env';
 import { operationKey } from './idempotency';
+import { resolveUseMock } from '@/config/useMock';
 import type {
   Transfer,
   ProviderHealth,
@@ -7,8 +8,7 @@ import type {
 } from '@/types/transfersAdmin';
 
 // Backend may not be running — default to fixtures unless explicitly disabled.
-const USE_FIXTURES =
-  (process.env.NEXT_PUBLIC_TRANSFERS_ADMIN_USE_MOCK ?? 'true') !== 'false';
+const USE_FIXTURES = resolveUseMock(process.env.NEXT_PUBLIC_TRANSFERS_ADMIN_USE_MOCK);
 
 // Go backend mounts finance admin routes under /api/finance/admin/...
 // env.apiBaseUrl looks like http://localhost:8080/api/v1 → /api.
@@ -245,11 +245,20 @@ export async function getProviderHealth(): Promise<ProviderHealth[]> {
   return Array.isArray(data) ? data : data.data ?? [];
 }
 
-// One funnel for the two sensitive money-moving writes.
+// One funnel for the two sensitive money-moving writes. Both have real,
+// verified live endpoints (POST /finance/admin/transfers/:id/{retry,reverse}),
+// so fixture mode refuses loudly instead of reporting a transfer action it did
+// not perform. See docs/audit/ADMIN_SIMULATED_WRITES.md.
+// NOTE: the real Reverse handler does not bind a JSON body at all — the
+// `reason` sent below is silently discarded server-side with no audit trail
+// of it. Not the simulated-write bug this pass fixes, but worth a backend
+// follow-up (accept + record the reason).
 async function postAction(id: string, action: 'retry' | 'reverse', body?: Record<string, unknown>): Promise<void> {
   if (USE_FIXTURES) {
-    await delay(null);
-    return;
+    throw new Error(
+      `Transfer ${action} is unavailable in fixture mode: this console will not report a write it did not perform. ` +
+      'Set NEXT_PUBLIC_TRANSFERS_ADMIN_USE_MOCK=false to make this change against the live backend.',
+    );
   }
   const res = await fetch(
     `${adminApiBase()}/finance/admin/transfers/${encodeURIComponent(id)}/${action}`,

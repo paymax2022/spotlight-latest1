@@ -33,7 +33,6 @@ package marketplace_test
 
 import (
 	"fmt"
-	"os"
 	"testing"
 
 	mkt "spotlight/backend/internal/marketplace"
@@ -58,19 +57,11 @@ const adr023SeqSkip = "ADR-023: escrow order/dispute/webhook flow removed (listi
 //	pool, _ := pgxpool.New(ctx, os.Getenv("MARKETPLACE_TEST_DATABASE_URL"))
 //	ledgerSvc := ledger.NewService(pool)
 //	svc := mkt.NewService(pool, ledgerSvc, nil) // redis nil is supported (DB-unique backstop)
-func newTestService(t *testing.T) (*mkt.Service, bool) {
-	t.Helper()
-	dsn := os.Getenv("MARKETPLACE_TEST_DATABASE_URL")
-	if dsn == "" {
-		return nil, false
-	}
-	// Intentionally not implemented further: wiring a live pgxpool + ledger.Service
-	// here is an infra decision for whoever runs this suite against a real
-	// Postgres (see QA_REPORT.md). The skip below fires until MARKETPLACE_TEST_DATABASE_URL
-	// is set AND this constructor is completed by that operator.
-	t.Skip("MARKETPLACE_TEST_DATABASE_URL is set but live-DB service construction is not wired in this sandbox; see QA_REPORT.md")
-	return nil, false
-}
+// (removed) newTestService was a constructor that called t.Skip() unconditionally
+// even when MARKETPLACE_TEST_DATABASE_URL was set, so nothing gated on it could
+// run in ANY environment — the tests behind it reported ok while asserting
+// nothing. Live marketplace tests use liveMktService (remoderation_live_db_test.go),
+// which actually connects and is what chaos_live_db_test.go drives.
 
 // ─── 6.1 Escrow checkout → funding ────────────────────────────────────────────
 
@@ -85,12 +76,12 @@ func newTestService(t *testing.T) (*mkt.Service, bool) {
 //  3. CreateOrder itself is idempotent on K1 the same way (a second POST /orders
 //     with K1 returns the same order, no second row / no second listing lock).
 func TestFlow_EscrowCheckoutToFunding_IdempotentSingleLedgerEffect(t *testing.T) {
-	svc, ok := newTestService(t)
-	if !ok {
-		t.Skip("requires live Postgres + ledger.Service + Redis(optional); set MARKETPLACE_TEST_DATABASE_URL. " +
-			"See QA_REPORT.md for the docker-compose + supabase db reset + NewService bring-up recipe.")
-	}
-	_ = svc // unreachable; kept so the intended call sequence below compiles the intent for reviewers.
+	// ADR-023 removed the escrow order/dispute/webhook path this drives. The
+	// old gate claimed a live database would run it, which no environment
+	// could satisfy — newTestService skips unconditionally and the code under
+	// test no longer exists. The intended assertions below are kept as the
+	// design record if the path returns.
+	t.Skip(adr023ChaosSkip)
 
 	// ---- intended assertions once live (documented for the DB-enabled run) ----
 	// order1, err := svc.CreateOrder(ctx, buyerID, "K1", mkt.CreateOrderInput{ListingID: listingID, DeliveryOption: "pickup"})
@@ -142,12 +133,12 @@ func TestFlow_EscrowCheckoutToFunding_DeterministicKeyNaming(t *testing.T) {
 // cron AutoReleaseDue after the deadline passes with no open dispute → released,
 // with a placeholder review inserted (§6.2: "INSERT mkt_reviews (is_placeholder=true)").
 func TestFlow_DeliveryToAutoRelease_DeadlineDrivesRelease(t *testing.T) {
-	svc, ok := newTestService(t)
-	if !ok {
-		t.Skip("requires live Postgres + ledger.Service; set MARKETPLACE_TEST_DATABASE_URL. " +
-			"AutoReleaseDue scans mkt_orders WHERE inspection_deadline < now() — needs real clock + real rows.")
-	}
-	_ = svc
+	// ADR-023 removed the escrow order/dispute/webhook path this drives. The
+	// old gate claimed a live database would run it, which no environment
+	// could satisfy — newTestService skips unconditionally and the code under
+	// test no longer exists. The intended assertions below are kept as the
+	// design record if the path returns.
+	t.Skip(adr023ChaosSkip)
 
 	// ---- intended assertions once live ----
 	// 1. seed an order through funded -> seller_accepted (SellerAccept)
@@ -237,11 +228,12 @@ func isOrderTerminalMirror(s mkt.OrderStatus) bool {
 // is rejected (SAME_APPROVER_NOT_ALLOWED); ApproveDispute by a DIFFERENT admin
 // executes the ledger transaction and closes the dispute.
 func TestFlow_DisputeDualApproval_RequiresDistinctSecondApprover(t *testing.T) {
-	svc, ok := newTestService(t)
-	if !ok {
-		t.Skip("requires live Postgres + ledger.Service; set MARKETPLACE_TEST_DATABASE_URL.")
-	}
-	_ = svc
+	// ADR-023 removed the escrow order/dispute/webhook path this drives. The
+	// old gate claimed a live database would run it, which no environment
+	// could satisfy — newTestService skips unconditionally and the code under
+	// test no longer exists. The intended assertions below are kept as the
+	// design record if the path returns.
+	t.Skip(adr023ChaosSkip)
 
 	// ---- intended assertions once live ----
 	// 1. seed an order with AmountKobo = 60_000_000 (₦600k, > threshold) through to
@@ -263,11 +255,12 @@ func TestFlow_DisputeDualApproval_RequiresDistinctSecondApprover(t *testing.T) {
 // counterpart: DecideDispute executes the ledger transaction in the SAME call,
 // no second approver required.
 func TestFlow_DisputeSingleApproval_BelowThresholdExecutesImmediately(t *testing.T) {
-	svc, ok := newTestService(t)
-	if !ok {
-		t.Skip("requires live Postgres + ledger.Service; set MARKETPLACE_TEST_DATABASE_URL.")
-	}
-	_ = svc
+	// ADR-023 removed the escrow order/dispute/webhook path this drives. The
+	// old gate claimed a live database would run it, which no environment
+	// could satisfy — newTestService skips unconditionally and the code under
+	// test no longer exists. The intended assertions below are kept as the
+	// design record if the path returns.
+	t.Skip(adr023ChaosSkip)
 	// ---- intended assertions once live ----
 	// seed an order with AmountKobo = 20_000_000 (₦200k, <= threshold) disputed/under_review.
 	// d, err := svc.DecideDispute(ctx, "admin-1", disputeID, mkt.DecideDisputeInput{

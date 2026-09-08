@@ -45,6 +45,8 @@ import (
 
 	"spotlight/backend/internal/finance/ledger"
 	"spotlight/backend/internal/spotlightwealth"
+
+	"spotlight/backend/internal/testsupport"
 )
 
 func liveDBPool(t *testing.T) *pgxpool.Pool {
@@ -141,12 +143,13 @@ func seedUser(t *testing.T, ctx context.Context, pool *pgxpool.Pool) string {
 	if _, err := pool.Exec(ctx, `INSERT INTO auth.users (id, email) VALUES ($1, $2) ON CONFLICT DO NOTHING`, id, id+"@seed.test"); err != nil {
 		t.Fatalf("seed auth.users: %v", err)
 	}
+	testsupport.CleanupUser(t, pool, id)
 	return id
 }
 
 func TestLiveDB_CompleteChallenge_IdempotentRetry_OneLedgerCreditOneRewardRow(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	led := newLiveLedgerService(pool)
 	svc := spotlightwealth.NewService(pool, led, nil)
 	ctx := context.Background()
@@ -205,7 +208,7 @@ func TestLiveDB_CompleteChallenge_IdempotentRetry_OneLedgerCreditOneRewardRow(t 
 // who never joined, and posts nothing.
 func TestLiveDB_CompleteChallenge_RequiresJoinFirst(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	led := newLiveLedgerService(pool)
 	svc := spotlightwealth.NewService(pool, led, nil)
 	ctx := context.Background()
@@ -231,7 +234,7 @@ func TestLiveDB_CompleteChallenge_RequiresJoinFirst(t *testing.T) {
 // guard end-to-end: an empty Idempotency-Key is rejected before any DB write.
 func TestLiveDB_CompleteChallenge_RequiresIdempotencyKey(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	led := newLiveLedgerService(pool)
 	svc := spotlightwealth.NewService(pool, led, nil)
 	ctx := context.Background()
@@ -262,7 +265,7 @@ func TestLiveDB_CompleteChallenge_RequiresIdempotencyKey(t *testing.T) {
 // table.
 func TestLiveDB_CompleteChallenge_ZeroRewardChallenge_CompletesWithNoLedgerPost(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	led := newLiveLedgerService(pool)
 	svc := spotlightwealth.NewService(pool, led, nil)
 	ctx := context.Background()
@@ -299,7 +302,7 @@ func TestLiveDB_CompleteChallenge_ZeroRewardChallenge_CompletesWithNoLedgerPost(
 // membership row is created.
 func TestLiveDB_JoinChallenge_RejectsEndedChallenge(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	led := newLiveLedgerService(pool)
 	svc := spotlightwealth.NewService(pool, led, nil)
 	ctx := context.Background()
@@ -343,7 +346,7 @@ func seedLearningPoints(t *testing.T, ctx context.Context, pool *pgxpool.Pool, d
 // live read path orders by points DESC and relabels the caller's own row "You".
 func TestLiveDB_Leaderboard_OrdersByPointsDescendingAndLabelsCaller(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	led := newLiveLedgerService(pool)
 	svc := spotlightwealth.NewService(pool, led, nil)
 	ctx := context.Background()

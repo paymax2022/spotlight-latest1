@@ -781,7 +781,7 @@ func (s *Service) DeliverDelivery(ctx context.Context, id, driverUserID, dropoff
 	// Settle the courier split on prepaid escrow. Invoice-billed deliveries accrue
 	// (no per-delivery escrow), so settlement happens at invoice close.
 	if d.SettlementID != nil && d.CourierID != nil {
-		if err := s.settleModeProvider(ctx, *d.SettlementID, *d.CourierID); err != nil {
+		if err := s.settleModeProvider(ctx, *d.SettlementID, *d.CourierID, 0); err != nil {
 			return fmt.Errorf("transport: settle delivery: %w", err)
 		}
 	}

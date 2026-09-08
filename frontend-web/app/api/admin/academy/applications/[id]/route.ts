@@ -2,10 +2,12 @@ import { errorResponse, handleApiError, successResponse } from '@/src/lib/api/re
 import { assertAdminPermission } from '@/src/server/admin/auth';
 import { updateAcademyApplicationReview } from '@/src/server/services/academy/service';
 import { autoCreateInstallmentPlan } from '@/src/server/services/academy/installments';
+import { ensureEnrollment } from '@/src/server/services/academy/enrollment';
 import { createAdminClient } from '@/lib/supabase/server';
 import type { AcademyReviewUpdateInput } from '@/src/lib/validation/academy';
 
-export async function GET(request: Request, { params }: { params: { id: string } }) {
+export async function GET(request: Request, ctx: { params: Promise<{ id: string }> }) {
+  const params = await ctx.params;
   try {
     await assertAdminPermission(request, 'applications:review');
     const supabase = createAdminClient();
@@ -21,7 +23,8 @@ export async function GET(request: Request, { params }: { params: { id: string }
   }
 }
 
-export async function PATCH(request: Request, { params }: { params: { id: string } }) {
+export async function PATCH(request: Request, ctx: { params: Promise<{ id: string }> }) {
+  const params = await ctx.params;
   try {
     const identity = await assertAdminPermission(request, 'applications:review');
     const body = (await request.json()) as AcademyReviewUpdateInput;
@@ -44,6 +47,12 @@ export async function PATCH(request: Request, { params }: { params: { id: string
       if (app?.batch_id) {
         await autoCreateInstallmentPlan(params.id, app.batch_id, new Date().toISOString());
       }
+
+      // A batch with no tuition owes nothing, so approval alone earns the enrolment.
+      // Where tuition IS due this is a no-op until the first instalment settles.
+      await ensureEnrollment(supabase, params.id).catch((e) => {
+        console.error('[admin/academy/applications] enrolment after approval failed', e);
+      });
     }
 
     return successResponse({ success: true, application: updated });

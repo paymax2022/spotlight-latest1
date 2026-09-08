@@ -11,7 +11,11 @@ import PrimaryButton from '@/components/PrimaryButton';
 
 const REASONS: Record<string, string> = {
   declined: 'Your payment was declined. No money has left your account.',
-  network: "We couldn't confirm your payment due to a network issue. If you were charged, it will be reversed automatically.",
+  // No automatic reversal exists on this rail, so the old copy ("it will be
+  // reversed automatically") promised something nothing performs. Point people
+  // at the record instead: a charge that did go through is already listed
+  // there, and paying again would be a second, separate contribution.
+  network: "We couldn't confirm your payment. Check your contributions first — if the charge went through it is already listed there, and paying again would contribute a second time.",
   init: 'We couldn’t start this payment. Please try again.',
 };
 

@@ -20,6 +20,8 @@ import (
 
 	"spotlight/backend/internal/finance/ledger"
 	"spotlight/backend/internal/finance/settlement"
+
+	"spotlight/backend/internal/testsupport"
 )
 
 func fsmPool(t *testing.T) *pgxpool.Pool {
@@ -67,7 +69,7 @@ func seedOrderWithEscrow(t *testing.T, ctx context.Context, pool *pgxpool.Pool, 
 
 func TestLiveDB_OrderFSMExpansion(t *testing.T) {
 	pool := fsmPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	svc := fsmService(pool)
 
@@ -77,6 +79,7 @@ func TestLiveDB_OrderFSMExpansion(t *testing.T) {
 	stranger := uuid.New().String()
 	for _, u := range []string{owner, customer, rider, stranger} {
 		_, _ = pool.Exec(ctx, `INSERT INTO auth.users (id,email) VALUES ($1,$2) ON CONFLICT DO NOTHING`, u, u+"@seed.test")
+		testsupport.CleanupUser(t, pool, u)
 	}
 	restID := uuid.New().String()
 	if _, err := pool.Exec(ctx, `INSERT INTO restaurants (id, owner_id, name, address, is_open) VALUES ($1,$2,'FSM Kitchen','1 St',TRUE)`, restID, owner); err != nil {

@@ -2,6 +2,10 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { View, Text, ScrollView, StyleSheet, Platform, KeyboardAvoidingView } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
+// Aliased: this screen already has a local `goBack` that steps back through
+// the wizard. Without the alias my call sites resolved to THAT function and
+// recursed into it with an argument it does not take.
+import { goBack as leaveScreen } from '@/lib/navigation';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
 import { Spacing } from '@/constants/spacing';
@@ -69,13 +73,13 @@ export default function OnboardingWizardScreen() {
   };
 
   const goBack = () => {
-    if (stepIndex === 0) { router.back(); return; }
+    if (stepIndex === 0) { leaveScreen('/'); return; }
     setErrors({});
     setStep(stepIndex - 1);
   };
 
   const handleSaveExit = async () => {
-    if (!applicationId) { router.back(); return; }
+    if (!applicationId) { leaveScreen('/'); return; }
     try { await saveDraft.mutateAsync({ applicationId, data }); } catch { /* keep local */ }
     reset();
     router.dismissAll?.();
@@ -117,7 +121,7 @@ export default function OnboardingWizardScreen() {
     return (
       <SafeAreaView style={styles.safe} edges={['top']}>
         <ScreenHeader title="Apply" />
-        <StateView kind="error" title="Couldn't start your application" message="Please try again." actionLabel="Back" onAction={() => router.back()} />
+        <StateView kind="error" title="Couldn't start your application" message="Please try again." actionLabel="Back" onAction={() => leaveScreen('/')} />
       </SafeAreaView>
     );
   }

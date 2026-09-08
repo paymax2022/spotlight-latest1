@@ -49,9 +49,13 @@ export default function MeetingDetail() {
 
   const m = meeting.data;
   const Mode = m.mode === 'PHYSICAL' ? MapPin : Video;
-  const current = rsvp.variables?.status ?? m.rsvp;
+  const current = rsvp.variables?.status ?? m.rsvp ?? null;
   const checkedIn = m.checkedIn || checkIn.isSuccess;
   const isPast = m.state === 'PAST';
+  // Collections and the attendance QR are optional on the live DTO.
+  const agenda = m.agenda ?? [];
+  const documents = m.documents ?? [];
+  const minutesPublished = m.minutesPublished ?? false;
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
@@ -107,7 +111,8 @@ export default function MeetingDetail() {
         {/* Agenda */}
         <Text style={styles.sectionTitle}>Agenda</Text>
         <View style={[styles.infoCard, shadow1]}>
-          {m.agenda.map((item, i) => (
+          {agenda.length === 0 ? <Text style={styles.emptyText}>No agenda has been published.</Text> : null}
+          {agenda.map((item, i) => (
             <View key={item.id} style={[styles.agendaRow, i > 0 && styles.agendaDivider]}>
               <View style={styles.agendaNum}><Text style={styles.agendaNumText}>{item.order}</Text></View>
               <Text style={styles.agendaTitle}>{item.title}</Text>
@@ -122,11 +127,11 @@ export default function MeetingDetail() {
         </View>
 
         {/* Documents */}
-        {m.documents.length > 0 ? (
+        {documents.length > 0 ? (
           <>
             <Text style={styles.sectionTitle}>Documents</Text>
             <View style={styles.gap8}>
-              {m.documents.map((d) => (
+              {documents.map((d) => (
                 <Pressable key={d.id} style={[styles.docRow, shadow1]} accessibilityRole="button" accessibilityLabel={`Open ${d.name}`}>
                   <FileText size={18} color={Colors.secondary} strokeWidth={2} />
                   <Text style={styles.docName} numberOfLines={1}>{d.name}</Text>
@@ -137,12 +142,12 @@ export default function MeetingDetail() {
         ) : null}
 
         {/* Minutes (past meetings) */}
-        {isPast && m.minutesPublished ? (
+        {isPast && minutesPublished ? (
           <Pressable style={[styles.minutesRow, shadow1]} accessibilityRole="button" accessibilityLabel="View minutes">
             <ScrollText size={18} color={Colors.primary} strokeWidth={2} />
             <Text style={styles.minutesText}>View published minutes</Text>
           </Pressable>
-        ) : isPast && !m.minutesPublished ? (
+        ) : isPast && !minutesPublished ? (
           <Pressable style={[styles.minutesRow, shadow1]} onPress={() => router.push('/association/ai-notes/new')} accessibilityRole="button" accessibilityLabel="Generate AI minutes">
             <ScrollText size={18} color={Colors.primary} strokeWidth={2} />
             <Text style={styles.minutesText}>Generate AI minutes from recording</Text>
@@ -152,8 +157,14 @@ export default function MeetingDetail() {
         {/* Check-in QR */}
         {showQr ? (
           <View style={styles.qrWrap}>
-            <QrCodeView payload={m.attendanceCode} size={180} />
-            <Text style={styles.qrHint}>Show this code to the meeting host to confirm attendance</Text>
+            {m.attendanceCode ? (
+              <>
+                <QrCodeView payload={m.attendanceCode} size={180} />
+                <Text style={styles.qrHint}>Show this code to the meeting host to confirm attendance</Text>
+              </>
+            ) : (
+              <Text style={styles.qrHint}>No attendance code has been issued for this meeting yet.</Text>
+            )}
           </View>
         ) : null}
       </ScrollView>
@@ -203,6 +214,7 @@ const styles = StyleSheet.create({
   durChip: { flexDirection: 'row', alignItems: 'center', gap: 3 },
   durText: { ...Typography.caption, color: Colors.onSurfaceVariant },
   gap8: { gap: Spacing.sm },
+  emptyText: { ...Typography.bodySm, color: Colors.onSurfaceVariant },
   docRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm, backgroundColor: Colors.surfaceContainerLowest, borderRadius: Radius.lg, borderWidth: 1, borderColor: Colors.outlineVariant, padding: Spacing.md },
   docName: { ...Typography.labelMd, color: Colors.onSurface, flex: 1 },
   minutesRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm, backgroundColor: Colors.iconBgPurple, borderRadius: Radius.lg, padding: Spacing.md },

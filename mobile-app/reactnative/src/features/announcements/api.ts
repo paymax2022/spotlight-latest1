@@ -1,4 +1,5 @@
 // Estate Announcements (Block 34) — types + dual mock/live api + constants.
+import { mockAllowed } from '@/config/mockPolicy';
 import { api } from '@/api/client';
 import { Colors } from '@/constants/colors';
 import { generateIdempotencyKey } from '@/utils/idempotency';
@@ -10,7 +11,7 @@ export interface Announcement {
 }
 export interface CreateAnnouncementInput { title: string; body: string; kind: AnnouncementKind; idempotencyKey: string; }
 
-export const USE_MOCK = (process.env.EXPO_PUBLIC_ANNOUNCEMENTS_USE_MOCK ?? 'true') !== 'false';
+export const USE_MOCK = mockAllowed(process.env.EXPO_PUBLIC_ANNOUNCEMENTS_USE_MOCK, true);
 
 // Announcements are served by the resident-scoped frontend-web handlers under
 // /api/v1/estate/announcements (GET list, POST create, GET/POST /{id},

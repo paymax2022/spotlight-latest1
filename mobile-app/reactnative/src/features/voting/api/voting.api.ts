@@ -1,3 +1,4 @@
+import { mockAllowed } from '@/config/mockPolicy';
 import { api } from '@/api/client';
 import type {
   Contest,
@@ -12,6 +13,7 @@ import type {
   VotePaidVerifyResult,
   RankChange,
   LeaderboardState,
+  VotingNotification,
 } from '../types/voting.types';
 import {
   mapContest,
@@ -29,9 +31,17 @@ import {
   MOCK_VOTING_NOTIFICATIONS,
 } from './voting.mock';
 
-// ─── Feature flag: flip to false once real endpoints are ready ─────────────────
-// Mock by default; set EXPO_PUBLIC_VOTING_USE_MOCK=false to hit the live backend.
-const USE_MOCK = (process.env.EXPO_PUBLIC_VOTING_USE_MOCK ?? 'true').toLowerCase() !== 'false';
+// ─── Mock data: OPT-IN ONLY ───────────────────────────────────────────────────
+// This used to default to MOCK, so any environment that forgot the flag served
+// invented contests, contestants and vote packages while looking entirely normal.
+// Fake data that shows up silently is worse than an empty screen or an error:
+// nobody goes looking for a bug they cannot see.
+//
+// The default is now LIVE. Mock is only used when someone explicitly asks for it
+// with EXPO_PUBLIC_VOTING_USE_MOCK=true — so forgetting the flag now produces a
+// visible failure against the real backend rather than a convincing fiction.
+// Live by default, and NEVER mock on staging or production — see mockPolicy.ts.
+const USE_MOCK = mockAllowed(process.env.EXPO_PUBLIC_VOTING_USE_MOCK, false);
 
 // Live voting is served by the Go backend's Connect module. Contests,
 // contestants and free votes all come from here; the roster is the same ranked
@@ -251,10 +261,44 @@ function movementFromTrend(
 
 // ─── Vote Packages ─────────────────────────────────────────────────────────────
 
+/**
+ * Paid vote packages for a contest.
+ *
+ * The path used to be '/voting/packages', which does not exist and returned 404
+ * on every call. Nothing noticed because the mock branch above short-circuited
+ * before the request was ever made — the endpoint had never actually run.
+ *
+ * The real route returns { id, votes, bonusVotes, priceKobo, label, popular },
+ * which is not the client's VotePackage shape, so it is mapped here rather than
+ * cast. `amount` is KOBO on this side: payment-method.tsx passes it straight to
+ * the gateway as amountKobo.
+ *
+ * No packages is a legitimate answer — a contest with paid voting off has none —
+ * so an empty array is returned rather than treated as an error.
+ */
 export async function getVotePackages(contestId?: string): Promise<VotePackage[]> {
   if (USE_MOCK) return MOCK_VOTE_PACKAGES;
-  const res = await api.get('/voting/packages', { params: { contestId } });
-  return (res.data?.data ?? res.data) as VotePackage[];
+  if (!contestId) return [];
+
+  const res = await api.get(`/api/v1/contests/${contestId}/vote-packages`);
+  const rows = (res.data?.data ?? res.data ?? []) as Array<{
+    id: string;
+    votes: number;
+    bonusVotes?: number;
+    priceKobo: number;
+    label?: string;
+    popular?: boolean;
+  }>;
+
+  return rows.map((r) => ({
+    id: r.id,
+    votes: Number(r.votes ?? 0),
+    amount: Number(r.priceKobo ?? 0),
+    currency: 'NGN' as const,
+    label: r.label,
+    bonusVotes: r.bonusVotes ? Number(r.bonusVotes) : undefined,
+    isPopular: Boolean(r.popular),
+  }));
 }
 
 // ─── Free Vote Allocation (PER CONTESTANT) ──────────────────────────────────────
@@ -361,6 +405,39 @@ export async function initiatePaidVote(payload: VotePaidInitiatePayload): Promis
       status: 'PROCESSING',
     };
   }
+  // The wallet rail has its OWN endpoint, and this used to ignore it: the
+  // paymentMethod was dropped here, so "Pay with Wallet" opened a Paystack
+  // transaction instead of debiting the wallet, then sent the voter to a
+  // processing screen to wait for a payment they were never asked to make.
+  //
+  // /paid/wallet debits atomically, prices the package server-side, records the
+  // transaction and credits the votes in one call — so it comes back already
+  // SUCCESSFUL, with nothing to verify.
+  if (payload.paymentMethod === 'WALLET') {
+    if (!payload.packageId) {
+      throw new Error('Select a vote package to pay from your wallet.');
+    }
+    const walletRes = await api.post(
+      '/api/votes/paid/wallet',
+      {
+        contestId:    payload.contestId,
+        contestantId: payload.contestantId,
+        packageId:    payload.packageId,
+        voterEmail:   payload.voterEmail,
+        voterName:    payload.voterName,
+      },
+      { headers: { 'Idempotency-Key': payload.idempotencyKey } },
+    );
+    const w = (walletRes.data?.data ?? walletRes.data) as Record<string, unknown>;
+    return {
+      transactionId:  String(w.transactionId ?? ''),
+      reference:      String(w.paymentReference ?? ''),
+      votesToCredit:  w.votesCredited != null ? Number(w.votesCredited) : payload.votes,
+      amountExpected: w.amountKobo != null ? Number(w.amountKobo) : payload.amount,
+      status:         'SUCCESSFUL',
+    };
+  }
+
   // Backend: POST /api/votes/paid/initiate (no /voting prefix, no /v2).
   // Requires voterEmail + voterName; vote count goes in `customVoteQuantity`
   // unless a preset `packageId` is supplied.
@@ -396,6 +473,8 @@ export async function verifyPaidVote(args: {
     return { status: 'SUCCESSFUL', votes: 50 };
   }
   // Backend: POST /api/votes/paid/verify expects { transactionId, paymentReference }.
+  // The connect tally is projected by a database trigger on vote_transactions,
+  // so it no longer matters which verify route credits the purchase.
   const res = await api.post('/api/votes/paid/verify', {
     transactionId:    args.transactionId,
     paymentReference: args.reference,
@@ -423,8 +502,91 @@ export async function getMyVotes(params?: {
     if (params?.status)    list = list.filter((t) => t.status === params.status);
     return list;
   }
-  const res = await api.get('/voting/my-votes', { params });
-  return (res.data?.data ?? res.data) as VoteTransaction[];
+  // GET /voting/my-votes was never served by anything — it answered 404 with an
+  // HTML body, so with mock mode off this screen could not render a single row.
+  // The votes live in connect_votes and reach us through the Go connect module.
+  const res = await api.get('/api/v1/connect/votes/mine', {
+    params: {
+      contestId: params?.contestId,
+      voteType: params?.voteType,
+    },
+  });
+  const rows = (res.data?.data ?? res.data ?? []) as ConnectVoteRow[];
+  return rows.map(toVoteTransaction);
+}
+
+/** A row of connect_votes as the Go connect module returns it. */
+interface ConnectVoteRow {
+  id: string;
+  contest_id: string;
+  contest_title: string;
+  contestant_id: string;
+  contestant_name: string;
+  photo_url: string;
+  paid: boolean;
+  quantity: number;
+  amount_kobo: number;
+  created_at: string;
+}
+
+/**
+ * connect_votes is an immutable log of votes that HAPPENED, so there is no
+ * pending or failed row to represent: anything the caller can see already
+ * counted. Mapping every row to SUCCESSFUL is the honest translation, not a
+ * default — a status field that could only ever hold one value would invite the
+ * screen to render a filter that never changes anything.
+ *
+ * amount_kobo is kobo; the screen's `amount` is naira, which is the conversion
+ * this seam exists to do.
+ */
+function toVoteTransaction(r: ConnectVoteRow): VoteTransaction {
+  return {
+    id: r.id,
+    contestId: r.contest_id,
+    contestantId: r.contestant_id,
+    contestantName: r.contestant_name,
+    contestTitle: r.contest_title,
+    voteType: r.paid ? 'PAID' : 'FREE',
+    votes: r.quantity,
+    amount: r.paid ? r.amount_kobo / 100 : undefined,
+    currency: 'NGN',
+    status: 'SUCCESSFUL',
+    reference: r.id,
+    createdAt: r.created_at,
+  };
+}
+
+/** One person who voted for a contestant. Contestant-only; see the Go service. */
+export interface Supporter {
+  voterName: string;
+  anonymous: boolean;
+  paid: boolean;
+  quantity: number;
+  amountKobo: number;
+  createdAt: string;
+}
+
+/**
+ * Who voted for a contestant. The server refuses anyone who is not that
+ * contestant, and blanks the name on votes cast under the contest's
+ * allow_anonymous_free_vote setting — the client never receives an identity it
+ * is not allowed to show.
+ */
+export async function getContestantSupporters(contestantId: string): Promise<Supporter[]> {
+  if (USE_MOCK) return [];
+  const res = await api.get(`/api/v1/connect/contestants/${contestantId}/supporters`);
+  const rows = (res.data?.data ?? res.data ?? []) as Array<{
+    voter_name: string; anonymous: boolean; paid: boolean;
+    quantity: number; amount_kobo: number; created_at: string;
+  }>;
+  return rows.map((r) => ({
+    voterName: r.voter_name,
+    anonymous: r.anonymous,
+    paid: r.paid,
+    quantity: r.quantity,
+    amountKobo: r.amount_kobo,
+    createdAt: r.created_at,
+  }));
 }
 
 export async function getVoteReceipt(transactionId: string): Promise<VoteTransaction> {
@@ -433,14 +595,40 @@ export async function getVoteReceipt(transactionId: string): Promise<VoteTransac
     if (!found) throw new Error('Transaction not found');
     return found;
   }
-  const res = await api.get(`/voting/transactions/${transactionId}/receipt`);
-  return (res.data?.data ?? res.data) as VoteTransaction;
+  // /voting/transactions/:id/receipt was never served either — and My Votes
+  // rows push straight here, so a working list would have led to a dead screen.
+  const res = await api.get(`/api/v1/connect/votes/${transactionId}`);
+  return toVoteTransaction((res.data?.data ?? res.data) as ConnectVoteRow);
 }
 
 // ─── Notifications ────────────────────────────────────────────────────────────
 
-export async function getVotingNotifications() {
+/**
+ * The voting activity feed.
+ *
+ * DERIVED, not stored: nothing in this module has ever written a voting
+ * notification, so the server computes the feed from the caller's votes and the
+ * deadlines of contests they voted in. It reports VOTE_SUCCESS and
+ * CONTEST_ENDING; the other five kinds the VotingNotification union names have
+ * no source to derive from and would need an events table written at the moment
+ * each happens. `read` is always true — a derived feed has nowhere to keep
+ * per-user read state, and false would give every row a dot that never clears.
+ */
+export async function getVotingNotifications(): Promise<VotingNotification[]> {
   if (USE_MOCK) return MOCK_VOTING_NOTIFICATIONS;
-  const res = await api.get('/voting/notifications');
-  return res.data?.data ?? res.data;
+  const res = await api.get('/api/v1/connect/notifications');
+  const rows = (res.data?.data ?? res.data ?? []) as Array<{
+    id: string; type: string; title: string; message: string;
+    contest_id?: string; contestant_id?: string; created_at: string; read: boolean;
+  }>;
+  return rows.map((r) => ({
+    id: r.id,
+    type: r.type as VotingNotification['type'],
+    title: r.title,
+    message: r.message,
+    contestId: r.contest_id || undefined,
+    contestantId: r.contestant_id || undefined,
+    createdAt: r.created_at,
+    read: r.read,
+  }));
 }

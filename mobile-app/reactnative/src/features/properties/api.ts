@@ -1,4 +1,5 @@
 // Estate Property management (Block 38) — types + dual mock/live api + constants.
+import { mockAllowed } from '@/config/mockPolicy';
 import { api } from '@/api/client';
 import { Colors } from '@/constants/colors';
 
@@ -13,7 +14,7 @@ export interface Property {
 export interface PropertySummary { total: number; occupied: number; vacant: number; reserved: number; occupancyRate: number; }
 export interface PropertiesResponse { summary: PropertySummary; properties: Property[]; }
 
-export const USE_MOCK = (process.env.EXPO_PUBLIC_PROPERTIES_USE_MOCK ?? 'true') !== 'false';
+export const USE_MOCK = mockAllowed(process.env.EXPO_PUBLIC_PROPERTIES_USE_MOCK, true);
 export const PROPERTIES_API_BASE = '/api/v1/estate/properties';
 
 export const TYPE_META: Record<PropertyType, { label: string; icon: string }> = {

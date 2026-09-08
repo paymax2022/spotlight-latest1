@@ -13,6 +13,8 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"spotlight/backend/internal/testsupport"
 )
 
 func reassignPool(t *testing.T) *pgxpool.Pool {
@@ -37,6 +39,7 @@ func seedDriverAt(t *testing.T, ctx context.Context, pool *pgxpool.Pool, lat, ln
 	id := uuid.New().String()
 	reg := "REG-" + id[:6]
 	_, _ = pool.Exec(ctx, `INSERT INTO auth.users (id,email) VALUES ($1,$2) ON CONFLICT DO NOTHING`, id, id+"@seed.test")
+	testsupport.CleanupUser(t, pool, id)
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO drivers (user_id, name, vehicle_reg, status, verification_status, current_lat, current_lng, updated_at)
 		VALUES ($1,'Rider',$2,$3,'approved',$4,$5,now())
@@ -58,7 +61,7 @@ func hasOpenOffer(t *testing.T, ctx context.Context, pool *pgxpool.Pool, orderID
 
 func TestLiveDB_DispatchReassign(t *testing.T) {
 	pool := reassignPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	svc := NewService(pool, nil)
 
@@ -70,6 +73,7 @@ func TestLiveDB_DispatchReassign(t *testing.T) {
 	owner := uuid.New().String()
 	customer := uuid.New().String()
 	_, _ = pool.Exec(ctx, `INSERT INTO auth.users (id,email) VALUES ($1,$2),($3,$4) ON CONFLICT DO NOTHING`, owner, owner+"@t", customer, customer+"@t")
+	testsupport.CleanupUser(t, pool, owner)
 	restID := uuid.New().String()
 	if _, err := pool.Exec(ctx, `INSERT INTO restaurants (id, owner_id, name, address, is_open, geo_lat, geo_lng) VALUES ($1,$2,'Reassign Kitchen','1 St',TRUE,6.5,3.4)`, restID, owner); err != nil {
 		t.Fatalf("seed restaurant: %v", err)

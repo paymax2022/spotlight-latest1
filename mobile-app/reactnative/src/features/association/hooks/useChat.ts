@@ -53,15 +53,17 @@ export function useReactMessage(threadId: string) {
         if (!prev) return prev;
         const messages = prev.messages.map((m): ChatMessage => {
           if (m.id !== messageId) return m;
-          const existing = m.reactions.find((r) => r.emoji === emoji);
+          // `reactions` is optional on the live DTO — treat a missing array as empty.
+          const current = m.reactions ?? [];
+          const existing = current.find((r) => r.emoji === emoji);
           let reactions;
           if (existing) {
             const nextCount = existing.count + (existing.mine ? -1 : 1);
             reactions = nextCount <= 0
-              ? m.reactions.filter((r) => r.emoji !== emoji)
-              : m.reactions.map((r) => (r.emoji === emoji ? { ...r, count: nextCount, mine: !existing.mine } : r));
+              ? current.filter((r) => r.emoji !== emoji)
+              : current.map((r) => (r.emoji === emoji ? { ...r, count: nextCount, mine: !existing.mine } : r));
           } else {
-            reactions = [...m.reactions, { emoji, count: 1, mine: true }];
+            reactions = [...current, { emoji, count: 1, mine: true }];
           }
           return { ...m, reactions };
         });

@@ -18,6 +18,16 @@ import (
 //	POST /support/tickets/:id/reply  → append a reply, set ticket PENDING
 //	GET  /notifications              → caller's notifications
 //	POST /notifications/read         → mark all notifications read
+//	POST /campaigns/:id/events       → record a VIEW or SHARE (analytics)
+//	GET  /campaigns/:id/comments     → campaign comments + Q&A with replies
+//	POST /campaigns/:id/comments     → post a comment or question
+//	POST /comments/:commentId/reply  → creator reply to a comment
+//	POST /comments/:commentId/report → flag a comment (idempotent)
+//	GET  /campaigns/:id/updates      → campaign updates, newest first
+//	POST /campaigns/:id/updates      → publish an update (creator only)
+//	POST /updates/:updateId/like     → like an update (idempotent)
+//	GET  /campaigns/:id/documents    → supporting documents
+//	POST /campaigns/:id/documents    → attach an uploaded document (creator only)
 //	GET  /settings/notifications     → notification preferences
 //	PUT  /settings/notifications     → upsert notification preferences
 func Register(rg *gin.RouterGroup, db *pgxpool.Pool) {
@@ -32,6 +42,32 @@ func Register(rg *gin.RouterGroup, db *pgxpool.Pool) {
 
 	rg.GET("/notifications", h.GetNotifications)
 	rg.POST("/notifications/read", h.MarkNotificationsRead)
+
+	// Engagement events feeding creator analytics. Public-ish: an anonymous
+	// view still counts, so this must not require user_id to be set.
+	rg.POST("/campaigns/:id/events", h.RecordCampaignEvent)
+
+	// Campaign comments and Q&A. The reply/report routes hang off /comments/:commentId
+	// rather than the campaign, because that is the shape the client already calls —
+	// it holds a comment id at that point, not a campaign id.
+	//
+	// The param is named :commentId, NOT :id: gin panics at boot on two different
+	// wildcard names at the same position, and /campaigns/:id/* already claims :id
+	// on this group.
+	rg.GET("/campaigns/:id/comments", h.ListComments)
+	rg.POST("/campaigns/:id/comments", h.PostComment)
+	rg.POST("/comments/:commentId/reply", h.ReplyComment)
+	rg.POST("/comments/:commentId/report", h.ReportComment)
+
+	// Campaign updates. Same :commentId reasoning applies to :updateId — gin panics
+	// at boot on two wildcard names in the same position, and /campaigns/:id/*
+	// already owns :id on this group.
+	rg.GET("/campaigns/:id/updates", h.ListUpdates)
+	rg.POST("/campaigns/:id/updates", h.PostUpdate)
+	rg.POST("/updates/:updateId/like", h.LikeUpdate)
+
+	rg.GET("/campaigns/:id/documents", h.ListDocuments)
+	rg.POST("/campaigns/:id/documents", h.AttachDocument)
 
 	rg.GET("/settings/notifications", h.GetNotificationPrefs)
 	rg.PUT("/settings/notifications", h.UpdateNotificationPrefs)

@@ -10,11 +10,12 @@
 // Flip to live by setting `EXPO_PUBLIC_DOCTOR_USE_MOCK=false`. See
 // `docs/DOCTOR_GO_LIVE.md` and `docs/DOCTOR_ENDPOINT_INVENTORY.md`.
 
+import { mockAllowed } from '@/config/mockPolicy';
 import { api } from '@/api/client';
 
 // Default MOCK: unset / anything-but-'false' => mock, so the app still runs
 // with no backend. Only the exact string 'false' switches to the live backend.
-export const DOCTOR_USE_MOCK = (process.env.EXPO_PUBLIC_DOCTOR_USE_MOCK ?? 'true') !== 'false';
+export const DOCTOR_USE_MOCK = mockAllowed(process.env.EXPO_PUBLIC_DOCTOR_USE_MOCK, true);
 
 // All live doctor endpoints live under this prefix on the API base URL.
 export const DOCTOR_API_PREFIX = '/api/v1/doctor';

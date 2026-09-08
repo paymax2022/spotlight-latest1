@@ -8,14 +8,13 @@
 //
 // Money: none in this module (Learn Center has no money path).
 
-import { env } from '@/config/env';
+import { apiV1 } from '@/config/env';
 
 function adminBase(): string {
-  // env.apiBaseUrl already ends in /api/v1 — keep it, just append /learn/admin.
-  return `${env.apiBaseUrl.replace(/\/$/, '')}/learn/admin`;
+  return `${apiV1()}/learn/admin`;
 }
 function moduleBase(): string {
-  return `${env.apiBaseUrl.replace(/\/$/, '')}/learn`;
+  return `${apiV1()}/learn`;
 }
 function authHeaders(): Record<string, string> {
   if (typeof window === 'undefined') return {};

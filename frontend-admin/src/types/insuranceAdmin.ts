@@ -1,351 +1,472 @@
-// ── Admin — Paymax Insurance (micro-insurance) types ─────────────────────────
-// Field names mirror the Go JSON (snake_case) from /api/insurance/admin/*.
-// Money is BIGINT kobo (minor units) throughout. Underwriter + aggregator are
-// always disclosed (PRD §13/§18).
+// ── Admin — Paymax Insurance (MyCover.ai distribution) types ─────────────────
+//
+// These mirror the INTERNAL CONTRACT for `/api/insurance/admin/*` (snake_case
+// over the wire, `{ data: … }` envelope on success, `{ error: {code,message} }`
+// on failure).
+//
+// MONEY: every `*_kobo` field is an INTEGER in minor units. MyCover's own API
+// speaks naira decimal strings ("6000.0000"); the Go adapter converts naira→kobo
+// exactly once at the adapter boundary. The admin console must NEVER re-convert
+// and must never do float arithmetic on these — format at the render boundary
+// only (see `formatNaira` in the service).
+//
+// RATES: a percentage product carries a RATE, not an amount. `is_percentage`
+// products expose `rate_bps` (basis points: 0.5% → 50) and `base_price_kobo` is
+// null for them. Rendering "₦0.50" for a 0.5% rate is a money bug.
+//
+// OPTIONALITY IS DELIBERATE: almost every analytic field is `?: T | null`.
+// The console must be able to tell "the backend reported zero" apart from "the
+// backend did not report this at all", and render the latter as "not reported"
+// rather than inventing a 0. Do not tighten these to non-optional to make a
+// component simpler — that is how fixtures creep back in.
 
-export type Provider = 'mycover' | 'octamile';
-export type BindingMode = 'embedded' | 'voluntary';
-export type PremiumModel = 'one_off' | 'recurring' | 'per_event';
+// ── Failure surface ──────────────────────────────────────────────────────────
+// Classification of *why* a live call failed, so pages can explain themselves to
+// an operator instead of printing "Error: [object Object]".
+export type FailureKind =
+  | 'unauthorized' // 401 — backend did not accept the admin session
+  | 'forbidden' // 403 — session accepted, RBAC permission missing
+  | 'not_implemented' // 404 — the endpoint does not exist on the backend yet
+  | 'bad_request' // 4xx other
+  | 'server' // 5xx
+  | 'network' // could not reach the API at all
+  | 'malformed'; // 2xx with a body we cannot read
 
-export type ProductLine =
-  | 'wallet_protection' | 'health' | 'personal_accident' | 'credit_life' | 'device'
-  | 'sme' | 'spotlight_event' | 'ride_hailing' | 'logistics' | 'parcel' | 'bus'
-  | 'motor' | 'git' | 'driver_protection' | 'passenger_protection';
+// ── Catalog ──────────────────────────────────────────────────────────────────
+export type Aggregator = 'mycover' | 'octamile' | string;
 
-// ── Dashboard (§15.4) ────────────────────────────────────────────────────────
-export interface InsuranceDashboardActivity {
-  id: string;
-  kind: string;        // bind_succeeded | claim_settled | reconciliation_break | renewal_due | bind_failed …
-  label: string;
-  ref?: string | null;
-  created_at: string;
-}
-export interface ProviderHealth {
-  provider: Provider;
-  underwriter: string;
-  status: 'healthy' | 'degraded' | 'down';
-  uptime_pct: number;
-  quote_p95_ms: number;
-  webhook_lag_s: number;
-  open_breaks: number;
-}
-export interface InsuranceDashboard {
-  gwp_today_kobo: number;          // gross written premium
-  gwp_30d_kobo: number;
-  policies_active: number;
-  policies_bound_today: number;
-  attach_rate: number;             // 0..1 — embedded attach on eligible events
-  claims_ratio: number;            // 0..1 — incurred claims / earned premium
-  claims_open: number;
-  claims_settled_30d: number;
-  premium_collected_30d_kobo: number;
-  commission_earned_30d_kobo: number;
-  reconciliation_breaks_open: number;
-  reconciliation_break_value_kobo: number;
-  refunds_pending: number;
-  renewals_due_7d: number;
-  provider_health: ProviderHealth[];
-  premium_vs_commission: { date: string; premium_kobo: number; commission_kobo: number }[];
-  activity: InsuranceDashboardActivity[];
+/** MyCover categories seen live: Life, Auto, Health, Content, Gadget, Package, Travel. */
+export type ProductLine = string;
+
+/**
+ * How a product's commission split is expressed. `commission_from` matters a
+ * great deal: the same percentage applied to `original_premium` vs
+ * `final_premium` is a materially different naira figure once discounts or
+ * add-ons move the final premium, so the console shows the basis next to the
+ * rate rather than the rate alone.
+ */
+export interface SharingFormula {
+  /** PAYMAX's revenue share, percent (0–25 across the live catalog). */
+  distributor_commission_pct: number | null;
+  /** MyCover's own take, percent. */
+  mca_commission_pct: number | null;
+  /** The underwriter's share, percent. */
+  provider_commission_pct: number | null;
+  /** Basis the provider share is computed from. */
+  provider_commission_from: 'original_premium' | 'final_premium' | null;
+  /** Basis the distributor share is computed from. */
+  distributor_commission_from: 'original_premium' | 'final_premium' | null;
+  /** Band bounds when a product has multiple formulas (0/0 = single band). */
+  min?: number | null;
+  max?: number | null;
+  band_key?: string | null;
 }
 
-// ── Catalog (§9.1, §6) ───────────────────────────────────────────────────────
-export interface SumInsuredRule {
-  min_kobo: number;
-  max_kobo: number;
-  default_kobo: number;
-  step_kobo?: number;
-}
 export interface InsuranceProduct {
   code: string;
   name: string;
+  description?: string | null;
   product_line: ProductLine;
-  provider: Provider;
-  underwriter: string;             // NAICOM-licensed insurer (disclosed)
-  provider_product_code: string;
-  binding_mode: BindingMode;
-  premium_model: PremiumModel;
-  required_kyc_tier: number;       // 0..3
-  sum_insured: SumInsuredRule;
-  base_premium_kobo: number;
-  commission_basis_pct: number;
-  active: boolean;
-  version: number;
-  policies_active: number;
-  updated_at: string;
-  created_at: string;
-}
-export interface ProductVersionEntry {
-  version: number;
-  change: string;
-  actor: string;
-  created_at: string;
-}
-export interface InsuranceProductDetail extends InsuranceProduct {
-  description: string;
-  required_fields: string[];       // schema field keys this product collects
-  consent_version: string;
-  history: ProductVersionEntry[];
-}
-export type ProductUpsert = Partial<InsuranceProductDetail> & { code: string };
+  category?: string | null;
 
-// ── Routing table (§6) ───────────────────────────────────────────────────────
-export interface RoutingRule {
-  id: string;
-  product_line: ProductLine;
-  provider: Provider;
   underwriter: string;
-  binding_trigger: string;         // e.g. 'trip_start', 'wallet_funded', 'opt_in'
-  enabled: boolean;
-  priority: number;
-  updated_at: string;
+  underwriter_logo_url?: string | null;
+  aggregator: Aggregator;
+  /** The aggregator's own identifier for this product. */
+  provider_product_code?: string | null;
+  /** Purchase route, where one is stored. v2 uses a single shared buy endpoint. */
+  provider_buy_path?: string | null;
+  buy_path_verified?: boolean | null;
+
+  /**
+   * PROVIDER CAPABILITY — deliberately separate from `active`.
+   *
+   * `active` is our decision ("do we offer this?"). `purchasable` is MyCover's
+   * ("can this be bought at all?"). Seven products are broken on the provider's
+   * side: four have no purchase config and return an empty field schema, and
+   * three have no sharing formula, meaning Paymax would earn nothing even if
+   * pricing were fixed. A product can be active and unpurchasable, which is the
+   * combination worth showing loudly.
+   *
+   * status: ok | broken | schema_unavailable | unknown
+   */
+  purchasable?: boolean | null;
+  provider_config_status?: string | null;
+  /** The provider's own verbatim explanation. Never a credential, never PII. */
+  provider_config_error?: string | null;
+
+  /** Flat premium in KOBO. Null when `is_percentage`. */
+  base_price_kobo?: number | null;
+  is_percentage: boolean;
+  /** Basis points when `is_percentage` (0.5% → 50). Null otherwise. */
+  rate_bps?: number | null;
+  sum_insured_kobo?: number | null;
+  cover_period_days?: number | null;
+  currency?: string | null;
+
+  is_renewable?: boolean | null;
+  is_claimable?: boolean | null;
+  is_certificateable?: boolean | null;
+  is_inspectable?: boolean | null;
+
+  active: boolean;
+
+  /** Commission split bands. Empty/absent = the backend did not report it. */
+  sharing_formula?: SharingFormula[] | null;
+
+  key_benefits_html?: string | null;
+  full_benefits_html?: string | null;
+  how_it_works_html?: string | null;
+  how_to_claim_html?: string | null;
+
+  /** Live policy count attributed to this product, when the backend reports it. */
+  policies_active?: number | null;
+  updated_at?: string | null;
+  created_at?: string | null;
 }
 
-// ── Field schema editor (§6 / data minimisation) ─────────────────────────────
-export interface SchemaField {
+/** Sync bookkeeping returned alongside the catalog. */
+export interface CatalogSyncStatus {
+  last_synced_at?: string | null;
+  /** Products currently stored locally. */
+  local_count?: number | null;
+  /** Products the provider reports. */
+  provider_count?: number | null;
+  /** Codes present at the provider but not locally. */
+  missing_locally?: string[] | null;
+  /** Codes stored locally that the provider no longer lists. */
+  stale_locally?: string[] | null;
+  last_sync_error?: string | null;
+}
+
+export interface CatalogResponse {
+  products: InsuranceProduct[];
+  sync: CatalogSyncStatus | null;
+}
+
+export interface CatalogSyncResult {
+  synced?: number | null;
+  created?: number | null;
+  updated?: number | null;
+  deactivated?: number | null;
+  failed?: number | null;
+  with_schema?: number | null;
+  status?: string | null;
+  error_text?: string | null;
+  synced_at?: string | null;
+}
+
+// ── Dashboard ────────────────────────────────────────────────────────────────
+export interface DashboardBreakdown {
+  /** Category name, underwriter name, … depending on which list this is in. */
   key: string;
-  label: string;
-  type: 'string' | 'number' | 'date' | 'boolean' | 'enum' | 'file';
-  required: boolean;
-  pii: boolean;                    // shared with provider only if product needs it
-  product_lines: ProductLine[];
-  enum_values?: string[];
+  policies?: number | null;
+  gross_premium_kobo?: number | null;
+  commission_kobo?: number | null;
+  claims?: number | null;
+  claims_paid_kobo?: number | null;
 }
 
-// ── Policies (§9.2) ──────────────────────────────────────────────────────────
-export type PolicyState =
-  | 'quoted' | 'pending_payment' | 'binding' | 'active' | 'renewal_due'
-  | 'lapsed' | 'cancelled' | 'expired' | 'bind_failed' | 'payment_failed' | 'void';
+export interface InsuranceDashboard {
+  policies_total?: number | null;
+  policies_active?: number | null;
+  policies_lapsed?: number | null;
+  policies_expired?: number | null;
+  policies_cancelled?: number | null;
+  policies_pending?: number | null;
+
+  /** Gross written premium, kobo. */
+  gross_premium_kobo?: number | null;
+  /** PAYMAX's distributor share, kobo. Our revenue, not the underwriter's. */
+  commission_kobo?: number | null;
+
+  claims_count?: number | null;
+  claims_open?: number | null;
+  claims_paid_kobo?: number | null;
+  /** Incurred claims ÷ earned premium, 0..1. Undefined while premium is zero. */
+  loss_ratio?: number | null;
+
+  by_category?: DashboardBreakdown[] | null;
+  by_underwriter?: DashboardBreakdown[] | null;
+
+  catalog?: {
+    products_total?: number | null;
+    products_active?: number | null;
+    last_synced_at?: string | null;
+  } | null;
+
+  generated_at?: string | null;
+}
+
+// ── Policies ─────────────────────────────────────────────────────────────────
+export type PolicyStatus =
+  | 'pending'
+  | 'active'
+  | 'expired'
+  | 'cancelled'
+  | 'lapsed'
+  | string;
 
 export interface PolicySummary {
   id: string;
-  provider_policy_ref: string;
-  policyholder_masked: string;     // PII masked
-  policyholder_user_id: string;
+  policy_ref?: string | null;
+  provider_policy_ref?: string | null;
   product_code: string;
-  product_name: string;
-  provider: Provider;
-  underwriter: string;
-  binding_mode: BindingMode;
-  state: PolicyState;
-  sum_insured_kobo: number;
-  premium_kobo: number;
-  effective_at: string | null;
-  expires_at: string | null;
-  created_at: string;
-}
-export interface PolicyTimelineEntry {
-  at: string;
-  state: string;
-  actor: string;
-  note?: string | null;
-}
-export interface PolicyPremiumTx {
-  id: string;
-  reference: string;
-  amount_kobo: number;
-  direction: 'DEBIT' | 'CREDIT';
-  status: string;
-  wallet_ledger_ref: string;
-  created_at: string;
-}
-export interface PolicyDetail extends PolicySummary {
-  capability_id: string;
-  source_event_id: string | null;
-  currency: string;
-  version: number;
-  beneficiaries: { id: string; name_masked: string; relationship: string; share_pct: number }[];
-  premium_transactions: PolicyPremiumTx[];
-  commission: { amount_kobo: number; basis: string; revenue_ledger_ref: string; reconciled: boolean } | null;
-  consent: { version: string; granted_at: string; scope: string } | null;
-  timeline: PolicyTimelineEntry[];
+  product_name?: string | null;
+  underwriter?: string | null;
+  aggregator?: Aggregator | null;
+  status: PolicyStatus;
+  premium_kobo?: number | null;
+  sum_insured_kobo?: number | null;
+  commission_kobo?: number | null;
+  currency?: string | null;
+  policyholder_masked?: string | null;
+  policyholder_user_id?: string | null;
+  starts_at?: string | null;
+  ends_at?: string | null;
+  created_at?: string | null;
 }
 
-// ── Claims (§9.2, §10.2) ─────────────────────────────────────────────────────
-export type ClaimState =
-  | 'draft' | 'fnol_submitted' | 'under_assessment' | 'needs_more_info'
-  | 'approved' | 'payout_pending' | 'settled' | 'rejected';
+export interface PolicyTimelineEntry {
+  at: string;
+  status: string;
+  actor?: string | null;
+  note?: string | null;
+}
+
+export interface PolicyDetail extends PolicySummary {
+  certificate_url?: string | null;
+  quote_ref?: string | null;
+  inputs?: Record<string, unknown> | null;
+  timeline?: PolicyTimelineEntry[] | null;
+  claims?: ClaimSummary[] | null;
+}
+
+// ── Claims ───────────────────────────────────────────────────────────────────
+export type ClaimStatus =
+  | 'submitted'
+  | 'under_review'
+  | 'approved'
+  | 'rejected'
+  | 'paid'
+  | string;
 
 export interface ClaimSummary {
   id: string;
-  provider_claim_ref: string;
+  claim_ref?: string | null;
+  provider_claim_ref?: string | null;
   policy_id: string;
-  product_name: string;
-  provider: Provider;
-  claimant_masked: string;
-  state: ClaimState;
-  claimed_amount_kobo: number;
-  approved_amount_kobo: number;
-  loss_event_at: string;
-  reported_at: string;
-  created_at: string;
+  product_name?: string | null;
+  underwriter?: string | null;
+  claimant_masked?: string | null;
+  status: ClaimStatus;
+  claimed_amount_kobo?: number | null;
+  approved_amount_kobo?: number | null;
+  loss_event_at?: string | null;
+  created_at?: string | null;
 }
+
 export interface ClaimEvidence {
   id: string;
-  kind: string;                    // photo | document | report
-  label: string;
-  signed_url_ref: string;          // access-controlled pointer (not raw URL)
-  uploaded_at: string;
-}
-export interface ClaimTimelineEntry {
-  at: string;
-  state: string;
-  actor: string;
-  note?: string | null;
-}
-export interface ClaimDetail extends ClaimSummary {
-  underwriter: string;
-  payout_ledger_ref: string | null;
-  sla_target_minutes: number | null;
-  evidence: ClaimEvidence[];
-  timeline: ClaimTimelineEntry[];
-  notes: string | null;
+  kind?: string | null;
+  label?: string | null;
+  /** Access-controlled pointer, never a raw provider URL. */
+  ref?: string | null;
+  uploaded_at?: string | null;
 }
 
-// ── Finance: premiums / commission / reconciliation / refunds (§17) ──────────
-export interface PremiumTransaction {
-  id: string;
-  reference: string;
-  policy_id: string;
-  provider: Provider;
-  amount_kobo: number;
-  direction: 'DEBIT' | 'CREDIT';
-  status: string;
-  idempotency_key: string;
-  provider_remittance_ref: string | null;
-  reconciled: boolean;
-  created_at: string;
+export interface ClaimDetail extends ClaimSummary {
+  description?: string | null;
+  evidence?: ClaimEvidence[] | null;
+  timeline?: PolicyTimelineEntry[] | null;
+  payout_ledger_ref?: string | null;
 }
+
+// ── Pagination ───────────────────────────────────────────────────────────────
+export interface Paged<T> {
+  items: T[];
+  page: number;
+  page_size: number;
+  /** Null when the backend does not report a total. */
+  total: number | null;
+  has_more: boolean;
+}
+
+// ── Commission ───────────────────────────────────────────────────────────────
+/**
+ * One row of realised distributor commission. `basis_pct` + `basis` together
+ * explain how `commission_kobo` was derived — an operator reconciling against a
+ * MyCover statement needs both, because the same rate on `original_premium` vs
+ * `final_premium` produces different money.
+ */
 export interface CommissionEntry {
   id: string;
-  policy_id: string;
-  premium_transaction_id: string;
-  provider: Provider;
-  commission_amount_kobo: number;
-  commission_basis: string;
-  revenue_ledger_ref: string;
-  reconciled: boolean;
-  reversed: boolean;
-  created_at: string;
-}
-export type BreakStatus = 'open' | 'investigating' | 'resolved';
-export interface ReconciliationBreak {
-  id: string;
-  provider: Provider;
-  break_type: 'premium' | 'commission' | 'claim_payout';
-  policy_id: string | null;
-  paymax_amount_kobo: number;
-  provider_amount_kobo: number;
-  delta_kobo: number;
-  status: BreakStatus;
-  age_hours: number;
-  sla_breached: boolean;
-  detail: string;
-  created_at: string;
-}
-export interface BreakResolution {
-  id: string;
-  status: BreakStatus;
-  resolved_at: string;
-}
-export type RefundStatus = 'pending' | 'approved' | 'rejected' | 'paid';
-export interface RefundRequest {
-  id: string;
-  reference: string;
-  policy_id: string;
-  provider: Provider;
-  reason: string;            // cooling_off | cancellation | bind_failed | duplicate
-  amount_kobo: number;
-  status: RefundStatus;
-  policyholder_masked: string;
-  requested_at: string;
-}
-export interface RefundDecision {
-  id: string;
-  status: RefundStatus;
-  decided_at: string;
+  policy_id?: string | null;
+  product_code?: string | null;
+  product_name?: string | null;
+  underwriter?: string | null;
+  premium_kobo?: number | null;
+  commission_kobo?: number | null;
+  basis_pct?: number | null;
+  basis?: 'original_premium' | 'final_premium' | string | null;
+  ledger_ref?: string | null;
+  reconciled?: boolean | null;
+  created_at?: string | null;
 }
 
-// ── Providers (§12, §15.4) ───────────────────────────────────────────────────
-export interface ProviderConfig {
-  provider: Provider;
-  display_name: string;
-  underwriters: string[];          // NAICOM-licensed insurers behind this rail
-  base_url: string;
-  api_key_masked: string;          // never raw
-  webhook_secret_masked: string;
-  webhook_url: string;
-  signature_verified: boolean;
-  sandbox: boolean;
-  sla_quote_p95_ms: number;
-  sla_claim_settle_minutes: number;
-  status: 'healthy' | 'degraded' | 'down';
-  product_lines: ProductLine[];
-  updated_at: string;
-}
-export interface ProviderEvent {
-  id: string;
-  provider: Provider;
-  event_type: string;
-  external_event_id: string;
-  signature_verified: boolean;
-  processed: boolean;
-  duplicate: boolean;              // dropped via unique (provider, external_event_id)
-  payload_ref: string;
-  received_at: string;
-  processed_at: string | null;
-}
-export interface WebhookDelivery {
-  id: string;
-  provider: Provider;
-  event_type: string;
-  external_event_id: string;
-  status: 'delivered' | 'failed' | 'pending';
-  attempts: number;
-  last_attempt_at: string;
-  replayable: boolean;
-}
-export interface WebhookReplayResult {
-  id: string;
-  status: 'queued';
-  queued_at: string;
+export interface CommissionSummary {
+  entries: CommissionEntry[];
+  total_commission_kobo?: number | null;
+  total_premium_kobo?: number | null;
+  period_from?: string | null;
+  period_to?: string | null;
 }
 
-// ── Ops: consent/audit · sweeps · reports (§18) ──────────────────────────────
-export interface ConsentAuditEntry {
-  id: string;
-  policy_id: string | null;
-  user_masked: string;
-  consent_version: string;
-  scope: string;                   // fields shared with provider
-  provider: Provider;
-  action: 'granted' | 'withdrawn' | 'data_shared' | 'erasure_requested';
-  actor: string;
-  created_at: string;
+// ── Providers ────────────────────────────────────────────────────────────────
+export interface ProviderWebhookStatus {
+  url?: string | null;
+  /** Whether signature verification is switched on at all. */
+  verification_enabled?: boolean | null;
+  /** The backend's own explanation of the verification posture. */
+  note?: string | null;
+  /** FALSE when the shared secret is unset — signature verification cannot pass. */
+  secret_configured?: boolean | null;
+  signature_scheme?: string | null;
+  last_received_at?: string | null;
+  last_verified_at?: string | null;
+  received_24h?: number | null;
+  rejected_24h?: number | null;
 }
-export interface SweepRun {
-  id: string;
-  kind: 'lapse' | 'renewal';
-  status: 'completed' | 'running' | 'failed';
-  scanned: number;
-  affected: number;
-  notified: number;
-  errors: number;
-  window: string;
-  ran_at: string;
+
+/**
+ * The PREFUNDED DISTRIBUTOR FLOAT — modelled as an OBSERVED CIRCUIT BREAKER,
+ * not as a balance.
+ *
+ * MyCover settles binds from a wallet Paymax funds in advance, and its
+ * `/wallet/balance` returns 403 for our credential. We therefore cannot read the
+ * balance at all, and the backend deliberately does not pretend to: it records
+ * what the provider was OBSERVED to do. The first bind refused for
+ * "Insufficient wallet fund" trips `state: exhausted`, and every later bind is
+ * refused BEFORE the member is debited. An operator tops the wallet up at the
+ * provider and resets the breaker.
+ *
+ * This is the right model for the constraint, and the console renders it as
+ * such. `balance_kobo` stays here only for the day the balance becomes
+ * readable; it is expected to be null, and null must never render as ₦0.00.
+ */
+export interface ProviderFloat {
+  provider: string;
+  /** ok | exhausted | unknown */
+  state: string;
+  /** TRUE means: do not take the member's money — binds cannot be issued. */
+  binding_paused: boolean | null;
+  consecutive_failures?: number | null;
+  last_failure_at?: string | null;
+  last_failure_text?: string | null;
+  last_success_at?: string | null;
+  /** An operator's human record of a top-up. NOT an authority on the balance. */
+  last_topup_note?: string | null;
+  last_reset_at?: string | null;
+  updated_at?: string | null;
+  /** Null today: the provider will not tell us. See the note above. */
+  balance_kobo?: number | null;
 }
-export interface SweepsMonitor {
-  renewals_due_7d: number;
-  renewals_due_30d: number;
-  lapses_pending: number;
-  next_run_at: string;
-  recent_runs: SweepRun[];
+
+/** One catalog sync run, as recorded by the backend. */
+export interface CatalogSyncRun {
+  sync_id?: string | null;
+  provider?: string | null;
+  status?: string | null;
+  products_seen?: number | null;
+  products_upserted?: number | null;
+  products_failed?: number | null;
+  products_with_schema?: number | null;
+  started_at?: string | null;
+  finished_at?: string | null;
+  error_text?: string | null;
+  skipped_codes?: string[] | null;
 }
-export interface ReportDefinition {
+
+/**
+ * The whole `/providers` payload. Adapter health, float breakers, and the last
+ * catalog sync arrive together, plus a top-level `binding_paused` that is the
+ * launch gate: when it is true, no policy can be issued no matter how healthy
+ * every other indicator looks.
+ */
+export interface ProvidersReport {
+  adapters: ProviderStatus[];
+  floats: ProviderFloat[];
+  binding_paused: boolean | null;
+  binding_paused_reason: string | null;
+  last_sync: CatalogSyncRun | null;
+}
+
+export interface ProviderStatus {
+  provider: Aggregator;
+  display_name?: string | null;
+  base_url?: string | null;
+  /**
+   * 'test' | 'live'. The backend does not currently report this — the
+   * environment is determined by the API-KEY PREFIX (MCASECK_T… is staging),
+   * which the API deliberately never exposes. Expect null and render "unknown"
+   * rather than assuming test, since assuming test on a live key is the
+   * dangerous direction of that guess.
+   */
+  mode?: 'test' | 'live' | 'unknown' | string | null;
+  api_key_configured?: boolean | null;
+  /** How many purchase families the adapter has routes for. */
+  purchase_families?: number | null;
+  reachable?: boolean | null;
+  last_success_at?: string | null;
+  last_error_at?: string | null;
+  last_error?: string | null;
+  latency_ms?: number | null;
+  products_synced?: number | null;
+  webhook?: ProviderWebhookStatus | null;
+  float?: ProviderFloat | null;
+  updated_at?: string | null;
+}
+
+// ── Reconciliation ───────────────────────────────────────────────────────────
+export type DriftKind =
+  | 'missing_locally' // provider has a policy we have no record of
+  | 'missing_at_provider' // we recorded a policy the provider does not list
+  | 'status_mismatch'
+  | 'premium_mismatch'
+  | string;
+
+export interface ReconciliationDrift {
   id: string;
-  name: string;
-  description: string;
-  category: 'finance' | 'compliance' | 'operations';
-  formats: string[];               // csv | xlsx | pdf
-  last_generated_at: string | null;
+  kind: DriftKind;
+  policy_id?: string | null;
+  provider_policy_ref?: string | null;
+  product_code?: string | null;
+  local_status?: string | null;
+  provider_status?: string | null;
+  local_premium_kobo?: number | null;
+  provider_premium_kobo?: number | null;
+  delta_kobo?: number | null;
+  detail?: string | null;
+  detected_at?: string | null;
+}
+
+export interface ReconciliationReport {
+  drifts: ReconciliationDrift[];
+  local_policy_count?: number | null;
+  provider_policy_count?: number | null;
+  matched_count?: number | null;
+  /**
+   * Float reconciliation: what the provider actually debited from our prefunded
+   * wallet against what our own records say we bound. A gap here means either a
+   * bind we were charged for and never recorded, or one we recorded and were
+   * never charged for — both are money.
+   */
+  float_balance_kobo?: number | null;
+  float_debited_kobo?: number | null;
+  bound_premium_kobo?: number | null;
+  bound_policy_count?: number | null;
+  float_delta_kobo?: number | null;
+  /** Absolute premium delta across all drifts, kobo. */
+  total_delta_kobo?: number | null;
+  ran_at?: string | null;
 }

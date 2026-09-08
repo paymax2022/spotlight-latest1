@@ -90,14 +90,6 @@ export function useAcceptConsents() {
   });
 }
 
-export function useSubmitLiveness() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: connectApi.submitLiveness,
-    onSuccess: (draft) => qc.setQueryData(connectKeys.onboardingDraft(), draft),
-  });
-}
-
 export function useLinkIdentity() {
   const qc = useQueryClient();
   return useMutation({

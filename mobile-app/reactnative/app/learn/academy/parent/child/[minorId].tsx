@@ -2,6 +2,7 @@ import React from 'react';
 import { View, Text, Pressable, ScrollView, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Flame, Clock, Target, ChevronRight, SlidersHorizontal, FileText, AlertCircle, Award } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
@@ -21,7 +22,7 @@ export default function ChildDashboard() {
   const dash = useChildDashboard(minorId);
 
   if (dash.isLoading) return <SafeAreaView style={styles.safe} edges={['top']}><StateView kind="loading" message="Loading dashboard…" /></SafeAreaView>;
-  if (dash.isError) return <SafeAreaView style={styles.safe} edges={['top']}><ScreenHeader title="Child" /><StateView kind="error" title="No active link" message={dash.error instanceof Error ? dash.error.message : 'Cannot load this child.'} actionLabel="Back" onAction={() => router.back()} /></SafeAreaView>;
+  if (dash.isError) return <SafeAreaView style={styles.safe} edges={['top']}><ScreenHeader title="Child" /><StateView kind="error" title="No active link" message={dash.error instanceof Error ? dash.error.message : 'Cannot load this child.'} actionLabel="Back" onAction={() => goBack('/learn/academy/parent')} /></SafeAreaView>;
   if (!dash.data) return null;
 
   const d = dash.data;
@@ -112,7 +113,7 @@ const styles = StyleSheet.create({
   scroll: { padding: Spacing.containerMargin, paddingBottom: Spacing.xxl, gap: Spacing.md },
   hero: { borderRadius: Radius.xl, padding: Spacing.lg },
   heroKicker: { ...Typography.labelSm, color: Colors.gold, letterSpacing: 1, fontWeight: '700' },
-  heroPct: { ...Typography.displayLg, color: Colors.onPrimary, fontSize: 44, lineHeight: 50 },
+  heroPct: { ...Typography.displayLg, color: Colors.onPrimary, fontSize: 44, letterSpacing: -0.88, lineHeight: 50 },
   statsRow: { flexDirection: 'row', gap: Spacing.sm },
   statCard: { flex: 1, backgroundColor: Colors.surfaceContainerLowest, borderRadius: Radius.lg, padding: Spacing.md, alignItems: 'center', gap: 2 },
   statNum: { ...Typography.titleMd, color: Colors.onSurface },

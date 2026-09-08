@@ -101,7 +101,7 @@ func (s *Service) Handle(ctx context.Context, ev EmbeddedEvent) (*Result, error)
 	}
 
 	// COVER_RESOLVED → quote at the provider to learn the premium + sum insured.
-	gw, providerProductCode, err := s.router.Resolve(ctx, prod.Code)
+	gw, providerProduct, err := s.router.Resolve(ctx, prod.Code)
 	if err != nil {
 		return &Result{State: StateNoMapping, ProductCode: prod.Code, Reason: "no provider for product"}, nil
 	}
@@ -110,7 +110,8 @@ func (s *Service) Handle(ctx context.Context, ev EmbeddedEvent) (*Result, error)
 		sumInsured = fixedSumFromRules(prod.SumInsuredRules)
 	}
 	q, qErr := gw.GetQuote(ctx, gateway.QuoteRequest{
-		ProviderProductCode: providerProductCode,
+		ProviderProductCode: providerProduct.Code,
+		Product:             providerProduct,
 		Currency:            prod.Currency,
 		SumInsuredKobo:      sumInsured,
 		Inputs:              ev.Inputs,
@@ -185,7 +186,8 @@ func (s *Service) Handle(ctx context.Context, ev EmbeddedEvent) (*Result, error)
 
 	// BINDING → bind at the provider (idempotent on idempotencyKey).
 	bound, bErr := gw.BindPolicy(ctx, gateway.BindRequest{
-		ProviderProductCode: providerProductCode,
+		ProviderProductCode: providerProduct.Code,
+		Product:             providerProduct,
 		ProviderQuoteRef:    q.ProviderQuoteRef,
 		Currency:            q.Currency,
 		SumInsuredKobo:      sumInsured,

@@ -208,30 +208,21 @@ export interface CfFeatureFlag {
 
 // ─── KYC / KYB verification ───────────────────────────────────────────────────
 
-export type CfKycKind = 'KYC' | 'KYB';
 export type CfKycStatus = 'PENDING' | 'APPROVED' | 'REJECTED';
 
-export interface CfKycDoc {
-  id: string;
-  label: string;              // 'NIN', 'CAC certificate', 'Selfie', 'Bank statement'
-  type: 'image' | 'pdf';
-  verified: boolean;
-}
-
+// Sourced from the platform's shared KYC (finance/kyc), not a crowdfunding-
+// specific dataset — there's no business-entity (KYB) tier, so every case is
+// an individual identity verification distinguished only by requested tier.
 export interface CfKycCase {
-  id: string;
-  kind: CfKycKind;
+  id: string; // the user's id
   status: CfKycStatus;
   applicantName: string;
-  applicantType: string;      // 'Individual' | 'NGO' | 'SME'
+  applicantType: string; // always 'Individual'
   email: string;
-  idLabel: string;            // masked NIN/BVN or RC number
-  bankLabel: string;
+  tier: number; // requested tier (1-3)
+  documentType: string | null;
   submittedAt: string;
-  documents: CfKycDoc[];
-  duplicateIdentity: boolean;
-  duplicateBank: boolean;
-  riskLevel: CfRiskLevel;
+  verifiedAt: string | null;
 }
 
 // ─── Compliance ───────────────────────────────────────────────────────────────
@@ -295,4 +286,197 @@ export interface CfUser {
   joinedAt: string;
   lastActiveAt: string;
   activity: CfUserActivity[];
+}
+
+// ─── Featured / promotion management ─────────────────────────────────────────
+// Promotion flags are editorial placement, not money — but they are only valid on
+// a LIVE campaign, so the backend refuses (4xx) setting any of them true on a
+// campaign whose status is not ACTIVE. See CfCampaignStatus above.
+
+export interface CfFeaturedCampaign {
+  id: string;
+  title: string;
+  status: CfCampaignStatus;
+  category: string;
+  featured: boolean;
+  trending: boolean;
+  urgent: boolean;
+  verified: boolean;
+  raisedKobo: number;
+  goalKobo: number;
+  contributorCount: number;
+  createdAt: string;
+}
+
+/** The three operator-editable promotion flags (`verified` is set by KYC review, not here). */
+export type CfCampaignFlag = 'featured' | 'trending' | 'urgent';
+
+/** PATCH body: only the supplied keys change. */
+export type CfCampaignFlags = Partial<Record<CfCampaignFlag, boolean>>;
+
+export interface CfFeaturedReportEntry {
+  id: string;
+  title: string;
+  raisedKobo: number;
+  contributorCount: number;
+}
+
+export interface CfFeaturedReport {
+  featuredCount: number;
+  trendingCount: number;
+  urgentCount: number;
+  activeCount: number;
+  featured: CfFeaturedReportEntry[];
+  /**
+   * Outstanding owner feature requests. OPTIONAL — the report endpoint predates
+   * the request queue and may not carry it. When absent the console derives the
+   * number from the queue itself, so the stat card is correct either way.
+   */
+  pendingRequestCount?: number;
+}
+
+// ─── Feature requests (owner-initiated) ──────────────────────────────────────
+// Featuring is deliberately NOT self-serve: `featured` is an editorial placement
+// on the public discovery rail, so a campaign owner can only REQUEST it and an
+// admin approves. (Owners can always UNfeature themselves without approval, which
+// is why there is no "un-feature request" in this model.)
+//
+// Approving sets the campaign's `featured` flag, so it inherits the same rule the
+// PATCH .../flags endpoint enforces: only an ACTIVE campaign can be promoted, and
+// anything else is refused with 409. `campaignStatus` is carried on the request so
+// the console can gate the action instead of offering a guaranteed failure.
+
+export type CfFeatureRequestStatus = 'PENDING' | 'APPROVED' | 'REJECTED';
+
+/**
+ * The campaign's status as reported on the request row.
+ *
+ * 'UNKNOWN' is not a backend value — it is what the mapper produces when the wire
+ * payload carries no recognisable campaign status. It exists so a field-name drift
+ * degrades to a visible "cannot confirm this is ACTIVE" (approval gated, reason
+ * shown) rather than silently mis-gating rows.
+ */
+export type CfFeatureRequestCampaignStatus = CfCampaignStatus | 'UNKNOWN';
+
+export interface CfFeatureRequest {
+  id: string;
+  campaignId: string;
+  campaignTitle: string;
+  status: CfFeatureRequestStatus;
+  campaignStatus: CfFeatureRequestCampaignStatus;
+  raisedKobo: number;
+  goalKobo: number;
+  contributorCount: number;
+  requestedBy: string;
+  requestedAt: string;
+  /** Admin note captured on reject. Null while PENDING and on approve. */
+  note: string | null;
+  /** When the request was actioned. Null while PENDING. */
+  decidedAt: string | null;
+}
+
+// ─── Campaign directory ───────────────────────────────────────────────────────
+// The "every campaign" surface. Distinct from CfReviewCampaign, which is only
+// the moderation queue (PENDING_REVIEW) and carries no funding figures.
+
+export interface CfDirectoryRow {
+  id: string;
+  title: string;
+  category: string;
+  type: string;
+  status: string;
+  reviewStatus: string;
+  creatorId: string;
+  creatorName: string;
+  goalKobo: number;
+  raisedKobo: number;
+  percentOfGoal: number;
+  /** DISTINCT contributors. */
+  backerCount: number;
+  contributionCount: number;
+  /** The denormalised campaigns.contributor_count, shown when it disagrees. */
+  storedContributorCount: number;
+  verified: boolean;
+  featured: boolean;
+  trending: boolean;
+  urgent: boolean;
+  frozen: boolean;
+  riskLevel: string;
+  riskScore: number;
+  deadline: string;
+  createdAt: string;
+}
+
+export interface CfDirectoryPage {
+  rows: CfDirectoryRow[];
+  total: number;
+  page: number;
+  limit: number;
+}
+
+export interface CfDirectoryFilter {
+  status?: string;
+  reviewStatus?: string;
+  category?: string;
+  q?: string;
+  flag?: '' | 'featured' | 'verified' | 'trending' | 'urgent' | 'frozen';
+  sort?: '' | 'recent' | 'raised' | 'goal' | 'backers' | 'deadline';
+  page?: number;
+  limit?: number;
+}
+
+export interface CfBacker {
+  contributionId: string;
+  contributorId: string;
+  contributorName: string;
+  contributorEmail: string;
+  amountKobo: number;
+  status: string;
+  createdAt: string;
+}
+
+export interface CfBackersPage {
+  backers: CfBacker[];
+  total: number;
+  page: number;
+  limit: number;
+  raisedKobo: number;
+  backerCount: number;
+}
+
+export interface CfStatusBreakdown {
+  status: string;
+  count: number;
+  amountKobo: number;
+}
+
+/**
+ * Per-campaign money. Refunds and settlements are deliberately absent: neither
+ * table carries a campaign_id in this schema, so they cannot be attributed to a
+ * campaign without guessing on the title. They live on the finance pages.
+ */
+export interface CfCampaignFunding {
+  campaignId: string;
+  goalKobo: number;
+  raisedKobo: number;
+  backerCount: number;
+  contributionCount: number;
+  averageContributionKobo: number;
+  largestContributionKobo: number;
+  firstContributionAt: string;
+  lastContributionAt: string;
+  byStatus: CfStatusBreakdown[];
+  withdrawnKobo: number;
+  withdrawalCount: number;
+  pendingWithdrawalKobo: number;
+  milestoneCount: number;
+  milestonesReleased: number;
+}
+
+/** One page of crowdfunding users plus the count matching the current filters. */
+export interface CfUsersPage {
+  users: CfUser[];
+  total: number;
+  page: number;
+  limit: number;
 }

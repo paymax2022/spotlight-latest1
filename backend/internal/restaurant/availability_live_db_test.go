@@ -19,6 +19,8 @@ import (
 
 	"spotlight/backend/internal/finance/ledger"
 	"spotlight/backend/internal/finance/settlement"
+
+	"spotlight/backend/internal/testsupport"
 )
 
 func availLivePool(t *testing.T) *pgxpool.Pool {
@@ -44,7 +46,7 @@ func availService(pool *pgxpool.Pool) *Service {
 
 func TestLiveDB_AvailabilityHolidayAndSweep(t *testing.T) {
 	pool := availLivePool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	svc := availService(pool)
 
@@ -55,6 +57,7 @@ func TestLiveDB_AvailabilityHolidayAndSweep(t *testing.T) {
 		if _, err := pool.Exec(ctx, `INSERT INTO auth.users (id,email) VALUES ($1,$2) ON CONFLICT DO NOTHING`, u, u+"@seed.test"); err != nil {
 			t.Fatalf("seed user: %v", err)
 		}
+		testsupport.CleanupUser(t, pool, u)
 	}
 	restID := uuid.New().String()
 	if _, err := pool.Exec(ctx, `INSERT INTO restaurants (id, owner_id, name, address, is_open, accept_sla_minutes) VALUES ($1,$2,'Avail Kitchen','1 St',TRUE,5)`, restID, owner); err != nil {

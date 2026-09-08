@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { listGroups, listGroupMembers, formatNaira, type GroupRecord, type GroupMember } from '@/services/groupsAdminService';
-import { PageHeader, GroupsTabs, Card, Badge, DisclosureNote, StateBlock, FilterBar, btn, btnPrimary, th, td, input, label, select, fmtDate } from '../_ui';
+import { PageHeader, GroupsTabs, Card, Badge, DisclosureNote, SampleDataBanner, StateBlock, FilterBar, btn, btnPrimary, th, td, input, label, select, fmtDate } from '../_ui';
 import { colors } from '@/components/ui/vuexy';
 
 export default function GroupsPage() {
@@ -34,7 +34,11 @@ export default function GroupsPage() {
     <div style={{ padding: '0.5rem 0.5rem 2rem' }}>
       <PageHeader title="Groups & members" subtitle="Group savings pools and their members. Select a group to inspect its membership." action={<button onClick={load} style={btn()}>Refresh</button>} />
       <GroupsTabs active="groups" />
-      <DisclosureNote>Read-only — backed by member group projections. No admin write surface exists on the backend yet.</DisclosureNote>
+      <SampleDataBanner />
+      <DisclosureNote>
+        Scope: group savings / contribution pools — <strong>not</strong> association membership (that is{' '}
+        <code>/admin/association/members</code>). Read-only: no admin write surface exists on the backend yet.
+      </DisclosureNote>
 
       <FilterBar>
         <div style={{ minWidth: 200 }}>

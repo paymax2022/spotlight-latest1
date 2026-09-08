@@ -30,12 +30,15 @@ export async function markDealMet(dealId: string): Promise<void> {
   await mktPost<unknown>(`/deals/${dealId}/mark-met`);
 }
 
-// ── Reviews — POST /deals/:id/review {rating, tags, text} ────────────────────
+// ── Reviews — POST /deals/:id/review {rating, product_quality_rating, tags, text} ─
+// productQualityRating is the second sub-score — how the buyer rates the ITEM,
+// separate from `rating` (the overall/counterparty score). Optional: a
+// reviewer who skips it still submits a valid review with rating alone.
 export async function submitReview(
   dealId: string,
-  input: { rating: number; tags: string[]; text?: string },
+  input: { rating: number; productQualityRating?: number; tags: string[]; text?: string },
 ): Promise<Review> {
-  if (MKT_USE_MOCK) return M.mockSubmitReview(dealId, input.rating, input.tags, input.text);
+  if (MKT_USE_MOCK) return M.mockSubmitReview(dealId, input.rating, input.productQualityRating, input.tags, input.text);
   return mktPost<Review>(`/deals/${dealId}/review`, input);
 }
 

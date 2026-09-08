@@ -51,6 +51,8 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	feesinvoice "spotlight/backend/internal/academy/fees/invoice"
+
+	"spotlight/backend/internal/testsupport"
 )
 
 // TestLiveDB_Invoice_IdempotencyKeyScopedToInvoice is the ledger-auditor F1 regression:
@@ -59,7 +61,7 @@ import (
 // pair a foreign payment with the wrong invoice's derived state.
 func TestLiveDB_Invoice_IdempotencyKeyScopedToInvoice(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	svc := feesinvoice.NewService(pool)
 	ctx := context.Background()
 
@@ -107,7 +109,7 @@ func TestLiveDB_Invoice_IdempotencyKeyScopedToInvoice(t *testing.T) {
 // exact-full payment (bringing balance to 0) is still accepted.
 func TestLiveDB_Invoice_RejectsOverpayment(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	svc := feesinvoice.NewService(pool)
 	ctx := context.Background()
 
@@ -179,6 +181,7 @@ func seedUser(t *testing.T, ctx context.Context, pool *pgxpool.Pool) string {
 	if _, err := pool.Exec(ctx, `INSERT INTO auth.users (id, email) VALUES ($1, $2) ON CONFLICT DO NOTHING`, id, id+"@seed.test"); err != nil {
 		t.Fatalf("seed auth.users: %v", err)
 	}
+	testsupport.CleanupUser(t, pool, id)
 	t.Cleanup(func() {
 		_, _ = pool.Exec(context.Background(), `DELETE FROM auth.users WHERE id=$1`, id)
 	})
@@ -259,7 +262,7 @@ func cleanupInvoice(t *testing.T, pool *pgxpool.Pool, invoiceID string) {
 //	    second payment row and leaves status + derived balance unchanged.
 func TestLiveDB_Invoice_IssueLocksSchedule_PartialThenFull_DerivedBalance_Idempotent(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	svc := feesinvoice.NewService(pool)
 	ctx := context.Background()
 
@@ -376,7 +379,7 @@ func TestLiveDB_Invoice_IssueLocksSchedule_PartialThenFull_DerivedBalance_Idempo
 // academy_invoice_payments row is written.
 func TestLiveDB_Invoice_RecordPayment_RequiresIdempotencyKey(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	svc := feesinvoice.NewService(pool)
 	ctx := context.Background()
 

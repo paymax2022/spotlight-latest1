@@ -2,6 +2,7 @@ package extranet
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"time"
 
@@ -22,27 +23,46 @@ func NewRepository(db *pgxpool.Pool) *Repository { return &Repository{db: db} }
 
 // Property is the editable content view returned to the extranet.
 type Property struct {
-	ID           string    `json:"id"`
-	Name         string    `json:"name"`
-	Description  string    `json:"description"`
-	Address      string    `json:"address"`
-	City         string    `json:"city"`
-	StarRating   int       `json:"star_rating"`
-	PropertyType string    `json:"property_type"`
-	Status       string    `json:"status"`
-	UpdatedAt    time.Time `json:"updated_at"`
+	ID                 string    `json:"id"`
+	Name               string    `json:"name"`
+	Description        string    `json:"description"`
+	Address            string    `json:"address"`
+	City               string    `json:"city"`
+	StarRating         int       `json:"star_rating"`
+	PropertyType       string    `json:"property_type"`
+	Status             string    `json:"status"`
+	Lat                float64   `json:"lat"`
+	Lng                float64   `json:"lng"`
+	Amenities          []string  `json:"amenities"`
+	HouseRules         string    `json:"house_rules"`
+	CancellationPolicy string    `json:"cancellation_policy"`
+	CheckInFrom        string    `json:"check_in_from"`   // "HH:MM"
+	CheckOutUntil      string    `json:"check_out_until"` // "HH:MM"
+	ContactPhone       string    `json:"contact_phone"`
+	ContactEmail       string    `json:"contact_email"`
+	UpdatedAt          time.Time `json:"updated_at"`
 }
 
 // GetProperty returns the property content.
 func (r *Repository) GetProperty(ctx context.Context, propertyID string) (Property, error) {
 	var p Property
+	var amenities []byte
 	err := r.db.QueryRow(ctx, `
 		SELECT id, name, COALESCE(description,''), address, city, star_rating,
-		       property_type, status, updated_at
+		       property_type, status,
+		       COALESCE(ST_Y(geo::geometry),0), COALESCE(ST_X(geo::geometry),0),
+		       amenities, house_rules, cancellation_policy, check_in_from, check_out_until,
+		       contact_phone, contact_email, updated_at
 		FROM public.stays_property WHERE id = $1`, propertyID).Scan(
 		&p.ID, &p.Name, &p.Description, &p.Address, &p.City, &p.StarRating,
-		&p.PropertyType, &p.Status, &p.UpdatedAt)
-	return p, err
+		&p.PropertyType, &p.Status, &p.Lat, &p.Lng,
+		&amenities, &p.HouseRules, &p.CancellationPolicy, &p.CheckInFrom, &p.CheckOutUntil,
+		&p.ContactPhone, &p.ContactEmail, &p.UpdatedAt)
+	if err != nil {
+		return Property{}, err
+	}
+	p.Amenities = decodeAmenities(amenities)
+	return p, nil
 }
 
 // UpdatePropertyContent edits the property content fields (NOT moderation status —
@@ -65,6 +85,84 @@ func (r *Repository) UpdatePropertyContent(ctx context.Context, propertyID, name
 		return fmt.Errorf("extranet: property not found")
 	}
 	return nil
+}
+
+// PropertyDetailsPatch is the Airbnb-style listing detail patch: location,
+// amenities, house rules, cancellation policy, contact and check-in/out. Every
+// field is a pointer so "absent from the request" (leave untouched) is
+// distinguishable from "explicitly cleared" — unlike UpdatePropertyContent's
+// older empty-string-means-unset convention, amenities/house_rules legitimately
+// need to be clearable to empty.
+type PropertyDetailsPatch struct {
+	Lat, Lng           *float64
+	Amenities          *[]string
+	HouseRules         *string
+	CancellationPolicy *string
+	CheckInFrom        *string
+	CheckOutUntil      *string
+	ContactPhone       *string
+	ContactEmail       *string
+}
+
+// UpdatePropertyDetails applies a partial patch of the Airbnb-style listing
+// fields. Object-scope is checked in the service.
+func (r *Repository) UpdatePropertyDetails(ctx context.Context, propertyID string, patch PropertyDetailsPatch) error {
+	var amenitiesJSON []byte
+	if patch.Amenities != nil {
+		amenitiesJSON = encodeAmenities(*patch.Amenities)
+	}
+	ct, err := r.db.Exec(ctx, `
+		UPDATE public.stays_property
+		SET geo = CASE WHEN $2::double precision IS NOT NULL AND $3::double precision IS NOT NULL
+		               THEN ST_SetSRID(ST_MakePoint($3, $2), 4326)::geography
+		               ELSE geo END,
+		    amenities = COALESCE($4, amenities),
+		    house_rules = COALESCE($5, house_rules),
+		    cancellation_policy = COALESCE($6, cancellation_policy),
+		    check_in_from = COALESCE($7, check_in_from),
+		    check_out_until = COALESCE($8, check_out_until),
+		    contact_phone = COALESCE($9, contact_phone),
+		    contact_email = COALESCE($10, contact_email),
+		    updated_at = now()
+		WHERE id = $1`,
+		propertyID, patch.Lat, patch.Lng, nullableJSON(amenitiesJSON),
+		patch.HouseRules, patch.CancellationPolicy, patch.CheckInFrom, patch.CheckOutUntil,
+		patch.ContactPhone, patch.ContactEmail)
+	if err != nil {
+		return err
+	}
+	if ct.RowsAffected() == 0 {
+		return fmt.Errorf("extranet: property not found")
+	}
+	return nil
+}
+
+func nullableJSON(b []byte) any {
+	if b == nil {
+		return nil
+	}
+	return b
+}
+
+// decodeAmenities tolerates a null/malformed amenities column (reads as empty
+// rather than failing the whole property load — a display concern, not a hard error).
+func decodeAmenities(raw []byte) []string {
+	if len(raw) == 0 {
+		return []string{}
+	}
+	var out []string
+	if err := json.Unmarshal(raw, &out); err != nil || out == nil {
+		return []string{}
+	}
+	return out
+}
+
+func encodeAmenities(list []string) []byte {
+	if list == nil {
+		list = []string{}
+	}
+	b, _ := json.Marshal(list)
+	return b
 }
 
 // --- room types ---
@@ -551,6 +649,51 @@ func (r *Repository) UpsertStaff(ctx context.Context, propertyID, userID, role, 
 		DO UPDATE SET role = EXCLUDED.role, status = EXCLUDED.status, updated_at = now()`,
 		userID, propertyID, orStr(role, "READ_ONLY"), orStr(status, "ACTIVE"))
 	return err
+}
+
+// CreateProperty self-lists a new property (hotel/shortlet/apartment) and grants
+// the creating user OWNER in the same transaction — the two rows must appear
+// together or not at all, since a stays_property with no hotelier_profile grant
+// is unreachable (every other extranet call is object-scoped) and a grant on a
+// nonexistent property is meaningless.
+//
+// source_rail/supplier_code/supplier_property_ref are NOT NULL on stays_property
+// (UNIQUE together) because the table's original design assumes every row is
+// supplier-sourced (a bedbank aggregator or the DIRECT rail's own supplier
+// identity). A self-listed property has no such upstream identity, so it is
+// stamped source_rail='DIRECT', supplier_code='self', and a fresh random
+// supplier_property_ref — satisfying the constraint without claiming a real
+// supplier relationship. New listings start DRAFT (the table's own default);
+// go-live is the existing admin moderation endpoint
+// (POST /api/stays/admin/properties/:id/status), unchanged by this addition.
+func (r *Repository) CreateProperty(ctx context.Context, ownerUserID, name, propertyType, address, city string, starRating int) (string, error) {
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return "", fmt.Errorf("extranet: begin create-property tx: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	var propertyID string
+	err = tx.QueryRow(ctx, `
+		INSERT INTO public.stays_property
+			(source_rail, supplier_code, supplier_property_ref, name, address, city, star_rating, property_type)
+		VALUES ('DIRECT', 'self', gen_random_uuid()::text, $1, $2, $3, $4, $5)
+		RETURNING id`,
+		name, address, city, starRating, orStr(propertyType, "hotel")).Scan(&propertyID)
+	if err != nil {
+		return "", fmt.Errorf("extranet: insert property: %w", err)
+	}
+
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO public.stays_hotelier_profile (user_id, property_id, role, status)
+		VALUES ($1, $2, 'OWNER', 'ACTIVE')`, ownerUserID, propertyID); err != nil {
+		return "", fmt.Errorf("extranet: grant owner: %w", err)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return "", fmt.Errorf("extranet: commit create-property tx: %w", err)
+	}
+	return propertyID, nil
 }
 
 // MyProperties returns the properties the user has ACTIVE grants on (the extranet

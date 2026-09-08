@@ -1,10 +1,11 @@
 // Estate Tasks API (Block 31) — dual mock/live behind USE_MOCK.
+import { mockAllowed } from '@/config/mockPolicy';
 import { api } from '@/api/client';
 import { Colors } from '@/constants/colors';
 import { generateIdempotencyKey } from '@/utils/idempotency';
 import type { CreateTaskInput, EstateTask, TaskPriority, TaskStatus, UpdateTaskStatusInput } from './types';
 
-export const USE_MOCK = (process.env.EXPO_PUBLIC_TASKS_USE_MOCK ?? 'true') !== 'false';
+export const USE_MOCK = mockAllowed(process.env.EXPO_PUBLIC_TASKS_USE_MOCK, true);
 
 // Tasks are served by the resident-scoped frontend-web handlers under
 // /api/v1/estate/tasks (GET list, POST create, GET /{id}, POST /{id}/status).

@@ -1,12 +1,16 @@
 // Package wallet exposes a campaign's derived wallet, its ledger projection, the
-// creator's saved bank accounts, and the (PENDING-only) withdrawal request flow.
+// creator's saved bank accounts, and the withdrawal flow.
 //
 // IRON RULES enforced here:
 //   - All monetary amounts are int64 kobo (minor units). Never floats.
 //   - The wallet balance is NEVER stored: it is derived from the contributions
 //     ledger and cf_withdrawals on every read.
-//   - SubmitWithdrawal requires an Idempotency-Key and only creates a PENDING
-//     row — no money is moved (an admin approves later in a separate slice).
+//   - SubmitWithdrawal requires an Idempotency-Key and executes the payout
+//     immediately (DEBIT AccountEscrow / CREDIT AccountProviderClearing,
+//     balanced double-entry, deterministic idempotency key, audited) — there is
+//     no separate admin-approval step. Campaign review (approve/reject/freeze)
+//     is the one remaining gate: it decides whether a campaign can accept
+//     contributions at all; once it can, funds are the creator's on arrival.
 package wallet
 
 // ─── Response DTOs (field names match the mobile TypeScript contract exactly) ──
@@ -57,11 +61,11 @@ type WithdrawalRequestInput struct {
 	EvidenceLabel *string `json:"evidenceLabel"`
 }
 
-// WithdrawalResult is the object returned after a withdrawal request is filed.
+// WithdrawalResult is the object returned after a withdrawal is paid out.
 type WithdrawalResult struct {
 	ID          string `json:"id"`
 	Reference   string `json:"reference"`
-	Status      string `json:"status"` // always PENDING on create
+	Status      string `json:"status"` // COMPLETED on success; PENDING only on an idempotent replay that hasn't posted yet
 	AmountKobo  int64  `json:"amountKobo"`
 	BankLabel   string `json:"bankLabel"`
 	RequestedAt string `json:"requestedAt"`

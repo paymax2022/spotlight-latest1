@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import PhoneNumberInput from '@/components/PhoneNumberInput';
 import { View, Text, ScrollView, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { CircleCheck, CircleAlert, Clock, ShieldCheck } from 'lucide-react-native';
@@ -9,6 +10,7 @@ import { Spacing } from '@/constants/spacing';
 import { Radius } from '@/constants/radius';
 import { shadow1 } from '@/constants/shadows';
 import { router } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 
 import ScreenHeader from '@/components/ScreenHeader';
 import StateView from '@/components/StateView';
@@ -71,7 +73,7 @@ export default function PhlebotomistOnboardingScreen() {
           title="Application submitted"
           message="Your MLSCN details are under review. You become assignable for collections once verified."
           actionLabel="Done"
-          onAction={() => router.back()}
+          onAction={() => goBack('/health/lab')}
         />
       </SafeAreaView>
     );
@@ -107,12 +109,7 @@ export default function PhlebotomistOnboardingScreen() {
             onChangeText={setFullName}
             placeholder="e.g. Amaka Okafor"
           />
-          <TextInputField
-            label="Phone number"
-            value={phone}
-            onChangeText={setPhone}
-            placeholder="e.g. 0803 000 0000"
-          />
+          <PhoneNumberInput label="Phone number" value={phone} onChange={({ e164, nsn }) => (setPhone)(e164 || nsn)} />
         </View>
 
         <View style={styles.card}>

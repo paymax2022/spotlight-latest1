@@ -2,6 +2,7 @@ import React from 'react';
 import { View, Text, ScrollView, StyleSheet, Pressable } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import { ArrowLeft, Banknote, HandCoins, FileText, Repeat, ShieldAlert, FolderOpen } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
@@ -14,6 +15,7 @@ import SectionHeader from '@/components/SectionHeader';
 import { useEarnings } from '@/features/creators/hooks';
 import { CreatorsColors, formatNaira, NL5_DISCLOSURE } from '@/features/creators/constants/creators.constants';
 import type { EarningEntry } from '@/features/creators/types';
+import { HomeMenuButton } from '@/components/HomeMenu';
 
 const SOURCE_ICON = { tip: HandCoins, subscription: Repeat, content: FileText };
 
@@ -23,9 +25,12 @@ export default function Earnings() {
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
       <View style={styles.header}>
-        <Pressable onPress={() => router.back()} hitSlop={10} style={styles.iconBtn} accessibilityLabel="Go back"><ArrowLeft size={22} color={Colors.onSurface} /></Pressable>
+        <Pressable onPress={() => goBack('/creators')} hitSlop={10} style={styles.iconBtn} accessibilityLabel="Go back"><ArrowLeft size={22} color={Colors.onSurface} /></Pressable>
         <Text style={styles.headerTitle}>Earnings</Text>
-        <Pressable onPress={() => router.push('/creators/content/manage')} hitSlop={10} style={styles.iconBtn} accessibilityLabel="Manage content"><FolderOpen size={20} color={Colors.onSurface} /></Pressable>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+          <Pressable onPress={() => router.push('/creators/content/manage')} hitSlop={10} style={styles.iconBtn} accessibilityLabel="Manage content"><FolderOpen size={20} color={Colors.onSurface} /></Pressable>
+          <HomeMenuButton />
+        </View>
       </View>
 
       {earnings.isLoading ? (
@@ -88,7 +93,7 @@ const styles = StyleSheet.create({
   scroll: { paddingHorizontal: Spacing.containerMargin, paddingTop: Spacing.sm },
   balanceCard: { backgroundColor: CreatorsColors.brand, borderRadius: Radius.xl, padding: Spacing.lg, gap: 4 },
   balLabel: { ...Typography.labelMd, color: '#D3BBFF' },
-  balValue: { ...Typography.displayLg, fontSize: 36, lineHeight: 42, color: '#FFFFFF' },
+  balValue: { ...Typography.displayLg, fontSize: 36, letterSpacing: -0.72, lineHeight: 42, color: '#FFFFFF' },
   balMetaRow: { flexDirection: 'row', gap: Spacing.lg, marginTop: 4 },
   balMeta: { ...Typography.labelSm, color: '#EBDCFF' },
   kycWarn: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: Spacing.sm, backgroundColor: CreatorsColors.warnBg, paddingHorizontal: 10, paddingVertical: 6, borderRadius: Radius.md, alignSelf: 'flex-start' },

@@ -202,29 +202,53 @@ export async function updateUserProfile(user: RequestUser, patch: Partial<Spotli
   };
   const fullName = [patch.firstName, patch.lastName].filter(Boolean).join(' ').trim() || patch.displayName;
 
-  const widePayload = {
+  // A PATCH must only carry the fields it was actually given.
+  //
+  // This payload used to spell out every column with `patch.x || null`, which
+  // broke updates twice over:
+  //
+  //   1. full_name is NOT NULL. `PUT /api/me/profile {"phone":"…"}` carries no
+  //      name, so full_name became null, the upsert failed 23502, and the
+  //      fallback below quietly persisted only id/email/role — a 200 response
+  //      that saved nothing. That is why a user could never add a phone number,
+  //      and why marketplace's seller-phone reveal had almost nobody to reveal.
+  //   2. Had it succeeded it would have been destructive: sending only a phone
+  //      also nulled first_name, city, address and everything else the caller
+  //      never mentioned.
+  //
+  // Omitting undefined keys fixes both — an absent field is left exactly as it
+  // is, and a NOT NULL column is never handed a null it did not ask for.
+  const optional: Record<string, unknown> = {
+    full_name: fullName || undefined,
+    first_name: patch.firstName,
+    last_name: patch.lastName,
+    display_name: patch.displayName || fullName || undefined,
+    phone: patch.phone,
+    date_of_birth: patch.dateOfBirth,
+    gender: patch.gender,
+    country: patch.country,
+    state: patch.state,
+    lga: patch.lga,
+    city: patch.city,
+    address: patch.address,
+    social: patch.social,
+    identity: patch.identity,
+    specialist_profiles: patch.specialistProfiles,
+    profile_types: patch.profileTypes,
+  };
+
+  const widePayload: Record<string, unknown> = {
+    // id and email are the row's identity; email is NOT NULL with no default, so
+    // it has to be present for the insert half of the upsert.
     id: user.id,
     email: patch.email || user.email || null,
     role: patch.role || 'USER',
-    full_name: fullName || null,
-    first_name: patch.firstName || null,
-    last_name: patch.lastName || null,
-    display_name: patch.displayName || fullName || null,
-    phone: patch.phone || null,
-    date_of_birth: patch.dateOfBirth || null,
-    gender: patch.gender || null,
-    country: patch.country || null,
-    state: patch.state || null,
-    lga: patch.lga || null,
-    city: patch.city || null,
-    address: patch.address || null,
     metadata,
-    social: patch.social || {},
-    identity: patch.identity || {},
-    specialist_profiles: patch.specialistProfiles || {},
-    profile_types: patch.profileTypes || ['general_applicant'],
     updated_at: new Date().toISOString(),
   };
+  for (const [key, value] of Object.entries(optional)) {
+    if (value !== undefined) widePayload[key] = value;
+  }
 
   const narrowPayload = {
     id: user.id,

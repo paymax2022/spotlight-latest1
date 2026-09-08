@@ -5,6 +5,7 @@
 // (backend/internal/invest/routes.go) — suitability lives at
 // /api/v1/invest/suitability/*, not a top-level /api/v1/suitability/*.
 
+import { mockAllowed } from '@/config/mockPolicy';
 import { api } from '@/api/client';
 import {
   MOCK_AGREEMENTS,
@@ -26,7 +27,7 @@ import type {
 
 // ─── Feature flag: flip to false once real endpoints are ready ────────────────
 const USE_MOCK =
-  (process.env.EXPO_PUBLIC_ONBOARDING_USE_MOCK ?? 'true').toLowerCase() !== 'false';
+  mockAllowed(process.env.EXPO_PUBLIC_ONBOARDING_USE_MOCK, true);
 
 /** Simulated network latency so loading states render in mock mode. */
 const delay = (ms = 320) => new Promise((r) => setTimeout(r, ms));

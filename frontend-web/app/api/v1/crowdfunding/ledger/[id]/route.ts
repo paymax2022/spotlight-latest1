@@ -6,7 +6,8 @@ import { errorResponse, handleApiError } from '@/src/lib/api/responses';
 // GET /api/v1/crowdfunding/ledger/[id]
 // → Go: GET /api/finance/crowdfunding/campaigns/:id/ledger
 // [id] is the CAMPAIGN id. Returns the projected ledger feed ({ data: LedgerEntry[] }).
-export async function GET(request: Request, { params }: { params: { id: string } }) {
+export async function GET(request: Request, ctx: { params: Promise<{ id: string }> }) {
+  const params = await ctx.params;
   if (!featureFlags.crowdfunding()) return errorResponse('Crowdfunding is not available.', 503);
   try {
     await requireRequestUser(request);

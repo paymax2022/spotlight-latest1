@@ -102,12 +102,12 @@ func registerConnectGrowthRoutes(member *gin.RouterGroup, admin *gin.RouterGroup
 	mon := connectmonetization.NewHandler(monSvc)
 	mg := member.Group("/")
 	mg.GET("/plans", mon.ListPlans)
-	mg.POST("/subscriptions", mon.Subscribe)              // Idempotency-Key required
+	mg.POST("/subscriptions", mon.Subscribe)                 // Idempotency-Key required
 	mg.POST("/subscriptions/cancel", mon.CancelSubscription) // PAY-006 cancel (end-of-period or immediate+proration)
-	mg.POST("/boosts", mon.BuyBoost)         // Idempotency-Key required
-	mg.POST("/passes", mon.BuyPass)          // Idempotency-Key required
+	mg.POST("/boosts", mon.BuyBoost)                         // Idempotency-Key required
+	mg.POST("/passes", mon.BuyPass)                          // Idempotency-Key required
 	mg.GET("/entitlements", mon.Entitlements)
-	mg.GET("/credits", credits.Balances) // PAY-008 consumable credit balances
+	mg.GET("/credits", credits.Balances)                // PAY-008 consumable credit balances
 	mg.POST("/date-plans/:id/ride", mon.BookRide)       // reuses Mobility + wallet
 	mg.POST("/date-plans/:id/tickets", mon.BookTickets) // reuses Events + wallet
 

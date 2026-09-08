@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { ScrollView, View, Text, Pressable, TextInput, StyleSheet, KeyboardAvoidingView, Platform } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import { Check, ShieldAlert } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
@@ -35,7 +36,7 @@ export default function ReportScreen() {
           title="Thank you for flagging this"
           message="Our Trust & Safety team will review this campaign. We may freeze it while we investigate."
           actionLabel="Done"
-          onAction={() => router.back()}
+          onAction={() => goBack('/crowdfunding')}
         />
       </SafeAreaView>
     );

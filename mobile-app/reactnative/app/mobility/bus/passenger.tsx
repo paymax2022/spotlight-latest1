@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import PhoneNumberInput from '@/components/PhoneNumberInput';
 import { View, Text, ScrollView, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
@@ -28,7 +29,7 @@ export default function BusPassengerScreen() {
         <View style={styles.card}>
           <Text style={styles.note}>Enter the details of the person travelling. Their name will appear on the ticket and boarding pass.</Text>
           <TextInputField label="Full name" value={name} onChangeText={setName} placeholder="Passenger name" autoCapitalize="words" />
-          <TextInputField label="Phone number" value={phone} onChangeText={setPhone} placeholder="+234…" keyboardType="phone-pad" />
+          <PhoneNumberInput label="Phone number" value={phone} onChange={({ e164, nsn }) => (setPhone)(e164 || nsn)} />
         </View>
       </ScrollView>
       <View style={styles.footer}>

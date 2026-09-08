@@ -25,7 +25,7 @@ const IS_PROD = process.env.NODE_ENV === 'production';
 // the entry here. { FLAG: reason }
 const MOCK_ALLOWLIST = {
   NEXT_PUBLIC_FX_ADMIN_USE_MOCK: 'FX admin endpoints not built yet (mock-only).',
-  NEXT_PUBLIC_RESTAURANT_ADMIN_USE_MOCK: 'Restaurant admin ops routes not built yet.',
+  NEXT_PUBLIC_GROUPS_ADMIN_USE_MOCK: 'Groups (savings pools) has NO admin route group in Go — only 5 member endpoints exist under /api/finance/groups. The pages render a SampleDataBanner while this is allowlisted.',
 };
 
 const FLAG_RE = /NEXT_PUBLIC_[A-Z0-9_]+_USE_(?:MOCK|FIXTURES)/g;
@@ -52,17 +52,40 @@ function collectFlags() {
 // Load .env files exactly as Next does, so we assert against the real values.
 async function loadEnv() {
   try {
-    const { loadEnvConfig } = await import('@next/env');
+    // @next/env 15.x ships CJS, so under ESM the named export is undefined and
+    // only `default` carries the functions. Destructuring the named one silently
+    // produced `undefined`, the call threw, and the catch below reported "not
+    // available" — so this audit read process.env ONLY and marked every flag
+    // MOCK, including the 11 explicitly set to false in .env.local. A gate whose
+    // verdict is "everything is broken" is one nobody can act on.
+    const mod = await import('@next/env');
+    const loadEnvConfig = mod.loadEnvConfig ?? mod.default?.loadEnvConfig;
+    if (typeof loadEnvConfig !== 'function') {
+      throw new TypeError('@next/env exposed no loadEnvConfig (named or default)');
+    }
     loadEnvConfig(ROOT, !IS_PROD);
-  } catch {
-    console.warn('  [check-mock-flags] @next/env not available — reading process.env only.');
+  } catch (err) {
+    // Say WHY. The previous message claimed the package was absent, which sent
+    // anyone investigating to check node_modules — where it was installed all along.
+    console.warn(`  [check-mock-flags] could not load .env files (${err?.message ?? err}) — reading process.env only.`);
   }
 }
 
-// Service reality: MOCK unless the flag is explicitly 'false'. Conservative — once a
-// service adopts resolveUseMock (unset ⇒ live in prod) this may over-report mock,
-// which fails closed; it never falsely reports LIVE.
-const isMock = (flag) => ((process.env[flag] ?? '').trim().toLowerCase() !== 'false');
+// Service reality, and it MUST stay identical to resolveUseMock in
+// src/config/useMock.ts — this gate is worthless if it models something the
+// services no longer do. Explicit 'true'/'false' always win; unset falls back by
+// environment (MOCK in development, LIVE in production).
+//
+// It used to hardcode "MOCK unless explicitly 'false'", which matched the old
+// fail-open services. Now that all 48 route through resolveUseMock, that model
+// would over-report every unset flag as shipping mock in production, when in
+// production an unset flag resolves LIVE.
+const isMock = (flag) => {
+  const v = (process.env[flag] ?? '').trim().toLowerCase();
+  if (v === 'false') return false;
+  if (v === 'true') return true;
+  return !IS_PROD;
+};
 
 async function main() {
   await loadEnv();

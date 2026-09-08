@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { View, Text, Pressable, FlatList, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import { Check, X } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
@@ -23,14 +24,14 @@ export default function AddWalletScreen() {
   const onAdd = async () => {
     if (!selected) return;
     await add.mutateAsync(selected);
-    router.back();
+    goBack('/fx');
   };
 
   return (
     <SafeAreaView style={styles.safe}>
       <View style={styles.header}>
         <Text style={styles.title}>Add currency wallet</Text>
-        <Pressable onPress={() => router.back()} hitSlop={8} accessibilityRole="button" accessibilityLabel="Close">
+        <Pressable onPress={() => goBack('/fx')} hitSlop={8} accessibilityRole="button" accessibilityLabel="Close">
           <X size={22} color={Colors.onSurfaceVariant} strokeWidth={2} />
         </Pressable>
       </View>

@@ -34,7 +34,7 @@ export default function Intent() {
   return (
     <OnboardingStep
       step={1}
-      totalSteps={8}
+      totalSteps={5}
       title="What brings you to Connect?"
       subtitle="Pick one or more. You can switch modes anytime — each has its own visibility."
       primaryLabel="Continue"

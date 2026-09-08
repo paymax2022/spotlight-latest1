@@ -7,6 +7,7 @@
 // IRON RULES: all money is integer kobo; submit + pay carry an Idempotency-Key;
 // price breakdowns come from the SERVER quote — never computed in the UI.
 
+import { mockAllowed } from '@/config/mockPolicy';
 import { api } from '@/api/client';
 import type {
   Zone,
@@ -33,7 +34,7 @@ import {
 } from './mock';
 
 export const USE_MOCK =
-  (process.env.EXPO_PUBLIC_FEATURED_USE_MOCK ?? 'true').toLowerCase() !== 'false';
+  mockAllowed(process.env.EXPO_PUBLIC_FEATURED_USE_MOCK, true);
 
 const BASE = '/api/v1/placement';
 const LANDING = '/api/v1/landing';

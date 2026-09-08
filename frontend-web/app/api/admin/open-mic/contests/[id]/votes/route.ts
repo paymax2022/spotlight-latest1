@@ -2,11 +2,12 @@ import { handleApiError, successResponse } from '@/src/lib/api/responses';
 import { assertOpenMicReadAdmin } from '@/src/server/openmic/auth';
 import { getContestById, getLeaderboard } from '@/src/server/openmic/persistence';
 
-export async function GET(request: Request, context: { params: { id: string } }) {
+export async function GET(request: Request, context: { params: Promise<{ id: string }> }) {
+  const params = await context.params;
   try {
     await assertOpenMicReadAdmin(request);
-    const contest = await getContestById(context.params.id);
-    const leaderboard = await getLeaderboard(context.params.id);
+    const contest = await getContestById(params.id);
+    const leaderboard = await getLeaderboard(params.id);
     const totalVotes = leaderboard.reduce((sum, row) => sum + row.voteCount, 0);
     const votePrice = contest?.votingConfig.votePrice || 0;
     return successResponse({

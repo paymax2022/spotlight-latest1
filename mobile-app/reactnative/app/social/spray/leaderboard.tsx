@@ -2,6 +2,7 @@ import React from 'react';
 import { View, Text, ScrollView, StyleSheet, Pressable } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import { ArrowLeft, Droplets } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
@@ -13,6 +14,7 @@ import PrimaryButton from '@/components/PrimaryButton';
 import SprayLeaderboardRow from '@/features/social/components/spray-SprayLeaderboardRow';
 import { useSprayLeaderboard, useSprayTarget } from '@/features/social/spray';
 import { SocialColors } from '@/features/social/constants/social.constants';
+import { HomeMenuButton } from '@/components/HomeMenu';
 
 export default function SprayLeaderboard() {
   const params = useLocalSearchParams<{ targetId?: string }>();
@@ -23,9 +25,9 @@ export default function SprayLeaderboard() {
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
       <View style={styles.header}>
-        <Pressable onPress={() => router.back()} hitSlop={10} style={styles.iconBtn} accessibilityLabel="Go back"><ArrowLeft size={22} color={Colors.onSurface} /></Pressable>
+        <Pressable onPress={() => goBack('/social')} hitSlop={10} style={styles.iconBtn} accessibilityLabel="Go back"><ArrowLeft size={22} color={Colors.onSurface} /></Pressable>
         <View style={styles.headerTitleWrap}><Text style={styles.eyebrow}>Spray leaderboard</Text><Text style={styles.headerTitle} numberOfLines={1}>{target.data?.title ?? 'Live'}</Text></View>
-        <View style={styles.iconBtn} />
+        <HomeMenuButton />
       </View>
 
       {board.isLoading ? (

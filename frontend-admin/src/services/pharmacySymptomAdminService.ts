@@ -11,6 +11,7 @@
 // licensed pharmacist approves it here — approvals go live immediately.
 
 import { env } from '@/config/env';
+import { resolveUseMock } from '@/config/useMock';
 
 // ── URL constants (single place to fix if backend paths differ) ──────────────
 // Base mirrors healthPharmacyAdminService: env.apiBaseUrl ends with /api/v1 and
@@ -22,7 +23,7 @@ export const URL_REVIEW_DECISION = (id: string) => `/symptom/reviews/${encodeURI
 export const URL_MAPPINGS = '/symptom/mappings'; // GET ?entity=term|cluster · POST {entity, action, payload}
 export const URL_METRICS = '/symptom/metrics'; // GET — safety-KPI strip (PRD §9)
 
-const USE_MOCK = (process.env.NEXT_PUBLIC_HEALTH_USE_MOCK ?? 'true').toLowerCase() !== 'false';
+const USE_MOCK = resolveUseMock(process.env.NEXT_PUBLIC_HEALTH_USE_MOCK);
 
 function adminBase(): string {
   return env.apiBaseUrl.replace(/\/api\/v1\/?$/, ADMIN_BASE_SUFFIX);
@@ -432,7 +433,7 @@ export async function actOnTerm(id: string, action: 'approve' | 'retire'): Promi
     t.status = action === 'approve' ? 'APPROVED' : 'RETIRED';
     t.approved_by = 'you (pharmacist)';
     t.approved_at = new Date().toISOString();
-    return { ok: true, message: action === 'approve' ? `Term "${t.term}" approved — now live in user-facing symptom search. Approver + timestamp recorded to immutable audit.` : `Term "${t.term}" retired — removed from user-facing resolution. Recorded to immutable audit.` };
+    return { ok: true, message: action === 'approve' ? `Term "${t.term}" approved — now live in user-facing symptom search. Approver + timestamp recorded to immutable audit.` : `Term "${t.term}" retired — removed from user-facing resolution.` };
   }
   await postJson(URL_MAPPINGS, { entity: 'term', action, payload: { id } });
   return { ok: true, message: `Term ${action}d.` };
@@ -452,7 +453,7 @@ export async function actOnClassMap(clusterId: string, therapeuticClassId: strin
     if (!c || !m) throw new Error('Cluster→class mapping not found');
     if (action === 'retire') {
       c.class_maps = c.class_maps.filter((x) => x.therapeutic_class_id !== therapeuticClassId);
-      return { ok: true, message: `"${m.class_name}" removed from this cluster — no longer in its results. The class itself is untouched. Recorded to immutable audit.` };
+      return { ok: true, message: `Fixture — nothing was saved. "${m.class_name}" removed from this cluster — no longer in its results. The class itself is untouched.` };
     }
     if (m.status === 'RETIRED') throw new Error('Illegal transition — cannot approve a retired class (409).');
     // Status is a projection of the ONE class row — approving updates every cluster mapping it.

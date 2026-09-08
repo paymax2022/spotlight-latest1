@@ -97,7 +97,7 @@ func globalResidual(t *testing.T, ctx context.Context, pool *pgxpool.Pool) (int6
 func TestLiveDB_LedgerGlobalConservation(t *testing.T) {
 	ctx := context.Background()
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 
 	residual, count := globalResidual(t, ctx, pool)
 	if residual != 0 {
@@ -115,7 +115,7 @@ func TestLiveDB_LedgerGlobalConservation(t *testing.T) {
 func TestLiveDB_LedgerConservationCheckView(t *testing.T) {
 	ctx := context.Background()
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 
 	want, _ := globalResidual(t, ctx, pool)
 
@@ -136,7 +136,7 @@ func TestLiveDB_LedgerConservationCheckView(t *testing.T) {
 func TestLiveDB_LedgerConservationSurvivesPosting(t *testing.T) {
 	ctx := context.Background()
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 
 	svc := ledger.NewService(ledger.NewRepository(pool), (*goredis.Client)(nil))
 

@@ -2,20 +2,33 @@ package adminext
 
 // Crowdfunding withdrawal MONEY-PATH (admin approval → payout).
 //
-// This is the escrow-release leg of the creator cash-out flow. SubmitWithdrawal
+// This is the payout leg of the creator cash-out flow. SubmitWithdrawal
 // (wallet domain) only files a PENDING request and moves no money; DecideWithdrawal
 // (service.go) flips PENDING→APPROVED/REJECTED but still moves no money. This file
 // adds the single place where a crowdfunding withdrawal actually posts to the
-// finance ledger and drains campaign escrow.
+// finance ledger and pays the creator out.
 //
 // LEDGER MODEL (mirrors internal/finance/settlement):
 //   - Contributions escrow money via settlement.Escrow → ledger.Debit(payer) /
-//     CREDIT AccountEscrow. So crowdfunding funds live in the AccountEscrow
-//     standing account.
-//   - A withdrawal pays the creator OUT to a bank (funds LEAVE the platform).
-//     The balanced payout leg is therefore:
-//         DEBIT  AccountEscrow           (release held campaign funds)
-//         CREDIT AccountProviderClearing (stage funds for the payout rail)
+//     CREDIT AccountEscrow. So UNSETTLED crowdfunding funds live in the shared
+//     AccountEscrow standing account — but AccountEscrow is a SINGLE pooled
+//     account shared across every campaign and every creator; it does not track
+//     whose money is whose.
+//   - settlement.Settle (called from campaign Release / the instant-settle
+//     contribution path) is what actually attributes money to a creator: it moves
+//     the creator's share OUT of AccountEscrow and INTO that creator's OWN
+//     user_wallet ledger account (ledger.GetOrCreateUserWallet(creatorID)). By the
+//     time a withdrawal reaches admin approval, the requesting creator's money is
+//     sitting in THEIR user_wallet, not in the shared escrow pool.
+//   - A withdrawal pays the creator OUT to a bank (funds LEAVE the platform). The
+//     balanced payout leg therefore debits the CREATOR'S OWN WALLET, not the
+//     shared escrow account:
+//         DEBIT  creator's user_wallet    (ledger.Debit — balance-checked, TOCTOU-safe)
+//         CREDIT AccountProviderClearing  (stage funds for the payout rail)
+//     Debiting AccountEscrow instead would drain money belonging to OTHER
+//     campaigns'/creators' still-unsettled contributions rather than the
+//     withdrawing creator's own settled balance — a cross-user fund
+//     misattribution. See ADR for the incident this file fixes.
 //     The bank transfer itself is a separate rail (see TODO(prod) below); until a
 //     disbursement provider is wired into this admin surface we post to the
 //     clearing account and DO NOT fabricate a provider success.
@@ -23,8 +36,9 @@ package adminext
 // IRON RULES enforced here:
 //   - integer kobo only (BIGINT throughout);
 //   - a deterministic idempotency key derived from the withdrawal id makes the
-//     whole approval safe to replay (ledger PostJournal + guarded UPDATEs);
-//   - a balanced double-entry is posted before the terminal state flip;
+//     whole approval safe to replay (ledger.Debit + guarded UPDATEs);
+//   - a balance-checked double-entry is posted before the terminal state flip —
+//     insufficient creator balance fails closed, before any state change;
 //   - an immutable cf_audit_logs row is written in the same tx as the flip;
 //   - fail-closed: illegal states are rejected, and a missing ledger dependency
 //     refuses to move money rather than silently skipping the posting.
@@ -43,7 +57,7 @@ import (
 const (
 	wStatusPending   = "PENDING"
 	wStatusApproved  = "APPROVED"
-	wStatusCompleted = "COMPLETED" // terminal PAID state (funds released from escrow)
+	wStatusCompleted = "COMPLETED" // terminal PAID state (funds debited from the creator's wallet)
 	wStatusRejected  = "REJECTED"
 )
 
@@ -57,6 +71,11 @@ var ErrWithdrawalIllegalState = errors.New("adminext: withdrawal is not in an ap
 // ErrLedgerUnavailable is returned when the money-path is invoked without a wired
 // finance ledger. Fail-closed: we refuse to transition without posting money.
 var ErrLedgerUnavailable = errors.New("adminext: finance ledger not configured — cannot approve withdrawal")
+
+// ErrInsufficientBalance is returned when the creator's own settled wallet
+// balance cannot cover the withdrawal amount. Fail-closed: no state transition
+// happens on this path.
+var ErrInsufficientBalance = errors.New("adminext: creator's wallet balance is insufficient for this withdrawal")
 
 // ApproveWithdrawalResult summarises the outcome of an approval.
 type ApproveWithdrawalResult struct {
@@ -74,10 +93,10 @@ type ApproveWithdrawalResult struct {
 // Guarded + idempotent. It:
 //  1. loads the withdrawal; a non-PENDING/APPROVED/COMPLETED state (e.g. REJECTED)
 //     is illegal; an already-COMPLETED row is an idempotent no-op;
-//  2. posts a BALANCED double-entry via the finance ledger —
-//     DEBIT AccountEscrow / CREDIT AccountProviderClearing — for the exact
-//     amount_kobo, keyed deterministically on the withdrawal id so a replay posts
-//     nothing twice;
+//  2. posts a BALANCED, balance-checked double-entry via the finance ledger —
+//     DEBIT the withdrawing creator's own user_wallet / CREDIT
+//     AccountProviderClearing — for the exact amount_kobo, keyed deterministically
+//     on the withdrawal id so a replay posts nothing twice;
 //  3. transitions PENDING→APPROVED→COMPLETED with guarded UPDATEs (WHERE status=…);
 //  4. writes an immutable cf_audit_logs row in the same tx as the terminal flip.
 //
@@ -102,11 +121,12 @@ func (s *Service) ApproveWithdrawal(ctx context.Context, withdrawalID, approverI
 	// ── (1) Load the withdrawal + validate its state ─────────────────────────
 	var (
 		reference string
+		creatorID string
 		amount    int64
 		status    string
 	)
-	const sel = `SELECT reference, amount_kobo, status FROM cf_withdrawals WHERE id = $1`
-	if err := s.db.QueryRow(ctx, sel, withdrawalID).Scan(&reference, &amount, &status); err != nil {
+	const sel = `SELECT reference, creator_id, amount_kobo, status FROM cf_withdrawals WHERE id = $1`
+	if err := s.db.QueryRow(ctx, sel, withdrawalID).Scan(&reference, &creatorID, &amount, &status); err != nil {
 		return nil, ErrWithdrawalNotFound
 	}
 
@@ -125,29 +145,24 @@ func (s *Service) ApproveWithdrawal(ctx context.Context, withdrawalID, approverI
 		return nil, fmt.Errorf("adminext: withdrawal amount must be positive, got %d", amount)
 	}
 
-	// ── (2) Post the BALANCED double-entry (money leaves escrow) ─────────────
+	// ── (2) Post the BALANCED, balance-checked double-entry (money leaves the
+	// creator's OWN wallet, not the shared escrow pool — see file header) ────
 	// Deterministic key derived from the withdrawal id ⇒ replay posts nothing twice.
 	payoutIdem := "cf:withdraw:payout:" + withdrawalID
-	escrowAcc, err := s.ledger.GetOrCreateStandingAccount(ctx, financeledger.AccountEscrow)
-	if err != nil {
-		return nil, fmt.Errorf("adminext: resolve escrow account: %w", err)
-	}
 	clearingAcc, err := s.ledger.GetOrCreateStandingAccount(ctx, financeledger.AccountProviderClearing)
 	if err != nil {
 		return nil, fmt.Errorf("adminext: resolve clearing account: %w", err)
 	}
 	posted := true
-	if err := s.ledger.PostJournal(ctx, financeledger.JournalEntry{
-		Reference:       "cf:withdraw:" + reference,
-		IdempotencyKey:  payoutIdem,
-		AmountKobo:      amount,
-		DebitAccountID:  escrowAcc.ID,   // release held campaign funds
-		CreditAccountID: clearingAcc.ID, // stage for the payout rail (leaves platform)
-	}); err != nil {
-		if !errors.Is(err, financeledger.ErrDuplicate) {
+	if err := s.ledger.Debit(ctx, creatorID, "cf:withdraw:"+reference, payoutIdem, clearingAcc.ID, amount); err != nil {
+		switch {
+		case errors.Is(err, financeledger.ErrDuplicate):
+			posted = false // already posted on an earlier attempt — safe to continue
+		case errors.Is(err, financeledger.ErrInsufficientFunds):
+			return nil, ErrInsufficientBalance
+		default:
 			return nil, fmt.Errorf("adminext: post withdrawal payout: %w", err)
 		}
-		posted = false // already posted on an earlier attempt — safe to continue
 	}
 
 	// TODO(prod): trigger payout-rail transfer.
@@ -170,7 +185,7 @@ func (s *Service) ApproveWithdrawal(ctx context.Context, withdrawalID, approverI
 		wStatusApproved, withdrawalID, wStatusPending); err != nil {
 		return nil, fmt.Errorf("adminext: approve withdrawal: %w", err)
 	}
-	// APPROVED → COMPLETED (guarded; funds released from escrow).
+	// APPROVED → COMPLETED (guarded; funds already debited from the creator's wallet above).
 	tag, err := tx.Exec(ctx,
 		`UPDATE cf_withdrawals SET status=$1 WHERE id=$2 AND status IN ($3,$4)`,
 		wStatusCompleted, withdrawalID, wStatusApproved, wStatusPending)

@@ -42,6 +42,8 @@ export interface BackendContest {
   /** Roster/tally summary returned by the list endpoint. */
   contestant_count?: number;
   total_votes?: number;
+  rules_text?: string;
+  banner_image_url?: string;
 }
 
 /**
@@ -78,6 +80,8 @@ export function mapContest(
     endsAt: raw.closes_at ?? undefined,
     freeVotesPerDay: raw.free_votes_per_user ?? 0,
     paidVotingEnabled: (raw.paid_vote_kobo ?? 0) > 0,
+    rulesText: raw.rules_text || undefined,
+    bannerImage: raw.banner_image_url || undefined,
   };
 }
 

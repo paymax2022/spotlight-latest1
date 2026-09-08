@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"log"
 	"os"
 
@@ -39,10 +40,22 @@ import (
 //
 //	INSURANCE_MYCOVER_API_KEY (secret) / INSURANCE_MYCOVER_PUBLIC_KEY / INSURANCE_MYCOVER_WEBHOOK_SECRET / INSURANCE_MYCOVER_BASE_URL
 //	INSURANCE_OCTAMILE_API_KEY (secret) / INSURANCE_OCTAMILE_PUBLIC_KEY / INSURANCE_OCTAMILE_WEBHOOK_SECRET / INSURANCE_OCTAMILE_BASE_URL
-func RegisterInsurance(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pgxpool.Pool, rbac services.RBACService) {
+//
+// InsuranceServices exposes the subset of the insurance module other verticals
+// may reuse directly (in-process Go calls, not HTTP) — e.g. transport's parcel
+// flow binding real Goods-in-Transit cover. Nil-safe: a caller that gets a nil
+// *InsuranceServices (pool was nil) must treat the feature as unavailable
+// rather than dereference it.
+type InsuranceServices struct {
+	Policy  *policy.Service
+	Catalog *catalog.Service
+	Consent *consent.Service
+}
+
+func RegisterInsurance(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pgxpool.Pool, rbac services.RBACService) *InsuranceServices {
 	if pool == nil {
 		log.Println("[insurance] nil pool — skipping insurance routes")
-		return
+		return nil
 	}
 
 	// --- Reused finance primitives (money path) ---
@@ -54,6 +67,10 @@ func RegisterInsurance(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pg
 	// --- Insurance domain services ---
 	catalogSvc := catalog.NewService(pool)
 	consentSvc := consent.NewService(pool)
+	// Prefunded-provider-float breaker. MyCover settles binds from a distributor
+	// float, so an empty float fails EVERY bind at once; this stops the queue
+	// before members are debited for cover that cannot be issued.
+	floatSvc := catalog.NewFloatService(pool)
 
 	// --- Provider adapters (sandbox keys from env; empty => sandbox defaults) ---
 	mycoverGW := mycover.New(
@@ -69,8 +86,18 @@ func RegisterInsurance(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pg
 		os.Getenv("INSURANCE_OCTAMILE_BASE_URL"),
 	)
 
+	// Remote-options dropdowns: catalog resolves the field's options_url from the
+	// stored schema, the adapter fetches it. Adapted rather than passed directly
+	// so catalog keeps its narrow OptionsFetcher and does not import the provider.
+	catalogSvc.WithOptionsFetcher(mycoverOptions{mycoverGW})
+
 	// Router resolves an adapter from the data-driven catalog (product.provider).
 	router := gateway.NewRouter(catalogSvc, mycoverGW, octamileGW)
+
+	// Catalog sync. Form schemas are FETCHED from the provider's public
+	// per-product schema endpoint rather than maintained here, so adding a
+	// product is a sync run and nothing in this repo needs editing.
+	catalogSyncer := catalog.NewSyncer(catalogSvc, mycoverGW.Name(), mycoverGW, mycoverGW)
 
 	// Policy service: lifecycle + thin quote engine + premium-bind saga.
 	policySvc := policy.NewService(policy.Deps{
@@ -80,11 +107,37 @@ func RegisterInsurance(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pg
 		Consent: consentSvc,
 		Wallet:  walletSvc,
 		Ledger:  ledgerSvc,
+		Float:   floatSvc,
+		// Outbound purchase idempotency. MyCover has none of its own, so this is
+		// what stops a retried bind buying a second policy with real money.
+		Binds: policy.NewBindRegistry(pool),
 		// Notifier / Auditor are optional (nil-safe); IB1/orchestrator may inject
 		// the real notifications + audit sinks.
 	})
 
-	catalogHandler := catalog.NewHandler(catalogSvc, kycSvc)
+	catalogHandler := catalog.NewHandler(catalogSvc, kycSvc).
+		WithAdmin(catalogSyncer, floatSvc, func() any {
+			// PRESENCE and configuration only — never a credential value.
+			return []map[string]any{
+				{
+					"aggregator":             mycoverGW.Name(),
+					"base_url":               mycoverGW.BaseURL(),
+					"api_key_present":        mycoverGW.Configured(),
+					"webhook_secret_present": mycoverGW.WebhookConfigured(),
+					"webhook_verification": map[string]any{
+						"enabled": mycoverGW.WebhookConfigured(),
+						"note": "Signature verification fails CLOSED. With no secret configured " +
+							"every inbound webhook is rejected — a real signing secret is needed from the provider.",
+					},
+					"quote_path": mycover.QuotePath,
+					"buy_path":   mycover.BuyPath,
+				},
+				{
+					"aggregator":      octamileGW.Name(),
+					"api_key_present": os.Getenv("INSURANCE_OCTAMILE_API_KEY") != "",
+				},
+			}
+		})
 	consentHandler := consent.NewHandler(consentSvc)
 	// signRef is nil for now — the certificate route returns the stored ref until
 	// the orchestrator injects the R2 signer. (TODO: wire r2 presign.)
@@ -94,6 +147,14 @@ func RegisterInsurance(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pg
 	mg := member.Group("/insurance")
 	// Products: KYC-tier + context filtered.
 	mg.GET("/products", catalogHandler.ListProducts)
+	mg.GET("/products/:code", catalogHandler.GetProduct)
+	// Dynamic purchase form. MyCover validates a bespoke field set per purchase
+	// family, so the app renders from this rather than a hardcoded form.
+	mg.GET("/products/:code/schema", catalogHandler.GetProductSchema)
+	// Remote-options dropdowns the schema points at (options_url). The client
+	// asks by product + field; the URL is resolved from our stored schema, so
+	// this is not an open proxy.
+	mg.GET("/products/:code/options/:field", catalogHandler.GetFieldOptions)
 	// NDPA consent (gate before any provider data-share).
 	mg.GET("/consent", consentHandler.Status)
 	mg.POST("/consent", consentHandler.Grant)
@@ -115,7 +176,20 @@ func RegisterInsurance(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pg
 	}
 	ag := admin.Group("")
 	// Catalog management.
+	// KPI dashboard. Figures we do not compute come back as null, never 0 — the
+	// console renders them differently and a confident zero on a money screen is
+	// worse than an honest gap.
+	ag.GET("/dashboard", guard("insurance.catalog.view"), catalogHandler.AdminDashboard)
 	ag.GET("/catalog", guard("insurance.catalog.view"), catalogHandler.AdminList)
+	// Pull the live provider catalog into the DB. Idempotent; new products land
+	// INACTIVE so a sync never puts an unreviewed product in front of members.
+	ag.POST("/catalog/sync", guard("insurance.catalog.manage"), catalogHandler.AdminSync)
+	// Bulk-activate everything the provider can actually sell. Never activates an
+	// unsellable product, and skips any an admin has already ruled on.
+	ag.POST("/catalog/activate-purchasable", guard("insurance.catalog.manage"), catalogHandler.AdminActivateAllPurchasable)
+	// Adapter health, last sync, and the prefunded-float launch gate.
+	ag.GET("/providers", guard("insurance.catalog.view"), catalogHandler.AdminProviders)
+	ag.POST("/providers/:provider/float/reset", guard("insurance.catalog.manage"), catalogHandler.AdminResetFloat)
 	ag.PATCH("/catalog/:code/active", guard("insurance.catalog.manage"), catalogHandler.AdminSetActive)
 	// Routing / provider config (product → aggregator).
 	ag.PATCH("/routing/:code", guard("insurance.routing.manage"), catalogHandler.AdminSetRouting)
@@ -123,4 +197,23 @@ func RegisterInsurance(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pg
 	ag.GET("/policies", guard("insurance.policy.view"), policyHandler.AdminSearch)
 
 	log.Println("[insurance] routes registered — catalog/quotes/policies/consent + premium-bind saga live")
+
+	return &InsuranceServices{Policy: policySvc, Catalog: catalogSvc, Consent: consentSvc}
+}
+
+// mycoverOptions adapts the MyCover client to catalog.OptionsFetcher, mapping the
+// provider's Option to the catalog's own type so neither package depends on the
+// other's shape.
+type mycoverOptions struct{ c *mycover.Client }
+
+func (m mycoverOptions) FetchUtilityOptions(ctx context.Context, optionsURL, query string) ([]catalog.FieldOption, error) {
+	opts, err := m.c.FetchUtilityOptions(ctx, optionsURL, query)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]catalog.FieldOption, 0, len(opts))
+	for _, o := range opts {
+		out = append(out, catalog.FieldOption{Value: o.Value, Label: o.Label})
+	}
+	return out, nil
 }

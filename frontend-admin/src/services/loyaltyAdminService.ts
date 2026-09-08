@@ -8,6 +8,7 @@
 
 import { env } from '@/config/env';
 import { operationKey } from './idempotency';
+import { resolveUseMock } from '@/config/useMock';
 import type {
   LoyaltyDashboard,
   EarnRule,
@@ -23,7 +24,9 @@ import type {
   PointsLiability,
 } from '@/types/loyaltyAdmin';
 
-const USE_MOCK = (process.env.NEXT_PUBLIC_LOYALTY_USE_MOCK ?? 'true').toLowerCase() !== 'false';
+export const USE_MOCK = resolveUseMock(process.env.NEXT_PUBLIC_LOYALTY_USE_MOCK);
+/** Named so the fixture banner can cite the exact switch. */
+export const USE_MOCK_ENV = 'NEXT_PUBLIC_LOYALTY_USE_MOCK';
 
 function adminBase(): string {
   return env.apiBaseUrl.replace(/\/api\/v1\/?$/, '/api/loyalty/admin');
@@ -36,6 +39,15 @@ function authHeaders(): Record<string, string> {
     : { 'Content-Type': 'application/json' };
 }
 const delay = (ms = 240) => new Promise((r) => setTimeout(r, ms));
+
+// Verified against backend/internal/loyalty (handler.go Register): the ONLY
+// admin route registered is GET /memberships/:userId. No earn-rules or tiers
+// mutation route exists anywhere in backend/internal/loyalty or the points
+// module it delegates to — grepped both for "earn-rules"/"earn_rules"/
+// "EarnRule"/"tiers/:id"/"UpdateTier", zero hits beyond read-side model code.
+const NO_BACKEND_YET =
+  'has no backend yet (see the comment on the live-mode call below). ' +
+  'This console cannot perform this action until that endpoint is built.';
 
 async function getJson<T>(path: string): Promise<T> {
   const res = await fetch(`${adminBase()}${path}`, { headers: authHeaders() });
@@ -137,11 +149,7 @@ export async function listEarnRules(opts?: { module?: string; status?: string; q
   return getJson<EarnRule[]>(`/earn-rules${qs.toString() ? `?${qs}` : ''}`);
 }
 export async function updateEarnRule(id: string, patch: EarnRuleUpdate): Promise<EarnRuleResult> {
-  if (USE_MOCK) {
-    await delay();
-    const cur = EARN_RULES.find((r) => r.id === id);
-    return { id, config_version: (cur?.config_version ?? 1) + 1, audit_id: `aud_${Math.random().toString(36).slice(2, 10)}`, message: `Earn rule ${id} updated — new versioned config saved. Points are NON-CASH (NL-4). Recorded to immutable audit (NL-12).` };
-  }
+  if (USE_MOCK) throw new Error(`Updating an earn rule ${NO_BACKEND_YET}`);
   return sendJson<EarnRuleResult>('PATCH', `/earn-rules/${id}`, patch);
 }
 
@@ -158,11 +166,7 @@ export async function listTiers(): Promise<TierConfig[]> {
   return getJson<TierConfig[]>('/tiers');
 }
 export async function updateTier(id: string, patch: TierUpdate): Promise<TierResult> {
-  if (USE_MOCK) {
-    await delay();
-    const cur = TIERS.find((t) => t.id === id);
-    return { id, config_version: (cur?.config_version ?? 1) + 1, audit_id: `aud_${Math.random().toString(36).slice(2, 10)}`, message: `Tier ${id} config updated. Members re-evaluated on next earn. Recorded to immutable audit (NL-12).` };
-  }
+  if (USE_MOCK) throw new Error(`Updating a loyalty tier ${NO_BACKEND_YET}`);
   return sendJson<TierResult>('PATCH', `/tiers/${id}`, patch);
 }
 
@@ -199,7 +203,7 @@ export async function upsertCatalogItem(item: CatalogUpsert): Promise<CatalogRes
   if (USE_MOCK) {
     await delay();
     const id = item.id ?? `cat_${Math.random().toString(36).slice(2, 8)}`;
-    return { id, audit_id: `aud_${Math.random().toString(36).slice(2, 10)}`, message: `Catalog item ${id} ${item.id ? 'updated' : 'created'}. Redeems to non-cash value only (NL-4). Recorded to immutable audit (NL-12).` };
+    return { id, audit_id: `aud_${Math.random().toString(36).slice(2, 10)}`, message: `Fixture — nothing was saved. Catalog item ${id} ${item.id ? 'updated' : 'created'}. Redeems to non-cash value only (NL-4).` };
   }
   return sendJson<CatalogResult>(item.id ? 'PATCH' : 'POST', item.id ? `/catalog/${item.id}` : '/catalog', item);
 }

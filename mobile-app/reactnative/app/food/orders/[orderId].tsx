@@ -2,6 +2,7 @@ import React, { useMemo, useState } from 'react';
 import { View, Text, ScrollView, StyleSheet, Pressable, Platform } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import { confirmAsync } from '@/lib/confirm';
 import * as Icons from 'lucide-react-native';
 import StateView from '@/components/StateView';
@@ -16,6 +17,7 @@ import { useOrder, useCancelOrder } from '@/features/food/hooks';
 import { useOrderRealtime } from '@/features/food/useOrderRealtime';
 import { OrderTimeline, OrderChatThread, FoodStatusBadge, RiderInfoCard } from '@/features/food/components';
 import { formatNaira, STATUS_LABEL, isLiveTrackable, isTerminalStatus, normalizeStatus } from '@/features/food/utils';
+import { HomeMenuButton } from '@/components/HomeMenu';
 
 type Tab = 'tracking' | 'chat';
 
@@ -54,12 +56,13 @@ export default function OrderTrackingScreen() {
   return (
     <SafeAreaView style={s.safe} edges={['top']}>
       <View style={s.topBar}>
-        <Pressable onPress={() => router.back()} style={s.iconButton} accessibilityLabel="Go back">
+        <Pressable onPress={() => goBack('/food/orders')} style={s.iconButton} accessibilityLabel="Go back">
           <Icons.ArrowLeft size={22} color={Colors.primary} strokeWidth={2.2} />
         </Pressable>
         <Text style={s.topTitle}>Your order</Text>
         <View style={s.iconButton}>
           {realtime.live ? <View style={s.liveDot} /> : null}
+          <HomeMenuButton />
         </View>
       </View>
 

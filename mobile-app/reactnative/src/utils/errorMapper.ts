@@ -11,6 +11,12 @@ const FRIENDLY: Record<string, string> = {
   TIMEOUT:              'Request timed out. Please try again.',
   PROVIDER_TIMEOUT:     'Provider timed out. Please try again or check transaction status.',
   UNAUTHORIZED:         'Your session has expired. Please sign in again.',
+  // A 401 means two different things depending on WHERE it happens. On an
+  // authenticated request the token lapsed — 'session expired' is right. On a
+  // SIGN-IN attempt there is no session to expire, and telling someone their
+  // session expired while they are signing in is simply confusing. Callers on
+  // the auth path pass { authAttempt: true } to get this instead.
+  INVALID_CREDENTIALS:  'Incorrect email/phone number or password. Please try again.',
   INSUFFICIENT_BALANCE: 'Insufficient wallet balance for this transaction.',
   METER_NOT_FOUND:      'Unable to validate meter number. Please check the number and try again.',
   CARD_NOT_FOUND:       'Smart card number not found. Please check and try again.',
@@ -58,6 +64,18 @@ export function normalizeApiError(error: unknown): NormalizedError {
   return { message: 'An unexpected error occurred.' };
 }
 
-export function getErrorMessage(error: unknown): string {
-  return normalizeApiError(error).message;
+export interface ErrorMessageOptions {
+  /**
+   * Set on sign-in / sign-up submissions. A 401 there means the credentials
+   * were rejected, not that a session lapsed.
+   */
+  authAttempt?: boolean;
+}
+
+export function getErrorMessage(error: unknown, opts?: ErrorMessageOptions): string {
+  const normalized = normalizeApiError(error);
+  if (opts?.authAttempt && normalized.status === 401) {
+    return FRIENDLY.INVALID_CREDENTIALS;
+  }
+  return normalized.message;
 }

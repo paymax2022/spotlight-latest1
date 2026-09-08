@@ -3,6 +3,7 @@
 // flip USE_MOCK to false once the real /crowdfunding endpoints land.
 // IRON RULE: all monetary amounts are integers in minor units (kobo).
 
+import { mockAllowed } from '@/config/mockPolicy';
 import { api } from '@/api/client';
 import type {
   Campaign,
@@ -10,6 +11,7 @@ import type {
   CampaignCategory,
   CampaignQuery,
   Contribution,
+  ContributionStatus,
   ContributionDraft,
   InitiateContributionResult,
   Contributor,
@@ -19,6 +21,7 @@ import type {
   CreatorNotification,
   CampaignAnalytics,
   CampaignDraftInput,
+  CampaignEditInput,
   SubmitCampaignResult,
 } from '../types/crowdfunding.types';
 import {
@@ -39,7 +42,7 @@ import {
 // ─── Feature flag ─────────────────────────────────────────────────────────────
 // Mock is the default. Set EXPO_PUBLIC_CF_USE_MOCK=false to hit the live backend
 // (Next.js proxy at /api/v1/crowdfunding/* → Go /api/finance/crowdfunding/*).
-const USE_MOCK = process.env.EXPO_PUBLIC_CF_USE_MOCK !== 'false';
+const USE_MOCK = mockAllowed(process.env.EXPO_PUBLIC_CF_USE_MOCK, true);
 
 // Base path of the crowdfunding proxy on the frontend-web Next.js server.
 const LIVE = '/api/v1/crowdfunding';
@@ -69,6 +72,7 @@ function toSummary(c: Campaign): CampaignSummary {
     trending: c.trending,
     urgent: c.urgent,
     saved: c.saved,
+    paused: c.paused,
     location: c.location,
     creatorName: c.creator.name,
     creatorType: c.creator.type,
@@ -199,6 +203,31 @@ export async function getRecentlyViewed(): Promise<CampaignSummary[]> {
 }
 
 /** Optimistic toggle in mock mode; real impl POST/DELETE /saves. */
+/**
+ * Record a VIEW or SHARE against a campaign.
+ *
+ * These events are what make the creator performance screen's Views, Shares,
+ * Conversion and traffic-source figures real — before this existed the backend
+ * derived them from a hash of the campaign id.
+ *
+ * Deliberately FIRE-AND-FORGET: analytics must never break or delay what the
+ * user actually asked for, so the promise always resolves and failures are
+ * swallowed rather than surfaced. It is also skipped entirely in mock mode so a
+ * mock session never writes to a real analytics table.
+ */
+export async function recordCampaignEvent(
+  id: string,
+  type: 'VIEW' | 'SHARE',
+  source = 'direct',
+): Promise<void> {
+  if (USE_MOCK || !id) return;
+  try {
+    await api.post(`/api/v1/crowdfunding/campaigns/${id}/events`, { type, source });
+  } catch {
+    // Analytics is best-effort — never surface this to the user.
+  }
+}
+
 export async function toggleSaveCampaign(id: string, saved: boolean): Promise<{ id: string; saved: boolean }> {
   if (USE_MOCK) {
     await delay(120);
@@ -284,9 +313,11 @@ export async function initiateContribution(
   idempotencyKey: string,
 ): Promise<InitiateContributionResult> {
   if (USE_MOCK) {
+    const ref = `SPL-CF-${Date.now()}`;
     await delay(900);
     return {
-      reference: `SPL-CF-${Date.now()}`,
+      contributionId: ref,
+      reference: ref,
       status: draft.paymentMethod === 'BANK_TRANSFER' || draft.paymentMethod === 'USSD' ? 'PENDING' : 'PROCESSING',
       authorizationUrl: draft.paymentMethod === 'CARD' ? 'https://checkout.paystack.com/mock' : undefined,
     };
@@ -297,21 +328,69 @@ export async function initiateContribution(
     { amount_kobo: draft.amountKobo, idempotency_key: idempotencyKey },
     { headers: { 'Idempotency-Key': idempotencyKey } },
   );
-  return res.data?.data ?? res.data;
+  // The live endpoint is SYNCHRONOUS and FINAL — there is no provider handshake
+  // to come back for. A 2xx means the escrow posted, the contribution row was
+  // written and the 90/10 split settled, so the payment has already happened by
+  // the time this resolves. It answers with the raw snake_case contribution
+  // ({id, status: 'escrowed' | 'released' | 'refunded', …}), NOT the
+  // mock-shaped {reference, status: 'SUCCESSFUL'} envelope. Returning it
+  // unmapped is what left the caller with `reference: undefined` and a `status`
+  // outside the ContributionStatus union, which then drove a paid contribution
+  // onto the "Payment failed" screen. Map it here, at the seam, so every screen
+  // downstream sees one shape.
+  const raw = (res.data?.data ?? res.data) as { id?: string; status?: string };
+  return {
+    contributionId: String(raw?.id ?? ''),
+    status: liveContributionStatus(raw?.status),
+  };
 }
 
-export async function verifyContribution(reference: string): Promise<Contribution> {
+/**
+ * Map the backend's `contributions.status` to the client union. `escrowed` and
+ * `released` are both money-has-moved states — the difference is only whether
+ * the 90/10 split has swept yet, which is not something the contributor either
+ * sees or can act on. Anything unrecognised stays PROCESSING rather than
+ * FAILED: an unknown status is not evidence that a charge which returned 2xx
+ * did not happen, and calling it a failure is exactly the wrong guess to make.
+ */
+function liveContributionStatus(raw?: string): ContributionStatus {
+  switch (raw) {
+    case 'escrowed':
+    case 'released':
+      return 'SUCCESSFUL';
+    case 'refunded':
+      return 'REFUNDED';
+    default:
+      return 'PROCESSING';
+  }
+}
+
+/**
+ * Confirm a contribution by reading it back from the server.
+ *
+ * There is no `POST /contributions/verify` endpoint and there never was — the
+ * client used to call one because mock mode modelled a Paystack-style
+ * verify-after-redirect handshake that the live rail does not have. Next.js
+ * matched that path against the `contributions/[id]` route (id = "verify"),
+ * which only exports GET, so every live contribution ended on a 405 and the
+ * processing screen reported a successful payment as failed.
+ *
+ * The authoritative read is the contribution itself, which is owner-scoped
+ * server-side and carries the derived reference and mapped status.
+ */
+export async function verifyContribution(contributionId: string): Promise<Contribution> {
   if (USE_MOCK) {
     await delay(700);
     return {
-      id: reference,
-      reference,
+      id: contributionId,
+      reference: contributionId,
       campaignId: 'cf1',
       campaignTitle: 'Help Baby Zara Get Open-Heart Surgery',
       campaignCover: null,
       amountKobo: 500_000,
-      feeKobo: 12_500,
-      totalKobo: 512_500,
+      feeKobo: 50_000,
+      netToCampaignKobo: 450_000,
+      totalKobo: 500_000,
       currency: 'NGN',
       status: 'SUCCESSFUL',
       paymentMethod: 'WALLET',
@@ -322,8 +401,7 @@ export async function verifyContribution(reference: string): Promise<Contributio
       refundEligible: true,
     };
   }
-  const res = await api.post('/api/v1/crowdfunding/contributions/verify', { reference });
-  return res.data?.data ?? res.data;
+  return getContribution(contributionId);
 }
 
 export async function requestRefund(contributionId: string, reason: string): Promise<{ status: string }> {
@@ -385,6 +463,134 @@ export async function getCampaignAnalytics(id: string): Promise<CampaignAnalytic
   return (res.data?.data ?? res.data) as CampaignAnalytics;
 }
 
+// ─── Owner self-management (Section G2) ───────────────────────────────────────
+// Every call here is owner-scoped and mutates a campaign the caller owns. They
+// all resolve to the campaign the SERVER returned (except delete, which returns
+// nothing) so a screen renders authoritative state instead of a local guess.
+
+/** Locate a campaign in the mock creator dataset, or throw the way the API would. */
+function mockOwned(id: string): Campaign {
+  const found = MOCK_MY_CAMPAIGNS.find((c) => c.id === id);
+  if (!found) throw new Error('Campaign not found');
+  return found;
+}
+
+/**
+ * Update a campaign the caller owns.
+ *
+ * Subset semantics: only the keys present in `patch` change. The caller is
+ * responsible for sending just the fields the owner edited — spreading a whole
+ * form here would silently overwrite fields the owner never opened.
+ */
+export async function updateCampaign(id: string, patch: CampaignEditInput): Promise<Campaign> {
+  if (USE_MOCK) {
+    await delay(600);
+    const c = mockOwned(id);
+    if (patch.title !== undefined) c.title = patch.title;
+    if (patch.summary !== undefined) c.summary = patch.summary;
+    if (patch.story !== undefined) c.story = patch.story;
+    if (patch.coverImage !== undefined) c.coverImage = patch.coverImage;
+    if (patch.goalKobo !== undefined) c.goalKobo = patch.goalKobo;
+    if (patch.category !== undefined) {
+      c.category = patch.category;
+      c.categoryLabel = CAMPAIGN_CATEGORIES.find((k) => k.slug === patch.category)?.label ?? c.categoryLabel;
+    }
+    return { ...c };
+  }
+  const res = await api.patch(`${LIVE}/creator/campaigns/${id}`, patch);
+  return (res.data?.data ?? res.data) as Campaign;
+}
+
+/**
+ * Pause or resume a campaign. A paused campaign is hidden from public discovery
+ * and stops accepting contributions; nothing already raised is affected.
+ *
+ * `paused` is a field of its own, NOT a status — the campaign keeps whatever
+ * review status it had. Resume therefore re-checks that status: a campaign
+ * frozen while it was paused must not be resumable by its owner, or Resume
+ * would quietly become a way to lift a fraud stop.
+ */
+export async function setCampaignPaused(id: string, paused: boolean): Promise<Campaign> {
+  if (USE_MOCK) {
+    await delay(500);
+    const c = mockOwned(id);
+    // Mirror the server's refusals so mock mode cannot teach a workflow the
+    // live backend rejects.
+    if (paused) {
+      if (c.paused) throw new Error('This campaign is already paused.');
+      if (c.status !== 'ACTIVE') throw new Error('Only a live campaign can be paused.');
+    } else {
+      if (!c.paused) throw new Error('This campaign is not paused.');
+      if (c.status !== 'ACTIVE') throw new Error('This campaign is no longer live and cannot be resumed.');
+    }
+    c.paused = paused;
+    return { ...c };
+  }
+  const res = await api.post(`${LIVE}/creator/campaigns/${id}/${paused ? 'pause' : 'resume'}`);
+  return (res.data?.data ?? res.data) as Campaign;
+}
+
+/**
+ * Permanently delete a campaign. The server allows this ONLY while the campaign
+ * has never received funds and answers 409 otherwise — the contribution record
+ * has to outlive the campaign. The UI gates on the same rule, but the server is
+ * the authority and its refusal is surfaced verbatim.
+ */
+export async function deleteCampaign(id: string): Promise<void> {
+  if (USE_MOCK) {
+    await delay(600);
+    const c = mockOwned(id);
+    if (c.raisedKobo > 0 || c.contributorCount > 0) {
+      throw new Error('This campaign has received contributions and cannot be deleted.');
+    }
+    const idx = MOCK_MY_CAMPAIGNS.findIndex((m) => m.id === id);
+    if (idx >= 0) MOCK_MY_CAMPAIGNS.splice(idx, 1);
+    return;
+  }
+  await api.delete(`${LIVE}/creator/campaigns/${id}`);
+}
+
+/** Ask an admin to feature this campaign. Refused unless the campaign is ACTIVE. */
+export async function requestCampaignFeature(id: string): Promise<Campaign> {
+  if (USE_MOCK) {
+    await delay(500);
+    const c = mockOwned(id);
+    if (c.status !== 'ACTIVE') throw new Error('Only a live campaign can be featured.');
+    c.featureRequestStatus = 'PENDING';
+    return { ...c };
+  }
+  const res = await api.post(`${LIVE}/creator/campaigns/${id}/feature-request`);
+  return (res.data?.data ?? res.data) as Campaign;
+}
+
+/** Withdraw a pending feature request before an admin acts on it. */
+export async function withdrawCampaignFeatureRequest(id: string): Promise<Campaign> {
+  if (USE_MOCK) {
+    await delay(400);
+    const c = mockOwned(id);
+    c.featureRequestStatus = 'NONE';
+    return { ...c };
+  }
+  const res = await api.delete(`${LIVE}/creator/campaigns/${id}/feature-request`);
+  return (res.data?.data ?? res.data) as Campaign;
+}
+
+/**
+ * Take your own campaign off the featured rail. Always permitted — this is the
+ * owner's escape hatch from a placement an admin granted.
+ */
+export async function unfeatureCampaign(id: string): Promise<Campaign> {
+  if (USE_MOCK) {
+    await delay(400);
+    const c = mockOwned(id);
+    c.featured = false;
+    c.featureRequestStatus = 'NONE';
+    return { ...c };
+  }
+  const res = await api.post(`${LIVE}/creator/campaigns/${id}/unfeature`);
+  return (res.data?.data ?? res.data) as Campaign;
+}
+
 // ─── Campaign creation (Section G) ────────────────────────────────────────────
 
 /**
@@ -438,6 +644,7 @@ export async function submitCampaign(
       trending: false,
       urgent: false,
       saved: false,
+      paused: false,
       budget: draft.budget.map((b) => ({ id: b.id, label: b.label, amountKobo: b.amountKobo, note: null })),
       milestones: draft.milestones.map((m, i) => ({ id: m.id, title: m.title, targetKobo: m.targetKobo, status: i === 0 ? 'ACTIVE' : 'LOCKED', dueAt: null, evidenceCount: 0 })),
       updates: [],
@@ -451,9 +658,77 @@ export async function submitCampaign(
 
     return { campaignId: id, status, reference: `SPL-CFNEW-${Date.now()}` };
   }
+  // Map explicitly onto the Go SubmitCampaignRequest DTO. Spreading the raw
+  // draft looked equivalent but was not: the server field is `coverImageUrl`
+  // while the draft carries `coverImageUri`, so every cover image was silently
+  // dropped, and the spread hid that the DTO accepts none of the wizard's
+  // data either — it collected all of it and the server discarded it.
+  // That is no longer true of milestones, budget, reward tiers or the beneficiary:
+  // the DTO accepts each one and SubmitForReview stores it in the same transaction
+  // as the campaign. DOCUMENTS are the only thing still dropped, and they need a
+  // real upload path before persistence would mean anything. Keep this list
+  // explicit so the next field that stops being persisted is visible in review.
   const res = await api.post(
     `${LIVE}/campaigns`,
-    { ...draft, submitForReview },
+    {
+      type: draft.type,
+      category: draft.category,
+      title: draft.title,
+      summary: draft.summary,
+      story: draft.story,
+      goalKobo: draft.goalKobo,
+      deadline: draft.deadline,
+      location: draft.location,
+      refundPolicy: draft.refundPolicy,
+      disbursementModel: draft.disbursementModel,
+      // Only a remotely-resolvable URL may be persisted. The media step stores
+      // the raw picker URI (file:// on native, blob: on web) and there is NO
+      // upload step yet, so sending it would replace a silently-dropped cover
+      // with a stored path that renders broken for every other viewer. Send it
+      // only once it is an http(s) URL — which is what an R2 upload will yield.
+      coverImageUrl: /^https?:\/\//i.test(draft.coverImageUri ?? '') ? draft.coverImageUri : null,
+        // The wizard's funding plan, now that the server accepts and stores it. The
+        // first milestone is what the campaign is working on and the rest are locked
+        // behind it — the same labelling the wizard uses while collecting them.
+        // RELEASED and PENDING_REVIEW are deliberately not sendable: the server
+        // refuses them, because a campaign must not be able to tell backers money
+        // reached a milestone it never reached.
+        milestones: draft.milestones.map((m, i) => ({
+          title: m.title,
+          targetKobo: m.targetKobo,
+          status: i === 0 ? 'ACTIVE' : 'LOCKED',
+          dueAt: null,
+        })),
+        // The other two things the wizard collected and the server used to drop.
+        // Reward tiers deliberately send no `claimed`: how many backers took a tier
+        // is a fact the server counts from who actually did, not a number a campaign
+        // may assert about itself.
+        budget: draft.budget.map((b) => ({
+          label: b.label,
+          amountKobo: b.amountKobo,
+          note: null,
+        })),
+        rewardTiers: draft.rewardTiers.map((r) => ({
+          title: r.title,
+          amountKobo: r.amountKobo,
+          description: r.description,
+          estimatedDelivery: null,
+          limit: null,
+          requiresShipping: r.requiresShipping,
+        })),
+        // Who the campaign is for. Sent only when the wizard collected one — a
+        // campaign raising for its own creator legitimately has no beneficiary, and
+        // an empty object would be a different claim from none at all. No
+        // `verified`: that badge is granted by review, not asserted here.
+        beneficiary: draft.beneficiaryName.trim()
+          ? {
+              name: draft.beneficiaryName.trim(),
+              relationship: draft.beneficiaryRelationship,
+              description: null,
+            }
+          : null,
+      submitForReview,
+    },
     { headers: { 'Idempotency-Key': idempotencyKey } },
   );
   return res.data?.data ?? res.data;

@@ -7,6 +7,7 @@ import React from 'react';
 import { View, Text, StyleSheet, ScrollView, Pressable, ActivityIndicator, RefreshControl } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import { ArrowLeft, ShieldCheck, Info, Lock } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
@@ -14,6 +15,7 @@ import { Spacing } from '@/constants/spacing';
 import { Radius } from '@/constants/radius';
 import { useStrategies } from '@/features/aitrading/hooks';
 import type { StrategyStage, StrategyMaturity } from '@/features/aitrading/api';
+import { HomeMenuButton } from '@/components/HomeMenu';
 
 const STAGE_META: Record<StrategyStage, { label: string; blurb: string; fg: string; bg: string }> = {
   paper:  { label: 'Paper',  blurb: 'Runs on live data with no money at stake — the proving ground.', fg: '#6b21a8', bg: '#f3e8ff' },
@@ -39,9 +41,9 @@ export default function StrategyMaturityScreen() {
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
       <View style={styles.topBar}>
-        <Pressable onPress={() => router.back()} hitSlop={12} accessibilityLabel="Back"><ArrowLeft size={22} color={Colors.onSurface} /></Pressable>
+        <Pressable onPress={() => goBack('/ai-trading')} hitSlop={12} accessibilityLabel="Back"><ArrowLeft size={22} color={Colors.onSurface} /></Pressable>
         <Text style={styles.topTitle}>How your fund is managed</Text>
-        <View style={{ width: 22 }} />
+        <HomeMenuButton />
       </View>
 
       {q.isLoading ? (

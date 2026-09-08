@@ -19,6 +19,16 @@ import type { StructureType } from '@/features/association/types/orgDraft.types'
 
 const stateId = (state: string) => `st_${state}`;
 
+/** Stable id for the single-structure chapter row, so editing replaces it. */
+const SINGLE_CHAPTER_ID = 'ch_single';
+
+/**
+ * What the backend names a chapter when the founder names none. Mirrors
+ * association.DefaultChapterName in backend/internal/association/service_ext.go;
+ * shown here only so the hint tells the truth about what will be created.
+ */
+const DEFAULT_CHAPTER_NAME = 'Home';
+
 export default function WizardStructure() {
   const {
     draft, patch,
@@ -39,6 +49,12 @@ export default function WizardStructure() {
       draft.stateLeaders.forEach((l) => removeChapter(l.id));
       patch({ stateLeaders: [] });
     }
+    // And the reverse: the single-structure chapter belongs to the SINGLE path
+    // only. Left behind, it would publish alongside the state chapters as a
+    // stray extra the founder never sees on this screen again.
+    if (t === 'STATEWIDE') {
+      removeChapter(SINGLE_CHAPTER_ID);
+    }
   };
 
   const toggleState = (state: string) => {
@@ -50,6 +66,14 @@ export default function WizardStructure() {
       addStateLeader({ id, state, leaderName: '', leaderContact: '', canApproveMembers: true });
       addChapter({ id, name: state, level: 'STATE' });
     }
+  };
+
+  // The single-structure chapter is one row, edited in place — not a list to
+  // add to. Typing replaces it; clearing it removes the row entirely so the
+  // backend sees "no chapters named" and applies its default, rather than an
+  // empty-named chapter.
+  const setSingleChapter = (name: string) => {
+    patch({ chapters: name.trim() ? [{ id: SINGLE_CHAPTER_ID, name, level: 'LOCAL' }] : [] });
   };
 
   const onAddCommittee = () => {
@@ -155,6 +179,25 @@ export default function WizardStructure() {
                 </View>
               </>
             ) : null}
+          </>
+        ) : null}
+
+        {/* Chapter — a plain optional field, not a picker.
+            The state multi-select above is the STATEWIDE path, where chapters
+            are derived from the states chosen. An organisation that is not
+            organised by state still wants somewhere to file its members, and
+            forcing that through a list of Nigerian states was the wrong shape
+            for it. Left blank, the backend names the chapter "Home" — every
+            organisation ends up with at least one either way. */}
+        {!statewide ? (
+          <>
+            <Text style={[styles.label, styles.sectionGap]}>Chapter (optional)</Text>
+            <Text style={styles.help}>Name your first chapter or branch. Leave it blank and we&apos;ll call it &ldquo;{DEFAULT_CHAPTER_NAME}&rdquo;.</Text>
+            <TextInputField
+              placeholder={`e.g. Ikeja Branch — blank means "${DEFAULT_CHAPTER_NAME}"`}
+              value={draft.chapters[0]?.name ?? ''}
+              onChangeText={setSingleChapter}
+            />
           </>
         ) : null}
 

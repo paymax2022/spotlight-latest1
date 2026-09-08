@@ -5,7 +5,9 @@ import { listStaff, inviteStaff } from '@/services/staysExtranetService';
 import type { StaffMember, StaffRole } from '@/types/staysExtranet';
 import { PageHeader, ExtranetTabs, Card, PropertyScopeNote, Badge, StateBlock, btn, btnPrimary, input, label, select, th, td, timeAgo } from '../_ui';
 
-const ROLES: StaffRole[] = ['owner', 'revenue_manager', 'front_desk'];
+// Owner is never offered here: it mirrors the property creator and cannot be
+// granted through an invite (backend rejects it — see staff_invite.go).
+const INVITABLE_ROLES: StaffRole[] = ['revenue_manager', 'front_desk'];
 const ROLE_DESC: Record<StaffRole, string> = {
   owner: 'Full access including finance, staff and settings',
   revenue_manager: 'Rates, availability, promotions and analytics',
@@ -16,7 +18,7 @@ export default function StaffPage() {
   const [rows, setRows] = useState<StaffMember[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [draft, setDraft] = useState({ name: '', email: '', role: 'front_desk' as StaffRole });
+  const [draft, setDraft] = useState({ name: '', email: '', role: 'front_desk' as Exclude<StaffRole, 'owner'> });
   const [busy, setBusy] = useState(false);
 
   async function load() {
@@ -28,7 +30,7 @@ export default function StaffPage() {
 
   async function invite() {
     setBusy(true);
-    try { const m = await inviteStaff(draft.name, draft.email, draft.role); setRows((r) => [...r, m]); setDraft({ name: '', email: '', role: 'front_desk' }); }
+    try { const m = await inviteStaff(draft.name, draft.email, draft.role); setRows((r) => [...r, m]); setDraft({ name: '', email: '', role: 'front_desk' as const }); }
     catch (e) { setError(String(e)); } finally { setBusy(false); }
   }
 
@@ -62,7 +64,7 @@ export default function StaffPage() {
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: '0.7rem' }}>
           <div><label style={label()}>Full name</label><input style={input()} value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} /></div>
           <div><label style={label()}>Email</label><input style={input()} value={draft.email} onChange={(e) => setDraft({ ...draft, email: e.target.value })} /></div>
-          <div><label style={label()}>Role</label><select style={select()} value={draft.role} onChange={(e) => setDraft({ ...draft, role: e.target.value as StaffRole })}>{ROLES.map((r) => <option key={r} value={r}>{r.replace(/_/g, ' ')}</option>)}</select></div>
+          <div><label style={label()}>Role</label><select style={select()} value={draft.role} onChange={(e) => setDraft({ ...draft, role: e.target.value as Exclude<StaffRole, 'owner'> })}>{INVITABLE_ROLES.map((r) => <option key={r} value={r}>{r.replace(/_/g, ' ')}</option>)}</select></div>
         </div>
         <button style={{ ...btnPrimary(), marginTop: '0.85rem' }} onClick={invite} disabled={busy || !draft.name || !draft.email}>{busy ? 'Sending…' : 'Send invite'}</button>
       </Card>

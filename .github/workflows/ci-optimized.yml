@@ -75,13 +75,63 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 1
+          # Full history: the scan diffs two commits, and a shallow clone cannot
+          # resolve a base ref at all.
+          fetch-depth: 0
 
-      - uses: trufflesecurity/trufflehog@main
+      # Resolve the range BEFORE calling the scanner. The previous config passed
+      # base: <default_branch> with head: HEAD, which on a push to main compares
+      # main against itself - TruffleHog exits 1 with "BASE and HEAD commits are
+      # the same" and scans NOTHING. It failed that way on every push to main, so
+      # this lane has been red-but-blind rather than protecting anything.
+      - name: Resolve the commit range to scan
+        id: range
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            BASE="${{ github.event.pull_request.base.sha }}"
+            HEAD="${{ github.event.pull_request.head.sha }}"
+          else
+            BASE="${{ github.event.before }}"
+            HEAD="${{ github.sha }}"
+          fi
+          # A brand-new branch (or a force-push) reports an all-zero "before".
+          # Fall back to the first parent so there is still a real range instead
+          # of an error, and scan the whole tree when even that is missing.
+          if [ -z "$BASE" ] || [ "$BASE" = "0000000000000000000000000000000000000000" ] || ! git cat-file -e "$BASE^{commit}" 2>/dev/null; then
+            # --verify, NOT plain rev-parse: on a ROOT commit `rev-parse <sha>^`
+            # prints "<sha>^" and then fails, so `|| true` would keep that invalid
+            # string as BASE and hand the scanner a ref it cannot resolve.
+            BASE="$(git rev-parse --verify --quiet "$HEAD^" || true)"
+          fi
+          if [ -z "$BASE" ] || [ "$BASE" = "$HEAD" ]; then
+            echo "  no usable range - scanning the working tree instead"
+            echo "filesystem=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "  scanning $BASE..$HEAD"
+            echo "filesystem=false" >> "$GITHUB_OUTPUT"
+            echo "base=$BASE" >> "$GITHUB_OUTPUT"
+            echo "head=$HEAD" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Scan the pushed range
+        if: steps.range.outputs.filesystem == 'false'
+        uses: trufflesecurity/trufflehog@main
         with:
           path: ./
-          base: ${{ github.event.repository.default_branch }}
-          head: HEAD
+          base: ${{ steps.range.outputs.base }}
+          head: ${{ steps.range.outputs.head }}
+          # --results=verified,unknown is the action default; keeping it explicit
+          # documents that unverifiable app secrets (an ADMIN_API_KEY has no
+          # provider to check against) still surface rather than being dropped.
+          extra_args: --results=verified,unknown
+
+      - name: Scan the working tree (no usable range)
+        if: steps.range.outputs.filesystem == 'true'
+        uses: trufflesecurity/trufflehog@main
+        with:
+          path: ./
+          extra_args: --results=verified,unknown
 
   # Migrations guard (lightweight check)
   migrations:

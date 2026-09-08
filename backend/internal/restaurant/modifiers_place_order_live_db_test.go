@@ -51,7 +51,7 @@ func addGroup(t *testing.T, ctx context.Context, f promoOrderFixture, itemID, na
 // per unit, ride into the escrow, are snapshotted, and settle with conservation.
 func TestLiveDB_OrderModifiersPricedAndSnapshotted(t *testing.T) {
 	pool := promoOrderPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	f := newPromoOrderFixture(t, ctx, pool, "Modifier Kitchen", 400_000)
 
@@ -183,7 +183,7 @@ func TestLiveDB_OrderModifiersPricedAndSnapshotted(t *testing.T) {
 // BEFORE any money moves. Without validation a bogus id was accepted and priced at zero.
 func TestLiveDB_OrderModifierSelectionIsValidated(t *testing.T) {
 	pool := promoOrderPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	f := newPromoOrderFixture(t, ctx, pool, "Validation Kitchen", 400_000)
 
@@ -255,7 +255,7 @@ func TestLiveDB_OrderModifierSelectionIsValidated(t *testing.T) {
 // prices exactly as before. This is the back-compat guard for every existing client.
 func TestLiveDB_OrderWithoutModifiersUnchanged(t *testing.T) {
 	pool := promoOrderPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	f := newPromoOrderFixture(t, ctx, pool, "Plain Kitchen", 350_000)
 

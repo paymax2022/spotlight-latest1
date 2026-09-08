@@ -81,6 +81,11 @@ export default function MarketplaceAdminPage() {
 
   // Set up WebSocket for real-time updates
   useEffect(() => {
+    // Cleared on unmount below. Previously this was returned from
+    // ws.onerror, which the WebSocket API never calls — so the fallback
+    // interval was never cleared and a new one leaked on every mount.
+    let pollInterval: ReturnType<typeof setInterval> | null = null;
+
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const ws = new WebSocket(`${protocol}//localhost:8091/ws/marketplace/updates`);
 
@@ -133,8 +138,10 @@ export default function MarketplaceAdminPage() {
 
     ws.onerror = (error) => {
       console.error('WebSocket error:', error);
-      // Fall back to polling if WebSocket fails
-      const pollInterval = setInterval(async () => {
+      // Fall back to polling if WebSocket fails. Guarded so a second error
+      // event (or a stray one after unmount) can't stack a second interval.
+      if (pollInterval) return;
+      pollInterval = setInterval(async () => {
         try {
           const data = await service.getActivityFeed();
           setActivities(data);
@@ -142,13 +149,12 @@ export default function MarketplaceAdminPage() {
           console.error('Polling failed:', err);
         }
       }, 10000); // Poll every 10 seconds
-
-      return () => clearInterval(pollInterval);
     };
 
     wsRef.current = ws;
 
     return () => {
+      if (pollInterval) clearInterval(pollInterval);
       if (wsRef.current) {
         wsRef.current.close();
       }

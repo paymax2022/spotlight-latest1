@@ -2,6 +2,7 @@ import React from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import { TrendingUp, X } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
@@ -21,7 +22,7 @@ export default function TierUpgraded() {
 
   return (
     <SafeAreaView style={styles.safe} edges={['top', 'bottom']}>
-      <Pressable onPress={() => router.back()} hitSlop={12} style={styles.close} accessibilityRole="button" accessibilityLabel="Close">
+      <Pressable onPress={() => goBack('/referral/rewards')} hitSlop={12} style={styles.close} accessibilityRole="button" accessibilityLabel="Close">
         <X size={22} color={Colors.onPrimary} strokeWidth={2} />
       </Pressable>
 

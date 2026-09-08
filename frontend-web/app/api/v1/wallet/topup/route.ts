@@ -1,6 +1,7 @@
 import { featureFlags } from '@/src/lib/feature-flags';
 import { requireRequestUser } from '@/src/lib/auth/request';
 import { assertTopupAllowed, type TopupPurpose } from '@/src/server/wallet/topup-gate';
+import { sanitiseCheckoutDomain } from '@/src/server/wallet/checkout-domain';
 import { createTopupIntent } from '@/src/server/wallet/service';
 import { errorResponse, handleApiError } from '@/src/lib/api/responses';
 import { NextResponse } from 'next/server';
@@ -33,11 +34,18 @@ export async function POST(request: Request) {
 
     const callbackUrl = typeof body.callback_url === 'string' ? body.callback_url : undefined;
 
+    // What the checkout is buying, so this stops being an anonymous top-up.
+    // Only meaningful for the checkout rail — a standalone funding is not
+    // buying anything, and letting it carry a domain would mislabel it.
+    const checkoutDomain =
+      purpose === 'checkout' ? sanitiseCheckoutDomain(body.checkout_domain) : null;
+
     const result = await createTopupIntent(user.id, user.email ?? '', {
       amountKobo,
       idempotencyKey,
       callbackUrl,
       purpose,
+      checkoutDomain,
     });
 
     return NextResponse.json(

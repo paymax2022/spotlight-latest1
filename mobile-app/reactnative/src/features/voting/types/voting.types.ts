@@ -45,7 +45,8 @@ export interface Contest {
   sponsorName?: string;
   sponsorLogo?: string;
   prizes?: string[];
-  rules?: string[];
+  /** Contest-specific voting rules/policies, shown above the platform defaults. */
+  rulesText?: string;
   /**
    * Admin visibility flags. All default to `true` when undefined so existing
    * contests are unaffected. Resolve with `resolveContestVisibility`.

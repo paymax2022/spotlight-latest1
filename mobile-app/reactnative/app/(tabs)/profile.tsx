@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import PhoneNumberInput from '@/components/PhoneNumberInput';
 import {
   View,
   Text,
@@ -462,8 +463,8 @@ export default function ProfileScreen() {
                 <TextInputField label="First name" value={profileForm.firstName} onChangeText={(value) => setProfileValue('firstName', value)} autoCapitalize="words" />
                 <TextInputField label="Last name" value={profileForm.lastName} onChangeText={(value) => setProfileValue('lastName', value)} autoCapitalize="words" />
                 <TextInputField label="Display name (optional)" value={profileForm.displayName} onChangeText={(value) => setProfileValue('displayName', value)} autoCapitalize="words" />
-                <TextInputField label="Phone number" value={profileForm.phone} onChangeText={(value) => setProfileValue('phone', value)} keyboardType="phone-pad" placeholder="08012345678" />
-                <TextInputField label="WhatsApp number (optional)" value={profileForm.whatsapp} onChangeText={(value) => setProfileValue('whatsapp', value)} keyboardType="phone-pad" placeholder="08012345678" />
+                <PhoneNumberInput label="Phone number" value={profileForm.phone} onChange={({ e164, nsn }) => ((value) => setProfileValue('phone', value))(e164 || nsn)} />
+                <PhoneNumberInput label="WhatsApp number (optional)" value={profileForm.whatsapp} onChange={({ e164, nsn }) => ((value) => setProfileValue('whatsapp', value))(e164 || nsn)} />
 
                 <DatePickerField
                   label="Date of birth"

@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { View, Text, ScrollView, Pressable, StyleSheet, TextInput } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import { Flag, CircleCheck, ShieldAlert } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
@@ -42,7 +43,7 @@ export default function ReportStreamScreen() {
           <Text style={styles.successTitle}>Thank you — case opened</Text>
           <Text style={styles.caseId}>Case {caseId}</Text>
           <Text style={styles.successBody}>Our safety team will review this stream. You can track the outcome in your safety cases. The host won't know who reported them.</Text>
-          <View style={{ width: '100%', marginTop: Spacing.lg }}><PrimaryButton label="Done" onPress={() => router.back()} /></View>
+          <View style={{ width: '100%', marginTop: Spacing.lg }}><PrimaryButton label="Done" onPress={() => goBack('/connect')} /></View>
         </View>
       </SafeAreaView>
     );

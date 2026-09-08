@@ -24,32 +24,36 @@ const (
 
 // Doctor is a registered healthcare provider (base record).
 type Doctor struct {
-	ID              string          `json:"id"`
-	UserID          string          `json:"user_id"`
-	Name            string          `json:"name"`
-	Specialty       DoctorSpecialty `json:"specialty"`
-	SubSpecialty    *string         `json:"sub_specialty,omitempty"`
-	Bio             string          `json:"bio,omitempty"`
-	About           string          `json:"about,omitempty"`
-	ConsultFeeKobo  int64           `json:"consult_fee_kobo"`
+	ID             string          `json:"id"`
+	UserID         string          `json:"user_id"`
+	Name           string          `json:"name"`
+	Specialty      DoctorSpecialty `json:"specialty"`
+	SubSpecialty   *string         `json:"sub_specialty,omitempty"`
+	Bio            string          `json:"bio,omitempty"`
+	About          string          `json:"about,omitempty"`
+	ConsultFeeKobo int64           `json:"consult_fee_kobo"`
 	// Booking is the server-computed price breakdown for consulting this doctor
 	// (consultation fee + platform booking fee). It is derived from
 	// ConsultFeeKobo, never stored, and is what the app renders on the confirm
-	// screen — the app holds no fee rate of its own. See ADR-040.
-	Booking         *BookingQuote   `json:"booking,omitempty"`
-	AvatarURL       *string         `json:"avatar_url,omitempty"`
-	IsAvailable     bool            `json:"is_available"`
-	IsOnline        bool            `json:"is_online"`
-	IsHMOVerified   bool            `json:"is_hmo_verified"`
-	ExperienceYears int             `json:"experience_years"`
-	Rating          float64         `json:"rating"`
-	ReviewCount     int             `json:"review_count"`
-	PatientsCount   int             `json:"patients_count"`
-	SuccessRate     int             `json:"success_rate"`
-	MDCNNumber      *string         `json:"mdcn_number,omitempty"`
-	Phone           *string         `json:"phone,omitempty"`
-	Education       []Education     `json:"education"`
-	CreatedAt       time.Time       `json:"created_at"`
+	// screen — the app holds no fee rate of its own. See ADR-044.
+	Booking       *BookingQuote `json:"booking,omitempty"`
+	AvatarURL     *string       `json:"avatar_url,omitempty"`
+	IsAvailable   bool          `json:"is_available"`
+	IsOnline      bool          `json:"is_online"`
+	IsHMOVerified bool          `json:"is_hmo_verified"`
+	// IsFeatured is editorial curation, not a derived score. The app hides its
+	// Featured Doctors section entirely when nothing is featured, so this must be
+	// a stored fact — deriving it from rating would make the section never empty.
+	IsFeatured      bool        `json:"is_featured"`
+	ExperienceYears int         `json:"experience_years"`
+	Rating          float64     `json:"rating"`
+	ReviewCount     int         `json:"review_count"`
+	PatientsCount   int         `json:"patients_count"`
+	SuccessRate     int         `json:"success_rate"`
+	MDCNNumber      *string     `json:"mdcn_number,omitempty"`
+	Phone           *string     `json:"phone,omitempty"`
+	Education       []Education `json:"education"`
+	CreatedAt       time.Time   `json:"created_at"`
 }
 
 // Education is a single academic credential.
@@ -98,14 +102,14 @@ type Appointment struct {
 	FeeKobo int64 `json:"fee_kobo"`
 	// PlatformFeeKobo is the platform booking fee charged on top of the
 	// consultation fee. Settled as a 100%-platform leg, so it does not dilute the
-	// doctor's 85%. Zero for appointments booked before ADR-040.
+	// doctor's 85%. Zero for appointments booked before ADR-044.
 	PlatformFeeKobo int64 `json:"platform_fee_kobo"`
 	// TotalKobo is what was actually escrowed and what the patient paid
 	// (FeeKobo + PlatformFeeKobo). A cancellation refunds this in full.
-	TotalKobo      int64  `json:"total_kobo"`
-	IdempotencyKey string `json:"idempotency_key"`
-	SettlementID     string            `json:"settlement_id"`
-	CreatedAt        time.Time         `json:"created_at"`
+	TotalKobo      int64     `json:"total_kobo"`
+	IdempotencyKey string    `json:"idempotency_key"`
+	SettlementID   string    `json:"settlement_id"`
+	CreatedAt      time.Time `json:"created_at"`
 }
 
 // Prescription is issued by a doctor after a completed appointment.
@@ -219,7 +223,7 @@ type BookAppointmentRequest struct {
 	// this server escrows anything, so a stale quote would put the charged and
 	// escrowed amounts out of step — when this disagrees with the server's own
 	// computation the booking is rejected before any money moves. Zero means the
-	// client did not quote a total and skips the check (ADR-040).
+	// client did not quote a total and skips the check (ADR-044).
 	ExpectedTotalKobo int64 `json:"expected_total_kobo"`
 }
 
@@ -260,6 +264,13 @@ type ListDoctorsQuery struct {
 	AvailableNow  bool   `form:"available_now"`
 	TopRated      bool   `form:"top_rated"`
 	MinExperience int    `form:"min_experience"`
-	Limit         int    `form:"limit,default=20"`
-	Offset        int    `form:"offset,default=0"`
+	// MinRating filters on the doctor's rating (0-5). Distinct from TopRated,
+	// which only ORDERS: "show me 4+ stars" and "sort best first" are different
+	// questions, and the app's rating filter needs the former.
+	MinRating float64 `form:"min_rating"`
+	// Featured restricts to editorially curated doctors. Empty result is a valid
+	// answer and means the app hides the section.
+	Featured bool `form:"featured"`
+	Limit    int  `form:"limit,default=20"`
+	Offset   int  `form:"offset,default=0"`
 }

@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { View, Text, ScrollView, StyleSheet, Platform, KeyboardAvoidingView } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import { Colors } from '@/constants/colors';
 import { Spacing } from '@/constants/spacing';
 import { Typography } from '@/constants/typography';
@@ -37,7 +38,7 @@ export default function NewSupportTicketScreen() {
     try {
       const result = await create.mutateAsync({ subject: subject.trim(), category, body: body.trim() });
       await alertAsync({ title: 'Ticket created', message: `${result.ref} has been opened. We'll get back to you shortly.` });
-      router.back();
+      goBack('/support');
     } catch {
       alertAsync({ title: 'Failed', message: 'Could not create your ticket. Please try again.' });
     }

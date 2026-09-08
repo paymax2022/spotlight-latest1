@@ -29,6 +29,7 @@ type Service struct {
 	searcher   Searcher           // optional; nil ⇒ GET /search returns 501 SEARCH_NOT_WIRED
 	commission CommissionRecorder // optional; nil ⇒ realized-profit recording is a no-op
 	realtime   RealtimePublisher  // optional; nil ⇒ no live push (clients poll instead)
+	thumbs     ThumbPresigner     // optional; nil ⇒ listings serve without images
 	// referralEmitter was removed in the listings-and-connect pivot (ADR-023): the
 	// marketplace no longer settles purchases (no escrow release), so there is nothing
 	// to emit to the Direct Referral Rewards engine. See marketplace_routes.go, where
@@ -171,6 +172,145 @@ func (s *Service) GetCategory(ctx context.Context, id string) (*Category, error)
 // fallback (ILIKE title + category/condition/state/price filters, newest-first,
 // LIMIT-bounded) so the mobile search screen still returns real active listings
 // instead of a 501 dead-end. Full facets/relevance/geo ranking only ship with ES.
+// ─── Listing thumbnails ──────────────────────────────────────────────────────
+
+// listingThumbTTL is how long a thumbnail URL stays valid. Long enough that a
+// browse session never sees an image expire mid-scroll, short enough that a
+// leaked URL is not a durable handle on the object.
+const listingThumbTTL = 6 * time.Hour
+
+// WithThumbPresigner attaches the R2 presigner used to turn a stored object key
+// into a fetchable thumbnail URL. Without it listings still serve correctly, just
+// with no images — the same behaviour as before thumbnails existed, rather than
+// a hard failure on a display concern.
+func (s *Service) WithThumbPresigner(p ThumbPresigner) *Service {
+	s.thumbs = p
+	return s
+}
+
+// ThumbPresigner is the slice of the R2 presigner this needs, so the marketplace
+// package does not take a dependency on the whole platform client.
+type ThumbPresigner interface {
+	PresignGet(key string, expiry time.Duration) (string, error)
+	Configured() bool
+}
+
+// presignThumb converts one stored object key into a fetchable URL, or "" when
+// there is no presigner, no key, or signing fails. Never an error: a listing that
+// cannot show its photo is still a listing worth returning.
+func (s *Service) presignThumb(key string) string {
+	if key == "" || s.thumbs == nil || !s.thumbs.Configured() {
+		return ""
+	}
+	url, err := s.thumbs.PresignGet(key, listingThumbTTL)
+	if err != nil {
+		return ""
+	}
+	return url
+}
+
+// attachThumbs fills ThumbURL for a page of listings in ONE media query plus a
+// local signature each (signing is HMAC, no network).
+//
+// The objects sit in a private R2 bucket, so the client cannot fetch a raw key —
+// it needs a signed URL, which is why this happens on read rather than being
+// stored. If a public bucket or CDN binding is configured later, this is the one
+// place that changes.
+func (s *Service) attachThumbs(ctx context.Context, listings []*Listing) {
+	if len(listings) == 0 || s.thumbs == nil || !s.thumbs.Configured() {
+		return
+	}
+	ids := make([]string, 0, len(listings))
+	for _, l := range listings {
+		if l != nil {
+			ids = append(ids, l.ID)
+		}
+	}
+	keys, err := s.repo.ThumbKeysFor(ctx, ids)
+	if err != nil {
+		// Display-only: a listing page must not fail because a thumbnail lookup did.
+		log.Printf("[marketplace] thumbnail lookup failed for %d listing(s): %v", len(ids), err)
+		return
+	}
+	for _, l := range listings {
+		if l != nil {
+			l.ThumbURL = s.presignThumb(keys[l.ID])
+		}
+	}
+}
+
+// attachFullMedia fills Media with every photo on a SINGLE listing, for the
+// detail screen's gallery. Deliberately separate from attachThumbs (which runs
+// on pages of results and only ever needs one thumbnail per card) — a detail
+// view is one listing, so one extra query here costs nothing search/list can't
+// afford to pay per row.
+func (s *Service) attachFullMedia(ctx context.Context, l *Listing) {
+	if l == nil || s.thumbs == nil || !s.thumbs.Configured() {
+		return
+	}
+	rows, err := s.repo.ListMediaForListing(ctx, l.ID)
+	if err != nil {
+		// Display-only, same contract as attachThumbs: a listing must still load
+		// if its gallery lookup fails.
+		log.Printf("[marketplace] full media lookup failed for listing %s: %v", l.ID, err)
+		return
+	}
+	media := make([]ListingMediaItem, 0, len(rows))
+	for _, r := range rows {
+		url := s.presignThumb(r.Key)
+		if url == "" {
+			continue
+		}
+		media = append(media, ListingMediaItem{
+			ID: r.ID, URLThumb: url, URLCard: url, URLFull: url,
+			Blurhash: r.Blurhash, SortOrder: r.SortOrder,
+		})
+	}
+	l.Media = media
+}
+
+// attachMediaForPage is attachFullMedia's batched counterpart, for a PAGE of
+// listings rather than one — the "My Listings" screen (SellerListings) reads
+// listing.media[] per card, same as the detail gallery, not thumb_url like
+// search/browse cards do. One extra query for the whole page, like attachThumbs.
+func (s *Service) attachMediaForPage(ctx context.Context, listings []*Listing) {
+	if len(listings) == 0 || s.thumbs == nil || !s.thumbs.Configured() {
+		return
+	}
+	ids := make([]string, 0, len(listings))
+	for _, l := range listings {
+		if l != nil {
+			ids = append(ids, l.ID)
+		}
+	}
+	rowsByListing, err := s.repo.MediaForListings(ctx, ids)
+	if err != nil {
+		log.Printf("[marketplace] page media lookup failed for %d listing(s): %v", len(ids), err)
+		return
+	}
+	for _, l := range listings {
+		if l == nil {
+			continue
+		}
+		rows := rowsByListing[l.ID]
+		if len(rows) == 0 {
+			continue
+		}
+		media := make([]ListingMediaItem, 0, len(rows))
+		for _, r := range rows {
+			url := s.presignThumb(r.Key)
+			if url == "" {
+				continue
+			}
+			media = append(media, ListingMediaItem{
+				ID: r.ID, URLThumb: url, URLCard: url, URLFull: url,
+				Blurhash: r.Blurhash, SortOrder: r.SortOrder,
+			})
+		}
+		l.Media = media
+	}
+}
+
 func (s *Service) Search(ctx context.Context, req any) (any, error) {
 	if s.searcher != nil {
 		return s.searcher.Search(ctx, req)
@@ -180,6 +320,18 @@ func (s *Service) Search(ctx context.Context, req any) (any, error) {
 	if err != nil {
 		return nil, err
 	}
+	// A nil slice marshals to `results: null`, and the client maps over it. That was
+	// survivable while the fallback answered every market and practically never came
+	// back empty; now that it is scoped, an empty market is an ordinary outcome, so
+	// the empty case has to be a well-formed empty list rather than null.
+	if listings == nil {
+		listings = []Listing{}
+	}
+	ptrs := make([]*Listing, len(listings))
+	for i := range listings {
+		ptrs[i] = &listings[i]
+	}
+	s.attachThumbs(ctx, ptrs)
 	// Shape a search-response-like envelope the mobile client already understands
 	// (results + empty facets + no cursor). `degraded` flags the reduced mode.
 	return map[string]any{
@@ -195,7 +347,10 @@ func (s *Service) Search(ctx context.Context, req any) (any, error) {
 // provider-agnostic request map (values are the raw query-param strings).
 func parseSearchFallback(req any) SearchFallbackFilter {
 	m, _ := req.(map[string]any)
-	f := SearchFallbackFilter{}
+	// Seeded with the market scope so EVERY return path below carries one. The nil
+	// return used to leave MarketID empty, which is the unscoped-search bug again by
+	// the back door — a caller passing a non-map got every market's listings.
+	f := SearchFallbackFilter{MarketID: DefaultMarketID}
 	if m == nil {
 		return f
 	}
@@ -216,6 +371,14 @@ func parseSearchFallback(req any) SearchFallbackFilter {
 			return &n
 		}
 		return nil
+	}
+	// The handler has always put market_id in this map; nothing read it, so the
+	// Postgres fallback searched every market. Default rather than leave it empty:
+	// an unscoped search is the bug, so a caller that forgets the key gets the
+	// default market, never all of them.
+	f.MarketID = getStr("market_id")
+	if f.MarketID == "" {
+		f.MarketID = DefaultMarketID
 	}
 	f.Q = getStr("q")
 	f.CategoryID = getStr("category_id")
@@ -245,13 +408,52 @@ func (s *Service) SellerProfile(ctx context.Context, sellerID string) (*TrustPro
 }
 
 // SellerListings returns a seller's listings.
+// SellerListings is the PUBLIC storefront read (GET /sellers/:id/listings, no
+// auth) — a buyer browsing a seller's portfolio, so only ever active listings
+// (never a draft/pending_review/paused/removed_user row a buyer has no
+// business seeing). This route has no auth middleware at all (base group,
+// marketplace_routes.go), so there is no caller identity to compare against
+// :id here — see MyListingsForSeller for the seller's own, all-statuses view.
 func (s *Service) SellerListings(ctx context.Context, sellerID string, limit, offset int) ([]Listing, error) {
-	return s.repo.ListSellerListings(ctx, sellerID, limit, offset)
+	return s.sellerListingsWithMedia(ctx, sellerID, limit, offset, true)
 }
 
-// SellerReviews returns a seller's visible reviews.
-func (s *Service) SellerReviews(ctx context.Context, sellerID string, limit, offset int) ([]Review, error) {
-	return s.repo.ListSellerReviews(ctx, sellerID, limit, offset)
+// MyListingsForSeller is the AUTHENTICATED self-view (GET /listings/mine) —
+// the seller managing their own listings needs every status (draft awaiting
+// submit, pending_review, paused, expired, sold, removed) to act on it, which
+// is exactly what a buyer must never see through SellerListings above.
+func (s *Service) MyListingsForSeller(ctx context.Context, sellerID string, limit, offset int) ([]Listing, error) {
+	return s.sellerListingsWithMedia(ctx, sellerID, limit, offset, false)
+}
+
+func (s *Service) sellerListingsWithMedia(ctx context.Context, sellerID string, limit, offset int, onlyActive bool) ([]Listing, error) {
+	ls, err := s.repo.ListSellerListings(ctx, sellerID, limit, offset, onlyActive)
+	if err != nil {
+		return nil, err
+	}
+	// This backs the "My listings" screen too — the one a seller checks right
+	// after uploading photos, so it is the last place that should show a
+	// placeholder. attachThumbs covers thumb_url; attachMediaForPage
+	// additionally covers media[], which is what the screen actually reads for
+	// its card photo.
+	ptrs := make([]*Listing, len(ls))
+	for i := range ls {
+		ptrs[i] = &ls[i]
+	}
+	s.attachThumbs(ctx, ptrs)
+	s.attachMediaForPage(ctx, ptrs)
+	return ls, nil
+}
+
+// SellerReviews returns a seller's visible reviews — mkt_deal_reviews
+// (thread-keyed, ADR-023), NOT the dead order-keyed mkt_reviews table
+// ListSellerReviews still reads. Every review since ADR-023 removed escrow
+// orders has been written via SubmitDealReview into mkt_deal_reviews; the old
+// table has taken no new rows since, so a seller's real reviews were never
+// reaching this endpoint (and the JSON shape didn't even match the mobile
+// Review type's camelCase contract — see ListRevieweeDealReviews's doc).
+func (s *Service) SellerReviews(ctx context.Context, sellerID string, limit, offset int) ([]DealReview, error) {
+	return s.repo.ListRevieweeDealReviews(ctx, sellerID, limit, offset)
 }
 
 // ─── Verification (delegates to KYC provider elsewhere; badges are PERMANENT) ──
@@ -272,6 +474,19 @@ func (s *Service) VerifyBusiness(ctx context.Context, userID string) error {
 
 // CreateOffer places a pending offer on a listing.
 func (s *Service) CreateOffer(ctx context.Context, buyerID, listingID string, offerKobo int64, message string) (*Offer, error) {
+	// Guard before the fetch: an empty listingID reached the repository and
+	// surfaced as 500 "invalid input syntax for type uuid".
+	//
+	// This guard was originally added believing the caller was misspelling
+	// listingId as listing_id. That had it backwards — snake_case IS the wire
+	// name (contracts/openapi.yaml), and the mobile client cannot send anything
+	// else, since it snake-cases every outbound body. The real fault was the
+	// handler reading camelCase, so this guard converted a 500 into a 400 and
+	// left the endpoint just as unreachable. Handler fixed; guard kept, because
+	// an empty listing ID is still a caller error worth naming.
+	if strings.TrimSpace(listingID) == "" {
+		return nil, fieldErr(CodeValidation, "listing_id is required", "listing_id")
+	}
 	l, err := s.repo.GetListing(ctx, listingID)
 	if err != nil {
 		return nil, err

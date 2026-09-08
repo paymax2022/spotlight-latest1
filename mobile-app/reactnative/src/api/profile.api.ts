@@ -158,6 +158,66 @@ export async function updateProfile(payload: Partial<ProfileDetails>): Promise<P
   return profileFromApi(asRow(body.profile ?? body));
 }
 
+/**
+ * Writes details the user has just confirmed elsewhere into the BLANK columns of
+ * their profile, so no other form has to ask for them again.
+ *
+ * Three deliberate limits:
+ *
+ *  1. **Blanks only — never an overwrite.** Date of birth in particular is
+ *     KYC-adjacent; a value the user has already established must not be
+ *     rewritten by a module that happens to collect it again.
+ *  2. **Only these three columns.** Notably NOT the name: a Connect display name
+ *     is a chosen handle, and writing it to `full_name` would replace the user's
+ *     real name with it.
+ *  3. **A targeted column update, not `updateProfile()`.** `PUT /api/me/profile`
+ *     upserts a WIDE payload built from the patch, so every field the patch
+ *     omits is written as NULL — sending `{dateOfBirth}` alone would wipe the
+ *     user's name and phone. This writes named columns directly instead.
+ *
+ * Best-effort: returns the columns it actually wrote, or `[]` if it could not
+ * write at all. Callers must not block on the result.
+ */
+export async function fillProfileGaps(values: {
+  dateOfBirth?: string;
+  gender?: string;
+  state?: string;
+}): Promise<string[]> {
+  try {
+    const supabase = createSupabaseClient();
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return [];
+
+    const { data, error } = await supabase
+      .from('user_profiles')
+      .select('date_of_birth, gender, state')
+      .eq('id', user.id)
+      .maybeSingle();
+    if (error) return [];
+
+    const current = asRow(data ?? {});
+    const patch: Record<string, string> = {};
+    // `str()` treats '' and whitespace as absent — several of these columns hold
+    // '' rather than NULL, and an empty string is not an answer.
+    if (!str(current.date_of_birth) && str(values.dateOfBirth)) {
+      patch.date_of_birth = values.dateOfBirth!.trim();
+    }
+    if (!str(current.gender) && str(values.gender)) patch.gender = values.gender!.trim();
+    if (!str(current.state) && str(values.state)) patch.state = values.state!.trim();
+
+    const written = Object.keys(patch);
+    if (written.length === 0) return [];
+
+    const { error: updateError } = await supabase
+      .from('user_profiles')
+      .update(patch)
+      .eq('id', user.id);
+    return updateError ? [] : written;
+  } catch {
+    return [];
+  }
+}
+
 export async function submitKyc(payload: {
   requestedTier: 1 | 2 | 3;
   documentType: KycDocumentType;

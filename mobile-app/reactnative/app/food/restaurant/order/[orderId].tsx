@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { View, Text, ScrollView, StyleSheet, Pressable } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import { confirmAsync, alertAsync } from '@/lib/confirm';
 import * as Icons from 'lucide-react-native';
 import StateView from '@/components/StateView';
@@ -16,6 +17,7 @@ import { useOrderRealtime } from '@/features/food/useOrderRealtime';
 import { OrderChatThread, FoodStatusBadge, RiderInfoCard } from '@/features/food/components';
 import { formatNaira, STATUS_LABEL, DISPATCH_LABEL, normalizeStatus, toFoodError } from '@/features/food/utils';
 import type { OrderStatus } from '@/features/food/types';
+import { HomeMenuButton } from '@/components/HomeMenu';
 
 type Tab = 'order' | 'chat';
 
@@ -65,11 +67,14 @@ export default function RestaurantOrderScreen() {
   return (
     <SafeAreaView style={s.safe} edges={['top']}>
       <View style={s.topBar}>
-        <Pressable onPress={() => router.back()} style={s.iconButton} accessibilityLabel="Go back">
+        <Pressable onPress={() => goBack('/food/restaurant')} style={s.iconButton} accessibilityLabel="Go back">
           <Icons.ArrowLeft size={22} color={Colors.primary} strokeWidth={2.2} />
         </Pressable>
         <Text style={s.topTitle}>Manage order</Text>
-        <View style={s.iconButton}>{realtime.live ? <View style={s.liveDot} /> : null}</View>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+          <View style={s.iconButton}>{realtime.live ? <View style={s.liveDot} /> : null}</View>
+          <HomeMenuButton />
+        </View>
       </View>
 
       {isLoading ? (

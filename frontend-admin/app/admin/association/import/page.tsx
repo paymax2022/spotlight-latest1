@@ -6,17 +6,17 @@ import {
   type ImportPreviewResult,
 } from '@/services/associationAdminService';
 import {
-  AssociationTabs, DisclosureNote, AuditNote,
+  AssociationTabs, DisclosureNote, AuditNote, OrgPicker, useSelectedOrg,
   useAssociationPermissions, ASSOCIATION_PERMS, PermissionBanner,
 } from '../_ui';
-import { Page, PageHeader, Card, Button, Input, colors, tint, thCell, tdCell } from '@/components/ui/vuexy';
+import { Page, PageHeader, Card, Button, colors, tint, thCell, tdCell } from '@/components/ui/vuexy';
 
 export default function AssociationImportPage() {
   const { can } = useAssociationPermissions();
   const canManage = can(ASSOCIATION_PERMS.manage);
+  const orgId = useSelectedOrg();
 
   const fileRef = useRef<HTMLInputElement>(null);
-  const [orgId, setOrgId] = useState('');
   const [file, setFile] = useState<File | null>(null);
   const [preview, setPreview] = useState<ImportPreviewResult | null>(null);
   const [sendInvites, setSendInvites] = useState(true);
@@ -27,9 +27,9 @@ export default function AssociationImportPage() {
 
   async function doPreview() {
     if (!file) { setError('Choose a CSV file first.'); return; }
-    if (!orgId.trim()) { setError('Organisation ID is required.'); return; }
+    if (!orgId) { setError('Select an organisation above first.'); return; }
     setLoading(true); setError(null); setMsg(null); setPreview(null);
-    try { setPreview(await previewImport(orgId.trim(), file)); }
+    try { setPreview(await previewImport(orgId, file)); }
     catch (e) { setError(String(e)); }
     finally { setLoading(false); }
   }
@@ -53,10 +53,10 @@ export default function AssociationImportPage() {
   // admin see duplicates/invalid rows before anything persists).
   async function doBulkImportDirect() {
     if (!file) { setError('Choose a CSV file first.'); return; }
-    if (!orgId.trim()) { setError('Organisation ID is required.'); return; }
+    if (!orgId) { setError('Select an organisation above first.'); return; }
     setConfirming(true); setError(null); setMsg(null);
     try {
-      const res = await bulkImportMembers(orgId.trim(), file);
+      const res = await bulkImportMembers(orgId, file);
       setMsg(`Direct import complete — ${res.imported} member(s) imported. Recorded to audit log (NL-12).`);
       setFile(null); setPreview(null);
       if (fileRef.current) fileRef.current.value = '';
@@ -71,6 +71,7 @@ export default function AssociationImportPage() {
         subtitle="Upload a CSV of members, review the preview (valid / duplicate / invalid rows), then confirm to persist and optionally send invites."
       />
       <AssociationTabs active="import" />
+      <OrgPicker />
       <DisclosureNote>
         Preview via <code>POST /api/finance/associations/admin/import/preview</code>, confirm via{' '}
         <code>POST /api/finance/associations/admin/import/confirm</code>. Nothing persists until you confirm.
@@ -83,10 +84,6 @@ export default function AssociationImportPage() {
 
       <Card title="1. Upload CSV">
         <div style={{ display: 'flex', gap: '0.6rem', flexWrap: 'wrap', alignItems: 'flex-end', marginTop: 12 }}>
-          <div style={{ minWidth: 220 }}>
-            <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, color: colors.text, marginBottom: '0.25rem' }}>Organisation ID</label>
-            <Input value={orgId} onChange={(e) => setOrgId(e.target.value)} placeholder="Org uuid" disabled={!canManage} />
-          </div>
           <div>
             <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, color: colors.text, marginBottom: '0.25rem' }}>CSV file</label>
             <input ref={fileRef} type="file" accept=".csv,text/csv" disabled={!canManage} onChange={(e) => setFile(e.target.files?.[0] ?? null)} />

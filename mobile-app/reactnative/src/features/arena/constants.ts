@@ -2,13 +2,14 @@
 // Single source of truth for the progress stepper, human labels, NDC-1 copy, and
 // the 36 states + FCT selector. Keeps screens declarative.
 
+import { mockAllowed } from '@/config/mockPolicy';
 import type { ContestantState, MeritStage, QuizStage } from './types';
 
 // Dev/offline mode: when true (the default), the arena api returns mock data
 // WITHOUT calling the backend — so the spectator screens are walkable and the
 // console isn't spammed with 404s. Set EXPO_PUBLIC_ARENA_USE_MOCK=false once the
 // Go /api/arena backend is live.
-export const USE_MOCK = (process.env.EXPO_PUBLIC_ARENA_USE_MOCK ?? 'true') !== 'false';
+export const USE_MOCK = mockAllowed(process.env.EXPO_PUBLIC_ARENA_USE_MOCK, true);
 
 /**
  * NDC-1 transparency note — surfaced anywhere Support money or Play-Along

@@ -2,6 +2,7 @@ import React from 'react';
 import { View, Text, ScrollView, StyleSheet, Pressable } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import { MapPin, User, FileCheck, AlertTriangle, X } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
@@ -114,7 +115,7 @@ export default function DeliveryDetailScreen() {
 
       <View style={styles.footer}>
         {CANCELLABLE.includes(d.status) ? (
-          <Pressable style={styles.cancelBtn} onPress={() => id && cancel.mutate(id, { onSuccess: () => router.back() })} disabled={cancel.isPending}>
+          <Pressable style={styles.cancelBtn} onPress={() => id && cancel.mutate(id, { onSuccess: () => goBack('/mobility/business') })} disabled={cancel.isPending}>
             <X size={16} color={Colors.error} strokeWidth={2} />
             <Text style={styles.cancelText}>{cancel.isPending ? 'Cancelling…' : 'Cancel & void delivery'}</Text>
           </Pressable>

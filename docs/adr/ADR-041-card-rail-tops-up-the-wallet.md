@@ -2,7 +2,7 @@
 
 - **Status:** Accepted
 - **Date:** 2026-08-14
-- **Related:** [ADR-040](ADR-040-telemedicine-platform-booking-fee.md) (the review
+- **Related:** [ADR-044](ADR-044-telemedicine-platform-booking-fee.md) (the review
   that surfaced this), [ADR-030](ADR-030-fx-paymax-markup.md) /
   [ADR-029](ADR-029-orch-ledger-per-currency-double-entry.md) (one ledger, balanced)
 
@@ -36,8 +36,8 @@ Two consequences, both real money:
   *default* case for a customer paying by card precisely because their wallet is
   empty.
 
-A ledger-auditor review of the telemedicine platform fee (ADR-040) surfaced this.
-It also means ADR-040's guards — "reject before any money moves" — were only ever
+A ledger-auditor review of the telemedicine platform fee (ADR-044) surfaced this.
+It also means ADR-044's guards — "reject before any money moves" — were only ever
 true of the wallet rail: on the card rail the PSP charge had already completed, so
 a rejection destroyed the customer's money rather than protecting it.
 
@@ -123,7 +123,7 @@ earlier, and a PIN would be a second authorisation for one payment.
   ordinary path.
 - No module changed. All 54 checkouts inherit the fix, because `charge()` already
   did the wallet debit.
-- ADR-040's expected-total guard becomes truthful on both rails: the 409 now fires
+- ADR-044's expected-total guard becomes truthful on both rails: the 409 now fires
   before the wallet is debited, and any card money already taken is sitting in the
   customer's wallet rather than lost at the PSP.
 

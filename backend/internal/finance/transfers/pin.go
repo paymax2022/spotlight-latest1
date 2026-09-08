@@ -24,6 +24,20 @@ const (
 	pinLockWindow  = 15 * time.Minute
 )
 
+// PinAttemptError carries how many tries remain before the lockout bites.
+//
+// Without it every wrong PIN looks identical to the customer, who then guesses
+// their way into a 15-minute lock with no warning that they were one attempt
+// away. errors.Is still matches the wrapped sentinel, so every existing status
+// and code mapping is unaffected.
+type PinAttemptError struct {
+	Err       error
+	Remaining int
+}
+
+func (e *PinAttemptError) Error() string { return e.Err.Error() }
+func (e *PinAttemptError) Unwrap() error { return e.Err }
+
 // pinStore wraps user_transaction_pin access.
 type pinStore struct {
 	db *pgxpool.Pool
@@ -115,5 +129,5 @@ func (p *pinStore) Verify(ctx context.Context, userID, pin string) error {
 	}
 	_, _ = p.db.Exec(ctx,
 		`UPDATE user_transaction_pin SET failed_attempts=$2, updated_at=now() WHERE user_id=$1`, userID, row.FailedAttempts+1)
-	return ErrPinInvalid
+	return &PinAttemptError{Err: ErrPinInvalid, Remaining: maxPinFailures - (row.FailedAttempts + 1)}
 }
