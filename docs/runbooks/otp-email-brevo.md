@@ -350,19 +350,30 @@ product work end to end.
    `{{ params.EXPIRY_MINUTES }}` — renaming one ships a blank code and nothing on
    our side fails.
 4. **`OTP_PEPPER`** (`openssl rand -base64 32`), per environment.
-5. **Client work — nothing calls these endpoints yet.** This is the big one:
-   `POST /api/auth/otp/{request,verify}` and the code form of
-   `/api/auth/reset-password` have **no caller** in mobile or web. Mobile still
-   calls `supabase.auth.verifyOtp` and `supabase.auth.resend` directly.
+5. ~~Client work~~ — **done.** Mobile and web now call these endpoints.
 
-   That is not merely "unused". With `FEATURE_OTP_EMAIL_ENABLED` on, registration
-   takes the silent admin path, so **GoTrue never mints a confirmation code** —
-   and `supabase.auth.verifyOtp` has nothing to verify. **Enabling the flag before
-   the clients are repointed breaks mobile registration.** `supabase.auth.resend`
-   is an escape hatch that works, but only by sending Supabase's own email again,
-   which puts the two-systems problem straight back.
+   The clients go through the Next.js gateway routes, as `register` and `login`
+   already did, and each route is **Go-first with a Supabase fallback**: it tries
+   the Go backend and falls back to the Supabase call it used to make when Go
+   says the feature is closed, or cannot be reached. So the cutover is a
+   server-side flag flip with no client deploy, and shipping the repoint cannot
+   break an environment where the flag is off.
 
-   So: repoint the clients first, or keep the flag off.
+   The fallback is deliberately narrow. A wrong or expired code is passed through
+   verbatim — re-asking Supabase about a code it never issued would turn one
+   clear error into a confusing second one, and on the reset path would hand a
+   wrong code a second chance.
+
+   Two behaviours changed for users, both unavoidable:
+
+   - **Verifying a sign-up no longer signs you in.** Supabase's signup OTP
+     established a session; the server-issued one confirms the account and stops,
+     because control of a mailbox is not proof of the password. The response
+     carries `signedIn` and both clients branch on it — mobile routes to the login
+     screen with "Email verified. Please sign in.", web does the same.
+   - **A sign-in code cannot be resent from the code screen.** Login codes are not
+     self-issuable (that refusal is what keeps the step-up a second factor rather
+     than passwordless sign-in), so the screen says to enter the password again.
 
 Separately, and not blocking the OTP module: **Supabase SMTP** (audit B1) is what
 the password-reset LINK needs on the cloud projects, and the cloud copies of the

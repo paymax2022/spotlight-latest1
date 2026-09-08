@@ -12,7 +12,7 @@ import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
 import { Spacing } from '@/constants/spacing';
 import { useAuthStore } from '@/store/authStore';
-import { EmailNotConfirmedError } from '@/api/auth.api';
+import { EmailNotConfirmedError, MfaRequiredError } from '@/api/auth.api';
 import { getErrorMessage } from '@/utils/errorMapper';
 
 // Sign in with EITHER an email or a phone number. The field is validated loosely on
@@ -27,7 +27,7 @@ type Form = z.infer<typeof schema>;
 export default function LoginScreen() {
   const { login } = useAuthStore();
   const [apiError, setApiError] = useState('');
-  const { returnTo } = useLocalSearchParams<{ returnTo?: string }>();
+  const { returnTo, notice } = useLocalSearchParams<{ returnTo?: string; notice?: string }>();
 
   const { control, handleSubmit, formState: { errors, isSubmitting } } = useForm<Form>({
     resolver: zodResolver(schema),
@@ -51,6 +51,13 @@ export default function LoginScreen() {
       // enter their code rather than showing a credentials error they cannot act on.
       if (err instanceof EmailNotConfirmedError) {
         router.push({ pathname: '/(auth)/verify-otp', params: { email: err.email } });
+        return;
+      }
+      // The password was CORRECT and a second factor is now required. Same code
+      // screen, different redemption endpoint — mode=login makes it redeem the
+      // sign-in code (which returns a session) rather than a sign-up code.
+      if (err instanceof MfaRequiredError) {
+        router.push({ pathname: '/(auth)/verify-otp', params: { email: err.email, mode: 'login' } });
         return;
       }
       // authAttempt: a 401 HERE means the credentials were rejected. Without it
@@ -102,6 +109,10 @@ export default function LoginScreen() {
         <Text style={styles.forgotText}>Forgot password?</Text>
       </Pressable>
 
+      {/* Set when the user arrives here straight after verifying their email:
+          server-issued verification confirms the account without signing anyone
+          in, so landing on a bare login screen would look like the code failed. */}
+      {notice && !apiError ? <Text style={styles.notice}>{notice}</Text> : null}
       {apiError ? <Text style={styles.apiError}>{apiError}</Text> : null}
 
       <PrimaryButton label="Sign In" onPress={handleSubmit(onSubmit)} loading={isSubmitting} />
@@ -125,6 +136,7 @@ const styles = StyleSheet.create({
   forgot:      { alignSelf: 'flex-end', marginBottom: Spacing.lg, marginTop: -Spacing.xs },
   forgotText:  { ...Typography.labelMd, color: Colors.secondary },
   apiError:    { ...Typography.labelSm, color: Colors.error, textAlign: 'center', marginBottom: Spacing.md },
+  notice:      { ...Typography.labelSm, color: Colors.teal, textAlign: 'center', marginBottom: Spacing.md },
   dividerRow:  { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm, marginVertical: Spacing.lg },
   line:        { flex: 1, height: 1, backgroundColor: Colors.outlineVariant },
   orText:      { ...Typography.labelSm, color: Colors.outline },

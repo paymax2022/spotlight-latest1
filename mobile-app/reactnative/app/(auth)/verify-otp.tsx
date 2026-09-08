@@ -19,7 +19,11 @@ import { otpLength, distributeOtpInput, nextOtpFocus } from '@/features/auth/otp
 const OTP_LENGTH = otpLength();
 
 export default function VerifyOtpScreen() {
-  const { email } = useLocalSearchParams<{ email: string }>();
+  // mode distinguishes the two things this screen redeems. 'login' is the
+  // sign-in second factor, which returns a SESSION; the default is the sign-up
+  // code, which confirms the account and returns none.
+  const { email, mode } = useLocalSearchParams<{ email: string; mode?: string }>();
+  const isLoginStepUp = mode === 'login';
   const { setUser } = useAuthStore();
   const [otp, setOtp]         = useState<string[]>(Array(OTP_LENGTH).fill(''));
   const [loading, setLoading] = useState(false);
@@ -48,7 +52,30 @@ export default function VerifyOtpScreen() {
     if (code.length < OTP_LENGTH) { setApiError(`Enter all ${OTP_LENGTH} digits.`); return; }
     setApiError(''); setLoading(true);
     try {
-      await authApi.verifyOtp({ email: email ?? '', otp: code });
+      if (isLoginStepUp) {
+        // Redeeming the sign-in code returns a session directly; there is no
+        // "verified, now go and log in" step, because logging in is what this IS.
+        const result = await authApi.verifyLoginOtp({ email: email ?? '', otp: code });
+        setUser(result.user);
+        router.replace('/(tabs)/home');
+        return;
+      }
+
+      const { signedIn } = await authApi.verifyOtp({ email: email ?? '', otp: code });
+
+      // The two verification backends differ here and the screen has to branch.
+      // Supabase's signup OTP signs the user in; the server-issued one confirms
+      // the account and stops, because control of a mailbox is not proof of the
+      // password. Calling getMe() without a session would fail and show the user
+      // an error after a verification that actually SUCCEEDED.
+      if (!signedIn) {
+        router.replace({
+          pathname: '/(auth)/login',
+          params: { notice: 'Email verified. Please sign in.' },
+        });
+        return;
+      }
+
       const user = await authApi.getMe();
       setUser(user);
       router.replace('/(tabs)/home');
@@ -62,6 +89,14 @@ export default function VerifyOtpScreen() {
   const handleResend = async () => {
     setResendMsg(''); setApiError(''); setResending(true);
     try {
+      if (isLoginStepUp) {
+        // Sign-in codes are issued only by the password step — /otp/request
+        // refuses purpose=login, and that refusal is what keeps this a second
+        // factor rather than passwordless sign-in. So resending means signing in
+        // again.
+        setApiError('To get a new sign-in code, enter your password again.');
+        return;
+      }
       await authApi.resendOtp({ email: email ?? '' });
       setResendMsg('A new code has been sent.');
     } catch (err) {
@@ -72,7 +107,11 @@ export default function VerifyOtpScreen() {
   };
 
   return (
-    <AuthScreenWrapper title="Verify your email" subtitle={`Enter the 6-digit code sent to ${email ?? 'your email'}.`} showBack>
+    <AuthScreenWrapper
+      title={isLoginStepUp ? 'Finish signing in' : 'Verify your email'}
+      subtitle={`Enter the ${OTP_LENGTH}-digit code sent to ${email ?? 'your email'}.`}
+      showBack
+    >
       <View style={styles.otpRow}>
         {otp.map((digit, i) => (
           <TextInput

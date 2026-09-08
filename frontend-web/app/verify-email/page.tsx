@@ -13,10 +13,9 @@
  * from the email and calls verifyOtp with type 'signup'.
  */
 
-import { Suspense, useEffect, useMemo, useRef, useState } from 'react';
+import { Suspense, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { createClient } from '@/lib/supabase/client';
 import { otpLength, distributeOtpInput, nextOtpFocus } from '@/src/features/auth/otp';
 
 const RESEND_COOLDOWN_S = 60;
@@ -37,7 +36,6 @@ function readableError(err: unknown, fallback: string): string {
 }
 
 function VerifyEmailInner() {
-  const supabase = useMemo(() => createClient(), []);
   const router = useRouter();
   const params = useSearchParams();
   const email = (params?.get('email') || '').trim().toLowerCase();
@@ -86,10 +84,29 @@ function VerifyEmailInner() {
     if (!email) { setError('We do not know which address to verify. Please sign up again.'); return; }
     setBusy(true); setError(''); setInfo('');
     try {
-      // 'signup', not 'email' — 'email' is for an email CHANGE confirmation.
-      const { error: e } = await supabase.auth.verifyOtp({ email, token, type: 'signup' });
-      if (e) throw e;
-      router.replace(next);
+      // Through /api/auth/verify-otp rather than supabase.auth directly. Once
+      // server-issued OTP is on, registration creates the account through
+      // GoTrue's admin endpoint, so GoTrue never mints a code for verifyOtp to
+      // check — the direct call would fail for every newly registered user. The
+      // route handles both worlds and falls back to Supabase while the feature
+      // is off.
+      const res = await fetch('/api/auth/verify-otp', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, otp: token }),
+      });
+      const body = await res.json().catch(() => null);
+      if (!res.ok) throw new Error(body?.error || 'Verification failed. Please try again.');
+
+      // The two backends differ here. Supabase's signup OTP signs the user in;
+      // the server-issued one confirms the account and stops, because control of
+      // a mailbox is not proof of the password. Continuing to `next` without a
+      // session would land on a page that bounces straight back to sign-in.
+      if (body?.signedIn) {
+        router.replace(next);
+      } else {
+        router.replace(`/login?notice=${encodeURIComponent('Email verified. Please sign in.')}`);
+      }
     } catch (err) {
       setError(readableError(err, 'Verification failed. Please try again.'));
       setCode(Array(LENGTH).fill(''));
@@ -102,8 +119,16 @@ function VerifyEmailInner() {
     if (!email || cooldown > 0) return;
     setResending(true); setError(''); setInfo('');
     try {
-      const { error: e } = await supabase.auth.resend({ type: 'signup', email });
-      if (e) throw e;
+      const res = await fetch('/api/auth/resend-otp', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email }),
+      });
+      const body = await res.json().catch(() => null);
+      // A 429 is the server's cooldown or hourly budget. Surfaced rather than
+      // swallowed: a user told "sent" who receives nothing cannot tell a throttle
+      // from a delivery failure.
+      if (!res.ok) throw new Error(body?.error || 'Could not resend the code. Please try again.');
       setInfo('A new code is on its way. It can take a minute to arrive.');
       // The project allows very few verification emails per hour, so make the
       // wait explicit rather than letting people burn the quota on retries.
