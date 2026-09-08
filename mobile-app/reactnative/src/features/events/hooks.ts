@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import * as api from './api';
-import type { CreateEventInput, PurchaseTicketInput, GiftTicketInput, TopUpSource } from './types';
+import type { CreateEventInput, PurchaseTicketInput, GiftTicketInput, TopUpSource, GateToken, Gate } from './types';
 
 const KEYS = {
   events:    (params?: { category?: string; state?: string }) => ['events', 'list', params ?? {}] as const,
@@ -138,6 +138,6 @@ export function useCloseEventWallet(walletId: string) {
 
 export function useValidateScan() {
   return useMutation({
-    mutationFn: (credentialId: string) => api.validateScan(credentialId),
+    mutationFn: ({ token, gate }: { token: GateToken; gate: Gate }) => api.validateScan(token, gate),
   });
 }

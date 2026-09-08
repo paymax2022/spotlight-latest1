@@ -1,8 +1,9 @@
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import { View, Text, ScrollView, StyleSheet, Pressable } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLocalSearchParams } from 'expo-router';
-import { ScanLine, CheckCircle2, XCircle, WifiOff, Camera } from 'lucide-react-native';
+import { CameraView, useCameraPermissions } from 'expo-camera';
+import { ScanLine, CheckCircle2, XCircle, WifiOff, Camera, CameraOff, Keyboard } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
 import { Spacing } from '@/constants/spacing';
@@ -12,7 +13,7 @@ import PrimaryButton from '@/components/PrimaryButton';
 import TextInputField from '@/components/TextInputField';
 import { useValidateScan } from '@/features/events/hooks';
 import { EventColors } from '@/features/events/constants/events.constants';
-import type { ScanResult } from '@/features/events/types';
+import type { ScanResult, GateToken, Gate } from '@/features/events/types';
 
 const OUTCOME: Record<ScanResult['outcome'], { title: string; ok: boolean; color: string; bg: string }> = {
   'valid':       { title: 'Admit guest',     ok: true,  color: EventColors.ok,       bg: EventColors.okBg },
@@ -22,33 +23,95 @@ const OUTCOME: Record<ScanResult['outcome'], { title: string; ok: boolean; color
 };
 
 export default function StewardScan() {
-  useLocalSearchParams<{ eventId: string }>();
+  const { eventId } = useLocalSearchParams<{ eventId: string }>();
   const validate = useValidateScan();
-  const [code, setCode] = useState('');
+  const [pasted, setPasted] = useState('');
   const [result, setResult] = useState<ScanResult | null>(null);
+  const [parseError, setParseError] = useState<string | null>(null);
+  const [permission, requestPermission] = useCameraPermissions();
+  const scanning = useRef(false);
 
-  const scan = async (payload: string) => {
+  // v1: one default gate per event. Multi-gate management (named gates an
+  // organiser configures) is a further feature, not built here.
+  const gate: Gate = { id: `${eventId ?? 'unknown'}:main`, name: 'Main Entrance' };
+
+  const scan = async (token: GateToken) => {
     setResult(null);
-    const res = await validate.mutateAsync(payload);
+    setParseError(null);
+    const res = await validate.mutateAsync({ token, gate });
     setResult(res);
   };
+
+  // The QR encodes the real server-issued token as JSON (see
+  // app/events/ticket/[id].tsx / GateToken) — never a bare credential id, so a
+  // screenshot of someone typing digits can't forge a scan.
+  const parseToken = (raw: string): GateToken | null => {
+    try {
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed.cid === 'string' && typeof parsed.sig === 'string') return parsed as GateToken;
+    } catch {
+      // fall through
+    }
+    return null;
+  };
+
+  const onBarcodeScanned = ({ data }: { data: string }) => {
+    if (scanning.current) return;
+    const token = parseToken(data);
+    if (!token) {
+      setParseError("That QR isn't a valid ticket pass.");
+      return;
+    }
+    scanning.current = true;
+    scan(token).finally(() => { setTimeout(() => { scanning.current = false; }, 1500); });
+  };
+
+  const submitPasted = () => {
+    const token = parseToken(pasted.trim());
+    if (!token) { setParseError("Couldn't read that as a ticket pass — paste the full code from the attendee's app."); return; }
+    scan(token);
+  };
+
+  const cameraGranted = permission?.granted ?? false;
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
       <ScreenHeader title="Scan tickets" subtitle="Steward check-in" />
       <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
-        {/* Camera viewfinder placeholder (camera module not bundled). */}
         <View style={styles.viewfinder}>
-          <Camera size={36} color={Colors.inverseOnSurface} strokeWidth={1.4} />
-          <Text style={styles.viewfinderText}>Point camera at the attendee's QR pass</Text>
-          <View style={styles.scanFrame}>
+          {cameraGranted ? (
+            <CameraView
+              style={StyleSheet.absoluteFill}
+              facing="back"
+              barcodeScannerSettings={{ barcodeTypes: ['qr'] }}
+              onBarcodeScanned={onBarcodeScanned}
+            />
+          ) : (
+            <>
+              <Camera size={36} color={Colors.inverseOnSurface} strokeWidth={1.4} />
+              {permission && !permission.granted && !permission.canAskAgain ? (
+                <Text style={styles.viewfinderText}>Camera access denied — enable it in Settings</Text>
+              ) : (
+                <Pressable onPress={requestPermission} style={styles.grantBtn} accessibilityRole="button">
+                  <CameraOff size={18} color={EventColors.ok} strokeWidth={1.8} />
+                  <Text style={styles.grantText}>Grant camera access</Text>
+                </Pressable>
+              )}
+            </>
+          )}
+          <View style={styles.scanFrame} pointerEvents="none">
             <ScanLine size={40} color={EventColors.ok} strokeWidth={1.4} />
           </View>
+          {cameraGranted ? <Text style={styles.viewfinderCaption}>Point camera at the attendee's QR pass</Text> : null}
         </View>
 
-        <Text style={styles.or}>or enter the credential id manually</Text>
-        <TextInputField placeholder="cred_xxxxxxxx" autoCapitalize="none" value={code} onChangeText={setCode} />
-        <PrimaryButton label="Validate" loading={validate.isPending} onPress={() => scan(code || 'cred_9x2k')} />
+        <View style={styles.manualHeader}>
+          <Keyboard size={16} color={EventColors.muted} strokeWidth={1.8} />
+          <Text style={styles.or}>Can't scan? Paste the code from the attendee's app</Text>
+        </View>
+        <TextInputField placeholder="Paste ticket pass code" autoCapitalize="none" value={pasted} onChangeText={setPasted} />
+        {parseError ? <Text style={styles.parseError}>{parseError}</Text> : null}
+        <PrimaryButton label="Validate" loading={validate.isPending} disabled={!pasted.trim()} onPress={submitPasted} />
 
         {result ? (
           <View style={[styles.resultCard, { backgroundColor: OUTCOME[result.outcome].bg }]}>
@@ -63,7 +126,7 @@ export default function StewardScan() {
                 <Text style={styles.offlineText}>Validated offline — will sync when online</Text>
               </View>
             ) : null}
-            <Pressable onPress={() => { setResult(null); setCode(''); }} style={styles.nextBtn}>
+            <Pressable onPress={() => { setResult(null); setPasted(''); setParseError(null); }} style={styles.nextBtn}>
               <Text style={styles.nextText}>Scan next</Text>
             </Pressable>
           </View>
@@ -79,10 +142,15 @@ export default function StewardScan() {
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: Colors.background },
   scroll: { paddingHorizontal: Spacing.containerMargin, gap: Spacing.md, paddingTop: Spacing.sm },
-  viewfinder: { height: 220, borderRadius: Radius.xl, backgroundColor: Colors.backdropDark, alignItems: 'center', justifyContent: 'center', gap: Spacing.sm },
-  viewfinderText: { ...Typography.bodySm, color: Colors.inverseOnSurface },
-  scanFrame: { width: 120, height: 120, borderRadius: Radius.lg, borderWidth: 2, borderColor: EventColors.ok, alignItems: 'center', justifyContent: 'center', marginTop: Spacing.sm },
-  or: { ...Typography.bodySm, color: EventColors.muted, textAlign: 'center' },
+  viewfinder: { height: 220, borderRadius: Radius.xl, backgroundColor: Colors.backdropDark, alignItems: 'center', justifyContent: 'center', gap: Spacing.sm, overflow: 'hidden' },
+  viewfinderText: { ...Typography.bodySm, color: Colors.inverseOnSurface, textAlign: 'center', paddingHorizontal: Spacing.lg },
+  viewfinderCaption: { position: 'absolute', bottom: 12, left: 16, right: 16, ...Typography.bodySm, color: Colors.inverseOnSurface, textAlign: 'center' },
+  scanFrame: { position: 'absolute', width: 120, height: 120, borderRadius: Radius.lg, borderWidth: 2, borderColor: EventColors.ok, alignItems: 'center', justifyContent: 'center' },
+  grantBtn: { flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: Colors.surfaceContainerLow, borderRadius: Radius.full, paddingHorizontal: Spacing.md, paddingVertical: Spacing.sm },
+  grantText: { ...Typography.labelMd, color: EventColors.ok },
+  manualHeader: { flexDirection: 'row', alignItems: 'center', gap: Spacing.xs, marginTop: Spacing.sm },
+  or: { ...Typography.bodySm, color: EventColors.muted },
+  parseError: { ...Typography.bodySm, color: EventColors.danger },
   resultCard: { borderRadius: Radius.xl, padding: Spacing.lg, alignItems: 'center', gap: Spacing.sm },
   resultTitle: { ...Typography.headlineMd },
   resultMeta: { ...Typography.bodyMd, color: Colors.onSurface },

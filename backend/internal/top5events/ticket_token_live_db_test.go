@@ -80,8 +80,12 @@ func seedIssuedTicket(t *testing.T, ctx context.Context, pool *pgxpool.Pool, cre
 	t.Helper()
 
 	eventID := uuid.New().String()
+	// Both organizer_id (legacy, NOT NULL) and organiser_id (new spelling — what
+	// ScanTicket's steward/organiser authz actually reads) must be set: they're
+	// two independently-nullable columns left over from the schema-drift
+	// reconciliation, not synonyms the DB keeps in sync for you.
 	if _, err := pool.Exec(ctx,
-		`INSERT INTO events (id, organizer_id, title, starts_at, ends_at) VALUES ($1,$2,'Ticket Token Test Event',$3,$4)`,
+		`INSERT INTO events (id, organizer_id, organiser_id, title, starts_at, ends_at) VALUES ($1,$2,$2,'Ticket Token Test Event',$3,$4)`,
 		eventID, ownerID, time.Now().Add(24*time.Hour), time.Now().Add(30*time.Hour)); err != nil {
 		t.Fatalf("seed event: %v", err)
 	}

@@ -52,6 +52,11 @@ func (h *Handler) Register(member, admin *gin.RouterGroup, guard GuardFunc) {
 	// Steward scan (validates a rotating-QR / NFC token at a gate).
 	member.POST("/scan", h.Scan)
 
+	// Steward management (organiser-only; object-level authZ in the service).
+	member.POST("/:id/stewards", h.AddSteward)
+	member.GET("/:id/stewards", h.ListStewards)
+	member.DELETE("/:id/stewards/:userId", h.RemoveSteward)
+
 	// Cashless event wallet.
 	member.POST("/:id/wallet", h.OpenWallet)
 	member.POST("/wallet/:walletId/topup", h.TopUp)
@@ -286,7 +291,8 @@ type scanRequest struct {
 }
 
 func (h *Handler) Scan(c *gin.Context) {
-	if _, ok := uid(c); !ok {
+	u, ok := uid(c)
+	if !ok {
 		return
 	}
 	var req scanRequest
@@ -294,12 +300,51 @@ func (h *Handler) Scan(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	res, err := h.svc.ScanTicket(c.Request.Context(), req.Token, req.Gate)
+	res, err := h.svc.ScanTicket(c.Request.Context(), u, req.Token, req.Gate)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		// Was a blanket 500 for every error, including ErrForbidden — a rejected
+		// steward looked identical to a server crash. respond() already maps
+		// ErrForbidden->403, ErrNotFound->404.
+		respond(c, nil, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": res.OK, "result": res})
+}
+
+type stewardRequest struct {
+	UserID string `json:"user_id" binding:"required"`
+}
+
+func (h *Handler) AddSteward(c *gin.Context) {
+	u, ok := uid(c)
+	if !ok {
+		return
+	}
+	var req stewardRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	err := h.svc.AddSteward(c.Request.Context(), u, c.Param("id"), req.UserID)
+	respondOK(c, err)
+}
+
+func (h *Handler) RemoveSteward(c *gin.Context) {
+	u, ok := uid(c)
+	if !ok {
+		return
+	}
+	err := h.svc.RemoveSteward(c.Request.Context(), u, c.Param("id"), c.Param("userId"))
+	respondOK(c, err)
+}
+
+func (h *Handler) ListStewards(c *gin.Context) {
+	u, ok := uid(c)
+	if !ok {
+		return
+	}
+	out, err := h.svc.ListStewards(c.Request.Context(), u, c.Param("id"))
+	respond(c, out, err)
 }
 
 // --- Cashless wallet ---

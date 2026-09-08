@@ -19,6 +19,7 @@ import type {
   ScanResult,
   TopUpSource,
   GateToken,
+  Gate,
 } from './types';
 
 const delay = (ms = 280) => new Promise((r) => setTimeout(r, ms));
@@ -392,22 +393,28 @@ export async function listWalletEntries(_walletId: string): Promise<EventWalletE
   return [];
 }
 
-// Steward scan validation (offline-tolerant). Live calls fall back to a local
-// manifest when the network is unreachable.
-export async function validateScan(credentialId: string): Promise<ScanResult> {
+// Steward scan validation (offline-tolerant). Takes the REAL decoded gate token
+// (from the camera's QR scan, JSON.parse'd — see app/events/steward/scan.tsx)
+// plus which gate is scanning; POSTs the shape the backend actually expects
+// ({token, gate}), matching backend/internal/top5events's scanRequest exactly.
+// The previous version sent {credential_id: string} — a request shape the
+// backend never accepted, so live check-in was broken end to end.
+export async function validateScan(token: GateToken, gate: Gate): Promise<ScanResult> {
   if (USE_MOCK) {
     await delay(180);
-    const code = credentialId.trim();
+    const code = token.cid.trim();
     const att = MOCK_ATTENDEES.find((a) => a.ticketId.toLowerCase() === code.toLowerCase());
     if (code.toUpperCase().includes('USED') || att?.state === 'USED') return { outcome: 'already-used', ticket_id: att?.ticketId, holderName: att?.name, tierName: att?.tierName, offline: false };
     if (code.length > 0) return { outcome: 'valid', ticket_id: att?.ticketId ?? 'tk_scan', holderName: att?.name ?? 'Guest', tierName: att?.tierName ?? 'Regular', offline: false };
     return { outcome: 'invalid', offline: false };
   }
   try {
-    return unwrap(await api.post(`${API_BASE}/scan`, { credential_id: credentialId }, { headers: { 'Idempotency-Key': idempotencyKey() } }));
+    return unwrap(await api.post(`${API_BASE}/scan`, { token, gate }, { headers: { 'Idempotency-Key': idempotencyKey() } }));
   } catch {
-    // Offline fallback: optimistic accept of well-formed codes, queued for sync.
-    const valid = credentialId.trim().length > 0;
+    // Offline fallback: optimistic accept of a well-formed token, queued for
+    // sync — the real single-use/replay check only happens server-side, so this
+    // is a UX affordance for a flaky gate connection, not a security guarantee.
+    const valid = !!(token.cid && token.sig);
     return { outcome: valid ? 'valid' : 'invalid', offline: true };
   }
 }
