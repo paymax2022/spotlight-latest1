@@ -10,6 +10,7 @@ import { Typography } from '@/constants/typography';
 import { Spacing } from '@/constants/spacing';
 import { Radius } from '@/constants/radius';
 import ScreenHeader from '@/components/ScreenHeader';
+import StateView from '@/components/StateView';
 import TextInputField from '@/components/TextInputField';
 import PrimaryButton from '@/components/PrimaryButton';
 import CodeTypeSelector from '@/features/visitor/components/CodeTypeSelector';
@@ -60,6 +61,12 @@ export default function CreateAccessCodeScreen() {
 
   // VM-108: if hard-banned, never show the form.
   const hardBanned = restriction.data?.state === 'hard_ban';
+  // Issuing a code requires being a resident of an estate: POST /visitor/codes
+  // refuses a non-resident with 403 "Not a resident of any estate". Without this
+  // the screen let someone fill in the visitor, dates and purpose and only then
+  // refused, with the reason arriving as a generic form error. Only an explicit
+  // `false` counts — a response that predates the field must never lock anyone out.
+  const notResident = restriction.data?.isResident === false;
   React.useEffect(() => {
     if (hardBanned) router.replace('/visitor/restricted');
   }, [hardBanned]);
@@ -112,6 +119,20 @@ export default function CreateAccessCodeScreen() {
       },
     );
   };
+
+  if (notResident) {
+    return (
+      <SafeAreaView style={styles.safe} edges={['top']}>
+        <ScreenHeader title="Invite a visitor" />
+        <StateView
+          kind="empty"
+          icon="Home"
+          title="You're not registered to an estate"
+          message="Visitor codes are issued by residents. Ask your estate manager to add you, then invite visitors from here."
+        />
+      </SafeAreaView>
+    );
+  }
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>

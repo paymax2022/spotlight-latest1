@@ -4,7 +4,10 @@
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import * as hotelier from './api';
-import type { CreatePropertyInput, CreateRoomTypeInput, CreateRatePlanInput } from './types';
+import type {
+  CreatePropertyInput, CreateRoomTypeInput, CreateRatePlanInput,
+  UpdatePropertyContentInput, UpdatePropertyDetailsInput,
+} from './types';
 
 const KEY = 'stays-hotelier';
 
@@ -67,5 +70,81 @@ export function useHotelierReservations(propertyId?: string) {
     queryFn: () => hotelier.listReservations(propertyId as string),
     enabled: Boolean(propertyId),
     staleTime: 10_000,
+  });
+}
+
+export function useUpdatePropertyContent(propertyId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: UpdatePropertyContentInput) => hotelier.updatePropertyContent(propertyId, input),
+    onSuccess: () => qc.invalidateQueries({ queryKey: [KEY, 'detail', propertyId] }),
+  });
+}
+
+export function useUpdatePropertyDetails(propertyId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: UpdatePropertyDetailsInput) => hotelier.updatePropertyDetails(propertyId, input),
+    onSuccess: () => qc.invalidateQueries({ queryKey: [KEY, 'detail', propertyId] }),
+  });
+}
+
+// ── Photos ─────────────────────────────────────────────────────────────────
+export function usePropertyPhotos(propertyId?: string) {
+  return useQuery({
+    queryKey: [KEY, 'photos', propertyId],
+    queryFn: () => hotelier.listPhotos(propertyId as string),
+    enabled: Boolean(propertyId),
+  });
+}
+
+export function useUploadPhoto(propertyId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (vars: { uri: string; mimeType: string; roomTypeId?: string; caption?: string }) =>
+      hotelier.uploadPropertyPhoto(propertyId, { uri: vars.uri, mimeType: vars.mimeType }, { roomTypeId: vars.roomTypeId, caption: vars.caption }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: [KEY, 'photos', propertyId] }),
+  });
+}
+
+export function useSetCoverPhoto(propertyId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (photoId: string) => hotelier.setCoverPhoto(propertyId, photoId),
+    onSuccess: () => qc.invalidateQueries({ queryKey: [KEY, 'photos', propertyId] }),
+  });
+}
+
+export function useDeletePhoto(propertyId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (photoId: string) => hotelier.deletePhoto(propertyId, photoId),
+    onSuccess: () => qc.invalidateQueries({ queryKey: [KEY, 'photos', propertyId] }),
+  });
+}
+
+export function useUpdatePhotoCaption(propertyId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (vars: { photoId: string; caption: string }) => hotelier.updatePhotoCaption(propertyId, vars.photoId, vars.caption),
+    onSuccess: () => qc.invalidateQueries({ queryKey: [KEY, 'photos', propertyId] }),
+  });
+}
+
+// ── Go-live verification ──────────────────────────────────────────────────
+export function useVerificationStatus(propertyId?: string) {
+  return useQuery({
+    queryKey: [KEY, 'verification', propertyId],
+    queryFn: () => hotelier.getVerificationStatus(propertyId as string),
+    enabled: Boolean(propertyId),
+    staleTime: 5_000,
+  });
+}
+
+export function useSubmitForReview(propertyId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => hotelier.submitForReview(),
+    onSuccess: () => qc.invalidateQueries({ queryKey: [KEY, 'verification', propertyId] }),
   });
 }

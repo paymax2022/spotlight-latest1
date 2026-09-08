@@ -126,11 +126,15 @@ func toBusinessVerification(k kyb) BusinessVerification {
 	}
 }
 
+// minPhotosForGoLive mirrors the go-live copy already shown elsewhere in the
+// product ("properties with 14+ photos convert 23% better... at least 8
+// photos uploaded (cover set)") — the checklist enforces the number that
+// copy has always implied a listing needs.
+const minPhotosForGoLive = 8
+
 // buildVerificationStatus computes the checklist from real signals: property
-// content fields, room types + rate plans, upcoming availability, and the KYB
-// record. Nothing here is faked — an incomplete/unbuilt signal (e.g. policies,
-// which has no backing table yet) reads as pending with an explanatory detail
-// rather than a fabricated pass.
+// content fields, room types + rate plans, photos, policies, upcoming
+// availability, and the KYB record. Nothing here is faked.
 func (s *Service) buildVerificationStatus(ctx context.Context, propertyID string) (VerificationStatus, error) {
 	prop, err := s.repo.GetProperty(ctx, propertyID)
 	if err != nil {
@@ -152,9 +156,19 @@ func (s *Service) buildVerificationStatus(ctx context.Context, propertyID string
 	if err != nil {
 		return VerificationStatus{}, err
 	}
+	photoCount, err := s.repo.CountPropertyPhotos(ctx, propertyID)
+	if err != nil {
+		return VerificationStatus{}, err
+	}
 
 	propertyDone := prop.Address != "" && prop.City != ""
 	contentDone := prop.Description != "" && len(roomTypes) >= 1 && len(ratePlans) >= 1
+	photosDone := photoCount >= minPhotosForGoLive
+	// house_rules is the one policy field with no non-empty default (unlike
+	// cancellation_policy/check_in_from/check_out_until, which are always
+	// populated with a sensible default) — its presence is the genuine signal
+	// that a host actually reviewed and set policies, not just inherited defaults.
+	policiesDone := strings.TrimSpace(prop.HouseRules) != ""
 
 	kycStatus, docStatus := VerifPending, VerifPending
 	if hasKYB {
@@ -172,14 +186,18 @@ func (s *Service) buildVerificationStatus(ctx context.Context, propertyID string
 			Status: statusIf(propertyDone), Required: true},
 		{Key: "content", Label: "Property description and at least one room type with a rate plan", Stage: "content",
 			Status: statusIf(contentDone), Required: true},
+		{Key: "photos", Label: fmt.Sprintf("At least %d photos uploaded (cover set)", minPhotosForGoLive), Stage: "content",
+			Status: statusIf(photosDone), Required: true,
+			Detail: verificationDetail(statusIf(photosDone), fmt.Sprintf("You have %d — add %d more to go live.", photoCount, max(0, minPhotosForGoLive-photoCount)))},
 		{Key: "business_identity", Label: "Business identity verified (legal name, CAC, TIN, director KYC)", Stage: "verification",
 			Status: kycStatus, Required: false,
 			Detail: verificationDetail(kycStatus, "Send your business documents to Paymax support to begin review.")},
 		{Key: "business_documents", Label: "Supporting business documents reviewed", Stage: "verification",
 			Status: docStatus, Required: false,
 			Detail: verificationDetail(docStatus, "Send your business documents to Paymax support to begin review.")},
-		{Key: "policies", Label: "Policies configured (check-in/out, cancellation)", Stage: "policies",
-			Status: VerifPending, Required: false, Detail: "Policy setup is not yet available in the extranet."},
+		{Key: "policies", Label: "Policies configured (check-in/out, cancellation, house rules)", Stage: "policies",
+			Status: statusIf(policiesDone), Required: false,
+			Detail: verificationDetail(statusIf(policiesDone), "Set your house rules in the Policies section to complete this step.")},
 		{Key: "availability", Label: "Availability & rates loaded (next 90 days)", Stage: "go_live",
 			Status: statusIf(hasAvailability), Required: true},
 	}

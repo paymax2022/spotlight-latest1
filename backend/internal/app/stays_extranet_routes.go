@@ -10,6 +10,7 @@ import (
 	"spotlight/backend/internal/config"
 	financeledger "spotlight/backend/internal/finance/ledger"
 	"spotlight/backend/internal/middleware"
+	"spotlight/backend/internal/platform/r2"
 	"spotlight/backend/internal/services"
 	"spotlight/backend/internal/stays/ari"
 	"spotlight/backend/internal/stays/extranet"
@@ -53,6 +54,17 @@ func RegisterStaysExtranet(member *gin.RouterGroup, admin *gin.RouterGroup, extr
 
 	staffInviteMailer := extranet.NewResendStaffInviteMailer(cfg.ResendAPIKey, cfg.ResendFromEmail)
 	extranetSvc := extranet.NewService(extranet.NewRepository(pool), authz, ariSvc, staffInviteMailer, cfg.AdminAppBaseURL)
+	// Property photo uploads (property_photos.go). A nil/unconfigured presigner
+	// makes photo endpoints fail closed with 400 ErrUploadsNotConfigured rather
+	// than issuing a fabricated URL — same posture as marketplace/estate/
+	// association/transport's own presign wiring.
+	extranetSvc.WithPhotoPresigner(r2.New(r2.Config{
+		AccountEndpoint: cfg.R2AccountEndpoint,
+		Bucket:          cfg.R2Bucket,
+		AccessKeyID:     cfg.R2AccessKeyID,
+		SecretAccessKey: cfg.R2SecretAccessKey,
+		Region:          cfg.R2Region,
+	}))
 	reviewsSvc := reviews.NewService(reviews.NewRepository(pool), authz)
 	settlementSvc := staysettlement.NewService(staysettlement.NewRepository(pool), ledgerSvc)
 	webhookSvc := supplierwebhooks.NewService(pool, ariSvc, getEnvSupplierSecret())
