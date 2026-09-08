@@ -507,19 +507,45 @@ export async function getPharmacy(id: string): Promise<PharmacyVendor> {
 }
 
 // ── Customer: prescriptions (HL-3) ────────────────────────────────────────────
+
+// The backend's list route (GET /prescriptions) returns { success, prescriptions }
+// where each row is the narrow PrescriptionSummary read model (see Go
+// healthpharmacy.PrescriptionSummary) — id/state/prescriber_id/pharmacy_provider_id/
+// reject_reason/item_count/created_at only. It carries no item names, patient
+// name, pharmacy/pharmacist name, or verified-at timestamp, so those fields
+// default to empty/absent here rather than being invented; the screens that
+// render this list (home banner, Rx wallet) already fall back gracefully when
+// `items` is empty.
+const RX_STATUS_FROM_STATE: Record<string, RxStatus> = {
+  ISSUED: 'verifying',
+  SENT_TO_PHARMACY: 'verifying',
+  VERIFYING: 'verifying',
+  VERIFIED: 'verified',
+  DISPENSED: 'dispensed',
+  FULFILLED: 'dispensed',
+  REJECTED: 'rejected',
+};
+function mapPrescriptionSummary(raw: any): Prescription {
+  return {
+    id: raw.id,
+    source: 'upload',
+    status: RX_STATUS_FROM_STATE[raw.state] ?? 'verifying',
+    uploadedAt: raw.created_at,
+    pharmacistNote: raw.reject_reason || undefined,
+    patientName: '',
+    items: [],
+    docColor: tintForId(String(raw.id ?? '')),
+    fulfilled: raw.state === 'DISPENSED' || raw.state === 'FULFILLED',
+  };
+}
+
 export async function getPrescriptions(): Promise<Prescription[]> {
   if (USE_MOCK) {
     await delay();
     return [...MOCK_PRESCRIPTIONS].sort((a, b) => +new Date(b.uploadedAt) - +new Date(a.uploadedAt));
   }
-  // Route didn't exist at all before this change — backend now wraps the list
-  // as {"success":true,"prescriptions":[...]} like every other list handler.
-  // The rows are PrescriptionSummary (id/state/prescriber_id/item_count/...),
-  // not the richer Prescription shape this screen declares (drugName, image,
-  // pharmacyName, etc.) — mapping/enriching to that full shape is separate
-  // follow-up work, not done here.
-  const { data } = await api.get<{ success: boolean; prescriptions: Prescription[] }>(`${PHARMACY_API}/prescriptions`);
-  return data.prescriptions ?? [];
+  const { data } = await api.get<{ prescriptions?: unknown[] }>(`${PHARMACY_API}/prescriptions`);
+  return (data.prescriptions ?? []).map(mapPrescriptionSummary);
 }
 
 export async function getPrescription(id: string): Promise<Prescription> {
