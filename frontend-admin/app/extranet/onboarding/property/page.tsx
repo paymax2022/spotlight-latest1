@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import type { PropertyType } from '@/types/staysExtranet';
+import { createProperty } from '@/services/staysExtranetService';
 import { PageHeader, ExtranetTabs, Card, PropertyScopeNote, btnPrimary, input, label, select } from '../../_ui';
 
 const TYPES: PropertyType[] = ['hotel', 'apartment', 'guesthouse', 'resort', 'hostel', 'villa'];
@@ -10,7 +11,27 @@ const TYPES: PropertyType[] = ['hotel', 'apartment', 'guesthouse', 'resort', 'ho
 export default function PropertyRegistrationPage() {
   const [form, setForm] = useState({ name: '', type: 'hotel' as PropertyType, address: '', city: 'Lagos', state: 'Lagos', lat: '', lng: '' });
   const [saved, setSaved] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const set = (k: string, v: string) => setForm((f) => ({ ...f, [k]: v }));
+
+  async function save() {
+    setBusy(true);
+    setError(null);
+    try {
+      await createProperty({
+        name: form.name,
+        property_type: form.type,
+        address: form.address,
+        city: form.city,
+      });
+      setSaved(true);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not register the property. Please try again.');
+    } finally {
+      setBusy(false);
+    }
+  }
 
   return (
     <div style={{ padding: '0.5rem 0.5rem 2rem' }}>
@@ -28,8 +49,9 @@ export default function PropertyRegistrationPage() {
           <div><label style={label()}>Latitude</label><input style={input()} value={form.lat} onChange={(e) => set('lat', e.target.value)} placeholder="6.4391" /></div>
           <div><label style={label()}>Longitude</label><input style={input()} value={form.lng} onChange={(e) => set('lng', e.target.value)} placeholder="3.4731" /></div>
         </div>
+        {error ? <p style={{ color: '#b91c1c', fontSize: '0.82rem', marginTop: '0.75rem' }}>{error}</p> : null}
         <div style={{ marginTop: '1rem', display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-          <button style={btnPrimary()} onClick={() => setSaved(true)} disabled={!form.name || !form.address}>Save & continue</button>
+          <button style={btnPrimary()} onClick={save} disabled={busy || saved || !form.name || !form.address}>{busy ? 'Saving…' : 'Save & continue'}</button>
           {saved ? <Link href="/extranet/onboarding/verification" style={{ ...btnPrimary(), textDecoration: 'none' }}>Continue → Verification</Link> : null}
         </div>
         {saved ? <p style={{ color: '#15803d', fontSize: '0.85rem', marginTop: '0.5rem' }}>Property registered as draft.</p> : null}

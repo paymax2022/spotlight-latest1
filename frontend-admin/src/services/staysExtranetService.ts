@@ -5,7 +5,7 @@
 // OBJECT-SCOPED: every call resolves to the signed-in hotelier's OWN property.
 // Money is BIGINT kobo (minor units) and settled in Naira (NGN).
 
-import { env } from '@/config/env';
+import { env, apiRoot } from '@/config/env';
 import { resolveUseMock } from '@/config/useMock';
 import type {
   VerificationStatus,
@@ -43,8 +43,15 @@ import type {
 
 const USE_MOCK = resolveUseMock(process.env.NEXT_PUBLIC_STAYS_USE_MOCK);
 
+// apiBaseUrl is the same-origin admin-proxy path (<origin>/api/admin-proxy),
+// not a plain API root — the old `apiBaseUrl.replace(/\/api\/v1\/?$/, ...)`
+// here matched nothing once the proxy migration landed (apiBaseUrl stopped
+// ending in /api/v1), silently forwarding every "live" call here to
+// <ADMIN_API_BASE_URL>/properties/... instead of .../api/stays/extranet/...
+// — a 404 no caller of this file would have seen without reading the network
+// tab. apiRoot() is the helper env.ts added for exactly this class of bug.
 function extranetBase(): string {
-  return env.apiBaseUrl.replace(/\/api\/v1\/?$/, '/api/stays/extranet');
+  return `${apiRoot()}/api/stays/extranet`;
 }
 function authHeaders(): Record<string, string> {
   if (typeof window === 'undefined') return {};
@@ -459,6 +466,32 @@ export async function submitForReview(): Promise<VerificationStatus> {
   // property scoping like most of this file's other writes.
   if (USE_MOCK) throw new Error(`Submitting for review ${NOT_IN_FIXTURE_MODE}`);
   return sendJson<VerificationStatus>('POST', '/verification/submit', {});
+}
+
+// Self-list a new property via POST /properties (no propertyId in the path —
+// this one grants the caller OWNER, so scoping doesn't apply yet). Caches the
+// returned id so the rest of this file's activePropertyId() calls resolve to
+// it immediately instead of round-tripping /me/properties.
+export async function createProperty(input: {
+  name: string;
+  property_type: string;
+  address: string;
+  city: string;
+  star_rating?: number;
+}): Promise<{ id: string }> {
+  if (USE_MOCK) { await delay(); cachedPropertyId = PROPERTY_ID; return { id: PROPERTY_ID }; }
+  const res = await sendJson<{ id: string }>('POST', '/properties', input);
+  cachedPropertyId = res.id;
+  return res;
+}
+
+// Redeems a staff-invite token for the signed-in caller. Not property-scoped
+// (see staff_invite.go / handler.go Register()) — the token itself names the
+// property and the invitee's email is matched server-side against their own
+// authenticated identity, never a client-supplied value.
+export async function acceptStaffInvite(token: string): Promise<void> {
+  if (USE_MOCK) throw new Error(`Accepting a staff invite ${NOT_IN_FIXTURE_MODE}`);
+  await sendJson<{ ok: boolean }>('POST', '/staff/invite/accept', { token });
 }
 
 // B · Content & inventory
