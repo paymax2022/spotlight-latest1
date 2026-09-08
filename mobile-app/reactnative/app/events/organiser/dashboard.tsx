@@ -16,7 +16,7 @@ import { EventColors, formatNaira, formatNairaCompact, EVENT_STATE_BADGE } from 
 export default function OrganiserDashboard() {
   const { data, isLoading, isError, refetch } = useOrganiserEvents();
 
-  const totalGross = (data ?? []).reduce((s, e) => s + e.grossKobo, 0);
+  const totalGross = (data ?? []).reduce((s, e) => s + e.gross_kobo, 0);
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
@@ -52,7 +52,7 @@ export default function OrganiserDashboard() {
 
           {data!.map((stats) => {
             const e = stats.event;
-            const pct = stats.ticketsTotal ? Math.round((stats.ticketsSold / stats.ticketsTotal) * 100) : 0;
+            const pct = stats.tickets_total ? Math.round((stats.tickets_sold / stats.tickets_total) * 100) : 0;
             const meta = EVENT_STATE_BADGE[e.state] ?? EVENT_STATE_BADGE.APPROVED;
             return (
               <View key={e.id} style={styles.card}>
@@ -61,10 +61,10 @@ export default function OrganiserDashboard() {
                   <Text style={[styles.status, { color: meta.color }]}>{e.state}</Text>
                 </View>
                 <View style={styles.statsRow}>
-                  <Stat label="Sold" value={`${stats.ticketsSold}${stats.ticketsTotal ? `/${stats.ticketsTotal}` : ''}`} />
-                  <Stat label="Gross" value={formatNaira(stats.grossKobo)} />
+                  <Stat label="Sold" value={`${stats.tickets_sold}${stats.tickets_total ? `/${stats.tickets_total}` : ''}`} />
+                  <Stat label="Gross" value={formatNaira(stats.gross_kobo)} />
                 </View>
-                {stats.ticketsTotal ? (
+                {stats.tickets_total ? (
                   <View style={styles.track}><View style={[styles.fill, { width: `${pct}%` }]} /></View>
                 ) : null}
                 <Pressable style={styles.attendeesLink} onPress={() => router.push({ pathname: '/events/organiser/attendees', params: { eventId: e.id } })}>

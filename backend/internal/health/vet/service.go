@@ -186,7 +186,12 @@ func (s *Service) ListPets(ctx context.Context, ownerID string) ([]Pet, error) {
 	if ownerID == "" {
 		return nil, fmt.Errorf("vet: unauthenticated")
 	}
-	const q = `SELECT id, owner_user_id, name, species, breed, sex, birth_date, weight_kg, notes, created_at
+	// birth_date is cast to text: pgx v5 cannot bind a binary-format Postgres
+	// `date` into *string (Pet.BirthDate), so a pet with a non-null birth_date
+	// made this query fail with "cannot scan date (OID 1082) in binary format
+	// into **string" — which ListPets's caller (below) turns into an opaque
+	// 401, not a 500, making it look like an auth failure.
+	const q = `SELECT id, owner_user_id, name, species, breed, sex, birth_date::text, weight_kg, notes, created_at
 	           FROM pets WHERE owner_user_id=$1 ORDER BY created_at DESC`
 	rows, err := s.db.Query(ctx, q, ownerID)
 	if err != nil {

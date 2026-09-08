@@ -202,25 +202,27 @@ export interface EventDisplayMeta {
 // list (GET /api/finance/events?organiser scoping is not in the route table
 // either — see report). ticketsSold/grossKobo are computed from tier sold
 // counts on EventDetail where available.
+// GET /organiser/mine — real endpoint. Snake_case, matching this file's stated
+// convention (field names mirror the Go backend verbatim) rather than the
+// camelCase this type had while it was still client-derived-only.
 export interface OrganiserEventStats {
-  event:        EventSummary;
-  ticketsSold:  number;
-  ticketsTotal: number | null;
-  grossKobo:    number;
+  event:         EventSummary;
+  tickets_sold:  number;
+  tickets_total: number | null;
+  gross_kobo:    number;
 }
 
-// Attendee list: no dedicated backend endpoint exists (see report). Kept as a
-// UI type only; the attendees screen surfaces a "not available yet" state
-// rather than inventing fake data.
+// GET /:id/attendees — real, organiser/steward-gated endpoint. Snake_case, same
+// reasoning as OrganiserEventStats above.
 export interface Attendee {
-  id:             string;
-  name:           string;
-  cashtag:        string;
-  tierName:       string;
-  ticketId:       string;
-  state:          TicketState;
-  checkedIn:      boolean;
-  checkedInAtISO?: string | null;
+  id:            string;
+  name:          string;
+  cashtag:       string;
+  tier_name:     string;
+  ticket_id:     string;
+  state:         TicketState;
+  checked_in:    boolean;
+  checked_in_at?: string | null;
 }
 
 export interface VenueZone {

@@ -1,4 +1,12 @@
-FROM golang:1.25-alpine AS build
+# Base image must satisfy backend/go.mod's `go` directive. The official golang
+# images set GOTOOLCHAIN=local, so an older image CANNOT auto-download a newer
+# toolchain the way a CI runner does — it fails with
+#   go: go.mod requires go >= 1.26.6 (running go 1.25.14; GOTOOLCHAIN=local)
+# This broke main once already: 1b64f24c raised go.mod to 1.26.6 for a security
+# bump while this line still said 1.25, and nothing caught it until
+# integration-verify's docker build, which only runs on push:main. When you bump
+# the go directive, bump this line in the SAME commit.
+FROM golang:1.26-alpine AS build
 WORKDIR /app
 COPY . .
 

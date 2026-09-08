@@ -105,6 +105,9 @@ func registerRaw(t *testing.T, otpEnabled bool, settings func(*captured)) (strin
 		nil,
 		config.Config{FeatureOTPEmailEnabled: otpEnabled},
 	)
+	// The admin path is gated on OTP being OPERATIONAL, not merely flagged — see
+	// TestRegisterUsesSignupWhenTheFlagIsOnButOTPNeverWired.
+	SetOTPOperational(svc, otpEnabled)
 	_, err := svc.RegisterUser(domain.RegisterRequest{
 		Email: "Ada@Example.com", Password: "correct-horse-battery",
 		FirstName: "Ada", LastName: "Lovelace",
@@ -232,5 +235,42 @@ func TestRegisterDoesNotReadTheSignupPolicyOnTheSignupPath(t *testing.T) {
 	}
 	if path != "/auth/v1/signup" {
 		t.Fatalf("path = %s, want /auth/v1/signup", path)
+	}
+}
+
+// THE regression for a defect this file's earlier version did not catch.
+//
+// RegisterUser used to branch on cfg.FeatureOTPEmailEnabled while the register
+// HANDLER branched on whether an issuer was actually wired. Those disagree in a
+// state that is easy to reach — flag on, Brevo credentials absent, which is the
+// repository's state today — and the result was an account created through the
+// silent admin path (so GoTrue sent nothing) with no code issued either.
+// Unconfirmed, unverifiable, login refused forever, and /api/auth/otp/request
+// answering 503 so the user could not even ask for one.
+//
+// Reproduced live before the fix: registration returned 201, the mail catcher
+// recorded zero messages, otp_codes was empty, and login answered 403.
+func TestRegisterUsesSignupWhenTheFlagIsOnButOTPNeverWired(t *testing.T) {
+	cap := &captured{}
+	srv := gotrueStub(t, cap)
+	defer srv.Close()
+
+	svc := NewAuthService(
+		integrations.NewSupabaseRestClient(srv.URL, "service-role-key"),
+		nil,
+		// Flag ON …
+		config.Config{FeatureOTPEmailEnabled: true},
+	)
+	// … but the OTP service was never built, so SetOTPOperational is never called.
+
+	if _, err := svc.RegisterUser(domain.RegisterRequest{
+		Email: "Ada@Example.com", Password: "correct-horse-battery",
+		FirstName: "Ada", LastName: "Lovelace",
+	}); err != nil {
+		t.Fatalf("RegisterUser: %v", err)
+	}
+	path, _, _ := cap.snapshot()
+	if path != "/auth/v1/signup" {
+		t.Fatalf("created the account at %s with no OTP service wired — GoTrue sends nothing and no code is issued, so the account can never be verified", path)
 	}
 }
