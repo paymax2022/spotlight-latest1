@@ -12,6 +12,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"spotlight/backend/internal/domain"
 	"spotlight/backend/internal/middleware"
+	"spotlight/backend/internal/otp"
 	"spotlight/backend/internal/services"
 )
 
@@ -25,6 +26,10 @@ type AuthHandler struct {
 	// feature flag is on; Login degrades gracefully when absent.
 	sessions         services.SessionService
 	sessionHardening bool
+
+	// Optional server-issued OTP. Nil unless FEATURE_OTP_EMAIL_ENABLED is on and
+	// fully configured; Register behaves exactly as before when absent.
+	issueOTP OTPIssuer
 }
 
 func NewAuthHandler(auth services.AuthService, rbac services.RBACService, audit services.AuditService) *AuthHandler {
@@ -47,6 +52,22 @@ func (h *AuthHandler) WithReferralAttribution(fn ReferralAttributor) *AuthHandle
 func (h *AuthHandler) WithSessions(sessions services.SessionService, enabled bool) *AuthHandler {
 	h.sessions = sessions
 	h.sessionHardening = enabled
+	return h
+}
+
+// OTPIssuer sends a verification code to a freshly-registered address.
+//
+// A function rather than the otp.Service itself, for the same reason
+// ReferralAttributor is: the service needs the shared pgx pool, which is built
+// after this handler.
+type OTPIssuer func(ctx context.Context, email, name, purpose string, ip string) error
+
+// WithOTPIssuer makes Register send our own verification code.
+//
+// Without it Register is unchanged and verification stays entirely with Supabase
+// Auth, which is the shipped behaviour.
+func (h *AuthHandler) WithOTPIssuer(fn OTPIssuer) *AuthHandler {
+	h.issueOTP = fn
 	return h
 }
 
@@ -113,6 +134,26 @@ func (h *AuthHandler) Register(c *gin.Context) {
 	message := "Registration successful. Enter the code we emailed you to verify your account."
 	if !needsVerification {
 		message = "Registration successful."
+	}
+
+	// Send our own verification code.
+	//
+	// Best-effort, exactly like referral attribution above: THE ACCOUNT ALREADY
+	// EXISTS. Failing the response here would send the user back to a register
+	// form that answers "registration failed" for an account that is genuinely
+	// theirs — the worst outcome available. A user who receives no code can ask
+	// for one at POST /api/auth/otp/request, which is rate-limited the same way.
+	//
+	// ⚠️ While Supabase's own confirmation mailer is enabled on the project, a
+	// registering user receives TWO codes from two systems, and each is redeemed
+	// at a different endpoint. Turning that mailer off is a prerequisite for
+	// enabling FEATURE_OTP_EMAIL_ENABLED anywhere real — see
+	// docs/runbooks/otp-email-brevo.md.
+	if needsVerification && h.issueOTP != nil {
+		if err := h.issueOTP(c.Request.Context(), in.Email, in.FullNameOrJoin(), otp.PurposeVerifyEmail, c.ClientIP()); err != nil {
+			// No address in the log line: an access log of addresses is a user list.
+			log.Printf("[auth] register: verification code could not be issued for user %s: %v", res.UserID, err)
+		}
 	}
 
 	// The session is carried in THREE shapes on purpose, exactly as Login does:
