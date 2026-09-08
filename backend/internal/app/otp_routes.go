@@ -50,7 +50,7 @@ import (
 // service instance behind both surfaces: registration and POST /otp/request must
 // share a store and a send budget, or "resend" would hand out a second live code
 // and a second allowance.
-func registerOTPRoutes(r *gin.Engine, cfg config.Config, pool *pgxpool.Pool, supabase *integrations.SupabaseRestClient, auth services.AuthService) (handlers.OTPIssuer, handlers.OTPVerifier, services.PasswordSetter) {
+func registerOTPRoutes(r *gin.Engine, cfg config.Config, pool *pgxpool.Pool, supabase *integrations.SupabaseRestClient, auth services.AuthService) (handlers.OTPIssuer, handlers.OTPVerifier, services.PasswordSetter, handlers.SignupGate) {
 	group := r.Group("/api/auth/otp")
 
 	svc, reason := buildOTPService(cfg, pool)
@@ -78,7 +78,9 @@ func registerOTPRoutes(r *gin.Engine, cfg config.Config, pool *pgxpool.Pool, sup
 
 	if svc == nil {
 		log.Printf("[otp] routes registered DISABLED (%s) — POST /api/auth/otp/* will answer 503", reason)
-		return nil, nil, nil
+		// Registration keeps using /auth/v1/signup, which GoTrue gates itself, so
+		// no signup budget is returned either.
+		return nil, nil, nil, nil
 	}
 	if bridge == nil {
 		log.Printf("[otp] ERROR: OTP is enabled but the auth bridge could not be built — login step-up and code-based password reset are unavailable")
@@ -103,7 +105,29 @@ func registerOTPRoutes(r *gin.Engine, cfg config.Config, pool *pgxpool.Pool, sup
 	if bridge != nil {
 		setter = bridge
 	}
-	return issue, verify, setter
+
+	// Signup budget for the admin creation path, which GoTrue does not gate.
+	//
+	// The same Postgres fixed-window limiter the OTP flows use — atomic, and
+	// shared across replicas, which is the property the in-process
+	// middleware.AuthRateLimiter on this route cannot offer. The IP is hashed
+	// with the pepper for the same reason the OTP keys are: an unsalted digest of
+	// an IPv4 address is a four-billion-entry lookup, i.e. not a hash at all.
+	limiter := otp.NewPostgresLimiter(pool)
+	pepper := []byte(cfg.OTPPepper)
+	window := 5 * time.Minute
+	budget := cfg.SignupRateLimitPer5Min
+	gate := func(ctx context.Context, ip string) (bool, error) {
+		if strings.TrimSpace(ip) == "" {
+			// No IP to budget against. Allowing is correct rather than refusing
+			// everyone behind a proxy that strips it; the per-process limiter on
+			// the route still applies.
+			return true, nil
+		}
+		return limiter.Allow(ctx, "signup:ip:"+otp.Hash(ip, pepper), budget, window)
+	}
+
+	return issue, verify, setter, gate
 }
 
 // buildOTPService returns (nil, reason) when the feature must stay closed.

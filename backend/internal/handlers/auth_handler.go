@@ -41,6 +41,11 @@ type AuthHandler struct {
 	// ResetPassword refusing, which is what it should have been doing all along.
 	verifyOTP   OTPVerifier
 	setPassword services.PasswordSetter
+
+	// signupGate replaces GoTrue's sign_in_sign_ups limit, which the admin
+	// creation path does not enforce. Nil when registration still goes through
+	// /auth/v1/signup, where GoTrue applies it itself.
+	signupGate SignupGate
 }
 
 func NewAuthHandler(auth services.AuthService, rbac services.RBACService, audit services.AuditService) *AuthHandler {
@@ -79,6 +84,21 @@ type OTPIssuer func(ctx context.Context, email, name, purpose string, ip string)
 // Auth, which is the shipped behaviour.
 func (h *AuthHandler) WithOTPIssuer(fn OTPIssuer) *AuthHandler {
 	h.issueOTP = fn
+	return h
+}
+
+// SignupGate reports whether another registration may be attempted from ip.
+//
+// It stands in for GoTrue's sign_in_sign_ups budget, which /auth/v1/admin/users
+// does not apply. Backed by Postgres rather than the in-process
+// middleware.AuthRateLimiter that also guards this route: that one is per
+// PROCESS, so every replica grants the full allowance independently, which is
+// not what the limit it replaces did.
+type SignupGate func(ctx context.Context, ip string) (allowed bool, err error)
+
+// WithSignupGate wires the cross-replica signup budget.
+func (h *AuthHandler) WithSignupGate(g SignupGate) *AuthHandler {
+	h.signupGate = g
 	return h
 }
 
@@ -147,6 +167,34 @@ func (h *AuthHandler) Register(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": "invalid payload"})
 		return
 	}
+	// Signup budget. Only present when registration takes the admin path — on
+	// /auth/v1/signup GoTrue applies its own, and a second one here would halve
+	// the shipped allowance.
+	//
+	// Checked BEFORE the account is created, and fails CLOSED: a limiter that
+	// answers "allowed" when its store is unreachable reports protection it is
+	// not providing.
+	if h.signupGate != nil {
+		allowed, gerr := h.signupGate(c.Request.Context(), c.ClientIP())
+		if gerr != nil {
+			log.Printf("[auth] register: signup budget could not be evaluated, refusing: %v", gerr)
+			c.JSON(http.StatusTooManyRequests, gin.H{
+				"success": false, "code": "signup_rate_limited",
+				"error": "Too many registration attempts. Please try again shortly.",
+			})
+			return
+		}
+		if !allowed {
+			h.audit.LogAction("", "", "register.rate_limited", "auth", "user", "", nil,
+				map[string]any{"ip": c.ClientIP()}, c.ClientIP(), c.Request.UserAgent(), "medium")
+			c.JSON(http.StatusTooManyRequests, gin.H{
+				"success": false, "code": "signup_rate_limited",
+				"error": "Too many registration attempts. Please try again shortly.",
+			})
+			return
+		}
+	}
+
 	res, err := h.auth.RegisterUser(in)
 	if err != nil {
 		h.audit.LogAction("", "", "register.failed", "auth", "user", "", nil, map[string]any{"email": in.Email}, c.ClientIP(), c.Request.UserAgent(), "medium")

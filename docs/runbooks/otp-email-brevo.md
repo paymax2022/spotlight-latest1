@@ -97,9 +97,20 @@ our OTP in place — it auto-confirms every sign-up, so:
 Disabling SMTP wholesale is not an option either: the password-reset **link**
 deliberately still goes through it.
 
-**What actually happens instead.** With `FEATURE_OTP_EMAIL_ENABLED` on,
+**What actually happens instead.** When server-issued OTP is **operational** —
+flag on AND pepper AND Brevo credentials AND a database, not merely flagged —
 `RegisterUser` creates the account through `POST /auth/v1/admin/users` with
-`email_confirm: false` rather than `POST /auth/v1/signup`. The admin endpoint
+`email_confirm: false` rather than `POST /auth/v1/signup`.
+
+> The distinction is not pedantic. Branching on the flag alone produced accounts
+> nobody could ever verify: with the flag on and credentials missing (the state
+> this repository is in today), registration took the silent admin path so GoTrue
+> sent nothing, while the register handler — which checks the wired issuer, not
+> the flag — sent nothing either. The account existed, unconfirmed, with no code,
+> and `/api/auth/otp/request` answered 503 so the user could not even ask for one.
+> Login refused it forever. Both decisions now read the same signal, and the
+> fail-safe direction is `/auth/v1/signup`, which always sends something the user
+> can act on. The admin endpoint
 writes the same row and sends **nothing**. The account is unconfirmed exactly as
 before, login still answers `403 email_not_confirmed`, and our code becomes the
 only verification email.
@@ -114,8 +125,20 @@ the new user; flag off → Supabase's "Your Spotlight verification code" arrives
 
 **Two behaviours differ on the admin path, deliberately:**
 
-- GoTrue's `sign_in_sign_ups` rate limit does not apply. `/api/auth/register`
-  already carries `middleware.AuthRateLimiter` (`AUTH_RATE_LIMIT_PER_MIN`).
+- GoTrue's `sign_in_sign_ups` rate limit does not apply, so `Register` enforces
+  its own budget before creating: `AUTH_SIGNUP_RATE_LIMIT_PER_5MIN` per IP,
+  defaulted to **30 per 5 minutes** — GoTrue's own default, so switching creation
+  paths does not quietly change the allowance. Exceeded returns
+  `429 signup_rate_limited`.
+
+  It uses the **Postgres** fixed-window limiter, not the `middleware.AuthRateLimiter`
+  that also guards the route: that one is per PROCESS, so every replica grants the
+  full allowance independently, which is not what the limit it replaces did. Both
+  apply — the in-process one caps bursts, this one caps the shared budget.
+
+  It **fails closed**, and the IP is hashed with the pepper before it is stored:
+  an unsalted digest of an IPv4 address is a four-billion-entry lookup, i.e. not
+  a hash at all.
 - GoTrue's own `enable_signup` switch does not apply to the admin endpoint, so
   `RegisterUser` enforces it itself: before creating, it reads
   `GET /auth/v1/settings` and refuses with `403 signup_disabled` when
@@ -154,6 +177,7 @@ cloud copies of the email templates.
 |---|---|---|---|
 | `FEATURE_OTP_EMAIL_ENABLED` | — | `false` | Master switch. |
 | `FEATURE_OTP_LOGIN_MFA_ENABLED` | — | `false` | Second factor on login. **Fails closed — see the warning above.** Ignored unless the master switch is on. |
+| `AUTH_SIGNUP_RATE_LIMIT_PER_5MIN` | — | `30` | Per-IP signup budget replacing GoTrue's `sign_in_sign_ups` on the admin creation path. Shared across replicas. |
 | `BREVO_API_KEY` | when on | — | From the Brevo dashboard. |
 | `BREVO_SENDER_EMAIL` | when on | — | Must be on a domain verified in Brevo. |
 | `BREVO_SENDER_NAME` | — | `Spotlight` | |
