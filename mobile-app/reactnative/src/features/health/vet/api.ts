@@ -15,6 +15,7 @@ import type {
   VaccinationEntry,
   Vet,
   VetQuery,
+  AppointmentType,
   AvailabilityDay,
   Appointment,
   CreateAppointmentInput,
@@ -436,14 +437,140 @@ const MOCK_PROVIDER_HOME_NAV: ProviderHomeNav = {
   phone: '+234 803 444 5555',
 };
 
+// ════════════════════════════════════════════════════════════════════════════
+// Live-mode adapters — backend/internal/health/vet/handler.go wraps every
+// response as {"success": true, "<key>": <payload>} (never a bare array/object,
+// and the key is per-resource — "pets", "vets", "appointment", etc. — not a
+// uniform "data"). getPets() et al used to do `const { data } = await
+// api.get(...); return data` and hand that whole envelope back typed as if it
+// were the payload — every live call was therefore returning the WRONG SHAPE
+// even on success, which is what turned a 404 on one endpoint into a `.map is
+// not a function` crash on a completely different one (VetHubScreen, pets).
+//
+// The Go models here (model.go) are also considerably thinner than these TS
+// types — no display names on an Appointment (just ids), no vet bio/rating/
+// fees on VetResult, no microchip/neutered on Pet. Fields the backend does not
+// track get a documented neutral default instead of invented data. And most of
+// this file's functions call routes that do not exist anywhere in
+// backend/internal/health/vet at all (see notOnBackend() call sites below) —
+// only 14 member routes are registered (health_vet_routes.go): pets
+// create/list, vet discovery, one service upsert, book/accept/confirm/cancel/
+// dispatch, consult start/complete, vaccination schedule, and SOS. Everything
+// else — appointment listing, the whole provider/vet-facing dashboard, VCN
+// verification, reviews, availability slots, e-prescription/medication reads,
+// home-visit tracking — has no backend counterpart yet.
+// ════════════════════════════════════════════════════════════════════════════
+
+/** A call with no backend route anywhere in backend/internal/health/vet. Thrown
+ * instead of letting it 404 silently or (worse) crash on a shape mismatch. */
+function notOnBackend(what: string): never {
+  throw new Error(`${what} is unavailable: no backend endpoint exists for this yet.`);
+}
+
+interface GoPet { id: string; owner_user_id: string; name: string; species: string; breed: string; sex: string; birth_date?: string | null; weight_kg?: number | null; notes: string; created_at: string }
+const PET_COLORS = [Colors.iconBgBlue, Colors.iconBgPurple, Colors.iconBgTeal, Colors.iconBgGold];
+function ageLabelFromDob(dob?: string): string {
+  if (!dob) return 'Unknown age';
+  const years = (Date.now() - new Date(dob).getTime()) / (365 * 86_400_000);
+  if (years < 1) return `${Math.max(1, Math.round(years * 12))} mos`;
+  return `${Math.floor(years)} yr${Math.floor(years) === 1 ? '' : 's'}`;
+}
+function petFromGo(g: GoPet, index = 0): Pet {
+  const species = (g.species || '').toLowerCase();
+  const sex = (g.sex || '').toLowerCase();
+  return {
+    id: g.id,
+    name: g.name ?? '',
+    species: (['dog', 'cat', 'bird', 'rabbit', 'reptile', 'other'] as const).includes(species as never) ? (species as Pet['species']) : 'other',
+    breed: g.breed ?? '',
+    sex: (['male', 'female', 'unknown'] as const).includes(sex as never) ? (sex as Pet['sex']) : 'unknown',
+    dob: g.birth_date ?? undefined,
+    ageLabel: ageLabelFromDob(g.birth_date ?? undefined),
+    weightKg: g.weight_kg ?? undefined,
+    microchipId: undefined, // stays_room_type-style gap: not a column on the Go Pet model
+    neutered: undefined, // not tracked
+    avatarColor: PET_COLORS[index % PET_COLORS.length],
+    notes: g.notes ?? '',
+  };
+}
+function petToGoBody(input: PetInput) {
+  // microchipId / neutered have no backend column — they are accepted here for
+  // form parity but silently not persisted server-side until one exists.
+  return {
+    name: input.name,
+    species: (input.species || '').toUpperCase(),
+    breed: input.breed,
+    sex: (input.sex || '').toUpperCase(),
+    birth_date: input.dob,
+    weight_kg: input.weightKg,
+    notes: input.notes ?? '',
+  };
+}
+
+interface GoVetResult { provider_id: string; display_name: string; owner_user_id: string; lat?: number | null; lng?: number | null; distance_m?: number | null }
+function vetFromGo(g: GoVetResult): Vet {
+  return {
+    id: g.provider_id,
+    name: g.display_name || 'Vet',
+    headline: '', // not returned by DiscoverVets
+    bio: '',
+    // DiscoverVets only surfaces APPROVED + VCN-verified providers (HL-2), so
+    // "verified" is a safe inference even though the credential itself isn't returned.
+    credential: { authority: 'VCN', licenseNo: '', status: 'verified' },
+    rating: 0, // not tracked here — see getReviews()/getProviderReviews() gaps
+    reviewCount: 0,
+    clinicName: '',
+    address: '',
+    distanceLabel: g.distance_m != null ? `${(g.distance_m / 1000).toFixed(1)} km` : '',
+    lat: g.lat ?? 0,
+    lng: g.lng ?? 0,
+    consultFeeKobo: 0, // fees live on VetService rows, not returned by discovery
+    homeVisitFeeKobo: 0,
+    types: [], // discovery doesn't return which visit types/species a provider offers
+    species: [],
+    specialties: [],
+    availableNow: false, // not tracked
+    active: true, // implied by DiscoverVets' own APPROVED filter
+  };
+}
+
+interface GoAppointment { id: string; provider_id: string; owner_id: string; pet_id: string; service_id: string; visit_type: string; state: string; pay_state: string; total_kobo: number; escrow_id?: string | null; consult_id?: string | null; delivery_ref?: string | null; slot_start: string; slot_end: string; created_at: string }
+async function appointmentFromGo(g: GoAppointment): Promise<Appointment> {
+  // Go tracks ids only (no joined display names) — a best-effort lookup against
+  // the owner's own pet list / the vet discovery list fills these in with real
+  // data where it can be found; neither call is guaranteed to have the row
+  // (e.g. a vet who is no longer APPROVED drops out of getVets()).
+  const [pets, vets] = await Promise.all([getPets().catch(() => []), getVets().catch(() => [])]);
+  return {
+    id: g.id,
+    petId: g.pet_id,
+    petName: pets.find((p) => p.id === g.pet_id)?.name ?? '',
+    vetId: g.provider_id,
+    vetName: vets.find((v) => v.id === g.provider_id)?.name ?? '',
+    type: (g.visit_type || '').toLowerCase() as AppointmentType,
+    status: g.state as Appointment['status'], // Go's ApptState values are identical strings to AppointmentStatus
+    scheduledFor: g.slot_start,
+    reason: '', // not a column on health_appointments' vet projection
+    feeKobo: g.total_kobo, // Go tracks one total, not a fee/home-visit-fee split
+    homeVisitFeeKobo: 0,
+    totalKobo: g.total_kobo,
+    paymentHeld: g.pay_state === 'HELD',
+    createdAt: g.created_at,
+    location: undefined, // home-visit address lives on the transport delivery, not returned here
+    consultId: g.consult_id ?? undefined,
+    summaryId: undefined, // SOAP notes are only ever returned inline from completeConsult(), never addressable afterward
+    prescriptionId: undefined, // same — only inline on the CompleteConsult response
+  };
+}
+
 // ══ PETS ════════════════════════════════════════════════════════════════════
 export async function getPets(): Promise<Pet[]> {
   if (USE_MOCK) {
     await delay();
     return MOCK_PETS;
   }
-  const { data } = await api.get<Pet[]>(`${VET_API}/pets`);
-  return data;
+  const { data } = await api.get<{ pets: GoPet[] }>(`${VET_API}/pets`);
+  return (data.pets ?? []).map(petFromGo);
 }
 
 export async function getPet(id: string): Promise<Pet> {
@@ -453,18 +580,11 @@ export async function getPet(id: string): Promise<Pet> {
     if (!p) throw new Error('Pet not found');
     return p;
   }
-  const { data } = await api.get<Pet>(`${VET_API}/pets/${id}`);
-  return data;
+  // No GET /pets/:id route exists — composed from the (small, owner-scoped) list.
+  const p = (await getPets()).find((x) => x.id === id);
+  if (!p) throw new Error('Pet not found');
+  return p;
 }
-
-function ageLabelFromDob(dob?: string): string {
-  if (!dob) return 'Unknown age';
-  const years = (Date.now() - new Date(dob).getTime()) / (365 * 86_400_000);
-  if (years < 1) return `${Math.max(1, Math.round(years * 12))} mos`;
-  return `${Math.floor(years)} yr${Math.floor(years) === 1 ? '' : 's'}`;
-}
-
-const PET_COLORS = [Colors.iconBgBlue, Colors.iconBgPurple, Colors.iconBgTeal, Colors.iconBgGold];
 
 export async function createPet(input: PetInput): Promise<Pet> {
   if (USE_MOCK) {
@@ -478,8 +598,8 @@ export async function createPet(input: PetInput): Promise<Pet> {
     MOCK_PETS = [...MOCK_PETS, pet];
     return pet;
   }
-  const { data } = await api.post<Pet>(`${VET_API}/pets`, input);
-  return data;
+  const { data } = await api.post<{ pet: GoPet }>(`${VET_API}/pets`, petToGoBody(input));
+  return petFromGo(data.pet);
 }
 
 export async function updatePet(id: string, input: PetInput): Promise<Pet> {
@@ -494,8 +614,8 @@ export async function updatePet(id: string, input: PetInput): Promise<Pet> {
     if (!updated) throw new Error('Pet not found');
     return updated;
   }
-  const { data } = await api.put<Pet>(`${VET_API}/pets/${id}`, input);
-  return data;
+  // Only POST /pets (create) and GET /pets (list) exist — there is no PUT /pets/:id.
+  return notOnBackend('Editing a pet profile');
 }
 
 export async function getPetRecords(petId: string): Promise<PetRecordEntry[]> {
@@ -503,8 +623,7 @@ export async function getPetRecords(petId: string): Promise<PetRecordEntry[]> {
     await delay();
     return MOCK_PET_RECORDS.filter((r) => r.petId === petId).sort((a, b) => +new Date(b.at) - +new Date(a.at));
   }
-  const { data } = await api.get<PetRecordEntry[]>(`${VET_API}/pets/${petId}/records`);
-  return data;
+  return notOnBackend('Pet health records');
 }
 
 export async function getVaccinations(petId?: string): Promise<VaccinationEntry[]> {
@@ -512,8 +631,8 @@ export async function getVaccinations(petId?: string): Promise<VaccinationEntry[
     await delay();
     return petId ? MOCK_VACCINATIONS.filter((v) => v.petId === petId) : MOCK_VACCINATIONS;
   }
-  const { data } = await api.get<VaccinationEntry[]>(`${VET_API}/vaccinations`, { params: { petId } });
-  return data;
+  // POST /pets/:id/vaccinations (schedule) exists; there is no matching GET/list.
+  return notOnBackend('Vaccination history');
 }
 
 export async function scheduleVaccination(vaccinationId: string, dueAt: string): Promise<VaccinationEntry> {
@@ -525,8 +644,13 @@ export async function scheduleVaccination(vaccinationId: string, dueAt: string):
     v.dueAt = dueAt;
     return { ...v };
   }
-  const { data } = await api.post<VaccinationEntry>(`${VET_API}/vaccinations/${vaccinationId}/schedule`, { dueAt });
-  return data;
+  // The real endpoint is POST /pets/:petId/vaccinations {vaccine, due_at} — it
+  // CREATES a new schedule for a pet+vaccine pair, it does not reschedule an
+  // existing vaccination by its own id. This function's signature
+  // (vaccinationId, dueAt) can't address that endpoint at all: it has neither a
+  // petId nor a vaccine name, because there's also no GET to have discovered
+  // an existing vaccinationId from in the first place (see getVaccinations()).
+  return notOnBackend('Rescheduling a vaccination');
 }
 
 // ══ VETS (HL-2 credential-gated discovery) ══════════════════════════════════
@@ -544,8 +668,16 @@ export async function getVets(query?: VetQuery): Promise<Vet[]> {
     }
     return rows;
   }
-  const { data } = await api.get<Vet[]>(`${VET_API}/vets`, { params: query });
-  return data;
+  // DiscoverVets only accepts lat/lng/radius_m (geo). `type`/`species` can't be
+  // honored even client-side — VetResult carries neither field — so only the
+  // free-text name match (`q`) is applied here; passing type/species is a no-op.
+  const { data } = await api.get<{ vets: GoVetResult[] }>(`${VET_API}/vets`);
+  let rows = (data.vets ?? []).map(vetFromGo);
+  if (query?.q) {
+    const q = query.q.toLowerCase();
+    rows = rows.filter((v) => v.name.toLowerCase().includes(q));
+  }
+  return rows;
 }
 
 export async function getVet(id: string): Promise<Vet> {
@@ -555,8 +687,10 @@ export async function getVet(id: string): Promise<Vet> {
     if (!v) throw new Error('Vet not found');
     return v;
   }
-  const { data } = await api.get<Vet>(`${VET_API}/vets/${id}`);
-  return data;
+  // No GET /vets/:id route — composed from the discovery list.
+  const v = (await getVets()).find((x) => x.id === id);
+  if (!v) throw new Error('Vet not found');
+  return v;
 }
 
 export async function getAvailability(vetId: string): Promise<AvailabilityDay[]> {
@@ -564,8 +698,7 @@ export async function getAvailability(vetId: string): Promise<AvailabilityDay[]>
     await delay();
     return buildAvailability(vetId);
   }
-  const { data } = await api.get<AvailabilityDay[]>(`${VET_API}/vets/${vetId}/availability`);
-  return data;
+  return notOnBackend('Vet availability slots');
 }
 
 export async function getReviews(vetId: string): Promise<VetReview[]> {
@@ -573,8 +706,7 @@ export async function getReviews(vetId: string): Promise<VetReview[]> {
     await delay();
     return MOCK_REVIEWS;
   }
-  const { data } = await api.get<VetReview[]>(`${VET_API}/vets/${vetId}/reviews`);
-  return data;
+  return notOnBackend('Vet reviews');
 }
 
 export async function submitReview(input: SubmitReviewInput): Promise<VetReview> {
@@ -582,8 +714,7 @@ export async function submitReview(input: SubmitReviewInput): Promise<VetReview>
     await delay(350);
     return { id: `rev_${Date.now()}`, author: 'You', rating: input.rating, body: input.body, at: new Date().toISOString() };
   }
-  const { data } = await api.post<VetReview>(`${VET_API}/reviews`, input);
-  return data;
+  return notOnBackend('Submitting a review');
 }
 
 // ══ APPOINTMENTS (HL-9 held payment) ════════════════════════════════════════
@@ -592,8 +723,12 @@ export async function getAppointments(): Promise<Appointment[]> {
     await delay();
     return [...MOCK_APPOINTMENTS].sort((a, b) => +new Date(b.scheduledFor) - +new Date(a.scheduledFor));
   }
-  const { data } = await api.get<Appointment[]>(`${VET_API}/appointments`);
-  return data;
+  // This is the call that 404'd (and, upstream of that, the pets envelope bug
+  // crashed the same screen): GET /appointments/:id (single, object-scoped)
+  // is the only member-facing read — there is no list-all route. The one that
+  // DOES list appointments (GET /admin/appointments) is RBAC-gated to
+  // health.vet.appointments and scoped platform-wide, not to "my appointments".
+  return notOnBackend('Listing your appointments');
 }
 
 export async function getAppointment(id: string): Promise<Appointment> {
@@ -602,8 +737,8 @@ export async function getAppointment(id: string): Promise<Appointment> {
     const a = MOCK_APPOINTMENTS.find((x) => x.id === id) ?? MOCK_APPOINTMENTS[0];
     return a;
   }
-  const { data } = await api.get<Appointment>(`${VET_API}/appointments/${id}`);
-  return data;
+  const { data } = await api.get<{ appointment: GoAppointment }>(`${VET_API}/appointments/${id}`);
+  return appointmentFromGo(data.appointment);
 }
 
 export async function createAppointment(input: CreateAppointmentInput): Promise<Appointment> {
@@ -632,11 +767,14 @@ export async function createAppointment(input: CreateAppointmentInput): Promise<
     MOCK_APPOINTMENTS = [appt, ...MOCK_APPOINTMENTS];
     return appt;
   }
-  // HL-9: held payment captured on booking; Idempotency-Key guards the mutation.
-  const { data } = await api.post<Appointment>(`${VET_API}/appointments`, input, {
-    headers: { 'Idempotency-Key': input.idempotencyKey },
-  });
-  return data;
+  // POST /appointments (Book) requires a service_id — Go prices the appointment
+  // server-side from a governed VetService row, never from a client-sent fee
+  // (BookInput has no fee fields at all). There is no member-facing endpoint to
+  // list a provider's priced services (POST /services is create/update-only,
+  // vet-side), so this screen has no legal way to obtain a service_id to book
+  // against — booking needs a new "list services for a vet" endpoint before it
+  // can go live, not just a URL fix.
+  return notOnBackend('Booking an appointment');
 }
 
 export async function rescheduleAppointment(input: RescheduleInput): Promise<Appointment> {
@@ -648,8 +786,8 @@ export async function rescheduleAppointment(input: RescheduleInput): Promise<App
     a.scheduledFor = input.scheduledFor;
     return { ...a };
   }
-  const { data } = await api.post<Appointment>(`${VET_API}/appointments/${input.appointmentId}/reschedule`, input);
-  return data;
+  // No reschedule route — only accept/confirm/cancel/dispatch state transitions exist.
+  return notOnBackend('Rescheduling an appointment');
 }
 
 export async function cancelAppointment(id: string): Promise<Appointment> {
@@ -661,8 +799,8 @@ export async function cancelAppointment(id: string): Promise<Appointment> {
     a.paymentHeld = false;
     return { ...a };
   }
-  const { data } = await api.post<Appointment>(`${VET_API}/appointments/${id}/cancel`, {});
-  return data;
+  const { data } = await api.post<{ appointment: GoAppointment }>(`${VET_API}/appointments/${id}/cancel`, {});
+  return appointmentFromGo(data.appointment);
 }
 
 // ══ CONSULT ═════════════════════════════════════════════════════════════════
@@ -672,8 +810,7 @@ export async function getConsult(id: string): Promise<VetConsult> {
     const c = MOCK_CONSULTS.find((x) => x.id === id) ?? MOCK_CONSULTS[0];
     return c;
   }
-  const { data } = await api.get<VetConsult>(`${VET_API}/consults/${id}`);
-  return data;
+  return notOnBackend('Reading a consult');
 }
 
 export async function startConsult(id: string): Promise<VetConsult> {
@@ -683,8 +820,27 @@ export async function startConsult(id: string): Promise<VetConsult> {
     c.status = 'in_progress';
     return { ...c };
   }
-  const { data } = await api.post<VetConsult>(`${VET_API}/consults/${id}/start`, {});
-  return data;
+  // POST /consults/:id/start (:id is the APPOINTMENT id) is a real, meaningful
+  // state transition (IN_PROGRESS) — it's called for real here. But it returns
+  // the updated Appointment, not a consult/messaging object: there is no
+  // VetConsult model, no chat persistence, and no vet/pet display-name lookup
+  // on this response, so most of the object below is a documented placeholder,
+  // not data this endpoint actually has.
+  const { data } = await api.post<{ appointment: GoAppointment }>(`${VET_API}/consults/${id}/start`, {});
+  const a = await appointmentFromGo(data.appointment);
+  return {
+    id: a.consultId ?? a.id,
+    appointmentId: a.id,
+    vetId: a.vetId,
+    vetName: a.vetName,
+    petId: a.petId,
+    petName: a.petName,
+    mode: 'video',
+    status: 'in_progress',
+    scheduledAt: a.scheduledFor,
+    providerReady: true,
+    messages: [], // no messaging persistence exists — see sendConsultMessage()
+  };
 }
 
 export async function sendConsultMessage(consultId: string, body: string): Promise<VetConsultMessage> {
@@ -701,8 +857,7 @@ export async function sendConsultMessage(consultId: string, body: string): Promi
     if (c) c.messages = [...c.messages, message];
     return message;
   }
-  const { data } = await api.post<VetConsultMessage>(`${VET_API}/consults/${consultId}/messages`, { body });
-  return data;
+  return notOnBackend('Sending a consult message');
 }
 
 export async function completeConsult(id: string): Promise<{ ok: true; summaryId: string }> {
@@ -712,8 +867,11 @@ export async function completeConsult(id: string): Promise<{ ok: true; summaryId
     if (c) c.status = 'completed';
     return { ok: true, summaryId: 'sum_003' };
   }
-  const { data } = await api.post<{ ok: true; summaryId: string }>(`${VET_API}/consults/${id}/complete`, {});
-  return data;
+  // POST /consults/:id/complete requires the SOAP note (subjective/objective/
+  // assessment/plan) plus optional rx/lab fields in the SAME request — this
+  // function's (id)-only signature has no way to collect or send any of that,
+  // so it cannot call the real endpoint correctly as written.
+  return notOnBackend('Completing a consult');
 }
 
 // ══ CONSULT SUMMARY ═════════════════════════════════════════════════════════
@@ -723,8 +881,9 @@ export async function getConsultSummary(id: string): Promise<ConsultSummary> {
     const s = MOCK_SUMMARIES.find((x) => x.id === id) ?? MOCK_SUMMARIES[0];
     return s;
   }
-  const { data } = await api.get<ConsultSummary>(`${VET_API}/summaries/${id}`);
-  return data;
+  // The SOAP note is only ever returned inline from completeConsult()'s
+  // response (CompleteResult.clinical_note) — there is no GET to fetch it back afterward.
+  return notOnBackend('Reading a consult summary');
 }
 
 // ══ E-PRESCRIPTION (HL-3 / HL-8) ════════════════════════════════════════════
@@ -734,8 +893,7 @@ export async function getPrescription(id: string): Promise<EPrescription> {
     const p = MOCK_PRESCRIPTIONS.find((x) => x.id === id) ?? MOCK_PRESCRIPTIONS[0];
     return p;
   }
-  const { data } = await api.get<EPrescription>(`${VET_API}/prescriptions/${id}`);
-  return data;
+  return notOnBackend('Reading a prescription');
 }
 
 export async function getPrescriptions(petId?: string): Promise<EPrescription[]> {
@@ -743,8 +901,7 @@ export async function getPrescriptions(petId?: string): Promise<EPrescription[]>
     await delay();
     return petId ? MOCK_PRESCRIPTIONS.filter((p) => p.petId === petId) : MOCK_PRESCRIPTIONS;
   }
-  const { data } = await api.get<EPrescription[]>(`${VET_API}/prescriptions`, { params: { petId } });
-  return data;
+  return notOnBackend('Listing prescriptions');
 }
 
 /** HL-8: explicit consent before a sensitive record/e-Rx body is unlocked. */
@@ -753,8 +910,7 @@ export async function acknowledgeRecordConsent(recordId: string): Promise<{ ackn
     await delay(250);
     return { acknowledged: true };
   }
-  const { data } = await api.post<{ acknowledged: boolean }>(`${VET_API}/records/${recordId}/consent`, {});
-  return data;
+  return notOnBackend('Recording consent to view a record');
 }
 
 /** Care handoff: send an issued e-Rx to the pharmacy vertical (HL-3 verify-then-dispense). */
@@ -766,8 +922,9 @@ export async function sendRxToPharmacy(prescriptionId: string): Promise<EPrescri
     p.status = 'SENT_TO_PHARMACY';
     return { ...p };
   }
-  const { data } = await api.post<EPrescription>(`${VET_API}/prescriptions/${prescriptionId}/send-to-pharmacy`, {});
-  return data;
+  // This handoff already happens automatically inside completeConsult() when
+  // pharmacy_provider_id is set — there is no separate endpoint to trigger it afterward.
+  return notOnBackend('Sending a prescription to pharmacy');
 }
 
 // ══ PET MEDS & REFILLS ══════════════════════════════════════════════════════
@@ -776,8 +933,7 @@ export async function getMedications(petId?: string): Promise<PetMedication[]> {
     await delay();
     return petId ? MOCK_MEDS.filter((m) => m.petId === petId) : MOCK_MEDS;
   }
-  const { data } = await api.get<PetMedication[]>(`${VET_API}/medications`, { params: { petId } });
-  return data;
+  return notOnBackend('Listing pet medications');
 }
 
 export async function requestRefill(medId: string): Promise<{ ok: true }> {
@@ -785,8 +941,7 @@ export async function requestRefill(medId: string): Promise<{ ok: true }> {
     await delay(350);
     return { ok: true };
   }
-  await api.post(`${VET_API}/medications/${medId}/refill`, {});
-  return { ok: true };
+  return notOnBackend('Requesting a medication refill');
 }
 
 // ══ HOME VISIT TRACKING ═════════════════════════════════════════════════════
@@ -795,8 +950,10 @@ export async function getHomeVisitTracking(appointmentId: string): Promise<HomeV
     await delay();
     return { ...MOCK_HOME_VISIT, appointmentId };
   }
-  const { data } = await api.get<HomeVisitTracking>(`${VET_API}/appointments/${appointmentId}/tracking`);
-  return data;
+  // Dispatch (POST /appointments/:id/dispatch) only books the transport
+  // delivery — the resulting location/ETA lives on the transport module, and
+  // there is no vet-vertical endpoint that reads it back.
+  return notOnBackend('Home-visit tracking');
 }
 
 // ══ EMERGENCY (HL-11) ═══════════════════════════════════════════════════════
@@ -805,18 +962,25 @@ export async function getEmergencyVets(): Promise<EmergencyVetOption[]> {
     await delay();
     return MOCK_EMERGENCY;
   }
-  const { data } = await api.get<EmergencyVetOption[]>(`${VET_API}/emergency`);
-  return data;
+  // POST /sos exists but is a single action (route to the nearest in-person
+  // vet + disclaimer), not a browsable list — and it needs {lat, lng} this
+  // function's zero-argument signature doesn't collect.
+  return notOnBackend('Listing emergency vets');
 }
 
 // ══ PROVIDER ════════════════════════════════════════════════════════════════
+// None of the vet-facing provider dashboard has a backend counterpart: no
+// profile read/write, no availability, no appointment queue/decision, no pet
+// chart, no SOAP/rx/lab/referral authoring endpoints, no earnings/payouts, no
+// reviews, no nav. UpsertService (POST /services) is the only provider-side
+// write that exists at all, and nothing here calls it. This whole surface
+// needs new backend work before it can go live — it is not a URL fix.
 export async function getProviderProfile(): Promise<ProviderProfile> {
   if (USE_MOCK) {
     await delay();
     return MOCK_PROFILE;
   }
-  const { data } = await api.get<ProviderProfile>(`${VET_API}/provider/profile`);
-  return data;
+  return notOnBackend('Provider profile');
 }
 
 export async function submitProviderOnboarding(input: SubmitOnboardingInput): Promise<ProviderProfile> {
@@ -830,13 +994,13 @@ export async function submitProviderOnboarding(input: SubmitOnboardingInput): Pr
     };
     return MOCK_PROFILE;
   }
-  const { data } = await api.post<ProviderProfile>(`${VET_API}/provider/onboarding`, input);
-  return data;
+  return notOnBackend('Submitting provider onboarding');
 }
 
 // ── Mode B (assisted) VCN verification (HL-2) ───────────────────────────────────
 // Member submits credentials + documents + consent; ops confirms out-of-band.
 // The member only ever receives a coarse stage — no register/match detail.
+// No /verification/* routes exist in backend/internal/health/vet at all.
 export async function submitVcnVerification(input: SubmitVcnInput): Promise<VcnStatus> {
   if (USE_MOCK) {
     await delay(450);
@@ -847,15 +1011,7 @@ export async function submitVcnVerification(input: SubmitVcnInput): Promise<VcnS
     };
     return MOCK_VCN_STATUS;
   }
-  const { data } = await api.post<VcnStatus>(`${VET_API}/verification/submit`, {
-    application_id: input.applicationId,
-    reg_number: input.regNumber,
-    full_name: input.fullName,
-    dob: input.dob,
-    consent: input.consent,
-    docs: input.docs.map((d) => ({ type: d.type, storage_key: d.storageKey })),
-  });
-  return data;
+  return notOnBackend('Submitting VCN verification');
 }
 
 export async function getVcnStatus(applicationId: string): Promise<VcnStatus> {
@@ -863,10 +1019,7 @@ export async function getVcnStatus(applicationId: string): Promise<VcnStatus> {
     await delay();
     return { ...MOCK_VCN_STATUS, applicationId };
   }
-  const { data } = await api.get<VcnStatus>(`${VET_API}/verification/status`, {
-    params: { application_id: applicationId },
-  });
-  return data;
+  return notOnBackend('Reading VCN verification status');
 }
 
 export async function getVcnDocUrl(docId: string): Promise<{ url: string }> {
@@ -874,8 +1027,7 @@ export async function getVcnDocUrl(docId: string): Promise<{ url: string }> {
     await delay();
     return { url: `https://mock.r2/vet/verification/${docId}` };
   }
-  const { data } = await api.get<{ url: string }>(`${VET_API}/verification/documents/${docId}/url`);
-  return data;
+  return notOnBackend('Reading a VCN verification document URL');
 }
 
 export async function updateProviderProfile(input: UpdateProfileInput): Promise<ProviderProfile> {
@@ -884,8 +1036,7 @@ export async function updateProviderProfile(input: UpdateProfileInput): Promise<
     MOCK_PROFILE = { ...MOCK_PROFILE, ...input };
     return MOCK_PROFILE;
   }
-  const { data } = await api.put<ProviderProfile>(`${VET_API}/provider/profile`, input);
-  return data;
+  return notOnBackend('Updating provider profile');
 }
 
 export async function getProviderAvailability(): Promise<ProviderAvailabilityBlock[]> {
@@ -893,8 +1044,7 @@ export async function getProviderAvailability(): Promise<ProviderAvailabilityBlo
     await delay();
     return MOCK_AVAIL_BLOCKS;
   }
-  const { data } = await api.get<ProviderAvailabilityBlock[]>(`${VET_API}/provider/availability`);
-  return data;
+  return notOnBackend('Provider availability');
 }
 
 export async function setProviderAvailability(blocks: ProviderAvailabilityBlock[]): Promise<ProviderAvailabilityBlock[]> {
@@ -903,8 +1053,7 @@ export async function setProviderAvailability(blocks: ProviderAvailabilityBlock[
     MOCK_AVAIL_BLOCKS = blocks;
     return blocks;
   }
-  const { data } = await api.put<ProviderAvailabilityBlock[]>(`${VET_API}/provider/availability`, { blocks });
-  return data;
+  return notOnBackend('Updating provider availability');
 }
 
 export async function getProviderAppointments(): Promise<ProviderAppointmentRow[]> {
@@ -912,8 +1061,7 @@ export async function getProviderAppointments(): Promise<ProviderAppointmentRow[
     await delay();
     return MOCK_PROVIDER_APPTS;
   }
-  const { data } = await api.get<ProviderAppointmentRow[]>(`${VET_API}/provider/appointments`);
-  return data;
+  return notOnBackend('Provider appointment queue');
 }
 
 export async function decideAppointment(input: DecisionInput): Promise<{ ok: true; status: string }> {
@@ -928,11 +1076,11 @@ export async function decideAppointment(input: DecisionInput): Promise<{ ok: tru
     }
     return { ok: true, status: row?.status ?? 'ACCEPTED' };
   }
-  const { data } = await api.post<{ ok: true; status: string }>(
-    `${VET_API}/provider/appointments/${input.appointmentId}/decision`,
-    input,
-  );
-  return data;
+  // accept/confirm/cancel DO exist (POST /appointments/:id/{accept,confirm,cancel})
+  // as three separate routes, but there is no combined "decision" endpoint and
+  // no "reschedule" transition at all — this function's single-call shape
+  // doesn't map onto them without a UI-level rework of how a vet acts on a request.
+  return notOnBackend('Deciding on an appointment request');
 }
 
 export async function getPetChart(petId: string): Promise<PetChart> {
@@ -951,8 +1099,7 @@ export async function getPetChart(petId: string): Promise<PetChart> {
       ],
     };
   }
-  const { data } = await api.get<PetChart>(`${VET_API}/provider/pets/${petId}/chart`);
-  return data;
+  return notOnBackend('Provider pet chart');
 }
 
 export async function saveSoapNote(input: SaveSoapInput): Promise<{ ok: true; summaryId: string }> {
@@ -960,11 +1107,9 @@ export async function saveSoapNote(input: SaveSoapInput): Promise<{ ok: true; su
     await delay(400);
     return { ok: true, summaryId: `sum_${Date.now()}` };
   }
-  const { data } = await api.post<{ ok: true; summaryId: string }>(
-    `${VET_API}/provider/appointments/${input.appointmentId}/soap`,
-    input,
-  );
-  return data;
+  // SOAP notes are only ever written as part of completeConsult() — there is
+  // no standalone "save SOAP" endpoint to call ahead of completion.
+  return notOnBackend('Saving a SOAP note');
 }
 
 export async function issuePrescription(input: IssueRxInput): Promise<EPrescription> {
@@ -987,8 +1132,8 @@ export async function issuePrescription(input: IssueRxInput): Promise<EPrescript
       notes: input.notes,
     };
   }
-  const { data } = await api.post<EPrescription>(`${VET_API}/provider/prescriptions`, input);
-  return data;
+  // Same as saveSoapNote: an e-Rx is only ever issued inline via completeConsult().
+  return notOnBackend('Issuing a prescription');
 }
 
 export async function orderLabForPet(input: OrderLabInput): Promise<{ ok: true; labOrderId: string }> {
@@ -996,8 +1141,7 @@ export async function orderLabForPet(input: OrderLabInput): Promise<{ ok: true; 
     await delay(350);
     return { ok: true, labOrderId: `lord_${Date.now()}` };
   }
-  const { data } = await api.post<{ ok: true; labOrderId: string }>(`${VET_API}/provider/lab-orders`, input);
-  return data;
+  return notOnBackend('Ordering a lab test');
 }
 
 export async function createReferral(input: ReferralInput): Promise<{ ok: true }> {
@@ -1005,8 +1149,7 @@ export async function createReferral(input: ReferralInput): Promise<{ ok: true }
     await delay(350);
     return { ok: true };
   }
-  await api.post(`${VET_API}/provider/referrals`, input);
-  return { ok: true };
+  return notOnBackend('Creating a referral');
 }
 
 export async function getProviderEarnings(): Promise<ProviderEarnings> {
@@ -1014,8 +1157,7 @@ export async function getProviderEarnings(): Promise<ProviderEarnings> {
     await delay();
     return MOCK_EARNINGS;
   }
-  const { data } = await api.get<ProviderEarnings>(`${VET_API}/provider/earnings`);
-  return data;
+  return notOnBackend('Provider earnings');
 }
 
 export async function requestPayout(amountKobo: number, idempotencyKey: string): Promise<{ ok: true }> {
@@ -1023,8 +1165,7 @@ export async function requestPayout(amountKobo: number, idempotencyKey: string):
     await delay(350);
     return { ok: true };
   }
-  await api.post(`${VET_API}/provider/payouts`, { amountKobo }, { headers: { 'Idempotency-Key': idempotencyKey } });
-  return { ok: true };
+  return notOnBackend('Requesting a payout');
 }
 
 export async function getProviderReviews(): Promise<VetReview[]> {
@@ -1032,8 +1173,7 @@ export async function getProviderReviews(): Promise<VetReview[]> {
     await delay();
     return MOCK_REVIEWS;
   }
-  const { data } = await api.get<VetReview[]>(`${VET_API}/provider/reviews`);
-  return data;
+  return notOnBackend('Provider reviews');
 }
 
 export async function getProviderHomeNav(appointmentId: string): Promise<ProviderHomeNav> {
@@ -1041,8 +1181,7 @@ export async function getProviderHomeNav(appointmentId: string): Promise<Provide
     await delay();
     return { ...MOCK_PROVIDER_HOME_NAV, appointmentId };
   }
-  const { data } = await api.get<ProviderHomeNav>(`${VET_API}/provider/appointments/${appointmentId}/nav`);
-  return data;
+  return notOnBackend('Provider home-visit navigation');
 }
 
 export { newIdempotencyKey } from './constants';
