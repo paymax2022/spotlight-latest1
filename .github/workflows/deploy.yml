@@ -50,7 +50,7 @@ jobs:
         with:
           workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ secrets.GCP_DEPLOY_SERVICE_ACCOUNT }}
-      - uses: google-github-actions/setup-gcloud@v2
+      - uses: google-github-actions/setup-gcloud@v3
       - name: Configure Docker for Artifact Registry
         run: gcloud auth configure-docker ${{ vars.GCP_REGION }}-docker.pkg.dev --quiet
       - name: Build & push (immutable, SHA-tagged)
@@ -69,7 +69,7 @@ jobs:
         with:
           workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ secrets.GCP_DEPLOY_SERVICE_ACCOUNT }}
-      - uses: google-github-actions/setup-gcloud@v2
+      - uses: google-github-actions/setup-gcloud@v3
       # Migrations run expand-first, decoupled from code that needs them (§10).
       # Staging migrations are applied by the `apply-staging` job in
       # db-migrate.yml (push to `staging`, gated on DB_MIGRATE_STAGING_ENABLED),
@@ -101,7 +101,7 @@ jobs:
         with:
           workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ secrets.GCP_DEPLOY_SERVICE_ACCOUNT }}
-      - uses: google-github-actions/setup-gcloud@v2
+      - uses: google-github-actions/setup-gcloud@v3
       # TODO(you): apply the (already staging-verified, additive) migrations to PROD
       # BEFORE routing traffic to code that requires them.
       - name: Deploy canary (no traffic yet)
