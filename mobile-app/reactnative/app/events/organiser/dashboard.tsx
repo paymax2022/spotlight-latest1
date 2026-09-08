@@ -11,9 +11,14 @@ import { shadow1 } from '@/constants/shadows';
 import ScreenHeader from '@/components/ScreenHeader';
 import StateView from '@/components/StateView';
 import { useOrganiserEvents } from '@/features/events/hooks';
+import { useEventsRealtime } from '@/features/events/realtime/useEventsRealtime';
 import { EventColors, formatNaira, formatNairaCompact, EVENT_STATE_BADGE } from '@/features/events/constants/events.constants';
 
 export default function OrganiserDashboard() {
+  // Live check-in push (accelerates the poll below when accepted scans come
+  // in) — see useEventsRealtime's header comment. Safe no-op when the
+  // EXPO_PUBLIC_REALTIME_ENABLED flag is off.
+  useEventsRealtime();
   const { data, isLoading, isError, refetch } = useOrganiserEvents();
 
   const totalGross = (data ?? []).reduce((s, e) => s + e.gross_kobo, 0);

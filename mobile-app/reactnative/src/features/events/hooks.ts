@@ -2,7 +2,9 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import * as api from './api';
 import type { CreateEventInput, PurchaseTicketInput, GiftTicketInput, TopUpSource, GateToken, Gate } from './types';
 
-const KEYS = {
+// Exported so useEventsRealtime (realtime/useEventsRealtime.ts) can invalidate
+// the exact same query keys on a push, rather than duplicating the shape.
+export const KEYS = {
   events:    (params?: { category?: string; state?: string }) => ['events', 'list', params ?? {}] as const,
   event:     (id: string) => ['events', 'event', id] as const,
   tickets:   ['events', 'tickets'] as const,
@@ -54,11 +56,16 @@ export const useVendors = (eventId: string) =>
 export const useVenueMap = (eventId: string) =>
   useQuery({ queryKey: KEYS.venue(eventId), queryFn: () => api.getVenueMap(eventId), enabled: !!eventId });
 
+// Polls as the safety net for useEventsRealtime's SSE push (which is opt-in
+// via EXPO_PUBLIC_REALTIME_ENABLED and may be off) — SSE is an accelerator,
+// this poll is what actually guarantees the dashboard goes stale.
 export const useOrganiserEvents = () =>
-  useQuery({ queryKey: KEYS.organiser, queryFn: api.listOrganiserEvents });
+  useQuery({ queryKey: KEYS.organiser, queryFn: api.listOrganiserEvents, refetchInterval: 30_000 });
 
+// Same safety-net reasoning as useOrganiserEvents above — this is the roster
+// a steward is actively checking people in against, so it polls faster.
 export const useAttendees = (eventId: string) =>
-  useQuery({ queryKey: KEYS.attendees(eventId), queryFn: () => api.listAttendees(eventId), enabled: !!eventId });
+  useQuery({ queryKey: KEYS.attendees(eventId), queryFn: () => api.listAttendees(eventId), enabled: !!eventId, refetchInterval: 15_000 });
 
 // ── Mutations ────────────────────────────────────────────────────────────────
 export function usePurchaseTickets() {
