@@ -1,0 +1,6 @@
+# Generated at deploy time by ci.yml and read by Dockerfile to stamp the build
+# commit into the binary. Never committed: it would go stale instantly and the
+# /api/v1/public/build endpoint would then report a commit the binary is not from.
+# (railway up runs with --no-gitignore, so ignoring it does not exclude it from
+# the upload.)
+BUILD_COMMIT

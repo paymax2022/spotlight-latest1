@@ -2289,6 +2289,10 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		adminFinance.POST("/kyc/users/:user_id/reject", middleware.RequirePermission(rbac, "finance.admin.kyc"), kycHandler.Reject)
 	}
 	if cfg.FeatureWalletEnabled {
+		// Reuses finance.admin.transfers rather than a dedicated finance.admin.wallets
+		// permission — both would be granted to exactly the same two roles
+		// (super-admin + system-admin; see 20260920000100_rbac_seed_gaps.sql), and no
+		// separate finance-ops/compliance role exists yet to justify splitting them.
 		adminFinance.GET("/wallets/:user_id/balance", middleware.RequirePermission(rbac, "finance.admin.transfers"), walletHandler.AdminGetBalance)
 		adminFinance.GET("/wallets/:user_id/transactions", middleware.RequirePermission(rbac, "finance.admin.transfers"), walletHandler.AdminListTransactions)
 	}

@@ -1,8 +1,27 @@
 FROM golang:1.25-alpine AS build
 WORKDIR /app
 COPY . .
-RUN go mod download \
- && go build -o server ./cmd/server \
+
+# Bake the git SHA into the binary so a DEPLOYED server can report what it is
+# running (GET /api/v1/public/build). It cannot discover this itself: the runtime
+# image has no .git, which is why internal/platform/buildinfo.Describe returns
+# nothing there. Without this, the only external probe was /public/health, whose
+# body is identical on every build — so it could never distinguish "deployed"
+# from "did not deploy".
+#
+# Two ways to supply it, both optional; an unset value builds fine and the
+# endpoint honestly reports source "unknown" rather than a guess:
+#   - docker build --build-arg BUILD_COMMIT=$(git rev-parse HEAD)
+#   - a BUILD_COMMIT file in the build context (how CI does it, since Railway
+#     builds this Dockerfile itself from an uploaded directory and we cannot set
+#     a build arg on its side).
+ARG BUILD_COMMIT=""
+
+RUN COMMIT="${BUILD_COMMIT}" \
+ && if [ -z "$COMMIT" ] && [ -f BUILD_COMMIT ]; then COMMIT="$(cat BUILD_COMMIT)"; fi \
+ && LDFLAGS="-X spotlight/backend/internal/platform/buildinfo.injectedCommit=${COMMIT}" \
+ && go mod download \
+ && go build -ldflags "$LDFLAGS" -o server ./cmd/server \
  # Marketplace worker binaries (built alongside the API from the SAME image so
  # "build once, deploy many" holds; compose selects which one to run via command).
  && go build -o marketplace-indexer ./cmd/marketplace-indexer \

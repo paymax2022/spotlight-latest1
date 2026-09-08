@@ -58,7 +58,9 @@ resource "google_project_iam_member" "runtime_roles" {
 resource "google_secret_manager_secret" "app" {
   for_each  = toset(var.secret_names)
   secret_id = each.key
-  replication { auto {} }
+  replication {
+    auto {}
+  }
   labels     = local.labels
   depends_on = [google_project_service.services]
 }
