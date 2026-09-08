@@ -1,8 +1,8 @@
 import React, { useState, useMemo } from 'react';
-import { View, Text, ScrollView, StyleSheet, TextInput, Platform, ActivityIndicator } from 'react-native';
+import { View, Text, ScrollView, StyleSheet, TextInput, Platform, ActivityIndicator, Pressable } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
-import { Search } from 'lucide-react-native';
+import { Search, Star } from 'lucide-react-native';
 import { useQuery } from '@tanstack/react-query';
 import { Colors } from '@/constants/colors';
 import { Radius } from '@/constants/radius';
@@ -18,6 +18,9 @@ export default function FindDoctorScreen() {
   const [specialtyId, setSpecialtyId] = useState<string | null>(params.specialtyId ?? null);
   const [search, setSearch] = useState('');
   const [sort, setSort] = useState<SortKey>('rating');
+  const [minRating, setMinRating] = useState(0);
+  const [minExperience, setMinExperience] = useState(0);
+  const [availableNow, setAvailableNow] = useState(false);
 
   const { data: specialties = [] } = useQuery({
     queryKey: ['tele-specialties'],
@@ -25,9 +28,19 @@ export default function FindDoctorScreen() {
     placeholderData: DEMO_SPECIALTIES,
   });
 
+  // Rating / experience / availability are applied by the SERVER (min_rating,
+  // min_experience, available_now) rather than in the list below, so the filter
+  // holds across the whole catalogue instead of only the current page of results.
+  // Every filter is part of the query key, or react-query would serve a cached
+  // list belonging to different filters.
   const { data: doctors = [], isLoading } = useQuery({
-    queryKey: ['tele-doctors', specialtyId],
-    queryFn:  () => getDoctors(specialtyId ?? undefined),
+    queryKey: ['tele-doctors', specialtyId, minRating, minExperience, availableNow],
+    queryFn:  () => getDoctors({
+      specialtyId: specialtyId ?? undefined,
+      minRating:   minRating || undefined,
+      minExperience: minExperience || undefined,
+      availableNow: availableNow || undefined,
+    }),
     placeholderData: DEMO_DOCTORS,
   });
 
@@ -71,6 +84,36 @@ export default function FindDoctorScreen() {
         ))}
       </ScrollView>
 
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterRow}>
+        <Pressable
+          onPress={() => setAvailableNow((v) => !v)}
+          style={[styles.filterChip, availableNow && styles.filterChipActive]}
+        >
+          <Text style={[styles.filterText, availableNow && styles.filterTextActive]}>Available now</Text>
+        </Pressable>
+
+        {([[4, '4.0+'], [4.5, '4.5+']] as [number, string][]).map(([v, label]) => (
+          <Pressable
+            key={`r${v}`}
+            onPress={() => setMinRating((cur) => (cur === v ? 0 : v))}
+            style={[styles.filterChip, minRating === v && styles.filterChipActive]}
+          >
+            <Star size={12} color={minRating === v ? Colors.onPrimary : Colors.onSurfaceVariant} strokeWidth={2.4} />
+            <Text style={[styles.filterText, minRating === v && styles.filterTextActive]}>{label}</Text>
+          </Pressable>
+        ))}
+
+        {([[5, '5+ yrs'], [10, '10+ yrs']] as [number, string][]).map(([v, label]) => (
+          <Pressable
+            key={`e${v}`}
+            onPress={() => setMinExperience((cur) => (cur === v ? 0 : v))}
+            style={[styles.filterChip, minExperience === v && styles.filterChipActive]}
+          >
+            <Text style={[styles.filterText, minExperience === v && styles.filterTextActive]}>{label}</Text>
+          </Pressable>
+        ))}
+      </ScrollView>
+
       <View style={styles.sortRow}>
         <Text style={styles.resultCount}>{filtered.length} doctors</Text>
         <View style={styles.sortChips}>
@@ -93,7 +136,9 @@ export default function FindDoctorScreen() {
           {filtered.map((d) => (
             <DoctorCard key={d.id} doctor={d} onPress={() => router.push(`/services/telemedicine/doctor/${d.id}`)} />
           ))}
-          {filtered.length === 0 && <Text style={styles.empty}>No doctors match your search.</Text>}
+          {filtered.length === 0 && (
+            <Text style={styles.empty}>No doctors match your search or filters.</Text>
+          )}
         </ScrollView>
       )}
     </SafeAreaView>
@@ -105,6 +150,11 @@ const styles = StyleSheet.create({
   searchWrap:   { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm, marginHorizontal: Spacing.containerMargin, marginTop: Spacing.md, paddingHorizontal: Spacing.md, height: 52, borderRadius: Radius.lg, backgroundColor: Colors.surfaceContainerLow, borderWidth: 1, borderColor: Colors.surfaceContainerHigh },
   searchInput:  { flex: 1, ...Typography.bodyMd, color: Colors.onSurface },
   chipRow:      { gap: Spacing.sm, paddingHorizontal: Spacing.containerMargin, paddingVertical: Spacing.md },
+  filterRow:    { gap: Spacing.xs, paddingHorizontal: Spacing.containerMargin, paddingBottom: Spacing.md },
+  filterChip:   { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: Spacing.md, height: 36, borderRadius: Radius.full, borderWidth: 1, borderColor: Colors.outlineVariant, backgroundColor: Colors.surfaceContainerLowest },
+  filterChipActive: { backgroundColor: Colors.primary, borderColor: Colors.primary },
+  filterText:   { ...Typography.labelSm, color: Colors.onSurfaceVariant },
+  filterTextActive: { color: Colors.onPrimary },
   sortRow:      { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: Spacing.containerMargin, marginBottom: Spacing.sm },
   resultCount:  { ...Typography.labelMd, color: Colors.onSurfaceVariant },
   sortChips:    { flexDirection: 'row', gap: Spacing.xs },
