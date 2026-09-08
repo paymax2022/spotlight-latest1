@@ -4174,6 +4174,101 @@ security:
 
 paths:
   # ╔══════════════════════════════════════════════════════════════════════╗
+  # ║ SERVER-ISSUED EMAIL OTP (Brevo)                                        ║
+  # ║ Feature flag: FEATURE_OTP_EMAIL_ENABLED (default OFF).                 ║
+  # ║ When OFF — or ON with OTP_PEPPER / Brevo credentials missing — both    ║
+  # ║ endpoints return 503 naming the reason. They are never 404.            ║
+  # ║                                                                        ║
+  # ║ This is a SECOND OTP system. Today every OTP a user receives is minted ║
+  # ║ and mailed by Supabase Auth (docs/audit/USER_MANAGEMENT_AUDIT.md B1).  ║
+  # ║ Verifying here proves control of a mailbox; it does NOT confirm a      ║
+  # ║ GoTrue user and does NOT issue a session. Wiring it into registration, ║
+  # ║ login or password reset is a separate, deliberate change.              ║
+  # ║                                                                        ║
+  # ║ Both endpoints are unauthenticated and answer identically whether or   ║
+  # ║ not an account exists — otherwise they enumerate users.                ║
+  # ╚══════════════════════════════════════════════════════════════════════╝
+  /api/auth/otp/request:
+    post:
+      operationId: requestEmailOTP
+      summary: Send a one-time code to an email address
+      description: >
+        Always answers 200 with the same message whether or not the address
+        belongs to a user, and whether or not delivery succeeded. Reporting
+        either would turn this into a user-enumeration oracle. 429 is the one
+        exception: a caller who is rate limited already knows they asked, and
+        needs to be told to wait.
+      tags: [OTP]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, purpose]
+              properties:
+                email: { type: string, format: email }
+                purpose:
+                  type: string
+                  enum: [login, verify_email, password_reset]
+                  description: Scopes the code. A login code cannot complete a password reset.
+                name:
+                  type: string
+                  description: Optional display name for the email greeting. Defaults to "there".
+      responses:
+        '200':
+          description: Accepted (says nothing about whether the address exists)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean, example: true }
+                  message: { type: string, example: "if an account exists for that address, a code has been sent" }
+                  expiresInSeconds: { type: integer, example: 600 }
+        '400': { description: Malformed address or unknown purpose }
+        '429': { description: Send budget or resend cooldown exceeded }
+        '503': { description: "Feature disabled, or enabled but misconfigured (body names which)" }
+  /api/auth/otp/verify:
+    post:
+      operationId: verifyEmailOTP
+      summary: Verify a one-time code
+      description: >
+        On success the code is consumed and cannot be replayed. A wrong code, an
+        unknown address and a mismatched purpose all return the same 400
+        "invalid code" — distinguishing them would leak which addresses are real.
+        Expiry and lockout are distinguished because the user must be told to
+        request a new code.
+      tags: [OTP]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, code, purpose]
+              properties:
+                email: { type: string, format: email }
+                code: { type: string, example: "482913" }
+                purpose:
+                  type: string
+                  enum: [login, verify_email, password_reset]
+      responses:
+        '200':
+          description: The caller controls the mailbox. Not a session; see the block comment above.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean, example: true }
+                  verified: { type: boolean, example: true }
+                  purpose: { type: string, example: login }
+        '400': { description: Invalid or expired code }
+        '429': { description: "Attempt ceiling reached, or per-IP verify budget exceeded" }
+        '503': { description: "Feature disabled, or enabled but misconfigured" }
+
+  # ╔══════════════════════════════════════════════════════════════════════╗
   # ║ SESSION HARDENING — #19 (refresh rotation + suspicious-login response)  ║
   # ║ Feature flag: FEATURE_SESSION_HARDENING_ENABLED (default OFF).          ║
   # ║ When OFF, every endpoint below returns 503 { error: feature_disabled }. ║
