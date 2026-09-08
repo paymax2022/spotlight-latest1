@@ -16,18 +16,26 @@ export interface WalletBalance {
   balance_kobo: number;
 }
 
+/**
+ * One row of GET /api/finance/admin/wallets/:user_id/transactions.
+ *
+ * Mirrors the Go handler's `wallet.Transaction`, which projects the four raw
+ * ledger entry types down to a lowercase credit/debit pair and omits
+ * account_id/idempotency_key. This type previously described the raw
+ * ledger_entries row instead, so nothing matched and the table stayed empty.
+ */
 export interface LedgerEntry {
   id: string;
-  account_id: string;
-  type: 'CREDIT' | 'DEBIT' | 'REVERSAL_CREDIT' | 'REVERSAL_DEBIT';
+  type: 'credit' | 'debit';
   amount_kobo: number;
   reference: string;
-  idempotency_key: string;
   created_at: string;
 }
 
 export interface TransactionsResponse {
-  entries: LedgerEntry[];
+  transactions: LedgerEntry[];
+  limit: number;
+  offset: number;
   total: number;
 }
 

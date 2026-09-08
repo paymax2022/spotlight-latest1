@@ -499,6 +499,16 @@ jobs:
           node-version: '20'
       - name: Install Railway CLI
         run: npm install --global @railway/cli@5.40.1
+      # Railway builds backend/Dockerfile itself from the directory `railway up`
+      # uploads, so we cannot pass it --build-arg. Writing the SHA into the build
+      # context is the way in: the Dockerfile reads BUILD_COMMIT and bakes it into
+      # the binary via -ldflags, and GET /api/v1/public/build then reports it.
+      # Without this a deployed server cannot say what it is running — /public/health
+      # returns the same bytes on every build, so it can never distinguish
+      # "deployed" from "did not deploy".
+      - name: Stamp the build commit (backend image only)
+        if: matrix.service == 'backend'
+        run: printf '%s' "${{ github.sha }}" > backend/BUILD_COMMIT
       - name: Deploy ${{ matrix.service }}
         env:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN_DEVELOPMENT }}
@@ -574,6 +584,16 @@ jobs:
           node-version: '20'
       - name: Install Railway CLI
         run: npm install --global @railway/cli@5.40.1
+      # Railway builds backend/Dockerfile itself from the directory `railway up`
+      # uploads, so we cannot pass it --build-arg. Writing the SHA into the build
+      # context is the way in: the Dockerfile reads BUILD_COMMIT and bakes it into
+      # the binary via -ldflags, and GET /api/v1/public/build then reports it.
+      # Without this a deployed server cannot say what it is running — /public/health
+      # returns the same bytes on every build, so it can never distinguish
+      # "deployed" from "did not deploy".
+      - name: Stamp the build commit (backend image only)
+        if: matrix.service == 'backend'
+        run: printf '%s' "${{ github.sha }}" > backend/BUILD_COMMIT
       - name: Deploy ${{ matrix.service }}
         env:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN_STAGING }}
@@ -649,6 +669,16 @@ jobs:
           node-version: '20'
       - name: Install Railway CLI
         run: npm install --global @railway/cli@5.40.1
+      # Railway builds backend/Dockerfile itself from the directory `railway up`
+      # uploads, so we cannot pass it --build-arg. Writing the SHA into the build
+      # context is the way in: the Dockerfile reads BUILD_COMMIT and bakes it into
+      # the binary via -ldflags, and GET /api/v1/public/build then reports it.
+      # Without this a deployed server cannot say what it is running — /public/health
+      # returns the same bytes on every build, so it can never distinguish
+      # "deployed" from "did not deploy".
+      - name: Stamp the build commit (backend image only)
+        if: matrix.service == 'backend'
+        run: printf '%s' "${{ github.sha }}" > backend/BUILD_COMMIT
       - name: Deploy ${{ matrix.service }}
         env:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN_PRODUCTION }}

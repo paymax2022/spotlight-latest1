@@ -52,7 +52,7 @@ func (h *Handler) ListTransactions(c *gin.Context) {
 // AdminGetBalance handles GET /finance/admin/wallets/:user_id/balance (admin only)
 func (h *Handler) AdminGetBalance(c *gin.Context) {
 	targetUserID := c.Param("user_id")
-	resp, err := h.svc.GetBalance(c.Request.Context(), targetUserID)
+	resp, err := h.svc.AdminGetBalance(c.Request.Context(), targetUserID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -66,7 +66,7 @@ func (h *Handler) AdminListTransactions(c *gin.Context) {
 	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "50"))
 	offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
 
-	resp, err := h.svc.ListTransactions(c.Request.Context(), targetUserID, limit, offset)
+	resp, err := h.svc.AdminListTransactions(c.Request.Context(), targetUserID, limit, offset)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
