@@ -128,10 +128,30 @@ func (s *Service) AdminDecide(ctx context.Context, campaignID, adminID, decision
 		return fmt.Errorf("crowdfunding: cannot %s a campaign in %s state", decision, current)
 	}
 
+	// UNFREEZE restores the status freeze replaced, rather than the ACTIVE that
+	// reviewTransition names as its nominal target. Freezing a PENDING_REVIEW
+	// campaign and releasing it used to approve the campaign — live, with no
+	// review decision, and a campaign_reviews row that recorded "UNFREEZE" while
+	// the campaign quietly became ACTIVE. The fallback stays ACTIVE for anything
+	// frozen before the column existed.
+	if decision == "UNFREEZE" {
+		var prev *string
+		if err := tx.QueryRow(ctx,
+			`SELECT NULLIF(pre_freeze_review_status,'') FROM campaigns WHERE id=$1`, campaignID).Scan(&prev); err == nil && prev != nil {
+			next = *prev
+		}
+	}
+
 	if _, err := tx.Exec(ctx,
 		`UPDATE campaigns SET review_status=$1, admin_note=COALESCE(NULLIF($2,''), admin_note),
-		        status=CASE WHEN $1='ACTIVE' THEN 'active' ELSE status END, updated_at=NOW()
-		 WHERE id=$3`, next, note, campaignID); err != nil {
+		        status=CASE WHEN $1='ACTIVE' THEN 'active' ELSE status END,
+		        pre_freeze_review_status = CASE
+		          WHEN $4 = 'FREEZE'   THEN $5
+		          WHEN $4 = 'UNFREEZE' THEN NULL
+		          ELSE pre_freeze_review_status
+		        END,
+		        updated_at=NOW()
+		 WHERE id=$3`, next, note, campaignID, decision, current); err != nil {
 		return err
 	}
 	if _, err := tx.Exec(ctx,

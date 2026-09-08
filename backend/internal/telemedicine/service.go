@@ -166,8 +166,19 @@ func (s *Service) ListDoctors(ctx context.Context, q ListDoctorsQuery) ([]Doctor
 	}
 
 	where := strings.Join(filters, " AND ")
+	// bio and about are NULLABLE text columns read into PLAIN Go strings (Doctor.Bio
+	// and Doctor.About), unlike sub_specialty/avatar_url/mdcn_number/phone which are
+	// already *string and tolerate NULL. pgx fails the whole scan on either —
+	// "cannot scan NULL into *string" — and because that happens per-row inside the
+	// loop, ONE such doctor 500s the ENTIRE list rather than omitting itself. Every
+	// doctor in the local database has about=NULL, so the doctor list — the front
+	// door of telemedicine — returned 500 outright.
+	//
+	// bio has no NULLs today but the column allows them, so it is coalesced too
+	// rather than left as the next instance of this bug. Empty string matches the
+	// struct's `omitempty` JSON tags: an absent bio simply does not appear.
 	sql := fmt.Sprintf(`
-		SELECT d.id, d.user_id, d.name, d.specialty, d.sub_specialty, d.bio, d.about,
+		SELECT d.id, d.user_id, d.name, d.specialty, d.sub_specialty, COALESCE(d.bio, ''), COALESCE(d.about, ''),
 		       d.consult_fee_kobo, d.avatar_url, d.is_available, d.is_online, d.is_hmo_verified,
 		       d.experience_years, d.rating, d.review_count, d.patients_count, d.success_rate, d.is_featured,
 		       d.mdcn_number, d.phone, d.education, d.created_at
@@ -187,7 +198,7 @@ func (s *Service) ListDoctors(ctx context.Context, q ListDoctorsQuery) ([]Doctor
 // GetDoctor returns a single doctor profile by ID.
 func (s *Service) GetDoctor(ctx context.Context, id string) (*Doctor, error) {
 	const q = `
-		SELECT d.id, d.user_id, d.name, d.specialty, d.sub_specialty, d.bio, d.about,
+		SELECT d.id, d.user_id, d.name, d.specialty, d.sub_specialty, COALESCE(d.bio, ''), COALESCE(d.about, ''),
 		       d.consult_fee_kobo, d.avatar_url, d.is_available, d.is_online, d.is_hmo_verified,
 		       d.experience_years, d.rating, d.review_count, d.patients_count, d.success_rate, d.is_featured,
 		       d.mdcn_number, d.phone, d.education, d.created_at

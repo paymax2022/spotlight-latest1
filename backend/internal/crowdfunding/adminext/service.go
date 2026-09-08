@@ -409,13 +409,35 @@ func (s *Service) SetCampaignFreeze(ctx context.Context, campaignID, adminID str
 		return err
 	}
 	// Best-effort: also flip the campaign review_status if the table/row exists.
-	reviewStatus := "ACTIVE"
+	//
+	// Freeze REMEMBERS the status it replaced, and unfreeze restores it. Writing
+	// ACTIVE unconditionally on unfreeze meant freezing a PENDING_REVIEW campaign
+	// and releasing it silently approved the campaign — live, with no review
+	// decision and nothing in the audit trail claiming one.
 	if freeze {
-		reviewStatus = "FROZEN"
+		// COALESCE keeps the ORIGINAL value if this row is already frozen, so a
+		// second freeze cannot overwrite the memory with 'FROZEN' itself.
+		_, _ = tx.Exec(ctx, `
+			UPDATE campaigns
+			   SET pre_freeze_review_status = CASE
+			         WHEN review_status = 'FROZEN' THEN pre_freeze_review_status
+			         ELSE review_status
+			       END,
+			       review_status = 'FROZEN',
+			       admin_note = COALESCE(NULLIF($1,''), admin_note),
+			       updated_at = NOW()
+			 WHERE id = $2`, note, campaignID)
+	} else {
+		// Fall back to ACTIVE when nothing was remembered — a campaign frozen
+		// before this column existed, which is exactly the old behaviour.
+		_, _ = tx.Exec(ctx, `
+			UPDATE campaigns
+			   SET review_status = COALESCE(NULLIF(pre_freeze_review_status,''), 'ACTIVE'),
+			       pre_freeze_review_status = NULL,
+			       admin_note = COALESCE(NULLIF($1,''), admin_note),
+			       updated_at = NOW()
+			 WHERE id = $2`, note, campaignID)
 	}
-	_, _ = tx.Exec(ctx,
-		`UPDATE campaigns SET review_status=$1, admin_note=COALESCE(NULLIF($2,''), admin_note), updated_at=NOW() WHERE id=$3`,
-		reviewStatus, note, campaignID)
 
 	action := "campaign.unfreeze"
 	if freeze {
