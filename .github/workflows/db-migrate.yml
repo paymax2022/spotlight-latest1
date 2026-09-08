@@ -82,7 +82,7 @@ jobs:
       SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
       SUPABASE_PROJECT_ID: ${{ secrets.SUPABASE_PROJECT_ID }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # PINNED ON PURPOSE — do not "modernise" this back to `latest`.
       # The step below runs `supabase db push --linked` against PRODUCTION. With
@@ -134,7 +134,7 @@ jobs:
       SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_STAGING_DB_PASSWORD }}
       SUPABASE_PROJECT_ID: ${{ secrets.SUPABASE_STAGING_PROJECT_ID }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # PINNED, and deliberately the SAME pin as the production job above: if the
       # two jobs could disagree about how a migration applies, a chain that went
