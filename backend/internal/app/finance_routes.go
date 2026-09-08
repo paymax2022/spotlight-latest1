@@ -568,7 +568,17 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		RegisterSocialPay(finance.Group("/social"), adminGroupTop5(r, "/api/social/admin"), pool, rbac)
 	}
 	if cfg.FeatureEventsEnabled && pool != nil {
-		RegisterEvents(finance.Group("/events"), adminGroupTop5(r, "/api/events/admin"), cfg, pool, rbac)
+		// adminGroupTop5 only calls requireUserID(), which reads c.GetString("user_id")
+		// but never sets it — RequireAuthContext is what populates that (and the RBAC
+		// context GetAuthenticatedUser needs). Without mapsAuth() here, every route
+		// under /api/events/admin — including approve/suspend/settle — 401s for every
+		// caller, including super-admin. Same fix already applied to tAdmin above and
+		// several other admin groups in this file; adminGroupTop5's other 13 call
+		// sites still have this gap and are a separate follow-up.
+		eventsAdmin := r.Group("/api/events/admin")
+		eventsAdmin.Use(mapsAuth())
+		eventsAdmin.Use(requireUserID())
+		RegisterEvents(finance.Group("/events"), eventsAdmin, cfg, pool, rbac)
 	}
 	if cfg.FeatureLoyaltyEnabled && pool != nil {
 		RegisterLoyalty(finance.Group("/loyalty"), adminGroupTop5(r, "/api/loyalty/admin"), pool, rbac)
