@@ -297,15 +297,15 @@ export async function setCampaignFreeze(campaignId: string, freeze: boolean, not
 // ─── Finance ──────────────────────────────────────────────────────────────────
 
 const MOCK_REFUNDS: CfRefundRequest[] = [
-  { id: 're1', reference: 'SPL-RF-7001', campaignTitle: 'Flood Relief for Bayelsa Families', contributorName: 'Anonymous', amountKobo: 2_000_000, reason: 'Concerns about how funds are used', status: 'REQUESTED', requestedAt: '2026-06-19T07:30:00Z', refundEligible: true },
-  { id: 're2', reference: 'SPL-RF-7002', campaignTitle: 'Àdìre Documentary', contributorName: 'Tunde Bakare', amountKobo: 500_000, reason: 'Contributed by mistake', status: 'REQUESTED', requestedAt: '2026-06-18T22:10:00Z', refundEligible: true },
-  { id: 're3', reference: 'SPL-RF-6990', campaignTitle: 'Cryptocurrency Doubling Scheme', contributorName: 'Bola Ighodalo', amountKobo: 5_000_000, reason: 'Campaign turned out to be misleading', status: 'APPROVED', requestedAt: '2026-06-17T14:00:00Z', refundEligible: true },
+  { id: 're1', reference: 'SPL-RF-7001', campaignTitle: 'Flood Relief for Bayelsa Families', contributorName: 'Anonymous', amountKobo: 2_000_000, reason: 'Concerns about how funds are used', status: 'REQUESTED', requestedAt: '2026-06-19T07:30:00Z', refundEligible: true, isDemo: true },
+  { id: 're2', reference: 'SPL-RF-7002', campaignTitle: 'Àdìre Documentary', contributorName: 'Tunde Bakare', amountKobo: 500_000, reason: 'Contributed by mistake', status: 'REQUESTED', requestedAt: '2026-06-18T22:10:00Z', refundEligible: true, isDemo: true },
+  { id: 're3', reference: 'SPL-RF-6990', campaignTitle: 'Cryptocurrency Doubling Scheme', contributorName: 'Bola Ighodalo', amountKobo: 5_000_000, reason: 'Campaign turned out to be misleading', status: 'APPROVED', requestedAt: '2026-06-17T14:00:00Z', refundEligible: true, isDemo: true },
 ];
 
 const MOCK_SETTLEMENTS: CfSettlementBatch[] = [
-  { id: 'sb1', reference: 'SPL-STL-2026-06-19', payoutCount: 18, grossKobo: 240_000_000, feeKobo: 6_000_000, netKobo: 234_000_000, status: 'PROCESSING', createdAt: '2026-06-19T06:00:00Z' },
-  { id: 'sb2', reference: 'SPL-STL-2026-06-18', payoutCount: 31, grossKobo: 412_000_000, feeKobo: 10_300_000, netKobo: 401_700_000, status: 'SETTLED', createdAt: '2026-06-18T06:00:00Z' },
-  { id: 'sb3', reference: 'SPL-STL-2026-06-17', payoutCount: 12, grossKobo: 88_000_000, feeKobo: 2_200_000, netKobo: 85_800_000, status: 'SETTLED', createdAt: '2026-06-17T06:00:00Z' },
+  { id: 'sb1', reference: 'SPL-STL-2026-06-19', payoutCount: 18, grossKobo: 240_000_000, feeKobo: 6_000_000, netKobo: 234_000_000, status: 'PROCESSING', createdAt: '2026-06-19T06:00:00Z', isDemo: true },
+  { id: 'sb2', reference: 'SPL-STL-2026-06-18', payoutCount: 31, grossKobo: 412_000_000, feeKobo: 10_300_000, netKobo: 401_700_000, status: 'SETTLED', createdAt: '2026-06-18T06:00:00Z', isDemo: true },
+  { id: 'sb3', reference: 'SPL-STL-2026-06-17', payoutCount: 12, grossKobo: 88_000_000, feeKobo: 2_200_000, netKobo: 85_800_000, status: 'SETTLED', createdAt: '2026-06-17T06:00:00Z', isDemo: true },
 ];
 
 export async function getFinanceSummary(): Promise<CfFinanceSummary> {
@@ -321,6 +321,9 @@ export async function getFinanceSummary(): Promise<CfFinanceSummary> {
       escrowKobo: 642_000_000_00,
       settledThisMonthKobo: 1_204_000_000_00,
       reconciliationMismatches: 1,
+      unbookedGrossKobo: 45_000_00,
+      demoRefundRows: MOCK_REFUNDS.length,
+      demoSettlementRows: MOCK_SETTLEMENTS.length,
     };
   }
   const res = await fetch(`${adminBase()}/finance/summary`, { cache: 'no-store', headers: authHeaders() });
