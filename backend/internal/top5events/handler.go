@@ -74,6 +74,16 @@ func (h *Handler) Register(member, admin *gin.RouterGroup, guard GuardFunc) {
 	admin.POST("/:id/approve", guard("events.approve"), h.Approve)
 	admin.POST("/:id/suspend", guard("events.suspend"), h.Suspend)
 	admin.POST("/:id/vendors/:vendorId/settle", guard("events.settle"), h.SettleVendor)
+
+	// Admin reads (RBAC events.admin.view, seeded but previously unused).
+	adminView := guard("events.admin.view")
+	admin.GET("/dashboard", adminView, h.AdminGetDashboard)
+	admin.GET("/events", adminView, h.AdminListEvents)
+	admin.GET("/events/:id", adminView, h.AdminGetEvent)
+	admin.GET("/tickets", adminView, h.AdminListTickets)
+	admin.GET("/cashless", adminView, h.AdminGetCashlessFloat)
+	admin.GET("/vendors", adminView, h.AdminListVendors)
+	admin.GET("/settlement", adminView, h.AdminGetSettlement)
 }
 
 func uid(c *gin.Context) (string, bool) {
@@ -474,6 +484,43 @@ func (h *Handler) TapCharge(c *gin.Context) {
 		return
 	}
 	out, err := h.svc.TapCharge(c.Request.Context(), c.Param("vendorId"), req.WalletID, req.AmountKobo, key)
+	respond(c, out, err)
+}
+
+// --- Admin reads (events.admin.view) ---
+
+func (h *Handler) AdminGetDashboard(c *gin.Context) {
+	out, err := h.svc.AdminGetDashboard(c.Request.Context())
+	respond(c, out, err)
+}
+
+func (h *Handler) AdminListEvents(c *gin.Context) {
+	out, err := h.svc.AdminListEvents(c.Request.Context(), c.Query("status"), c.Query("q"))
+	respond(c, out, err)
+}
+
+func (h *Handler) AdminGetEvent(c *gin.Context) {
+	out, err := h.svc.AdminGetEvent(c.Request.Context(), c.Param("id"))
+	respond(c, out, err)
+}
+
+func (h *Handler) AdminListTickets(c *gin.Context) {
+	out, err := h.svc.AdminListTickets(c.Request.Context(), c.Query("event_id"), c.Query("status"), c.Query("q"))
+	respond(c, out, err)
+}
+
+func (h *Handler) AdminGetCashlessFloat(c *gin.Context) {
+	out, err := h.svc.AdminGetCashlessFloat(c.Request.Context())
+	respond(c, out, err)
+}
+
+func (h *Handler) AdminListVendors(c *gin.Context) {
+	out, err := h.svc.AdminListVendors(c.Request.Context(), c.Query("payout_status"), c.Query("q"))
+	respond(c, out, err)
+}
+
+func (h *Handler) AdminGetSettlement(c *gin.Context) {
+	out, err := h.svc.AdminGetSettlement(c.Request.Context())
 	respond(c, out, err)
 }
 
