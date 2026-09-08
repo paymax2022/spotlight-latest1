@@ -27,6 +27,10 @@ COPY --from=builder --chown=node:node /app/dist ./public
 # switch needs nothing else. Port 8083 is unprivileged.
 USER node
 EXPOSE 8083
+# Static SPA server — any request under / resolves, so this needs nothing
+# app-specific. wget is BusyBox-provided on node:alpine, no extra package.
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+  CMD wget --no-verbose --tries=1 --spider http://localhost:8083/ || exit 1
 
 # Start server
 CMD ["serve", "-s", "public", "-l", "8083"]

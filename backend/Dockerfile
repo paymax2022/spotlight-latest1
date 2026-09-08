@@ -45,4 +45,8 @@ COPY --from=build /app/transport-scheduler /app/transport-scheduler
 RUN addgroup -S app && adduser -S -G app app
 USER app
 EXPOSE 8080
+# GET /api/v1/public/health — deliberately unauthenticated (router.go), so the
+# probe itself needs no credentials. curl is already installed above for this.
+HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
+  CMD curl -f "http://localhost:${APP_PORT:-8080}/api/v1/public/health" || exit 1
 CMD ["/app/server"]
