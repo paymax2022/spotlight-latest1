@@ -30,6 +30,8 @@ func mapErr(c *gin.Context, err error) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "not found"})
 	case errors.Is(err, ErrInviteNotValid):
 		c.JSON(http.StatusBadRequest, gin.H{"error": "this invite is not valid"})
+	case errors.Is(err, ErrValidation):
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 	default:
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 	}
@@ -52,6 +54,13 @@ func (h *Handler) Register(g *gin.RouterGroup) {
 	// Property content.
 	g.GET("/properties/:propertyId", h.GetProperty)
 	g.PATCH("/properties/:propertyId", h.UpdateContent)
+	g.PATCH("/properties/:propertyId/details", h.UpdateDetails)
+	// Photos (property_photos.go).
+	g.POST("/properties/:propertyId/photos/presign", h.PresignPhoto)
+	g.GET("/properties/:propertyId/photos", h.ListPhotos)
+	g.POST("/properties/:propertyId/photos", h.CreatePhoto)
+	g.PATCH("/properties/:propertyId/photos/:photoId", h.UpdatePhoto)
+	g.DELETE("/properties/:propertyId/photos/:photoId", h.DeletePhoto)
 	// Room types + rate plans.
 	g.GET("/properties/:propertyId/room-types", h.ListRoomTypes)
 	g.POST("/properties/:propertyId/room-types", h.CreateRoomType)
@@ -148,6 +157,39 @@ func (h *Handler) UpdateContent(c *gin.Context) {
 	}
 	if err := h.svc.UpdateContent(c.Request.Context(), uid(c), c.Param("propertyId"),
 		b.Name, b.Description, b.Address, b.City, b.StarRating, b.PropertyType); err != nil {
+		mapErr(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": gin.H{"ok": true}})
+}
+
+// UpdateDetails: PATCH /properties/:propertyId/details {lat?, lng?, amenities?,
+// house_rules?, cancellation_policy?, check_in_from?, check_out_until?,
+// contact_phone?, contact_email?} — every field optional; only fields present
+// in the body are changed. A separate route from UpdateContent (above) so the
+// two PATCH bodies keep their own, independently-evolving validation.
+func (h *Handler) UpdateDetails(c *gin.Context) {
+	var b struct {
+		Lat                *float64  `json:"lat"`
+		Lng                *float64  `json:"lng"`
+		Amenities          *[]string `json:"amenities"`
+		HouseRules         *string   `json:"house_rules"`
+		CancellationPolicy *string   `json:"cancellation_policy"`
+		CheckInFrom        *string   `json:"check_in_from"`
+		CheckOutUntil      *string   `json:"check_out_until"`
+		ContactPhone       *string   `json:"contact_phone"`
+		ContactEmail       *string   `json:"contact_email"`
+	}
+	if err := c.ShouldBindJSON(&b); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	patch := PropertyDetailsPatch{
+		Lat: b.Lat, Lng: b.Lng, Amenities: b.Amenities, HouseRules: b.HouseRules,
+		CancellationPolicy: b.CancellationPolicy, CheckInFrom: b.CheckInFrom,
+		CheckOutUntil: b.CheckOutUntil, ContactPhone: b.ContactPhone, ContactEmail: b.ContactEmail,
+	}
+	if err := h.svc.UpdateDetails(c.Request.Context(), uid(c), c.Param("propertyId"), patch); err != nil {
 		mapErr(c, err)
 		return
 	}
