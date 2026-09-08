@@ -38,8 +38,11 @@ export default function LoginScreen() {
     try {
       await login(values.identifier, values.password);
       // Navigate to the originating module screen, or the home grid as fallback.
-      // Validate returnTo starts with "/" to prevent open-redirect.
-      const dest = (typeof returnTo === 'string' && returnTo.startsWith('/'))
+      // Validate returnTo is a ROOTED, non-protocol-relative path to prevent an
+      // open redirect. startsWith('/') alone was not enough: "//evil.example"
+      // passes it and a browser treats it as an absolute URL to another host, so
+      // a crafted ?returnTo= could bounce a freshly-signed-in user off-site.
+      const dest = (typeof returnTo === 'string' && returnTo.startsWith('/') && !returnTo.startsWith('//'))
         ? returnTo
         : '/(tabs)/home';
       router.replace(dest as never);

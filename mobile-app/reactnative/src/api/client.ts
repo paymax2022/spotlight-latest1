@@ -2,6 +2,7 @@ import axios from 'axios';
 import { router } from 'expo-router';
 import { createSupabaseClient } from '@/lib/supabase';
 import { getDevUrl } from '@/lib/devUrl';
+import { currentPathForReturn } from '@/lib/authError';
 
 // Base URL points to the frontend-web Next.js server, which hosts server-side
 // bill payment operations (wallet debit + provider calls + ledger writes).
@@ -46,7 +47,17 @@ api.interceptors.response.use(
     // next real request will 401 and take this path anyway.
     if (error?.response?.status === 401 && !error?.config?.skipAuthRedirect) {
       try { await createSupabaseClient().auth.signOut(); } catch { /* ignore */ }
-      router.replace('/(auth)/login');
+      // Come BACK here after signing in. The login screen already accepts a
+      // returnTo (and validates it starts with "/" against open redirects); this
+      // redirect simply never passed one, so an expired session cost the user
+      // their place as well as their session — they signed in and landed on the
+      // home grid, then had to find their way back to what they were doing.
+      const returnTo = currentPathForReturn();
+      router.replace(
+        returnTo
+          ? { pathname: '/(auth)/login', params: { returnTo } }
+          : ('/(auth)/login' as never),
+      );
     }
     // Surface the server-provided reason (e.g. "This feature requires KYC Tier 1…",
     // insufficient-balance, tier-limit) instead of axios's generic "Request failed

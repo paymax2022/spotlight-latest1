@@ -11,13 +11,18 @@ import { shadow1 } from '@/constants/shadows';
 import ScreenHeader from '@/components/ScreenHeader';
 import StateView from '@/components/StateView';
 import { useProperties } from '@/features/properties/hooks';
+import { isUnauthorized } from '@/lib/authError';
+import { promptSignIn } from '@/lib/authRedirect';
 import { TYPE_META, OCCUPANCY_META } from '@/features/properties/api';
 import type { Property, OccupancyStatus } from '@/features/properties/api';
 
 const FILTERS: (OccupancyStatus | 'all')[] = ['all', 'occupied', 'vacant', 'reserved'];
 
 export default function PropertiesScreen() {
-  const { data, isLoading, isError, refetch, isRefetching } = useProperties();
+  const { data, isLoading, isError, error, refetch, isRefetching } = useProperties();
+  // An expired session is not a transient failure: retrying sends the same dead
+  // token and fails identically. Offer the action that can actually work.
+  const signedOut = isError && isUnauthorized(error);
   const [filter, setFilter] = useState<OccupancyStatus | 'all'>('all');
   const filtered = useMemo(() => (data?.properties ?? []).filter((p) => filter === 'all' || p.occupancyStatus === filter), [data, filter]);
 
@@ -64,6 +69,16 @@ export default function PropertiesScreen() {
         </View>
       ) : null}
       {isLoading ? <StateView kind="loading" message="Loading properties…" />
+        : signedOut ? (
+          <StateView
+            kind="error"
+            icon="LogIn"
+            title="Please sign in"
+            message="Your session has expired. Sign in again and we'll bring you straight back here."
+            actionLabel="Sign in"
+            onAction={() => promptSignIn('/properties')}
+          />
+        )
         : isError ? <StateView kind="error" title="Couldn't load" message="Please try again." actionLabel="Retry" onAction={() => refetch()} />
         : (
           <FlatList data={filtered} keyExtractor={(p) => p.id} renderItem={renderItem} contentContainerStyle={styles.list} showsVerticalScrollIndicator={false} refreshing={isRefetching} onRefresh={refetch} ItemSeparatorComponent={() => <View style={{ height: Spacing.sm }} />}
