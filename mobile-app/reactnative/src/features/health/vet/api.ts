@@ -437,13 +437,39 @@ const MOCK_PROVIDER_HOME_NAV: ProviderHomeNav = {
 };
 
 // ══ PETS ════════════════════════════════════════════════════════════════════
+const SPECIES_FROM_WIRE: Record<string, Pet['species']> = {
+  DOG: 'dog', CAT: 'cat', BIRD: 'bird', RABBIT: 'rabbit', REPTILE: 'reptile',
+};
+const SEX_FROM_WIRE: Record<string, Pet['sex']> = { MALE: 'male', FEMALE: 'female' };
+
+// Maps the backend's minimal Pet row (snake_case; see Go healthvet.Pet) onto
+// the richer mobile Pet display shape. microchipId/neutered are not on this
+// row (there is no such column server-side) so they stay undefined rather
+// than being invented; avatarColor/ageLabel are computed the same way the
+// create/update paths already do below (PET_COLORS / ageLabelFromDob), not
+// fabricated per-pet data.
+function mapPet(raw: any, index: number): Pet {
+  return {
+    id: raw.id,
+    name: raw.name ?? '',
+    species: SPECIES_FROM_WIRE[String(raw.species ?? '').toUpperCase()] ?? 'other',
+    breed: raw.breed ?? '',
+    sex: SEX_FROM_WIRE[String(raw.sex ?? '').toUpperCase()] ?? 'unknown',
+    dob: raw.birth_date ?? undefined,
+    ageLabel: ageLabelFromDob(raw.birth_date ?? undefined),
+    weightKg: raw.weight_kg ?? undefined,
+    avatarColor: PET_COLORS[index % PET_COLORS.length],
+    notes: raw.notes ?? undefined,
+  };
+}
+
 export async function getPets(): Promise<Pet[]> {
   if (USE_MOCK) {
     await delay();
     return MOCK_PETS;
   }
-  const { data } = await api.get<Pet[]>(`${VET_API}/pets`);
-  return data;
+  const { data } = await api.get<{ pets?: unknown[] }>(`${VET_API}/pets`);
+  return (data.pets ?? []).map(mapPet);
 }
 
 export async function getPet(id: string): Promise<Pet> {

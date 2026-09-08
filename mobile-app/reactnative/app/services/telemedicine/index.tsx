@@ -3,7 +3,7 @@ import { View, Text, ScrollView, StyleSheet, Pressable, Platform } from 'react-n
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
-import { CalendarClock, ChevronRight, Stethoscope } from 'lucide-react-native';
+import { CalendarClock, ChevronRight, Stethoscope, UserCog } from 'lucide-react-native';
 import { useQuery } from '@tanstack/react-query';
 import { Colors } from '@/constants/colors';
 import { Radius } from '@/constants/radius';
@@ -99,6 +99,24 @@ export default function TelemedicineHome() {
           <View style={{ flex: 1 }}>
             <Text style={styles.apptTitle}>My appointments</Text>
             <Text style={styles.apptSub}>View upcoming and past consultations</Text>
+          </View>
+          <ChevronRight size={20} color={Colors.onSurfaceVariant} strokeWidth={2} />
+        </Pressable>
+
+        {/* Doctor onboarding entry point — practising doctors apply here to
+            offer consultations on Paymax (MDCN verification + guided setup). */}
+        <Pressable
+          style={[styles.apptShortcut, shadow1]}
+          onPress={() => router.push('/(doctor)/signup')}
+          accessibilityRole="button"
+          accessibilityLabel="Are you a doctor? Start onboarding"
+        >
+          <View style={styles.apptIcon}>
+            <UserCog size={20} color={Colors.secondary} strokeWidth={2} />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.apptTitle}>Are you a doctor?</Text>
+            <Text style={styles.apptSub}>Get MDCN-verified and start offering consultations</Text>
           </View>
           <ChevronRight size={20} color={Colors.onSurfaceVariant} strokeWidth={2} />
         </Pressable>
