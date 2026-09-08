@@ -12,7 +12,9 @@ import (
 	"spotlight/backend/internal/config"
 	"spotlight/backend/internal/email"
 	"spotlight/backend/internal/handlers"
+	"spotlight/backend/internal/integrations"
 	"spotlight/backend/internal/otp"
+	"spotlight/backend/internal/services"
 )
 
 // registerOTPRoutes wires POST /api/auth/otp/{request,verify}.
@@ -43,11 +45,22 @@ import (
 // routes that answer 503 naming the reason. Nothing silently proceeds with a
 // weak hash or a missing store, which is the property the guide's fail-fast rule
 // actually protects.
-func registerOTPRoutes(r *gin.Engine, cfg config.Config, pool *pgxpool.Pool) {
+// registerOTPRoutes returns the issuer the registration handler uses to send a
+// verification code, or nil when the feature is closed. Returning it keeps ONE
+// service instance behind both surfaces: registration and POST /otp/request must
+// share a store and a send budget, or "resend" would hand out a second live code
+// and a second allowance.
+func registerOTPRoutes(r *gin.Engine, cfg config.Config, pool *pgxpool.Pool, supabase *integrations.SupabaseRestClient) handlers.OTPIssuer {
 	group := r.Group("/api/auth/otp")
 
 	svc, reason := buildOTPService(cfg, pool)
 	h := handlers.NewOTPHandler(svc, reason)
+
+	// Account confirmation for the verify_email purpose. Without it a redeemed
+	// code proves mailbox control and activates nothing, so the handler refuses
+	// that purpose loudly rather than returning a cheerful 200.
+	verifier := services.NewSupabaseEmailVerifier(pool, supabase)
+	h.WithEmailVerifier(verifier)
 
 	// Routes are registered even when disabled so the surface answers 503 rather
 	// than 404. A 404 reads as "this endpoint does not exist in this build",
@@ -57,9 +70,18 @@ func registerOTPRoutes(r *gin.Engine, cfg config.Config, pool *pgxpool.Pool) {
 
 	if svc == nil {
 		log.Printf("[otp] routes registered DISABLED (%s) — POST /api/auth/otp/* will answer 503", reason)
-		return
+		return nil
+	}
+	if verifier == nil {
+		// Enabled but unable to finish the job it is enabled for. Loud, because
+		// the symptom otherwise appears only at a user's first verification.
+		log.Printf("[otp] ERROR: OTP is enabled but no email verifier could be built (Supabase not configured) — verify_email will answer 500")
 	}
 	log.Printf("[otp] routes enabled — length=%d ttl=%s", cfg.OTPLength, time.Duration(cfg.OTPTTLMinutes)*time.Minute)
+
+	return func(ctx context.Context, email, name, purpose, ip string) error {
+		return svc.Issue(ctx, email, name, purpose, ip)
+	}
 }
 
 // buildOTPService returns (nil, reason) when the feature must stay closed.

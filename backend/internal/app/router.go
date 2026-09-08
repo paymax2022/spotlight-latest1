@@ -373,7 +373,13 @@ func NewRouter(cfg config.Config) *gin.Engine {
 	// 503-with-a-reason rather than 404; the service inside is nil unless
 	// FEATURE_OTP_EMAIL_ENABLED is on AND the pool, pepper and Brevo credentials
 	// are all present. See otp_routes.go.
-	registerOTPRoutes(r, cfg, sharedPool)
+	//
+	// The returned issuer is what makes Register send a code. It is nil when the
+	// feature is closed, and WithOTPIssuer(nil) leaves Register exactly as it
+	// shipped — verification stays entirely with Supabase Auth.
+	if issuer := registerOTPRoutes(r, cfg, sharedPool, supabase); issuer != nil {
+		authHandler.WithOTPIssuer(issuer)
+	}
 
 	// Finance modules — wired only when the shared pool is present. Returns the
 	// Direct Referral Rewards engine service (nil when flag-off) so Phase-1 revenue
