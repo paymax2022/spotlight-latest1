@@ -19,6 +19,7 @@ import (
 	"spotlight/backend/internal/finance/wallet"
 	"spotlight/backend/internal/loyalty"
 	"spotlight/backend/internal/middleware"
+	"spotlight/backend/internal/platform/realtime"
 	"spotlight/backend/internal/points"
 	"spotlight/backend/internal/services"
 	"spotlight/backend/internal/top5events"
@@ -41,7 +42,7 @@ import (
 // MAIN wallet on close (NL-3); points/event-wallet never cash out (NL-4); vendor
 // payouts are KYC-gated (NL-10) and run net of fees through the ledger. Auditing is
 // nil-safe (the orchestrator may inject a sink).
-func RegisterEvents(member *gin.RouterGroup, admin *gin.RouterGroup, cfg config.Config, pool *pgxpool.Pool, rbac services.RBACService) {
+func RegisterEvents(member *gin.RouterGroup, admin *gin.RouterGroup, cfg config.Config, pool *pgxpool.Pool, rbac services.RBACService, rtHub *realtime.Hub) {
 	if pool == nil {
 		log.Println("[top5events] nil pool — skipping events routes")
 		return
@@ -61,6 +62,13 @@ func RegisterEvents(member *gin.RouterGroup, admin *gin.RouterGroup, cfg config.
 
 	var auditor top5events.Auditor = nil
 	svc := top5events.NewService(pool, ledgerSvc, walletSvc, settlementSvc, tiersSvc, credSvc, tags, auditor)
+
+	// Live check-in push (organiser dashboard). Shared hub built once at the
+	// router level (see router.go) — same instance marketplace's Deal Room
+	// chat publishes through, so there is exactly one SSE connection
+	// (/api/v1/realtime/stream) per client regardless of which module fires.
+	// Nil-safe: ScanTicket's publish is a no-op if this is nil.
+	svc.SetRealtime(rtHub)
 
 	// ── Central Commission & Profit recording (§ profit registry) ──
 	// When the commission feature is on, inject a nil-safe recorder so realized
