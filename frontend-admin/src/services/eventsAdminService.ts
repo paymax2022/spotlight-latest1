@@ -41,12 +41,22 @@ function authHeaders(): Record<string, string> {
 }
 const delay = (ms = 240) => new Promise((r) => setTimeout(r, ms));
 
-// Verified against backend/internal/top5events (handler.go:64-66 — the ENTIRE
-// admin surface is just 3 routes: POST /:id/approve, POST /:id/suspend, POST
-// /:id/vendors/:vendorId/settle). Functions with a real route throw
-// NOT_IN_FIXTURE_MODE; functions with no reachable route throw NO_BACKEND_YET
-// instead, since flipping the mock flag would not reach a working call either
-// way. See docs/audit/ADMIN_SIMULATED_WRITES.md.
+// UPDATED: the admin surface now also has 7 real GET reads (RBAC
+// events.admin.view) — dashboard/events/events/:id/tickets/cashless/vendors/
+// settlement, all in backend/internal/top5events/admin_reads.go — alongside
+// the original 3 write routes (approve/suspend/settle). getEventsDashboard,
+// listEvents, getEvent, listTickets, getCashlessFloat, listVendors, and
+// getSettlement below already called these exact paths/shapes in live mode
+// before the backend existed; no code change was needed here, only the
+// routes landing. The functions below that still throw do so because the
+// admin UI's REVIEW/DECISION model (reject, request_changes, a
+// approve/reject payout decision, settlement-break resolution, fraud
+// actions) has no backend equivalent at all — not because a route is
+// missing, but because the underlying capability doesn't exist server-side.
+// Functions with a real route throw NOT_IN_FIXTURE_MODE; functions with no
+// reachable route throw NO_BACKEND_YET instead, since flipping the mock flag
+// would not reach a working call either way. See
+// docs/audit/ADMIN_SIMULATED_WRITES.md.
 const NOT_IN_FIXTURE_MODE =
   'is unavailable in fixture mode: this console will not report a write it did not perform. ' +
   'Set NEXT_PUBLIC_EVENTS_USE_MOCK=false to make this change against the live backend.';
@@ -132,6 +142,12 @@ const APPROVALS: EventApprovalItem[] = [
   { id: 'evt_9004', title: 'Port Harcourt Comedy Night', organiser_masked: 'PH Laughs•••', category: 'Comedy', city: 'Port Harcourt', status: 'draft', starts_at: dateAhead(45), capacity: 1200, tiers_count: 2, cashless_enabled: false, submitted_at: null, cms_complete: false, flagged_terms: false, created_at: iso(30) },
   { id: 'evt_9005', title: 'Owambe Owners Convention', organiser_masked: 'Lekki Events•••', category: 'Conference', city: 'Lagos', status: 'submitted', starts_at: dateAhead(60), capacity: 3000, tiers_count: 4, cashless_enabled: true, submitted_at: iso(40), cms_complete: true, flagged_terms: false, created_at: iso(120) },
 ];
+// Deliberately NOT wired to the real GET /events?status=submitted (the
+// backend has no separate /approvals route — that filter IS the approvals
+// queue). EventApprovalItem's tiers_count is derivable from real data, but
+// cms_complete and flagged_terms are content-moderation flags with no
+// backend concept at all — wiring this would mean fabricating those two
+// fields rather than honestly reporting them, so this stays mock-only.
 export async function listEventApprovals(opts?: { status?: string; q?: string }): Promise<EventApprovalItem[]> {
   if (USE_MOCK) {
     await delay();
