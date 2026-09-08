@@ -152,6 +152,24 @@ export interface GiftTicketInput {
 }
 
 // ── Steward scan ─────────────────────────────────────────────────────────────
+
+// The live, server-issued, HMAC-signed rotating token for a ticket's gate-entry
+// credential (mirrors backend/internal/credential.Token's JSON tags exactly —
+// cid/w/n/sig — so a scanned QR round-trips straight into a Go credential.Token
+// via JSON.parse). Fetched via GET /tickets/:ticketId/token, never computed
+// client-side; the server enforces its RotateTTL/anti-screenshot window.
+export interface GateToken {
+  cid: string; // credential id
+  w:   number; // rotation window bucket
+  n:   string; // per-window nonce
+  sig: string; // HMAC-SHA256(secret, cid|w|n)
+}
+
+export interface Gate {
+  id:   string;
+  name: string;
+}
+
 export interface ScanInput {
   credential_id: string;
 }

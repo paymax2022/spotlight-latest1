@@ -18,6 +18,7 @@ import type {
   Attendee,
   ScanResult,
   TopUpSource,
+  GateToken,
 } from './types';
 
 const delay = (ms = 280) => new Promise((r) => setTimeout(r, ms));
@@ -195,6 +196,18 @@ export async function getTicket(id: string): Promise<Ticket> {
   const t = tickets.find((x) => x.id === id);
   if (!t) throw new Error('Ticket not found');
   return t;
+}
+
+// Live, server-issued rotating gate token for the caller's own ticket — replaces
+// any client-computed QR rotation. Re-fetch on an interval just under the
+// server's RotateTTL (30s) so the rendered pass changes on the same schedule
+// Scan's window-staleness check enforces (see useTicketToken in hooks.ts).
+export async function getTicketToken(ticketId: string): Promise<GateToken> {
+  if (USE_MOCK) {
+    await delay(120);
+    return { cid: 'mock-credential', w: Math.floor(Date.now() / 30000), n: 'mock-nonce', sig: 'mock-sig' };
+  }
+  return unwrap(await api.get(`${API_BASE}/tickets/${ticketId}/token`));
 }
 
 export async function getEventWallet(walletId: string): Promise<EventWallet> {
