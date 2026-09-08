@@ -99,19 +99,56 @@ func (s *authService) RegisterUser(in domain.RegisterRequest) (*RegisterResult, 
 	// only first_name/last_name gave every account an EMPTY profile name.
 	fullName := in.FullNameOrJoin()
 
-	payload := map[string]any{
-		"email":    strings.TrimSpace(strings.ToLower(in.Email)),
-		"password": in.Password,
-		"data": map[string]any{
-			"full_name":  fullName,
-			"first_name": in.FirstName,
-			"last_name":  in.LastName,
-			"user_type":  in.UserTypeOrDefault(),
-			"phone":      in.Phone,
-		},
+	meta := map[string]any{
+		"full_name":  fullName,
+		"first_name": in.FirstName,
+		"last_name":  in.LastName,
+		"user_type":  in.UserTypeOrDefault(),
+		"phone":      in.Phone,
 	}
+	email := strings.TrimSpace(strings.ToLower(in.Email))
+
+	// WHICH GOTRUE ENDPOINT CREATES THE ACCOUNT — and why it depends on a flag.
+	//
+	// /auth/v1/signup sends GoTrue's own confirmation email. There is no setting
+	// that keeps the account unconfirmed while suppressing that mail:
+	// enable_confirmations (mailer_autoconfirm on cloud) governs BOTH, so turning
+	// the mailer off auto-confirms every signup and removes email verification
+	// altogether. Disabling SMTP wholesale is not an option either — the
+	// password-reset LINK deliberately still goes through it.
+	//
+	// /auth/v1/admin/users creates the same row and sends NOTHING. With
+	// email_confirm false the account is unconfirmed exactly as before, login
+	// still answers 403 email_not_confirmed, and our own code (issued by the
+	// register handler) becomes the single verification email.
+	//
+	// Only when the OTP feature is ON. With it off there would be no code, and an
+	// account nobody can ever confirm is worse than a duplicate email.
+	//
+	// Two behaviours differ on the admin path and are accepted deliberately:
+	//   - GoTrue's sign_in_sign_ups rate limit does not apply. The /register route
+	//     already carries middleware.AuthRateLimiter (AUTH_RATE_LIMIT_PER_MIN).
+	//   - GoTrue's own enable_signup switch does not apply. If signups are ever
+	//     closed at the project level, this path must be closed here too.
+	//
+	// Note the metadata key: /signup takes "data", the admin endpoint takes
+	// "user_metadata". Both land in raw_user_meta_data, which is what
+	// handle_new_user reads for full_name — send the wrong one and every profile
+	// is created nameless.
+	path := "/auth/v1/signup"
+	payload := map[string]any{"email": email, "password": in.Password, "data": meta}
+	if s.cfg.FeatureOTPEmailEnabled {
+		path = "/auth/v1/admin/users"
+		payload = map[string]any{
+			"email":         email,
+			"password":      in.Password,
+			"email_confirm": false,
+			"user_metadata": meta,
+		}
+	}
+
 	b, _ := json.Marshal(payload)
-	req, err := http.NewRequest(http.MethodPost, strings.TrimRight(s.supabase.BaseURL(), "/")+"/auth/v1/signup", bytes.NewReader(b))
+	req, err := http.NewRequest(http.MethodPost, strings.TrimRight(s.supabase.BaseURL(), "/")+path, bytes.NewReader(b))
 	if err != nil {
 		return nil, err
 	}

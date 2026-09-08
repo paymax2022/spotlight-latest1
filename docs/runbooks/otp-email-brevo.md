@@ -82,16 +82,50 @@ sets the password through GoTrue's admin API.
 > why nobody noticed. The token form is now refused with a 400 that says what to
 > do instead.
 
-### ⚠️ Prerequisite: turn off Supabase's confirmation mailer first
+### Supabase's confirmation email is already suppressed — here is how, and why not the obvious way
 
-While `mailer_autoconfirm = false` **and** Supabase's own confirmation email is
-enabled on the project, a registering user receives **two codes from two systems**,
-each redeemed at a different endpoint. Both work; the experience is incoherent.
+**Do not turn off `enable_confirmations` (cloud: `mailer_autoconfirm`).** It is a
+single setting governing two things: whether GoTrue sends its confirmation mail
+**and** whether the new account starts unconfirmed. Turning it off does not leave
+our OTP in place — it auto-confirms every sign-up, so:
 
-Disable the Supabase confirmation email (or accept the duplicate knowingly)
-before enabling `FEATURE_OTP_EMAIL_ENABLED` anywhere real. This is the
-"two coexisting verification paradigms" state the audit says to get out of — so
-whichever system wins should win on purpose rather than by accretion.
+- login stops gating on verification,
+- signup returns a session, which is the exact signal our register handler uses
+  to decide a code is needed,
+- so no code is issued, and **email verification stops happening at all**.
+
+Disabling SMTP wholesale is not an option either: the password-reset **link**
+deliberately still goes through it.
+
+**What actually happens instead.** With `FEATURE_OTP_EMAIL_ENABLED` on,
+`RegisterUser` creates the account through `POST /auth/v1/admin/users` with
+`email_confirm: false` rather than `POST /auth/v1/signup`. The admin endpoint
+writes the same row and sends **nothing**. The account is unconfirmed exactly as
+before, login still answers `403 email_not_confirmed`, and our code becomes the
+only verification email.
+
+With the flag off, registration uses `/auth/v1/signup` unchanged and Supabase
+sends its email as it always did — an account created silently with no code to
+confirm it would be worse than a duplicate email.
+
+Verified locally by A/B against the mail catcher: flag on → **0** messages for
+the new user; flag off → Supabase's "Your Spotlight verification code" arrives.
+`backend/internal/services/register_endpoint_test.go` pins both.
+
+**Two behaviours differ on the admin path, deliberately:**
+
+- GoTrue's `sign_in_sign_ups` rate limit does not apply. `/api/auth/register`
+  already carries `middleware.AuthRateLimiter` (`AUTH_RATE_LIMIT_PER_MIN`).
+- GoTrue's own `enable_signup` switch does not apply. **If you ever close signups
+  at the project level, close this path too** — the admin endpoint will keep
+  creating accounts.
+
+**Nothing here touches the cloud projects.** `supabase/config.toml` configures
+LOCAL only, and the suppression above is application code, so it takes effect on
+any environment the moment the flag is on — no dashboard change needed for the
+confirmation email. What still needs the dashboard is B1/B6 in
+`docs/audit/USER_MANAGEMENT_AUDIT.md`: SMTP for the password-reset link, and the
+cloud copies of the email templates.
 
 ---
 
@@ -241,7 +275,7 @@ cannot make a stale code verify.
 | 2. Provision Brevo: account, sender domain, SPF/DKIM/DMARC, template | Test send received, **not** in spam |
 | 3. Set the env keys in one non-production environment; flag on | `POST /api/auth/otp/request` returns 200; a code arrives |
 | 4. Exercise the full matrix on a real device | Register -> code -> verify -> **login succeeds**; then replay, wrong code x5, expiry, cooldown |
-| 5. Turn off Supabase's own confirmation mailer | Registering users receive exactly ONE code |
+| 5. (nothing to do — the flag itself suppresses GoTrue's confirmation mail) | Registering users receive exactly ONE code; confirm against the mail catcher / provider logs |
 | 6. Enable in production (email OTP only) | Success rate at baseline |
 | 7. Only then consider `FEATURE_OTP_LOGIN_MFA_ENABLED` | Deliverability proven for days, not hours — this flag makes email delivery a hard dependency of every sign-in |
 
