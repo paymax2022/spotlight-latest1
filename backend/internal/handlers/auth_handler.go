@@ -30,6 +30,17 @@ type AuthHandler struct {
 	// Optional server-issued OTP. Nil unless FEATURE_OTP_EMAIL_ENABLED is on and
 	// fully configured; Register behaves exactly as before when absent.
 	issueOTP OTPIssuer
+
+	// loginMFA turns a successful password check into a second-factor challenge
+	// instead of a session. Off unless FEATURE_OTP_LOGIN_MFA_ENABLED is on AND an
+	// issuer exists — a challenge nobody can be sent a code for would lock every
+	// user out.
+	loginMFA bool
+
+	// verifyOTP and setPassword complete a code-based password reset. Nil leaves
+	// ResetPassword refusing, which is what it should have been doing all along.
+	verifyOTP   OTPVerifier
+	setPassword services.PasswordSetter
 }
 
 func NewAuthHandler(auth services.AuthService, rbac services.RBACService, audit services.AuditService) *AuthHandler {
@@ -70,6 +81,33 @@ func (h *AuthHandler) WithOTPIssuer(fn OTPIssuer) *AuthHandler {
 	h.issueOTP = fn
 	return h
 }
+
+// OTPVerifier redeems a code. Injected for the same ordering reason as
+// OTPIssuer.
+type OTPVerifier func(ctx context.Context, email, purpose, code, ip string) error
+
+// WithOTPVerifier wires code redemption into the password-reset completion.
+func (h *AuthHandler) WithOTPVerifier(fn OTPVerifier) *AuthHandler {
+	h.verifyOTP = fn
+	return h
+}
+
+// WithLoginMFA makes a correct password produce a code challenge rather than a
+// session. Ignored without an issuer: a challenge with no way to receive a code
+// is a locked door for every user at once.
+func (h *AuthHandler) WithLoginMFA(enabled bool) *AuthHandler {
+	h.loginMFA = enabled
+	return h
+}
+
+// WithPasswordSetter enables the code-based half of password reset.
+func (h *AuthHandler) WithPasswordSetter(p services.PasswordSetter) *AuthHandler {
+	h.setPassword = p
+	return h
+}
+
+// mfaActive reports whether Login should challenge instead of returning tokens.
+func (h *AuthHandler) mfaActive() bool { return h.loginMFA && h.issueOTP != nil }
 
 func asStr(v any) string {
 	if s, ok := v.(string); ok {
@@ -202,11 +240,60 @@ func (h *AuthHandler) Login(c *gin.Context) {
 	}
 	h.audit.LogLogin("", in.Email, "success", "", c.ClientIP(), c.Request.UserAgent(), map[string]any{})
 
+	// Strip the internal hints BEFORE any branch can return `out` to a client.
+	// They were previously removed only inside the session-hardening branch, so
+	// with that flag off __user_id was shipped to the caller despite the comment
+	// saying it never is.
+	loginUserID, _ := out["__user_id"].(string)
+	resolvedEmail, _ := out["__email"].(string)
+	delete(out, "__user_id")
+	delete(out, "__email")
+
+	// Second factor. The password was correct, so GoTrue has already minted a
+	// session in `out` — it is DISCARDED here rather than parked anywhere, and a
+	// fresh one is minted by the verify step once the code is redeemed. Holding
+	// it would mean writing an access and a refresh token to storage to wait for
+	// an email, which is a worse trade than one extra GoTrue round trip.
+	//
+	// Fails CLOSED: if the code cannot be sent, no session is returned. That is
+	// the opposite of Register, where the account already exists and refusing
+	// would strand the user — here refusing is the whole point of the factor.
+	// ⚠️ It also means an email outage is a total login outage. See the runbook.
+	if h.mfaActive() {
+		if resolvedEmail == "" {
+			// Nothing to send to. Refusing beats returning a session that the
+			// second factor was supposed to gate.
+			log.Printf("[auth] login: MFA is on but no account email was resolved")
+			c.JSON(http.StatusServiceUnavailable, gin.H{
+				"success": false, "code": "mfa_send_failed",
+				"error": "We could not send your sign-in code. Please try again shortly.",
+			})
+			return
+		}
+		if err := h.issueOTP(c.Request.Context(), resolvedEmail, "", otp.PurposeLogin, c.ClientIP()); err != nil {
+			log.Printf("[auth] login: second-factor code could not be issued: %v", err)
+			c.JSON(http.StatusServiceUnavailable, gin.H{
+				"success": false,
+				"code":    "mfa_send_failed",
+				"error":   "We could not send your sign-in code. Please try again shortly.",
+			})
+			return
+		}
+		// No tokens in this response, deliberately: a client that reads
+		// access_token opportunistically must not find one here.
+		c.JSON(http.StatusOK, gin.H{
+			"success":     true,
+			"mfaRequired": true,
+			"purpose":     otp.PurposeLogin,
+			"message":     "Enter the code we emailed you to finish signing in.",
+		})
+		return
+	}
+
 	// Session hardening (#19): issue a tracked session + run suspicious-login
 	// detection. Gated by the feature flag; never blocks a valid login.
 	if h.sessionHardening && h.sessions != nil {
-		userID, _ := out["__user_id"].(string)
-		delete(out, "__user_id") // internal-only hint; never returned to client
+		userID := loginUserID
 		lc := services.LoginContext{
 			IPAddress:         c.ClientIP(),
 			UserAgent:         c.Request.UserAgent(),
@@ -254,24 +341,96 @@ func (h *AuthHandler) RequestPasswordReset(c *gin.Context) {
 			// which addresses have accounts.
 			log.Printf("[auth] password reset upstream failed: %v", err)
 		}
+		// Our own code, ALONGSIDE Supabase's reset link rather than instead of it,
+		// so no existing client that completes a reset through the link breaks.
+		//
+		// ⚠️ The cost is that a user asking to reset gets TWO emails offering two
+		// different mechanisms. That is a deliberate, temporary state — see
+		// docs/runbooks/otp-email-brevo.md.
+		//
+		// Best-effort and silent: the response must not vary, and the link has
+		// already been sent, so a code failure still leaves the user a way in.
+		if h.issueOTP != nil {
+			if err := h.issueOTP(c.Request.Context(), in.Email, "", otp.PurposePasswordReset, c.ClientIP()); err != nil {
+				log.Printf("[auth] password reset: code could not be issued: %v", err)
+			}
+		}
 	}
 	// Always the same answer, whether or not the account exists.
 	c.JSON(http.StatusOK, gin.H{"success": true, "message": "If your email exists, reset instructions were sent."})
 }
 
+// ResetPassword completes a reset with an emailed CODE.
+//
+// It used to accept {token, newPassword}, hand the token to a service method
+// that returned nil for any non-empty string, and answer "Password reset
+// successful" — for a password it had not changed. That is the same defect the
+// audit removed as B4 on verify-email, still live here. Nothing called it: web
+// and mobile both complete resets through Supabase's own recovery session, which
+// is why nobody noticed.
+//
+// The token form is now REFUSED rather than answered with a false success. A
+// caller relying on it was already getting nothing; the difference is that it
+// now says so.
 func (h *AuthHandler) ResetPassword(c *gin.Context) {
 	var in struct {
-		Token       string `json:"token" binding:"required"`
+		Email       string `json:"email"`
+		Code        string `json:"code"`
+		Token       string `json:"token"`
 		NewPassword string `json:"newPassword" binding:"required,min=8"`
 	}
 	if err := c.ShouldBindJSON(&in); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": "invalid payload"})
 		return
 	}
-	if err := h.auth.ResetPassword(in.Token, in.NewPassword); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": err.Error()})
+
+	email := strings.ToLower(strings.TrimSpace(in.Email))
+	code := strings.TrimSpace(in.Code)
+	if email == "" || code == "" {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"error":   "A verification code is required. Request one at /api/auth/request-password-reset, or complete the reset through the emailed link.",
+		})
 		return
 	}
+	if h.verifyOTP == nil || h.setPassword == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{
+			"success": false, "error": "feature_disabled", "feature": "otp_email",
+		})
+		return
+	}
+
+	if err := h.verifyOTP(c.Request.Context(), email, otp.PurposePasswordReset, code, c.ClientIP()); err != nil {
+		switch {
+		case errors.Is(err, otp.ErrTooManyAttempts), errors.Is(err, otp.ErrRateLimited):
+			c.JSON(http.StatusTooManyRequests, gin.H{"success": false, "error": "too many attempts, request a new code"})
+		case errors.Is(err, otp.ErrExpired):
+			c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": "code expired, request a new code"})
+		default:
+			c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": "invalid code"})
+		}
+		return
+	}
+
+	// The code is consumed. From here the caller must be told the truth about
+	// whether their password actually changed.
+	changed, err := h.setPassword.SetPassword(c.Request.Context(), email, in.NewPassword)
+	if err != nil {
+		if errors.Is(err, services.ErrAccountUnavailable) {
+			c.JSON(http.StatusForbidden, gin.H{"success": false, "error": "account unavailable"})
+			return
+		}
+		log.Printf("[auth] reset-password: could not set password: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"success": false, "error": "could not reset your password, please request a new code"})
+		return
+	}
+	// changed == false means no account for that address. Answered as success:
+	// the request endpoint deliberately does not disclose whether an account
+	// exists, and neither does this one.
+	_ = changed
+
+	h.audit.LogAction("", "", "password.reset", "auth", "user", "", nil, nil, c.ClientIP(), c.Request.UserAgent(), "high")
 	c.JSON(http.StatusOK, gin.H{"success": true, "message": "Password reset successful"})
 }
 

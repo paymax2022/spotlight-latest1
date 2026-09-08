@@ -32,9 +32,55 @@ Two properties worth knowing:
   "registration failed" for an account that is genuinely theirs, with no way
   forward. A user who gets no code asks again at `POST /api/auth/otp/request`,
   which shares the same store and the same send budget.
-- **Verifying still does not issue a session.** It confirms the account; the
-  client then logs in with the password the user just chose. `login` and
-  `password_reset` codes prove mailbox control and activate nothing.
+- **Verifying does not issue a session here.** It confirms the account; the
+  client then logs in with the password the user just chose.
+
+### Login is a step-up, not passwordless
+
+`FEATURE_OTP_LOGIN_MFA_ENABLED` (separate flag, default OFF). With it on:
+
+1. `POST /api/auth/login` checks the password as it always did — lockout gate,
+   failed-attempt counting, `email_not_confirmed` — then returns
+   `{"mfaRequired": true}` **and no tokens**. The session GoTrue minted during the
+   password check is discarded, not parked: holding it would mean writing an
+   access and a refresh token to storage to wait for an email.
+2. `POST /api/auth/otp/verify` with `purpose: login` mints a **fresh** session via
+   GoTrue's admin magiclink (`generate_link` returns an `email_otp` and sends no
+   mail — verified against the local catcher) and returns it in the same three
+   shapes login uses.
+
+**`login` codes are not self-issuable.** `/otp/request` refuses `purpose=login`
+with a 400. This is the control the whole design rests on: redeeming a login code
+mints a session, so if anyone could ask for one, this would be passwordless login
+wearing a second factor's clothes — an attacker who can read a mailbox would need
+no password at all. To resend, submit the password again.
+
+The lockout gate is **re-run when the session is minted**, so an account
+suspended between the two factors gets a 403 rather than a session.
+
+> ⚠️ **Login MFA fails closed, and that is a total-outage risk.** If Brevo cannot
+> deliver, `POST /api/auth/login` answers `503 mfa_send_failed` and **nobody can
+> sign in**. There is also no enrolment, no opt-out and no recovery code: a user
+> who loses access to their mailbox cannot get in. Do not enable this flag
+> without deciding what you will do on a provider incident — the fastest lever is
+> turning the flag back off, which restores password-only login immediately.
+
+### Password reset
+
+`POST /api/auth/request-password-reset` now sends **both** Supabase's reset link
+(unchanged) **and** our code, so nothing that completes a reset through the link
+breaks. Two emails offering two mechanisms is a deliberate, temporary state.
+
+`POST /api/auth/reset-password` takes `{email, code, newPassword}` and actually
+sets the password through GoTrue's admin API.
+
+> It previously accepted `{token, newPassword}`, handed the token to a service
+> method that returned `nil` for any non-empty string, and answered **"Password
+> reset successful" for a password it had not changed** — the same defect the
+> audit removed as B4 on verify-email, still live. Nothing called it: web and
+> mobile both complete resets through Supabase's own recovery session, which is
+> why nobody noticed. The token form is now refused with a 400 that says what to
+> do instead.
 
 ### ⚠️ Prerequisite: turn off Supabase's confirmation mailer first
 
@@ -54,6 +100,7 @@ whichever system wins should win on purpose rather than by accretion.
 | Key | Required | Default | Notes |
 |---|---|---|---|
 | `FEATURE_OTP_EMAIL_ENABLED` | — | `false` | Master switch. |
+| `FEATURE_OTP_LOGIN_MFA_ENABLED` | — | `false` | Second factor on login. **Fails closed — see the warning above.** Ignored unless the master switch is on. |
 | `BREVO_API_KEY` | when on | — | From the Brevo dashboard. |
 | `BREVO_SENDER_EMAIL` | when on | — | Must be on a domain verified in Brevo. |
 | `BREVO_SENDER_NAME` | — | `Spotlight` | |
@@ -195,7 +242,8 @@ cannot make a stale code verify.
 | 3. Set the env keys in one non-production environment; flag on | `POST /api/auth/otp/request` returns 200; a code arrives |
 | 4. Exercise the full matrix on a real device | Register -> code -> verify -> **login succeeds**; then replay, wrong code x5, expiry, cooldown |
 | 5. Turn off Supabase's own confirmation mailer | Registering users receive exactly ONE code |
-| 6. Enable in production | Success rate at baseline |
+| 6. Enable in production (email OTP only) | Success rate at baseline |
+| 7. Only then consider `FEATURE_OTP_LOGIN_MFA_ENABLED` | Deliverability proven for days, not hours — this flag makes email delivery a hard dependency of every sign-in |
 
 **Keep the Supabase path available for one release after any cutover.** If Brevo
 has an incident on the day you switch, being able to fall back is worth more than

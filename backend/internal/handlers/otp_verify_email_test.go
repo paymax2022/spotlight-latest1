@@ -98,7 +98,10 @@ func TestVerifyEmailConfirmsTheAccount(t *testing.T) {
 // account off the back of a login code would activate an address that never went
 // through registration.
 func TestOtherPurposesDoNotConfirmAnything(t *testing.T) {
-	for _, purpose := range []string{otp.PurposeLogin, otp.PurposePasswordReset} {
+	// PurposeLogin is not self-issuable any more, so it cannot be driven through
+	// the request endpoint here; its non-confirmation is covered in
+	// otp_login_stepup_test.go.
+	for _, purpose := range []string{otp.PurposePasswordReset} {
 		t.Run(purpose, func(t *testing.T) {
 			sender := &capturingSender{}
 			v := &fakeVerifier{confirmed: true}

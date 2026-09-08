@@ -28,6 +28,10 @@ type OTPHandler struct {
 	// the correct behaviour for the login and password-reset purposes, and a
 	// misconfiguration for verify_email (reported, never silent).
 	verifier services.EmailVerifier
+	// minter issues the session once a login code is redeemed. Nil when the
+	// step-up is not wired, in which case a login code cannot be issued in the
+	// first place — Login only issues one when this exists.
+	minter services.SessionMinter
 }
 
 func NewOTPHandler(svc *otp.Service, reason string) *OTPHandler {
@@ -37,6 +41,13 @@ func NewOTPHandler(svc *otp.Service, reason string) *OTPHandler {
 // WithEmailVerifier wires account confirmation into the verify_email purpose.
 func (h *OTPHandler) WithEmailVerifier(v services.EmailVerifier) *OTPHandler {
 	h.verifier = v
+	return h
+}
+
+// WithSessionMinter wires session issuance into the login purpose (the second
+// half of the login step-up).
+func (h *OTPHandler) WithSessionMinter(m services.SessionMinter) *OTPHandler {
+	h.minter = m
 	return h
 }
 
@@ -91,6 +102,22 @@ func (h *OTPHandler) RequestOTP(c *gin.Context) {
 	email := strings.ToLower(strings.TrimSpace(body.Email))
 	purpose := strings.TrimSpace(body.Purpose)
 	if !emailShape.MatchString(email) || !otp.IsAllowedPurpose(purpose) {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": "invalid request"})
+		return
+	}
+
+	// login codes are NOT self-issuable, and this is the control the whole
+	// step-up design rests on.
+	//
+	// Redeeming a login code mints a session. If anyone could ask for one here,
+	// that would be passwordless login wearing a second factor's clothes: an
+	// attacker who can read a mailbox would need no password at all. A login code
+	// exists only because POST /api/auth/login already accepted the password, so
+	// it is issued from there and nowhere else.
+	//
+	// The cost is that "resend my login code" means submitting the password
+	// again. That is the correct trade.
+	if purpose == otp.PurposeLogin {
 		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": "invalid request"})
 		return
 	}
@@ -180,6 +207,10 @@ func (h *OTPHandler) VerifyOTP(c *gin.Context) {
 			c.JSON(http.StatusOK, gin.H{"success": true, "verified": true, "purpose": purpose})
 			return
 		}
+		if purpose == otp.PurposeLogin {
+			h.completeStepUpLogin(c, email)
+			return
+		}
 		c.JSON(http.StatusOK, gin.H{"success": true, "verified": true, "purpose": purpose})
 	case errors.Is(err, otp.ErrTooManyAttempts):
 		c.JSON(http.StatusTooManyRequests, gin.H{
@@ -195,4 +226,55 @@ func (h *OTPHandler) VerifyOTP(c *gin.Context) {
 		logOTPFailure("verify", purpose, err)
 		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": "something went wrong"})
 	}
+}
+
+// completeStepUpLogin issues the session for a redeemed login code.
+//
+// The code is already consumed. Everything below therefore has to either produce
+// a session or say plainly that it could not — a cheerful 200 with no tokens
+// would leave a client that has spent both factors with nothing to show and no
+// idea why.
+func (h *OTPHandler) completeStepUpLogin(c *gin.Context, email string) {
+	if h.minter == nil {
+		logOTPFailure("verify.login", otp.PurposeLogin, errors.New("no session minter is wired"))
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"success": false, "error": "could not complete sign-in, please try again"})
+		return
+	}
+
+	session, err := h.minter.MintSession(c.Request.Context(), email)
+	if err != nil {
+		// The lockout gate is re-run at mint time, so an account suspended
+		// between the two factors lands here. It is answered like login's own
+		// refusal rather than as a server error.
+		if errors.Is(err, services.ErrAccountUnavailable) {
+			c.JSON(http.StatusForbidden, gin.H{"success": false, "error": "account unavailable"})
+			return
+		}
+		logOTPFailure("verify.login", otp.PurposeLogin, err)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"success": false, "error": "could not complete sign-in, please try again"})
+		return
+	}
+	if session == nil {
+		// No account behind the address. Unreachable in practice — a login code
+		// is only ever issued after that account authenticated — but answered as
+		// a refusal rather than a 200 with no session.
+		c.JSON(http.StatusUnauthorized, gin.H{"success": false, "error": "invalid credentials"})
+		return
+	}
+
+	// The same three shapes Login returns. Each existing client reads a different
+	// one and none should have to change to complete a step-up.
+	access, _ := session["access_token"].(string)
+	refresh, _ := session["refresh_token"].(string)
+	c.JSON(http.StatusOK, gin.H{
+		"success":       true,
+		"verified":      true,
+		"purpose":       otp.PurposeLogin,
+		"session":       session,
+		"tokens":        gin.H{"accessToken": access, "refreshToken": refresh},
+		"access_token":  access,
+		"refresh_token": refresh,
+	})
 }

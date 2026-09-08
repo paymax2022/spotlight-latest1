@@ -265,6 +265,11 @@ func (s *authService) LoginUser(in domain.LoginRequest) (map[string]any, error) 
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
 		return nil, err
 	}
+	// The ACCOUNT email, which is not the same as what the caller sent — login
+	// accepts a phone number and resolves it server-side. A second factor has to
+	// be emailed to the resolved address, and the handler has no other way to
+	// learn it. Internal hint, stripped before the response leaves the handler.
+	out["__email"] = email
 	if user != nil {
 		_ = s.supabase.REST(http.MethodPatch, "platform_users", map[string]string{"id": "eq." + user.ID}, map[string]any{
 			"failed_login_attempts": 0,

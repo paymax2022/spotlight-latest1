@@ -18,18 +18,27 @@ import (
 // ── doubles ─────────────────────────────────────────────────────────────────
 
 type stubAuthService struct {
-	result *services.RegisterResult
-	err    error
+	result   *services.RegisterResult
+	err      error
+	loginOut map[string]any
 }
 
 func (s *stubAuthService) RegisterUser(domain.RegisterRequest) (*services.RegisterResult, error) {
 	return s.result, s.err
 }
-func (s *stubAuthService) LoginUser(domain.LoginRequest) (map[string]any, error) { return nil, nil }
-func (s *stubAuthService) RequestPasswordReset(string) error                     { return nil }
-func (s *stubAuthService) ResetPassword(string, string) error                    { return nil }
-func (s *stubAuthService) ChangePassword(string, string, string) error           { return nil }
-func (s *stubAuthService) CompleteProfile(string, string, map[string]any) error  { return nil }
+func (s *stubAuthService) LoginUser(domain.LoginRequest) (map[string]any, error) {
+	// A fresh copy per call: the handler deletes the internal hints in place, and
+	// a shared map would make the second test in a run see them already gone.
+	out := map[string]any{}
+	for k, v := range s.loginOut {
+		out[k] = v
+	}
+	return out, nil
+}
+func (s *stubAuthService) RequestPasswordReset(string) error                    { return nil }
+func (s *stubAuthService) ResetPassword(string, string) error                   { return nil }
+func (s *stubAuthService) ChangePassword(string, string, string) error          { return nil }
+func (s *stubAuthService) CompleteProfile(string, string, map[string]any) error { return nil }
 
 // noopAudit is declared in session_handler_test.go and reused here.
 
