@@ -12,6 +12,8 @@ import type {
   PharmacyVendor,
   Prescription,
   PharmacyOrder,
+  OrderStatus,
+  CartLine,
   CreateOrderInput,
   MedicationItem,
   Refill,
@@ -580,13 +582,69 @@ export async function uploadPrescription(input: { patientName: string; note?: st
 }
 
 // ── Customer: orders (HL-9 payment HELD; Idempotency-Key) ─────────────────────
+
+const ORDER_STATUS_FROM_STATE: Record<string, OrderStatus> = {
+  CREATED: 'created',
+  RX_PENDING_VERIFICATION: 'rx_pending',
+  CONFIRMED: 'confirmed',
+  DISPENSED: 'dispensed',
+  IN_DELIVERY: 'in_delivery',
+  READY_FOR_PICKUP: 'ready_for_pickup',
+  DELIVERED: 'delivered',
+  COLLECTED: 'collected',
+  CLOSED: 'closed',
+  CANCELLED: 'cancelled',
+  REFUNDED: 'refunded',
+};
+
+// Map the backend's minimal money-path order row (snake_case; see Go
+// pharmacy.Order/OrderLine) onto the richer mobile PharmacyOrder display
+// shape. The backend has no `reference` (falls back to the order id), no
+// `subtotalKobo`/`deliveryFeeKobo` split (total_kobo only, so the whole
+// amount is attributed to subtotal), no `rider`/`etaLabel`, and lines carry
+// no `form`/`imageColor` — those default to empty/derived so the card still
+// renders, matching the mapProduct convention above.
+function mapOrder(raw: any): PharmacyOrder {
+  const lines: CartLine[] = (raw.lines ?? []).map((l: any) => ({
+    productId: l.product_id,
+    name: l.product_name ?? '',
+    form: '',
+    priceKobo: l.unit_price_kobo ?? 0,
+    qty: l.quantity ?? 0,
+    rxRequired: !!l.rx_required,
+    imageColor: tintForId(String(l.product_id ?? '')),
+  }));
+  return {
+    id: raw.id,
+    reference: raw.id,
+    status: ORDER_STATUS_FROM_STATE[raw.state] ?? 'created',
+    fulfilment: raw.fulfilment_method === 'DELIVERY' ? 'delivery' : 'pickup',
+    pharmacyId: raw.pharmacy_provider_id ?? '',
+    pharmacyName: '',
+    lines,
+    subtotalKobo: raw.total_kobo ?? 0,
+    deliveryFeeKobo: 0,
+    totalKobo: raw.total_kobo ?? 0,
+    paymentHeld: !!raw.escrow_id,
+    createdAt: raw.created_at,
+    pickupCode: raw.pickup_code ?? undefined,
+    requiresRx: !!raw.prescription_id,
+    rxId: raw.prescription_id ?? undefined,
+    timeline: [],
+  };
+}
+
+// GET /orders/mine — the caller's own order history. NOT GET /orders, which is
+// the pharmacist's owner-scoped fulfilment inbox (see Go ListMine) — a patient
+// calling that endpoint got an empty list, or another business's orders if
+// they also happened to own a pharmacy.
 export async function getOrders(): Promise<PharmacyOrder[]> {
   if (USE_MOCK) {
     await delay();
     return [...ORDERS].sort((a, b) => +new Date(b.createdAt) - +new Date(a.createdAt));
   }
-  const { data } = await api.get<PharmacyOrder[]>(`${PHARMACY_API}/orders`);
-  return data;
+  const { data } = await api.get<{ orders?: unknown[] }>(`${PHARMACY_API}/orders/mine`);
+  return (data.orders ?? []).map(mapOrder);
 }
 
 export async function getOrder(id: string): Promise<PharmacyOrder> {
@@ -596,8 +654,9 @@ export async function getOrder(id: string): Promise<PharmacyOrder> {
     if (!o) throw new Error('Order not found');
     return o;
   }
-  const { data } = await api.get<PharmacyOrder>(`${PHARMACY_API}/orders/${id}`);
-  return data;
+  const { data } = await api.get<{ order?: unknown }>(`${PHARMACY_API}/orders/${id}`);
+  if (!data.order) throw new Error('Order not found');
+  return mapOrder(data.order);
 }
 
 /**
