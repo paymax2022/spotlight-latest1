@@ -508,11 +508,21 @@ type Config struct {
 	// sender domain and template have to be provisioned before this can be
 	// switched on anywhere. See docs/audit/USER_MANAGEMENT_AUDIT.md B1.
 	FeatureOTPEmailEnabled bool
-	BrevoAPIKey            string
-	BrevoSenderName        string
-	BrevoSenderEmail       string
-	BrevoOTPTemplateID     int64
-	BrevoTimeoutSeconds    int
+	// FeatureOTPLoginMFAEnabled turns a correct password into a code challenge
+	// instead of a session. SEPARATE from FeatureOTPEmailEnabled on purpose:
+	// enabling server-issued OTP should not silently add a second factor to
+	// every login.
+	//
+	// ⚠️ It fails CLOSED, which is the point of a second factor and also means an
+	// email outage is a TOTAL LOGIN OUTAGE for everyone. There is no enrolment,
+	// no opt-out and no recovery code: a user who loses access to their mailbox
+	// cannot sign in. Read docs/runbooks/otp-email-brevo.md before enabling it.
+	FeatureOTPLoginMFAEnabled bool
+	BrevoAPIKey               string
+	BrevoSenderName           string
+	BrevoSenderEmail          string
+	BrevoOTPTemplateID        int64
+	BrevoTimeoutSeconds       int
 
 	// OTPPepper is the server-side HMAC key for code and identifier hashing.
 	// REQUIRED whenever the feature is on: otp.NewService refuses to construct
@@ -814,12 +824,13 @@ func Load() Config {
 		ResendAPIKey:    getEnv("RESEND_API_KEY", ""),
 		ResendFromEmail: getEnv("RESEND_FROM_EMAIL", "Spotlight <no-reply@spotlightng.com>"),
 
-		FeatureOTPEmailEnabled: getEnvBool("FEATURE_OTP_EMAIL_ENABLED", false),
-		BrevoAPIKey:            getEnv("BREVO_API_KEY", ""),
-		BrevoSenderName:        getEnv("BREVO_SENDER_NAME", "Spotlight"),
-		BrevoSenderEmail:       getEnv("BREVO_SENDER_EMAIL", ""),
-		BrevoOTPTemplateID:     int64(getEnvInt("BREVO_OTP_TEMPLATE_ID", 0)),
-		BrevoTimeoutSeconds:    getEnvInt("BREVO_TIMEOUT_SECONDS", 10),
+		FeatureOTPEmailEnabled:    getEnvBool("FEATURE_OTP_EMAIL_ENABLED", false),
+		FeatureOTPLoginMFAEnabled: getEnvBool("FEATURE_OTP_LOGIN_MFA_ENABLED", false),
+		BrevoAPIKey:               getEnv("BREVO_API_KEY", ""),
+		BrevoSenderName:           getEnv("BREVO_SENDER_NAME", "Spotlight"),
+		BrevoSenderEmail:          getEnv("BREVO_SENDER_EMAIL", ""),
+		BrevoOTPTemplateID:        int64(getEnvInt("BREVO_OTP_TEMPLATE_ID", 0)),
+		BrevoTimeoutSeconds:       getEnvInt("BREVO_TIMEOUT_SECONDS", 10),
 
 		OTPPepper:                getEnv("OTP_PEPPER", ""),
 		OTPLength:                getEnvInt("OTP_LENGTH", 6),

@@ -111,6 +111,12 @@ func (s *capturingSender) SendOTP(_ context.Context, _, _, code string, _ time.D
 	return nil
 }
 
+func (s *capturingSender) count() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.sent)
+}
+
 func (s *capturingSender) lastCode() string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -164,7 +170,7 @@ func TestDisabledHandlerReturns503WithReason(t *testing.T) {
 	r.POST("/api/auth/otp/verify", h.VerifyOTP)
 
 	for _, path := range []string{"/api/auth/otp/request", "/api/auth/otp/verify"} {
-		w := post(t, r, path, map[string]string{"email": "a@b.com", "purpose": "login", "code": "111111"})
+		w := post(t, r, path, map[string]string{"email": "a@b.com", "purpose": "password_reset", "code": "111111"})
 		if w.Code != http.StatusServiceUnavailable {
 			t.Errorf("%s status = %d, want 503", path, w.Code)
 		}
@@ -187,9 +193,9 @@ func TestRequestOTPAnswersIdenticallyForAnyAddress(t *testing.T) {
 	r := newOTPRouter(t, sender, &memLimiter{})
 
 	first := post(t, r, "/api/auth/otp/request",
-		map[string]string{"email": "definitely-real@example.com", "purpose": "login", "name": "Ada"})
+		map[string]string{"email": "definitely-real@example.com", "purpose": "password_reset", "name": "Ada"})
 	second := post(t, r, "/api/auth/otp/request",
-		map[string]string{"email": "definitely-not-a-user@example.com", "purpose": "login"})
+		map[string]string{"email": "definitely-not-a-user@example.com", "purpose": "password_reset"})
 
 	if first.Code != http.StatusOK || second.Code != http.StatusOK {
 		t.Fatalf("statuses = %d and %d, want 200 and 200", first.Code, second.Code)
@@ -206,8 +212,8 @@ func TestRequestOTPHidesDeliveryFailure(t *testing.T) {
 	ok := newOTPRouter(t, &capturingSender{}, &memLimiter{})
 	broken := newOTPRouter(t, &capturingSender{err: errors.New("brevo down")}, &memLimiter{})
 
-	good := post(t, ok, "/api/auth/otp/request", map[string]string{"email": "a@b.com", "purpose": "login"})
-	bad := post(t, broken, "/api/auth/otp/request", map[string]string{"email": "a@b.com", "purpose": "login"})
+	good := post(t, ok, "/api/auth/otp/request", map[string]string{"email": "a@b.com", "purpose": "password_reset"})
+	bad := post(t, broken, "/api/auth/otp/request", map[string]string{"email": "a@b.com", "purpose": "password_reset"})
 
 	if good.Code != bad.Code {
 		t.Errorf("statuses differ: %d vs %d — a send failure is observable", good.Code, bad.Code)
@@ -225,10 +231,13 @@ func TestRequestOTPRejectsBadInput(t *testing.T) {
 		name string
 		body map[string]string
 	}{
-		{"no address", map[string]string{"purpose": "login"}},
-		{"malformed address", map[string]string{"email": "not-an-email", "purpose": "login"}},
-		{"no domain dot", map[string]string{"email": "a@b", "purpose": "login"}},
+		{"no address", map[string]string{"purpose": "password_reset"}},
+		{"malformed address", map[string]string{"email": "not-an-email", "purpose": "password_reset"}},
+		{"no domain dot", map[string]string{"email": "a@b", "purpose": "password_reset"}},
 		{"unknown purpose", map[string]string{"email": "a@b.com", "purpose": "admin_override"}},
+		// login is a real purpose and is still refused here — see
+		// TestRequestOTPRefusesToSelfIssueLoginCodes for why.
+		{"login is not self-issuable", map[string]string{"email": "a@b.com", "purpose": "login"}},
 		{"missing purpose", map[string]string{"email": "a@b.com"}},
 	}
 	for _, tc := range cases {
@@ -246,7 +255,7 @@ func TestFullRoundTripThroughTheHandlers(t *testing.T) {
 	r := newOTPRouter(t, sender, &memLimiter{})
 
 	w := post(t, r, "/api/auth/otp/request",
-		map[string]string{"email": "Ada@Example.com", "purpose": "login", "name": "Ada"})
+		map[string]string{"email": "Ada@Example.com", "purpose": "password_reset", "name": "Ada"})
 	if w.Code != http.StatusOK {
 		t.Fatalf("request status = %d: %s", w.Code, w.Body.String())
 	}
@@ -267,13 +276,13 @@ func TestFullRoundTripThroughTheHandlers(t *testing.T) {
 	}
 
 	v := post(t, r, "/api/auth/otp/verify",
-		map[string]string{"email": "ada@example.com", "purpose": "login", "code": code})
+		map[string]string{"email": "ada@example.com", "purpose": "password_reset", "code": code})
 	if v.Code != http.StatusOK {
 		t.Fatalf("verify status = %d: %s", v.Code, v.Body.String())
 	}
 
 	replay := post(t, r, "/api/auth/otp/verify",
-		map[string]string{"email": "ada@example.com", "purpose": "login", "code": code})
+		map[string]string{"email": "ada@example.com", "purpose": "password_reset", "code": code})
 	if replay.Code != http.StatusBadRequest {
 		t.Errorf("replay status = %d, want 400 — the code is reusable", replay.Code)
 	}
@@ -291,9 +300,9 @@ func TestFullRoundTripThroughTheHandlers(t *testing.T) {
 func TestVerifyStatusMapping(t *testing.T) {
 	sender := &capturingSender{}
 	r := newOTPRouter(t, sender, &memLimiter{})
-	_ = post(t, r, "/api/auth/otp/request", map[string]string{"email": "a@b.com", "purpose": "login"})
+	_ = post(t, r, "/api/auth/otp/request", map[string]string{"email": "a@b.com", "purpose": "password_reset"})
 
-	wrong := map[string]string{"email": "a@b.com", "purpose": "login", "code": "000000"}
+	wrong := map[string]string{"email": "a@b.com", "purpose": "password_reset", "code": "000000"}
 
 	// MaxAttempts is 5: four wrong guesses are merely wrong.
 	for i := 1; i <= 4; i++ {
@@ -306,7 +315,7 @@ func TestVerifyStatusMapping(t *testing.T) {
 		t.Fatalf("attempt 5 status = %d, want 429", w.Code)
 	}
 	// And the credential is gone — the CORRECT code no longer works either.
-	correct := map[string]string{"email": "a@b.com", "purpose": "login", "code": sender.lastCode()}
+	correct := map[string]string{"email": "a@b.com", "purpose": "password_reset", "code": sender.lastCode()}
 	if w := post(t, r, "/api/auth/otp/verify", correct); w.Code != http.StatusBadRequest {
 		t.Errorf("the correct code after lockout returned %d — lockout must destroy the code, not pause guessing at it", w.Code)
 	}
@@ -314,27 +323,44 @@ func TestVerifyStatusMapping(t *testing.T) {
 
 // A login code must not complete a password reset, and the refusal must look
 // exactly like a wrong code.
+// THE control the whole step-up design rests on. Redeeming a login code mints a
+// session, so a self-issuable login code would be passwordless login wearing a
+// second factor's clothes: anyone who can read a mailbox would need no password.
+// Login codes are issued only by POST /api/auth/login, after the password.
+func TestRequestOTPRefusesToSelfIssueLoginCodes(t *testing.T) {
+	sender := &capturingSender{}
+	r := newOTPRouter(t, sender, &memLimiter{})
+
+	w := post(t, r, "/api/auth/otp/request", map[string]string{"email": "a@b.com", "purpose": "login"})
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400 — anyone could mint themselves a session-bearing code", w.Code)
+	}
+	if n := sender.count(); n != 0 {
+		t.Errorf("%d login code(s) were sent to a self-service caller", n)
+	}
+}
+
 func TestVerifyRejectsAMismatchedPurpose(t *testing.T) {
 	sender := &capturingSender{}
 	r := newOTPRouter(t, sender, &memLimiter{})
-	_ = post(t, r, "/api/auth/otp/request", map[string]string{"email": "a@b.com", "purpose": "login"})
+	_ = post(t, r, "/api/auth/otp/request", map[string]string{"email": "a@b.com", "purpose": "password_reset"})
 
 	w := post(t, r, "/api/auth/otp/verify",
-		map[string]string{"email": "a@b.com", "purpose": "password_reset", "code": sender.lastCode()})
+		map[string]string{"email": "a@b.com", "purpose": "verify_email", "code": sender.lastCode()})
 	if w.Code != http.StatusBadRequest {
-		t.Fatalf("status = %d, want 400 — a login code completed a password reset", w.Code)
+		t.Fatalf("status = %d, want 400 — a password-reset code completed an email verification", w.Code)
 	}
 	// Still usable for what it WAS issued for: the rejection must not consume it.
 	if v := post(t, r, "/api/auth/otp/verify",
-		map[string]string{"email": "a@b.com", "purpose": "login", "code": sender.lastCode()}); v.Code != http.StatusOK {
+		map[string]string{"email": "a@b.com", "purpose": "password_reset", "code": sender.lastCode()}); v.Code != http.StatusOK {
 		t.Errorf("the code stopped working for its own purpose after a cross-purpose attempt (status %d)", v.Code)
 	}
 }
 
 func TestRequestOTPRateLimitedReturns429(t *testing.T) {
 	r := newOTPRouter(t, &capturingSender{}, &memLimiter{limit: 1})
-	_ = post(t, r, "/api/auth/otp/request", map[string]string{"email": "a@b.com", "purpose": "login"})
-	w := post(t, r, "/api/auth/otp/request", map[string]string{"email": "c@d.com", "purpose": "login"})
+	_ = post(t, r, "/api/auth/otp/request", map[string]string{"email": "a@b.com", "purpose": "password_reset"})
+	w := post(t, r, "/api/auth/otp/request", map[string]string{"email": "c@d.com", "purpose": "password_reset"})
 	if w.Code != http.StatusTooManyRequests {
 		t.Errorf("status = %d, want 429", w.Code)
 	}

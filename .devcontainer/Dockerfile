@@ -32,3 +32,10 @@ RUN arch="$(dpkg --print-architecture)" \
 #
 # If this needs silencing, do it in the scanner config with this reason — not by
 # changing the image.
+# trivy:ignore:DS-0002
+#
+# ── trivy DS-0026 ("No HEALTHCHECK defined") — also not applicable here ────────
+# Nothing ever orchestrates or polls this image for liveness; it's opened
+# interactively by VS Code / Codespaces on a developer's own machine, not run
+# as a service. A HEALTHCHECK would have no consumer.
+# trivy:ignore:DS-0026

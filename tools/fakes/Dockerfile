@@ -22,4 +22,7 @@ COPY --from=build /out/fakes /usr/local/bin/fakes
 
 USER fakes
 EXPOSE 9100
+# GET /health (main.go). wget is BusyBox-provided on alpine — no extra package.
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+  CMD wget --no-verbose --tries=1 --spider http://localhost:9100/health || exit 1
 ENTRYPOINT ["/usr/local/bin/fakes"]

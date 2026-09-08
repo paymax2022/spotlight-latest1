@@ -50,7 +50,7 @@ import (
 // service instance behind both surfaces: registration and POST /otp/request must
 // share a store and a send budget, or "resend" would hand out a second live code
 // and a second allowance.
-func registerOTPRoutes(r *gin.Engine, cfg config.Config, pool *pgxpool.Pool, supabase *integrations.SupabaseRestClient) handlers.OTPIssuer {
+func registerOTPRoutes(r *gin.Engine, cfg config.Config, pool *pgxpool.Pool, supabase *integrations.SupabaseRestClient, auth services.AuthService) (handlers.OTPIssuer, handlers.OTPVerifier, services.PasswordSetter) {
 	group := r.Group("/api/auth/otp")
 
 	svc, reason := buildOTPService(cfg, pool)
@@ -62,6 +62,14 @@ func registerOTPRoutes(r *gin.Engine, cfg config.Config, pool *pgxpool.Pool, sup
 	verifier := services.NewSupabaseEmailVerifier(pool, supabase)
 	h.WithEmailVerifier(verifier)
 
+	// The login step-up's other half, and the password-reset completion. Both come
+	// from one bridge over the SAME authService, so the lockout gate they apply is
+	// the one login already applies rather than a second copy that can drift.
+	bridge := services.NewOTPAuthBridge(auth, pool)
+	if bridge != nil {
+		h.WithSessionMinter(bridge)
+	}
+
 	// Routes are registered even when disabled so the surface answers 503 rather
 	// than 404. A 404 reads as "this endpoint does not exist in this build",
 	// which sends an operator looking for a deploy problem that is not there.
@@ -70,7 +78,10 @@ func registerOTPRoutes(r *gin.Engine, cfg config.Config, pool *pgxpool.Pool, sup
 
 	if svc == nil {
 		log.Printf("[otp] routes registered DISABLED (%s) — POST /api/auth/otp/* will answer 503", reason)
-		return nil
+		return nil, nil, nil
+	}
+	if bridge == nil {
+		log.Printf("[otp] ERROR: OTP is enabled but the auth bridge could not be built — login step-up and code-based password reset are unavailable")
 	}
 	if verifier == nil {
 		// Enabled but unable to finish the job it is enabled for. Loud, because
@@ -79,9 +90,20 @@ func registerOTPRoutes(r *gin.Engine, cfg config.Config, pool *pgxpool.Pool, sup
 	}
 	log.Printf("[otp] routes enabled — length=%d ttl=%s", cfg.OTPLength, time.Duration(cfg.OTPTTLMinutes)*time.Minute)
 
-	return func(ctx context.Context, email, name, purpose, ip string) error {
+	issue := func(ctx context.Context, email, name, purpose, ip string) error {
 		return svc.Issue(ctx, email, name, purpose, ip)
 	}
+	verify := func(ctx context.Context, email, purpose, code, ip string) error {
+		return svc.Verify(ctx, email, purpose, code, ip)
+	}
+	// nil-typed interface guard: returning a typed nil *otpAuthBridge as a
+	// PasswordSetter would make `!= nil` true at the call site and produce a nil
+	// dereference at the first reset.
+	var setter services.PasswordSetter
+	if bridge != nil {
+		setter = bridge
+	}
+	return issue, verify, setter
 }
 
 // buildOTPService returns (nil, reason) when the feature must stay closed.
