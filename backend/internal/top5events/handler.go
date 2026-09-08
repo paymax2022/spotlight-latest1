@@ -47,6 +47,7 @@ func (h *Handler) Register(member, admin *gin.RouterGroup, guard GuardFunc) {
 	member.POST("/:id/purchase", h.Purchase)
 	member.POST("/tickets/:ticketId/gift", h.GiftTicket)
 	member.GET("/my/tickets", h.MyTickets)
+	member.GET("/tickets/:ticketId/token", h.TicketToken)
 
 	// Steward scan (validates a rotating-QR / NFC token at a gate).
 	member.POST("/scan", h.Scan)
@@ -266,6 +267,17 @@ func (h *Handler) MyTickets(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "tickets": out})
+}
+
+// TicketToken returns the caller's own ticket's live rotating gate token, for
+// rendering the real QR pass (replacing any client-computed rotation scheme).
+func (h *Handler) TicketToken(c *gin.Context) {
+	u, ok := uid(c)
+	if !ok {
+		return
+	}
+	out, err := h.svc.TicketToken(c.Request.Context(), u, c.Param("ticketId"))
+	respond(c, out, err)
 }
 
 type scanRequest struct {

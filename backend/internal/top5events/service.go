@@ -717,6 +717,29 @@ func (s *Service) getTicket(ctx context.Context, id string) (*Ticket, error) {
 	return &t, nil
 }
 
+// TicketToken returns the caller's own live rotating gate token for a ticket they
+// own — the real, server-issued, HMAC-signed token the credential package already
+// mints on purchase/gift (s.cred.Issue), NOT a client-computed value. The ticket
+// holder's app re-fetches this roughly every RotateTTL so the rendered QR/pass
+// changes on the same schedule the server enforces, closing the loop with
+// ScanTicket's window-staleness check (anti-screenshot).
+func (s *Service) TicketToken(ctx context.Context, callerID, ticketID string) (*credential.Token, error) {
+	t, err := s.getTicket(ctx, ticketID)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			return nil, ErrNotFound
+		}
+		return nil, err
+	}
+	if t.OwnerID != callerID {
+		return nil, ErrForbidden
+	}
+	if t.CredentialID == "" {
+		return nil, fmt.Errorf("events: ticket has no credential")
+	}
+	return s.cred.CurrentToken(ctx, t.CredentialID)
+}
+
 // ---------- Cashless Event Wallet (closed-loop sub-balance, NL-3) ----------
 
 // OpenWallet creates an attendee event-wallet (state OPEN).
