@@ -479,7 +479,7 @@ export async function createProperty(input: {
   city: string;
   star_rating?: number;
 }): Promise<{ id: string }> {
-  if (USE_MOCK) { await delay(); cachedPropertyId = PROPERTY_ID; return { id: PROPERTY_ID }; }
+  if (USE_MOCK) throw new Error(`Registering a property ${NOT_IN_FIXTURE_MODE}`);
   const res = await sendJson<{ id: string }>('POST', '/properties', input);
   cachedPropertyId = res.id;
   return res;
