@@ -123,6 +123,24 @@ jobs:
             console.log("  APP_PORT   = " + (v.APP_PORT ?? "NOT SET (Go binds :8080 by default)"));
             console.log("  PORT       = " + (v.PORT ?? "NOT SET"));
             console.log("  APP_ENV    = " + (v.APP_ENV ?? "NOT SET"));
+            // Insurance provider credentials: PRESENCE, LENGTH and a short SHA256
+            // prefix only — never the value. The digest is the point: comparing it
+            // against the same digest of the intended key proves whether staging
+            // holds the right secret WITHOUT either side printing one. Length
+            // catches a trailing newline, which shows as one character more than
+            // expected — exactly how the last one hid.
+            const crypto = require("crypto");
+            const shape = (name) => {
+              const raw = v[name];
+              if (raw === undefined || String(raw).length === 0) return name + " = NOT SET";
+              const str = String(raw);
+              const dig = crypto.createHash("sha256").update(str).digest("hex").slice(0, 12);
+              const ws = /\s$/.test(str) ? "  !! ENDS IN WHITESPACE" : "";
+              return name + " = set (len " + str.length + ", sha256 " + dig + ")" + ws;
+            };
+            for (const n of ["INSURANCE_MYCOVER_API_KEY","INSURANCE_MYCOVER_WEBHOOK_SECRET","INSURANCE_MYCOVER_BASE_URL","FEATURE_INSURANCE_ENABLED"]) {
+              console.log("  " + shape(n));
+            }
           '
 
       # Deployment STATE first. `railway redeploy` returns once a build is
