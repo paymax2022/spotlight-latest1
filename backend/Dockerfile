@@ -6,7 +6,7 @@
 # bump while this line still said 1.25, and nothing caught it until
 # integration-verify's docker build, which only runs on push:main. When you bump
 # the go directive, bump this line in the SAME commit.
-FROM golang:1.26-alpine AS build
+FROM golang:1.27-alpine AS build
 WORKDIR /app
 COPY . .
 
