@@ -98,8 +98,11 @@ func seedIssuedTicket(t *testing.T, ctx context.Context, pool *pgxpool.Pool, cre
 	}
 
 	tierID := uuid.New().String()
+	// sold starts at 1, not 0: this ticket exists, so a tier whose sold count
+	// didn't reflect that would make any aggregate read (ListMyOrganiserEvents,
+	// SoldOut) silently wrong for every test built on this fixture.
 	if _, err := pool.Exec(ctx,
-		`INSERT INTO event_ticket_tiers (id, event_id, name, price_kobo, capacity) VALUES ($1,$2,'General',500000,100)`,
+		`INSERT INTO event_ticket_tiers (id, event_id, name, price_kobo, capacity, sold) VALUES ($1,$2,'General',500000,100,1)`,
 		tierID, eventID); err != nil {
 		t.Fatalf("seed tier: %v", err)
 	}
