@@ -6,6 +6,8 @@
   "scripts": {
     "start": "expo start --port 8083",
     "android": "expo run:android",
+    "build:android": "cd android && ./gradlew assembleRelease",
+    "build:ios": "react-native run-ios --configuration Release",
     "ios": "expo run:ios",
     "web": "expo start --web --port 8083",
     "uat:insurance": "EXPO_PUBLIC_INSURANCE_USE_MOCK=false expo start --web --port 8083",
@@ -68,6 +70,7 @@
     "expo-sharing": "~14.0.8",
     "expo-splash-screen": "~31.0.13",
     "expo-status-bar": "~3.0.9",
+    "expo-updates": "~29.0.20",
     "html2canvas": "^1.4.1",
     "lucide-react-native": "^0.525.0",
     "react": "19.1.0",

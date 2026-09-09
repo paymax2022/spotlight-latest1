@@ -14,6 +14,9 @@
     },
     "preview": {
       "distribution": "internal",
+      "android": {
+        "buildType": "apk"
+      },
       "channel": "preview",
       "autoIncrement": true,
       "env": {
@@ -21,6 +24,10 @@
       }
     },
     "production": {
+      
+      "android": {
+        "buildType": "apk"
+      },
       "channel": "production",
       "autoIncrement": true,
       "env": {
@@ -36,16 +43,6 @@
         "EXPO_PUBLIC_SENTRY_ENVIRONMENT": "staging"
       }
     }
-  },
-  "submit": {
-    "production": {
-      "ios": {
-        "//": "TODO(you): appleId, ascAppId, appleTeamId — or use an App Store Connect API key in EAS secrets"
-      },
-      "android": {
-        "//": "TODO(you): serviceAccountKeyPath (Play Console) + track (internal→production)",
-        "track": "internal"
-      }
-    }
   }
+ 
 }

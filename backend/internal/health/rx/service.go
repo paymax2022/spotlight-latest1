@@ -260,48 +260,6 @@ func (s *Service) Get(ctx context.Context, requesterID, rxID string) (*Prescript
 	return p, nil
 }
 
-// ListForPatient returns the caller's own prescriptions, most recent first —
-// the read the pharmacy vertical's "My Prescriptions" list needs. Scoped by
-// WHERE patient_id = $1 rather than an object-level check per row, same
-// reasoning as lab's ListOrdersForPatient: there is nothing to authorize
-// beyond "these are yours."
-func (s *Service) ListForPatient(ctx context.Context, patientID string) ([]Prescription, error) {
-	const q = `SELECT id, consult_id, prescriber_id, patient_id, pharmacy_provider_id, verified_by, state, dispensed_at, reject_reason, created_at,
-	                  refills_authorized, refills_used
-	           FROM health_prescriptions WHERE patient_id = $1
-	           ORDER BY created_at DESC LIMIT 200`
-	rows, err := s.db.Query(ctx, q, patientID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	// Non-nil so callers serialise [] rather than null for a patient with no
-	// prescriptions yet.
-	out := []Prescription{}
-	for rows.Next() {
-		var p Prescription
-		var state string
-		if err := rows.Scan(&p.ID, &p.ConsultID, &p.PrescriberID, &p.PatientID,
-			&p.PharmacyProviderID, &p.VerifiedBy, &state, &p.DispensedAt, &p.RejectReason, &p.CreatedAt,
-			&p.RefillsAuthorized, &p.RefillsUsed); err != nil {
-			return nil, err
-		}
-		p.State = State(state)
-		out = append(out, p)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	for i := range out {
-		items, err := s.loadItems(ctx, out[i].ID)
-		if err != nil {
-			return nil, err
-		}
-		out[i].Items = items
-	}
-	return out, nil
-}
-
 // --- internals ---
 
 // internal carrier carrying the POM flag fetched during the locked read.

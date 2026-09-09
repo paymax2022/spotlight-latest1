@@ -70,23 +70,18 @@ export async function listRepairs(): Promise<RepairRequest[]> {
   if (USE_MOCK) { await latency(); return repairs.slice().sort((a, b) => +new Date(b.createdAt) - +new Date(a.createdAt)).map((r) => ({ ...r, updates: undefined })); }
   const { data } = await api.get<RepairRequest[]>(REPAIRS_API_BASE); return data;
 }
-// NOTE: the backend route table has no GET /:id/repairs/:repairId (single
-// read) — only GET /:id/repairs (list) and GET .../:repairId/updates exist.
-// Derive the single repair from the list, then merge its update history
-// (mirrors events.api.ts getTicket() / tasks.api.ts getTask()).
+// GET /api/v1/estate/repairs/:id returns the repair (estate-scope checked
+// server-side: 404 if it belongs to a different estate than the caller's, 403
+// if the caller isn't a resident of any estate) plus its update history in one
+// call. A fetch-the-list-and-find-by-id workaround used to live here because
+// that route didn't exist yet; it does now, and calling it directly is
+// strictly better: one request instead of two, and a real 403/404 the caller
+// can act on instead of a generic "not found" synthesized from an empty list.
 export async function getRepair(id: string): Promise<RepairRequest> {
   if (USE_MOCK) { await latency(250); const r = repairs.find((x) => x.id === id); if (!r) throw new Error('Not found'); return { ...r, updates: (r.updates ?? []).slice() }; }
-  const all = await listRepairs();
-  const r = all.find((x) => x.id === id);
-  if (!r) throw new Error('Repair not found');
-  const updates = await listRepairUpdates(id);
-  return { ...r, updates };
+  const { data } = await api.get<RepairRequest>(`${REPAIRS_API_BASE}/${id}`); return data;
 }
 
-export async function listRepairUpdates(id: string): Promise<RepairUpdate[]> {
-  if (USE_MOCK) { await latency(200); const r = repairs.find((x) => x.id === id); return (r?.updates ?? []).slice(); }
-  const { data } = await api.get<RepairUpdate[]>(`${REPAIRS_API_BASE}/${id}/updates`); return data;
-}
 export async function createRepair(input: CreateRepairInput): Promise<RepairRequest> {
   if (USE_MOCK) {
     await latency(400);

@@ -58,6 +58,9 @@ export default function EstateDashboardPage() {
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '1rem', marginBottom: '1.25rem' }}>
             <Card title="Collections"><p style={{ color: colors.muted, fontSize: '0.85rem' }}>{money(kpis.collectionsThisCycleKobo)} collected this cycle.</p><Link href="/admin/estate/dues" style={{ fontSize: '0.85rem', color: colors.info }}>Open dues →</Link></Card>
             <Card title="Security"><p style={{ color: colors.muted, fontSize: '0.85rem' }}>{kpis.openIncidents} open incident(s).</p><Link href="/admin/estate/gates" style={{ fontSize: '0.85rem', color: colors.info }}>Gates & incidents →</Link></Card>
+            <Card title="Facilities"><p style={{ color: colors.muted, fontSize: '0.85rem' }}>Manage pools, gyms, halls & more.</p><Link href="/admin/estate/facilities" style={{ fontSize: '0.85rem', color: colors.info }}>Facilities management →</Link></Card>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '1rem', marginBottom: '1.25rem' }}>
             <Card title="Vendors"><p style={{ color: colors.muted, fontSize: '0.85rem' }}>{kpis.activeVendors} active vendor(s).</p><Link href="/admin/estate/vendors" style={{ fontSize: '0.85rem', color: colors.info }}>Vendor directory →</Link></Card>
           </div>
 

@@ -15,7 +15,6 @@ import { shadow1 } from '@/constants/shadows';
 import ScreenHeader from '@/components/ScreenHeader';
 import StateView from '@/components/StateView';
 import SectionHeader from '@/components/SectionHeader';
-import PromoBanner from '@/components/PromoBanner';
 import ElectionHeaderBanner from '@/features/election/components/ElectionHeaderBanner';
 import AccessCodeCard from '@/features/visitor/components/AccessCodeCard';
 import VisitEventRow from '@/features/visitor/components/VisitEventRow';
@@ -82,16 +81,6 @@ export default function VisitorDashboard() {
       />
 
       <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
-        {/* Hero banner */}
-        <View style={styles.bannerBleed}>
-          <PromoBanner
-            title="Hosting an event?"
-            subtitle="Invite multiple guests at once and track RSVPs in real time."
-            cta="Manage event guests"
-            onPress={() => router.push('/visitor/event-guests')}
-          />
-        </View>
-
         {restriction.data ? (
           <RestrictionBanner status={restriction.data} onPress={() => router.push('/visitor/restricted')} />
         ) : null}
@@ -227,7 +216,6 @@ export default function VisitorDashboard() {
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: Colors.background },
   scroll: { paddingHorizontal: Spacing.containerMargin, paddingBottom: Spacing.xxl, gap: Spacing.md },
-  bannerBleed: { marginHorizontal: -Spacing.containerMargin },
   actionsRow: { flexDirection: 'row', gap: Spacing.md },
   action: { flex: 1, alignItems: 'center', gap: Spacing.xs, paddingVertical: Spacing.sm },
   pressed: { opacity: 0.8 },

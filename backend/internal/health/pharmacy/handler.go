@@ -54,21 +54,6 @@ func (h *Handler) VerifyPrescription(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"success": true})
 }
 
-// ListMyPrescriptions — GET /prescriptions  (patient's own list)
-func (h *Handler) ListMyPrescriptions(c *gin.Context) {
-	id := uid(c)
-	if id == "" {
-		fail(c, http.StatusUnauthorized, "unauthenticated")
-		return
-	}
-	rx, err := h.svc.MyPrescriptions(c.Request.Context(), id)
-	if err != nil {
-		fail(c, http.StatusInternalServerError, err.Error())
-		return
-	}
-	c.JSON(http.StatusOK, gin.H{"success": true, "prescriptions": rx})
-}
-
 // ListProducts — GET /products?pharmacy_provider_id=&q=  (NAFDAC-gated, Rx flag, HL-5)
 // q is an optional case-insensitive search on the medicine name or owning pharmacy name.
 func (h *Handler) ListProducts(c *gin.Context) {

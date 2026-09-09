@@ -5,7 +5,7 @@ export default function AdminRbacSettingsPage() {
   return (
     <Page>
       <PageHeader title="RBAC Settings" subtitle="Manage access control across roles, permissions, assignment matrix, and audit trails." />
-      <Card>
+      <Card title="Core RBAC Management">
         <div style={{ display: 'grid', gap: 10 }}>
           <Link href="/admin/roles" style={{ color: colors.primary }}>Role Management</Link>
           <Link href="/admin/permissions" style={{ color: colors.primary }}>Permissions Management</Link>
@@ -13,6 +13,13 @@ export default function AdminRbacSettingsPage() {
           <Link href="/admin/users" style={{ color: colors.primary }}>User Role & Status Management</Link>
           <Link href="/admin/audit-logs" style={{ color: colors.primary }}>Audit Logs</Link>
           <Link href="/admin/security-events" style={{ color: colors.primary }}>Security Events</Link>
+        </div>
+      </Card>
+
+      <Card title="Module Management">
+        <div style={{ display: 'grid', gap: 10 }}>
+          <Link href="/admin/modules/privileges" style={{ color: colors.primary }}>User Module Privileges</Link>
+          <Link href="/admin/modules/facilities-rbac" style={{ color: colors.primary }}>Facilities RBAC Configuration</Link>
         </div>
       </Card>
     </Page>

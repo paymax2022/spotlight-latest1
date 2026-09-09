@@ -13,7 +13,6 @@ import { generateIdempotencyKey } from '@/utils/idempotency';
 import {
   mapAppointmentMoney,
   mapDoctorMoney,
-  mapDoctor,
   withDemoQuote,
 } from '@/features/telemedicine/pricing';
 import type {
@@ -71,10 +70,6 @@ const DEMO_DOCTORS_RAW: Doctor[] = [
     bio: 'Family physician with over a decade of experience in primary care, chronic disease management and preventive health.',
     initials: 'AO', avatarColor: Colors.primary, feeKobo: 350000, rating: 4.9, reviewCount: 312,
     yearsExperience: 12, languages: ['English', 'Igbo'], isOnline: true, nextAvailable: 'Today, 4:30 PM',
-    // One featured fixture so mock mode exercises the SAME path as the live API:
-    // without it `getDoctors({ featured: true })` could only ever return [], and the
-    // landing screen's Featured section would be unreachable in mock mode.
-    featured: true,
   },
   {
     id: 'doc-2', name: 'Dr. Tunde Bello', title: 'MBBS, FMCP (Cardiology)', specialtyId: 'cardio',
@@ -177,94 +172,13 @@ export async function getSpecialties(): Promise<Specialty[]> {
   return unwrap<Specialty[]>(await api.get(`${BASE}/specialties`));
 }
 
-export interface DoctorFilters {
-  specialtyId?:   string;
-  search?:        string;
-  /** Minimum star rating, 0-5. */
-  minRating?:     number;
-  /** Minimum years of practice. */
-  minExperience?: number;
-  /** Only doctors with an open slot right now. */
-  availableNow?:  boolean;
-  /** Only editorially featured doctors. An empty result is a valid answer. */
-  featured?:      boolean;
-}
-
-/**
- * List doctors.
- *
- * Params are sent in the SERVER's snake_case. There is no case-transforming
- * interceptor on this axios client (see src/api/client.ts) and the Next.js proxy
- * forwards `url.search` verbatim, so a camelCase param never reaches a Go
- * `c.Query("...")` lookup. The previous `{ specialtyId }` was therefore silently
- * dropped by the backend and every call returned the UNFILTERED list — a filter
- * that looks applied and is not.
- */
-export async function getDoctors(filters?: DoctorFilters | string): Promise<Doctor[]> {
-  const f: DoctorFilters = typeof filters === 'string' ? { specialtyId: filters } : (filters ?? {});
-
+export async function getDoctors(specialtyId?: string): Promise<Doctor[]> {
   if (TELEMEDICINE_USE_MOCK) {
-    let list = DEMO_DOCTORS;
-    if (f.specialtyId)          list = list.filter((d) => d.specialtyId === f.specialtyId);
-    if (f.availableNow)         list = list.filter((d) => d.isOnline);
-    if (f.featured)             list = list.filter((d) => d.featured === true);
-    if (f.minRating)            list = list.filter((d) => d.rating >= f.minRating!);
-    if (f.minExperience)        list = list.filter((d) => d.yearsExperience >= f.minExperience!);
-    if (f.search?.trim()) {
-      const q = f.search.trim().toLowerCase();
-      list = list.filter((d) => d.name.toLowerCase().includes(q)
-        || d.specialties.join(' ').toLowerCase().includes(q));
-    }
+    const list = specialtyId ? DEMO_DOCTORS.filter((d) => d.specialtyId === specialtyId) : DEMO_DOCTORS;
     return wait(list);
   }
-
-  const params: Record<string, string> = {};
-  if (f.specialtyId)      params.specialty_id   = f.specialtyId;
-  if (f.search?.trim())   params.search         = f.search.trim();
-  if (f.minRating)        params.min_rating     = String(f.minRating);
-  if (f.minExperience)    params.min_experience = String(f.minExperience);
-  if (f.availableNow)     params.available_now  = 'true';
-  if (f.featured)         params.featured       = 'true';
-
-  const raw = unwrap<unknown[]>(await api.get(`${BASE}/doctors`, {
-    params: Object.keys(params).length ? params : undefined,
-  }));
-  return (raw ?? []).map(mapDoctor);
-}
-
-export interface RegisterDoctorInput {
-  fullName:        string;
-  email:           string;
-  phone:           string;
-  specialty:       string;
-  yearsExperience: number;
-  mdcnNumber:      string;
-}
-
-/**
- * Submit a doctor onboarding application.
- *
- * Body keys are the server's snake_case — Go binds them with `json:"..."` tags
- * and `binding:"required"`, so a camelCase key does not merely get ignored, it
- * fails validation with a 400 naming a field the app never showed.
- *
- * The doctor is created UNVERIFIED (`is_available = false`): the backend will not
- * list them until a human verifies the MDCN registration. The screen must say so
- * rather than implying the profile goes live on submit.
- */
-export async function registerDoctor(input: RegisterDoctorInput): Promise<{ doctorId: string }> {
-  const body = {
-    full_name:        input.fullName.trim(),
-    email:            input.email.trim(),
-    phone:            input.phone.trim(),
-    specialty:        input.specialty,
-    years_experience: input.yearsExperience,
-    mdcn_number:      input.mdcnNumber.trim(),
-  };
-  const data = unwrap<{ doctor_id?: string; doctorId?: string }>(
-    await api.post(`${BASE}/doctor/register`, body),
-  );
-  return { doctorId: String(data?.doctor_id ?? data?.doctorId ?? '') };
+  const raw = unwrap<unknown[]>(await api.get(`${BASE}/doctors`, { params: specialtyId ? { specialtyId } : undefined }));
+  return (raw ?? []).map(mapDoctorMoney);
 }
 
 export async function getDoctor(id: string): Promise<Doctor | undefined> {
@@ -272,7 +186,7 @@ export async function getDoctor(id: string): Promise<Doctor | undefined> {
     return wait(DEMO_DOCTORS.find((d) => d.id === id));
   }
   const raw = unwrap<unknown>(await api.get(`${BASE}/doctors/${id}`));
-  return raw ? mapDoctor(raw) : undefined;
+  return raw ? mapDoctorMoney(raw) : undefined;
 }
 
 export async function getDoctorAvailability(doctorId: string): Promise<Slot[]> {
