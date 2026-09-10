@@ -21,7 +21,7 @@ declare module 'axios' {
 
 export const api = axios.create({
   baseURL,
-  timeout: 30_000,
+  timeout: 60_000, // Increased from 30s to 60s for slower staging backend
   headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
 });
 
