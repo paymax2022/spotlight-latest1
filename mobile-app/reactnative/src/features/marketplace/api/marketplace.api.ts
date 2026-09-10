@@ -12,9 +12,16 @@
 
 import axios, { AxiosInstance, AxiosError } from 'axios';
 import * as SecureStore from 'expo-secure-store';
+import { getDevUrl } from '@/lib/devUrl';
 
 const API_BASE_URL =
   process.env.EXPO_PUBLIC_API_BASE_URL || 'http://localhost:8091/api/v1';
+
+function marketplaceWsUrl(): string {
+  const base = getDevUrl(process.env.EXPO_PUBLIC_API_BASE_URL ?? 'http://localhost:3000');
+  const path = '/ws/marketplace/updates';
+  return base.replace(/^http/, 'ws').replace(/\/$/, '') + path;
+}
 
 export interface Listing {
   id: string;
@@ -231,11 +238,7 @@ class MarketplaceAPIClient {
     onMessage: (event: { type: string; listing: Listing }) => void,
     onError?: (error: Error) => void
   ): () => void {
-    const protocol =
-      typeof window !== 'undefined' && window.location.protocol === 'https:'
-        ? 'wss:'
-        : 'ws:';
-    const wsUrl = `${protocol}//localhost:8091/ws/marketplace/updates`;
+    const wsUrl = marketplaceWsUrl();
 
     const ws = new WebSocket(wsUrl);
 
