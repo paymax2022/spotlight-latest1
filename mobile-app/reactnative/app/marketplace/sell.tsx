@@ -4,7 +4,7 @@
 // If not → the zero-friction Sell entry CTA into the camera-first composer.
 // States: skeletons (not spinners) on cold load; empty → Sell entry.
 import React, { useState } from 'react';
-import { View, Text, StyleSheet, Pressable, ScrollView, Image, Alert, RefreshControl } from 'react-native';
+import { View, Text, StyleSheet, Pressable, ScrollView, Image, RefreshControl } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { Camera, Plus, Eye, Heart, Zap, Play, Pause, RefreshCw, CheckCircle2, Tag, Pencil, ListChecks, Circle, Trash2, X } from 'lucide-react-native';
@@ -16,6 +16,8 @@ import PrimaryButton from '@/components/PrimaryButton';
 import StateView from '@/components/StateView';
 import { MarketColors, formatNaira, conditionLabel } from '@/features/marketplace';
 import type { Listing, ListingStatus } from '@/features/marketplace';
+import { confirmAsync } from '@/lib/confirm';
+import { showToast } from '@/store/toastStore';
 import {
   useMyListings,
   usePauseListing,
@@ -23,6 +25,7 @@ import {
   useRenewListing,
   useMarkSold,
   useBulkListings,
+  useDeleteListing,
 } from '@/features/marketplace/sell.hooks';
 
 const STATUS_META: Record<ListingStatus, { label: string; color: keyof typeof MarketColors; bg: keyof typeof MarketColors }> = {
@@ -114,17 +117,46 @@ function MyListings({ listings, refreshing, onRefresh }: { listings: Listing[]; 
   });
   const exitSelect = () => { setSelectMode(false); setSelected(new Set()); };
 
-  const runBulk = (action: 'delete' | 'pause') => {
+  const runBulk = async (action: 'delete' | 'pause') => {
     const ids = [...selected];
     if (ids.length === 0) return;
-    const doIt = () => bulk.mutate({ ids, action }, {
-      onSuccess: (r) => { Alert.alert(action === 'delete' ? 'Listings deleted' : 'Listings paused', r.failed > 0 ? `${r.ok} done, ${r.failed} failed.` : `${r.ok} listing${r.ok === 1 ? '' : 's'} ${action === 'delete' ? 'deleted' : 'paused'}.`); exitSelect(); },
-    });
+
+    // confirmAsync, never a raw multi-button Alert.alert: that is a silent no-op
+    // on react-native-web, so the confirmation never rendered, doIt() never ran
+    // and Delete did nothing at all on the web build.
     if (action === 'delete') {
-      Alert.alert('Delete listings', `Permanently delete ${ids.length} listing${ids.length === 1 ? '' : 's'}? This can’t be undone.`, [
-        { text: 'Delete', style: 'destructive', onPress: doIt }, { text: 'Cancel', style: 'cancel' },
-      ]);
-    } else { doIt(); }
+      // Copy matches what the server actually does: DELETE /listings/:id is a
+      // SOFT removal (status -> removed_user, row retained), so the old
+      // "Permanently delete … can't be undone" was telling the seller something
+      // untrue. Nothing in the backend hard-deletes a listing.
+      const ok = await confirmAsync({
+        title: `Remove ${ids.length} listing${ids.length === 1 ? '' : 's'}`,
+        message: 'Buyers will no longer see them. They stay in your Removed filter.',
+        confirmLabel: 'Remove',
+        destructive: true,
+      });
+      if (!ok) return;
+    }
+
+    bulk.mutate({ ids, action }, {
+      onSuccess: (r) => {
+        showToast({
+          variant: r.failed > 0 ? 'info' : 'success',
+          title: action === 'delete' ? 'Listings removed' : 'Listings paused',
+          message: r.failed > 0
+            ? `${r.ok} done, ${r.failed} failed.`
+            : `${r.ok} listing${r.ok === 1 ? '' : 's'} ${action === 'delete' ? 'removed' : 'paused'}.`,
+        });
+        exitSelect();
+      },
+      // Previously absent, so a failed bulk action was indistinguishable from a
+      // successful one: nothing changed on screen either way.
+      onError: () => showToast({
+        variant: 'error',
+        title: action === 'delete' ? 'Could not remove' : 'Could not pause',
+        message: 'Please try again.',
+      }),
+    });
   };
 
   return (
@@ -182,9 +214,9 @@ function MyListings({ listings, refreshing, onRefresh }: { listings: Listing[]; 
               <Text style={styles.bulkActionText}>Pause</Text>
             </Pressable>
           )}
-          <Pressable style={[styles.bulkAction, styles.bulkDelete]} onPress={() => runBulk('delete')} disabled={bulk.isPending} accessibilityLabel="Delete selected">
+          <Pressable style={[styles.bulkAction, styles.bulkDelete]} onPress={() => runBulk('delete')} disabled={bulk.isPending} accessibilityLabel="Remove selected">
             <Trash2 size={18} color={MarketColors.danger} />
-            <Text style={[styles.bulkActionText, { color: MarketColors.danger }]}>{bulk.isPending ? 'Working…' : 'Delete'}</Text>
+            <Text style={[styles.bulkActionText, { color: MarketColors.danger }]}>{bulk.isPending ? 'Working…' : 'Remove'}</Text>
           </Pressable>
         </View>
       )}
@@ -205,16 +237,43 @@ function ListingRow({ listing, selectMode = false, selected = false, onToggleSel
   const resume = useResumeListing();
   const renew = useRenewListing();
   const markSold = useMarkSold();
+  const del = useDeleteListing();
   const meta = STATUS_META[listing.status];
   const cover = listing.media?.[0];
-  const busy = pause.isPending || resume.isPending || renew.isPending || markSold.isPending;
+  const busy = pause.isPending || resume.isPending || renew.isPending || markSold.isPending || del.isPending;
 
-  const confirmMarkSold = () => {
-    Alert.alert('Mark as sold', 'How did you sell this item?', [
-      { text: 'Via Paymax escrow', onPress: () => markSold.mutate({ id: listing.id, viaEscrow: true }) },
-      { text: 'Sold elsewhere', onPress: () => markSold.mutate({ id: listing.id, viaEscrow: false }) },
-      { text: 'Cancel', style: 'cancel' },
-    ]);
+  // Two sequential booleans rather than one three-option Alert.alert. The Alert
+  // form is a silent no-op on web, and confirmAsync is boolean-only — asking
+  // "sold?" then "how?" keeps all three outcomes, including the abort path that
+  // a single two-option prompt would drop.
+  const confirmMarkSold = async () => {
+    const proceed = await confirmAsync({
+      title: 'Mark as sold',
+      message: `Mark “${listing.title}” as sold? It will stop showing to buyers.`,
+      confirmLabel: 'Mark sold',
+    });
+    if (!proceed) return;
+    const viaEscrow = await confirmAsync({
+      title: 'How did you sell it?',
+      message: 'Escrow sales count towards your seller-protection record.',
+      confirmLabel: 'Via Paymax escrow',
+      cancelLabel: 'Sold elsewhere',
+    });
+    markSold.mutate({ id: listing.id, viaEscrow });
+  };
+
+  const confirmDelete = async () => {
+    const ok = await confirmAsync({
+      title: 'Remove listing',
+      message: `Take “${listing.title}” off the marketplace? Buyers will no longer see it. It stays in your Removed filter.`,
+      confirmLabel: 'Remove',
+      destructive: true,
+    });
+    if (!ok) return;
+    del.mutate(listing.id, {
+      onSuccess: () => showToast({ variant: 'success', title: 'Listing removed', message: listing.title }),
+      onError: () => showToast({ variant: 'error', title: 'Could not remove', message: 'Please try again.' }),
+    });
   };
 
   return (
@@ -266,6 +325,9 @@ function ListingRow({ listing, selectMode = false, selected = false, onToggleSel
             {(listing.status === 'active' || listing.status === 'paused') ? (
               <QuickAction icon={Zap} label="Boost" onPress={() => router.push(`/marketplace/boost/${listing.id}` as never)} disabled={busy} highlight />
             ) : null}
+            {listing.status !== 'removed_user' && listing.status !== 'removed_policy' ? (
+              <QuickAction icon={Trash2} label={del.isPending ? 'Removing…' : 'Remove'} onPress={confirmDelete} disabled={busy} danger />
+            ) : null}
           </View>
         </>
       )}
@@ -283,11 +345,18 @@ function Stat({ icon: Icon, value, label }: { icon: React.ComponentType<{ size?:
   );
 }
 
-function QuickAction({ icon: Icon, label, onPress, disabled, highlight }: { icon: React.ComponentType<{ size?: number; color?: string }>; label: string; onPress: () => void; disabled?: boolean; highlight?: boolean }) {
+function QuickAction({ icon: Icon, label, onPress, disabled, highlight, danger }: { icon: React.ComponentType<{ size?: number; color?: string }>; label: string; onPress: () => void; disabled?: boolean; highlight?: boolean; danger?: boolean }) {
+  const tint = danger ? MarketColors.danger : highlight ? MarketColors.brand : MarketColors.text;
   return (
-    <Pressable style={[styles.action, highlight && styles.actionHighlight, disabled && styles.actionDisabled]} onPress={onPress} disabled={disabled} accessibilityRole="button">
-      <Icon size={15} color={highlight ? MarketColors.brand : MarketColors.text} />
-      <Text style={[styles.actionText, highlight && styles.actionTextHighlight]}>{label}</Text>
+    <Pressable
+      style={[styles.action, highlight && styles.actionHighlight, danger && styles.actionDanger, disabled && styles.actionDisabled]}
+      onPress={onPress}
+      disabled={disabled}
+      accessibilityRole="button"
+      accessibilityLabel={label}
+    >
+      <Icon size={15} color={tint} />
+      <Text style={[styles.actionText, { color: tint }]}>{label}</Text>
     </Pressable>
   );
 }
@@ -345,9 +414,9 @@ const styles = StyleSheet.create({
   actionsRow: { flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.xs },
   action: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 12, paddingVertical: 8, borderRadius: Radius.full, borderWidth: 1, borderColor: MarketColors.border, backgroundColor: MarketColors.surface },
   actionHighlight: { borderColor: MarketColors.brand, backgroundColor: MarketColors.okBg },
+  actionDanger: { borderColor: MarketColors.danger, backgroundColor: MarketColors.dangerBg },
   actionDisabled: { opacity: 0.5 },
-  actionText: { ...Typography.labelSm, color: MarketColors.text, fontWeight: '600' },
-  actionTextHighlight: { color: MarketColors.brand },
+  actionText: { ...Typography.labelSm, fontWeight: '600' },
   // entry
   entryWrap: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: Spacing.xl, gap: Spacing.md },
   entryIcon: { width: 80, height: 80, borderRadius: 22, backgroundColor: MarketColors.okBg, alignItems: 'center', justifyContent: 'center' },
