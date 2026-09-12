@@ -303,15 +303,38 @@ function estimateProratedRefund(boost: Boost): number {
   return Math.floor(boost.priceKobo * (remaining / total));
 }
 
+// formatDateTime shows both the date and the clock time. InfoRow previously
+// used toLocaleDateString() alone, so "Started"/"Ends" never told the seller
+// WHEN on that day the boost actually starts or ends — for a boost bought via
+// the custom end-time picker, that time is exactly the thing they chose.
+function formatDateTime(iso: string): string {
+  const d = new Date(iso);
+  return `${d.toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' })}, ${d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}`;
+}
+
 function ActiveState({ boost, remaining, onStop, stopping }: { boost: Boost; remaining: string; onStop: () => void; stopping: boolean }) {
+  // boost.status is the SERVER's last-known state, and nothing here flips it
+  // active -> completed the instant ends_at passes — that transition needs a
+  // background job to run. So a boost can sit at status: 'active' long after
+  // its end time, and reading status alone produced a header reading "Boost
+  // active" directly above a subtitle already reading "Ended", from the SAME
+  // screen, at the SAME time. `remaining` is computed from ends_at against
+  // the current clock every tick (see the countdown effect above), which is
+  // the one place on this screen that already knows the boost is over — so
+  // the header now reads from that, not from the stale server status.
+  const ended = remaining === 'Ended';
+
   // Performance delta stub — with no baseline in the payload, present a plain
   // placeholder rather than an invented number.
   return (
     <>
       <View style={styles.statusHero}>
         <View style={styles.statusIcon}><Zap size={28} color={MarketColors.brand} /></View>
-        <Text style={styles.statusTitle}>Boost active</Text>
-        <Text style={styles.statusSub}>{remaining || `${boost.durationDays} days`}</Text>
+        <Text style={styles.statusTitle}>{ended ? 'Boost ended' : 'Boost active'}</Text>
+        {/* statusSub carries textTransform: 'capitalize' (see styles below), built
+            for short label-style text like "7 days" or "2d 5h left" — a full
+            sentence there title-cases every word. Kept short to match. */}
+        <Text style={styles.statusSub}>{ended ? 'Ran its course' : (remaining || `${boost.durationDays} days`)}</Text>
       </View>
 
       <View style={styles.deltaCard}>
@@ -325,13 +348,20 @@ function ActiveState({ boost, remaining, onStop, stopping }: { boost: Boost; rem
       <InfoRow label="Tier" value={boost.tier} />
       <InfoRow label="Duration" value={`${boost.durationDays} days`} />
       <InfoRow label="Amount paid" value={formatNaira(boost.priceKobo)} />
-      {boost.startsAt ? <InfoRow label="Started" value={new Date(boost.startsAt).toLocaleDateString()} /> : null}
-      {boost.endsAt ? <InfoRow label="Ends" value={new Date(boost.endsAt).toLocaleDateString()} /> : null}
+      <InfoRow label="Started" value={boost.startsAt ? formatDateTime(boost.startsAt) : '—'} />
+      {/* Always rendered, even with no value: a missing end date used to make
+          this whole row disappear, which reads as "the app forgot the field"
+          rather than "the field is genuinely empty" — the second is something
+          a seller can report, the first just looks broken. */}
+      <InfoRow label="Ends" value={boost.endsAt ? formatDateTime(boost.endsAt) : '—'} />
 
-      <Pressable style={styles.retryRow} onPress={onStop} disabled={stopping} accessibilityRole="button">
-        <XCircle size={16} color={MarketColors.danger} />
-        <Text style={[styles.retryText, { color: MarketColors.danger }]}>{stopping ? 'Stopping…' : 'Stop boost'}</Text>
-      </Pressable>
+      {/* Nothing left to stop once it has already ended. */}
+      {!ended && (
+        <Pressable style={styles.retryRow} onPress={onStop} disabled={stopping} accessibilityRole="button">
+          <XCircle size={16} color={MarketColors.danger} />
+          <Text style={[styles.retryText, { color: MarketColors.danger }]}>{stopping ? 'Stopping…' : 'Stop boost'}</Text>
+        </Pressable>
+      )}
     </>
   );
 }
