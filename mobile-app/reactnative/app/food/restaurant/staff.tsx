@@ -153,7 +153,7 @@ export default function StaffScreen() {
                     >
                       <Text style={styles.resultName}>{lookup.data.name || lookup.data.email || lookup.data.phone}</Text>
                       <Text style={styles.resultSubtitle}>
-                        {[lookup.data.email, lookup.data.phone].filter(Boolean).join(‘ · ‘)}
+                        {[lookup.data.email, lookup.data.phone].filter(Boolean).join(' · ')}
                       </Text>
                     </Pressable>
                   )}
@@ -168,7 +168,7 @@ export default function StaffScreen() {
               <View style={styles.confirmCard}>
                 <Text style={styles.resultName}>{selectedUser.name || selectedUser.email || selectedUser.phone}</Text>
                 <Text style={styles.resultSubtitle}>
-                  {[selectedUser.email, selectedUser.phone].filter(Boolean).join(‘ · ‘)}
+                  {[selectedUser.email, selectedUser.phone].filter(Boolean).join(' · ')}
                 </Text>
                 <Pressable
                   onPress={() => setSelectedUser(null)}
@@ -194,9 +194,9 @@ export default function StaffScreen() {
               ))}
               {invite.isError && (
                 <Text style={styles.error}>
-                  {(invite.error as Error)?.message?.includes(‘owner’)
-                    ? ‘Only the owner can add a manager.’
-                    : ‘Couldn’t create that invite. Try again.’}
+                  {(invite.error as Error)?.message?.includes('owner')
+                    ? 'Only the owner can add a manager.'
+                    : 'Couldn’t create that invite. Try again.'}
                 </Text>
               )}
               <PrimaryButton label="Send invite" onPress={send} loading={invite.isPending} />
