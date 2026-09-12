@@ -14,7 +14,13 @@ import { Spacing } from '@/constants/spacing';
 import { Radius } from '@/constants/radius';
 import { useMyStores, useStaff, useInviteStaff, useSetStaffStatus, useUserLookup } from '@/features/restaurantmerchant/hooks';
 import { resolveActiveOutlet } from '@/features/restaurantmerchant/activeOutlet';
-import type { StaffMember, UserLookup } from '@/features/restaurantmerchant/types';
+import type { StaffMember } from '@/features/restaurantmerchant/types';
+// UserLookup, from api.ts, NOT types.ts: that file also declared a UserLookup
+// (userId, camelCase) that disagreed with the real wire shape (user_id,
+// snake_case — see the Go handler's json tag). useUserLookup's data already
+// comes from api.ts's lookupUser(), so this makes the annotation on
+// selectedUser agree with the value actually flowing into it.
+import type { UserLookup } from '@/features/restaurantmerchant/api';
 
 /**
  * Staff for ONE outlet.

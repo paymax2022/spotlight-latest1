@@ -119,10 +119,10 @@ export interface StaffInvite {
   token: string;
 }
 
-/** User lookup result for staff invitation search. */
-export interface UserLookup {
-  userId: string;
-  email?: string;
-  phone?: string;
-  name?: string;
-}
+// UserLookup used to be declared here too, as { userId, ... } — a second
+// definition of the same name, disagreeing with the one in api.ts ({ user_id,
+// ... }, matching the Go handler's json:"user_id" tag exactly). Nothing ever
+// consumed this copy; useUserLookup's data flows from api.ts's lookupUser(),
+// so this one was dead except for a stray import in staff.tsx that happened
+// to reach for the wrong same-named type. Removed rather than fixed in place,
+// so the mistake can't be made again by importing from here. See api.ts.
