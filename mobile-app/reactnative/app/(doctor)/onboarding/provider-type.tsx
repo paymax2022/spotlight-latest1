@@ -30,7 +30,14 @@ const ICON_MAP: Record<ProviderType, LucideIcon> = {
 export default function ProviderTypeScreen() {
   const { data: status, isLoading, isError, refetch } = useMerchantUpgradeStatus();
   const selectType = useSelectProviderType();
-  const [selected, setSelected] = useState<ProviderType | undefined>(status?.selectedType);
+  // The saved choice is the default; a tap overrides it for this visit.
+  //
+  // DERIVED, not seeded into useState. useState reads its initial value only on
+  // the FIRST render — which happens against placeholderData, where selectedType
+  // is undefined — so the real value arriving from the query was discarded and
+  // returning to this step always looked like nothing had been chosen.
+  const [override, setOverride] = useState<ProviderType | undefined>();
+  const selected = override ?? status?.selectedType;
   const [error, setError] = useState<string>();
 
   const handleContinue = async () => {
@@ -70,7 +77,7 @@ export default function ProviderTypeScreen() {
                 description={opt.description}
                 icon={ICON_MAP[opt.type]}
                 selected={selected === opt.type}
-                onPress={() => setSelected(opt.type)}
+                onPress={() => setOverride(opt.type)}
                 disabled={selectType.isPending}
               />
             ))}

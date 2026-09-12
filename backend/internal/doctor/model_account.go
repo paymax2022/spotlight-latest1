@@ -51,10 +51,15 @@ type RecordPermissionRequest struct {
 
 // MerchantUpgrade mirrors public.doctor_merchant_upgrades.
 type MerchantUpgrade struct {
-	ID          string          `json:"id"`
-	UserID      string          `json:"userId"`
-	State       string          `json:"state"`
-	RequestedAt *time.Time      `json:"requestedAt,omitempty"`
+	ID     string `json:"id"`
+	UserID string `json:"userId"`
+	State  string `json:"state"`
+	// SelectedType is the provider type chosen at the provider-type step. It is
+	// not a column on this table — it is read from the profile draft, which is
+	// where SetProviderType writes it. Kept as a projection rather than a second
+	// copy so the two cannot drift when a user changes their choice.
+	SelectedType *string    `json:"selectedType,omitempty"`
+	RequestedAt  *time.Time `json:"requestedAt,omitempty"`
 	CompletedAt *time.Time      `json:"completedAt,omitempty"`
 	Detail      json.RawMessage `json:"detail,omitempty"`
 	CreatedAt   time.Time       `json:"createdAt"`
