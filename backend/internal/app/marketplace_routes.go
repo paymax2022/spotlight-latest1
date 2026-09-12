@@ -296,6 +296,9 @@ func RegisterMarketplace(
 	m.POST("/listings/:id/renew", h.RenewListing)
 	m.POST("/listings/:id/mark-sold", h.MarkSoldListing)
 	m.POST("/listings/:id/contact", h.RevealSellerContact)
+	// Seller performance for one listing. Owner-scoped in the query, so a foreign
+	// id is 404 rather than another seller's offer figures.
+	m.GET("/listings/:id/insights", h.ListingInsights)
 	m.DELETE("/listings/:id", h.DeleteListing)
 	m.POST("/listings/:id/media", h.AddListingMedia)
 	m.DELETE("/listings/:id/media/:mediaId", h.RemoveListingMedia)

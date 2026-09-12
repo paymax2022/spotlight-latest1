@@ -102,6 +102,12 @@ func (h *Handler) GetListing(c *gin.Context) {
 		fail(c, err)
 		return
 	}
+	// Count the view only after a successful read, and never on the error path.
+	// Best effort by design: a failed counter bump must not fail loading a
+	// listing. userID is "" for anonymous browsers (this route is tier0_browse)
+	// and those still count — only the seller's own visits are excluded, inside
+	// the UPDATE. Called before respond so the request context is still live.
+	h.svc.RecordListingView(c.Request.Context(), c.Param("id"), userID(c))
 	respond(c, http.StatusOK, l)
 }
 

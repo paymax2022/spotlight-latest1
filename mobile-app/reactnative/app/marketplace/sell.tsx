@@ -7,7 +7,7 @@ import React, { useState } from 'react';
 import { View, Text, StyleSheet, Pressable, ScrollView, Image, RefreshControl } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
-import { Camera, Plus, Eye, Heart, Zap, Play, Pause, RefreshCw, CheckCircle2, Tag, Pencil, ListChecks, Circle, Trash2, X } from 'lucide-react-native';
+import { Camera, Plus, Eye, Heart, Zap, Play, Pause, RefreshCw, CheckCircle2, Tag, Pencil, ListChecks, Circle, Trash2, X, TrendingUp } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
 import { Spacing } from '@/constants/spacing';
@@ -325,6 +325,7 @@ function ListingRow({ listing, selectMode = false, selected = false, onToggleSel
             {(listing.status === 'active' || listing.status === 'paused') ? (
               <QuickAction icon={Zap} label="Boost" onPress={() => router.push(`/marketplace/boost/${listing.id}` as never)} disabled={busy} highlight />
             ) : null}
+            <QuickAction icon={TrendingUp} label="Insights" onPress={() => router.push(`/marketplace/insights/${listing.id}` as never)} disabled={busy} />
             {listing.status !== 'removed_user' && listing.status !== 'removed_policy' ? (
               <QuickAction icon={Trash2} label={del.isPending ? 'Removing…' : 'Remove'} onPress={confirmDelete} disabled={busy} danger />
             ) : null}

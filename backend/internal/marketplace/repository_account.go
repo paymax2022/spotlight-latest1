@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 )
@@ -421,4 +422,81 @@ func itoa(n int) string {
 		n /= 10
 	}
 	return string(buf[i:])
+}
+
+// ─── Listing insights ────────────────────────────────────────────────────────
+
+// GetListingInsights returns the performance summary for one listing.
+//
+// Owner-scoped in the WHERE clause (seller_id = $2), not just in the service:
+// a listing's offer count and best standing offer are commercially sensitive, so
+// a wrong id must return "not found" rather than another seller's numbers.
+//
+// Counts come from the event tables, never from mkt_listings.save_count — that
+// column has no writer in this backend, so reading it would report 0 saves for
+// every listing forever. view_count is the one denormalised figure used, because
+// there is no per-view table; IncrementListingView is its only writer.
+func (r *Repository) GetListingInsights(ctx context.Context, sellerID, listingID string) (*ListingInsights, error) {
+	const q = `
+		SELECT l.id, l.view_count,
+		       (SELECT count(*) FROM mkt_saved_items      s WHERE s.listing_id = l.id),
+		       (SELECT count(*) FROM mkt_threads          t WHERE t.listing_id = l.id),
+		       (SELECT count(*) FROM mkt_offers           o WHERE o.listing_id = l.id),
+		       (SELECT count(*) FROM mkt_contact_reveals  c WHERE c.listing_id = l.id),
+		       (SELECT count(*) FROM mkt_orders           d WHERE d.listing_id = l.id),
+		       (SELECT max(o.offer_price_kobo) FROM mkt_offers o
+		          WHERE o.listing_id = l.id AND o.status = 'pending'),
+		       b.tier, b.ends_at, l.created_at, l.expires_at
+		  FROM mkt_listings l
+		  LEFT JOIN LATERAL (
+		        SELECT tier, ends_at FROM mkt_boosts
+		         WHERE listing_id = l.id AND status = 'active' AND ends_at > now()
+		         ORDER BY ends_at DESC LIMIT 1
+		  ) b ON TRUE
+		 WHERE l.id = $1 AND l.seller_id = $2`
+
+	out := &ListingInsights{}
+	var tier *string
+	var endsAt *time.Time
+	err := r.db.QueryRow(ctx, q, listingID, sellerID).Scan(
+		&out.ListingID, &out.Views, &out.Saves, &out.Enquiries, &out.Offers,
+		&out.ContactReveals, &out.Orders, &out.BestOfferKobo,
+		&tier, &endsAt, &out.ListedAt, &out.ExpiresAt,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrListingNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	out.BoostTier, out.BoostEndsAt = tier, endsAt
+	out.BoostActive = endsAt != nil
+	return out, nil
+}
+
+// IncrementListingView bumps the view counter, skipping the seller's own visits
+// WHEN the viewer is known.
+//
+// This is the ONLY writer of mkt_listings.view_count. Without it the column stays
+// at its default and every listing reports "0 views" forever, which is what the
+// seller dashboard was showing.
+//
+// ⚠️ KNOWN GAP: the caller is GET /listings/:id, which is deliberately
+// auth-OPTIONAL (tier0_browse) and therefore runs no auth middleware — so
+// c.GetString("user_id") is "" even when a valid Bearer is present, and the
+// seller-exclusion below never fires today. Sellers refreshing their own listing
+// inflate their own view count. Closing this means giving that route a
+// non-aborting auth middleware, which changes the auth posture of the module's
+// most-hit public read and deserves its own review. The guard is kept because it
+// is correct the moment a viewer id is available.
+//
+// Deliberately fire-and-forget at the call site and never part of the read's
+// error path: a failed counter bump must not fail loading a listing.
+func (r *Repository) IncrementListingView(ctx context.Context, listingID, viewerID string) error {
+	const q = `
+		UPDATE mkt_listings
+		   SET view_count = view_count + 1
+		 WHERE id = $1 AND ($2 = '' OR seller_id <> $2::uuid)`
+	_, err := r.db.Exec(ctx, q, listingID, viewerID)
+	return err
 }

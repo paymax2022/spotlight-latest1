@@ -2,6 +2,7 @@ package marketplace
 
 import (
 	"context"
+	"log"
 	"strings"
 )
 
@@ -20,6 +21,26 @@ func (s *Service) SaveListing(ctx context.Context, userID, listingID string) (*S
 		return nil, err
 	}
 	return s.repo.InsertSavedItem(ctx, userID, listingID, l.PriceKobo)
+}
+
+// ─── Listing insights ────────────────────────────────────────────────────────
+
+// RecordListingView bumps a listing's view counter. Best effort: the error is
+// logged and swallowed, because this runs on the listing-detail read path and a
+// counter failure must not turn a working page into an error.
+func (s *Service) RecordListingView(ctx context.Context, listingID, viewerID string) {
+	if err := s.repo.IncrementListingView(ctx, listingID, viewerID); err != nil {
+		log.Printf("[marketplace] view counter bump failed for listing %s: %v", listingID, err)
+	}
+}
+
+// GetListingInsights returns the seller's performance summary for one listing.
+//
+// Ownership is enforced inside the query rather than by a separate read-then-check
+// here: the counts include standing-offer values, so a foreign id must come back
+// as not-found and never as another seller's numbers.
+func (s *Service) GetListingInsights(ctx context.Context, sellerID, listingID string) (*ListingInsights, error) {
+	return s.repo.GetListingInsights(ctx, sellerID, listingID)
 }
 
 // UnsaveListing removes a listing from the caller's wishlist (no-op-safe: missing

@@ -224,3 +224,17 @@ func (h *Handler) MeetupSafeSpots(c *gin.Context) {
 	spots := h.svc.MeetupSafeSpots(c.Query("state"), c.Query("lga"))
 	respond(c, http.StatusOK, spots)
 }
+
+// ListingInsights GET /listings/:id/insights — seller performance for one listing.
+func (h *Handler) ListingInsights(c *gin.Context) {
+	uid, ok := requireUser(c)
+	if !ok {
+		return
+	}
+	ins, err := h.svc.GetListingInsights(c.Request.Context(), uid, c.Param("id"))
+	if err != nil {
+		fail(c, err)
+		return
+	}
+	respond(c, http.StatusOK, ins)
+}

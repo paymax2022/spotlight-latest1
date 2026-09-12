@@ -220,6 +220,42 @@ export async function getBoost(id: string): Promise<Boost> {
   return mktGet<Boost>(`/boosts/${id}`);
 }
 
+/**
+ * Seller performance for one listing. Owner-scoped server-side, so another
+ * seller's id comes back 404 rather than leaking their offer figures.
+ *
+ * Every figure except `views` is counted from the table that records the event
+ * (saves, threads, offers, contact reveals, orders) — mkt_listings.save_count has
+ * no writer, so a denormalised read would report 0 saves forever.
+ */
+export interface ListingInsights {
+  listingId: string;
+  views: number;
+  saves: number;
+  enquiries: number;
+  offers: number;
+  contactReveals: number;
+  orders: number;
+  bestOfferKobo?: number;
+  boostActive: boolean;
+  boostTier?: string;
+  boostEndsAt?: string;
+  listedAt: string;
+  expiresAt?: string;
+}
+
+export async function getListingInsights(id: string): Promise<ListingInsights> {
+  if (MKT_USE_MOCK) {
+    return {
+      listingId: id,
+      views: 0, saves: 0, enquiries: 0, offers: 0, contactReveals: 0, orders: 0,
+      boostActive: false,
+      listedAt: new Date().toISOString(),
+    };
+  }
+  return mktGet<ListingInsights>(`/listings/${id}/insights`);
+}
+
 /** Stop the caller's own active boost early — a prorated refund posts for the
  *  unused days (see backend CancelBoost). Distinct from an admin's RejectBoost
  *  (full refund, policy violation), which this seller-facing action is not. */
