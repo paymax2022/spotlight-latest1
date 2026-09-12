@@ -185,9 +185,23 @@ export async function getMerchantUpgradeStatus(): Promise<MerchantUpgradeStatus>
 }
 
 // ── Entries 8–12 ──
+// GET /onboarding/legal is wired server-side to the SAME read as ListConsents
+// (internal/doctor/service_account_tail.go: "Read-only thin projection over the
+// existing ListConsents read") — it returns the caller's own acceptance records,
+// never document content. There is no title/body/sections/version for any kind
+// anywhere in the backend; nothing to fetch, versioned or otherwise. Calling it
+// crashed consent/[kind].tsx on `doc.sections.length` for every kind, for every
+// user, the moment they tapped in from the (now-working) consents hub.
+//
+// The consents hub already labels this content "Demo legal copy" to users, so
+// the live path now serves the same LEGAL_DOCS_BY_KIND fixture the mock branch
+// always has — real, complete copy for all five kinds, not new text invented
+// here. DOCTOR_USE_MOCK stops mattering for this one call because both branches
+// resolve to the same content; that is a statement about what actually exists,
+// not a bug.
 export async function getLegalDocument(kind: LegalDocKind): Promise<LegalDocument> {
   if (DOCTOR_USE_MOCK) return wait(DEMO_LEGAL_DOCUMENTS[kind]);
-  return doctorGet<LegalDocument>('/onboarding/legal', { kind });
+  return LEGAL_DOCS_BY_KIND[kind];
 }
 
 // GET /onboarding/consents returns a flat, ungrouped list — one row per
