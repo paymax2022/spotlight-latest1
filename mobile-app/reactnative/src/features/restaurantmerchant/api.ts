@@ -1,6 +1,6 @@
 // ── Restaurant merchant — API wrapper ────────────────────────────────────────
 // Owner-facing store & menu management against the Go backend (BASE
-// /api/v1/restaurant). Talks LIVE by default (real operational data); set
+// /api/finance/restaurant). Talks LIVE by default (real operational data); set
 // EXPO_PUBLIC_RESTAURANT_MERCHANT_USE_MOCK=true for an offline in-memory stub.
 //
 // Backend contract (mapped snake_case → camelCase here):
@@ -14,6 +14,9 @@
 //   POST   /restaurant/:id/menu/items                → add item
 //   PATCH  /restaurant/:id/menu/items/:itemId        → price/availability
 //   DELETE /restaurant/:id/menu/items/:itemId
+//   GET    /restaurant/:id/staff                     → staff member list (StaffMember[])
+//   POST   /restaurant/:id/staff                     → invite staff
+//   PATCH  /restaurant/:id/staff/:userId             → set staff status
 
 import { mockAllowed } from '@/config/mockPolicy';
 import { api } from '@/api/client';
@@ -34,7 +37,7 @@ import type {
 export const USE_MOCK =
   mockAllowed(process.env.EXPO_PUBLIC_RESTAURANT_MERCHANT_USE_MOCK, false);
 
-const BASE = '/api/v1/restaurant';
+const BASE = '/api/finance/restaurant';
 const enc = encodeURIComponent;
 const unwrap = <T>(res: { data: { data?: T } & T }): T => (res.data?.data ?? res.data) as T;
 
