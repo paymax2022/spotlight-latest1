@@ -195,7 +195,7 @@ export default function FacilitiesPage() {
               {facilities.map((f) => (
                 <tr key={f.id}>
                   <td style={tdCell}><strong>{f.name}</strong></td>
-                  <td style={tdCell}><Badge status={f.kind} label={cap(f.kind)} /></td>
+                  <td style={tdCell}><Badge text={cap(f.kind)} /></td>
                   <td style={tdCell}>{f.capacity ? `${f.capacity} people` : '—'}</td>
                   <td style={tdCell}>{money(f.feeKobo)}</td>
                   <td style={tdCell}>

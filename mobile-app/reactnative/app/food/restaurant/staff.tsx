@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { View, Text, StyleSheet, ScrollView, TextInput, Pressable, ActivityIndicator } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLocalSearchParams } from 'expo-router';
-import { UserPlus, Copy, Check } from 'lucide-react-native';
+import { UserPlus, Copy, Check, Search } from 'lucide-react-native';
 import * as Clipboard from 'expo-clipboard';
 
 import ScreenHeader from '@/components/ScreenHeader';
@@ -12,9 +12,9 @@ import { confirmAsync } from '@/lib/confirm';
 import { Colors } from '@/constants/colors';
 import { Spacing } from '@/constants/spacing';
 import { Radius } from '@/constants/radius';
-import { useMyStores, useStaff, useInviteStaff, useSetStaffStatus } from '@/features/restaurantmerchant/hooks';
+import { useMyStores, useStaff, useInviteStaff, useSetStaffStatus, useUserLookup } from '@/features/restaurantmerchant/hooks';
 import { resolveActiveOutlet } from '@/features/restaurantmerchant/activeOutlet';
-import type { StaffMember } from '@/features/restaurantmerchant/types';
+import type { StaffMember, UserLookup } from '@/features/restaurantmerchant/types';
 
 /**
  * Staff for ONE outlet.
@@ -40,17 +40,23 @@ export default function StaffScreen() {
   const invite = useInviteStaff(storeId);
   const setStatus = useSetStaffStatus(storeId);
 
-  const [userId, setUserId] = useState('');
+  const [query, setQuery] = useState('');
+  const [selectedUser, setSelectedUser] = useState<UserLookup | null>(null);
+  const lookup = useUserLookup(query);
   const [role, setRole] = useState<StaffMember['role']>('CASHIER');
   const [issued, setIssued] = useState<{ token: string; role: string } | null>(null);
   const [copied, setCopied] = useState(false);
 
   const send = () => {
-    if (!userId.trim()) return;
+    if (!selectedUser?.user_id) return;
     invite.mutate(
-      { userId: userId.trim(), role },
+      { userId: selectedUser.user_id, role },
       {
-        onSuccess: (inv) => { setIssued({ token: inv.token, role: inv.role }); setUserId(''); },
+        onSuccess: (inv) => {
+          setIssued({ token: inv.token, role: inv.role });
+          setQuery('');
+          setSelectedUser(null);
+        },
       },
     );
   };
@@ -119,37 +125,83 @@ export default function StaffScreen() {
             <UserPlus size={18} color={Colors.primary} />
             <Text style={styles.cardTitle}>Add someone</Text>
           </View>
-          <Text style={styles.label}>Their Spotlight user ID</Text>
-          <TextInput
-            value={userId}
-            onChangeText={setUserId}
-            placeholder="They must already have a Spotlight account"
-            placeholderTextColor={Colors.outline}
-            autoCapitalize="none"
-            autoCorrect={false}
-            style={styles.input}
-          />
-          <Text style={styles.label}>Role</Text>
-          {ROLES.map((r) => (
-            <Pressable
-              key={r.role}
-              onPress={() => setRole(r.role)}
-              style={[styles.roleRow, role === r.role && styles.roleRowOn]}
-              accessibilityRole="radio"
-              accessibilityState={{ selected: role === r.role }}
-            >
-              <Text style={[styles.roleLabel, role === r.role && styles.roleLabelOn]}>{r.label}</Text>
-              <Text style={styles.muted}>{r.blurb}</Text>
-            </Pressable>
-          ))}
-          {invite.isError && (
-            <Text style={styles.error}>
-              {(invite.error as Error)?.message?.includes('owner')
-                ? 'Only the owner can add a manager.'
-                : 'Couldn’t create that invite. Check the user ID and try again.'}
-            </Text>
+
+          {!selectedUser ? (
+            <>
+              <Text style={styles.label}>Search by email or phone</Text>
+              <View style={styles.searchRow}>
+                <Search size={16} color={Colors.outline} style={{ marginTop: 12 }} />
+                <TextInput
+                  value={query}
+                  onChangeText={setQuery}
+                  placeholder="e.g. john@example.com or +2341234567890"
+                  placeholderTextColor={Colors.outline}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  style={[styles.input, { flex: 1 }]}
+                />
+              </View>
+
+              {query.length >= 3 && (
+                <>
+                  {lookup.isLoading && <ActivityIndicator color={Colors.primary} style={{ marginVertical: 8 }} />}
+                  {lookup.data && (
+                    <Pressable
+                      onPress={() => setSelectedUser(lookup.data)}
+                      style={styles.userResult}
+                      accessibilityRole="button"
+                    >
+                      <Text style={styles.resultName}>{lookup.data.name || lookup.data.email || lookup.data.phone}</Text>
+                      <Text style={styles.resultSubtitle}>
+                        {[lookup.data.email, lookup.data.phone].filter(Boolean).join(‘ · ‘)}
+                      </Text>
+                    </Pressable>
+                  )}
+                  {lookup.isError && !lookup.isLoading && (
+                    <Text style={styles.error}>No account found with that email or phone</Text>
+                  )}
+                </>
+              )}
+            </>
+          ) : (
+            <>
+              <View style={styles.confirmCard}>
+                <Text style={styles.resultName}>{selectedUser.name || selectedUser.email || selectedUser.phone}</Text>
+                <Text style={styles.resultSubtitle}>
+                  {[selectedUser.email, selectedUser.phone].filter(Boolean).join(‘ · ‘)}
+                </Text>
+                <Pressable
+                  onPress={() => setSelectedUser(null)}
+                  style={{ marginTop: Spacing.sm }}
+                  accessibilityRole="button"
+                >
+                  <Text style={styles.changeText}>Search again</Text>
+                </Pressable>
+              </View>
+
+              <Text style={styles.label}>Role</Text>
+              {ROLES.map((r) => (
+                <Pressable
+                  key={r.role}
+                  onPress={() => setRole(r.role)}
+                  style={[styles.roleRow, role === r.role && styles.roleRowOn]}
+                  accessibilityRole="radio"
+                  accessibilityState={{ selected: role === r.role }}
+                >
+                  <Text style={[styles.roleLabel, role === r.role && styles.roleLabelOn]}>{r.label}</Text>
+                  <Text style={styles.muted}>{r.blurb}</Text>
+                </Pressable>
+              ))}
+              {invite.isError && (
+                <Text style={styles.error}>
+                  {(invite.error as Error)?.message?.includes(‘owner’)
+                    ? ‘Only the owner can add a manager.’
+                    : ‘Couldn’t create that invite. Try again.’}
+                </Text>
+              )}
+              <PrimaryButton label="Send invite" onPress={send} loading={invite.isPending} />
+            </>
           )}
-          <PrimaryButton label="Create invite" onPress={send} loading={invite.isPending} disabled={!userId.trim()} />
         </View>
 
         {/* Roster */}
@@ -218,6 +270,18 @@ const styles = StyleSheet.create({
     borderWidth: 1, borderColor: Colors.outlineVariant, borderRadius: Radius.md,
     paddingHorizontal: Spacing.sm, paddingVertical: 10, color: Colors.onSurface,
   },
+  searchRow: { flexDirection: 'row', alignItems: 'flex-start', gap: Spacing.sm },
+  userResult: {
+    padding: Spacing.md, borderRadius: Radius.md, borderWidth: 1, borderColor: Colors.primary,
+    backgroundColor: Colors.surfaceContainerLow, marginTop: Spacing.sm,
+  },
+  resultName: { color: Colors.onSurface, fontSize: 14, fontWeight: '600' },
+  resultSubtitle: { color: Colors.onSurfaceVariant, fontSize: 12, marginTop: 2 },
+  confirmCard: {
+    padding: Spacing.md, borderRadius: Radius.md, borderWidth: 1, borderColor: Colors.primary,
+    backgroundColor: Colors.surfaceContainerLow,
+  },
+  changeText: { color: Colors.primary, fontSize: 13, fontWeight: '600' },
   roleRow: { gap: 2, padding: Spacing.sm, borderRadius: Radius.md, borderWidth: 1, borderColor: Colors.outlineVariant },
   roleRowOn: { borderColor: Colors.primary, backgroundColor: Colors.surfaceContainerLow },
   roleLabel: { color: Colors.onSurface, fontSize: 14, fontWeight: '600' },

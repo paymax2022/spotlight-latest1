@@ -148,6 +148,24 @@ export async function getPayoutReadiness(): Promise<OutletPayoutReadiness[]> {
 
 // ── Staff ────────────────────────────────────────────────────────────────────
 
+export interface UserLookup {
+  user_id: string;
+  email?: string;
+  phone?: string;
+  name?: string;
+}
+
+export async function lookupUser(query: string): Promise<UserLookup | null> {
+  if (!query.trim()) return null;
+  try {
+    const response = await api.get<{ user: UserLookup }>(`${BASE}/lookup/user?query=${encodeURIComponent(query)}`);
+    return response.data?.user ?? null;
+  } catch (err) {
+    console.error('User lookup failed:', err);
+    return null;
+  }
+}
+
 export async function listStaff(restaurantId: string): Promise<StaffMember[]> {
   if (USE_MOCK) {
     await delay();

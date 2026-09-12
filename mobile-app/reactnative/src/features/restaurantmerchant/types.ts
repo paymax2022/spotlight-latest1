@@ -118,3 +118,11 @@ export interface StaffInvite {
   role: StaffMember['role'];
   token: string;
 }
+
+/** User lookup result for staff invitation search. */
+export interface UserLookup {
+  userId: string;
+  email?: string;
+  phone?: string;
+  name?: string;
+}

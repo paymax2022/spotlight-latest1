@@ -1554,6 +1554,7 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		// intentionally not outlet-scoped: the token names the outlet, and the
 		// invitee is not yet staff there, so no per-outlet guard could pass.
 		restGroup.POST("/staff/accept", restaurantHandler.AcceptStaffInvite)
+		restGroup.GET("/lookup/user", restaurantHandler.LookupUser)
 		restGroup.GET("/:id/staff", restaurantHandler.ListStaff)
 		restGroup.POST("/:id/staff", restaurantHandler.InviteStaff)
 		restGroup.PATCH("/:id/staff/:userId", restaurantHandler.SetStaffStatus)

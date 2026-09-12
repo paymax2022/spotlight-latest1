@@ -174,7 +174,7 @@ export default function PrivilegesPage() {
                             <h3 style={{ margin: 0, fontSize: '0.95rem', fontWeight: 600 }}>{mod.name}</h3>
                             <p style={{ margin: '0.25rem 0 0', fontSize: '0.75rem', color: colors.muted }}>{mod.description}</p>
                           </div>
-                          <Badge status={hasAccess ? 'active' : 'inactive'} label={hasAccess ? 'Access' : 'No Access'} />
+                          <Badge text={hasAccess ? 'Access' : 'No Access'} color={hasAccess ? colors.success : colors.muted} />
                         </div>
 
                         {hasAccess && perms.length > 0 && (
@@ -188,8 +188,8 @@ export default function PrivilegesPage() {
                                 return (
                                   <Badge
                                     key={p}
-                                    status="active"
-                                    label={permInfo?.label || p.split('.').pop() || p}
+                                    text={permInfo?.label || p.split('.').pop() || p}
+                                    color={colors.success}
                                   />
                                 );
                               })}

@@ -61,10 +61,24 @@ export function PageHeader({ title, subtitle, actions }: { title: string; subtit
   );
 }
 
-export function Card({ children, title, className, style }: { children: ReactNode; title?: string; className?: string; style?: CSSProperties }) {
+// `right` is an optional header action slot (a Refresh button, an Edit toggle).
+// The module-local _ui.tsx kits have carried one for a while; callers importing
+// Card from here had no equivalent, which is what broke the type-check on the
+// estate-facilities and modules pages.
+//
+// The no-`right` branch deliberately renders the bare <h2> exactly as before,
+// rather than always wrapping in a flex row: Card has ~1180 call sites across the
+// admin app and none of them should shift by a pixel for a slot they do not use.
+export function Card({ children, title, right, className, style }: { children: ReactNode; title?: string; right?: ReactNode; className?: string; style?: CSSProperties }) {
+  const heading = title ? <h2 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: colors.text }}>{title}</h2> : null;
   return (
     <section className={`vx-card${className ? ` ${className}` : ''}`} style={style}>
-      {title ? <h2 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: colors.text }}>{title}</h2> : null}
+      {right ? (
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+          {heading ?? <span />}
+          {right}
+        </div>
+      ) : heading}
       {children}
     </section>
   );

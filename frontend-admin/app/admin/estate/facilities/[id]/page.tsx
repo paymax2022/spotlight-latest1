@@ -205,7 +205,7 @@ export default function FacilityDetailPage() {
                 </div>
                 <div>
                   <p style={{ color: colors.muted, fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: 0.3, marginBottom: '0.25rem' }}>Type</p>
-                  <p><Badge status={facility.kind} label={cap(facility.kind)} /></p>
+                  <p><Badge text={cap(facility.kind)} /></p>
                 </div>
                 <div>
                   <p style={{ color: colors.muted, fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: 0.3, marginBottom: '0.25rem' }}>Capacity</p>
@@ -240,7 +240,7 @@ export default function FacilityDetailPage() {
                       <td style={tdCell}>{formatDate(b.startsAt)}</td>
                       <td style={tdCell}>{formatDate(b.endsAt)}</td>
                       <td style={tdCell}>{money(b.amountKobo)}</td>
-                      <td style={tdCell}><Badge status={b.status} label={cap(b.status)} color={statusColor(b.status)} /></td>
+                      <td style={tdCell}><Badge text={cap(b.status)} color={statusColor(b.status)} /></td>
                     </tr>
                   ))}
                 </tbody>

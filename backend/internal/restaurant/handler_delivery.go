@@ -228,6 +228,29 @@ func (h *Handler) ListStaff(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"staff": list})
 }
 
+// LookupUser → GET /restaurant/lookup/user?query={email_or_phone}
+//
+// Search for a user by email or phone number. Returns user data (id, email, phone, name)
+// so the restaurant admin can confirm before sending an invite.
+func (h *Handler) LookupUser(c *gin.Context) {
+	query := strings.TrimSpace(c.Query("query"))
+	if query == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "query parameter required"})
+		return
+	}
+	if len(query) < 3 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "search query must be at least 3 characters"})
+		return
+	}
+
+	user, err := h.svc.LookupUser(c.Request.Context(), query)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "user not found"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"user": user})
+}
+
 // InviteStaff → POST /restaurant/:id/staff {user_id, role}
 //
 // The response carries the invite token ONCE. It is not recoverable afterwards —
