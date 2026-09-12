@@ -20,6 +20,7 @@
 // Money is always an integer in kobo (Section A has no money fields).
 
 import { DOCTOR_USE_MOCK, doctorGet, doctorPost } from '@/api/doctor.client';
+import { LEGAL_DOC_ORDER } from '@/features/doctor/constants/onboarding';
 // Re-export the shared money formatter so Section A screens can import it here too.
 export { formatKobo } from '@/api/doctor.api';
 // Re-export the REUSED Batch 7 account-status read so entries 17–20 pull the
@@ -187,9 +188,49 @@ export async function getLegalDocument(kind: LegalDocKind): Promise<LegalDocumen
   return doctorGet<LegalDocument>('/onboarding/legal', { kind });
 }
 
+// GET /onboarding/consents returns a flat, ungrouped list — one row per
+// (kind, version) ever decided, not the {accepted, outstanding, allAccepted}
+// object ConsentStatus promises (internal/doctor: ListConsents -> Service
+// .ListConsents -> Repository.ListConsents, all typed []LegalConsent). No
+// endpoint anywhere computes that aggregate; it has only ever existed as a
+// client-side type. consents.tsx read `status.outstanding` straight off
+// whatever this returned, so `status` was really the bare array, `.outstanding`
+// was `undefined` on it, and reading `.length` off that crashed on the very
+// first visit for any user who reached this step. See LegalConsentWire below
+// for the wire shape (camelCase, unconverted — the same as SelectProviderTypeInput
+// needed to match verbatim).
+interface LegalConsentWire {
+  consentKind: LegalDocKind;
+  version: string;
+  accepted: boolean;
+  acceptedAt?: string;
+}
+
 export async function getConsentStatus(): Promise<ConsentStatus> {
   if (DOCTOR_USE_MOCK) return wait(DEMO_CONSENT_STATUS);
-  return doctorGet<ConsentStatus>('/onboarding/consents');
+  const rows = await doctorGet<LegalConsentWire[]>('/onboarding/consents');
+
+  // ORDER BY created_at DESC server-side, so the FIRST row seen per kind is the
+  // most recent decision for it — exactly what "currently accepted" means when
+  // the same kind can carry more than one version over time.
+  const latestByKind = new Map<LegalDocKind, LegalConsentWire>();
+  for (const row of rows) {
+    if (!latestByKind.has(row.consentKind)) latestByKind.set(row.consentKind, row);
+  }
+
+  const accepted: LegalConsentRecord[] = [];
+  for (const row of latestByKind.values()) {
+    if (row.accepted) accepted.push({ kind: row.consentKind, version: row.version, acceptedAt: row.acceptedAt ?? '' });
+  }
+  const acceptedKinds = new Set(accepted.map((r) => r.kind));
+  const outstanding = LEGAL_DOC_ORDER.filter((k) => !acceptedKinds.has(k));
+
+  return {
+    accepted,
+    outstanding,
+    allAccepted: outstanding.length === 0,
+    updatedAt: new Date().toISOString(),
+  };
 }
 
 // ── Entries 13–16 ──
