@@ -95,8 +95,40 @@ func (s *Service) SetProviderType(ctx context.Context, userID, idemKey string, r
 
 // ── Profile builder ──────────────────────────────────────────────────────────
 
+// GetProfileDraft has the same defect GetMerchantUpgrade was fixed for: no
+// doctor_profiles row is the STARTING state for a fresh provider (the row is
+// only ever created by SaveProfileDraft's upsert, on the FIRST write), not a
+// missing resource. Propagating ErrNotFound as a 404 made every one of Section
+// B's profile-builder screens unreachable for anyone who reaches
+// /profile/setup/* before that first write has happened — e.g. a bookmarked or
+// directly-typed URL, same failure mode this endpoint's fresh-user branch
+// already existed to prevent for /onboarding/merchant-upgrade. The synthesized
+// row mirrors doctor_profiles' own column defaults (supabase/migrations
+// 20260625000000_doctor_module.sql) exactly, so a first-time GET and a
+// first-time INSERT look identical to every caller.
 func (s *Service) GetProfileDraft(ctx context.Context, userID string) (*Profile, error) {
-	return s.repo.GetProfileDraft(ctx, userID)
+	p, err := s.repo.GetProfileDraft(ctx, userID)
+	if err == nil {
+		return p, nil
+	}
+	if !errors.Is(err, ErrNotFound) {
+		return nil, err
+	}
+	now := time.Now().UTC()
+	return &Profile{
+		UserID:         userID,
+		ProviderType:   "doctor",
+		Specialties:    json.RawMessage("[]"),
+		SubSpecialties: json.RawMessage("[]"),
+		Languages:      json.RawMessage("[]"),
+		Presence:       "offline",
+		Verification:   "unsubmitted",
+		Timezone:       "Africa/Lagos",
+		ProfileDraft:   json.RawMessage("{}"),
+		CompletedSteps: json.RawMessage("[]"),
+		CreatedAt:      now,
+		UpdatedAt:      now,
+	}, nil
 }
 
 func (s *Service) SaveProfileDraft(ctx context.Context, userID, idemKey string, patch json.RawMessage) (*Profile, error) {

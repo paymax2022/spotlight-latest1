@@ -11,6 +11,7 @@
 
 import type {
   DoctorProfileDraft,
+  VerificationStatus,
   ProfileDocumentSlot,
   UploadedFile,
   BankAccount,
@@ -153,9 +154,73 @@ export const DEMO_VERIFICATION_DECISION: VerificationDecision = {
 
 // ─── Read endpoints ──────────────────────────────────────────────────────────
 
+// GET /profile/draft (internal/doctor Service/Repository.GetProfileDraft) wires
+// straight to GetProfile, whose response is the flat doctor_profiles row — id,
+// userId, providerType, name, bio, specialtyId, languages, ..., profileDraft,
+// completedSteps, createdAt, updatedAt — not the DoctorProfileDraft shape this
+// function promises (personalInfo, licence, pricing, freeFollowUp, ...). Every
+// one of Section B's screens writes and reads through this same function, so
+// this was never reachable with real data: each screen's `save.mutateAsync({
+// draft: {...} })` call sends the WHOLE SaveProfileDraftInput as the PUT body
+// (doctorPut passes `input` straight through), so what actually lands in the
+// `profile_draft` jsonb column is `{draft: {...that screen's patch...},
+// idempotencyKey: "..."}` — the real fields the builder needs live one level
+// deeper, at `profileDraft.draft`, not at the wire's top level or even at
+// `profileDraft` directly.
+//
+// This unwraps that one level and fills in every required DoctorProfileDraft
+// field DEMO_PROFILE_DRAFT already exercises, so a field a given user hasn't
+// reached yet renders as empty rather than crashing the screen that reads it
+// (`draft.personalInfo` etc. would otherwise be `undefined`, which is exactly
+// what made personal.tsx's `if (isError || !draft || !form)` guard permanently
+// true on the live path — the reported "We could not load your profile.").
+//
+// NOT fixed here, and out of scope for that crash: because `profileDraft.draft`
+// is replaced wholesale on every save (jsonb `||` merges top-level keys only,
+// and every screen's patch is nested one level under the same `draft` key),
+// each step's save currently overwrites every OTHER step's already-saved data
+// — a real, separate data-loss defect in the write path, not a shape mismatch.
+// Reading it back accurately here does not fix that; it surfaces it (a
+// returning user will see only whichever screen they saved last).
+interface ProfileDraftWire {
+  id:            string;
+  userId:        string;
+  verification:  VerificationStatus;
+  isPublished:   boolean;
+  updatedAt:     string;
+  profileDraft?: { draft?: Partial<DoctorProfileDraft> } | null;
+}
+
 export async function getProfileDraft(draftId?: string): Promise<DoctorProfileDraft> {
   if (DOCTOR_USE_MOCK) return wait(DEMO_PROFILE_DRAFT);
-  return doctorGet<DoctorProfileDraft>('/profile/draft', { draftId });
+  const wire = await doctorGet<ProfileDraftWire>('/profile/draft', { draftId });
+  const saved = wire.profileDraft?.draft ?? {};
+  return {
+    id: wire.id,
+    doctorId: wire.userId,
+    personalInfo: saved.personalInfo ?? { firstName: '', lastName: '', title: '', email: '', phone: '' },
+    photo: saved.photo,
+    bio: saved.bio ?? '',
+    specialtyId: saved.specialtyId ?? '',
+    subSpecialtyIds: saved.subSpecialtyIds ?? [],
+    yearsExperience: saved.yearsExperience ?? 0,
+    languages: saved.languages ?? [],
+    licence: saved.licence ?? { licenceNumber: '', issuingBody: 'MDCN' },
+    documents: saved.documents ?? [],
+    certificates: saved.certificates ?? [],
+    associationMembership: saved.associationMembership,
+    affiliations: saved.affiliations ?? [],
+    education: saved.education ?? [],
+    workExperience: saved.workExperience ?? [],
+    pricing: saved.pricing ?? { videoFeeKobo: 0, audioFeeKobo: 0, chatFeeKobo: 0, currency: 'NGN', acceptsInstant: false },
+    freeFollowUp: saved.freeFollowUp ?? { enabled: false, windowDays: 0, maxFreeVisits: 0 },
+    bankAccount: saved.bankAccount,
+    taxInfo: saved.taxInfo,
+    completedSteps: saved.completedSteps ?? [],
+    status: wire.verification,
+    updatedAt: wire.updatedAt,
+    isPublished: wire.isPublished,
+  };
 }
 
 export async function getDocumentSlots(): Promise<ProfileDocumentSlot[]> {
