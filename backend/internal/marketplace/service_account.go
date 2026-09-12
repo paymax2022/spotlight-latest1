@@ -23,6 +23,17 @@ func (s *Service) SaveListing(ctx context.Context, userID, listingID string) (*S
 	return s.repo.InsertSavedItem(ctx, userID, listingID, l.PriceKobo)
 }
 
+// ─── Permanent deletion ──────────────────────────────────────────────────────
+
+// PurgeListing PERMANENTLY deletes a listing the caller owns. Irreversible, and
+// distinct from DeleteListing, which is a soft status change to removed_user.
+//
+// Refused when the listing carries orders, boosts, offers or buyer threads — see
+// Repository.PurgeListing for why those four and not others.
+func (s *Service) PurgeListing(ctx context.Context, sellerID, listingID string) error {
+	return s.repo.PurgeListing(ctx, sellerID, listingID)
+}
+
 // ─── Listing insights ────────────────────────────────────────────────────────
 
 // RecordListingView bumps a listing's view counter. Best effort: the error is

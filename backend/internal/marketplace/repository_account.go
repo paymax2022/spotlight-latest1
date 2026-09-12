@@ -424,6 +424,88 @@ func itoa(n int) string {
 	return string(buf[i:])
 }
 
+// ─── Permanent deletion ──────────────────────────────────────────────────────
+
+// PurgeListing PERMANENTLY removes a listing and the rows that exist only to
+// describe it. Unlike DeleteListing (a soft status change to removed_user) this
+// is irreversible.
+//
+// It refuses whenever the listing carries commercial history — orders, boosts,
+// offers or buyer threads. That is not a policy invented here: those four are the
+// exact FKs the schema declares ON DELETE NO ACTION, while media, saved-items and
+// contact-reveals are ON DELETE CASCADE. The database already encodes what may be
+// erased with a listing and what must outlive it; this function reads the same
+// line, and checks up front only so the seller gets "this listing has 2 offers"
+// instead of an opaque foreign-key 500.
+//
+// Orders and boosts both carry ledger references, so erasing either would orphan
+// a money record — the strongest reason the refusal must stay.
+//
+// mkt_listings_outbox is deleted rather than blocking: it is our own search-index
+// event queue, internal plumbing rather than a record of anything a person did.
+func (r *Repository) PurgeListing(ctx context.Context, sellerID, listingID string) error {
+	const pre = `
+		SELECT (SELECT count(*) FROM public.mkt_orders  o WHERE o.listing_id = l.id),
+		       (SELECT count(*) FROM public.mkt_boosts  b WHERE b.listing_id = l.id),
+		       (SELECT count(*) FROM public.mkt_offers  f WHERE f.listing_id = l.id),
+		       (SELECT count(*) FROM public.mkt_threads t WHERE t.listing_id = l.id)
+		  FROM public.mkt_listings l
+		 WHERE l.id = $1 AND l.seller_id = $2`
+
+	var orders, boosts, offers, threads int64
+	err := r.db.QueryRow(ctx, pre, listingID, sellerID).Scan(&orders, &boosts, &offers, &threads)
+	if errors.Is(err, pgx.ErrNoRows) {
+		// Covers both "no such listing" and "not yours" — deliberately the same
+		// answer, so this cannot be used to probe other sellers' listing ids.
+		return ErrListingNotFound
+	}
+	if err != nil {
+		return wrapInternal("purge listing preconditions", err)
+	}
+	if msg := purgeBlockedBy(orders, boosts, offers, threads); msg != "" {
+		return &CodedError{Status: 409, Code: CodeListingHasHistory, Message: msg}
+	}
+
+	// Outbox rows and the listing go together or not at all: dropping the queue
+	// entries and then failing the delete would strip the listing from search
+	// while leaving it live.
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return wrapInternal("purge listing begin", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	if _, err := tx.Exec(ctx, `DELETE FROM public.mkt_listings_outbox WHERE listing_id = $1`, listingID); err != nil {
+		return wrapInternal("purge listing outbox", err)
+	}
+	ct, err := tx.Exec(ctx, `DELETE FROM public.mkt_listings WHERE id = $1 AND seller_id = $2`, listingID, sellerID)
+	if err != nil {
+		return wrapInternal("purge listing", err)
+	}
+	if ct.RowsAffected() == 0 {
+		return ErrListingNotFound
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return wrapInternal("purge listing commit", err)
+	}
+	return nil
+}
+
+// purgeBlockedBy returns a seller-readable reason, or "" when nothing blocks.
+func purgeBlockedBy(orders, boosts, offers, threads int64) string {
+	switch {
+	case orders > 0:
+		return "This listing has orders, so it can't be permanently deleted. Remove it instead — the record has to stay."
+	case boosts > 0:
+		return "This listing has been boosted, so it can't be permanently deleted. Remove it instead — the payment record has to stay."
+	case offers > 0:
+		return "Buyers have made offers on this listing, so it can't be permanently deleted. Remove it instead."
+	case threads > 0:
+		return "Buyers have messaged you about this listing, so it can't be permanently deleted. Remove it instead."
+	}
+	return ""
+}
+
 // ─── Listing insights ────────────────────────────────────────────────────────
 
 // GetListingInsights returns the performance summary for one listing.

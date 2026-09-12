@@ -300,6 +300,9 @@ func RegisterMarketplace(
 	// id is 404 rather than another seller's offer figures.
 	m.GET("/listings/:id/insights", h.ListingInsights)
 	m.DELETE("/listings/:id", h.DeleteListing)
+	// PERMANENT deletion, distinct from the soft DELETE above. Refused when the
+	// listing has orders/boosts/offers/threads — see Repository.PurgeListing.
+	m.DELETE("/listings/:id/permanent", h.PurgeListing)
 	m.POST("/listings/:id/media", h.AddListingMedia)
 	m.DELETE("/listings/:id/media/:mediaId", h.RemoveListingMedia)
 	m.PUT("/listings/:id/media/reorder", h.ReorderListingMedia)

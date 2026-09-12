@@ -18,6 +18,7 @@ import { MarketColors, formatNaira, conditionLabel } from '@/features/marketplac
 import type { Listing, ListingStatus } from '@/features/marketplace';
 import { confirmAsync } from '@/lib/confirm';
 import { showToast } from '@/store/toastStore';
+import { getErrorMessage } from '@/utils/errorMapper';
 import {
   useMyListings,
   usePauseListing,
@@ -26,6 +27,7 @@ import {
   useMarkSold,
   useBulkListings,
   useDeleteListing,
+  usePurgeListing,
 } from '@/features/marketplace/sell.hooks';
 
 const STATUS_META: Record<ListingStatus, { label: string; color: keyof typeof MarketColors; bg: keyof typeof MarketColors }> = {
@@ -238,9 +240,10 @@ function ListingRow({ listing, selectMode = false, selected = false, onToggleSel
   const renew = useRenewListing();
   const markSold = useMarkSold();
   const del = useDeleteListing();
+  const purge = usePurgeListing();
   const meta = STATUS_META[listing.status];
   const cover = listing.media?.[0];
-  const busy = pause.isPending || resume.isPending || renew.isPending || markSold.isPending || del.isPending;
+  const busy = pause.isPending || resume.isPending || renew.isPending || markSold.isPending || del.isPending || purge.isPending;
 
   // Two sequential booleans rather than one three-option Alert.alert. The Alert
   // form is a silent no-op on web, and confirmAsync is boolean-only — asking
@@ -260,6 +263,26 @@ function ListingRow({ listing, selectMode = false, selected = false, onToggleSel
       cancelLabel: 'Sold elsewhere',
     });
     markSold.mutate({ id: listing.id, viaEscrow });
+  };
+
+  // Permanent deletion is offered only AFTER a listing is removed, so erasing is
+  // a deliberate second step rather than something reachable by mis-tapping the
+  // primary action. removed_policy is excluded: a moderation removal is not the
+  // seller's record to erase.
+  const confirmPurge = async () => {
+    const ok = await confirmAsync({
+      title: 'Delete permanently?',
+      message: `“${listing.title}” will be erased for good. This cannot be undone, and it is different from removing it — a removed listing can still be seen here.`,
+      confirmLabel: 'Delete forever',
+      destructive: true,
+    });
+    if (!ok) return;
+    purge.mutate(listing.id, {
+      onSuccess: () => showToast({ variant: 'success', title: 'Listing deleted permanently', message: listing.title }),
+      // The server refuses when the listing carries orders, boosts, offers or
+      // buyer threads. Surface ITS message — it names the actual blocker.
+      onError: (e) => showToast({ variant: 'error', title: 'Could not delete permanently', message: getErrorMessage(e) }),
+    });
   };
 
   const confirmDelete = async () => {
@@ -328,6 +351,9 @@ function ListingRow({ listing, selectMode = false, selected = false, onToggleSel
             <QuickAction icon={TrendingUp} label="Insights" onPress={() => router.push(`/marketplace/insights/${listing.id}` as never)} disabled={busy} />
             {listing.status !== 'removed_user' && listing.status !== 'removed_policy' ? (
               <QuickAction icon={Trash2} label={del.isPending ? 'Removing…' : 'Remove'} onPress={confirmDelete} disabled={busy} danger />
+            ) : null}
+            {listing.status === 'removed_user' ? (
+              <QuickAction icon={Trash2} label={purge.isPending ? 'Deleting…' : 'Delete permanently'} onPress={confirmPurge} disabled={busy} danger />
             ) : null}
           </View>
         </>

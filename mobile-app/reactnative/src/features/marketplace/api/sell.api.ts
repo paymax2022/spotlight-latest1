@@ -221,6 +221,22 @@ export async function getBoost(id: string): Promise<Boost> {
 }
 
 /**
+ * PERMANENTLY delete a listing — irreversible, unlike deleteListing which is a
+ * soft status change to removed_user.
+ *
+ * The server refuses with 409 LISTING_HAS_HISTORY when the listing carries
+ * orders, boosts, offers or buyer threads; those records have to outlive it (two
+ * of them hold ledger references). Surface that message rather than retrying.
+ */
+export async function purgeListing(id: string): Promise<void> {
+  if (MKT_USE_MOCK) {
+    await S.mockDeleteListing(id);
+    return;
+  }
+  await mktDelete<unknown>(`/listings/${id}/permanent`);
+}
+
+/**
  * Seller performance for one listing. Owner-scoped server-side, so another
  * seller's id comes back 404 rather than leaking their offer figures.
  *

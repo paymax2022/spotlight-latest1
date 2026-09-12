@@ -141,6 +141,12 @@ export const useResumeListing = () => useListingLifecycle(sellApi.resumeListing)
 export const useRenewListing = () => useListingLifecycle(sellApi.renewListing);
 export const useDeleteListing = () => useListingLifecycle(sellApi.deleteListing);
 
+// PERMANENT deletion — irreversible, and distinct from useDeleteListing which
+// only soft-removes. The server refuses (409 LISTING_HAS_HISTORY) when the
+// listing carries orders, boosts, offers or buyer threads, so callers must
+// surface the error message rather than assume success.
+export const usePurgeListing = () => useListingLifecycle(sellApi.purgeListing);
+
 // Bulk manage (LM-006). No batch endpoint exists, so this fans out over the
 // per-listing lifecycle calls and reports partial success. Uses allSettled so one
 // failure never aborts the rest; refreshes My Listings once at the end. Returns

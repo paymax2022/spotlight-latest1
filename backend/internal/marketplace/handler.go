@@ -346,6 +346,21 @@ func (h *Handler) DeleteListing(c *gin.Context) {
 	respond(c, http.StatusOK, l)
 }
 
+// PurgeListing DELETE /listings/:id/permanent — IRREVERSIBLE, unlike
+// DeleteListing which only flips status to removed_user. Refused with 409
+// LISTING_HAS_HISTORY when the listing carries orders, boosts, offers or threads.
+func (h *Handler) PurgeListing(c *gin.Context) {
+	uid, ok := requireUser(c)
+	if !ok {
+		return
+	}
+	if err := h.svc.PurgeListing(c.Request.Context(), uid, c.Param("id")); err != nil {
+		fail(c, err)
+		return
+	}
+	respond(c, http.StatusOK, gin.H{"purged": true, "listing_id": c.Param("id")})
+}
+
 // ─── Search + categories ─────────────────────────────────────────────────────
 
 // Search GET /search — calls the injected searcher; 501 when unwired.
