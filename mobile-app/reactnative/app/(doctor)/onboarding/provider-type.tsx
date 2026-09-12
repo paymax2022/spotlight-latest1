@@ -47,7 +47,7 @@ export default function ProviderTypeScreen() {
     }
     setError(undefined);
     try {
-      await selectType.mutateAsync({ type: selected });
+      await selectType.mutateAsync({ providerType: selected });
       // Gate: consents → permissions → builder. The builder is reached from the
       // permissions step using the persisted selectedType.
       router.push('/(doctor)/onboarding/consents');

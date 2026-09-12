@@ -218,7 +218,7 @@ export async function requestMerchantUpgrade(input: RequestMerchantUpgradeInput)
 export async function selectProviderType(input: SelectProviderTypeInput): Promise<SelectProviderTypeResult> {
   if (DOCTOR_USE_MOCK) {
     const status: MerchantUpgradeStatus = {
-      state: 'type_selected', selectedType: input.type, startedAt: iso(0), updatedAt: iso(0),
+      state: 'type_selected', selectedType: input.providerType, startedAt: iso(0), updatedAt: iso(0),
     };
     return wait({ status }, 500);
   }
