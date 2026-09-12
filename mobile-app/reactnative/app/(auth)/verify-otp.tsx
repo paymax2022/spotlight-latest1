@@ -11,6 +11,7 @@ import * as authApi from '@/api/auth.api';
 import { setSecureItem } from '@/lib/secureStorage';
 import { useAuthStore } from '@/store/authStore';
 import { getErrorMessage } from '@/utils/errorMapper';
+import { showToast } from '@/store/toastStore';
 import { otpLength, distributeOtpInput, nextOtpFocus } from '@/features/auth/otp';
 
 // Was hardcoded 6 while PRODUCTION issues 8-digit codes, so a production user
@@ -69,10 +70,15 @@ export default function VerifyOtpScreen() {
       // password. Calling getMe() without a session would fail and show the user
       // an error after a verification that actually SUCCEEDED.
       if (!signedIn) {
-        router.replace({
-          pathname: '/(auth)/login',
-          params: { notice: 'Email verified. Please sign in.' },
+        // Raised BEFORE the navigation on purpose: ToastHost is mounted at the
+        // app root and its state lives outside the route tree, so the toast
+        // outlives this screen and is still on screen once login renders.
+        showToast({
+          variant: 'success',
+          title: 'Email verified',
+          message: 'Please sign in to continue.',
         });
+        router.replace('/(auth)/login');
         return;
       }
 

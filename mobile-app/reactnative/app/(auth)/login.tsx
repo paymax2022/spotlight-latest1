@@ -27,7 +27,7 @@ type Form = z.infer<typeof schema>;
 export default function LoginScreen() {
   const { login } = useAuthStore();
   const [apiError, setApiError] = useState('');
-  const { returnTo, notice } = useLocalSearchParams<{ returnTo?: string; notice?: string }>();
+  const { returnTo } = useLocalSearchParams<{ returnTo?: string }>();
 
   const { control, handleSubmit, formState: { errors, isSubmitting } } = useForm<Form>({
     resolver: zodResolver(schema),
@@ -109,10 +109,6 @@ export default function LoginScreen() {
         <Text style={styles.forgotText}>Forgot password?</Text>
       </Pressable>
 
-      {/* Set when the user arrives here straight after verifying their email:
-          server-issued verification confirms the account without signing anyone
-          in, so landing on a bare login screen would look like the code failed. */}
-      {notice && !apiError ? <Text style={styles.notice}>{notice}</Text> : null}
       {apiError ? <Text style={styles.apiError}>{apiError}</Text> : null}
 
       <PrimaryButton label="Sign In" onPress={handleSubmit(onSubmit)} loading={isSubmitting} />
@@ -136,7 +132,6 @@ const styles = StyleSheet.create({
   forgot:      { alignSelf: 'flex-end', marginBottom: Spacing.lg, marginTop: -Spacing.xs },
   forgotText:  { ...Typography.labelMd, color: Colors.secondary },
   apiError:    { ...Typography.labelSm, color: Colors.error, textAlign: 'center', marginBottom: Spacing.md },
-  notice:      { ...Typography.labelSm, color: Colors.teal, textAlign: 'center', marginBottom: Spacing.md },
   dividerRow:  { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm, marginVertical: Spacing.lg },
   line:        { flex: 1, height: 1, backgroundColor: Colors.outlineVariant },
   orText:      { ...Typography.labelSm, color: Colors.outline },
