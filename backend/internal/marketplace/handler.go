@@ -1,11 +1,15 @@
 package marketplace
 
 import (
+	"encoding/base64"
+	"encoding/json"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 
 	"spotlight/backend/internal/platform/r2"
 )
@@ -26,6 +30,55 @@ func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
 func (h *Handler) WithWebhookSecret(secret string) *Handler { h.webhookSecret = secret; return h }
 
 func userID(c *gin.Context) string { return c.GetString("user_id") }
+
+// viewerIDForCounting returns the caller's user id for VIEW-COUNTING ONLY.
+//
+// ⚠️ NOT AUTHENTICATION. When no auth middleware has run it falls back to reading
+// the `sub` claim out of the bearer token WITHOUT verifying its signature, so the
+// value is attacker-controllable. It is deliberately never written into the gin
+// context, because userID() reads from there and every authorization check in
+// this package trusts that key — putting an unverified id there would turn a
+// forged token into real access. Pass it straight to RecordListingView, nowhere
+// else.
+//
+// Why unverified is acceptable HERE: the value gates nothing but whether a
+// counter increments. GET /listings/:id is deliberately auth-optional
+// (tier0_browse) and runs no auth middleware, and the only proper alternative —
+// supabase.AuthUser() — is a GoTrue round trip per request on the module's
+// hottest public read. That is not a trade worth making for a view counter.
+//
+// Worst case from a forged token: the forger suppresses counting of views they
+// are themselves generating. They cannot inflate anyone's count beyond simply
+// fetching the page, and they gain no access.
+func viewerIDForCounting(c *gin.Context) string {
+	if id := userID(c); id != "" {
+		return id // a real middleware ran — trust that instead
+	}
+	h := strings.TrimSpace(c.GetHeader("Authorization"))
+	if !strings.HasPrefix(strings.ToLower(h), "bearer ") {
+		return ""
+	}
+	parts := strings.Split(strings.TrimSpace(h[7:]), ".")
+	if len(parts) != 3 {
+		return ""
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		return ""
+	}
+	var claims struct {
+		Sub string `json:"sub"`
+	}
+	if err := json.Unmarshal(payload, &claims); err != nil {
+		return ""
+	}
+	// Shape-check before it reaches a ::uuid cast: a malformed sub would abort the
+	// UPDATE, which would silently stop counting views for that request.
+	if _, err := uuid.Parse(claims.Sub); err != nil {
+		return ""
+	}
+	return claims.Sub
+}
 
 func idemKeyOf(c *gin.Context) string { return c.GetHeader("Idempotency-Key") }
 
@@ -104,10 +157,14 @@ func (h *Handler) GetListing(c *gin.Context) {
 	}
 	// Count the view only after a successful read, and never on the error path.
 	// Best effort by design: a failed counter bump must not fail loading a
-	// listing. userID is "" for anonymous browsers (this route is tier0_browse)
-	// and those still count — only the seller's own visits are excluded, inside
-	// the UPDATE. Called before respond so the request context is still live.
-	h.svc.RecordListingView(c.Request.Context(), c.Param("id"), userID(c))
+	// listing. Anonymous browsers (this route is tier0_browse) resolve to "" and
+	// still count — only the seller's own visits are excluded, inside the UPDATE.
+	// Called before respond so the request context is still live.
+	//
+	// viewerIDForCounting, NOT userID: no auth middleware runs on this route, so
+	// userID is always "". See its doc for why an unverified id is sound for a
+	// counter and why it must never reach the gin context.
+	h.svc.RecordListingView(c.Request.Context(), c.Param("id"), viewerIDForCounting(c))
 	respond(c, http.StatusOK, l)
 }
 

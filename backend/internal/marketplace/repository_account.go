@@ -474,21 +474,16 @@ func (r *Repository) GetListingInsights(ctx context.Context, sellerID, listingID
 	return out, nil
 }
 
-// IncrementListingView bumps the view counter, skipping the seller's own visits
-// WHEN the viewer is known.
+// IncrementListingView bumps the view counter, skipping the seller's own visits.
 //
 // This is the ONLY writer of mkt_listings.view_count. Without it the column stays
 // at its default and every listing reports "0 views" forever, which is what the
 // seller dashboard was showing.
 //
-// ⚠️ KNOWN GAP: the caller is GET /listings/:id, which is deliberately
-// auth-OPTIONAL (tier0_browse) and therefore runs no auth middleware — so
-// c.GetString("user_id") is "" even when a valid Bearer is present, and the
-// seller-exclusion below never fires today. Sellers refreshing their own listing
-// inflate their own view count. Closing this means giving that route a
-// non-aborting auth middleware, which changes the auth posture of the module's
-// most-hit public read and deserves its own review. The guard is kept because it
-// is correct the moment a viewer id is available.
+// viewerID is "" for anonymous browsers (the calling route is tier0_browse) and
+// those still count — the empty check below is what lets them through. When it is
+// set it comes from handler.viewerIDForCounting, which is attribution-only and
+// explicitly not authentication; see its doc.
 //
 // Deliberately fire-and-forget at the call site and never part of the read's
 // error path: a failed counter bump must not fail loading a listing.
