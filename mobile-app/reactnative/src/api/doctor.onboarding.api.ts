@@ -20,7 +20,7 @@
 // Money is always an integer in kobo (Section A has no money fields).
 
 import { DOCTOR_USE_MOCK, doctorGet, doctorPost } from '@/api/doctor.client';
-import { LEGAL_DOC_ORDER } from '@/features/doctor/constants/onboarding';
+import { LEGAL_DOC_ORDER, PERMISSION_ORDER, PERMISSION_LABELS } from '@/features/doctor/constants/onboarding';
 // Re-export the shared money formatter so Section A screens can import it here too.
 export { formatKobo } from '@/api/doctor.api';
 // Re-export the REUSED Batch 7 account-status read so entries 17–20 pull the
@@ -44,6 +44,8 @@ import type {
   AcceptConsentResult,
   RecordPermissionDecisionInput,
   RecordPermissionDecisionResult,
+  AppPermissionKind,
+  PermissionState,
 } from '@/types/doctor.onboarding';
 
 // Simulate network latency so loading states are exercised in the UI.
@@ -234,9 +236,45 @@ export async function getConsentStatus(): Promise<ConsentStatus> {
 }
 
 // ── Entries 13–16 ──
+// Same "aggregate exists only as a client type" pattern as getConsentStatus
+// above. GET /onboarding/permissions (internal/doctor: ListPermissions ->
+// Service.ListPermissions -> Repository.ListPermissions, typed []AppPermission)
+// returns a flat, per-kind row list — never the {permissions, updatedAt}
+// wrapper PermissionStates promises. Two more differences layer on top:
+//   - the field is permissionKind on the wire, not kind (AppPermissionStatus.kind)
+//   - Go's AppPermission carries no `required` field at all; PERMISSION_LABELS
+//     is already this client's own source of truth for it (permissions/index.tsx
+//     reads PERMISSION_LABELS[k].required directly for its own "all required
+//     decided?" check), so the aggregate reuses that rather than inventing a
+//     second copy of the camera/microphone-are-required rule.
+// UNIQUE(user_id, permission_kind) server-side means at most one row per kind —
+// no dedup needed, unlike the consents aggregate where a kind can carry rows
+// across several versions.
+interface AppPermissionWire {
+  permissionKind: AppPermissionKind;
+  state:          PermissionState;
+  decidedAt?:     string;
+}
+
 export async function getPermissionStates(): Promise<PermissionStates> {
   if (DOCTOR_USE_MOCK) return wait(DEMO_PERMISSION_STATES);
-  return doctorGet<PermissionStates>('/onboarding/permissions');
+  const rows = await doctorGet<AppPermissionWire[]>('/onboarding/permissions');
+  const byKind = new Map(rows.map((r) => [r.permissionKind, r]));
+
+  // Always all four kinds, matching permissions/index.tsx's own comment ("always
+  // four kinds; an 'empty' permission is undetermined") — a kind the user has
+  // never decided on is a real, meaningful state here, not an absence to omit.
+  const permissions: AppPermissionStatus[] = PERMISSION_ORDER.map((kind) => {
+    const row = byKind.get(kind);
+    return {
+      kind,
+      state: row?.state ?? 'undetermined',
+      required: PERMISSION_LABELS[kind].required,
+      decidedAt: row?.decidedAt,
+    };
+  });
+
+  return { permissions, updatedAt: new Date().toISOString() };
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -283,7 +321,21 @@ export async function acceptConsent(input: AcceptConsentInput): Promise<AcceptCo
     };
     return wait({ record, status }, 500);
   }
-  return doctorPost<AcceptConsentResult>('/onboarding/consents', input, input.idempotencyKey);
+  // Wire body must name the field consentKind, not kind: Go's AcceptConsentRequest
+  // has json:"consentKind" with binding:"required" (internal/doctor/model_account.go),
+  // so a body key of `kind` left it permanently unpopulated and every acceptance
+  // failed binding with a 400 before touching the database — nobody has ever
+  // been able to accept a legal document through this screen.
+  //
+  // AcceptConsentInput itself keeps `kind`, matching every other client type in
+  // this module (LegalConsentRecord.kind, AppPermissionStatus.kind, …); only the
+  // wire body translates, the same way viewerIDForCounting translates at its own
+  // boundary rather than renaming a name used everywhere else.
+  return doctorPost<AcceptConsentResult>(
+    '/onboarding/consents',
+    { consentKind: input.kind, version: input.version },
+    input.idempotencyKey,
+  );
 }
 
 // ── Entries 13–16 — record an OS permission decision ──
@@ -295,5 +347,12 @@ export async function recordPermissionDecision(input: RecordPermissionDecisionIn
     };
     return wait({ permission }, 400);
   }
-  return doctorPost<RecordPermissionDecisionResult>('/onboarding/permissions', input, input.idempotencyKey);
+  // Same class of bug as acceptConsent above: Go's RecordPermissionRequest needs
+  // json:"permissionKind" with binding:"required", not `kind` — every decision
+  // failed binding with a 400 before this translated the wire body.
+  return doctorPost<RecordPermissionDecisionResult>(
+    '/onboarding/permissions',
+    { permissionKind: input.kind, state: input.state },
+    input.idempotencyKey,
+  );
 }
