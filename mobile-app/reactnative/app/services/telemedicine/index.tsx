@@ -3,7 +3,7 @@ import { View, Text, ScrollView, StyleSheet, Pressable, Platform } from 'react-n
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
-import { CalendarClock, ChevronRight, Stethoscope } from 'lucide-react-native';
+import { ArrowRight, BriefcaseMedical, CalendarClock, ChevronRight, Stethoscope } from 'lucide-react-native';
 import { useQuery } from '@tanstack/react-query';
 import { Colors } from '@/constants/colors';
 import { Radius } from '@/constants/radius';
@@ -102,6 +102,28 @@ export default function TelemedicineHome() {
           </View>
           <ChevronRight size={20} color={Colors.onSurfaceVariant} strokeWidth={2} />
         </Pressable>
+
+        {/* Provider onboarding */}
+        <View style={[styles.providerCard, shadow1]}>
+          <View style={styles.providerIcon}>
+            <BriefcaseMedical size={20} color={Colors.primary} strokeWidth={2} />
+          </View>
+          <Text style={styles.providerEyebrow}>FOR HEALTHCARE PROVIDERS</Text>
+          <Text style={styles.providerTitle}>List your practice on Paymax</Text>
+          <Text style={styles.providerSub}>
+            Doctors, pharmacies, diagnostic labs, HMOs, vets and clinics — get verified, publish
+            your services and get paid into your wallet.
+          </Text>
+          <Pressable
+            style={styles.providerBtn}
+            onPress={() => router.push('/health/provider-onboarding')}
+            accessibilityRole="button"
+            accessibilityLabel="List your practice as a healthcare provider"
+          >
+            <Text style={styles.providerBtnText}>Get started</Text>
+            <ArrowRight size={18} color={Colors.onPrimary} strokeWidth={2.4} />
+          </Pressable>
+        </View>
       </ScrollView>
     </SafeAreaView>
   );
@@ -129,4 +151,11 @@ const styles = StyleSheet.create({
   apptIcon:    { width: 44, height: 44, borderRadius: Radius.md, backgroundColor: Colors.iconBgBlue, alignItems: 'center', justifyContent: 'center' },
   apptTitle:   { ...Typography.labelLg, color: Colors.onSurface },
   apptSub:     { ...Typography.caption, color: Colors.onSurfaceVariant },
+  providerCard:   { marginTop: Spacing.lg, padding: Spacing.cardPadding, borderRadius: Radius.xl, backgroundColor: Colors.surfaceContainerLowest, borderWidth: 1, borderColor: Colors.surfaceContainerHigh, gap: Spacing.xs },
+  providerIcon:   { width: 44, height: 44, borderRadius: Radius.md, backgroundColor: Colors.iconBgPurple, alignItems: 'center', justifyContent: 'center', marginBottom: Spacing.sm },
+  providerEyebrow:{ ...Typography.labelSm, color: Colors.secondary },
+  providerTitle:  { ...Typography.titleLg, color: Colors.onSurface },
+  providerSub:    { ...Typography.bodySm, color: Colors.onSurfaceVariant, marginBottom: Spacing.md },
+  providerBtn:    { alignSelf: 'flex-start', flexDirection: 'row', alignItems: 'center', gap: 6, height: 44, paddingHorizontal: Spacing.lg, borderRadius: Radius.full, backgroundColor: Colors.primary },
+  providerBtnText:{ ...Typography.labelLg, color: Colors.onPrimary },
 });
