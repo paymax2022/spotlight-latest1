@@ -11,7 +11,13 @@ import { useActiveElection } from './useElection';
 const announced = new Set<string>();
 
 export function useElectionPushBridge(enabled: boolean): void {
-  const { data } = useActiveElection();
+  // `enabled` must gate the QUERY, not just the effect below. This hook is
+  // mounted from the root layout, so while it ran unconditionally a SIGNED-OUT
+  // user polled this resident-scoped endpoint every 30s from every screen — and
+  // each 401 hits the global handler, which replaces the route with the login
+  // screen. That made /signup unreachable: you were bounced before you could
+  // type. Mirrors useVisitorPushBridge, which gates its query correctly.
+  const { data } = useActiveElection(enabled);
 
   useEffect(() => {
     if (!enabled || !data || announced.has(data.id)) return;

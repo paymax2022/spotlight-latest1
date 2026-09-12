@@ -15,12 +15,13 @@ export const electionKeys = {
  * The currently-open election (or null). Polls so the header banner switches on
  * automatically at the admin-set start time and off at the end — no app restart.
  */
-export function useActiveElection() {
+export function useActiveElection(enabled = true) {
   return useQuery({
     queryKey: electionKeys.active(),
     queryFn: api.getActiveElection,
-    refetchInterval: 30_000,
-    refetchOnWindowFocus: true,
+    enabled,
+    refetchInterval: enabled ? 30_000 : false,
+    refetchOnWindowFocus: enabled,
     staleTime: 15_000,
   });
 }
