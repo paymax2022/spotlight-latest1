@@ -30,6 +30,8 @@ export { getAccountStatus, DEMO_ACCOUNT_STATUS } from '@/api/doctor.batch7.api';
 import type {
   OnboardingSlide,
   MerchantUpgradeStatus,
+  MerchantUpgradeState,
+  ProviderType,
   ConsentStatus,
   LegalDocument,
   LegalDocKind,
@@ -295,6 +297,23 @@ export async function getPermissionStates(): Promise<PermissionStates> {
 // MUTATIONS
 // ═══════════════════════════════════════════════════════════════════════════
 
+// POST /onboarding/merchant-upgrade (internal/doctor Service.RequestMerchantUpgrade)
+// returns the doctor_merchant_upgrades row directly — {id, userId, state,
+// selectedType?, requestedAt?, completedAt?, detail?, createdAt, updatedAt} —
+// not the {status: MerchantUpgradeStatus} wrapper RequestMerchantUpgradeResult
+// promises. The live JSON has no top-level `status` key, so any caller reading
+// `result.status.state` got `undefined`; no screen does today (the upgrade
+// screen only branches on success/failure), so this was dormant, not crashing.
+// Translated at the call site: same fields, correct wrapper, and the wire's
+// `requestedAt` mapped to the client's `startedAt` (a naming difference, not a
+// missing value — the row is written the moment the upgrade is requested).
+interface MerchantUpgradeWire {
+  state:         MerchantUpgradeState;
+  selectedType?: ProviderType;
+  requestedAt?:  string;
+  updatedAt:     string;
+}
+
 // ── Entry 3 — request user→merchant (provider) upgrade ──
 export async function requestMerchantUpgrade(input: RequestMerchantUpgradeInput): Promise<RequestMerchantUpgradeResult> {
   if (DOCTOR_USE_MOCK) {
@@ -304,10 +323,34 @@ export async function requestMerchantUpgrade(input: RequestMerchantUpgradeInput)
     };
     return wait({ status }, 500);
   }
-  return doctorPost<RequestMerchantUpgradeResult>('/onboarding/merchant-upgrade', input, input.idempotencyKey);
+  const wire = await doctorPost<MerchantUpgradeWire>('/onboarding/merchant-upgrade', input, input.idempotencyKey);
+  return {
+    status: {
+      state: wire.state,
+      selectedType: wire.selectedType,
+      startedAt: wire.requestedAt,
+      updatedAt: wire.updatedAt,
+    },
+  };
 }
 
-// ── Entry 4 — choose provider type ──
+// POST /onboarding/provider-type (internal/doctor Service.SetProviderType)
+// returns the doctor profile draft — id, providerType, name, title,
+// specialtyId, feeKobo, rating, isPublished, profileDraft, ... — an entirely
+// different entity from MerchantUpgrade, not the {status: MerchantUpgradeStatus}
+// SelectProviderTypeResult promises. Also dormant today: provider-type.tsx
+// awaits the mutation but never reads its resolved value, relying instead on
+// the separately-invalidated useMerchantUpgradeStatus query.
+//
+// The profile draft has no `state` field to report anyway — SetProviderType's
+// own doc comment notes the canonical upgrade state only flips at publish, this
+// call just patch-merges the choice into the draft. So rather than parse an
+// unrelated entity for fields it cannot supply, synthesize the status from what
+// this call is actually guaranteed to mean: a 2xx response IS the profile
+// draft's `providerType` having been saved (the endpoint's entire job, and the
+// same `profile_draft->>'providerType'` field GetMerchantUpgrade already reads
+// back as `selectedType` — see GetSelectedProviderType) — i.e. exactly
+// 'type_selected' with this input's provider type.
 export async function selectProviderType(input: SelectProviderTypeInput): Promise<SelectProviderTypeResult> {
   if (DOCTOR_USE_MOCK) {
     const status: MerchantUpgradeStatus = {
@@ -315,7 +358,14 @@ export async function selectProviderType(input: SelectProviderTypeInput): Promis
     };
     return wait({ status }, 500);
   }
-  return doctorPost<SelectProviderTypeResult>('/onboarding/provider-type', input, input.idempotencyKey);
+  await doctorPost<unknown>('/onboarding/provider-type', input, input.idempotencyKey);
+  return {
+    status: {
+      state: 'type_selected',
+      selectedType: input.providerType,
+      updatedAt: new Date().toISOString(),
+    },
+  };
 }
 
 // ── Entries 8–12 — accept a legal document (versioned) ──

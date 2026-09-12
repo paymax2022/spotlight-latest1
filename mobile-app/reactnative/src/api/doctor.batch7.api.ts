@@ -53,6 +53,7 @@ import type {
   EdgeStateDescriptor,
   AppStatus,
   AccountStatus,
+  AccountState,
   CreateDisputeInput,
   CreateDisputeResult,
   UploadDisputeEvidenceInput,
@@ -450,9 +451,49 @@ export async function getAppStatus(): Promise<AppStatus> {
   return doctorGet<AppStatus>('/app-status');
 }
 
+// GET /account/status (backend/internal/doctor/service_tail2.go GetAccountStatus)
+// returns { verificationStatus, isPublished, providerType } — a disjoint field
+// set from the client's AccountStatus, which promises { state, canPractise,
+// title, message, reviewNotice?, updatedAt }. Not one field name overlaps, so
+// the live path always rendered `status.state === undefined`, and
+// account-status/index.tsx's `STATE_ICON[status.state]` threw ("Element type
+// is invalid") for every user on the account-status screen the moment mock
+// mode was off — same class of bug as the legal-document endpoint.
+//
+// `verificationStatus` on the wire is exactly the VerificationStatus lifecycle
+// value, a subset of the client's AccountState — 'under_review' is a
+// client-only extension of that vocabulary the backend never emits (there is
+// no server-side "under review" distinct from "pending"), so it is mapped here
+// for completeness but never actually reached live. `updatedAt` has no backend
+// source for this projection — the read is synthesized on every call, so this
+// is "now", not a stored timestamp.
+interface AccountStatusWire {
+  verificationStatus: AccountState;
+  isPublished:         boolean;
+  providerType:        string;
+}
+
+const ACCOUNT_STATUS_COPY: Record<AccountState, { title: string; message: string }> = {
+  unsubmitted:  { title: 'Verification not started', message: 'Submit your documents to get verified and start practising.' },
+  pending:      { title: 'Verification pending',      message: 'We are reviewing your submitted documents.' },
+  needs_info:   { title: 'More information needed',   message: 'Please review and resubmit the requested documents.' },
+  approved:     { title: 'Account active',            message: 'Your account is verified and active.' },
+  rejected:     { title: 'Verification rejected',     message: 'Your submission was rejected. Please review and resubmit.' },
+  suspended:    { title: 'Account suspended',         message: 'Your account has been suspended. Contact support for details.' },
+  under_review: { title: 'Account under review',      message: 'Your account is being reviewed.' },
+};
+
 export async function getAccountStatus(): Promise<AccountStatus> {
   if (DOCTOR_USE_MOCK) return wait(DEMO_ACCOUNT_STATUS);
-  return doctorGet<AccountStatus>('/account/status');
+  const wire = await doctorGet<AccountStatusWire>('/account/status');
+  const copy = ACCOUNT_STATUS_COPY[wire.verificationStatus];
+  return {
+    state: wire.verificationStatus,
+    canPractise: wire.verificationStatus === 'approved',
+    title: copy.title,
+    message: copy.message,
+    updatedAt: new Date().toISOString(),
+  };
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
