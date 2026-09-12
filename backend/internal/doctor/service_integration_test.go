@@ -54,17 +54,27 @@ func newIntegrationService(t *testing.T) (*doctor.Service, *ledger.Service, *db.
 // seedTier inserts a user_profiles row with the given kyc_tier so the
 // tiers.EnforceWalletDebitLimit check passes (it fail-closes when no profile row
 // exists). Tier 3 is used in the happy-path tests for a generous debit limit.
+//
+// email is supplied explicitly: the column is NOT NULL with no default and carries
+// a UNIQUE index, so it is derived from userID rather than fixed. Omitting it made
+// every caller of this helper fail with a not-null violation, which is what killed
+// the whole money-path suite. It also matches the address seedAuthUser writes, so
+// the auth row and the profile row agree.
 func seedTier(t *testing.T, pool *db.Pool, userID string, kycTier int) {
 	t.Helper()
 	ctx := context.Background()
 	_, err := pool.Exec(ctx,
-		`INSERT INTO user_profiles (id, kyc_tier) VALUES ($1, $2)
+		`INSERT INTO user_profiles (id, email, kyc_tier) VALUES ($1, $2, $3)
 		 ON CONFLICT (id) DO UPDATE SET kyc_tier = EXCLUDED.kyc_tier`,
-		userID, kycTier)
+		userID, testEmailFor(userID), kycTier)
 	if err != nil {
 		t.Fatalf("seed tier: %v", err)
 	}
 }
+
+// testEmailFor derives a unique, obviously-synthetic address from a user id, so
+// seedAuthUser and seedTier write the same one.
+func testEmailFor(userID string) string { return "doctor-it-" + userID + "@example.test" }
 
 // fundWallet credits the user's wallet so a payout can succeed. It posts a
 // balanced double-entry CREDIT from the settlement standing account.
@@ -85,10 +95,10 @@ func fundWallet(t *testing.T, ledgerSvc *ledger.Service, userID string, kobo int
 // earnings balance by exactly amountKobo. Audit row is emitted.
 func TestPayoutSuccess_PostsBalancedDebitAndPersistsRow(t *testing.T) {
 	svc, ledgerSvc, pool, cleanup := newIntegrationService(t)
-	defer cleanup()
+	t.Cleanup(cleanup)
 	ctx := context.Background()
 
-	userID := uuid.NewString()
+	userID := seedAuthUser(t, pool)
 	const fund = int64(50_000) // ₦500
 	const payout = int64(20_000)
 	seedTier(t, pool, userID, 3) // tier 3 -> generous daily debit limit
@@ -124,10 +134,10 @@ func TestPayoutSuccess_PostsBalancedDebitAndPersistsRow(t *testing.T) {
 // second ledger entry (balance unchanged on replay).
 func TestPayoutIdempotencyReplay_NoSecondLedgerEntry(t *testing.T) {
 	svc, ledgerSvc, pool, cleanup := newIntegrationService(t)
-	defer cleanup()
+	t.Cleanup(cleanup)
 	ctx := context.Background()
 
-	userID := uuid.NewString()
+	userID := seedAuthUser(t, pool)
 	seedTier(t, pool, userID, 3)
 	fundWallet(t, ledgerSvc, userID, 100_000)
 
@@ -155,10 +165,10 @@ func TestPayoutIdempotencyReplay_NoSecondLedgerEntry(t *testing.T) {
 // Case 4: insufficient funds -> ledger.ErrInsufficientFunds, no payout row.
 func TestPayoutInsufficientFunds_Rejected(t *testing.T) {
 	svc, ledgerSvc, pool, cleanup := newIntegrationService(t)
-	defer cleanup()
+	t.Cleanup(cleanup)
 	ctx := context.Background()
 
-	userID := uuid.NewString()
+	userID := seedAuthUser(t, pool)
 	seedTier(t, pool, userID, 3)
 	fundWallet(t, ledgerSvc, userID, 1_000) // only ₦10
 
@@ -188,11 +198,13 @@ func TestPayoutInsufficientFunds_Rejected(t *testing.T) {
 // In both cases the tier check runs BEFORE ledger.Debit, so funds are untouched.
 func TestPayoutTierDenied_FailClosed_NoLedgerEntry(t *testing.T) {
 	svc, ledgerSvc, pool, cleanup := newIntegrationService(t)
-	defer cleanup()
+	t.Cleanup(cleanup)
 	ctx := context.Background()
 
 	t.Run("no profile row -> fail closed", func(t *testing.T) {
-		userID := uuid.NewString()
+		// auth.users row only — deliberately NO user_profiles row, which is the
+		// condition under test (GetUserTier errors -> the limit check fails closed).
+		userID := seedAuthUser(t, pool)
 		fundWallet(t, ledgerSvc, userID, 100_000) // funded, but no tier profile
 		before, _ := ledgerSvc.GetBalance(ctx, userID)
 
@@ -208,7 +220,7 @@ func TestPayoutTierDenied_FailClosed_NoLedgerEntry(t *testing.T) {
 	})
 
 	t.Run("tier0 -> wallet disabled", func(t *testing.T) {
-		userID := uuid.NewString()
+		userID := seedAuthUser(t, pool)
 		seedTier(t, pool, userID, 0) // Tier0
 		fundWallet(t, ledgerSvc, userID, 100_000)
 		before, _ := ledgerSvc.GetBalance(ctx, userID)
@@ -228,11 +240,11 @@ func TestPayoutTierDenied_FailClosed_NoLedgerEntry(t *testing.T) {
 // Case 6: earnings are PROJECTED from the ledger (GetBalance), never a stored
 // column — funding the wallet then reading earnings reflects the live balance.
 func TestEarningsProjectedFromLedger(t *testing.T) {
-	svc, ledgerSvc, _, cleanup := newIntegrationService(t)
-	defer cleanup()
+	svc, ledgerSvc, pool, cleanup := newIntegrationService(t)
+	t.Cleanup(cleanup)
 	ctx := context.Background()
 
-	userID := uuid.NewString()
+	userID := seedAuthUser(t, pool)
 	fundWallet(t, ledgerSvc, userID, 75_000)
 
 	earn, err := svc.GetEarnings(ctx, userID)
@@ -245,5 +257,149 @@ func TestEarningsProjectedFromLedger(t *testing.T) {
 	}
 	if earn.Currency != "NGN" {
 		t.Errorf("currency = %q, want NGN", earn.Currency)
+	}
+}
+
+// Regression: a user who has never requested an upgrade must get the
+// `not_started` STATE, never an error.
+//
+// The repository correctly reports "no row"; the bug was translating that into a
+// 404 at the service boundary. Every provider looks exactly like this on their
+// first visit, so the 404 made /onboarding/upgrade-merchant unreachable for the
+// only people it exists for — it rendered "We could not load your upgrade
+// status". contracts/doctor.openapi.yaml declares ONLY a 200 for this endpoint,
+// so the 404 was never part of the contract either.
+func TestGetMerchantUpgrade_FreshUserIsNotStartedNotAnError(t *testing.T) {
+	svc, _, _, cleanup := newIntegrationService(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	userID := uuid.NewString() // deliberately never inserted into doctor_merchant_upgrades
+
+	got, err := svc.GetMerchantUpgrade(ctx, userID)
+	if err != nil {
+		t.Fatalf("a fresh user must not error: %v", err)
+	}
+	if got == nil {
+		t.Fatal("a fresh user must receive a status object, got nil")
+	}
+	if got.State != doctor.MerchantUpgradeNotStarted {
+		t.Errorf("state = %q, want %q", got.State, doctor.MerchantUpgradeNotStarted)
+	}
+	if got.UserID != userID {
+		t.Errorf("userId = %q, want %q", got.UserID, userID)
+	}
+	// The client type declares updatedAt as REQUIRED, and a zero time serialises
+	// as year 0001, which renders as a nonsense date rather than an absent one.
+	if got.UpdatedAt.IsZero() {
+		t.Error("updatedAt must be set on the synthesised not_started status")
+	}
+}
+
+// seedAuthUser creates the auth.users row that doctor_profiles.user_id references.
+// A bare uuid.NewString() fails that FK. ON DELETE CASCADE removes everything the
+// test wrote when the row goes, so cleanup is one statement.
+func seedAuthUser(t *testing.T, pool *db.Pool) string {
+	t.Helper()
+	ctx := context.Background()
+	id := uuid.NewString()
+	_, err := pool.Exec(ctx, `
+		INSERT INTO auth.users (id, instance_id, aud, role, email, created_at, updated_at)
+		VALUES ($1, '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', $2, now(), now())`,
+		id, testEmailFor(id))
+	if err != nil {
+		t.Fatalf("seed auth user: %v", err)
+	}
+	// BEST EFFORT, and it deliberately does not fail the test when it cannot
+	// delete.
+	//
+	// auth.users cascades to ledger_accounts, but ledger_entries -> ledger_accounts
+	// is ON DELETE NO ACTION — the schema enforcing "ledger entries are immutable".
+	// So any user this suite has funded or debited CANNOT be removed, and that
+	// refusal is the invariant working, not a bug.
+	//
+	// Do NOT "fix" a failure here by deleting from ledger_entries first: that
+	// teaches the suite to erase the append-only record the whole module exists to
+	// protect. Users with no ledger activity (the onboarding tests) do get removed.
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(), `DELETE FROM auth.users WHERE id = $1`, id)
+	})
+	return id
+}
+
+// Regression: choosing a provider type must work for a user with NO doctor_profiles
+// row — which is everyone who reaches this step.
+//
+// Nothing in this backend ever INSERTed into doctor_profiles, so the UPDATE this
+// path used to run matched zero rows and returned ErrNotFound → HTTP 404, blocking
+// onboarding at the provider-type step for every real user.
+func TestSetProviderType_CreatesProfileRowForFreshUser(t *testing.T) {
+	svc, _, pool, cleanup := newIntegrationService(t)
+	// t.Cleanup, NOT defer: seedAuthUser registers its row deletion with
+	// t.Cleanup, and deferred calls run BEFORE cleanups — so `defer cleanup()`
+	// closes the pool first and the deletion silently no-ops against it, leaking
+	// rows. Registered here first, so it runs LAST.
+	t.Cleanup(cleanup)
+	ctx := context.Background()
+
+	userID := seedAuthUser(t, pool)
+
+	var n int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM doctor_profiles WHERE user_id=$1`, userID).Scan(&n); err != nil {
+		t.Fatalf("precondition count: %v", err)
+	}
+	if n != 0 {
+		t.Fatalf("precondition: the user must start with no profile row, got %d", n)
+	}
+
+	if _, err := svc.SetProviderType(ctx, userID, "idem-"+uuid.NewString(),
+		doctor.SetProviderTypeRequest{ProviderType: "veterinarian"}); err != nil {
+		t.Fatalf("SetProviderType on a fresh user must succeed: %v", err)
+	}
+
+	var draftType string
+	if err := pool.QueryRow(ctx,
+		`SELECT profile_draft->>'providerType' FROM doctor_profiles WHERE user_id=$1`,
+		userID).Scan(&draftType); err != nil {
+		t.Fatalf("the profile row must exist after selection: %v", err)
+	}
+	if draftType != "veterinarian" {
+		t.Errorf("draft providerType = %q, want veterinarian", draftType)
+	}
+}
+
+// Regression: the chosen type must come back on the merchant-upgrade status — that
+// is what the provider-type screen reads to preselect the user's card. The Go model
+// carried no selectedType field at all, so it was permanently undefined on the
+// client and returning to the step always looked like nothing had been chosen.
+func TestGetMerchantUpgrade_SurfacesSelectedType(t *testing.T) {
+	svc, _, pool, cleanup := newIntegrationService(t)
+	t.Cleanup(cleanup) // see the note in TestSetProviderType_CreatesProfileRowForFreshUser
+	ctx := context.Background()
+
+	userID := seedAuthUser(t, pool)
+
+	before, err := svc.GetMerchantUpgrade(ctx, userID)
+	if err != nil {
+		t.Fatalf("GetMerchantUpgrade (before): %v", err)
+	}
+	if before.SelectedType != nil {
+		t.Errorf("selectedType must be nil before any choice, got %q", *before.SelectedType)
+	}
+
+	if _, err := svc.SetProviderType(ctx, userID, "idem-"+uuid.NewString(),
+		doctor.SetProviderTypeRequest{ProviderType: "specialist"}); err != nil {
+		t.Fatalf("SetProviderType: %v", err)
+	}
+
+	after, err := svc.GetMerchantUpgrade(ctx, userID)
+	if err != nil {
+		t.Fatalf("GetMerchantUpgrade (after): %v", err)
+	}
+	if after.SelectedType == nil {
+		t.Fatal("selectedType must be set once a provider type has been chosen")
+	}
+	if *after.SelectedType != "specialist" {
+		t.Errorf("selectedType = %q, want specialist", *after.SelectedType)
 	}
 }
