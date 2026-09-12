@@ -466,9 +466,10 @@ func (r *Repository) PurgeListing(ctx context.Context, sellerID, listingID strin
 		return &CodedError{Status: 409, Code: CodeListingHasHistory, Message: msg}
 	}
 
-	// Outbox rows and the listing go together or not at all: dropping the queue
-	// entries and then failing the delete would strip the listing from search
-	// while leaving it live.
+	// Outbox rows, the listing and its audit record go together or not at all:
+	// dropping the queue entries and then failing the delete would strip the
+	// listing from search while leaving it live, and committing the delete without
+	// the audit row would erase a listing with no trace of who did it.
 	tx, err := r.db.Begin(ctx)
 	if err != nil {
 		return wrapInternal("purge listing begin", err)
@@ -478,13 +479,54 @@ func (r *Repository) PurgeListing(ctx context.Context, sellerID, listingID strin
 	if _, err := tx.Exec(ctx, `DELETE FROM public.mkt_listings_outbox WHERE listing_id = $1`, listingID); err != nil {
 		return wrapInternal("purge listing outbox", err)
 	}
-	ct, err := tx.Exec(ctx, `DELETE FROM public.mkt_listings WHERE id = $1 AND seller_id = $2`, listingID, sellerID)
+
+	// DELETE ... RETURNING rather than SELECT-then-DELETE, so the snapshot is
+	// provably of the row that was actually removed — there is no window in which
+	// the two could disagree.
+	var (
+		title      string
+		priceKobo  int64
+		status     string
+		categoryID string
+		createdAt  time.Time
+	)
+	err = tx.QueryRow(ctx, `
+		DELETE FROM public.mkt_listings
+		 WHERE id = $1 AND seller_id = $2
+		 RETURNING title, price_kobo, status, category_id, created_at`,
+		listingID, sellerID).Scan(&title, &priceKobo, &status, &categoryID, &createdAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrListingNotFound
+	}
 	if err != nil {
 		return wrapInternal("purge listing", err)
 	}
-	if ct.RowsAffected() == 0 {
-		return ErrListingNotFound
+
+	// The audit row is written INSIDE this transaction, which is only possible
+	// because mkt_admin_audit_log carries no foreign key to mkt_listings — a FK
+	// would either cascade the record away with the listing or block the delete
+	// outright. An audit trail for a deletion has to outlive the thing deleted.
+	//
+	// Reusing the admin table for a SELLER action is a deliberate stretch of its
+	// name: it is append-only, has the right shape (text target_id, jsonb
+	// before_state), and the admin audit viewer filters by target rather than by
+	// actor — so "what happened to listing X" surfaces this row, which is the whole
+	// point. admin_role carries 'seller' so the actor is never mistaken for staff.
+	before := map[string]any{
+		"title":       title,
+		"price_kobo":  priceKobo,
+		"status":      status,
+		"category_id": categoryID,
+		"created_at":  createdAt,
 	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO public.mkt_admin_audit_log
+			(admin_id, admin_role, action, target_type, target_id, reason_code, before_state)
+		VALUES ($1,'seller','listing.purged','listing',$2,'seller_permanent_delete',$3)`,
+		sellerID, listingID, jsonOrNil(before)); err != nil {
+		return wrapInternal("purge listing audit", err)
+	}
+
 	if err := tx.Commit(ctx); err != nil {
 		return wrapInternal("purge listing commit", err)
 	}
