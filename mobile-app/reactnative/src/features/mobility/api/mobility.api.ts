@@ -613,9 +613,17 @@ export async function driverStart(tripId: string): Promise<Trip> {
   return unwrap<Trip>(await api.post(`${BASE}/driver/trips/${tripId}/start`, {}));
 }
 
-export async function driverComplete(tripId: string): Promise<Trip> {
+/**
+ * Completing a trip settles it — for wallet/card trips the escrowed fare
+ * splits to the driver's wallet as usual; for a CASH trip there is no
+ * escrow (the rider paid the driver directly), so the platform instead
+ * debits the driver's own wallet for its commission. platformFeeKobo is
+ * only present on that cash path — the driver screen uses it to show
+ * "₦X was deducted as the platform fee" instead of the wallet-credit copy.
+ */
+export async function driverComplete(tripId: string): Promise<Trip & { platformFeeKobo?: number }> {
   if (USE_MOCK) { await delay(500); return makeTrip({ id: tripId, phase: 'completed', status: 'completed', paymentStatus: 'settled', driver: MOCK_DRIVER, vehicle: MOCK_VEHICLE, completedAt: new Date().toISOString(), tripPin: null }); }
-  return unwrap<Trip>(await api.post(`${BASE}/driver/trips/${tripId}/complete`, {}));
+  return unwrap<Trip & { platformFeeKobo?: number }>(await api.post(`${BASE}/driver/trips/${tripId}/complete`, {}));
 }
 
 export async function getDriverEarnings(): Promise<DriverEarnings> {

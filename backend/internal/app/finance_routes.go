@@ -1869,7 +1869,10 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		// Share the flag-configured tier gate so a rider fare — a consumer purchase —
 		// honours the Tier-0 checkout allowance instead of the strict gate transport
 		// would otherwise build for itself (ADR-043).
-		transportSvc := transport.NewService(pool, settlementSvcTr).WithTiers(tiersSvc)
+		// WithLedger is required for cash rides: the platform's commission on a
+		// cash-paid trip is debited straight from the driver's own wallet (no
+		// escrow exists to split for a fare the rider paid the driver in cash).
+		transportSvc := transport.NewService(pool, settlementSvcTr).WithTiers(tiersSvc).WithLedger(ledgerSvc)
 		// Bridge transport dispatch/estimation onto the provider-agnostic
 		// MapService (OpenStack/OSRM by default) instead of the ad-hoc maps stub.
 		if mapSvc != nil {

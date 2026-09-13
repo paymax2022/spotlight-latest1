@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { View, Text, FlatList, StyleSheet, Pressable } from 'react-native';
+import { View, Text, FlatList, StyleSheet, Pressable, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { MapPin, Navigation2, Star } from 'lucide-react-native';
@@ -28,7 +28,10 @@ export default function DriverRequestsScreen() {
   const [counterError, setCounterError] = useState<string | null>(null);
 
   const onAccept = (req: DriverRideRequest) => {
-    accept.mutate(req.tripId, { onSuccess: () => router.push(`/mobility/driver/trip/${req.tripId}`) });
+    accept.mutate(req.tripId, {
+      onSuccess: () => router.push(`/mobility/driver/trip/${req.tripId}`),
+      onError: (e) => Alert.alert('Could not accept', toMobilityError(e).message),
+    });
   };
 
   const openCounter = (req: DriverRideRequest) => {
