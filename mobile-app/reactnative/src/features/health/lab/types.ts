@@ -288,6 +288,11 @@ export interface AccessionInput {
 
 export interface ResultEntryAnalyte {
   id: string;
+  // The catalog test this analyte result belongs to — required by the real
+  // backend (EnterResultInput.TestID) to bind a result to an ordered test
+  // line, not just a free-text name. Sourced from the order's own lines
+  // (LabOrderLine.refId), never typed by hand.
+  testId?: string;
   name: string;
   value: string;
   unit: string;
@@ -299,6 +304,10 @@ export interface ResultEntryInput {
   orderId: string;
   analytes: ResultEntryAnalyte[];
   interpretation?: string;
+  // LR-001: the backend rejects result entry unless the scanned barcode
+  // matches the order's accessioned sample (verifyBarcodeScan) — this was
+  // previously never collected at all.
+  scannedBarcode?: string;
 }
 
 export interface ResultReleaseInput {

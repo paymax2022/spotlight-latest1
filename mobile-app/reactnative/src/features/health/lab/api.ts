@@ -29,6 +29,8 @@ import type {
   AccessionInput,
   ResultEntryInput,
   ResultReleaseInput,
+  ResultStatus,
+  AnalyteFlag,
   ProviderEarnings,
   CollectionAssignment,
   CollectionChecklistItem,
@@ -933,6 +935,31 @@ export async function accessionSample(input: AccessionInput): Promise<{ ok: true
   return { ok: true, status: barcodeStatus };
 }
 
+// `${LAB_API}/provider/orders/:id/result` was never implemented — the real
+// endpoint is POST /orders/:id/results (handler.go EnterResults), and it binds
+// {scanned_barcode, results: [{test_id, value, unit, ref_range, status}]}, not
+// this screen's free-text {analytes: [{name, flag, ...}]}. `test_id` must be
+// one of the order's own ordered tests (the service looks it up in
+// lab_order_lines and rejects anything else) — sourced from
+// analyte.testId, which the screen now populates from the order's real lines
+// (getOrder().lines[].refId) instead of letting the scientist type a name.
+// `scanned_barcode` is LR-001: the backend verifies it against the
+// accessioned sample and rejects a mismatch; an empty scan is explicitly
+// permitted (verifyBarcodeScan) for flows that don't scan.
+//
+// The response is the bare order (no per-result echo, no distinct "result
+// id" — this schema doesn't have one; results are keyed by order_id+test_id),
+// so the returned LabResult is synthesized from what was just entered rather
+// than parsed from a response shape this endpoint doesn't provide. This is
+// safe: hasCritical here only drives UI copy on the next screen, not the
+// actual escalation decision — Release (below) independently recomputes
+// criticality from the persisted results, including any server-side
+// deriveEffectiveStatus upgrade, so a client-side estimate here can never
+// under-escalate a real critical value.
+const FLAG_TO_STATUS: Record<AnalyteFlag, 'NORMAL' | 'ABNORMAL' | 'CRITICAL'> = {
+  normal: 'NORMAL', low: 'ABNORMAL', high: 'ABNORMAL', critical: 'CRITICAL',
+};
+
 export async function enterResult(input: ResultEntryInput): Promise<LabResult> {
   if (USE_MOCK) {
     await delay();
@@ -951,21 +978,50 @@ export async function enterResult(input: ResultEntryInput): Promise<LabResult> {
       interpretation: input.interpretation,
     };
   }
-  const { data } = await api.post<LabResult>(`${LAB_API}/provider/orders/${input.orderId}/result`, input);
-  return data;
+  const { data } = await api.post<{ order: { id: string; state: string } }>(
+    `${LAB_API}/orders/${input.orderId}/results`,
+    {
+      scanned_barcode: input.scannedBarcode ?? '',
+      results: input.analytes.map((a) => ({
+        test_id: a.testId, value: a.value, unit: a.unit, ref_range: a.referenceRange, status: FLAG_TO_STATUS[a.flag],
+      })),
+    },
+  );
+  const hasCritical = input.analytes.some((a) => a.flag === 'critical');
+  const hasAbnormal = input.analytes.some((a) => a.flag !== 'normal');
+  return {
+    id: data.order.id,
+    orderId: input.orderId,
+    testName: input.analytes.map((a) => a.name).join(', '),
+    labName: '',
+    status: (data.order.state as ResultStatus) ?? 'RESULT_READY',
+    collectedAt: new Date().toISOString(),
+    analytes: input.analytes.map((a) => ({ ...a })),
+    hasAbnormal,
+    hasCritical,
+    interpretation: input.interpretation,
+  };
 }
 
-/** Scientist sign-off & release (HL-7). Releasing a critical result requires ack. */
+// `${LAB_API}/provider/orders/:id/release` was also never implemented — the
+// real endpoint is POST /orders/:id/release, and it takes NO body at all.
+// resultId/signedBy/criticalAcknowledged (this screen's confirmation state)
+// have no equivalent there: Release (service.go) independently recomputes
+// criticality from the persisted results and handles the full HL-7
+// escalation-then-release sequence itself in one call — a client-supplied
+// "I acknowledge this is critical" flag would be redundant, and dangerous to
+// trust over the server's own recomputation, so it's intentionally never
+// sent. This screen's confirmation UI still gates the tap; it just isn't
+// wire data.
 export async function releaseResult(input: ResultReleaseInput): Promise<{ ok: true; releasedAt: string }> {
   if (USE_MOCK) {
     await delay();
     return { ok: true, releasedAt: new Date().toISOString() };
   }
-  const { data } = await api.post<{ ok: true; releasedAt: string }>(
-    `${LAB_API}/provider/orders/${input.orderId}/release`,
-    input,
-  );
-  return data;
+  // Order (model.go) carries no updated_at field to read a real release
+  // timestamp from — this is "now" by construction, not a parsed value.
+  await api.post(`${LAB_API}/orders/${input.orderId}/release`, {});
+  return { ok: true, releasedAt: new Date().toISOString() };
 }
 
 export async function getProviderEarnings(): Promise<ProviderEarnings> {
