@@ -7,6 +7,7 @@
 
 import { api } from '@/api/client';
 import { USE_MOCK, HEALTH_API_BASE } from '../constants/health.constants';
+import { uploadProviderCredential, addProviderCredential } from '../api';
 import { Colors } from '@/constants/colors';
 import type {
   Pet,
@@ -922,6 +923,10 @@ export async function submitProviderOnboarding(input: SubmitOnboardingInput): Pr
       domain: 'VET', provider_type: 'vet', display_name: input.displayName,
     });
     app = created.data.application;
+  }
+  if (input.licenceFile) {
+    const storageKey = await uploadProviderCredential(app.id, input.licenceFile);
+    await addProviderCredential(app.id, { credType: 'VCN', referenceNo: input.vcnLicenseNo, storageKey });
   }
   if (app.state === 'DRAFT' || app.state === 'NEEDS_INFO') {
     const submitted = await api.post<{ application: ProviderApplicationWire }>(`${PROVIDERS_API}/applications/${app.id}/submit`, {});

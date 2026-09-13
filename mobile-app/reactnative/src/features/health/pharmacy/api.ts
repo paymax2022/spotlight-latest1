@@ -6,6 +6,7 @@
 
 import { api } from '@/api/client';
 import { USE_MOCK, HEALTH_API_BASE } from '../constants/health.constants';
+import { uploadProviderCredential, addProviderCredential } from '../api';
 import { Colors } from '@/constants/colors';
 import type {
   PharmacyProduct,
@@ -833,7 +834,15 @@ export async function getProviderOnboarding(): Promise<ProviderOnboardingState> 
   };
 }
 
-export async function submitProviderOnboarding(input: Partial<ProviderOnboardingState>): Promise<ProviderOnboardingState> {
+// licenceFile: previously flagged as a real gap — the onboarding screen only
+// ever collected the PCN licence NUMBER, with no document-upload step, so
+// AddCredential (which requires a real uploaded file's storage_key) could
+// never be called. Now optional on this input: when the screen supplies a
+// picked file, it's presigned + uploaded to R2 and recorded as a real PCN
+// credential before submission.
+export async function submitProviderOnboarding(
+  input: Partial<ProviderOnboardingState> & { licenceFile?: { uri: string; fileName: string; mimeType: string } },
+): Promise<ProviderOnboardingState> {
   if (USE_MOCK) {
     await delay(500);
     return {
@@ -850,6 +859,10 @@ export async function submitProviderOnboarding(input: Partial<ProviderOnboarding
       domain: 'PHARMACY', provider_type: 'pharmacist', display_name: input.businessName ?? '',
     });
     app = created.data.application;
+  }
+  if (input.licenceFile) {
+    const storageKey = await uploadProviderCredential(app.id, input.licenceFile);
+    await addProviderCredential(app.id, { credType: 'PCN', referenceNo: input.pcnLicenseNo, storageKey });
   }
   // Submit only transitions DRAFT/NEEDS_INFO forward; calling it again on an
   // already-submitted application is a 409, so skip the call rather than
