@@ -15,7 +15,7 @@ import ServiceTypeCard from '@/features/mobility/components/ServiceTypeCard';
 import FareOfferSheet from '@/features/mobility/components/FareOfferSheet';
 import MobilityEdgeState from '@/features/mobility/components/MobilityEdgeState';
 import AddressEntry, { type ConfirmedAddress } from '@/features/mobility/components/AddressEntry';
-import { useRideEstimate, useRideRequest } from '@/features/mobility/hooks/useMobility';
+import { useRideEstimate, useRideRequest, useRideSettings } from '@/features/mobility/hooks/useMobility';
 import * as mobAPI from '@/features/mobility/api/mobility.api';
 import { useCurrentLocation } from '@/features/location/useCurrentLocation';
 import { usePurchasePayment, PaymentSheet } from '@/features/payments';
@@ -72,6 +72,17 @@ export default function EstimateScreen() {
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('wallet');
   const [offerKobo, setOfferKobo] = useState<number>(0);
   const [submitError, setSubmitError] = useState<string | null>(null);
+
+  // Seed the payment-method picker from the rider's saved default (Ride
+  // settings) exactly once — after that, the rider's own tap on the picker
+  // is authoritative for this request, even if the settings query refetches.
+  const rideSettings = useRideSettings();
+  const [defaultPaymentApplied, setDefaultPaymentApplied] = useState(false);
+  useEffect(() => {
+    if (defaultPaymentApplied || !rideSettings.data) return;
+    setPaymentMethod(rideSettings.data.defaultPayment);
+    setDefaultPaymentApplied(true);
+  }, [defaultPaymentApplied, rideSettings.data]);
 
   // Pickup: explicit "Current location" from the planner if present, else real
   // device location (GPS + reverse geocode) with graceful fallback.

@@ -351,6 +351,26 @@ export interface DriverTripSummary {
   destLabel: string;
 }
 
+// ─── Rider ride-preference settings (GET/PUT /mobility/profile) ───────────────
+// Distinct from the lightweight display MobilityProfile above (name/photo/
+// rating on the home payload) — this is the rider's saved preferences: trust
+// level, default payment method, and saved home/work addresses.
+export interface RideSettings {
+  trustLevel: string;
+  defaultPayment: PaymentMethod;
+  homeAddress?: string | null;
+  workAddress?: string | null;
+  rating: number;
+  completedTrips: number;
+  status: string;
+}
+
+export interface UpdateRideSettingsInput {
+  defaultPayment?: PaymentMethod;
+  homeAddress?: string | null;
+  workAddress?: string | null;
+}
+
 // ─── Trip chat ────────────────────────────────────────────────────────────────
 // Pre-arrival/en-route logistics between the rider and the assigned driver
 // ("I'm outside", "which gate", "is this the right address") — distinct from

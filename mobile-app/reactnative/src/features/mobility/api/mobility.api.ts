@@ -34,6 +34,8 @@ import type {
   LatLng,
   TripMessage,
   TripChatRole,
+  RideSettings,
+  UpdateRideSettingsInput,
 } from '../types/mobility.types';
 import {
   mockEstimate,
@@ -50,6 +52,8 @@ import {
   mockEarnings,
   mockListTripMessages,
   mockSendTripMessage,
+  mockGetRideSettings,
+  mockUpdateRideSettings,
 } from './mobility.mock';
 
 // ─── Feature flag: mock by default; flip to hit the Go backend ─────────────────
@@ -721,6 +725,26 @@ export async function sendTripMessage(tripId: string, role: TripChatRole, body: 
   if (USE_MOCK) { await delay(250); return mockSendTripMessage(tripId, role, body); }
   const res = await api.post(`${chatBase(role)}/trips/${encodeURIComponent(tripId)}/messages`, { body });
   return mapTripMessage(res.data?.message);
+}
+
+// ─── Rider ride-preference settings ────────────────────────────────────────────
+// GET/PUT /mobility/profile. The backend lazily creates a default row on first
+// GET, so this is always safe to call. PUT is a partial update (COALESCE on the
+// server): an omitted field keeps its current value.
+export async function getRideSettings(): Promise<RideSettings> {
+  if (USE_MOCK) { await delay(220); return mockGetRideSettings(); }
+  return unwrap<RideSettings>(await api.get(`${BASE}/mobility/profile`));
+}
+
+export async function updateRideSettings(patch: UpdateRideSettingsInput): Promise<RideSettings> {
+  if (USE_MOCK) { await delay(300); return mockUpdateRideSettings(patch); }
+  return unwrap<RideSettings>(
+    await api.put(`${BASE}/mobility/profile`, {
+      default_payment: patch.defaultPayment ?? '',
+      home_address: patch.homeAddress,
+      work_address: patch.workAddress,
+    }),
+  );
 }
 
 export { USE_MOCK };

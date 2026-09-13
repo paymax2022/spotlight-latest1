@@ -271,3 +271,16 @@ export function useSendTripMessage(tripId?: string, role: 'rider' | 'driver' = '
     onSuccess: () => qc.invalidateQueries({ queryKey: [KEY, 'trip', tripId, 'messages', role] }),
   });
 }
+
+// ─── Ride settings (default payment method, saved addresses) ──────────────────
+export function useRideSettings() {
+  return useQuery({ queryKey: [KEY, 'ride-settings'], queryFn: mob.getRideSettings, staleTime: 10_000 });
+}
+
+export function useUpdateRideSettings() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: mob.updateRideSettings,
+    onSuccess: (settings) => qc.setQueryData([KEY, 'ride-settings'], settings),
+  });
+}

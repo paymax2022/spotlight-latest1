@@ -20,6 +20,8 @@ import type {
   TrustedContact,
   TripMessage,
   TripChatRole,
+  RideSettings,
+  UpdateRideSettingsInput,
 } from '../types/mobility.types';
 import { haversineMeters } from '../utils/mobilityFormatters';
 
@@ -158,10 +160,40 @@ export function makeTrip(overrides: Partial<Trip> = {}): Trip {
 }
 
 // Singleton mutable store for the rider's active trip in mock mode.
-export const mockStore: { activeTrip: Trip | null; messages: Record<string, TripMessage[]> } = {
+export const mockStore: {
+  activeTrip: Trip | null;
+  messages: Record<string, TripMessage[]>;
+  rideSettings: RideSettings;
+} = {
   activeTrip: null,
   messages: {},
+  rideSettings: {
+    trustLevel: 'standard',
+    defaultPayment: 'wallet',
+    homeAddress: null,
+    workAddress: null,
+    rating: 4.8,
+    completedTrips: 12,
+    status: 'active',
+  },
 };
+
+/** Reads the mock rider's saved ride preferences. */
+export function mockGetRideSettings(): RideSettings {
+  return { ...mockStore.rideSettings };
+}
+
+/** Partially updates the mock rider's ride preferences (matches the real
+ * PUT's COALESCE semantics: an omitted/undefined field keeps its current value). */
+export function mockUpdateRideSettings(patch: UpdateRideSettingsInput): RideSettings {
+  mockStore.rideSettings = {
+    ...mockStore.rideSettings,
+    ...(patch.defaultPayment !== undefined ? { defaultPayment: patch.defaultPayment } : {}),
+    ...(patch.homeAddress !== undefined ? { homeAddress: patch.homeAddress } : {}),
+    ...(patch.workAddress !== undefined ? { workAddress: patch.workAddress } : {}),
+  };
+  return { ...mockStore.rideSettings };
+}
 
 let mockMessageSeq = 0;
 
