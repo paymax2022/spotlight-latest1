@@ -1954,6 +1954,12 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		// Real-time tracking: rider/driver WS channel + driver GPS ingest.
 		mob.GET("/ws", transportHandler.ServeTripWS)
 		mob.POST("/trips/:id/track", transportHandler.TrackPosition)
+		// Trip chat (rider<->driver, pre-arrival logistics — distinct from the
+		// PIN identity check). Registered under both /mobility and /driver
+		// below; object-level authz (Service.ListMessages/SendMessage) is the
+		// real gate, not the route prefix.
+		mob.GET("/trips/:id/messages", transportHandler.ListMessages)
+		mob.POST("/trips/:id/messages", transportHandler.SendMessage)
 		mob.GET("/home", transportHandler.Home)
 		mob.GET("/config/pricing", transportHandler.ConfigPricing)
 		mob.POST("/rides/estimate", transportHandler.Estimate)
@@ -1994,6 +2000,8 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		drv.POST("/trips/:id/verify-pin", transportHandler.VerifyPin)
 		drv.POST("/trips/:id/start", transportHandler.StartTrip)
 		drv.POST("/trips/:id/complete", transportHandler.CompleteTrip)
+		drv.GET("/trips/:id/messages", transportHandler.ListMessages)
+		drv.POST("/trips/:id/messages", transportHandler.SendMessage)
 		drv.GET("/earnings", transportHandler.DriverEarnings)
 		drv.POST("/sos", transportHandler.DriverSOS)
 

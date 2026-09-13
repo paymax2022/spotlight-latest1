@@ -152,6 +152,7 @@ export default function DriverTripScreen() {
 
       <View style={styles.footer}>
         <SafetyButton onSos={onSos} variant="bar" />
+        <PrimaryButton label="Message rider" variant="secondary" onPress={() => router.push(`/mobility/driver/trip/${id}/chat`)} />
         {phase === 'driver_assigned' && (
           <PrimaryButton label="I've arrived at pickup" onPress={onArrive} loading={arrive.isPending} />
         )}

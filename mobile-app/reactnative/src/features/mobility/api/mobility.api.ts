@@ -32,6 +32,8 @@ import type {
   DriverEarnings,
   Kobo,
   LatLng,
+  TripMessage,
+  TripChatRole,
 } from '../types/mobility.types';
 import {
   mockEstimate,
@@ -46,6 +48,8 @@ import {
   mockDriver,
   mockDriverRequests,
   mockEarnings,
+  mockListTripMessages,
+  mockSendTripMessage,
 } from './mobility.mock';
 
 // ─── Feature flag: mock by default; flip to hit the Go backend ─────────────────
@@ -682,6 +686,41 @@ function advanceMockTrip(trip: Trip): Trip {
 /** Clears the mock active trip (used after rider finishes the completed flow). */
 export function clearMockActiveTrip(): void {
   if (USE_MOCK) mockStore.activeTrip = null;
+}
+
+// ─── Trip chat ────────────────────────────────────────────────────────────────
+// Registered under both /mobility (rider) and /driver (driver) on the backend,
+// pointing at the same handler — object-level authz is the real gate, not the
+// URL prefix. `role` here only selects which prefix this app's own client uses,
+// matching every other rider/driver-split function in this file.
+function chatBase(role: TripChatRole): string {
+  return role === 'driver' ? `${BASE}/driver` : `${BASE}/mobility`;
+}
+
+/** Maps the raw (snake_case) wire shape to the camelCase TripMessage type. */
+function mapTripMessage(raw: any): TripMessage {
+  return {
+    id: raw.id,
+    tripId: raw.trip_id,
+    senderId: raw.sender_id,
+    senderRole: raw.sender_role,
+    body: raw.body,
+    attachmentUrl: raw.attachment_url ?? null,
+    createdAt: raw.created_at,
+  };
+}
+
+export async function listTripMessages(tripId: string, role: TripChatRole): Promise<TripMessage[]> {
+  if (USE_MOCK) { await delay(200); return mockListTripMessages(tripId); }
+  const res = await api.get(`${chatBase(role)}/trips/${encodeURIComponent(tripId)}/messages`);
+  const raw = res.data?.messages;
+  return Array.isArray(raw) ? raw.map(mapTripMessage) : [];
+}
+
+export async function sendTripMessage(tripId: string, role: TripChatRole, body: string): Promise<TripMessage> {
+  if (USE_MOCK) { await delay(250); return mockSendTripMessage(tripId, role, body); }
+  const res = await api.post(`${chatBase(role)}/trips/${encodeURIComponent(tripId)}/messages`, { body });
+  return mapTripMessage(res.data?.message);
 }
 
 export { USE_MOCK };

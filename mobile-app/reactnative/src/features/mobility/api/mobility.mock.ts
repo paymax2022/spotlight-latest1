@@ -18,6 +18,8 @@ import type {
   DriverRideRequest,
   DriverEarnings,
   TrustedContact,
+  TripMessage,
+  TripChatRole,
 } from '../types/mobility.types';
 import { haversineMeters } from '../utils/mobilityFormatters';
 
@@ -156,7 +158,34 @@ export function makeTrip(overrides: Partial<Trip> = {}): Trip {
 }
 
 // Singleton mutable store for the rider's active trip in mock mode.
-export const mockStore: { activeTrip: Trip | null } = { activeTrip: null };
+export const mockStore: { activeTrip: Trip | null; messages: Record<string, TripMessage[]> } = {
+  activeTrip: null,
+  messages: {},
+};
+
+let mockMessageSeq = 0;
+
+/** Reads a trip's chat thread, oldest first (empty array for a fresh trip). */
+export function mockListTripMessages(tripId: string): TripMessage[] {
+  return mockStore.messages[tripId] ?? [];
+}
+
+/** Posts a mock chat message as the given role, mirroring the real backend's
+ * server-derived sender_role (never client-supplied). */
+export function mockSendTripMessage(tripId: string, role: TripChatRole, body: string): TripMessage {
+  const m: TripMessage = {
+    id: `msg_${now()}_${mockMessageSeq++}`,
+    tripId,
+    senderId: role === 'rider' ? 'mock-rider' : MOCK_DRIVER.id,
+    senderRole: role,
+    body,
+    createdAt: iso(),
+  };
+  const thread = mockStore.messages[tripId] ?? [];
+  thread.push(m);
+  mockStore.messages[tripId] = thread;
+  return m;
+}
 
 // ─── Rider history ───────────────────────────────────────────────────────────
 export const MOCK_HISTORY: Trip[] = [

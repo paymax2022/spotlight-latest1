@@ -351,6 +351,22 @@ export interface DriverTripSummary {
   destLabel: string;
 }
 
+// ─── Trip chat ────────────────────────────────────────────────────────────────
+// Pre-arrival/en-route logistics between the rider and the assigned driver
+// ("I'm outside", "which gate", "is this the right address") — distinct from
+// the trip PIN, which is an at-the-door identity check, not free-form chat.
+export type TripChatRole = 'rider' | 'driver';
+
+export interface TripMessage {
+  id: string;
+  tripId: string;
+  senderId: string;
+  senderRole: TripChatRole;
+  body: string;
+  attachmentUrl?: string | null;
+  createdAt: string;
+}
+
 // ─── API error shape ─────────────────────────────────────────────────────────
 export type MobilityErrorCode =
   | 'FARE_BELOW_FLOOR'
@@ -362,7 +378,8 @@ export type MobilityErrorCode =
   | 'INVALID_STATE'
   | 'NOT_PERMITTED'
   | 'RESTRICTED'
-  | 'INVALID_PIN';
+  | 'INVALID_PIN'
+  | 'INSUFFICIENT_DRIVER_BALANCE';
 
 export interface MobilityError extends Error {
   code?: MobilityErrorCode;
