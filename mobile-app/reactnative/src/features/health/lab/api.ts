@@ -21,6 +21,7 @@ import type {
   SubmitReviewInput,
   ShareResultInput,
   ProviderOnboardingState,
+  ProviderOnboardingStatus,
   SubmitOnboardingInput,
   CatalogPriceItem,
   ProviderOrderRow,
@@ -35,6 +36,7 @@ import type {
 } from './types';
 
 const LAB_API = `${HEALTH_API_BASE}/lab`;
+const PROVIDERS_API = `${HEALTH_API_BASE}/providers`;
 const delay = (ms = 300) => new Promise((r) => setTimeout(r, ms));
 
 // ── Mock data ─────────────────────────────────────────────────────────────────
@@ -631,8 +633,20 @@ export async function createOrder(input: CreateOrderInput): Promise<LabOrder> {
       custody: [],
     };
   }
-  // HL-9: held payment captured on create; Idempotency-Key guards the mutation.
-  const { data } = await api.post<LabOrder>(`${LAB_API}/orders`, input, {
+  // POST /health/lab/orders (handler.go CreateOrder) binds
+  // {lab_provider_id, collection_method, test_ids, idempotency_key} — the live
+  // branch sent this screen's own field names (labId, collectionMode, lines)
+  // verbatim, none of which match, so CreateOrderInput.LabProviderID/
+  // CollectionMethod/TestIDs were always empty and the service rejected every
+  // real checkout with "at least one test required" / "collection_method must
+  // be HOME or WALK_IN" — checkout was 100% broken, not silently wrong.
+  const collectionMethod = input.collectionMode === 'home' ? 'HOME' : 'WALK_IN';
+  const { data } = await api.post<LabOrder>(`${LAB_API}/orders`, {
+    lab_provider_id: input.labId,
+    collection_method: collectionMethod,
+    test_ids: input.lines.map((l) => l.refId),
+    idempotency_key: input.idempotencyKey,
+  }, {
     headers: { 'Idempotency-Key': input.idempotencyKey },
   });
   return data;
@@ -717,22 +731,84 @@ export async function submitReview(input: SubmitReviewInput): Promise<LabReview>
 }
 
 // ── Provider (lab) ───────────────────────────────────────────────────────────
+// `${LAB_API}/provider/onboarding` was never implemented backend side —
+// backend/internal/app/health_lab_routes.go has no /provider group at all
+// (only /tests, /orders, /samples), so both calls 404'd on every non-mock
+// request. Same root cause and same fix as pharmacy's identical bug: the
+// generic provider-application backend (backend/internal/health/providers/*,
+// mounted at /api/finance/health/providers/applications*) already supports
+// domain=LAB (service.go validType accepts 'lab'/'lab_scientist'/
+// 'phlebotomist') and was simply never called. Repointed here instead of
+// building a duplicate lab-specific onboarding backend.
+interface ProviderApplicationWire {
+  id: string;
+  domain: string;
+  provider_type: string;
+  display_name: string;
+  state: 'DRAFT' | 'SUBMITTED' | 'UNDER_REVIEW' | 'NEEDS_INFO' | 'APPROVED' | 'SUSPENDED' | 'REJECTED';
+}
+
+function mapApplicationState(state: ProviderApplicationWire['state']): ProviderOnboardingStatus {
+  switch (state) {
+    case 'DRAFT':        return 'draft';
+    case 'SUBMITTED':    return 'submitted';
+    case 'UNDER_REVIEW':  return 'under_review';
+    case 'APPROVED':      return 'approved';
+    case 'NEEDS_INFO':
+    case 'SUSPENDED':
+    case 'REJECTED':
+    default:              return 'needs_info';
+  }
+}
+
+async function findLabApplication(): Promise<ProviderApplicationWire | undefined> {
+  const { data } = await api.get<{ applications: ProviderApplicationWire[] }>(`${PROVIDERS_API}/applications`);
+  return data.applications?.find((a) => a.domain === 'LAB');
+}
+
 export async function getProviderOnboarding(): Promise<ProviderOnboardingState> {
   if (USE_MOCK) {
     await delay();
     return MOCK_ONBOARDING;
   }
-  const { data } = await api.get<ProviderOnboardingState>(`${LAB_API}/provider/onboarding`);
-  return data;
+  const app = await findLabApplication();
+  if (!app) return { status: 'draft', businessName: '', mlscnLicenseNo: '', contactName: '' };
+  return {
+    status: mapApplicationState(app.state),
+    businessName: app.display_name,
+    mlscnLicenseNo: '',
+    contactName: '',
+  };
 }
 
+// NOT fixed here: like pharmacy, the generic API's AddCredential (the MLSCN
+// facility licence document) requires a real uploaded file's storage_key —
+// this screen only ever collected mlscnLicenseNo as a text field, with no
+// upload step. The licence number is echoed back for display but not
+// persisted server-side; a real fix needs a presign endpoint for this module
+// plus a document-picker step in this screen, same follow-up as pharmacy.
 export async function submitProviderOnboarding(input: SubmitOnboardingInput): Promise<ProviderOnboardingState> {
   if (USE_MOCK) {
     await delay();
     return { ...MOCK_ONBOARDING, ...input, status: 'submitted' };
   }
-  const { data } = await api.post<ProviderOnboardingState>(`${LAB_API}/provider/onboarding`, input);
-  return data;
+  let app = await findLabApplication();
+  if (!app) {
+    const created = await api.post<{ application: ProviderApplicationWire }>(`${PROVIDERS_API}/applications`, {
+      domain: 'LAB', provider_type: 'lab', display_name: input.businessName,
+    });
+    app = created.data.application;
+  }
+  if (app.state === 'DRAFT' || app.state === 'NEEDS_INFO') {
+    const submitted = await api.post<{ application: ProviderApplicationWire }>(`${PROVIDERS_API}/applications/${app.id}/submit`, {});
+    app = submitted.data.application;
+  }
+  return {
+    status: mapApplicationState(app.state),
+    businessName: app.display_name,
+    mlscnLicenseNo: input.mlscnLicenseNo,
+    contactName: input.contactName,
+  };
 }
 
 export async function getProviderCatalog(): Promise<CatalogPriceItem[]> {
