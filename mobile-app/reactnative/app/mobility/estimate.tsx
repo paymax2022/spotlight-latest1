@@ -16,6 +16,7 @@ import FareOfferSheet from '@/features/mobility/components/FareOfferSheet';
 import MobilityEdgeState from '@/features/mobility/components/MobilityEdgeState';
 import AddressEntry, { type ConfirmedAddress } from '@/features/mobility/components/AddressEntry';
 import { useRideEstimate, useRideRequest } from '@/features/mobility/hooks/useMobility';
+import * as mobAPI from '@/features/mobility/api/mobility.api';
 import { useCurrentLocation } from '@/features/location/useCurrentLocation';
 import { usePurchasePayment, PaymentSheet } from '@/features/payments';
 import { SERVICE_TYPES, RIDE_NEGOTIATION_ENABLED } from '@/features/mobility/constants/mobility.constants';
@@ -86,6 +87,15 @@ export default function EstimateScreen() {
   const estimate = useRideEstimate();
   const request = useRideRequest();
   const est: RideEstimate | undefined = estimate.data;
+  // Store estimates for ALL service types so pricing is visible upfront
+  const [allEstimates, setAllEstimates] = useState<Record<ServiceType, RideEstimate | undefined>>({
+    economy: undefined,
+    comfort: undefined,
+    premium: undefined,
+    xl: undefined,
+  });
+  // Track which service types failed to load so we can show them as unavailable
+  const [failedServiceTypes, setFailedServiceTypes] = useState<Set<ServiceType>>(new Set());
   // Shared wallet/card chooser — gates the wallet debit exactly like carhire/bus.
   const pay = usePurchasePayment<Trip>();
 
@@ -129,15 +139,41 @@ export default function EstimateScreen() {
     setEditingDest(false);
   }, []);
 
-  // Fetch estimate whenever the service type or pickup changes.
+  // Fetch estimates for ALL service types upfront so pricing is visible immediately
   useEffect(() => {
     setSubmitError(null);
-    estimate.mutate(
-      { pickup, dest, serviceType },
-      { onSuccess: (e) => setOfferKobo(e.systemFareKobo) },
-    );
+    // Fetch all 4 service types in parallel using the API directly
+    Promise.all(
+      SERVICE_TYPES.map((st) =>
+        mobAPI
+          .estimateRide({ pickup, dest, serviceType: st.value })
+          .then((result) => ({ type: st.value, estimate: result }))
+          .catch(() => ({ type: st.value, estimate: undefined }))
+      )
+    ).then((results) => {
+      // Merge all results into allEstimates state
+      const merged: Record<ServiceType, RideEstimate | undefined> = {
+        economy: undefined,
+        comfort: undefined,
+        premium: undefined,
+        xl: undefined,
+      };
+      const failed = new Set<ServiceType>();
+      results.forEach(({ type, estimate: est }) => {
+        if (est) {
+          merged[type as ServiceType] = est;
+        } else {
+          failed.add(type as ServiceType);
+        }
+      });
+      setAllEstimates(merged);
+      setFailedServiceTypes(failed);
+      // Update offerKobo for the currently selected service type
+      const selectedEstimate = merged[serviceType];
+      if (selectedEstimate) setOfferKobo(selectedEstimate.systemFareKobo);
+    });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [serviceType, dest, pickup]);
+  }, [dest, pickup]);
 
   // Fire the ride request (the server-side wallet debit / escrow). Called either
   // directly (cash) or as the PaymentSheet's `charge` (wallet/card).
@@ -158,14 +194,16 @@ export default function EstimateScreen() {
 
   const onRideError = (e: unknown) => {
     const me = toMobilityError(e);
-    if (isFareBoundError(me)) setSubmitError(fareBoundMessage(me, est?.offerMinKobo ?? 0, est?.offerMaxKobo ?? 0));
+    const selectedEst = allEstimates[serviceType];
+    if (isFareBoundError(me)) setSubmitError(fareBoundMessage(me, selectedEst?.offerMinKobo ?? 0, selectedEst?.offerMaxKobo ?? 0));
     else if (isNoDriverError(me)) setSubmitError(null); // handled on next screen
     else if (me.code === 'PAYMENT_FAILED') setSubmitError('Payment could not be authorised. Try another method.');
     else setSubmitError(me.message);
   };
 
   const onRequest = () => {
-    if (!est) return;
+    const selectedEst = allEstimates[serviceType];
+    if (!selectedEst) return;
     setSubmitError(null);
     // Cash rides settle in-vehicle — no upfront debit, so skip the payment sheet.
     if (paymentMethod === 'cash') {
@@ -178,7 +216,7 @@ export default function EstimateScreen() {
     // Wallet / card → shared PaymentSheet (PIN + KYC/tier gating live inside it),
     // mirroring the carhire & bus flows. The ride request runs as the charge.
     pay.start({
-      amountKobo: pricingMode === 'offer' ? (offerKobo || est.systemFareKobo) : est.systemFareKobo,
+      amountKobo: pricingMode === 'offer' ? (offerKobo || selectedEst.systemFareKobo) : selectedEst.systemFareKobo,
       title: pricingMode === 'offer' ? 'Confirm your fare offer' : 'Pay for your ride',
       domain: 'ride',
       method: paymentMethod === 'wallet' ? 'wallet' : 'card',
@@ -188,7 +226,7 @@ export default function EstimateScreen() {
         } catch (e) {
           // Translate fare-bound errors into a friendly message inside the sheet.
           const me = toMobilityError(e);
-          if (isFareBoundError(me)) throw new Error(fareBoundMessage(me, est.offerMinKobo, est.offerMaxKobo));
+          if (isFareBoundError(me)) throw new Error(fareBoundMessage(me, selectedEst.offerMinKobo, selectedEst.offerMaxKobo));
           throw me;
         }
       },
@@ -212,7 +250,7 @@ export default function EstimateScreen() {
               showRoute
               pickup={pickup}
               dropoff={dest}
-              caption={est ? `${(est.distanceM / 1000).toFixed(1)} km` : 'Calculating route…'}
+              caption={allEstimates[serviceType] ? `${(allEstimates[serviceType]!.distanceM / 1000).toFixed(1)} km` : 'Calculating route…'}
             />
 
             {/* Both stops are editable inline — tap pickup or destination to
@@ -264,18 +302,40 @@ export default function EstimateScreen() {
             {/* Service categories */}
             <Text style={styles.sectionLabel}>Choose a ride</Text>
             <View style={styles.serviceList}>
-              {SERVICE_TYPES.map((meta) => (
-                <ServiceTypeCard
-                  key={meta.value}
-                  meta={meta}
-                  // Per-category fare only shown for the selected (estimated) type;
-                  // others show — until selected (server is the source of truth).
-                  fareKobo={meta.value === serviceType ? est?.systemFareKobo : undefined}
-                  etaMin={meta.value === serviceType && est ? Math.max(2, Math.round(est.durationS / 60 / 6)) : undefined}
-                  selected={serviceType === meta.value}
-                  onPress={() => setServiceType(meta.value)}
-                />
-              ))}
+              {SERVICE_TYPES.map((meta) => {
+                const serviceEstimate = allEstimates[meta.value];
+                const isFailed = failedServiceTypes.has(meta.value);
+                const isDisabled = isFailed;
+                return (
+                  <Pressable
+                    key={meta.value}
+                    disabled={isDisabled}
+                    onPress={() => {
+                      if (!isDisabled) {
+                        setServiceType(meta.value);
+                        if (serviceEstimate) setOfferKobo(serviceEstimate.systemFareKobo);
+                      }
+                    }}
+                  >
+                    <ServiceTypeCard
+                      meta={meta}
+                      // Show fare from allEstimates for ALL service types upfront
+                      fareKobo={isFailed ? undefined : serviceEstimate?.systemFareKobo}
+                      etaMin={!isFailed && serviceEstimate ? Math.max(2, Math.round(serviceEstimate.durationS / 60 / 6)) : undefined}
+                      selected={serviceType === meta.value && !isDisabled}
+                      onPress={() => {
+                        if (!isDisabled) {
+                          setServiceType(meta.value);
+                          if (serviceEstimate) setOfferKobo(serviceEstimate.systemFareKobo);
+                        }
+                      }}
+                    />
+                    {isFailed && (
+                      <Text style={[styles.unavailableLabel]}>Not available in your area</Text>
+                    )}
+                  </Pressable>
+                );
+              })}
             </View>
 
             {/* Instant vs Offer */}
@@ -287,7 +347,7 @@ export default function EstimateScreen() {
                     active={pricingMode === 'instant'}
                     icon={<Zap size={18} color={pricingMode === 'instant' ? Colors.primary : Colors.onSurfaceVariant} strokeWidth={2.2} />}
                     title="Instant fare"
-                    subtitle={est ? formatNairaWhole(est.systemFareKobo) : '—'}
+                    subtitle={allEstimates[serviceType] ? formatNairaWhole(allEstimates[serviceType]!.systemFareKobo) : '—'}
                     onPress={() => setPricingMode('instant')}
                   />
                   <ModeOption
@@ -299,12 +359,12 @@ export default function EstimateScreen() {
                   />
                 </View>
 
-                {pricingMode === 'offer' && est && (
+                {pricingMode === 'offer' && allEstimates[serviceType] && (
                   <View style={styles.offerWrap}>
                     <FareOfferSheet
-                      systemFareKobo={est.systemFareKobo}
-                      offerMinKobo={est.offerMinKobo}
-                      offerMaxKobo={est.offerMaxKobo}
+                      systemFareKobo={allEstimates[serviceType]!.systemFareKobo}
+                      offerMinKobo={allEstimates[serviceType]!.offerMinKobo}
+                      offerMaxKobo={allEstimates[serviceType]!.offerMaxKobo}
                       value={offerKobo || est.systemFareKobo}
                       onChange={setOfferKobo}
                       error={submitError}
@@ -339,11 +399,11 @@ export default function EstimateScreen() {
           <View style={styles.footer}>
             <View style={styles.fareRow}>
               <Text style={styles.fareLabel}>{pricingMode === 'offer' ? 'Your offer' : 'Total fare'}</Text>
-              {estimate.isPending && !est ? (
+              {estimate.isPending && !allEstimates[serviceType] ? (
                 <ActivityIndicator color={Colors.primary} />
               ) : (
                 <Text style={styles.fareValue}>
-                  {formatNairaWhole(pricingMode === 'offer' ? (offerKobo || est?.systemFareKobo || 0) : est?.systemFareKobo ?? 0)}
+                  {formatNairaWhole(pricingMode === 'offer' ? (offerKobo || allEstimates[serviceType]?.systemFareKobo || 0) : allEstimates[serviceType]?.systemFareKobo ?? 0)}
                 </Text>
               )}
             </View>
@@ -351,7 +411,7 @@ export default function EstimateScreen() {
               label={pickupResolved ? (pricingMode === 'offer' ? 'Send offer to drivers' : 'Request ride') : 'Set pickup to continue'}
               onPress={pickupResolved ? onRequest : () => setEditingPickup(true)}
               loading={request.isPending || pay.phase === 'charging' || pay.phase === 'awaiting'}
-              disabled={(!est || estimate.isPending) && pickupResolved}
+              disabled={(!allEstimates[serviceType] || estimate.isPending) && pickupResolved}
             />
           </View>
         </>
@@ -442,6 +502,7 @@ const styles = StyleSheet.create({
   payLabel: { ...Typography.bodyMd, color: Colors.onSurface, flex: 1 },
   payLabelActive: { color: Colors.primary, fontWeight: '600' as const },
   submitError: { ...Typography.labelSm, color: Colors.error, marginTop: Spacing.xs },
+  unavailableLabel: { ...Typography.labelSm, color: Colors.onSurfaceVariant, marginTop: Spacing.xs, fontStyle: 'italic' as const },
   footer: { paddingHorizontal: Spacing.containerMargin, paddingTop: Spacing.md, paddingBottom: Spacing.lg, borderTopWidth: 1, borderTopColor: Colors.outlineVariant, backgroundColor: Colors.surfaceContainerLowest, gap: Spacing.sm },
   fareRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   fareLabel: { ...Typography.bodyMd, color: Colors.onSurfaceVariant },
