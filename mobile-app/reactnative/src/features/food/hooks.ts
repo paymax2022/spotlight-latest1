@@ -412,12 +412,13 @@ export function usePostRiderLocation() {
 export function useConfirmPickup() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (orderId: string) => food.confirmPickup(orderId),
+    mutationFn: ({ orderId, code }: { orderId: string; code: string }) =>
+      food.confirmPickup(orderId, code),
     onError: (e) => {
       throw toFoodError(e);
     },
-    onSuccess: (_d, orderId) => {
-      qc.invalidateQueries({ queryKey: [KEY, 'order', orderId] });
+    onSuccess: (_d, vars) => {
+      qc.invalidateQueries({ queryKey: [KEY, 'order', vars.orderId] });
       qc.invalidateQueries({ queryKey: [KEY, 'rider', 'active'] });
       qc.invalidateQueries({ queryKey: [KEY, 'orders'] });
     },

@@ -18,7 +18,7 @@ import type {
 const LAGOS: LatLng = { lat: 6.5244, lng: 3.3792 };
 
 /** A stable 4-digit customer handoff code (mock parity with the backend). */
-function makeDeliveryCode(): string {
+function makeHandoffCode(): string {
   return String(1000 + Math.floor(Math.random() * 9000));
 }
 
@@ -425,7 +425,8 @@ export function makeOrder(
     // (the backend escrows payment and returns delivery_code on the Order).
     dispatchStatus: partial.dispatchStatus ?? 'none',
     riderId: partial.riderId ?? null,
-    deliveryCode: partial.deliveryCode ?? makeDeliveryCode(),
+    deliveryCode: partial.deliveryCode ?? makeHandoffCode(),
+    pickupCode: partial.pickupCode ?? makeHandoffCode(),
     createdAt: partial.createdAt ?? new Date().toISOString(),
     deliveredAt: partial.deliveredAt ?? null,
     rated: partial.rated ?? false,
@@ -635,9 +636,16 @@ export function mockDeclineOffer(orderId: string): void {
 }
 
 /** Rider confirms pickup at the restaurant → picked_up. */
-export function mockConfirmPickup(orderId: string): Order {
+export function mockConfirmPickup(orderId: string, code: string): Order {
   const order = mockStore.orders[orderId];
   if (!order) throw new Error('Order not found');
+  if (!order.pickupCode || code.trim() !== order.pickupCode) {
+    const err = new Error('Incorrect pickup code. Ask the restaurant to read it again.') as Error & {
+      code?: string;
+    };
+    err.code = 'INVALID_PICKUP_CODE';
+    throw err;
+  }
   order.status = 'picked_up';
   if (!order.rider) order.rider = { ...MOCK_RIDER };
   order.riderId = order.rider.id;

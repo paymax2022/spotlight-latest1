@@ -510,13 +510,19 @@ export async function declineOffer(orderId: string): Promise<void> {
   await api.post(`${BASE}/orders/${encodeURIComponent(orderId)}/decline`, {});
 }
 
-/** Rider confirms pickup at the restaurant. POST `${BASE}/orders/:id/pickup`. */
-export async function confirmPickup(orderId: string): Promise<Order> {
+/**
+ * Rider confirms pickup at the restaurant with the restaurant's pickup code —
+ * proves they collected the food. POST `${BASE}/orders/:id/pickup` { code }.
+ * An invalid code throws.
+ */
+export async function confirmPickup(orderId: string, code: string): Promise<Order> {
   if (USE_MOCK) {
     await delay(420);
-    return mockConfirmPickup(orderId);
+    return mockConfirmPickup(orderId, code);
   }
-  return mapOrder(unwrap<Order>(await api.post(`${BASE}/orders/${encodeURIComponent(orderId)}/pickup`, {})));
+  return mapOrder(
+    unwrap<Order>(await api.post(`${BASE}/orders/${encodeURIComponent(orderId)}/pickup`, { code })),
+  );
 }
 
 /**

@@ -119,6 +119,19 @@ export default function RestaurantOrderScreen() {
                 <Text style={s.addr}>Deliver to: {order.deliveryAddress}</Text>
               </View>
 
+              {/* Pickup code: hand this to the rider when they arrive — they must enter
+                  it to confirm pickup. Distinct from the customer's delivery code. */}
+              {normalizeStatus(status) === 'ready' && order.pickupCode ? (
+                <View style={[s.codeCard, shadow1]}>
+                  <View style={s.codeHead}>
+                    <Icons.KeyRound size={18} color={Colors.tertiaryContainer} strokeWidth={2} />
+                    <Text style={s.codeTitle}>Pickup code</Text>
+                  </View>
+                  <Text style={s.codeValue}>{order.pickupCode}</Text>
+                  <Text style={s.codeHint}>Give this code to the rider when they arrive: {order.pickupCode}</Text>
+                </View>
+              ) : null}
+
               {/* Dispatch state — after 'ready' the server auto-dispatches riders. */}
               {normalizeStatus(status) === 'ready' && dispatchStatus && dispatchStatus !== 'none' ? (
                 <View style={[s.dispatchCard, shadow1]}>
@@ -206,4 +219,9 @@ const s = StyleSheet.create({
   actions: { marginTop: Spacing.lg, gap: Spacing.sm },
   dispatchCard: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm, backgroundColor: Colors.iconBgBlue, borderRadius: Radius.lg, padding: Spacing.md, marginTop: Spacing.md },
   dispatchText: { ...Typography.labelMd, color: Colors.secondary, flex: 1 },
+  codeCard: { backgroundColor: Colors.iconBgTeal, borderRadius: Radius.lg, padding: Spacing.md, marginTop: Spacing.md, alignItems: 'center', gap: 4 },
+  codeHead: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  codeTitle: { ...Typography.labelLg, color: Colors.tertiaryContainer },
+  codeValue: { ...Typography.headlineMd, color: Colors.tertiaryContainer, fontWeight: '800', letterSpacing: 6, marginVertical: 4 },
+  codeHint: { ...Typography.bodySm, color: Colors.onSurface, textAlign: 'center' },
 });

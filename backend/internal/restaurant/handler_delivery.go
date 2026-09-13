@@ -430,10 +430,18 @@ func (h *Handler) DeclineDelivery(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"ok": true})
 }
 
-// ConfirmPickup → POST /restaurant/orders/:orderId/pickup (assigned rider picks up).
+// ConfirmPickup → POST /restaurant/orders/:orderId/pickup {code} (assigned
+// rider picks up; the restaurant's pickup code proves they collected the food).
 func (h *Handler) ConfirmPickup(c *gin.Context) {
 	riderID := c.GetString("user_id")
-	if err := h.svc.ConfirmPickup(c.Request.Context(), c.Param("orderId"), riderID); err != nil {
+	var body struct {
+		Code string `json:"code" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if err := h.svc.ConfirmPickup(c.Request.Context(), c.Param("orderId"), riderID, body.Code); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
