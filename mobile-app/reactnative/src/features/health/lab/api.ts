@@ -746,6 +746,17 @@ interface ProviderApplicationWire {
   provider_type: string;
   display_name: string;
   state: 'DRAFT' | 'SUBMITTED' | 'UNDER_REVIEW' | 'NEEDS_INFO' | 'APPROVED' | 'SUSPENDED' | 'REJECTED';
+  provider_id?: string;
+}
+
+// The lab-scoped reads/writes below (catalog, provider orders, accession,
+// results) all need "which lab_provider_id am I" — only known once an
+// application is APPROVED (Application.ProviderID is set at that point; see
+// backend/internal/health/providers/model.go). Resolved via the same
+// applications list already wired for onboarding above, not a separate call.
+async function resolveMyLabProviderId(): Promise<string | undefined> {
+  const app = await findLabApplication();
+  return app?.state === 'APPROVED' ? app.provider_id : undefined;
 }
 
 function mapApplicationState(state: ProviderApplicationWire['state']): ProviderOnboardingStatus {
@@ -811,13 +822,46 @@ export async function submitProviderOnboarding(input: SubmitOnboardingInput): Pr
   };
 }
 
+// `${LAB_API}/provider/catalog` was never implemented — there is no /provider
+// group in health_lab_routes.go. The real catalog read already exists and
+// already works (`GET /health/lab/tests`, the same endpoint getTests() above
+// correctly calls for the patient-facing browse view) — it just needs the
+// caller's own lab_provider_id to scope to "my tests" instead of every lab's.
 export async function getProviderCatalog(): Promise<CatalogPriceItem[]> {
   if (USE_MOCK) {
     await delay();
     return MOCK_CATALOG_PRICES;
   }
-  const { data } = await api.get<CatalogPriceItem[]>(`${LAB_API}/provider/catalog`);
-  return data;
+  const providerId = await resolveMyLabProviderId();
+  if (!providerId) return [];
+  const { data } = await api.get<{ tests?: Array<{
+    id: string; code: string; name: string; tat_hours: number; price_kobo: number; active: boolean;
+  }> }>(`${LAB_API}/tests`, { params: { lab_provider_id: providerId } });
+  return (data.tests ?? []).map((t) => ({
+    testId: t.id, name: t.name, code: t.code, priceKobo: t.price_kobo, active: t.active, tat: `${t.tat_hours}h`,
+  }));
+}
+
+// `${LAB_API}/provider/orders` never existed backend side either. Unlike
+// catalog, there was no existing scoped read to repoint to — AdminListOrders
+// is platform-admin RBAC, not owner-scoped, so using it here would either
+// reject every real lab owner (no RBAC grant) or, if it didn't, leak every
+// lab's orders to every caller. Added a real endpoint instead:
+// GET /health/lab/provider/orders (Service.ListProviderOrders,
+// backend/internal/health/lab/service.go) — object-level authZ'd to a
+// verified owner of the resolved lab_provider_id, same VerifiedLabOwner
+// check UpsertTest already uses. `patientName` has no resolver in this
+// backend package (see the Go doc comment) — surfaced as the raw patient id
+// pending a proper name-lookup follow-up, not fabricated.
+interface ProviderOrderWire {
+  id: string;
+  patient_id: string;
+  state: string;
+  collection_method: 'HOME' | 'WALK_IN';
+  created_at: string;
+  sample_barcode?: string;
+  test_names: string[];
+  has_critical: boolean;
 }
 
 export async function getProviderOrders(): Promise<ProviderOrderRow[]> {
@@ -825,20 +869,63 @@ export async function getProviderOrders(): Promise<ProviderOrderRow[]> {
     await delay();
     return MOCK_PROVIDER_ORDERS;
   }
-  const { data } = await api.get<ProviderOrderRow[]>(`${LAB_API}/provider/orders`);
-  return data;
+  const providerId = await resolveMyLabProviderId();
+  if (!providerId) return [];
+  const { data } = await api.get<{ orders?: ProviderOrderWire[] }>(`${LAB_API}/provider/orders`, {
+    params: { lab_provider_id: providerId },
+  });
+  return (data.orders ?? []).map((o) => ({
+    orderId: o.id,
+    patientName: o.patient_id,
+    status: o.state as ProviderOrderRow['status'],
+    testSummary: o.test_names.join(', '),
+    collectionMode: o.collection_method === 'HOME' ? 'home' : 'walk_in',
+    sampleBarcode: o.sample_barcode,
+    createdAt: o.created_at,
+    hasCritical: o.has_critical,
+  }));
 }
 
+// `${LAB_API}/provider/orders/:id/accession` was also never implemented — the
+// real endpoint is `POST /samples/:id/accession` (a SAMPLE id, not an order
+// id — see handler.go Accession, which reads c.Param("id") as sampleID and
+// calls Service.Accession(scientistID, sampleID, ...)), and it binds
+// {scanned_barcode, note}, not this screen's {orderId, barcode, conditionOk}.
+// The sample id is resolved via the order's custody trail: Collect() creates
+// the sample row AND its first custody event in the same transaction
+// (service.go), so by the time accession is reachable (only after
+// SAMPLE_COLLECTED), the trail always has at least one entry naming it.
+//
+// `conditionOk` has no equivalent on Accession itself — a barcode mismatch is
+// what the real endpoint treats as a breach (verifyBarcodeScan), not a
+// separate flag. A scientist judging the physical sample unacceptable despite
+// a matching barcode is a distinct concern with its own endpoint
+// (POST /samples/:id/breach, {reason}) — called as a follow-up when the
+// barcode matched but conditionOk is explicitly false.
 export async function accessionSample(input: AccessionInput): Promise<{ ok: true; status: 'ACCESSIONED' | 'breached' }> {
   if (USE_MOCK) {
     await delay();
     return { ok: true, status: input.conditionOk ? 'ACCESSIONED' : 'breached' };
   }
-  const { data } = await api.post<{ ok: true; status: 'ACCESSIONED' | 'breached' }>(
-    `${LAB_API}/provider/orders/${input.orderId}/accession`,
-    input,
+  const { data: custody } = await api.get<{ custody?: Array<{ sample_id: string }> }>(
+    `${LAB_API}/orders/${input.orderId}/custody`,
   );
-  return data;
+  const sampleId = custody.custody?.[0]?.sample_id;
+  if (!sampleId) throw new Error('lab: no sample recorded for this order yet');
+
+  const { data: accessioned } = await api.post<{ sample: { state: string } }>(
+    `${LAB_API}/samples/${sampleId}/accession`,
+    { scanned_barcode: input.barcode, note: input.note },
+  );
+  const barcodeStatus: 'ACCESSIONED' | 'breached' = accessioned.sample.state === 'ACCESSIONED' ? 'ACCESSIONED' : 'breached';
+
+  if (input.conditionOk === false && barcodeStatus === 'ACCESSIONED') {
+    await api.post(`${LAB_API}/samples/${sampleId}/breach`, {
+      reason: input.note || 'Sample condition flagged unacceptable at accession',
+    });
+    return { ok: true, status: 'breached' };
+  }
+  return { ok: true, status: barcodeStatus };
 }
 
 export async function enterResult(input: ResultEntryInput): Promise<LabResult> {

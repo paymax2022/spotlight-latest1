@@ -832,6 +832,65 @@ func (s *Service) Cancel(ctx context.Context, patientID, orderID, reason string)
 	return out, nil
 }
 
+// ListProviderOrders is the lab-staff order list — the operational counterpart
+// to AdminListOrders (admin.go), but object-level authZ'd to a verified OWNER
+// of providerID rather than platform-admin RBAC (health.lab.orders). Never
+// trusts the caller-supplied providerID at face value: VerifiedLabOwner
+// re-checks ownership server-side even though the client only ever discovers
+// its own provider id via the applications API (defence in depth against a
+// forged id). hasCritical is read straight from the order's own state — an
+// order in StateEscalated IS the "critical result awaiting escalation" signal,
+// no separate join to lab_results needed.
+//
+// patientID is surfaced as-is, not a resolved name — this package has no
+// cross-schema user-lookup today (name resolution for other lists in this app
+// happens client-side against user_profiles); resolving a display name here is
+// a follow-up, not attempted in this pass.
+func (s *Service) ListProviderOrders(ctx context.Context, ownerID, providerID string) ([]ProviderOrderSummary, error) {
+	if providerID == "" {
+		return nil, fmt.Errorf("lab: lab_provider_id required")
+	}
+	if s.prov != nil {
+		ok, err := s.prov.VerifiedLabOwner(ctx, ownerID, providerID)
+		if err != nil {
+			return nil, err
+		}
+		if !ok {
+			return nil, fmt.Errorf("lab: not a verified owner of this lab (HL-2)")
+		}
+	}
+	const q = `
+		SELECT o.id, o.patient_id, o.state, o.collection_method, o.created_at, sm.barcode_ref
+		FROM lab_orders o
+		LEFT JOIN lab_samples sm ON sm.order_id = o.id
+		WHERE o.lab_provider_id = $1
+		ORDER BY o.created_at DESC LIMIT 200`
+	rows, err := s.db.Query(ctx, q, providerID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []ProviderOrderSummary
+	for rows.Next() {
+		var r ProviderOrderSummary
+		var state, method string
+		if err := rows.Scan(&r.ID, &r.PatientID, &state, &method, &r.CreatedAt, &r.SampleBarcode); err != nil {
+			return nil, err
+		}
+		r.State = OrderState(state)
+		r.CollectionMethod = CollectionMethod(method)
+		r.HasCritical = r.State == StateEscalated
+		lines, _ := s.loadLines(ctx, r.ID)
+		names := make([]string, 0, len(lines))
+		for _, l := range lines {
+			names = append(names, l.TestName)
+		}
+		r.TestNames = names
+		out = append(out, r)
+	}
+	return out, nil
+}
+
 // Get returns an order with object-level authZ: the patient, the owning lab, or an
 // admin may read. HL-8: a patient reads only their own order/results.
 func (s *Service) Get(ctx context.Context, requesterID, orderID string, isAdmin bool) (*Order, error) {
