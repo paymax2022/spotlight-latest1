@@ -37,7 +37,7 @@ import type {
 
 // Re-export the shared money formatter so Section B screens can import it here.
 export { formatKobo } from '@/api/doctor.api';
-import { DOCTOR_USE_MOCK, doctorGet, doctorPost, doctorPut } from '@/api/doctor.client';
+import { DOCTOR_USE_MOCK, doctorGet, doctorPost, doctorPut, doctorUploadFile } from '@/api/doctor.client';
 
 // Simulate network latency so loading states are exercised in the UI.
 const wait = <T>(value: T, ms = 350): Promise<T> =>
@@ -248,6 +248,15 @@ export async function saveProfileDraft(input: SaveProfileDraftInput): Promise<Sa
   return doctorPut<SaveProfileDraftResult>('/profile/draft', input, input.idempotencyKey);
 }
 
+// POST /profile/photo (internal/doctor Service.SetProfilePhoto) requires
+// {photoUrl}, binding:"required" — the live branch used to post {uri,
+// fileName, mimeType} straight through with no upload ever happening, so this
+// 400'd on the missing field every time, on top of never reaching R2 at all.
+// Now: presign, PUT the real binary, then record the resulting object key.
+// SetProfilePhoto's response is the whole doctor_profiles row, not an
+// UploadResult — the caller only needs confirmation the write succeeded, so
+// the result is built from what's already known rather than parsed from a
+// response shape this endpoint was never going to match.
 export async function uploadProfilePhoto(input: UploadProfilePhotoInput): Promise<UploadResult> {
   if (DOCTOR_USE_MOCK) {
     const file: UploadedFile = {
@@ -256,10 +265,23 @@ export async function uploadProfilePhoto(input: UploadProfilePhotoInput): Promis
     };
     return wait({ file }, 600);
   }
-  // Live: backend presigns R2 + records the metadata. See DOCTOR_GO_LIVE.md.
-  return doctorPost<UploadResult>('/profile/photo', input, input.idempotencyKey);
+  const mimeType = input.mimeType ?? 'image/jpeg';
+  const objectKey = await doctorUploadFile('profile_photo', { ...input, mimeType });
+  await doctorPost<unknown>('/profile/photo', { photoUrl: objectKey }, input.idempotencyKey);
+  return {
+    file: {
+      id: objectKey, uri: input.uri, fileName: input.fileName,
+      mimeType: input.mimeType, uploadedAt: new Date().toISOString(),
+    },
+  };
 }
 
+// POST /profile/documents (internal/doctor Service.UploadProfileDocument)
+// requires `docType`, binding:"required", and stores `fileUrl` — the live
+// branch sent `{type, uri, fileName, mimeType}`, so `docType` was always
+// absent (400) and `fileUrl` never populated even had it not been. Same fix
+// as uploadProfilePhoto: presign, PUT the real binary, record the object key
+// under the field names the backend actually binds.
 export async function uploadDocument(input: UploadDocumentInput): Promise<UploadResult> {
   if (DOCTOR_USE_MOCK) {
     void input.type;
@@ -269,8 +291,17 @@ export async function uploadDocument(input: UploadDocumentInput): Promise<Upload
     };
     return wait({ file }, 600);
   }
-  // Live: backend presigns R2 + records the metadata. See DOCTOR_GO_LIVE.md.
-  return doctorPost<UploadResult>('/profile/documents', input, input.idempotencyKey);
+  const mimeType = input.mimeType ?? 'application/octet-stream';
+  const objectKey = await doctorUploadFile('document', { ...input, mimeType });
+  await doctorPost<unknown>('/profile/documents', {
+    docType: input.type, fileUrl: objectKey, fileName: input.fileName, mimeType,
+  }, input.idempotencyKey);
+  return {
+    file: {
+      id: objectKey, uri: input.uri, fileName: input.fileName,
+      mimeType: input.mimeType, uploadedAt: new Date().toISOString(),
+    },
+  };
 }
 
 export async function saveBankAccount(input: SaveBankAccountInput): Promise<SaveBankAccountResult> {

@@ -13,6 +13,8 @@ import { SectionCard, StateView, WizardProgress, UploadField, EditableListCard }
 import type { UploadFieldState } from '@/features/doctor/components';
 import { useProfileDraft, useUploadDocument, useSaveProfileDraft } from '@/features/doctor/hooks';
 import type { UploadedFile } from '@/types/doctor.profile';
+import { pickFileForField } from '@/features/registration/utils/filePicker';
+import type { PickedUpload } from '@/features/registration/types/registration.types';
 
 export default function CertificatesScreen() {
   const { data: draft, isLoading, isError, refetch } = useProfileDraft();
@@ -23,6 +25,7 @@ export default function CertificatesScreen() {
   const [adding, setAdding] = useState(false);
   const [state, setState] = useState<UploadFieldState>('empty');
   const [fileName, setFileName] = useState<string | undefined>();
+  const [picked, setPicked] = useState<PickedUpload>();
   const [error, setError] = useState<string>();
 
   useEffect(() => {
@@ -31,20 +34,24 @@ export default function CertificatesScreen() {
 
   const certs = list ?? [];
 
-  const pick = () => {
+  const pick = async () => {
     setError(undefined);
-    setFileName(`certificate-${Date.now()}.pdf`);
+    const file = await pickFileForField('.pdf,.jpg,.jpeg,.png');
+    if (!file) return;
+    setPicked(file);
+    setFileName(file.name);
     setState('selected');
   };
 
   const doUpload = async () => {
-    if (!fileName) return;
+    if (!picked) return;
     setState('uploading');
     try {
-      const res = await upload.mutateAsync({ type: 'certificate', uri: `file:///picked/${fileName}`, fileName, mimeType: 'application/pdf' });
+      const res = await upload.mutateAsync({ type: 'certificate', uri: picked.uri, fileName: picked.name, mimeType: picked.mimeType });
       setList((prev) => [...(prev ?? []), res.file]);
       setState('empty');
       setFileName(undefined);
+      setPicked(undefined);
       setAdding(false);
     } catch {
       setState('error');

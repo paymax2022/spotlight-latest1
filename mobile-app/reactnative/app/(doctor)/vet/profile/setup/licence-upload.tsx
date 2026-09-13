@@ -11,6 +11,9 @@ import { SectionCard, StateView, WizardProgress, UploadField } from '@/features/
 import type { UploadFieldState } from '@/features/doctor/components';
 import { useVetProfileDraft, useVetDocumentSlots, useSaveVetProfileDraft } from '@/features/doctor/hooks';
 import type { UploadedFile } from '@/types/doctor.batch1';
+import { pickFileForField } from '@/features/registration/utils/filePicker';
+import type { PickedUpload } from '@/features/registration/types/registration.types';
+import { DOCTOR_USE_MOCK, doctorUploadFile } from '@/api/doctor.client';
 
 export default function VetLicenceUploadScreen() {
   const { data: draft } = useVetProfileDraft();
@@ -21,26 +24,41 @@ export default function VetLicenceUploadScreen() {
   const existing = draft?.licence.licenceFile ?? slot?.file;
   const [state, setState] = useState<UploadFieldState>(existing ? 'uploaded' : 'empty');
   const [fileName, setFileName] = useState<string | undefined>(existing?.fileName);
+  const [picked, setPicked] = useState<PickedUpload>();
   const [uploadErr, setUploadErr] = useState<string>();
 
-  const pick = () => {
+  const pick = async () => {
     setUploadErr(undefined);
-    setFileName(`vet-licence-${Date.now()}.pdf`);
+    const file = await pickFileForField('.pdf,.jpg,.jpeg,.png');
+    if (!file) return;
+    setPicked(file);
+    setFileName(file.name);
     setState('selected');
   };
 
-  // Phase A stubs the picker: mark uploaded locally; the file persists on Continue.
-  const doUpload = () => setState('uploaded');
+  // The real upload (presign + PUT to R2) happens here rather than in
+  // handleNext, so the UploadField's own uploading/error states reflect it.
+  const doUpload = async () => {
+    if (!picked) return;
+    setState('uploading');
+    try {
+      if (!DOCTOR_USE_MOCK) await doctorUploadFile('document', { uri: picked.uri, fileName: picked.name, mimeType: picked.mimeType });
+      setState('uploaded');
+    } catch {
+      setState('error');
+      setUploadErr('Upload failed. Please try again.');
+    }
+  };
 
   const canContinue = state === 'uploaded';
 
   const handleNext = async () => {
-    if (!draft || !fileName) return;
+    if (!draft || !picked) return;
     const file: UploadedFile = {
       id: `vet-lic-${Date.now()}`,
-      uri: `file:///picked/${fileName}`,
-      fileName,
-      mimeType: 'application/pdf',
+      uri: picked.uri,
+      fileName: picked.name,
+      mimeType: picked.mimeType,
       uploadedAt: new Date().toISOString(),
     };
     try {

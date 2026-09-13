@@ -12,6 +12,8 @@ import { SectionCard, StateView, WizardProgress, UploadField } from '@/features/
 import type { UploadFieldState } from '@/features/doctor/components';
 import { useDocumentSlots, useUploadDocument } from '@/features/doctor/hooks';
 import { ID_TYPE_OPTIONS } from '@/features/doctor/constants';
+import { pickFileForField } from '@/features/registration/utils/filePicker';
+import type { PickedUpload } from '@/features/registration/types/registration.types';
 
 export default function GovernmentIdScreen() {
   const { data: slots, isLoading, isError, refetch } = useDocumentSlots();
@@ -21,19 +23,23 @@ export default function GovernmentIdScreen() {
   const [idType, setIdType] = useState<string | undefined>();
   const [state, setState] = useState<UploadFieldState>(slot?.file ? 'uploaded' : 'empty');
   const [fileName, setFileName] = useState<string | undefined>(slot?.file?.fileName);
+  const [picked, setPicked] = useState<PickedUpload>();
   const [error, setError] = useState<string>();
 
-  const pick = () => {
+  const pick = async () => {
     setError(undefined);
-    setFileName(`government-id-${Date.now()}.jpg`);
+    const file = await pickFileForField('.jpg,.jpeg,.png,.pdf');
+    if (!file) return;
+    setPicked(file);
+    setFileName(file.name);
     setState('selected');
   };
 
   const doUpload = async () => {
-    if (!fileName) return;
+    if (!picked) return;
     setState('uploading');
     try {
-      await upload.mutateAsync({ type: 'government_id', uri: `file:///picked/${fileName}`, fileName, mimeType: 'image/jpeg' });
+      await upload.mutateAsync({ type: 'government_id', uri: picked.uri, fileName: picked.name, mimeType: picked.mimeType });
       setState('uploaded');
     } catch {
       setState('error');

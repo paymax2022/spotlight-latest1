@@ -399,9 +399,31 @@ export async function getSupportMessages(threadId: string): Promise<SupportMessa
 }
 
 // ── Section AB ──
+// GET /vet/licence (internal/doctor GetVetLicence) returns Go's own
+// VetLicenceInfo{licenceNumber, verification} — a different struct from this
+// file's client-side VetLicenceInfo (doctor.batch7.ts, extending phase2's
+// LicenceInfo): {mdcnNumber, status, issuedAt, expiresAt, daysToExpiry,
+// councilName, vcnNumber} — all required. Note this is a THIRD, independent
+// VetLicenceInfo shape in this codebase (doctor.batch1.ts declares its own,
+// unrelated one for the profile builder) — a pre-existing type-duplication
+// issue, not something this fix consolidates.
+// `licenceNumber` is the only field with a real backend source (mapped to
+// both `mdcnNumber` and `vcnNumber` below). `status`/`issuedAt`/`expiresAt`/
+// `daysToExpiry` cannot be honestly computed: doctor_vet_profiles has no
+// expiry-date column at all, so there is nothing to derive an expiry warning
+// from. Defaulted to a "nothing due" reading rather than fabricating a
+// specific date, so this screen doesn't invent an expiry warning that isn't
+// real — flagged here rather than silently guessed, since fixing it for real
+// needs a schema column, not a client-side translation.
 export async function getVetLicence(): Promise<VetLicenceInfo> {
   if (DOCTOR_USE_MOCK) return wait(DEMO_VET_LICENCE);
-  return doctorGet<VetLicenceInfo>('/vet/licence');
+  const wire = await doctorGet<{ licenceNumber?: string; verification: string }>('/vet/licence');
+  const licenceNumber = wire.licenceNumber ?? '';
+  return {
+    mdcnNumber: licenceNumber, vcnNumber: licenceNumber,
+    councilName: 'Veterinary Council of Nigeria (VCN)',
+    status: 'valid', issuedAt: '', expiresAt: '', daysToExpiry: 0,
+  };
 }
 
 export async function getPrivacySettings(): Promise<DataPrivacySettings> {

@@ -13,6 +13,8 @@ import type { UploadFieldState } from '@/features/doctor/components';
 import { useProfileDraft, useUploadDocument, useSaveProfileDraft } from '@/features/doctor/hooks';
 import { ASSOCIATION_OPTIONS } from '@/features/doctor/constants';
 import type { UploadedFile } from '@/types/doctor.profile';
+import { pickFileForField } from '@/features/registration/utils/filePicker';
+import type { PickedUpload } from '@/features/registration/types/registration.types';
 
 export default function AssociationScreen() {
   const { data: draft, isLoading, isError, refetch } = useProfileDraft();
@@ -23,6 +25,7 @@ export default function AssociationScreen() {
   const [file, setFile] = useState<UploadedFile | undefined>();
   const [state, setState] = useState<UploadFieldState>('empty');
   const [fileName, setFileName] = useState<string | undefined>();
+  const [picked, setPicked] = useState<PickedUpload>();
   const [error, setError] = useState<string>();
 
   useEffect(() => {
@@ -33,17 +36,20 @@ export default function AssociationScreen() {
     }
   }, [draft, file]);
 
-  const pick = () => {
+  const pick = async () => {
     setError(undefined);
-    setFileName(`association-${Date.now()}.pdf`);
+    const pickedFile = await pickFileForField('.pdf,.jpg,.jpeg,.png');
+    if (!pickedFile) return;
+    setPicked(pickedFile);
+    setFileName(pickedFile.name);
     setState('selected');
   };
 
   const doUpload = async () => {
-    if (!fileName) return;
+    if (!picked) return;
     setState('uploading');
     try {
-      const res = await upload.mutateAsync({ type: 'association_membership', uri: `file:///picked/${fileName}`, fileName, mimeType: 'application/pdf' });
+      const res = await upload.mutateAsync({ type: 'association_membership', uri: picked.uri, fileName: picked.name, mimeType: picked.mimeType });
       setFile(res.file);
       setState('uploaded');
     } catch {
