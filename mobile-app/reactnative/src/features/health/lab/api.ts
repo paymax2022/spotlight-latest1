@@ -7,6 +7,7 @@
 
 import { api } from '@/api/client';
 import { USE_MOCK, HEALTH_API_BASE } from '../constants/health.constants';
+import { uploadProviderCredential, addProviderCredential } from '../api';
 import { Colors } from '@/constants/colors';
 import type {
   LabTest,
@@ -792,12 +793,12 @@ export async function getProviderOnboarding(): Promise<ProviderOnboardingState> 
   };
 }
 
-// NOT fixed here: like pharmacy, the generic API's AddCredential (the MLSCN
-// facility licence document) requires a real uploaded file's storage_key —
-// this screen only ever collected mlscnLicenseNo as a text field, with no
-// upload step. The licence number is echoed back for display but not
-// persisted server-side; a real fix needs a presign endpoint for this module
-// plus a document-picker step in this screen, same follow-up as pharmacy.
+// licenceFile: previously flagged as a real gap (same as pharmacy/vet had) —
+// this screen only ever collected the MLSCN licence NUMBER as a text field,
+// with no upload step, so AddCredential (which requires a real uploaded
+// file's storage_key) could never be called. Now uses the same shared
+// presign+upload helper (uploadProviderCredential/addProviderCredential,
+// src/features/health/api.ts) already built for pharmacy/vet.
 export async function submitProviderOnboarding(input: SubmitOnboardingInput): Promise<ProviderOnboardingState> {
   if (USE_MOCK) {
     await delay();
@@ -809,6 +810,10 @@ export async function submitProviderOnboarding(input: SubmitOnboardingInput): Pr
       domain: 'LAB', provider_type: 'lab', display_name: input.businessName,
     });
     app = created.data.application;
+  }
+  if (input.licenceFile) {
+    const storageKey = await uploadProviderCredential(app.id, input.licenceFile);
+    await addProviderCredential(app.id, { credType: 'MLSCN', referenceNo: input.mlscnLicenseNo, storageKey });
   }
   if (app.state === 'DRAFT' || app.state === 'NEEDS_INFO') {
     const submitted = await api.post<{ application: ProviderApplicationWire }>(`${PROVIDERS_API}/applications/${app.id}/submit`, {});
