@@ -23,6 +23,27 @@ func (s *Service) SaveListing(ctx context.Context, userID, listingID string) (*S
 	return s.repo.InsertSavedItem(ctx, userID, listingID, l.PriceKobo)
 }
 
+// ToggleSavedItem toggles a listing in the caller's wishlist. When saved=true,
+// adds it (no-op if already saved); when saved=false, removes it (no-op if not saved).
+func (s *Service) ToggleSavedItem(ctx context.Context, userID, listingID string, saved bool) (*SavedItem, error) {
+	if saved {
+		// Add to wishlist
+		l, err := s.repo.GetListing(ctx, listingID)
+		if err != nil {
+			return nil, err
+		}
+		// InsertSavedItem returns ALREADY_SAVED on conflict; caller may retry or ignore
+		return s.repo.InsertSavedItem(ctx, userID, listingID, l.PriceKobo)
+	} else {
+		// Remove from wishlist
+		if err := s.repo.DeleteSavedItem(ctx, userID, listingID); err != nil {
+			return nil, err
+		}
+		// Return empty SavedItem to indicate deleted
+		return &SavedItem{ListingID: listingID}, nil
+	}
+}
+
 // ─── Permanent deletion ──────────────────────────────────────────────────────
 
 // PurgeListing PERMANENTLY deletes a listing the caller owns. Irreversible, and

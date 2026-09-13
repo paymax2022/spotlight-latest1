@@ -370,6 +370,8 @@ func RegisterMarketplace(
 	// tree position (it would panic at registration). Functionally identical.
 	m.POST("/media/presign", h.PresignMedia)
 	// Saved items / wishlist (distinct from saved-searches above).
+	// New: PATCH to toggle; legacy: POST/DELETE still work for backwards compatibility.
+	m.PATCH("/listings/:id/save", h.ToggleSavedItem)
 	m.POST("/listings/:id/save", h.SaveListing)
 	m.DELETE("/listings/:id/save", h.UnsaveListing)
 	m.GET("/saved-items", h.ListSavedItems)
@@ -382,6 +384,12 @@ func RegisterMarketplace(
 	// Notification preferences (per-category toggles).
 	m.GET("/notification-prefs", h.GetNotificationPrefs)
 	m.PATCH("/notification-prefs", h.UpdateNotificationPrefs)
+	// Notifications feed (actual notifications, distinct from preferences).
+	m.GET("/notifications", h.ListNotifications)
+	m.GET("/notifications/unread-count", h.GetUnreadCount)
+	m.PATCH("/notifications/:id", h.MarkNotificationRead)
+	m.PATCH("/notifications/mark-all-read", h.MarkAllNotificationsRead)
+	m.DELETE("/notifications/:id", h.DeleteNotification)
 	// Meetup safe-spots (Transact agent's Meetup Mode).
 	m.GET("/meetup/safe-spots", h.MeetupSafeSpots)
 	// Followed sellers (§ Mobile-UX-Flows LD-005) — mkt_seller_follows.
