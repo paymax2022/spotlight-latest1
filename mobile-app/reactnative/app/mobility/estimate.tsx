@@ -86,7 +86,6 @@ export default function EstimateScreen() {
 
   const estimate = useRideEstimate();
   const request = useRideRequest();
-  const est: RideEstimate | undefined = estimate.data;
   // Store estimates for ALL service types so pricing is visible upfront
   const [allEstimates, setAllEstimates] = useState<Record<ServiceType, RideEstimate | undefined>>({
     economy: undefined,
@@ -365,7 +364,7 @@ export default function EstimateScreen() {
                       systemFareKobo={allEstimates[serviceType]!.systemFareKobo}
                       offerMinKobo={allEstimates[serviceType]!.offerMinKobo}
                       offerMaxKobo={allEstimates[serviceType]!.offerMaxKobo}
-                      value={offerKobo || est.systemFareKobo}
+                      value={offerKobo || allEstimates[serviceType]!.systemFareKobo}
                       onChange={setOfferKobo}
                       error={submitError}
                     />
