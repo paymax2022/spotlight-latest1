@@ -32,6 +32,7 @@ import {
   mockOrdersByRole,
   mockRiderOffers,
   mockAcceptOffer,
+  mockDeclineOffer,
   mockSetStatus,
   mockCancel,
   mockConfirmPickup,
@@ -493,6 +494,20 @@ export async function acceptOffer(orderId: string, idempotencyKey: string): Prom
       await api.post(`${BASE}/orders/${encodeURIComponent(orderId)}/accept`, {}, idemHeader(idempotencyKey)),
     ),
   );
+}
+
+/**
+ * Rider declines an offered delivery. No money moves; the order stays `ready`
+ * and is auto re-dispatched to the next nearest rider server-side.
+ * POST `${BASE}/orders/:id/decline`.
+ */
+export async function declineOffer(orderId: string): Promise<void> {
+  if (USE_MOCK) {
+    await delay(350);
+    mockDeclineOffer(orderId);
+    return;
+  }
+  await api.post(`${BASE}/orders/${encodeURIComponent(orderId)}/decline`, {});
 }
 
 /** Rider confirms pickup at the restaurant. POST `${BASE}/orders/:id/pickup`. */

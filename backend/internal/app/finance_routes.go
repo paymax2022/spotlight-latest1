@@ -1591,11 +1591,12 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		// Rider / delivery lifecycle. Marking an order "ready" (via the status
 		// endpoint) auto-dispatches to nearby available riders; the first to
 		// accept wins, picks up, then confirms handoff with the delivery code.
-		restGroup.POST("/orders/:orderId/assign", restaurantHandler.AssignRider)     // manual offer (fallback)
-		restGroup.POST("/orders/:orderId/dispatch", restaurantHandler.Redispatch)    // owner re-runs auto-dispatch
-		restGroup.POST("/orders/:orderId/accept", restaurantHandler.AcceptDelivery)  // rider claims the delivery
-		restGroup.POST("/orders/:orderId/pickup", restaurantHandler.ConfirmPickup)   // rider confirms pickup
-		restGroup.POST("/orders/:orderId/handoff", restaurantHandler.ConfirmHandoff) // rider confirms drop-off (code)
+		restGroup.POST("/orders/:orderId/assign", restaurantHandler.AssignRider)      // manual offer (fallback)
+		restGroup.POST("/orders/:orderId/dispatch", restaurantHandler.Redispatch)     // owner re-runs auto-dispatch
+		restGroup.POST("/orders/:orderId/accept", restaurantHandler.AcceptDelivery)   // rider claims the delivery
+		restGroup.POST("/orders/:orderId/decline", restaurantHandler.DeclineDelivery) // rider declines; auto re-dispatched
+		restGroup.POST("/orders/:orderId/pickup", restaurantHandler.ConfirmPickup)    // rider confirms pickup
+		restGroup.POST("/orders/:orderId/handoff", restaurantHandler.ConfirmHandoff)  // rider confirms drop-off (code)
 		restGroup.POST("/orders/:orderId/location", restaurantHandler.PostLocation)
 		restGroup.GET("/rider/offers", restaurantHandler.RiderOffers)
 		restGroup.GET("/rider/active", restaurantHandler.RiderActive)

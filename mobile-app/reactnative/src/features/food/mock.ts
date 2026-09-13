@@ -370,9 +370,11 @@ interface MockState {
   messages: Record<string, ChatMessage[]>;
   /** ms timestamp each order was last advanced. */
   advancedAt: Record<string, number>;
+  /** Order ids the demo rider has declined — hidden from mockRiderOffers (mirrors DeclineDelivery). */
+  declinedOffers: Set<string>;
 }
 
-export const mockStore: MockState = { orders: {}, messages: {}, advancedAt: {} };
+export const mockStore: MockState = { orders: {}, messages: {}, advancedAt: {}, declinedOffers: new Set() };
 
 const MOCK_RIDER = {
   id: 'rider-1',
@@ -567,7 +569,9 @@ export function mockRiderOffers(): RiderOffer[] {
   // Auto-dispatch: surface 'ready' orders that are searching for a rider and
   // not yet assigned. This mirrors the server's auto-populated rider offers.
   const open = Object.values(mockStore.orders)
-    .filter((o) => !o.rider && o.status === 'ready' && o.dispatchStatus === 'searching')
+    .filter(
+      (o) => !o.rider && o.status === 'ready' && o.dispatchStatus === 'searching' && !mockStore.declinedOffers.has(o.id),
+    )
     .map<RiderOffer>((o) => ({
       orderId: o.id,
       restaurantName: o.restaurantName,
@@ -617,6 +621,17 @@ export function mockAcceptOffer(orderId: string): Order {
   mockStore.advancedAt[orderId] = Date.now() + 600_000;
   pushSystem(orderId, `${MOCK_RIDER.name} accepted the delivery.`);
   return { ...order };
+}
+
+/**
+ * Rider declines an offer — mirrors the real `DeclineDelivery`: no money moves,
+ * the order stays `ready`/`searching` and is simply hidden from this rider's
+ * offer list, as if auto re-dispatched to someone else.
+ */
+export function mockDeclineOffer(orderId: string): void {
+  mockStore.declinedOffers.add(orderId);
+  const order = mockStore.orders[orderId];
+  if (order) pushSystem(orderId, 'A rider declined this delivery — searching for another rider.');
 }
 
 /** Rider confirms pickup at the restaurant → picked_up. */

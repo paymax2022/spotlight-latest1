@@ -372,6 +372,20 @@ export function useAcceptOffer() {
   });
 }
 
+/** Rider declines an offered delivery — server auto re-dispatches to the next nearest rider. */
+export function useDeclineOffer() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (orderId: string) => food.declineOffer(orderId),
+    onError: (e) => {
+      throw toFoodError(e);
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: [KEY, 'rider', 'offers'] });
+    },
+  });
+}
+
 /** Restaurant assigns a rider to a ready order. */
 export function useAssignRider() {
   const qc = useQueryClient();

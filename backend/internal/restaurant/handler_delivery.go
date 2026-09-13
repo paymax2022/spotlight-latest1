@@ -418,6 +418,18 @@ func (h *Handler) AcceptDelivery(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"ok": true})
 }
 
+// DeclineDelivery → POST /restaurant/orders/:orderId/decline (offered rider
+// declines; if no other offer is claimed, the order is auto re-dispatched to
+// fresh nearby riders — DP-002).
+func (h *Handler) DeclineDelivery(c *gin.Context) {
+	riderID := c.GetString("user_id")
+	if err := h.svc.DeclineDelivery(c.Request.Context(), c.Param("orderId"), riderID); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"ok": true})
+}
+
 // ConfirmPickup → POST /restaurant/orders/:orderId/pickup (assigned rider picks up).
 func (h *Handler) ConfirmPickup(c *gin.Context) {
 	riderID := c.GetString("user_id")
