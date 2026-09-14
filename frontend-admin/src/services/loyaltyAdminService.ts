@@ -6,7 +6,7 @@
 // (catalog cash value, liability valuation) is BIGINT kobo via formatNaira.
 // Surfaces NL-4 (points ≠ cash), NL-8 (append-only ledger), NL-12 (immutable audit).
 
-import { env } from '@/config/env';
+import { apiRoot } from '@/config/env';
 import { operationKey } from './idempotency';
 import { resolveUseMock } from '@/config/useMock';
 import type {
@@ -28,8 +28,17 @@ export const USE_MOCK = resolveUseMock(process.env.NEXT_PUBLIC_LOYALTY_USE_MOCK)
 /** Named so the fixture banner can cite the exact switch. */
 export const USE_MOCK_ENV = 'NEXT_PUBLIC_LOYALTY_USE_MOCK';
 
+// Verified against backend/internal/app/top5_p2_routes.go RegisterLoyalty:
+//   RegisterLoyalty(finance.Group("/loyalty"), adminGroupTop5(r, "/api/loyalty/admin"), pool, rbac)
+// — the admin group really is rooted at /api/loyalty/admin.
+//
+// This used to be `env.apiBaseUrl.replace(/\/api\/v1\/?$/, '/api/loyalty/admin')`,
+// which was correct only while apiBaseUrl ended in /api/v1. It no longer does —
+// it is the same-origin proxy path (<origin>/api/admin-proxy) — so the regex
+// stopped matching, the replace was a no-op, and every live call went to the
+// bare proxy root and 404'd. Same shape as apiRoot() usage in insuranceAdminService.
 function adminBase(): string {
-  return env.apiBaseUrl.replace(/\/api\/v1\/?$/, '/api/loyalty/admin');
+  return `${apiRoot()}/api/loyalty/admin`;
 }
 function authHeaders(): Record<string, string> {
   if (typeof window === 'undefined') return {};

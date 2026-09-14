@@ -8,16 +8,24 @@
 // append-only — points accrue only as a side effect of live-module actions, never
 // via a self-award endpoint (NL-4). Ledger listing here is mock-only.
 
-import { env } from '@/config/env';
+import { apiRoot } from '@/config/env';
 import { resolveUseMock } from '@/config/useMock';
 
 export const USE_MOCK = resolveUseMock(process.env.NEXT_PUBLIC_POINTS_ADMIN_USE_MOCK);
 /** Named so the fixture banner can cite the exact switch. */
 export const USE_MOCK_ENV = 'NEXT_PUBLIC_POINTS_ADMIN_USE_MOCK';
 
-// Points admin oversight lives under the loyalty admin group at /api/loyalty/admin/*.
+// Points admin oversight lives under the loyalty admin group at /api/loyalty/admin/*
+// (verified against backend/internal/app/top5_p2_routes.go RegisterLoyalty, same
+// group loyaltyAdminService.ts uses).
+//
+// This used to be `env.apiBaseUrl.replace(/\/api\/v1\/?$/, '/api/loyalty/admin')`,
+// which was correct only while apiBaseUrl ended in /api/v1. It no longer does —
+// it is the same-origin proxy path (<origin>/api/admin-proxy) — so the regex
+// stopped matching, the replace was a no-op, and the one live call
+// (lookupMembership) went to the bare proxy root and 404'd.
 function adminBase(): string {
-  return env.apiBaseUrl.replace(/\/api\/v1\/?$/, '/api/loyalty/admin');
+  return `${apiRoot()}/api/loyalty/admin`;
 }
 function authHeaders(): Record<string, string> {
   if (typeof window === 'undefined') return {};
