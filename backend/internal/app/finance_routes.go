@@ -475,9 +475,19 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		// documented path 404'd and only the doubled one answered. A provider
 		// cannot discover that, so every real MyCover delivery would have been
 		// lost, and silently: the provider sees a 404 and we see nothing at all.
-		insuranceWebhooks := r.Group("")                                                // provider-signed, no user auth
-		insuranceSvcs = RegisterInsurance(finance, insuranceAdmin, pool, rbac)          // gateway/catalog/policy/quote/saga/consent
-		RegisterInsuranceClaims(finance, insuranceAdmin, insuranceWebhooks, pool, rbac) // claims/embedded/webhooks/reconciliation
+		insuranceWebhooks := r.Group("") // provider-signed, no user auth
+		// Backend-owned presigned R2 uploads for application-form identity/evidence
+		// photos (image_url / id_image_url / device_about_image_url). Unconfigured
+		// creds → the upload endpoint fails closed with 503 (never a fabricated URL).
+		insurancePresigner := r2.New(r2.Config{
+			AccountEndpoint: cfg.R2AccountEndpoint,
+			Bucket:          cfg.R2Bucket,
+			AccessKeyID:     cfg.R2AccessKeyID,
+			SecretAccessKey: cfg.R2SecretAccessKey,
+			Region:          cfg.R2Region,
+		})
+		insuranceSvcs = RegisterInsurance(finance, insuranceAdmin, pool, rbac, insurancePresigner, cfg.R2Bucket) // gateway/catalog/policy/quote/saga/consent
+		RegisterInsuranceClaims(finance, insuranceAdmin, insuranceWebhooks, pool, rbac)                          // claims/embedded/webhooks/reconciliation
 	}
 
 	// --- Hotel Booking / Stays (Property Suite, dual-rail supply gateway) ---

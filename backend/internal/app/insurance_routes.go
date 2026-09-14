@@ -17,6 +17,7 @@ import (
 	"spotlight/backend/internal/insurance/gateway"
 	"spotlight/backend/internal/insurance/policy"
 	"spotlight/backend/internal/middleware"
+	"spotlight/backend/internal/platform/r2"
 	"spotlight/backend/internal/provider/mycover"
 	"spotlight/backend/internal/provider/octamile"
 	"spotlight/backend/internal/services"
@@ -52,7 +53,7 @@ type InsuranceServices struct {
 	Consent *consent.Service
 }
 
-func RegisterInsurance(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pgxpool.Pool, rbac services.RBACService) *InsuranceServices {
+func RegisterInsurance(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pgxpool.Pool, rbac services.RBACService, presigner *r2.Presigner, bucket string) *InsuranceServices {
 	if pool == nil {
 		log.Println("[insurance] nil pool — skipping insurance routes")
 		return nil
@@ -142,6 +143,7 @@ func RegisterInsurance(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pg
 	// signRef is nil for now — the certificate route returns the stored ref until
 	// the orchestrator injects the R2 signer. (TODO: wire r2 presign.)
 	policyHandler := policy.NewHandler(policySvc, nil)
+	uploadHandler := &insuranceUploadHandler{presigner: presigner, bucket: bucket}
 
 	// --- Member routes (/api/finance/insurance) ---
 	mg := member.Group("/insurance")
@@ -158,6 +160,11 @@ func RegisterInsurance(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pg
 	// NDPA consent (gate before any provider data-share).
 	mg.GET("/consent", consentHandler.Status)
 	mg.POST("/consent", consentHandler.Grant)
+	// Identity/evidence photo upload for form fields (image_url / id_image_url /
+	// device_about_image_url). MyCover fetches + content-checks the URL we send
+	// at quote/bind time, so this must return a publicly-fetchable link, not an
+	// opaque reference — see insurance_uploads.go.
+	mg.POST("/uploads", uploadHandler.Upload)
 	// Quotes.
 	mg.POST("/quotes", policyHandler.CreateQuote)
 	mg.GET("/quotes/:id", policyHandler.GetQuote)

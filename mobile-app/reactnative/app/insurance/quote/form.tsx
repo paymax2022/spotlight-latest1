@@ -59,6 +59,17 @@ export default function ApplicationForm() {
   const [values, setValues] = useState<FormValues>(existing?.values ?? {});
   const [prefilled, setPrefilled] = useState(false);
 
+  // Consent is per product and per NDPA version. These hooks (and the effect
+  // below) MUST run unconditionally on every render — they used to sit after
+  // the loading/error early-returns further down, so the component called a
+  // different number of hooks once product/schema finished loading than it
+  // did while loading, which is exactly the "Rendered more hooks than during
+  // the previous render" crash (Rules of Hooks). The effect itself simply
+  // no-ops until the product code is known.
+  const [hasConsent, setHasConsent] = useState<boolean | null>(null);
+  const [consentTicked, setConsentTicked] = useState(false);
+  const [consentError, setConsentError] = useState<string | null>(null);
+
   // The schema may be embedded in the product payload or served separately;
   // whichever arrives first is what we render.
   const activeSchema = schema.data ?? product.data?.formSchema ?? null;
@@ -89,6 +100,23 @@ export default function ApplicationForm() {
     () => (activeSchema ? declaredValueKobo(activeSchema.fields, values) : 0),
     [activeSchema, values],
   );
+
+  // Consent is per product and per NDPA version, so it is asked once per
+  // product and skipped silently for anyone who has already given it. Reads
+  // product.data?.code directly (rather than the later `p.code`) because this
+  // effect must run before the loading/error guards below, when product.data
+  // may still be undefined — it simply no-ops until the code is known.
+  const productCode = product.data?.code;
+  useEffect(() => {
+    if (!productCode) return;
+    let cancelled = false;
+    // Unknown status must not read as "already consented" — default closed.
+    setHasConsent(null);
+    getConsentStatus(productCode)
+      .then((ok) => { if (!cancelled) setHasConsent(ok); })
+      .catch(() => { if (!cancelled) setHasConsent(false); });
+    return () => { cancelled = true; };
+  }, [productCode]);
 
   const serverFieldErrors = (quote.error as unknown as InsuranceError | null)?.fieldErrors;
 
@@ -122,22 +150,6 @@ export default function ApplicationForm() {
   }
 
   const p = product.data;
-
-  // Consent is per product and per NDPA version, so it is asked once per product
-  // and skipped silently for anyone who has already given it.
-  const [hasConsent, setHasConsent] = useState<boolean | null>(null);
-  const [consentTicked, setConsentTicked] = useState(false);
-  const [consentError, setConsentError] = useState<string | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    // Unknown status must not read as "already consented" — default closed.
-    setHasConsent(null);
-    getConsentStatus(p.code)
-      .then((ok) => { if (!cancelled) setHasConsent(ok); })
-      .catch(() => { if (!cancelled) setHasConsent(false); });
-    return () => { cancelled = true; };
-  }, [p.code]);
 
   const submit = async (submittedValues: FormValues) => {
     if (!activeSchema) return;
@@ -201,6 +213,25 @@ export default function ApplicationForm() {
                 share what they ask for.
               </Text>
             </View>
+            {hasConsent === false ? (
+              <View style={styles.consentBox}>
+                <Pressable
+                  style={styles.consentRow}
+                  onPress={() => { setConsentTicked((v) => !v); setConsentError(null); }}
+                  accessibilityRole="checkbox"
+                  accessibilityState={{ checked: consentTicked }}
+                >
+                  <View style={[styles.checkbox, consentTicked && styles.checkboxOn]}>
+                    {consentTicked ? <Check size={14} color={Colors.onPrimary} strokeWidth={3} /> : null}
+                  </View>
+                  <Text style={styles.consentText}>
+                    <Text style={styles.consentEmphasis}>I consent</Text> to share these answers with{' '}
+                    {p.underwriter || 'the insurer'} to price and issue this policy.
+                  </Text>
+                </Pressable>
+                {consentError ? <Text style={styles.consentError}>{consentError}</Text> : null}
+              </View>
+            ) : null}
             {quote.isError ? (
               <View style={styles.bannerWrap}>
                 <InsuranceErrorBanner error={quote.error} />
