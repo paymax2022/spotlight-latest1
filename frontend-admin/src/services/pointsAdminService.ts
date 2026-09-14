@@ -2,7 +2,7 @@
 // Mock by default. Flip with NEXT_PUBLIC_POINTS_ADMIN_USE_MOCK=false to hit the live
 // Go backend. NOTE: the points admin surface is THIN — points are administered via
 // the loyalty admin group. The only relevant real admin route is
-// GET /api/loyalty/admin/loyalty/memberships/:userId (RBAC loyalty.read), which
+// GET /api/loyalty/admin/memberships/:userId (RBAC loyalty.read), which
 // returns a member's loyalty membership incl. points balance + tier. The member
 // reads points at /api/finance/points/{balance,catalog}. The points LEDGER is
 // append-only — points accrue only as a side effect of live-module actions, never
@@ -109,7 +109,7 @@ export async function listPointsLedger(opts?: { kind?: string; q?: string }): Pr
   return rows;
 }
 
-// ── Balances — real endpoint: GET /api/loyalty/admin/loyalty/memberships/:userId ─
+// ── Balances — real endpoint: GET /api/loyalty/admin/memberships/:userId ─────
 const MEMBERSHIPS: Record<string, PointsMembership> = {
   usr_2210: { user_id: 'usr_2210', tier: 'Gold', points_balance: 8_400, lifetime_points: 42_100, joined_at: iso(8_760) },
   usr_1980: { user_id: 'usr_1980', tier: 'Silver', points_balance: 1_200, lifetime_points: 12_800, joined_at: iso(4_380) },
@@ -121,5 +121,5 @@ export async function lookupMembership(userId: string): Promise<PointsMembership
     if (m) return { ...m };
     return { user_id: userId, tier: 'Bronze', points_balance: 0, lifetime_points: 0, joined_at: iso(720) };
   }
-  return getJson<PointsMembership>(`/loyalty/memberships/${encodeURIComponent(userId)}`);
+  return getJson<PointsMembership>(`/memberships/${encodeURIComponent(userId)}`);
 }

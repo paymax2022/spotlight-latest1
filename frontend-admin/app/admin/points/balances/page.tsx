@@ -24,7 +24,7 @@ export default function PointsBalancesPage() {
     <div style={{ padding: '0.5rem 0.5rem 2rem' }}>
       <PageHeader title="Member balances" subtitle="Look up a member's loyalty/points membership by user id." />
       <PointsTabs active="balances" />
-      <DisclosureNote>Live admin endpoint — <code>GET /api/loyalty/admin/loyalty/memberships/:userId</code> (RBAC <code>loyalty.read</code>). Returns the member's tier and points balance.</DisclosureNote>
+      <DisclosureNote>Live admin endpoint — <code>GET /api/loyalty/admin/memberships/:userId</code> (RBAC <code>loyalty.read</code>). Returns the member's tier and points balance.</DisclosureNote>
 
       <FilterBar>
         <div style={{ minWidth: 280 }}>
