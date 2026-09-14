@@ -31,7 +31,7 @@ export default function SprayDashboardPage() {
 
       <DisclosureNote>
         Thin admin surface — the only backend admin route is the per-event <strong>leaderboard</strong>
-        (<code>/api/spray/admin/spray/leaderboard/:contextRef</code>, RBAC <code>spray.read</code>) for AML oversight.
+        (<code>/api/p2p/admin/spray/leaderboard/:contextRef</code>, RBAC <code>spray.read</code>) for AML oversight.
         Spray enforces single / daily-amount / daily-count AML limits server-side. Payout settlement is not yet
         exposed on the backend admin surface (mock view).
       </DisclosureNote>
