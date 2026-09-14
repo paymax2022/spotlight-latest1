@@ -9,7 +9,7 @@
 // The member routes here are owner-scoped and answer an operator about the
 // handful of rows they personally own.
 
-import { env } from '@/config/env';
+import { apiRoot } from '@/config/env';
 import { ACTIVE_ORDER_STATUSES, ORDER_STATUSES, isTerminalOrderStatus } from '@/types/restaurantAdmin';
 import type {
   AdminDispatchPage,
@@ -54,12 +54,16 @@ import type {
 // indicate why. 709 outlets are currently in exactly that state.
 const USE_MOCK = (process.env.NEXT_PUBLIC_RESTAURANT_ADMIN_USE_MOCK ?? 'false').toLowerCase() === 'true';
 
+// apiBaseUrl is the same-origin admin-proxy path (<origin>/api/admin-proxy),
+// not a plain API root — the old `env.apiBaseUrl.replace(/\/api\/v1\/?$/, ...)`
+// here matched nothing once the proxy migration landed (apiBaseUrl stopped
+// ending in /api/v1), silently forwarding every "live" call to
+// <proxy>/api/finance/restaurant/... which never 404'd cleanly the same way but
+// still bypassed the intended root resolution. apiRoot() strips any trailing
+// /api/v1 from the proxy base and nothing else — see insuranceAdminService.ts
+// for the same regression.
 function base(): string {
-  // env.apiBaseUrl already ends with /api/v1; the restaurant module is mounted
-  // under /api/finance/restaurant. We strip the trailing /api/v1 segment so the
-  // module path is reachable regardless of how apiBaseUrl is configured.
-  const root = env.apiBaseUrl.replace(/\/api\/v1\/?$/, '');
-  return `${root}/api/finance/restaurant`;
+  return `${apiRoot()}/api/finance/restaurant`;
 }
 
 function authHeaders(): Record<string, string> {
@@ -331,13 +335,13 @@ export async function listOrders(params: AdminOrderQuery = {}): Promise<AdminOrd
 // The restaurant module root is /api/finance/restaurant (used for the CONSUMED
 // live rider-lifecycle + dispute routes). The proposed admin surface hangs off
 // /api/restaurant/admin (same root as the live delivery-config console).
+// Both used the same `env.apiBaseUrl.replace(/\/api\/v1\/?$/, ...)` pattern as
+// base() above, with the same silent-no-op regression — see that comment.
 function adminBase(): string {
-  const root = env.apiBaseUrl.replace(/\/api\/v1\/?$/, '');
-  return `${root}/api/restaurant/admin`;
+  return `${apiRoot()}/api/restaurant/admin`;
 }
 function financeBase(): string {
-  const root = env.apiBaseUrl.replace(/\/api\/v1\/?$/, '');
-  return `${root}/api/finance`;
+  return `${apiRoot()}/api/finance`;
 }
 
 async function reqAt<T>(url: string, init?: RequestInit): Promise<T> {
