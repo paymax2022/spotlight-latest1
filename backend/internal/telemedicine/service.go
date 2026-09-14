@@ -149,16 +149,6 @@ func (s *Service) ListDoctors(ctx context.Context, q ListDoctorsQuery) ([]Doctor
 		args = append(args, "%"+strings.ToLower(q.Search)+"%")
 		filters = append(filters, fmt.Sprintf("(LOWER(d.name) LIKE $%d OR LOWER(d.specialty) LIKE $%d)", len(args), len(args)))
 	}
-	if q.MinRating > 0 {
-		args = append(args, q.MinRating)
-		filters = append(filters, fmt.Sprintf("d.rating >= $%d", len(args)))
-	}
-	// Featured is a stored editorial flag, never derived. When nothing is
-	// featured this correctly returns an empty list and the app hides its
-	// Featured section — that is the intended outcome, not a failure.
-	if q.Featured {
-		filters = append(filters, "d.is_featured = TRUE")
-	}
 
 	orderBy := "d.name"
 	if q.TopRated {
@@ -166,21 +156,10 @@ func (s *Service) ListDoctors(ctx context.Context, q ListDoctorsQuery) ([]Doctor
 	}
 
 	where := strings.Join(filters, " AND ")
-	// bio and about are NULLABLE text columns read into PLAIN Go strings (Doctor.Bio
-	// and Doctor.About), unlike sub_specialty/avatar_url/mdcn_number/phone which are
-	// already *string and tolerate NULL. pgx fails the whole scan on either —
-	// "cannot scan NULL into *string" — and because that happens per-row inside the
-	// loop, ONE such doctor 500s the ENTIRE list rather than omitting itself. Every
-	// doctor in the local database has about=NULL, so the doctor list — the front
-	// door of telemedicine — returned 500 outright.
-	//
-	// bio has no NULLs today but the column allows them, so it is coalesced too
-	// rather than left as the next instance of this bug. Empty string matches the
-	// struct's `omitempty` JSON tags: an absent bio simply does not appear.
 	sql := fmt.Sprintf(`
-		SELECT d.id, d.user_id, d.name, d.specialty, d.sub_specialty, COALESCE(d.bio, ''), COALESCE(d.about, ''),
+		SELECT d.id, d.user_id, d.name, d.specialty, d.sub_specialty, d.bio, d.about,
 		       d.consult_fee_kobo, d.avatar_url, d.is_available, d.is_online, d.is_hmo_verified,
-		       d.experience_years, d.rating, d.review_count, d.patients_count, d.success_rate, d.is_featured,
+		       d.experience_years, d.rating, d.review_count, d.patients_count, d.success_rate,
 		       d.mdcn_number, d.phone, d.education, d.created_at
 		FROM doctors d
 		WHERE %s
@@ -198,9 +177,9 @@ func (s *Service) ListDoctors(ctx context.Context, q ListDoctorsQuery) ([]Doctor
 // GetDoctor returns a single doctor profile by ID.
 func (s *Service) GetDoctor(ctx context.Context, id string) (*Doctor, error) {
 	const q = `
-		SELECT d.id, d.user_id, d.name, d.specialty, d.sub_specialty, COALESCE(d.bio, ''), COALESCE(d.about, ''),
+		SELECT d.id, d.user_id, d.name, d.specialty, d.sub_specialty, d.bio, d.about,
 		       d.consult_fee_kobo, d.avatar_url, d.is_available, d.is_online, d.is_hmo_verified,
-		       d.experience_years, d.rating, d.review_count, d.patients_count, d.success_rate, d.is_featured,
+		       d.experience_years, d.rating, d.review_count, d.patients_count, d.success_rate,
 		       d.mdcn_number, d.phone, d.education, d.created_at
 		FROM doctors d WHERE d.id = $1`
 	rows, err := s.db.Query(ctx, q, id)
@@ -772,7 +751,7 @@ func scanDoctors(rows pgRows, platformFeeBp int) ([]Doctor, error) {
 		if err := rows.Scan(
 			&d.ID, &d.UserID, &d.Name, &d.Specialty, &subSpec, &d.Bio, &d.About,
 			&d.ConsultFeeKobo, &d.AvatarURL, &d.IsAvailable, &d.IsOnline, &d.IsHMOVerified,
-			&d.ExperienceYears, &d.Rating, &d.ReviewCount, &d.PatientsCount, &d.SuccessRate, &d.IsFeatured,
+			&d.ExperienceYears, &d.Rating, &d.ReviewCount, &d.PatientsCount, &d.SuccessRate,
 			&mdcn, &phone, &educationJSON, &d.CreatedAt,
 		); err != nil {
 			return nil, err

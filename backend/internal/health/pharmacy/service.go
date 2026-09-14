@@ -114,7 +114,6 @@ type Service struct {
 	rxItems    RxItems            // optional; nil ⇒ dispensed-item↔Rx match check is skipped (DP-002)
 	proofRec   ProofRecorder      // optional (DP-006); nil ⇒ proofs not stored (delivery still allowed)
 	proofVer   ProofVerifier      // optional (DP-006); nil ⇒ proofs recorded but not verified
-	rxLister   RxLister           // optional, injected via SetRxLister; nil ⇒ MyPrescriptions fails closed
 }
 
 func NewService(db *pgxpool.Pool, escrow EscrowHolder, rx RxGate, verifier RxVerifier, dispatch Dispatcher, prov ProviderGate, payout PayoutGate, audit Auditor) *Service {
@@ -127,45 +126,6 @@ func NewService(db *pgxpool.Pool, escrow EscrowHolder, rx RxGate, verifier RxVer
 
 // SetReviewCaseOpener injects the optional symptom-search seam at wiring time.
 func (s *Service) SetReviewCaseOpener(r ReviewCaseOpener) { s.reviews = r }
-
-// SetRxLister injects the optional "list my prescriptions" seam at wiring
-// time (mirrors SetReviewCaseOpener — added as a setter rather than a
-// NewService positional param so existing call sites, including the live-DB
-// test fixtures that construct a read-only Service with a run of nils,
-// need no change).
-func (s *Service) SetRxLister(r RxLister) { s.rxLister = r }
-
-// PrescriptionSummary is a patient's own prescription row for the pharmacy
-// "My Prescriptions" list — a narrow read model local to this package,
-// decoupled from healthrx's own Prescription type (mirrors the RxGate/
-// RxVerifier seam pattern: pharmacy never imports healthrx's concrete types).
-type PrescriptionSummary struct {
-	ID                 string    `json:"id"`
-	State              string    `json:"state"`
-	PrescriberID       string    `json:"prescriber_id"`
-	PharmacyProviderID *string   `json:"pharmacy_provider_id,omitempty"`
-	RejectReason       string    `json:"reject_reason"`
-	ItemCount          int       `json:"item_count"`
-	CreatedAt          time.Time `json:"created_at"`
-}
-
-// RxLister is the narrow seam into healthrx for the pharmacy "My
-// Prescriptions" list (GET /pharmacy/prescriptions) — the mobile client has
-// called this since the Sell group's pharmacy vertical was built, but no
-// route/handler/service method ever existed for it (only the single-item
-// GET /prescriptions/:id path existed, requiring an id the patient does not
-// yet have on first load).
-type RxLister interface {
-	ListForPatient(ctx context.Context, patientID string) ([]PrescriptionSummary, error)
-}
-
-// MyPrescriptions returns the caller's own prescriptions, most recent first.
-func (s *Service) MyPrescriptions(ctx context.Context, patientID string) ([]PrescriptionSummary, error) {
-	if s.rxLister == nil {
-		return nil, fmt.Errorf("pharmacy: rx lister not configured")
-	}
-	return s.rxLister.ListForPatient(ctx, patientID)
-}
 
 // CommissionRecorder is the nil-safe seam into the central Commission & Profit
 // module (§ profit registry). app-wiring injects a thin adapter over the finance

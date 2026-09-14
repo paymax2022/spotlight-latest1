@@ -44,6 +44,7 @@ export const SELL_KEYS = {
   boostTiers: ['mkt', 'sell', 'boost-tiers'] as const,
   boost: (id: string) => ['mkt', 'sell', 'boost', id] as const,
   boostQuote: (tier?: string, endsAt?: string) => ['mkt', 'sell', 'boost-quote', tier ?? '', endsAt ?? ''] as const,
+  insights: (id: string) => ['mkt', 'sell', 'insights', id] as const,
 };
 
 // ─── Current seller id (for GET /sellers/:id/listings) ───────────────────────
@@ -140,6 +141,12 @@ export const useResumeListing = () => useListingLifecycle(sellApi.resumeListing)
 export const useRenewListing = () => useListingLifecycle(sellApi.renewListing);
 export const useDeleteListing = () => useListingLifecycle(sellApi.deleteListing);
 
+// PERMANENT deletion — irreversible, and distinct from useDeleteListing which
+// only soft-removes. The server refuses (409 LISTING_HAS_HISTORY) when the
+// listing carries orders, boosts, offers or buyer threads, so callers must
+// surface the error message rather than assume success.
+export const usePurgeListing = () => useListingLifecycle(sellApi.purgeListing);
+
 // Bulk manage (LM-006). No batch endpoint exists, so this fans out over the
 // per-listing lifecycle calls and reports partial success. Uses allSettled so one
 // failure never aborts the rest; refreshes My Listings once at the end. Returns
@@ -168,6 +175,16 @@ export function useMarkSold() {
 // ─── Boosts (screens 16–17) ───────────────────────────────────────────────────
 export const useBoostTiers = () =>
   useQuery({ queryKey: SELL_KEYS.boostTiers, queryFn: sellApi.getBoostTiers, staleTime: 5 * 60_000 });
+
+// Seller performance for one listing. Short staleTime: a seller opening this
+// screen wants the current figures, not a cached snapshot from earlier today.
+export const useListingInsights = (id: string | null) =>
+  useQuery({
+    queryKey: SELL_KEYS.insights(id ?? ''),
+    queryFn: () => sellApi.getListingInsights(id as string),
+    enabled: !!id,
+    staleTime: 15_000,
+  });
 
 export const useBoost = (id: string | null) =>
   useQuery({

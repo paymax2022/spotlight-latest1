@@ -1,6 +1,6 @@
 // ── EdTech School-Fees — school-admin console service ─────────────────────────
 // Brownfield: copies academyAdminService.ts EXACTLY.
-//  • adminBase() rewrites env.apiBaseUrl (…/api/v1) → …/api/academy
+//  • adminBase() rewrites apiRoot() (the proxy origin, /api/v1 already stripped) → …/api/academy
 //  • authHeaders() attaches the admin Bearer token from localStorage
 //  • getJson/sendJson unwrap { data } and throw on non-2xx
 // Live calls target the academy fees admin routes: /api/academy/admin/fees/*
@@ -11,7 +11,7 @@
 // immutable once issued), SF-3 (two-approval promotion), SF-9 (human hardship
 // review), SF-11 (opt-in, immutably-logged government export).
 
-import { env } from '@/config/env';
+import { apiRoot } from '@/config/env';
 import { resolveUseMock } from '@/config/useMock';
 import type {
   FeesSchool, FeesSchoolInput,
@@ -30,8 +30,20 @@ import type {
 
 const USE_MOCK = resolveUseMock(process.env.NEXT_PUBLIC_ACADEMY_USE_MOCK);
 
+// Full path = apiRoot() + '/api/academy' + <call path, spelled '/admin/fees/...'
+// or '/admin/schools/...' etc below>, matching the real Go mounts: the fees
+// admin surfaces (feesschool/feesroles/feeshardship/feesadminapi/…) are
+// registered on adminGroupTop5(r, "/api/academy/admin") — see
+// backend/internal/app/academy_routes.go and each call site's own comment
+// below for the exact route it was checked against.
+//
+// This used to be `env.apiBaseUrl.replace(/\/api\/v1\/?$/, '/api/academy')`, which
+// stopped matching the moment apiBaseUrl became the same-origin proxy path
+// (<origin>/api/admin-proxy, no /api/v1 suffix) — see insuranceAdminService.ts for
+// the same regression. Every request 404'd against <proxy>/admin/... instead of
+// <proxy>/api/academy/admin/...; USE_MOCK hid it whenever set.
 function adminBase(): string {
-  return env.apiBaseUrl.replace(/\/api\/v1\/?$/, '/api/academy');
+  return `${apiRoot()}/api/academy`;
 }
 function authHeaders(): Record<string, string> {
   if (typeof window === 'undefined') return {};

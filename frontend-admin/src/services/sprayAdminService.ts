@@ -1,21 +1,42 @@
 // ── Admin — Spray (event money-spraying) ops console ─────────────────────────
 // Mock by default. Flip with NEXT_PUBLIC_SPRAY_ADMIN_USE_MOCK=false to hit the live
 // Go backend. NOTE: the spray admin surface is THIN — the only admin route is
-// GET /api/spray/admin/spray/leaderboard/:contextRef (RBAC spray.read), used for
+// GET /api/p2p/admin/spray/leaderboard/:contextRef (RBAC spray.read), used for
 // AML oversight of a spray context's leaderboard. There is no payouts admin route;
 // the payouts view here is mock-only and documents the gap.
 // Spray enforces AML single / daily-amount / daily-count limits server-side.
 // Money is BIGINT kobo (minor units) throughout.
 
-import { env } from '@/config/env';
+import { apiRoot } from '@/config/env';
 import { resolveUseMock } from '@/config/useMock';
 
 export const USE_MOCK = resolveUseMock(process.env.NEXT_PUBLIC_SPRAY_ADMIN_USE_MOCK);
 /** Named so the fixture banner can cite the exact switch. */
 export const USE_MOCK_ENV = 'NEXT_PUBLIC_SPRAY_ADMIN_USE_MOCK';
 
+// The doc comments elsewhere (this file's old header, .env.production.example,
+// the /admin/spray pages, and even backend/internal/spray/handler.go's own
+// "admin: /api/spray/admin/*" comment) all describe a /api/spray/admin root —
+// but that route is never actually registered anywhere. Spray's admin routes
+// are mounted onto the SAME RouterGroup as the p2p-market admin routes:
+//   backend/internal/app/finance_routes.go:
+//     RegisterP2PMarket(finance.Group("/p2p"), adminGroupTop5(r, "/api/p2p/admin"), pool, rbac, auditSink)
+//   backend/internal/app/top5_p3_routes.go RegisterP2PMarket:
+//     sprayHandler.Register(member, admin, ...)   // `admin` here IS the /api/p2p/admin group
+//   backend/internal/spray/handler.go Handler.Register:
+//     admin.GET("/spray/leaderboard/:contextRef", guard("spray.read"), h.Leaderboard)
+// So the real, live path is /api/p2p/admin/spray/leaderboard/:contextRef, not
+// /api/spray/admin/spray/leaderboard/:contextRef. This is a second, independent
+// bug from the apiRoot() regression below: the suffix itself was wrong even
+// before apiBaseUrl stopped ending in /api/v1.
+//
+// This used to be `env.apiBaseUrl.replace(/\/api\/v1\/?$/, '/api/spray/admin')`,
+// which stopped matching once apiBaseUrl became the same-origin proxy path
+// (<origin>/api/admin-proxy, no /api/v1 suffix) — see apiRoot()'s comment in
+// config/env.ts. Both bugs combined meant the leaderboard call 404'd through two
+// independent failures, one hiding the other.
 function adminBase(): string {
-  return env.apiBaseUrl.replace(/\/api\/v1\/?$/, '/api/spray/admin');
+  return `${apiRoot()}/api/p2p/admin`;
 }
 function authHeaders(): Record<string, string> {
   if (typeof window === 'undefined') return {};
@@ -120,7 +141,8 @@ export async function listSprayEvents(opts?: { status?: string; q?: string }): P
   return getJson<SprayEvent[]>('/events');
 }
 
-// Real admin endpoint: GET /api/spray/admin/spray/leaderboard/:contextRef
+// Real admin endpoint: GET /api/p2p/admin/spray/leaderboard/:contextRef (see the
+// adminBase() comment above for why this is /api/p2p/admin and not /api/spray/admin)
 export async function getSprayLeaderboard(contextRef: string): Promise<SprayLeaderRow[]> {
   if (USE_MOCK) {
     await delay();

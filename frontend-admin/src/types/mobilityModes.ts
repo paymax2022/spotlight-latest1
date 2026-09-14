@@ -41,18 +41,6 @@ export interface ParcelRow {
   updatedAt: string;
 }
 
-// ─── Couriers (drivers w/ parcel service category) ────────────────────────────
-export interface CourierRow {
-  id: string;
-  name: string;
-  phone: string;
-  zone: string;
-  status: 'active' | 'inactive' | 'suspended';
-  rating: number;
-  activeParcels: number;
-  completedParcels: number;
-}
-
 // ─── Bus ──────────────────────────────────────────────────────────────────────
 export interface BusOperator {
   id: string;

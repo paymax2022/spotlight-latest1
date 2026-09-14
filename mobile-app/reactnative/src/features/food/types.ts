@@ -204,6 +204,13 @@ export interface Order {
    * until a code is issued, and never exposed to non-participants by the server.
    */
   deliveryCode?: string | null;
+  /**
+   * Restaurant's pickup code, generated as soon as the order is ready. Shown
+   * to the restaurant to hand to the rider; the rider must enter it in
+   * ConfirmPickup to prove they collected the food. Distinct from
+   * deliveryCode (rider → customer, at the other end of the trip).
+   */
+  pickupCode?: string | null;
   /** ISO timestamps. */
   createdAt: string;
   deliveredAt?: string | null;

@@ -3,7 +3,7 @@
 // NEXT_PUBLIC_REALTOR_ADMIN_USE_MOCK=false to hit the live admin endpoints.
 // All money is integer minor units (kobo).
 
-import { env } from '@/config/env';
+import { apiRoot } from '@/config/env';
 import { operationKey } from './idempotency';
 import { resolveUseMock } from '@/config/useMock';
 import type {
@@ -13,8 +13,18 @@ import type {
 
 const USE_MOCK = resolveUseMock(process.env.NEXT_PUBLIC_REALTOR_ADMIN_USE_MOCK);
 
+// /api/realtor/admin is the real mount point — confirmed against
+// backend/internal/realtor/routes.go (`admin := r.Group("/api/realtor/admin")`)
+// and its Register() doc comment. apiRoot() strips any trailing /api/v1 from the
+// proxy base and nothing else.
+//
+// This used to be `env.apiBaseUrl.replace(/\/api\/v1\/?$/, '/api/realtor/admin')`,
+// which stopped matching once apiBaseUrl became the same-origin proxy path
+// (<origin>/api/admin-proxy, no /api/v1 suffix) — the replace() was a no-op and
+// every request 404'd against <proxy>/overview instead of
+// <proxy>/api/realtor/admin/overview.
 function adminBase(): string {
-  return env.apiBaseUrl.replace(/\/api\/v1\/?$/, '/api/realtor/admin');
+  return `${apiRoot()}/api/realtor/admin`;
 }
 function authHeaders(): Record<string, string> {
   if (typeof window === 'undefined') return {};

@@ -126,3 +126,35 @@ type SafeSpot struct {
 	Lng      float64 `json:"lng"`
 	Verified bool    `json:"verified"`
 }
+
+// ─── Listing insights (seller performance) ───────────────────────────────────
+
+// ListingInsights is the seller-facing performance summary for ONE listing.
+//
+// Every figure is counted from the table that actually records the event, not
+// from a denormalised counter — mkt_listings.save_count is never written by this
+// backend, so trusting it would report 0 saves forever.
+//
+// Views are the exception and are read from mkt_listings.view_count, because
+// there is no per-view event table. See Repository.IncrementListingView.
+type ListingInsights struct {
+	ListingID string `json:"listing_id"`
+
+	Views          int64 `json:"views"`
+	Saves          int64 `json:"saves"`           // mkt_saved_items
+	Enquiries      int64 `json:"enquiries"`       // mkt_threads — buyers who opened a chat
+	Offers         int64 `json:"offers"`          // mkt_offers
+	ContactReveals int64 `json:"contact_reveals"` // mkt_contact_reveals — strongest intent signal
+	Orders         int64 `json:"orders"`          // mkt_orders
+
+	// BestOfferKobo is the highest LIVE offer (nil when none stands). Minor units,
+	// int64 — never a float.
+	BestOfferKobo *int64 `json:"best_offer_kobo,omitempty"`
+
+	// Boost state, so the seller can see whether promotion is running and until when.
+	BoostActive  bool       `json:"boost_active"`
+	BoostTier    *string    `json:"boost_tier,omitempty"`
+	BoostEndsAt  *time.Time `json:"boost_ends_at,omitempty"`
+	ListedAt     time.Time  `json:"listed_at"`
+	ExpiresAt    *time.Time `json:"expires_at,omitempty"`
+}

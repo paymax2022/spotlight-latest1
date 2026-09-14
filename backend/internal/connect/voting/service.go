@@ -435,3 +435,35 @@ func (s *Service) Notifications(ctx context.Context, userID string) ([]Notificat
 	}
 	return s.repo.Notifications(ctx, userID)
 }
+
+// ─── Support Ticket Methods (lowercase internal methods called by handlers) ───
+
+func (s *Service) createSupportTicket(ctx context.Context, ticket SupportTicket) (*SupportTicket, error) {
+	svc := NewSupportService(s.repo.db)
+	return svc.CreateSupportTicket(ctx, ticket)
+}
+
+func (s *Service) listSupportTickets(ctx context.Context, userID, status string, limit, offset int) ([]SupportTicket, error) {
+	svc := NewSupportService(s.repo.db)
+	return svc.ListSupportTickets(ctx, userID, status, limit, offset)
+}
+
+func (s *Service) getSupportTicket(ctx context.Context, userID, ticketID string) (*SupportTicket, error) {
+	svc := NewSupportService(s.repo.db)
+	return svc.GetSupportTicket(ctx, userID, ticketID)
+}
+
+func (s *Service) updateSupportTicket(ctx context.Context, userID, ticketID, status, priority, description string) (*SupportTicket, error) {
+	svc := NewSupportService(s.repo.db)
+	return svc.UpdateSupportTicket(ctx, userID, ticketID, status, priority, description)
+}
+
+func (s *Service) addTicketMessage(ctx context.Context, userID, ticketID, message string, attachments []string) (*TicketMessage, error) {
+	svc := NewSupportService(s.repo.db)
+	return svc.AddTicketMessage(ctx, userID, ticketID, message, attachments)
+}
+
+func (s *Service) listTicketMessages(ctx context.Context, userID, ticketID string) ([]TicketMessage, error) {
+	svc := NewSupportService(s.repo.db)
+	return svc.ListTicketMessages(ctx, userID, ticketID)
+}

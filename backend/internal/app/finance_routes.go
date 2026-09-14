@@ -475,9 +475,19 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		// documented path 404'd and only the doubled one answered. A provider
 		// cannot discover that, so every real MyCover delivery would have been
 		// lost, and silently: the provider sees a 404 and we see nothing at all.
-		insuranceWebhooks := r.Group("")                                                // provider-signed, no user auth
-		insuranceSvcs = RegisterInsurance(finance, insuranceAdmin, pool, rbac)          // gateway/catalog/policy/quote/saga/consent
-		RegisterInsuranceClaims(finance, insuranceAdmin, insuranceWebhooks, pool, rbac) // claims/embedded/webhooks/reconciliation
+		insuranceWebhooks := r.Group("") // provider-signed, no user auth
+		// Backend-owned presigned R2 uploads for application-form identity/evidence
+		// photos (image_url / id_image_url / device_about_image_url). Unconfigured
+		// creds → the upload endpoint fails closed with 503 (never a fabricated URL).
+		insurancePresigner := r2.New(r2.Config{
+			AccountEndpoint: cfg.R2AccountEndpoint,
+			Bucket:          cfg.R2Bucket,
+			AccessKeyID:     cfg.R2AccessKeyID,
+			SecretAccessKey: cfg.R2SecretAccessKey,
+			Region:          cfg.R2Region,
+		})
+		insuranceSvcs = RegisterInsurance(finance, insuranceAdmin, pool, rbac, insurancePresigner, cfg.R2Bucket) // gateway/catalog/policy/quote/saga/consent
+		RegisterInsuranceClaims(finance, insuranceAdmin, insuranceWebhooks, pool, rbac)                          // claims/embedded/webhooks/reconciliation
 	}
 
 	// --- Hotel Booking / Stays (Property Suite, dual-rail supply gateway) ---
@@ -1554,6 +1564,7 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		// intentionally not outlet-scoped: the token names the outlet, and the
 		// invitee is not yet staff there, so no per-outlet guard could pass.
 		restGroup.POST("/staff/accept", restaurantHandler.AcceptStaffInvite)
+		restGroup.GET("/lookup/user", restaurantHandler.LookupUser)
 		restGroup.GET("/:id/staff", restaurantHandler.ListStaff)
 		restGroup.POST("/:id/staff", restaurantHandler.InviteStaff)
 		restGroup.PATCH("/:id/staff/:userId", restaurantHandler.SetStaffStatus)
@@ -1590,11 +1601,12 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		// Rider / delivery lifecycle. Marking an order "ready" (via the status
 		// endpoint) auto-dispatches to nearby available riders; the first to
 		// accept wins, picks up, then confirms handoff with the delivery code.
-		restGroup.POST("/orders/:orderId/assign", restaurantHandler.AssignRider)     // manual offer (fallback)
-		restGroup.POST("/orders/:orderId/dispatch", restaurantHandler.Redispatch)    // owner re-runs auto-dispatch
-		restGroup.POST("/orders/:orderId/accept", restaurantHandler.AcceptDelivery)  // rider claims the delivery
-		restGroup.POST("/orders/:orderId/pickup", restaurantHandler.ConfirmPickup)   // rider confirms pickup
-		restGroup.POST("/orders/:orderId/handoff", restaurantHandler.ConfirmHandoff) // rider confirms drop-off (code)
+		restGroup.POST("/orders/:orderId/assign", restaurantHandler.AssignRider)      // manual offer (fallback)
+		restGroup.POST("/orders/:orderId/dispatch", restaurantHandler.Redispatch)     // owner re-runs auto-dispatch
+		restGroup.POST("/orders/:orderId/accept", restaurantHandler.AcceptDelivery)   // rider claims the delivery
+		restGroup.POST("/orders/:orderId/decline", restaurantHandler.DeclineDelivery) // rider declines; auto re-dispatched
+		restGroup.POST("/orders/:orderId/pickup", restaurantHandler.ConfirmPickup)    // rider confirms pickup
+		restGroup.POST("/orders/:orderId/handoff", restaurantHandler.ConfirmHandoff)  // rider confirms drop-off (code)
 		restGroup.POST("/orders/:orderId/location", restaurantHandler.PostLocation)
 		restGroup.GET("/rider/offers", restaurantHandler.RiderOffers)
 		restGroup.GET("/rider/active", restaurantHandler.RiderActive)
@@ -1867,7 +1879,10 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		// Share the flag-configured tier gate so a rider fare — a consumer purchase —
 		// honours the Tier-0 checkout allowance instead of the strict gate transport
 		// would otherwise build for itself (ADR-043).
-		transportSvc := transport.NewService(pool, settlementSvcTr).WithTiers(tiersSvc)
+		// WithLedger is required for cash rides: the platform's commission on a
+		// cash-paid trip is debited straight from the driver's own wallet (no
+		// escrow exists to split for a fare the rider paid the driver in cash).
+		transportSvc := transport.NewService(pool, settlementSvcTr).WithTiers(tiersSvc).WithLedger(ledgerSvc)
 		// Bridge transport dispatch/estimation onto the provider-agnostic
 		// MapService (OpenStack/OSRM by default) instead of the ad-hoc maps stub.
 		if mapSvc != nil {
@@ -1949,6 +1964,12 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		// Real-time tracking: rider/driver WS channel + driver GPS ingest.
 		mob.GET("/ws", transportHandler.ServeTripWS)
 		mob.POST("/trips/:id/track", transportHandler.TrackPosition)
+		// Trip chat (rider<->driver, pre-arrival logistics — distinct from the
+		// PIN identity check). Registered under both /mobility and /driver
+		// below; object-level authz (Service.ListMessages/SendMessage) is the
+		// real gate, not the route prefix.
+		mob.GET("/trips/:id/messages", transportHandler.ListMessages)
+		mob.POST("/trips/:id/messages", transportHandler.SendMessage)
 		mob.GET("/home", transportHandler.Home)
 		mob.GET("/config/pricing", transportHandler.ConfigPricing)
 		mob.POST("/rides/estimate", transportHandler.Estimate)
@@ -1989,6 +2010,8 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		drv.POST("/trips/:id/verify-pin", transportHandler.VerifyPin)
 		drv.POST("/trips/:id/start", transportHandler.StartTrip)
 		drv.POST("/trips/:id/complete", transportHandler.CompleteTrip)
+		drv.GET("/trips/:id/messages", transportHandler.ListMessages)
+		drv.POST("/trips/:id/messages", transportHandler.SendMessage)
 		drv.GET("/earnings", transportHandler.DriverEarnings)
 		drv.POST("/sos", transportHandler.DriverSOS)
 

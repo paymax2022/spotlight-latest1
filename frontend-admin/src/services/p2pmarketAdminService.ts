@@ -7,7 +7,7 @@
 // duties (the arbiter must differ from the release approver) and is audited (NL-12).
 // Money is BIGINT kobo (minor units) throughout.
 
-import { env } from '@/config/env';
+import { apiRoot } from '@/config/env';
 import { operationKey } from './idempotency';
 import { resolveUseMock } from '@/config/useMock';
 
@@ -15,13 +15,26 @@ export const USE_MOCK = resolveUseMock(process.env.NEXT_PUBLIC_P2PMARKET_ADMIN_U
 /** Named so the fixture banner can cite the exact switch. */
 export const USE_MOCK_ENV = 'NEXT_PUBLIC_P2PMARKET_ADMIN_USE_MOCK';
 
-// Admin (arbitration) lives at /api/p2p/admin/*.
+// Admin (arbitration) lives at /api/p2p/admin/* — confirmed against
+// backend/internal/app/finance_routes.go:
+//   RegisterP2PMarket(finance.Group("/p2p"), adminGroupTop5(r, "/api/p2p/admin"), ...)
+// and backend/internal/p2pmarket/handler.go's Register doc comment
+// ("admin : /api/p2p/admin/*"). apiRoot() strips any trailing /api/v1 from the
+// proxy base and nothing else.
+//
+// This used to be `env.apiBaseUrl.replace(/\/api\/v1\/?$/, '/api/p2p/admin')`,
+// which stopped matching once apiBaseUrl became the same-origin proxy path
+// (<origin>/api/admin-proxy, no /api/v1 suffix) — the replace() was a no-op and
+// every admin call 404'd against <proxy>/p2p/orders/... instead of
+// <proxy>/api/p2p/admin/p2p/orders/....
 function adminBase(): string {
-  return env.apiBaseUrl.replace(/\/api\/v1\/?$/, '/api/p2p/admin');
+  return `${apiRoot()}/api/p2p/admin`;
 }
-// Listings + orders are read from the member group at /api/finance/p2p/*.
+// Listings + orders are read from the member group at /api/finance/p2p/*
+// (finance := r.Group("/api/finance"); RegisterP2PMarket(finance.Group("/p2p"), ...)).
+// Same historical regex bug as adminBase() above.
 function memberBase(): string {
-  return env.apiBaseUrl.replace(/\/api\/v1\/?$/, '/api/finance/p2p');
+  return `${apiRoot()}/api/finance/p2p`;
 }
 function authHeaders(): Record<string, string> {
   if (typeof window === 'undefined') return {};

@@ -205,3 +205,30 @@ func (s *Service) ListStaff(ctx context.Context, restaurantID, actorID string) (
 	}
 	return out, rows.Err()
 }
+
+// UserLookup is the response when searching for a user by email or phone.
+type UserLookup struct {
+	UserID string `json:"user_id"`
+	Email  string `json:"email,omitempty"`
+	Phone  string `json:"phone,omitempty"`
+	Name   string `json:"name,omitempty"`
+}
+
+// LookupUser searches for a user by email or phone number for staff invitation.
+func (s *Service) LookupUser(ctx context.Context, query string) (*UserLookup, error) {
+	const q = `
+		SELECT id, COALESCE(email, ''), COALESCE(phone, ''), COALESCE(raw_user_meta_data->>'name', '')
+		FROM auth.users
+		WHERE (email ILIKE $1 OR phone LIKE $2) AND deleted_at IS NULL
+		LIMIT 1`
+
+	searchPattern := "%" + query + "%"
+	var u UserLookup
+	err := s.db.QueryRow(ctx, q, searchPattern, "%"+query).Scan(
+		&u.UserID, &u.Email, &u.Phone, &u.Name,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("user not found: %w", err)
+	}
+	return &u, nil
+}

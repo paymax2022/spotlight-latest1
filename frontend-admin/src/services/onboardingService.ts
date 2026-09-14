@@ -1,4 +1,4 @@
-import { env } from '@/config/env';
+import { apiRoot } from '@/config/env';
 import type {
   OnboardingApplication,
   OnboardingQueueRow,
@@ -9,11 +9,23 @@ import {
   onboardingApplicationFixture,
 } from '@/services/onboardingFixtures';
 
-// Backend admin onboarding routes live under the /admin prefix on the Go API,
-// matching usersService: env.apiBaseUrl ends with /api/v1 and admin routes
-// hang off /api/admin/...
+/**
+ * Onboarding admin routes hang off r.Group("/api/admin/onboarding") in
+ * backend/internal/onboarding/routes.go — the doc comment there notes it
+ * deliberately uses the engine-level /api/admin convention (matching
+ * rbacAdmin + this admin frontend's adminApiBase), NOT /api/v1/admin.
+ * apiRoot() strips any trailing /api/v1 from the same-origin proxy base and
+ * nothing else.
+ *
+ * This used to be env.apiBaseUrl.replace(/\/api\/v1\/?$/, '/api'), which
+ * stopped matching once apiBaseUrl became the proxy path itself
+ * (<origin>/api/admin-proxy, no /api/v1 suffix) — see
+ * insuranceAdminService.ts for the same regression. The replace became a
+ * no-op and every request 404'd against <proxy>/admin/onboarding/... instead
+ * of <proxy>/api/admin/onboarding/....
+ */
 function adminApiBase(): string {
-  return env.apiBaseUrl.replace(/\/api\/v1\/?$/, '/api');
+  return `${apiRoot()}/api`;
 }
 
 function authHeaders(): Record<string, string> {

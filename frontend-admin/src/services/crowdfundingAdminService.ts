@@ -4,7 +4,7 @@
 // Mirrors fintechService shape: flip USE_MOCK to false and the fetch branches hit
 // the live backend. All money is integer kobo.
 
-import { env } from '@/config/env';
+import { apiRoot } from '@/config/env';
 import { operationKey } from './idempotency';
 import { resolveUseMock } from '@/config/useMock';
 import type {
@@ -49,8 +49,9 @@ import type {
 const USE_MOCK = resolveUseMock(process.env.NEXT_PUBLIC_CF_USE_MOCK);
 
 function adminBase(): string {
-  // Strip a trailing /api/v1 (if present) to get the API ROOT, then append the
-  // module's absolute path — the same shape restaurantAdminService uses.
+  // apiRoot() strips a trailing /api/v1 (if present) off env.apiBaseUrl and
+  // nothing else, then the module's absolute path is appended — the same
+  // shape restaurantAdminService uses.
   //
   // This used to REPLACE /api/v1 with the module path, which silently produced a
   // base with no module prefix at all once frontend-admin moved env.apiBaseUrl to
@@ -58,8 +59,7 @@ function adminBase(): string {
   // so every call went to <proxy>/campaigns instead of
   // <proxy>/api/crowdfunding/admin/campaigns, and 404'd. Stripping is a no-op when
   // there is nothing to strip, so this form is correct for both base shapes.
-  const root = env.apiBaseUrl.replace(/\/api\/v1\/?$/, '');
-  return `${root}/api/crowdfunding/admin`;
+  return `${apiRoot()}/api/crowdfunding/admin`;
 }
 function authHeaders(): Record<string, string> {
   if (typeof window === 'undefined') return {};

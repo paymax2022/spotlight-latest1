@@ -194,15 +194,20 @@ func (r *Repository) getProfileDocumentByID(ctx context.Context, userID, id stri
 }
 
 // SetProfilePhoto sets the avatar_url column on doctor_profiles (the canonical
-// profile photo column). Returns the refreshed profile.
+// profile photo column). Upserts for the same reason SaveProfileDraft does: a
+// fresh doctor reaching /profile/setup/photo (entry 2 of the builder) directly
+// — a bookmark, a deep link, or simply landing there before provider-type's
+// SaveProfileDraft write has happened — has no doctor_profiles row yet, and
+// the plain UPDATE this used to be matched zero rows and 404'd on the very
+// first thing the builder ever writes.
 func (r *Repository) SetProfilePhoto(ctx context.Context, userID, photoURL string) (*Profile, error) {
-	const q = `UPDATE doctor_profiles SET avatar_url = $2, updated_at = now() WHERE user_id = $1`
-	tag, err := r.db.Exec(ctx, q, userID, photoURL)
-	if err != nil {
+	const q = `
+		INSERT INTO doctor_profiles (user_id, avatar_url)
+		VALUES ($1, $2)
+		ON CONFLICT (user_id) DO UPDATE
+		SET avatar_url = EXCLUDED.avatar_url, updated_at = now()`
+	if _, err := r.db.Exec(ctx, q, userID, photoURL); err != nil {
 		return nil, err
-	}
-	if tag.RowsAffected() == 0 {
-		return nil, ErrNotFound
 	}
 	return r.GetProfile(ctx, userID)
 }

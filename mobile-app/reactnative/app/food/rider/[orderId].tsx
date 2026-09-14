@@ -29,6 +29,7 @@ export default function RiderActiveDeliveryScreen() {
   const { orderId } = useLocalSearchParams<{ orderId: string }>();
   const [tab, setTab] = useState<Tab>('delivery');
 
+  const [pickupCode, setPickupCode] = useState('');
   const [code, setCode] = useState('');
   const { data: order, isLoading, isError, refetch } = useOrder(orderId, { poll: true });
   const realtime = useOrderRealtime(orderId, { status: order?.status });
@@ -52,10 +53,14 @@ export default function RiderActiveDeliveryScreen() {
   }, [order?.id, status]);
 
   const onPickup = () => {
-    if (!order) return;
-    confirmPickup.mutate(order.id, {
-      onError: (e) => Alert.alert('Could not confirm pickup', toFoodError(e).message),
-    });
+    if (!order || pickupCode.trim().length < 4) return;
+    confirmPickup.mutate(
+      { orderId: order.id, code: pickupCode.trim() },
+      {
+        onSuccess: () => setPickupCode(''),
+        onError: (e) => Alert.alert('Could not confirm pickup', toFoodError(e).message),
+      },
+    );
   };
 
   const onHandoff = () => {
@@ -127,9 +132,31 @@ export default function RiderActiveDeliveryScreen() {
               </View>
 
               <View style={s.actions}>
-                {/* Step 1 — confirm pickup at the restaurant. */}
+                {/* Step 1 — confirm pickup at the restaurant with its pickup code. */}
                 {normalizeStatus(status) === 'assigned' || normalizeStatus(status) === 'ready' ? (
-                  <PrimaryButton label="Confirm pickup" onPress={onPickup} loading={confirmPickup.isPending} />
+                  <View style={[s.handoffCard, shadow1]}>
+                    <View style={s.handoffHead}>
+                      <Icons.KeyRound size={18} color={Colors.secondary} strokeWidth={2} />
+                      <Text style={s.handoffTitle}>Confirm pickup</Text>
+                    </View>
+                    <Text style={s.handoffHint}>Ask the restaurant for their 4-digit pickup code.</Text>
+                    <TextInput
+                      style={s.codeInput}
+                      value={pickupCode}
+                      onChangeText={(t) => setPickupCode(t.replace(/[^0-9]/g, '').slice(0, 4))}
+                      placeholder="• • • •"
+                      placeholderTextColor={Colors.onSurfaceVariant}
+                      keyboardType="number-pad"
+                      maxLength={4}
+                      accessibilityLabel="Pickup code"
+                    />
+                    <PrimaryButton
+                      label="Confirm pickup"
+                      onPress={onPickup}
+                      loading={confirmPickup.isPending}
+                      disabled={pickupCode.trim().length < 4}
+                    />
+                  </View>
                 ) : null}
 
                 {/* Step 2 — confirm handoff with the customer's delivery code. */}

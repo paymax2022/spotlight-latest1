@@ -8,13 +8,18 @@
 // /api/connect/admin/*. All money is integer minor units (kobo); XP/coins are
 // NON-CASH gamification points — admin tooling must never convert them to money.
 
-import { env } from '@/config/env';
+import { apiRoot } from '@/config/env';
 import { resolveUseMock } from '@/config/useMock';
 
 const USE_MOCK = resolveUseMock(process.env.NEXT_PUBLIC_CONNECT_USE_MOCK);
 
+// adminBase() used to do `env.apiBaseUrl.replace(/\/api\/v1\/?$/, '/api/connect/admin')`,
+// which relied on apiBaseUrl ending in /api/v1. It no longer does (same-origin
+// proxy origin instead), so the regex became a silent no-op and every live call
+// 404'd. apiRoot() strips any trailing /api/v1 explicitly, so this keeps working
+// no matter how apiBaseUrl is spelled.
 function adminBase(): string {
-  return env.apiBaseUrl.replace(/\/api\/v1\/?$/, '/api/connect/admin');
+  return `${apiRoot()}/api/connect/admin`;
 }
 function authHeaders(): Record<string, string> {
   if (typeof window === 'undefined') return {};

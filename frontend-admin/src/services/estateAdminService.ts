@@ -13,7 +13,7 @@
 //   GET  /api/finance/property/context
 //   GET  /api/finance/property/rent-passport/lookup/:userId  (perm: property.manage)
 
-import { env } from '@/config/env';
+import { apiRoot } from '@/config/env';
 import { resolveUseMock } from '@/config/useMock';
 import type {
   EstateKpis, EstateActivity, AdminResident, AdminDuesInvoice,
@@ -28,10 +28,15 @@ import type {
 
 const USE_MOCK = resolveUseMock(process.env.NEXT_PUBLIC_ESTATE_ADMIN_USE_MOCK);
 
-// The canonical Go backend mounts finance verticals under /api/finance, while
-// env.apiBaseUrl ends with /api/v1. Strip the version suffix and target /api/finance.
+// The canonical Go backend mounts finance verticals under /api/finance. This
+// used to be env.apiBaseUrl.replace(/\/api\/v1\/?$/, '/api/finance'), which
+// stopped matching once apiBaseUrl became the same-origin proxy path
+// (<origin>/api/admin-proxy, no /api/v1 suffix) instead of ending in /api/v1 —
+// every live call 404'd against <proxy>/estate/... instead of
+// <proxy>/api/finance/estate/.... apiRoot() strips that trailing /api/v1 (if
+// any) and nothing else, so the module path can be appended unconditionally.
 function financeBase(): string {
-  return env.apiBaseUrl.replace(/\/api\/v1\/?$/, '/api/finance');
+  return `${apiRoot()}/api/finance`;
 }
 // Active estate is resolved server-side from membership; the admin console pins
 // the demo estate id. Override with NEXT_PUBLIC_ESTATE_ADMIN_ESTATE_ID.

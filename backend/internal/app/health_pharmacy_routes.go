@@ -64,7 +64,6 @@ func RegisterHealthPharmacy(member *gin.RouterGroup, admin *gin.RouterGroup, poo
 		&payoutGateAdapter{kyc: kycSvc},
 		nil, // audit sink injected by orchestrator (HL-12) — nil-safe here
 	)
-	svc.SetRxLister(&rxListerAdapter{rx: rxSvc})
 
 	// Central Commission & Profit recording at the pharmacy order settlement point
 	// (Complete → escrow release). Best-effort + idempotent + nil-safe: constructed
@@ -89,7 +88,6 @@ func RegisterHealthPharmacy(member *gin.RouterGroup, admin *gin.RouterGroup, poo
 	pg.GET("/products/mine", h.MyProducts)                      // owner shelf incl. off-sale (before :id)
 	pg.GET("/products/:id", h.GetProduct)                       // single product + owning pharmacy
 	pg.POST("/products", h.UpsertProduct)                       // pharmacy owner, HL-5 write-gate
-	pg.GET("/prescriptions", h.ListMyPrescriptions)             // patient's own list
 	pg.POST("/prescriptions/:id/verify", h.VerifyPrescription)  // pharmacist, HL-3
 	pg.GET("/pharmacies", h.DiscoverPharmacies)                 // browse ALL pharmacies — proximity/rating (HL-2)
 	pg.GET("/pharmacies/:id", h.GetPharmacy)                    // pharmacy detail
@@ -201,32 +199,6 @@ func (a *rxVerifierAdapter) Verify(ctx context.Context, pharmacistID, rxID strin
 func (a *rxVerifierAdapter) BeginVerify(ctx context.Context, pharmacistID, rxID string) error {
 	_, err := a.rx.BeginVerify(ctx, pharmacistID, rxID)
 	return err
-}
-
-// rxListerAdapter bridges the pharmacy "My Prescriptions" read to healthrx,
-// mapping its concrete Prescription rows onto pharmacy's own narrow
-// PrescriptionSummary read model (pharmacy never imports healthrx's types
-// directly — same seam discipline as rxGateAdapter/rxVerifierAdapter above).
-type rxListerAdapter struct{ rx *healthrx.Service }
-
-func (a *rxListerAdapter) ListForPatient(ctx context.Context, patientID string) ([]healthpharmacy.PrescriptionSummary, error) {
-	rows, err := a.rx.ListForPatient(ctx, patientID)
-	if err != nil {
-		return nil, err
-	}
-	out := make([]healthpharmacy.PrescriptionSummary, len(rows))
-	for i, r := range rows {
-		out[i] = healthpharmacy.PrescriptionSummary{
-			ID:                 r.ID,
-			State:              string(r.State),
-			PrescriberID:       r.PrescriberID,
-			PharmacyProviderID: r.PharmacyProviderID,
-			RejectReason:       r.RejectReason,
-			ItemCount:          len(r.Items),
-			CreatedAt:          r.CreatedAt,
-		}
-	}
-	return out, nil
 }
 
 // dispatchAdapter creates a medication delivery as a parcel job on the transport

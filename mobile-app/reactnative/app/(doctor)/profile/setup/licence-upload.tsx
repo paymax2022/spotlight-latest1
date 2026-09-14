@@ -10,6 +10,8 @@ import { TeleHeader } from '@/features/telemedicine/components';
 import { SectionCard, StateView, WizardProgress, UploadField } from '@/features/doctor/components';
 import type { UploadFieldState } from '@/features/doctor/components';
 import { useDocumentSlots, useUploadDocument } from '@/features/doctor/hooks';
+import { pickFileForField } from '@/features/registration/utils/filePicker';
+import type { PickedUpload } from '@/features/registration/types/registration.types';
 
 export default function LicenceUploadScreen() {
   const { data: slots, isLoading, isError, refetch } = useDocumentSlots();
@@ -18,19 +20,23 @@ export default function LicenceUploadScreen() {
   const slot = slots?.find((s) => s.type === 'medical_license');
   const [state, setState] = useState<UploadFieldState>(slot?.file ? 'uploaded' : 'empty');
   const [fileName, setFileName] = useState<string | undefined>(slot?.file?.fileName);
+  const [picked, setPicked] = useState<PickedUpload>();
   const [error, setError] = useState<string>();
 
-  const pick = () => {
+  const pick = async () => {
     setError(undefined);
-    setFileName(`medical-license-${Date.now()}.pdf`);
+    const file = await pickFileForField('.pdf,.jpg,.jpeg,.png');
+    if (!file) return;
+    setPicked(file);
+    setFileName(file.name);
     setState('selected');
   };
 
   const doUpload = async () => {
-    if (!fileName) return;
+    if (!picked) return;
     setState('uploading');
     try {
-      await upload.mutateAsync({ type: 'medical_license', uri: `file:///picked/${fileName}`, fileName, mimeType: 'application/pdf' });
+      await upload.mutateAsync({ type: 'medical_license', uri: picked.uri, fileName: picked.name, mimeType: picked.mimeType });
       setState('uploaded');
     } catch {
       setState('error');

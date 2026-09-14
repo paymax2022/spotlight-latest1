@@ -1,4 +1,4 @@
-import { env } from '@/config/env';
+import { apiRoot } from '@/config/env';
 import { resolveUseMock } from '@/config/useMock';
 import type {
   IntakeSchema,
@@ -15,11 +15,21 @@ import type {
   IntakeAnalytics,
 } from '@/types/intakeAdmin';
 
-// The Go health intake admin routes hang off the /api prefix (same convention
-// as onboardingService / nutritionAdminService): env.apiBaseUrl ends with
-// /api/v1 and admin routes live under /api/health/admin/intake/...
+// The Go health intake admin routes hang off adminGroupTop5(r,
+// "/api/health/admin").Group("/intake") — see backend/internal/app/health_routes.go
+// (RegisterHealth's `aig := admin.Group("/intake")`, wired from finance_routes.go
+// as adminGroupTop5(r, "/api/health/admin")) — giving the full mount point
+// /api/health/admin/intake/... that BASE below appends onto. apiRoot() strips
+// any trailing /api/v1 from the same-origin proxy base and nothing else.
+//
+// This used to be env.apiBaseUrl.replace(/\/api\/v1\/?$/, '/api'), which
+// stopped matching once apiBaseUrl became the proxy path itself
+// (<origin>/api/admin-proxy, no /api/v1 suffix) — see
+// insuranceAdminService.ts for the same regression. The replace became a
+// no-op and every live request 404'd against <proxy>/health/admin/intake/...
+// instead of <proxy>/api/health/admin/intake/....
 function adminApiBase(): string {
-  return env.apiBaseUrl.replace(/\/api\/v1\/?$/, '/api');
+  return `${apiRoot()}/api`;
 }
 
 function authHeaders(): Record<string, string> {

@@ -18,7 +18,7 @@ import type {
 const LAGOS: LatLng = { lat: 6.5244, lng: 3.3792 };
 
 /** A stable 4-digit customer handoff code (mock parity with the backend). */
-function makeDeliveryCode(): string {
+function makeHandoffCode(): string {
   return String(1000 + Math.floor(Math.random() * 9000));
 }
 
@@ -370,9 +370,11 @@ interface MockState {
   messages: Record<string, ChatMessage[]>;
   /** ms timestamp each order was last advanced. */
   advancedAt: Record<string, number>;
+  /** Order ids the demo rider has declined — hidden from mockRiderOffers (mirrors DeclineDelivery). */
+  declinedOffers: Set<string>;
 }
 
-export const mockStore: MockState = { orders: {}, messages: {}, advancedAt: {} };
+export const mockStore: MockState = { orders: {}, messages: {}, advancedAt: {}, declinedOffers: new Set() };
 
 const MOCK_RIDER = {
   id: 'rider-1',
@@ -423,7 +425,8 @@ export function makeOrder(
     // (the backend escrows payment and returns delivery_code on the Order).
     dispatchStatus: partial.dispatchStatus ?? 'none',
     riderId: partial.riderId ?? null,
-    deliveryCode: partial.deliveryCode ?? makeDeliveryCode(),
+    deliveryCode: partial.deliveryCode ?? makeHandoffCode(),
+    pickupCode: partial.pickupCode ?? makeHandoffCode(),
     createdAt: partial.createdAt ?? new Date().toISOString(),
     deliveredAt: partial.deliveredAt ?? null,
     rated: partial.rated ?? false,
@@ -567,7 +570,9 @@ export function mockRiderOffers(): RiderOffer[] {
   // Auto-dispatch: surface 'ready' orders that are searching for a rider and
   // not yet assigned. This mirrors the server's auto-populated rider offers.
   const open = Object.values(mockStore.orders)
-    .filter((o) => !o.rider && o.status === 'ready' && o.dispatchStatus === 'searching')
+    .filter(
+      (o) => !o.rider && o.status === 'ready' && o.dispatchStatus === 'searching' && !mockStore.declinedOffers.has(o.id),
+    )
     .map<RiderOffer>((o) => ({
       orderId: o.id,
       restaurantName: o.restaurantName,
@@ -619,10 +624,28 @@ export function mockAcceptOffer(orderId: string): Order {
   return { ...order };
 }
 
+/**
+ * Rider declines an offer — mirrors the real `DeclineDelivery`: no money moves,
+ * the order stays `ready`/`searching` and is simply hidden from this rider's
+ * offer list, as if auto re-dispatched to someone else.
+ */
+export function mockDeclineOffer(orderId: string): void {
+  mockStore.declinedOffers.add(orderId);
+  const order = mockStore.orders[orderId];
+  if (order) pushSystem(orderId, 'A rider declined this delivery — searching for another rider.');
+}
+
 /** Rider confirms pickup at the restaurant → picked_up. */
-export function mockConfirmPickup(orderId: string): Order {
+export function mockConfirmPickup(orderId: string, code: string): Order {
   const order = mockStore.orders[orderId];
   if (!order) throw new Error('Order not found');
+  if (!order.pickupCode || code.trim() !== order.pickupCode) {
+    const err = new Error('Incorrect pickup code. Ask the restaurant to read it again.') as Error & {
+      code?: string;
+    };
+    err.code = 'INVALID_PICKUP_CODE';
+    throw err;
+  }
   order.status = 'picked_up';
   if (!order.rider) order.rider = { ...MOCK_RIDER };
   order.riderId = order.rider.id;

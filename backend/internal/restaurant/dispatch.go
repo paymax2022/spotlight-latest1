@@ -49,6 +49,12 @@ func (s *Service) DispatchOrder(ctx context.Context, orderID string) error {
 	if err != nil {
 		return err
 	}
+	// Also (re-)ensure the restaurant pickup code — idempotent, so this is the
+	// retry path if the ready-transition's own generation hit a hiccup: the
+	// restaurant re-triggering dispatch (Redispatch) picks it up here too.
+	if _, err := s.ensurePickupCode(ctx, orderID); err != nil {
+		return err
+	}
 	if _, err := s.db.Exec(ctx,
 		`UPDATE orders SET dispatch_status='searching', ready_at=COALESCE(ready_at, now()) WHERE id=$1`,
 		orderID); err != nil {
@@ -135,14 +141,27 @@ func (s *Service) DispatchOrder(ctx context.Context, orderID string) error {
 }
 
 // ConfirmPickup lets the assigned rider mark a ready order as picked up. Only
-// the order's rider may call it; advances ready → picked_up.
-func (s *Service) ConfirmPickup(ctx context.Context, orderID, riderID string) error {
-	_, _, rider, err := s.orderParties(ctx, orderID)
-	if err != nil {
-		return err
+// the order's rider may call it, and only with the restaurant's pickup code
+// (generated when the order went ready — ensurePickupCode) — this proves the
+// rider actually collected the food from the restaurant, distinct from the
+// delivery_code proof-of-delivery at the customer end. Advances ready → picked_up.
+func (s *Service) ConfirmPickup(ctx context.Context, orderID, riderID, code string) error {
+	var rider *string
+	var dbCode *string
+	var status string
+	if err := s.db.QueryRow(ctx,
+		`SELECT rider_id, pickup_code, status FROM orders WHERE id=$1`, orderID).
+		Scan(&rider, &dbCode, &status); err != nil {
+		return fmt.Errorf("restaurant: order not found")
 	}
-	if rider == "" || rider != riderID {
+	if rider == nil || *rider != riderID {
 		return fmt.Errorf("restaurant: only the assigned rider may confirm pickup")
+	}
+	if dbCode == nil || *dbCode == "" {
+		return fmt.Errorf("restaurant: no pickup code on this order")
+	}
+	if code == "" || code != *dbCode {
+		return fmt.Errorf("restaurant: incorrect pickup code")
 	}
 	if _, err := s.db.Exec(ctx, `UPDATE orders SET picked_up_at=COALESCE(picked_up_at, now()) WHERE id=$1`, orderID); err != nil {
 		return err
@@ -202,7 +221,7 @@ func (s *Service) ensureDeliveryCode(ctx context.Context, orderID string) (strin
 	if existing != nil && *existing != "" {
 		return *existing, nil
 	}
-	code, err := generateDeliveryCode()
+	code, err := generateHandoffCode()
 	if err != nil {
 		return "", err
 	}
@@ -212,8 +231,31 @@ func (s *Service) ensureDeliveryCode(ctx context.Context, orderID string) (strin
 	return code, nil
 }
 
-// generateDeliveryCode returns a random 4-digit handoff code (0000–9999).
-func generateDeliveryCode() (string, error) {
+// ensurePickupCode sets a 4-digit restaurant-pickup code on the order if
+// absent and returns it. Generated as soon as the order goes `ready` — the
+// restaurant hands it to the rider, who must enter it in ConfirmPickup before
+// the order advances to picked_up. Distinct from delivery_code (rider→customer).
+func (s *Service) ensurePickupCode(ctx context.Context, orderID string) (string, error) {
+	var existing *string
+	if err := s.db.QueryRow(ctx, `SELECT pickup_code FROM orders WHERE id=$1`, orderID).Scan(&existing); err != nil {
+		return "", fmt.Errorf("restaurant: order not found")
+	}
+	if existing != nil && *existing != "" {
+		return *existing, nil
+	}
+	code, err := generateHandoffCode()
+	if err != nil {
+		return "", err
+	}
+	if _, err := s.db.Exec(ctx, `UPDATE orders SET pickup_code=$1 WHERE id=$2`, code, orderID); err != nil {
+		return "", err
+	}
+	return code, nil
+}
+
+// generateHandoffCode returns a random 4-digit handoff code (0000–9999), used
+// for both the restaurant pickup code and the customer delivery code.
+func generateHandoffCode() (string, error) {
 	n, err := rand.Int(rand.Reader, big.NewInt(10000))
 	if err != nil {
 		return "", err

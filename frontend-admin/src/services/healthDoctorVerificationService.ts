@@ -1,16 +1,24 @@
 // ── Admin — Paymax Health · MDCN doctor verification review (Mode B / ASSISTED) ─
 // Mirrors healthVetVerificationService.ts exactly for request building / auth /
 // errors:
-//  • adminBase() rewrites env.apiBaseUrl (…/api/v1) → …/api/health/doctor/admin
+//  • adminBase() builds the absolute backend path via apiRoot() + /api/health/doctor/admin
 //  • authHeaders() attaches the admin Bearer token from localStorage
 //  • getJson/sendJson unwrap { data } and throw on non-2xx
 // These verification endpoints live under …/api/health/doctor/admin/verification
+// (backend/internal/app/health_doctor_mdcn_routes.go: `ag := r.Group("/api/health/doctor/admin/verification")`;
+// this file supplies the "/verification" segment itself on each call path below)
 // and require RBAC permission `health.doctor.review` (carried by the admin
 // session token). Mock by default (NEXT_PUBLIC_HEALTH_USE_MOCK); flip to false to
 // hit the live Go backend. Every document-url read is access-logged server-side
 // (HL-8 / NDPA). The doctor never sees the MDCN portal.
+//
+// adminBase() used to do `env.apiBaseUrl.replace(/\/api\/v1\/?$/, '/api/health/doctor/admin')`,
+// which stopped matching the moment apiBaseUrl became the same-origin proxy path
+// (<origin>/api/admin-proxy, no /api/v1 suffix) — see insuranceAdminService.ts for
+// the same regression. Every request 404'd against <proxy>/verification/... instead
+// of <proxy>/api/health/doctor/admin/verification/...; USE_MOCK hid it whenever set.
 
-import { env } from '@/config/env';
+import { apiRoot } from '@/config/env';
 import { resolveUseMock } from '@/config/useMock';
 import type {
   MdcnReviewRecord,
@@ -21,7 +29,7 @@ import type {
 const USE_MOCK = resolveUseMock(process.env.NEXT_PUBLIC_HEALTH_USE_MOCK);
 
 function adminBase(): string {
-  return env.apiBaseUrl.replace(/\/api\/v1\/?$/, '/api/health/doctor/admin');
+  return `${apiRoot()}/api/health/doctor/admin`;
 }
 function authHeaders(): Record<string, string> {
   if (typeof window === 'undefined') return {};

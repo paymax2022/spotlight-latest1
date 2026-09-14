@@ -228,6 +228,29 @@ func (h *Handler) ListStaff(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"staff": list})
 }
 
+// LookupUser → GET /restaurant/lookup/user?query={email_or_phone}
+//
+// Search for a user by email or phone number. Returns user data (id, email, phone, name)
+// so the restaurant admin can confirm before sending an invite.
+func (h *Handler) LookupUser(c *gin.Context) {
+	query := strings.TrimSpace(c.Query("query"))
+	if query == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "query parameter required"})
+		return
+	}
+	if len(query) < 3 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "search query must be at least 3 characters"})
+		return
+	}
+
+	user, err := h.svc.LookupUser(c.Request.Context(), query)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "user not found"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"user": user})
+}
+
 // InviteStaff → POST /restaurant/:id/staff {user_id, role}
 //
 // The response carries the invite token ONCE. It is not recoverable afterwards —
@@ -395,10 +418,30 @@ func (h *Handler) AcceptDelivery(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"ok": true})
 }
 
-// ConfirmPickup → POST /restaurant/orders/:orderId/pickup (assigned rider picks up).
+// DeclineDelivery → POST /restaurant/orders/:orderId/decline (offered rider
+// declines; if no other offer is claimed, the order is auto re-dispatched to
+// fresh nearby riders — DP-002).
+func (h *Handler) DeclineDelivery(c *gin.Context) {
+	riderID := c.GetString("user_id")
+	if err := h.svc.DeclineDelivery(c.Request.Context(), c.Param("orderId"), riderID); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"ok": true})
+}
+
+// ConfirmPickup → POST /restaurant/orders/:orderId/pickup {code} (assigned
+// rider picks up; the restaurant's pickup code proves they collected the food).
 func (h *Handler) ConfirmPickup(c *gin.Context) {
 	riderID := c.GetString("user_id")
-	if err := h.svc.ConfirmPickup(c.Request.Context(), c.Param("orderId"), riderID); err != nil {
+	var body struct {
+		Code string `json:"code" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if err := h.svc.ConfirmPickup(c.Request.Context(), c.Param("orderId"), riderID, body.Code); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}

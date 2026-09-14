@@ -10,7 +10,7 @@
 //  HL-8 health data sensitive NDPA (masked; consent gates release),
 //  HL-9 money held→released→refunded, HL-10 payout KYC+AML gate, HL-12 immutable audit.
 
-import { env } from '@/config/env';
+import { apiRoot } from '@/config/env';
 import { resolveUseMock } from '@/config/useMock';
 import type {
   LabDashboard,
@@ -40,8 +40,15 @@ export const USE_MOCK = resolveUseMock(process.env.NEXT_PUBLIC_HEALTH_USE_MOCK);
 /** Named so the fixture banner can cite the exact switch. */
 export const USE_MOCK_ENV = 'NEXT_PUBLIC_HEALTH_USE_MOCK';
 
+// Verified against backend/internal/app/finance_routes.go:
+//   RegisterHealthLab(finance, adminGroupTop5(r, "/api/health/lab/admin"), ...)
+// This used to be `env.apiBaseUrl.replace(/\/api\/v1\/?$/, '/api/health/lab/admin')`,
+// which stopped matching the moment apiBaseUrl became the same-origin proxy path
+// (<origin>/api/admin-proxy, no /api/v1 suffix) — see insuranceAdminService.ts for
+// the same regression. Every request 404'd against <proxy>/dashboard instead of
+// <proxy>/api/health/lab/admin/dashboard; USE_MOCK hid it whenever set.
 function adminBase(): string {
-  return env.apiBaseUrl.replace(/\/api\/v1\/?$/, '/api/health/lab/admin');
+  return `${apiRoot()}/api/health/lab/admin`;
 }
 function authHeaders(): Record<string, string> {
   if (typeof window === 'undefined') return {};

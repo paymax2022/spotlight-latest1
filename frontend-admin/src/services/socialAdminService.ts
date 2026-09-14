@@ -6,7 +6,7 @@
 // corrections are reversing entries only), NL-10 (KYC gates & AML velocity limits),
 // NL-12 (immutable audit on every state change).
 
-import { env } from '@/config/env';
+import { apiRoot } from '@/config/env';
 import { resolveUseMock } from '@/config/useMock';
 import type {
   SocialDashboard,
@@ -25,8 +25,13 @@ export const USE_MOCK = resolveUseMock(process.env.NEXT_PUBLIC_SOCIAL_USE_MOCK);
 /** Named so the fixture banner can cite the exact switch. */
 export const USE_MOCK_ENV = 'NEXT_PUBLIC_SOCIAL_USE_MOCK';
 
+// adminBase() used to do `env.apiBaseUrl.replace(/\/api\/v1\/?$/, '/api/social/admin')`,
+// which relied on apiBaseUrl ending in /api/v1. It no longer does (same-origin
+// proxy origin instead), so the regex became a silent no-op and every live call
+// 404'd. apiRoot() strips any trailing /api/v1 explicitly, so this keeps working
+// no matter how apiBaseUrl is spelled.
 function adminBase(): string {
-  return env.apiBaseUrl.replace(/\/api\/v1\/?$/, '/api/social/admin');
+  return `${apiRoot()}/api/social/admin`;
 }
 function authHeaders(): Record<string, string> {
   if (typeof window === 'undefined') return {};

@@ -218,6 +218,14 @@ func Register(member gin.IRouter, svc *Service, cfg config.Config) {
 	member.GET("/contestants/:id/supporters", h.Supporters)
 	member.GET("/contests/:id/stages", h.GetStages)
 
+	// Support / Help ticket system
+	member.POST("/support/tickets", h.CreateSupportTicket)
+	member.GET("/support/tickets", h.ListSupportTickets)
+	member.GET("/support/tickets/:id", h.GetSupportTicket)
+	member.PATCH("/support/tickets/:id", h.UpdateSupportTicket)
+	member.POST("/support/tickets/:id/messages", h.AddTicketMessage)
+	member.GET("/support/tickets/:id/messages", h.ListTicketMessages)
+
 	// Stage eviction routes — gated behind FEATURE_CONTEST_STAGE_EVICTION_ENABLED.
 	// Admin routes with RBAC guards are in RegisterAdmin.
 	if !cfg.FeatureContestStageEvictionEnabled {
