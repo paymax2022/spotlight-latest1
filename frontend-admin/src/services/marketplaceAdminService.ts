@@ -1,4 +1,4 @@
-import { env } from '@/config/env';
+import { apiRoot } from '@/config/env';
 import type {
   MktListing,
   MktFlag,
@@ -17,10 +17,17 @@ import type {
 // Escrow/orders/disputes were REMOVED from the backend per ADR-023 — this console
 // only covers moderation, flags, boosts, and the audit log.
 //
-// env.apiBaseUrl looks like http://localhost:8080/api/v1 → strip the /api/v1
-// suffix entirely to reach the engine root, then append /v1/marketplace/admin.
+// apiRoot() strips any trailing /api/v1 from the proxy base and nothing else,
+// leaving the engine root — append /v1/marketplace/admin onto that.
+//
+// This used to be `env.apiBaseUrl.replace(/\/api\/v1\/?$/, '')`, which stopped
+// matching the moment apiBaseUrl became the same-origin proxy path
+// (<origin>/api/admin-proxy, no /api/v1 suffix). Every request then went to
+// <proxy>/v1/marketplace/admin/... intact rather than silently breaking here —
+// but the same broken replace() also poisoned getModerationListing below,
+// which built a *different* URL from the same dead regex.
 export function marketplaceAdminBase(): string {
-  return `${env.apiBaseUrl.replace(/\/api\/v1\/?$/, '')}/v1/marketplace/admin`;
+  return `${apiRoot()}/v1/marketplace/admin`;
 }
 
 function authHeaders(): Record<string, string> {
@@ -131,7 +138,7 @@ export async function getModerationListing(id: string): Promise<MktListing> {
   // No dedicated admin GET-by-id in the frozen route list; the queue already
   // returns full listing objects, so the detail page is hydrated from the
   // cached queue result and falls back to the public listing GET if needed.
-  const res = await fetch(`${env.apiBaseUrl.replace(/\/api\/v1\/?$/, '')}/v1/marketplace/listings/${encodeURIComponent(id)}`, { cache: 'no-store', headers: authHeaders() });
+  const res = await fetch(`${apiRoot()}/v1/marketplace/listings/${encodeURIComponent(id)}`, { cache: 'no-store', headers: authHeaders() });
   if (!res.ok) throw new Error(await parseErrorMessage(res, 'Listing fetch failed'));
   return res.json();
 }

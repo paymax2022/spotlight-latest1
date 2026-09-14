@@ -7,7 +7,7 @@
 // NL-10 (KYC/AML), NL-12 (immutable audit). Separation-of-duties enforced on
 // arbitration: the arbitrator must differ from the underlying release approver.
 
-import { env } from '@/config/env';
+import { apiRoot } from '@/config/env';
 import { operationKey } from './idempotency';
 import { resolveUseMock } from '@/config/useMock';
 import type {
@@ -25,8 +25,25 @@ export const USE_MOCK = resolveUseMock(process.env.NEXT_PUBLIC_SOCIAL_USE_MOCK);
 /** Named so the fixture banner can cite the exact switch. */
 export const USE_MOCK_ENV = 'NEXT_PUBLIC_SOCIAL_USE_MOCK';
 
+// /api/p2p/admin is the real mount point — confirmed against
+// backend/internal/app/finance_routes.go's RegisterP2PMarket(..., adminGroupTop5(r,
+// "/api/p2p/admin"), ...) and internal/p2pmarket/handler.go's Register doc comment.
+// apiRoot() strips any trailing /api/v1 from the proxy base and nothing else.
+//
+// This used to be `env.apiBaseUrl.replace(/\/api\/v1\/?$/, '/api/p2p/admin')`,
+// which stopped matching once apiBaseUrl became the same-origin proxy path
+// (<origin>/api/admin-proxy, no /api/v1 suffix) — the replace() was a no-op.
+//
+// ⚠️ Even with the base fixed, the *sub-paths* this file calls under it
+// (/escrow/dashboard, /disputes, /disputes/:id, /disputes/:id/arbitrate,
+// /escrow/fraud*) are NOT registered anywhere in the Go backend today. The only
+// real route under /api/p2p/admin is
+// POST /p2p/orders/:orderId/arbitrate (see p2pmarketAdminService.ts's
+// `arbitrate()`, which hits that exact endpoint). So fixing this base makes live
+// mode fail with real, honest 404s instead of a proxy-root 404 — it does not
+// make this console actually live. See docs/audit/ADMIN_SIMULATED_WRITES.md.
 function adminBase(): string {
-  return env.apiBaseUrl.replace(/\/api\/v1\/?$/, '/api/p2p/admin');
+  return `${apiRoot()}/api/p2p/admin`;
 }
 function authHeaders(): Record<string, string> {
   if (typeof window === 'undefined') return {};
