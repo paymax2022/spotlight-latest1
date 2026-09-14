@@ -1,8 +1,22 @@
-import { env } from '@/config/env';
+import { apiRoot } from '@/config/env';
 import type { AuditFilters, GenericRow } from '@/types/audit';
 
+/**
+ * Audit/login-activity/security-events hang off the rbacAdmin group at
+ * r.Group("/api/admin") in backend/internal/app/router.go (see the
+ * GET /admin/audit-logs, /admin/login-activity, /admin/security-events
+ * registrations there). apiRoot() strips any trailing /api/v1 from the
+ * same-origin proxy base and nothing else.
+ *
+ * This used to be env.apiBaseUrl.replace(/\/api\/v1\/?$/, '/api'), which
+ * stopped matching once apiBaseUrl became the proxy path itself
+ * (<origin>/api/admin-proxy, no /api/v1 suffix) — see
+ * insuranceAdminService.ts for the same regression. The replace became a
+ * no-op and every request 404'd against <proxy>/admin/audit-logs instead of
+ * <proxy>/api/admin/audit-logs.
+ */
 function adminApiBase(): string {
-  return env.apiBaseUrl.replace(/\/api\/v1\/?$/, '/api');
+  return `${apiRoot()}/api`;
 }
 
 function toQuery(filters: AuditFilters): string {
