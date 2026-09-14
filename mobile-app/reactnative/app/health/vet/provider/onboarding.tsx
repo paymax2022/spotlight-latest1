@@ -13,6 +13,10 @@ import StateView from '@/components/StateView';
 import PrimaryButton from '@/components/PrimaryButton';
 import TextInputField from '@/components/TextInputField';
 import CredentialBadge from '@/features/health/components/CredentialBadge';
+import { UploadField } from '@/features/doctor/components';
+import type { UploadFieldState } from '@/features/doctor/components';
+import { pickFileForField } from '@/features/registration/utils/filePicker';
+import type { PickedUpload } from '@/features/registration/types/registration.types';
 import { useProviderProfile, useSubmitProviderOnboarding } from '@/features/health/vet/hooks';
 
 export default function ProviderOnboardingScreen() {
@@ -23,6 +27,17 @@ export default function ProviderOnboardingScreen() {
   const [vcn, setVcn] = useState('');
   const [clinic, setClinic] = useState('');
   const [errors, setErrors] = useState<Record<string, string>>({});
+  const [uploadState, setUploadState] = useState<UploadFieldState>('empty');
+  const [licenceFile, setLicenceFile] = useState<PickedUpload>();
+  const [uploadErr, setUploadErr] = useState<string>();
+
+  const pickLicence = async () => {
+    setUploadErr(undefined);
+    const file = await pickFileForField('.pdf,.jpg,.jpeg,.png');
+    if (!file) return;
+    setLicenceFile(file);
+    setUploadState('selected');
+  };
 
   if (isLoading) {
     return (
@@ -87,9 +102,18 @@ export default function ProviderOnboardingScreen() {
     if (!clinic.trim()) e.clinic = 'Required';
     setErrors(e);
     if (Object.keys(e).length) return;
+    setUploadErr(undefined);
     submit.mutate(
-      { displayName: displayName.trim(), vcnLicenseNo: vcn.trim(), clinicName: clinic.trim() },
-      { onSuccess: () => refetch() },
+      {
+        displayName: displayName.trim(),
+        vcnLicenseNo: vcn.trim(),
+        clinicName: clinic.trim(),
+        licenceFile: licenceFile ? { uri: licenceFile.uri, fileName: licenceFile.name, mimeType: licenceFile.mimeType } : undefined,
+      },
+      {
+        onSuccess: () => refetch(),
+        onError: () => setUploadErr('Could not submit your licence document. Please try again.'),
+      },
     );
   };
 
@@ -108,6 +132,14 @@ export default function ProviderOnboardingScreen() {
         <TextInputField label="Display name *" placeholder="Dr. …" value={displayName} onChangeText={setDisplayName} error={errors.displayName} />
         <TextInputField label="VCN registration number *" placeholder="e.g. VCN-2014-0912" value={vcn} onChangeText={setVcn} error={errors.vcn} />
         <TextInputField label="Clinic / practice name *" placeholder="Your clinic" value={clinic} onChangeText={setClinic} error={errors.clinic} />
+        <UploadField
+          label="VCN licence document"
+          state={uploadState}
+          fileName={licenceFile?.name}
+          errorText={uploadErr}
+          hint="PDF, JPG or PNG"
+          onPick={pickLicence}
+        />
       </ScrollView>
 
       <View style={styles.footer}>

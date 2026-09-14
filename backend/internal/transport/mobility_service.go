@@ -58,16 +58,27 @@ func (s *Service) RequestRide(ctx context.Context, riderID string, req RequestRi
 		paymentMethod = "wallet"
 	}
 
-	// Fail-closed tier/spending-limit gate BEFORE any wallet escrow.
-	if err := s.enforceTierLimit(ctx, riderID, escrowKobo); err != nil {
-		return nil, err
-	}
-
 	tripID := uuid.New().String()
-	ref := "trip:" + tripID
-	sett, err := s.settlement.Escrow(ctx, riderID, ref, idempotencyKey, "transport", escrowKobo)
-	if err != nil {
-		return nil, fmt.Errorf("transport: escrow fare: %w", err)
+
+	// Cash rides settle in-vehicle — the rider pays the driver directly, out of
+	// band, so NOTHING is escrowed from the rider's wallet here (that used to
+	// happen unconditionally, silently wallet-debiting "cash" riders with no
+	// visible authorization). The platform instead collects its commission by
+	// debiting the DRIVER's wallet at trip completion (settleCashTrip); a
+	// driver whose balance can't cover that fee is filtered out of the open
+	// requests feed and blocked from accepting (see driverCanCoverCashFee).
+	var settlementID *string
+	if !isCashPayment(paymentMethod) {
+		// Fail-closed tier/spending-limit gate BEFORE any wallet escrow.
+		if err := s.enforceTierLimit(ctx, riderID, escrowKobo); err != nil {
+			return nil, err
+		}
+		ref := "trip:" + tripID
+		sett, err := s.settlement.Escrow(ctx, riderID, ref, idempotencyKey, "transport", escrowKobo)
+		if err != nil {
+			return nil, fmt.Errorf("transport: escrow fare: %w", err)
+		}
+		settlementID = &sett.ID
 	}
 
 	pin := generatePin()
@@ -80,7 +91,7 @@ func (s *Service) RequestRide(ctx context.Context, riderID string, req RequestRi
 	if _, err := s.db.Exec(ctx, q,
 		tripID, riderID, req.Pickup.Address, req.Dest.Address, escrowKobo, string(phase),
 		serviceType, req.PricingMode, paymentMethod, req.Pickup.Lat, req.Pickup.Lng, req.Dest.Lat, req.Dest.Lng,
-		route.DistanceM, route.DurationS, systemFare, route.Polyline, pin, idempotencyKey, sett.ID,
+		route.DistanceM, route.DurationS, systemFare, route.Polyline, pin, idempotencyKey, settlementID,
 	); err != nil {
 		return nil, fmt.Errorf("transport: insert trip: %w", err)
 	}
@@ -187,7 +198,13 @@ func (s *Service) AcceptCounter(ctx context.Context, tripID, riderID string) (*F
 // adjustEscrow escrows the positive delta when newFare > currently-held amount.
 // Lowering the fare is allowed but the surplus stays in escrow and is settled to
 // the rider on completion via the standard split (no partial de-escrow needed).
+// No-op for cash trips: negotiation still moves fare_kobo (the agreed price the
+// rider will hand the driver), but nothing is ever escrowed from a cash rider's
+// wallet — see RequestRide.
 func (s *Service) adjustEscrow(ctx context.Context, t *tripRow, newFare int64) error {
+	if isCashPayment(t.PaymentMethod) {
+		return nil
+	}
 	var held int64
 	s.db.QueryRow(ctx, `SELECT COALESCE(SUM(total_kobo),0) FROM settlements WHERE reference LIKE $1 AND status='escrowed'`, "trip:"+t.ID+"%").Scan(&held)
 	delta := newFare - held

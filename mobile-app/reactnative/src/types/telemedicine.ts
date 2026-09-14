@@ -53,19 +53,7 @@ export interface Doctor {
   yearsExperience: number;
   languages:       string[];
   isOnline:        boolean;
-  /**
-   * Editorial curation flag from the server (`is_featured`). The landing screen
-   * hides its Featured Doctors section entirely when nothing is featured, so this
-   * is never derived from rating — a derived flag would make the section
-   * permanently visible.
-   */
-  featured?:       boolean;
-  /**
-   * Human label e.g. "Today, 4:30 PM". OPTIONAL: the live backend does not send
-   * one, and this is a medical booking screen — a fabricated time would be a
-   * promise the system cannot keep. Renders as the doctor's online state instead.
-   */
-  nextAvailable?:  string;
+  nextAvailable:   string;            // human label e.g. "Today, 4:30 PM"
 }
 
 export interface Slot {

@@ -1,4 +1,4 @@
-import { env } from '@/config/env';
+import { apiRoot } from '@/config/env';
 import { resolveUseMock } from '@/config/useMock';
 import type {
   Competition,
@@ -36,13 +36,16 @@ import type {
 // unless explicitly disabled, so every screen renders. Mirrors kycAdminService.
 const USE_FIXTURES = resolveUseMock(process.env.NEXT_PUBLIC_ARENA_ADMIN_USE_MOCK);
 
-// env.apiBaseUrl looks like http://localhost:8080/api/v1 → /api/arena/admin
-// (and /api/arena for the public GETs).
+// apiRoot() strips any trailing /api/v1 off env.apiBaseUrl → /api/arena/admin
+// (and /api/arena for the public GETs). Used to be a regex on env.apiBaseUrl
+// itself, which relied on apiBaseUrl ending in /api/v1 — it no longer does
+// (see config/env.ts), so that regex silently stopped matching and every
+// live arena admin/public call 404'd against the bare proxy origin.
 export function arenaAdminBase(): string {
-  return env.apiBaseUrl.replace(/\/api\/v1\/?$/, '/api/arena/admin');
+  return `${apiRoot()}/api/arena/admin`;
 }
 export function arenaPublicBase(): string {
-  return env.apiBaseUrl.replace(/\/api\/v1\/?$/, '/api/arena');
+  return `${apiRoot()}/api/arena`;
 }
 
 function authHeaders(): Record<string, string> {

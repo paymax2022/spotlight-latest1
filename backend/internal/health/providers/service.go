@@ -33,17 +33,33 @@ type RoleView struct {
 	Slug string
 }
 
+// Presigner is the slice of the R2 presigner this package reuses (satisfied by
+// *r2.Presigner). nil/unconfigured → credential presign fails closed (503).
+type Presigner interface {
+	Configured() bool
+	PresignPut(key, contentType string, expiry time.Duration) (string, error)
+}
+
 // Service owns the ProviderApplication state machine + credential vault. HL-1:
 // it carries no clinical logic — only onboarding workflow/state. Every transition
 // is audited (HL-12). On APPROVED it idempotently grants the capability (HL-2).
 type Service struct {
-	db    *pgxpool.Pool
-	rbac  CapabilityGranter
-	audit Auditor
+	db        *pgxpool.Pool
+	rbac      CapabilityGranter
+	audit     Auditor
+	presigner Presigner
+	bucket    string
 }
 
 func NewService(db *pgxpool.Pool, rbac CapabilityGranter, audit Auditor) *Service {
 	return &Service{db: db, rbac: rbac, audit: audit}
+}
+
+// WithPresigner wires the R2 presigner used for credential-document uploads.
+func (s *Service) WithPresigner(p Presigner, bucket string) *Service {
+	s.presigner = p
+	s.bucket = bucket
+	return s
 }
 
 // CreateApplication starts onboarding in DRAFT for the acting user.

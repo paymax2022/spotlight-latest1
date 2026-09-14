@@ -6,6 +6,7 @@
 
 import { api } from '@/api/client';
 import { USE_MOCK, HEALTH_API_BASE } from '../constants/health.constants';
+import { uploadProviderCredential, addProviderCredential } from '../api';
 import { Colors } from '@/constants/colors';
 import type {
   PharmacyProduct,
@@ -30,6 +31,7 @@ import type {
 } from './types';
 
 const PHARMACY_API = `${HEALTH_API_BASE}/pharmacy`;
+const PROVIDERS_API = `${HEALTH_API_BASE}/providers`;
 const delay = (ms = 300) => new Promise((r) => setTimeout(r, ms));
 
 // ── Mock data ─────────────────────────────────────────────────────────────────
@@ -768,16 +770,79 @@ export async function sendConsultMessage(body: string): Promise<PharmacistConsul
 }
 
 // ── Provider: onboarding (HL-2) ───────────────────────────────────────────────
+// `${PHARMACY_API}/provider/onboarding[/submit]` was never implemented backend
+// side — backend/internal/app/health_pharmacy_routes.go has no /provider group
+// at all, so both calls 404'd on every non-mock request; onboarding could never
+// actually complete. A real, working generic provider-application backend
+// already exists (backend/internal/health/providers/*, mounted at
+// /api/finance/health/providers/applications*) and explicitly supports
+// domain=PHARMACY (service.go validType) — it was simply never called by any
+// client. Repointed here instead of building a duplicate pharmacy-specific
+// backend.
+//
+// Application.State (DRAFT/SUBMITTED/UNDER_REVIEW/NEEDS_INFO/APPROVED/
+// SUSPENDED/REJECTED) is mapped onto this screen's simpler status vocabulary;
+// SUSPENDED/REJECTED fold into 'needs_info' since this type has no equivalent
+// terminal-failure state to route to instead.
+//
+// NOT fixed here: the generic API's AddCredential (the licence-document upload)
+// requires a real uploaded file's storage_key — this screen only ever collected
+// a licence NUMBER as a text field, with no upload step at all, so there is no
+// file to attach. The PCN licence number is carried in the returned state for
+// display, but is not persisted anywhere server-side; wiring an actual
+// credential upload needs a presign endpoint for this module (mirroring
+// internal/doctor/presign.go) plus a document-picker step in this screen —
+// out of scope for this fix, flagged as a follow-up.
+interface ProviderApplicationWire {
+  id: string;
+  domain: string;
+  provider_type: string;
+  display_name: string;
+  state: 'DRAFT' | 'SUBMITTED' | 'UNDER_REVIEW' | 'NEEDS_INFO' | 'APPROVED' | 'SUSPENDED' | 'REJECTED';
+}
+
+function mapApplicationState(state: ProviderApplicationWire['state']): ProviderOnboardingState['status'] {
+  switch (state) {
+    case 'DRAFT':        return 'draft';
+    case 'SUBMITTED':     return 'submitted';
+    case 'UNDER_REVIEW':  return 'under_review';
+    case 'APPROVED':      return 'approved';
+    case 'NEEDS_INFO':
+    case 'SUSPENDED':
+    case 'REJECTED':
+    default:              return 'needs_info';
+  }
+}
+
+async function findPharmacyApplication(): Promise<ProviderApplicationWire | undefined> {
+  const { data } = await api.get<{ applications: ProviderApplicationWire[] }>(`${PROVIDERS_API}/applications`);
+  return data.applications?.find((a) => a.domain === 'PHARMACY');
+}
+
 export async function getProviderOnboarding(): Promise<ProviderOnboardingState> {
   if (USE_MOCK) {
     await delay();
     return { status: 'under_review', pcnLicenseNo: 'PCN/LA/9921', pcnStatus: 'pending', premisesVerified: false, businessName: 'Wellness Hub Pharmacy' };
   }
-  const { data } = await api.get<ProviderOnboardingState>(`${PHARMACY_API}/provider/onboarding`);
-  return data;
+  const app = await findPharmacyApplication();
+  if (!app) return { status: 'draft', pcnStatus: 'pending', premisesVerified: false };
+  return {
+    status: mapApplicationState(app.state),
+    businessName: app.display_name,
+    pcnStatus: 'pending',
+    premisesVerified: false,
+  };
 }
 
-export async function submitProviderOnboarding(input: Partial<ProviderOnboardingState>): Promise<ProviderOnboardingState> {
+// licenceFile: previously flagged as a real gap — the onboarding screen only
+// ever collected the PCN licence NUMBER, with no document-upload step, so
+// AddCredential (which requires a real uploaded file's storage_key) could
+// never be called. Now optional on this input: when the screen supplies a
+// picked file, it's presigned + uploaded to R2 and recorded as a real PCN
+// credential before submission.
+export async function submitProviderOnboarding(
+  input: Partial<ProviderOnboardingState> & { licenceFile?: { uri: string; fileName: string; mimeType: string } },
+): Promise<ProviderOnboardingState> {
   if (USE_MOCK) {
     await delay(500);
     return {
@@ -788,8 +853,31 @@ export async function submitProviderOnboarding(input: Partial<ProviderOnboarding
       businessName: input.businessName,
     };
   }
-  const { data } = await api.post<ProviderOnboardingState>(`${PHARMACY_API}/provider/onboarding/submit`, input);
-  return data;
+  let app = await findPharmacyApplication();
+  if (!app) {
+    const created = await api.post<{ application: ProviderApplicationWire }>(`${PROVIDERS_API}/applications`, {
+      domain: 'PHARMACY', provider_type: 'pharmacist', display_name: input.businessName ?? '',
+    });
+    app = created.data.application;
+  }
+  if (input.licenceFile) {
+    const storageKey = await uploadProviderCredential(app.id, input.licenceFile);
+    await addProviderCredential(app.id, { credType: 'PCN', referenceNo: input.pcnLicenseNo, storageKey });
+  }
+  // Submit only transitions DRAFT/NEEDS_INFO forward; calling it again on an
+  // already-submitted application is a 409, so skip the call rather than
+  // treat a resubmit as a failure.
+  if (app.state === 'DRAFT' || app.state === 'NEEDS_INFO') {
+    const submitted = await api.post<{ application: ProviderApplicationWire }>(`${PROVIDERS_API}/applications/${app.id}/submit`, {});
+    app = submitted.data.application;
+  }
+  return {
+    status: mapApplicationState(app.state),
+    pcnLicenseNo: input.pcnLicenseNo,
+    pcnStatus: 'pending',
+    premisesVerified: false,
+    businessName: app.display_name,
+  };
 }
 
 // ── Provider: catalog / stock ─────────────────────────────────────────────────

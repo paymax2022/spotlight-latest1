@@ -47,6 +47,14 @@ export function useStaff(restaurantId: string) {
   });
 }
 
+export function useUserLookup(query: string) {
+  return useQuery({
+    queryKey: [KEY, 'lookup', query],
+    queryFn: () => merchant.lookupUser(query),
+    enabled: Boolean(query?.trim()),
+  });
+}
+
 export function useInviteStaff(restaurantId: string) {
   const qc = useQueryClient();
   return useMutation({

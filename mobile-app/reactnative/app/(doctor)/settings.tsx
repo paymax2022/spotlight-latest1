@@ -129,7 +129,7 @@ export default function DoctorSettingsScreen() {
 
         <Text style={styles.groupTitle}>Account status &amp; gates</Text>
         <View style={styles.menu}>
-          <ProfileMenuItem icon="ShieldCheck" iconColor={Colors.teal} bgColor={Colors.iconBgTeal} label="Verification status" onPress={() => router.push('/(doctor)/signup/pending')} />
+          <ProfileMenuItem icon="ShieldCheck" iconColor={Colors.teal} bgColor={Colors.iconBgTeal} label="Verification status" onPress={() => router.push('/(doctor)/credentialing/pending')} />
           <View style={styles.divider} />
           <ProfileMenuItem icon="UserCheck" iconColor={Colors.secondary} bgColor={Colors.iconBgBlue} label="Account status" onPress={() => router.push('/(doctor)/account-status')} />
           <View style={styles.divider} />

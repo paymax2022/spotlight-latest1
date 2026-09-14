@@ -84,22 +84,22 @@ var ErrOrderMissingIdem = errors.New("restaurant: Idempotency-Key required to pl
 
 // Service manages restaurants, menus, and orders.
 type Service struct {
-	db          *pgxpool.Pool
-	settlement  *settlement.Service
-	ledger      *ledger.Service // money path for payout-run disbursement (nil → payouts disabled)
-	geocoder    AddressGeocoder
-	distancer   RouteDistancer      // optional; nil → haversine straight-line distance
-	feeRepo     *DeliveryConfigRepo // distance-based delivery-fee config (nil-safe → defaults)
-	notifier    Notifier            // nil-safe via s.notify; defaults to LogNotifier
-	rt          *Realtime           // optional; nil → no WS fan-out
-	commission  CommissionRecorder  // optional; nil ⇒ realized-profit recording is a no-op
-	tiers       TierLimiter         // REQUIRED; fail-closed gate on order escrow + withdrawal debit
-	withdrawalsOn bool              // FEATURE_RESTAURANT_WITHDRAWALS_ENABLED
+	db            *pgxpool.Pool
+	settlement    *settlement.Service
+	ledger        *ledger.Service // money path for payout-run disbursement (nil → payouts disabled)
+	geocoder      AddressGeocoder
+	distancer     RouteDistancer      // optional; nil → haversine straight-line distance
+	feeRepo       *DeliveryConfigRepo // distance-based delivery-fee config (nil-safe → defaults)
+	notifier      Notifier            // nil-safe via s.notify; defaults to LogNotifier
+	rt            *Realtime           // optional; nil → no WS fan-out
+	commission    CommissionRecorder  // optional; nil ⇒ realized-profit recording is a no-op
+	tiers         TierLimiter         // REQUIRED; fail-closed gate on order escrow + withdrawal debit
+	withdrawalsOn bool                // FEATURE_RESTAURANT_WITHDRAWALS_ENABLED
 	// moderationOn gates the listing-review requirement in discovery
 	// (FEATURE_FOODHUB_MODERATION). OFF by default: with it off, discovery serves
 	// exactly what it served before listing review existed (PRD §1.4).
 	moderationOn bool
-	disburser   WithdrawalDisburser // optional; nil ⇒ NoopDisburser (default sandbox)
+	disburser    WithdrawalDisburser // optional; nil ⇒ NoopDisburser (default sandbox)
 }
 
 func NewService(db *pgxpool.Pool, settlement *settlement.Service) *Service {
@@ -367,8 +367,8 @@ func (s *Service) PlaceOrder(ctx context.Context, restaurantID, customerID strin
 
 	// Fetch and validate menu items; group by restaurant for downstream processing.
 	type itemWithRest struct {
-		item       OrderItem
-		restID     string
+		item   OrderItem
+		restID string
 	}
 	var itemsWithRest []itemWithRest
 	var subtotal int64
@@ -659,33 +659,33 @@ func (s *Service) PlaceOrder(ctx context.Context, restaurantID, customerID strin
 	defer tx.Rollback(ctx)
 
 	order := &Order{
-		ID:                orderID,
-		CustomerID:        customerID,
-		RestaurantID:      restaurantID,
-		SubtotalKobo:      subtotal,
-		DeliveryKobo:      deliveryKobo,
-		SurgeKobo:         surgeKobo,
-		ServiceFeeKobo:    serviceFeeKobo,
-		PackagingFeeKobo:  packagingKobo,
-		PackageCount:      packageCount,
-		TipKobo:           tipKobo,
-		DiscountKobo:      discountKobo,
-		PromoID:           promoID,
-		PromoFunder:       promoFunder,
-		TotalKobo:         total,
+		ID:               orderID,
+		CustomerID:       customerID,
+		RestaurantID:     restaurantID,
+		SubtotalKobo:     subtotal,
+		DeliveryKobo:     deliveryKobo,
+		SurgeKobo:        surgeKobo,
+		ServiceFeeKobo:   serviceFeeKobo,
+		PackagingFeeKobo: packagingKobo,
+		PackageCount:     packageCount,
+		TipKobo:          tipKobo,
+		DiscountKobo:     discountKobo,
+		PromoID:          promoID,
+		PromoFunder:      promoFunder,
+		TotalKobo:        total,
 		// Free text from the client, so it is normalized rather than trusted: control
 		// characters stripped, whitespace runs collapsed, length capped (CT-009). It
 		// reaches the kitchen's screen and the rider's app, both of which render it.
 		SpecialInstructions: sanitizeInstructions(req.SpecialInstructions),
 		ScheduledFor:        scheduledFor,
-		Status:            OrderPending,
-		IdempotencyKey:    req.IdempotencyKey,
-		SettlementID:      sett.ID,
-		DeliveryAddress:   req.DeliveryAddress,
-		DistanceMeters:    distanceMeters,
-		EtaMinutes:        etaMinutes,
-		DeliveryBreakdown: breakdown,
-		CreatedAt:         time.Now(),
+		Status:              OrderPending,
+		IdempotencyKey:      req.IdempotencyKey,
+		SettlementID:        sett.ID,
+		DeliveryAddress:     req.DeliveryAddress,
+		DistanceMeters:      distanceMeters,
+		EtaMinutes:          etaMinutes,
+		DeliveryBreakdown:   breakdown,
+		CreatedAt:           time.Now(),
 	}
 
 	// delivery_breakdown is a NOT NULL jsonb column (default '{}'); marshal the
@@ -938,6 +938,18 @@ func (s *Service) transitionInternal(ctx context.Context, orderID string, newSta
 	// available riders (unless one is already assigned). This is precisely what
 	// "ready for pickup" activates — rider sourcing, no manual assignment.
 	if newStatus == OrderReady {
+		// The pickup code proves the rider actually collected the food from THIS
+		// restaurant — generated as soon as the order is ready, independent of
+		// whether a rider is assigned yet, so the restaurant has it in hand the
+		// moment a rider shows up. The status UPDATE above is not transactional
+		// with this, so — like the dispatch call right below — a generation
+		// hiccup must not roll back the already-committed ready transition;
+		// DispatchOrder retries it (it's idempotent) on every dispatch/redispatch.
+		if _, cerr := s.ensurePickupCode(ctx, orderID); cerr != nil {
+			s.notify(ctx, Notification{UserID: "", Event: EventPickupCodeErr,
+				Title: "Pickup code error", Body: cerr.Error(),
+				Data: map[string]any{"order_id": orderID}})
+		}
 		var assigned *string
 		s.db.QueryRow(ctx, `SELECT rider_id FROM orders WHERE id=$1`, orderID).Scan(&assigned)
 		if assigned == nil {

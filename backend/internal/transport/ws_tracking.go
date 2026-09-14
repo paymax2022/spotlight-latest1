@@ -141,6 +141,25 @@ func (t *TripTracker) Ingest(ctx context.Context, tripID, callerID string, p Tra
 	return nil
 }
 
+// BroadcastMessage fans a trip chat message out to the trip's rider + driver
+// over the same cross-instance-safe hub/Redis path as position updates. A nil
+// tracker (realtime not configured) is a silent no-op — the message itself is
+// already durably persisted by Service.SendMessage before this is called.
+func (t *TripTracker) BroadcastMessage(ctx context.Context, tripID string, m *TripMessage) {
+	if t == nil {
+		return
+	}
+	rider, driver, err := t.participants(ctx, tripID)
+	if err != nil {
+		return
+	}
+	recipients := []string{rider}
+	if driver != "" {
+		recipients = append(recipients, driver)
+	}
+	t.fanout(ctx, recipients, ws.Message{Type: "trip.message", Payload: m})
+}
+
 // fanout delivers to recipients. With Redis, publish once and let every instance
 // (including this one) deliver via the subscriber — avoids double-delivery.
 func (t *TripTracker) fanout(ctx context.Context, recipients []string, msg ws.Message) {

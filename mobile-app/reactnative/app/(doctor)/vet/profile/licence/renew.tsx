@@ -12,6 +12,8 @@ import { TeleHeader } from '@/features/telemedicine/components';
 import { SectionCard, StateView, UploadField } from '@/features/doctor/components';
 import type { UploadFieldState } from '@/features/doctor/components';
 import { useVetProfileDraft, useRenewVetLicence } from '@/features/doctor/hooks';
+import { pickFileForField } from '@/features/registration/utils/filePicker';
+import type { PickedUpload } from '@/features/registration/types/registration.types';
 
 export default function VetLicenceRenewScreen() {
   const { data: draft, isLoading, isError, refetch } = useVetProfileDraft();
@@ -21,6 +23,7 @@ export default function VetLicenceRenewScreen() {
   const [newExpiresAt, setNewExpiresAt] = useState<string | undefined>();
   const [state, setState] = useState<UploadFieldState>('empty');
   const [fileName, setFileName] = useState<string | undefined>();
+  const [picked, setPicked] = useState<PickedUpload>();
   const [uploadErr, setUploadErr] = useState<string>();
   const [error, setError] = useState<string>();
 
@@ -28,21 +31,24 @@ export default function VetLicenceRenewScreen() {
     if (draft && !licenceNumber) setLicenceNumber(draft.licence.licenceNumber);
   }, [draft, licenceNumber]);
 
-  const pick = () => {
+  const pick = async () => {
     setUploadErr(undefined);
-    setFileName(`renewed-vet-licence-${Date.now()}.pdf`);
+    const file = await pickFileForField('.pdf,.jpg,.jpeg,.png');
+    if (!file) return;
+    setPicked(file);
+    setFileName(file.name);
     setState('selected');
   };
 
   const markUploaded = () => setState('uploaded');
 
-  const canSubmit = licenceNumber.trim().length > 0 && !!newExpiresAt && state === 'uploaded' && !!fileName;
+  const canSubmit = licenceNumber.trim().length > 0 && !!newExpiresAt && state === 'uploaded' && !!picked;
 
   const handleSubmit = async () => {
-    if (!newExpiresAt || !fileName) return;
+    if (!newExpiresAt || !picked) return;
     setError(undefined);
     try {
-      await renew.mutateAsync({ licenceNumber: licenceNumber.trim(), newExpiresAt, uri: `file:///picked/${fileName}`, fileName, mimeType: 'application/pdf' });
+      await renew.mutateAsync({ licenceNumber: licenceNumber.trim(), newExpiresAt, uri: picked.uri, fileName: picked.name, mimeType: picked.mimeType });
       router.replace('/(doctor)/vet/profile/verification');
     } catch {
       setError('Renewal submission failed. Please try again.');

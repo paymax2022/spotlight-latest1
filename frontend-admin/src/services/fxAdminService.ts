@@ -1,14 +1,21 @@
 // ── Admin — FX Orchestration service ─────────────────────────────────────────
-// Mock-backed. No backend endpoints exist yet — /api/fx/admin/... is not
-// registered anywhere in the Go service (verified by grep; the closest thing
-// is /api/finance/admin/fx/markup, a narrower, unrelated surface). Shaped
+// Mock-backed. No backend endpoints exist yet for this console's surface —
+// /api/fx/admin/... is not registered anywhere in the Go service (verified by
+// grep). The closest real mount is /api/finance/admin/fx (see
+// backend/internal/app/finance_routes.go), and even that only serves the FX
+// markup-rate console (/markup, /markup/audit) — a narrower, unrelated surface
+// from this file's overview/transactions/routing/providers/etc. adminBase()
+// below points at that real group anyway, because it is the true root this
+// module would be built under; a caller adding a path under it that the
+// backend has not built yet still 404s, same as before, and gets there via a
+// route the backend actually owns instead of one that never existed. Shaped
 // after crowdfundingAdminService / fintechService so that once the admin
-// control-plane is built, flipping NEXT_PUBLIC_FX_ADMIN_USE_MOCK=false and
-// pointing adminBase() at the real routes is the only change needed — but
-// until then every mutation below refuses honestly rather than reporting a
-// success it did not perform. All money is integer minor units.
+// control-plane is built, flipping NEXT_PUBLIC_FX_ADMIN_USE_MOCK=false is the
+// only change needed — but until then every mutation below refuses honestly
+// rather than reporting a success it did not perform. All money is integer
+// minor units.
 
-import { env } from '@/config/env';
+import { apiRoot } from '@/config/env';
 import { operationKey } from './idempotency';
 import { resolveUseMock } from '@/config/useMock';
 import type {
@@ -29,7 +36,7 @@ import type {
 const USE_MOCK = resolveUseMock(process.env.NEXT_PUBLIC_FX_ADMIN_USE_MOCK);
 
 function adminBase(): string {
-  return env.apiBaseUrl.replace(/\/api\/v1\/?$/, '/api/fx/admin');
+  return `${apiRoot()}/api/finance/admin/fx`;
 }
 function authHeaders(): Record<string, string> {
   if (typeof window === 'undefined') return {};
@@ -39,18 +46,21 @@ function authHeaders(): Record<string, string> {
 const delay = (ms = 300) => new Promise((r) => setTimeout(r, ms));
 
 // Unlike association/restaurant, there is NO backend for any FX admin write —
-// /api/fx/admin/... does not exist anywhere in the Go service (confirmed by
-// grep; the only related route is /api/finance/admin/fx/markup, a different,
-// narrower surface). So there is no "set NEXT_PUBLIC_FX_ADMIN_USE_MOCK=false
-// to reach the real endpoint" escape hatch here — flipping that flag was ALSO
-// dishonest: every "live" branch below called fetch(...) and then returned
+// this console's surface (routing/providers/treasury/spread/recon/customers/
+// compliance/webhooks/cards/settings) does not exist anywhere in the Go
+// service (confirmed by grep; the only related route is
+// /api/finance/admin/fx/markup, a different, narrower surface — see adminBase()
+// above). So there is no "set NEXT_PUBLIC_FX_ADMIN_USE_MOCK=false to reach the
+// real endpoint" escape hatch here — flipping that flag was ALSO dishonest:
+// every "live" branch below called fetch(...) and then returned
 // `{ ok: true }` unconditionally, discarding the response and its status code,
 // so a 404 (the only possible outcome today) was reported as success too.
 // Both paths now fail honestly instead of fabricating a result. See
 // docs/audit/ADMIN_SIMULATED_WRITES.md.
 const NO_BACKEND_YET =
-  'has no backend yet: /api/fx/admin/... does not exist on the Go service. ' +
-  'This console cannot perform this action until that surface is built.';
+  'has no backend yet: this surface does not exist on the Go service (only ' +
+  '/api/finance/admin/fx/markup is real). This console cannot perform this ' +
+  'action until that surface is built.';
 
 async function reqLive<T>(url: string, init: RequestInit): Promise<T> {
   const res = await fetch(url, init);

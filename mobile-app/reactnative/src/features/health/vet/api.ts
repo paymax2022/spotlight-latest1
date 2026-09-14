@@ -7,6 +7,7 @@
 
 import { api } from '@/api/client';
 import { USE_MOCK, HEALTH_API_BASE } from '../constants/health.constants';
+import { uploadProviderCredential, addProviderCredential } from '../api';
 import { Colors } from '@/constants/colors';
 import type {
   Pet,
@@ -29,6 +30,7 @@ import type {
   SubmitReviewInput,
   EmergencyVetOption,
   ProviderProfile,
+  ProviderOnboardingStatus,
   SubmitOnboardingInput,
   UpdateProfileInput,
   ProviderAvailabilityBlock,
@@ -46,6 +48,7 @@ import type {
 } from './types';
 
 const VET_API = `${HEALTH_API_BASE}/vet`;
+const PROVIDERS_API = `${HEALTH_API_BASE}/providers`;
 const delay = (ms = 300) => new Promise((r) => setTimeout(r, ms));
 
 const now = Date.now();
@@ -836,13 +839,71 @@ export async function getEmergencyVets(): Promise<EmergencyVetOption[]> {
 }
 
 // ══ PROVIDER ════════════════════════════════════════════════════════════════
+// `${VET_API}/provider/profile` and `${VET_API}/provider/onboarding` were
+// never implemented backend side — backend/internal/app/health_vet_routes.go
+// has no /provider group at all. Same bug and same fix as pharmacy/lab's
+// identical onboarding 404s: the generic provider-application backend
+// (backend/internal/health/providers/*, mounted at
+// /api/finance/health/providers/applications*) already supports domain=VET
+// (service.go validType accepts 'vet') and was simply never called. This
+// client type's own `applicationId?` field and the Mode B comment already
+// anticipated this — the wiring was just never finished. Repointed here
+// instead of building a duplicate vet-specific onboarding backend.
+interface ProviderApplicationWire {
+  id: string;
+  domain: string;
+  provider_type: string;
+  display_name: string;
+  state: 'DRAFT' | 'SUBMITTED' | 'UNDER_REVIEW' | 'NEEDS_INFO' | 'APPROVED' | 'SUSPENDED' | 'REJECTED';
+}
+
+function mapApplicationState(state: ProviderApplicationWire['state']): ProviderOnboardingStatus {
+  switch (state) {
+    case 'DRAFT':        return 'draft';
+    case 'SUBMITTED':    return 'submitted';
+    case 'UNDER_REVIEW':  return 'under_review';
+    case 'APPROVED':      return 'approved';
+    case 'NEEDS_INFO':
+    case 'SUSPENDED':
+    case 'REJECTED':
+    default:              return 'needs_info';
+  }
+}
+
+async function findVetApplication(): Promise<ProviderApplicationWire | undefined> {
+  const { data } = await api.get<{ applications: ProviderApplicationWire[] }>(`${PROVIDERS_API}/applications`);
+  return data.applications?.find((a) => a.domain === 'VET');
+}
+
+// NOT fixed here: like pharmacy/lab, the generic API's AddCredential (the VCN
+// licence document) requires a real uploaded file's storage_key, and this
+// screen only ever collected vcnLicenseNo as a text field with no upload step
+// — so the credential is echoed back for display but not persisted
+// server-side. bio/consultFeeKobo/homeVisitFeeKobo/types/species are a LATER
+// profile-editing step (UpdateProfileInput), not onboarding, and have no
+// source here either — defaulted empty, same "unknown → safe default"
+// treatment used throughout this fix pass rather than fabricating values.
 export async function getProviderProfile(): Promise<ProviderProfile> {
   if (USE_MOCK) {
     await delay();
     return MOCK_PROFILE;
   }
-  const { data } = await api.get<ProviderProfile>(`${VET_API}/provider/profile`);
-  return data;
+  const app = await findVetApplication();
+  if (!app) {
+    return {
+      status: 'draft', displayName: '', vcnLicenseNo: '', clinicName: '', bio: '',
+      consultFeeKobo: 0, homeVisitFeeKobo: 0, types: [], species: [],
+      credential: { authority: 'VCN', licenseNo: '', status: 'pending' },
+    };
+  }
+  return {
+    status: mapApplicationState(app.state),
+    applicationId: app.id,
+    displayName: app.display_name,
+    vcnLicenseNo: '', clinicName: '', bio: '',
+    consultFeeKobo: 0, homeVisitFeeKobo: 0, types: [], species: [],
+    credential: { authority: 'VCN', licenseNo: '', status: 'pending' },
+  };
 }
 
 export async function submitProviderOnboarding(input: SubmitOnboardingInput): Promise<ProviderProfile> {
@@ -856,8 +917,30 @@ export async function submitProviderOnboarding(input: SubmitOnboardingInput): Pr
     };
     return MOCK_PROFILE;
   }
-  const { data } = await api.post<ProviderProfile>(`${VET_API}/provider/onboarding`, input);
-  return data;
+  let app = await findVetApplication();
+  if (!app) {
+    const created = await api.post<{ application: ProviderApplicationWire }>(`${PROVIDERS_API}/applications`, {
+      domain: 'VET', provider_type: 'vet', display_name: input.displayName,
+    });
+    app = created.data.application;
+  }
+  if (input.licenceFile) {
+    const storageKey = await uploadProviderCredential(app.id, input.licenceFile);
+    await addProviderCredential(app.id, { credType: 'VCN', referenceNo: input.vcnLicenseNo, storageKey });
+  }
+  if (app.state === 'DRAFT' || app.state === 'NEEDS_INFO') {
+    const submitted = await api.post<{ application: ProviderApplicationWire }>(`${PROVIDERS_API}/applications/${app.id}/submit`, {});
+    app = submitted.data.application;
+  }
+  return {
+    status: mapApplicationState(app.state),
+    applicationId: app.id,
+    displayName: app.display_name,
+    vcnLicenseNo: input.vcnLicenseNo,
+    clinicName: input.clinicName,
+    bio: '', consultFeeKobo: 0, homeVisitFeeKobo: 0, types: [], species: [],
+    credential: { authority: 'VCN', licenseNo: input.vcnLicenseNo, status: 'pending' },
+  };
 }
 
 // ── Mode B (assisted) VCN verification (HL-2) ───────────────────────────────────

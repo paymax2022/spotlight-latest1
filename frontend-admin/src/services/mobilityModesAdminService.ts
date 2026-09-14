@@ -1,6 +1,6 @@
 // ── Admin — Paymax Mobility multi-modal service ──────────────────────────────
 // Parcel · Bus · Towing · Movers · Car hire. Mock by default; flip USE_MOCK to
-// false and the fetch branches hit /api/finance/admin/transport/{parcels,couriers,
+// false and the fetch branches hit /api/finance/admin/transport/{parcels,
 // bus,towing,movers,car-hire}. Most of this surface IS live — registered under
 // backend/internal/app/finance_routes.go's FeatureTransportModesEnabled block —
 // the OLD "Go backend admin endpoints not live yet" claim here was stale; a few
@@ -8,10 +8,10 @@
 // throw rather than in this header.
 // All money is integer minor units (kobo). Every mutation is server-audited.
 
-import { env } from '@/config/env';
+import { apiRoot } from '@/config/env';
 import { resolveUseMock } from '@/config/useMock';
 import type {
-  ParcelRow, ParcelStatus, PodStatus, CourierRow,
+  ParcelRow, ParcelStatus, PodStatus,
   BusOperator, BusRoute, BusSchedule, BusManifestRow,
   TowingRow, TowingStatus,
   MoverRow, MoverDetail, MoverStatus,
@@ -23,9 +23,18 @@ import type {
 // admin control-plane endpoints are live on the Go backend.
 const USE_MOCK = resolveUseMock(process.env.NEXT_PUBLIC_MOBILITY_MODES_USE_MOCK);
 
+// Admin transport lives under its own absolute root (/api/finance/admin/transport,
+// see backend/internal/app/finance_routes.go's `adminTr` group), so the caller
+// must spell the full path out. apiRoot() strips any trailing /api/v1 from the
+// proxy base and nothing else.
+//
+// This used to be `env.apiBaseUrl.replace(/\/api\/v1\/?$/, '/api/finance/admin/transport')`,
+// which stopped matching the moment apiBaseUrl became the same-origin proxy
+// path (<origin>/api/admin-proxy, no /api/v1 suffix) — see insuranceAdminService.ts
+// for the same regression. Every request 404'd against <proxy>/parcels instead
+// of <proxy>/api/finance/admin/transport/parcels.
 function adminBase(): string {
-  // env.apiBaseUrl defaults to .../api/v1 ; admin transport lives under /api/finance/admin/transport
-  return env.apiBaseUrl.replace(/\/api\/v1\/?$/, '/api/finance/admin/transport');
+  return `${apiRoot()}/api/finance/admin/transport`;
 }
 function authHeaders(): Record<string, string> {
   if (typeof window === 'undefined') return {};
@@ -61,6 +70,24 @@ async function writeOk(url: string, init: RequestInit): Promise<{ ok: boolean }>
   return { ok: true };
 }
 
+// The GET branches below had the same untested-assumption problem as the writes:
+// several called a URL with an extra path segment that matches no registered
+// route (404), and every one of them (even the correctly-pathed ones) did
+// `fetch(...).json()` with no res.ok check and no envelope unwrap — the admin
+// handlers reply `{ parcels: [...] }` / `{ jobs: [...] }` / `{ bookings: [...] }`
+// / `{ routes: [...] }` / `{ manifest: [...] }`, never a bare array. Route lists
+// with no admin backend at all (see per-function comments) throw NO_BACKEND_YET
+// instead of silently 404ing.
+async function readList(url: string, key: string): Promise<any[]> {
+  const res = await fetch(url, { headers: authHeaders() });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body?.error || body?.message || `Request failed (${res.status})`);
+  }
+  const j = await res.json();
+  return Array.isArray(j) ? j : (j?.[key] ?? []);
+}
+
 // ─── Mock datasets ────────────────────────────────────────────────────────────
 
 const PARCELS: ParcelRow[] = [
@@ -69,13 +96,6 @@ const PARCELS: ParcelRow[] = [
   { id: 'pcl_3003', senderName: 'Sola M.', courierName: null, courierId: null, status: 'created', category: 'parcel', size: 'large', speed: 'standard', pickupAddress: 'Surulere', dropoffAddress: 'Yaba', zone: 'Surulere', fareKobo: 3_100_00, declaredValueKobo: 30_000_00, podStatus: 'pending', podProofUrl: null, escrowStatus: 'held', createdAt: '2026-06-20T11:00:00Z', updatedAt: '2026-06-20T11:00:00Z' },
   { id: 'pcl_2990', senderName: 'Kemi T.', courierName: 'Grace E.', courierId: 'drv_2011', status: 'delivered', category: 'documents', size: 'small', speed: 'express', pickupAddress: 'Lekki', dropoffAddress: 'Ajah', zone: 'Lekki', fareKobo: 1_500_00, declaredValueKobo: 10_000_00, podStatus: 'approved', podProofUrl: '#', escrowStatus: 'released', createdAt: '2026-06-19T15:00:00Z', updatedAt: '2026-06-19T16:05:00Z' },
   { id: 'pcl_2985', senderName: 'David N.', courierName: 'Femi K.', courierId: 'drv_2010', status: 'disputed', category: 'fragile', size: 'medium', speed: 'standard', pickupAddress: 'Yaba', dropoffAddress: 'Surulere', zone: 'Yaba', fareKobo: 2_000_00, declaredValueKobo: 75_000_00, podStatus: 'rejected', podProofUrl: '#', escrowStatus: 'held', createdAt: '2026-06-19T12:00:00Z', updatedAt: '2026-06-19T14:30:00Z' },
-];
-
-const COURIERS: CourierRow[] = [
-  { id: 'drv_1003', name: 'Tunde Adeyemi', phone: '+2348034567890', zone: 'Lagos Island', status: 'active', rating: 4.8, activeParcels: 1, completedParcels: 412 },
-  { id: 'drv_2012', name: 'Ibrahim S.', phone: '+2348044567811', zone: 'Lekki', status: 'active', rating: 4.7, activeParcels: 1, completedParcels: 188 },
-  { id: 'drv_2011', name: 'Grace E.', phone: '+2348044567822', zone: 'Ikeja', status: 'active', rating: 4.9, activeParcels: 0, completedParcels: 256 },
-  { id: 'drv_2010', name: 'Femi K.', phone: '+2348044567833', zone: 'Yaba', status: 'suspended', rating: 4.1, activeParcels: 0, completedParcels: 97 },
 ];
 
 const BUS_OPERATORS: BusOperator[] = [
@@ -154,8 +174,7 @@ export async function getParcels(status?: ParcelStatus | ''): Promise<ParcelRow[
     return list;
   }
   const q = status ? `?status=${status}` : '';
-  const res = await fetch(`${adminBase()}/parcels${q}`, { headers: authHeaders() });
-  return res.json();
+  return readList(`${adminBase()}/parcels${q}`, 'parcels');
 }
 
 export async function setParcelStatus(id: string, patch: ModeStatusPatch): Promise<{ ok: boolean }> {
@@ -172,18 +191,10 @@ export async function reviewParcelPod(id: string, decision: PodStatus, reason: s
   return writeOk(`${adminBase()}/parcels/${id}/pod-review`, { method: 'PATCH', headers: authHeaders(), body: JSON.stringify({ decision, reason }) });
 }
 
-export async function getCouriers(): Promise<CourierRow[]> {
-  if (USE_MOCK) { await delay(); return [...COURIERS]; }
-  const res = await fetch(`${adminBase()}/couriers`, { headers: authHeaders() });
-  return res.json();
-}
-
 // ─── Bus ────────────────────────────────────────────────────────────────────--
 export async function getBusOperators(): Promise<BusOperator[]> {
   if (USE_MOCK) { await delay(); return [...BUS_OPERATORS]; }
-  const res = await fetch(`${adminBase()}/bus/operators`, { headers: authHeaders() });
-  const j = await res.json();
-  return Array.isArray(j) ? j : (j.operators ?? []);
+  return readList(`${adminBase()}/bus/operators`, 'operators');
 }
 
 export async function setBusProviderVerification(
@@ -198,8 +209,7 @@ export async function setBusProviderVerification(
 
 export async function getBusRoutes(): Promise<BusRoute[]> {
   if (USE_MOCK) { await delay(); return [...BUS_ROUTES]; }
-  const res = await fetch(`${adminBase()}/bus/routes`, { headers: authHeaders() });
-  return res.json();
+  return readList(`${adminBase()}/bus/routes`, 'routes');
 }
 
 export async function approveBusRouteFare(id: string, reason: string): Promise<{ ok: boolean }> {
@@ -212,8 +222,11 @@ export async function approveBusRouteFare(id: string, reason: string): Promise<{
 
 export async function getBusSchedules(): Promise<BusSchedule[]> {
   if (USE_MOCK) { await delay(); return [...BUS_SCHEDULES]; }
-  const res = await fetch(`${adminBase()}/bus/schedules`, { headers: authHeaders() });
-  return res.json();
+  // No backend at all: finance_routes.go registers no admin GET for schedules —
+  // only POST /bus/schedules (create) and POST /bus/schedules/:id/approve-fare.
+  // GET /bus/schedules exists only on the customer-facing `mob` group (different
+  // base path, requires a route_id) and is not reachable from adminBase().
+  throw new Error(`Listing bus schedules ${NO_BACKEND_YET}`);
 }
 
 export async function approveBusScheduleFare(id: string, reason: string): Promise<{ ok: boolean }> {
@@ -225,8 +238,7 @@ export async function approveBusScheduleFare(id: string, reason: string): Promis
 
 export async function getBusManifest(scheduleId: string): Promise<BusManifestRow[]> {
   if (USE_MOCK) { await delay(); return BUS_MANIFEST[scheduleId] ?? []; }
-  const res = await fetch(`${adminBase()}/bus/manifest?schedule_id=${encodeURIComponent(scheduleId)}`, { headers: authHeaders() });
-  return res.json();
+  return readList(`${adminBase()}/bus/manifest?schedule_id=${encodeURIComponent(scheduleId)}`, 'manifest');
 }
 
 // ─── Towing ─────────────────────────────────────────────────────────────────--
@@ -237,9 +249,11 @@ export async function getTowingJobs(status?: TowingStatus | ''): Promise<TowingR
     if (status) list = list.filter((t) => t.status === status);
     return list;
   }
+  // backend: GET /towing (transportAdmin.AdminTowingList) — the OLD /towing/jobs
+  // path here had an extra "jobs" segment that matched no route, same bug as
+  // setTowingStatus's PATCH path had before it was fixed.
   const q = status ? `?status=${status}` : '';
-  const res = await fetch(`${adminBase()}/towing/jobs${q}`, { headers: authHeaders() });
-  return res.json();
+  return readList(`${adminBase()}/towing${q}`, 'jobs');
 }
 
 export async function setTowingStatus(id: string, patch: ModeStatusPatch): Promise<{ ok: boolean }> {
@@ -257,9 +271,11 @@ export async function getMoverJobs(status?: MoverStatus | ''): Promise<MoverRow[
     if (status) list = list.filter((m) => m.status === status);
     return list;
   }
+  // backend: GET /movers (transportAdmin.AdminMoversList) — the OLD /movers/jobs
+  // path here had an extra "jobs" segment that matched no route, same bug as
+  // setMoverStatus's PATCH path had before it was fixed.
   const q = status ? `?status=${status}` : '';
-  const res = await fetch(`${adminBase()}/movers/jobs${q}`, { headers: authHeaders() });
-  return res.json();
+  return readList(`${adminBase()}/movers${q}`, 'jobs');
 }
 
 export async function getMoverJob(id: string): Promise<MoverDetail> {
@@ -269,8 +285,10 @@ export async function getMoverJob(id: string): Promise<MoverDetail> {
     if (!m) throw new Error('Mover job not found');
     return m;
   }
-  const res = await fetch(`${adminBase()}/movers/jobs/${id}`, { headers: authHeaders() });
-  return res.json();
+  // No backend at all: admin_modes.go's AdminMoversList only returns the list —
+  // there is no admin GET for a single mover job's detail (bids, inventory).
+  // GET /movers/:id exists only on the customer-facing `mob` group.
+  throw new Error(`Loading a mover job's detail ${NO_BACKEND_YET}`);
 }
 
 export async function setMoverStatus(id: string, patch: ModeStatusPatch): Promise<{ ok: boolean }> {
@@ -288,9 +306,11 @@ export async function getCarHireBookings(status?: CarHireStatus | ''): Promise<C
     if (status) list = list.filter((c) => c.status === status);
     return list;
   }
+  // backend: GET /car-hire (transportAdmin.AdminCarHireList) — the OLD
+  // /car-hire/bookings path here had an extra "bookings" segment that matched
+  // no route, same bug as setCarHireStatus's PATCH path had before it was fixed.
   const q = status ? `?status=${status}` : '';
-  const res = await fetch(`${adminBase()}/car-hire/bookings${q}`, { headers: authHeaders() });
-  return res.json();
+  return readList(`${adminBase()}/car-hire${q}`, 'bookings');
 }
 
 export async function setCarHireStatus(id: string, patch: ModeStatusPatch): Promise<{ ok: boolean }> {

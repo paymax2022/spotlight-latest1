@@ -16,7 +16,7 @@ export default function SessionExpiredScreen() {
   const goLogin = () => {
     const route = descriptor.cta?.route;
     if (route) router.replace(route as never);
-    else router.replace('/(doctor)/signup');
+    else router.replace('/(doctor)/credentialing');
   };
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>

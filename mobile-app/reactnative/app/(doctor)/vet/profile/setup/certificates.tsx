@@ -13,6 +13,9 @@ import { SectionCard, StateView, WizardProgress, UploadField, EditableListCard }
 import type { UploadFieldState } from '@/features/doctor/components';
 import { useVetProfileDraft, useSaveVetProfileDraft } from '@/features/doctor/hooks';
 import type { UploadedFile } from '@/types/doctor.batch1';
+import { pickFileForField } from '@/features/registration/utils/filePicker';
+import type { PickedUpload } from '@/features/registration/types/registration.types';
+import { DOCTOR_USE_MOCK, doctorUploadFile } from '@/api/doctor.client';
 
 export default function VetCertificatesScreen() {
   const { data: draft, isLoading, isError, refetch } = useVetProfileDraft();
@@ -22,6 +25,7 @@ export default function VetCertificatesScreen() {
   const [adding, setAdding] = useState(false);
   const [state, setState] = useState<UploadFieldState>('empty');
   const [fileName, setFileName] = useState<string | undefined>();
+  const [picked, setPicked] = useState<PickedUpload>();
   const [error, setError] = useState<string>();
 
   useEffect(() => {
@@ -30,25 +34,36 @@ export default function VetCertificatesScreen() {
 
   const certs = list ?? [];
 
-  const pick = () => {
+  const pick = async () => {
     setError(undefined);
-    setFileName(`vet-certificate-${Date.now()}.pdf`);
+    const file = await pickFileForField('.pdf,.jpg,.jpeg,.png');
+    if (!file) return;
+    setPicked(file);
+    setFileName(file.name);
     setState('selected');
   };
 
-  const doUpload = () => {
-    if (!fileName) return;
-    const file: UploadedFile = {
-      id: `vet-cert-${Date.now()}`,
-      uri: `file:///picked/${fileName}`,
-      fileName,
-      mimeType: 'application/pdf',
-      uploadedAt: new Date().toISOString(),
-    };
-    setList((prev) => [...(prev ?? []), file]);
-    setState('empty');
-    setFileName(undefined);
-    setAdding(false);
+  const doUpload = async () => {
+    if (!picked) return;
+    setState('uploading');
+    try {
+      if (!DOCTOR_USE_MOCK) await doctorUploadFile('document', { uri: picked.uri, fileName: picked.name, mimeType: picked.mimeType });
+      const uploaded: UploadedFile = {
+        id: `vet-cert-${Date.now()}`,
+        uri: picked.uri,
+        fileName: picked.name,
+        mimeType: picked.mimeType,
+        uploadedAt: new Date().toISOString(),
+      };
+      setList((prev) => [...(prev ?? []), uploaded]);
+      setState('empty');
+      setFileName(undefined);
+      setPicked(undefined);
+      setAdding(false);
+    } catch {
+      setState('error');
+      setError('Upload failed. Please try again.');
+    }
   };
 
   const removeCert = (id: string) => setList((prev) => (prev ?? []).filter((c) => c.id !== id));

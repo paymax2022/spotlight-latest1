@@ -3,7 +3,7 @@ import { View, Text, ScrollView, StyleSheet, Pressable, Platform } from 'react-n
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
-import { CalendarClock, ChevronRight, Stethoscope, Sparkles, BadgeCheck } from 'lucide-react-native';
+import { ArrowRight, BriefcaseMedical, CalendarClock, ChevronRight, Stethoscope } from 'lucide-react-native';
 import { useQuery } from '@tanstack/react-query';
 import { Colors } from '@/constants/colors';
 import { Radius } from '@/constants/radius';
@@ -23,19 +23,9 @@ export default function TelemedicineHome() {
   });
 
   const { data: doctors = [] } = useQuery({
-    queryKey: ['tele-doctors', 'all'],
+    queryKey: ['tele-doctors', 'featured'],
     queryFn:  () => getDoctors(),
     placeholderData: DEMO_DOCTORS,
-  });
-
-  // Featured is asked of the SERVER rather than filtered out of the list above,
-  // so an empty answer is authoritative. Deliberately no placeholderData: seeding
-  // this with DEMO_DOCTORS would render a Featured section — heading and all —
-  // for doctors nobody curated, and the section's whole contract is that it
-  // appears only when something is genuinely featured.
-  const { data: featured = [] } = useQuery({
-    queryKey: ['tele-doctors', 'featured'],
-    queryFn:  () => getDoctors({ featured: true }),
   });
 
   const online = doctors.filter((d) => d.isOnline);
@@ -87,29 +77,6 @@ export default function TelemedicineHome() {
           ))}
         </View>
 
-        {/* Featured — renders ONLY when a doctor is actually featured. An empty
-            carousel under a heading reads as a broken screen, so the heading is
-            inside the conditional too, not just the list. */}
-        {featured.length > 0 && (
-          <>
-            <View style={styles.sectionHeader}>
-              <View style={styles.featuredHeading}>
-                <Sparkles size={18} color={Colors.gold} strokeWidth={2.2} />
-                <Text style={styles.sectionTitle}>Featured doctors</Text>
-              </View>
-            </View>
-            <View style={{ gap: Spacing.sm }}>
-              {featured.map((d) => (
-                <DoctorCard
-                  key={d.id}
-                  doctor={d}
-                  onPress={() => router.push(`/services/telemedicine/doctor/${d.id}`)}
-                />
-              ))}
-            </View>
-          </>
-        )}
-
         {/* Online now */}
         <View style={styles.sectionHeader}>
           <Text style={styles.sectionTitle}>Available now</Text>
@@ -135,20 +102,28 @@ export default function TelemedicineHome() {
           </View>
           <ChevronRight size={20} color={Colors.onSurfaceVariant} strokeWidth={2} />
         </Pressable>
-        {/* Practitioner onboarding */}
-        <Pressable
-          style={[styles.onboardCard, shadow1]}
-          onPress={() => router.push('/services/telemedicine/doctor/register')}
-        >
-          <View style={styles.onboardIcon}>
-            <BadgeCheck size={20} color={Colors.primary} strokeWidth={2} />
+
+        {/* Provider onboarding */}
+        <View style={[styles.providerCard, shadow1]}>
+          <View style={styles.providerIcon}>
+            <BriefcaseMedical size={20} color={Colors.primary} strokeWidth={2} />
           </View>
-          <View style={{ flex: 1 }}>
-            <Text style={styles.apptTitle}>Are you a doctor?</Text>
-            <Text style={styles.apptSub}>Join Paymax and consult with patients online</Text>
-          </View>
-          <ChevronRight size={20} color={Colors.onSurfaceVariant} strokeWidth={2} />
-        </Pressable>
+          <Text style={styles.providerEyebrow}>FOR HEALTHCARE PROVIDERS</Text>
+          <Text style={styles.providerTitle}>List your practice on Paymax</Text>
+          <Text style={styles.providerSub}>
+            Doctors, pharmacies, diagnostic labs, HMOs, vets and clinics — get verified, publish
+            your services and get paid into your wallet.
+          </Text>
+          <Pressable
+            style={styles.providerBtn}
+            onPress={() => router.push('/health/provider-onboarding')}
+            accessibilityRole="button"
+            accessibilityLabel="List your practice as a healthcare provider"
+          >
+            <Text style={styles.providerBtnText}>Get started</Text>
+            <ArrowRight size={18} color={Colors.onPrimary} strokeWidth={2.4} />
+          </Pressable>
+        </View>
       </ScrollView>
     </SafeAreaView>
   );
@@ -174,9 +149,13 @@ const styles = StyleSheet.create({
   onlineText:  { ...Typography.labelSm, color: '#16A34A' },
   apptShortcut:{ flexDirection: 'row', alignItems: 'center', gap: Spacing.md, marginTop: Spacing.lg, padding: Spacing.md, borderRadius: Radius.lg, backgroundColor: Colors.surfaceContainerLowest, borderWidth: 1, borderColor: Colors.surfaceContainerHigh },
   apptIcon:    { width: 44, height: 44, borderRadius: Radius.md, backgroundColor: Colors.iconBgBlue, alignItems: 'center', justifyContent: 'center' },
-  featuredHeading: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  onboardCard: { flexDirection: 'row', alignItems: 'center', gap: Spacing.md, marginTop: Spacing.sm, padding: Spacing.md, borderRadius: Radius.lg, backgroundColor: Colors.surfaceContainerLowest, borderWidth: 1, borderColor: Colors.surfaceContainerHigh },
-  onboardIcon: { width: 44, height: 44, borderRadius: Radius.md, backgroundColor: Colors.iconBgPurple, alignItems: 'center', justifyContent: 'center' },
   apptTitle:   { ...Typography.labelLg, color: Colors.onSurface },
   apptSub:     { ...Typography.caption, color: Colors.onSurfaceVariant },
+  providerCard:   { marginTop: Spacing.lg, padding: Spacing.cardPadding, borderRadius: Radius.xl, backgroundColor: Colors.surfaceContainerLowest, borderWidth: 1, borderColor: Colors.surfaceContainerHigh, gap: Spacing.xs },
+  providerIcon:   { width: 44, height: 44, borderRadius: Radius.md, backgroundColor: Colors.iconBgPurple, alignItems: 'center', justifyContent: 'center', marginBottom: Spacing.sm },
+  providerEyebrow:{ ...Typography.labelSm, color: Colors.secondary },
+  providerTitle:  { ...Typography.titleLg, color: Colors.onSurface },
+  providerSub:    { ...Typography.bodySm, color: Colors.onSurfaceVariant, marginBottom: Spacing.md },
+  providerBtn:    { alignSelf: 'flex-start', flexDirection: 'row', alignItems: 'center', gap: 6, height: 44, paddingHorizontal: Spacing.lg, borderRadius: Radius.full, backgroundColor: Colors.primary },
+  providerBtnText:{ ...Typography.labelLg, color: Colors.onPrimary },
 });

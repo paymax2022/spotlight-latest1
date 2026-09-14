@@ -82,8 +82,8 @@ export default function ConsentsHubScreen() {
 
           <PrimaryButton
             label={allAccepted ? 'Continue to permissions' : 'Review agreements'}
-            onPress={allAccepted ? goNext : () => router.push(`/(doctor)/onboarding/consent/${(status.outstanding[0] ?? LEGAL_DOC_ORDER[0])}`)}
-            disabled={!allAccepted && status.outstanding.length === 0}
+            onPress={allAccepted ? goNext : () => router.push(`/(doctor)/onboarding/consent/${(status?.outstanding?.[0] ?? LEGAL_DOC_ORDER[0])}`)}
+            disabled={!allAccepted && (status?.outstanding?.length ?? 0) === 0}
             style={styles.btn}
           />
         </ScrollView>

@@ -67,9 +67,10 @@ const (
 	EventOrderCancelled = "restaurant.order.cancelled"
 	EventOrderAssigned  = "restaurant.order.assigned"
 	EventOrderAccepted  = "restaurant.order.accepted"
-	EventOrderDispatch  = "restaurant.order.dispatch"  // offered to available riders
-	EventOrderNoRiders  = "restaurant.order.no_riders" // dispatch found no available riders
-	EventOrderHandoff   = "restaurant.order.handoff"   // delivered + handed off (code confirmed)
+	EventOrderDispatch  = "restaurant.order.dispatch"          // offered to available riders
+	EventOrderNoRiders  = "restaurant.order.no_riders"         // dispatch found no available riders
+	EventOrderHandoff   = "restaurant.order.handoff"           // delivered + handed off (code confirmed)
+	EventPickupCodeErr  = "restaurant.order.pickup_code_error" // failed to generate/persist the pickup code
 	EventNewMessage     = "restaurant.chat.message"
 	// Admin ops-console onboarding decision (approve/reject) delivered to the owner.
 	EventOnboardingDecision = "restaurant.onboarding.decision"

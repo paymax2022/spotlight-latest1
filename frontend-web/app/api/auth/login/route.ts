@@ -78,6 +78,20 @@ export async function POST(request: Request) {
       );
     }
 
+    // Second factor. With FEATURE_OTP_LOGIN_MFA_ENABLED on, Go answers 200 with
+    // mfaRequired and NO tokens: the password was right and a code has been
+    // emailed. This must be checked BEFORE the missing-session guard below, which
+    // would otherwise report a successful password as "Sign in failed" and leave
+    // the user with a code and nowhere to enter it.
+    if (payload?.mfaRequired === true) {
+      return NextResponse.json({
+        success: true,
+        mfaRequired: true,
+        purpose: payload?.purpose ?? 'login',
+        message: payload?.message ?? 'Enter the code we emailed you to finish signing in.',
+      });
+    }
+
     const session = payload?.session ?? {};
     const accessToken = typeof session.access_token === 'string' ? session.access_token : '';
     const refreshToken = typeof session.refresh_token === 'string' ? session.refresh_token : '';

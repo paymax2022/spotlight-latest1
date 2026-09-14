@@ -64,9 +64,22 @@
               "NSExceptionAllowsInsecureHTTPLoads": true
             }
           }
-        }
+        },
+        "ITSAppUsesNonExemptEncryption": false
       },
       "bundleIdentifier": "com.anonymous.paymaxreactnativeapp"
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "c69cdff3-1818-47f8-9d72-658a2c83832d"
+      }
+    },
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
+    "updates": {
+      "url": "https://u.expo.dev/c69cdff3-1818-47f8-9d72-658a2c83832d"
     }
   }
 }

@@ -10,6 +10,8 @@ import { TeleHeader } from '@/features/telemedicine/components';
 import { SectionCard, StateView, WizardProgress, UploadField } from '@/features/doctor/components';
 import type { UploadFieldState } from '@/features/doctor/components';
 import { useProfileDraft, useUploadProfilePhoto, useSaveProfileDraft } from '@/features/doctor/hooks';
+import { pickFileForField } from '@/features/registration/utils/filePicker';
+import type { PickedUpload } from '@/features/registration/types/registration.types';
 
 export default function ProfilePhotoScreen() {
   const { data: draft, isLoading, isError, refetch } = useProfileDraft();
@@ -18,20 +20,23 @@ export default function ProfilePhotoScreen() {
 
   const [state, setState] = useState<UploadFieldState>('empty');
   const [fileName, setFileName] = useState<string | undefined>();
+  const [picked, setPicked] = useState<PickedUpload>();
   const [error, setError] = useState<string>();
 
-  // Phase A stub: simulate a picked file (no real ImagePicker until Phase C).
-  const pick = () => {
+  const pick = async () => {
     setError(undefined);
-    setFileName(`profile-photo-${Date.now()}.jpg`);
+    const file = await pickFileForField('.jpg,.jpeg,.png');
+    if (!file) return;
+    setPicked(file);
+    setFileName(file.name);
     setState('selected');
   };
 
   const doUpload = async () => {
-    if (!fileName) return;
+    if (!picked) return;
     setState('uploading');
     try {
-      await upload.mutateAsync({ uri: `file:///picked/${fileName}`, fileName, mimeType: 'image/jpeg' });
+      await upload.mutateAsync({ uri: picked.uri, fileName: picked.name, mimeType: picked.mimeType });
       setState('uploaded');
     } catch {
       setState('error');

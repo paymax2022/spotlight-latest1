@@ -1,4 +1,4 @@
-import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query';
+import { QueryClient, QueryClientProvider, useQuery, QueryCache, MutationCache } from '@tanstack/react-query';
 import { fetchModuleVisibility, MODULE_VISIBILITY_KEY } from '@/features/modules/visibility';
 import { visibilityFor } from '@/features/modules/rules';
 import {
@@ -27,6 +27,8 @@ import { usePushNotifications } from '@/lib/push';
 import { useVisitorPushBridge } from '@/features/visitor/hooks/useVisitorPushBridge';
 import { useElectionPushBridge } from '@/features/election/hooks/useElectionPushBridge';
 import * as Sentry from '@sentry/react-native';
+import { isUnauthorized, currentPathForReturn } from '@/lib/authError';
+import { promptSignIn } from '@/lib/authRedirect';
 
 // Error tracking + native crash capture. Inert until EXPO_PUBLIC_SENTRY_DSN is set,
 // so local/dev and Expo Go are unaffected.
@@ -41,9 +43,35 @@ Sentry.init({
 // Keep the native splash visible until the brand font is ready (best-effort).
 SplashScreen.preventAutoHideAsync().catch(() => {});
 
+// A DEAD SESSION IS HANDLED ONCE, HERE, FOR EVERY SCREEN.
+//
+// 726 screens render the same generic "Couldn't load. Please try again." with a
+// Retry button. When the cause is an expired session that button cannot work —
+// it resends the same dead token — so the user is offered the one action
+// guaranteed to fail and never told the real remedy. Fixing that screen by
+// screen would be 726 edits; the query client sees every one of those failures
+// already.
+//
+// promptSignIn is throttled, so the several queries a screen fires in parallel
+// produce ONE navigation rather than a router.replace storm — a crash this file
+// has met before (see the "Maximum update depth exceeded" note below).
 const queryClient = new QueryClient({
+  queryCache: new QueryCache({
+    onError: (error) => { if (isUnauthorized(error)) promptSignIn(); },
+  }),
+  mutationCache: new MutationCache({
+    // A 401 on a write is the same dead session, and arguably worse: the user
+    // believes they submitted something.
+    onError: (error) => { if (isUnauthorized(error)) promptSignIn(); },
+  }),
   defaultOptions: {
-    queries: { retry: 1, staleTime: 30_000 },
+    queries: {
+      // Never retry a 401. The default retried it once, which cannot succeed and
+      // only delays the sign-in prompt by a round trip.
+      retry: (failureCount, error) => !isUnauthorized(error) && failureCount < 1,
+      staleTime: 30_000,
+    },
+    mutations: { retry: false },
   },
 });
 
@@ -115,8 +143,17 @@ function AuthGate({ children }: { children: React.ReactNode }) {
 
     if (!user && !inAuth) {
       // Pass the current route so login can return the user here after success.
-      if (isModuleRoute) {
-        const returnTo = '/' + segments.join('/');
+      //
+      // COLD BOOT loses this if we rely on segments alone. Deep-linking to
+      // /properties while signed out runs this gate before the router has
+      // populated segments, so isModuleRoute is false, the else branch fires and
+      // the destination is thrown away — the user signs in and lands on the home
+      // grid having asked for something else. Observed exactly that: a cold
+      // /properties with an expired session redirected to /login with no
+      // returnTo. currentPathForReturn() reads the address bar, which is already
+      // correct at that moment (and refuses login paths, so this cannot loop).
+      const returnTo = isModuleRoute ? '/' + segments.join('/') : currentPathForReturn();
+      if (returnTo) {
         router.replace({ pathname: '/(auth)/login', params: { returnTo } } as never);
       } else {
         router.replace('/(auth)/login');

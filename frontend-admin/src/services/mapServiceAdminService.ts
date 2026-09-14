@@ -7,7 +7,7 @@
 // `map.admin.review` (carried by the admin session token).
 // Mock by default (NEXT_PUBLIC_MAPS_USE_MOCK); flip to false to hit the live Go backend.
 
-import { env } from '@/config/env';
+import { apiRoot } from '@/config/env';
 import { resolveUseMock } from '@/config/useMock';
 import type {
   MapDashboard,
@@ -20,8 +20,15 @@ import type {
 
 const USE_MOCK = resolveUseMock(process.env.NEXT_PUBLIC_MAPS_USE_MOCK);
 
+// apiRoot() strips any trailing /api/v1 off env.apiBaseUrl → /api/maps/admin
+// (verified: backend/internal/maps/routes_v2.go `grp := r.Group("/api/maps/admin")`,
+// registered via RegisterMapsV2Admin in finance_routes.go). This used to be a
+// regex on env.apiBaseUrl itself, which relied on apiBaseUrl ending in
+// /api/v1 — it no longer does (see config/env.ts), so that regex silently
+// stopped matching and every live maps admin call 404'd against the bare
+// proxy origin.
 function adminBase(): string {
-  return env.apiBaseUrl.replace(/\/api\/v1\/?$/, '/api/maps/admin');
+  return `${apiRoot()}/api/maps/admin`;
 }
 function authHeaders(): Record<string, string> {
   if (typeof window === 'undefined') return {};
