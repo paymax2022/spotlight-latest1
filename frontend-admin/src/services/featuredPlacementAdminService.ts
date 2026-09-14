@@ -1,4 +1,4 @@
-import { env } from '@/config/env';
+import { apiRoot } from '@/config/env';
 import { resolveUseMock } from '@/config/useMock';
 import type {
   Campaign,
@@ -6,11 +6,17 @@ import type {
   ReviewQueueFilters,
 } from '@/types/featuredPlacementAdmin';
 
-// Backend admin placement routes hang off the Go API /api prefix, matching the
-// onboarding/mobility admin services: env.apiBaseUrl ends with /api/v1 and the
-// admin routes live under /api/placement/admin/...
+// Backend admin placement routes hang off the Go API /api prefix (verified:
+// backend/internal/app/finance_routes.go `placementAdmin := r.Group("/api/placement/admin")`),
+// matching the onboarding/mobility admin services. This used to be
+// `env.apiBaseUrl.replace(/\/api\/v1\/?$/, '/api')`, which relied on
+// apiBaseUrl ending in /api/v1 — it no longer does (see config/env.ts), so
+// that regex silently stopped matching and every live placement admin call
+// 404'd against the bare proxy origin. apiRoot() strips the /api/v1 suffix
+// (if any) so `${apiRoot()}/api` reliably lands on the API root regardless of
+// how apiBaseUrl is spelled.
 function adminApiBase(): string {
-  return env.apiBaseUrl.replace(/\/api\/v1\/?$/, '/api');
+  return `${apiRoot()}/api`;
 }
 
 function authHeaders(): Record<string, string> {
