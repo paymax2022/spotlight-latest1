@@ -173,9 +173,15 @@ export async function reviewParcelPod(id: string, decision: PodStatus, reason: s
 }
 
 export async function getCouriers(): Promise<CourierRow[]> {
+  // No backend at all: there is no /couriers route. finance_routes.go's own
+  // comment (admin_modes.go: "Couriers/operators/providers are surfaced via
+  // the existing /admin/transport/drivers queue") points at GET /drivers
+  // instead, but that endpoint returns driver rows (vehicle_type,
+  // verification_status, completed_trips/cancelled_trips) with no phone,
+  // zone, or activeParcels field — there is no real mapping to CourierRow,
+  // only mock data would fill the gap.
   if (USE_MOCK) { await delay(); return [...COURIERS]; }
-  const res = await fetch(`${adminBase()}/couriers`, { headers: authHeaders() });
-  return res.json();
+  throw new Error(`Listing couriers ${NO_BACKEND_YET}`);
 }
 
 // ─── Bus ────────────────────────────────────────────────────────────────────--
@@ -237,8 +243,10 @@ export async function getTowingJobs(status?: TowingStatus | ''): Promise<TowingR
     if (status) list = list.filter((t) => t.status === status);
     return list;
   }
+  // backend: GET /towing (transportAdmin.AdminTowingList) — the OLD /towing/jobs
+  // path here had an extra "jobs" segment that matched no route.
   const q = status ? `?status=${status}` : '';
-  const res = await fetch(`${adminBase()}/towing/jobs${q}`, { headers: authHeaders() });
+  const res = await fetch(`${adminBase()}/towing${q}`, { headers: authHeaders() });
   return res.json();
 }
 
@@ -257,8 +265,10 @@ export async function getMoverJobs(status?: MoverStatus | ''): Promise<MoverRow[
     if (status) list = list.filter((m) => m.status === status);
     return list;
   }
+  // backend: GET /movers (transportAdmin.AdminMoversList) — the OLD /movers/jobs
+  // path here had an extra "jobs" segment that matched no route.
   const q = status ? `?status=${status}` : '';
-  const res = await fetch(`${adminBase()}/movers/jobs${q}`, { headers: authHeaders() });
+  const res = await fetch(`${adminBase()}/movers${q}`, { headers: authHeaders() });
   return res.json();
 }
 
@@ -269,8 +279,12 @@ export async function getMoverJob(id: string): Promise<MoverDetail> {
     if (!m) throw new Error('Mover job not found');
     return m;
   }
-  const res = await fetch(`${adminBase()}/movers/jobs/${id}`, { headers: authHeaders() });
-  return res.json();
+  // No backend at all: adminTr only registers GET /movers (list) and
+  // PATCH /movers/:id/status — there is no admin per-id detail route (the
+  // OLD /movers/jobs/:id path here matched no route either way). A
+  // GET /movers/:id route does exist, but under the customer-facing `mob`
+  // group with different auth — not reachable from adminBase().
+  throw new Error(`Fetching a mover job's detail ${NO_BACKEND_YET}`);
 }
 
 export async function setMoverStatus(id: string, patch: ModeStatusPatch): Promise<{ ok: boolean }> {
@@ -288,8 +302,11 @@ export async function getCarHireBookings(status?: CarHireStatus | ''): Promise<C
     if (status) list = list.filter((c) => c.status === status);
     return list;
   }
+  // backend: GET /car-hire (transportAdmin.AdminCarHireList) — the OLD
+  // /car-hire/bookings path here had an extra "bookings" segment that matched
+  // no route.
   const q = status ? `?status=${status}` : '';
-  const res = await fetch(`${adminBase()}/car-hire/bookings${q}`, { headers: authHeaders() });
+  const res = await fetch(`${adminBase()}/car-hire${q}`, { headers: authHeaders() });
   return res.json();
 }
 
