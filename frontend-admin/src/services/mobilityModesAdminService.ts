@@ -70,6 +70,24 @@ async function writeOk(url: string, init: RequestInit): Promise<{ ok: boolean }>
   return { ok: true };
 }
 
+// The GET branches below had the same untested-assumption problem as the writes:
+// several called a URL with an extra path segment that matches no registered
+// route (404), and every one of them (even the correctly-pathed ones) did
+// `fetch(...).json()` with no res.ok check and no envelope unwrap — the admin
+// handlers reply `{ parcels: [...] }` / `{ jobs: [...] }` / `{ bookings: [...] }`
+// / `{ routes: [...] }` / `{ manifest: [...] }`, never a bare array. Route lists
+// with no admin backend at all (see per-function comments) throw NO_BACKEND_YET
+// instead of silently 404ing.
+async function readList(url: string, key: string): Promise<any[]> {
+  const res = await fetch(url, { headers: authHeaders() });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body?.error || body?.message || `Request failed (${res.status})`);
+  }
+  const j = await res.json();
+  return Array.isArray(j) ? j : (j?.[key] ?? []);
+}
+
 // ─── Mock datasets ────────────────────────────────────────────────────────────
 
 const PARCELS: ParcelRow[] = [
@@ -163,8 +181,7 @@ export async function getParcels(status?: ParcelStatus | ''): Promise<ParcelRow[
     return list;
   }
   const q = status ? `?status=${status}` : '';
-  const res = await fetch(`${adminBase()}/parcels${q}`, { headers: authHeaders() });
-  return res.json();
+  return readList(`${adminBase()}/parcels${q}`, 'parcels');
 }
 
 export async function setParcelStatus(id: string, patch: ModeStatusPatch): Promise<{ ok: boolean }> {
@@ -183,16 +200,18 @@ export async function reviewParcelPod(id: string, decision: PodStatus, reason: s
 
 export async function getCouriers(): Promise<CourierRow[]> {
   if (USE_MOCK) { await delay(); return [...COURIERS]; }
-  const res = await fetch(`${adminBase()}/couriers`, { headers: authHeaders() });
-  return res.json();
+  // No backend at all: there is no /couriers admin route. admin_modes.go's own
+  // package comment says couriers are meant to be surfaced via the general
+  // /admin/transport/drivers queue, but that endpoint has no vehicle_type
+  // filter and returns a different row shape (no zone/activeParcels) — wiring
+  // this up needs a backend change, not just a different URL here.
+  throw new Error(`Listing couriers ${NO_BACKEND_YET}`);
 }
 
 // ─── Bus ────────────────────────────────────────────────────────────────────--
 export async function getBusOperators(): Promise<BusOperator[]> {
   if (USE_MOCK) { await delay(); return [...BUS_OPERATORS]; }
-  const res = await fetch(`${adminBase()}/bus/operators`, { headers: authHeaders() });
-  const j = await res.json();
-  return Array.isArray(j) ? j : (j.operators ?? []);
+  return readList(`${adminBase()}/bus/operators`, 'operators');
 }
 
 export async function setBusProviderVerification(
@@ -207,8 +226,7 @@ export async function setBusProviderVerification(
 
 export async function getBusRoutes(): Promise<BusRoute[]> {
   if (USE_MOCK) { await delay(); return [...BUS_ROUTES]; }
-  const res = await fetch(`${adminBase()}/bus/routes`, { headers: authHeaders() });
-  return res.json();
+  return readList(`${adminBase()}/bus/routes`, 'routes');
 }
 
 export async function approveBusRouteFare(id: string, reason: string): Promise<{ ok: boolean }> {
@@ -221,8 +239,11 @@ export async function approveBusRouteFare(id: string, reason: string): Promise<{
 
 export async function getBusSchedules(): Promise<BusSchedule[]> {
   if (USE_MOCK) { await delay(); return [...BUS_SCHEDULES]; }
-  const res = await fetch(`${adminBase()}/bus/schedules`, { headers: authHeaders() });
-  return res.json();
+  // No backend at all: finance_routes.go registers no admin GET for schedules —
+  // only POST /bus/schedules (create) and POST /bus/schedules/:id/approve-fare.
+  // GET /bus/schedules exists only on the customer-facing `mob` group (different
+  // base path, requires a route_id) and is not reachable from adminBase().
+  throw new Error(`Listing bus schedules ${NO_BACKEND_YET}`);
 }
 
 export async function approveBusScheduleFare(id: string, reason: string): Promise<{ ok: boolean }> {
@@ -234,8 +255,7 @@ export async function approveBusScheduleFare(id: string, reason: string): Promis
 
 export async function getBusManifest(scheduleId: string): Promise<BusManifestRow[]> {
   if (USE_MOCK) { await delay(); return BUS_MANIFEST[scheduleId] ?? []; }
-  const res = await fetch(`${adminBase()}/bus/manifest?schedule_id=${encodeURIComponent(scheduleId)}`, { headers: authHeaders() });
-  return res.json();
+  return readList(`${adminBase()}/bus/manifest?schedule_id=${encodeURIComponent(scheduleId)}`, 'manifest');
 }
 
 // ─── Towing ─────────────────────────────────────────────────────────────────--
@@ -246,9 +266,11 @@ export async function getTowingJobs(status?: TowingStatus | ''): Promise<TowingR
     if (status) list = list.filter((t) => t.status === status);
     return list;
   }
+  // backend: GET /towing (transportAdmin.AdminTowingList) — the OLD /towing/jobs
+  // path here had an extra "jobs" segment that matched no route, same bug as
+  // setTowingStatus's PATCH path had before it was fixed.
   const q = status ? `?status=${status}` : '';
-  const res = await fetch(`${adminBase()}/towing/jobs${q}`, { headers: authHeaders() });
-  return res.json();
+  return readList(`${adminBase()}/towing${q}`, 'jobs');
 }
 
 export async function setTowingStatus(id: string, patch: ModeStatusPatch): Promise<{ ok: boolean }> {
@@ -266,9 +288,11 @@ export async function getMoverJobs(status?: MoverStatus | ''): Promise<MoverRow[
     if (status) list = list.filter((m) => m.status === status);
     return list;
   }
+  // backend: GET /movers (transportAdmin.AdminMoversList) — the OLD /movers/jobs
+  // path here had an extra "jobs" segment that matched no route, same bug as
+  // setMoverStatus's PATCH path had before it was fixed.
   const q = status ? `?status=${status}` : '';
-  const res = await fetch(`${adminBase()}/movers/jobs${q}`, { headers: authHeaders() });
-  return res.json();
+  return readList(`${adminBase()}/movers${q}`, 'jobs');
 }
 
 export async function getMoverJob(id: string): Promise<MoverDetail> {
@@ -278,8 +302,10 @@ export async function getMoverJob(id: string): Promise<MoverDetail> {
     if (!m) throw new Error('Mover job not found');
     return m;
   }
-  const res = await fetch(`${adminBase()}/movers/jobs/${id}`, { headers: authHeaders() });
-  return res.json();
+  // No backend at all: admin_modes.go's AdminMoversList only returns the list —
+  // there is no admin GET for a single mover job's detail (bids, inventory).
+  // GET /movers/:id exists only on the customer-facing `mob` group.
+  throw new Error(`Loading a mover job's detail ${NO_BACKEND_YET}`);
 }
 
 export async function setMoverStatus(id: string, patch: ModeStatusPatch): Promise<{ ok: boolean }> {
@@ -297,9 +323,11 @@ export async function getCarHireBookings(status?: CarHireStatus | ''): Promise<C
     if (status) list = list.filter((c) => c.status === status);
     return list;
   }
+  // backend: GET /car-hire (transportAdmin.AdminCarHireList) — the OLD
+  // /car-hire/bookings path here had an extra "bookings" segment that matched
+  // no route, same bug as setCarHireStatus's PATCH path had before it was fixed.
   const q = status ? `?status=${status}` : '';
-  const res = await fetch(`${adminBase()}/car-hire/bookings${q}`, { headers: authHeaders() });
-  return res.json();
+  return readList(`${adminBase()}/car-hire${q}`, 'bookings');
 }
 
 export async function setCarHireStatus(id: string, patch: ModeStatusPatch): Promise<{ ok: boolean }> {
