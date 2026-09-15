@@ -38,7 +38,11 @@ export function resolveEnforce(raw: string | undefined): boolean {
 }
 
 const ENFORCE = resolveEnforce(process.env.ADMIN_MIDDLEWARE_ENFORCE);
-const SESSION_COOKIE = 'sb-admin-token';
+
+// Exported so other server-side entry points that need the same session check
+// (e.g. app/api/admin-proxy/[...path]/route.ts — AUTH-010) use the identical
+// cookie name instead of re-deriving it.
+export const SESSION_COOKIE = 'sb-admin-token';
 
 // Paths under /admin reachable without a session (login + terminal states).
 export function isPublicAdminPath(pathname: string): boolean {
