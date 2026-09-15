@@ -14,7 +14,7 @@ import type {
   ParcelRow, ParcelStatus, PodStatus,
   BusOperator, BusRoute, BusSchedule, BusManifestRow,
   TowingRow, TowingStatus,
-  MoverRow, MoverDetail, MoverStatus,
+  MoverRow, MoverDetail, MoverBid, MoverStatus,
   CarHireRow, CarHireStatus,
   ModeStatusPatch,
 } from '@/types/mobilityModes';
@@ -264,6 +264,40 @@ export async function setTowingStatus(id: string, patch: ModeStatusPatch): Promi
 }
 
 // ─── Movers ───────────────────────────────────────────────────────────────────
+// Both the list (AdminMoversList) and the detail (AdminMoverDetail) handlers
+// reply with the same snake_case row shape (see admin_modes.go's
+// ListMoverJobs / MoverJobDetail) — mapMoverRow/mapMoverBid translate that
+// into the camelCase MoverRow/MoverBid shape this page renders.
+function mapMoverRow(raw: any): MoverRow {
+  return {
+    id: raw.id,
+    customerName: raw.customer_name ?? raw.customerName ?? 'Unknown',
+    status: raw.status,
+    pickupAddress: raw.pickup_address ?? raw.pickupAddress ?? '',
+    dropoffAddress: raw.dropoff_address ?? raw.dropoffAddress ?? '',
+    truckSize: raw.truck_size ?? raw.truckSize ?? '',
+    helpers: raw.helpers ?? 0,
+    moveAt: raw.move_at ?? raw.moveAt ?? '',
+    acceptedAmountKobo: raw.quote_amount_kobo ?? raw.acceptedAmountKobo ?? null,
+    escrowStatus: raw.escrow_status ?? raw.escrowStatus,
+    bidsCount: raw.bids_count ?? raw.bidsCount ?? 0,
+    createdAt: raw.created_at ?? raw.createdAt,
+    updatedAt: raw.updated_at ?? raw.updatedAt,
+  };
+}
+
+function mapMoverBid(raw: any): MoverBid {
+  return {
+    id: raw.id,
+    moverName: raw.mover_name ?? raw.moverName ?? 'Unknown',
+    moverId: raw.mover_id ?? raw.moverId ?? '',
+    amountKobo: raw.amount_kobo ?? raw.amountKobo ?? 0,
+    crewSize: raw.crew_size ?? raw.crewSize ?? 0,
+    accepted: !!raw.accepted,
+    createdAt: raw.created_at ?? raw.createdAt,
+  };
+}
+
 export async function getMoverJobs(status?: MoverStatus | ''): Promise<MoverRow[]> {
   if (USE_MOCK) {
     await delay();
@@ -275,7 +309,8 @@ export async function getMoverJobs(status?: MoverStatus | ''): Promise<MoverRow[
   // path here had an extra "jobs" segment that matched no route, same bug as
   // setMoverStatus's PATCH path had before it was fixed.
   const q = status ? `?status=${status}` : '';
-  return readList(`${adminBase()}/movers${q}`, 'jobs');
+  const raw = await readList(`${adminBase()}/movers${q}`, 'jobs');
+  return raw.map(mapMoverRow);
 }
 
 export async function getMoverJob(id: string): Promise<MoverDetail> {
@@ -285,10 +320,20 @@ export async function getMoverJob(id: string): Promise<MoverDetail> {
     if (!m) throw new Error('Mover job not found');
     return m;
   }
-  // No backend at all: admin_modes.go's AdminMoversList only returns the list —
-  // there is no admin GET for a single mover job's detail (bids, inventory).
-  // GET /movers/:id exists only on the customer-facing `mob` group.
-  throw new Error(`Loading a mover job's detail ${NO_BACKEND_YET}`);
+  // backend: GET /movers/:id (transportAdmin.AdminMoverDetail), returning the
+  // job row plus its bids in one object (not list-wrapped, unlike readList's
+  // callers) — see admin_modes.go's MoverJobDetail.
+  const res = await fetch(`${adminBase()}/movers/${id}`, { headers: authHeaders() });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body?.error || body?.message || `Request failed (${res.status})`);
+  }
+  const raw = await res.json();
+  return {
+    ...mapMoverRow(raw),
+    inventory: typeof raw.inventory === 'string' ? raw.inventory : (raw.inventory ? JSON.stringify(raw.inventory) : ''),
+    bids: Array.isArray(raw.bids) ? raw.bids.map(mapMoverBid) : [],
+  };
 }
 
 export async function setMoverStatus(id: string, patch: ModeStatusPatch): Promise<{ ok: boolean }> {

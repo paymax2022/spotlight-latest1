@@ -2186,6 +2186,7 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 			adminTr.PATCH("/towing/:id/status", middleware.RequirePermission(rbac, mobilityTowingManagePerm), transportAdmin.AdminTowingStatus)
 
 			adminTr.GET("/movers", middleware.RequirePermission(rbac, mobilityViewPerm), transportAdmin.AdminMoversList)
+			adminTr.GET("/movers/:id", middleware.RequirePermission(rbac, mobilityViewPerm), transportAdmin.AdminMoverDetail)
 			adminTr.PATCH("/movers/:id/status", middleware.RequirePermission(rbac, mobilityMoversManagePerm), transportAdmin.AdminMoverStatus)
 
 			adminTr.GET("/car-hire", middleware.RequirePermission(rbac, mobilityViewPerm), transportAdmin.AdminCarHireList)
