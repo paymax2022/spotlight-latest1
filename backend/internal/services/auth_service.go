@@ -23,7 +23,6 @@ type AuthService interface {
 	RegisterUser(in domain.RegisterRequest) (*RegisterResult, error)
 	LoginUser(in domain.LoginRequest) (map[string]any, error)
 	RequestPasswordReset(email string) error
-	ResetPassword(token, password string) error
 	ChangePassword(accessToken, currentPassword, newPassword string) error
 	CompleteProfile(userID string, profileType string, metadata map[string]any) error
 }
@@ -397,14 +396,6 @@ func (s *authService) RequestPasswordReset(email string) error {
 	if resp.StatusCode >= 500 {
 		return fmt.Errorf("password reset upstream returned %d", resp.StatusCode)
 	}
-	return nil
-}
-
-func (s *authService) ResetPassword(token, password string) error {
-	if strings.TrimSpace(token) == "" || len(password) < 8 {
-		return fmt.Errorf("invalid reset payload")
-	}
-	// Supabase reset completion is client-token based; backend keeps this endpoint for contract compatibility.
 	return nil
 }
 
