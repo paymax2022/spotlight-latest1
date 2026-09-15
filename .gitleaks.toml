@@ -45,6 +45,7 @@ paths = [
     '''^REGISTRATION_E2E_TEST_RESULTS\.md$''',
     '''^docs/qa/modules/cashtag\.md$''',
     '''^frontend-web/src/server/voting-bridge/README\.md$''',
+    '''^IMPLEMENTATION_CHECKLIST\.md$''', # curl-auth-header hits on "Bearer YOUR_TOKEN" example snippets (entropy 3.12)
 ]
 
 # Matched against the detected SECRET value (gitleaks default regexTarget).
