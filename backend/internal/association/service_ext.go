@@ -808,7 +808,7 @@ func (s *Service) ImportPreview(ctx context.Context, adminID, orgID, fileName st
 			var existing int
 			_ = s.db.QueryRow(ctx, `
 				SELECT count(*) FROM assoc_memberships m
-				JOIN auth.users u ON u.id = m.user_id
+				JOIN public.platform_users u ON u.id = m.user_id
 				WHERE m.organisation_id=$1 AND lower(u.email)=$2`,
 				orgID, email).Scan(&existing)
 			dup = existing > 0
@@ -898,7 +898,7 @@ func (s *Service) ConfirmImport(ctx context.Context, adminID, batchID string, se
 		// account-creation path here, so an unknown email is skipped rather than
 		// silently counted as imported.
 		var userID string
-		if err := tx.QueryRow(ctx, `SELECT id::text FROM auth.users WHERE lower(email)=$1 LIMIT 1`, email).Scan(&userID); err != nil {
+		if err := tx.QueryRow(ctx, `SELECT id::text FROM public.platform_users WHERE lower(email)=$1 LIMIT 1`, email).Scan(&userID); err != nil {
 			skipped++
 			continue
 		}

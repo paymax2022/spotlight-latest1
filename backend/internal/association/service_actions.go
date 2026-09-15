@@ -616,9 +616,9 @@ func (s *Service) BulkImportMembers(ctx context.Context, adminID, orgID string, 
 		userID := row.UserID
 		if userID == "" {
 			if err := tx.QueryRow(ctx,
-				`SELECT id FROM auth.users WHERE email=$1 LIMIT 1`, row.Email,
+				`SELECT id FROM public.platform_users WHERE email=$1 LIMIT 1`, row.Email,
 			).Scan(&userID); err != nil {
-				continue // email not in auth.users — skip
+				continue // email not a known platform user — skip
 			}
 		}
 

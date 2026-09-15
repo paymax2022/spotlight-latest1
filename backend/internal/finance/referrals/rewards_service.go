@@ -504,7 +504,7 @@ func (s *RewardService) ListReferrals(ctx context.Context, referrerID string, li
 		      AND r2.status = 'CREDITED'
 		  ),0) AS lifetime
 		FROM referral_attributions a
-		LEFT JOIN auth.users u ON u.id = a.referred_user_id
+		LEFT JOIN public.platform_users u ON u.id = a.referred_user_id
 		WHERE a.referrer_id = $1
 		ORDER BY a.created_at DESC
 		LIMIT $2 OFFSET $3`

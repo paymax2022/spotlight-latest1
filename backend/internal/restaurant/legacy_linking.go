@@ -91,7 +91,7 @@ func (s *Service) LinkLegacyOwners(ctx context.Context) (int, error) {
 		       '/merchant/restaurant', now()
 		FROM restaurants r
 		WHERE r.owner_id IS NOT NULL
-		  AND EXISTS (SELECT 1 FROM auth.users u WHERE u.id = r.owner_id)
+		  AND EXISTS (SELECT 1 FROM public.platform_users u WHERE u.id = r.owner_id)
 		ON CONFLICT (user_id, merchant_type_id) DO NOTHING`)
 	if err != nil {
 		return 0, err

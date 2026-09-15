@@ -459,12 +459,12 @@ func (r *Repository) Supporters(ctx context.Context, contestantID, contestID str
 		)
 		SELECT
 			CASE WHEN (SELECT anon_enabled FROM anon) AND v.paid = false THEN ''
-			     ELSE COALESCE(NULLIF(u.raw_user_meta_data->>'full_name', ''), u.email, 'A voter')
+			     ELSE COALESCE(NULLIF(btrim(u.first_name || ' ' || u.last_name), ''), u.email, 'A voter')
 			END,
 			((SELECT anon_enabled FROM anon) AND v.paid = false),
 			v.paid, v.quantity, v.amount_kobo, v.created_at
 		FROM connect_votes v
-		LEFT JOIN auth.users u ON u.id = v.voter_id
+		LEFT JOIN public.platform_users u ON u.id = v.voter_id
 		WHERE v.option_ref = $1 AND v.contest_id = $2
 		ORDER BY v.created_at DESC
 		LIMIT 500`

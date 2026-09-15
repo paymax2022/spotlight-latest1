@@ -426,6 +426,12 @@ type CreateOrderInput struct {
 	IdempotencyKey     string
 	SearchEventID      *string // optional symptom-search context (PRD §10 review-case tier)
 	Lines              []OrderLineInput
+	// Delivery dropoff, required when FulfilmentMethod == FulfilDelivery (validated
+	// in CreateOrder) — persisted on the order so Dispatch's patientDropoff seam can
+	// resolve real coordinates instead of failing closed. Unused for PICKUP.
+	DeliveryAddress string
+	DeliveryLat     *float64
+	DeliveryLng     *float64
 }
 
 type OrderLineInput struct {
@@ -457,6 +463,14 @@ func (s *Service) CreateOrder(ctx context.Context, patientID string, in CreateOr
 	}
 	if in.FulfilmentMethod != FulfilDelivery && in.FulfilmentMethod != FulfilPickup {
 		return nil, fmt.Errorf("pharmacy: fulfilment_method must be DELIVERY or PICKUP")
+	}
+	// A DELIVERY order with no resolvable dropoff can never be dispatched (see
+	// patientDropoff in health_pharmacy_routes.go) — fail closed here, before any
+	// money moves, rather than let it get stuck HELD after DISPENSE.
+	if in.FulfilmentMethod == FulfilDelivery {
+		if in.DeliveryLat == nil || in.DeliveryLng == nil || in.DeliveryAddress == "" {
+			return nil, fmt.Errorf("pharmacy: a delivery order requires delivery_address, delivery_lat, and delivery_lng")
+		}
 	}
 	// Replay: return the existing order for this idempotency key (no double-hold).
 	if existing, err := s.getByIdem(ctx, in.IdempotencyKey); err == nil && existing != nil {
@@ -555,12 +569,17 @@ func (s *Service) CreateOrder(ctx context.Context, patientID string, in CreateOr
 	}
 	defer tx.Rollback(ctx)
 
+	var deliveryAddr *string
+	if in.FulfilmentMethod == FulfilDelivery {
+		deliveryAddr = &in.DeliveryAddress
+	}
 	const insOrder = `
 		INSERT INTO pharmacy_orders
-			(id, patient_id, pharmacy_provider_id, prescription_id, state, fulfilment_method, total_kobo, escrow_id, idempotency_key, search_event_id)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`
+			(id, patient_id, pharmacy_provider_id, prescription_id, state, fulfilment_method, total_kobo, escrow_id, idempotency_key, search_event_id, delivery_address, delivery_lat, delivery_lng)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`
 	if _, err := tx.Exec(ctx, insOrder, orderID, patientID, in.PharmacyProviderID, in.PrescriptionID,
-		string(initial), string(in.FulfilmentMethod), total, escrowID, in.IdempotencyKey, in.SearchEventID); err != nil {
+		string(initial), string(in.FulfilmentMethod), total, escrowID, in.IdempotencyKey, in.SearchEventID,
+		deliveryAddr, in.DeliveryLat, in.DeliveryLng); err != nil {
 		return nil, fmt.Errorf("pharmacy: insert order: %w", err)
 	}
 	const insLine = `
@@ -583,6 +602,7 @@ func (s *Service) CreateOrder(ctx context.Context, patientID string, in CreateOr
 		PrescriptionID: in.PrescriptionID, State: initial, FulfilmentMethod: in.FulfilmentMethod,
 		TotalKobo: total, EscrowID: &escrowID, SearchEventID: in.SearchEventID,
 		IdempotencyKey: in.IdempotencyKey, Lines: lines,
+		DeliveryAddress: deliveryAddr, DeliveryLat: in.DeliveryLat, DeliveryLng: in.DeliveryLng,
 		CreatedAt: time.Now(),
 	}
 	s.audited(patientID, "", "health.pharmacy.order.create", orderID, nil,
@@ -1191,10 +1211,12 @@ func (s *Service) load(ctx context.Context, orderID string) (*Order, error) {
 	var o Order
 	var state, method string
 	const q = `SELECT id, patient_id, pharmacy_provider_id, prescription_id, state, fulfilment_method,
-	                  total_kobo, escrow_id, delivery_ref, pickup_code, idempotency_key, created_at
+	                  total_kobo, escrow_id, delivery_ref, pickup_code, idempotency_key, created_at,
+	                  delivery_address, delivery_lat, delivery_lng
 	           FROM pharmacy_orders WHERE id=$1`
 	if err := s.db.QueryRow(ctx, q, orderID).Scan(&o.ID, &o.PatientID, &o.PharmacyProviderID, &o.PrescriptionID,
-		&state, &method, &o.TotalKobo, &o.EscrowID, &o.DeliveryRef, &o.PickupCode, &o.IdempotencyKey, &o.CreatedAt); err != nil {
+		&state, &method, &o.TotalKobo, &o.EscrowID, &o.DeliveryRef, &o.PickupCode, &o.IdempotencyKey, &o.CreatedAt,
+		&o.DeliveryAddress, &o.DeliveryLat, &o.DeliveryLng); err != nil {
 		if err == pgx.ErrNoRows {
 			return nil, fmt.Errorf("pharmacy: order not found")
 		}

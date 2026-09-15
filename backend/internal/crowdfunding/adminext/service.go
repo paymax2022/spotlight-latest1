@@ -568,7 +568,7 @@ func (s *Service) ListKyc(ctx context.Context, status string) ([]KycCase, error)
 	type identity struct{ name, email string }
 	byID := map[string]identity{}
 	rows, err := s.db.Query(ctx,
-		`SELECT id, COALESCE(NULLIF(raw_user_meta_data->>'full_name',''), email), email FROM auth.users WHERE id = ANY($1)`, ids)
+		`SELECT id, COALESCE(NULLIF(btrim(first_name || ' ' || last_name), ''), email), email FROM public.platform_users WHERE id = ANY($1)`, ids)
 	if err == nil {
 		defer rows.Close()
 		for rows.Next() {
@@ -636,7 +636,7 @@ func (s *Service) DecideKyc(ctx context.Context, id, adminID string, approve boo
 		}
 	}
 	var name string
-	_ = s.db.QueryRow(ctx, `SELECT COALESCE(NULLIF(raw_user_meta_data->>'full_name',''), email) FROM auth.users WHERE id=$1`, id).Scan(&name)
+	_ = s.db.QueryRow(ctx, `SELECT COALESCE(NULLIF(btrim(first_name || ' ' || last_name), ''), email) FROM public.platform_users WHERE id=$1`, id).Scan(&name)
 	if name == "" {
 		name = id
 	}
@@ -729,12 +729,16 @@ func (s *Service) FulfilDataRequest(ctx context.Context, id, adminID string) err
 // ─── Users ───────────────────────────────────────────────────────────────────
 
 // userBaseCTE derives every crowdfunding user (creator and/or contributor) live
-// from campaigns/contributions/auth.users — there is no standalone user
-// registry. The only genuinely admin-authored fact, a suspend/restrict
-// decision, comes from cf_user_moderation (absent row = ACTIVE, the default a
-// real account starts in). Verification reuses the platform's shared KYC
-// (user_profiles.kyc_*, see backend/internal/finance/kyc) rather than a
-// crowdfunding-specific verification field.
+// from campaigns/contributions/platform_users — there is no standalone user
+// registry. It reads platform_users rather than auth.users because this pool
+// runs as service_role, which Supabase never grants access to the auth schema
+// (platform_users.id mirrors auth.users.id 1:1, so it's a safe substitute for
+// email/name/created_at). The only genuinely admin-authored fact, a
+// suspend/restrict decision, comes from cf_user_moderation (absent row =
+// ACTIVE, the default a real account starts in). Verification reuses the
+// platform's shared KYC (user_profiles.kyc_*, see
+// backend/internal/finance/kyc) rather than a crowdfunding-specific
+// verification field.
 const userBaseCTE = `
 	WITH creator_stats AS (
 		SELECT c.creator_id AS user_id,
@@ -756,7 +760,7 @@ const userBaseCTE = `
 	)
 	SELECT
 		u.id,
-		COALESCE(NULLIF(u.raw_user_meta_data->>'full_name',''), u.email) AS name,
+		COALESCE(NULLIF(btrim(u.first_name || ' ' || u.last_name), ''), u.email) AS name,
 		u.email,
 		CASE WHEN cs.user_id IS NULL THEN 'CONTRIBUTOR' WHEN cs.is_org THEN 'ORGANISATION' ELSE 'CREATOR' END AS role,
 		CASE WHEN cs.is_org THEN 'NGO' ELSE 'Individual' END AS type,
@@ -775,7 +779,7 @@ const userBaseCTE = `
 		u.created_at AS joined_at,
 		GREATEST(COALESCE(cs.last_campaign_at, u.created_at), COALESCE(ct.last_contribution_at, u.created_at)) AS last_active_at
 	FROM (SELECT user_id FROM creator_stats UNION SELECT user_id FROM contributor_stats) ids
-	JOIN auth.users u ON u.id = ids.user_id
+	JOIN public.platform_users u ON u.id = ids.user_id
 	LEFT JOIN creator_stats cs ON cs.user_id = ids.user_id
 	LEFT JOIN contributor_stats ct ON ct.user_id = ids.user_id
 	LEFT JOIN cf_user_moderation mod ON mod.user_id = ids.user_id
@@ -928,7 +932,7 @@ func (s *Service) SetUserStatus(ctx context.Context, id, adminID, status, note s
 
 	var name string
 	if err := tx.QueryRow(ctx,
-		`SELECT COALESCE(NULLIF(raw_user_meta_data->>'full_name',''), email) FROM auth.users WHERE id=$1`, id).Scan(&name); err != nil {
+		`SELECT COALESCE(NULLIF(btrim(first_name || ' ' || last_name), ''), email) FROM public.platform_users WHERE id=$1`, id).Scan(&name); err != nil {
 		return fmt.Errorf("adminext: user not found")
 	}
 	if _, err := tx.Exec(ctx, `

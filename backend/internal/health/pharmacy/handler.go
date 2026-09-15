@@ -133,11 +133,14 @@ func (h *Handler) CreateOrder(c *gin.Context) {
 		return
 	}
 	var req struct {
-		PharmacyProviderID string  `json:"pharmacy_provider_id"`
-		PrescriptionID     *string `json:"prescription_id"`
-		FulfilmentMethod   string  `json:"fulfilment_method"`
-		IdempotencyKey     string  `json:"idempotency_key"`
-		SearchEventID      *string `json:"search_event_id"` // optional symptom-search link (PRD §10)
+		PharmacyProviderID string   `json:"pharmacy_provider_id"`
+		PrescriptionID     *string  `json:"prescription_id"`
+		FulfilmentMethod   string   `json:"fulfilment_method"`
+		IdempotencyKey     string   `json:"idempotency_key"`
+		SearchEventID      *string  `json:"search_event_id"` // optional symptom-search link (PRD §10)
+		DeliveryAddress    string   `json:"delivery_address"` // required when fulfilment_method=DELIVERY
+		DeliveryLat        *float64 `json:"delivery_lat"`
+		DeliveryLng        *float64 `json:"delivery_lng"`
 		Lines              []struct {
 			ProductID string `json:"product_id"`
 			Quantity  int    `json:"quantity"`
@@ -157,6 +160,9 @@ func (h *Handler) CreateOrder(c *gin.Context) {
 		FulfilmentMethod:   FulfilmentMethod(req.FulfilmentMethod),
 		IdempotencyKey:     idem,
 		SearchEventID:      req.SearchEventID,
+		DeliveryAddress:    req.DeliveryAddress,
+		DeliveryLat:        req.DeliveryLat,
+		DeliveryLng:        req.DeliveryLng,
 	}
 	for _, l := range req.Lines {
 		in.Lines = append(in.Lines, OrderLineInput{ProductID: l.ProductID, Quantity: l.Quantity})

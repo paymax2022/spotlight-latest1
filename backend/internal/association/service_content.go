@@ -1047,10 +1047,10 @@ func (s *Service) GetPendingMeetings(ctx context.Context, adminID, orgID string)
 	}
 	rows, err := s.db.Query(ctx, `
 		SELECT mt.id::text, mt.title, mt.mode, mt.starts_at::text, mt.ends_at::text, mt.location,
-		       COALESCE(u.raw_user_meta_data->>'full_name', u.email, 'A member'),
+		       COALESCE(NULLIF(btrim(u.first_name || ' ' || u.last_name), ''), u.email, 'A member'),
 		       mt.created_at::text
 		FROM assoc_meetings mt
-		LEFT JOIN auth.users u ON u.id = mt.created_by
+		LEFT JOIN public.platform_users u ON u.id = mt.created_by
 		WHERE mt.organisation_id=$1 AND mt.approval_status='PENDING'
 		ORDER BY mt.starts_at ASC
 		LIMIT 100`, orgID)
