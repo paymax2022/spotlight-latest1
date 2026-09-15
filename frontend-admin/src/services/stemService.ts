@@ -1,4 +1,4 @@
-import { apiV1 } from '@/config/env';
+import { apiV1, adminAuthHeaders } from '@/config/env';
 import type {
   StemContest,
   StemEmergingInnovator,
@@ -32,9 +32,7 @@ import type {
 } from '@/types/stem';
 
 function adminHeaders() {
-  const headers: Record<string, string> = {};
-  headers['x-stem-role'] = process.env.NEXT_PUBLIC_STEM_ROLE || 'ADMIN';
-  return headers;
+  return adminAuthHeaders({ 'x-stem-role': process.env.NEXT_PUBLIC_STEM_ROLE || 'ADMIN' });
 }
 
 export async function getStemOverview(): Promise<StemOverview | null> {

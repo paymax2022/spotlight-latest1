@@ -1,4 +1,4 @@
-import { apiV1 } from '@/config/env';
+import { apiV1, adminAuthHeaders } from '@/config/env';
 import type { AdminMenuCounts } from '@/types/admin';
 import type { AdminOverview } from '@/types/adminOverview';
 
@@ -8,6 +8,7 @@ export async function getAdminMenuCounts(): Promise<AdminMenuCounts | null> {
       method: 'GET',
       credentials: 'include',
       cache: 'no-store',
+      headers: adminAuthHeaders(),
     });
 
     const payload = await response.json();
@@ -31,6 +32,7 @@ export async function getAdminOverview(): Promise<AdminOverview | null> {
       method: 'GET',
       credentials: 'include',
       cache: 'no-store',
+      headers: adminAuthHeaders(),
     });
     const payload = await response.json();
     if (!response.ok || !payload?.success || !Array.isArray(payload?.modules)) return null;
