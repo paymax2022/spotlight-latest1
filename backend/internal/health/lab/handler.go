@@ -83,6 +83,21 @@ func (h *Handler) UpsertTest(c *gin.Context) {
 	c.JSON(http.StatusCreated, gin.H{"success": true, "test": out})
 }
 
+// ListProviderOrders — GET /provider/orders?lab_provider_id=  (lab staff order list)
+func (h *Handler) ListProviderOrders(c *gin.Context) {
+	id := uid(c)
+	if id == "" {
+		fail(c, http.StatusUnauthorized, "unauthenticated")
+		return
+	}
+	rows, err := h.svc.ListProviderOrders(c.Request.Context(), id, c.Query("lab_provider_id"))
+	if err != nil {
+		fail(c, http.StatusForbidden, err.Error())
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "orders": rows})
+}
+
 // CreateOrder — POST /orders  (patient, payment HELD, HL-9)
 func (h *Handler) CreateOrder(c *gin.Context) {
 	id := uid(c)

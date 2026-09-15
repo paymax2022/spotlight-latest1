@@ -79,22 +79,23 @@ func RegisterHealthLab(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pg
 
 	// --- Member routes (/api/finance/health/lab) — HEALTH-BUILD §6 Laboratory ---
 	lg := member.Group("/health/lab")
-	lg.GET("/tests", h.ListTests)                  // catalog: prep, TAT, price
-	lg.POST("/tests", h.UpsertTest)                // lab owner, HL-2 catalog governance
-	lg.GET("/packages", h.ListPackages)            // bundle catalog, same shape as ListTests
-	lg.POST("/orders", h.CreateOrder)              // patient, payment HELD (HL-9)
-	lg.GET("/orders", h.ListMyOrders)              // patient's own order history + active-order card
-	lg.GET("/orders/:id", h.Get)                   // object-level authZ
-	lg.GET("/orders/:id/results", h.Results)       // object-level authZ (HL-8)
-	lg.GET("/orders/:id/custody", h.Custody)       // chain-of-custody trail (HL-6/12)
-	lg.POST("/orders/:id/schedule", h.Schedule)    // phlebotomist dispatch (HOME)
-	lg.POST("/orders/:id/collect", h.Collect)      // phlebotomist: sample + custody (HL-6)
-	lg.POST("/orders/:id/results", h.EnterResults) // scientist enter + validate (HL-7)
-	lg.POST("/orders/:id/release", h.Release)      // sign-off → vault; release payment (HL-7/8/9)
-	lg.POST("/orders/:id/cancel", h.Cancel)        // pre-collection → refund (HL-9)
-	lg.POST("/samples/:id/accession", h.Accession) // lab intake, HL-6 chain gate
-	lg.POST("/samples/:id/handover", h.Handover)   // custody transfer (HL-6)
-	lg.POST("/samples/:id/breach", h.FlagBreach)   // chain break → recollect (HL-6)
+	lg.GET("/tests", h.ListTests)                    // catalog: prep, TAT, price
+	lg.POST("/tests", h.UpsertTest)                  // lab owner, HL-2 catalog governance
+	lg.GET("/packages", h.ListPackages)              // bundle catalog, same shape as ListTests
+	lg.GET("/provider/orders", h.ListProviderOrders) // lab staff order list (owner-scoped, HL-2)
+	lg.POST("/orders", h.CreateOrder)                // patient, payment HELD (HL-9)
+	lg.GET("/orders", h.ListMyOrders)                // patient's own order history + active-order card
+	lg.GET("/orders/:id", h.Get)                     // object-level authZ
+	lg.GET("/orders/:id/results", h.Results)         // object-level authZ (HL-8)
+	lg.GET("/orders/:id/custody", h.Custody)         // chain-of-custody trail (HL-6/12)
+	lg.POST("/orders/:id/schedule", h.Schedule)      // phlebotomist dispatch (HOME)
+	lg.POST("/orders/:id/collect", h.Collect)        // phlebotomist: sample + custody (HL-6)
+	lg.POST("/orders/:id/results", h.EnterResults)   // scientist enter + validate (HL-7)
+	lg.POST("/orders/:id/release", h.Release)        // sign-off → vault; release payment (HL-7/8/9)
+	lg.POST("/orders/:id/cancel", h.Cancel)          // pre-collection → refund (HL-9)
+	lg.POST("/samples/:id/accession", h.Accession)   // lab intake, HL-6 chain gate
+	lg.POST("/samples/:id/handover", h.Handover)     // custody transfer (HL-6)
+	lg.POST("/samples/:id/breach", h.FlagBreach)     // chain break → recollect (HL-6)
 
 	// --- Admin routes (/api/health/lab/admin, RBAC health.lab.*) ---
 	ag := admin.Group("")
@@ -103,7 +104,7 @@ func RegisterHealthLab(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pg
 	ag.GET("/escalations", guard("health.lab.escalation"), h.AdminEscalations)           // critical-result escalation (HL-7)
 	ag.POST("/tests/:id/deactivate", guard("health.lab.catalog"), h.AdminDeactivateTest) // catalog governance
 
-	log.Println("[health.lab] lab routes registered — tests/orders/collect/accession/results/release + custody + admin")
+	log.Println("[health.lab] lab routes registered — tests/orders/collect/accession/results/release + custody + provider orders + admin")
 }
 
 // isHealthLabAdmin reports whether the caller holds the lab admin order-oversight

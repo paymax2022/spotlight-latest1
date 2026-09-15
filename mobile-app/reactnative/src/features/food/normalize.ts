@@ -213,6 +213,7 @@ export function mapOrder(input: unknown): Order {
   const deliveredAt = pick(raw, 'deliveredAt', 'delivered_at');
   const dispatchStatus = pick(raw, 'dispatchStatus', 'dispatch_status');
   const deliveryCode = pick(raw, 'deliveryCode', 'delivery_code');
+  const pickupCode = pick(raw, 'pickupCode', 'pickup_code');
   const riderId = pick(raw, 'riderId', 'rider_id');
   // The order endpoint does NOT return a restaurant name (verified against
   // /api/finance/restaurant/orders/:id). Defaulting it to '' would be worse
@@ -236,6 +237,7 @@ export function mapOrder(input: unknown): Order {
     ...(deliveredAt !== undefined ? { deliveredAt: str(deliveredAt) } : {}),
     dispatchStatus: (dispatchStatus as Order['dispatchStatus']) ?? undefined,
     deliveryCode: (deliveryCode as string | null) ?? null,
+    pickupCode: (pickupCode as string | null) ?? null,
     riderId: (riderId as string | null) ?? null,
   };
 }

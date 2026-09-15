@@ -87,7 +87,7 @@ export default function VerificationPendingScreen() {
           ) : submission.status === 'suspended' ? (
             <PrimaryButton label="Renew licence" onPress={() => router.push('/(doctor)/profile/licence/renew')} style={styles.btn} />
           ) : submission.status === 'unsubmitted' ? (
-            <PrimaryButton label="Resubmit documents" onPress={() => router.replace('/(doctor)/signup')} style={styles.btn} />
+            <PrimaryButton label="Resubmit documents" onPress={() => router.replace('/(doctor)/credentialing')} style={styles.btn} />
           ) : (
             <PrimaryButton label="Refresh status" onPress={() => refetch()} variant="secondary" style={styles.btn} />
           )}

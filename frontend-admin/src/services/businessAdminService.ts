@@ -1,8 +1,13 @@
 // ── Admin — Business Registry (CAC business-name verify/register) service ──────
 // Copies the commissionService.ts / academyAdminService.ts request stack EXACTLY:
-//  • businessBase() rewrites env.apiBaseUrl (…/api/v1) → …/api/business
-//    (these admin routes live under /api/business/admin/*, NOT /api/finance or
-//     /api/academy — mirroring how sibling services target a non-v1 sub-path).
+//  • businessBase() is apiRoot() + /api/business (these admin routes live under
+//    /api/business/admin/*, NOT /api/finance or /api/academy — mirroring how
+//    sibling services target a non-v1 sub-path). apiRoot() strips a trailing
+//    /api/v1 from env.apiBaseUrl (if any) and nothing else — the old
+//    `env.apiBaseUrl.replace(/\/api\/v1\/?$/, '/api/business')` stopped
+//    matching once apiBaseUrl became the same-origin proxy path
+//    (<origin>/api/admin-proxy, no /api/v1 suffix), so every live call 404'd
+//    against <proxy>/admin/... instead of <proxy>/api/business/admin/....
 //  • authHeaders() attaches the admin Bearer token from localStorage.
 //  • getJson/sendJson unwrap the { data } envelope and throw on non-2xx.
 //
@@ -12,7 +17,7 @@
 // shows ₦ (feeKobo/100). Mock by default (NEXT_PUBLIC_BUSINESS_USE_MOCK); flip to
 // false to hit the live Go backend. Every state-change is audit-logged server-side.
 
-import { env } from '@/config/env';
+import { apiRoot } from '@/config/env';
 import { resolveUseMock } from '@/config/useMock';
 
 const USE_MOCK = resolveUseMock(process.env.NEXT_PUBLIC_BUSINESS_USE_MOCK);
@@ -77,7 +82,7 @@ export interface ListOpts {
 
 // ── Request stack ─────────────────────────────────────────────────────────────
 function businessBase(): string {
-  return env.apiBaseUrl.replace(/\/api\/v1\/?$/, '/api/business');
+  return `${apiRoot()}/api/business`;
 }
 function authHeaders(): Record<string, string> {
   if (typeof window === 'undefined') return {};

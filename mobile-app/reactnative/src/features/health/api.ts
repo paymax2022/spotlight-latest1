@@ -401,3 +401,56 @@ export async function sendConsultMessage(consultId: string, body: string): Promi
   const { data } = await api.post<ConsultChatMessage>(`${HEALTH_API_BASE}/consults/${consultId}/messages`, { body });
   return data;
 }
+
+// ── Provider-application credential uploads (presigned R2) ───────────────────
+// Shared by pharmacy/lab/vet onboarding — one credential-vault backend
+// (backend/internal/health/providers/*) serves all three domains, so one
+// upload helper does too. Mirrors the doctor module's doctorUploadFile: get a
+// presigned PUT URL scoped to the caller's own application, PUT the binary
+// straight to R2 (never through this API), then the caller records the
+// resulting object key via addProviderCredential. The returned value is the
+// R2 object key, never a public URL — same convention as every other presign
+// flow in this codebase (the bucket is private).
+interface ProviderCredentialPresignResponse {
+  presign: {
+    upload_url: string;
+    storage_key: string;
+    content_type: string;
+    bucket: string;
+    expires_in: number;
+    method: string;
+  };
+}
+
+export async function uploadProviderCredential(
+  applicationId: string,
+  file: { uri: string; fileName: string; mimeType: string },
+): Promise<string> {
+  const { data: body } = await api.post<ProviderCredentialPresignResponse>(
+    `${HEALTH_API_BASE}/providers/applications/${applicationId}/credentials/presign`,
+    { file_name: file.fileName, content_type: file.mimeType },
+  );
+  const data = body.presign;
+  const blob = await (await fetch(file.uri)).blob();
+  const res = await fetch(data.upload_url, {
+    method: 'PUT',
+    body: blob,
+    headers: { 'Content-Type': data.content_type },
+  });
+  if (!res.ok) throw new Error(`Upload failed (${res.status})`);
+  return data.storage_key;
+}
+
+// credType: VCN | PCN | MLSCN | NAFDAC | PREMISES | OTHER (backend/internal/
+// health/providers/model.go CredentialDoc.CredType — no closed enum server
+// side, kept as a plain string here to match).
+export async function addProviderCredential(
+  applicationId: string,
+  input: { credType: string; referenceNo?: string; storageKey: string },
+): Promise<void> {
+  await api.post(`${HEALTH_API_BASE}/providers/applications/${applicationId}/credentials`, {
+    cred_type: input.credType,
+    reference_no: input.referenceNo,
+    storage_key: input.storageKey,
+  });
+}

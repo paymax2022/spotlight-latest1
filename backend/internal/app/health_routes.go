@@ -61,7 +61,18 @@ func RegisterHealth(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pgxpo
 	// signer is left nil here (the orchestrator may inject the R2 presigner).
 	consentSvc := healthconsent.NewService(pool, consentAudit)
 	recordsSvc := healthrecords.NewService(pool, consentSvc, nil, recAudit)
-	providersSvc := healthproviders.NewService(pool, newCapabilityGranter(rbac), provAudit)
+	// Reuse the R2 presigner (same pattern as preconsult below) for provider
+	// onboarding's credential-document uploads (licence/registration proof) —
+	// unconfigured → presign fails closed (503), never a fabricated URL.
+	providersPresigner := r2.New(r2.Config{
+		AccountEndpoint: cfg.R2AccountEndpoint,
+		Bucket:          cfg.R2Bucket,
+		AccessKeyID:     cfg.R2AccessKeyID,
+		SecretAccessKey: cfg.R2SecretAccessKey,
+		Region:          cfg.R2Region,
+	})
+	providersSvc := healthproviders.NewService(pool, newCapabilityGranter(rbac), provAudit).
+		WithPresigner(providersPresigner, cfg.R2Bucket)
 	schedulingSvc := healthscheduling.NewService(pool, sched, schedAudit)
 	rxSvc := healthrx.NewService(pool, rxAudit)
 	consultSvc := healthconsult.NewService(pool, avKey, consultAudit)
@@ -86,6 +97,7 @@ func RegisterHealth(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pgxpo
 	hg.POST("/providers/applications", provH.CreateApplication)
 	hg.GET("/providers/applications", provH.List)
 	hg.GET("/providers/applications/:id", provH.Get)
+	hg.POST("/providers/applications/:id/credentials/presign", provH.PresignCredential)
 	hg.POST("/providers/applications/:id/credentials", provH.AddCredential)
 	hg.POST("/providers/applications/:id/submit", provH.Submit)
 

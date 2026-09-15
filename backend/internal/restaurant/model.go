@@ -142,6 +142,10 @@ type Order struct {
 	// DeliveryCode is the customer's handoff code. The rider must enter it at
 	// drop-off to confirm the handoff. Returned only to the order's participants.
 	DeliveryCode *string `json:"delivery_code,omitempty"`
+	// PickupCode is the restaurant's handoff code, generated on `ready`. The
+	// rider must enter it in ConfirmPickup to prove they collected the food
+	// from THIS restaurant — distinct from DeliveryCode (rider → customer).
+	PickupCode *string `json:"pickup_code,omitempty"`
 	// Distance/time-based fee inputs + breakdown (persisted for transparency/audit).
 	// Zero/empty when the order fell back to the flat DeliveryFeeKobo (no coords).
 	DistanceMeters    *float64              `json:"distance_meters,omitempty"`

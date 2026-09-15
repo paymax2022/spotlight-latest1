@@ -99,7 +99,8 @@ func RegisterCreators(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pgx
 // FeatureSocialPayEnabled. Also mounts the shared spray engine member endpoints.
 //
 //   - member: /api/finance/p2p/*  +  /api/finance/spray/*
-//   - admin : /api/p2p/admin/*  +  /api/spray/admin/*  (RBAC p2p.* / spray.*)
+//   - admin : /api/p2p/admin/*  (both p2p AND spray admin routes share this one
+//     group — spray has no admin group of its own) (RBAC p2p.* / spray.*)
 func RegisterP2PMarket(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pgxpool.Pool, rbac services.RBACService, audit services.AuditService) {
 	if pool == nil {
 		log.Println("[p2pmarket] nil pool — skipping p2p routes")

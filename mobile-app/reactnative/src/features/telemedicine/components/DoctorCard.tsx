@@ -27,12 +27,7 @@ export default function DoctorCard({ doctor, onPress }: Props) {
         <View style={styles.metaRow}>
           <View style={styles.meta}>
             <Clock size={13} color={Colors.onSurfaceVariant} strokeWidth={2} />
-            <Text style={styles.metaText}>
-              {/* The live backend sends no next-available time, and inventing one on a
-                  medical booking screen would promise a slot that may not exist. Fall
-                  back to the doctor's real online state. */}
-              {doctor.nextAvailable ?? (doctor.isOnline ? 'Available now' : 'Book a slot')}
-            </Text>
+            <Text style={styles.metaText}>{doctor.nextAvailable}</Text>
           </View>
         </View>
       </View>

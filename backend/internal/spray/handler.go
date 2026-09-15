@@ -21,7 +21,9 @@ type GuardFunc func(permission string) gin.HandlerFunc
 // Register mounts member + admin routes.
 //
 //	member: /api/finance/spray/*
-//	admin : /api/spray/admin/*  (RBAC spray.*)
+//	admin : /api/p2p/admin/*  (RBAC spray.*) — mounted onto the p2p-market
+//	        admin group by the caller (see RegisterP2PMarket), not a route
+//	        this package registers on its own.
 func (h *Handler) Register(member, admin *gin.RouterGroup, guard GuardFunc) {
 	member.POST("/spray", h.Spray)
 	member.GET("/spray/leaderboard/:contextRef", h.Leaderboard)

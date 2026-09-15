@@ -372,6 +372,20 @@ export function useAcceptOffer() {
   });
 }
 
+/** Rider declines an offered delivery — server auto re-dispatches to the next nearest rider. */
+export function useDeclineOffer() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (orderId: string) => food.declineOffer(orderId),
+    onError: (e) => {
+      throw toFoodError(e);
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: [KEY, 'rider', 'offers'] });
+    },
+  });
+}
+
 /** Restaurant assigns a rider to a ready order. */
 export function useAssignRider() {
   const qc = useQueryClient();
@@ -398,12 +412,13 @@ export function usePostRiderLocation() {
 export function useConfirmPickup() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (orderId: string) => food.confirmPickup(orderId),
+    mutationFn: ({ orderId, code }: { orderId: string; code: string }) =>
+      food.confirmPickup(orderId, code),
     onError: (e) => {
       throw toFoodError(e);
     },
-    onSuccess: (_d, orderId) => {
-      qc.invalidateQueries({ queryKey: [KEY, 'order', orderId] });
+    onSuccess: (_d, vars) => {
+      qc.invalidateQueries({ queryKey: [KEY, 'order', vars.orderId] });
       qc.invalidateQueries({ queryKey: [KEY, 'rider', 'active'] });
       qc.invalidateQueries({ queryKey: [KEY, 'orders'] });
     },

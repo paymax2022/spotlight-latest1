@@ -9,14 +9,15 @@
 // surface. Backend RBAC (Go middleware.RequirePermission) remains authoritative.
 //
 // Request stack copies academyAdminService.ts EXACTLY:
-//   • base() rewrites env.apiBaseUrl (…/api/v1) → the platform/academy admin group
+//   • base() rewrites apiRoot() (the proxy origin, /api/v1 already stripped) → the
+//     platform/academy admin group
 //   • authHeaders() attaches the admin Bearer token from localStorage
 //   • mock by default (NEXT_PUBLIC_EDTECH_PLATFORM_USE_MOCK); flip to 'false' to hit
 //     the live Go backend (academy fees admin + platform routes).
 // Live routes target the academy fees admin group + platform oversight endpoints:
 //   /api/academy/admin/platform/<module> — gated academy.fees.* + platform_edtech_admin.
 
-import { env } from '@/config/env';
+import { apiRoot } from '@/config/env';
 import { resolveUseMock } from '@/config/useMock';
 import type {
   PlatformSchool, VerificationSubmission, VerificationReviewInput,
@@ -30,9 +31,17 @@ import type {
 
 const USE_MOCK = resolveUseMock(process.env.NEXT_PUBLIC_EDTECH_PLATFORM_USE_MOCK);
 
+// Mounted directly at r.Group("/api/academy/admin/platform") — see
+// backend/internal/app/academy_platform_routes.go:59 (RegisterAcademyPlatform) —
+// so the full path is exactly apiRoot() + that literal prefix + <call path>.
+//
+// This used to be `env.apiBaseUrl.replace(/\/api\/v1\/?$/, '/api/academy/admin/platform')`,
+// which stopped matching the moment apiBaseUrl became the same-origin proxy path
+// (<origin>/api/admin-proxy, no /api/v1 suffix) — see insuranceAdminService.ts for
+// the same regression. Every request 404'd against <proxy>/schools etc. instead of
+// <proxy>/api/academy/admin/platform/schools; USE_MOCK hid it whenever set.
 function base(): string {
-  // …/api/v1 → …/api/academy/admin/platform (the platform oversight admin group)
-  return env.apiBaseUrl.replace(/\/api\/v1\/?$/, '/api/academy/admin/platform');
+  return `${apiRoot()}/api/academy/admin/platform`;
 }
 function authHeaders(): Record<string, string> {
   if (typeof window === 'undefined') return {};

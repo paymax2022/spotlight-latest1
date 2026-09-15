@@ -304,7 +304,7 @@ export default function DoctorDashboardScreen() {
 
         {/* Verification banner */}
         {profile.verification !== 'approved' && (
-          <Pressable style={styles.verifyBanner} onPress={() => router.push('/(doctor)/signup/pending')}>
+          <Pressable style={styles.verifyBanner} onPress={() => router.push('/(doctor)/credentialing/pending')}>
             <Text style={styles.verifyText}>Your verification is {profile.verification}. Tap to view status.</Text>
             <ChevronRight size={18} color={Colors.onPrimary} strokeWidth={2} />
           </Pressable>

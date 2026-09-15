@@ -33,7 +33,7 @@ export default function PointsDashboardPage() {
 
       <DisclosureNote>
         Thin admin surface — points are administered via the loyalty admin group. The live admin route is a member
-        membership lookup (<code>/api/loyalty/admin/loyalty/memberships/:userId</code>, RBAC <code>loyalty.read</code>),
+        membership lookup (<code>/api/loyalty/admin/memberships/:userId</code>, RBAC <code>loyalty.read</code>),
         surfaced on the Balances tab. The points ledger is <strong>append-only</strong> — points accrue only as a
         side effect of live-module actions, never via a self-award endpoint (NL-4).
       </DisclosureNote>

@@ -82,3 +82,44 @@ describe('currentPathForReturn', () => {
     });
   });
 });
+
+// The throttle lives in authRedirect.ts, which imports expo-router and so cannot
+// be loaded here. Its CONTRACT is asserted instead: a burst of failures inside
+// the window must collapse to one action, and the window must reopen afterwards
+// so a later expiry can still prompt.
+describe('sign-in prompt throttle (contract)', () => {
+  const COOLDOWN_MS = 3_000;
+  const makeThrottled = (now: () => number) => {
+    // -Infinity, matching the implementation: the FIRST prompt must never be
+    // throttled regardless of what the clock reads. Initialising to 0 swallowed
+    // it whenever the clock started near zero — which is exactly what the test
+    // below caught.
+    let last = Number.NEGATIVE_INFINITY;
+    return () => {
+      const t = now();
+      if (t - last < COOLDOWN_MS) return false;
+      last = t;
+      return true;
+    };
+  };
+
+  test('a burst of parallel 401s causes exactly one navigation', () => {
+    let clock = 10_000;
+    const fire = makeThrottled(() => clock);
+    // Six queries failing within a few ms of each other — a normal screen load.
+    const results = [0, 1, 2, 5, 9, 14].map((tick) => { clock = 10_000 + tick; return fire(); });
+    assert.deepEqual(results, [true, false, false, false, false, false]);
+  });
+
+  test('the window reopens, so a later expiry still prompts', () => {
+    let clock = 0;
+    const fire = makeThrottled(() => clock);
+    assert.equal(fire(), true);
+    clock = COOLDOWN_MS - 1;
+    assert.equal(fire(), false, 'still inside the window');
+    clock = COOLDOWN_MS + 1;
+    // A permanent flag here would leave the user stuck on a dead screen with no
+    // way to reach the login form for the rest of the session.
+    assert.equal(fire(), true, 'window must reopen');
+  });
+});

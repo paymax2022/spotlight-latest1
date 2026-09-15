@@ -1,10 +1,17 @@
-import { env } from '@/config/env';
+import { apiRoot } from '@/config/env';
 import { operationKey } from './idempotency';
 import type { KycProfile, WalletBalance, TransactionsResponse, Dispute, DisputeResolution } from '@/types/fintech';
 
+// Go backend finance admin routes live at /api/finance/admin/... . This used
+// to be env.apiBaseUrl.replace(/\/api\/v1\/?$/, '/api/finance/admin'), which
+// stopped matching once apiBaseUrl became the same-origin proxy path
+// (<origin>/api/admin-proxy, no /api/v1 suffix) instead of ending in /api/v1 —
+// every live call 404'd against <proxy>/kyc/pending instead of
+// <proxy>/api/finance/admin/kyc/pending. apiRoot() strips that trailing
+// /api/v1 (if any) and nothing else, so the module path can be appended
+// unconditionally regardless of which shape apiBaseUrl happens to be.
 function financeAdminBase(): string {
-  // Go backend finance admin routes live at /api/finance/admin/...
-  return env.apiBaseUrl.replace(/\/api\/v1\/?$/, '/api/finance/admin');
+  return `${apiRoot()}/api/finance/admin`;
 }
 
 function authHeaders(): Record<string, string> {
@@ -70,8 +77,10 @@ export function formatKobo(kobo: number): string {
   return `₦${(kobo / 100).toLocaleString('en-NG', { minimumFractionDigits: 2 })}`;
 }
 
+// Member-facing finance base (distinct from financeAdminBase() above), matching
+// `finance := r.Group("/api/finance")` in backend/internal/app/finance_routes.go.
 function financeBase(): string {
-  return env.apiBaseUrl.replace(/\/api\/v1\/?$/, '/api/finance');
+  return `${apiRoot()}/api/finance`;
 }
 
 export async function listAdminDisputes(status?: string, limit = 50, offset = 0): Promise<Dispute[]> {

@@ -3,7 +3,7 @@
 // NEXT_PUBLIC_CONNECT_ADMIN_USE_MOCK=false to hit the live Go backend at
 // /api/connect/admin/*. Read-only in Phase 0 (cases + audit + config views).
 
-import { env } from '@/config/env';
+import { apiRoot } from '@/config/env';
 import { operationKey } from './idempotency';
 import { resolveUseMock } from '@/config/useMock';
 import type {
@@ -31,8 +31,13 @@ export const USE_MOCK = resolveUseMock(process.env.NEXT_PUBLIC_CONNECT_ADMIN_USE
 /** Named so the fixture banner can cite the exact switch. */
 export const USE_MOCK_ENV = 'NEXT_PUBLIC_CONNECT_ADMIN_USE_MOCK';
 
+// adminBase() used to do `env.apiBaseUrl.replace(/\/api\/v1\/?$/, '/api/connect/admin')`,
+// which relied on apiBaseUrl ending in /api/v1. It no longer does (same-origin
+// proxy origin instead), so the regex became a silent no-op and every live call
+// 404'd. apiRoot() strips any trailing /api/v1 explicitly, so this keeps working
+// no matter how apiBaseUrl is spelled.
 function adminBase(): string {
-  return env.apiBaseUrl.replace(/\/api\/v1\/?$/, '/api/connect/admin');
+  return `${apiRoot()}/api/connect/admin`;
 }
 function authHeaders(): Record<string, string> {
   if (typeof window === 'undefined') return {};

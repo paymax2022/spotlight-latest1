@@ -39,7 +39,7 @@ export default function DoctorSignupScreen() {
     setError(undefined);
     try {
       await submit.mutateAsync({ mdcnNumber: mdcnNumber.trim(), documents: uploaded });
-      router.replace('/(doctor)/signup/pending');
+      router.replace('/(doctor)/credentialing/pending');
     } catch {
       setError('Submission failed. Please try again.');
     }

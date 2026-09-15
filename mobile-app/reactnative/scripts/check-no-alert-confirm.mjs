@@ -26,13 +26,16 @@ const ROOTS = ['app', 'src'];
 // Paths intentionally excluded from the gate:
 //  - crowdfunding: its Alert.alert usage is being migrated on a separate branch.
 //  - lib/confirm.ts: the helper itself references the words in its own comments.
-//  - marketplace/sell.tsx: a 3-option chooser ("Via Paymax escrow" / "Sold
-//    elsewhere" / "Cancel") that confirmAsync can't express without dropping the
-//    abort path. TODO: migrate once a multi-choice chooser exists in confirm.ts.
+//
+// marketplace/sell.tsx was excluded for a 3-option "Mark as sold" chooser that
+// confirmAsync could not express. The exclusion was file-wide, so it also let a
+// 2-button DELETE confirmation through — and that one silently did nothing on
+// web, which is how "unable to delete listings" shipped. The chooser is now two
+// sequential confirmAsync calls (sold? then how?), which keeps the abort path,
+// so the file is back under the gate.
 const EXCLUDE = [
   join('app', 'crowdfunding'),
   join('src', 'lib', 'confirm.ts'),
-  join('app', 'marketplace', 'sell.tsx'),
 ];
 
 function walk(dir, out) {

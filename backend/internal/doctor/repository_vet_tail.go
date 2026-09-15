@@ -89,20 +89,26 @@ func (r *Repository) PublishVetProfile(ctx context.Context, userID string) (*Vet
 }
 
 // SaveVetProfileDraftRecord patch-merges the supplied JSON into profile_draft
-// (jsonb || jsonb). Mirrors the human-side repository_account.go SaveProfileDraft.
-// Idempotent: a replayed / empty patch is a no-op merge. Scoped to the owning vet
-// (user_id). Returns ErrNotFound when no vet row exists.
+// (jsonb || jsonb), creating the vet row on first write. Mirrors the human-side
+// repository_account.go SaveProfileDraft, which carries this exact history:
+// this was a plain UPDATE (this doc's own comment claimed "upserts" while the
+// query never did), and nothing on the vet onboarding path ever creates a
+// doctor_vet_profiles row before this call — selecting "veterinarian" in
+// provider-type.tsx patches the HUMAN doctor_profiles table, and the only
+// other creator (UpsertVetMode) is never invoked from onboarding. So the FIRST
+// "Continue" tap on the vet profile builder's first screen always hit
+// ErrNotFound/404, for every vet, with no way to proceed.
+// Idempotent: a replayed / empty patch is a no-op merge. Scoped to the owning
+// vet (user_id).
 func (r *Repository) SaveVetProfileDraftRecord(ctx context.Context, userID string, patch []byte) (*VetProfile, error) {
 	const q = `
-		UPDATE doctor_vet_profiles
-		SET profile_draft = profile_draft || $2::jsonb, updated_at = now()
-		WHERE user_id = $1`
-	tag, err := r.db.Exec(ctx, q, userID, jsonOrEmptyObject(patch))
-	if err != nil {
+		INSERT INTO doctor_vet_profiles (user_id, profile_draft)
+		VALUES ($1, $2::jsonb)
+		ON CONFLICT (user_id) DO UPDATE
+		SET profile_draft = doctor_vet_profiles.profile_draft || EXCLUDED.profile_draft,
+		    updated_at    = now()`
+	if _, err := r.db.Exec(ctx, q, userID, jsonOrEmptyObject(patch)); err != nil {
 		return nil, err
-	}
-	if tag.RowsAffected() == 0 {
-		return nil, ErrNotFound
 	}
 	return r.GetVetProfile(ctx, userID)
 }

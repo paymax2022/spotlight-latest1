@@ -281,6 +281,29 @@ func (h *Handler) ListMine(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"success": true, "orders": orders})
 }
 
+// ListMyOrders — GET /orders/mine?state=&limit=&offset=
+//
+// The patient's own order history: orders the CALLER placed. Counterpart to
+// ListMine (the pharmacist inbox at GET /orders) — kept on a distinct path so
+// the two never collide. Registered BEFORE /orders/:id for the same reason
+// ListMine is: Gin must not bind "mine" as :id.
+func (h *Handler) ListMyOrders(c *gin.Context) {
+	id := uid(c)
+	if id == "" {
+		fail(c, http.StatusUnauthorized, "unauthenticated")
+		return
+	}
+	orders, err := h.svc.ListForPatient(
+		c.Request.Context(), id, c.Query("state"),
+		parseIntDefault(c.Query("limit"), 0), parseIntDefault(c.Query("offset"), 0),
+	)
+	if err != nil {
+		fail(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "orders": orders})
+}
+
 // parseIntDefault reads a non-negative integer query param, falling back to def
 // for anything absent or malformed. The service clamps the range; a bad string is
 // not worth a 400 on a list read.

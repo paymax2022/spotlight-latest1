@@ -14,11 +14,23 @@ export const USE_MOCK = mockAllowed(process.env.EXPO_PUBLIC_CONNECT_USE_MOCK, tr
 // absolute URL as-is, ignoring the client's :3000 baseURL. The backend allows the
 // Expo web origin (:8083) via CORS_ALLOW_ORIGINS.
 //
-// Default host is the local backend (:8091, matching backend/.env APP_PORT).
-// getDevUrl() rewrites localhost → the dev-machine LAN IP so physical devices and
-// emulators still reach it. Override with EXPO_PUBLIC_CONNECT_API_HOST if the
-// backend runs elsewhere (e.g. a staging URL).
-const CONNECT_API_HOST = process.env.EXPO_PUBLIC_CONNECT_API_HOST ?? 'http://localhost:8091';
+// Host resolution, in order:
+//   1. EXPO_PUBLIC_CONNECT_API_HOST — explicit override when the Connect backend
+//      runs somewhere other than the main one.
+//   2. EXPO_PUBLIC_API_BASE_URL — the main backend. Connect ships live in
+//      production (EXPO_PUBLIC_CONNECT_USE_MOCK=false), so it MUST follow the
+//      real backend by default.
+//   3. localhost:8091 — dev-only last resort (matches backend/.env APP_PORT).
+//
+// Step 2 was missing until 2026-09-11: CONNECT_API_HOST is set in no env file,
+// so release APKs resolved to `http://localhost:8091/api/v1/connect` — the
+// device's OWN loopback — and every Connect call failed as "no connection".
+// getDevUrl() does not rescue this: it opens with `if (!__DEV__) return url`,
+// so the loopback host is never rewritten in a release build.
+const CONNECT_API_HOST =
+  process.env.EXPO_PUBLIC_CONNECT_API_HOST ??
+  process.env.EXPO_PUBLIC_API_BASE_URL ??
+  'http://localhost:8091';
 export const CONNECT_API_BASE = getDevUrl(`${CONNECT_API_HOST}/api/v1/connect`);
 
 // Module-scoped colors built on the base design tokens (never hardcode hex).

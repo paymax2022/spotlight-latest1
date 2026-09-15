@@ -13,7 +13,6 @@ import { generateIdempotencyKey } from '@/utils/idempotency';
 import {
   mapAppointmentMoney,
   mapDoctorMoney,
-  mapDoctor,
   withDemoQuote,
 } from '@/features/telemedicine/pricing';
 import type {
@@ -196,8 +195,8 @@ export interface DoctorFilters {
  * Params are sent in the SERVER's snake_case. There is no case-transforming
  * interceptor on this axios client (see src/api/client.ts) and the Next.js proxy
  * forwards `url.search` verbatim, so a camelCase param never reaches a Go
- * `c.Query("...")` lookup. The previous `{ specialtyId }` was therefore silently
- * dropped by the backend and every call returned the UNFILTERED list — a filter
+ * `c.Query("...")` lookup. A bare `{ specialtyId }` is therefore silently
+ * dropped by the backend and every call returns the UNFILTERED list — a filter
  * that looks applied and is not.
  */
 export async function getDoctors(filters?: DoctorFilters | string): Promise<Doctor[]> {
@@ -229,42 +228,7 @@ export async function getDoctors(filters?: DoctorFilters | string): Promise<Doct
   const raw = unwrap<unknown[]>(await api.get(`${BASE}/doctors`, {
     params: Object.keys(params).length ? params : undefined,
   }));
-  return (raw ?? []).map(mapDoctor);
-}
-
-export interface RegisterDoctorInput {
-  fullName:        string;
-  email:           string;
-  phone:           string;
-  specialty:       string;
-  yearsExperience: number;
-  mdcnNumber:      string;
-}
-
-/**
- * Submit a doctor onboarding application.
- *
- * Body keys are the server's snake_case — Go binds them with `json:"..."` tags
- * and `binding:"required"`, so a camelCase key does not merely get ignored, it
- * fails validation with a 400 naming a field the app never showed.
- *
- * The doctor is created UNVERIFIED (`is_available = false`): the backend will not
- * list them until a human verifies the MDCN registration. The screen must say so
- * rather than implying the profile goes live on submit.
- */
-export async function registerDoctor(input: RegisterDoctorInput): Promise<{ doctorId: string }> {
-  const body = {
-    full_name:        input.fullName.trim(),
-    email:            input.email.trim(),
-    phone:            input.phone.trim(),
-    specialty:        input.specialty,
-    years_experience: input.yearsExperience,
-    mdcn_number:      input.mdcnNumber.trim(),
-  };
-  const data = unwrap<{ doctor_id?: string; doctorId?: string }>(
-    await api.post(`${BASE}/doctor/register`, body),
-  );
-  return { doctorId: String(data?.doctor_id ?? data?.doctorId ?? '') };
+  return (raw ?? []).map(mapDoctorMoney);
 }
 
 export async function getDoctor(id: string): Promise<Doctor | undefined> {
@@ -272,7 +236,7 @@ export async function getDoctor(id: string): Promise<Doctor | undefined> {
     return wait(DEMO_DOCTORS.find((d) => d.id === id));
   }
   const raw = unwrap<unknown>(await api.get(`${BASE}/doctors/${id}`));
-  return raw ? mapDoctor(raw) : undefined;
+  return raw ? mapDoctorMoney(raw) : undefined;
 }
 
 export async function getDoctorAvailability(doctorId: string): Promise<Slot[]> {

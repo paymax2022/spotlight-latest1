@@ -67,6 +67,7 @@ const (
 
 	// Listings
 	CodeListingNotFound          = "LISTING_NOT_FOUND"
+	CodeListingHasHistory        = "LISTING_HAS_HISTORY"
 	CodeListingNotActive         = "LISTING_NOT_ACTIVE"
 	CodeListingNotEscrowElig     = "LISTING_NOT_ESCROW_ELIGIBLE"
 	CodeDescriptionTooShort      = "DESCRIPTION_TOO_SHORT"

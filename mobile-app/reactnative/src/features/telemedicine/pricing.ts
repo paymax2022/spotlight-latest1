@@ -9,7 +9,6 @@
 // The Go backend speaks snake_case. Only MONEY fields are mapped here; the rest of
 // this module's live field mapping is a known, pre-existing gap.
 
-import { Colors } from '@/constants/colors';
 import type { Appointment, BookingQuote, Doctor } from '@/types/telemedicine';
 
 const num = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v) ? v : 0);
@@ -44,83 +43,6 @@ export function mapDoctorMoney(raw: unknown): Doctor {
     ...(r as unknown as Doctor),
     feeKobo: num(r.consult_fee_kobo ?? r.feeKobo ?? booking?.consultFeeKobo),
     booking,
-  };
-}
-
-// ── Full doctor mapping ──────────────────────────────────────────────────────
-// Closes the "known, pre-existing gap" named in this module's header. Money was
-// mapped; identity and display fields were not, so `{...raw}` left every
-// camelCase field on Doctor UNDEFINED against the live backend — isOnline,
-// yearsExperience, reviewCount, specialties, initials, avatarColor. With
-// EXPO_PUBLIC_TELEMEDICINE_USE_MOCK=false (the committed .env), that is what the
-// app actually renders: the landing screen's "Available now" list filters on
-// `isOnline` and so was permanently empty, and DoctorCard drew blank initials
-// and no specialties. It looked like "no doctors online" rather than a mapping
-// bug, which is why it survived.
-
-const AVATAR_PALETTE = [
-  Colors.primary, Colors.secondary, Colors.tertiary,
-  Colors.teal, Colors.gold, Colors.error,
-];
-
-/** Stable per-doctor accent: same id always yields the same colour. */
-function avatarColorFor(seed: string): string {
-  let h = 0;
-  for (let i = 0; i < seed.length; i++) h = (h * 31 + seed.charCodeAt(i)) >>> 0;
-  return AVATAR_PALETTE[h % AVATAR_PALETTE.length];
-}
-
-/** "Dr. Amaka Obi" → "AO". Honorifics are not initials. */
-export function initialsFrom(name: string): string {
-  const words = String(name ?? '')
-    .replace(/^\s*(dr|doctor|prof|professor|mr|mrs|ms|miss)\.?\s+/i, '')
-    .trim()
-    .split(/\s+/)
-    .filter(Boolean);
-  if (words.length === 0) return '?';
-  const first = words[0][0] ?? '';
-  const last  = words.length > 1 ? (words[words.length - 1][0] ?? '') : '';
-  return (first + last).toUpperCase();
-}
-
-/** "general" → "General", "internal_medicine" → "Internal Medicine". */
-function humanise(slug: unknown): string {
-  const s = typeof slug === 'string' ? slug : '';
-  return s.replace(/[_-]+/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()).trim();
-}
-
-/**
- * Map a live doctor payload (Go, snake_case) onto the app's Doctor.
- *
- * Deliberately does NOT invent `nextAvailable`. The backend has no such field,
- * and this is a screen where someone books medical care — a fabricated "Today,
- * 4:30 PM" would be a promise the system cannot keep. It stays undefined and the
- * card falls back to the doctor's real online state.
- */
-export function mapDoctor(raw: unknown): Doctor {
-  const r = (raw ?? {}) as Record<string, unknown>;
-  const base = mapDoctorMoney(r);
-  const id = typeof r.id === 'string' ? r.id : '';
-  const name = typeof r.name === 'string' ? r.name : '';
-  const specialties = [humanise(r.specialty), humanise(r.sub_specialty)].filter(Boolean);
-
-  return {
-    ...base,
-    id,
-    name,
-    specialtyId:     typeof r.specialty === 'string' ? r.specialty : (base.specialtyId ?? ''),
-    specialties:     specialties.length ? specialties : (base.specialties ?? []),
-    title:           typeof r.title === 'string' ? r.title : (base.title ?? ''),
-    bio:             (typeof r.bio === 'string' && r.bio) || (typeof r.about === 'string' ? r.about : '') || '',
-    initials:        (typeof base.initials === 'string' && base.initials) || initialsFrom(name),
-    avatarColor:     (typeof base.avatarColor === 'string' && base.avatarColor) || avatarColorFor(id || name),
-    rating:          num(r.rating ?? base.rating),
-    reviewCount:     num(r.review_count ?? base.reviewCount),
-    yearsExperience: num(r.experience_years ?? base.yearsExperience),
-    isOnline:        Boolean(r.is_online ?? base.isOnline),
-    featured:        Boolean(r.is_featured ?? base.featured),
-    languages:       Array.isArray(r.languages) ? (r.languages as string[]) : (base.languages ?? []),
-    nextAvailable:   typeof r.next_available === 'string' ? r.next_available : base.nextAvailable,
   };
 }
 

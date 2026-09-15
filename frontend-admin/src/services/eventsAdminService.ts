@@ -5,7 +5,7 @@
 // Money is BIGINT kobo (minor units) throughout. Surfaces NL-3 (closed-loop +
 // residual refund), NL-10 (KYC payout gate), NL-12 (immutable audit).
 
-import { env } from '@/config/env';
+import { apiRoot } from '@/config/env';
 import { resolveUseMock } from '@/config/useMock';
 import type {
   EventsDashboard,
@@ -29,8 +29,13 @@ export const USE_MOCK = resolveUseMock(process.env.NEXT_PUBLIC_EVENTS_USE_MOCK);
 /** Named so the fixture banner can cite the exact switch. */
 export const USE_MOCK_ENV = 'NEXT_PUBLIC_EVENTS_USE_MOCK';
 
+// apiRoot() strips any trailing /api/v1 off env.apiBaseUrl. This used to be a
+// regex on env.apiBaseUrl itself, which relied on apiBaseUrl ending in
+// /api/v1 — it no longer does (see config/env.ts), so that regex silently
+// stopped matching and every live events admin call 404'd against the bare
+// proxy origin.
 function adminBase(): string {
-  return env.apiBaseUrl.replace(/\/api\/v1\/?$/, '/api/events/admin');
+  return `${apiRoot()}/api/events/admin`;
 }
 function authHeaders(): Record<string, string> {
   if (typeof window === 'undefined') return {};

@@ -99,7 +99,10 @@ func RegisterHealthPharmacy(member *gin.RouterGroup, admin *gin.RouterGroup, poo
 	// The pharmacist's inbox — orders for the pharmacies the caller OWNS. Declared
 	// BEFORE /orders/:id so Gin routes the literal path rather than binding "orders"
 	// as an :id.
-	pg.GET("/orders", h.ListMine)                  // owner-scoped fulfilment queue
+	pg.GET("/orders", h.ListMine) // owner-scoped fulfilment queue
+	// The patient's own order history — a distinct path from /orders (the owner
+	// inbox above) so the two never collide. Also declared before /orders/:id.
+	pg.GET("/orders/mine", h.ListMyOrders)         // patient-scoped order history
 	pg.GET("/earnings", h.Earnings)                // owner-scoped money view
 	pg.GET("/orders/:id", h.Get)                   // object-level authZ
 	pg.POST("/orders/:id/confirm", h.Confirm)      // HL-3 verified e-Rx gate

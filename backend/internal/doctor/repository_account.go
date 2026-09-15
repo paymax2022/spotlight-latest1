@@ -127,6 +127,24 @@ func (r *Repository) GetMerchantUpgrade(ctx context.Context, userID string) (*Me
 	return m, err
 }
 
+// GetSelectedProviderType returns the provider type chosen at the provider-type
+// step, or nil when the user has not chosen one.
+//
+// Reads profile_draft, NOT the provider_type column. The column is the PUBLISHED
+// value and defaults to 'doctor', so reading it would report a confident "doctor"
+// for a user who has chosen nothing — and would silently preselect the wrong card
+// for a vet. SetProviderType writes the choice into the draft, so the draft is the
+// only place that distinguishes "chose doctor" from "chose nothing".
+func (r *Repository) GetSelectedProviderType(ctx context.Context, userID string) (*string, error) {
+	const q = `SELECT profile_draft->>'providerType' FROM doctor_profiles WHERE user_id = $1`
+	var t *string
+	err := r.db.QueryRow(ctx, q, userID).Scan(&t)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	return t, err
+}
+
 // InsertMerchantUpgrade requests an upgrade. Idempotent on UNIQUE(idempotency_key).
 func (r *Repository) InsertMerchantUpgrade(ctx context.Context, userID, idemKey string, detail []byte) (*MerchantUpgrade, error) {
 	id := uuid.New().String()
@@ -178,19 +196,25 @@ func (r *Repository) GetProfileDraft(ctx context.Context, userID string) (*Profi
 	return r.GetProfile(ctx, userID)
 }
 
-// SaveProfileDraft patch-merges the supplied JSON into profile_draft (jsonb || jsonb).
-// Idempotent: an empty/replayed patch is a no-op merge.
+// SaveProfileDraft patch-merges the supplied JSON into profile_draft (jsonb || jsonb),
+// creating the profile row on first write. Idempotent: an empty/replayed patch is a
+// no-op merge.
+//
+// UPSERT, not UPDATE. Nothing in this backend ever INSERTs into doctor_profiles —
+// there are ten UPDATEs, one SELECT and no INSERT, and no migration seeds a row —
+// so an UPDATE here matched nothing for every real user and returned ErrNotFound.
+// That surfaced as a 404 from POST /onboarding/provider-type, which blocked the
+// onboarding flow at the provider-type step for everyone. Every other NOT NULL
+// column on the table carries a default, so user_id is all an insert needs.
 func (r *Repository) SaveProfileDraft(ctx context.Context, userID string, patch []byte) (*Profile, error) {
 	const q = `
-		UPDATE doctor_profiles
-		SET profile_draft = profile_draft || $2::jsonb, updated_at = now()
-		WHERE user_id = $1`
-	tag, err := r.db.Exec(ctx, q, userID, jsonOrEmptyObject(patch))
-	if err != nil {
+		INSERT INTO doctor_profiles (user_id, profile_draft)
+		VALUES ($1, $2::jsonb)
+		ON CONFLICT (user_id) DO UPDATE
+		SET profile_draft = doctor_profiles.profile_draft || EXCLUDED.profile_draft,
+		    updated_at    = now()`
+	if _, err := r.db.Exec(ctx, q, userID, jsonOrEmptyObject(patch)); err != nil {
 		return nil, err
-	}
-	if tag.RowsAffected() == 0 {
-		return nil, ErrNotFound
 	}
 	return r.GetProfile(ctx, userID)
 }

@@ -1,4 +1,4 @@
-import { env } from '@/config/env';
+import { apiRoot } from '@/config/env';
 import { resolveUseMock } from '@/config/useMock';
 import type {
   CompositionReference,
@@ -14,10 +14,18 @@ import type {
 } from '@/types/nutritionAdmin';
 
 // The Go nutrition admin routes hang off the /api prefix (same convention as
-// usersService / onboardingService): env.apiBaseUrl ends with /api/v1 and admin
-// routes live under /api/nutrition/admin/...
+// usersService / onboardingService): callers append '/nutrition/...' or
+// '/nutrition/admin/...' onto this base.
+//
+// apiBaseUrl is the same-origin admin-proxy path (<origin>/api/admin-proxy),
+// not a plain API root — the old `env.apiBaseUrl.replace(/\/api\/v1\/?$/, ...)`
+// here stopped matching once the proxy migration landed (apiBaseUrl stopped
+// ending in /api/v1), silently no-op'ing this replace and leaving every call
+// pointed at the bare proxy root instead of .../api/nutrition/... — see
+// insuranceAdminService.ts for the same regression. apiRoot() strips any
+// trailing /api/v1 from the proxy base and nothing else.
 function adminApiBase(): string {
-  return env.apiBaseUrl.replace(/\/api\/v1\/?$/, '/api');
+  return `${apiRoot()}/api`;
 }
 
 function authHeaders(): Record<string, string> {

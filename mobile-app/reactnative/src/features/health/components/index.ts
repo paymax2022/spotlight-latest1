@@ -10,3 +10,4 @@ export { default as ConsultLobbyCard } from './ConsultLobbyCard';
 export { default as EmergencyBanner } from './EmergencyBanner';
 export { default as IntakeStatusBadge } from './IntakeStatusBadge';
 export { default as RedFlagInterstitial } from './RedFlagInterstitial';
+export { default as ProviderOnboardingCard } from './ProviderOnboardingCard';

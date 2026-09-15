@@ -36,24 +36,23 @@ type Doctor struct {
 	// (consultation fee + platform booking fee). It is derived from
 	// ConsultFeeKobo, never stored, and is what the app renders on the confirm
 	// screen — the app holds no fee rate of its own. See ADR-044.
-	Booking       *BookingQuote `json:"booking,omitempty"`
-	AvatarURL     *string       `json:"avatar_url,omitempty"`
-	IsAvailable   bool          `json:"is_available"`
-	IsOnline      bool          `json:"is_online"`
-	IsHMOVerified bool          `json:"is_hmo_verified"`
-	// IsFeatured is editorial curation, not a derived score. The app hides its
-	// Featured Doctors section entirely when nothing is featured, so this must be
-	// a stored fact — deriving it from rating would make the section never empty.
-	IsFeatured      bool        `json:"is_featured"`
-	ExperienceYears int         `json:"experience_years"`
-	Rating          float64     `json:"rating"`
-	ReviewCount     int         `json:"review_count"`
-	PatientsCount   int         `json:"patients_count"`
-	SuccessRate     int         `json:"success_rate"`
-	MDCNNumber      *string     `json:"mdcn_number,omitempty"`
-	Phone           *string     `json:"phone,omitempty"`
-	Education       []Education `json:"education"`
-	CreatedAt       time.Time   `json:"created_at"`
+	Booking         *BookingQuote `json:"booking,omitempty"`
+	AvatarURL       *string       `json:"avatar_url,omitempty"`
+	IsAvailable     bool          `json:"is_available"`
+	IsOnline        bool          `json:"is_online"`
+	IsHMOVerified   bool          `json:"is_hmo_verified"`
+	ExperienceYears int           `json:"experience_years"`
+	Rating          float64       `json:"rating"`
+	ReviewCount     int           `json:"review_count"`
+	PatientsCount   int           `json:"patients_count"`
+	SuccessRate     int           `json:"success_rate"`
+	// IsFeatured is a stored editorial flag, never derived — see
+	// supabase/migrations/20270185000000_telemedicine_featured_doctors.sql.
+	IsFeatured bool        `json:"is_featured"`
+	MDCNNumber *string     `json:"mdcn_number,omitempty"`
+	Phone      *string     `json:"phone,omitempty"`
+	Education  []Education `json:"education"`
+	CreatedAt  time.Time   `json:"created_at"`
 }
 
 // Education is a single academic credential.
@@ -264,13 +263,9 @@ type ListDoctorsQuery struct {
 	AvailableNow  bool   `form:"available_now"`
 	TopRated      bool   `form:"top_rated"`
 	MinExperience int    `form:"min_experience"`
-	// MinRating filters on the doctor's rating (0-5). Distinct from TopRated,
-	// which only ORDERS: "show me 4+ stars" and "sort best first" are different
-	// questions, and the app's rating filter needs the former.
+	// MinRating is a float ("4.5"), unlike MinExperience above.
 	MinRating float64 `form:"min_rating"`
-	// Featured restricts to editorially curated doctors. Empty result is a valid
-	// answer and means the app hides the section.
-	Featured bool `form:"featured"`
-	Limit    int  `form:"limit,default=20"`
-	Offset   int  `form:"offset,default=0"`
+	Featured  bool    `form:"featured"`
+	Limit     int     `form:"limit,default=20"`
+	Offset    int     `form:"offset,default=0"`
 }
