@@ -113,8 +113,11 @@ export async function getProfiles(): Promise<Profile[]> {
     await delay();
     return [...MOCK_PROFILES];
   }
-  const { data } = await api.get<Profile[]>(`${TRIAGE_API_BASE}/profiles`);
-  return data;
+  // Backend wraps every response as {success, <key>}, never a bare payload
+  // (see backend/internal/health/triage/core/handler.go's ListProfiles) — and
+  // "profiles" is null, not [], when the caller has none yet.
+  const { data } = await api.get<{ profiles: Profile[] | null }>(`${TRIAGE_API_BASE}/profiles`);
+  return data.profiles ?? [];
 }
 
 export async function createProfile(input: CreateProfileInput): Promise<Profile> {
