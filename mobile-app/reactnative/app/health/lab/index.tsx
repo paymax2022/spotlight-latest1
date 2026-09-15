@@ -22,6 +22,7 @@ import SearchBar from '@/components/SearchBar';
 import StateView from '@/components/StateView';
 import LabTestCard from '@/features/health/lab/components/LabTestCard';
 import LabStatusPill from '@/features/health/lab/components/LabStatusPill';
+import { ProviderOnboardingCard } from '@/features/health/components';
 import { useTests, usePackages, useOrders } from '@/features/health/lab/hooks';
 import { formatNaira } from '@/features/health/constants/health.constants';
 
@@ -146,6 +147,9 @@ export default function LabHomeScreen() {
           <Text style={styles.reorderText}>Reorder a previous test or set a screening reminder</Text>
           <ChevronRight size={16} color={Colors.outline} strokeWidth={2} />
         </Pressable>
+
+        {/* Provider onboarding */}
+        <ProviderOnboardingCard />
       </ScrollView>
     </SafeAreaView>
   );
