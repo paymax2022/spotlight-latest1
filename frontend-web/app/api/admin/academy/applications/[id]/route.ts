@@ -1,6 +1,10 @@
 import { errorResponse, handleApiError, successResponse } from '@/src/lib/api/responses';
 import { assertAdminPermission } from '@/src/server/admin/auth';
-import { updateAcademyApplicationReview } from '@/src/server/services/academy/service';
+import {
+  updateAcademyApplicationReview,
+  sendAcademyApplicationApprovedEmail,
+  sendAcademyApplicationRejectedEmail,
+} from '@/src/server/services/academy/service';
 import { autoCreateInstallmentPlan } from '@/src/server/services/academy/installments';
 import { ensureEnrollment } from '@/src/server/services/academy/enrollment';
 import { createAdminClient } from '@/lib/supabase/server';
@@ -40,7 +44,7 @@ export async function PATCH(request: Request, ctx: { params: Promise<{ id: strin
     if (body.status === 'approved') {
       const { data: app } = await supabase
         .from('academy_applications')
-        .select('batch_id')
+        .select('batch_id, academy_batches(batch_name)')
         .eq('id', params.id)
         .maybeSingle();
 
@@ -52,6 +56,29 @@ export async function PATCH(request: Request, ctx: { params: Promise<{ id: strin
       // Where tuition IS due this is a no-op until the first instalment settles.
       await ensureEnrollment(supabase, params.id).catch((e) => {
         console.error('[admin/academy/applications] enrolment after approval failed', e);
+      });
+
+      if (updated?.email) {
+        const batchName = (app as { academy_batches?: { batch_name?: string | null } | null } | null)
+          ?.academy_batches?.batch_name;
+        await sendAcademyApplicationApprovedEmail({
+          email: updated.email,
+          fullName: updated.full_name,
+          batchName,
+          tuitionOwedNgn: (updated as { tuition_total_ngn?: number | null }).tuition_total_ngn,
+        }).catch((e) => {
+          console.error('[admin/academy/applications] approval email failed', e);
+        });
+      }
+    }
+
+    if (body.status === 'rejected' && updated?.email) {
+      await sendAcademyApplicationRejectedEmail({
+        email: updated.email,
+        fullName: updated.full_name,
+        rejectionReason: (updated as { rejection_reason?: string | null }).rejection_reason,
+      }).catch((e) => {
+        console.error('[admin/academy/applications] rejection email failed', e);
       });
     }
 

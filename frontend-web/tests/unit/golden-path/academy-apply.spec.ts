@@ -472,6 +472,83 @@ describe('POST /api/academy/apply', () => {
     expect(body.error).toMatch(/more than once/i);
   });
 
+  // ── Batch capacity (max_students / enrolled_count) ─────────────────────────
+  // academy_batches.enrolled_count is bumped by a DB trigger on every INSERT
+  // into academy_applications regardless of status, so it is NOT "seats
+  // taken" — a pile of rejected applications would inflate it forever. The
+  // route must count 'pending'/'approved' applications itself instead, and
+  // must never treat a null max_students (unlimited) as a cap of zero.
+
+  /**
+   * Sets up: free settings, a batch with the given max_students, no existing
+   * application for THIS applicant, then a capacity count for
+   * academy_applications filtered by batch/status resolving to `seatsTaken`.
+   */
+  function setupCapacityMock(maxStudents: number | null, seatsTaken: number) {
+    const { mock, maybySingle, insertFn } = makeSupabaseMock();
+    mockInterestAreas(mock);
+
+    maybySingle
+      .mockResolvedValueOnce({
+        data: { registration_type: 'free', application_fee: 0 },
+        error: null,
+      })
+      .mockResolvedValueOnce({ data: { id: 'batch-001', max_students: maxStudents }, error: null })
+      .mockResolvedValueOnce({ data: null, error: null }) // no existing by userId
+      .mockResolvedValueOnce({ data: null, error: null }); // no existing by email
+
+    // `.in()` is called for two different queries in this route: pricing the
+    // selected areas of interest ('slug', [...]) and counting seat-occupying
+    // applications ('status', [...]). Branch on the column so both resolve to
+    // the shape their caller expects.
+    (mock as { in: unknown }).in = vi.fn().mockImplementation((column: string) => {
+      if (column === 'status') {
+        return Promise.resolve({ count: seatsTaken, data: null, error: null });
+      }
+      return Promise.resolve({
+        data: [{ slug: 'acting', fee_ngn: 0, is_active: true }],
+        error: null,
+      });
+    });
+
+    insertFn.mockResolvedValue({ error: null });
+    vi.mocked(createAdminClient).mockReturnValue(mock as any);
+    return { mock, insertFn };
+  }
+
+  it('rejects a new application when the batch is at full capacity', async () => {
+    // max_students = 1, one seat already occupied by an approved application.
+    setupCapacityMock(1, 1);
+
+    const res = await POST(makeRequest('/api/academy/apply', { body: makeApplyBody() }));
+    const body = await res.json();
+
+    expect(res.status).toBe(409);
+    expect(body.error).toMatch(/full capacity/i);
+  });
+
+  it('accepts an application to an unlimited batch (max_students null) regardless of count', async () => {
+    const { insertFn } = setupCapacityMock(null, 999);
+
+    const res = await POST(makeRequest('/api/academy/apply', { body: makeApplyBody() }));
+
+    expect(res.status).toBe(201);
+    expect(insertFn).toHaveBeenCalled();
+  });
+
+  it('does not count a rejected application against capacity', async () => {
+    // max_students = 1, but the only existing application was rejected, so
+    // it does not occupy a seat — the capacity count itself reflects that
+    // (the route filters status IN ('pending','approved'), so a batch whose
+    // sole application was rejected reports 0 seats taken).
+    const { insertFn } = setupCapacityMock(1, 0);
+
+    const res = await POST(makeRequest('/api/academy/apply', { body: makeApplyBody() }));
+
+    expect(res.status).toBe(201);
+    expect(insertFn).toHaveBeenCalled();
+  });
+
   it('publishes the cap on GET so the client does not hardcode its own copy', async () => {
     const { mock } = makeSupabaseMock();
     mockInterestAreas(mock);
