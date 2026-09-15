@@ -65,6 +65,9 @@ func RegisterHealthPharmacy(member *gin.RouterGroup, admin *gin.RouterGroup, poo
 		nil, // audit sink injected by orchestrator (HL-12) — nil-safe here
 	)
 	svc.SetRxLister(&rxListerAdapter{rx: rxSvc})
+	// DP-002 dispense-match: was left permanently nil (dead check) — the seam
+	// existed but nothing ever called SetRxItems. See rxItemsAdapter above.
+	svc.SetRxItems(&rxItemsAdapter{db: pool})
 
 	// Central Commission & Profit recording at the pharmacy order settlement point
 	// (Complete → escrow release). Best-effort + idempotent + nil-safe: constructed
@@ -232,6 +235,31 @@ func (a *rxListerAdapter) ListForPatient(ctx context.Context, patientID string) 
 	return out, nil
 }
 
+// rxItemsAdapter backs the DP-002 dispense-match safety gate (Service.SetRxItems)
+// — direct parameterised SQL against health_prescription_items, same pattern as
+// rxGateAdapter above, rather than going through healthrx.Service.Get (whose
+// requester-authZ is shaped for a patient/prescriber/pharmacist READING their own
+// Rx, not for this internal, already-authorized dispense-time check).
+type rxItemsAdapter struct{ db *pgxpool.Pool }
+
+func (a *rxItemsAdapter) PrescribedItems(ctx context.Context, rxID string) ([]healthpharmacy.PrescribedItem, error) {
+	const q = `SELECT nafdac_ref, quantity, drug_name FROM health_prescription_items WHERE prescription_id=$1`
+	rows, err := a.db.Query(ctx, q, rxID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []healthpharmacy.PrescribedItem
+	for rows.Next() {
+		var it healthpharmacy.PrescribedItem
+		if err := rows.Scan(&it.NAFDACRef, &it.Quantity, &it.DrugName); err != nil {
+			return nil, err
+		}
+		out = append(out, it)
+	}
+	return out, rows.Err()
+}
+
 // dispatchAdapter creates a medication delivery as a parcel job on the transport
 // last-mile rail (REUSE — no routing rebuild). The pharmacy supplies the route;
 // here the minimal job is booked under the patient as sender. The returned
@@ -322,12 +350,26 @@ func (a *dispatchAdapter) CreateDelivery(ctx context.Context, senderID, referenc
 }
 
 // patientDropoff resolves the patient's delivery coordinates + address for an
-// order. The current pharmacy schema does not persist a per-order delivery address
-// or geo, so this returns ok=false and the caller fails the dispatch closed rather
-// than routing to a 0,0 placeholder. It is the single seam to wire real dropoff
-// data once the order-time delivery address is captured.
-func patientDropoff(_ context.Context, _ *pgxpool.Pool, _ string) (lat, lng float64, address string, ok bool) {
-	return 0, 0, "", false
+// order, captured at CreateOrder time (delivery_address/delivery_lat/delivery_lng
+// on pharmacy_orders — CreateOrder requires all three for a DELIVERY order, so a
+// missing coordinate here means the order predates that requirement). Returns
+// ok=false rather than a 0,0 placeholder so the caller still fails the dispatch
+// closed for any such stale row.
+func patientDropoff(ctx context.Context, db *pgxpool.Pool, orderID string) (lat, lng float64, address string, ok bool) {
+	var dLat, dLng *float64
+	var dAddr *string
+	const q = `SELECT delivery_lat, delivery_lng, delivery_address FROM pharmacy_orders WHERE id=$1`
+	if err := db.QueryRow(ctx, q, orderID).Scan(&dLat, &dLng, &dAddr); err != nil {
+		return 0, 0, "", false
+	}
+	if dLat == nil || dLng == nil {
+		return 0, 0, "", false
+	}
+	addr := ""
+	if dAddr != nil {
+		addr = *dAddr
+	}
+	return *dLat, *dLng, addr, true
 }
 
 // providerGateAdapter enforces HL-2 against health_providers (parameterised).

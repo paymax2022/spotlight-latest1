@@ -1,0 +1,1 @@
+export { PromotionalBannerCard } from './PromotionalBanner';
