@@ -54,6 +54,8 @@ export interface Doctor {
   languages:       string[];
   isOnline:        boolean;
   nextAvailable:   string;            // human label e.g. "Today, 4:30 PM"
+  /** Editorially featured doctor. Mock-mode filtering flag; live field mapping is a known gap (see pricing.ts). */
+  featured?:       boolean;
 }
 
 export interface Slot {
