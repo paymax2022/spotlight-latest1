@@ -121,22 +121,44 @@ ACCOUNTS=("$@")
 echo "Supabase: $SUPABASE_URL"
 echo
 
-# One listing, reused for every account.
-USERS_JSON="$(curl -sS --max-time 20 \
-  "$SUPABASE_URL/auth/v1/admin/users?page=1&per_page=1000" \
-  -H "apikey: $SERVICE_ROLE_KEY" -H "Authorization: Bearer $SERVICE_ROLE_KEY")"
+DATABASE_URL="${DATABASE_URL:-}"
+if [[ -z "$DATABASE_URL" ]]; then
+  for f in "$ROOT/backend/.env" "$ROOT/frontend-admin/.env.local" "$ROOT/frontend-web/.env.local"; do
+    DATABASE_URL="$(read_env DATABASE_URL "$f" || true)"
+    [[ -n "$DATABASE_URL" ]] && break
+  done
+fi
+USE_PSQL_LOOKUP=0
+if [[ -n "$DATABASE_URL" ]] && command -v psql >/dev/null 2>&1; then
+  USE_PSQL_LOOKUP=1
+else
+  # Fallback: GoTrue's admin listing. Known to 500 on this local DB once it
+  # accumulates a row with a NULL confirmation_token (or similar NOT-NULL-ish
+  # column GoTrue scans into a Go string) among 10k+ seeded/test users — the
+  # psql path above sidesteps that entirely by selecting only id+email, never
+  # confirmation_token, but keep this path for a machine without local psql.
+  USERS_JSON="$(curl -sS --max-time 20 \
+    "$SUPABASE_URL/auth/v1/admin/users?page=1&per_page=1000" \
+    -H "apikey: $SERVICE_ROLE_KEY" -H "Authorization: Bearer $SERVICE_ROLE_KEY")"
+fi
 
 failed=0
 for email in "${ACCOUNTS[@]}"; do
   printf '%s\n' "── $email"
 
-  uid="$(printf '%s' "$USERS_JSON" | EMAIL="$email" python3 -c '
+  if [[ "$USE_PSQL_LOOKUP" -eq 1 ]]; then
+    uid="$(psql "$DATABASE_URL" -t -A -c \
+      "select id from auth.users where lower(email) = lower('$(printf '%s' "$email" | sed "s/'/''/g")') limit 1;" \
+      2>/dev/null | tr -d '[:space:]')"
+  else
+    uid="$(printf '%s' "$USERS_JSON" | EMAIL="$email" python3 -c '
 import sys, json, os
 raw = json.load(sys.stdin)
 users = raw.get("users", raw if isinstance(raw, list) else [])
 want = os.environ["EMAIL"].lower()
 print(next((u["id"] for u in users if (u.get("email") or "").lower() == want), ""))
 ')"
+  fi
 
   if [[ -z "$uid" ]]; then
     echo "   ✗ no auth user with that email — skipping (create it first)"

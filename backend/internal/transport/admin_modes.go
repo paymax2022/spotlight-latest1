@@ -2,6 +2,7 @@ package transport
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"time"
 
@@ -59,16 +60,24 @@ func (a *AdminService) PatchTowingStatus(ctx context.Context, adminID, id string
 	return a.patchModeStatus(ctx, adminID, "towing_jobs", "towing_job", id, req)
 }
 
-// ListMoverJobs (admin) lists mover jobs filtered by status.
+// ListMoverJobs (admin) lists mover jobs filtered by status, joined against
+// user_profiles for the customer's display name and against mover_bids for a
+// per-job bid count — the same row shape MoverJobDetail returns for one job.
 func (a *AdminService) ListMoverJobs(ctx context.Context, status string) ([]map[string]any, error) {
 	db := a.svc.db
-	q := `SELECT id, user_id, provider_id, status, escrow_status, quote_amount_kobo, created_at FROM mover_jobs`
+	q := `
+		SELECT mj.id, mj.user_id, up.full_name, mj.provider_id, mj.status, mj.escrow_status,
+		       mj.pickup_address, mj.dropoff_address, mj.truck_size, mj.helpers, mj.move_at,
+		       mj.quote_amount_kobo, mj.created_at, mj.updated_at,
+		       (SELECT COUNT(*) FROM mover_bids b WHERE b.job_id = mj.id) AS bids_count
+		FROM mover_jobs mj
+		LEFT JOIN user_profiles up ON up.id = mj.user_id`
 	args := []any{}
 	if status != "" {
-		q += ` WHERE status=$1`
+		q += ` WHERE mj.status=$1`
 		args = append(args, status)
 	}
-	q += ` ORDER BY created_at DESC LIMIT 200`
+	q += ` ORDER BY mj.created_at DESC LIMIT 200`
 	rows, err := db.Query(ctx, q, args...)
 	if err != nil {
 		return nil, err
@@ -76,16 +85,108 @@ func (a *AdminService) ListMoverJobs(ctx context.Context, status string) ([]map[
 	defer rows.Close()
 	var out []map[string]any
 	for rows.Next() {
-		var id, uid, status, escrow string
-		var provider *string
+		var id, uid, status, escrow, pickup, dropoff, truckSize string
+		var fullName, provider *string
+		var helpers, bidsCount int
+		var moveAt *time.Time
 		var quote *int64
-		var createdAt time.Time
-		if err := rows.Scan(&id, &uid, &provider, &status, &escrow, &quote, &createdAt); err != nil {
+		var createdAt, updatedAt time.Time
+		if err := rows.Scan(&id, &uid, &fullName, &provider, &status, &escrow, &pickup, &dropoff,
+			&truckSize, &helpers, &moveAt, &quote, &createdAt, &updatedAt, &bidsCount); err != nil {
 			return nil, err
 		}
 		out = append(out, map[string]any{
-			"id": id, "user_id": uid, "provider_id": provider, "status": status,
-			"escrow_status": escrow, "quote_amount_kobo": quote, "created_at": createdAt,
+			"id": id, "user_id": uid, "customer_name": fullName, "provider_id": provider,
+			"status": status, "escrow_status": escrow, "pickup_address": pickup, "dropoff_address": dropoff,
+			"truck_size": truckSize, "helpers": helpers, "move_at": moveAt, "quote_amount_kobo": quote,
+			"created_at": createdAt, "updated_at": updatedAt, "bids_count": bidsCount,
+		})
+	}
+	return out, nil
+}
+
+// MoverJobDetail (admin) returns one mover job's full row plus its bids
+// (joined against drivers for each bidder's display name) — the per-job
+// modal getMoverJob() opens from the admin movers list.
+func (a *AdminService) MoverJobDetail(ctx context.Context, id string) (map[string]any, error) {
+	db := a.svc.db
+	const q = `
+		SELECT mj.id, mj.user_id, up.full_name, mj.provider_id, mj.status, mj.escrow_status,
+		       mj.pickup_address, mj.dropoff_address, mj.truck_size, mj.helpers, mj.move_at,
+		       mj.quote_amount_kobo, mj.inventory, mj.created_at, mj.updated_at
+		FROM mover_jobs mj
+		LEFT JOIN user_profiles up ON up.id = mj.user_id
+		WHERE mj.id=$1`
+	var (
+		jid, uid, status, escrow, pickup, dropoff, truckSize string
+		fullName, provider                                   *string
+		helpers                                              int
+		moveAt                                               *time.Time
+		quote                                                *int64
+		inventory                                            []byte
+		createdAt, updatedAt                                 time.Time
+	)
+	if err := db.QueryRow(ctx, q, id).Scan(&jid, &uid, &fullName, &provider, &status, &escrow,
+		&pickup, &dropoff, &truckSize, &helpers, &moveAt, &quote, &inventory, &createdAt, &updatedAt); err != nil {
+		return nil, codedErr(http.StatusNotFound, CodeNotFound, "mover job not found")
+	}
+	bids, err := a.listMoverBidsAdmin(ctx, jid)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{
+		"id": jid, "user_id": uid, "customer_name": fullName, "provider_id": provider,
+		"status": status, "escrow_status": escrow, "pickup_address": pickup, "dropoff_address": dropoff,
+		"truck_size": truckSize, "helpers": helpers, "move_at": moveAt, "quote_amount_kobo": quote,
+		"inventory": inventoryDisplay(inventory), "created_at": createdAt, "updated_at": updatedAt,
+		"bids_count": len(bids), "bids": bids,
+	}, nil
+}
+
+// inventoryDisplay renders mover_jobs.inventory (freeform JSONB — the client
+// can submit a string, an object, or an array; RequestMoverQuote never
+// validates its shape) as a plain string for the admin console. A raw
+// string(bytes) would show a JSON-string value with its quotes still on
+// ("\"3-bedroom flat...\""), so a plain JSON string is unwrapped first;
+// anything else (object, array, or invalid JSON) falls back to the raw bytes.
+func inventoryDisplay(raw []byte) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	var s string
+	if err := json.Unmarshal(raw, &s); err == nil {
+		return s
+	}
+	return string(raw)
+}
+
+// listMoverBidsAdmin returns a mover job's bids joined against drivers for
+// the bidder's display name. crew_size defaults to 1 for every row (see
+// supabase/migrations/20270199000000_mover_bids_crew_size.sql) — the
+// driver-facing bid endpoint doesn't collect it yet.
+func (a *AdminService) listMoverBidsAdmin(ctx context.Context, jobID string) ([]map[string]any, error) {
+	rows, err := a.svc.db.Query(ctx, `
+		SELECT b.id, b.provider_id, d.name, b.amount_kobo, b.crew_size, b.status, b.created_at
+		FROM mover_bids b
+		LEFT JOIN drivers d ON d.id = b.provider_id
+		WHERE b.job_id=$1 ORDER BY b.amount_kobo ASC`, jobID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []map[string]any
+	for rows.Next() {
+		var id, providerID, status string
+		var moverName *string
+		var amount int64
+		var crewSize int
+		var createdAt time.Time
+		if err := rows.Scan(&id, &providerID, &moverName, &amount, &crewSize, &status, &createdAt); err != nil {
+			return nil, err
+		}
+		out = append(out, map[string]any{
+			"id": id, "mover_id": providerID, "mover_name": moverName, "amount_kobo": amount,
+			"crew_size": crewSize, "accepted": status == "accepted", "created_at": createdAt,
 		})
 	}
 	return out, nil
@@ -301,6 +402,15 @@ func (h *AdminHandler) AdminMoversList(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"jobs": js})
+}
+
+func (h *AdminHandler) AdminMoverDetail(c *gin.Context) {
+	j, err := h.svc.MoverJobDetail(c.Request.Context(), c.Param("id"))
+	if err != nil {
+		respondErr(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, j)
 }
 
 func (h *AdminHandler) AdminMoverStatus(c *gin.Context) {
