@@ -81,7 +81,19 @@ func RequireAdminConsoleRole(supabase *integrations.SupabaseRestClient, rbac ser
 			return
 		}
 
-		status, _ := rbac.GetUserStatus(userID)
+		// AUTH-012: GetUserStatus returns ("pending", err) on a lookup failure,
+		// and "pending" is not one of the blocked statuses above — so a
+		// swallowed error here used to let a transient lookup failure through
+		// this specific check as if the account were merely pending. Fail
+		// closed instead: a status we could not verify is refused, same as
+		// every other failure path in this function.
+		status, serr := rbac.GetUserStatus(userID)
+		if serr != nil {
+			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{
+				"error": "could not verify account status",
+			})
+			return
+		}
 		if status == "suspended" || status == "locked" || status == "deleted" {
 			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{
 				"error": "account restricted",
