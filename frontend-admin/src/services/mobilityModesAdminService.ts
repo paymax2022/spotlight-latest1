@@ -88,6 +88,99 @@ async function readList(url: string, key: string): Promise<any[]> {
   return Array.isArray(j) ? j : (j?.[key] ?? []);
 }
 
+// ─── Row → camelCase mappers (parcels/towing/movers/car-hire) ────────────────
+// admin_modes.go's ListParcels/ListTowingJobs/ListMoverJobs/ListCarHireBookings
+// return snake_case rows (joined with user_profiles/drivers for names and
+// settlements for escrow state — see that file), while the console types here
+// are camelCase. Mirrors mobilityAdminService.ts's mapTrip/mapDriverSummary
+// pattern. Bus endpoints don't get a mapper: their backend rows were never
+// enriched the same way, so readList()'s raw pass-through is all there is.
+// Fields the backend does not track yet (zone — no mode table has a per-job
+// zone column, only a pricing-config default) get the same honest 'default'
+// fallback used in mobilityAdminService.ts rather than a fabricated value.
+type Row = Record<string, any>;
+
+function mapParcelRow(p: Row): ParcelRow {
+  return {
+    id: p.id,
+    senderName: p.sender_name ?? (p.sender_id ? `sender ${String(p.sender_id).slice(0, 8)}` : 'Unknown'),
+    courierName: p.courier_name ?? (p.courier_id ? `courier ${String(p.courier_id).slice(0, 8)}` : null),
+    courierId: p.courier_id ?? null,
+    status: p.status,
+    category: p.category ?? '',
+    size: p.size ?? '',
+    speed: p.speed ?? '',
+    pickupAddress: p.pickup_address ?? '',
+    dropoffAddress: p.dropoff_address ?? '',
+    zone: p.zone ?? 'default',
+    fareKobo: p.fare_kobo ?? 0,
+    declaredValueKobo: p.declared_value_kobo ?? 0,
+    podStatus: (p.pod_status ?? 'pending') as PodStatus,
+    podProofUrl: p.pod_proof_url ?? null,
+    escrowStatus: p.escrow_status ?? 'none',
+    createdAt: p.created_at ?? '',
+    updatedAt: p.updated_at ?? p.created_at ?? '',
+  };
+}
+
+function mapTowingRow(t: Row): TowingRow {
+  return {
+    id: t.id,
+    customerName: t.customer_name ?? (t.user_id ? `customer ${String(t.user_id).slice(0, 8)}` : 'Unknown'),
+    operatorName: t.operator_name ?? (t.operator_id ? `operator ${String(t.operator_id).slice(0, 8)}` : null),
+    operatorId: t.operator_id ?? null,
+    status: t.status,
+    serviceType: t.service_type ?? '',
+    pickupAddress: t.pickup_address ?? '',
+    destAddress: t.dest_address ?? '',
+    zone: t.zone ?? 'default',
+    calloutKobo: t.callout_kobo ?? 0,
+    fareKobo: t.fare_kobo ?? 0,
+    escrowStatus: t.escrow_status ?? 'none',
+    createdAt: t.created_at ?? '',
+    updatedAt: t.updated_at ?? t.created_at ?? '',
+  };
+}
+
+function mapMoverRow(m: Row): MoverRow {
+  return {
+    id: m.id,
+    customerName: m.customer_name ?? (m.user_id ? `customer ${String(m.user_id).slice(0, 8)}` : 'Unknown'),
+    status: m.status,
+    pickupAddress: m.pickup_address ?? '',
+    dropoffAddress: m.dropoff_address ?? '',
+    truckSize: m.truck_size ?? '',
+    helpers: m.helpers ?? 0,
+    moveAt: m.move_at ?? '',
+    acceptedAmountKobo: m.accepted_amount_kobo ?? null,
+    escrowStatus: m.escrow_status ?? 'none',
+    bidsCount: m.bids_count ?? 0,
+    createdAt: m.created_at ?? '',
+    updatedAt: m.updated_at ?? m.created_at ?? '',
+  };
+}
+
+function mapCarHireRow(c: Row): CarHireRow {
+  return {
+    id: c.id,
+    customerName: c.customer_name ?? (c.user_id ? `customer ${String(c.user_id).slice(0, 8)}` : 'Unknown'),
+    driverName: c.driver_name ?? (c.driver_id ? `driver ${String(c.driver_id).slice(0, 8)}` : null),
+    driverId: c.driver_id ?? null,
+    status: c.status,
+    hireType: c.hire_type ?? '',
+    vehicleClass: c.vehicle_class ?? '',
+    chauffeur: Boolean(c.chauffeur),
+    startAt: c.start_at ?? '',
+    durationHours: c.duration_hours ?? 0,
+    fareKobo: c.fare_kobo ?? 0,
+    depositKobo: c.deposit_kobo ?? 0,
+    escrowStatus: c.escrow_status ?? 'none',
+    zone: c.zone ?? 'default',
+    createdAt: c.created_at ?? '',
+    updatedAt: c.updated_at ?? c.created_at ?? '',
+  };
+}
+
 // ─── Mock datasets ────────────────────────────────────────────────────────────
 
 const PARCELS: ParcelRow[] = [
@@ -174,7 +267,8 @@ export async function getParcels(status?: ParcelStatus | ''): Promise<ParcelRow[
     return list;
   }
   const q = status ? `?status=${status}` : '';
-  return readList(`${adminBase()}/parcels${q}`, 'parcels');
+  const rows = await readList(`${adminBase()}/parcels${q}`, 'parcels');
+  return rows.map(mapParcelRow);
 }
 
 export async function setParcelStatus(id: string, patch: ModeStatusPatch): Promise<{ ok: boolean }> {
@@ -253,7 +347,8 @@ export async function getTowingJobs(status?: TowingStatus | ''): Promise<TowingR
   // path here had an extra "jobs" segment that matched no route, same bug as
   // setTowingStatus's PATCH path had before it was fixed.
   const q = status ? `?status=${status}` : '';
-  return readList(`${adminBase()}/towing${q}`, 'jobs');
+  const rows = await readList(`${adminBase()}/towing${q}`, 'jobs');
+  return rows.map(mapTowingRow);
 }
 
 export async function setTowingStatus(id: string, patch: ModeStatusPatch): Promise<{ ok: boolean }> {
@@ -266,26 +361,9 @@ export async function setTowingStatus(id: string, patch: ModeStatusPatch): Promi
 // ─── Movers ───────────────────────────────────────────────────────────────────
 // Both the list (AdminMoversList) and the detail (AdminMoverDetail) handlers
 // reply with the same snake_case row shape (see admin_modes.go's
-// ListMoverJobs / MoverJobDetail) — mapMoverRow/mapMoverBid translate that
-// into the camelCase MoverRow/MoverBid shape this page renders.
-function mapMoverRow(raw: any): MoverRow {
-  return {
-    id: raw.id,
-    customerName: raw.customer_name ?? raw.customerName ?? 'Unknown',
-    status: raw.status,
-    pickupAddress: raw.pickup_address ?? raw.pickupAddress ?? '',
-    dropoffAddress: raw.dropoff_address ?? raw.dropoffAddress ?? '',
-    truckSize: raw.truck_size ?? raw.truckSize ?? '',
-    helpers: raw.helpers ?? 0,
-    moveAt: raw.move_at ?? raw.moveAt ?? '',
-    acceptedAmountKobo: raw.quote_amount_kobo ?? raw.acceptedAmountKobo ?? null,
-    escrowStatus: raw.escrow_status ?? raw.escrowStatus,
-    bidsCount: raw.bids_count ?? raw.bidsCount ?? 0,
-    createdAt: raw.created_at ?? raw.createdAt,
-    updatedAt: raw.updated_at ?? raw.updatedAt,
-  };
-}
-
+// ListMoverJobs / MoverJobDetail) — mapMoverRow (defined above, alongside the
+// parcel/towing/car-hire mappers) and mapMoverBid below translate that into
+// the camelCase MoverRow/MoverBid shape this page renders.
 function mapMoverBid(raw: any): MoverBid {
   return {
     id: raw.id,
@@ -309,8 +387,8 @@ export async function getMoverJobs(status?: MoverStatus | ''): Promise<MoverRow[
   // path here had an extra "jobs" segment that matched no route, same bug as
   // setMoverStatus's PATCH path had before it was fixed.
   const q = status ? `?status=${status}` : '';
-  const raw = await readList(`${adminBase()}/movers${q}`, 'jobs');
-  return raw.map(mapMoverRow);
+  const rows = await readList(`${adminBase()}/movers${q}`, 'jobs');
+  return rows.map(mapMoverRow);
 }
 
 export async function getMoverJob(id: string): Promise<MoverDetail> {
@@ -355,7 +433,8 @@ export async function getCarHireBookings(status?: CarHireStatus | ''): Promise<C
   // /car-hire/bookings path here had an extra "bookings" segment that matched
   // no route, same bug as setCarHireStatus's PATCH path had before it was fixed.
   const q = status ? `?status=${status}` : '';
-  return readList(`${adminBase()}/car-hire${q}`, 'bookings');
+  const rows = await readList(`${adminBase()}/car-hire${q}`, 'bookings');
+  return rows.map(mapCarHireRow);
 }
 
 export async function setCarHireStatus(id: string, patch: ModeStatusPatch): Promise<{ ok: boolean }> {
