@@ -113,11 +113,35 @@ const (
 // ── Frequency validation ──────────────────────────────────────────────────
 
 // ValidFrequencies is the set of allowed frequency strings.
+// "upfront" is NOT included here even though academy_batches.fee_frequency allows
+// it as a batch-level descriptor: academy_installment_plans.frequency is
+// CONSTRAINED to weekly|biweekly|monthly (see the CHECK constraint) — an "upfront"
+// batch cadence or a one_off plan must be NORMALIZED to one of these (see
+// NormalizePlanFrequency) before it's ever persisted as a plan's frequency.
 var ValidFrequencies = map[string]bool{
-	"upfront":  true,
 	"weekly":   true,
 	"biweekly": true,
 	"monthly":  true,
+}
+
+// NormalizePlanFrequency maps a batch's fee_frequency (which may be "upfront", or
+// any value at all if the batch config is stale) plus the chosen plan type onto a
+// frequency that academy_installment_plans.frequency's CHECK constraint accepts,
+// plus the correct installment count for that choice. A one-off plan is always a
+// single payment; the stored cadence is immaterial for it, so it defaults to
+// "monthly" rather than failing the insert.
+func NormalizePlanFrequency(planType, batchFrequency string, batchInstallmentsCount int32) (frequency string, count int32) {
+	payUpfront := planType == "one_off" || !IsValidFrequency(batchFrequency)
+	if payUpfront {
+		return "monthly", 1
+	}
+	if batchInstallmentsCount < 1 {
+		batchInstallmentsCount = 1
+	}
+	if batchInstallmentsCount > 12 {
+		batchInstallmentsCount = 12
+	}
+	return batchFrequency, batchInstallmentsCount
 }
 
 // ── Sentinel errors ──────────────────────────────────────────────────────

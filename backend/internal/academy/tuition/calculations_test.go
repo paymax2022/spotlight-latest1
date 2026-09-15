@@ -316,3 +316,42 @@ func TestHasCompletePayment_Empty(t *testing.T) {
 		t.Error("expected true (no payments means all are terminal)")
 	}
 }
+
+// ── NormalizePlanFrequency ────────────────────────────────────────────────
+
+func TestNormalizePlanFrequency_OneOffAlwaysMonthlySingle(t *testing.T) {
+	freq, count := NormalizePlanFrequency("one_off", "biweekly", 6)
+	if freq != "monthly" || count != 1 {
+		t.Errorf("got (%s, %d), want (monthly, 1)", freq, count)
+	}
+}
+
+func TestNormalizePlanFrequency_UpfrontBatchCadenceNormalized(t *testing.T) {
+	// A batch configured with fee_frequency='upfront' is not a legal plan cadence —
+	// it must never reach the DB as the plan's frequency (CHECK constraint rejects it).
+	freq, count := NormalizePlanFrequency("installment", "upfront", 3)
+	if freq != "monthly" || count != 1 {
+		t.Errorf("got (%s, %d), want (monthly, 1)", freq, count)
+	}
+}
+
+func TestNormalizePlanFrequency_InstallmentPassesThroughValidCadence(t *testing.T) {
+	freq, count := NormalizePlanFrequency("installment", "weekly", 4)
+	if freq != "weekly" || count != 4 {
+		t.Errorf("got (%s, %d), want (weekly, 4)", freq, count)
+	}
+}
+
+func TestNormalizePlanFrequency_ClampsCountTo12(t *testing.T) {
+	_, count := NormalizePlanFrequency("installment", "monthly", 24)
+	if count != 12 {
+		t.Errorf("got count=%d, want 12", count)
+	}
+}
+
+func TestNormalizePlanFrequency_ClampsCountToAtLeast1(t *testing.T) {
+	_, count := NormalizePlanFrequency("installment", "monthly", 0)
+	if count != 1 {
+		t.Errorf("got count=%d, want 1", count)
+	}
+}

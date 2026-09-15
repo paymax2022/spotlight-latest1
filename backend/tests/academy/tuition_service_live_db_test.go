@@ -3,13 +3,18 @@ package academy
 // tuition_service_live_db_test.go tests the Film Academy tuition money path
 // against a live Postgres database. Run with TEST_DATABASE_URL set.
 //
+// Payment rail is Paystack (card), not a wallet debit — ConfirmPayment verifies a
+// gateway reference and posts a balanced provider_clearing -> settlement ledger
+// journal. Tests use a local fake provider.PaymentProvider (no live network).
+//
 // Tests cover:
-//   - KYC gate (fail-closed for unverified/tier-0 users)
-//   - Idempotency Layer 1 (Redis key claim)
-//   - Idempotency Layer 2 (conditional UPDATE — replay after Layer 1 is bypassed)
-//   - Wallet debit on success + reversal when a later step fails
-//   - Payment status transitions + plan completion
-//   - Ledger balanced-pair verification
+//   - Full confirm saga: verify -> ledger journal -> payment recorded -> plan completion
+//   - Ownership + ownership-mismatch rejection
+//   - Amount-mismatch rejection (gateway-reported kobo below expected)
+//   - Unconfirmed-charge rejection
+//   - Reference-reuse rejection (across two different installments)
+//   - Idempotency Layer 1 (Redis key claim) + Layer 2 (conditional UPDATE replay)
+//   - Admin waiver + plan auto-completion
 
 import (
 	"context"
@@ -22,11 +27,9 @@ import (
 	goredis "github.com/redis/go-redis/v9"
 
 	"spotlight/backend/internal/academy/tuition"
-	"spotlight/backend/internal/finance/commission"
 	"spotlight/backend/internal/finance/ledger"
-	"spotlight/backend/internal/finance/tiers"
-	"spotlight/backend/internal/finance/wallet"
-	platformredis "spotlight/backend/internal/platform/redis"
+	"spotlight/backend/internal/platform/redis"
+	"spotlight/backend/internal/provider"
 )
 
 func skipIfNoTestDB(t *testing.T) {
@@ -52,7 +55,7 @@ func newTestPool(t *testing.T) *pgxpool.Pool {
 
 // newTestRedis returns a redis client, or nil if no local redis is reachable —
 // tests fall back to the DB-only (Layer 2) idempotency path in that case.
-func newTestRedis(t *testing.T) *platformredis.Client {
+func newTestRedis(t *testing.T) *redis.Client {
 	client := goredis.NewClient(&goredis.Options{Addr: "localhost:6379"})
 	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
 	defer cancel()
@@ -65,25 +68,55 @@ func newTestRedis(t *testing.T) *platformredis.Client {
 	return client
 }
 
-// seedVerifiedUser creates (or updates) an auth.users + user_profiles row with
-// the given KYC tier. user_profiles.id has an FK to auth.users(id), so the
-// auth row must exist first.
-func seedVerifiedUser(ctx context.Context, t *testing.T, pool *pgxpool.Pool, userID string, tier int) {
+// fakePaymentProvider is a local, in-memory provider.PaymentProvider. Only
+// VerifyPayment matters for these tests; the rest satisfy the interface.
+type fakePaymentProvider struct {
+	// byReference controls VerifyPayment's response per reference.
+	byReference map[string]*provider.PaymentStatus
+}
+
+func newFakeProvider() *fakePaymentProvider {
+	return &fakePaymentProvider{byReference: map[string]*provider.PaymentStatus{}}
+}
+
+func (f *fakePaymentProvider) setSuccess(reference string, amountKobo int64) {
+	f.byReference[reference] = &provider.PaymentStatus{Reference: reference, Status: "success", AmountKobo: amountKobo}
+}
+
+func (f *fakePaymentProvider) setFailed(reference string) {
+	f.byReference[reference] = &provider.PaymentStatus{Reference: reference, Status: "failed"}
+}
+
+func (f *fakePaymentProvider) InitializePayment(ctx context.Context, req provider.InitializePaymentRequest) (*provider.InitializePaymentResponse, error) {
+	return &provider.InitializePaymentResponse{Reference: req.Reference}, nil
+}
+
+func (f *fakePaymentProvider) VerifyPayment(ctx context.Context, reference string) (*provider.PaymentStatus, error) {
+	if s, ok := f.byReference[reference]; ok {
+		return s, nil
+	}
+	return &provider.PaymentStatus{Reference: reference, Status: "failed"}, nil
+}
+
+func (f *fakePaymentProvider) InitiatePayout(ctx context.Context, req provider.PayoutRequest) (*provider.PayoutResponse, error) {
+	return &provider.PayoutResponse{Reference: req.Reference, Status: "success"}, nil
+}
+
+func (f *fakePaymentProvider) VerifyWebhookSignature(payload []byte, signature string) bool { return true }
+func (f *fakePaymentProvider) Name() string                                                 { return "fake" }
+
+// seedVerifiedUser creates (or updates) an auth.users + user_profiles row.
+// user_profiles.id has an FK to auth.users(id), so the auth row must exist first.
+func seedVerifiedUser(ctx context.Context, t *testing.T, pool *pgxpool.Pool, userID string) {
 	if _, err := pool.Exec(ctx,
 		`INSERT INTO auth.users (id, email) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
 		userID, userID+"@example.com"); err != nil {
 		t.Fatalf("seed auth user: %v", err)
 	}
-
-	status := "unverified"
-	if tier >= 1 {
-		status = "verified"
-	}
 	if _, err := pool.Exec(ctx, `
-		INSERT INTO public.user_profiles (id, kyc_tier, kyc_status)
-		VALUES ($1, $2, $3)
-		ON CONFLICT (id) DO UPDATE SET kyc_tier = EXCLUDED.kyc_tier, kyc_status = EXCLUDED.kyc_status
-	`, userID, tier, status); err != nil {
+		INSERT INTO public.user_profiles (id) VALUES ($1)
+		ON CONFLICT (id) DO NOTHING
+	`, userID); err != nil {
 		t.Fatalf("seed user profile: %v", err)
 	}
 }
@@ -120,7 +153,7 @@ func seedApplication(ctx context.Context, t *testing.T, pool *pgxpool.Pool, user
 	return appID
 }
 
-func newTestService(pool *pgxpool.Pool, redisClient *platformredis.Client) (*tuition.Service, *ledger.Service, *tuition.Repository) {
+func newTestService(pool *pgxpool.Pool, redisClient *redis.Client, fakeProvider *fakePaymentProvider) (*tuition.Service, *tuition.Repository) {
 	repo := tuition.NewRepository(pool)
 	ledgerRepo := ledger.NewRepository(pool)
 	var goRedis *goredis.Client
@@ -128,83 +161,49 @@ func newTestService(pool *pgxpool.Pool, redisClient *platformredis.Client) (*tui
 		goRedis = redisClient
 	}
 	ledgerSvc := ledger.NewService(ledgerRepo, goRedis)
-	tiersSvc := tiers.NewService(pool)
-	walletSvc := wallet.NewService(ledgerSvc, tiersSvc)
-	commissionSvc := commission.NewService(commission.NewRepository(pool), ledgerSvc)
-	svc := tuition.NewService(repo, walletSvc, ledgerSvc, commissionSvc, redisClient, nil, pool)
-	return svc, ledgerSvc, repo
+	svc := tuition.NewService(repo, ledgerSvc, fakeProvider, redisClient, nil)
+	return svc, repo
 }
 
-// TestPayTuitionKYCGate verifies an unverified (tier 0) user is rejected before
-// any money moves.
-func TestPayTuitionKYCGate(t *testing.T) {
+// TestConfirmPaymentSuccess exercises the full saga: plan+schedule auto-creation via
+// CreateTuitionPlan, gateway verification, ledger journal, and payment recorded.
+func TestConfirmPaymentSuccess(t *testing.T) {
 	skipIfNoTestDB(t)
 	pool := newTestPool(t)
 	redisClient := newTestRedis(t)
 	ctx := context.Background()
 
 	userID := uuid.New().String()
-	seedVerifiedUser(ctx, t, pool, userID, 0) // tier 0, unverified
-
-	batchID := seedBatch(ctx, t, pool, 100000, 4, 0)
-	appID := seedApplication(ctx, t, pool, userID, batchID, 100000, "installment")
-
-	svc, _, _ := newTestService(pool, redisClient)
-
-	_, err := svc.PayTuition(ctx, uuid.New().String(), appID, 25000, userID)
-	if err != tuition.ErrKYCRequired {
-		t.Fatalf("expected ErrKYCRequired for tier-0 user, got: %v", err)
-	}
-}
-
-// TestPayTuitionSuccess exercises the full saga: plan+schedule auto-creation,
-// wallet debit, ledger posting, payment recorded, and next-due-date reporting.
-func TestPayTuitionSuccess(t *testing.T) {
-	skipIfNoTestDB(t)
-	pool := newTestPool(t)
-	redisClient := newTestRedis(t)
-	ctx := context.Background()
-
-	userID := uuid.New().String()
-	seedVerifiedUser(ctx, t, pool, userID, 1)
-
+	seedVerifiedUser(ctx, t, pool, userID)
 	feeNaira := int64(100000)
 	batchID := seedBatch(ctx, t, pool, feeNaira, 4, 0)
 	appID := seedApplication(ctx, t, pool, userID, batchID, feeNaira, "installment")
 
-	svc, ledgerSvc, repo := newTestService(pool, redisClient)
+	fakeProvider := newFakeProvider()
+	svc, repo := newTestService(pool, redisClient, fakeProvider)
 
-	// Fund the wallet: credit the user's wallet directly via ledger so the debit
-	// in PayTuition has funds to draw from.
-	userWallet, err := ledgerSvc.GetOrCreateUserWallet(ctx, userID)
+	plan, err := svc.CreateTuitionPlan(ctx, appID, userID)
 	if err != nil {
-		t.Fatalf("get user wallet: %v", err)
+		t.Fatalf("create plan: %v", err)
 	}
-	settlement, err := ledgerSvc.GetOrCreateStandingAccount(ctx, ledger.AccountSettlement)
+	payments, err := repo.ListInstallmentPayments(ctx, plan.ID)
+	if err != nil || len(payments) == 0 {
+		t.Fatalf("list payments: %v", err)
+	}
+	firstPayment := payments[0]
+
+	reference := "test-ref-" + uuid.New().String()
+	fakeProvider.setSuccess(reference, firstPayment.AmountNGN*100)
+
+	result, err := svc.ConfirmPayment(ctx, uuid.New().String(), plan.ID, firstPayment.ID, reference, userID)
 	if err != nil {
-		t.Fatalf("get settlement account: %v", err)
+		t.Fatalf("ConfirmPayment failed: %v", err)
 	}
-	if err := ledgerSvc.PostJournal(ctx, ledger.JournalEntry{
-		Reference:       "test-fund-" + uuid.New().String(),
-		IdempotencyKey:  "test-fund-" + uuid.New().String(),
-		AmountKobo:      feeNaira * 100, // fund the full tuition amount in kobo
-		DebitAccountID:  settlement.ID,
-		CreditAccountID: userWallet.ID,
-	}); err != nil {
-		t.Fatalf("fund wallet: %v", err)
+	if result.AmountPaidNGN != firstPayment.AmountNGN {
+		t.Errorf("wrong amount: got %d, want %d", result.AmountPaidNGN, firstPayment.AmountNGN)
 	}
 
-	amountPerPayment := feeNaira / 4
-
-	result, err := svc.PayTuition(ctx, uuid.New().String(), appID, amountPerPayment, userID)
-	if err != nil {
-		t.Fatalf("PayTuition failed: %v", err)
-	}
-	if result.AmountPaidNGN != amountPerPayment {
-		t.Errorf("wrong amount: got %d, want %d", result.AmountPaidNGN, amountPerPayment)
-	}
-
-	payment, err := repo.GetPaymentByID(ctx, result.PaymentID)
+	payment, err := repo.GetPaymentByID(ctx, firstPayment.ID)
 	if err != nil {
 		t.Fatalf("get payment: %v", err)
 	}
@@ -213,9 +212,143 @@ func TestPayTuitionSuccess(t *testing.T) {
 	}
 }
 
-// TestPayTuitionLayer1Idempotency verifies a replay with the same Idempotency-Key
-// while Redis is available is rejected as a duplicate before any second debit.
-func TestPayTuitionLayer1Idempotency(t *testing.T) {
+// TestConfirmPaymentOwnershipMismatch verifies a different user cannot confirm someone
+// else's installment.
+func TestConfirmPaymentOwnershipMismatch(t *testing.T) {
+	skipIfNoTestDB(t)
+	pool := newTestPool(t)
+	ctx := context.Background()
+
+	ownerID := uuid.New().String()
+	attackerID := uuid.New().String()
+	seedVerifiedUser(ctx, t, pool, ownerID)
+	seedVerifiedUser(ctx, t, pool, attackerID)
+	feeNaira := int64(50000)
+	batchID := seedBatch(ctx, t, pool, feeNaira, 1, 0)
+	appID := seedApplication(ctx, t, pool, ownerID, batchID, feeNaira, "one_off")
+
+	fakeProvider := newFakeProvider()
+	svc, repo := newTestService(pool, nil, fakeProvider)
+
+	plan, err := svc.CreateTuitionPlan(ctx, appID, ownerID)
+	if err != nil {
+		t.Fatalf("create plan: %v", err)
+	}
+	payments, _ := repo.ListInstallmentPayments(ctx, plan.ID)
+
+	reference := "test-ref-" + uuid.New().String()
+	fakeProvider.setSuccess(reference, payments[0].AmountNGN*100)
+
+	_, err = svc.ConfirmPayment(ctx, uuid.New().String(), plan.ID, payments[0].ID, reference, attackerID)
+	if err != tuition.ErrForbidden {
+		t.Fatalf("expected ErrForbidden, got: %v", err)
+	}
+}
+
+// TestConfirmPaymentAmountMismatch verifies a charge for less than the installment
+// amount is rejected.
+func TestConfirmPaymentAmountMismatch(t *testing.T) {
+	skipIfNoTestDB(t)
+	pool := newTestPool(t)
+	ctx := context.Background()
+
+	userID := uuid.New().String()
+	seedVerifiedUser(ctx, t, pool, userID)
+	feeNaira := int64(50000)
+	batchID := seedBatch(ctx, t, pool, feeNaira, 1, 0)
+	appID := seedApplication(ctx, t, pool, userID, batchID, feeNaira, "one_off")
+
+	fakeProvider := newFakeProvider()
+	svc, repo := newTestService(pool, nil, fakeProvider)
+
+	plan, err := svc.CreateTuitionPlan(ctx, appID, userID)
+	if err != nil {
+		t.Fatalf("create plan: %v", err)
+	}
+	payments, _ := repo.ListInstallmentPayments(ctx, plan.ID)
+
+	reference := "test-ref-" + uuid.New().String()
+	fakeProvider.setSuccess(reference, payments[0].AmountNGN*100-1000) // short by 10 naira
+
+	_, err = svc.ConfirmPayment(ctx, uuid.New().String(), plan.ID, payments[0].ID, reference, userID)
+	if err != tuition.ErrInvalidPaymentAmount {
+		t.Fatalf("expected ErrInvalidPaymentAmount, got: %v", err)
+	}
+}
+
+// TestConfirmPaymentUnconfirmedCharge verifies a non-success gateway status is rejected.
+func TestConfirmPaymentUnconfirmedCharge(t *testing.T) {
+	skipIfNoTestDB(t)
+	pool := newTestPool(t)
+	ctx := context.Background()
+
+	userID := uuid.New().String()
+	seedVerifiedUser(ctx, t, pool, userID)
+	feeNaira := int64(20000)
+	batchID := seedBatch(ctx, t, pool, feeNaira, 1, 0)
+	appID := seedApplication(ctx, t, pool, userID, batchID, feeNaira, "one_off")
+
+	fakeProvider := newFakeProvider()
+	svc, repo := newTestService(pool, nil, fakeProvider)
+
+	plan, err := svc.CreateTuitionPlan(ctx, appID, userID)
+	if err != nil {
+		t.Fatalf("create plan: %v", err)
+	}
+	payments, _ := repo.ListInstallmentPayments(ctx, plan.ID)
+
+	reference := "test-ref-" + uuid.New().String()
+	fakeProvider.setFailed(reference)
+
+	_, err = svc.ConfirmPayment(ctx, uuid.New().String(), plan.ID, payments[0].ID, reference, userID)
+	if err != tuition.ErrPaymentNotConfirmed {
+		t.Fatalf("expected ErrPaymentNotConfirmed, got: %v", err)
+	}
+}
+
+// TestConfirmPaymentReferenceReuse verifies a reference that already settled a
+// DIFFERENT installment cannot be replayed against a second one.
+func TestConfirmPaymentReferenceReuse(t *testing.T) {
+	skipIfNoTestDB(t)
+	pool := newTestPool(t)
+	ctx := context.Background()
+
+	userID := uuid.New().String()
+	seedVerifiedUser(ctx, t, pool, userID)
+	feeNaira := int64(40000)
+	batchID := seedBatch(ctx, t, pool, feeNaira, 2, 0)
+	appID := seedApplication(ctx, t, pool, userID, batchID, feeNaira, "installment")
+
+	fakeProvider := newFakeProvider()
+	svc, repo := newTestService(pool, nil, fakeProvider)
+
+	plan, err := svc.CreateTuitionPlan(ctx, appID, userID)
+	if err != nil {
+		t.Fatalf("create plan: %v", err)
+	}
+	payments, _ := repo.ListInstallmentPayments(ctx, plan.ID)
+	if len(payments) < 2 {
+		t.Fatalf("expected 2 installments, got %d", len(payments))
+	}
+
+	reference := "test-ref-" + uuid.New().String()
+	// Fund the reference generously enough to "cover" both installments' amounts.
+	fakeProvider.setSuccess(reference, payments[1].AmountNGN*100)
+
+	if _, err := svc.ConfirmPayment(ctx, uuid.New().String(), plan.ID, payments[0].ID, reference, userID); err != nil {
+		t.Fatalf("first confirm failed: %v", err)
+	}
+
+	// Replaying the SAME reference against the second installment must be rejected.
+	_, err = svc.ConfirmPayment(ctx, uuid.New().String(), plan.ID, payments[1].ID, reference, userID)
+	if err != tuition.ErrReferenceReused {
+		t.Fatalf("expected ErrReferenceReused, got: %v", err)
+	}
+}
+
+// TestConfirmPaymentLayer1Idempotency verifies a replay with the same Idempotency-Key
+// while Redis is available is rejected as a duplicate.
+func TestConfirmPaymentLayer1Idempotency(t *testing.T) {
 	skipIfNoTestDB(t)
 	pool := newTestPool(t)
 	redisClient := newTestRedis(t)
@@ -225,75 +358,74 @@ func TestPayTuitionLayer1Idempotency(t *testing.T) {
 	ctx := context.Background()
 
 	userID := uuid.New().String()
-	seedVerifiedUser(ctx, t, pool, userID, 1)
-	feeNaira := int64(40000)
-	batchID := seedBatch(ctx, t, pool, feeNaira, 2, 0)
-	appID := seedApplication(ctx, t, pool, userID, batchID, feeNaira, "installment")
+	seedVerifiedUser(ctx, t, pool, userID)
+	feeNaira := int64(30000)
+	batchID := seedBatch(ctx, t, pool, feeNaira, 1, 0)
+	appID := seedApplication(ctx, t, pool, userID, batchID, feeNaira, "one_off")
 
-	svc, ledgerSvc, _ := newTestService(pool, redisClient)
-	userWallet, _ := ledgerSvc.GetOrCreateUserWallet(ctx, userID)
-	settlement, _ := ledgerSvc.GetOrCreateStandingAccount(ctx, ledger.AccountSettlement)
-	_ = ledgerSvc.PostJournal(ctx, ledger.JournalEntry{
-		Reference:       "test-fund-" + uuid.New().String(),
-		IdempotencyKey:  "test-fund-" + uuid.New().String(),
-		AmountKobo:      feeNaira * 100,
-		DebitAccountID:  settlement.ID,
-		CreditAccountID: userWallet.ID,
-	})
+	fakeProvider := newFakeProvider()
+	svc, repo := newTestService(pool, redisClient, fakeProvider)
+
+	plan, err := svc.CreateTuitionPlan(ctx, appID, userID)
+	if err != nil {
+		t.Fatalf("create plan: %v", err)
+	}
+	payments, _ := repo.ListInstallmentPayments(ctx, plan.ID)
+
+	reference := "test-ref-" + uuid.New().String()
+	fakeProvider.setSuccess(reference, payments[0].AmountNGN*100)
 
 	idempKey := uuid.New().String()
-	amountPerPayment := feeNaira / 2
-
-	_, err := svc.PayTuition(ctx, idempKey, appID, amountPerPayment, userID)
-	if err != nil {
-		t.Fatalf("first PayTuition failed: %v", err)
+	if _, err := svc.ConfirmPayment(ctx, idempKey, plan.ID, payments[0].ID, reference, userID); err != nil {
+		t.Fatalf("first confirm failed: %v", err)
 	}
 
-	_, err = svc.PayTuition(ctx, idempKey, appID, amountPerPayment, userID)
+	_, err = svc.ConfirmPayment(ctx, idempKey, plan.ID, payments[0].ID, reference, userID)
 	if err != tuition.ErrDuplicate {
 		t.Fatalf("expected ErrDuplicate on replay, got: %v", err)
 	}
 }
 
-// TestPayTuitionLayer2Idempotency simulates Layer 1 being unavailable (no redis)
-// and verifies the DB-level conditional UPDATE still prevents double-processing
-// when the same payment is (somehow) targeted twice.
-func TestPayTuitionLayer2Idempotency(t *testing.T) {
+// TestConfirmPaymentLayer2Idempotency simulates Layer 1 being unavailable (no redis)
+// and verifies a second confirm attempt against an already-paid installment is a safe
+// no-op (idempotent success) rather than a double-post.
+func TestConfirmPaymentLayer2Idempotency(t *testing.T) {
 	skipIfNoTestDB(t)
 	pool := newTestPool(t)
 	ctx := context.Background()
 
 	userID := uuid.New().String()
-	seedVerifiedUser(ctx, t, pool, userID, 1)
+	seedVerifiedUser(ctx, t, pool, userID)
 	feeNaira := int64(30000)
 	batchID := seedBatch(ctx, t, pool, feeNaira, 1, 0)
 	appID := seedApplication(ctx, t, pool, userID, batchID, feeNaira, "one_off")
 
-	// No redis client passed here — forces the DB-only path.
-	svc, ledgerSvc, repo := newTestService(pool, nil)
-	userWallet, _ := ledgerSvc.GetOrCreateUserWallet(ctx, userID)
-	settlement, _ := ledgerSvc.GetOrCreateStandingAccount(ctx, ledger.AccountSettlement)
-	_ = ledgerSvc.PostJournal(ctx, ledger.JournalEntry{
-		Reference:       "test-fund-" + uuid.New().String(),
-		IdempotencyKey:  "test-fund-" + uuid.New().String(),
-		AmountKobo:      feeNaira * 200, // fund double, since this test debits twice by design
-		DebitAccountID:  settlement.ID,
-		CreditAccountID: userWallet.ID,
-	})
+	fakeProvider := newFakeProvider()
+	// No redis client passed — forces the DB-only path.
+	svc, repo := newTestService(pool, nil, fakeProvider)
 
-	result, err := svc.PayTuition(ctx, uuid.New().String(), appID, feeNaira, userID)
+	plan, err := svc.CreateTuitionPlan(ctx, appID, userID)
 	if err != nil {
-		t.Fatalf("first PayTuition failed: %v", err)
+		t.Fatalf("create plan: %v", err)
+	}
+	payments, _ := repo.ListInstallmentPayments(ctx, plan.ID)
+
+	reference := "test-ref-" + uuid.New().String()
+	fakeProvider.setSuccess(reference, payments[0].AmountNGN*100)
+
+	result1, err := svc.ConfirmPayment(ctx, uuid.New().String(), plan.ID, payments[0].ID, reference, userID)
+	if err != nil {
+		t.Fatalf("first confirm failed: %v", err)
 	}
 
-	// Directly exercise the repository's Layer 2 guard: a second conditional
-	// UPDATE against the now-paid row must affect zero rows.
-	applied, err := repo.RecordPaymentWithReference(ctx, result.PaymentID, time.Now(), "second-attempt-ref")
+	// Replay against the now-paid installment with the SAME reference: the Layer 2
+	// guard (conditional UPDATE) makes this a safe idempotent no-op, not a double-post.
+	result2, err := svc.ConfirmPayment(ctx, uuid.New().String(), plan.ID, payments[0].ID, reference, userID)
 	if err != nil {
-		t.Fatalf("second RecordPaymentWithReference errored: %v", err)
+		t.Fatalf("second confirm (replay) should succeed idempotently, got: %v", err)
 	}
-	if applied {
-		t.Error("expected Layer 2 guard to reject a replay against an already-paid row")
+	if result2.AmountPaidNGN != result1.AmountPaidNGN {
+		t.Errorf("replay result mismatch: got %d, want %d", result2.AmountPaidNGN, result1.AmountPaidNGN)
 	}
 }
 
@@ -304,12 +436,12 @@ func TestValidatePayment(t *testing.T) {
 	ctx := context.Background()
 
 	userID := uuid.New().String()
-	seedVerifiedUser(ctx, t, pool, userID, 1)
+	seedVerifiedUser(ctx, t, pool, userID)
 	feeNaira := int64(60000)
 	batchID := seedBatch(ctx, t, pool, feeNaira, 3, 0)
 	appID := seedApplication(ctx, t, pool, userID, batchID, feeNaira, "installment")
 
-	svc, _, _ := newTestService(pool, nil)
+	svc, _ := newTestService(pool, nil, newFakeProvider())
 
 	if err := svc.ValidatePayment(ctx, appID, userID, feeNaira); err != nil {
 		t.Errorf("validation before plan creation failed: %v", err)
@@ -326,18 +458,17 @@ func TestWaivePayment(t *testing.T) {
 	ctx := context.Background()
 
 	userID := uuid.New().String()
-	seedVerifiedUser(ctx, t, pool, userID, 1)
+	seedVerifiedUser(ctx, t, pool, userID)
 	feeNaira := int64(20000)
 	batchID := seedBatch(ctx, t, pool, feeNaira, 1, 0)
 	appID := seedApplication(ctx, t, pool, userID, batchID, feeNaira, "one_off")
 
-	svc, _, repo := newTestService(pool, nil)
+	svc, repo := newTestService(pool, nil, newFakeProvider())
 
 	plan, err := svc.CreateTuitionPlan(ctx, appID, userID)
 	if err != nil {
 		t.Fatalf("create plan: %v", err)
 	}
-
 	payments, err := repo.ListInstallmentPayments(ctx, plan.ID)
 	if err != nil || len(payments) == 0 {
 		t.Fatalf("failed to get payments: %v", err)

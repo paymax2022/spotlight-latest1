@@ -368,6 +368,23 @@ func (r *Repository) MarkPlanCompleted(ctx context.Context, planID string) error
 	return nil
 }
 
+// IsPaymentReferenceUsed reports whether reference already settles a DIFFERENT
+// installment than excludePaymentID. Guards against a reference being replayed
+// across installments (e.g. a small charge's reference reused against a larger one).
+func (r *Repository) IsPaymentReferenceUsed(ctx context.Context, reference, excludePaymentID string) (bool, error) {
+	var id string
+	err := r.db.QueryRow(ctx,
+		`SELECT id FROM academy_installment_payments WHERE payment_reference = $1 LIMIT 1`,
+		reference).Scan(&id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return id != excludePaymentID, nil
+}
+
 // UpdateApplicationPaymentStatus updates the payment_status of an application.
 func (r *Repository) UpdateApplicationPaymentStatus(ctx context.Context, appID, status string) error {
 	result, err := r.db.Exec(ctx, `

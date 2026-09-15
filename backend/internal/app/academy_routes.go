@@ -44,11 +44,8 @@ import (
 	"spotlight/backend/internal/academy/schools"
 	"spotlight/backend/internal/academy/trade"
 	"spotlight/backend/internal/academy/tutor"
-	"spotlight/backend/internal/finance/commission"
 	"spotlight/backend/internal/finance/kyc"
 	"spotlight/backend/internal/finance/ledger"
-	"spotlight/backend/internal/finance/tiers"
-	"spotlight/backend/internal/finance/wallet"
 	"spotlight/backend/internal/integrations/rtc"
 	"spotlight/backend/internal/middleware"
 	providerInterfaces "spotlight/backend/internal/provider"
@@ -258,26 +255,36 @@ func RegisterAcademy(r *gin.Engine, finance *gin.RouterGroup, pool *pgxpool.Pool
 		placement.RegisterAcademyPlacement(memberAcad, pool)
 	}
 
-	// Film Academy Tuition payment (Phase 1 Go migration): installment plans + money path.
-	// Gated by FeatureAcademyTuitionEnabled. Tuition amounts are whole NAIRA, never kobo.
-	// Wire only when the ledger is available (nil ledger would silently drop money legs).
-	// Phase 1 scope: member-facing routes only. Admin routes (Phase 4) deferred.
-	if tuitionEnabled && ledgerSvc != nil {
+	// Film Academy Tuition payment: installment plans + Paystack-verified money path.
+	// Gated by FeatureAcademyTuitionEnabled. Tuition amounts are whole NAIRA, never kobo,
+	// converted to kobo only at the ledger/provider seam. Paystack is the payment rail
+	// (matches the pre-existing product behavior this replaces) — no user wallet is
+	// debited; a confirmed charge posts a balanced provider_clearing -> settlement
+	// ledger journal. Wire only when the ledger is available (nil ledger would silently
+	// drop money legs) and a payment provider is configured (nil provider can never
+	// verify a charge).
+	if tuitionEnabled && ledgerSvc != nil && paymentProvider != nil {
 		// Redis client and Auditor are both nil-safe (see service.go) — nil here means
 		// idempotency relies on the DB-level Layer 2 guard alone and mutations go
 		// unaudited. Wire a real redis.Client + Auditor once one is threaded into
 		// RegisterAcademy's parameters.
 		tuitionRepo := tuition.NewRepository(pool)
-		walletSvc := wallet.NewService(ledgerSvc, tiers.NewService(pool))
-		commissionSvc := commission.NewService(commission.NewRepository(pool), nil)
-		tuitionSvc := tuition.NewService(tuitionRepo, walletSvc, ledgerSvc, commissionSvc, nil, nil, pool)
+		tuitionSvc := tuition.NewService(tuitionRepo, ledgerSvc, paymentProvider, nil, nil)
 		tuitionHandler := tuition.NewHandler(tuitionSvc)
 
-		// Member-facing routes (Phase 1)
+		// Member-facing routes.
 		tuitionGroup := memberAcad.Group("/tuition")
-		tuitionGroup.POST("/pay", tuitionHandler.PayTuition)
+		tuitionGroup.POST("/confirm", tuitionHandler.ConfirmPayment)
 		tuitionGroup.POST("/validate", tuitionHandler.ValidatePayment)
 		tuitionGroup.GET("/status/:application_id", tuitionHandler.GetTuitionStatus)
+
+		// Admin routes: waive an installment, force-complete a plan, or create a plan
+		// ahead of first payment. Every mutation is RBAC-gated on academy.tuition.admin.
+		tuitionAdminGuard := middleware.RequirePermission(rbac, "academy.tuition.admin")
+		tuitionAdmin := adminAcad.Group("/tuition")
+		tuitionAdmin.POST("/plans", tuitionAdminGuard, tuitionHandler.CreatePlan)
+		tuitionAdmin.PATCH("/plans/:id/mark-complete", tuitionAdminGuard, tuitionHandler.MarkPlanCompleted)
+		tuitionAdmin.PATCH("/payments/:id/waive", tuitionAdminGuard, tuitionHandler.WaiveTuition)
 	}
 
 	// EdTech School Fees (invoices, vault, promotion, competition, scholarship,

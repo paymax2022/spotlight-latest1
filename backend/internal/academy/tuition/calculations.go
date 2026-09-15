@@ -74,8 +74,6 @@ func IsApplicationReadyForEnrollment(payments []InstallmentPayment) bool {
 // Example: index=0, start=2025-01-01, freq="biweekly" → 2025-01-15.
 func CalculateDueDate(startDate time.Time, index int32, frequency string) time.Time {
 	switch frequency {
-	case "upfront":
-		return startDate
 	case "weekly":
 		return startDate.AddDate(0, 0, int(index+1)*7)
 	case "biweekly":
