@@ -1,0 +1,28 @@
+-- Grant service_role read access to auth.users.
+--
+-- AUTH-008 (UAT Blocker): backend/internal/platform/db/db.go's New() runs
+-- `SET ROLE service_role` on every pgx-pool connection so the app's own
+-- money-path/data queries bypass RLS. But `service_role` has never held any
+-- grant on `auth.users` in this project — only `supabase_auth_admin`,
+-- `dashboard_user`, and `postgres` do (see `\dp auth.users`). Any pgx-pool
+-- query against auth.users therefore fails with
+-- `permission denied for table users (SQLSTATE 42501)`, regardless of which
+-- Go code issues it.
+--
+-- This breaks the shared helper authUserByEmail() in
+-- backend/internal/services/email_verification.go, used by:
+--   - ConfirmEmail (same file) — OTP email verification, POST
+--     /api/auth/otp/verify with purpose=verify_email. Reproduced live: a
+--     correct code 500s with "could not activate your account".
+--   - SetPassword in backend/internal/services/otp_login.go — OTP-code
+--     password reset completion, POST /api/auth/reset-password. Reproduced
+--     live: 500 "could not reset your password".
+--
+-- Fix: grant service_role SELECT only. Nothing in these paths writes to
+-- auth.users directly — writes go through GoTrue's admin API
+-- (AdminConfirmEmail / AdminSetPassword), which is correct and unchanged by
+-- this migration. INSERT/UPDATE/DELETE stay ungranted on purpose: widening
+-- write access here would let the app pool touch GoTrue-owned rows directly,
+-- bypassing GoTrue's own invariants (password hashing, confirmation
+-- timestamps, etc).
+GRANT SELECT ON auth.users TO service_role;
