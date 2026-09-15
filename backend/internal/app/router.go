@@ -433,12 +433,24 @@ func NewRouter(cfg config.Config) *gin.Engine {
 		// frontend-admin's server-side proxy attaches) rather than the
 		// X-Admin-Role header the mobile admin console uses — the browser
 		// never holds the key, and the proxy is what supplies it.
+		//
+		// AUTH-003: RequireAdmin alone let this leak real financial/
+		// operational data to fully anonymous requests whenever ADMIN_API_KEY
+		// is unset with APP_ENV=development (the documented local-dev
+		// convenience path in admin_auth.go — intentional there, but this
+		// route had no OTHER gate to fall back on when it fires, unlike every
+		// other route in this group). Layering the same real-identity check
+		// used below closes that: the x-admin-api-key gate stays as-is
+		// (untouched, still governs the frontend-admin proxy trust boundary),
+		// and this adds an independent requirement for a real, verified admin
+		// identity that an anonymous request can never satisfy.
 		overviewGroup := v1.Group("/admin")
 		overviewGroup.Use(middleware.RequireAdmin(cfg.AdminAPIKey, cfg.AppEnv))
+		overviewGroup.Use(middleware.RequireAdminConsoleRole(supabase, rbacService))
 		overviewGroup.GET("/overview", handlers.NewAdminOverviewHandler(sharedPool).Overview)
 
 		adminConsole := v1.Group("/admin")
-		adminConsole.Use(middleware.RequireAdminConsoleRole())
+		adminConsole.Use(middleware.RequireAdminConsoleRole(supabase, rbacService))
 		adminConsole.GET("/dashboard", adminConsoleHandler.Dashboard)
 		adminConsole.GET("/users", adminConsoleHandler.GetUsers)
 		adminConsole.GET("/users/:id", adminConsoleHandler.GetUser)
