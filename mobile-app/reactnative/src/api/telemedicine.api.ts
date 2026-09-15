@@ -70,6 +70,10 @@ const DEMO_DOCTORS_RAW: Doctor[] = [
     bio: 'Family physician with over a decade of experience in primary care, chronic disease management and preventive health.',
     initials: 'AO', avatarColor: Colors.primary, feeKobo: 350000, rating: 4.9, reviewCount: 312,
     yearsExperience: 12, languages: ['English', 'Igbo'], isOnline: true, nextAvailable: 'Today, 4:30 PM',
+    // One featured fixture so mock mode exercises the SAME path as the live API:
+    // without it `getDoctors({ featured: true })` could only ever return [], and the
+    // landing screen's Featured section would be unreachable in mock mode.
+    featured: true,
   },
   {
     id: 'doc-2', name: 'Dr. Tunde Bello', title: 'MBBS, FMCP (Cardiology)', specialtyId: 'cardio',
@@ -172,12 +176,58 @@ export async function getSpecialties(): Promise<Specialty[]> {
   return unwrap<Specialty[]>(await api.get(`${BASE}/specialties`));
 }
 
-export async function getDoctors(specialtyId?: string): Promise<Doctor[]> {
+export interface DoctorFilters {
+  specialtyId?:   string;
+  search?:        string;
+  /** Minimum star rating, 0-5. */
+  minRating?:     number;
+  /** Minimum years of practice. */
+  minExperience?: number;
+  /** Only doctors with an open slot right now. */
+  availableNow?:  boolean;
+  /** Only editorially featured doctors. An empty result is a valid answer. */
+  featured?:      boolean;
+}
+
+/**
+ * List doctors.
+ *
+ * Params are sent in the SERVER's snake_case. There is no case-transforming
+ * interceptor on this axios client (see src/api/client.ts) and the Next.js proxy
+ * forwards `url.search` verbatim, so a camelCase param never reaches a Go
+ * `c.Query("...")` lookup. A bare `{ specialtyId }` is therefore silently
+ * dropped by the backend and every call returns the UNFILTERED list — a filter
+ * that looks applied and is not.
+ */
+export async function getDoctors(filters?: DoctorFilters | string): Promise<Doctor[]> {
+  const f: DoctorFilters = typeof filters === 'string' ? { specialtyId: filters } : (filters ?? {});
+
   if (TELEMEDICINE_USE_MOCK) {
-    const list = specialtyId ? DEMO_DOCTORS.filter((d) => d.specialtyId === specialtyId) : DEMO_DOCTORS;
+    let list = DEMO_DOCTORS;
+    if (f.specialtyId)          list = list.filter((d) => d.specialtyId === f.specialtyId);
+    if (f.availableNow)         list = list.filter((d) => d.isOnline);
+    if (f.featured)             list = list.filter((d) => d.featured === true);
+    if (f.minRating)            list = list.filter((d) => d.rating >= f.minRating!);
+    if (f.minExperience)        list = list.filter((d) => d.yearsExperience >= f.minExperience!);
+    if (f.search?.trim()) {
+      const q = f.search.trim().toLowerCase();
+      list = list.filter((d) => d.name.toLowerCase().includes(q)
+        || d.specialties.join(' ').toLowerCase().includes(q));
+    }
     return wait(list);
   }
-  const raw = unwrap<unknown[]>(await api.get(`${BASE}/doctors`, { params: specialtyId ? { specialtyId } : undefined }));
+
+  const params: Record<string, string> = {};
+  if (f.specialtyId)      params.specialty_id   = f.specialtyId;
+  if (f.search?.trim())   params.search         = f.search.trim();
+  if (f.minRating)        params.min_rating     = String(f.minRating);
+  if (f.minExperience)    params.min_experience = String(f.minExperience);
+  if (f.availableNow)     params.available_now  = 'true';
+  if (f.featured)         params.featured       = 'true';
+
+  const raw = unwrap<unknown[]>(await api.get(`${BASE}/doctors`, {
+    params: Object.keys(params).length ? params : undefined,
+  }));
   return (raw ?? []).map(mapDoctorMoney);
 }
 
