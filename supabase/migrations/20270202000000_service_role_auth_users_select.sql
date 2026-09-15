@@ -25,4 +25,12 @@
 -- write access here would let the app pool touch GoTrue-owned rows directly,
 -- bypassing GoTrue's own invariants (password hashing, confirmation
 -- timestamps, etc).
-GRANT SELECT ON auth.users TO service_role;
+--
+-- AUTH-011: narrowed to column-level grants. authUserByEmail() (the only
+-- consumer) reads exactly id, email, email_confirmed_at, deleted_at — a
+-- table-wide SELECT also exposed encrypted_password, recovery tokens, MFA
+-- secrets, etc. to every service_role query, none of which any current code
+-- path needs. This migration was still local-only (never pushed) when this
+-- was tightened, so it is edited in place rather than superseded by a
+-- correction migration.
+GRANT SELECT (id, email, email_confirmed_at, deleted_at) ON auth.users TO service_role;
