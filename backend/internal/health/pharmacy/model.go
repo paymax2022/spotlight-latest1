@@ -115,6 +115,9 @@ type Order struct {
 	EscrowID           *string          `json:"escrow_id,omitempty"`
 	DeliveryRef        *string          `json:"delivery_ref,omitempty"`    // transport last-mile ref
 	PickupCode         *string          `json:"pickup_code,omitempty"`     // pickup QR/code credential
+	DeliveryAddress    *string          `json:"delivery_address,omitempty"` // patient-supplied dropoff (DELIVERY only)
+	DeliveryLat        *float64         `json:"delivery_lat,omitempty"`
+	DeliveryLng        *float64         `json:"delivery_lng,omitempty"`
 	SearchEventID      *string          `json:"search_event_id,omitempty"` // originating symptom search (PRD §10)
 	IdempotencyKey     string           `json:"idempotency_key"`
 	Lines              []OrderLine      `json:"lines,omitempty"`

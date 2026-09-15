@@ -61,6 +61,7 @@ import (
 	platformRedis "spotlight/backend/internal/platform/redis"
 	platformWS "spotlight/backend/internal/platform/ws"
 	"spotlight/backend/internal/property"
+	"spotlight/backend/internal/promotions"
 	providerInterfaces "spotlight/backend/internal/provider"
 	"spotlight/backend/internal/provider/cac"
 	"spotlight/backend/internal/provider/disbursement"
@@ -2279,6 +2280,24 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		rtGroup.POST("", ratingsHandler.Create)
 		rtGroup.GET("/:entity_id", ratingsHandler.GetSummary)
 	}
+
+	// --- Promotions routes ---
+	// Promotional banners and content served by module (health, restaurant, etc.)
+	// All users can read active banners; only admins can manage them (RBAC enforced).
+	promoSvc := promotions.NewService(pool)
+	promoHandler := promotions.NewHandler(promoSvc)
+
+	promoGroup := r.Group("/api/v1/promotions")
+	// Public read access (no auth required)
+	promoGroup.GET("/banners", promoHandler.ListBanners)
+
+	// Admin-only management routes
+	promoAdmin := r.Group("/api/promotions/admin")
+	promoAdmin.Use(mapsAuth())
+	promoAdmin.Use(requireUserID())
+	promoAdmin.POST("/banners", middleware.RequirePermission(rbac, "promotions.manage"), promoHandler.CreateBanner)
+	promoAdmin.PATCH("/banners/:id", middleware.RequirePermission(rbac, "promotions.manage"), promoHandler.UpdateBanner)
+	promoAdmin.DELETE("/banners/:id", middleware.RequirePermission(rbac, "promotions.manage"), promoHandler.DeleteBanner)
 
 	// --- Vote bridge routes ---
 	// Provides a wallet-debit endpoint called by the Next.js bridge before crediting

@@ -85,10 +85,15 @@ const mainWalletBalanceSQL = `
 // the routing DETERMINISTIC PER CUSTOMER: a given customer's NGN always lives in
 // exactly one place, so no customer is ever split across both pots.
 //
-// The auth.users probe is load-bearing, not defensive decoration:
+// The identity probe is load-bearing, not defensive decoration:
 // ledger_accounts.user_id is FK to auth.users and a failed INSERT aborts the
 // whole enclosing transaction in Postgres. Inside a money tx we cannot "try it
-// and fall back" — we have to know before we write.
+// and fall back" — we have to know before we write. It probes platform_users,
+// not auth.users directly: this pool runs as service_role, which Supabase
+// never grants access to the auth schema, and platform_users.id mirrors
+// auth.users.id 1:1 (20260527100000_enterprise_auth_rbac.sql +
+// 20260904000000_rbac_identity_bridge.sql), so it is a safe proxy for "does
+// this id belong to a real auth user".
 func mainWalletAccountID(ctx context.Context, q querier, customerID string) (string, bool, error) {
 	id := strings.TrimSpace(customerID)
 	if _, err := uuid.Parse(id); err != nil {
@@ -105,7 +110,7 @@ func mainWalletAccountID(ctx context.Context, q querier, customerID string) (str
 	}
 
 	var isUser bool
-	if err := q.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM auth.users WHERE id=$1)`, id).Scan(&isUser); err != nil {
+	if err := q.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM public.platform_users WHERE id=$1)`, id).Scan(&isUser); err != nil {
 		return "", false, err
 	}
 	if !isUser {

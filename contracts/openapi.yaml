@@ -14897,3 +14897,55 @@ paths:
                 properties:
                   modules: { type: array, items: { $ref: '#/components/schemas/ReferralModuleRewardStat' } }
         '403': { description: Missing referral.admin.module }
+
+  /api/media/banners/{slug}:
+    get:
+      operationId: getMarketingBanner
+      summary: Resolve a marketing banner to a short-lived Cloudflare R2 URL
+      description: >
+        Marketing banner artwork lives in Cloudflare R2, not in the app bundle.
+        This resolver maps a slug from a closed server-side whitelist onto an
+        object key and returns a presigned GET URL for it.
+
+
+        The bucket is NOT public: it also holds estate documents, insurance
+        documents and marketplace photos, so enabling an r2.dev public domain
+        would expose all of them to anyone who can guess a key. Reads therefore
+        go through a presigned GET, as every other R2 read in this API does.
+
+
+        Unauthenticated on purpose — banners are public marketing art, and the
+        slug whitelist means a caller can never steer this at an arbitrary
+        object key. Clients should treat this as an advisory read: a failure
+        means "render the screen without a banner", never an error state.
+      tags: [Media]
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema: { type: string, example: health-vet }
+          description: Whitelisted banner slug. Unknown slugs return 404.
+      responses:
+        '200':
+          description: Presigned banner URL plus the intrinsic size needed to reserve layout space
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [slug, url, width, height, aspectRatio, alt, expiresAt]
+                properties:
+                  slug: { type: string, example: health-vet }
+                  url:
+                    type: string
+                    format: uri
+                    description: Presigned R2 GET URL. Expires — do not persist it.
+                  width: { type: integer, example: 1536 }
+                  height: { type: integer, example: 576 }
+                  aspectRatio: { type: number, format: float, example: 2.667 }
+                  alt:
+                    type: string
+                    description: Alt text authored alongside the artwork, for screen readers.
+                  expiresAt: { type: string, format: date-time }
+        '404': { description: Unknown banner slug }
+        '502': { description: Presigning failed }
+        '503': { description: R2 is not configured in this environment }
