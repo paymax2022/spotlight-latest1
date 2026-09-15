@@ -54,7 +54,6 @@ import (
 	"context"
 	crand "crypto/rand"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -94,10 +93,17 @@ const (
 
 // Sentinel errors for missing credentials, mirroring the TS adapter's
 // readCredentials()/authHeaders() throws.
+//
+// Each wraps provider.ErrProviderRefused because these are PRE-FLIGHT refusals:
+// authHeaders fails before any socket is opened, so nothing reached VTpass and a
+// caller on the money path can safely fail over to the next provider (or reverse
+// the wallet debit) instead of parking the transaction as an unknown outcome.
+// errors.Is against the sentinels themselves still works — wrapping only adds a
+// second matchable target.
 var (
-	ErrMissingAPIKey    = errors.New("vtpass: VTPASS_API_KEY is required")
-	ErrMissingPublicKey = errors.New("vtpass: VTPASS_PUBLIC_KEY is required for GET requests")
-	ErrMissingSecretKey = errors.New("vtpass: VTPASS_SECRET_KEY is required for POST requests")
+	ErrMissingAPIKey    = fmt.Errorf("%w: vtpass: VTPASS_API_KEY is required", provider.ErrProviderRefused)
+	ErrMissingPublicKey = fmt.Errorf("%w: vtpass: VTPASS_PUBLIC_KEY is required for GET requests", provider.ErrProviderRefused)
+	ErrMissingSecretKey = fmt.Errorf("%w: vtpass: VTPASS_SECRET_KEY is required for POST requests", provider.ErrProviderRefused)
 )
 
 // Client implements provider.BillsProvider. Keys and environment come from

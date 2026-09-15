@@ -3,7 +3,23 @@ package provider
 import (
 	"context"
 	"encoding/json"
+	"errors"
 )
+
+// ErrProviderRefused marks an error that is a DEFINITE negative: either the
+// provider answered and refused, or the adapter refused pre-flight and never sent
+// anything at all (missing credentials, unsupported operation). Either way NOTHING
+// was created upstream, so a retry — or a failover to the next provider — is safe.
+//
+// This exists because the opposite case is the dangerous one. A transport failure
+// (timeout, reset connection, context deadline) does NOT say whether the request
+// was processed: the provider may still be completing it after our socket gave up.
+// Callers on a money path classify with errors.Is(err, ErrProviderRefused) and
+// treat everything UNRECOGNISED as an unknown outcome to be reconciled, never as a
+// failure to retry. Silence is never read as success or as failure.
+//
+// Adapters must wrap this ONLY around errors they can positively vouch for.
+var ErrProviderRefused = errors.New("provider: request refused, nothing was created upstream")
 
 // Additive gateway ports for the Maplerad WaaS integration (ADR-012). These sit
 // alongside PaymentProvider / DisbursementProvider / VirtualAccountProvider
@@ -112,5 +128,45 @@ type Bill struct {
 type BillsProvider interface {
 	PurchaseBill(ctx context.Context, req BillRequest) (*Bill, error)
 	GetBill(ctx context.Context, ref string) (*Bill, error)
+	Name() string
+}
+
+// BillValidationRequest asks a provider to confirm that a customer reference (a
+// meter number, a smartcard number, a customer id) actually exists at the biller
+// before any money moves.
+//
+// Params uses the SAME key names as BillRequest.Params so a caller can build one
+// map and use it for both calls — see the vtpass adapter's Params contract.
+type BillValidationRequest struct {
+	Type              string // category, e.g. "electricity"
+	CustomerReference string // the meter / smartcard / customer id being verified
+	Params            map[string]string
+}
+
+// BillValidation is a normalised customer-verification result.
+type BillValidation struct {
+	// Valid is the ONLY field a money path may branch on. A provider that cannot
+	// verify (unsupported category, missing credentials) reports Valid=true with a
+	// Message explaining that verification was skipped — refusing a purchase
+	// because a provider has no verification endpoint would be wrong.
+	Valid bool
+	// CustomerName is the biller's name for the account, shown back to the member
+	// as a "paying: <name>" confirmation. Empty when the provider returns none.
+	CustomerName string
+	// Message is a human-readable explanation, surfaced on a failed validation.
+	Message string
+	// Raw is the provider's raw response, kept for audit/debugging. Never parsed
+	// by callers.
+	Raw json.RawMessage
+}
+
+// BillsValidator is the OPTIONAL customer-verification half of a bills provider.
+// It is deliberately a separate interface from BillsProvider rather than extra
+// methods on it: not every bills provider can verify a customer (Maplerad's bills
+// API has no equivalent), and widening BillsProvider would force every
+// implementer to carry a method it cannot honour. Callers type-assert for it and
+// skip verification when a provider does not implement it.
+type BillsValidator interface {
+	ValidateCustomer(ctx context.Context, req BillValidationRequest) (*BillValidation, error)
 	Name() string
 }
