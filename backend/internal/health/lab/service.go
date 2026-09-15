@@ -214,6 +214,81 @@ func (s *Service) ListTests(ctx context.Context, labProviderID string) ([]Test, 
 	return out, nil
 }
 
+// ListPackages returns the active bundle catalog (HEALTH-BUILD §6). Mirrors
+// ListTests exactly — a package is priced/booked the same way a single test
+// is, just with test_ids attached — this is the one catalog read the mobile
+// Lab Home Screen calls that never had a backend route at all.
+func (s *Service) ListPackages(ctx context.Context, labProviderID string) ([]Package, error) {
+	const base = `
+		SELECT id, lab_provider_id, name, description, prep_instructions, tat_hours, price_kobo, test_ids, active, created_at
+		FROM lab_packages WHERE active = true`
+	q := base + labFilter(labProviderID) + ` ORDER BY name ASC LIMIT 200`
+	var rows pgx.Rows
+	var err error
+	if labProviderID != "" {
+		rows, err = s.db.Query(ctx, q, labProviderID)
+	} else {
+		rows, err = s.db.Query(ctx, q)
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Package
+	for rows.Next() {
+		var p Package
+		if err := rows.Scan(&p.ID, &p.LabProviderID, &p.Name, &p.Description, &p.PrepInstructions,
+			&p.TATHours, &p.PriceKobo, &p.TestIDs, &p.Active, &p.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, p)
+	}
+	return out, nil
+}
+
+// ListOrdersForPatient returns the caller's own LabOrders, most recent first —
+// the read the Lab Home Screen's "active order" card and an order-history
+// screen need. Scoped by WHERE patient_id = $1 rather than an object-level
+// check per row: there is nothing to authorize beyond "these are yours."
+// Each order's lines are attached the same way Get() does for a single order.
+func (s *Service) ListOrdersForPatient(ctx context.Context, patientID string) ([]Order, error) {
+	const q = `
+		SELECT id, patient_id, lab_provider_id, state, collection_method, total_kobo,
+		       escrow_id, delivery_ref, result_record_id, cancel_reason, idempotency_key, created_at
+		FROM lab_orders WHERE patient_id = $1
+		ORDER BY created_at DESC LIMIT 200`
+	rows, err := s.db.Query(ctx, q, patientID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	// Non-nil so the handler serialises [] rather than null for a patient with
+	// no orders yet — the exact shape mismatch that crashed getTests().
+	out := []Order{}
+	for rows.Next() {
+		var o Order
+		var state, method string
+		if err := rows.Scan(&o.ID, &o.PatientID, &o.LabProviderID, &state, &method, &o.TotalKobo,
+			&o.EscrowID, &o.DeliveryRef, &o.ResultRecordID, &o.CancelReason, &o.IdempotencyKey, &o.CreatedAt); err != nil {
+			return nil, err
+		}
+		o.State = OrderState(state)
+		o.CollectionMethod = CollectionMethod(method)
+		out = append(out, o)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	for i := range out {
+		lines, err := s.loadLines(ctx, out[i].ID)
+		if err != nil {
+			return nil, err
+		}
+		out[i].Lines = lines
+	}
+	return out, nil
+}
+
 func labFilter(id string) string {
 	if id == "" {
 		return ""
