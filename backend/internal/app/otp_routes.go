@@ -50,7 +50,7 @@ import (
 // service instance behind both surfaces: registration and POST /otp/request must
 // share a store and a send budget, or "resend" would hand out a second live code
 // and a second allowance.
-func registerOTPRoutes(r *gin.Engine, cfg config.Config, pool *pgxpool.Pool, supabase *integrations.SupabaseRestClient, auth services.AuthService) (handlers.OTPIssuer, handlers.OTPVerifier, services.PasswordSetter, handlers.SignupGate) {
+func registerOTPRoutes(r *gin.Engine, cfg config.Config, pool *pgxpool.Pool, supabase *integrations.SupabaseRestClient, auth services.AuthService, sessions services.SessionService) (handlers.OTPIssuer, handlers.OTPVerifier, services.PasswordSetter, handlers.SignupGate) {
 	group := r.Group("/api/auth/otp")
 
 	svc, reason := buildOTPService(cfg, pool)
@@ -67,6 +67,12 @@ func registerOTPRoutes(r *gin.Engine, cfg config.Config, pool *pgxpool.Pool, sup
 	// the one login already applies rather than a second copy that can drift.
 	bridge := services.NewOTPAuthBridge(auth, pool)
 	if bridge != nil {
+		// AUTH-009: register the step-up session with the SAME SessionService
+		// instance (and the same feature flag) that AuthHandler.Login wires for
+		// the password path, so a token minted here is found by
+		// RequireAuthContextWithSessions instead of rejected as "session
+		// revoked". See otp_login.go's trackSession.
+		bridge = bridge.WithSessions(sessions, cfg.FeatureSessionHardeningEnabled)
 		h.WithSessionMinter(bridge)
 	}
 

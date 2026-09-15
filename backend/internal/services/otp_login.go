@@ -41,6 +41,13 @@ type PasswordSetter interface {
 type otpAuthBridge struct {
 	svc *authService
 	db  *pgxpool.Pool
+
+	// sessions/sessionHardening mirror AuthHandler's own fields (see
+	// AuthHandler.WithSessions). Nil/false is a valid, common configuration —
+	// not every deployment runs with session hardening on — and every use below
+	// checks both before touching SessionService.
+	sessions         SessionService
+	sessionHardening bool
 }
 
 // NewOTPAuthBridge adapts an AuthService for the OTP flows. Returns nil unless
@@ -54,23 +61,36 @@ func NewOTPAuthBridge(auth AuthService, db *pgxpool.Pool) *otpAuthBridge {
 	return &otpAuthBridge{svc: svc, db: db}
 }
 
-// gate re-runs the lockout checks and returns the platform user.
+// WithSessions wires SessionService into the bridge, the same way
+// AuthHandler.WithSessions does for the password-login path. Call this from
+// the same place that builds the AuthHandler's session wiring, with the same
+// service instance and the same feature flag — a step-up session that is
+// tracked by a DIFFERENT SessionService instance than /api/auth/me validates
+// against would fail exactly the way the untracked session did before this.
+func (b *otpAuthBridge) WithSessions(sessions SessionService, enabled bool) *otpAuthBridge {
+	b.sessions = sessions
+	b.sessionHardening = enabled
+	return b
+}
+
+// gate re-runs the lockout checks and returns the platform user (nil when
+// there is no platform_users row — an ordinary case, not a refusal).
 //
 // Re-run rather than trusted from the password step: minutes can pass between
 // the two factors, and an account suspended in between must not complete a
 // login that started before it. The password path is not the authority on
 // whether an account is still allowed in at the moment a session is issued.
-func (b *otpAuthBridge) gate(email string) error {
+func (b *otpAuthBridge) gate(email string) (*platformUser, error) {
 	user, err := b.svc.findPlatformUserByEmail(email)
 	if err != nil || user == nil {
 		// No platform_users row is not a refusal: login treats that the same way
 		// (the gate only applies when a row exists).
-		return nil
+		return nil, nil
 	}
 	if err := b.svc.validateLoginStatus(user); err != nil {
-		return fmt.Errorf("%w: %v", ErrAccountUnavailable, err)
+		return nil, fmt.Errorf("%w: %v", ErrAccountUnavailable, err)
 	}
-	return nil
+	return user, nil
 }
 
 func (b *otpAuthBridge) MintSession(ctx context.Context, email string) (map[string]any, error) {
@@ -78,14 +98,66 @@ func (b *otpAuthBridge) MintSession(ctx context.Context, email string) (map[stri
 	if email == "" {
 		return nil, nil
 	}
-	if err := b.gate(email); err != nil {
+	user, err := b.gate(email)
+	if err != nil {
 		return nil, err
 	}
 	session, err := b.svc.supabase.MintSessionByEmail(ctx, email)
 	if err != nil {
 		return nil, err
 	}
+	// AUTH-009: a session minted here was, until this call, NEVER registered
+	// with SessionService — only the password-login path (AuthHandler.Login)
+	// did that, after its own GoTrue mint. With FEATURE_SESSION_HARDENING_ENABLED
+	// on, RequireAuthContextWithSessions looks every token up in SessionService
+	// and fails closed on a miss, so a step-up session was valid at GoTrue and
+	// rejected everywhere else as "session revoked". Registering it here, using
+	// the tokens GoTrue just returned, is the missing half of the same pattern
+	// Login already uses.
+	b.trackSession(user, session)
 	return session, nil
+}
+
+// trackSession registers a freshly minted step-up session with SessionService,
+// mirroring the `h.sessionHardening && h.sessions != nil` guard in
+// AuthHandler.Login. A no-op — never an error — when session hardening is off
+// or unwired, or when there is no platform_users row to attribute the session
+// to (the same case Login itself skips: see loginUserID != "" there).
+func (b *otpAuthBridge) trackSession(user *platformUser, session map[string]any) {
+	if !b.sessionHardening || b.sessions == nil || user == nil {
+		return
+	}
+	tokens := IssuedTokens{
+		AccessToken:  asOTPBridgeString(session["access_token"]),
+		RefreshToken: asOTPBridgeString(session["refresh_token"]),
+		ExpiresIn:    asOTPBridgeInt(session["expires_in"]),
+	}
+	if tokens.RefreshToken == "" {
+		return
+	}
+	// No IP/user-agent: MintSession's context.Context is derived from the
+	// request but does not carry them, and the SessionMinter interface (its
+	// only caller, handlers.OTPHandler.completeStepUpLogin) does not pass them
+	// either. IssueSession accepts an empty LoginContext — the fields are used
+	// for suspicious-login heuristics, not for whether the session is valid.
+	_, _ = b.sessions.IssueSession(user.ID, tokens, LoginContext{})
+}
+
+func asOTPBridgeString(v any) string {
+	s, _ := v.(string)
+	return s
+}
+
+func asOTPBridgeInt(v any) int {
+	switch n := v.(type) {
+	case int:
+		return n
+	case int64:
+		return int(n)
+	case float64:
+		return int(n)
+	}
+	return 0
 }
 
 func (b *otpAuthBridge) SetPassword(ctx context.Context, email, newPassword string) (bool, error) {
@@ -95,7 +167,7 @@ func (b *otpAuthBridge) SetPassword(ctx context.Context, email, newPassword stri
 	}
 	// The lockout gate applies here too. A suspended account must not be able to
 	// take a new password and walk back in.
-	if err := b.gate(email); err != nil {
+	if _, err := b.gate(email); err != nil {
 		return false, err
 	}
 
