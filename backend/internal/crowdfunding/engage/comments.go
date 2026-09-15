@@ -117,19 +117,21 @@ func (s *Service) ListComments(ctx context.Context, campaignID, viewerID string)
 		return nil, err
 	}
 
-	// One query for the whole thread. The author name comes from auth.users the
-	// same way service_discovery.go resolves a creator, and the LEFT JOIN on
-	// reports is scoped to the viewer so the flag is per-person.
+	// One query for the whole thread. The author name comes from platform_users
+	// the same way service_discovery.go resolves a creator (the pgx pool runs as
+	// service_role, which Supabase never grants access to auth.users), and the
+	// LEFT JOIN on reports is scoped to the viewer so the flag is per-person.
+	// platform_users has no avatar column, so avatar_url is always NULL here.
 	const q = `
 		SELECT c.id::text,
 		       c.parent_id::text,
 		       c.author_id::text,
-		       COALESCE(u.raw_user_meta_data->>'full_name', u.email, 'Backer') AS author_name,
-		       u.raw_user_meta_data->>'avatar_url' AS avatar_url,
+		       COALESCE(NULLIF(btrim(u.first_name || ' ' || u.last_name), ''), u.email, 'Backer') AS author_name,
+		       NULL::text AS avatar_url,
 		       c.body, c.is_question, c.created_at,
 		       (r.id IS NOT NULL) AS reported
 		  FROM cf_campaign_comments c
-		  LEFT JOIN auth.users u ON u.id = c.author_id
+		  LEFT JOIN public.platform_users u ON u.id = c.author_id
 		  LEFT JOIN cf_comment_reports r ON r.comment_id = c.id AND r.reporter_id = NULLIF($2,'')::uuid
 		 WHERE c.campaign_id = $1 AND c.deleted_at IS NULL
 		 ORDER BY c.created_at DESC, c.id DESC`
@@ -326,9 +328,9 @@ func (s *Service) authorIdentity(ctx context.Context, userID string) (string, *s
 	var name string
 	var avatar *string
 	if err := s.db.QueryRow(ctx, `
-		SELECT COALESCE(raw_user_meta_data->>'full_name', email, 'Backer'),
-		       raw_user_meta_data->>'avatar_url'
-		  FROM auth.users WHERE id = $1`, userID,
+		SELECT COALESCE(NULLIF(btrim(first_name || ' ' || last_name), ''), email, 'Backer'),
+		       NULL::text
+		  FROM public.platform_users WHERE id = $1`, userID,
 	).Scan(&name, &avatar); err != nil {
 		return "Backer", nil
 	}

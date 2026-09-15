@@ -154,7 +154,7 @@ func (d *triageWADriver) StartOrContinue(ctx context.Context, externalID, text, 
 	var userID string
 	phone := normalizePhone(externalID)
 	_ = d.pool.QueryRow(ctx,
-		`SELECT id::text FROM auth.users WHERE regexp_replace(phone, '\D', '', 'g') = $1 LIMIT 1`, phone).Scan(&userID)
+		`SELECT id::text FROM public.platform_users WHERE regexp_replace(phone, '\D', '', 'g') = $1 LIMIT 1`, phone).Scan(&userID)
 	if userID == "" {
 		return "We couldn't find a Paymax account for this number. Please open the Spotlight app to use the Symptom Checker.", false, nil
 	}

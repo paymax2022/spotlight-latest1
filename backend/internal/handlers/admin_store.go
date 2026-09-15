@@ -123,7 +123,7 @@ func (s *AdminStore) GetDashboardStats(ctx context.Context) (*DashboardStats, er
 	// integer minor units — CLAUDE.md § Money handling).
 	row := s.db.QueryRow(ctx, `
 		SELECT
-			(SELECT COUNT(*) FROM auth.users) as total_users,
+			(SELECT COUNT(*) FROM platform_users) as total_users,
 			(SELECT COUNT(*) FROM user_profiles
 			 WHERE kyc_status IN ('submitted', 'pending')) as kyc_pending,
 			(SELECT COUNT(*) FROM (`+tradingOrdersSQL+`) o
@@ -163,24 +163,23 @@ type User struct {
 func (s *AdminStore) ListUsers(ctx context.Context, limit int, offset int) ([]User, int64, error) {
 	// Get total count
 	var total int64
-	err := s.db.QueryRow(ctx, `SELECT COUNT(*) FROM auth.users`).Scan(&total)
+	err := s.db.QueryRow(ctx, `SELECT COUNT(*) FROM platform_users`).Scan(&total)
 	if err != nil {
 		return nil, 0, fmt.Errorf("count users: %w", err)
 	}
 
 	// Get paginated results.
 	//
-	// GoTrue's column is raw_user_meta_data — there is no auth.users.user_metadata
-	// on Supabase or on the CI compat shim, so the earlier `u.user_metadata->>...`
-	// made this query fail with `column u.user_metadata does not exist` on every
-	// call. Every projected column is COALESCE'd: email and the metadata status
-	// are both nullable, and a NULL scanned into a string field is a hard error.
+	// Reads platform_users, not auth.users: this pool runs as service_role,
+	// which Supabase never grants access to the auth schema, and
+	// platform_users.id mirrors auth.users.id 1:1. Every projected column is
+	// COALESCE'd: email and status are both nullable in principle, and a NULL
+	// scanned into a string field is a hard error.
 	//
-	// NULLS LAST matters: auth.users.created_at is nullable and Postgres sorts
-	// NULLs FIRST on DESC, so without it every row with an unknown creation date
-	// outranks every real one and the newest users fall off page 1 entirely (on
-	// the local dev database 877 of 879 rows have a NULL created_at). u.id is the
-	// tiebreaker — LIMIT/OFFSET paging over a column with thousands of ties is
+	// NULLS LAST is kept defensively even though platform_users.created_at is
+	// NOT NULL — Postgres sorts NULLs FIRST on DESC, and a future nullable
+	// column here should not silently push unknown-date rows to page 1.
+	// u.id is the tiebreaker — LIMIT/OFFSET paging over a column with ties is
 	// otherwise non-deterministic and can repeat or skip rows between pages.
 	rows, err := s.db.Query(ctx, `
 		SELECT
@@ -189,10 +188,10 @@ func (s *AdminStore) ListUsers(ctx context.Context, limit int, offset int) ([]Us
 			COALESCE(p.full_name, '') as name,
 			COALESCE(p.phone, '') as phone,
 			COALESCE(p.kyc_tier, 0) as tier,
-			COALESCE(u.raw_user_meta_data->>'status', 'active') as status,
+			COALESCE(u.status, 'active') as status,
 			COALESCE(u.created_at::text, '') as created_at,
-			COALESCE(u.last_sign_in_at::text, '') as last_login
-		FROM auth.users u
+			COALESCE(u.last_login_at::text, '') as last_login
+		FROM platform_users u
 		LEFT JOIN user_profiles p ON u.id = p.id
 		ORDER BY u.created_at DESC NULLS LAST, u.id
 		LIMIT $1 OFFSET $2
@@ -250,7 +249,7 @@ func (s *AdminStore) GetKYCQueue(ctx context.Context) ([]KYCEntry, error) {
 			COALESCE(p.document_type, '') as document,
 			COALESCE(p.kyc_submitted_at::text, '') as submitted_at
 		FROM user_profiles p
-		JOIN auth.users u ON p.id = u.id
+		JOIN platform_users u ON p.id = u.id
 		WHERE p.kyc_status IN ('submitted', 'pending')
 		ORDER BY p.kyc_submitted_at ASC NULLS LAST
 	`)
@@ -289,13 +288,15 @@ type Order struct {
 // ListOrders retrieves orders/assets.
 func (s *AdminStore) ListOrders(ctx context.Context) ([]Order, error) {
 	// invest_orders.user_id is text (not uuid), so the email join compares
-	// auth.users.id cast to text rather than casting the order's id to uuid —
-	// a non-uuid value there would abort the whole query.
+	// platform_users.id cast to text rather than casting the order's id to
+	// uuid — a non-uuid value there would abort the whole query. platform_users
+	// (not auth.users) because this pool runs as service_role, which Supabase
+	// never grants auth-schema access to.
 	rows, err := s.db.Query(ctx, `
 		SELECT
 			o.id,
 			o.user_id,
-			COALESCE((SELECT u.email FROM auth.users u WHERE u.id::text = o.user_id), '') as email,
+			COALESCE((SELECT u.email FROM platform_users u WHERE u.id::text = o.user_id), '') as email,
 			o.kind,
 			o.amount_kobo,
 			o.status,
@@ -344,7 +345,7 @@ func (s *AdminStore) ListWithdrawals(ctx context.Context) ([]Withdrawal, error) 
 		SELECT
 			id,
 			user_id,
-			COALESCE((SELECT email FROM auth.users WHERE id = payouts.user_id), '') as email,
+			COALESCE((SELECT email FROM platform_users WHERE id = payouts.user_id), '') as email,
 			amount_kobo,
 			status,
 			COALESCE(bank_name, 'N/A') as bank,

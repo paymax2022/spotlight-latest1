@@ -97,7 +97,7 @@ func contributionStatus(raw string, refundRequested bool) string {
 func (s *Service) creatorDisplayName(ctx context.Context, userID string) string {
 	var full *string
 	_ = s.db.QueryRow(ctx,
-		`SELECT COALESCE(raw_user_meta_data->>'full_name', email) FROM auth.users WHERE id = $1`, userID,
+		`SELECT COALESCE(NULLIF(btrim(first_name || ' ' || last_name), ''), email) FROM public.platform_users WHERE id = $1`, userID,
 	).Scan(&full)
 	if full != nil && *full != "" {
 		return *full
@@ -114,9 +114,9 @@ func (s *Service) creatorDisplayName(ctx context.Context, userID string) string 
 func (s *Service) GetContributors(ctx context.Context, campaignID string) ([]Contributor, error) {
 	const q = `
 		SELECT co.id::text, co.contributor_id::text, co.amount_kobo, co.created_at,
-		       COALESCE(u.raw_user_meta_data->>'full_name', u.email, 'Anonymous')
+		       COALESCE(NULLIF(btrim(u.first_name || ' ' || u.last_name), ''), u.email, 'Anonymous')
 		FROM contributions co
-		LEFT JOIN auth.users u ON u.id = co.contributor_id
+		LEFT JOIN public.platform_users u ON u.id = co.contributor_id
 		WHERE co.campaign_id = $1 AND co.status IN ('escrowed','released')
 		ORDER BY co.created_at DESC
 		LIMIT 100`
@@ -461,10 +461,10 @@ func (s *Service) GetMyCampaigns(ctx context.Context, userID, status string) ([]
 func (s *Service) GetCreatorContributions(ctx context.Context, userID string) ([]CreatorContribution, error) {
 	const q = `
 		SELECT co.id::text, COALESCE(c.title,''), co.amount_kobo, co.created_at,
-		       COALESCE(u.raw_user_meta_data->>'full_name', u.email, 'Anonymous')
+		       COALESCE(NULLIF(btrim(u.first_name || ' ' || u.last_name), ''), u.email, 'Anonymous')
 		FROM contributions co
 		JOIN campaigns c ON c.id = co.campaign_id
-		LEFT JOIN auth.users u ON u.id = co.contributor_id
+		LEFT JOIN public.platform_users u ON u.id = co.contributor_id
 		WHERE c.creator_id = $1 AND co.status IN ('escrowed','released')
 		ORDER BY co.created_at DESC
 		LIMIT 50`
