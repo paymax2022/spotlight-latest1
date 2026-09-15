@@ -63,6 +63,7 @@ func RegisterUtilityBills(
 	authMW gin.HandlerFunc,
 	ledgerSvc *financeledger.Service,
 	walletSvc *wallet.Service,
+	auditSink services.AuditService,
 ) {
 	if !cfg.FeatureUtilityBillsEnabled || pool == nil {
 		return
@@ -107,6 +108,15 @@ func RegisterUtilityBills(
 		// by a live deployment.
 		SandboxValidation:  environment == vtpass.EnvironmentSandbox,
 		SandboxAdapterCode: "vtpass",
+		// Resolved ONCE here rather than per call, per credentials.go's own
+		// convention (DeriveCredentialsKey takes the raw material as an argument
+		// specifically so the env read lives at wiring time). An unset or
+		// unusable key leaves this empty, and credential ROTATION then fails
+		// closed with ErrCredentialsKeyMissing — it never falls back to storing
+		// a provider secret unencrypted. Nothing else in the module needs it, so
+		// an absent key does not affect the money path.
+		CredentialsKey: utilityCredentialsKey(),
+		Auditor:        auditSink,
 	})
 	handler := utilitybills.NewHandler(svc)
 
@@ -141,12 +151,88 @@ func RegisterUtilityBills(
 	admin.POST("/transactions/:id/reverse", perm, handler.AdminReverse)
 	admin.GET("/unresolved", perm, handler.AdminUnresolvedBinds)
 
+	// --- Phase 4: catalogue administration, reports and support tooling ---
+	//
+	// ONE permission for the whole admin surface. The Next.js routes split
+	// 'utility:manage' (catalogue writes) from 'utility:support' (read-only
+	// support tooling); this deliberately collapses both onto
+	// finance.admin.utilitybills. That is a strict TIGHTENING, never a loosening
+	// — the single Go permission is a superset of each TS one, so nothing
+	// becomes reachable to a caller the TS routes would have refused. An
+	// approved simplification, flagged in the PR rather than assumed.
+	//
+	// Provider catalogue.
+	admin.GET("/providers", perm, handler.AdminListProviders)
+	admin.POST("/providers", perm, handler.AdminCreateProvider)
+	admin.PATCH("/providers/:id", perm, handler.AdminUpdateProvider)
+	// Credential rotation is PUT, not PATCH: it REPLACES the whole credential
+	// set rather than merging into it, and the verb should say so.
+	admin.PUT("/providers/:id/credentials", perm, handler.AdminRotateProviderCredentials)
+	admin.POST("/providers/:id/health-check", perm, handler.AdminHealthCheckProvider)
+
+	// Biller / product catalogue.
+	admin.GET("/billers", perm, handler.AdminListBillers)
+	admin.POST("/billers", perm, handler.AdminCreateBiller)
+	admin.PATCH("/billers/:id", perm, handler.AdminUpdateBiller)
+	admin.GET("/products", perm, handler.AdminListProducts)
+	admin.POST("/products", perm, handler.AdminCreateProduct)
+	// Registered BEFORE /products/:id so Gin's router cannot route the literal
+	// "import" into the wildcard segment.
+	admin.POST("/products/import", perm, handler.AdminImportProducts)
+	admin.PATCH("/products/:id", perm, handler.AdminUpdateProduct)
+
+	// Routing configuration.
+	admin.GET("/provider-products", perm, handler.AdminListMappings)
+	admin.POST("/provider-products", perm, handler.AdminCreateMapping)
+	admin.PATCH("/provider-products/:id", perm, handler.AdminUpdateMapping)
+	admin.GET("/routing-rules", perm, handler.AdminListRoutingRules)
+	admin.POST("/routing-rules", perm, handler.AdminCreateRoutingRule)
+	admin.PATCH("/routing-rules/:id", perm, handler.AdminUpdateRoutingRule)
+
+	// Category-level controls (keyed on the category text column, not a uuid).
+	admin.GET("/categories", perm, handler.AdminListCategorySettings)
+	admin.POST("/categories", perm, handler.AdminCreateCategorySetting)
+	admin.PATCH("/categories/:category", perm, handler.AdminUpdateCategorySetting)
+
+	// Transactions, disputes and the manual sweep trigger.
+	admin.GET("/transactions", perm, handler.AdminListTransactions)
+	admin.POST("/transactions/:id/resolve", perm, handler.AdminResolveDispute)
+	admin.POST("/workers/requery-pending", perm, handler.AdminRequeryPending)
+
+	// Reports. All three support ?format=csv.
+	admin.GET("/reports/reconciliation", perm, handler.AdminReconciliationReport)
+	admin.GET("/reports/profitability", perm, handler.AdminProfitabilityReport)
+	admin.GET("/reports/provider-performance", perm, handler.AdminProviderPerformanceReport)
+
 	// Background reconciliation: hourly requery sweep for stuck purchases
 	// (Phase 3, closes UTIL-002 — previously nothing did this automatically).
 	utilitybills.StartPendingSweep(ctx, svc, time.Hour)
 
 	log.Printf("[finance] Utility Bills domain routes registered at /api/finance/utilitybills (vtpass env=%s, configured=%t, adapters=%v)",
 		environment, vtpassClient.Configured(), providers.AdapterCodes())
+}
+
+// utilityCredentialsKey derives the AES-256-GCM key for
+// utility_providers.credentials from UTILITY_PROVIDER_CREDENTIALS_KEY, once, at
+// wiring time.
+//
+// Returns nil when the variable is unset or unusable, which disables credential
+// ROTATION (ErrCredentialsKeyMissing, a 500 naming the variable) and nothing
+// else. It deliberately does NOT abort startup: the utility money path itself
+// does not need this key, and refusing to serve bill payments because an admin
+// convenience feature is unconfigured would be the wrong trade.
+func utilityCredentialsKey() []byte {
+	raw := os.Getenv("UTILITY_PROVIDER_CREDENTIALS_KEY")
+	if raw == "" {
+		return nil
+	}
+	key, err := utilitybills.DeriveCredentialsKey(raw)
+	if err != nil {
+		// Never log the value — only that it could not be used.
+		log.Printf("[finance] WARN UTILITY_PROVIDER_CREDENTIALS_KEY is set but unusable (%v); provider credential rotation is disabled", err)
+		return nil
+	}
+	return key
 }
 
 // utilityProviderTimeoutMs ports provider-timeout.ts's env fallback: an integer

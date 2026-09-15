@@ -170,3 +170,37 @@ type BillsValidator interface {
 	ValidateCustomer(ctx context.Context, req BillValidationRequest) (*BillValidation, error)
 	Name() string
 }
+
+// HealthCheckResult is a provider's self-reported liveness, normalised across
+// adapters. Status is one of "healthy" | "degraded" | "down", matching the
+// contract in frontend-web/src/server/utility/adapters/types.ts
+// (`healthCheck(): Promise<{ status: 'healthy' | 'degraded' | 'down'; message?: string }>`)
+// and the utility_providers_health_status_check CHECK constraint, which also
+// permits 'unknown' — the value a provider carries BEFORE it has ever been
+// checked, and therefore one no adapter ever returns.
+//
+// The three values are deliberately not a Go enum type: they are persisted
+// verbatim into utility_providers.health_status, and routing.go already branches
+// on that column's string values (`health_status != 'down'`).
+type HealthCheckResult struct {
+	// Status is the only field a caller may branch on.
+	Status string
+	// Message is human-readable detail for the admin console — a balance on a
+	// healthy check, the provider's own response_description on a degraded one,
+	// the transport error on a down one. Never machine-parsed.
+	Message string
+}
+
+// HealthChecker is the OPTIONAL liveness half of a bills provider, split out for
+// exactly the same reason as BillsValidator: not every adapter has an endpoint
+// that can report its own health, and widening BillsProvider would force every
+// implementer to carry a method it cannot honour. Callers type-assert for it.
+//
+// An implementation must NOT return an error for a provider that answered
+// badly — a refused or unparseable answer is a "degraded"/"down" RESULT, not a
+// Go error. An error is reserved for the adapter being unable to ask at all
+// (missing credentials, a malformed request it refused to send).
+type HealthChecker interface {
+	HealthCheck(ctx context.Context) (*HealthCheckResult, error)
+	Name() string
+}

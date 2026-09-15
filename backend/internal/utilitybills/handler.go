@@ -54,8 +54,27 @@ func writeErr(c *gin.Context, err error) {
 		errors.Is(err, ErrInvalidAmount),
 		errors.Is(err, ErrAmountBelowMinimum),
 		errors.Is(err, ErrAmountAboveMaximum),
-		errors.Is(err, ErrCategoryAmountOutOfRange):
+		errors.Is(err, ErrCategoryAmountOutOfRange),
+		// Phase 4 admin-surface validation. All 400s: every one of these is a
+		// malformed admin request, not a server fault.
+		errors.Is(err, ErrInvalidStatus),
+		errors.Is(err, ErrInvalidAmountType),
+		errors.Is(err, ErrInvalidHealthStatus),
+		errors.Is(err, ErrCredentialsRequired),
+		errors.Is(err, ErrCredentialsNotPatchable),
+		errors.Is(err, ErrEmptyImport),
+		errors.Is(err, ErrInvalidDisputeStatus),
+		errors.Is(err, ErrInvalidReportType):
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+	case errors.Is(err, ErrHealthCheckUnsupported):
+		// 501: the request was valid and the provider exists — this deployment
+		// simply has no adapter capable of answering it. Not the caller's fault
+		// (400) and not a failure of something that should have worked (500).
+		c.JSON(http.StatusNotImplemented, gin.H{"error": err.Error(), "code": "health_check_unsupported"})
+	case errors.Is(err, ErrCredentialsKeyMissing):
+		// A deployment misconfiguration: UTILITY_PROVIDER_CREDENTIALS_KEY is unset.
+		// Fails CLOSED — the alternative would be storing a secret in the clear.
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error(), "code": "credentials_key_missing"})
 	case errors.Is(err, ErrCustomerValidationFailed):
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error(), "code": "customer_validation_failed"})
 	case errors.Is(err, ErrNotEligibleForReversal):
@@ -457,7 +476,7 @@ func (h *Handler) AdminReverse(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "reason is required"})
 		return
 	}
-	t, err := h.svc.ReverseTransaction(c.Request.Context(), c.Param("id"), reason)
+	t, err := h.svc.ReverseTransaction(c.Request.Context(), adminActor(c), c.Param("id"), reason)
 	if err != nil {
 		writeErr(c, err)
 		return

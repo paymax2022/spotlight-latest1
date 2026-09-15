@@ -87,6 +87,62 @@ var (
 
 // ── Service ──────────────────────────────────────────────────────────────────
 
+// Auditor is the admin-action audit sink. It mirrors services.AuditService's
+// LogAction method EXACTLY, but is declared locally and satisfied structurally
+// rather than imported: internal/services pulls in enough of the app that
+// depending on it from a domain package creates an import cycle. Same
+// convention, and the same reason, as p2pmarket.Auditor.
+//
+// Deliberately fire-and-forget (no error return): an audit sink that could fail
+// a money mutation would be a worse outcome than a missing audit row, and the
+// real implementation already swallows its own transport errors.
+type Auditor interface {
+	LogAction(actorUserID, targetUserID, action, module, resourceType, resourceID string,
+		oldValues, newValues map[string]any, ipAddress, userAgent, severity string)
+}
+
+// auditModule is the `module` column value for every row this package writes.
+const auditModule = "utilitybills"
+
+// Audit resource types — the `resource_type` column. One per table this module's
+// admin surface mutates, named after the table so whoever reads an audit row can
+// find the data it refers to without a lookup table.
+const (
+	resourceProvider        = "utility_provider"
+	resourceBiller          = "utility_biller"
+	resourceProduct         = "utility_product"
+	resourceProviderMapping = "utility_provider_mapping"
+	resourceRoutingRule     = "utility_routing_rule"
+	resourceCategorySetting = "utility_category_setting"
+	resourceTransaction     = "utility_transaction"
+	resourceDispute         = "utility_dispute"
+)
+
+// Audit action names — `utilitybills.<entity>.<verb>`.
+const (
+	actionProviderCreate      = "utilitybills.provider.create"
+	actionProviderUpdate      = "utilitybills.provider.update"
+	actionProviderCredsRotate = "utilitybills.provider.credentials_rotate"
+	actionProviderHealthCheck = "utilitybills.provider.health_check"
+	actionBillerCreate        = "utilitybills.biller.create"
+	actionBillerUpdate        = "utilitybills.biller.update"
+	actionProductCreate       = "utilitybills.product.create"
+	actionProductUpdate       = "utilitybills.product.update"
+	actionProductImport       = "utilitybills.product.import"
+	actionMappingCreate       = "utilitybills.mapping.create"
+	actionMappingUpdate       = "utilitybills.mapping.update"
+	actionRoutingRuleCreate   = "utilitybills.routing_rule.create"
+	actionRoutingRuleUpdate   = "utilitybills.routing_rule.update"
+	actionCategoryCreate      = "utilitybills.category.create"
+	actionCategoryUpdate      = "utilitybills.category.update"
+	actionTransactionReverse  = "utilitybills.transaction.reverse"
+	actionDisputeResolve      = "utilitybills.dispute.resolve"
+	// actionSweepTrigger is recorded ONLY for the manual admin-triggered sweep.
+	// The scheduled job (jobs.go's StartPendingSweep) stays audit-silent — an
+	// audit log is a record of who did something, and "the clock" is not a who.
+	actionSweepTrigger = "utilitybills.sweep.trigger"
+)
+
 // Deps bundles the service dependencies.
 type Deps struct {
 	Repo          *Repository
@@ -113,20 +169,36 @@ type Deps struct {
 	SandboxValidation bool
 	// SandboxAdapterCode is the adapter used by that safety net ("vtpass").
 	SandboxAdapterCode string
+	// CredentialsKey is the AES-256-GCM key for utility_providers.credentials,
+	// derived ONCE at wiring time from UTILITY_PROVIDER_CREDENTIALS_KEY (see
+	// credentials.go's DeriveCredentialsKey, which deliberately takes the raw
+	// material as an argument rather than reading the environment itself).
+	//
+	// Empty is allowed at construction — the module's money path does not need
+	// it — but any attempt to ROTATE credentials without it fails closed with
+	// ErrCredentialsKeyMissing rather than storing a secret in the clear.
+	CredentialsKey []byte
+	// Auditor records admin mutations (Phase 4). OPTIONAL: nil disables audit
+	// logging without affecting any other behaviour, so a test can build a
+	// Service without one. In the wired app it is always the real
+	// services.AuditService — see RegisterUtilityBills.
+	Auditor Auditor
 }
 
 // Service owns the utility bills lifecycle.
 type Service struct {
-	repo          *Repository
-	beneficiaries *BeneficiaryRepository
-	binds         *BindRegistry
-	providers     *ProviderRegistry
-	wallet        *wallet.Service
-	ledger        *ledger.Service
-	commission    *commission.Service
-	timeoutMs     int
-	sandboxValid  bool
-	sandboxCode   string
+	repo           *Repository
+	beneficiaries  *BeneficiaryRepository
+	binds          *BindRegistry
+	providers      *ProviderRegistry
+	wallet         *wallet.Service
+	ledger         *ledger.Service
+	commission     *commission.Service
+	timeoutMs      int
+	sandboxValid   bool
+	sandboxCode    string
+	credentialsKey []byte
+	audit          Auditor
 }
 
 // NewService constructs the utility bills service.
@@ -136,16 +208,18 @@ func NewService(d Deps) *Service {
 		timeout = 15_000
 	}
 	return &Service{
-		repo:          d.Repo,
-		beneficiaries: d.Beneficiaries,
-		binds:         d.Binds,
-		providers:     d.Providers,
-		wallet:        d.Wallet,
-		ledger:        d.Ledger,
-		commission:    d.Commission,
-		timeoutMs:     timeout,
-		sandboxValid:  d.SandboxValidation,
-		sandboxCode:   d.SandboxAdapterCode,
+		repo:           d.Repo,
+		beneficiaries:  d.Beneficiaries,
+		binds:          d.Binds,
+		providers:      d.Providers,
+		wallet:         d.Wallet,
+		ledger:         d.Ledger,
+		commission:     d.Commission,
+		timeoutMs:      timeout,
+		sandboxValid:   d.SandboxValidation,
+		sandboxCode:    d.SandboxAdapterCode,
+		credentialsKey: d.CredentialsKey,
+		audit:          d.Auditor,
 	}
 }
 
@@ -1318,7 +1392,15 @@ func (s *Service) SweepPending(ctx context.Context, limit int) (*SweepResult, er
 // keying it on the transaction id means two admins clicking refund cannot pay the
 // member twice. (This is a deliberate divergence from the pay path's
 // client-key-derived suffixes — flagged in the PR description.)
-func (s *Service) ReverseTransaction(ctx context.Context, transactionID, reason string) (*TransactionRow, error) {
+//
+// actorUserID is the acting ADMIN (Phase 4), recorded as the audit actor. It is
+// deliberately a parameter rather than something read off the context: a money
+// reversal with no attributable author is exactly the record an audit trail
+// exists to prevent, and a parameter cannot be silently absent at compile time.
+// An empty value is still accepted rather than rejected — refusing to reverse a
+// member's stuck debit because an audit field was blank would punish the wrong
+// person — but it is logged as an anomaly.
+func (s *Service) ReverseTransaction(ctx context.Context, actorUserID, transactionID, reason string) (*TransactionRow, error) {
 	t, err := s.repo.GetTransaction(ctx, transactionID)
 	if err != nil {
 		return nil, err
@@ -1359,6 +1441,20 @@ func (s *Service) ReverseTransaction(ctx context.Context, transactionID, reason 
 		return nil, err
 	}
 	s.event(ctx, t.ID, "admin_reversed", reason, nil)
+	if actorUserID == "" {
+		log.Printf("[utilitybills] WARN admin reversal of %s has no attributable actor", t.ID)
+	}
+	// oldValues carries the pre-reversal status and the amount that moved, so the
+	// audit row stands alone: an auditor should never have to re-read the
+	// transaction (which by then shows only the post-state) to know what changed.
+	s.log(actorUserID, actionTransactionReverse, resourceTransaction, t.ID,
+		map[string]any{"status": t.Status},
+		map[string]any{
+			"status":             string(StatusReversed),
+			"reason":             reason,
+			"retail_amount_kobo": t.RetailAmountKobo,
+			"user_id":            t.UserID,
+		})
 	return updated, nil
 }
 
@@ -1441,6 +1537,27 @@ func (s *Service) event(ctx context.Context, transactionID, eventType, message s
 	if err := s.repo.AddEvent(ctx, transactionID, eventType, message, payload); err != nil {
 		log.Printf("[utilitybills] WARN could not append event %q for %s: %v", eventType, transactionID, err)
 	}
+}
+
+// log records one admin mutation in the platform audit trail, best-effort.
+//
+// NIL-SAFE by design: Deps.Auditor is optional, and every caller below fires
+// this unconditionally rather than guarding at the call site, so the one guard
+// lives here. Note the guard covers a nil INTERFACE only — a non-nil interface
+// holding a nil pointer would still panic, which is why RegisterUtilityBills
+// passes the concrete sink only when it is actually built.
+//
+// The event() helper above and this one are deliberately different trails and
+// both are written where both apply: event() is the per-transaction lifecycle
+// log a MEMBER's support case is reconstructed from, this is the who-did-what
+// record of an ADMIN's actions. Collapsing them would lose one audience or the
+// other.
+func (s *Service) log(actorUserID, action, resourceType, resourceID string, oldValues, newValues map[string]any) {
+	if s.audit == nil {
+		return
+	}
+	s.audit.LogAction(actorUserID, "", action, auditModule, resourceType, resourceID,
+		oldValues, newValues, "", "", "info")
 }
 
 // markFailed moves a transaction to 'failed' with a reason, best-effort. Used on

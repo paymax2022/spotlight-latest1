@@ -98,6 +98,23 @@ func (r *ProviderRegistry) Validator(code string) (provider.BillsValidator, bool
 	return v, ok
 }
 
+// HealthChecker returns the adapter for an adapter_code IF it also implements
+// the optional liveness capability. Same type-assertion discipline as Validator
+// above — but the CALLER's response to a miss deliberately differs: validation
+// is skipped on a miss (refusing a purchase for want of an optional capability
+// would be wrong), whereas an admin who explicitly asked to health-check a
+// provider that cannot be health-checked gets ErrHealthCheckUnsupported.
+// Reporting "healthy" for a provider nobody actually asked would be worse than
+// an error, because routing.go trusts that column.
+func (r *ProviderRegistry) HealthChecker(code string) (provider.HealthChecker, bool) {
+	a, ok := r.Adapter(code)
+	if !ok {
+		return nil, false
+	}
+	h, ok := a.(provider.HealthChecker)
+	return h, ok
+}
+
 // AdapterCodes lists the registered adapter codes, sorted, for startup logging
 // and admin health reporting. Sorted so the log line is stable between restarts.
 func (r *ProviderRegistry) AdapterCodes() []string {
