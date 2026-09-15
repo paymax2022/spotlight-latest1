@@ -11,6 +11,7 @@ import { shadow1 } from '@/constants/shadows';
 import ScreenHeader from '@/components/ScreenHeader';
 import StateView from '@/components/StateView';
 import PrimaryButton from '@/components/PrimaryButton';
+import AddressAutocompleteInput, { type SelectedAddress } from '@/components/AddressAutocompleteInput';
 import { PaymentSheet, usePurchasePayment } from '@/features/payments';
 import { useCartStore, newIdempotencyKey } from '@/features/health/pharmacy/cartStore';
 import { useSymptomSearchStore } from '@/features/health/pharmacy/symptomSearchStore';
@@ -35,6 +36,14 @@ export default function CheckoutScreen() {
   const [fulfilment, setFulfilment] = useState<FulfilmentType>(
     pharmacy?.supportsDelivery ? 'delivery' : 'pickup',
   );
+  // Delivery dropoff — the backend requires an address + real coordinates for a
+  // DELIVERY order (Dispatch can't route a courier without them); this used to
+  // be a hardcoded fixture string ("12B Ozumba Mbadiwe Ave..."), which meant a
+  // real request would either be silently wrong or (now that the backend
+  // validates it, see CreateOrder in service.go) rejected outright.
+  const [deliveryAddrText, setDeliveryAddrText] = useState('');
+  const [deliveryAddr, setDeliveryAddr] = useState<SelectedAddress | null>(null);
+  const addressResolved = fulfilment !== 'delivery' || Boolean(deliveryAddr);
 
   const deliveryFeeKobo = fulfilment === 'delivery' ? pharmacy?.deliveryFeeKobo ?? 0 : 0;
   const totalKobo = cart.subtotalKobo + deliveryFeeKobo;
@@ -56,6 +65,7 @@ export default function CheckoutScreen() {
   }
 
   const onPay = () => {
+    if (!addressResolved) return;
     const idempotencyKey = newIdempotencyKey('order');
     pay.start({
       amountKobo: totalKobo,
@@ -71,6 +81,9 @@ export default function CheckoutScreen() {
           rxId: cart.requiresRx ? verifiedRx?.id : undefined,
           idempotencyKey,
           searchEventId: useSymptomSearchStore.getState().searchEventId ?? undefined,
+          deliveryAddress: fulfilment === 'delivery' ? deliveryAddr?.label : undefined,
+          deliveryLat: fulfilment === 'delivery' ? deliveryAddr?.lat : undefined,
+          deliveryLng: fulfilment === 'delivery' ? deliveryAddr?.lng : undefined,
         });
       },
       onPaid: (order) => {
@@ -117,15 +130,33 @@ export default function CheckoutScreen() {
         </View>
 
         {/* Address / pickup location */}
-        <View style={[styles.addr, shadow1]}>
-          <MapPin size={18} color={Colors.secondary} strokeWidth={2} />
-          <View style={{ flex: 1 }}>
-            <Text style={styles.addrLabel}>{fulfilment === 'delivery' ? 'Deliver to' : 'Pick up from'}</Text>
-            <Text style={styles.addrValue} numberOfLines={2}>
-              {fulfilment === 'delivery' ? '12B Ozumba Mbadiwe Ave, Victoria Island, Lagos' : pharmacy.address}
-            </Text>
+        {fulfilment === 'delivery' ? (
+          <View>
+            <Text style={styles.addrLabel}>Deliver to</Text>
+            <AddressAutocompleteInput
+              value={deliveryAddrText}
+              onChangeText={(t) => {
+                setDeliveryAddrText(t);
+                setDeliveryAddr(null); // typed text no longer matches a geocoded pick
+              }}
+              onSelect={(a: SelectedAddress) => {
+                setDeliveryAddrText(a.label);
+                setDeliveryAddr(a);
+              }}
+              resolved={Boolean(deliveryAddr)}
+              surface="delivery"
+              placeholder="Search your delivery address…"
+            />
           </View>
-        </View>
+        ) : (
+          <View style={[styles.addr, shadow1]}>
+            <MapPin size={18} color={Colors.secondary} strokeWidth={2} />
+            <View style={{ flex: 1 }}>
+              <Text style={styles.addrLabel}>Pick up from</Text>
+              <Text style={styles.addrValue} numberOfLines={2}>{pharmacy.address}</Text>
+            </View>
+          </View>
+        )}
 
         {/* Rx attachment (HL-3) */}
         {cart.requiresRx ? (
@@ -175,9 +206,10 @@ export default function CheckoutScreen() {
 
       <View style={styles.footer}>
         <PrimaryButton
-          label={`Pay & hold ${formatNaira(totalKobo)}`}
+          label={addressResolved ? `Pay & hold ${formatNaira(totalKobo)}` : 'Select a delivery address'}
           onPress={onPay}
           loading={createOrder.isPending}
+          disabled={!addressResolved}
         />
       </View>
 
