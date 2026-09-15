@@ -487,7 +487,12 @@ func (s *authService) validateLoginStatus(u *platformUser) error {
 	if u.Status == "suspended" || u.Status == "deleted" {
 		return fmt.Errorf("account unavailable")
 	}
-	if u.Status == "locked" && u.LockedUntil != nil && u.LockedUntil.After(now) {
+	// A nil LockedUntil means "no expiry" (see UnlockUser, which clears it to nil
+	// as part of unlocking), not "not locked" — an indefinite manual lock (e.g.
+	// the admin console's "Lock User" action, which sets status=locked without
+	// ever setting LockedUntil) must still refuse. Only a LockedUntil that has
+	// actually passed lets an auto-lockout (which always sets it) self-expire.
+	if u.Status == "locked" && (u.LockedUntil == nil || u.LockedUntil.After(now)) {
 		return fmt.Errorf("account locked")
 	}
 	return nil
