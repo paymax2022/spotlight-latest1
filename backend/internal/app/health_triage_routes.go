@@ -150,11 +150,8 @@ func (d *triageWADriver) StartOrContinue(ctx context.Context, externalID, text, 
 	if language == "" {
 		language = "en"
 	}
-	// Resolve the Paymax user by phone (E.164). Unknown numbers are guided to the app.
-	var userID string
-	phone := normalizePhone(externalID)
-	_ = d.pool.QueryRow(ctx,
-		`SELECT id::text FROM public.platform_users WHERE regexp_replace(phone, '\D', '', 'g') = $1 LIMIT 1`, phone).Scan(&userID)
+	// Resolve the Paymax user by phone. Unknown numbers are guided to the app.
+	userID := resolveUserIDByPhone(ctx, d.pool, externalID)
 	if userID == "" {
 		return "We couldn't find a Paymax account for this number. Please open the Spotlight app to use the Symptom Checker.", false, nil
 	}
@@ -207,14 +204,25 @@ func formatWAReply(v *core.SessionView) (string, bool, error) {
 	return "Thanks — tell me more about your symptoms.", false, nil
 }
 
-func normalizePhone(s string) string {
-	var b strings.Builder
-	for _, r := range s {
-		if r >= '0' && r <= '9' {
-			b.WriteRune(r)
-		}
+// resolveUserIDByPhone looks up the Paymax account behind a WhatsApp number.
+//
+// user_profiles.phone is the only place a registered user's real phone number
+// lives: RegisterUser (services/auth_service.go) PATCHes it there after signup.
+// auth.users.phone (GoTrue's own column) and its platform_users mirror are
+// never set by any signup path in this codebase (ADR-053) — querying either
+// would never resolve a real user. Stored phones are not normalised, so the
+// match is on the national significant number, same as login
+// (services.NormalizePhone + the user_profiles_phone_nsn_idx index).
+func resolveUserIDByPhone(ctx context.Context, pool *pgxpool.Pool, externalID string) string {
+	nsn := services.NormalizePhone(externalID)
+	if nsn == "" {
+		return ""
 	}
-	return b.String()
+	var userID string
+	_ = pool.QueryRow(ctx,
+		`SELECT id::text FROM public.user_profiles
+		 WHERE right(regexp_replace(COALESCE(phone,''), '\D', '', 'g'), 10) = $1 LIMIT 1`, nsn).Scan(&userID)
+	return userID
 }
 
 func haversineMeters(lat1, lng1, lat2, lng2 float64) float64 {
