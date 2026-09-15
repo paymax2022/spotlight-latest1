@@ -67,7 +67,7 @@ func (s *Service) GetOrProvision(ctx context.Context, userID string) (*VirtualAc
 		Phone     string
 	}
 	var u userInfo
-	const q = `SELECT email, split_part(full_name,' ',1), split_part(full_name,' ',2), COALESCE(phone,'') FROM user_profiles WHERE id=$1`
+	const q = `SELECT COALESCE(email,''), split_part(full_name,' ',1), split_part(full_name,' ',2), COALESCE(phone,'') FROM user_profiles WHERE id=$1`
 	if err := s.db.QueryRow(ctx, q, userID).Scan(&u.Email, &u.FirstName, &u.LastName, &u.Phone); err != nil {
 		return nil, fmt.Errorf("va: fetch user info: %w", err)
 	}
