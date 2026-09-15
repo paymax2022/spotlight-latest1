@@ -65,6 +65,13 @@ type Config struct {
 	// member /api/finance/maplerad/* routes, the /api/webhooks/maplerad/go webhook,
 	// and the reconcile + orphan-sweep jobs. DEFAULT OFF — no flag, no money path.
 	FeatureMapleradEnabled bool
+	// FeatureUtilityBillsEnabled gates the Utility Bills DOMAIN money path
+	// (Next.js → Go migration, Phase 1+): member /api/finance/utilitybills/*
+	// routes, admin routes, and background jobs (pending-transaction requery
+	// sweep). DEFAULT OFF — no flag, no money path. Phase 0 (this package's
+	// pure domain types/logic) has nothing gated by it; the flag exists now
+	// so Phase 1 can wire behind it without a second config PR.
+	FeatureUtilityBillsEnabled bool
 
 	// Eversend credentials (FX provider 2).
 	EversendClientID      string
@@ -608,11 +615,12 @@ func Load() Config {
 		CryptoQuidaxLiveKey:     getEnv("QUIDAX_LIVE_API_KEY", ""),
 		CryptoQuidaxLiveBaseURL: getEnv("QUIDAX_LIVE_BASE_URL", "https://app.quidax.io/api/v1"),
 
-		MapleradSecretKey:      getEnv("MAPLERAD_SECRET_KEY", ""),
-		MapleradPublicKey:      getEnv("MAPLERAD_PUBLIC_KEY", ""),
-		MapleradProd:           getEnvBool("MAPLERAD_PROD", false),
-		MapleradWebhookSecret:  getEnv("MAPLERAD_WEBHOOK_SECRET", ""),
-		FeatureMapleradEnabled: getEnvBool("FEATURE_MAPLERAD_ENABLED", false),
+		MapleradSecretKey:          getEnv("MAPLERAD_SECRET_KEY", ""),
+		MapleradPublicKey:          getEnv("MAPLERAD_PUBLIC_KEY", ""),
+		MapleradProd:               getEnvBool("MAPLERAD_PROD", false),
+		MapleradWebhookSecret:      getEnv("MAPLERAD_WEBHOOK_SECRET", ""),
+		FeatureMapleradEnabled:     getEnvBool("FEATURE_MAPLERAD_ENABLED", false),
+		FeatureUtilityBillsEnabled: getEnvBool("FEATURE_UTILITY_BILLS_ENABLED", false),
 
 		EversendClientID:      getEnv("EVERSEND_CLIENT_ID", ""),
 		EversendClientSecret:  getEnv("EVERSEND_CLIENT_SECRET", ""),

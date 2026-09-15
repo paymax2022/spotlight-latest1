@@ -14949,3 +14949,125 @@ paths:
         '404': { description: Unknown banner slug }
         '502': { description: Presigning failed }
         '503': { description: R2 is not configured in this environment }
+
+  # ── Utility Bills (Next.js → Go migration) ─────────────────────────────────
+  # Phase 0 stub: paths only, added ahead of the Phase 1 implementation per
+  # this repo's spec-first workflow (contracts/openapi.yaml changes start
+  # before the handler code that serves them). Today this module lives
+  # entirely in frontend-web/src/server/utility (Next.js); these Go routes do
+  # not exist yet and are feature-flagged off (FeatureUtilityBillsEnabled,
+  # DEFAULT false) even once Phase 1 lands. Request/response schemas are
+  # intentionally minimal here — Phase 1 will flesh them out against the real
+  # handler.go once written, rather than speculating on shapes now.
+  /api/finance/utilitybills/pay:
+    post:
+      operationId: utilityBillsPay
+      summary: Pay a utility bill (Phase 1 — not yet implemented)
+      description: >-
+        Debits the wallet and purchases from the routed provider (electricity,
+        airtime, data, cable TV, internet, or education). A money mutation —
+        Idempotency-Key is required.
+      tags: [Utility Bills]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '200':
+          description: Purchase accepted, transaction created (status may still be provider_pending)
+  /api/finance/utilitybills/validate:
+    post:
+      operationId: utilityBillsValidateCustomer
+      summary: Validate a customer reference against the provider before purchase (Phase 1 — not yet implemented)
+      tags: [Utility Bills]
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: Validation result (customer name resolved by the provider, when supported)
+  /api/finance/utilitybills/quote:
+    post:
+      operationId: utilityBillsQuote
+      summary: Price a product before purchase, no side effects (Phase 1 — not yet implemented)
+      tags: [Utility Bills]
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: Pricing breakdown (amount, markup, convenience fee, retail total)
+  /api/finance/utilitybills/transactions:
+    get:
+      operationId: utilityBillsListTransactions
+      summary: List the caller's utility bill transactions (Phase 1 — not yet implemented)
+      tags: [Utility Bills]
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: Transaction list
+  /api/finance/utilitybills/transactions/{id}:
+    get:
+      operationId: utilityBillsGetTransaction
+      summary: Get a single utility bill transaction by id (Phase 1 — not yet implemented)
+      tags: [Utility Bills]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: Transaction detail
+  /api/finance/utilitybills/transactions/{id}/requery:
+    post:
+      operationId: utilityBillsRequeryTransaction
+      summary: Re-query a pending transaction's status against the provider (Phase 1 — not yet implemented)
+      tags: [Utility Bills]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: Transaction, status refreshed from the provider
+  /api/finance/utilitybills/beneficiaries:
+    get:
+      operationId: utilityBillsListBeneficiaries
+      summary: List the caller's saved utility beneficiaries (Phase 1 — not yet implemented)
+      tags: [Utility Bills]
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: Saved beneficiary list
+    post:
+      operationId: utilityBillsCreateBeneficiary
+      summary: Save a new utility beneficiary (Phase 1 — not yet implemented)
+      tags: [Utility Bills]
+      security: [{ bearerAuth: [] }]
+      responses:
+        '201':
+          description: Beneficiary saved
+  /api/finance/utilitybills/beneficiaries/{id}:
+    get:
+      operationId: utilityBillsGetBeneficiary
+      summary: Get a saved utility beneficiary by id (Phase 1 — not yet implemented)
+      tags: [Utility Bills]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: Beneficiary detail
+    put:
+      operationId: utilityBillsUpdateBeneficiary
+      summary: Update a saved utility beneficiary (Phase 1 — not yet implemented)
+      tags: [Utility Bills]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: Beneficiary updated
+    delete:
+      operationId: utilityBillsDeleteBeneficiary
+      summary: Remove a saved utility beneficiary (Phase 1 — not yet implemented)
+      tags: [Utility Bills]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '204':
+          description: Beneficiary removed

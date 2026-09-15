@@ -1,6 +1,9 @@
 package provider
 
-import "context"
+import (
+	"context"
+	"encoding/json"
+)
 
 // Additive gateway ports for the Maplerad WaaS integration (ADR-012). These sit
 // alongside PaymentProvider / DisbursementProvider / VirtualAccountProvider
@@ -83,9 +86,29 @@ type Bill struct {
 	Type        string
 	Status      string // PENDING | SUCCESS | FAILED
 	AmountKobo  int64
+	// Token is the provider-issued delivery artifact, when the bill type
+	// produces one (a prepaid electricity token is the actual deliverable —
+	// dropping it here would silently strand the customer with a paid-for,
+	// undeliverable purchase). Empty for bill types with no token (airtime,
+	// data, cable TV subscriptions).
+	Token string
+	// Message is a human-readable status/result message from the provider,
+	// surfaced to support tooling and customer-facing status text.
+	Message string
+	// Raw is the provider's raw response payload, kept for audit/debugging.
+	// Never parsed by callers — if a field matters, it belongs above.
+	Raw json.RawMessage
 }
 
 // BillsProvider purchases bills and re-queries them (orphan reconciliation).
+//
+// GetBill's ref MUST be the value returned as the prior Bill.ProviderRef (the
+// reference the provider itself echoed back at purchase time), never the
+// caller's own BillRequest.Ref. This is the one identifier every provider is
+// guaranteed to accept a lookup by — some providers (e.g. VTpass) have no
+// "look up by an arbitrary client reference" capability at all, since their
+// requery endpoint only recognizes the exact request identifier it was given
+// at purchase time.
 type BillsProvider interface {
 	PurchaseBill(ctx context.Context, req BillRequest) (*Bill, error)
 	GetBill(ctx context.Context, ref string) (*Bill, error)
