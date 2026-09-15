@@ -14,6 +14,7 @@ import (
 	"spotlight/backend/internal/academy/credentials"
 	"spotlight/backend/internal/academy/curriculum"
 	"spotlight/backend/internal/academy/edupay"
+	"spotlight/backend/internal/academy/tuition"
 	"spotlight/backend/internal/academy/exam"
 	feesadminapi "spotlight/backend/internal/academy/fees/adminapi"
 	feescompetition "spotlight/backend/internal/academy/fees/competition"
@@ -43,8 +44,11 @@ import (
 	"spotlight/backend/internal/academy/schools"
 	"spotlight/backend/internal/academy/trade"
 	"spotlight/backend/internal/academy/tutor"
+	"spotlight/backend/internal/finance/commission"
 	"spotlight/backend/internal/finance/kyc"
 	"spotlight/backend/internal/finance/ledger"
+	"spotlight/backend/internal/finance/tiers"
+	"spotlight/backend/internal/finance/wallet"
 	"spotlight/backend/internal/integrations/rtc"
 	"spotlight/backend/internal/middleware"
 	providerInterfaces "spotlight/backend/internal/provider"
@@ -109,7 +113,7 @@ func (g academyApprovalGate) Authorize(ctx context.Context, userID, orderID stri
 // Admin base (RBAC per-route via guard):
 //   - identity/curriculum/commerce embed "/academy" → base = /api.
 //   - gamification/rewards/assessment/exam → base = /api/academy/admin.
-func RegisterAcademy(r *gin.Engine, finance *gin.RouterGroup, pool *pgxpool.Pool, rbac services.RBACService, ledgerSvc *ledger.Service, rtcIssuer *rtc.Issuer, bnplRail commerce.BNPLRail, disburseRail edupay.DisburseRail, billingRail schools.BillingRail, payoutRail tutor.PayoutRail, paymentProvider providerInterfaces.PaymentProvider, examEnabled, spineEnabled, eduPayEnabled, credentialsEnabled, liveEnabled, schoolsEnabled, tutorEnabled, feesEnabled bool, webhookHandler *webhooks.PaystackHandler) {
+func RegisterAcademy(r *gin.Engine, finance *gin.RouterGroup, pool *pgxpool.Pool, rbac services.RBACService, ledgerSvc *ledger.Service, rtcIssuer *rtc.Issuer, bnplRail commerce.BNPLRail, disburseRail edupay.DisburseRail, billingRail schools.BillingRail, payoutRail tutor.PayoutRail, paymentProvider providerInterfaces.PaymentProvider, examEnabled, spineEnabled, eduPayEnabled, credentialsEnabled, liveEnabled, schoolsEnabled, tutorEnabled, feesEnabled, tuitionEnabled bool, webhookHandler *webhooks.PaystackHandler) {
 	if pool == nil {
 		return
 	}
@@ -254,6 +258,28 @@ func RegisterAcademy(r *gin.Engine, finance *gin.RouterGroup, pool *pgxpool.Pool
 		placement.RegisterAcademyPlacement(memberAcad, pool)
 	}
 
+	// Film Academy Tuition payment (Phase 1 Go migration): installment plans + money path.
+	// Gated by FeatureAcademyTuitionEnabled. Tuition amounts are whole NAIRA, never kobo.
+	// Wire only when the ledger is available (nil ledger would silently drop money legs).
+	// Phase 1 scope: member-facing routes only. Admin routes (Phase 4) deferred.
+	if tuitionEnabled && ledgerSvc != nil {
+		// Redis client and Auditor are both nil-safe (see service.go) — nil here means
+		// idempotency relies on the DB-level Layer 2 guard alone and mutations go
+		// unaudited. Wire a real redis.Client + Auditor once one is threaded into
+		// RegisterAcademy's parameters.
+		tuitionRepo := tuition.NewRepository(pool)
+		walletSvc := wallet.NewService(ledgerSvc, tiers.NewService(pool))
+		commissionSvc := commission.NewService(commission.NewRepository(pool), nil)
+		tuitionSvc := tuition.NewService(tuitionRepo, walletSvc, ledgerSvc, commissionSvc, nil, nil, pool)
+		tuitionHandler := tuition.NewHandler(tuitionSvc)
+
+		// Member-facing routes (Phase 1)
+		tuitionGroup := memberAcad.Group("/tuition")
+		tuitionGroup.POST("/pay", tuitionHandler.PayTuition)
+		tuitionGroup.POST("/validate", tuitionHandler.ValidatePayment)
+		tuitionGroup.GET("/status/:application_id", tuitionHandler.GetTuitionStatus)
+	}
+
 	// EdTech School Fees (invoices, vault, promotion, competition, scholarship,
 	// trust-score, compliance export), gated by FeatureAcademyFeesEnabled. Every
 	// money mutation rides the finance/ledger (double-entry, idempotent, fail-closed)
@@ -367,6 +393,7 @@ func registerAcademyFees(member, admin *gin.RouterGroup, pool *pgxpool.Pool, rba
 			webhookHandler.SetFeesConfirmer(feesPaymentConfirmer{svc: paySvc})
 		}
 	}
+
 }
 
 // ── Fees payment (T3.x) money/invoice adapters ────────────────────────────────────
