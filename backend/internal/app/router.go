@@ -208,6 +208,19 @@ func NewRouter(cfg config.Config) *gin.Engine {
 
 		adminGroup := v1.Group("/admin")
 		adminGroup.Use(middleware.RequireAdmin(cfg.AdminAPIKey, cfg.AppEnv))
+		// AUTH-010: this group (menu-counts, leads, chatbot sessions, handoffs,
+		// analytics, competitions, reality-tv dashboard — and, since stemRead/
+		// stemManage are sub-groups of adminGroup created below, the whole STEM
+		// admin tree too) was gated ONLY by RequireAdmin, which is satisfied by
+		// the shared x-admin-api-key. That key is attached unconditionally by
+		// frontend-admin's admin-proxy route to every request it forwards,
+		// authenticated or not — so any anonymous caller through the proxy (or
+		// anyone who obtains the key) reached real PII (lead names/emails/phones,
+		// chatbot transcripts) with no identity check at all. overviewGroup and
+		// adminConsole below already require a real, RBAC-verified admin identity
+		// on top of RequireAdmin (see RequireAdminConsoleRole); this group gets
+		// the same layering now, for the same reason.
+		adminGroup.Use(middleware.RequireAdminConsoleRole(supabase, rbacService))
 		adminGroup.GET("/menu-counts", admin.MenuCounts)
 		adminGroup.GET("/leads", leads.List)
 		adminGroup.PATCH("/leads/:id", leads.UpdateStatus)
