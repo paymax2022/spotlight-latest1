@@ -34,8 +34,11 @@ func TestRequireAdmin_AndStemRole_MissingStemRole(t *testing.T) {
 	// fakeVerifiedAdmin stands in for that without needing Supabase/RBAC wiring.
 	admin.Use(fakeVerifiedAdmin)
 
+	// Verified admin, but their real RBAC roles hold none of the STEM roles
+	// this group allows.
+	rbac := &fakeConsoleRBAC{roles: []string{"registered-user"}}
 	stemRead := admin.Group("/stem")
-	stemRead.Use(RequireStemRoles("SUPER_ADMIN", "ADMIN", "OPERATIONS_MANAGER", "CONTEST_MANAGER", "JUDGE"))
+	stemRead.Use(RequireStemRoles(rbac, "SUPER_ADMIN", "ADMIN", "OPERATIONS_MANAGER", "CONTEST_MANAGER", "JUDGE"))
 	stemRead.GET("/submissions", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"ok": true}) })
 
 	req := httptest.NewRequest(http.MethodGet, "/admin/stem/submissions", nil)
@@ -56,13 +59,14 @@ func TestRequireAdmin_AndStemRole_DisallowedStemRole(t *testing.T) {
 	admin.Use(RequireAdmin("secret-key", "production"))
 	admin.Use(fakeVerifiedAdmin)
 
+	// A real 'judge' is a valid STEM role, just not one the manage group allows.
+	rbac := &fakeConsoleRBAC{roles: []string{"judge"}}
 	stemManage := admin.Group("/stem")
-	stemManage.Use(RequireStemRoles("SUPER_ADMIN", "ADMIN", "OPERATIONS_MANAGER", "CONTEST_MANAGER"))
+	stemManage.Use(RequireStemRoles(rbac, "SUPER_ADMIN", "ADMIN", "OPERATIONS_MANAGER", "CONTEST_MANAGER"))
 	stemManage.PATCH("/submissions/abc/status", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"ok": true}) })
 
 	req := httptest.NewRequest(http.MethodPatch, "/admin/stem/submissions/abc/status", nil)
 	req.Header.Set("x-admin-api-key", "secret-key")
-	req.Header.Set("x-stem-role", "judge")
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 
@@ -79,13 +83,13 @@ func TestRequireAdmin_AndStemRole_AllowedManageRole(t *testing.T) {
 	admin.Use(RequireAdmin("secret-key", "production"))
 	admin.Use(fakeVerifiedAdmin)
 
+	rbac := &fakeConsoleRBAC{roles: []string{"contest-manager"}}
 	stemManage := admin.Group("/stem")
-	stemManage.Use(RequireStemRoles("SUPER_ADMIN", "ADMIN", "OPERATIONS_MANAGER", "CONTEST_MANAGER"))
+	stemManage.Use(RequireStemRoles(rbac, "SUPER_ADMIN", "ADMIN", "OPERATIONS_MANAGER", "CONTEST_MANAGER"))
 	stemManage.PATCH("/submissions/abc/status", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"ok": true}) })
 
 	req := httptest.NewRequest(http.MethodPatch, "/admin/stem/submissions/abc/status", nil)
 	req.Header.Set("x-admin-api-key", "secret-key")
-	req.Header.Set("x-stem-role", "contest_manager")
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 
@@ -98,10 +102,11 @@ func TestRequireAdmin_AndStemRole_AllowedManageRole(t *testing.T) {
 // admin identity — it's a gate satisfied by any caller who holds the key,
 // including the admin-proxy's own unconditional attachment of it. Without
 // RequireAdminConsoleRole (or equivalent) also running, a request carrying a
-// valid API key AND a self-declared x-stem-role must still be refused. This
-// is the exact shape production router.go avoids by nesting stemRead/
-// stemManage under adminGroup (which requires RequireAdminConsoleRole first);
-// this test guards against that nesting ever being accidentally dropped.
+// valid API key must still be refused before any RBAC role lookup happens —
+// a nil rbac here proves the lookup is never attempted. This is the exact
+// shape production router.go avoids by nesting stemRead/stemManage under
+// adminGroup (which requires RequireAdminConsoleRole first); this test guards
+// against that nesting ever being accidentally dropped.
 func TestRequireAdmin_AndStemRole_APIKeyAloneIsNotVerifiedAdmin(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
@@ -111,12 +116,11 @@ func TestRequireAdmin_AndStemRole_APIKeyAloneIsNotVerifiedAdmin(t *testing.T) {
 	// Deliberately no fakeVerifiedAdmin / RequireAdminConsoleRole here.
 
 	stemManage := admin.Group("/stem")
-	stemManage.Use(RequireStemRoles("SUPER_ADMIN", "ADMIN", "OPERATIONS_MANAGER", "CONTEST_MANAGER"))
+	stemManage.Use(RequireStemRoles(nil, "SUPER_ADMIN", "ADMIN", "OPERATIONS_MANAGER", "CONTEST_MANAGER"))
 	stemManage.PATCH("/submissions/abc/status", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"ok": true}) })
 
 	req := httptest.NewRequest(http.MethodPatch, "/admin/stem/submissions/abc/status", nil)
 	req.Header.Set("x-admin-api-key", "secret-key")
-	req.Header.Set("x-stem-role", "super_admin")
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 

@@ -237,6 +237,7 @@ func NewRouter(cfg config.Config) *gin.Engine {
 		stemRead := adminGroup.Group("")
 		stemRead.Use(middleware.StemRateLimit(120, time.Minute))
 		stemRead.Use(middleware.RequireStemRoles(
+			rbacService,
 			"SUPER_ADMIN",
 			"ADMIN",
 			"OPERATIONS_MANAGER",
@@ -278,7 +279,7 @@ func NewRouter(cfg config.Config) *gin.Engine {
 
 		stemManage := adminGroup.Group("")
 		stemManage.Use(middleware.StemRateLimit(40, time.Minute))
-		stemManage.Use(middleware.RequireStemRoles("SUPER_ADMIN", "ADMIN", "OPERATIONS_MANAGER", "CONTEST_MANAGER"))
+		stemManage.Use(middleware.RequireStemRoles(rbacService, "SUPER_ADMIN", "ADMIN", "OPERATIONS_MANAGER", "CONTEST_MANAGER"))
 		stemManage.PATCH("/schools/:id/verification", stem.UpdateSchoolVerification)
 		stemManage.POST("/stem-contests", stem.CreateContest)
 		stemManage.POST("/stem-eligibility/check", stem.CheckEligibility)
