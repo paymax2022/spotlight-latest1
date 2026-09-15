@@ -387,7 +387,7 @@ func NewRouter(cfg config.Config) *gin.Engine {
 	// The returned issuer is what makes Register send a code. It is nil when the
 	// feature is closed, and WithOTPIssuer(nil) leaves Register exactly as it
 	// shipped — verification stays entirely with Supabase Auth.
-	if issuer, verifier, setter, signupGate := registerOTPRoutes(r, cfg, sharedPool, supabase, authService); issuer != nil {
+	if issuer, verifier, setter, signupGate := registerOTPRoutes(r, cfg, sharedPool, supabase, authService, sessionService); issuer != nil {
 		authHandler.
 			WithOTPIssuer(issuer).
 			WithOTPVerifier(verifier).
