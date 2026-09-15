@@ -31,6 +31,11 @@ import type {
   StemSubmission,
 } from '@/types/stem';
 
+// x-stem-role is no longer trusted server-side for authorization (see the
+// AUTH-020 follow-up note in @/config/stemAccess.ts) — RequireStemRoles
+// resolves the caller's real role via RBAC instead. This header is now at
+// most a display hint the backend ignores; kept so existing request shapes
+// don't change while the frontend role-derivation replacement is pending.
 function adminHeaders() {
   return adminAuthHeaders({ 'x-stem-role': process.env.NEXT_PUBLIC_STEM_ROLE || 'ADMIN' });
 }
