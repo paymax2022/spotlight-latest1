@@ -1,6 +1,13 @@
 import { successResponse, errorResponse, handleApiError } from '@/src/lib/api/responses';
 import { validateUtilityCustomer } from '@/src/server/utility/service';
-import { parseUtilityCategory, requireUtilityReader, utilityRateLimit, utilityUnavailableResponse } from '../_utils';
+import {
+  callUtilityBillsGo,
+  parseUtilityCategory,
+  requireUtilityReader,
+  utilityGoProxyEnabled,
+  utilityRateLimit,
+  utilityUnavailableResponse,
+} from '../_utils';
 
 export async function POST(request: Request) {
   const unavailable = utilityUnavailableResponse();
@@ -23,11 +30,31 @@ export async function POST(request: Request) {
     const metadata: Record<string, unknown> = { ...bodyMeta };
     if (meterType) metadata.type = meterType;
 
+    const billerId = String(body.biller_id || body.billerId || '');
+    const productId = typeof body.product_id === 'string' ? body.product_id : typeof body.productId === 'string' ? body.productId : undefined;
+    const customerReference = String(body.customer_reference || body.customerReference || '');
+
+    if (utilityGoProxyEnabled()) {
+      // Go's ValidateInput.Metadata is map[string]string — stringify every
+      // value so a non-string field (e.g. a stray number) doesn't 400 at the
+      // Gin JSON binder instead of reaching validation.
+      const stringMetadata = Object.fromEntries(Object.entries(metadata).map(([k, v]) => [k, String(v)]));
+      const result = await callUtilityBillsGo(request, '/api/finance/utilitybills/validate', {
+        category,
+        biller_id: billerId,
+        product_id: productId ?? '',
+        customer_reference: customerReference,
+        metadata: stringMetadata,
+      });
+      if (!result.ok) return result.response;
+      return successResponse({ success: true, ...result.data });
+    }
+
     const result = await validateUtilityCustomer({
       category,
-      billerId: String(body.biller_id || body.billerId || ''),
-      productId: typeof body.product_id === 'string' ? body.product_id : typeof body.productId === 'string' ? body.productId : undefined,
-      customerReference: String(body.customer_reference || body.customerReference || ''),
+      billerId,
+      productId,
+      customerReference,
       metadata,
     });
 
