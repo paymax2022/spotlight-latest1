@@ -63,6 +63,10 @@ to check. That follow-up is this ADR.
    under the strict admin-console gate, is a separate authorization-surface
    decision with its own blast radius (it would let non-admin-console STEM
    staff reach `/api/v1/admin/*` routing at all) and is out of scope here.
+   **Update:** resolved in [ADR-057](ADR-057-stem-routes-verified-identity-gate.md)
+   — STEM routes now gate on a real verified identity with no
+   `consoleAdminRoleSlugs` floor, leaving the role decision entirely to
+   `RequireStemRoles`.
 7. **Frontend (`frontend-admin/src/config/stemAccess.ts`,
    `.../services/stemService.ts`) left unchanged in behavior**, beyond a doc
    comment. They still derive the "current" STEM role from a build-time env
@@ -73,12 +77,9 @@ to check. That follow-up is this ADR.
 
 ## Consequences
 
-- `SUPER_ADMIN` and `ADMIN` (`system-admin`) are the only STEM roles reachable
-  in practice until the `adminGroup`/`consoleAdminRoleSlugs` question (point 6)
-  is separately decided — this is a real, known gap, not a regression: it was
-  already true before this change (see AUTH-020's own commit message) and is
-  now explicit rather than implicit.
 - A request carrying a spoofed `x-stem-role` header no longer has any effect;
   only the caller's real RBAC roles decide.
-- Granting a real person `JUDGE`/`CONTEST_MANAGER`/etc. access still requires
-  them to also hold `super-admin` or `system-admin` today, per point 6.
+- ~~`SUPER_ADMIN` and `ADMIN` (`system-admin`) are the only STEM roles
+  reachable in practice~~ — **resolved by ADR-057**: every STEM role in
+  `RequireStemRoles`'s allow-lists is now reachable by someone holding only
+  that role, independent of `super-admin`/`system-admin`.

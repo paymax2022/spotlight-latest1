@@ -13,14 +13,15 @@ import (
 // the middleware allows all requests.
 //
 // It is NOT proof of identity on its own: this middleware refuses to run at
-// all unless a real, cryptographically-verified admin identity already exists
-// on the request context — i.e. RequireAdminConsoleRole (or an equivalent
-// real-auth middleware) has already run and set "adminUserID". In the live
-// router (router.go), stemRead/stemManage are sub-groups of adminGroup, which
-// requires RequireAdminConsoleRole before this middleware ever runs, so only a
-// caller holding a real "super-admin" or "system-admin" RBAC role can reach
-// this check at all. This fails closed instead of assuming router wiring: if
-// this middleware is ever mounted somewhere that skips real auth, it refuses
+// all unless a real, cryptographically-verified identity already exists on
+// the request context — i.e. RequireVerifiedIdentity or RequireAdminConsoleRole
+// (or an equivalent real-auth middleware) has already run and set
+// "adminUserID". In the live router (router.go), stemRead/stemManage require
+// RequireVerifiedIdentity — a real identity check with NO role floor of its
+// own (see ADR-057, docs/adr/ADR-057-stem-routes-verified-identity-gate.md) —
+// before this middleware ever runs, so the role decision is entirely this
+// middleware's. This fails closed instead of assuming router wiring: if this
+// middleware is ever mounted somewhere that skips real auth, it refuses
 // rather than resolving roles for an unverified caller.
 //
 // AUTH-020 follow-up: previously the caller's STEM sub-role was read from a
@@ -33,7 +34,10 @@ import (
 // the public.roles rows
 // (operations-manager, school-admin, teacher-coach, mentor, sponsor) this
 // depends on; contest-manager, judge, super-admin and system-admin already
-// existed (20260527100000_enterprise_auth_rbac.sql).
+// existed (20260527100000_enterprise_auth_rbac.sql). ADR-057 closed the
+// follow-on gap ADR-056 flagged: those STEM-specific roles are now actually
+// reachable by someone who holds only one of them, not just by platform
+// admins who also happen to qualify via the ADMIN/SUPER_ADMIN alias.
 func RequireStemRoles(rbac services.RBACService, allowedRoles ...string) gin.HandlerFunc {
 	allowed := map[string]struct{}{}
 	for _, role := range allowedRoles {
