@@ -611,6 +611,37 @@ func (r *Repository) ListUserTransactions(ctx context.Context, userID string, li
 	return out, rows.Err()
 }
 
+// ListPending returns transactions still in a non-terminal, requery-eligible
+// state (initiated, wallet_debited, provider_pending), oldest first, up to
+// limit. Feeds the scheduled requery sweep (jobs.go's StartPendingSweep).
+//
+// No age/TTL filter, matching the TS source's requeryPendingUtilityTransactions
+// exactly: anything in this set already failed to resolve synchronously inside
+// PayUtility (a provider timeout is the only way a row lands here), so there is
+// no "too young to sweep" case to exclude.
+func (r *Repository) ListPending(ctx context.Context, limit int) ([]TransactionRow, error) {
+	if limit <= 0 || limit > 100 {
+		limit = 25
+	}
+	rows, err := r.db.Query(ctx, `SELECT `+transactionCols+`
+		FROM public.utility_transactions
+		WHERE status IN ('initiated','wallet_debited','provider_pending')
+		ORDER BY created_at ASC LIMIT $1`, limit)
+	if err != nil {
+		return nil, fmt.Errorf("utilitybills: list pending transactions: %w", err)
+	}
+	defer rows.Close()
+	out := []TransactionRow{}
+	for rows.Next() {
+		t, err := scanTransaction(rows)
+		if err != nil {
+			return nil, fmt.Errorf("utilitybills: scan transaction: %w", err)
+		}
+		out = append(out, *t)
+	}
+	return out, rows.Err()
+}
+
 // InsertTransaction creates the initiated transaction row.
 //
 // Returns (row, false, nil) on a fresh insert and (existing, true, nil) when the

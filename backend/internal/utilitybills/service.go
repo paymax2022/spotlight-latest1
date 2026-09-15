@@ -1256,6 +1256,59 @@ func (s *Service) RequeryTransaction(ctx context.Context, transactionID string) 
 	return updated, nil
 }
 
+// ── Scheduled requery sweep (Phase 3, closes UTIL-002) ──────────────────────
+
+// SweepRowResult is one transaction's outcome within a sweep pass.
+type SweepRowResult struct {
+	ID     string `json:"id"`
+	OK     bool   `json:"ok"`
+	Status string `json:"status"`
+	Error  string `json:"error,omitempty"`
+}
+
+// SweepResult summarises one sweep pass — the same shape
+// requeryPendingUtilityTransactions returned, so the admin worker endpoint
+// (Phase 4) can report it identically.
+type SweepResult struct {
+	Processed int              `json:"processed"`
+	Succeeded int              `json:"succeeded"`
+	Failed    int              `json:"failed"`
+	Results   []SweepRowResult `json:"results"`
+}
+
+// SweepPending requeries every transaction still stuck in a non-terminal,
+// requery-eligible state, oldest first. Ports requeryPendingUtilityTransactions
+// verbatim: EVERY row runs even if an earlier one errors — one member's stuck
+// purchase must never block another's from being checked — and each row's
+// outcome is a recorded RESULT, not a returned error, mirroring the TS source's
+// per-row try/catch. The only error this can return is failing to LIST the
+// pending rows in the first place.
+func (s *Service) SweepPending(ctx context.Context, limit int) (*SweepResult, error) {
+	pending, err := s.repo.ListPending(ctx, limit)
+	if err != nil {
+		return nil, err
+	}
+	res := &SweepResult{Results: make([]SweepRowResult, 0, len(pending))}
+	for _, t := range pending {
+		row := SweepRowResult{ID: t.ID}
+		updated, rerr := s.RequeryTransaction(ctx, t.ID)
+		if rerr != nil {
+			row.OK = false
+			row.Status = t.Status
+			row.Error = rerr.Error()
+			log.Printf("utilitybills: pending sweep: requery id=%s: %v", t.ID, rerr)
+			res.Failed++
+		} else {
+			row.OK = true
+			row.Status = updated.Status
+			res.Succeeded++
+		}
+		res.Processed++
+		res.Results = append(res.Results, row)
+	}
+	return res, nil
+}
+
 // ReverseTransaction is the ADMIN-initiated reversal (a support refund), porting
 // reverseUtilityTransaction. Same single implementation serves any caller; the
 // route is RBAC-gated.

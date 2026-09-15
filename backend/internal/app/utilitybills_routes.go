@@ -1,9 +1,11 @@
 package app
 
 import (
+	"context"
 	"log"
 	"os"
 	"strconv"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -47,7 +49,12 @@ import (
 // the user_id that RequireAuthContext populates, so mounting it alone 401s every
 // admin route even with a valid token (the bug documented three times over in
 // finance_routes.go).
+//
+// ctx is the app-lifetime background context (registerFinanceRoutes's own
+// context.Background()) that scopes the Phase 3 requery-sweep job — the same
+// ctx the Maplerad block passes directly to StartReconcile/StartOrphanSweep.
 func RegisterUtilityBills(
+	ctx context.Context,
 	r *gin.Engine,
 	member *gin.RouterGroup,
 	cfg config.Config,
@@ -133,6 +140,10 @@ func RegisterUtilityBills(
 	admin.POST("/transactions/:id/requery", perm, handler.AdminRequery)
 	admin.POST("/transactions/:id/reverse", perm, handler.AdminReverse)
 	admin.GET("/unresolved", perm, handler.AdminUnresolvedBinds)
+
+	// Background reconciliation: hourly requery sweep for stuck purchases
+	// (Phase 3, closes UTIL-002 — previously nothing did this automatically).
+	utilitybills.StartPendingSweep(ctx, svc, time.Hour)
 
 	log.Printf("[finance] Utility Bills domain routes registered at /api/finance/utilitybills (vtpass env=%s, configured=%t, adapters=%v)",
 		environment, vtpassClient.Configured(), providers.AdapterCodes())
