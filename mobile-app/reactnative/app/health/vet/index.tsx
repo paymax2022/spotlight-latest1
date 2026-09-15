@@ -22,6 +22,7 @@ import ScreenHeader from '@/components/ScreenHeader';
 import StateView from '@/components/StateView';
 import PetCard from '@/features/health/vet/components/PetCard';
 import VetStatusPill from '@/features/health/vet/components/VetStatusPill';
+import { ProviderOnboardingCard } from '@/features/health/components';
 import { usePets, useAppointments } from '@/features/health/vet/hooks';
 import { APPT_TYPE_META } from '@/features/health/vet/constants';
 import { formatNaira } from '@/features/health/constants/health.constants';
@@ -152,6 +153,9 @@ export default function VetHubScreen() {
             </Pressable>
           </View>
         )}
+
+        {/* Provider onboarding */}
+        <ProviderOnboardingCard />
       </ScrollView>
     </SafeAreaView>
   );

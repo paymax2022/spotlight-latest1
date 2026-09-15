@@ -23,6 +23,7 @@ import ScreenHeader from '@/components/ScreenHeader';
 import SearchBar from '@/components/SearchBar';
 import StateView from '@/components/StateView';
 import PharmacyProductCard from '@/features/health/components/PharmacyProductCard';
+import { ProviderOnboardingCard } from '@/features/health/components';
 import { useProducts, usePrescriptions } from '@/features/health/pharmacy/hooks';
 import { useCartStore } from '@/features/health/pharmacy/cartStore';
 import { formatNaira } from '@/features/health/constants/health.constants';
@@ -170,6 +171,9 @@ export default function PharmacyHomeScreen() {
             <Text style={styles.cartCtaAmount}>{formatNaira(useCartStore.getState().cart().subtotalKobo)}</Text>
           </Pressable>
         ) : null}
+
+        {/* Provider onboarding */}
+        <ProviderOnboardingCard />
       </ScrollView>
     </SafeAreaView>
   );
