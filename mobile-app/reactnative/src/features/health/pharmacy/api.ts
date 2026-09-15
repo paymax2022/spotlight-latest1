@@ -552,19 +552,11 @@ export async function getPrescriptions(): Promise<Prescription[]> {
   return (data.prescriptions ?? []).map(mapPrescriptionSummary);
 }
 
-// Maps the rx package's flat, uppercase-state Prescription (backend/internal/
-// health/rx/service.go) onto the mobile UI's richer shape. There is no backend
-// concept matching RxStatus's 'clarification' (the state machine is a strict
-// VERIFYING -> VERIFIED|REJECTED — see decideRx below), so it never appears here.
-const RX_STATUS_FROM_STATE: Record<string, RxStatus> = {
-  SENT_TO_PHARMACY: 'verifying',
-  VERIFYING: 'verifying',
-  VERIFIED: 'verified',
-  REJECTED: 'rejected',
-  DISPENSED: 'dispensed',
-  FULFILLED: 'dispensed',
-};
-
+// mapPrescription maps the rx package's flat, uppercase-state Prescription
+// (backend/internal/health/rx/service.go) onto the mobile UI's richer shape,
+// reusing RX_STATUS_FROM_STATE above. There is no backend concept matching
+// RxStatus's 'clarification' (the state machine is a strict VERIFYING ->
+// VERIFIED|REJECTED — see decideRx below), so it never appears here.
 function mapPrescription(raw: any): Prescription {
   return {
     id: raw.id,

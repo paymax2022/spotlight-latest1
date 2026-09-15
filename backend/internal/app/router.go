@@ -67,6 +67,7 @@ func NewRouter(cfg config.Config) *gin.Engine {
 		// Unauthenticated on purpose: the point is to verify a deploy from OUTSIDE,
 		// which is exactly the situation where you have no credentials to hand.
 		public.GET("/build", health.Build)
+		RegisterPublicMedia(public, cfg)
 
 		auth := v1.Group("/auth")
 		auth.GET("/health", health.GenericHealth)
