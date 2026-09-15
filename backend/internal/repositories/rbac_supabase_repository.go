@@ -321,12 +321,53 @@ func readMetadataString(m map[string]any, key string) string {
 	return strings.TrimSpace(s)
 }
 
+// adminUserSelect is the platform_users select shared by ListAdminUsers (a
+// filtered, ordered page) and GetAdminUser (a single row by primary key), so
+// the two never drift on which fields/embeds a domain.AdminUser is built from.
+const adminUserSelect = "id,first_name,last_name,email,phone,user_type,status,profile_completed,created_at,profiles!left(state,country)"
+
+type adminUserRow struct {
+	ID               string `json:"id"`
+	FirstName        string `json:"first_name"`
+	LastName         string `json:"last_name"`
+	Email            string `json:"email"`
+	Phone            string `json:"phone"`
+	UserType         string `json:"user_type"`
+	Status           string `json:"status"`
+	ProfileCompleted bool   `json:"profile_completed"`
+	CreatedAt        string `json:"created_at"`
+	Profiles         []struct {
+		State    string         `json:"state"`
+		Country  string         `json:"country"`
+		Metadata map[string]any `json:"metadata"`
+	} `json:"profiles"`
+}
+
+// adminUserFromRow converts one raw platform_users row (as shaped by
+// adminUserSelect) into a domain.AdminUser, plus the de-normalized
+// state/program/contest/school values ListAdminUsers filters on.
+func adminUserFromRow(row adminUserRow) (user domain.AdminUser, state, country, programID, contestID, schoolID string) {
+	if len(row.Profiles) > 0 {
+		state, country = row.Profiles[0].State, row.Profiles[0].Country
+		programID = readMetadataString(row.Profiles[0].Metadata, "program_id")
+		contestID = readMetadataString(row.Profiles[0].Metadata, "contest_id")
+		schoolID = readMetadataString(row.Profiles[0].Metadata, "school_id")
+	}
+	user = domain.AdminUser{
+		ID: row.ID, FirstName: row.FirstName, LastName: row.LastName, Email: row.Email, Phone: row.Phone,
+		UserType: row.UserType, Status: row.Status, ProfileCompleted: row.ProfileCompleted,
+		State: state, Country: country, ProgramID: programID, ContestID: contestID, SchoolID: schoolID,
+		CreatedAt: row.CreatedAt,
+	}
+	return
+}
+
 func (r *RBACSupabaseRepository) ListAdminUsers(filter domain.AdminUserFilter) ([]domain.AdminUser, error) {
 	if filter.Limit <= 0 || filter.Limit > 500 {
 		filter.Limit = 100
 	}
 	q := map[string]string{
-		"select": "id,first_name,last_name,email,phone,user_type,status,profile_completed,created_at,profiles!left(state,country)",
+		"select": adminUserSelect,
 		"order":  "created_at.desc",
 		"limit":  fmt.Sprintf("%d", filter.Limit),
 	}
@@ -340,34 +381,13 @@ func (r *RBACSupabaseRepository) ListAdminUsers(filter domain.AdminUserFilter) (
 		q["or"] = fmt.Sprintf("(email.ilike.*%s*,first_name.ilike.*%s*,last_name.ilike.*%s*)", v, v, v)
 	}
 
-	var rows []struct {
-		ID               string `json:"id"`
-		FirstName        string `json:"first_name"`
-		LastName         string `json:"last_name"`
-		Email            string `json:"email"`
-		Phone            string `json:"phone"`
-		UserType         string `json:"user_type"`
-		Status           string `json:"status"`
-		ProfileCompleted bool   `json:"profile_completed"`
-		CreatedAt        string `json:"created_at"`
-		Profiles         []struct {
-			State    string         `json:"state"`
-			Country  string         `json:"country"`
-			Metadata map[string]any `json:"metadata"`
-		} `json:"profiles"`
-	}
+	var rows []adminUserRow
 	if err := r.client.REST(http.MethodGet, "platform_users", q, nil, &rows); err != nil {
 		return nil, err
 	}
 	out := make([]domain.AdminUser, 0, len(rows))
 	for _, row := range rows {
-		state, country, programID, contestID, schoolID := "", "", "", "", ""
-		if len(row.Profiles) > 0 {
-			state, country = row.Profiles[0].State, row.Profiles[0].Country
-			programID = readMetadataString(row.Profiles[0].Metadata, "program_id")
-			contestID = readMetadataString(row.Profiles[0].Metadata, "contest_id")
-			schoolID = readMetadataString(row.Profiles[0].Metadata, "school_id")
-		}
+		user, state, country, programID, contestID, schoolID := adminUserFromRow(row)
 		if filter.State != "" && !strings.EqualFold(strings.TrimSpace(filter.State), strings.TrimSpace(state)) {
 			continue
 		}
@@ -384,22 +404,40 @@ func (r *RBACSupabaseRepository) ListAdminUsers(filter domain.AdminUserFilter) (
 		if filter.Country != "" && !strings.EqualFold(strings.TrimSpace(filter.Country), strings.TrimSpace(country)) {
 			continue
 		}
-		out = append(out, domain.AdminUser{ID: row.ID, FirstName: row.FirstName, LastName: row.LastName, Email: row.Email, Phone: row.Phone, UserType: row.UserType, Status: row.Status, ProfileCompleted: row.ProfileCompleted, State: state, Country: country, ProgramID: programID, ContestID: contestID, SchoolID: schoolID, CreatedAt: row.CreatedAt})
+		out = append(out, user)
 	}
 	return out, nil
 }
 
+// GetAdminUser fetches exactly one platform_users row by primary key.
+//
+// This used to be implemented as ListAdminUsers(Limit: 1) followed by a
+// linear search for a matching ID — but ListAdminUsers orders by
+// created_at.desc, so a Limit of 1 fetches only the single newest user
+// platform-wide. Every lookup for any other user (i.e. almost every lookup)
+// silently 404'd, which broke the admin console's per-user inspect/update
+// view (AUTH-019). Filter by id=eq.<userID> directly instead — PostgREST
+// applies the filter server-side, so this returns the requested row
+// regardless of creation order.
 func (r *RBACSupabaseRepository) GetAdminUser(userID string) (domain.AdminUser, error) {
-	rows, err := r.ListAdminUsers(domain.AdminUserFilter{Limit: 1})
-	if err != nil {
+	id := strings.TrimSpace(userID)
+	if id == "" {
+		return domain.AdminUser{}, fmt.Errorf("user not found")
+	}
+	q := map[string]string{
+		"select": adminUserSelect,
+		"id":     "eq." + id,
+		"limit":  "1",
+	}
+	var rows []adminUserRow
+	if err := r.client.REST(http.MethodGet, "platform_users", q, nil, &rows); err != nil {
 		return domain.AdminUser{}, err
 	}
-	for _, row := range rows {
-		if row.ID == userID {
-			return row, nil
-		}
+	if len(rows) == 0 {
+		return domain.AdminUser{}, fmt.Errorf("user not found")
 	}
-	return domain.AdminUser{}, fmt.Errorf("user not found")
+	user, _, _, _, _, _ := adminUserFromRow(rows[0])
+	return user, nil
 }
 
 func (r *RBACSupabaseRepository) UpdateAdminUser(userID string, patch map[string]any) (domain.AdminUser, error) {
@@ -416,7 +454,14 @@ func (r *RBACSupabaseRepository) UpdateAdminUser(userID string, patch map[string
 	var rows []struct {
 		ID string `json:"id"`
 	}
-	if err := r.client.REST(http.MethodPatch, "platform_users", map[string]string{"id": "eq." + userID, "select": "id"}, payload, &rows); err != nil {
+	// RESTReturn (Prefer: return=representation), not REST: plain REST leaves
+	// PostgREST on its default return=minimal for PATCH, which replies 204 No
+	// Content with an empty body regardless of whether a row matched. rows
+	// would then be empty on every call — success or not — and the check
+	// below would report "user not found" even for a patch that succeeded.
+	// This was masked until now because GetAdminUser's pre-check (AUTH-019)
+	// 404'd before any request ever reached here.
+	if err := r.client.RESTReturn(http.MethodPatch, "platform_users", map[string]string{"id": "eq." + userID, "select": "id"}, payload, &rows); err != nil {
 		return domain.AdminUser{}, err
 	}
 	if len(rows) == 0 {
