@@ -621,8 +621,8 @@ export async function getAppointments(): Promise<Appointment[]> {
     await delay();
     return [...MOCK_APPOINTMENTS].sort((a, b) => +new Date(b.scheduledFor) - +new Date(a.scheduledFor));
   }
-  const { data } = await api.get<Appointment[]>(`${VET_API}/appointments`);
-  return data;
+  const { data } = await api.get<{ appointments?: Appointment[] }>(`${VET_API}/appointments`);
+  return data.appointments ?? [];
 }
 
 export async function getAppointment(id: string): Promise<Appointment> {
