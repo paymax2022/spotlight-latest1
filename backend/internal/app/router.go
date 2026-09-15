@@ -58,7 +58,7 @@ func NewRouter(cfg config.Config) *gin.Engine {
 	realityTV := handlers.NewRealityTVHandler(services.NewRealityTVService(realityTVRepo))
 	// #23 audit coverage: STEM sensitive mutations emit structured audit events
 	// via the shared audit_service. Additive — read endpoints are unaffected.
-	stem := handlers.NewStemHandler(services.NewStemService(stemRepo)).WithAudit(auditService)
+	stem := handlers.NewStemHandler(services.NewStemService(stemRepo)).WithAudit(auditService).WithRBAC(rbacService)
 
 	v1 := r.Group("/api/v1")
 	{
@@ -249,21 +249,17 @@ func NewRouter(cfg config.Config) *gin.Engine {
 		stemGroup := v1.Group("/admin")
 		stemGroup.Use(middleware.RequireAdmin(cfg.AdminAPIKey, cfg.AppEnv))
 		stemGroup.Use(middleware.RequireVerifiedIdentity(supabase, rbacService))
+		// Deliberately NOT behind RequireStemRoles — see StemHandler.MyRole's
+		// doc comment. Any verified caller can ask "what STEM role do I have",
+		// including one whose answer is "none".
+		stemGroup.GET("/stem/my-role", stem.MyRole)
 
 		stemRead := stemGroup.Group("")
 		stemRead.Use(middleware.StemRateLimit(120, time.Minute))
-		stemRead.Use(middleware.RequireStemRoles(
-			rbacService,
-			"SUPER_ADMIN",
-			"ADMIN",
-			"OPERATIONS_MANAGER",
-			"CONTEST_MANAGER",
-			"SCHOOL_ADMIN",
-			"TEACHER_COACH",
-			"JUDGE",
-			"MENTOR",
-			"SPONSOR",
-		))
+		// The full set — every STEM role can read. middleware.AllStemRoleNames
+		// is the single source of truth for "every STEM role name that exists";
+		// StemHandler.MyRole filters against the same list.
+		stemRead.Use(middleware.RequireStemRoles(rbacService, middleware.AllStemRoleNames...))
 		stemRead.GET("/stem/overview", stem.Overview)
 		stemRead.GET("/schools", stem.Schools)
 		stemRead.GET("/schools/:id/dashboard", stem.SchoolDashboard)

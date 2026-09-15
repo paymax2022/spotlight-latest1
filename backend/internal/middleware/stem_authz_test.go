@@ -170,3 +170,63 @@ func TestRequireStemRoles_NoRolesConfigured_NoopEvenWithoutVerifiedAdmin(t *test
 		t.Fatalf("expected 200, got %d", w.Code)
 	}
 }
+
+// ResolveStemRoleNames (used by StemHandler.MyRole) must filter out
+// mechanically-converted names that aren't real STEM roles — a slug like
+// 'registered-user' converts to "REGISTERED_USER" just as readily as 'judge'
+// converts to "JUDGE", but only the latter is in AllStemRoleNames.
+func TestResolveStemRoleNames_FiltersToRecognizedStemRolesOnly(t *testing.T) {
+	got := ResolveStemRoleNames([]string{"judge", "registered-user", "verified-user", "contest-manager"})
+	want := []string{"JUDGE", "CONTEST_MANAGER"}
+	if len(got) != len(want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("got %v, want %v", got, want)
+		}
+	}
+}
+
+// Every STEM role slug this repo seeds resolves to a name AllStemRoleNames
+// recognizes — pins that the two lists (the mechanical conversion rule, and
+// the "real STEM role" allow-list) stay in agreement.
+func TestResolveStemRoleNames_AllSeededStemRoleSlugsAreRecognized(t *testing.T) {
+	slugs := []string{
+		"super-admin", "system-admin", "operations-manager", "contest-manager",
+		"school-admin", "teacher-coach", "judge", "mentor", "sponsor",
+	}
+	got := ResolveStemRoleNames(slugs)
+	if len(got) == 0 {
+		t.Fatalf("expected at least one recognized STEM role, got none")
+	}
+	for _, slug := range slugs {
+		names := normalizeStemRoleSlug(slug)
+		recognized := false
+		for _, n := range names {
+			for _, g := range got {
+				if g == n {
+					recognized = true
+				}
+			}
+		}
+		if !recognized {
+			t.Fatalf("slug %q (-> %v) was not recognized by AllStemRoleNames/ResolveStemRoleNames", slug, names)
+		}
+	}
+}
+
+// Duplicate role slugs (or slugs that alias to the same name, e.g.
+// system-admin's ADMIN alias) must not produce duplicate entries.
+func TestResolveStemRoleNames_Deduplicates(t *testing.T) {
+	got := ResolveStemRoleNames([]string{"judge", "judge", "system-admin"})
+	seen := map[string]int{}
+	for _, g := range got {
+		seen[g]++
+	}
+	for name, count := range seen {
+		if count != 1 {
+			t.Fatalf("role %q appeared %d times, want 1 (roles: %v)", name, count, got)
+		}
+	}
+}

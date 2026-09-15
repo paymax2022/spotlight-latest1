@@ -119,3 +119,60 @@ func normalizeStemRoleSlug(slug string) []string {
 	}
 	return []string{norm}
 }
+
+// AllStemRoleNames is the full set of STEM role names RequireStemRoles is
+// ever configured to check against — the union of every stemRead/stemManage
+// allow-list in router.go. Exported so router.go's broadest group (stemRead)
+// can pass this instead of repeating the list literally, and so
+// ResolveStemRoleNames below can filter its output to real STEM roles only.
+// Keep this in sync with router.go if a new STEM role is ever introduced —
+// there is deliberately only one place that needs to change.
+var AllStemRoleNames = []string{
+	"SUPER_ADMIN",
+	"ADMIN",
+	"OPERATIONS_MANAGER",
+	"CONTEST_MANAGER",
+	"SCHOOL_ADMIN",
+	"TEACHER_COACH",
+	"JUDGE",
+	"MENTOR",
+	"SPONSOR",
+}
+
+// ResolveStemRoleNames maps a user's real RBAC role slugs (as returned by
+// rbac.GetUserRoles) to the STEM role name(s) router.go's allow-lists use
+// (e.g. "JUDGE", "CONTEST_MANAGER"), using the exact same rule
+// RequireStemRoles itself checks against — exported so a "what STEM role do
+// I have" endpoint (StemHandler.MyRole) can report the same answer
+// RequireStemRoles would compute for this user, without duplicating or
+// drifting from the mapping.
+//
+// normalizeStemRoleSlug is a MECHANICAL conversion — it has no notion of
+// which resulting names are actually meaningful STEM roles, so a slug like
+// 'registered-user' converts to "REGISTERED_USER" just as readily as
+// 'judge' converts to "JUDGE". Filtered against AllStemRoleNames here so the
+// answer only ever contains roles someone could actually be granted STEM
+// access through. Order is deterministic (input order, first occurrence);
+// duplicates are removed.
+func ResolveStemRoleNames(roleSlugs []string) []string {
+	recognized := make(map[string]struct{}, len(AllStemRoleNames))
+	for _, n := range AllStemRoleNames {
+		recognized[n] = struct{}{}
+	}
+
+	seen := map[string]struct{}{}
+	out := make([]string, 0, len(roleSlugs))
+	for _, slug := range roleSlugs {
+		for _, name := range normalizeStemRoleSlug(slug) {
+			if _, ok := recognized[name]; !ok {
+				continue
+			}
+			if _, ok := seen[name]; ok {
+				continue
+			}
+			seen[name] = struct{}{}
+			out = append(out, name)
+		}
+	}
+	return out
+}
