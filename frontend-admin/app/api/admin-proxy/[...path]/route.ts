@@ -101,6 +101,18 @@ async function forward(request: Request, ctx: { params: Promise<{ path: string[]
   const idem = request.headers.get('idempotency-key');
   if (idem) headers['Idempotency-Key'] = idem;
 
+  // AUTH-020: x-stem-role MUST survive the hop.
+  //
+  // Same class of bug as Idempotency-Key above: this proxy's outbound headers
+  // are an allowlist, and x-stem-role was missing from it. The STEM admin
+  // console UI sends it on every /admin/stem*, /admin/schools*, /admin/stem-*
+  // request, but it was silently dropped here — so the backend's
+  // RequireStemRoles middleware always saw "missing stem role" (403) no matter
+  // what the browser sent, once AUTH-018 made this proxy attach a real bearer
+  // token and callers stopped 401ing before they even got this far.
+  const stemRole = request.headers.get('x-stem-role');
+  if (stemRole) headers['x-stem-role'] = stemRole;
+
   const method = request.method;
   const body = method === 'GET' || method === 'HEAD' ? undefined : await request.text();
 
