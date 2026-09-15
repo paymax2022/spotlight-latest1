@@ -1,7 +1,7 @@
 // ── Admin — Paymax Mobility multi-modal service ──────────────────────────────
 // Parcel · Bus · Towing · Movers · Car hire. Mock by default; flip USE_MOCK to
 // false and the fetch branches hit /api/finance/admin/transport/{parcels,
-// bus,towing,movers,car-hire}. Most of this surface IS live — registered under
+// bus,towing,movers,car-hire,drivers}. Most of this surface IS live — registered under
 // backend/internal/app/finance_routes.go's FeatureTransportModesEnabled block —
 // the OLD "Go backend admin endpoints not live yet" claim here was stale; a few
 // mutations genuinely have no backend action yet, and each says so on its own
@@ -11,7 +11,7 @@
 import { apiRoot } from '@/config/env';
 import { resolveUseMock } from '@/config/useMock';
 import type {
-  ParcelRow, ParcelStatus, PodStatus,
+  ParcelRow, ParcelStatus, PodStatus, CourierRow,
   BusOperator, BusRoute, BusSchedule, BusManifestRow,
   TowingRow, TowingStatus,
   MoverRow, MoverDetail, MoverStatus,
@@ -96,6 +96,13 @@ const PARCELS: ParcelRow[] = [
   { id: 'pcl_3003', senderName: 'Sola M.', courierName: null, courierId: null, status: 'created', category: 'parcel', size: 'large', speed: 'standard', pickupAddress: 'Surulere', dropoffAddress: 'Yaba', zone: 'Surulere', fareKobo: 3_100_00, declaredValueKobo: 30_000_00, podStatus: 'pending', podProofUrl: null, escrowStatus: 'held', createdAt: '2026-06-20T11:00:00Z', updatedAt: '2026-06-20T11:00:00Z' },
   { id: 'pcl_2990', senderName: 'Kemi T.', courierName: 'Grace E.', courierId: 'drv_2011', status: 'delivered', category: 'documents', size: 'small', speed: 'express', pickupAddress: 'Lekki', dropoffAddress: 'Ajah', zone: 'Lekki', fareKobo: 1_500_00, declaredValueKobo: 10_000_00, podStatus: 'approved', podProofUrl: '#', escrowStatus: 'released', createdAt: '2026-06-19T15:00:00Z', updatedAt: '2026-06-19T16:05:00Z' },
   { id: 'pcl_2985', senderName: 'David N.', courierName: 'Femi K.', courierId: 'drv_2010', status: 'disputed', category: 'fragile', size: 'medium', speed: 'standard', pickupAddress: 'Yaba', dropoffAddress: 'Surulere', zone: 'Yaba', fareKobo: 2_000_00, declaredValueKobo: 75_000_00, podStatus: 'rejected', podProofUrl: '#', escrowStatus: 'held', createdAt: '2026-06-19T12:00:00Z', updatedAt: '2026-06-19T14:30:00Z' },
+];
+
+const COURIERS: CourierRow[] = [
+  { id: 'drv_1003', name: 'Tunde Adeyemi', phone: '+2348034567890', status: 'active', rating: 4.8, activeParcels: 1, completedParcels: 412 },
+  { id: 'drv_2012', name: 'Ibrahim S.', phone: '+2348044567811', status: 'active', rating: 4.7, activeParcels: 1, completedParcels: 188 },
+  { id: 'drv_2011', name: 'Grace E.', phone: '+2348044567822', status: 'active', rating: 4.9, activeParcels: 0, completedParcels: 256 },
+  { id: 'drv_2010', name: 'Femi K.', phone: '+2348044567833', status: 'suspended', rating: 4.1, activeParcels: 0, completedParcels: 97 },
 ];
 
 const BUS_OPERATORS: BusOperator[] = [
@@ -189,6 +196,34 @@ export async function reviewParcelPod(id: string, decision: PodStatus, reason: s
   // exists in backend/internal/app/finance_routes.go's parcels admin routes.
   if (USE_MOCK) throw new Error(`Reviewing a parcel proof of delivery ${NO_BACKEND_YET}`);
   return writeOk(`${adminBase()}/parcels/${id}/pod-review`, { method: 'PATCH', headers: authHeaders(), body: JSON.stringify({ decision, reason }) });
+}
+
+// A courier is a driver with 'parcel' in service_categories — filtered
+// server-side via ?service_category=parcel (transportAdmin.ListDrivers). Do
+// NOT filter this by vehicle_type: that column is the transport mode
+// (car/bike/tricycle), not a proxy for "does parcel work". Status here maps
+// the driver's live status/verification onto the courier-facing tri-state:
+// suspended (verification revoked) beats online/offline.
+function mapCourier(d: Record<string, any>): CourierRow {
+  const status: CourierRow['status'] =
+    d.verification_status === 'suspended' ? 'suspended'
+    : (d.status === 'online' || d.status === 'on_trip') ? 'active'
+    : 'inactive';
+  return {
+    id: d.id,
+    name: d.name,
+    phone: d.phone ?? null,
+    status,
+    rating: Number(d.rating ?? 0),
+    activeParcels: Number(d.active_parcels ?? 0),
+    completedParcels: Number(d.completed_parcels ?? 0),
+  };
+}
+
+export async function getCouriers(): Promise<CourierRow[]> {
+  if (USE_MOCK) { await delay(); return [...COURIERS]; }
+  const rows = await readList(`${adminBase()}/drivers?service_category=parcel`, 'drivers');
+  return rows.map(mapCourier);
 }
 
 // ─── Bus ────────────────────────────────────────────────────────────────────--

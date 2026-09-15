@@ -24,7 +24,7 @@ func (h *AdminHandler) Dashboard(c *gin.Context) {
 
 // ListDrivers returns the driver list / verification queue.
 func (h *AdminHandler) ListDrivers(c *gin.Context) {
-	ds, err := h.svc.ListDrivers(c.Request.Context(), c.Query("status"))
+	ds, err := h.svc.ListDrivers(c.Request.Context(), c.Query("status"), c.Query("vehicle_type"), c.Query("service_category"))
 	if err != nil {
 		respondErr(c, err)
 		return

@@ -41,6 +41,26 @@ export interface ParcelRow {
   updatedAt: string;
 }
 
+// ─── Couriers ─────────────────────────────────────────────────────────────────
+// A courier IS a driver — GET /admin/transport/drivers?service_category=parcel
+// (transportAdmin.ListDrivers). Filtered on drivers.service_categories, NOT
+// vehicle_type: vehicle_type is the transport mode (car/bike/tricycle) and says
+// nothing about whether the driver does parcel work. There is no per-courier
+// "zone" on the drivers table (zone lives on individual parcel jobs), so it is
+// not part of this shape. activeParcels/completedParcels come from a live count
+// against the parcels table (courier_id) — NOT the driver's completed_trips/
+// cancelled_trips counters, which are shared across rides, towing, movers and
+// car-hire and would misreport parcel-specific activity.
+export interface CourierRow {
+  id: string;
+  name: string;
+  phone: string | null;
+  status: 'active' | 'inactive' | 'suspended';
+  rating: number;
+  activeParcels: number;
+  completedParcels: number;
+}
+
 // ─── Bus ──────────────────────────────────────────────────────────────────────
 export interface BusOperator {
   id: string;

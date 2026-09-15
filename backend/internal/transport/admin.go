@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"strconv"
+	"strings"
 )
 
 // AdminService wraps the transport Service for admin operations. Every mutation
@@ -97,15 +99,42 @@ func (a *AdminService) ReportsSummary(ctx context.Context) (map[string]any, erro
 
 // ─── Drivers ─────────────────────────────────────────────────────────────────
 
-func (a *AdminService) ListDrivers(ctx context.Context, status string) ([]map[string]any, error) {
+// ListDrivers returns the driver queue. serviceCategory filters to drivers
+// whose service_categories array contains the given value (e.g. "parcel" for
+// couriers) — vehicle_type (car/bike/tricycle) is the transport mode, NOT a
+// proxy for this: a car driver can be a parcel courier and a bike driver can
+// be pure ride-hailing, so callers that mean "couriers" must filter on
+// service_categories, not vehicle_type. active_parcels/completed_parcels are
+// computed from the parcels table (courier_id) rather than the driver's
+// cross-mode completed_trips/cancelled_trips counters, which are shared with
+// rides, towing, movers and car-hire jobs and would misreport parcel-specific
+// activity for a driver who also does other transport modes.
+func (a *AdminService) ListDrivers(ctx context.Context, status, vehicleType, serviceCategory string) ([]map[string]any, error) {
 	db := a.svc.db
-	q := `SELECT id, user_id, name, vehicle_type, status, rating, verification_status, completed_trips, cancelled_trips, created_at FROM drivers`
+	q := `SELECT d.id, d.user_id, d.name, d.vehicle_type, d.status, d.rating, d.verification_status,
+	             d.completed_trips, d.cancelled_trips, d.created_at, d.phone,
+	             COUNT(p.id) FILTER (WHERE p.status NOT IN ('delivered','failed','cancelled','disputed')) AS active_parcels,
+	             COUNT(p.id) FILTER (WHERE p.status = 'delivered') AS completed_parcels
+	      FROM drivers d
+	      LEFT JOIN parcels p ON p.courier_id = d.id`
 	args := []any{}
+	var where []string
 	if status != "" {
-		q += ` WHERE verification_status=$1`
 		args = append(args, status)
+		where = append(where, `d.verification_status=$`+strconv.Itoa(len(args)))
 	}
-	q += ` ORDER BY created_at DESC LIMIT 200`
+	if vehicleType != "" {
+		args = append(args, vehicleType)
+		where = append(where, `d.vehicle_type=$`+strconv.Itoa(len(args)))
+	}
+	if serviceCategory != "" {
+		args = append(args, serviceCategory)
+		where = append(where, `d.service_categories @> ARRAY[$`+strconv.Itoa(len(args))+`]::text[]`)
+	}
+	if len(where) > 0 {
+		q += ` WHERE ` + strings.Join(where, ` AND `)
+	}
+	q += ` GROUP BY d.id ORDER BY d.created_at DESC LIMIT 200`
 	rows, err := db.Query(ctx, q, args...)
 	if err != nil {
 		return nil, err
@@ -114,16 +143,18 @@ func (a *AdminService) ListDrivers(ctx context.Context, status string) ([]map[st
 	var out []map[string]any
 	for rows.Next() {
 		var id, uid, name, vtype, st, vstatus string
+		var phone *string
 		var rating float64
-		var completed, cancelled int
+		var completed, cancelled, activeParcels, completedParcels int
 		var createdAt any
-		if err := rows.Scan(&id, &uid, &name, &vtype, &st, &rating, &vstatus, &completed, &cancelled, &createdAt); err != nil {
+		if err := rows.Scan(&id, &uid, &name, &vtype, &st, &rating, &vstatus, &completed, &cancelled, &createdAt, &phone, &activeParcels, &completedParcels); err != nil {
 			return nil, err
 		}
 		out = append(out, map[string]any{
 			"id": id, "user_id": uid, "name": name, "vehicle_type": vtype, "status": st,
 			"rating": rating, "verification_status": vstatus, "completed_trips": completed,
-			"cancelled_trips": cancelled, "created_at": createdAt,
+			"cancelled_trips": cancelled, "created_at": createdAt, "phone": phone,
+			"active_parcels": activeParcels, "completed_parcels": completedParcels,
 		})
 	}
 	return out, nil
