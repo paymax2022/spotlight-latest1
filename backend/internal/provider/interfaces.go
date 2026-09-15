@@ -127,6 +127,10 @@ type PaymentStatus struct {
 	AmountKobo int64
 	Channel    string
 	PaidAt     *string
+	// Currency is the ISO 4217 code the gateway settled in (e.g. "NGN"). Empty
+	// when a provider adapter doesn't populate it — a caller that checks this
+	// MUST treat empty as "unknown", never as an implicit match.
+	Currency string
 }
 
 type PayoutRequest struct {
