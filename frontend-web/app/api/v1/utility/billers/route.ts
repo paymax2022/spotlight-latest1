@@ -1,6 +1,6 @@
 import { successResponse, handleApiError } from '@/src/lib/api/responses';
-import { listBillers } from '@/src/server/utility/service';
-import { parseUtilityCategory, requireUtilityUser, utilityUnavailableResponse } from '../_utils';
+import { proxyToGoBackend } from '@/src/lib/go-backend';
+import { requireUtilityUser, utilityUnavailableResponse } from '../_utils';
 
 export async function GET(request: Request) {
   const unavailable = utilityUnavailableResponse();
@@ -8,9 +8,15 @@ export async function GET(request: Request) {
 
   try {
     await requireUtilityUser(request);
-    const url = new URL(request.url);
-    const category = parseUtilityCategory(url.searchParams.get('category'));
-    return successResponse({ success: true, billers: await listBillers(category) });
+    // Proxy to Go backend (query params forwarded automatically)
+    const upstream = await proxyToGoBackend(request, '/api/finance/utilitybills/billers');
+
+    if (upstream.status >= 400) {
+      return upstream;
+    }
+
+    const data = await upstream.json() as Record<string, unknown>;
+    return successResponse({ success: true, billers: data.billers });
   } catch (err) {
     return handleApiError(err);
   }

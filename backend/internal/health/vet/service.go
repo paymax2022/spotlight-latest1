@@ -843,6 +843,45 @@ func (s *Service) Get(ctx context.Context, requesterID, apptID string, isAdmin b
 	return a, nil
 }
 
+// ListAppointmentsForPatient returns the caller's own appointments (as pet
+// owner/payer), most recent first — scoped by WHERE ap.patient_id = $1 rather
+// than an object-level check per row, same reasoning as lab's
+// ListOrdersForPatient: there is nothing to authorize beyond "these are yours."
+func (s *Service) ListAppointmentsForPatient(ctx context.Context, patientID string) ([]Appointment, error) {
+	const q = `
+		SELECT ap.id, ap.provider_id, ap.patient_id, ap.visit_type, ap.state, ap.slot_start, ap.slot_end,
+		       vp.pet_id, vp.service_id, vp.total_kobo, vp.escrow_id, vp.consult_id, vp.delivery_ref, vp.pay_state, ap.created_at
+		FROM health_appointments ap
+		JOIN vet_appointment_payments vp ON vp.appointment_id = ap.id
+		WHERE ap.patient_id = $1
+		ORDER BY ap.created_at DESC LIMIT 200`
+	rows, err := s.db.Query(ctx, q, patientID)
+	if err != nil {
+		return nil, fmt.Errorf("vet: list appointments: %w", err)
+	}
+	defer rows.Close()
+	// Non-nil so the handler serialises [] rather than null for a patient with
+	// no appointments yet.
+	out := []Appointment{}
+	for rows.Next() {
+		var a Appointment
+		var state, visit, payState string
+		if err := rows.Scan(&a.ID, &a.ProviderID, &a.OwnerID, &visit, &state,
+			&a.SlotStart, &a.SlotEnd, &a.PetID, &a.ServiceID, &a.TotalKobo, &a.EscrowID, &a.ConsultID,
+			&a.DeliveryRef, &payState, &a.CreatedAt); err != nil {
+			return nil, err
+		}
+		a.State = ApptState(state)
+		a.VisitType = VisitType(visit)
+		a.PayState = PayState(payState)
+		out = append(out, a)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // ─── internals ──────────────────────────────────────────────────────────────
 
 // load joins the scheduling row (authoritative state/slot) with the vet payment

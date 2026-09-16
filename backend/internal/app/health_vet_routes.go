@@ -107,6 +107,7 @@ func RegisterHealthVet(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pg
 	vg.GET("/vets", h.DiscoverVets)                          // map/list discovery (HL-2, PostGIS)
 	vg.POST("/services", h.UpsertService)                    // verified vet owner; fee governance
 	vg.POST("/appointments", h.Book)                         // tele/home/clinic; payment HELD (HL-9)
+	vg.GET("/appointments", h.ListMyAppointments)            // owner's own appointment history
 	vg.GET("/appointments/:id", h.Get)                       // object-level authZ
 	vg.POST("/appointments/:id/accept", h.Accept)            // verified vet (HL-2)
 	vg.POST("/appointments/:id/confirm", h.Confirm)          // ACCEPTED → CONFIRMED

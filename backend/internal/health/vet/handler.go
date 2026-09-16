@@ -354,6 +354,21 @@ func (h *Handler) EmergencySOS(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"success": true, "sos": res})
 }
 
+// ListMyAppointments — GET /appointments  (owner reads own appointment history)
+func (h *Handler) ListMyAppointments(c *gin.Context) {
+	id := uid(c)
+	if id == "" {
+		fail(c, http.StatusUnauthorized, "unauthenticated")
+		return
+	}
+	appts, err := h.svc.ListAppointmentsForPatient(c.Request.Context(), id)
+	if err != nil {
+		fail(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "appointments": appts})
+}
+
 // Get — GET /appointments/:id  (object-level authZ: owner / vet / admin)
 func (h *Handler) Get(c *gin.Context) {
 	a, err := h.svc.Get(c.Request.Context(), uid(c), c.Param("id"), h.isAdmin(c))

@@ -962,6 +962,16 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		log.Println("[finance] Maplerad WaaS domain routes + webhook + jobs registered")
 	}
 
+	// --- Utility Bills DOMAIN money path (Next.js → Go migration, Phase 1-3) ---
+	// Gated by FEATURE_UTILITY_BILLS_ENABLED inside RegisterUtilityBills (no flag,
+	// no money path). Member routes at /api/finance/utilitybills/*; the
+	// money-affecting admin actions at /api/finance/admin/utilitybills/* behind
+	// RBAC finance.admin.utilitybills. Reuses wallet/ledger/commission — the debit
+	// goes through walletSvc, so the tier/daily-limit check fires exactly as it
+	// does for every other module rather than being reimplemented here. The
+	// hourly requery-sweep job (Phase 3) runs on the same ctx as Maplerad's jobs.
+	RegisterUtilityBills(ctx, r, finance, cfg, pool, rbac, mapsAuth(), ledgerSvc, walletSvc, auditSink)
+
 	// --- Multi-provider KYC verification gateway (ADR-013) ---
 	// Gated by FEATURE_KYC_VERIFY_ENABLED (default off). Builds the adapter
 	// registry from config (only providers with non-empty creds are registered;

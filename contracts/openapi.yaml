@@ -14949,3 +14949,392 @@ paths:
         '404': { description: Unknown banner slug }
         '502': { description: Presigning failed }
         '503': { description: R2 is not configured in this environment }
+
+  # ── Utility Bills (Next.js → Go migration) ─────────────────────────────────
+  # Phase 1 (IMPLEMENTED): backend/internal/utilitybills + the route wiring in
+  # backend/internal/app/utilitybills_routes.go. The whole surface is gated by
+  # FeatureUtilityBillsEnabled (FEATURE_UTILITY_BILLS_ENABLED, DEFAULT false) —
+  # with the flag off every path below 404s.
+  #
+  # Phase 0 stubbed these paths ahead of the implementation per this repo's
+  # spec-first workflow and said schemas would be "fleshed out against the real
+  # handler.go once written". That is what this block now is. Three changes from
+  # the stub, each because the implementation settled the question:
+  #   • the catalogue reads (categories / billers / products), the attempt trail
+  #     and the dispute endpoint were missing from the stub and are real;
+  #   • GET and PUT on /beneficiaries/{id} were stubbed but NOT built: saving is
+  #     an UPSERT on the natural key (user, biller, customer_reference), so
+  #     "update" is POST /beneficiaries and a by-id read has no caller;
+  #   • the money-affecting admin actions are added, RBAC-gated. The remaining
+  #     ~20 admin routes are Phase 4.
+  /api/finance/utilitybills/categories:
+    get:
+      operationId: utilityBillsListCategories
+      summary: List enabled utility categories with their limits
+      tags: [Utility Bills]
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: Category list (falls back to the six built-ins when no settings rows are enabled)
+  /api/finance/utilitybills/billers:
+    get:
+      operationId: utilityBillsListBillers
+      summary: List active billers, optionally filtered by category
+      tags: [Utility Bills]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: category, in: query, required: false, schema: { type: string, enum: [airtime, data, electricity, cable_tv, internet, education] } }
+      responses:
+        '200':
+          description: Biller list
+  /api/finance/utilitybills/products:
+    get:
+      operationId: utilityBillsListProducts
+      summary: List active products, optionally filtered by category and/or biller
+      tags: [Utility Bills]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: category, in: query, required: false, schema: { type: string } }
+        - { name: biller_id, in: query, required: false, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: Product list
+  /api/finance/utilitybills/validate:
+    post:
+      operationId: utilityBillsValidateCustomer
+      summary: Validate a customer reference against the provider before purchase
+      description: >-
+        No side effects and no money movement. A provider with no verification
+        capability reports valid=true with an explanatory message rather than
+        blocking the purchase.
+      tags: [Utility Bills]
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [category, biller_id, customer_reference]
+              properties:
+                category: { type: string, enum: [airtime, data, electricity, cable_tv, internet, education] }
+                biller_id: { type: string, format: uuid }
+                product_id: { type: string, format: uuid, description: Optional; falls back to the biller's first active product. }
+                customer_reference: { type: string, description: Meter / smartcard / phone number being verified. }
+                metadata: { type: object, additionalProperties: { type: string } }
+      responses:
+        '200':
+          description: Validation result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  valid: { type: boolean }
+                  customer_name: { type: string }
+                  message: { type: string }
+        '400': { description: 'Invalid category, missing field, or biller/category mismatch' }
+        '404': { description: Unknown biller or product }
+  /api/finance/utilitybills/quote:
+    post:
+      operationId: utilityBillsQuote
+      summary: Price a product before purchase, no side effects
+      description: >-
+        Returns only what the CUSTOMER pays. Provider cost, gross profit and
+        margin are internal and are deliberately not disclosed here.
+      tags: [Utility Bills]
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [category, biller_id, product_id]
+              properties:
+                category: { type: string }
+                biller_id: { type: string, format: uuid }
+                product_id: { type: string, format: uuid }
+                amount_kobo:
+                  type: integer
+                  format: int64
+                  description: Integer minor units. Required for a variable-amount product; ignored for a fixed one.
+      responses:
+        '200':
+          description: Pricing breakdown
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  quote:
+                    type: object
+                    properties:
+                      category: { type: string }
+                      biller_id: { type: string, format: uuid }
+                      product_id: { type: string, format: uuid }
+                      provider_id: { type: string, format: uuid }
+                      amount_kobo: { type: integer, format: int64 }
+                      markup_kobo: { type: integer, format: int64 }
+                      convenience_fee_kobo: { type: integer, format: int64 }
+                      retail_amount_kobo:
+                        type: integer
+                        format: int64
+                        description: amount + markup + convenience fee. This is the sum the wallet is debited for.
+        '400': { description: 'Invalid category, missing field, or amount outside the product bounds' }
+        '503': { description: No viable provider route for this product }
+  /api/finance/utilitybills/pay:
+    post:
+      operationId: utilityBillsPay
+      summary: Pay a utility bill
+      description: >-
+        Debits the wallet into the provider-clearing pass-through account and
+        purchases from the routed provider, failing over across providers in
+        priority order. A money mutation — Idempotency-Key is REQUIRED (rejected
+        in the service layer, not middleware).
+
+
+        Replay of the same key returns the ORIGINAL transaction with
+        already_processed=true; it never debits twice and never re-hits the
+        provider. A DEFINITE provider failure on a wallet-sourced payment
+        auto-reverses the debit (status `reversed`); an AMBIGUOUS outcome
+        (timeout, transport error) lands in `provider_pending` and is NOT
+        reversed, because the purchase may still complete upstream.
+      tags: [Utility Bills]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [category, biller_id, product_id, customer_reference]
+              properties:
+                category: { type: string }
+                biller_id: { type: string, format: uuid }
+                product_id: { type: string, format: uuid }
+                customer_reference: { type: string }
+                amount_kobo: { type: integer, format: int64, description: Integer minor units; required for a variable-amount product. }
+                payment_source:
+                  type: string
+                  enum: [wallet, paystack]
+                  default: wallet
+                  description: >-
+                    'paystack' records an already-collected payment; no wallet
+                    debit is posted and no auto-reversal fires on provider
+                    failure (the funds are at Paystack, not in the ledger).
+                metadata: { type: object }
+      responses:
+        '200':
+          description: >-
+            Purchase settled. `status` is successful, provider_pending, failed or
+            reversed — check it; a 200 does not mean the bill was delivered.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  already_processed: { type: boolean, description: True when this Idempotency-Key was already used; the original transaction is returned unchanged. }
+                  transaction:
+                    type: object
+                    properties:
+                      id: { type: string, format: uuid }
+                      status: { type: string, enum: [initiated, wallet_debited, provider_pending, successful, failed, reversed, disputed] }
+                      retail_amount_kobo: { type: integer, format: int64 }
+                      token: { type: string, nullable: true, description: The vended prepaid-electricity token — the customer-facing deliverable. }
+                      receipt_number: { type: string, nullable: true }
+                      provider_reference: { type: string, nullable: true }
+        '400': { description: 'Missing Idempotency-Key, invalid field, or failed customer validation' }
+        '403': { description: Wallet disabled for this KYC tier }
+        '409': { description: 'A purchase with this key is in flight, or its outcome is unknown and awaiting reconciliation' }
+        '422': { description: Insufficient wallet funds }
+        '429': { description: Wallet tier daily limit or category daily limit exceeded }
+        '503': { description: 'No viable provider route, or the category is switched off' }
+  /api/finance/utilitybills/transactions:
+    get:
+      operationId: utilityBillsListTransactions
+      summary: List the caller's utility bill transactions
+      tags: [Utility Bills]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: limit, in: query, required: false, schema: { type: integer, default: 20, maximum: 100 } }
+        - { name: offset, in: query, required: false, schema: { type: integer, default: 0 } }
+      responses:
+        '200':
+          description: Transaction list, newest first
+  /api/finance/utilitybills/transactions/{id}:
+    get:
+      operationId: utilityBillsGetTransaction
+      summary: Get a single utility bill transaction by id
+      description: Scoped to the caller — another member's transaction reports 404, never the row.
+      tags: [Utility Bills]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: Transaction detail }
+        '404': { description: 'Not found, or not the caller''s' }
+  /api/finance/utilitybills/transactions/{id}/attempts:
+    get:
+      operationId: utilityBillsListTransactionAttempts
+      summary: List the provider attempt trail for one transaction
+      tags: [Utility Bills]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: 'Attempt list, in attempt order' }
+        '404': { description: 'Not found, or not the caller''s' }
+  /api/finance/utilitybills/transactions/{id}/requery:
+    post:
+      operationId: utilityBillsRequeryTransaction
+      summary: Re-query a pending transaction's status against the provider
+      description: >-
+        A transaction in a non-requeryable state is returned unchanged rather
+        than erroring. A requery that the provider cannot answer leaves the
+        status alone — it can never move a transaction to failed on silence.
+      tags: [Utility Bills]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: 'Transaction, status refreshed from the provider' }
+        '404': { description: 'Not found, or not the caller''s' }
+  /api/finance/utilitybills/transactions/{id}/dispute:
+    post:
+      operationId: utilityBillsCreateDispute
+      summary: Open a dispute against one of the caller's transactions
+      tags: [Utility Bills]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reason]
+              properties:
+                reason: { type: string }
+      responses:
+        '201': { description: Dispute opened; the transaction moves to `disputed` }
+        '400': { description: Missing reason }
+        '404': { description: 'Not found, or not the caller''s' }
+  /api/finance/utilitybills/beneficiaries:
+    get:
+      operationId: utilityBillsListBeneficiaries
+      summary: List the caller's saved utility beneficiaries
+      tags: [Utility Bills]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: category, in: query, required: false, schema: { type: string } }
+      responses:
+        '200': { description: 'Saved beneficiary list, newest first' }
+    post:
+      operationId: utilityBillsSaveBeneficiary
+      summary: Save (or rename) a utility beneficiary
+      description: >-
+        UPSERT on the natural key (user, biller, customer_reference). Re-saving
+        the same meter under a new label renames it rather than duplicating it —
+        which is why there is no separate PUT.
+      tags: [Utility Bills]
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [category, biller_id, label, customer_reference]
+              properties:
+                category: { type: string }
+                biller_id: { type: string, format: uuid }
+                label: { type: string }
+                customer_reference: { type: string }
+                customer_name: { type: string }
+      responses:
+        '200': { description: Beneficiary saved }
+        '400': { description: 'Invalid category, missing field, or biller/category mismatch' }
+  /api/finance/utilitybills/beneficiaries/{id}:
+    delete:
+      operationId: utilityBillsDeleteBeneficiary
+      summary: Remove a saved utility beneficiary
+      tags: [Utility Bills]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '204': { description: Beneficiary removed }
+        '404': { description: 'Not found, or not the caller''s' }
+
+  # ── Utility Bills admin (Phase 1: money-affecting actions only) ────────────
+  # RBAC: finance.admin.utilitybills, enforced per route with
+  # middleware.RequirePermission. The full admin surface is Phase 4; these exist
+  # now so the Next.js admin can PROXY to Go in Phase 2 rather than run a second
+  # independent writer against the same rows.
+  /api/finance/admin/utilitybills/transactions/{id}:
+    get:
+      operationId: utilityBillsAdminGetTransaction
+      summary: Get any utility transaction with its provider attempt trail (admin)
+      tags: [Utility Bills]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: Transaction plus attempts }
+        '403': { description: Missing finance.admin.utilitybills }
+        '404': { description: Unknown transaction }
+  /api/finance/admin/utilitybills/transactions/{id}/requery:
+    post:
+      operationId: utilityBillsAdminRequeryTransaction
+      summary: Re-query any transaction's status against the provider (admin)
+      tags: [Utility Bills]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: 'Transaction, status refreshed' }
+        '403': { description: Missing finance.admin.utilitybills }
+  /api/finance/admin/utilitybills/transactions/{id}/reverse:
+    post:
+      operationId: utilityBillsAdminReverseTransaction
+      summary: Reverse a wallet-sourced transaction, refunding the member (admin)
+      description: >-
+        Idempotent on the TRANSACTION, not on a caller-supplied header — two
+        admins clicking refund cannot pay the member twice. Refuses a
+        transaction whose status is not reversible, and refuses a
+        Paystack-sourced one (those funds are not in the ledger).
+      tags: [Utility Bills]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reason]
+              properties:
+                reason: { type: string }
+      responses:
+        '200': { description: Transaction reversed; the member's wallet is restored }
+        '400': { description: Missing reason }
+        '403': { description: Missing finance.admin.utilitybills }
+        '409': { description: Transaction is not eligible for reversal }
+  /api/finance/admin/utilitybills/unresolved:
+    get:
+      operationId: utilityBillsAdminUnresolvedBinds
+      summary: Count outbound purchases whose provider outcome was never learned (admin)
+      description: >-
+        The reconciliation backlog. Each one is a member who may have been
+        debited for a bill nobody can confirm. Phase 3's scheduled requery job
+        drains this; until then it is drained by hand.
+      tags: [Utility Bills]
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200': { description: Unresolved bind count }
+        '403': { description: Missing finance.admin.utilitybills }

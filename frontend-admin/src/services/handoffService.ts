@@ -1,9 +1,8 @@
-import { apiV1 } from '@/config/env';
+import { apiV1, adminAuthHeaders } from '@/config/env';
 import type { HandoffRow } from '@/types/handoff';
 
 function adminHeaders() {
-  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-  return headers;
+  return adminAuthHeaders({ 'Content-Type': 'application/json' });
 }
 
 export async function listHandoffs(limit = 200, sessionId = '', status = ''): Promise<HandoffRow[]> {
