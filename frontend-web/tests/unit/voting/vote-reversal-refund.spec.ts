@@ -107,7 +107,13 @@ describe('vote reversal refunds wallet (model, idempotent)', () => {
 });
 
 // ---------------------------------------------------------------------------
-// (B) ROUTE: real handler — behavior it already guarantees
+// (B) ROUTE: real handler — PROPOSE behavior only (UAT Batch 8, SEC-005/G-MC)
+//
+// The route no longer executes a reversal directly — it only proposes one via
+// contest_admin_approvals (dual control). The vote-lookup / already-reversed /
+// wallet-refund assertions that used to live here now target
+// executeVoteReversal directly in sensitive-actions-service.test.ts, which is
+// where that behavior actually lives post-refactor.
 // ---------------------------------------------------------------------------
 
 vi.mock('@/src/server/admin/auth', () => ({
@@ -118,80 +124,30 @@ vi.mock('@/lib/supabase/server', () => ({
   createAdminClient: vi.fn(),
 }));
 
-vi.mock('@/src/server/voting/totals.service', () => ({
-  incrementVoteTotals: vi.fn().mockResolvedValue(undefined),
-}));
-
-vi.mock('@/src/server/voting/audit.service', () => ({
-  appendAuditLog: vi.fn().mockResolvedValue(undefined),
-}));
-
-vi.mock('@/src/server/wallet/service', () => ({
-  reverseWalletDebit: vi.fn(),
-}));
-
 import { POST as postReverse } from '../../../app/api/admin/voting/votes/[voteId]/reverse/route';
 import { assertAdminPermission } from '@/src/server/admin/auth';
 import { createAdminClient } from '@/lib/supabase/server';
-import { reverseWalletDebit } from '@/src/server/wallet/service';
-import { makeSupabaseMock } from '../golden-path/_fixtures';
+import { makeSupabaseMock, chainableInsert } from '../golden-path/_fixtures';
 
 function withParams(voteId: string) {
   return { params: Promise.resolve({ voteId }) };
 }
 
-describe('POST /api/admin/voting/votes/{voteId}/reverse (route)', () => {
+describe('POST /api/admin/voting/votes/{voteId}/reverse (route, propose-only)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(assertAdminPermission).mockResolvedValue({ actorId: 'admin-1', role: 'super_admin' } as any);
   });
 
-  it('rejects a reason shorter than 5 chars (400)', async () => {
+  it('rejects a reason shorter than 5 chars (400) — still validated before proposing', async () => {
     const req = makeRequest('/api/admin/voting/votes/vote-1/reverse', { body: { reason: 'ok' } });
     const res = await postReverse(req, withParams('vote-1'));
     expect(res.status).toBe(400);
   });
 
-  it('returns 404 when the vote does not exist', async () => {
-    const { mock, maybySingle } = makeSupabaseMock();
-    maybySingle.mockResolvedValueOnce({ data: null, error: null });
-    vi.mocked(createAdminClient).mockReturnValue(mock as any);
-
-    const req = makeRequest('/api/admin/voting/votes/missing/reverse', {
-      body: { reason: 'Fraudulent activity detected' },
-    });
-    const res = await postReverse(req, withParams('missing'));
-    expect(res.status).toBe(404);
-  });
-
-  it('rejects an already-reversed vote (400) — terminal-state guard', async () => {
-    const { mock, maybySingle } = makeSupabaseMock();
-    maybySingle.mockResolvedValueOnce({
-      data: { id: 'vote-1', vote_status: 'reversed', vote_quantity: 10, contest_id: 'c1', contestant_id: 'k1' },
-      error: null,
-    });
-    vi.mocked(createAdminClient).mockReturnValue(mock as any);
-
-    const req = makeRequest('/api/admin/voting/votes/vote-1/reverse', {
-      body: { reason: 'Duplicate reversal attempt' },
-    });
-    const res = await postReverse(req, withParams('vote-1'));
-    expect(res.status).toBe(400);
-  });
-
-  it('reverses a confirmed vote and reports the reversed quantity', async () => {
-    const { mock, maybySingle } = makeSupabaseMock();
-    maybySingle.mockResolvedValueOnce({
-      data: {
-        id: 'vote-1',
-        vote_status: 'confirmed',
-        vote_quantity: 12,
-        contest_id: 'c1',
-        contestant_id: 'k1',
-        payment_provider: 'wallet',
-      },
-      error: null,
-    });
+  it('proposes a pending approval (202) instead of executing the reversal', async () => {
+    const { mock, insertFn } = makeSupabaseMock();
+    insertFn.mockReturnValue(chainableInsert({ id: 'approval-1', status: 'pending_approval' }));
     vi.mocked(createAdminClient).mockReturnValue(mock as any);
 
     const req = makeRequest('/api/admin/voting/votes/vote-1/reverse', {
@@ -200,59 +156,30 @@ describe('POST /api/admin/voting/votes/{voteId}/reverse (route)', () => {
     const res = await postReverse(req, withParams('vote-1'));
     const body = await res.json();
 
-    expect(res.status).toBe(200);
+    expect(res.status).toBe(202);
     expect(body.success).toBe(true);
-    expect(body.reversedQuantity).toBe(12);
+    expect(body.approvalId).toBe('approval-1');
+    expect(body.status).toBe('pending_approval');
+
+    // The proposal carries the validated payload; nothing has executed.
+    const insertedRow = insertFn.mock.calls[0][0] as any;
+    expect(insertedRow.action_type).toBe('vote_reversal');
+    expect(insertedRow.payload).toMatchObject({ voteId: 'vote-1', reason: 'Fraud reversal confirmed' });
+    expect(insertedRow.initiator_id).toBe('admin-1');
   });
 
-  // Now implemented: a wallet-paid vote reversal refunds via reverseWalletDebit,
-  // keyed on the linked transaction id, and the status guard prevents a second
-  // refund on a re-run (no double credit).
-  it('refunds the wallet via reverseWalletDebit for a wallet-paid vote (once)', async () => {
-    const { mock, maybySingle } = makeSupabaseMock();
-    // 1) votes row (wallet-paid, links to a transaction); 2) vote_transactions row.
-    maybySingle
-      .mockResolvedValueOnce({
-        data: {
-          id: 'vote-1', vote_status: 'confirmed', vote_quantity: 12,
-          contest_id: 'c1', contestant_id: 'k1', transaction_id: 'tx-1',
-        },
-        error: null,
-      })
-      .mockResolvedValueOnce({
-        data: { id: 'tx-1', payment_provider: 'wallet', payment_reference: 'ref-1', amount_paid: 500, voter_user_id: 'u1' },
-        error: null,
-      });
+  it('never looks up the vote at propose time — that happens at execute (approve) time only', async () => {
+    const { mock, insertFn } = makeSupabaseMock();
+    insertFn.mockReturnValue(chainableInsert({ id: 'approval-2', status: 'pending_approval' }));
     vi.mocked(createAdminClient).mockReturnValue(mock as any);
-    vi.mocked(reverseWalletDebit).mockResolvedValue({ alreadyProcessed: false, amountKobo: 50_000 } as any);
 
-    const req = makeRequest('/api/admin/voting/votes/vote-1/reverse', { body: { reason: 'Fraud reversal confirmed' } });
-    const res = await postReverse(req, withParams('vote-1'));
-    const body = await res.json();
-
-    expect(res.status).toBe(200);
-    expect(body.walletRefund.refunded).toBe(true);
-    expect(body.walletRefund.amountKobo).toBe(50_000); // ₦500 → kobo
-    expect(vi.mocked(reverseWalletDebit)).toHaveBeenCalledTimes(1);
-    expect(vi.mocked(reverseWalletDebit)).toHaveBeenCalledWith('u1', expect.objectContaining({
-      amountKobo: 50_000,
-      idempotencyKey: 'vote-reversal-refund:tx-1',
-    }));
-  });
-
-  it('does not double-refund: re-reversing an already-reversed vote is blocked (400)', async () => {
-    const { mock, maybySingle } = makeSupabaseMock();
-    // The vote is already reversed → terminal-state guard returns 400 before any refund.
-    maybySingle.mockResolvedValueOnce({
-      data: { id: 'vote-1', vote_status: 'reversed', vote_quantity: 12, contest_id: 'c1', contestant_id: 'k1', transaction_id: 'tx-1' },
-      error: null,
+    const req = makeRequest('/api/admin/voting/votes/vote-missing/reverse', {
+      body: { reason: 'Fraudulent activity detected' },
     });
-    vi.mocked(createAdminClient).mockReturnValue(mock as any);
+    const res = await postReverse(req, withParams('vote-missing'));
 
-    const req = makeRequest('/api/admin/voting/votes/vote-1/reverse', { body: { reason: 'Duplicate reversal attempt' } });
-    const res = await postReverse(req, withParams('vote-1'));
-
-    expect(res.status).toBe(400);
-    expect(vi.mocked(reverseWalletDebit)).not.toHaveBeenCalled();
+    // Propose succeeds regardless of whether vote-missing actually exists —
+    // existence is checked by executeVoteReversal at approve time.
+    expect(res.status).toBe(202);
   });
 });

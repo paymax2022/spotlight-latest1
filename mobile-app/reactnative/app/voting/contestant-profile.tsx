@@ -137,14 +137,28 @@ export default function ContestantProfileScreen() {
     <SafeAreaView style={styles.safe} edges={['top']}>
       {/* Floating controls */}
       <View style={styles.floatingBar}>
-        <Pressable onPress={() => goBack(`/voting/contestants?contestId=${contestId}`)} style={styles.floatBtn}>
+        <Pressable
+          onPress={() => goBack(`/voting/contestants?contestId=${contestId}`)}
+          style={styles.floatBtn}
+          accessibilityRole="button"
+          accessibilityLabel="Go back"
+        >
           <ArrowLeft size={20} color={Colors.onSurface} strokeWidth={2} />
         </Pressable>
         <View style={styles.floatRight}>
-          <Pressable onPress={() => setShareOpen(true)} style={styles.floatBtn}>
+          <Pressable
+            onPress={() => setShareOpen(true)}
+            style={styles.floatBtn}
+            accessibilityRole="button"
+            accessibilityLabel={`Share ${contestant.stageName ?? contestant.name}'s profile`}
+          >
             <Share2 size={20} color={Colors.onSurface} strokeWidth={2} />
           </Pressable>
-          <Pressable style={styles.floatBtn}>
+          <Pressable
+            style={styles.floatBtn}
+            accessibilityRole="button"
+            accessibilityLabel="Favorite"
+          >
             <Heart size={20} color={Colors.error} strokeWidth={2} />
           </Pressable>
           <HomeMenuButton />

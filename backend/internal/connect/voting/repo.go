@@ -97,6 +97,69 @@ func (r *Repository) CountFreeVotes(ctx context.Context, contestID, voterID stri
 	return n, err
 }
 
+// ClaimFreeVote atomically enforces the free-vote allowance and records the
+// vote (D-010 fix): a plain "count then insert" — two separate statements,
+// each in its own implicit transaction — let two concurrent requests from the
+// same voter both read a count below the cap before either had inserted, so
+// both inserts succeeded and the cap was bypassed. Every step here runs
+// inside ONE transaction, and pg_advisory_xact_lock serializes concurrent
+// claims for the SAME (contest, voter) pair before either can read the count
+// — the second claim can only see the first's insert once it commits, so the
+// count it reads is never stale.
+//
+// An advisory lock, not a `SELECT ... FOR UPDATE` on an existing row: unlike
+// the per-contestant daily-cap row the universal TS engine's claim_free_vote
+// locks (voter_contestant_daily_limits, upserted first so a row always exists
+// to lock), there is no per-(contest,voter) tracking row here to lock ahead of
+// a voter's first vote — connect_votes is an append-only log with no such row.
+//
+// Returns (vote, true, nil) on success, (nil, false, nil) when the cap is
+// already reached (not an error — the caller maps this to ErrFreeVoteUsed).
+func (r *Repository) ClaimFreeVote(ctx context.Context, v *Vote, allowance int) (*Vote, bool, error) {
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return nil, false, fmt.Errorf("voting: claim free vote: begin: %w", err)
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck // no-op once committed
+
+	if _, err := tx.Exec(ctx,
+		`SELECT pg_advisory_xact_lock(hashtextextended($1 || ':' || $2, 0))`,
+		v.ContestID, v.VoterID,
+	); err != nil {
+		return nil, false, fmt.Errorf("voting: claim free vote: lock: %w", err)
+	}
+
+	var used int
+	if err := tx.QueryRow(ctx,
+		`SELECT COUNT(*) FROM connect_votes WHERE contest_id = $1 AND voter_id = $2 AND paid = false`,
+		v.ContestID, v.VoterID,
+	).Scan(&used); err != nil {
+		return nil, false, fmt.Errorf("voting: claim free vote: count: %w", err)
+	}
+	if used >= allowance {
+		return nil, false, nil
+	}
+
+	const ins = `INSERT INTO connect_votes
+		(contest_id, voter_id, option_ref, paid, quantity, amount_kobo, idempotency_key, ledger_ref)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+		RETURNING id, contest_id, voter_id, option_ref, paid, quantity, amount_kobo, ledger_ref, created_at`
+	out := &Vote{}
+	if err := tx.QueryRow(ctx, ins,
+		v.ContestID, v.VoterID, v.OptionRef, v.Paid, v.Quantity, v.AmountKobo, v.IdempotencyKey, v.LedgerRef,
+	).Scan(
+		&out.ID, &out.ContestID, &out.VoterID, &out.OptionRef, &out.Paid,
+		&out.Quantity, &out.AmountKobo, &out.LedgerRef, &out.CreatedAt,
+	); err != nil {
+		return nil, false, fmt.Errorf("voting: claim free vote: insert: %w", err)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return nil, false, fmt.Errorf("voting: claim free vote: commit: %w", err)
+	}
+	return out, true, nil
+}
+
 // CountRecentVotes returns how many votes (any kind) the user cast in a contest
 // since `since` — used for the per-window velocity guard.
 func (r *Repository) CountRecentVotes(ctx context.Context, contestID, voterID string, since time.Time) (int, error) {
