@@ -46,7 +46,7 @@ export default function RiskProfileScreen() {
 
   const save = () => {
     if (!result) return;
-    complete.mutate({ step: 'risk', riskProfile: result }, { onSuccess: () => goBack('/crowdfunding/investment') });
+    complete.mutate({ step: 'riskProfile', riskProfile: result }, { onSuccess: () => goBack('/crowdfunding/investment') });
   };
 
   return (
