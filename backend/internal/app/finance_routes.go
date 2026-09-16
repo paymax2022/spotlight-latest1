@@ -2,6 +2,8 @@ package app
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"log"
 	"net/http"
 	"strings"
@@ -1501,15 +1503,33 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 	}
 
 	// --- Restaurant & Delivery routes ---
+	// restaurantSvc is hoisted to this outer scope (rather than := inside the block
+	// below) so the Disputes routes block further down can wire it into
+	// finance/disputes.Service as the food-dispute delegate (FOOD-004) — it stays nil
+	// when the module is flag-off, and that block checks for nil before using it.
+	var restaurantSvc *restaurant.Service
 	if cfg.FeatureRestaurantEnabled {
 		settlementSvcR := settlement.NewService(pool, ledgerSvc)
 		// WithTiers is NOT optional here: both restaurant money paths (the customer
 		// order escrow in PlaceOrder and the merchant withdrawal reserve) refuse with
 		// ErrTierGateUnwired when no gate is attached, so an unwired deployment serves
 		// 503 on every order rather than escrowing past the KYC daily cap (ADR-033).
-		restaurantSvc := restaurant.NewService(pool, settlementSvcR).
+		restaurantSvc = restaurant.NewService(pool, settlementSvcR).
 			WithLedger(ledgerSvc).
-			WithTiers(tiersSvc)
+			WithTiers(tiersSvc).
+			// FOOD-005: the merchant/rider withdrawal money path (withdrawal.go) had a
+			// complete service (RequestWithdrawal/MarkWithdrawalPaid/MarkWithdrawalFailed)
+			// but was never wired — no flag, no routes, so it was completely unreachable.
+			// The flag gates the MONEY MOVE only (RequestWithdrawal refuses with
+			// ErrWithdrawalsDisabled while off); the read/admin routes mount unconditionally
+			// below alongside the rest of the restaurant module. Disburser is left at the
+			// NoopDisburser default (nil) — RegistryDisburser does not yet populate the
+			// recipient's bank fields on WithdrawalDisburseRequest (see
+			// disbursement_adapter.go), so wiring a live provider here would send a real
+			// payout call with an empty account number/name. Withdrawals stay reserved in
+			// suspense (funds move out of the merchant wallet, but no bank transfer fires)
+			// until that gap is closed.
+			WithWithdrawals(cfg.FeatureRestaurantWithdrawalsEnabled)
 
 		// ── Central Commission & Profit recording (§ profit registry) ──
 		// When the commission feature is on, inject a nil-safe recorder so realized
@@ -1580,6 +1600,26 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		restGroup.POST("/:id/staff", restaurantHandler.InviteStaff)
 		restGroup.PATCH("/:id/staff/:userId", restaurantHandler.SetStaffStatus)
 		restGroup.GET("/earnings", restaurantHandler.Earnings) // caller's food-delivery earnings
+
+		// FOOD-005: merchant/rider WITHDRAWAL money path (wallet → saved bank
+		// account). Both "bank-accounts" and "withdrawals" are static siblings of
+		// :id, like /mine and /earnings above. Bank-account capture (AddBankAccount
+		// etc.) is NOT money-path — no ledger post — but a merchant needs a saved
+		// account before RequestWithdrawal will accept a bank_account_id, and there
+		// was previously no route to create one at all.
+		restGroup.POST("/bank-accounts", restaurantHandler.AddBankAccount)
+		restGroup.GET("/bank-accounts", restaurantHandler.ListBankAccounts)
+		restGroup.PATCH("/bank-accounts/:accountId/default", restaurantHandler.SetDefaultBankAccount)
+		restGroup.DELETE("/bank-accounts/:accountId", restaurantHandler.DeleteBankAccount)
+		// The withdrawal money path itself (withdrawal.go). RequestWithdrawal
+		// requires an Idempotency-Key and refuses with 403 ErrWithdrawalsDisabled
+		// unless FEATURE_RESTAURANT_WITHDRAWALS_ENABLED is on (see WithWithdrawals
+		// above) — the route is always mounted so the flag alone controls the
+		// money path, not route (un)availability.
+		restGroup.POST("/withdrawals", restaurantHandler.RequestWithdrawal)
+		restGroup.GET("/withdrawals", restaurantHandler.ListWithdrawals)
+		restGroup.GET("/withdrawals/:withdrawalId", restaurantHandler.GetWithdrawal)
+
 		restGroup.GET("/:id", restaurantHandler.GetRestaurant)
 		restGroup.POST("/:id/like", restaurantHandler.LikeRestaurant)
 		restGroup.DELETE("/:id/like", restaurantHandler.UnlikeRestaurant)
@@ -1587,6 +1627,17 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		// Store management (owner only): edit profile + operational open/close.
 		restGroup.PATCH("/:id", restaurantHandler.UpdateRestaurant)
 		restGroup.PATCH("/:id/availability", restaurantHandler.SetAvailability)
+
+		// Merchant KYB (Know-Your-Business) onboarding (owner only, PermManageBanking —
+		// enforced inside the service, matching every sibling owner route in this
+		// group). FOOD-003: these existed in kyb_handler.go/kyb_service.go but were
+		// never mounted, so a restaurant owner had no way to ever create a
+		// restaurant_kyb row through the live product. Fill business/settlement
+		// details, attach documents, then submit for admin review.
+		restGroup.GET("/:id/kyb", restaurantHandler.GetKYB)
+		restGroup.PUT("/:id/kyb", restaurantHandler.SaveKYB)
+		restGroup.POST("/:id/kyb/documents", restaurantHandler.AddKYBDocument)
+		restGroup.POST("/:id/kyb/submit", restaurantHandler.SubmitKYB)
 
 		// Menu management (owner only).
 		restGroup.POST("/:id/menu/categories", restaurantHandler.CreateCategory)
@@ -1726,6 +1777,25 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		restAdmin.POST("/payouts/build", middleware.RequirePermission(rbac, "restaurant.admin.payouts"), restaurantHandler.AdminBuildPayoutRun)
 		restAdmin.GET("/payouts/:id", middleware.RequirePermission(rbac, "restaurant.admin.payouts"), restaurantHandler.AdminGetPayoutRun)
 		restAdmin.POST("/payouts/:id/process", middleware.RequirePermission(rbac, "restaurant.admin.payouts"), restaurantHandler.AdminProcessPayoutRun)
+
+		// FOOD-005: merchant/rider withdrawal ops queue (wallet → bank; distinct
+		// from the payout runs above, which pay a provider FROM the platform's
+		// settlement account INTO their wallet — a withdrawal is the subsequent,
+		// separate step of the provider moving money OUT of that wallet to their
+		// bank). List/detail are reads over ALL merchants/riders (not owner-scoped,
+		// see AdminListWithdrawals); paid/failed drive withdrawal.go's
+		// MarkWithdrawalPaid/MarkWithdrawalFailed, which post the balanced settle or
+		// reversal ledger leg under a row lock (mutually exclusive, idempotent on
+		// retry) — so, unlike the member-facing RequestWithdrawal, these two do NOT
+		// require a caller-supplied Idempotency-Key; the row-lock + per-transition
+		// idempotency key derived from the withdrawal already makes a duplicate
+		// admin action a safe no-op. Fail-closed behind restaurant.admin.withdrawals
+		// (dedicated slug — an ops agent reviewing withdrawals should not need the
+		// broader restaurant.manage grant).
+		restAdmin.GET("/withdrawals", middleware.RequirePermission(rbac, "restaurant.admin.withdrawals"), restaurantHandler.AdminListWithdrawals)
+		restAdmin.GET("/withdrawals/:withdrawalId", middleware.RequirePermission(rbac, "restaurant.admin.withdrawals"), restaurantHandler.AdminGetWithdrawal)
+		restAdmin.POST("/withdrawals/:withdrawalId/paid", middleware.RequirePermission(rbac, "restaurant.admin.withdrawals"), restaurantHandler.AdminSettleWithdrawal)
+		restAdmin.POST("/withdrawals/:withdrawalId/failed", middleware.RequirePermission(rbac, "restaurant.admin.withdrawals"), restaurantHandler.AdminReverseWithdrawal)
 
 		// Crash-recovery settlement reconciliation (money-path durability): an order
 		// marked delivered whose escrow never released (process died / Settle errored
@@ -2268,6 +2338,14 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 	// --- Disputes routes ---
 	if cfg.FeatureDisputesEnabled {
 		disputesSvc := disputes.NewService(pool)
+		// FOOD-004: dispatch module_type=="food" disputes to the restaurant module's
+		// real refund-cap + tip-clawback logic instead of the bare status-flip every
+		// other module_type still gets (see disputes.Service.Resolve). Only wired when
+		// the restaurant module itself is on — if it's off, a food dispute resolve
+		// fails closed with "not wired" rather than a fake 200.
+		if restaurantSvc != nil {
+			disputesSvc = disputesSvc.WithFoodResolver(foodDisputeResolverAdapter{svc: restaurantSvc})
+		}
 		disputesHandler := disputes.NewHandler(disputesSvc)
 		dpGroup := finance.Group("/disputes")
 		dpGroup.POST("", disputesHandler.Open)
@@ -3102,6 +3180,33 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 	// threaded into revenue modules wired outside this function (Marketplace). Nil
 	// when the engine is flag-off / pool-less — the receiving setter is nil-safe.
 	return rewardSvc
+}
+
+// foodDisputeResolverAdapter bridges finance/disputes.Service's decoupled
+// FoodDisputeResolver interface to the real *restaurant.Service (FOOD-004): the
+// generic admin dispute-resolve endpoint dispatches module_type=="food" disputes here
+// instead of bare-flipping the disputes.status column, so a refund resolution now
+// actually posts the platform-funded ledger reversal and (on a full refund of an
+// order whose rider was already paid) the tip clawback that
+// AdminResolveFoodDispute/ResolveGenericDispute already implement.
+//
+// It also translates restaurant's typed errors (ErrForbidden, ErrDisputeInvalid) into
+// disputes' own sentinels so the shared handler can still answer 403/422 instead of a
+// blanket 500 without the disputes package importing internal/restaurant.
+type foodDisputeResolverAdapter struct{ svc *restaurant.Service }
+
+func (a foodDisputeResolverAdapter) ResolveGenericDispute(ctx context.Context, disputeID, adminID, resolution string, refundKobo int64, note string) error {
+	_, err := a.svc.ResolveGenericDispute(ctx, disputeID, adminID, resolution, refundKobo, note)
+	switch {
+	case err == nil:
+		return nil
+	case errors.Is(err, restaurant.ErrForbidden):
+		return fmt.Errorf("%w: %s", disputes.ErrDisputeForbidden, err)
+	case errors.Is(err, restaurant.ErrDisputeInvalid):
+		return fmt.Errorf("%w: %s", disputes.ErrDisputeNotResolvable, err)
+	default:
+		return err
+	}
 }
 
 // Mobility (transport) admin RBAC permission slugs. These gate the admin-facing

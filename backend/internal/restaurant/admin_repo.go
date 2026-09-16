@@ -175,7 +175,10 @@ func (s *Service) AdminListApplications(ctx context.Context, status string) ([]A
 
 // AdminDecideApplication approves or rejects a restaurant onboarding application.
 // Idempotent: approve opens the restaurant (is_open=true), reject closes it
-// (is_open=false). Drives only the existing `restaurants.is_open` gate — no money
+// (is_open=false). It ALSO drives the `restaurants.kyb_status` snapshot the payout
+// gate reads (see FOOD-003) — either through the real restaurant_kyb state machine
+// when the owner has submitted one, or directly when they have not, since a console
+// approve/reject is itself the verification decision in that case. No money
 // movement. `note` is the reviewer's KYC note (recorded on the restaurant
 // description-adjacent audit; required by the caller on reject).
 func (s *Service) AdminDecideApplication(ctx context.Context, restaurantID, adminID, decision, note string) error {
@@ -224,6 +227,22 @@ func (s *Service) AdminDecideApplication(ctx context.Context, restaurantID, admi
 		}
 	} else if decision == "needs_info" {
 		return fmt.Errorf("restaurant: no KYB submission to request more info on")
+	} else {
+		// No formal restaurant_kyb row exists (the common case today — see FOOD-003:
+		// the owner-facing KYB submission routes were never wired, so no restaurant
+		// could create one). The admin console's approve/reject IS the verification
+		// decision in that case — there is no separate KYB record to defer to — so the
+		// kyb_status snapshot the payout gate reads (payout.go: `res.kyb_status =
+		// 'approved'`) must still move here. Leaving it unset (the previous behavior)
+		// let a console "approve" open the restaurant for orders while permanently
+		// blocking its payouts with no way to ever clear "Business verification not
+		// started". This also repairs any restaurant already stuck in that state by
+		// simply re-running the decision.
+		if _, err := s.db.Exec(ctx,
+			`UPDATE restaurants SET kyb_status=$2, updated_at=now() WHERE id=$1`,
+			restaurantID, string(target)); err != nil {
+			return err
+		}
 	}
 
 	switch decision {

@@ -141,6 +141,28 @@ func (h *Handler) GetWithdrawal(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": w})
 }
 
+// AdminListWithdrawals lists withdrawal requests across all merchants/riders,
+// optionally filtered by ?status=. Backs the ops console withdrawals queue.
+func (h *Handler) AdminListWithdrawals(c *gin.Context) {
+	status := c.Query("status")
+	list, err := h.svc.AdminListWithdrawals(c.Request.Context(), status, 100)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": list})
+}
+
+// AdminGetWithdrawal returns one withdrawal by id, unscoped by owner.
+func (h *Handler) AdminGetWithdrawal(c *gin.Context) {
+	w, err := h.svc.AdminGetWithdrawal(c.Request.Context(), c.Param("withdrawalId"))
+	if err != nil {
+		c.JSON(withdrawalErrStatus(err), gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": w})
+}
+
 func (h *Handler) AdminSettleWithdrawal(c *gin.Context) {
 	var body struct {
 		ProviderReference string `json:"provider_reference"`

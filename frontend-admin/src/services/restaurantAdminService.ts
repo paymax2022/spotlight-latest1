@@ -33,6 +33,8 @@ import type {
   PayoutRun,
   PayoutLine,
   PayeeType,
+  Withdrawal,
+  WithdrawalStatus,
   OrderDispute,
   DisputeStatus,
   ResolveDisputeRequest,
@@ -853,6 +855,48 @@ export async function processPayoutRun(runId: string): Promise<{ ok: true }> {
     headers: { ...authHeaders(), 'Idempotency-Key': `payout-run-${runId}` },
   });
 }
+
+// ── Merchant/rider WITHDRAWALS (money path; FOOD-005) ────────────────────────
+// Backed by GET/POST /api/restaurant/admin/withdrawals* (RBAC
+// restaurant.admin.withdrawals). Distinct from the payout runs above: a payout
+// run pays a provider FROM the platform's settlement account INTO their
+// wallet; a withdrawal is the provider's own subsequent request to move money
+// OUT of that wallet to their bank account.
+
+export async function listWithdrawals(status?: WithdrawalStatus | ''): Promise<Withdrawal[]> {
+  if (USE_MOCK) { await delay(); return status ? MOCK_WITHDRAWALS.filter((w) => w.status === status) : MOCK_WITHDRAWALS; }
+  const qs = status ? `?status=${encodeURIComponent(status)}` : '';
+  const list = await reqAt<Withdrawal[]>(`${adminBase()}/withdrawals${qs}`);
+  return list ?? [];
+}
+
+// Money path: server posts a balanced settle ledger leg (suspense → provider
+// clearing) and flips the row to `paid`. Idempotent on retry (row-lock +
+// per-transition ledger key), so no client-supplied Idempotency-Key is needed.
+export async function markWithdrawalPaid(id: string, providerReference?: string): Promise<Withdrawal> {
+  if (USE_MOCK) throw new Error(`Marking a withdrawal paid ${NOT_IN_FIXTURE_MODE}`);
+  return reqAt<Withdrawal>(`${adminBase()}/withdrawals/${encodeURIComponent(id)}/paid`, {
+    method: 'POST',
+    body: JSON.stringify({ provider_reference: providerReference ?? '' }),
+  });
+}
+
+// Money path: server posts a balanced reversal (suspense → merchant wallet,
+// restoring the reserved funds) and flips the row to `reversed`.
+export async function markWithdrawalFailed(id: string, reason: string): Promise<Withdrawal> {
+  if (!reason.trim()) throw new Error('A failure reason is required to reverse a withdrawal.');
+  if (USE_MOCK) throw new Error(`Marking a withdrawal failed ${NOT_IN_FIXTURE_MODE}`);
+  return reqAt<Withdrawal>(`${adminBase()}/withdrawals/${encodeURIComponent(id)}/failed`, {
+    method: 'POST',
+    body: JSON.stringify({ reason }),
+  });
+}
+
+const MOCK_WITHDRAWALS: Withdrawal[] = [
+  { id: 'wd-1', user_id: 'u-7001', bank_account_id: 'ba-1', amount_kobo: 250_000, currency: 'NGN', status: 'processing', idempotency_key: 'mock-wd-1', created_at: new Date(Date.now() - 3_600_000).toISOString(), updated_at: new Date(Date.now() - 3_600_000).toISOString() },
+  { id: 'wd-2', user_id: 'u-7002', bank_account_id: 'ba-2', amount_kobo: 90_000, currency: 'NGN', status: 'paid', provider_reference: 'mock-ref-2', idempotency_key: 'mock-wd-2', created_at: new Date(Date.now() - 86_400_000).toISOString(), updated_at: new Date(Date.now() - 80_000_000).toISOString() },
+  { id: 'wd-3', user_id: 'u-7003', bank_account_id: 'ba-3', amount_kobo: 40_000, currency: 'NGN', status: 'reversed', failure_reason: 'Invalid account number', idempotency_key: 'mock-wd-3', created_at: new Date(Date.now() - 172_800_000).toISOString(), updated_at: new Date(Date.now() - 170_000_000).toISOString() },
+];
 
 // ── Refunds & disputes queue (money path) ────────────────────────────────────
 

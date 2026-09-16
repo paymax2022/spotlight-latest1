@@ -137,6 +137,17 @@
       "description": "Throwaway admin console on :3024 pointed at backend-auth-uat (:8114), for AUTH-020 STEM Overview UAT verification."
     },
     {
+      "name": "admin-food005-uat",
+      "runtimeExecutable": "bash",
+      "runtimeArgs": [
+        "-c",
+        "ADMIN_API_BASE_URL=http://localhost:8096 NEXT_PUBLIC_ADMIN_API_BASE_URL=http://localhost:8096/api/v1 NEXT_PUBLIC_RESTAURANT_ADMIN_USE_MOCK=false exec npx next dev --port 3025"
+      ],
+      "cwd": "frontend-admin",
+      "port": 3025,
+      "description": "Throwaway admin console on :3025 pointed at the FOOD-005 throwaway backend (:8096), for live withdrawals-page verification without touching the shared :8091/:3001."
+    },
+    {
       "name": "mobile-worktree",
       "runtimeExecutable": "npx",
       "runtimeArgs": [

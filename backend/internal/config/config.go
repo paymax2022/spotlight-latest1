@@ -171,6 +171,13 @@ type Config struct {
 	FeatureEstateEnabled       bool
 	FeatureCrowdfundingEnabled bool
 	FeatureRestaurantEnabled   bool
+	// FeatureRestaurantWithdrawalsEnabled gates the merchant/rider withdrawal
+	// money path (wallet → saved bank account; restaurant/withdrawal.go
+	// RequestWithdrawal). Default OFF: the routes are always mounted once
+	// FeatureRestaurantEnabled is on (list/admin views are read-only-safe), but
+	// RequestWithdrawal itself refuses with ErrWithdrawalsDisabled until this is
+	// explicitly turned on (see Service.WithWithdrawals).
+	FeatureRestaurantWithdrawalsEnabled bool
 	// FeatureModuleGateEnforce turns the server-side module gate from observe-only
 	// (logs what it would refuse) into enforcing (503s unpublished modules). Default
 	// false: the gate's route map is hand-built and must be validated against real
@@ -689,6 +696,7 @@ func Load() Config {
 		FeatureEstateEnabled:                  getEnvBool("FEATURE_ESTATE_ENABLED", false),
 		FeatureCrowdfundingEnabled:            getEnvBool("FEATURE_CROWDFUNDING_ENABLED", false),
 		FeatureRestaurantEnabled:              getEnvBool("FEATURE_RESTAURANT_ENABLED", false),
+		FeatureRestaurantWithdrawalsEnabled:   getEnvBool("FEATURE_RESTAURANT_WITHDRAWALS_ENABLED", false),
 		FeatureModuleGateEnforce:              getEnvBool("FEATURE_MODULE_GATE_ENFORCE", false),
 		FeatureNutritionEnabled:               getEnvBool("FEATURE_NUTRITION_ENABLED", false),
 		FeatureTelemedicineEnabled:            getEnvBool("FEATURE_TELEMEDICINE_ENABLED", false),
