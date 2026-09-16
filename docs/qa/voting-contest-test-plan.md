@@ -341,7 +341,7 @@ Production-ready when **all** hold:
 | AD-012 | Announcements / notifications composer | Functional | P1 | Admin | Send | Correct audience; no hidden-count leak | Y | 🚧 Partial | Real composer only in legacy open-mic; new module is scaffold stub. |
 | AD-013 | Analytics (votes, revenue, engagement — respects hidden) | Privacy | P2 | Data | View | Correct; no leak of hidden to unauthorized | P | 🚧 Partial | Only Revenue dashboard is real; `/admin/reports-analytics` is scaffold stub. |
 | AD-014 | RBAC & admin sub-role scoping | Security | P0 | Sub-roles | Cross-scope | Only own scope; else 403 | Y | ⬜ Not Run | Built in `frontend-admin` (`roles`, `permissions-matrix`, `rbacAdminService`). Web `/admin/users-roles` is stub. Pending cross-scope test. |
-| AD-015 | Immutable audit log explorer & export | Compliance | P0 | Actions | Query/export | Complete; immutable | Y | ⬜ Not Run | Built: `frontend-admin/audit-logs` (filters + export). Web scaffold read-only. Pending immutability test. |
+| AD-015 | Immutable audit log explorer & export | Compliance | P0 | Actions | Query/export | Complete; immutable | Y | 🚧 Partial | Correction: `frontend-admin/audit-logs` and the web scaffold both query unrelated tables (generic in-memory admin event log / Go `audit_logs`), **not** `vote_audit_logs` — voting admin actions were unqueryable. Closed: `GET /api/admin/voting/{contestId}/audit-log` exposes the real, immutable `vote_audit_logs` trail (`getAuditLogs`, gated on `votes:manage`), tested in `tests/unit/voting/ad015-contest-audit-log-route.spec.ts`. Built standalone screen `frontend-admin/admin/voting/audit-log` (contest loader, entityType/entityId filters, offset pagination, old/new value diff) rather than folding into contestant/leaderboard views — those are per-contestant/tally-focused and this trail spans settings, adjustments, reversals and freeze/unfreeze together. Still missing: CSV/export. Pending an executed test pass to confirm immutability end-to-end and move off `🚧 Partial`. |
 | AD-016 | Kill switch: pause voting / freeze results / halt contest | Safety | P0 | Incident | Halt | Scope halted; audited | Y | 🚧 Partial | Distributed: settings `status='paused'` + leaderboard freeze/unfreeze. **No unified kill switch.** |
 | AD-017 | Admin screens: loading/empty/error/permission states | UX | P1 | Each | Force states | Graceful; no crash | Y | 🚧 Partial | Real screens handle states; scaffold-stub slugs render mock only. |
 
@@ -413,9 +413,9 @@ Production-ready when **all** hold:
 | TS-11 Non-Functional | 10 | 0 | 0 | 0 | 7 | 0 | 0 | 0 | 3 |
 | TS-12 Edge & Chaos | 16 | 0 | 0 | 4 | 1 | 4 | 4 | 0 | 3 |
 | TS-13 Mobile Screens | 15 | 0 | 0 | 1 | 0 | 6 | 0 | 0 | 8 |
-| TS-14 Admin Portal Screens | 17 | 0 | 0 | 2 | 0 | 11 | 0 | 0 | 4 |
+| TS-14 Admin Portal Screens | 17 | 0 | 0 | 2 | 0 | 12 | 0 | 0 | 3 |
 | TS-15 UAT | 15 | 0 | 0 | 0 | 15 | 0 | 0 | 0 | 0 |
-| **TOTAL** | **178** | **0** | **2** | **36** | **23** | **66** | **12** | **0** | **39** |
+| **TOTAL** | **178** | **0** | **2** | **36** | **23** | **67** | **12** | **0** | **38** |
 
 > **Baseline note (2026-07-30):** Classification is from **static code mapping**, not executed runs. Per §0.4 no P0 row may become `✅ Pass` on static reasoning — the **39 `⬜ Not Run`** are *implemented and look complete* (many with repo tests) but stay Not-Run until executed assertions prove them; the **68 `🚧 Partial`** are built-but-incomplete; **12 `❌ Fail`** are confirmed defects (see §24); **23 `⚠️ Blocked`** are UAT + non-functional cases that cannot run until upstream P0s land.
 
