@@ -110,3 +110,34 @@ pre-existing, unrelated failure in `internal/integrations/rtc`).
   `user_profiles`, never `auth.users` directly. `auth.users` is reachable only
   from Supabase's own GoTrue-fronted paths (PostgREST with `authenticated`/
   `anon`, or the Admin API), never from this pool.
+
+## Addendum (2026-09-15) — a service_role grant on auth.users now coexists with this ADR, kept deliberately
+
+A separate, concurrent fix (`supabase/migrations/20270202000000_service_role_auth_users_select.sql`,
+AUTH-008 then AUTH-011) independently repaired the same underlying defect for
+the same function — `authUserByEmail()` in `services/email_verification.go` —
+by granting `service_role` a column-narrowed `SELECT (id, email,
+email_confirmed_at, deleted_at) ON auth.users`, rather than migrating the
+call site to `platform_users`. That grant landed on `develop` chronologically
+around this ADR's own commit (90e8c5b1); whichever version of
+`email_verification.go` is newest wins the file, and today that's this ADR's
+`platform_users` rewrite — so the grant is currently unused by any
+production code path (checked: no non-test pgx-pool Go code queries
+`auth.users` directly on the current `develop` tip).
+
+Decision: **the grant is being left in place, not revoked.** Revoking it
+would break `TestLiveDB_ServiceRoleCanSelectAuthUsers`
+(`backend/tests/otp/service_role_auth_users_grant_live_db_test.go`), a
+regression test written specifically to catch a real production incident
+(OTP email verification and password-reset completion 500ing under
+`service_role`). The grant itself is narrow, read-only, and exposes no
+password hash, token, or MFA-secret columns — the residual risk of keeping
+it is low, and it was already responsibly least-privilege-narrowed by its
+own author (AUTH-011) before this ADR's fix even landed. Undoing another
+session's tested, incident-justified migration to resolve what is now a
+purely cosmetic redundancy is not worth the disruption.
+
+This does not change the rule above: new code still must not query
+`auth.users` directly. The grant existing is not permission to use it — it's
+a narrow, dormant safety net kept for the one call site it was built for,
+which no longer needs it.

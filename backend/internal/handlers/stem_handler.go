@@ -22,6 +22,10 @@ type StemHandler struct {
 	// existing NewStemHandler signature and all existing tests intact while
 	// closing audit coverage on STEM sensitive mutations (#23).
 	audit services.AuditService
+	// rbac is an OPTIONAL dependency, only used by MyRole (ADR-057 frontend
+	// follow-up). Nil is safe: MyRole reports no roles rather than panicking,
+	// same defensive shape as audit above.
+	rbac services.RBACService
 }
 
 func NewStemHandler(service services.StemService) *StemHandler {
@@ -33,6 +37,13 @@ func NewStemHandler(service services.StemService) *StemHandler {
 // Additive: returns the same handler for chaining in the router.
 func (h *StemHandler) WithAudit(audit services.AuditService) *StemHandler {
 	h.audit = audit
+	return h
+}
+
+// WithRBAC attaches the RBAC service MyRole needs to resolve the caller's
+// real STEM role(s). Additive: returns the same handler for chaining.
+func (h *StemHandler) WithRBAC(rbac services.RBACService) *StemHandler {
+	h.rbac = rbac
 	return h
 }
 
@@ -77,6 +88,38 @@ func (h *StemHandler) Overview(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "overview": overview})
+}
+
+// MyRole reports which STEM role name(s) — if any — the caller's real RBAC
+// roles resolve to, using the exact mapping RequireStemRoles itself checks
+// against (middleware.ResolveStemRoleNames). ADR-057 frontend follow-up:
+// frontend-admin's stemAccess.ts used to derive the "current" STEM role from
+// a build-time env var; this endpoint lets it ask the real, signed-in-user
+// question instead.
+//
+// Deliberately sits behind RequireVerifiedIdentity ONLY (router.go's
+// stemGroup), not RequireStemRoles: the whole point is that ANY verified
+// admin can call this, including one who holds no STEM role at all — an
+// empty roles array is a valid, meaningful answer ("you have no STEM
+// access"), not a failure. Gating this behind RequireStemRoles would make it
+// unusable for exactly the callers who most need to know they have nothing.
+func (h *StemHandler) MyRole(c *gin.Context) {
+	if h.rbac == nil {
+		c.JSON(http.StatusOK, gin.H{"success": true, "roles": []string{}})
+		return
+	}
+	adminUserIDVal, ok := c.Get("adminUserID")
+	adminUserID, _ := adminUserIDVal.(string)
+	if !ok || adminUserID == "" {
+		c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"success": false, "error": "missing verified identity"})
+		return
+	}
+	roleSlugs, err := h.rbac.GetUserRoles(adminUserID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": "could not resolve roles"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "roles": middleware.ResolveStemRoleNames(roleSlugs)})
 }
 
 func (h *StemHandler) Schools(c *gin.Context) {

@@ -4,6 +4,11 @@ import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
+import {
+  requestLoginOtpVerify,
+  requestSignIn,
+  requestSignUp,
+} from '@/src/features/auth/loginFlow';
 
 function toReadableAuthError(err: unknown, fallback: string): string {
   const message = err instanceof Error ? err.message : '';
@@ -21,7 +26,10 @@ function toReadableAuthError(err: unknown, fallback: string): string {
   if (lowered.includes('already registered')) {
     return 'This email already has an account. Please sign in instead.';
   }
-  if (lowered.includes('invalid login credentials')) {
+  // 'invalid login credentials' is Supabase's own wording (the old direct-call
+  // error); 'invalid credentials' is Go's (see backend/internal/handlers/auth_handler.go).
+  // Both mean the same thing to a user and should read the same.
+  if (lowered.includes('invalid login credentials') || lowered.includes('invalid credentials')) {
     return 'Invalid email or password.';
   }
   return message || fallback;
@@ -44,29 +52,49 @@ export default function LoginPage() {
   const [info, setInfo] = useState('');
   const [showPassword, setShowPassword] = useState(false);
 
+  // AUTH-016 second factor: only reachable now that sign-in actually goes
+  // through Go. mfaEmail doubles as "the MFA step is active".
+  const [mfaEmail, setMfaEmail] = useState('');
+  const [mfaCode, setMfaCode] = useState('');
+
   useEffect(() => {
     if (emailHint) setEmail(emailHint);
     if (registered) setInfo('Account created! Please sign in.');
   }, [emailHint, registered]);
+
+  async function adoptSession(tokens: { accessToken: string; refreshToken: string }) {
+    const { error: e } = await supabase.auth.setSession({
+      access_token: tokens.accessToken,
+      refresh_token: tokens.refreshToken,
+    });
+    if (e) throw e;
+  }
 
   async function signIn() {
     setBusy(true);
     setError('');
     try {
       const normalized = email.trim().toLowerCase();
-      const { error: e } = await supabase.auth.signInWithPassword({
-        email: normalized,
-        password,
-      });
-      // The password was RIGHT and only verification is missing — Supabase returns
-      // this code ONLY when the credentials check out. Sending them to enter their
-      // code beats showing a sign-in error they cannot act on, which is what an
-      // unverified account used to get.
-      if (e && (e as { code?: string }).code === 'email_not_confirmed') {
+      // Through the Go backend (via the /api/auth/login proxy), not Supabase
+      // directly — AUTH-016. Calling Supabase from the browser skipped account
+      // lockout, login rate limiting, the OTP-login step-up, session-hardening
+      // tracking, and Go's audit log entirely.
+      const outcome = await requestSignIn(fetch, normalized, password);
+
+      if (outcome.kind === 'emailNotConfirmed') {
         router.push(`/verify-email?email=${encodeURIComponent(normalized)}&next=${encodeURIComponent(next)}`);
         return;
       }
-      if (e) throw e;
+      if (outcome.kind === 'mfaRequired') {
+        setMfaEmail(outcome.email);
+        setMfaCode('');
+        setInfo(outcome.message || 'Enter the code we emailed you to finish signing in.');
+        return;
+      }
+
+      // Adopt the session Go returned so the rest of the app — which reads the
+      // Supabase client's session for its bearer token — keeps working unchanged.
+      await adoptSession(outcome.tokens);
       router.replace(next);
     } catch (err) {
       setError(toReadableAuthError(err, 'Sign in failed. Please try again.'));
@@ -75,26 +103,53 @@ export default function LoginPage() {
     }
   }
 
+  async function verifyMfa() {
+    setBusy(true);
+    setError('');
+    try {
+      const tokens = await requestLoginOtpVerify(fetch, mfaEmail, mfaCode.trim());
+      await adoptSession(tokens);
+      router.replace(next);
+    } catch (err) {
+      setError(toReadableAuthError(err, 'Verification failed. Please try again.'));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function cancelMfa() {
+    setMfaEmail('');
+    setMfaCode('');
+    setError('');
+    setInfo('');
+  }
+
   async function signUp() {
     setBusy(true);
     setError('');
     try {
       const normalized = email.trim().toLowerCase();
-      const { data, error: e } = await supabase.auth.signUp({
+      // Through the Go backend (via the /api/auth/register proxy), not Supabase
+      // directly — AUTH-016. The direct call skipped referral attribution,
+      // duplicate-account handling, and Go's audit event.
+      const outcome = await requestSignUp(fetch, {
+        fullName: name.trim() || normalized,
         email: normalized,
         password,
-        options: { data: { full_name: name.trim() || email } },
       });
-      if (e) throw e;
+
+      if (outcome.kind === 'session') {
+        // Adopt the session so the rest of the app keeps working unchanged,
+        // same as signIn().
+        await adoptSession(outcome.tokens);
+        router.replace(next);
+        return;
+      }
 
       // Confirmation is required on both cloud projects, so there is no session
       // here and the old advice — "confirm, then sign in" — was a dead end:
       // signing in before confirming fails. Send them to enter the code instead.
-      if (data?.session?.access_token) {
-        router.replace(next);
-        return;
-      }
-      router.push(`/verify-email?email=${encodeURIComponent(normalized)}&next=${encodeURIComponent(next)}`);
+      router.push(`/verify-email?email=${encodeURIComponent(outcome.email)}&next=${encodeURIComponent(next)}`);
     } catch (err) {
       setError(toReadableAuthError(err, 'Sign up failed. Please try again.'));
     } finally {
@@ -150,7 +205,9 @@ export default function LoginPage() {
             <span style={{ fontSize: '2rem', fontWeight: 800, color: '#f59e0b' }}>.</span>
           </Link>
           <p style={{ color: '#94a3b8', fontSize: '0.9rem', marginTop: '0.5rem', marginBottom: 0 }}>
-            {tab === 'signin' ? 'Welcome back — sign in to continue' : 'Create your account to get started'}
+            {mfaEmail
+              ? 'One more step to finish signing in'
+              : tab === 'signin' ? 'Welcome back — sign in to continue' : 'Create your account to get started'}
           </p>
         </div>
 
@@ -165,6 +222,111 @@ export default function LoginPage() {
             boxShadow: '0 25px 50px rgba(0,0,0,0.5)',
           }}
         >
+          {mfaEmail ? (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+              <div>
+                <p style={{ color: '#cbd5e1', fontSize: '0.85rem', margin: 0, lineHeight: 1.5 }}>
+                  Enter the code we emailed to <strong style={{ color: '#f1f5f9' }}>{mfaEmail}</strong> to finish
+                  signing in.
+                </p>
+              </div>
+
+              <div>
+                <label style={{ display: 'block', color: '#cbd5e1', fontSize: '0.8rem', fontWeight: 600, marginBottom: '0.4rem', letterSpacing: '0.04em', textTransform: 'uppercase' }}>
+                  Verification Code
+                </label>
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  autoComplete="one-time-code"
+                  placeholder="123456"
+                  value={mfaCode}
+                  onChange={(e) => setMfaCode(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && !busy && verifyMfa()}
+                  autoFocus
+                  style={inputStyle}
+                />
+              </div>
+
+              {error && (
+                <div style={{
+                  background: 'rgba(239,68,68,0.15)',
+                  border: '1px solid rgba(239,68,68,0.4)',
+                  borderRadius: '0.625rem',
+                  padding: '0.75rem 1rem',
+                  color: '#fca5a5',
+                  fontSize: '0.85rem',
+                  display: 'flex',
+                  alignItems: 'flex-start',
+                  gap: '0.5rem',
+                }}>
+                  <span style={{ flexShrink: 0, marginTop: '0.05rem' }}>⚠</span>
+                  {error}
+                </div>
+              )}
+
+              {info && (
+                <div style={{
+                  background: 'rgba(34,197,94,0.15)',
+                  border: '1px solid rgba(34,197,94,0.4)',
+                  borderRadius: '0.625rem',
+                  padding: '0.75rem 1rem',
+                  color: '#86efac',
+                  fontSize: '0.85rem',
+                }}>
+                  {info}
+                </div>
+              )}
+
+              <button
+                type="button"
+                onClick={() => !busy && verifyMfa()}
+                disabled={busy || !mfaCode.trim()}
+                style={{
+                  width: '100%',
+                  padding: '0.875rem',
+                  background: busy || !mfaCode.trim()
+                    ? 'rgba(245,158,11,0.4)'
+                    : 'linear-gradient(135deg, #f59e0b 0%, #d97706 100%)',
+                  color: busy || !mfaCode.trim() ? 'rgba(0,0,0,0.5)' : '#000000',
+                  border: 'none',
+                  borderRadius: '0.75rem',
+                  fontSize: '0.95rem',
+                  fontWeight: 700,
+                  cursor: busy || !mfaCode.trim() ? 'not-allowed' : 'pointer',
+                  transition: 'all 0.2s',
+                  letterSpacing: '0.01em',
+                  boxShadow: busy || !mfaCode.trim() ? 'none' : '0 4px 15px rgba(245,158,11,0.35)',
+                }}
+              >
+                {busy
+                  ? <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem' }}>
+                      <SpinnerIcon /> Verifying…
+                    </span>
+                  : 'Verify & Sign In'
+                }
+              </button>
+
+              <button
+                type="button"
+                onClick={cancelMfa}
+                disabled={busy}
+                style={{
+                  width: '100%',
+                  padding: '0.6rem',
+                  background: 'none',
+                  border: 'none',
+                  color: '#94a3b8',
+                  fontSize: '0.82rem',
+                  cursor: busy ? 'not-allowed' : 'pointer',
+                  textDecoration: 'underline',
+                }}
+              >
+                Back to sign in
+              </button>
+            </div>
+          ) : (
+          <>
           {/* Tabs */}
           <div
             style={{
@@ -365,6 +527,8 @@ export default function LoginPage() {
             <GoogleIcon />
             Continue with Google
           </button>
+          </>
+          )}
         </div>
 
         <p style={{ textAlign: 'center', fontSize: '0.78rem', color: '#475569', marginTop: '1.25rem' }}>

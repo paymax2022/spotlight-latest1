@@ -5,7 +5,7 @@ import { usePathname, useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
 import type { AdminMenuCounts } from '@/types/admin';
 import { getAdminMenuCounts } from '@/services/adminApiClient';
-import { canManageStem, canReadStem, getCurrentStemRole } from '@/config/stemAccess';
+import { canManageStem, canReadStem, useStemRoles } from '@/config/stemAccess';
 import { hasAnyPermission, type AuthUser } from '@/features/auth/rbac';
 import { clearAdminSession } from '@/features/auth/adminAuth';
 import { colors, tint } from '@/components/ui/vuexy';
@@ -558,9 +558,9 @@ export function AdminSidebar() {
   const [authUser, setAuthUser] = useState<AuthUser | null>(null);
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [loggingOut, setLoggingOut] = useState(false);
-  const role = getCurrentStemRole();
-  const allowRead = canReadStem(role);
-  const allowManage = canManageStem(role);
+  const stemRoles = useStemRoles();
+  const allowRead = canReadStem(stemRoles);
+  const allowManage = canManageStem(stemRoles);
 
   useEffect(() => {
     void getAdminMenuCounts().then(setCounts);

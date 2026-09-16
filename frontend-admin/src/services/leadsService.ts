@@ -1,4 +1,4 @@
-import { apiV1 } from '@/config/env';
+import { apiV1, adminAuthHeaders } from '@/config/env';
 import type { Lead } from '@/types/leads';
 
 export async function listLeads(limit = 200, sessionId = ''): Promise<Lead[]> {
@@ -6,7 +6,7 @@ export async function listLeads(limit = 200, sessionId = ''): Promise<Lead[]> {
   url.searchParams.set('limit', String(limit));
   if (sessionId.trim()) url.searchParams.set('sessionId', sessionId.trim());
 
-  const headers: Record<string, string> = {};
+  const headers = adminAuthHeaders();
 
   const res = await fetch(url.toString(), { cache: 'no-store', credentials: 'include', headers });
   const payload = await res.json();
@@ -15,7 +15,7 @@ export async function listLeads(limit = 200, sessionId = ''): Promise<Lead[]> {
 }
 
 export async function updateLeadStatus(id: string, status: string): Promise<boolean> {
-  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  const headers = adminAuthHeaders({ 'Content-Type': 'application/json' });
 
   const res = await fetch(`${apiV1()}/admin/leads/${encodeURIComponent(id)}`, {
     method: 'PATCH',

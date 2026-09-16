@@ -1,4 +1,4 @@
-import { apiV1 } from '@/config/env';
+import { apiV1, adminAuthHeaders } from '@/config/env';
 import type {
   StemContest,
   StemEmergingInnovator,
@@ -31,10 +31,32 @@ import type {
   StemSubmission,
 } from '@/types/stem';
 
+// x-stem-role is no longer trusted server-side for authorization (see
+// getMyStemRoles below, and @/config/stemAccess.ts) — RequireStemRoles
+// resolves the caller's real role via RBAC instead. This header is now at
+// most a display hint the backend ignores; kept so existing request shapes
+// don't change.
 function adminHeaders() {
-  const headers: Record<string, string> = {};
-  headers['x-stem-role'] = process.env.NEXT_PUBLIC_STEM_ROLE || 'ADMIN';
-  return headers;
+  return adminAuthHeaders({ 'x-stem-role': process.env.NEXT_PUBLIC_STEM_ROLE || 'ADMIN' });
+}
+
+/**
+ * Asks the backend which real STEM role(s) — if any — the signed-in admin
+ * holds (backend/internal/handlers/stem_handler.go's MyRole, via
+ * middleware.ResolveStemRoleNames — the exact mapping RequireStemRoles
+ * itself checks). An empty array is a valid answer: "no STEM access", not a
+ * failure. Returns null only on a network/auth failure, so callers can tell
+ * "we don't know yet" apart from "we asked and the answer was none".
+ */
+export async function getMyStemRoles(): Promise<string[] | null> {
+  const res = await fetch(`${apiV1()}/admin/stem/my-role`, {
+    cache: 'no-store',
+    credentials: 'include',
+    headers: adminAuthHeaders(),
+  });
+  const payload = await res.json().catch(() => ({}));
+  if (!res.ok || !payload?.success || !Array.isArray(payload?.roles)) return null;
+  return payload.roles as string[];
 }
 
 export async function getStemOverview(): Promise<StemOverview | null> {

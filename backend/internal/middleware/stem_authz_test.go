@@ -8,10 +8,22 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// fakeVerifiedAdmin stands in for RequireAdminConsoleRole having already run
+// and resolved a real, cryptographically-verified admin identity: it sets only
+// the context key RequireStemRoles checks for, without any of the real
+// bearer-token/Supabase/RBAC machinery — keeping these unit tests focused on
+// RequireStemRoles's own logic.
+func fakeVerifiedAdmin(c *gin.Context) {
+	c.Set("adminUserID", "test-admin-user")
+	c.Next()
+}
+
 func TestRequireStemRoles_MissingRole(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
-	r.Use(RequireStemRoles("ADMIN"))
+	r.Use(fakeVerifiedAdmin)
+	rbac := &fakeConsoleRBAC{roles: []string{"registered-user"}}
+	r.Use(RequireStemRoles(rbac, "ADMIN"))
 	r.GET("/x", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"ok": true}) })
 
 	req := httptest.NewRequest(http.MethodGet, "/x", nil)
@@ -26,15 +38,195 @@ func TestRequireStemRoles_MissingRole(t *testing.T) {
 func TestRequireStemRoles_AllowedRole(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
-	r.Use(RequireStemRoles("ADMIN", "SUPER_ADMIN"))
+	r.Use(fakeVerifiedAdmin)
+	// 'system-admin' is aliased to "ADMIN" by normalizeStemRoleSlug — see
+	// stem_authz.go's doc comment.
+	rbac := &fakeConsoleRBAC{roles: []string{"system-admin"}}
+	r.Use(RequireStemRoles(rbac, "ADMIN", "SUPER_ADMIN"))
 	r.GET("/x", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"ok": true}) })
 
 	req := httptest.NewRequest(http.MethodGet, "/x", nil)
-	req.Header.Set("x-stem-role", "admin")
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", w.Code)
+	}
+}
+
+// AUTH-020: RequireStemRoles must never be usable as a standalone auth gate.
+// A request with no real verified admin identity on the context (i.e.
+// RequireAdminConsoleRole or equivalent never ran) must be refused before the
+// RBAC role lookup is even attempted — a nil rbac proves that.
+func TestRequireStemRoles_FailsClosedWithoutVerifiedAdmin(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	// Deliberately NOT using fakeVerifiedAdmin here.
+	r.Use(RequireStemRoles(nil, "ADMIN", "SUPER_ADMIN"))
+	r.GET("/x", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"ok": true}) })
+
+	req := httptest.NewRequest(http.MethodGet, "/x", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401 (no verified admin identity on context), got %d", w.Code)
+	}
+}
+
+// AUTH-020 follow-up: a client-supplied x-stem-role header must no longer be
+// trusted for anything — a verified admin whose REAL roles don't include the
+// header's claimed role must still be refused.
+func TestRequireStemRoles_HeaderIsNoLongerTrusted(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	r.Use(fakeVerifiedAdmin)
+	rbac := &fakeConsoleRBAC{roles: []string{"judge"}}
+	r.Use(RequireStemRoles(rbac, "SUPER_ADMIN"))
+	r.GET("/x", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"ok": true}) })
+
+	req := httptest.NewRequest(http.MethodGet, "/x", nil)
+	req.Header.Set("x-stem-role", "super_admin") // claims a role the caller does not really hold
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("expected 403 (header must not override the real RBAC role), got %d", w.Code)
+	}
+}
+
+// A GetUserRoles lookup failure must fail closed, not fall through as if the
+// caller held no roles were somehow still authorized.
+func TestRequireStemRoles_FailsClosedOnRoleLookupError(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	r.Use(fakeVerifiedAdmin)
+	rbac := &fakeConsoleRBAC{roles: []string{"super-admin"}, rolesErr: httptestErrStatusLookup}
+	r.Use(RequireStemRoles(rbac, "SUPER_ADMIN"))
+	r.GET("/x", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"ok": true}) })
+
+	req := httptest.NewRequest(http.MethodGet, "/x", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("role lookup error: expected 403, got %d", w.Code)
+	}
+}
+
+// The five STEM roles seeded in 20270205000000_stem_admin_rbac_roles.sql
+// (plus the two pre-existing ones) must each resolve through the real RBAC
+// lookup to the STEM role name router.go allow-lists use.
+func TestRequireStemRoles_RealRoleSlugsResolve(t *testing.T) {
+	cases := []struct {
+		slug string
+		want string
+	}{
+		{"super-admin", "SUPER_ADMIN"},
+		{"system-admin", "ADMIN"},
+		{"operations-manager", "OPERATIONS_MANAGER"},
+		{"contest-manager", "CONTEST_MANAGER"},
+		{"school-admin", "SCHOOL_ADMIN"},
+		{"teacher-coach", "TEACHER_COACH"},
+		{"judge", "JUDGE"},
+		{"mentor", "MENTOR"},
+		{"sponsor", "SPONSOR"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.slug, func(t *testing.T) {
+			gin.SetMode(gin.TestMode)
+			r := gin.New()
+			r.Use(fakeVerifiedAdmin)
+			rbac := &fakeConsoleRBAC{roles: []string{tc.slug}}
+			r.Use(RequireStemRoles(rbac, tc.want))
+			r.GET("/x", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"ok": true}) })
+
+			req := httptest.NewRequest(http.MethodGet, "/x", nil)
+			w := httptest.NewRecorder()
+			r.ServeHTTP(w, req)
+
+			if w.Code != http.StatusOK {
+				t.Fatalf("slug %q -> %q: expected 200, got %d", tc.slug, tc.want, w.Code)
+			}
+		})
+	}
+}
+
+// When no roles are configured (len(allowed) == 0), RequireStemRoles is a
+// no-op regardless of auth context or rbac — this is pre-existing behavior
+// (used where no STEM gating is desired) and must not regress. A nil rbac
+// proves the lookup is never attempted.
+func TestRequireStemRoles_NoRolesConfigured_NoopEvenWithoutVerifiedAdmin(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	r.Use(RequireStemRoles(nil))
+	r.GET("/x", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"ok": true}) })
+
+	req := httptest.NewRequest(http.MethodGet, "/x", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+}
+
+// ResolveStemRoleNames (used by StemHandler.MyRole) must filter out
+// mechanically-converted names that aren't real STEM roles — a slug like
+// 'registered-user' converts to "REGISTERED_USER" just as readily as 'judge'
+// converts to "JUDGE", but only the latter is in AllStemRoleNames.
+func TestResolveStemRoleNames_FiltersToRecognizedStemRolesOnly(t *testing.T) {
+	got := ResolveStemRoleNames([]string{"judge", "registered-user", "verified-user", "contest-manager"})
+	want := []string{"JUDGE", "CONTEST_MANAGER"}
+	if len(got) != len(want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("got %v, want %v", got, want)
+		}
+	}
+}
+
+// Every STEM role slug this repo seeds resolves to a name AllStemRoleNames
+// recognizes — pins that the two lists (the mechanical conversion rule, and
+// the "real STEM role" allow-list) stay in agreement.
+func TestResolveStemRoleNames_AllSeededStemRoleSlugsAreRecognized(t *testing.T) {
+	slugs := []string{
+		"super-admin", "system-admin", "operations-manager", "contest-manager",
+		"school-admin", "teacher-coach", "judge", "mentor", "sponsor",
+	}
+	got := ResolveStemRoleNames(slugs)
+	if len(got) == 0 {
+		t.Fatalf("expected at least one recognized STEM role, got none")
+	}
+	for _, slug := range slugs {
+		names := normalizeStemRoleSlug(slug)
+		recognized := false
+		for _, n := range names {
+			for _, g := range got {
+				if g == n {
+					recognized = true
+				}
+			}
+		}
+		if !recognized {
+			t.Fatalf("slug %q (-> %v) was not recognized by AllStemRoleNames/ResolveStemRoleNames", slug, names)
+		}
+	}
+}
+
+// Duplicate role slugs (or slugs that alias to the same name, e.g.
+// system-admin's ADMIN alias) must not produce duplicate entries.
+func TestResolveStemRoleNames_Deduplicates(t *testing.T) {
+	got := ResolveStemRoleNames([]string{"judge", "judge", "system-admin"})
+	seen := map[string]int{}
+	for _, g := range got {
+		seen[g]++
+	}
+	for name, count := range seen {
+		if count != 1 {
+			t.Fatalf("role %q appeared %d times, want 1 (roles: %v)", name, count, got)
+		}
 	}
 }

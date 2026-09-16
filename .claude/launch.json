@@ -116,6 +116,28 @@
       "description": "Go backend on :8092 — the binary has no godotenv autoload, so .env must be shell-sourced before `go run`; this worktree's .env sets APP_PORT=8092 so it doesn't collide with the main checkout's :8091."
     },
     {
+      "name": "backend-auth-uat",
+      "runtimeExecutable": "bash",
+      "runtimeArgs": [
+        "-c",
+        "set -a; . ./.env; set +a; APP_PORT=8114 exec go run ./cmd/server"
+      ],
+      "cwd": "backend",
+      "port": 8114,
+      "description": "Throwaway Go backend on :8114 for AUTH-020 STEM Overview UAT verification, so it doesn't collide with other worktrees on :8091/:8092/.../:8113."
+    },
+    {
+      "name": "admin-auth-uat",
+      "runtimeExecutable": "bash",
+      "runtimeArgs": [
+        "-c",
+        "ADMIN_API_BASE_URL=http://localhost:8114 exec npx next dev --port 3024"
+      ],
+      "cwd": "frontend-admin",
+      "port": 3024,
+      "description": "Throwaway admin console on :3024 pointed at backend-auth-uat (:8114), for AUTH-020 STEM Overview UAT verification."
+    },
+    {
       "name": "mobile-worktree",
       "runtimeExecutable": "npx",
       "runtimeArgs": [
