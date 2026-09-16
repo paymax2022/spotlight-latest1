@@ -54,6 +54,7 @@ const navItemsBase: NavItem[] = [
   { label: 'SME Pitch', href: '/admin/sme-pitch', section: 'Contests', permissions: ['programs:manage'] },
   { label: 'Voting Packages', href: '/admin/voting/packages', section: 'Voting', permissions: ['votes:manage'] },
   { label: 'Voting Visibility', href: '/admin/voting/visibility', section: 'Voting', permissions: ['votes:manage'] },
+  { label: 'Voting Audit Log', href: '/admin/voting/audit-log', section: 'Voting', permissions: ['votes:manage'] },
   { label: 'Chat Sessions', href: '/admin/chatbot', section: 'Support' },
   { label: 'Leads Queue', href: '/admin/leads', section: 'Support' },
   { label: 'Handoff Queue', href: '/admin/handoffs', section: 'Support' },
