@@ -8175,6 +8175,41 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/Contribution' }
 
+  /crowdfunding/campaigns/{id}/broadcast:
+    post:
+      operationId: broadcastToContributors
+      summary: Message every backer of a campaign (creator only)
+      tags: [Crowdfunding]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [subject, body]
+              properties:
+                subject: { type: string, minLength: 4, maxLength: 200 }
+                body: { type: string, minLength: 11, maxLength: 5000 }
+                channelPush: { type: boolean, default: true }
+                channelEmail: { type: boolean, default: true }
+      responses:
+        '200':
+          description: Message delivered in-app to every opted-in backer
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      recipients: { type: integer, description: Distinct backers notified in-app }
+        '403':
+          description: Caller is not the campaign's creator
+
   # ── Telemedicine ──────────────────────────────────────────────────────────────
   /telemedicine/doctors:
     get:
