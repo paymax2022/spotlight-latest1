@@ -38,7 +38,7 @@ import { aiPrefill, estimateFairPriceBand, uploadListingImage, isEscrowEligibleC
 import type { AiPrefillResult } from '@/features/marketplace/api/sell.api';
 import { useSellCategories, useSellCategory, useCreateListing, useSubmitListing } from '@/features/marketplace/sell.hooks';
 import { mainCategories, subcategoriesOf, breadcrumb } from '@/features/marketplace/categoryTree';
-import PhotoStrip, { type ComposerPhoto } from '@/features/marketplace/components/sell/PhotoStrip';
+import PhotoStrip, { type ComposerPhoto, extensionForMime } from '@/features/marketplace/components/sell/PhotoStrip';
 import AiPrefillCard from '@/features/marketplace/components/sell/AiPrefillCard';
 import ComposerValidation, { checkBannedPatterns, countWords } from '@/features/marketplace/components/sell/ComposerValidation';
 import AttributeFields, { normalizeSchema, missingRequired } from '@/features/marketplace/components/sell/AttributeFields';
@@ -186,6 +186,12 @@ export default function SellWizard() {
       uri: a.uri,
       phash: phashOf(a.uri),
       uploading: true,
+      // A camera capture or gallery pick is not always a JPEG — screenshots and
+      // some Android gallery sources are PNG. Presigning/uploading with the
+      // WRONG declared type stores real PNG bytes under a .jpg key with
+      // Content-Type: image/jpeg, which native Image decoders (unlike browsers)
+      // fail to render even though the object fetches fine.
+      mimeType: a.mimeType || 'image/jpeg',
     }));
     setPhotos((prev) => [...prev, ...added]);
     track('composer_photo_captured', { count: added.length, via: fromCamera ? 'camera' : 'gallery' });
@@ -199,7 +205,8 @@ export default function SellWizard() {
     // Upload each picked photo (presign → PUT). Non-blocking; the composer works
     // while uploads run, and Publish waits for fileUrls.
     for (const p of added) {
-      uploadListingImage({ uri: p.uri, name: `${p.id}.jpg`, mimeType: 'image/jpeg' })
+      const mimeType = p.mimeType || 'image/jpeg';
+      uploadListingImage({ uri: p.uri, name: `${p.id}.${extensionForMime(mimeType)}`, mimeType })
         .then((fileUrl) => setPhotos((prev) => prev.map((x) => (x.id === p.id ? { ...x, uploading: false, fileUrl } : x))))
         .catch(() => setPhotos((prev) => prev.map((x) => (x.id === p.id ? { ...x, uploading: false } : x))));
     }

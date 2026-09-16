@@ -1,5 +1,6 @@
-import { env } from '@/config/env';
+import { apiRoot } from '@/config/env';
 import { operationKey } from './idempotency';
+import { resolveUseMock } from '@/config/useMock';
 import type {
   Transfer,
   ProviderHealth,
@@ -7,13 +8,22 @@ import type {
 } from '@/types/transfersAdmin';
 
 // Backend may not be running — default to fixtures unless explicitly disabled.
-const USE_FIXTURES =
-  (process.env.NEXT_PUBLIC_TRANSFERS_ADMIN_USE_MOCK ?? 'true') !== 'false';
+const USE_FIXTURES = resolveUseMock(process.env.NEXT_PUBLIC_TRANSFERS_ADMIN_USE_MOCK);
 
-// Go backend mounts finance admin routes under /api/finance/admin/...
-// env.apiBaseUrl looks like http://localhost:8080/api/v1 → /api.
+// Go backend mounts finance admin transfer routes at
+// r.Group("/api/finance/admin/transfers") in backend/internal/app/finance_routes.go
+// (GET "", GET /provider-health, GET /:id, POST /:id/retry, POST /:id/reverse
+// — all appended by this file onto '/finance/admin/transfers' below). apiRoot()
+// strips any trailing /api/v1 from the same-origin proxy base and nothing else.
+//
+// This used to be env.apiBaseUrl.replace(/\/api\/v1\/?$/, '/api'), which
+// stopped matching once apiBaseUrl became the proxy path itself
+// (<origin>/api/admin-proxy, no /api/v1 suffix) — see
+// insuranceAdminService.ts for the same regression. The replace became a
+// no-op and every request 404'd against <proxy>/finance/admin/transfers
+// instead of <proxy>/api/finance/admin/transfers.
 export function adminApiBase(): string {
-  return env.apiBaseUrl.replace(/\/api\/v1\/?$/, '/api');
+  return `${apiRoot()}/api`;
 }
 
 function authHeaders(): Record<string, string> {

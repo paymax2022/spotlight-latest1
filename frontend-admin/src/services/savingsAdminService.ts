@@ -6,8 +6,9 @@
 // NL-7 (Ajo peer rotation — Paymax is ledger/escrow only), NL-8 (ledger),
 // NL-12 (immutable audit on every state change).
 
-import { env } from '@/config/env';
+import { apiRoot } from '@/config/env';
 import { operationKey } from './idempotency';
+import { resolveUseMock } from '@/config/useMock';
 import type {
   SavingsDashboard,
   VaultRecord,
@@ -20,10 +21,19 @@ import type {
   DefaultActionResult,
 } from '@/types/savingsAdmin';
 
-const USE_MOCK = (process.env.NEXT_PUBLIC_SAVINGS_USE_MOCK ?? 'true').toLowerCase() !== 'false';
+export const USE_MOCK = resolveUseMock(process.env.NEXT_PUBLIC_SAVINGS_USE_MOCK);
+/** Named so the fixture banner can cite the exact switch. */
+export const USE_MOCK_ENV = 'NEXT_PUBLIC_SAVINGS_USE_MOCK';
 
+// apiBaseUrl is the same-origin admin-proxy path (<origin>/api/admin-proxy),
+// not a plain API root — the old `env.apiBaseUrl.replace(/\/api\/v1\/?$/, ...)`
+// here stopped matching once the proxy migration landed (apiBaseUrl stopped
+// ending in /api/v1), silently no-op'ing this replace and leaving every call
+// pointed at the bare proxy root instead of .../api/savings/admin/... — see
+// insuranceAdminService.ts for the same regression. apiRoot() strips any
+// trailing /api/v1 from the proxy base and nothing else.
 function adminBase(): string {
-  return env.apiBaseUrl.replace(/\/api\/v1\/?$/, '/api/savings/admin');
+  return `${apiRoot()}/api/savings/admin`;
 }
 function authHeaders(): Record<string, string> {
   if (typeof window === 'undefined') return {};

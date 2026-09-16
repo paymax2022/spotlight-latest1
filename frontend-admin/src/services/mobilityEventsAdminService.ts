@@ -6,7 +6,8 @@
 // yet" claim here was stale.
 // All money is integer minor units (kobo). Every mutation is server-audited.
 
-import { env } from '@/config/env';
+import { apiRoot } from '@/config/env';
+import { resolveUseMock } from '@/config/useMock';
 import type {
   EventOfferRow, EventOfferStatus,
   EventBookingRow, EventBookingStatus,
@@ -15,11 +16,20 @@ import type {
 
 // Mock by default; flip with NEXT_PUBLIC_MOBILITY_MODES_USE_MOCK=false once the
 // admin control-plane endpoints are live on the Go backend.
-const USE_MOCK = (process.env.NEXT_PUBLIC_MOBILITY_MODES_USE_MOCK ?? 'true').toLowerCase() !== 'false';
+const USE_MOCK = resolveUseMock(process.env.NEXT_PUBLIC_MOBILITY_MODES_USE_MOCK);
 
+// Admin transport lives under its own absolute root (/api/finance/admin/transport,
+// see backend/internal/app/finance_routes.go's `adminTr` group), so the caller
+// must spell the full path out. apiRoot() strips any trailing /api/v1 from the
+// proxy base and nothing else.
+//
+// This used to be `env.apiBaseUrl.replace(/\/api\/v1\/?$/, '/api/finance/admin/transport')`,
+// which stopped matching the moment apiBaseUrl became the same-origin proxy
+// path (<origin>/api/admin-proxy, no /api/v1 suffix) — see insuranceAdminService.ts
+// for the same regression. Every request 404'd against <proxy>/events/offers
+// instead of <proxy>/api/finance/admin/transport/events/offers.
 function adminBase(): string {
-  // env.apiBaseUrl defaults to .../api/v1 ; admin transport lives under /api/finance/admin/transport
-  return env.apiBaseUrl.replace(/\/api\/v1\/?$/, '/api/finance/admin/transport');
+  return `${apiRoot()}/api/finance/admin/transport`;
 }
 function authHeaders(): Record<string, string> {
   if (typeof window === 'undefined') return {};

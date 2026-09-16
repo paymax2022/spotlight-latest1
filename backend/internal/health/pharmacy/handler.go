@@ -54,6 +54,21 @@ func (h *Handler) VerifyPrescription(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"success": true})
 }
 
+// ListMyPrescriptions — GET /prescriptions  (patient's own list)
+func (h *Handler) ListMyPrescriptions(c *gin.Context) {
+	id := uid(c)
+	if id == "" {
+		fail(c, http.StatusUnauthorized, "unauthenticated")
+		return
+	}
+	rx, err := h.svc.MyPrescriptions(c.Request.Context(), id)
+	if err != nil {
+		fail(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "prescriptions": rx})
+}
+
 // ListProducts — GET /products?pharmacy_provider_id=&q=  (NAFDAC-gated, Rx flag, HL-5)
 // q is an optional case-insensitive search on the medicine name or owning pharmacy name.
 func (h *Handler) ListProducts(c *gin.Context) {
@@ -118,11 +133,14 @@ func (h *Handler) CreateOrder(c *gin.Context) {
 		return
 	}
 	var req struct {
-		PharmacyProviderID string  `json:"pharmacy_provider_id"`
-		PrescriptionID     *string `json:"prescription_id"`
-		FulfilmentMethod   string  `json:"fulfilment_method"`
-		IdempotencyKey     string  `json:"idempotency_key"`
-		SearchEventID      *string `json:"search_event_id"` // optional symptom-search link (PRD §10)
+		PharmacyProviderID string   `json:"pharmacy_provider_id"`
+		PrescriptionID     *string  `json:"prescription_id"`
+		FulfilmentMethod   string   `json:"fulfilment_method"`
+		IdempotencyKey     string   `json:"idempotency_key"`
+		SearchEventID      *string  `json:"search_event_id"` // optional symptom-search link (PRD §10)
+		DeliveryAddress    string   `json:"delivery_address"` // required when fulfilment_method=DELIVERY
+		DeliveryLat        *float64 `json:"delivery_lat"`
+		DeliveryLng        *float64 `json:"delivery_lng"`
 		Lines              []struct {
 			ProductID string `json:"product_id"`
 			Quantity  int    `json:"quantity"`
@@ -142,6 +160,9 @@ func (h *Handler) CreateOrder(c *gin.Context) {
 		FulfilmentMethod:   FulfilmentMethod(req.FulfilmentMethod),
 		IdempotencyKey:     idem,
 		SearchEventID:      req.SearchEventID,
+		DeliveryAddress:    req.DeliveryAddress,
+		DeliveryLat:        req.DeliveryLat,
+		DeliveryLng:        req.DeliveryLng,
 	}
 	for _, l := range req.Lines {
 		in.Lines = append(in.Lines, OrderLineInput{ProductID: l.ProductID, Quantity: l.Quantity})
@@ -257,6 +278,29 @@ func (h *Handler) Get(c *gin.Context) {
 func (h *Handler) ListMine(c *gin.Context) {
 	orders, err := h.svc.ListForOwner(
 		c.Request.Context(), uid(c), c.Query("state"),
+		parseIntDefault(c.Query("limit"), 0), parseIntDefault(c.Query("offset"), 0),
+	)
+	if err != nil {
+		fail(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "orders": orders})
+}
+
+// ListMyOrders — GET /orders/mine?state=&limit=&offset=
+//
+// The patient's own order history: orders the CALLER placed. Counterpart to
+// ListMine (the pharmacist inbox at GET /orders) — kept on a distinct path so
+// the two never collide. Registered BEFORE /orders/:id for the same reason
+// ListMine is: Gin must not bind "mine" as :id.
+func (h *Handler) ListMyOrders(c *gin.Context) {
+	id := uid(c)
+	if id == "" {
+		fail(c, http.StatusUnauthorized, "unauthenticated")
+		return
+	}
+	orders, err := h.svc.ListForPatient(
+		c.Request.Context(), id, c.Query("state"),
 		parseIntDefault(c.Query("limit"), 0), parseIntDefault(c.Query("offset"), 0),
 	)
 	if err != nil {

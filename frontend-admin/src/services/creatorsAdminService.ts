@@ -5,7 +5,8 @@
 // Money is BIGINT kobo (minor units) throughout. Surfaces NL-5 (perks not returns),
 // NL-10 (KYC payout gate), NL-11 (content & age safety), NL-12 (immutable audit).
 
-import { env } from '@/config/env';
+import { apiRoot } from '@/config/env';
+import { resolveUseMock } from '@/config/useMock';
 import type {
   CreatorsDashboard,
   CreatorVerificationItem,
@@ -26,10 +27,17 @@ import type {
   CreatorFraudActionResult,
 } from '@/types/creatorsAdmin';
 
-const USE_MOCK = (process.env.NEXT_PUBLIC_CREATORS_USE_MOCK ?? 'true').toLowerCase() !== 'false';
+export const USE_MOCK = resolveUseMock(process.env.NEXT_PUBLIC_CREATORS_USE_MOCK);
+/** Named so the fixture banner can cite the exact switch. */
+export const USE_MOCK_ENV = 'NEXT_PUBLIC_CREATORS_USE_MOCK';
 
+// adminBase() used to do `env.apiBaseUrl.replace(/\/api\/v1\/?$/, '/api/creators/admin')`,
+// which relied on apiBaseUrl ending in /api/v1. It no longer does (same-origin
+// proxy origin instead), so the regex became a silent no-op and every live call
+// 404'd. apiRoot() strips any trailing /api/v1 explicitly, so this keeps working
+// no matter how apiBaseUrl is spelled.
 function adminBase(): string {
-  return env.apiBaseUrl.replace(/\/api\/v1\/?$/, '/api/creators/admin');
+  return `${apiRoot()}/api/creators/admin`;
 }
 function authHeaders(): Record<string, string> {
   if (typeof window === 'undefined') return {};

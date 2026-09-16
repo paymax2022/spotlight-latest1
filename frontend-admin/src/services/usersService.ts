@@ -1,8 +1,22 @@
-import { env } from '@/config/env';
+import { apiRoot } from '@/config/env';
 import type { AdminUser, AdminUserFilters } from '@/types/users';
 
+/**
+ * Admin user management lives on the rbacAdmin group at
+ * r.Group("/api/admin") in backend/internal/app/router.go (GET/PATCH
+ * /admin/users, /admin/users/:id, /admin/users/:id/{suspend,unsuspend,lock,
+ * unlock}). apiRoot() strips any trailing /api/v1 from the same-origin proxy
+ * base and nothing else.
+ *
+ * This used to be env.apiBaseUrl.replace(/\/api\/v1\/?$/, '/api'), which
+ * stopped matching once apiBaseUrl became the proxy path itself
+ * (<origin>/api/admin-proxy, no /api/v1 suffix) — see
+ * insuranceAdminService.ts for the same regression. The replace became a
+ * no-op and every request 404'd against <proxy>/admin/users instead of
+ * <proxy>/api/admin/users.
+ */
 function adminApiBase(): string {
-  return env.apiBaseUrl.replace(/\/api\/v1\/?$/, '/api');
+  return `${apiRoot()}/api`;
 }
 
 function authHeaders(): Record<string, string> {

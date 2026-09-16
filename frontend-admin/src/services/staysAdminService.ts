@@ -5,7 +5,8 @@
 // Money is BIGINT kobo (minor units) throughout. Source-rail + supplier + FX are
 // always disclosed (PRD §5 dual-rail, §12 money/recon).
 
-import { env } from '@/config/env';
+import { apiRoot } from '@/config/env';
+import { resolveUseMock } from '@/config/useMock';
 import type {
   StaysDashboard,
   Supplier,
@@ -51,10 +52,19 @@ import type {
   NotificationTemplate,
 } from '@/types/staysAdmin';
 
-const USE_MOCK = (process.env.NEXT_PUBLIC_STAYS_USE_MOCK ?? 'true').toLowerCase() !== 'false';
+export const USE_MOCK = resolveUseMock(process.env.NEXT_PUBLIC_STAYS_USE_MOCK);
+/** Named so the fixture banner can cite the exact switch. */
+export const USE_MOCK_ENV = 'NEXT_PUBLIC_STAYS_USE_MOCK';
 
+// apiBaseUrl is the same-origin admin-proxy path (<origin>/api/admin-proxy),
+// not a plain API root — the old `env.apiBaseUrl.replace(/\/api\/v1\/?$/, ...)`
+// here stopped matching once the proxy migration landed (apiBaseUrl stopped
+// ending in /api/v1), silently no-op'ing this replace and leaving every call
+// pointed at the bare proxy root instead of .../api/stays/admin/... — see
+// insuranceAdminService.ts for the same regression. apiRoot() strips any
+// trailing /api/v1 from the proxy base and nothing else.
 function adminBase(): string {
-  return env.apiBaseUrl.replace(/\/api\/v1\/?$/, '/api/stays/admin');
+  return `${apiRoot()}/api/stays/admin`;
 }
 function authHeaders(): Record<string, string> {
   if (typeof window === 'undefined') return {};

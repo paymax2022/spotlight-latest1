@@ -131,6 +131,11 @@ export interface CfRefundRequest {
   status: CfRefundStatus;
   requestedAt: string;
   refundEligible: boolean;
+  /** True for rows created by the crowdfunding seed migration rather than by a
+   *  real refund. cf_refunds has exactly one writer in the repo (that seed), so
+   *  today every row is a demo row — the page labels them instead of showing
+   *  fixtures beside live GMV in identical styling. */
+  isDemo: boolean;
 }
 
 export type CfSettlementStatus = 'PENDING' | 'PROCESSING' | 'SETTLED' | 'FAILED';
@@ -144,10 +149,13 @@ export interface CfSettlementBatch {
   netKobo: number;
   status: CfSettlementStatus;
   createdAt: string;
+  /** See CfRefundRequest.isDemo — cf_settlements has the same single writer. */
+  isDemo: boolean;
 }
 
 export interface CfFinanceSummary {
   gmvKobo: number;
+  /** Realized revenue read from commission_earnings, not a % applied to GMV. */
   platformRevenueKobo: number;
   refundsPendingKobo: number;
   refundsPendingCount: number;
@@ -155,7 +163,13 @@ export interface CfFinanceSummary {
   chargebacksCount: number;
   escrowKobo: number;
   settledThisMonthKobo: number;
+  /** Released contributions with no commission_earnings row — money that moved
+   *  without its revenue being booked. Was previously hardcoded to 0. */
   reconciliationMismatches: number;
+  /** Gross contribution value behind those mismatches. */
+  unbookedGrossKobo: number;
+  demoRefundRows: number;
+  demoSettlementRows: number;
 }
 
 // ─── Support & disputes ───────────────────────────────────────────────────────
@@ -373,4 +387,110 @@ export interface CfFeatureRequest {
   note: string | null;
   /** When the request was actioned. Null while PENDING. */
   decidedAt: string | null;
+}
+
+// ─── Campaign directory ───────────────────────────────────────────────────────
+// The "every campaign" surface. Distinct from CfReviewCampaign, which is only
+// the moderation queue (PENDING_REVIEW) and carries no funding figures.
+
+export interface CfDirectoryRow {
+  id: string;
+  title: string;
+  category: string;
+  type: string;
+  status: string;
+  reviewStatus: string;
+  creatorId: string;
+  creatorName: string;
+  goalKobo: number;
+  raisedKobo: number;
+  percentOfGoal: number;
+  /** DISTINCT contributors. */
+  backerCount: number;
+  contributionCount: number;
+  /** The denormalised campaigns.contributor_count, shown when it disagrees. */
+  storedContributorCount: number;
+  verified: boolean;
+  featured: boolean;
+  trending: boolean;
+  urgent: boolean;
+  frozen: boolean;
+  riskLevel: string;
+  riskScore: number;
+  deadline: string;
+  createdAt: string;
+}
+
+export interface CfDirectoryPage {
+  rows: CfDirectoryRow[];
+  total: number;
+  page: number;
+  limit: number;
+}
+
+export interface CfDirectoryFilter {
+  status?: string;
+  reviewStatus?: string;
+  category?: string;
+  q?: string;
+  flag?: '' | 'featured' | 'verified' | 'trending' | 'urgent' | 'frozen';
+  sort?: '' | 'recent' | 'raised' | 'goal' | 'backers' | 'deadline';
+  page?: number;
+  limit?: number;
+}
+
+export interface CfBacker {
+  contributionId: string;
+  contributorId: string;
+  contributorName: string;
+  contributorEmail: string;
+  amountKobo: number;
+  status: string;
+  createdAt: string;
+}
+
+export interface CfBackersPage {
+  backers: CfBacker[];
+  total: number;
+  page: number;
+  limit: number;
+  raisedKobo: number;
+  backerCount: number;
+}
+
+export interface CfStatusBreakdown {
+  status: string;
+  count: number;
+  amountKobo: number;
+}
+
+/**
+ * Per-campaign money. Refunds and settlements are deliberately absent: neither
+ * table carries a campaign_id in this schema, so they cannot be attributed to a
+ * campaign without guessing on the title. They live on the finance pages.
+ */
+export interface CfCampaignFunding {
+  campaignId: string;
+  goalKobo: number;
+  raisedKobo: number;
+  backerCount: number;
+  contributionCount: number;
+  averageContributionKobo: number;
+  largestContributionKobo: number;
+  firstContributionAt: string;
+  lastContributionAt: string;
+  byStatus: CfStatusBreakdown[];
+  withdrawnKobo: number;
+  withdrawalCount: number;
+  pendingWithdrawalKobo: number;
+  milestoneCount: number;
+  milestonesReleased: number;
+}
+
+/** One page of crowdfunding users plus the count matching the current filters. */
+export interface CfUsersPage {
+  users: CfUser[];
+  total: number;
+  page: number;
+  limit: number;
 }

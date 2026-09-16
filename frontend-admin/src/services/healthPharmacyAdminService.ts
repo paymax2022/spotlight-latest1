@@ -8,7 +8,8 @@
 // HL-5 NAFDAC-only catalog (reject at write), HL-8 NDPA sensitive data (masked),
 // HL-9 money held→released→refunded, HL-10 payout KYC gate, HL-12 immutable audit.
 
-import { env } from '@/config/env';
+import { apiRoot } from '@/config/env';
+import { resolveUseMock } from '@/config/useMock';
 import type {
   PharmacyDashboard,
   PcnApplication,
@@ -30,10 +31,19 @@ import type {
   ReportingData,
 } from '@/types/healthAdmin';
 
-const USE_MOCK = (process.env.NEXT_PUBLIC_HEALTH_USE_MOCK ?? 'true').toLowerCase() !== 'false';
+export const USE_MOCK = resolveUseMock(process.env.NEXT_PUBLIC_HEALTH_USE_MOCK);
+/** Named so the fixture banner can cite the exact switch. */
+export const USE_MOCK_ENV = 'NEXT_PUBLIC_HEALTH_USE_MOCK';
 
+// Verified against backend/internal/app/finance_routes.go:
+//   RegisterHealthPharmacy(finance, adminGroupTop5(r, "/api/health/pharmacy/admin"), ...)
+// This used to be `env.apiBaseUrl.replace(/\/api\/v1\/?$/, '/api/health/pharmacy/admin')`,
+// which stopped matching the moment apiBaseUrl became the same-origin proxy path
+// (<origin>/api/admin-proxy, no /api/v1 suffix) — see insuranceAdminService.ts for
+// the same regression. Every request 404'd against <proxy>/dashboard instead of
+// <proxy>/api/health/pharmacy/admin/dashboard; USE_MOCK hid it whenever set.
 function adminBase(): string {
-  return env.apiBaseUrl.replace(/\/api\/v1\/?$/, '/api/health/pharmacy/admin');
+  return `${apiRoot()}/api/health/pharmacy/admin`;
 }
 function authHeaders(): Record<string, string> {
   if (typeof window === 'undefined') return {};

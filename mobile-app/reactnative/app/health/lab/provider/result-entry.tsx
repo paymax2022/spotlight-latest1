@@ -1,8 +1,8 @@
-import React, { useState } from 'react';
-import { View, Text, ScrollView, Pressable, StyleSheet } from 'react-native';
+import React, { useEffect, useState } from 'react';
+import { View, Text, ScrollView, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
-import { Plus, X, TriangleAlert } from 'lucide-react-native';
+import { TriangleAlert } from 'lucide-react-native';
 
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
@@ -11,12 +11,13 @@ import { Radius } from '@/constants/radius';
 import { shadow1 } from '@/constants/shadows';
 
 import ScreenHeader from '@/components/ScreenHeader';
+import StateView from '@/components/StateView';
 import PrimaryButton from '@/components/PrimaryButton';
 import TextInputField from '@/components/TextInputField';
 import SegmentedControl from '@/components/SegmentedControl';
 
-import { useEnterResult } from '@/features/health/lab/hooks';
-import type { ResultEntryAnalyte, AnalyteFlag } from '@/features/health/lab/types';
+import { useOrder, useEnterResult } from '@/features/health/lab/hooks';
+import type { ResultEntryAnalyte } from '@/features/health/lab/types';
 
 const FLAG_OPTIONS = [
   { value: 'normal', label: 'Normal' },
@@ -25,41 +26,43 @@ const FLAG_OPTIONS = [
   { value: 'critical', label: 'Critical' },
 ];
 
-function emptyAnalyte(id: string): ResultEntryAnalyte {
-  return { id, name: '', value: '', unit: '', referenceRange: '', flag: 'normal' };
-}
-
 export default function LabProviderResultEntryScreen() {
   const { orderId } = useLocalSearchParams<{ orderId: string }>();
+  const order = useOrder(orderId as string);
   const enterResult = useEnterResult();
 
-  const [analytes, setAnalytes] = useState<ResultEntryAnalyte[]>([
-    emptyAnalyte('a_1'),
-    emptyAnalyte('a_2'),
-    emptyAnalyte('a_3'),
-  ]);
+  const [analytes, setAnalytes] = useState<ResultEntryAnalyte[] | null>(null);
   const [interpretation, setInterpretation] = useState('');
+  const [scannedBarcode, setScannedBarcode] = useState('');
+
+  // Result rows are the order's own ordered tests, not free-text entries — a
+  // result can only bind to a test that was actually ordered (the real
+  // backend rejects any test_id not on this order's lines). One row per line,
+  // testId locked to the real catalog id (LabOrderLine.refId).
+  useEffect(() => {
+    if (order.data && analytes === null) {
+      setAnalytes(
+        order.data.lines.map((l) => ({
+          id: l.refId, testId: l.refId, name: l.name, value: '', unit: '', referenceRange: '', flag: 'normal',
+        })),
+      );
+    }
+  }, [order.data, analytes]);
 
   const update = (id: string, patch: Partial<ResultEntryAnalyte>) => {
-    setAnalytes((prev) => prev.map((a) => (a.id === id ? { ...a, ...patch } : a)));
+    setAnalytes((prev) => (prev ? prev.map((a) => (a.id === id ? { ...a, ...patch } : a)) : prev));
   };
 
-  const addRow = () => {
-    setAnalytes((prev) => [...prev, emptyAnalyte(`a_${Date.now()}`)]);
-  };
-
-  const removeRow = (id: string) => {
-    setAnalytes((prev) => prev.filter((a) => a.id !== id));
-  };
-
-  const hasCritical = analytes.some((a) => a.flag === 'critical');
-  const canSave = analytes.length > 0 && analytes.every((a) => a.name.trim() && a.value.trim());
+  const rows = analytes ?? [];
+  const hasCritical = rows.some((a) => a.flag === 'critical');
+  const canSave = rows.length > 0 && rows.every((a) => a.value.trim());
 
   const onSave = async () => {
     const created = await enterResult.mutateAsync({
       orderId: orderId as string,
-      analytes,
+      analytes: rows,
       interpretation: interpretation.trim() || undefined,
+      scannedBarcode: scannedBarcode.trim() || undefined,
     });
     router.push({
       pathname: '/health/lab/provider/result-release',
@@ -71,24 +74,46 @@ export default function LabProviderResultEntryScreen() {
     });
   };
 
+  if (order.isLoading) {
+    return (
+      <SafeAreaView style={styles.safe} edges={['top']}>
+        <ScreenHeader title="Result entry" subtitle="Enter & validate" />
+        <StateView kind="loading" />
+      </SafeAreaView>
+    );
+  }
+
+  if (order.isError || !order.data) {
+    return (
+      <SafeAreaView style={styles.safe} edges={['top']}>
+        <ScreenHeader title="Result entry" subtitle="Enter & validate" />
+        <StateView kind="error" title="Couldn't load order" message="Please try again." actionLabel="Retry" onAction={() => order.refetch()} />
+      </SafeAreaView>
+    );
+  }
+
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
       <ScreenHeader title="Result entry" subtitle="Enter & validate" />
       <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
-        {analytes.map((a, idx) => (
+        <View style={styles.card}>
+          <Text style={styles.cardTitle}>Sample verification</Text>
+          <TextInputField
+            label="Scanned barcode (optional)"
+            value={scannedBarcode}
+            onChangeText={setScannedBarcode}
+            placeholder="Scan or enter the tube barcode"
+          />
+          <Text style={styles.note}>
+            If entered, this must match the accessioned sample's barcode (LR-001) or result entry is rejected.
+          </Text>
+        </View>
+
+        {rows.map((a) => (
           <View key={a.id} style={styles.card}>
             <View style={styles.cardHeader}>
-              <Text style={styles.cardTitle}>Analyte {idx + 1}</Text>
-              <Pressable onPress={() => removeRow(a.id)} hitSlop={8}>
-                <X size={18} color={Colors.onSurfaceVariant} />
-              </Pressable>
+              <Text style={styles.cardTitle}>{a.name}</Text>
             </View>
-            <TextInputField
-              label="Name"
-              value={a.name}
-              onChangeText={(t) => update(a.id, { name: t })}
-              placeholder="e.g. Haemoglobin"
-            />
             <View style={styles.inlineRow}>
               <TextInputField
                 label="Value"
@@ -115,13 +140,11 @@ export default function LabProviderResultEntryScreen() {
             <SegmentedControl
               options={FLAG_OPTIONS}
               value={a.flag}
-              onChange={(v) => update(a.id, { flag: v as AnalyteFlag })}
+              onChange={(v) => update(a.id, { flag: v as ResultEntryAnalyte['flag'] })}
               scrollable
             />
           </View>
         ))}
-
-        <PrimaryButton label="+ Add analyte" variant="ghost" onPress={addRow} />
 
         <View style={styles.card}>
           <Text style={styles.cardTitle}>Interpretation (optional)</Text>
@@ -169,6 +192,7 @@ const styles = StyleSheet.create({
   inlineRow: { flexDirection: 'row', gap: Spacing.md },
   inlineField: { flex: 1 },
   flagLabel: { ...Typography.labelMd, color: Colors.onSurfaceVariant },
+  note: { ...Typography.bodySm, color: Colors.onSurfaceVariant },
   criticalNotice: {
     flexDirection: 'row',
     gap: Spacing.sm,

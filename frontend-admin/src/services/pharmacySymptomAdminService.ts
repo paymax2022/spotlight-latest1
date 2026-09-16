@@ -10,7 +10,8 @@
 // Suggest-approve gravity: nothing AI_SUGGESTED is user-visible until a
 // licensed pharmacist approves it here — approvals go live immediately.
 
-import { env } from '@/config/env';
+import { apiRoot } from '@/config/env';
+import { resolveUseMock } from '@/config/useMock';
 
 // ── URL constants (single place to fix if backend paths differ) ──────────────
 // Base mirrors healthPharmacyAdminService: env.apiBaseUrl ends with /api/v1 and
@@ -22,10 +23,17 @@ export const URL_REVIEW_DECISION = (id: string) => `/symptom/reviews/${encodeURI
 export const URL_MAPPINGS = '/symptom/mappings'; // GET ?entity=term|cluster · POST {entity, action, payload}
 export const URL_METRICS = '/symptom/metrics'; // GET — safety-KPI strip (PRD §9)
 
-const USE_MOCK = (process.env.NEXT_PUBLIC_HEALTH_USE_MOCK ?? 'true').toLowerCase() !== 'false';
+const USE_MOCK = resolveUseMock(process.env.NEXT_PUBLIC_HEALTH_USE_MOCK);
 
+// apiBaseUrl is the same-origin admin-proxy path (<origin>/api/admin-proxy),
+// not a plain API root — the old `env.apiBaseUrl.replace(/\/api\/v1\/?$/, ...)`
+// here stopped matching once the proxy migration landed (apiBaseUrl stopped
+// ending in /api/v1), silently no-op'ing this replace and leaving every call
+// pointed at the bare proxy root instead of .../api/health/pharmacy/admin/... —
+// see insuranceAdminService.ts for the same regression. apiRoot() strips any
+// trailing /api/v1 from the proxy base and nothing else.
 function adminBase(): string {
-  return env.apiBaseUrl.replace(/\/api\/v1\/?$/, ADMIN_BASE_SUFFIX);
+  return `${apiRoot()}${ADMIN_BASE_SUFFIX}`;
 }
 function authHeaders(extra?: Record<string, string>): Record<string, string> {
   const base: Record<string, string> = { 'Content-Type': 'application/json', ...(extra ?? {}) };

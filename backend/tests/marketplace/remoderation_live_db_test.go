@@ -221,9 +221,23 @@ func seedActiveBoost(t *testing.T, ctx context.Context, pool *pgxpool.Pool, list
 	t.Helper()
 	id := uuid.New().String()
 	if _, err := pool.Exec(ctx,
-		`INSERT INTO mkt_boosts (id, market_id, listing_id, seller_id, tier, duration_days, price_kobo,
+		// weight is FROZEN onto the boost row at purchase time (see PurchaseBoost),
+		// and searchPayload now reads that column rather than deriving rank from
+		// the tier. A seed that omits it takes the DEFAULT 0, so the listing would
+		// index as unboosted and this test would assert against its own gap rather
+		// than the behaviour.
+		//
+		// Deliberately NOT wrapped in COALESCE(..., 0): the package row is a
+		// precondition (migration 20270168000000 seeds all five tiers), so if it is
+		// missing this must fail LOUDLY at seed time on the NOT NULL weight column.
+		// Defaulting to 0 would resurrect the exact failure this line fixes, and
+		// its message would point at the boost weight rather than at the absent
+		// package row.
+		`INSERT INTO mkt_boosts (id, market_id, listing_id, seller_id, tier, duration_days, price_kobo, weight,
 			ledger_charge_ref, status, starts_at, ends_at, created_at)
-		 VALUES ($1::uuid,'NG',$2::uuid,$3::uuid,$4,7,50000,'test:'||$1::text,'active'::boost_status,
+		 VALUES ($1::uuid,'NG',$2::uuid,$3::uuid,$4,7,50000,
+			(SELECT weight FROM public.mkt_boost_packages WHERE tier=$4),
+			'test:'||$1::text,'active'::boost_status,
 			now()-interval '1 day', `+endsAt+`, now())`, id, listingID, sellerID, tier); err != nil {
 		t.Fatalf("seed active boost: %v", err)
 	}

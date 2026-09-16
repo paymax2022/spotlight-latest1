@@ -13,6 +13,7 @@ import FeaturedServiceCard from '@/components/FeaturedServiceCard';
 import PromoBanner from '@/components/PromoBanner';
 import RecentActivityCard, { Activity } from '@/components/RecentActivityCard';
 import { FeaturedHomeSection } from '@/features/featured/components';
+import { useMyTickets, useEvents } from '@/features/events/hooks';
 import { Colors } from '@/constants/colors';
 import { Spacing } from '@/constants/spacing';
 import { Radius } from '@/constants/radius';
@@ -114,6 +115,18 @@ export default function HomeScreen() {
     [gate],
   );
 
+  // Events promo banner: surfaces only when relevant (an unused ticket in
+  // hand, or something LIVE right now) rather than as permanent chrome — the
+  // Services grid tile stays the primary, always-available entry point.
+  // Fetches regardless of the module gate (cheap, cached, same pattern
+  // FeaturedHomeSection already uses — "renders nothing when empty" is
+  // decided at render, not at fetch time).
+  const { data: myTickets } = useMyTickets();
+  const { data: liveEvents } = useEvents({ state: 'LIVE' });
+  const hasUsableTicket = (myTickets ?? []).some((t) => t.state === 'ISSUED' || t.state === 'TRANSFERRED');
+  const hasLiveEvent = (liveEvents ?? []).length > 0;
+  const showEventsBanner = gate(registryKeyFor('events')) && (hasUsableTicket || hasLiveEvent);
+
   const runSearch = (text: string) => {
     const q = text.trim();
     if (!q) return;
@@ -213,6 +226,16 @@ export default function HomeScreen() {
           badge="NEW"
           onPress={() => { try { router.push('/voting' as never); } catch {} }}
         />
+
+        {showEventsBanner ? (
+          <PromoBanner
+            title={hasUsableTicket ? 'You have a ticket waiting' : "There's a live event right now"}
+            subtitle={hasUsableTicket ? 'Open your pass and get ready to go' : 'See what other Spotlight users are into'}
+            cta={hasUsableTicket ? 'View my ticket' : 'See what\'s live'}
+            badge="EVENTS"
+            onPress={() => { try { router.push((hasUsableTicket ? '/events/my-tickets' : '/events') as never); } catch {} }}
+          />
+        ) : null}
 
         {/* Featured Placement — dynamic sponsored content fed by the landing
             resolver (hero + carousel + grid). Renders nothing when empty, so

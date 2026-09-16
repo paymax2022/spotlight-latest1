@@ -58,6 +58,7 @@ export default function DynamicForm({
   onSubmit,
   submitLabel = 'Continue',
   submitting = false,
+  submitDisabled = false,
   /** Field errors returned by the server on the last submit attempt. */
   serverFieldErrors,
   /** Rendered above the first step — used for the underwriter disclosure. */
@@ -73,6 +74,10 @@ export default function DynamicForm({
   onSubmit: (values: FormValues) => void;
   submitLabel?: string;
   submitting?: boolean;
+  /** Blocks the FINAL submit only — intermediate steps still advance. Used for a
+   *  precondition the form cannot see, such as consent that must be given before
+   *  the answers may be transmitted. */
+  submitDisabled?: boolean;
   serverFieldErrors?: Record<string, string>;
   header?: React.ReactNode;
   footer?: React.ReactNode;

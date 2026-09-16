@@ -107,7 +107,13 @@ export async function syncAdminSession(): Promise<boolean> {
   if (error || !session?.access_token) {
     // No recoverable session. Drop the stale copy so the guard cannot wave the
     // operator through into a console that answers 401 on every request.
+    //
+    // The user record goes too. It was left behind, and roughly two dozen
+    // screens plus the sidebar read it directly from localStorage — so an
+    // expired session kept publishing an identity and a permission set that
+    // nothing could honour any more. Only an explicit Log out click cleared it.
     localStorage.removeItem(ADMIN_TOKEN_KEY);
+    localStorage.removeItem(ADMIN_USER_KEY);
     return false;
   }
 

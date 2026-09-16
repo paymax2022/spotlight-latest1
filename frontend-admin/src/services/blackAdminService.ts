@@ -6,8 +6,9 @@
 // Money is BIGINT kobo (minor units). Surfaces NL-3 (closed-loop perks via single-use
 // credential), NL-4 (perks/points not cash), NL-12 (immutable audit).
 
-import { env } from '@/config/env';
+import { apiRoot } from '@/config/env';
 import { operationKey } from './idempotency';
+import { resolveUseMock } from '@/config/useMock';
 import type {
   BlackDashboard,
   BlackPerk,
@@ -16,10 +17,21 @@ import type {
   BlackSettlement,
 } from '@/types/blackAdmin';
 
-const USE_MOCK = (process.env.NEXT_PUBLIC_LOYALTY_USE_MOCK ?? 'true').toLowerCase() !== 'false';
+export const USE_MOCK = resolveUseMock(process.env.NEXT_PUBLIC_LOYALTY_USE_MOCK);
+/** Named so the fixture banner can cite the exact switch. */
+export const USE_MOCK_ENV = 'NEXT_PUBLIC_LOYALTY_USE_MOCK';
 
+// Verified against backend/internal/app/top5_p3_routes.go RegisterLoyaltyBlack:
+//   RegisterLoyaltyBlack(finance.Group("/loyalty"), adminGroupTop5(r, "/api/loyalty/admin/black"), pool, rbac)
+// — the Black admin group really is rooted at /api/loyalty/admin/black.
+//
+// This used to be `env.apiBaseUrl.replace(/\/api\/v1\/?$/, '/api/loyalty/admin/black')`,
+// which was correct only while apiBaseUrl ended in /api/v1. It no longer does —
+// it is the same-origin proxy path (<origin>/api/admin-proxy) — so the regex
+// stopped matching, the replace was a no-op, and every live call went to the
+// bare proxy root and 404'd. Same shape as apiRoot() usage in loyaltyAdminService.
 function adminBase(): string {
-  return env.apiBaseUrl.replace(/\/api\/v1\/?$/, '/api/loyalty/admin/black');
+  return `${apiRoot()}/api/loyalty/admin/black`;
 }
 function authHeaders(): Record<string, string> {
   if (typeof window === 'undefined') return {};

@@ -38,7 +38,6 @@ import type {
   ProductCategory,
   CreateOrderInput,
   SubmitReviewInput,
-  ProviderOnboardingState,
   RxDecision,
 } from './types';
 import type { DiscoverPharmaciesOpts } from './api';
@@ -186,7 +185,7 @@ export function useProviderOnboarding() {
 export function useSubmitProviderOnboarding() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (input: Partial<ProviderOnboardingState>) => submitProviderOnboarding(input),
+    mutationFn: (input: Parameters<typeof submitProviderOnboarding>[0]) => submitProviderOnboarding(input),
     onSuccess: () => qc.invalidateQueries({ queryKey: [KEY, 'provider', 'onboarding'] }),
   });
 }

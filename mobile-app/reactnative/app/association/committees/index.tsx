@@ -2,7 +2,7 @@ import React from 'react';
 import { View, Text, FlatList, Pressable, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
-import { Users, ChevronRight, Check, Clock } from 'lucide-react-native';
+import { Users, ChevronRight, Check, Clock, Plus } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
 import { Spacing } from '@/constants/spacing';
@@ -11,24 +11,66 @@ import { shadow1 } from '@/constants/shadows';
 import ScreenHeader from '@/components/ScreenHeader';
 import SectionHeader from '@/components/SectionHeader';
 import StateView from '@/components/StateView';
-import { useCommittees } from '@/features/association/hooks/useCommunity';
+import { useCommittees, useCreateCommittee } from '@/features/association/hooks/useCommunity';
+import { useAdminAccess } from '@/features/association/hooks/useAdminMembers';
+import CommitteeFormModal from '@/features/association/components/CommitteeFormModal';
+import { alertAsync } from '@/lib/confirm';
+import { canManageCommittees } from '@/features/association/utils/committeePermissions';
 import { formatCount } from '@/features/association/utils/associationFormatters';
 import type { CommitteeSummary } from '@/features/association/types/community.types';
 
 export default function CommitteesList() {
   const committees = useCommittees();
+  const access = useAdminAccess();
+  const create = useCreateCommittee();
+  const [formOpen, setFormOpen] = React.useState(false);
+
+  // Owner only — and the rule lives in committeePermissions so it is unit
+  // tested and cannot drift between this screen and the detail screen.
+  const orgId = access.data?.organisationId ?? null;
+  const canManage = canManageCommittees(access.data);
+
   const mine = (committees.data ?? []).filter((c) => c.joinStatus === 'MEMBER');
   const others = (committees.data ?? []).filter((c) => c.joinStatus !== 'MEMBER');
 
+  const submit = async (input: { name: string; description?: string | null }) => {
+    try {
+      await create.mutateAsync({ orgId: orgId as string, input });
+      setFormOpen(false);
+    } catch {
+      await alertAsync({ title: "Couldn't create that committee", message: 'Please try again.' });
+    }
+  };
+
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
-      <ScreenHeader title="Committees" />
+      <ScreenHeader
+        title="Committees"
+        rightSlot={canManage ? (
+          <Pressable
+            onPress={() => setFormOpen(true)}
+            hitSlop={8}
+            accessibilityRole="button"
+            accessibilityLabel="New committee"
+            style={({ pressed }) => [styles.headerBtn, pressed && styles.pressed]}
+          >
+            <Plus size={20} color={Colors.primary} strokeWidth={2.4} />
+          </Pressable>
+        ) : undefined}
+      />
       {committees.isLoading ? (
         <StateView kind="loading" message="Loading committees…" />
       ) : committees.isError ? (
         <StateView kind="error" title="Couldn't load" message="Please try again." actionLabel="Retry" onAction={() => committees.refetch()} />
       ) : (committees.data?.length ?? 0) === 0 ? (
-        <StateView kind="empty" icon="Users" title="No committees" message="Committees will appear here." />
+        <StateView
+          kind="empty"
+          icon="Users"
+          title="No committees"
+          message={canManage ? 'Create the first committee for your association.' : 'Committees will appear here.'}
+          actionLabel={canManage ? 'New committee' : undefined}
+          onAction={canManage ? () => setFormOpen(true) : undefined}
+        />
       ) : (
         <FlatList
           data={others}
@@ -50,6 +92,12 @@ export default function CommitteesList() {
           ItemSeparatorComponent={() => <View style={{ height: Spacing.md }} />}
         />
       )}
+      <CommitteeFormModal
+        visible={formOpen}
+        busy={create.isPending}
+        onCancel={() => setFormOpen(false)}
+        onSubmit={submit}
+      />
     </SafeAreaView>
   );
 }
@@ -98,4 +146,5 @@ const styles = StyleSheet.create({
   meta: { ...Typography.caption, color: Colors.outline },
   statusChip: { flexDirection: 'row', alignItems: 'center', gap: 4, borderRadius: Radius.full, paddingHorizontal: Spacing.sm, paddingVertical: 5 },
   statusText: { ...Typography.caption, fontWeight: '700' as const },
+  headerBtn: { padding: 4 },
 });

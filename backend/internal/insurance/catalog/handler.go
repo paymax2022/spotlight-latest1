@@ -1,7 +1,9 @@
 package catalog
 
 import (
+	"errors"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -158,6 +160,57 @@ func (h *Handler) GetProductSchema(c *gin.Context) {
 			"It can be browsed and quoted, but not purchased."
 	}
 	c.JSON(http.StatusOK, gin.H{"data": schema})
+}
+
+// GetFieldOptions GET /products/:code/options/:field[?query=…]
+//
+// Serves the list behind a schema field's options_url. The client asks by
+// product + field and never sees the provider URL — see Service.FieldOptions.
+//
+// Before this the route did not exist, so every remote-options dropdown in the
+// app 404'd (219 such fields across 65 products) and the picker sat empty with
+// no way for the user to proceed.
+func (h *Handler) GetFieldOptions(c *gin.Context) {
+	if c.GetString("user_id") == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": gin.H{"code": "unauthenticated", "message": "sign in required"}})
+		return
+	}
+	code := c.Param("code")
+	field := c.Param("field")
+	if code == "" || field == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": gin.H{"code": "invalid_request", "message": "product code and field are required"}})
+		return
+	}
+
+	opts, err := h.svc.FieldOptions(c.Request.Context(), code, field, c.Query("query"))
+	switch {
+	case errors.Is(err, ErrNoSuchField):
+		// The form asked for a list this field does not have. A 404 here is about
+		// the FIELD, so say so rather than letting it read as a missing product.
+		c.JSON(http.StatusNotFound, gin.H{"error": gin.H{
+			"code": "unknown_field", "message": "this field has no selectable options"}})
+		return
+	case errors.Is(err, ErrOptionsUnavailable):
+		// Provider not configured. 503, not an empty list: an empty picker looks
+		// like "no choices exist" and the user would have no way to tell.
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": gin.H{
+			"code": "options_unavailable", "message": "this list is temporarily unavailable"}})
+		return
+	case err != nil:
+		if strings.Contains(err.Error(), "not found") {
+			c.JSON(http.StatusNotFound, gin.H{"error": gin.H{"code": "not_found", "message": "product not found"}})
+			return
+		}
+		// A provider fault is upstream, not the caller's fault.
+		c.JSON(http.StatusBadGateway, gin.H{"error": gin.H{
+			"code": "provider_error", "message": "could not load this list"}})
+		return
+	}
+
+	if opts == nil {
+		opts = []FieldOption{}
+	}
+	c.JSON(http.StatusOK, gin.H{"data": opts})
 }
 
 // ════════════════════════════════════════════════════════════════════════════

@@ -10,7 +10,8 @@
 //  (escrow released on consult completion) · HL-10 payout KYC+AML gate · HL-11 emergency safety
 //  (tele ≠ emergency; SOS → in-person) · HL-12 immutable audit on every state transition.
 
-import { env } from '@/config/env';
+import { apiRoot } from '@/config/env';
+import { resolveUseMock } from '@/config/useMock';
 import type {
   VetDashboard,
   VcnApplication,
@@ -31,10 +32,19 @@ import type {
   VetReportingData,
 } from '@/types/healthVetAdmin';
 
-const USE_MOCK = (process.env.NEXT_PUBLIC_HEALTH_USE_MOCK ?? 'true').toLowerCase() !== 'false';
+export const USE_MOCK = resolveUseMock(process.env.NEXT_PUBLIC_HEALTH_USE_MOCK);
+/** Named so the fixture banner can cite the exact switch. */
+export const USE_MOCK_ENV = 'NEXT_PUBLIC_HEALTH_USE_MOCK';
 
+// Verified against backend/internal/app/finance_routes.go:
+//   RegisterHealthVet(finance, adminGroupTop5(r, "/api/health/vet/admin"), ...)
+// This used to be `env.apiBaseUrl.replace(/\/api\/v1\/?$/, '/api/health/vet/admin')`,
+// which stopped matching the moment apiBaseUrl became the same-origin proxy path
+// (<origin>/api/admin-proxy, no /api/v1 suffix) — see insuranceAdminService.ts for
+// the same regression. Every request 404'd against <proxy>/dashboard instead of
+// <proxy>/api/health/vet/admin/dashboard; USE_MOCK hid it whenever set.
 function adminBase(): string {
-  return env.apiBaseUrl.replace(/\/api\/v1\/?$/, '/api/health/vet/admin');
+  return `${apiRoot()}/api/health/vet/admin`;
 }
 function authHeaders(): Record<string, string> {
   if (typeof window === 'undefined') return {};

@@ -4,7 +4,8 @@
 // /api/referral/admin/*. RBAC: referral.* gates wired on the sidebar by the
 // orchestrator. Money is BIGINT kobo throughout.
 
-import { env } from '@/config/env';
+import { apiRoot } from '@/config/env';
+import { resolveUseMock } from '@/config/useMock';
 import type {
   ReferralDashboard,
   ProgramConfig,
@@ -23,10 +24,21 @@ import type {
   ReassignDecision,
 } from '@/types/referralAdmin';
 
-const USE_MOCK = (process.env.NEXT_PUBLIC_REFERRAL_USE_MOCK ?? 'true').toLowerCase() !== 'false';
+export const USE_MOCK = resolveUseMock(process.env.NEXT_PUBLIC_REFERRAL_USE_MOCK);
+/** Named so the fixture banner can cite the exact switch. */
+export const USE_MOCK_ENV = 'NEXT_PUBLIC_REFERRAL_USE_MOCK';
 
+// adminBase() used to do `env.apiBaseUrl.replace(/\/api\/v1\/?$/, '/api/referral/admin')`,
+// which relied on apiBaseUrl ending in /api/v1. It no longer does (same-origin
+// proxy origin instead), so the regex became a silent no-op and every live call
+// 404'd. apiRoot() strips any trailing /api/v1 explicitly, so this keeps working
+// no matter how apiBaseUrl is spelled. Note: /api/referral/admin (RegisterReferral
+// et al. in referral_routes.go / referral_econ_routes.go / referral_trust_routes.go)
+// is a DIFFERENT admin surface from the newer Direct Referral Rewards engine's
+// /v1/admin/referrals (referral_rewards_routes.go) — every path this file calls
+// matches the former, so this base is correct as-is.
 function adminBase(): string {
-  return env.apiBaseUrl.replace(/\/api\/v1\/?$/, '/api/referral/admin');
+  return `${apiRoot()}/api/referral/admin`;
 }
 function authHeaders(): Record<string, string> {
   if (typeof window === 'undefined') return {};

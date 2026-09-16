@@ -80,7 +80,8 @@ import type {
 
 // Re-export the shared money formatter so Batch 1 screens can import it here too.
 export { formatKobo } from '@/api/doctor.api';
-import { DOCTOR_USE_MOCK, doctorGet, doctorPost, doctorPut } from '@/api/doctor.client';
+import { DOCTOR_USE_MOCK, doctorGet, doctorPost, doctorPut, doctorUploadFile } from '@/api/doctor.client';
+import type { VerificationStatus } from '@/types/doctor';
 
 // Simulate network latency so loading states are exercised in the UI.
 const wait = <T>(value: T, ms = 350): Promise<T> =>
@@ -160,9 +161,49 @@ export const DEMO_VET_VERIFICATION: VetVerificationSubmission = {
 
 // ─── Read endpoints (Section C) ──────────────────────────────────────────────
 
+// GET /vet/profile/draft (internal/doctor GetVetProfileDraft) returns the flat
+// doctor_vet_profiles row — id, userId, vetModeEnabled, licenceNumber,
+// verification, isPublished, profileDraft, detail, createdAt, updatedAt — not
+// the rich VetProfileDraft shape (personalInfo, licence, pricing, ...) this
+// function promises. Same root cause as the human getProfileDraft() bug it
+// mirrors: every vet screen's `save.mutateAsync({ draft: {...} })` sends its
+// whole SaveVetProfileDraftInput (including the `draft` wrapper key) as the PUT
+// body, so what actually lands in profile_draft is `{draft: {...}, ...}` —
+// the real fields live at `profileDraft.draft`, one level deeper than either
+// the wire's top level or `profileDraft` itself.
+interface VetProfileWire {
+  id:            string;
+  userId:        string;
+  verification:  VerificationStatus;
+  isPublished:   boolean;
+  updatedAt:     string;
+  profileDraft?: { draft?: Partial<VetProfileDraft> } | null;
+}
+
 export async function getVetProfileDraft(draftId?: string): Promise<VetProfileDraft> {
   if (DOCTOR_USE_MOCK) return wait(DEMO_VET_PROFILE_DRAFT);
-  return doctorGet<VetProfileDraft>('/vet/profile/draft', { draftId });
+  const wire = await doctorGet<VetProfileWire>('/vet/profile/draft', { draftId });
+  const saved = wire.profileDraft?.draft ?? {};
+  return {
+    id: wire.id,
+    doctorId: wire.userId,
+    personalInfo: saved.personalInfo ?? { firstName: '', lastName: '', title: '', email: '', phone: '' },
+    bio: saved.bio ?? '',
+    specialtyId: saved.specialtyId ?? '',
+    subSpecialtyIds: saved.subSpecialtyIds ?? [],
+    speciesTreated: saved.speciesTreated ?? [],
+    yearsExperience: saved.yearsExperience ?? 0,
+    licence: saved.licence ?? { licenceNumber: '', issuingBody: 'VCN' },
+    documents: saved.documents ?? [],
+    certificates: saved.certificates ?? [],
+    affiliations: saved.affiliations ?? [],
+    workExperience: saved.workExperience ?? [],
+    pricing: saved.pricing ?? { videoFeeKobo: 0, audioFeeKobo: 0, chatFeeKobo: 0, currency: 'NGN', acceptsInstant: false },
+    completedSteps: saved.completedSteps ?? [],
+    status: wire.verification,
+    updatedAt: wire.updatedAt,
+    isPublished: wire.isPublished,
+  };
 }
 
 export async function getVetDocumentSlots(): Promise<ProfileDocumentSlot[]> {
@@ -170,19 +211,40 @@ export async function getVetDocumentSlots(): Promise<ProfileDocumentSlot[]> {
   return doctorGet<ProfileDocumentSlot[]>('/vet/profile/documents');
 }
 
+// GET /vet/verification (internal/doctor GetVetVerification) returns the same
+// flat VetProfile row as above — there is no separate vet verifications table
+// (see repository_vet_tail.go SubmitVetVerificationRecord), so `submittedAt`/
+// `reviewedAt`/`decision` genuinely don't exist anywhere server-side; only
+// `status` and the renewal/submission `notes`/`documents` folded into `detail`
+// (see marshalVetVerificationDetail) are real. Translated rather than cast
+// directly so `verification.tsx`'s `STATUS_CONFIG[submission.status]` reads a
+// real value instead of `undefined`.
 export async function getVetVerification(submissionId?: string): Promise<VetVerificationSubmission> {
   if (DOCTOR_USE_MOCK) return wait(DEMO_VET_VERIFICATION);
-  return doctorGet<VetVerificationSubmission>('/vet/verification', { submissionId });
+  const wire = await doctorGet<VetProfileWire & { detail?: { notes?: string; documents?: unknown } }>(
+    '/vet/verification', { submissionId },
+  );
+  return {
+    id: wire.id,
+    draftId: wire.id,
+    status: wire.verification,
+    documents: [],
+    notes: wire.detail?.notes,
+  };
 }
 
 // ─── Mutations (Section C) ───────────────────────────────────────────────────
 
+// PUT /vet/profile/draft returns the flat VetProfile row, not
+// {draftId, status, updatedAt} — translated the same way requestMerchantUpgrade
+// was fixed for the human flow.
 export async function saveVetProfileDraft(input: SaveVetProfileDraftInput): Promise<SaveVetProfileDraftResult> {
   if (DOCTOR_USE_MOCK) {
     void input.draft;
     return wait({ draftId: DEMO_VET_PROFILE_DRAFT.id, status: 'unsubmitted', updatedAt: new Date().toISOString() }, 500);
   }
-  return doctorPut<SaveVetProfileDraftResult>('/vet/profile/draft', input, input.idempotencyKey);
+  const wire = await doctorPut<VetProfileWire>('/vet/profile/draft', input, input.idempotencyKey);
+  return { draftId: wire.id, status: wire.verification, updatedAt: wire.updatedAt };
 }
 
 export async function submitVetVerification(input: SubmitVetVerificationInput): Promise<SubmitVetVerificationResult> {
@@ -190,15 +252,35 @@ export async function submitVetVerification(input: SubmitVetVerificationInput): 
     void input.draftId;
     return wait({ submissionId: `vver-${Date.now()}`, status: 'pending' }, 700);
   }
-  return doctorPost<SubmitVetVerificationResult>('/vet/verification', input, input.idempotencyKey);
+  const wire = await doctorPost<VetProfileWire>('/vet/verification', { kind: 'initial' }, input.idempotencyKey);
+  return { submissionId: wire.id, status: wire.verification };
 }
 
+// POST /vet/licence/renew (internal/doctor RenewVetLicence) binds
+// SubmitVerificationRequest{kind, mdcnNumber, notes, documents} — the live
+// branch sent RenewVetLicenceInput's own field names (licenceNumber,
+// newExpiresAt, uri, fileName, mimeType) verbatim, none of which match. No
+// field carries `binding:"required"`, so this never 400'd — it silently
+// dropped the new licence number on every renewal (repository_vet_tail.go's
+// `COALESCE($2, licence_number)` kept the OLD number when `mdcnNumber` arrived
+// empty). `newExpiresAt` has no home at all: doctor_vet_profiles has no expiry
+// column, so it is genuinely not persisted anywhere yet — not fixed here,
+// since that needs a schema decision, not a field-name translation.
+// Also wires the real upload: the licence file is presigned + PUT to R2 first,
+// same as the human document uploads.
 export async function renewVetLicence(input: RenewVetLicenceInput): Promise<RenewVetLicenceResult> {
   if (DOCTOR_USE_MOCK) {
     void input.newExpiresAt;
     return wait({ renewalId: `vlr-${Date.now()}`, status: 'pending' }, 700);
   }
-  return doctorPost<RenewVetLicenceResult>('/vet/licence/renew', input, input.idempotencyKey);
+  const mimeType = input.mimeType ?? 'application/pdf';
+  const objectKey = await doctorUploadFile('licence', { ...input, mimeType });
+  const wire = await doctorPost<VetProfileWire>('/vet/licence/renew', {
+    kind: 'renewal',
+    mdcnNumber: input.licenceNumber,
+    documents: [{ fileUrl: objectKey, fileName: input.fileName, mimeType }],
+  }, input.idempotencyKey);
+  return { renewalId: wire.id, status: wire.verification };
 }
 
 export async function publishVetProfile(input: PublishVetProfileInput): Promise<PublishVetProfileResult> {
@@ -206,7 +288,8 @@ export async function publishVetProfile(input: PublishVetProfileInput): Promise<
     void input.draftId;
     return wait({ doctorId: 'doc-1', isPublished: true, publishedAt: new Date().toISOString() }, 600);
   }
-  return doctorPost<PublishVetProfileResult>('/vet/profile/publish', input, input.idempotencyKey);
+  const wire = await doctorPost<VetProfileWire>('/vet/profile/publish', input, input.idempotencyKey);
+  return { doctorId: wire.userId, isPublished: wire.isPublished, publishedAt: wire.updatedAt };
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

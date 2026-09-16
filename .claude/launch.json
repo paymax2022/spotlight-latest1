@@ -105,14 +105,14 @@
     },
     {
       "name": "backend-worktree",
-      "runtimeExecutable": "go",
+      "runtimeExecutable": "bash",
       "runtimeArgs": [
-        "run",
-        "./cmd/server"
+        "-c",
+        "set -a; . ./.env; set +a; exec go run ./cmd/server"
       ],
       "cwd": "backend",
       "port": 8092,
-      "description": "Go backend on :8092 (this worktree's .env sets APP_PORT=8092) so it doesn't collide with the main checkout's :8091."
+      "description": "Go backend on :8092 — the binary has no godotenv autoload, so .env must be shell-sourced before `go run`; this worktree's .env sets APP_PORT=8092 so it doesn't collide with the main checkout's :8091."
     },
     {
       "name": "mobile-worktree",

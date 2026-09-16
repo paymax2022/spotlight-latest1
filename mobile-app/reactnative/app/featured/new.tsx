@@ -3,7 +3,7 @@ import {
   View, Text, ScrollView, StyleSheet, KeyboardAvoidingView, Platform, Pressable, TextInput,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { router } from 'expo-router';
+import { router, useLocalSearchParams } from 'expo-router';
 import { goBack } from '@/lib/navigation';
 import { ChevronLeft } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
@@ -67,6 +67,30 @@ function LocalProgress({ stepIndex, stepCount, title, description }: { stepIndex
 }
 
 export default function FeaturedWizardScreen() {
+  // A merchant can arrive here already knowing what they are promoting — from
+  // their own restaurant screen, say — in which case asking them to pick it out
+  // of a list is a step that can only go wrong. These params preselect the
+  // subject and skip step 0 entirely.
+  //
+  // ⚠️ subjectType must match the literal the serving side filters on. Food
+  // discovery orders by subject_type = 'restaurant'; a different spelling here
+  // buys a campaign that is charged for and never shows.
+  const params = useLocalSearchParams<{ subjectType?: string; subjectId?: string; label?: string; subtitle?: string; deepLink?: string }>();
+  const preset: EligibleItem | null = React.useMemo(() => {
+    const t = typeof params.subjectType === 'string' ? params.subjectType : '';
+    const id = typeof params.subjectId === 'string' ? params.subjectId : '';
+    if (!t || !id) return null;
+    return {
+      subject_type: t as EligibleItem['subject_type'],
+      subject_id: id,
+      label: (typeof params.label === 'string' && params.label) || 'Your listing',
+      subtitle: typeof params.subtitle === 'string' ? params.subtitle : undefined,
+      deep_link:
+        (typeof params.deepLink === 'string' && params.deepLink) ||
+        (t === 'restaurant' ? `/food/restaurant/${id}` : ''),
+    };
+  }, [params.subjectType, params.subjectId, params.label, params.subtitle, params.deepLink]);
+
   const zonesQ = useZones();
   const itemsQ = useEligibleItems();
   const createDraft = useCreateDraft();
@@ -76,10 +100,10 @@ export default function FeaturedWizardScreen() {
   // Shared checkout: pay the booking from wallet OR card.
   const pay = usePurchasePayment<Campaign>();
 
-  const [stepIndex, setStepIndex] = React.useState(0);
+  const [stepIndex, setStepIndex] = React.useState(preset ? 1 : 0);
 
   // ── wizard form state ──────────────────────────────────────────────────────
-  const [item, setItem] = React.useState<EligibleItem | null>(null);
+  const [item, setItem] = React.useState<EligibleItem | null>(preset);
   const [zone, setZone] = React.useState<Zone | null>(null);
   const [durDays, setDurDays] = React.useState<number>(7);
   const [startDate, setStartDate] = React.useState<string>(todayIso());

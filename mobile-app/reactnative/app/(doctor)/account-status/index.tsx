@@ -94,7 +94,7 @@ export default function AccountStatusScreen() {
             <PrimaryButton label="View review notice" onPress={() => router.push('/(doctor)/compliance/account-review')} style={styles.btn} />
           )}
           {(status.state === 'rejected' || status.state === 'unsubmitted') && (
-            <PrimaryButton label="View verification status" onPress={() => router.push('/(doctor)/signup/pending')} style={styles.btn} />
+            <PrimaryButton label="View verification status" onPress={() => router.push('/(doctor)/credentialing/pending')} style={styles.btn} />
           )}
 
           <Text style={styles.groupTitle}>Other gates</Text>

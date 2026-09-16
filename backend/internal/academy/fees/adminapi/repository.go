@@ -253,7 +253,7 @@ func (r *Repository) ListInvoices(ctx context.Context, schoolID, status string) 
 		JOIN public.academy_students s ON s.id = i.student_id
 		LEFT JOIN public.academy_fee_classes cl ON cl.id = s.class_id
 		LEFT JOIN public.academy_edupay_accounts a ON a.id = s.edupay_account_id
-		LEFT JOIN auth.users gu ON gu.id = (s.guardian_user_ids)[1]
+		LEFT JOIN public.platform_users gu ON gu.id = (s.guardian_user_ids)[1]
 		WHERE i.status <> 'draft'
 		  AND ($1 = '' OR s.school_id = $1::uuid)
 		  AND ($2 = '' OR i.status = $2)

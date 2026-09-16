@@ -7,8 +7,10 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"spotlight/backend/internal/config"
 	financeledger "spotlight/backend/internal/finance/ledger"
 	"spotlight/backend/internal/middleware"
+	"spotlight/backend/internal/platform/r2"
 	"spotlight/backend/internal/services"
 	"spotlight/backend/internal/stays/ari"
 	"spotlight/backend/internal/stays/extranet"
@@ -38,7 +40,7 @@ import (
 // Secrets are read from the environment by the orchestrator and passed via the pool/
 // rbac wiring; the supplier-webhook HMAC secret is read here from the environment
 // (NEVER hard-coded / logged): STAYS_SUPPLIER_WEBHOOK_SECRET.
-func RegisterStaysExtranet(member *gin.RouterGroup, admin *gin.RouterGroup, extranetGroup *gin.RouterGroup, webhooks *gin.RouterGroup, pool *pgxpool.Pool, rbac services.RBACService) {
+func RegisterStaysExtranet(member *gin.RouterGroup, admin *gin.RouterGroup, extranetGroup *gin.RouterGroup, webhooks *gin.RouterGroup, pool *pgxpool.Pool, rbac services.RBACService, cfg config.Config) {
 	if pool == nil {
 		log.Println("[stays-extranet] nil pool — skipping SB1 stays routes")
 		return
@@ -50,7 +52,19 @@ func RegisterStaysExtranet(member *gin.RouterGroup, admin *gin.RouterGroup, extr
 	ariSvc := ari.NewService(ari.NewRepository(pool))
 	authz := extranet.NewAuthZ(pool)
 
-	extranetSvc := extranet.NewService(extranet.NewRepository(pool), authz, ariSvc)
+	staffInviteMailer := extranet.NewResendStaffInviteMailer(cfg.ResendAPIKey, cfg.ResendFromEmail)
+	extranetSvc := extranet.NewService(extranet.NewRepository(pool), authz, ariSvc, staffInviteMailer, cfg.AdminAppBaseURL)
+	// Property photo uploads (property_photos.go). A nil/unconfigured presigner
+	// makes photo endpoints fail closed with 400 ErrUploadsNotConfigured rather
+	// than issuing a fabricated URL — same posture as marketplace/estate/
+	// association/transport's own presign wiring.
+	extranetSvc.WithPhotoPresigner(r2.New(r2.Config{
+		AccountEndpoint: cfg.R2AccountEndpoint,
+		Bucket:          cfg.R2Bucket,
+		AccessKeyID:     cfg.R2AccessKeyID,
+		SecretAccessKey: cfg.R2SecretAccessKey,
+		Region:          cfg.R2Region,
+	}))
 	reviewsSvc := reviews.NewService(reviews.NewRepository(pool), authz)
 	settlementSvc := staysettlement.NewService(staysettlement.NewRepository(pool), ledgerSvc)
 	webhookSvc := supplierwebhooks.NewService(pool, ariSvc, getEnvSupplierSecret())
@@ -105,6 +119,7 @@ func RegisterStaysExtranet(member *gin.RouterGroup, admin *gin.RouterGroup, extr
 	if admin != nil {
 		settlementHandler.RegisterAdmin(admin, guard)
 		reviewsHandler.RegisterAdmin(admin, guard)
+		extranetHandler.RegisterAdmin(admin, guard)
 	}
 
 	// --- webhooks: /internal/webhooks/* (HMAC-verified; no member JWT) ---

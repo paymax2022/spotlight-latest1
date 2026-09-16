@@ -66,6 +66,14 @@ func RegisterAdmin(rg *gin.RouterGroup, db *pgxpool.Pool, ledgerSvc *financeledg
 	rg.GET("/featured/report", canRead, h.FeaturedReport)
 	rg.PATCH("/campaigns/:id/flags", canWrite, h.PatchCampaignFlags)
 
+	// Campaign directory — every campaign, with the funding figures and backer
+	// counts the review queue never carried. Mounted at /campaign-directory, not
+	// /campaigns: that path is the review queue (AdminListPending), and Gin will
+	// not accept a static sibling of the existing /campaigns/:id wildcard.
+	rg.GET("/campaign-directory", canRead, h.CampaignDirectory)
+	rg.GET("/campaigns/:id/backers", canRead, h.CampaignBackers)
+	rg.GET("/campaigns/:id/funding", canRead, h.CampaignFundingHandler)
+
 	// Owner-initiated featured-rail requests (the creator side writes these via
 	// POST /api/v1/crowdfunding/creator/campaigns/:id/feature-request). Approval
 	// is the only path from a request to a placement — see feature_requests.go.

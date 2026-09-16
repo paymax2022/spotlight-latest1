@@ -340,6 +340,40 @@ func TestLiveDB_OrchNGN_InsufficientBalanceMovesNothing(t *testing.T) {
 	}
 }
 
+// 20270202000000_rbac_bridge_phone_only_identities.sql drops platform_users.email's
+// NOT NULL so a phone-only auth.users row (none exist yet in this codebase — see
+// that migration's header — but the mirror trigger no longer refuses them) can be
+// mirrored at all. Before that migration a NULL-email platform_users row could
+// never exist, so nothing downstream was ever exercised against that shape. This
+// pins that mainWalletAccountID (ADR-052), which probes platform_users by id only,
+// does not silently mistreat such a row as "not a real customer": OpenWallet
+// swallows a false ok=false as plain success (it only propagates err), so a
+// regression here would show up as a missing ledger_accounts row, not a failing
+// call — assert on the row itself, not just OpenWallet's return value.
+func TestLiveDB_OrchNGN_MainWalletResolvesForIdentityWithoutEmail(t *testing.T) {
+	pool := livePool(t)
+	ctx := context.Background()
+
+	user := seedUser(t, ctx, pool)
+	cleanupOrch(t, pool, user)
+
+	if _, err := pool.Exec(ctx, `UPDATE public.platform_users SET email = NULL WHERE id=$1`, user); err != nil {
+		t.Fatalf("null out the mirrored email: %v", err)
+	}
+
+	if err := orchestration.NewSQLStore(pool).OpenWallet(ctx, user, "NGN"); err != nil {
+		t.Fatalf("OpenWallet NGN for a no-email platform_users row: %v", err)
+	}
+
+	var acctCount int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM ledger_accounts WHERE user_id=$1 AND type='user_wallet'`, user).Scan(&acctCount); err != nil {
+		t.Fatalf("count ledger_accounts: %v", err)
+	}
+	if acctCount != 1 {
+		t.Errorf("main wallet account for a no-email platform_users row: got %d want 1 — mainWalletAccountID returned ok=false and OpenWallet silently no-opped instead of provisioning the ledger account", acctCount)
+	}
+}
+
 // A payout funded from NGN must also draw down the main wallet.
 func TestLiveDB_OrchNGN_TransferDebitsTheMainWallet(t *testing.T) {
 	pool := livePool(t)

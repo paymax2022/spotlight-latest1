@@ -7,6 +7,21 @@
     "mobile-app/reactnative/src/features/association/**",
     "mobile-app/reactnative/tsconfig.associationcheck.json"
   ],
+  "commerce": [
+    "backend/internal/restaurant/**",
+    "backend/internal/marketplace/**",
+    "supabase/migrations/*restaurant*.sql",
+    "supabase/migrations/*food*.sql",
+    "supabase/migrations/*marketplace*.sql",
+    "supabase/migrations/*mkt_*.sql",
+    "frontend-web/app/api/v1/food/**",
+    "frontend-web/app/api/v1/marketplace/**",
+    "mobile-app/reactnative/src/features/food/**",
+    "mobile-app/reactnative/src/features/marketplace/**",
+    "mobile-app/reactnative/app/food/**",
+    "mobile-app/reactnative/app/marketplace/**",
+    "frontend-admin/app/admin/marketplace/**"
+  ],
   "connect": [
     "backend/internal/connect/**",
     "backend/internal/app/connect_routes.go",

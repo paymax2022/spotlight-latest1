@@ -5,7 +5,8 @@
 // OBJECT-SCOPED: every call resolves to the signed-in hotelier's OWN property.
 // Money is BIGINT kobo (minor units) and settled in Naira (NGN).
 
-import { env } from '@/config/env';
+import { env, apiRoot } from '@/config/env';
+import { resolveUseMock } from '@/config/useMock';
 import type {
   VerificationStatus,
   BusinessVerification,
@@ -40,10 +41,17 @@ import type {
   ExtranetSettings,
 } from '@/types/staysExtranet';
 
-const USE_MOCK = (process.env.NEXT_PUBLIC_STAYS_USE_MOCK ?? 'true').toLowerCase() !== 'false';
+const USE_MOCK = resolveUseMock(process.env.NEXT_PUBLIC_STAYS_USE_MOCK);
 
+// apiBaseUrl is the same-origin admin-proxy path (<origin>/api/admin-proxy),
+// not a plain API root — the old `apiBaseUrl.replace(/\/api\/v1\/?$/, ...)`
+// here matched nothing once the proxy migration landed (apiBaseUrl stopped
+// ending in /api/v1), silently forwarding every "live" call here to
+// <ADMIN_API_BASE_URL>/properties/... instead of .../api/stays/extranet/...
+// — a 404 no caller of this file would have seen without reading the network
+// tab. apiRoot() is the helper env.ts added for exactly this class of bug.
 function extranetBase(): string {
-  return env.apiBaseUrl.replace(/\/api\/v1\/?$/, '/api/stays/extranet');
+  return `${apiRoot()}/api/stays/extranet`;
 }
 function authHeaders(): Record<string, string> {
   if (typeof window === 'undefined') return {};
@@ -93,6 +101,19 @@ async function sendJson<T>(method: 'POST' | 'PATCH' | 'PUT', path: string, body:
   if (!res.ok) throw new Error(`Request failed (${res.status})`);
   const j = await res.json();
   return (j?.data ?? j) as T;
+}
+
+// The Go backend nests staff/property routes under /properties/:propertyId/*
+// (backend/internal/stays/extranet/handler.go). This resolves the signed-in
+// hotelier's own property id via /me/properties — the one live-correct route
+// that needs no propertyId itself — and caches it for the session.
+let cachedPropertyId: string | null = null;
+async function activePropertyId(): Promise<string> {
+  if (cachedPropertyId) return cachedPropertyId;
+  const rows = await getJson<Array<{ id: string }>>('/me/properties');
+  if (!rows?.length) throw new Error('No property found for this hotelier account.');
+  cachedPropertyId = rows[0].id;
+  return cachedPropertyId;
 }
 
 // ── Display helpers: kobo → ₦ ────────────────────────────────────────────────
@@ -447,6 +468,32 @@ export async function submitForReview(): Promise<VerificationStatus> {
   return sendJson<VerificationStatus>('POST', '/verification/submit', {});
 }
 
+// Self-list a new property via POST /properties (no propertyId in the path —
+// this one grants the caller OWNER, so scoping doesn't apply yet). Caches the
+// returned id so the rest of this file's activePropertyId() calls resolve to
+// it immediately instead of round-tripping /me/properties.
+export async function createProperty(input: {
+  name: string;
+  property_type: string;
+  address: string;
+  city: string;
+  star_rating?: number;
+}): Promise<{ id: string }> {
+  if (USE_MOCK) throw new Error(`Registering a property ${NOT_IN_FIXTURE_MODE}`);
+  const res = await sendJson<{ id: string }>('POST', '/properties', input);
+  cachedPropertyId = res.id;
+  return res;
+}
+
+// Redeems a staff-invite token for the signed-in caller. Not property-scoped
+// (see staff_invite.go / handler.go Register()) — the token itself names the
+// property and the invitee's email is matched server-side against their own
+// authenticated identity, never a client-supplied value.
+export async function acceptStaffInvite(token: string): Promise<void> {
+  if (USE_MOCK) throw new Error(`Accepting a staff invite ${NOT_IN_FIXTURE_MODE}`);
+  await sendJson<{ ok: boolean }>('POST', '/staff/invite/accept', { token });
+}
+
 // B · Content & inventory
 export async function getProperty(): Promise<PropertyProfile> {
   if (USE_MOCK) { await delay(); return PROFILE; }
@@ -635,9 +682,27 @@ export async function listStaff(): Promise<StaffMember[]> {
   if (USE_MOCK) { await delay(); return STAFF; }
   return getJson<StaffMember[]>('/staff');
 }
-export async function inviteStaff(name: string, email: string, role: StaffMember['role']): Promise<StaffMember> {
-  if (USE_MOCK) throw new Error(`Inviting a staff member ${NOT_PROPERTY_SCOPED}`);
-  return sendJson<StaffMember>('POST', '/staff', { name, email, role });
+// Backend roles (stays_hotelier_profile CHECK constraint) vs this UI's StaffRole
+// naming. OWNER is deliberately absent: it mirrors the property creator and is
+// never grantable through an invite (backend rejects it — see staff_invite.go).
+const STAFF_ROLE_TO_BACKEND: Record<Exclude<StaffMember['role'], 'owner'>, string> = {
+  revenue_manager: 'MANAGER',
+  front_desk: 'FRONT_DESK',
+};
+
+// Invites via POST /properties/:propertyId/staff/invite {name, email, role}. If
+// a Paymax platform user already owns that email the grant lands immediately
+// (status 'active'); otherwise the backend emails a signup/accept link and the
+// grant lands once they accept (status 'invited' here in the meantime).
+export async function inviteStaff(name: string, email: string, role: Exclude<StaffMember['role'], 'owner'>): Promise<StaffMember> {
+  if (USE_MOCK) throw new Error(`Inviting a staff member ${NOT_IN_FIXTURE_MODE}`);
+  const propertyId = await activePropertyId();
+  const res = await sendJson<{ email: string; role: string; status: 'active' | 'invited' }>(
+    'POST',
+    `/properties/${propertyId}/staff/invite`,
+    { name, email, role: STAFF_ROLE_TO_BACKEND[role] },
+  );
+  return { id: `st_${Date.now()}`, name, email, role, status: res.status, last_active: null };
 }
 export async function getSettings(): Promise<ExtranetSettings> {
   if (USE_MOCK) { await delay(); return SETTINGS; }

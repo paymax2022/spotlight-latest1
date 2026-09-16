@@ -32,6 +32,10 @@ import type {
   DriverEarnings,
   Kobo,
   LatLng,
+  TripMessage,
+  TripChatRole,
+  RideSettings,
+  UpdateRideSettingsInput,
 } from '../types/mobility.types';
 import {
   mockEstimate,
@@ -46,6 +50,10 @@ import {
   mockDriver,
   mockDriverRequests,
   mockEarnings,
+  mockListTripMessages,
+  mockSendTripMessage,
+  mockGetRideSettings,
+  mockUpdateRideSettings,
 } from './mobility.mock';
 
 // ─── Feature flag: mock by default; flip to hit the Go backend ─────────────────
@@ -613,9 +621,17 @@ export async function driverStart(tripId: string): Promise<Trip> {
   return unwrap<Trip>(await api.post(`${BASE}/driver/trips/${tripId}/start`, {}));
 }
 
-export async function driverComplete(tripId: string): Promise<Trip> {
+/**
+ * Completing a trip settles it — for wallet/card trips the escrowed fare
+ * splits to the driver's wallet as usual; for a CASH trip there is no
+ * escrow (the rider paid the driver directly), so the platform instead
+ * debits the driver's own wallet for its commission. platformFeeKobo is
+ * only present on that cash path — the driver screen uses it to show
+ * "₦X was deducted as the platform fee" instead of the wallet-credit copy.
+ */
+export async function driverComplete(tripId: string): Promise<Trip & { platformFeeKobo?: number }> {
   if (USE_MOCK) { await delay(500); return makeTrip({ id: tripId, phase: 'completed', status: 'completed', paymentStatus: 'settled', driver: MOCK_DRIVER, vehicle: MOCK_VEHICLE, completedAt: new Date().toISOString(), tripPin: null }); }
-  return unwrap<Trip>(await api.post(`${BASE}/driver/trips/${tripId}/complete`, {}));
+  return unwrap<Trip & { platformFeeKobo?: number }>(await api.post(`${BASE}/driver/trips/${tripId}/complete`, {}));
 }
 
 export async function getDriverEarnings(): Promise<DriverEarnings> {
@@ -674,6 +690,61 @@ function advanceMockTrip(trip: Trip): Trip {
 /** Clears the mock active trip (used after rider finishes the completed flow). */
 export function clearMockActiveTrip(): void {
   if (USE_MOCK) mockStore.activeTrip = null;
+}
+
+// ─── Trip chat ────────────────────────────────────────────────────────────────
+// Registered under both /mobility (rider) and /driver (driver) on the backend,
+// pointing at the same handler — object-level authz is the real gate, not the
+// URL prefix. `role` here only selects which prefix this app's own client uses,
+// matching every other rider/driver-split function in this file.
+function chatBase(role: TripChatRole): string {
+  return role === 'driver' ? `${BASE}/driver` : `${BASE}/mobility`;
+}
+
+/** Maps the raw (snake_case) wire shape to the camelCase TripMessage type. */
+function mapTripMessage(raw: any): TripMessage {
+  return {
+    id: raw.id,
+    tripId: raw.trip_id,
+    senderId: raw.sender_id,
+    senderRole: raw.sender_role,
+    body: raw.body,
+    attachmentUrl: raw.attachment_url ?? null,
+    createdAt: raw.created_at,
+  };
+}
+
+export async function listTripMessages(tripId: string, role: TripChatRole): Promise<TripMessage[]> {
+  if (USE_MOCK) { await delay(200); return mockListTripMessages(tripId); }
+  const res = await api.get(`${chatBase(role)}/trips/${encodeURIComponent(tripId)}/messages`);
+  const raw = res.data?.messages;
+  return Array.isArray(raw) ? raw.map(mapTripMessage) : [];
+}
+
+export async function sendTripMessage(tripId: string, role: TripChatRole, body: string): Promise<TripMessage> {
+  if (USE_MOCK) { await delay(250); return mockSendTripMessage(tripId, role, body); }
+  const res = await api.post(`${chatBase(role)}/trips/${encodeURIComponent(tripId)}/messages`, { body });
+  return mapTripMessage(res.data?.message);
+}
+
+// ─── Rider ride-preference settings ────────────────────────────────────────────
+// GET/PUT /mobility/profile. The backend lazily creates a default row on first
+// GET, so this is always safe to call. PUT is a partial update (COALESCE on the
+// server): an omitted field keeps its current value.
+export async function getRideSettings(): Promise<RideSettings> {
+  if (USE_MOCK) { await delay(220); return mockGetRideSettings(); }
+  return unwrap<RideSettings>(await api.get(`${BASE}/mobility/profile`));
+}
+
+export async function updateRideSettings(patch: UpdateRideSettingsInput): Promise<RideSettings> {
+  if (USE_MOCK) { await delay(300); return mockUpdateRideSettings(patch); }
+  return unwrap<RideSettings>(
+    await api.put(`${BASE}/mobility/profile`, {
+      default_payment: patch.defaultPayment ?? '',
+      home_address: patch.homeAddress,
+      work_address: patch.workAddress,
+    }),
+  );
 }
 
 export { USE_MOCK };

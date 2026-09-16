@@ -42,6 +42,9 @@ import {
   useProductSchema,
 } from '@/features/insurance/live/hooks';
 import { indicativePremiumKobo, nairaFromKobo } from '@/features/insurance/live/money';
+import { getConsentStatus, grantConsent } from '@/features/insurance/live/api';
+import { Pressable } from 'react-native';
+import { Check } from 'lucide-react-native';
 import type { FormValues, InsuranceError } from '@/features/insurance/live/types';
 
 export default function ApplicationForm() {
@@ -55,6 +58,17 @@ export default function ApplicationForm() {
   const [draftKey, setDraftKey] = useState<string | null>(existing?.id ?? null);
   const [values, setValues] = useState<FormValues>(existing?.values ?? {});
   const [prefilled, setPrefilled] = useState(false);
+
+  // Consent is per product and per NDPA version. These hooks (and the effect
+  // below) MUST run unconditionally on every render — they used to sit after
+  // the loading/error early-returns further down, so the component called a
+  // different number of hooks once product/schema finished loading than it
+  // did while loading, which is exactly the "Rendered more hooks than during
+  // the previous render" crash (Rules of Hooks). The effect itself simply
+  // no-ops until the product code is known.
+  const [hasConsent, setHasConsent] = useState<boolean | null>(null);
+  const [consentTicked, setConsentTicked] = useState(false);
+  const [consentError, setConsentError] = useState<string | null>(null);
 
   // The schema may be embedded in the product payload or served separately;
   // whichever arrives first is what we render.
@@ -86,6 +100,23 @@ export default function ApplicationForm() {
     () => (activeSchema ? declaredValueKobo(activeSchema.fields, values) : 0),
     [activeSchema, values],
   );
+
+  // Consent is per product and per NDPA version, so it is asked once per
+  // product and skipped silently for anyone who has already given it. Reads
+  // product.data?.code directly (rather than the later `p.code`) because this
+  // effect must run before the loading/error guards below, when product.data
+  // may still be undefined — it simply no-ops until the code is known.
+  const productCode = product.data?.code;
+  useEffect(() => {
+    if (!productCode) return;
+    let cancelled = false;
+    // Unknown status must not read as "already consented" — default closed.
+    setHasConsent(null);
+    getConsentStatus(productCode)
+      .then((ok) => { if (!cancelled) setHasConsent(ok); })
+      .catch(() => { if (!cancelled) setHasConsent(false); });
+    return () => { cancelled = true; };
+  }, [productCode]);
 
   const serverFieldErrors = (quote.error as unknown as InsuranceError | null)?.fieldErrors;
 
@@ -122,6 +153,20 @@ export default function ApplicationForm() {
 
   const submit = async (submittedValues: FormValues) => {
     if (!activeSchema) return;
+    // NDPA: the quote endpoint answers 428 ndpa_consent_required until consent is
+    // on record, because pricing SHARES the applicant's details with the
+    // underwriter. Record the tick before quoting rather than after, so we never
+    // transmit anything the person has not agreed to.
+    if (!hasConsent) {
+      if (!consentTicked) return;
+      try {
+        await grantConsent(p.code);
+        setHasConsent(true);
+      } catch (e) {
+        setConsentError('We could not record your consent. Please try again.');
+        return;
+      }
+    }
     const inputs = buildInputs(activeSchema.fields, submittedValues);
     try {
       const priced = await quote.mutateAsync({ productCode: p.code, inputs });
@@ -168,6 +213,25 @@ export default function ApplicationForm() {
                 share what they ask for.
               </Text>
             </View>
+            {hasConsent === false ? (
+              <View style={styles.consentBox}>
+                <Pressable
+                  style={styles.consentRow}
+                  onPress={() => { setConsentTicked((v) => !v); setConsentError(null); }}
+                  accessibilityRole="checkbox"
+                  accessibilityState={{ checked: consentTicked }}
+                >
+                  <View style={[styles.checkbox, consentTicked && styles.checkboxOn]}>
+                    {consentTicked ? <Check size={14} color={Colors.onPrimary} strokeWidth={3} /> : null}
+                  </View>
+                  <Text style={styles.consentText}>
+                    <Text style={styles.consentEmphasis}>I consent</Text> to share these answers with{' '}
+                    {p.underwriter || 'the insurer'} to price and issue this policy.
+                  </Text>
+                </Pressable>
+                {consentError ? <Text style={styles.consentError}>{consentError}</Text> : null}
+              </View>
+            ) : null}
             {quote.isError ? (
               <View style={styles.bannerWrap}>
                 <InsuranceErrorBanner error={quote.error} />
@@ -203,6 +267,31 @@ function lastNameOf(fullName: string | undefined): string {
 }
 
 const styles = StyleSheet.create({
+  consentBox: { marginTop: Spacing.md, gap: Spacing.xs },
+  consentRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: Spacing.sm,
+    padding: Spacing.md,
+    borderRadius: Radius.md,
+    borderWidth: 1,
+    borderColor: InsuranceColors.border,
+    backgroundColor: InsuranceColors.surfaceAlt,
+  },
+  checkbox: {
+    width: 20,
+    height: 20,
+    borderRadius: Radius.sm,
+    borderWidth: 2,
+    borderColor: InsuranceColors.border,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 1,
+  },
+  checkboxOn: { backgroundColor: Colors.primary, borderColor: Colors.primary },
+  consentText: { ...Typography.bodySm, color: InsuranceColors.text, flex: 1, lineHeight: 18 },
+  consentEmphasis: { fontWeight: '600', color: InsuranceColors.text },
+  consentError: { ...Typography.bodySm, color: InsuranceColors.danger, paddingHorizontal: Spacing.sm },
   safe: { flex: 1 },
   header: { gap: Spacing.sm, marginBottom: Spacing.md },
   privacy: { flexDirection: 'row', alignItems: 'flex-start', gap: Spacing.sm },

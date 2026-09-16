@@ -184,7 +184,7 @@ func (s *Service) ListStaff(ctx context.Context, restaurantID, actorID string) (
 	const q = `
 		SELECT st.user_id, COALESCE(u.email,''), st.role, st.status, st.accepted_at, st.created_at
 		FROM restaurant_staff st
-		LEFT JOIN auth.users u ON u.id = st.user_id
+		LEFT JOIN public.platform_users u ON u.id = st.user_id
 		WHERE st.restaurant_id = $1 AND st.status <> 'REMOVED'
 		ORDER BY CASE st.role WHEN 'OWNER' THEN 0 WHEN 'MANAGER' THEN 1 ELSE 2 END, st.created_at`
 	rows, err := s.db.Query(ctx, q, restaurantID)
@@ -204,4 +204,31 @@ func (s *Service) ListStaff(ctx context.Context, restaurantID, actorID string) (
 		out = append(out, m)
 	}
 	return out, rows.Err()
+}
+
+// UserLookup is the response when searching for a user by email or phone.
+type UserLookup struct {
+	UserID string `json:"user_id"`
+	Email  string `json:"email,omitempty"`
+	Phone  string `json:"phone,omitempty"`
+	Name   string `json:"name,omitempty"`
+}
+
+// LookupUser searches for a user by email or phone number for staff invitation.
+func (s *Service) LookupUser(ctx context.Context, query string) (*UserLookup, error) {
+	const q = `
+		SELECT id, COALESCE(email, ''), COALESCE(phone, ''), COALESCE(NULLIF(btrim(first_name || ' ' || last_name), ''), '')
+		FROM public.platform_users
+		WHERE (email ILIKE $1 OR phone LIKE $2) AND deleted_at IS NULL
+		LIMIT 1`
+
+	searchPattern := "%" + query + "%"
+	var u UserLookup
+	err := s.db.QueryRow(ctx, q, searchPattern, "%"+query).Scan(
+		&u.UserID, &u.Email, &u.Phone, &u.Name,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("user not found: %w", err)
+	}
+	return &u, nil
 }

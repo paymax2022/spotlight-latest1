@@ -5,16 +5,23 @@
 // governance surfaces on health.triage.admin (wired on the sidebar + pages).
 //
 // Request building / auth / errors mirror the existing health admin services:
-//  • adminBase() rewrites env.apiBaseUrl (…/api/v1) → …/api/health/triage/admin
+//  • adminBase() builds the absolute backend path via apiRoot() + /api/health/triage/admin
 //  • authHeaders() attaches the admin Bearer token from localStorage
 //  • getJson/sendJson unwrap { data } and throw on non-2xx
+//
+// adminBase() used to do `env.apiBaseUrl.replace(/\/api\/v1\/?$/, '/api/health/triage/admin')`,
+// which stopped matching the moment apiBaseUrl became the same-origin proxy path
+// (<origin>/api/admin-proxy, no /api/v1 suffix) — see insuranceAdminService.ts for
+// the same regression. Every request 404'd against <proxy>/sessions/stats instead
+// of <proxy>/api/health/triage/admin/sessions/stats; USE_MOCK hid it whenever set.
 //
 // SAFETY (PRD §11): triage + navigation only — NEVER a diagnosis (SC-1). The
 // deterministic red-flag layer can only RAISE urgency (SC-2). Content + rules need
 // licensed-clinician sign-off before publish (SC-6). Optimise EMERGENCY
 // SENSITIVITY first (SC-3). Every state change writes an immutable audit (SC-12).
 
-import { env } from '@/config/env';
+import { apiRoot } from '@/config/env';
+import { resolveUseMock } from '@/config/useMock';
 import type {
   TriageSession,
   TriageSessionStats,
@@ -32,10 +39,10 @@ import type {
   GovernanceState,
 } from '@/types/healthTriageAdmin';
 
-const USE_MOCK = (process.env.NEXT_PUBLIC_HEALTH_USE_MOCK ?? 'true').toLowerCase() !== 'false';
+const USE_MOCK = resolveUseMock(process.env.NEXT_PUBLIC_HEALTH_USE_MOCK);
 
 function adminBase(): string {
-  return env.apiBaseUrl.replace(/\/api\/v1\/?$/, '/api/health/triage/admin');
+  return `${apiRoot()}/api/health/triage/admin`;
 }
 function authHeaders(): Record<string, string> {
   if (typeof window === 'undefined') return {};

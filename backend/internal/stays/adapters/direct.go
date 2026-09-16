@@ -2,6 +2,7 @@ package adapters
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strconv"
@@ -33,7 +34,30 @@ import (
 // supplier_ref) so a retried Book never double-decrements and a retried Cancel
 // never double-releases.
 type DirectInventoryAdapter struct {
-	db *pgxpool.Pool
+	db     *pgxpool.Pool
+	photos PhotoReadPresigner // optional; nil ⇒ GetContent returns no photo URLs
+}
+
+// PhotoReadPresigner is the slice of the R2 presigner GetContent needs to turn
+// a stored object key into a fetchable URL (mirrors extranet.PhotoPresigner /
+// marketplace.ThumbPresigner's shape — the bucket is private, so a bare key is
+// never returned to the client).
+type PhotoReadPresigner interface {
+	PresignGet(key string, expiry time.Duration) (string, error)
+	Configured() bool
+}
+
+// photoReadTTL is how long a guest-facing photo URL stays valid — long enough
+// that a browse session never sees an image expire mid-scroll.
+const photoReadTTL = 6 * time.Hour
+
+// WithPhotoPresigner attaches the R2 presigner used to resolve stored property
+// photo keys into fetchable URLs. Without it, GetContent still works — Photos
+// is just empty, the same as before photos existed — never a hard failure on a
+// display concern.
+func (a *DirectInventoryAdapter) WithPhotoPresigner(p PhotoReadPresigner) *DirectInventoryAdapter {
+	a.photos = p
+	return a
 }
 
 // ErrOversellBlocked is returned when the requested rooms exceed remaining
@@ -123,26 +147,72 @@ func (a *DirectInventoryAdapter) Search(ctx context.Context, req gateway.SearchR
 	return offers, rows.Err()
 }
 
-// GetContent reads the stored direct-property content.
+// GetContent reads the stored direct-property content, including amenities
+// and photos (property_id resolved first, since the photo table keys on it —
+// supplier_property_ref is this adapter's own external-facing id, not the row id).
 func (a *DirectInventoryAdapter) GetContent(ctx context.Context, supplierPropertyRef string) (gateway.PropertyContent, error) {
 	if a.db == nil {
 		return gateway.PropertyContent{}, fmt.Errorf("direct: nil pool")
 	}
 	const q = `
-		SELECT name, COALESCE(description,''), address, city,
+		SELECT id, name, COALESCE(description,''), address, city,
 		       COALESCE(ST_Y(geo::geometry),0), COALESCE(ST_X(geo::geometry),0),
-		       star_rating, property_type
+		       star_rating, property_type, amenities
 		FROM public.stays_property
 		WHERE source_rail = 'DIRECT' AND supplier_property_ref = $1`
 	var c gateway.PropertyContent
+	var propertyID string
+	var amenitiesJSON []byte
 	c.SupplierPropertyRef = supplierPropertyRef
 	err := a.db.QueryRow(ctx, q, supplierPropertyRef).Scan(
-		&c.Name, &c.Description, &c.Address, &c.City, &c.Lat, &c.Lng, &c.StarRating, &c.PropertyType,
+		&propertyID, &c.Name, &c.Description, &c.Address, &c.City, &c.Lat, &c.Lng,
+		&c.StarRating, &c.PropertyType, &amenitiesJSON,
 	)
 	if err != nil {
 		return gateway.PropertyContent{}, fmt.Errorf("direct: content: %w", err)
 	}
+	c.Amenities = decodeAmenityList(amenitiesJSON)
+	c.Photos = a.listPhotoURLs(ctx, propertyID)
 	return c, nil
+}
+
+// listPhotoURLs returns every photo's freshly-presigned read URL, cover first.
+// Never an error: a property whose photos cannot currently be signed is still
+// worth returning content for (matches marketplace.Service.presignThumb's
+// fail-soft behaviour).
+func (a *DirectInventoryAdapter) listPhotoURLs(ctx context.Context, propertyID string) []string {
+	if a.photos == nil || !a.photos.Configured() {
+		return nil
+	}
+	rows, err := a.db.Query(ctx, `
+		SELECT storage_key FROM public.stays_property_photo
+		WHERE property_id = $1 ORDER BY is_cover DESC, sort_order ASC, created_at ASC`, propertyID)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	var urls []string
+	for rows.Next() {
+		var key string
+		if err := rows.Scan(&key); err != nil {
+			continue
+		}
+		if u, err := a.photos.PresignGet(key, photoReadTTL); err == nil {
+			urls = append(urls, u)
+		}
+	}
+	return urls
+}
+
+func decodeAmenityList(raw []byte) []string {
+	if len(raw) == 0 {
+		return nil
+	}
+	var out []string
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return nil
+	}
+	return out
 }
 
 // Prebook re-checks live price + availability against the rate plan and the SB1

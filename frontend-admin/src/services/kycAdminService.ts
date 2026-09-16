@@ -1,5 +1,6 @@
-import { env } from '@/config/env';
+import { apiRoot } from '@/config/env';
 import { operationKey } from './idempotency';
+import { resolveUseMock } from '@/config/useMock';
 import type {
   KycReviewItem,
   KycCaseDetail,
@@ -17,13 +18,17 @@ import type {
 //
 // Backend / flag may not be running — default to deterministic fixtures unless
 // explicitly disabled, so every screen renders. Mirrors transfersAdminService.
-const USE_FIXTURES =
-  (process.env.NEXT_PUBLIC_KYC_ADMIN_USE_MOCK ?? 'true') !== 'false';
+const USE_FIXTURES = resolveUseMock(process.env.NEXT_PUBLIC_KYC_ADMIN_USE_MOCK);
 
-// Go backend finance admin routes live at /api/finance/admin/...
-// env.apiBaseUrl looks like http://localhost:8080/api/v1 → /api/finance/admin.
+// Go backend finance admin routes live at /api/finance/admin/... — this used to
+// be env.apiBaseUrl.replace(/\/api\/v1\/?$/, '/api/finance/admin'), which
+// stopped matching once apiBaseUrl became the same-origin proxy path
+// (<origin>/api/admin-proxy, no /api/v1 suffix) instead of ending in /api/v1.
+// apiRoot() strips that trailing /api/v1 (if any) and nothing else, so the
+// module path can be appended unconditionally regardless of which shape
+// apiBaseUrl happens to be.
 export function kycAdminBase(): string {
-  return env.apiBaseUrl.replace(/\/api\/v1\/?$/, '/api/finance/admin');
+  return `${apiRoot()}/api/finance/admin`;
 }
 
 function authHeaders(): Record<string, string> {

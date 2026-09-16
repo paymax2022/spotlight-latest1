@@ -83,6 +83,9 @@ export default function MobilityHomeScreen() {
           <Pressable onPress={() => router.push('/mobility/history')} hitSlop={10} style={styles.iconBtn} accessibilityLabel="Trip history">
             <Clock size={20} color={Colors.onSurface} strokeWidth={2} />
           </Pressable>
+          <Pressable onPress={() => router.push('/mobility/settings')} hitSlop={10} style={styles.iconBtn} accessibilityLabel="Ride settings">
+            <Icons.Settings size={20} color={Colors.onSurface} strokeWidth={2} />
+          </Pressable>
           <HomeMenuButton />
         </View>
       </View>

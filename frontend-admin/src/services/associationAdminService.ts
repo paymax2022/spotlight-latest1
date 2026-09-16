@@ -14,7 +14,9 @@ import { resolveUseMock } from '@/config/useMock';
 // see routes.go). The old inline check defaulted to MOCK unless someone
 // remembered to set the flag, which is why this console showed fixtures with
 // nothing to indicate it.
-const USE_MOCK = resolveUseMock(process.env.NEXT_PUBLIC_ASSOCIATION_ADMIN_USE_MOCK);
+export const USE_MOCK = resolveUseMock(process.env.NEXT_PUBLIC_ASSOCIATION_ADMIN_USE_MOCK);
+/** Named so the fixture banner can cite the exact switch. */
+export const USE_MOCK_ENV = 'NEXT_PUBLIC_ASSOCIATION_ADMIN_USE_MOCK';
 
 // Reads may serve fixtures. WRITES MAY NOT.
 //

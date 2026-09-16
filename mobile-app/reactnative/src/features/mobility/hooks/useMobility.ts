@@ -249,3 +249,38 @@ export function useDriverTrip() {
 export function useDriverEarnings() {
   return useQuery({ queryKey: [KEY, 'driver', 'earnings'], queryFn: mob.getDriverEarnings, staleTime: 20_000 });
 }
+
+// ─── Trip chat ────────────────────────────────────────────────────────────────
+// `role` selects which side of the (identical, authz-gated) endpoint this
+// client calls — 'rider' for the customer app, 'driver' for the driver app.
+
+/** Polls a trip's chat thread every 4s while the screen is open. */
+export function useTripMessages(tripId?: string, role: 'rider' | 'driver' = 'rider') {
+  return useQuery({
+    queryKey: [KEY, 'trip', tripId, 'messages', role],
+    queryFn: () => mob.listTripMessages(tripId as string, role),
+    enabled: Boolean(tripId),
+    refetchInterval: 4_000,
+  });
+}
+
+export function useSendTripMessage(tripId?: string, role: 'rider' | 'driver' = 'rider') {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: string) => mob.sendTripMessage(tripId as string, role, body),
+    onSuccess: () => qc.invalidateQueries({ queryKey: [KEY, 'trip', tripId, 'messages', role] }),
+  });
+}
+
+// ─── Ride settings (default payment method, saved addresses) ──────────────────
+export function useRideSettings() {
+  return useQuery({ queryKey: [KEY, 'ride-settings'], queryFn: mob.getRideSettings, staleTime: 10_000 });
+}
+
+export function useUpdateRideSettings() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: mob.updateRideSettings,
+    onSuccess: (settings) => qc.setQueryData([KEY, 'ride-settings'], settings),
+  });
+}

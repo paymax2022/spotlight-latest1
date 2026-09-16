@@ -302,47 +302,11 @@ func TestIntegration_Purchase_RejectsWhenEventNotLive(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// 4. Ticket scan authZ gap — documents that ScanTicket does not check that the
-//    scanning steward (caller) has any relationship to the ticket/event; it only
-//    validates the credential token itself.
+// 4. Ticket scan authZ — FIXED (was: ScanTicket performed no check that the
+//    caller had any relationship to the ticket/event). See scan_authz_live_db_test.go
+//    (no integration build tag, so it actually runs under `go test ./...` with
+//    TEST_DATABASE_URL set) for the real organiser/steward/forbidden coverage.
 // ---------------------------------------------------------------------------
-
-func TestIntegration_Scan_DoesNotCheckCallerIdentityAgainstTicket_KnownGap(t *testing.T) {
-	ctx := context.Background()
-	pool := itestPool(t)
-	t.Cleanup(pool.Close)
-	svc := newTestService(t, pool)
-
-	organiser := seedUser(t, pool)
-	buyer := seedUser(t, pool)
-
-	ev, err := svc.CreateEvent(ctx, organiser, top5events.Event{Title: "itest scan", StartsAt: time.Now(), EndsAt: time.Now().Add(6 * time.Hour)})
-	if err != nil {
-		t.Fatalf("create: %v", err)
-	}
-	t.Cleanup(func() { _, _ = pool.Exec(ctx, `DELETE FROM events WHERE id=$1`, ev.ID) })
-	_ = svc.Submit(ctx, organiser, ev.ID)
-	_ = svc.Approve(ctx, "admin", ev.ID)
-	_ = svc.GoLive(ctx, organiser, ev.ID)
-
-	tier, err := svc.AddTier(ctx, organiser, ev.ID, top5events.TicketTier{Name: "GA", PriceKobo: 0, Capacity: 5})
-	if err != nil {
-		t.Fatalf("add tier: %v", err)
-	}
-	tk, err := svc.Purchase(ctx, buyer, ev.ID, tier.ID, "", "itest-scan-purchase-"+uuid.New().String())
-	if err != nil {
-		t.Skipf("purchase failed (escrow account setup) — not the code path under test: %v", err)
-	}
-
-	// ScanTicket takes a raw credential.Token/Gate — no "steward for THIS event" or
-	// "caller is authorised to scan" check happens inside top5events.Service itself
-	// (see handler.go: Scan only checks the caller is authenticated at all, not that
-	// they are a vendor/steward for this specific event). This documents current
-	// behavior for the report; the credential layer's own single-use enforcement is
-	// the real double-scan guard (tested in the mirror suite and here below).
-	_ = tk
-	t.Log("GAP: Service.ScanTicket performs no check that the caller is a steward for this specific event — any authenticated caller who has a valid gate token can scan. Flagged for follow-up, not fixed here.")
-}
 
 // ---------------------------------------------------------------------------
 // 5. EventWallet lifecycle + ledger balance invariant (DB-backed)

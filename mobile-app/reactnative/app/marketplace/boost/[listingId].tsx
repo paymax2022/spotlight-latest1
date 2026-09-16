@@ -11,11 +11,12 @@
 // Entry: My Listings "Boost" button (purchase); a boost-expiry notification or a
 // just-completed purchase (status, via ?boostId).
 import React, { useEffect, useState } from 'react';
-import { View, Text, ScrollView, StyleSheet, Pressable, Alert } from 'react-native';
+import { View, Text, ScrollView, StyleSheet, Pressable } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import { goBack } from '@/lib/navigation';
-import { X, Zap, Wallet, CheckCircle2, AlertTriangle, RefreshCw, ArrowUpRight, TrendingUp } from 'lucide-react-native';
+import { confirmAsync, alertAsync } from '@/lib/confirm';
+import { X, Zap, Wallet, CheckCircle2, AlertTriangle, RefreshCw, ArrowUpRight, TrendingUp, XCircle } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
 import { Spacing } from '@/constants/spacing';
@@ -23,10 +24,12 @@ import { Radius } from '@/constants/radius';
 import { shadow1 } from '@/constants/shadows';
 import StateView from '@/components/StateView';
 import PrimaryButton from '@/components/PrimaryButton';
+import DatePickerField from '@/components/DatePickerField';
+import TimePickerField from '@/components/TimePickerField';
 import { usePurchasePayment, PaymentSheet } from '@/features/payments';
 import { MarketColors, formatNaira } from '@/features/marketplace';
 import type { Boost, BoostTier } from '@/features/marketplace';
-import { useBoostTiers, useBoost, usePurchaseBoost } from '@/features/marketplace/sell.hooks';
+import { useBoostTiers, useBoost, useBoostQuote, usePurchaseBoost, useCancelBoost } from '@/features/marketplace/sell.hooks';
 
 function track(event: string, props: Record<string, unknown>) {
   if (__DEV__) console.log(`[analytics] ${event}`, props);
@@ -43,13 +46,39 @@ export default function BoostRoute() {
 }
 
 // ── Screen 16 — Boost purchase ──
+// Two ways to buy a boost, picked via the segmented control below:
+//   • Package — a preset tier (unchanged from before: fixed duration/price).
+//   • Custom  — pick an end date+time; starts now, fee = days (rounded up) ×
+//     the admin-set ₦/day rate, previewed live via useBoostQuote before the
+//     user commits (GET /boosts/quote — the SAME computation the purchase
+//     itself uses server-side, so the price shown here is authoritative, not
+//     a client-side guess).
 function BoostPurchase({ listingId, onPurchased }: { listingId: string; onPurchased: (id: string) => void }) {
   const tiersQuery = useBoostTiers();
   const purchaseBoost = usePurchaseBoost(listingId);
   const pay = usePurchasePayment<Boost>();
+  const [mode, setMode] = useState<'package' | 'custom'>('package');
   const [selectedTier, setSelectedTier] = useState<string | null>(null);
+  const [endDate, setEndDate] = useState<string | undefined>(); // YYYY-MM-DD
+  const [endTime, setEndTime] = useState<string | undefined>(); // HH:MM (24h)
 
   const tier = tiersQuery.data?.find((t) => t.tier === selectedTier);
+
+  // Combine the date+time pickers into an ISO timestamp once both are set.
+  // Local time is what the user actually picked ("6pm on the 12th"), so this
+  // constructs a Date in the device's own timezone rather than parsing as UTC.
+  const customEndsAt = React.useMemo(() => {
+    if (!endDate || !endTime) return undefined;
+    const [y, m, d] = endDate.split('-').map(Number);
+    const [h, min] = endTime.split(':').map(Number);
+    const dt = new Date(y, m - 1, d, h, min, 0, 0);
+    return Number.isNaN(dt.getTime()) ? undefined : dt.toISOString();
+  }, [endDate, endTime]);
+
+  const customQuote = useBoostQuote(mode === 'custom' ? { endsAt: customEndsAt } : {});
+  const priceKobo = mode === 'package' ? tier?.priceKobo : customQuote.data?.priceKobo;
+  const durationDays = mode === 'package' ? tier?.durationDays : customQuote.data?.durationDays;
+  const canConfirm = mode === 'package' ? !!selectedTier : !!customQuote.data && !customQuote.isError;
 
   // NO pre-flight affordability gate here, deliberately.
   //
@@ -66,16 +95,17 @@ function BoostPurchase({ listingId, onPurchased }: { listingId: string; onPurcha
   // first.
 
   const handleConfirm = () => {
-    if (!tier || !listingId) return;
+    if (!canConfirm || !listingId || !priceKobo) return;
+    const selection = mode === 'package' ? { tier: tier!.tier } : { endsAt: customEndsAt! };
     pay.start({
-      amountKobo: tier.priceKobo,
-      title: `Boost — ${tier.label}`,
+      amountKobo: priceKobo,
+      title: mode === 'package' ? `Boost — ${tier!.label}` : `Boost — ${durationDays} custom days`,
       domain: 'marketplace_boost',
       // The boost is created (wallet debit + Idempotency-Key) only after the
       // payment rail confirms; the resulting Boost flows into onPaid.
-      charge: async () => purchaseBoost.mutateAsync(tier.tier),
+      charge: async () => purchaseBoost.mutateAsync(selection),
       onPaid: (boost) => {
-        track('boost_purchased', { listing_id: listingId, tier: tier.tier, price_kobo: tier.priceKobo, boost_id: boost.id });
+        track('boost_purchased', { listing_id: listingId, mode, ...selection, price_kobo: priceKobo, boost_id: boost.id });
         onPurchased(boost.id);
       },
     });
@@ -112,21 +142,55 @@ function BoostPurchase({ listingId, onPurchased }: { listingId: string; onPurcha
             </Text>
           </View>
 
+          <View style={styles.segmentRow}>
+            <Pressable style={[styles.segment, mode === 'package' && styles.segmentActive]} onPress={() => setMode('package')}>
+              <Text style={[styles.segmentText, mode === 'package' && styles.segmentTextActive]}>Packages</Text>
+            </Pressable>
+            <Pressable style={[styles.segment, mode === 'custom' && styles.segmentActive]} onPress={() => setMode('custom')}>
+              <Text style={[styles.segmentText, mode === 'custom' && styles.segmentTextActive]}>Custom dates</Text>
+            </Pressable>
+          </View>
+
           <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
-            {(tiersQuery.data ?? []).map((t: BoostTier) => {
-              const active = selectedTier === t.tier;
-              return (
-                <Pressable key={t.tier} style={[styles.card, active && styles.cardActive]} onPress={() => setSelectedTier(t.tier)}>
-                  <View style={styles.cardHead}>
-                    <Zap size={18} color={active ? MarketColors.brand : MarketColors.muted} />
-                    <Text style={[styles.tierLabel, active && styles.tierLabelActive]}>{t.label}</Text>
-                    <Text style={styles.tierPrice}>{formatNaira(t.priceKobo)}</Text>
+            {mode === 'package' ? (
+              (tiersQuery.data ?? []).map((t: BoostTier) => {
+                const active = selectedTier === t.tier;
+                return (
+                  <Pressable key={t.tier} style={[styles.card, active && styles.cardActive]} onPress={() => setSelectedTier(t.tier)}>
+                    <View style={styles.cardHead}>
+                      <Zap size={18} color={active ? MarketColors.brand : MarketColors.muted} />
+                      <Text style={[styles.tierLabel, active && styles.tierLabelActive]}>{t.label}</Text>
+                      <Text style={styles.tierPrice}>{formatNaira(t.priceKobo)}</Text>
+                    </View>
+                    <Text style={styles.tierDesc}>{t.description}</Text>
+                    <Text style={styles.tierDuration}>{t.durationDays} days of premium placement</Text>
+                  </Pressable>
+                );
+              })
+            ) : (
+              <View style={styles.customCard}>
+                <View style={styles.customRow}>
+                  <Text style={styles.customLabel}>Starts</Text>
+                  <Text style={styles.customNow}>Now</Text>
+                </View>
+                <DatePickerField label="Ends — date" value={endDate} onChange={setEndDate} minYear={new Date().getFullYear()} maxYear={new Date().getFullYear() + 1} />
+                <TimePickerField label="Ends — time" value={endTime} onChange={setEndTime} />
+
+                {customEndsAt && customQuote.isLoading ? (
+                  <Text style={styles.quoteHint}>Calculating fee…</Text>
+                ) : customQuote.isError ? (
+                  <Text style={styles.quoteError}>{(customQuote.error as { message?: string })?.message ?? 'Pick an end date in the future.'}</Text>
+                ) : customQuote.data ? (
+                  <View style={styles.quoteBox}>
+                    <Text style={styles.quoteText}>
+                      {customQuote.data.durationDays} day{customQuote.data.durationDays === 1 ? '' : 's'} × boost rate = <Text style={styles.quoteAmount}>{formatNaira(customQuote.data.priceKobo)}</Text>
+                    </Text>
                   </View>
-                  <Text style={styles.tierDesc}>{t.description}</Text>
-                  <Text style={styles.tierDuration}>{t.durationDays} days of premium placement</Text>
-                </Pressable>
-              );
-            })}
+                ) : (
+                  <Text style={styles.quoteHint}>Pick an end date and time to see the fee.</Text>
+                )}
+              </View>
+            )}
 
             <Text style={styles.disclaimer}>
               Boosts add extra visibility on top of relevance, trust, and freshness — they never override quality or trust scoring in results.
@@ -136,9 +200,9 @@ function BoostPurchase({ listingId, onPurchased }: { listingId: string; onPurcha
 
           <View style={styles.footer}>
             <PrimaryButton
-              label={tier ? `Boost for ${formatNaira(tier.priceKobo)}` : 'Select a tier'}
+              label={priceKobo ? `Boost for ${formatNaira(priceKobo)}` : mode === 'package' ? 'Select a tier' : 'Pick an end date'}
               onPress={handleConfirm}
-              disabled={!selectedTier || pay.phase === 'charging' || pay.phase === 'awaiting'}
+              disabled={!canConfirm || pay.phase === 'charging' || pay.phase === 'awaiting'}
               loading={pay.phase === 'charging' || pay.phase === 'awaiting' || purchaseBoost.isPending}
             />
           </View>
@@ -153,10 +217,30 @@ function BoostPurchase({ listingId, onPurchased }: { listingId: string; onPurcha
 // ── Screen 17 — Boost status ──
 function BoostStatus({ boostId }: { boostId: string }) {
   const boostQuery = useBoost(boostId);
+  const cancelBoost = useCancelBoost();
   const [remaining, setRemaining] = useState('');
 
   const boost = boostQuery.data;
   const endsAt = boost?.endsAt ?? null;
+
+  const handleStopBoost = async () => {
+    if (!boost) return;
+    const estimate = estimateProratedRefund(boost);
+    const ok = await confirmAsync({
+      title: 'Stop this boost?',
+      message: estimate > 0
+        ? `Your listing will stop being promoted right away. You'll get back about ${formatNaira(estimate)} for the days you haven't used yet.`
+        : "Your listing will stop being promoted right away. There's nothing left to refund — the boost has essentially run its course.",
+      confirmLabel: 'Stop boost',
+      destructive: true,
+    });
+    if (!ok) return;
+    try {
+      await cancelBoost.mutateAsync(boost.id);
+    } catch (e) {
+      await alertAsync({ title: 'Could not stop boost', message: e instanceof Error ? e.message : 'Please try again.' });
+    }
+  };
 
   // Live countdown for an active boost.
   useEffect(() => {
@@ -189,10 +273,14 @@ function BoostStatus({ boostId }: { boostId: string }) {
         <StateView kind="error" title="Couldn't load boost" actionLabel="Retry" onAction={() => boostQuery.refetch()} />
       ) : (
         <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
-          {boost.status === 'rejected_with_reason' || boost.status === 'auto_refunded' ? (
+          {boost.status === 'rejected_with_reason' ? (
             <RejectedState boost={boost} />
+          ) : boost.status === 'auto_refunded' ? (
+            boost.rejectionReasonCode === 'seller_cancelled'
+              ? <CancelledState boost={boost} />
+              : <RejectedState boost={boost} />
           ) : (
-            <ActiveState boost={boost} remaining={remaining} />
+            <ActiveState boost={boost} remaining={remaining} onStop={handleStopBoost} stopping={cancelBoost.isPending} />
           )}
           <View style={styles.footer2}>
             <PrimaryButton label="Back to my listings" variant="secondary" onPress={() => router.replace('/marketplace/sell' as never)} />
@@ -203,15 +291,50 @@ function BoostStatus({ boostId }: { boostId: string }) {
   );
 }
 
-function ActiveState({ boost, remaining }: { boost: Boost; remaining: string }) {
+// estimateProratedRefund mirrors the backend's proratedBoostRefund (service_boost.go)
+// for display only — the authoritative amount is whatever CancelBoost actually
+// posts and returns as refundedKobo. Used to preview "about ₦X back" before the
+// seller confirms stopping the boost.
+function estimateProratedRefund(boost: Boost): number {
+  if (!boost.startsAt || !boost.endsAt || boost.priceKobo <= 0) return 0;
+  const total = new Date(boost.endsAt).getTime() - new Date(boost.startsAt).getTime();
+  if (total <= 0) return 0;
+  const remaining = Math.max(0, Math.min(total, new Date(boost.endsAt).getTime() - Date.now()));
+  return Math.floor(boost.priceKobo * (remaining / total));
+}
+
+// formatDateTime shows both the date and the clock time. InfoRow previously
+// used toLocaleDateString() alone, so "Started"/"Ends" never told the seller
+// WHEN on that day the boost actually starts or ends — for a boost bought via
+// the custom end-time picker, that time is exactly the thing they chose.
+function formatDateTime(iso: string): string {
+  const d = new Date(iso);
+  return `${d.toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' })}, ${d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}`;
+}
+
+function ActiveState({ boost, remaining, onStop, stopping }: { boost: Boost; remaining: string; onStop: () => void; stopping: boolean }) {
+  // boost.status is the SERVER's last-known state, and nothing here flips it
+  // active -> completed the instant ends_at passes — that transition needs a
+  // background job to run. So a boost can sit at status: 'active' long after
+  // its end time, and reading status alone produced a header reading "Boost
+  // active" directly above a subtitle already reading "Ended", from the SAME
+  // screen, at the SAME time. `remaining` is computed from ends_at against
+  // the current clock every tick (see the countdown effect above), which is
+  // the one place on this screen that already knows the boost is over — so
+  // the header now reads from that, not from the stale server status.
+  const ended = remaining === 'Ended';
+
   // Performance delta stub — with no baseline in the payload, present a plain
   // placeholder rather than an invented number.
   return (
     <>
       <View style={styles.statusHero}>
         <View style={styles.statusIcon}><Zap size={28} color={MarketColors.brand} /></View>
-        <Text style={styles.statusTitle}>Boost active</Text>
-        <Text style={styles.statusSub}>{remaining || `${boost.durationDays} days`}</Text>
+        <Text style={styles.statusTitle}>{ended ? 'Boost ended' : 'Boost active'}</Text>
+        {/* statusSub carries textTransform: 'capitalize' (see styles below), built
+            for short label-style text like "7 days" or "2d 5h left" — a full
+            sentence there title-cases every word. Kept short to match. */}
+        <Text style={styles.statusSub}>{ended ? 'Ran its course' : (remaining || `${boost.durationDays} days`)}</Text>
       </View>
 
       <View style={styles.deltaCard}>
@@ -225,8 +348,46 @@ function ActiveState({ boost, remaining }: { boost: Boost; remaining: string }) 
       <InfoRow label="Tier" value={boost.tier} />
       <InfoRow label="Duration" value={`${boost.durationDays} days`} />
       <InfoRow label="Amount paid" value={formatNaira(boost.priceKobo)} />
-      {boost.startsAt ? <InfoRow label="Started" value={new Date(boost.startsAt).toLocaleDateString()} /> : null}
-      {boost.endsAt ? <InfoRow label="Ends" value={new Date(boost.endsAt).toLocaleDateString()} /> : null}
+      <InfoRow label="Started" value={boost.startsAt ? formatDateTime(boost.startsAt) : '—'} />
+      {/* Always rendered, even with no value: a missing end date used to make
+          this whole row disappear, which reads as "the app forgot the field"
+          rather than "the field is genuinely empty" — the second is something
+          a seller can report, the first just looks broken. */}
+      <InfoRow label="Ends" value={boost.endsAt ? formatDateTime(boost.endsAt) : '—'} />
+
+      {/* Nothing left to stop once it has already ended. */}
+      {!ended && (
+        <Pressable style={styles.retryRow} onPress={onStop} disabled={stopping} accessibilityRole="button">
+          <XCircle size={16} color={MarketColors.danger} />
+          <Text style={[styles.retryText, { color: MarketColors.danger }]}>{stopping ? 'Stopping…' : 'Stop boost'}</Text>
+        </Pressable>
+      )}
+    </>
+  );
+}
+
+function CancelledState({ boost }: { boost: Boost }) {
+  const refunded = boost.refundedKobo ?? 0;
+  return (
+    <>
+      <View style={styles.statusHero}>
+        <View style={[styles.statusIcon, styles.statusIconWarn]}><XCircle size={28} color={MarketColors.warnText} /></View>
+        <Text style={styles.statusTitle}>Boost stopped</Text>
+        <Text style={styles.statusSub}>You cancelled this boost early</Text>
+      </View>
+
+      <View style={styles.refundCard}>
+        <CheckCircle2 size={18} color={MarketColors.ok} />
+        <Text style={styles.refundText}>
+          {refunded > 0
+            ? `${formatNaira(refunded)} for the unused days was automatically refunded to your wallet.`
+            : 'The boost had essentially run its course, so there was nothing left to refund.'}
+        </Text>
+      </View>
+
+      <InfoRow label="Tier" value={boost.tier} />
+      <InfoRow label="Amount paid" value={formatNaira(boost.priceKobo)} />
+      <InfoRow label="Amount refunded" value={formatNaira(refunded)} />
     </>
   );
 }
@@ -276,7 +437,21 @@ const styles = StyleSheet.create({
   walletRow: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: Spacing.containerMargin, paddingBottom: Spacing.xs },
   walletText: { ...Typography.labelMd, color: MarketColors.muted },
   walletAmount: { color: MarketColors.text, fontWeight: '700' },
+  segmentRow: { flexDirection: 'row', marginHorizontal: Spacing.containerMargin, backgroundColor: MarketColors.surfaceAlt, borderRadius: Radius.md, padding: 3, gap: 3 },
+  segment: { flex: 1, paddingVertical: 9, borderRadius: Radius.sm, alignItems: 'center' },
+  segmentActive: { backgroundColor: MarketColors.surface, ...shadow1 },
+  segmentText: { ...Typography.labelMd, color: MarketColors.muted, fontWeight: '600' },
+  segmentTextActive: { color: MarketColors.brand },
   scroll: { paddingHorizontal: Spacing.containerMargin, paddingTop: Spacing.sm, gap: Spacing.sm },
+  customCard: { borderWidth: 1.5, borderColor: MarketColors.border, borderRadius: Radius.lg, padding: Spacing.cardPadding, backgroundColor: MarketColors.surface, ...shadow1 },
+  customRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: Spacing.sm },
+  customLabel: { ...Typography.labelMd, color: MarketColors.muted },
+  customNow: { ...Typography.bodyMd, color: MarketColors.text, fontWeight: '700' },
+  quoteHint: { ...Typography.labelSm, color: MarketColors.muted, marginTop: Spacing.xs },
+  quoteError: { ...Typography.labelSm, color: Colors.error, marginTop: Spacing.xs },
+  quoteBox: { backgroundColor: MarketColors.okBg, borderRadius: Radius.md, padding: Spacing.sm, marginTop: Spacing.xs },
+  quoteText: { ...Typography.bodySm, color: MarketColors.text },
+  quoteAmount: { ...Typography.titleMd, color: MarketColors.brand, fontWeight: '800' },
   card: { borderWidth: 1.5, borderColor: MarketColors.border, borderRadius: Radius.lg, padding: Spacing.cardPadding, backgroundColor: MarketColors.surface, ...shadow1 },
   cardActive: { borderColor: MarketColors.brand, backgroundColor: MarketColors.okBg },
   cardHead: { flexDirection: 'row', alignItems: 'center', gap: Spacing.xs },

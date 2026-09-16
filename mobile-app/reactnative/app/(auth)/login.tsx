@@ -12,7 +12,7 @@ import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
 import { Spacing } from '@/constants/spacing';
 import { useAuthStore } from '@/store/authStore';
-import { EmailNotConfirmedError } from '@/api/auth.api';
+import { EmailNotConfirmedError, MfaRequiredError } from '@/api/auth.api';
 import { getErrorMessage } from '@/utils/errorMapper';
 
 // Sign in with EITHER an email or a phone number. The field is validated loosely on
@@ -38,8 +38,11 @@ export default function LoginScreen() {
     try {
       await login(values.identifier, values.password);
       // Navigate to the originating module screen, or the home grid as fallback.
-      // Validate returnTo starts with "/" to prevent open-redirect.
-      const dest = (typeof returnTo === 'string' && returnTo.startsWith('/'))
+      // Validate returnTo is a ROOTED, non-protocol-relative path to prevent an
+      // open redirect. startsWith('/') alone was not enough: "//evil.example"
+      // passes it and a browser treats it as an absolute URL to another host, so
+      // a crafted ?returnTo= could bounce a freshly-signed-in user off-site.
+      const dest = (typeof returnTo === 'string' && returnTo.startsWith('/') && !returnTo.startsWith('//'))
         ? returnTo
         : '/(tabs)/home';
       router.replace(dest as never);
@@ -48,6 +51,13 @@ export default function LoginScreen() {
       // enter their code rather than showing a credentials error they cannot act on.
       if (err instanceof EmailNotConfirmedError) {
         router.push({ pathname: '/(auth)/verify-otp', params: { email: err.email } });
+        return;
+      }
+      // The password was CORRECT and a second factor is now required. Same code
+      // screen, different redemption endpoint — mode=login makes it redeem the
+      // sign-in code (which returns a session) rather than a sign-up code.
+      if (err instanceof MfaRequiredError) {
+        router.push({ pathname: '/(auth)/verify-otp', params: { email: err.email, mode: 'login' } });
         return;
       }
       // authAttempt: a 401 HERE means the credentials were rejected. Without it

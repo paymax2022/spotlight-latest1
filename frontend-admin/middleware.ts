@@ -10,18 +10,42 @@ import type { NextRequest } from 'next/server';
 // localStorage). The client route guard remains for per-route AUTHORIZATION (UX);
 // the Go backend remains the authority for per-endpoint RBAC.
 //
-// SHIPPED OFF by default. Set ADMIN_MIDDLEWARE_ENFORCE=1 only after verifying the
-// cookie sign-in flow (see the Phase 0 runbook). Set SUPABASE_JWT_SECRET to enable
-// real signature verification; without it the gate falls back to decode+expiry
-// only (structure/expiry checked, signature NOT — weaker, but still blocks the
-// no-session case). Never rely on this alone: authorization must be enforced by
-// the backend on every admin endpoint.
+// ENFORCED BY DEFAULT (AUTH-001). An unset/omitted ADMIN_MIDDLEWARE_ENFORCE —
+// the state of every in-repo deploy config (render.yaml, app.yaml,
+// railway.json, .env.production.example) — now enforces the gate, not the
+// other way around. Opting OUT requires a deliberate ADMIN_MIDDLEWARE_ENFORCE=0
+// (e.g. a local dev flow that hasn't configured SUPABASE_JWT_SECRET yet and
+// wants the client-side AdminRouteGuard to keep working standalone). Never
+// rely on this middleware alone: authorization must be enforced by the
+// backend on every admin endpoint.
+//
+// SUPABASE_JWT_SECRET is REQUIRED for enforcement to actually admit anyone
+// (AUTH-002). Without it, isSessionValid() fails closed — every /admin/*
+// request is refused, including legitimate ones — rather than falling back
+// to a decode+expiry-only check that accepts a structurally-valid but
+// unsigned/forged cookie. A deploy that forgets this secret gets a visibly
+// broken admin console, not a silently unlocked one.
 
-const ENFORCE = process.env.ADMIN_MIDDLEWARE_ENFORCE === '1';
-const SESSION_COOKIE = 'sb-admin-token';
+/**
+ * Resolves the enforcement flag from its raw env value. Enforced unless the
+ * operator explicitly opts out with '0' — there is no opt-IN state, because
+ * an opt-in default is exactly what left every in-repo deploy config (which
+ * never set this var) serving /admin/* to anyone. Exported for direct unit
+ * testing without constructing a NextRequest.
+ */
+export function resolveEnforce(raw: string | undefined): boolean {
+  return raw !== '0';
+}
+
+const ENFORCE = resolveEnforce(process.env.ADMIN_MIDDLEWARE_ENFORCE);
+
+// Exported so other server-side entry points that need the same session check
+// (e.g. app/api/admin-proxy/[...path]/route.ts — AUTH-010) use the identical
+// cookie name instead of re-deriving it.
+export const SESSION_COOKIE = 'sb-admin-token';
 
 // Paths under /admin reachable without a session (login + terminal states).
-function isPublicAdminPath(pathname: string): boolean {
+export function isPublicAdminPath(pathname: string): boolean {
   return (
     pathname === '/admin/login' ||
     pathname.startsWith('/admin/login/') ||
@@ -34,7 +58,7 @@ function base64UrlDecode(input: string): string {
   return atob(b64.padEnd(b64.length + ((4 - (b64.length % 4)) % 4), '='));
 }
 
-async function isSessionValid(token: string | undefined): Promise<boolean> {
+export async function isSessionValid(token: string | undefined): Promise<boolean> {
   if (!token) return false;
   const parts = token.split('.');
   if (parts.length !== 3) return false;
@@ -48,9 +72,13 @@ async function isSessionValid(token: string | undefined): Promise<boolean> {
   }
   if (typeof payload.exp === 'number' && payload.exp * 1000 <= Date.now()) return false;
 
-  // Signature check (only when the secret is configured — Supabase signs HS256).
+  // Signature check — REQUIRED (AUTH-002). A missing secret used to fall back
+  // to decode+expiry only, which accepts any structurally-valid, unexpired
+  // JWT regardless of who signed it (or whether anyone did). That is a fail
+  // OPEN on a forged/tampered cookie, so it now fails CLOSED instead: no
+  // secret configured means no request is admitted while enforcement is on.
   const secret = process.env.SUPABASE_JWT_SECRET;
-  if (!secret) return true; // decode+expiry only — set SUPABASE_JWT_SECRET to harden.
+  if (!secret) return false;
   try {
     const enc = new TextEncoder();
     const key = await crypto.subtle.importKey(

@@ -5,6 +5,8 @@ import { getEventsDashboard, formatNaira } from '@/services/eventsAdminService';
 import type { EventsDashboard } from '@/types/eventsAdmin';
 import { PageHeader, EventsTabs, Card, Kpi, Badge, DisclosureNote, StateBlock, btn, th, td, timeAgo, pct } from '../_ui';
 import { colors } from '@/components/ui/vuexy';
+import { FixtureBanner } from '../../_shared/ui';
+import { USE_MOCK, USE_MOCK_ENV } from '@/services/eventsAdminService';
 
 export default function EventsDashboardPage() {
   const [data, setData] = useState<EventsDashboard | null>(null);
@@ -28,6 +30,7 @@ export default function EventsDashboardPage() {
         subtitle="GMV, ticket sales, closed-loop cashless float & liability, vendor settlement and fraud across the Ticketing + Cashless event wallet rails."
         action={<button onClick={load} style={btn()}>Refresh</button>}
       />
+      <FixtureBanner active={USE_MOCK} envVar={USE_MOCK_ENV} />
       <EventsTabs active="overview" />
 
       <DisclosureNote>

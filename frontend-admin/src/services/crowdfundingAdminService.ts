@@ -4,7 +4,7 @@
 // Mirrors fintechService shape: flip USE_MOCK to false and the fetch branches hit
 // the live backend. All money is integer kobo.
 
-import { env } from '@/config/env';
+import { apiRoot } from '@/config/env';
 import { operationKey } from './idempotency';
 import { resolveUseMock } from '@/config/useMock';
 import type {
@@ -32,6 +32,11 @@ import type {
   CfFeatureRequest,
   CfFeatureRequestStatus,
   CfFeatureRequestCampaignStatus,
+  CfDirectoryPage,
+  CfDirectoryFilter,
+  CfBackersPage,
+  CfCampaignFunding,
+  CfUsersPage,
 } from '@/types/crowdfunding';
 
 // Mock is the default. Set NEXT_PUBLIC_CF_USE_MOCK=false to hit the live Go backend
@@ -44,8 +49,9 @@ import type {
 const USE_MOCK = resolveUseMock(process.env.NEXT_PUBLIC_CF_USE_MOCK);
 
 function adminBase(): string {
-  // Strip a trailing /api/v1 (if present) to get the API ROOT, then append the
-  // module's absolute path — the same shape restaurantAdminService uses.
+  // apiRoot() strips a trailing /api/v1 (if present) off env.apiBaseUrl and
+  // nothing else, then the module's absolute path is appended — the same
+  // shape restaurantAdminService uses.
   //
   // This used to REPLACE /api/v1 with the module path, which silently produced a
   // base with no module prefix at all once frontend-admin moved env.apiBaseUrl to
@@ -53,8 +59,7 @@ function adminBase(): string {
   // so every call went to <proxy>/campaigns instead of
   // <proxy>/api/crowdfunding/admin/campaigns, and 404'd. Stripping is a no-op when
   // there is nothing to strip, so this form is correct for both base shapes.
-  const root = env.apiBaseUrl.replace(/\/api\/v1\/?$/, '');
-  return `${root}/api/crowdfunding/admin`;
+  return `${apiRoot()}/api/crowdfunding/admin`;
 }
 function authHeaders(): Record<string, string> {
   if (typeof window === 'undefined') return {};
@@ -292,15 +297,15 @@ export async function setCampaignFreeze(campaignId: string, freeze: boolean, not
 // ─── Finance ──────────────────────────────────────────────────────────────────
 
 const MOCK_REFUNDS: CfRefundRequest[] = [
-  { id: 're1', reference: 'SPL-RF-7001', campaignTitle: 'Flood Relief for Bayelsa Families', contributorName: 'Anonymous', amountKobo: 2_000_000, reason: 'Concerns about how funds are used', status: 'REQUESTED', requestedAt: '2026-06-19T07:30:00Z', refundEligible: true },
-  { id: 're2', reference: 'SPL-RF-7002', campaignTitle: 'Àdìre Documentary', contributorName: 'Tunde Bakare', amountKobo: 500_000, reason: 'Contributed by mistake', status: 'REQUESTED', requestedAt: '2026-06-18T22:10:00Z', refundEligible: true },
-  { id: 're3', reference: 'SPL-RF-6990', campaignTitle: 'Cryptocurrency Doubling Scheme', contributorName: 'Bola Ighodalo', amountKobo: 5_000_000, reason: 'Campaign turned out to be misleading', status: 'APPROVED', requestedAt: '2026-06-17T14:00:00Z', refundEligible: true },
+  { id: 're1', reference: 'SPL-RF-7001', campaignTitle: 'Flood Relief for Bayelsa Families', contributorName: 'Anonymous', amountKobo: 2_000_000, reason: 'Concerns about how funds are used', status: 'REQUESTED', requestedAt: '2026-06-19T07:30:00Z', refundEligible: true, isDemo: true },
+  { id: 're2', reference: 'SPL-RF-7002', campaignTitle: 'Àdìre Documentary', contributorName: 'Tunde Bakare', amountKobo: 500_000, reason: 'Contributed by mistake', status: 'REQUESTED', requestedAt: '2026-06-18T22:10:00Z', refundEligible: true, isDemo: true },
+  { id: 're3', reference: 'SPL-RF-6990', campaignTitle: 'Cryptocurrency Doubling Scheme', contributorName: 'Bola Ighodalo', amountKobo: 5_000_000, reason: 'Campaign turned out to be misleading', status: 'APPROVED', requestedAt: '2026-06-17T14:00:00Z', refundEligible: true, isDemo: true },
 ];
 
 const MOCK_SETTLEMENTS: CfSettlementBatch[] = [
-  { id: 'sb1', reference: 'SPL-STL-2026-06-19', payoutCount: 18, grossKobo: 240_000_000, feeKobo: 6_000_000, netKobo: 234_000_000, status: 'PROCESSING', createdAt: '2026-06-19T06:00:00Z' },
-  { id: 'sb2', reference: 'SPL-STL-2026-06-18', payoutCount: 31, grossKobo: 412_000_000, feeKobo: 10_300_000, netKobo: 401_700_000, status: 'SETTLED', createdAt: '2026-06-18T06:00:00Z' },
-  { id: 'sb3', reference: 'SPL-STL-2026-06-17', payoutCount: 12, grossKobo: 88_000_000, feeKobo: 2_200_000, netKobo: 85_800_000, status: 'SETTLED', createdAt: '2026-06-17T06:00:00Z' },
+  { id: 'sb1', reference: 'SPL-STL-2026-06-19', payoutCount: 18, grossKobo: 240_000_000, feeKobo: 6_000_000, netKobo: 234_000_000, status: 'PROCESSING', createdAt: '2026-06-19T06:00:00Z', isDemo: true },
+  { id: 'sb2', reference: 'SPL-STL-2026-06-18', payoutCount: 31, grossKobo: 412_000_000, feeKobo: 10_300_000, netKobo: 401_700_000, status: 'SETTLED', createdAt: '2026-06-18T06:00:00Z', isDemo: true },
+  { id: 'sb3', reference: 'SPL-STL-2026-06-17', payoutCount: 12, grossKobo: 88_000_000, feeKobo: 2_200_000, netKobo: 85_800_000, status: 'SETTLED', createdAt: '2026-06-17T06:00:00Z', isDemo: true },
 ];
 
 export async function getFinanceSummary(): Promise<CfFinanceSummary> {
@@ -316,6 +321,9 @@ export async function getFinanceSummary(): Promise<CfFinanceSummary> {
       escrowKobo: 642_000_000_00,
       settledThisMonthKobo: 1_204_000_000_00,
       reconciliationMismatches: 1,
+      unbookedGrossKobo: 45_000_00,
+      demoRefundRows: MOCK_REFUNDS.length,
+      demoSettlementRows: MOCK_SETTLEMENTS.length,
     };
   }
   const res = await fetch(`${adminBase()}/finance/summary`, { cache: 'no-store', headers: authHeaders() });
@@ -573,6 +581,46 @@ const MOCK_USERS: CfUser[] = [
   },
 ];
 
+/**
+ * One page of users. The endpoint used to answer a bare LIMIT 200 with no
+ * offset and no total, so past 200 active people the tail was invisible and
+ * nothing on screen said so.
+ */
+export async function listUsersPage(
+  role?: string, status?: string, search?: string, page = 1, limit = 25,
+): Promise<CfUsersPage> {
+  if (USE_MOCK) {
+    await delay();
+    const all = MOCK_USERS.filter((u) =>
+      (!role || u.role === role) &&
+      (!status || u.status === status) &&
+      (!search || u.name.toLowerCase().includes(search.toLowerCase()) || u.email.toLowerCase().includes(search.toLowerCase())),
+    );
+    // The fixture paginates too — a mock that always returns everything would
+    // hide a paging bug until production.
+    const start = (page - 1) * limit;
+    return { users: all.slice(start, start + limit), total: all.length, page, limit };
+  }
+  const p = new URLSearchParams({
+    role: role ?? '', status: status ?? '', search: search ?? '',
+    page: String(page), limit: String(limit),
+  });
+  const res = await fetch(`${adminBase()}/users?${p.toString()}`, { cache: 'no-store', headers: authHeaders() });
+  if (res.status === 401) throw new Error('Users failed: 401 — sign in again.');
+  if (res.status === 403) throw new Error('Users failed: 403 — needs crowdfunding.admin.review.');
+  if (!res.ok) throw new Error(`Users failed: ${res.status}`);
+  const body = await res.json();
+  return {
+    users: body.users ?? [],
+    // Older backends answer without these; fall back to the page itself so the
+    // UI degrades to "one page" instead of rendering NaN.
+    total: typeof body.total === 'number' ? body.total : (body.users?.length ?? 0),
+    page: typeof body.page === 'number' ? body.page : page,
+    limit: typeof body.limit === 'number' ? body.limit : limit,
+  };
+}
+
+/** Unpaginated convenience kept for existing callers; returns the first page. */
 export async function listUsers(role?: string, status?: string, search?: string): Promise<CfUser[]> {
   if (USE_MOCK) {
     await delay();
@@ -825,4 +873,53 @@ export async function decideFeatureRequest(id: string, approve: boolean, note: s
   const body = (await res.json().catch(() => ({}))) as { error?: string };
   if (!res.ok) throw new Error(body?.error || `Feature request ${approve ? 'approval' : 'rejection'} failed (${res.status})`);
   return mapFeatureRequest(unwrapRequest(body));
+}
+
+// ─── Campaign directory ───────────────────────────────────────────────────────
+// Every campaign, not just the review queue, with the funding figures the queue
+// never carried. Live-only by design: there is no fixture for these and this
+// console does not invent campaign or money numbers — see NOT_IN_FIXTURE_MODE.
+
+function directoryQuery(f: CfDirectoryFilter): string {
+  const p = new URLSearchParams();
+  if (f.status) p.set('status', f.status);
+  if (f.reviewStatus) p.set('reviewStatus', f.reviewStatus);
+  if (f.category) p.set('category', f.category);
+  if (f.q) p.set('q', f.q);
+  if (f.flag) p.set('flag', f.flag);
+  if (f.sort) p.set('sort', f.sort);
+  if (f.page) p.set('page', String(f.page));
+  if (f.limit) p.set('limit', String(f.limit));
+  const qs = p.toString();
+  return qs ? `?${qs}` : '';
+}
+
+export async function listCampaignDirectory(f: CfDirectoryFilter = {}): Promise<CfDirectoryPage> {
+  if (USE_MOCK) throw new Error(`The campaign directory ${NOT_IN_FIXTURE_MODE}`);
+  const res = await fetch(`${adminBase()}/campaign-directory${directoryQuery(f)}`, {
+    cache: 'no-store', headers: authHeaders(),
+  });
+  if (res.status === 401) throw new Error('Campaign directory failed: 401 — sign in again.');
+  if (res.status === 403) throw new Error('Campaign directory failed: 403 — needs crowdfunding.admin.review.');
+  if (!res.ok) throw new Error(`Campaign directory failed: ${res.status}`);
+  return res.json();
+}
+
+export async function listCampaignBackers(campaignId: string, page = 1, limit = 50): Promise<CfBackersPage> {
+  if (USE_MOCK) throw new Error(`Campaign backers ${NOT_IN_FIXTURE_MODE}`);
+  const res = await fetch(
+    `${adminBase()}/campaigns/${encodeURIComponent(campaignId)}/backers?page=${page}&limit=${limit}`,
+    { cache: 'no-store', headers: authHeaders() },
+  );
+  if (!res.ok) throw new Error(`Backers failed: ${res.status}`);
+  return res.json();
+}
+
+export async function getCampaignFunding(campaignId: string): Promise<CfCampaignFunding> {
+  if (USE_MOCK) throw new Error(`Campaign funding ${NOT_IN_FIXTURE_MODE}`);
+  const res = await fetch(`${adminBase()}/campaigns/${encodeURIComponent(campaignId)}/funding`, {
+    cache: 'no-store', headers: authHeaders(),
+  });
+  if (!res.ok) throw new Error(`Funding failed: ${res.status}`);
+  return res.json();
 }

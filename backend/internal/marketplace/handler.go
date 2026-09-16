@@ -1,10 +1,15 @@
 package marketplace
 
 import (
+	"encoding/base64"
+	"encoding/json"
 	"net/http"
 	"strconv"
+	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 
 	"spotlight/backend/internal/platform/r2"
 )
@@ -25,6 +30,55 @@ func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
 func (h *Handler) WithWebhookSecret(secret string) *Handler { h.webhookSecret = secret; return h }
 
 func userID(c *gin.Context) string { return c.GetString("user_id") }
+
+// viewerIDForCounting returns the caller's user id for VIEW-COUNTING ONLY.
+//
+// ⚠️ NOT AUTHENTICATION. When no auth middleware has run it falls back to reading
+// the `sub` claim out of the bearer token WITHOUT verifying its signature, so the
+// value is attacker-controllable. It is deliberately never written into the gin
+// context, because userID() reads from there and every authorization check in
+// this package trusts that key — putting an unverified id there would turn a
+// forged token into real access. Pass it straight to RecordListingView, nowhere
+// else.
+//
+// Why unverified is acceptable HERE: the value gates nothing but whether a
+// counter increments. GET /listings/:id is deliberately auth-optional
+// (tier0_browse) and runs no auth middleware, and the only proper alternative —
+// supabase.AuthUser() — is a GoTrue round trip per request on the module's
+// hottest public read. That is not a trade worth making for a view counter.
+//
+// Worst case from a forged token: the forger suppresses counting of views they
+// are themselves generating. They cannot inflate anyone's count beyond simply
+// fetching the page, and they gain no access.
+func viewerIDForCounting(c *gin.Context) string {
+	if id := userID(c); id != "" {
+		return id // a real middleware ran — trust that instead
+	}
+	h := strings.TrimSpace(c.GetHeader("Authorization"))
+	if !strings.HasPrefix(strings.ToLower(h), "bearer ") {
+		return ""
+	}
+	parts := strings.Split(strings.TrimSpace(h[7:]), ".")
+	if len(parts) != 3 {
+		return ""
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		return ""
+	}
+	var claims struct {
+		Sub string `json:"sub"`
+	}
+	if err := json.Unmarshal(payload, &claims); err != nil {
+		return ""
+	}
+	// Shape-check before it reaches a ::uuid cast: a malformed sub would abort the
+	// UPDATE, which would silently stop counting views for that request.
+	if _, err := uuid.Parse(claims.Sub); err != nil {
+		return ""
+	}
+	return claims.Sub
+}
 
 func idemKeyOf(c *gin.Context) string { return c.GetHeader("Idempotency-Key") }
 
@@ -101,6 +155,16 @@ func (h *Handler) GetListing(c *gin.Context) {
 		fail(c, err)
 		return
 	}
+	// Count the view only after a successful read, and never on the error path.
+	// Best effort by design: a failed counter bump must not fail loading a
+	// listing. Anonymous browsers (this route is tier0_browse) resolve to "" and
+	// still count — only the seller's own visits are excluded, inside the UPDATE.
+	// Called before respond so the request context is still live.
+	//
+	// viewerIDForCounting, NOT userID: no auth middleware runs on this route, so
+	// userID is always "". See its doc for why an unverified id is sound for a
+	// counter and why it must never reach the gin context.
+	h.svc.RecordListingView(c.Request.Context(), c.Param("id"), viewerIDForCounting(c))
 	respond(c, http.StatusOK, l)
 }
 
@@ -116,6 +180,68 @@ func (h *Handler) UpdateListing(c *gin.Context) {
 		return
 	}
 	l, err := h.svc.UpdateListing(c.Request.Context(), uid, c.Param("id"), in)
+	if err != nil {
+		fail(c, err)
+		return
+	}
+	respond(c, http.StatusOK, l)
+}
+
+// AddListingMediaRequest is POST /listings/:id/media.
+type AddListingMediaRequest struct {
+	MediaIDs []string `json:"media_ids" binding:"required"`
+}
+
+// AddListingMedia POST /listings/:id/media
+func (h *Handler) AddListingMedia(c *gin.Context) {
+	uid, ok := requireUser(c)
+	if !ok {
+		return
+	}
+	var in AddListingMediaRequest
+	if err := c.ShouldBindJSON(&in); err != nil {
+		fail(c, fieldErr(CodeValidation, err.Error(), "media_ids"))
+		return
+	}
+	l, err := h.svc.AddListingMedia(c.Request.Context(), uid, c.Param("id"), in.MediaIDs)
+	if err != nil {
+		fail(c, err)
+		return
+	}
+	respond(c, http.StatusOK, l)
+}
+
+// RemoveListingMedia DELETE /listings/:id/media/:mediaId
+func (h *Handler) RemoveListingMedia(c *gin.Context) {
+	uid, ok := requireUser(c)
+	if !ok {
+		return
+	}
+	l, err := h.svc.RemoveListingMedia(c.Request.Context(), uid, c.Param("id"), c.Param("mediaId"))
+	if err != nil {
+		fail(c, err)
+		return
+	}
+	respond(c, http.StatusOK, l)
+}
+
+// ReorderListingMediaRequest is PUT /listings/:id/media/reorder.
+type ReorderListingMediaRequest struct {
+	MediaIDs []string `json:"media_ids" binding:"required"`
+}
+
+// ReorderListingMedia PUT /listings/:id/media/reorder
+func (h *Handler) ReorderListingMedia(c *gin.Context) {
+	uid, ok := requireUser(c)
+	if !ok {
+		return
+	}
+	var in ReorderListingMediaRequest
+	if err := c.ShouldBindJSON(&in); err != nil {
+		fail(c, fieldErr(CodeValidation, err.Error(), "media_ids"))
+		return
+	}
+	l, err := h.svc.ReorderListingMedia(c.Request.Context(), uid, c.Param("id"), in.MediaIDs)
 	if err != nil {
 		fail(c, err)
 		return
@@ -166,6 +292,19 @@ func (h *Handler) ResumeListing(c *gin.Context) {
 }
 
 // MarkSoldListing POST /listings/:id/mark-sold
+func (h *Handler) RenewListing(c *gin.Context) {
+	uid, ok := requireUser(c)
+	if !ok {
+		return
+	}
+	l, err := h.svc.RenewListing(c.Request.Context(), uid, c.Param("id"))
+	if err != nil {
+		fail(c, err)
+		return
+	}
+	respond(c, http.StatusOK, l)
+}
+
 func (h *Handler) MarkSoldListing(c *gin.Context) {
 	uid, ok := requireUser(c)
 	if !ok {
@@ -205,6 +344,21 @@ func (h *Handler) DeleteListing(c *gin.Context) {
 		return
 	}
 	respond(c, http.StatusOK, l)
+}
+
+// PurgeListing DELETE /listings/:id/permanent — IRREVERSIBLE, unlike
+// DeleteListing which only flips status to removed_user. Refused with 409
+// LISTING_HAS_HISTORY when the listing carries orders, boosts, offers or threads.
+func (h *Handler) PurgeListing(c *gin.Context) {
+	uid, ok := requireUser(c)
+	if !ok {
+		return
+	}
+	if err := h.svc.PurgeListing(c.Request.Context(), uid, c.Param("id")); err != nil {
+		fail(c, err)
+		return
+	}
+	respond(c, http.StatusOK, gin.H{"purged": true, "listing_id": c.Param("id")})
 }
 
 // ─── Search + categories ─────────────────────────────────────────────────────
@@ -268,16 +422,12 @@ func (h *Handler) CreateOffer(c *gin.Context) {
 	if !ok {
 		return
 	}
-	var body struct {
-		ListingID      string `json:"listingId"`
-		OfferPriceKobo int64  `json:"priceKobo"`
-		Message        string `json:"message"`
-	}
+	var body createOfferRequest // wire_requests.go — snake_case, per the contract
 	if err := c.ShouldBindJSON(&body); err != nil {
 		fail(c, fieldErr(CodeValidation, err.Error(), ""))
 		return
 	}
-	o, err := h.svc.CreateOffer(c.Request.Context(), uid, body.ListingID, body.OfferPriceKobo, body.Message)
+	o, err := h.svc.CreateOffer(c.Request.Context(), uid, body.listingID(), body.priceKobo(), body.Message)
 	if err != nil {
 		fail(c, err)
 		return
@@ -305,14 +455,12 @@ func (h *Handler) CounterOffer(c *gin.Context) {
 	if !ok {
 		return
 	}
-	var body struct {
-		OfferPriceKobo int64 `json:"priceKobo"`
-	}
+	var body counterOfferRequest
 	if err := c.ShouldBindJSON(&body); err != nil {
 		fail(c, fieldErr(CodeValidation, err.Error(), ""))
 		return
 	}
-	o, err := h.svc.CounterOffer(c.Request.Context(), uid, c.Param("id"), body.OfferPriceKobo)
+	o, err := h.svc.CounterOffer(c.Request.Context(), uid, c.Param("id"), body.priceKobo())
 	if err != nil {
 		fail(c, err)
 		return
@@ -334,16 +482,16 @@ func (h *Handler) DeclineOffer(c *gin.Context) {
 	respond(c, http.StatusOK, o)
 }
 
-// ListOffers GET /offers?listingId=… — negotiation history for a listing, scoped
+// ListOffers GET /offers?listing_id=… — negotiation history for a listing, scoped
 // to the caller: the listing's seller sees every offer; a buyer sees only their own.
 func (h *Handler) ListOffers(c *gin.Context) {
 	uid, ok := requireUser(c)
 	if !ok {
 		return
 	}
-	listingID := c.Query("listingId")
+	listingID := listingIDQuery(c) // wire_requests.go
 	if listingID == "" {
-		fail(c, fieldErr(CodeValidation, "listingId is required", "listingId"))
+		fail(c, fieldErr(CodeValidation, "listing_id is required", "listing_id"))
 		return
 	}
 	offers, err := h.svc.ListOffersForListing(c.Request.Context(), uid, listingID)
@@ -364,7 +512,34 @@ func (h *Handler) ListOffers(c *gin.Context) {
 
 // BoostTiers GET /boosts/tiers
 func (h *Handler) BoostTiers(c *gin.Context) {
-	respond(c, http.StatusOK, h.svc.ListBoostTiers())
+	tiers, err := h.svc.ListBoostTiers(c.Request.Context())
+	if err != nil {
+		fail(c, err)
+		return
+	}
+	respond(c, http.StatusOK, tiers)
+}
+
+// GetBoostQuote GET /boosts/quote?tier=<pkg>  OR  ?ends_at=<RFC3339> — a
+// live, authoritative price preview so the client can show "5 days × ₦100 =
+// ₦500" before the user commits to POST /boosts. Public (no auth): pricing
+// info alone, no listing/wallet access.
+func (h *Handler) GetBoostQuote(c *gin.Context) {
+	var endsAt *time.Time
+	if raw := c.Query("ends_at"); raw != "" {
+		t, err := time.Parse(time.RFC3339, raw)
+		if err != nil {
+			fail(c, fieldErr(CodeValidation, "ends_at must be an RFC3339 timestamp", "ends_at"))
+			return
+		}
+		endsAt = &t
+	}
+	q, err := h.svc.ComputeBoostQuote(c.Request.Context(), c.Query("tier"), endsAt)
+	if err != nil {
+		fail(c, err)
+		return
+	}
+	respond(c, http.StatusOK, q)
 }
 
 // CreateBoost POST /boosts (Idempotency-Key)
@@ -489,6 +664,40 @@ func (h *Handler) SellerProfile(c *gin.Context) {
 func (h *Handler) SellerListings(c *gin.Context) {
 	limit, offset := pageParams(c)
 	ls, err := h.svc.SellerListings(c.Request.Context(), c.Param("id"), limit, offset)
+	if err != nil {
+		fail(c, err)
+		return
+	}
+	respond(c, http.StatusOK, ls)
+}
+
+// MyListings GET /listings/mine (authenticated) — the seller's own "My
+// Listings" screen, every status. SellerListings above is the public
+// storefront counterpart and only ever returns active listings; this is the
+// one place a seller sees their drafts/pending_review/paused/removed rows.
+// CancelBoost POST /boosts/:id/cancel (seller) — stops the caller's own active
+// boost early, with a prorated refund. See RejectBoost (admin group) for the
+// full-refund policy-violation counterpart.
+func (h *Handler) CancelBoost(c *gin.Context) {
+	uid, ok := requireUser(c)
+	if !ok {
+		return
+	}
+	b, err := h.svc.CancelBoost(c.Request.Context(), uid, c.Param("id"))
+	if err != nil {
+		fail(c, err)
+		return
+	}
+	respond(c, http.StatusOK, b)
+}
+
+func (h *Handler) MyListings(c *gin.Context) {
+	uid, ok := requireUser(c)
+	if !ok {
+		return
+	}
+	limit, offset := pageParams(c)
+	ls, err := h.svc.MyListingsForSeller(c.Request.Context(), uid, limit, offset)
 	if err != nil {
 		fail(c, err)
 		return

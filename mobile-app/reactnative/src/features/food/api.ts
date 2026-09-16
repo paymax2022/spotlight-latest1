@@ -32,13 +32,16 @@ import {
   mockOrdersByRole,
   mockRiderOffers,
   mockAcceptOffer,
+  mockDeclineOffer,
   mockSetStatus,
   mockCancel,
   mockConfirmPickup,
   mockConfirmHandoff,
   mockRedispatch,
+  mockToggleLike,
+  withMockLikeState,
 } from './mock';
-import { mapRestaurants, mapRestaurantDetail, mapOrderList } from './normalize';
+import { mapRestaurants, mapRestaurantDetail, mapOrderList, mapOrder } from './normalize';
 import { computeDeliveryFeeMock, type DeliveryQuote } from './deliveryFee';
 export type { DeliveryQuote, DeliveryFeeBreakdown } from './deliveryFee';
 
@@ -55,16 +58,6 @@ const idemHeader = (key: string) => ({ headers: { 'Idempotency-Key': key } });
  * The API otherwise returns the camelCase Order shape; this only normalizes the
  * newer auto-dispatch fields (`dispatch_status`, `delivery_code`, `rider_id`).
  */
-function mapOrder(raw: Order): Order {
-  const r = raw as Order & Record<string, unknown>;
-  return {
-    ...raw,
-    dispatchStatus:
-      (r.dispatchStatus ?? (r['dispatch_status'] as Order['dispatchStatus'])) ?? undefined,
-    deliveryCode: (r.deliveryCode ?? (r['delivery_code'] as string | null)) ?? null,
-    riderId: (r.riderId ?? (r['rider_id'] as string | null)) ?? null,
-  };
-}
 
 // ─── Discovery ────────────────────────────────────────────────────────────────
 
@@ -87,12 +80,18 @@ export interface RestaurantQuery {
    * `nearLng`; without both of those the server degrades it to the same 'eta'
    * proxy, so passing 'distance' alone is always safe.
    */
-  sort?: 'newest' | 'rating' | 'name' | 'eta' | 'distance';
+  sort?: 'newest' | 'rating' | 'name' | 'eta' | 'distance' | 'likes';
   /** Keep only restaurants running a live offer (the Offers view). */
   promo?: boolean;
+  /** Keep only restaurants with an active paid RESTAURANT_TOP placement. */
+  featured?: boolean;
   /** Device coordinates for `sort: 'distance'`. Ignored by every other sort. */
   nearLat?: number;
   nearLng?: number;
+  /** Inclusive minimum order price, in kobo. */
+  minPriceKobo?: number;
+  /** Inclusive maximum order price, in kobo. */
+  maxPriceKobo?: number;
   limit?: number;
   offset?: number;
 }
@@ -121,12 +120,18 @@ export async function listRestaurants(params: RestaurantQuery = {}): Promise<Res
     // identically — a mock that ignored the filters would page a different list.
     const q = (params.q ?? '').trim().toLowerCase();
     const cuisine = (params.cuisine ?? '').trim().toLowerCase();
-    const all = MOCK_RESTAURANTS.filter((r) => {
+    let all = MOCK_RESTAURANTS.map(withMockLikeState).filter((r) => {
       if (cuisine && cuisine !== 'all' && r.cuisine.toLowerCase() !== cuisine) return false;
       if (params.promo && !r.promo) return false;
+      if (params.featured && !r.isFeatured) return false;
+      if (params.minPriceKobo != null && r.minOrderKobo < params.minPriceKobo) return false;
+      if (params.maxPriceKobo != null && r.minOrderKobo > params.maxPriceKobo) return false;
       if (!q) return true;
       return r.name.toLowerCase().includes(q) || r.tags.some((t) => t.toLowerCase().includes(q));
     });
+    if (params.sort === 'likes') {
+      all = [...all].sort((a, b) => b.likeCount - a.likeCount);
+    }
     const items = all.slice(offset, offset + limit);
     return { items, total: all.length, limit, offset, hasMore: offset + items.length < all.length };
   }
@@ -150,8 +155,11 @@ export async function listRestaurants(params: RestaurantQuery = {}): Promise<Res
         cuisine: params.cuisine || undefined,
         sort: params.sort,
         promo: params.promo ? '1' : undefined,
+        featured: params.featured ? '1' : undefined,
         near_lat: params.nearLat,
         near_lng: params.nearLng,
+        min_price: params.minPriceKobo,
+        max_price: params.maxPriceKobo,
         limit,
         offset,
       },
@@ -180,6 +188,26 @@ export async function getRestaurant(id: string): Promise<RestaurantDetail> {
   // FLAT Restaurant carrying `menu`. The old cast left name/rating undefined and
   // `menu` missing outright, so the store page crashed the same way the list did.
   return mapRestaurantDetail(unwrap<unknown>(await api.get(`${BASE}/${encodeURIComponent(id)}`)));
+}
+
+/** Like a restaurant. Idempotent on the server — liking twice is not an error. */
+export async function likeRestaurant(id: string): Promise<{ liked: boolean }> {
+  if (USE_MOCK) {
+    await delay(150);
+    mockToggleLike(id, true);
+    return { liked: true };
+  }
+  return unwrap<{ liked: boolean }>(await api.post(`${BASE}/${encodeURIComponent(id)}/like`, {}));
+}
+
+/** Unlike a restaurant. Idempotent — unliking something never liked is a no-op. */
+export async function unlikeRestaurant(id: string): Promise<{ liked: boolean }> {
+  if (USE_MOCK) {
+    await delay(150);
+    mockToggleLike(id, false);
+    return { liked: false };
+  }
+  return unwrap<{ liked: boolean }>(await api.delete(`${BASE}/${encodeURIComponent(id)}/like`));
 }
 
 // ─── Delivery quote ─────────────────────────────────────────────────────────
@@ -468,13 +496,33 @@ export async function acceptOffer(orderId: string, idempotencyKey: string): Prom
   );
 }
 
-/** Rider confirms pickup at the restaurant. POST `${BASE}/orders/:id/pickup`. */
-export async function confirmPickup(orderId: string): Promise<Order> {
+/**
+ * Rider declines an offered delivery. No money moves; the order stays `ready`
+ * and is auto re-dispatched to the next nearest rider server-side.
+ * POST `${BASE}/orders/:id/decline`.
+ */
+export async function declineOffer(orderId: string): Promise<void> {
+  if (USE_MOCK) {
+    await delay(350);
+    mockDeclineOffer(orderId);
+    return;
+  }
+  await api.post(`${BASE}/orders/${encodeURIComponent(orderId)}/decline`, {});
+}
+
+/**
+ * Rider confirms pickup at the restaurant with the restaurant's pickup code —
+ * proves they collected the food. POST `${BASE}/orders/:id/pickup` { code }.
+ * An invalid code throws.
+ */
+export async function confirmPickup(orderId: string, code: string): Promise<Order> {
   if (USE_MOCK) {
     await delay(420);
-    return mockConfirmPickup(orderId);
+    return mockConfirmPickup(orderId, code);
   }
-  return mapOrder(unwrap<Order>(await api.post(`${BASE}/orders/${encodeURIComponent(orderId)}/pickup`, {})));
+  return mapOrder(
+    unwrap<Order>(await api.post(`${BASE}/orders/${encodeURIComponent(orderId)}/pickup`, { code })),
+  );
 }
 
 /**

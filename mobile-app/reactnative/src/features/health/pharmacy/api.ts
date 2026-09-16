@@ -6,12 +6,15 @@
 
 import { api } from '@/api/client';
 import { USE_MOCK, HEALTH_API_BASE } from '../constants/health.constants';
+import { uploadProviderCredential, addProviderCredential } from '../api';
 import { Colors } from '@/constants/colors';
 import type {
   PharmacyProduct,
   PharmacyVendor,
   Prescription,
   PharmacyOrder,
+  OrderStatus,
+  CartLine,
   CreateOrderInput,
   MedicationItem,
   Refill,
@@ -30,6 +33,7 @@ import type {
 } from './types';
 
 const PHARMACY_API = `${HEALTH_API_BASE}/pharmacy`;
+const PROVIDERS_API = `${HEALTH_API_BASE}/providers`;
 const delay = (ms = 300) => new Promise((r) => setTimeout(r, ms));
 
 // ── Mock data ─────────────────────────────────────────────────────────────────
@@ -548,6 +552,35 @@ export async function getPrescriptions(): Promise<Prescription[]> {
   return (data.prescriptions ?? []).map(mapPrescriptionSummary);
 }
 
+// mapPrescription maps the rx package's flat, uppercase-state Prescription
+// (backend/internal/health/rx/service.go) onto the mobile UI's richer shape,
+// reusing RX_STATUS_FROM_STATE above. There is no backend concept matching
+// RxStatus's 'clarification' (the state machine is a strict VERIFYING ->
+// VERIFIED|REJECTED — see decideRx below), so it never appears here.
+function mapPrescription(raw: any): Prescription {
+  return {
+    id: raw.id,
+    source: 'upload',
+    status: RX_STATUS_FROM_STATE[raw.state] ?? 'verifying',
+    uploadedAt: raw.created_at,
+    verifiedAt: raw.verified_by ? raw.created_at : undefined,
+    pharmacistNote: raw.reject_reason || undefined,
+    patientName: '',
+    items: (raw.items ?? []).map((it: any) => ({
+      name: it.drug_name ?? '',
+      dosage: it.dosage ?? '',
+      quantity: String(it.quantity ?? ''),
+    })),
+    docColor: Colors.secondary,
+    fulfilled: raw.state === 'DISPENSED' || raw.state === 'FULFILLED',
+  };
+}
+
+// GET /health/prescriptions/:id — NOT under PHARMACY_API (/health/pharmacy/...):
+// this route is owned by the rx package and mounted directly under /health
+// (backend/internal/app/health_routes.go), so it used to 404 at
+// .../health/pharmacy/prescriptions/:id (an extra /pharmacy segment that isn't
+// part of the real path).
 export async function getPrescription(id: string): Promise<Prescription> {
   if (USE_MOCK) {
     await delay();
@@ -555,8 +588,9 @@ export async function getPrescription(id: string): Promise<Prescription> {
     if (!rx) throw new Error('Prescription not found');
     return rx;
   }
-  const { data } = await api.get<Prescription>(`${PHARMACY_API}/prescriptions/${id}`);
-  return data;
+  const { data } = await api.get<{ prescription?: unknown }>(`${HEALTH_API_BASE}/prescriptions/${id}`);
+  if (!data.prescription) throw new Error('Prescription not found');
+  return mapPrescription(data.prescription);
 }
 
 /** Upload an Rx for pharmacist verification (HL-3) → enters VERIFYING. */
@@ -580,13 +614,70 @@ export async function uploadPrescription(input: { patientName: string; note?: st
 }
 
 // ── Customer: orders (HL-9 payment HELD; Idempotency-Key) ─────────────────────
+
+const ORDER_STATUS_FROM_STATE: Record<string, OrderStatus> = {
+  CREATED: 'created',
+  RX_PENDING_VERIFICATION: 'rx_pending',
+  CONFIRMED: 'confirmed',
+  DISPENSED: 'dispensed',
+  IN_DELIVERY: 'in_delivery',
+  READY_FOR_PICKUP: 'ready_for_pickup',
+  DELIVERED: 'delivered',
+  COLLECTED: 'collected',
+  CLOSED: 'closed',
+  CANCELLED: 'cancelled',
+  REFUNDED: 'refunded',
+};
+
+// Map the backend's minimal money-path order row (snake_case; see Go
+// pharmacy.Order/OrderLine) onto the richer mobile PharmacyOrder display
+// shape. The backend has no `reference` (falls back to the order id), no
+// `subtotalKobo`/`deliveryFeeKobo` split (total_kobo only, so the whole
+// amount is attributed to subtotal), no `rider`/`etaLabel`, and lines carry
+// no `form`/`imageColor` — those default to empty/derived so the card still
+// renders, matching the mapProduct convention above.
+function mapOrder(raw: any): PharmacyOrder {
+  const lines: CartLine[] = (raw.lines ?? []).map((l: any) => ({
+    productId: l.product_id,
+    name: l.product_name ?? '',
+    form: '',
+    priceKobo: l.unit_price_kobo ?? 0,
+    qty: l.quantity ?? 0,
+    rxRequired: !!l.rx_required,
+    imageColor: tintForId(String(l.product_id ?? '')),
+  }));
+  return {
+    id: raw.id,
+    reference: raw.id,
+    status: ORDER_STATUS_FROM_STATE[raw.state] ?? 'created',
+    fulfilment: raw.fulfilment_method === 'DELIVERY' ? 'delivery' : 'pickup',
+    pharmacyId: raw.pharmacy_provider_id ?? '',
+    pharmacyName: '',
+    lines,
+    subtotalKobo: raw.total_kobo ?? 0,
+    deliveryFeeKobo: 0,
+    totalKobo: raw.total_kobo ?? 0,
+    paymentHeld: !!raw.escrow_id,
+    createdAt: raw.created_at,
+    pickupCode: raw.pickup_code ?? undefined,
+    deliveryAddress: raw.delivery_address ?? undefined,
+    requiresRx: !!raw.prescription_id,
+    rxId: raw.prescription_id ?? undefined,
+    timeline: [],
+  };
+}
+
+// GET /orders/mine — the caller's own order history. NOT GET /orders, which is
+// the pharmacist's owner-scoped fulfilment inbox (see Go ListMine) — a patient
+// calling that endpoint got an empty list, or another business's orders if
+// they also happened to own a pharmacy.
 export async function getOrders(): Promise<PharmacyOrder[]> {
   if (USE_MOCK) {
     await delay();
     return [...ORDERS].sort((a, b) => +new Date(b.createdAt) - +new Date(a.createdAt));
   }
-  const { data } = await api.get<PharmacyOrder[]>(`${PHARMACY_API}/orders`);
-  return data;
+  const { data } = await api.get<{ orders?: unknown[] }>(`${PHARMACY_API}/orders/mine`);
+  return (data.orders ?? []).map(mapOrder);
 }
 
 export async function getOrder(id: string): Promise<PharmacyOrder> {
@@ -596,8 +687,9 @@ export async function getOrder(id: string): Promise<PharmacyOrder> {
     if (!o) throw new Error('Order not found');
     return o;
   }
-  const { data } = await api.get<PharmacyOrder>(`${PHARMACY_API}/orders/${id}`);
-  return data;
+  const { data } = await api.get<{ order?: unknown }>(`${PHARMACY_API}/orders/${id}`);
+  if (!data.order) throw new Error('Order not found');
+  return mapOrder(data.order);
 }
 
 /**
@@ -644,14 +736,31 @@ export async function createOrder(input: CreateOrderInput): Promise<PharmacyOrde
     ORDERS = [order, ...ORDERS];
     return order;
   }
-  // Additive: contract takes an optional top-level snake_case `search_event_id`.
-  const { searchEventId, ...body } = input;
-  const { data } = await api.post<PharmacyOrder>(
+  // The backend (backend/internal/health/pharmacy/handler.go CreateOrder) binds a
+  // snake_case struct with DIFFERENT field names, not just different casing
+  // (pharmacy_provider_id, fulfilment_method, lines[].product_id/quantity) — this
+  // used to spread `input`'s camelCase fields straight into the body, so every
+  // live order-create request bound to an empty pharmacy_provider_id, an empty
+  // fulfilment_method, and zero lines. The response is also wrapped in
+  // {success, order}, like every other pharmacy endpoint (see mapOrder below),
+  // not a raw PharmacyOrder.
+  const { data } = await api.post<{ order?: unknown }>(
     `${PHARMACY_API}/orders`,
-    searchEventId ? { ...body, search_event_id: searchEventId } : body,
+    {
+      pharmacy_provider_id: input.pharmacyId,
+      prescription_id: input.rxId ?? null,
+      fulfilment_method: input.fulfilment === 'delivery' ? 'DELIVERY' : 'PICKUP',
+      idempotency_key: input.idempotencyKey,
+      search_event_id: input.searchEventId ?? undefined,
+      delivery_address: input.deliveryAddress,
+      delivery_lat: input.deliveryLat,
+      delivery_lng: input.deliveryLng,
+      lines: input.lines.map((l) => ({ product_id: l.productId, quantity: l.qty })),
+    },
     { headers: { 'Idempotency-Key': input.idempotencyKey } },
   );
-  return data;
+  if (!data.order) throw new Error('Order was not created');
+  return mapOrder(data.order);
 }
 
 export async function reorder(orderId: string): Promise<PharmacyOrder['lines']> {
@@ -768,16 +877,79 @@ export async function sendConsultMessage(body: string): Promise<PharmacistConsul
 }
 
 // ── Provider: onboarding (HL-2) ───────────────────────────────────────────────
+// `${PHARMACY_API}/provider/onboarding[/submit]` was never implemented backend
+// side — backend/internal/app/health_pharmacy_routes.go has no /provider group
+// at all, so both calls 404'd on every non-mock request; onboarding could never
+// actually complete. A real, working generic provider-application backend
+// already exists (backend/internal/health/providers/*, mounted at
+// /api/finance/health/providers/applications*) and explicitly supports
+// domain=PHARMACY (service.go validType) — it was simply never called by any
+// client. Repointed here instead of building a duplicate pharmacy-specific
+// backend.
+//
+// Application.State (DRAFT/SUBMITTED/UNDER_REVIEW/NEEDS_INFO/APPROVED/
+// SUSPENDED/REJECTED) is mapped onto this screen's simpler status vocabulary;
+// SUSPENDED/REJECTED fold into 'needs_info' since this type has no equivalent
+// terminal-failure state to route to instead.
+//
+// NOT fixed here: the generic API's AddCredential (the licence-document upload)
+// requires a real uploaded file's storage_key — this screen only ever collected
+// a licence NUMBER as a text field, with no upload step at all, so there is no
+// file to attach. The PCN licence number is carried in the returned state for
+// display, but is not persisted anywhere server-side; wiring an actual
+// credential upload needs a presign endpoint for this module (mirroring
+// internal/doctor/presign.go) plus a document-picker step in this screen —
+// out of scope for this fix, flagged as a follow-up.
+interface ProviderApplicationWire {
+  id: string;
+  domain: string;
+  provider_type: string;
+  display_name: string;
+  state: 'DRAFT' | 'SUBMITTED' | 'UNDER_REVIEW' | 'NEEDS_INFO' | 'APPROVED' | 'SUSPENDED' | 'REJECTED';
+}
+
+function mapApplicationState(state: ProviderApplicationWire['state']): ProviderOnboardingState['status'] {
+  switch (state) {
+    case 'DRAFT':        return 'draft';
+    case 'SUBMITTED':     return 'submitted';
+    case 'UNDER_REVIEW':  return 'under_review';
+    case 'APPROVED':      return 'approved';
+    case 'NEEDS_INFO':
+    case 'SUSPENDED':
+    case 'REJECTED':
+    default:              return 'needs_info';
+  }
+}
+
+async function findPharmacyApplication(): Promise<ProviderApplicationWire | undefined> {
+  const { data } = await api.get<{ applications: ProviderApplicationWire[] }>(`${PROVIDERS_API}/applications`);
+  return data.applications?.find((a) => a.domain === 'PHARMACY');
+}
+
 export async function getProviderOnboarding(): Promise<ProviderOnboardingState> {
   if (USE_MOCK) {
     await delay();
     return { status: 'under_review', pcnLicenseNo: 'PCN/LA/9921', pcnStatus: 'pending', premisesVerified: false, businessName: 'Wellness Hub Pharmacy' };
   }
-  const { data } = await api.get<ProviderOnboardingState>(`${PHARMACY_API}/provider/onboarding`);
-  return data;
+  const app = await findPharmacyApplication();
+  if (!app) return { status: 'draft', pcnStatus: 'pending', premisesVerified: false };
+  return {
+    status: mapApplicationState(app.state),
+    businessName: app.display_name,
+    pcnStatus: 'pending',
+    premisesVerified: false,
+  };
 }
 
-export async function submitProviderOnboarding(input: Partial<ProviderOnboardingState>): Promise<ProviderOnboardingState> {
+// licenceFile: previously flagged as a real gap — the onboarding screen only
+// ever collected the PCN licence NUMBER, with no document-upload step, so
+// AddCredential (which requires a real uploaded file's storage_key) could
+// never be called. Now optional on this input: when the screen supplies a
+// picked file, it's presigned + uploaded to R2 and recorded as a real PCN
+// credential before submission.
+export async function submitProviderOnboarding(
+  input: Partial<ProviderOnboardingState> & { licenceFile?: { uri: string; fileName: string; mimeType: string } },
+): Promise<ProviderOnboardingState> {
   if (USE_MOCK) {
     await delay(500);
     return {
@@ -788,8 +960,31 @@ export async function submitProviderOnboarding(input: Partial<ProviderOnboarding
       businessName: input.businessName,
     };
   }
-  const { data } = await api.post<ProviderOnboardingState>(`${PHARMACY_API}/provider/onboarding/submit`, input);
-  return data;
+  let app = await findPharmacyApplication();
+  if (!app) {
+    const created = await api.post<{ application: ProviderApplicationWire }>(`${PROVIDERS_API}/applications`, {
+      domain: 'PHARMACY', provider_type: 'pharmacist', display_name: input.businessName ?? '',
+    });
+    app = created.data.application;
+  }
+  if (input.licenceFile) {
+    const storageKey = await uploadProviderCredential(app.id, input.licenceFile);
+    await addProviderCredential(app.id, { credType: 'PCN', referenceNo: input.pcnLicenseNo, storageKey });
+  }
+  // Submit only transitions DRAFT/NEEDS_INFO forward; calling it again on an
+  // already-submitted application is a 409, so skip the call rather than
+  // treat a resubmit as a failure.
+  if (app.state === 'DRAFT' || app.state === 'NEEDS_INFO') {
+    const submitted = await api.post<{ application: ProviderApplicationWire }>(`${PROVIDERS_API}/applications/${app.id}/submit`, {});
+    app = submitted.data.application;
+  }
+  return {
+    status: mapApplicationState(app.state),
+    pcnLicenseNo: input.pcnLicenseNo,
+    pcnStatus: 'pending',
+    premisesVerified: false,
+    businessName: app.display_name,
+  };
 }
 
 // ── Provider: catalog / stock ─────────────────────────────────────────────────
@@ -800,13 +995,28 @@ const MOCK_CATALOG: CatalogStockItem[] = [
   { productId: 'prod_vitc', name: 'Vitamin C', form: '1000mg · 30 tablets', priceKobo: 180000, nafdacReg: 'B1-4420', rxRequired: false, stock: 0, reorderLevel: 25, active: false },
 ];
 
+function mapCatalogItem(raw: any): CatalogStockItem {
+  return {
+    productId: raw.id,
+    name: raw.name ?? '',
+    form: '',
+    priceKobo: raw.price_kobo ?? 0,
+    nafdacReg: raw.nafdac_ref ?? '',
+    rxRequired: !!raw.rx_required,
+    stock: raw.stock_qty ?? 0,
+    reorderLevel: 0, // no per-product reorder threshold in the current schema
+    active: !!raw.active,
+  };
+}
+
+// GET /products/mine (h.MyProducts) — the real path; /provider/catalog doesn't exist.
 export async function getProviderCatalog(): Promise<CatalogStockItem[]> {
   if (USE_MOCK) {
     await delay();
     return [...MOCK_CATALOG];
   }
-  const { data } = await api.get<CatalogStockItem[]>(`${PHARMACY_API}/provider/catalog`);
-  return data;
+  const { data } = await api.get<{ products?: unknown[] }>(`${PHARMACY_API}/products/mine`);
+  return (data.products ?? []).map(mapCatalogItem);
 }
 
 export async function getStockAlerts(): Promise<StockAlert[]> {
@@ -821,13 +1031,16 @@ export async function getStockAlerts(): Promise<StockAlert[]> {
 }
 
 // ── Provider: orders queue + dispense + handoff ───────────────────────────────
+// GET /orders (h.ListMine) — the pharmacist's owner-scoped fulfilment inbox.
+// NOT /provider/orders (doesn't exist), and NOT /orders/mine (that's the
+// PATIENT's own order history — see getOrders above).
 export async function getProviderOrders(): Promise<PharmacyOrder[]> {
   if (USE_MOCK) {
     await delay();
     return [...ORDERS];
   }
-  const { data } = await api.get<PharmacyOrder[]>(`${PHARMACY_API}/provider/orders`);
-  return data;
+  const { data } = await api.get<{ orders?: unknown[] }>(`${PHARMACY_API}/orders`);
+  return (data.orders ?? []).map(mapOrder);
 }
 
 /** Pharmacist marks an order dispensed & packed (consumes Rx dispense-once, HL-3). */
@@ -854,10 +1067,16 @@ export async function handoffOrder(orderId: string, mode: 'dispatch' | 'pickup',
     o.status = mode === 'dispatch' ? 'in_delivery' : 'ready_for_pickup';
     return { ...o };
   }
-  const { data } = await api.post<PharmacyOrder>(`${PHARMACY_API}/orders/${orderId}/${mode === 'dispatch' ? 'dispatch' : 'ready'}`, {}, {
+  // Dispatch (backend/internal/health/pharmacy/service.go) handles BOTH
+  // fulfilment methods through the ONE endpoint, branching internally on the
+  // order's own fulfilment_method (DELIVERY books a courier; PICKUP just
+  // generates a pickup code) — there is no separate .../ready route, so the
+  // 'pickup' mode used to 404 every time.
+  const { data } = await api.post<{ order?: unknown }>(`${PHARMACY_API}/orders/${orderId}/dispatch`, {}, {
     headers: { 'Idempotency-Key': idempotencyKey },
   });
-  return data;
+  if (!data.order) throw new Error('Order not found');
+  return mapOrder(data.order);
 }
 
 // ── Provider: Rx verification (HL-3) ──────────────────────────────────────────
@@ -888,8 +1107,26 @@ export async function decideRx(rxId: string, decision: RxDecision, note?: string
     if (decision === 'approve') rx.verifiedAt = new Date().toISOString();
     return { ...rx };
   }
-  const { data } = await api.post<Prescription>(`${PHARMACY_API}/prescriptions/${rxId}/verify`, { decision, note });
-  return data;
+  // The backend (VerifyPrescription, backend/internal/health/pharmacy/handler.go)
+  // binds {begin, approve, reason} — a two-state VERIFIED|REJECTED decision, not
+  // the {decision, note} shape this used to send (which bound to zero values,
+  // silently defaulting every call to "reject" with no reason). There is no
+  // backend equivalent of 'clarify' (rx/service.go's state machine only has
+  // VERIFYING -> VERIFIED|REJECTED) — mapping it to reject would misrecord a
+  // "please clarify" as an actual rejection, so it fails closed instead of
+  // fabricating that outcome. `begin: true` is always safe to send: the
+  // transition helper treats re-entering the current state as an idempotent
+  // no-op (rx/service.go transition()), so this works whether or not a
+  // separate BeginVerify call already happened.
+  if (decision === 'clarify') {
+    throw new Error('Requesting clarification is not supported yet — approve or reject this prescription.');
+  }
+  await api.post(`${PHARMACY_API}/prescriptions/${rxId}/verify`, {
+    begin: true,
+    approve: decision === 'approve',
+    reason: note ?? '',
+  });
+  return getPrescription(rxId);
 }
 
 // ── Provider: controlled-substance log (HL-4) ─────────────────────────────────
@@ -922,15 +1159,33 @@ export async function getProviderEarnings(): Promise<ProviderEarnings> {
       ],
     };
   }
-  const { data } = await api.get<ProviderEarnings>(`${PHARMACY_API}/provider/earnings`);
-  return data;
+  // GET /earnings (h.Earnings) — the real path; /provider/earnings doesn't
+  // exist. The backend's PharmacyEarnings is three flat totals (released_kobo,
+  // held_kobo, orders_paid — backend/internal/health/pharmacy/model.go) with NO
+  // per-payout or per-settlement breakdown, so payouts[]/settlements[] are left
+  // empty rather than inventing rows the backend never returned — payout release
+  // is fully automatic on order Complete (see requestPayout below), there is no
+  // pending-payout ledger to list.
+  const { data } = await api.get<{ earnings?: { released_kobo?: number; held_kobo?: number; orders_paid?: number } }>(
+    `${PHARMACY_API}/earnings`,
+  );
+  const e = data.earnings ?? {};
+  return {
+    availableKobo: e.released_kobo ?? 0,
+    pendingKobo: e.held_kobo ?? 0,
+    lifetimeKobo: e.released_kobo ?? 0,
+    payouts: [],
+    settlements: [],
+  };
 }
 
-export async function requestPayout(amountKobo: number, idempotencyKey: string): Promise<{ ok: true }> {
+// Payout release is automatic on order Complete (escrow.Release pays the owner
+// directly) — there is no admin-reviewable pending-payout queue or manual
+// request endpoint on the backend to call here.
+export async function requestPayout(_amountKobo: number, _idempotencyKey: string): Promise<{ ok: true }> {
   if (USE_MOCK) {
     await delay(500);
     return { ok: true };
   }
-  await api.post(`${PHARMACY_API}/provider/payouts`, { amountKobo }, { headers: { 'Idempotency-Key': idempotencyKey } });
-  return { ok: true };
+  throw new Error('Payouts release automatically when an order completes — there is nothing to request.');
 }

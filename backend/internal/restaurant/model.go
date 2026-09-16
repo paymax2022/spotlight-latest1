@@ -36,6 +36,20 @@ type Restaurant struct {
 	// terms are deliberately NOT here — a discount is validated and priced
 	// server-side at PlaceOrder, and this is purely the "offer available" badge.
 	HasPromo bool `json:"has_promo"`
+
+	// IsFeatured reports an ACTIVE paid placement in the RESTAURANT_TOP zone
+	// right now (see featuredFirstOrder in discovery_page.go, which already
+	// used this predicate to sort featured restaurants first — this just
+	// surfaces the same fact as a badge/filter instead of only an ordering).
+	IsFeatured bool `json:"is_featured,omitempty"`
+
+	// LikeCount is a live COUNT(*) over restaurant_likes, never a denormalized
+	// counter — see 20270166000000_restaurant_likes.sql. Liked is whether the
+	// AUTHENTICATED CALLER liked this restaurant; populated only by discovery
+	// reads that know who's asking (attachLikedFlags in discovery_page.go),
+	// omitted (false) elsewhere rather than guessed.
+	LikeCount int64 `json:"like_count"`
+	Liked     bool  `json:"liked,omitempty"`
 }
 
 // MenuCategory groups menu items (e.g. "Starters", "Mains").
@@ -128,6 +142,10 @@ type Order struct {
 	// DeliveryCode is the customer's handoff code. The rider must enter it at
 	// drop-off to confirm the handoff. Returned only to the order's participants.
 	DeliveryCode *string `json:"delivery_code,omitempty"`
+	// PickupCode is the restaurant's handoff code, generated on `ready`. The
+	// rider must enter it in ConfirmPickup to prove they collected the food
+	// from THIS restaurant — distinct from DeliveryCode (rider → customer).
+	PickupCode *string `json:"pickup_code,omitempty"`
 	// Distance/time-based fee inputs + breakdown (persisted for transparency/audit).
 	// Zero/empty when the order fell back to the flat DeliveryFeeKobo (no coords).
 	DistanceMeters    *float64              `json:"distance_meters,omitempty"`

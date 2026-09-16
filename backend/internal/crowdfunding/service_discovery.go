@@ -372,10 +372,10 @@ func (s *Service) campaignUpdates(ctx context.Context, campaignID string) []map[
 // creatorMeta resolves a creator's display fields. Falls back gracefully.
 func (s *Service) creatorMeta(ctx context.Context, creatorID string) (name, typ, verification string) {
 	name, typ, verification = "Campaign creator", "INDIVIDUAL", "KYC"
-	// auth.users may expose raw_user_meta_data; tolerate absence.
+	// platform_users may lack a name; tolerate absence.
 	var full *string
 	_ = s.db.QueryRow(ctx,
-		`SELECT COALESCE(raw_user_meta_data->>'full_name', email) FROM auth.users WHERE id = $1`, creatorID,
+		`SELECT COALESCE(NULLIF(btrim(first_name || ' ' || last_name), ''), email) FROM public.platform_users WHERE id = $1`, creatorID,
 	).Scan(&full)
 	if full != nil && *full != "" {
 		name = *full
@@ -386,7 +386,7 @@ func (s *Service) creatorMeta(ctx context.Context, creatorID string) (name, typ,
 // creatorEmail resolves a creator's login email. Tolerates absence.
 func (s *Service) creatorEmail(ctx context.Context, creatorID string) string {
 	var email *string
-	_ = s.db.QueryRow(ctx, `SELECT email FROM auth.users WHERE id = $1`, creatorID).Scan(&email)
+	_ = s.db.QueryRow(ctx, `SELECT email FROM public.platform_users WHERE id = $1`, creatorID).Scan(&email)
 	if email != nil {
 		return *email
 	}

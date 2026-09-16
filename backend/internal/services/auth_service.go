@@ -2,6 +2,7 @@ package services
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -28,6 +29,19 @@ type AuthService interface {
 }
 
 type authService struct {
+	// otpOperational is true only when the OTP service was ACTUALLY BUILT — flag
+	// on AND pepper AND Brevo credentials AND a database. It is not the flag.
+	//
+	// Branching on the flag alone produced accounts nobody could ever verify: with
+	// the flag on but credentials missing, this service took the silent admin
+	// creation path (so GoTrue sent nothing) while the register handler, which
+	// checks the WIRED ISSUER rather than the flag, sent nothing either. The
+	// account existed, unconfirmed, with no code and no way to request one —
+	// /api/auth/otp/request answers 503 in that state. Login refused it forever.
+	//
+	// The two decisions must be made from the same signal, so this carries it.
+	otpOperational bool
+
 	supabase *integrations.SupabaseRestClient
 	rbac     RBACService
 	cfg      config.Config
@@ -88,6 +102,10 @@ func parseSignupResponse(body []byte) *RegisterResult {
 // extractSignupUserID is retained for callers that only need the id.
 func extractSignupUserID(body []byte) string { return parseSignupResponse(body).UserID }
 
+// ErrSignupDisabled is returned when the project has closed new sign-ups and the
+// admin creation path — which GoTrue does not gate for us — refuses on its behalf.
+var ErrSignupDisabled = errors.New("signups are disabled")
+
 func (s *authService) RegisterUser(in domain.RegisterRequest) (*RegisterResult, error) {
 	// Only when the client actually sent it — see domain.RegisterRequest.
 	if strings.TrimSpace(in.ConfirmPassword) != "" && in.Password != in.ConfirmPassword {
@@ -99,19 +117,78 @@ func (s *authService) RegisterUser(in domain.RegisterRequest) (*RegisterResult, 
 	// only first_name/last_name gave every account an EMPTY profile name.
 	fullName := in.FullNameOrJoin()
 
-	payload := map[string]any{
-		"email":    strings.TrimSpace(strings.ToLower(in.Email)),
-		"password": in.Password,
-		"data": map[string]any{
-			"full_name":  fullName,
-			"first_name": in.FirstName,
-			"last_name":  in.LastName,
-			"user_type":  in.UserTypeOrDefault(),
-			"phone":      in.Phone,
-		},
+	meta := map[string]any{
+		"full_name":  fullName,
+		"first_name": in.FirstName,
+		"last_name":  in.LastName,
+		"user_type":  in.UserTypeOrDefault(),
+		"phone":      in.Phone,
 	}
+	email := strings.TrimSpace(strings.ToLower(in.Email))
+
+	// WHICH GOTRUE ENDPOINT CREATES THE ACCOUNT — and why it depends on a flag.
+	//
+	// /auth/v1/signup sends GoTrue's own confirmation email. There is no setting
+	// that keeps the account unconfirmed while suppressing that mail:
+	// enable_confirmations (mailer_autoconfirm on cloud) governs BOTH, so turning
+	// the mailer off auto-confirms every signup and removes email verification
+	// altogether. Disabling SMTP wholesale is not an option either — the
+	// password-reset LINK deliberately still goes through it.
+	//
+	// /auth/v1/admin/users creates the same row and sends NOTHING. With
+	// email_confirm false the account is unconfirmed exactly as before, login
+	// still answers 403 email_not_confirmed, and our own code (issued by the
+	// register handler) becomes the single verification email.
+	//
+	// Only when the OTP feature is ON. With it off there would be no code, and an
+	// account nobody can ever confirm is worse than a duplicate email.
+	//
+	// Two behaviours differ on the admin path and are accepted deliberately:
+	//   - GoTrue's sign_in_sign_ups rate limit does not apply. The /register route
+	//     already carries middleware.AuthRateLimiter (AUTH_RATE_LIMIT_PER_MIN).
+	//   - GoTrue's own enable_signup switch does not apply. If signups are ever
+	//     closed at the project level, this path must be closed here too.
+	//
+	// Note the metadata key: /signup takes "data", the admin endpoint takes
+	// "user_metadata". Both land in raw_user_meta_data, which is what
+	// handle_new_user reads for full_name — send the wrong one and every profile
+	// is created nameless.
+	path := "/auth/v1/signup"
+	payload := map[string]any{"email": email, "password": in.Password, "data": meta}
+	if s.otpOperational {
+		// The admin endpoint is not gated by the project's enable_signup switch —
+		// that is the price of a creation call that sends no mail. Enforce the
+		// policy here instead, from GoTrue's own /settings, so there is one source
+		// of truth rather than a mirrored flag that drifts.
+		//
+		// Read on every attempt rather than cached: registration is already
+		// throttled per IP by middleware.AuthRateLimiter, and a cache is a window
+		// in which a door the project just closed is still open.
+		//
+		// Fails CLOSED. /settings and /admin/users are the same service, so a
+		// settings read that fails is a strong signal the create would fail too;
+		// treating the error as "signups are open" would let a partial outage
+		// reopen the door.
+		disabled, err := s.supabase.SignupDisabled(context.Background())
+		if err != nil {
+			log.Printf("[auth] register: could not read the project signup policy, refusing: %v", err)
+			return nil, ErrSignupDisabled
+		}
+		if disabled {
+			return nil, ErrSignupDisabled
+		}
+
+		path = "/auth/v1/admin/users"
+		payload = map[string]any{
+			"email":         email,
+			"password":      in.Password,
+			"email_confirm": false,
+			"user_metadata": meta,
+		}
+	}
+
 	b, _ := json.Marshal(payload)
-	req, err := http.NewRequest(http.MethodPost, strings.TrimRight(s.supabase.BaseURL(), "/")+"/auth/v1/signup", bytes.NewReader(b))
+	req, err := http.NewRequest(http.MethodPost, strings.TrimRight(s.supabase.BaseURL(), "/")+path, bytes.NewReader(b))
 	if err != nil {
 		return nil, err
 	}
@@ -265,6 +342,11 @@ func (s *authService) LoginUser(in domain.LoginRequest) (map[string]any, error) 
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
 		return nil, err
 	}
+	// The ACCOUNT email, which is not the same as what the caller sent — login
+	// accepts a phone number and resolves it server-side. A second factor has to
+	// be emailed to the resolved address, and the handler has no other way to
+	// learn it. Internal hint, stripped before the response leaves the handler.
+	out["__email"] = email
 	if user != nil {
 		_ = s.supabase.REST(http.MethodPatch, "platform_users", map[string]string{"id": "eq." + user.ID}, map[string]any{
 			"failed_login_attempts": 0,

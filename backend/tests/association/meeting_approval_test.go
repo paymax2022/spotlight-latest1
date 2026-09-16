@@ -87,8 +87,12 @@ func orgWithAdminAndMember(t *testing.T, ctx context.Context, pool *pgxpool.Pool
 	orgID = res.OrganisationID
 	memberID, _ = seedMember(t, ctx, pool, orgID, "@mtgmember.test")
 
+	// deleteOrganisation unwinds the meetings too, but the explicit delete stays:
+	// it names what this helper created, and reads as intent rather than relying
+	// on the generic unwind to have covered it.
 	t.Cleanup(func() {
 		_, _ = pool.Exec(ctx, `DELETE FROM assoc_meetings WHERE organisation_id=$1`, orgID)
+		deleteOrganisation(ctx, pool, orgID)
 	})
 	return orgID, adminID, memberID
 }

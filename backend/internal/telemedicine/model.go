@@ -24,32 +24,35 @@ const (
 
 // Doctor is a registered healthcare provider (base record).
 type Doctor struct {
-	ID              string          `json:"id"`
-	UserID          string          `json:"user_id"`
-	Name            string          `json:"name"`
-	Specialty       DoctorSpecialty `json:"specialty"`
-	SubSpecialty    *string         `json:"sub_specialty,omitempty"`
-	Bio             string          `json:"bio,omitempty"`
-	About           string          `json:"about,omitempty"`
-	ConsultFeeKobo  int64           `json:"consult_fee_kobo"`
+	ID             string          `json:"id"`
+	UserID         string          `json:"user_id"`
+	Name           string          `json:"name"`
+	Specialty      DoctorSpecialty `json:"specialty"`
+	SubSpecialty   *string         `json:"sub_specialty,omitempty"`
+	Bio            string          `json:"bio,omitempty"`
+	About          string          `json:"about,omitempty"`
+	ConsultFeeKobo int64           `json:"consult_fee_kobo"`
 	// Booking is the server-computed price breakdown for consulting this doctor
 	// (consultation fee + platform booking fee). It is derived from
 	// ConsultFeeKobo, never stored, and is what the app renders on the confirm
 	// screen — the app holds no fee rate of its own. See ADR-044.
-	Booking         *BookingQuote   `json:"booking,omitempty"`
-	AvatarURL       *string         `json:"avatar_url,omitempty"`
-	IsAvailable     bool            `json:"is_available"`
-	IsOnline        bool            `json:"is_online"`
-	IsHMOVerified   bool            `json:"is_hmo_verified"`
-	ExperienceYears int             `json:"experience_years"`
-	Rating          float64         `json:"rating"`
-	ReviewCount     int             `json:"review_count"`
-	PatientsCount   int             `json:"patients_count"`
-	SuccessRate     int             `json:"success_rate"`
-	MDCNNumber      *string         `json:"mdcn_number,omitempty"`
-	Phone           *string         `json:"phone,omitempty"`
-	Education       []Education     `json:"education"`
-	CreatedAt       time.Time       `json:"created_at"`
+	Booking         *BookingQuote `json:"booking,omitempty"`
+	AvatarURL       *string       `json:"avatar_url,omitempty"`
+	IsAvailable     bool          `json:"is_available"`
+	IsOnline        bool          `json:"is_online"`
+	IsHMOVerified   bool          `json:"is_hmo_verified"`
+	ExperienceYears int           `json:"experience_years"`
+	Rating          float64       `json:"rating"`
+	ReviewCount     int           `json:"review_count"`
+	PatientsCount   int           `json:"patients_count"`
+	SuccessRate     int           `json:"success_rate"`
+	// IsFeatured is a stored editorial flag, never derived — see
+	// supabase/migrations/20270185000000_telemedicine_featured_doctors.sql.
+	IsFeatured bool        `json:"is_featured"`
+	MDCNNumber *string     `json:"mdcn_number,omitempty"`
+	Phone      *string     `json:"phone,omitempty"`
+	Education  []Education `json:"education"`
+	CreatedAt  time.Time   `json:"created_at"`
 }
 
 // Education is a single academic credential.
@@ -102,10 +105,10 @@ type Appointment struct {
 	PlatformFeeKobo int64 `json:"platform_fee_kobo"`
 	// TotalKobo is what was actually escrowed and what the patient paid
 	// (FeeKobo + PlatformFeeKobo). A cancellation refunds this in full.
-	TotalKobo      int64  `json:"total_kobo"`
-	IdempotencyKey string `json:"idempotency_key"`
-	SettlementID     string            `json:"settlement_id"`
-	CreatedAt        time.Time         `json:"created_at"`
+	TotalKobo      int64     `json:"total_kobo"`
+	IdempotencyKey string    `json:"idempotency_key"`
+	SettlementID   string    `json:"settlement_id"`
+	CreatedAt      time.Time `json:"created_at"`
 }
 
 // Prescription is issued by a doctor after a completed appointment.
@@ -260,6 +263,9 @@ type ListDoctorsQuery struct {
 	AvailableNow  bool   `form:"available_now"`
 	TopRated      bool   `form:"top_rated"`
 	MinExperience int    `form:"min_experience"`
-	Limit         int    `form:"limit,default=20"`
-	Offset        int    `form:"offset,default=0"`
+	// MinRating is a float ("4.5"), unlike MinExperience above.
+	MinRating float64 `form:"min_rating"`
+	Featured  bool    `form:"featured"`
+	Limit     int     `form:"limit,default=20"`
+	Offset    int     `form:"offset,default=0"`
 }

@@ -33,8 +33,11 @@ jobs:
         run: go vet ./internal/doctor/... ./internal/integrations/...
       - name: Test (doctor module + integrations — money path, handlers, RTC token format)
         run: go test ./internal/doctor/... ./internal/integrations/rtc/... ./internal/integrations/llm/... -count=1 -v
-      - name: Test (all — regression)
-        run: go test ./... -count=1
+      # Repo-wide `go test ./...` removed: ci.yml's ungated `backend` job now runs
+      # the whole backend suite against a real Postgres, so this lane repeating it
+      # WITHOUT a database was both slower and weaker — every live-DB suite skipped
+      # here while reporting "ok". The scoped run above stays: it is fast, it is
+      # verbose, and it names this module when it fails.
 
   openapi:
     runs-on: ubuntu-latest
@@ -52,7 +55,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
-        with: { node-version: '20' }
+        with:
+          node-version: '20'
+          # Without this the RN dependency tree is installed from scratch every
+          # run: npm ci measured 276-421s here against 5-6s for the typecheck it
+          # exists to enable. ci.yml's own mobile job has had the cache all along;
+          # these lanes were simply never given it.
+          cache: npm
+          cache-dependency-path: mobile-app/reactnative/package-lock.json
       - run: npm ci
       - name: Typecheck doctor module (scoped)
         run: npx tsc --noEmit -p tsconfig.doctorcheck.json

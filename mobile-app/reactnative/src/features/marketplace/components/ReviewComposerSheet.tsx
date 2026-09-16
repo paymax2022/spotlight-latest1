@@ -23,9 +23,10 @@ export default function ReviewComposerSheet({
   visible: boolean;
   submitting?: boolean;
   onSkip: () => void;
-  onSubmit: (input: { rating: number; tags: string[]; text?: string }) => void;
+  onSubmit: (input: { rating: number; productQualityRating?: number; tags: string[]; text?: string }) => void;
 }) {
   const [rating, setRating] = useState(0);
+  const [productQualityRating, setProductQualityRating] = useState(0);
   const [tags, setTags] = useState<string[]>([]);
   const [text, setText] = useState('');
 
@@ -43,8 +44,14 @@ export default function ReviewComposerSheet({
           </View>
           <Text style={styles.sub}>Your review is the trust backbone of the marketplace — it helps the next buyer.</Text>
 
+          <Text style={styles.label}>Overall — how was the seller?</Text>
           <View style={styles.starWrap}>
             <StarRating value={rating} onChange={setRating} />
+          </View>
+
+          <Text style={styles.label}>The item itself — was it as described?</Text>
+          <View style={styles.starWrap}>
+            <StarRating value={productQualityRating} onChange={setProductQualityRating} />
           </View>
 
           <Text style={styles.label}>What went well?</Text>
@@ -71,7 +78,12 @@ export default function ReviewComposerSheet({
 
           <PrimaryButton
             label="Submit review"
-            onPress={() => onSubmit({ rating, tags, text: text.trim() || undefined })}
+            onPress={() => onSubmit({
+              rating,
+              productQualityRating: productQualityRating > 0 ? productQualityRating : undefined,
+              tags,
+              text: text.trim() || undefined,
+            })}
             disabled={rating === 0 || submitting}
             loading={submitting}
             style={{ marginTop: Spacing.md }}

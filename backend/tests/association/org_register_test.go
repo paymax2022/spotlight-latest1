@@ -33,6 +33,7 @@ func TestListAdminOrganisations_ReturnsRegisterColumnsAndFilters(t *testing.T) {
 	if err != nil {
 		t.Fatalf("publish: %v", err)
 	}
+	t.Cleanup(func() { deleteOrganisation(ctx, pool, res.OrganisationID) })
 
 	rows, err := svc.ListAdminOrganisations(ctx, founder, association.AdminOrgFilter{Search: name})
 	if err != nil {

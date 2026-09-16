@@ -165,6 +165,7 @@ func RegisterMarketplace(
 	rbac services.RBACService,
 	pool *pgxpool.Pool,
 	redis *goredis.Client,
+	rtHub *realtime.Hub,
 	referralRewards *referrals.RewardService,
 ) *marketplace.Service {
 	if pool == nil {
@@ -177,11 +178,13 @@ func RegisterMarketplace(
 
 	svc := marketplace.NewService(pool, ledgerSvc, redis)
 
-	// ── Realtime (SSE) live-push seam for chat. The hub fans events across backend
-	// instances via Redis pub/sub (in-process when redis is nil). Best-effort + nil-safe:
-	// a missed push is caught by the clients' polling fallback. The SSE stream route is
-	// registered below behind FEATURE_REALTIME_ENABLED.
-	rtHub := realtime.NewHub(redis)
+	// ── Realtime (SSE) live-push seam for chat. Shared hub built once at the router
+	// level (so other modules — events' check-in feed — can share the same
+	// /api/v1/realtime/stream connection) and passed in here. Fans events across
+	// backend instances via Redis pub/sub (in-process when redis is nil).
+	// Best-effort + nil-safe: a missed push is caught by the clients' polling
+	// fallback. The SSE stream route is registered below behind
+	// FEATURE_REALTIME_ENABLED.
 	svc.WithRealtime(rtHub)
 
 	// ── Central Commission & Profit recording (§ profit registry) ──
@@ -231,6 +234,11 @@ func RegisterMarketplace(
 		Region:          cfg.R2Region,
 	})
 
+	// The same presigner mints upload URLs (handler) and thumbnail read URLs
+	// (service): listing photos live in a PRIVATE bucket, so a stored object key
+	// only becomes fetchable once it is signed.
+	svc.WithThumbPresigner(mktPresigner)
+
 	h := marketplace.NewHandler(svc).
 		WithWebhookSecret(cfg.PaymaxWebhookSecret).
 		WithPresigner(mktPresigner, cfg.R2Bucket)
@@ -269,23 +277,38 @@ func RegisterMarketplace(
 	base.GET("/sellers/:id/listings", h.SellerListings)
 	base.GET("/sellers/:id/reviews", h.SellerReviews)
 	base.GET("/boosts/tiers", h.BoostTiers)
+	base.GET("/boosts/quote", h.GetBoostQuote)
 
 	// ── Member group (auth) ──
 	m := base.Group("")
 	m.Use(auth())
 
 	// Listings
+	// /my-listings, NOT /listings/mine — same class of Gin radix-router conflict
+	// as /media/presign above: a static segment at the position /listings/:id
+	// already claims as a param panics at startup, not silently.
+	m.GET("/my-listings", h.MyListings)
 	m.POST("/listings", h.CreateListing)
 	m.PUT("/listings/:id", h.UpdateListing)
 	m.POST("/listings/:id/submit", h.SubmitListing)
 	m.POST("/listings/:id/pause", h.PauseListing)
 	m.POST("/listings/:id/resume", h.ResumeListing)
+	m.POST("/listings/:id/renew", h.RenewListing)
 	m.POST("/listings/:id/mark-sold", h.MarkSoldListing)
 	m.POST("/listings/:id/contact", h.RevealSellerContact)
+	// Seller performance for one listing. Owner-scoped in the query, so a foreign
+	// id is 404 rather than another seller's offer figures.
+	m.GET("/listings/:id/insights", h.ListingInsights)
 	m.DELETE("/listings/:id", h.DeleteListing)
+	// PERMANENT deletion, distinct from the soft DELETE above. Refused when the
+	// listing has orders/boosts/offers/threads — see Repository.PurgeListing.
+	m.DELETE("/listings/:id/permanent", h.PurgeListing)
+	m.POST("/listings/:id/media", h.AddListingMedia)
+	m.DELETE("/listings/:id/media/:mediaId", h.RemoveListingMedia)
+	m.PUT("/listings/:id/media/reorder", h.ReorderListingMedia)
 
 	// Offers
-	m.GET("/offers", h.ListOffers) // ?listingId= — negotiation history (participant-scoped)
+	m.GET("/offers", h.ListOffers) // ?listing_id= — negotiation history (participant-scoped)
 	m.POST("/offers", h.CreateOffer)
 	m.POST("/offers/:id/accept", h.AcceptOffer)
 	m.POST("/offers/:id/counter", h.CounterOffer)
@@ -310,6 +333,7 @@ func RegisterMarketplace(
 	// Boosts
 	m.POST("/boosts", h.CreateBoost)
 	m.GET("/boosts/:id", h.GetBoost)
+	m.POST("/boosts/:id/cancel", h.CancelBoost)
 
 	// Messaging (ADR-023 listings-and-connect "connect" model; non-money metadata).
 	// Persistent 1:1 buyer↔seller threads about a listing — replaces the mobile's
@@ -346,6 +370,8 @@ func RegisterMarketplace(
 	// tree position (it would panic at registration). Functionally identical.
 	m.POST("/media/presign", h.PresignMedia)
 	// Saved items / wishlist (distinct from saved-searches above).
+	// New: PATCH to toggle; legacy: POST/DELETE still work for backwards compatibility.
+	m.PATCH("/listings/:id/save", h.ToggleSavedItem)
 	m.POST("/listings/:id/save", h.SaveListing)
 	m.DELETE("/listings/:id/save", h.UnsaveListing)
 	m.GET("/saved-items", h.ListSavedItems)
@@ -358,6 +384,12 @@ func RegisterMarketplace(
 	// Notification preferences (per-category toggles).
 	m.GET("/notification-prefs", h.GetNotificationPrefs)
 	m.PATCH("/notification-prefs", h.UpdateNotificationPrefs)
+	// Notifications feed (actual notifications, distinct from preferences).
+	m.GET("/notifications", h.ListNotifications)
+	m.GET("/notifications/unread-count", h.GetUnreadCount)
+	m.PATCH("/notifications/:id", h.MarkNotificationRead)
+	m.PATCH("/notifications/mark-all-read", h.MarkAllNotificationsRead)
+	m.DELETE("/notifications/:id", h.DeleteNotification)
 	// Meetup safe-spots (Transact agent's Meetup Mode).
 	m.GET("/meetup/safe-spots", h.MeetupSafeSpots)
 	// Followed sellers (§ Mobile-UX-Flows LD-005) — mkt_seller_follows.
@@ -394,6 +426,14 @@ func RegisterMarketplace(
 	// platform-wide (read-scoped marketplace.admin.moderation); POST rejects+auto-refunds.
 	a.GET("/boosts", guard("marketplace.admin.moderation"), h.AdminListBoosts)
 	a.POST("/boosts/:id/reject", guard("marketplace.admin.reject"), h.AdminRejectBoost)
+
+	// Boost pricing (ADM-002/MO-002) — admin-editable packages + the custom-range
+	// ₦/day rate. Gated on marketplace.admin.pricing (seeded by
+	// 20261028000400_marketplace_pricing_rbac_perm.sql, granted super-admin/system-admin).
+	a.GET("/pricing/boosts", guard("marketplace.admin.pricing"), h.AdminListBoostPackages)
+	a.PUT("/pricing/boosts", guard("marketplace.admin.pricing"), h.AdminUpsertBoostPackage)
+	a.GET("/pricing/boosts/daily-rate", guard("marketplace.admin.pricing"), h.AdminGetBoostDailyRate)
+	a.PUT("/pricing/boosts/daily-rate", guard("marketplace.admin.pricing"), h.AdminSetBoostDailyRate)
 
 	log.Println("[marketplace] routes registered — listings/offers/boosts + trust/account + admin moderation + real-time audit (listings-and-connect; no escrow)")
 	return svc

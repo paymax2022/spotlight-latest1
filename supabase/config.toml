@@ -227,7 +227,22 @@ double_confirm_changes = true
 # confirmation. Leaving this false locally meant every local sign-up auto-confirmed
 # and skipped the verify screen entirely — dev exercised the one path production
 # never uses, so the OTP flow was untested by construction.
-# Codes land in the local mail catcher (Inbucket, http://localhost:54324).
+#
+# ⚠️ DO NOT SET THIS TO false TO STOP THE CONFIRMATION EMAIL. It governs BOTH
+# whether the mail is sent AND whether the account starts unconfirmed, so turning
+# it off does not leave our own OTP in place — it auto-confirms every sign-up and
+# removes email verification entirely. The signal our register handler keys on
+# ("signup returned no session") disappears with it, so no code is ever issued.
+#
+# The supported way to stop GoTrue's confirmation mail is
+# FEATURE_OTP_EMAIL_ENABLED, which makes RegisterUser create the account through
+# /auth/v1/admin/users instead of /auth/v1/signup. That sends nothing, leaves the
+# account unconfirmed, and makes our code the only verification email. See
+# backend/internal/services/auth_service.go and docs/runbooks/otp-email-brevo.md.
+#
+# Codes land in the local mail catcher on http://localhost:54324. It is MAILPIT,
+# not Inbucket, despite the section name below: the API is /api/v1/messages, and
+# Inbucket's /api/v1/mailbox/<box> answers 404.
 enable_confirmations = true
 # If enabled, users will need to reauthenticate or have logged in recently to change their password.
 secure_password_change = false

@@ -114,6 +114,7 @@ type Service struct {
 	rxItems    RxItems            // optional; nil ⇒ dispensed-item↔Rx match check is skipped (DP-002)
 	proofRec   ProofRecorder      // optional (DP-006); nil ⇒ proofs not stored (delivery still allowed)
 	proofVer   ProofVerifier      // optional (DP-006); nil ⇒ proofs recorded but not verified
+	rxLister   RxLister           // optional, injected via SetRxLister; nil ⇒ MyPrescriptions fails closed
 }
 
 func NewService(db *pgxpool.Pool, escrow EscrowHolder, rx RxGate, verifier RxVerifier, dispatch Dispatcher, prov ProviderGate, payout PayoutGate, audit Auditor) *Service {
@@ -126,6 +127,45 @@ func NewService(db *pgxpool.Pool, escrow EscrowHolder, rx RxGate, verifier RxVer
 
 // SetReviewCaseOpener injects the optional symptom-search seam at wiring time.
 func (s *Service) SetReviewCaseOpener(r ReviewCaseOpener) { s.reviews = r }
+
+// SetRxLister injects the optional "list my prescriptions" seam at wiring
+// time (mirrors SetReviewCaseOpener — added as a setter rather than a
+// NewService positional param so existing call sites, including the live-DB
+// test fixtures that construct a read-only Service with a run of nils,
+// need no change).
+func (s *Service) SetRxLister(r RxLister) { s.rxLister = r }
+
+// PrescriptionSummary is a patient's own prescription row for the pharmacy
+// "My Prescriptions" list — a narrow read model local to this package,
+// decoupled from healthrx's own Prescription type (mirrors the RxGate/
+// RxVerifier seam pattern: pharmacy never imports healthrx's concrete types).
+type PrescriptionSummary struct {
+	ID                 string    `json:"id"`
+	State              string    `json:"state"`
+	PrescriberID       string    `json:"prescriber_id"`
+	PharmacyProviderID *string   `json:"pharmacy_provider_id,omitempty"`
+	RejectReason       string    `json:"reject_reason"`
+	ItemCount          int       `json:"item_count"`
+	CreatedAt          time.Time `json:"created_at"`
+}
+
+// RxLister is the narrow seam into healthrx for the pharmacy "My
+// Prescriptions" list (GET /pharmacy/prescriptions) — the mobile client has
+// called this since the Sell group's pharmacy vertical was built, but no
+// route/handler/service method ever existed for it (only the single-item
+// GET /prescriptions/:id path existed, requiring an id the patient does not
+// yet have on first load).
+type RxLister interface {
+	ListForPatient(ctx context.Context, patientID string) ([]PrescriptionSummary, error)
+}
+
+// MyPrescriptions returns the caller's own prescriptions, most recent first.
+func (s *Service) MyPrescriptions(ctx context.Context, patientID string) ([]PrescriptionSummary, error) {
+	if s.rxLister == nil {
+		return nil, fmt.Errorf("pharmacy: rx lister not configured")
+	}
+	return s.rxLister.ListForPatient(ctx, patientID)
+}
 
 // CommissionRecorder is the nil-safe seam into the central Commission & Profit
 // module (§ profit registry). app-wiring injects a thin adapter over the finance
@@ -292,8 +332,22 @@ func (s *Service) ListProducts(ctx context.Context, pharmacyProviderID, nameQuer
 		// Match either the medicine name or the owning pharmacy's name.
 		where += fmt.Sprintf(" AND (pr.name ILIKE '%%'||$%d||'%%' OR hp.display_name ILIKE '%%'||$%d||'%%')", len(args), len(args))
 	}
+	// TWO nullable columns are read into plain Go strings here:
+	// pharmacy_provider_id (uuid) and nafdac_ref (text). pgx fails the whole scan
+	// on either — "cannot scan NULL into *string" — and because that happens
+	// per-row inside the loop, ONE such product returned 500 for the entire
+	// catalog rather than omitting itself. Every product in the local database has
+	// both NULL, so the catalog was completely unreachable.
+	//
+	// The LEFT JOIN and the COALESCE on display_name beside them already
+	// anticipate an unresolvable provider; these columns simply were not given the
+	// same treatment. Empty string is the signal the name already uses.
+	//
+	// Note nafdac_ref is documented on the struct as "HL-5: required" but the
+	// column is nullable and no row has one — a data/schema question this does not
+	// settle, and deliberately: a catalog that 500s hides it instead of showing it.
 	q := fmt.Sprintf(`
-		SELECT pr.id, pr.pharmacy_provider_id, COALESCE(hp.display_name, ''), pr.name, pr.nafdac_ref,
+		SELECT pr.id, COALESCE(pr.pharmacy_provider_id::text, ''), COALESCE(hp.display_name, ''), pr.name, COALESCE(pr.nafdac_ref, ''),
 		       pr.nafdac_status, pr.rx_required, pr.is_controlled, pr.price_kobo, pr.stock_qty, pr.active, pr.created_at
 		FROM pharmacy_products pr
 		LEFT JOIN health_providers hp ON hp.id = pr.pharmacy_provider_id
@@ -320,8 +374,10 @@ func (s *Service) ListProducts(ctx context.Context, pharmacyProviderID, nameQuer
 // owning pharmacy's display name. Mirrors ListProducts' shape (LEFT JOIN
 // health_providers) so the detail screen has the same attribution as the list.
 func (s *Service) GetProduct(ctx context.Context, id string) (*Product, error) {
+	// Same nullable-provider handling as ListProducts — a detail page must not 500
+	// on a product the list can show.
 	const q = `
-		SELECT pr.id, pr.pharmacy_provider_id, COALESCE(hp.display_name, ''), pr.name, pr.nafdac_ref,
+		SELECT pr.id, COALESCE(pr.pharmacy_provider_id::text, ''), COALESCE(hp.display_name, ''), pr.name, COALESCE(pr.nafdac_ref, ''),
 		       pr.nafdac_status, pr.rx_required, pr.is_controlled, pr.price_kobo, pr.stock_qty, pr.active, pr.created_at
 		FROM pharmacy_products pr
 		LEFT JOIN health_providers hp ON hp.id = pr.pharmacy_provider_id
@@ -370,6 +426,12 @@ type CreateOrderInput struct {
 	IdempotencyKey     string
 	SearchEventID      *string // optional symptom-search context (PRD §10 review-case tier)
 	Lines              []OrderLineInput
+	// Delivery dropoff, required when FulfilmentMethod == FulfilDelivery (validated
+	// in CreateOrder) — persisted on the order so Dispatch's patientDropoff seam can
+	// resolve real coordinates instead of failing closed. Unused for PICKUP.
+	DeliveryAddress string
+	DeliveryLat     *float64
+	DeliveryLng     *float64
 }
 
 type OrderLineInput struct {
@@ -401,6 +463,14 @@ func (s *Service) CreateOrder(ctx context.Context, patientID string, in CreateOr
 	}
 	if in.FulfilmentMethod != FulfilDelivery && in.FulfilmentMethod != FulfilPickup {
 		return nil, fmt.Errorf("pharmacy: fulfilment_method must be DELIVERY or PICKUP")
+	}
+	// A DELIVERY order with no resolvable dropoff can never be dispatched (see
+	// patientDropoff in health_pharmacy_routes.go) — fail closed here, before any
+	// money moves, rather than let it get stuck HELD after DISPENSE.
+	if in.FulfilmentMethod == FulfilDelivery {
+		if in.DeliveryLat == nil || in.DeliveryLng == nil || in.DeliveryAddress == "" {
+			return nil, fmt.Errorf("pharmacy: a delivery order requires delivery_address, delivery_lat, and delivery_lng")
+		}
 	}
 	// Replay: return the existing order for this idempotency key (no double-hold).
 	if existing, err := s.getByIdem(ctx, in.IdempotencyKey); err == nil && existing != nil {
@@ -499,12 +569,17 @@ func (s *Service) CreateOrder(ctx context.Context, patientID string, in CreateOr
 	}
 	defer tx.Rollback(ctx)
 
+	var deliveryAddr *string
+	if in.FulfilmentMethod == FulfilDelivery {
+		deliveryAddr = &in.DeliveryAddress
+	}
 	const insOrder = `
 		INSERT INTO pharmacy_orders
-			(id, patient_id, pharmacy_provider_id, prescription_id, state, fulfilment_method, total_kobo, escrow_id, idempotency_key, search_event_id)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`
+			(id, patient_id, pharmacy_provider_id, prescription_id, state, fulfilment_method, total_kobo, escrow_id, idempotency_key, search_event_id, delivery_address, delivery_lat, delivery_lng)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`
 	if _, err := tx.Exec(ctx, insOrder, orderID, patientID, in.PharmacyProviderID, in.PrescriptionID,
-		string(initial), string(in.FulfilmentMethod), total, escrowID, in.IdempotencyKey, in.SearchEventID); err != nil {
+		string(initial), string(in.FulfilmentMethod), total, escrowID, in.IdempotencyKey, in.SearchEventID,
+		deliveryAddr, in.DeliveryLat, in.DeliveryLng); err != nil {
 		return nil, fmt.Errorf("pharmacy: insert order: %w", err)
 	}
 	const insLine = `
@@ -527,6 +602,7 @@ func (s *Service) CreateOrder(ctx context.Context, patientID string, in CreateOr
 		PrescriptionID: in.PrescriptionID, State: initial, FulfilmentMethod: in.FulfilmentMethod,
 		TotalKobo: total, EscrowID: &escrowID, SearchEventID: in.SearchEventID,
 		IdempotencyKey: in.IdempotencyKey, Lines: lines,
+		DeliveryAddress: deliveryAddr, DeliveryLat: in.DeliveryLat, DeliveryLng: in.DeliveryLng,
 		CreatedAt: time.Now(),
 	}
 	s.audited(patientID, "", "health.pharmacy.order.create", orderID, nil,
@@ -1135,10 +1211,12 @@ func (s *Service) load(ctx context.Context, orderID string) (*Order, error) {
 	var o Order
 	var state, method string
 	const q = `SELECT id, patient_id, pharmacy_provider_id, prescription_id, state, fulfilment_method,
-	                  total_kobo, escrow_id, delivery_ref, pickup_code, idempotency_key, created_at
+	                  total_kobo, escrow_id, delivery_ref, pickup_code, idempotency_key, created_at,
+	                  delivery_address, delivery_lat, delivery_lng
 	           FROM pharmacy_orders WHERE id=$1`
 	if err := s.db.QueryRow(ctx, q, orderID).Scan(&o.ID, &o.PatientID, &o.PharmacyProviderID, &o.PrescriptionID,
-		&state, &method, &o.TotalKobo, &o.EscrowID, &o.DeliveryRef, &o.PickupCode, &o.IdempotencyKey, &o.CreatedAt); err != nil {
+		&state, &method, &o.TotalKobo, &o.EscrowID, &o.DeliveryRef, &o.PickupCode, &o.IdempotencyKey, &o.CreatedAt,
+		&o.DeliveryAddress, &o.DeliveryLat, &o.DeliveryLng); err != nil {
 		if err == pgx.ErrNoRows {
 			return nil, fmt.Errorf("pharmacy: order not found")
 		}
@@ -1284,6 +1362,77 @@ func (s *Service) ListForOwner(ctx context.Context, ownerID, state string, limit
 	return out, rows.Err()
 }
 
+// maxPatientOrderPage bounds a client-supplied page size for a patient's own
+// order history, same rationale as maxOwnerOrderPage.
+const maxPatientOrderPage = 200
+const defaultPatientOrderPage = 50
+
+// ListForPatient returns the caller's own orders, newest first, optionally
+// narrowed to one state.
+//
+// This is the patient-facing counterpart to ListForOwner. Before it existed,
+// the mobile "my orders" screen called GET /orders — the same path the
+// pharmacist inbox (ListForOwner) is bound to — so a patient either got an
+// empty list (if they owned no pharmacy) or, worse, another business's
+// fulfilment queue (if they happened to also own one). Registered as
+// /orders/mine, a sibling of the existing /products/mine convention, so it
+// never collides with the owner inbox at /orders.
+//
+// pickup_code IS selected here, unlike ListForOwner: it is the patient's own
+// counter credential, and this is the patient reading their own order.
+func (s *Service) ListForPatient(ctx context.Context, patientID, state string, limit, offset int) ([]Order, error) {
+	if limit <= 0 {
+		limit = defaultPatientOrderPage
+	}
+	if limit > maxPatientOrderPage {
+		limit = maxPatientOrderPage
+	}
+	if offset < 0 {
+		offset = 0
+	}
+
+	const q = `
+		SELECT id, patient_id, pharmacy_provider_id, prescription_id, state, fulfilment_method,
+		       total_kobo, escrow_id, delivery_ref, pickup_code, idempotency_key, created_at
+		FROM pharmacy_orders
+		WHERE patient_id = $1
+		  AND ($2 = '' OR state = $2)
+		ORDER BY created_at DESC
+		LIMIT $3 OFFSET $4`
+
+	rows, err := s.db.Query(ctx, q, patientID, state, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	// Non-nil so the handler serialises [] rather than null for a patient with
+	// no orders yet.
+	out := []Order{}
+	for rows.Next() {
+		var o Order
+		var st, method string
+		if err := rows.Scan(&o.ID, &o.PatientID, &o.PharmacyProviderID, &o.PrescriptionID, &st,
+			&method, &o.TotalKobo, &o.EscrowID, &o.DeliveryRef, &o.PickupCode, &o.IdempotencyKey, &o.CreatedAt); err != nil {
+			return nil, err
+		}
+		o.State = OrderState(st)
+		o.FulfilmentMethod = FulfilmentMethod(method)
+		out = append(out, o)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	for i := range out {
+		lines, err := s.loadLines(ctx, out[i].ID)
+		if err != nil {
+			return nil, err
+		}
+		out[i].Lines = lines
+	}
+	return out, nil
+}
+
 // EarningsForOwner totals what this owner's pharmacies have been paid and what is
 // still held for them.
 //
@@ -1333,7 +1482,7 @@ func (s *Service) EarningsForOwner(ctx context.Context, ownerID string) (*Pharma
 // levels are commercially sensitive, and an owner of nothing gets nothing.
 func (s *Service) ListProductsForOwner(ctx context.Context, ownerID string) ([]Product, error) {
 	const q = `
-		SELECT pr.id, pr.pharmacy_provider_id, COALESCE(hp.display_name, ''), pr.name, pr.nafdac_ref,
+		SELECT pr.id, pr.pharmacy_provider_id, COALESCE(hp.display_name, ''), pr.name, COALESCE(pr.nafdac_ref, ''),
 		       pr.nafdac_status, pr.rx_required, pr.is_controlled, pr.price_kobo, pr.stock_qty,
 		       pr.active, pr.created_at
 		FROM pharmacy_products pr

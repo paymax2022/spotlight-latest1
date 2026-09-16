@@ -794,16 +794,30 @@ func (s *Service) requireCap(ctx context.Context, userID string, check func(Admi
 	return nil
 }
 
+// capabilitiesFor maps a role to what it may do. Named fields, not positional:
+// the literals used to be AdminCapabilities{true, true, true, true}, which says
+// nothing about which flag is which and silently shifts meaning the moment a
+// field is added.
 func capabilitiesFor(role string) AdminCapabilities {
 	switch role {
+	// The organisation owner. CreateOrganisation grants the founder
+	// SUPER_ADMIN/NATIONAL (service_ext.go), so this is the role that owns the
+	// org they created.
 	case "SUPER_ADMIN", "NATIONAL_ADMIN":
-		return AdminCapabilities{true, true, true, true}
+		return AdminCapabilities{
+			ApproveMembers: true, ManageMembers: true, ManageFinance: true,
+			ImportMembers: true, ManageCommittees: true,
+		}
 	case "FINANCE_ADMIN":
-		return AdminCapabilities{false, false, true, false}
+		return AdminCapabilities{ManageFinance: true}
+	// Runs members day-to-day, including committee rosters — but may NOT
+	// create or delete a committee. That is the owner's call.
 	case "CHAPTER_ADMIN":
-		return AdminCapabilities{true, true, false, true}
+		return AdminCapabilities{
+			ApproveMembers: true, ManageMembers: true, ImportMembers: true,
+		}
 	case "SECRETARY":
-		return AdminCapabilities{false, false, false, false}
+		return AdminCapabilities{}
 	default:
 		return AdminCapabilities{}
 	}
@@ -1445,7 +1459,7 @@ func (s *Service) GetApprovalQueue(ctx context.Context, adminID, jurisdiction, o
 		LEFT JOIN assoc_member_profiles mp ON mp.membership_id=(SELECT id FROM assoc_memberships WHERE user_id=a.user_id AND organisation_id=a.organisation_id LIMIT 1)
 		LEFT JOIN assoc_membership_categories mc ON mc.id=a.category_id
 		LEFT JOIN assoc_chapters ch ON ch.id=a.chapter_id
-		LEFT JOIN auth.users u ON u.id=a.user_id
+		LEFT JOIN public.platform_users u ON u.id=a.user_id
 		WHERE a.status IN ('PENDING','PENDING_CHAPTER','PENDING_NATIONAL','INFO_REQUESTED')
 		  AND a.organisation_id=$1`
 	args := []any{orgID}
@@ -1495,7 +1509,7 @@ func (s *Service) GetApplication(ctx context.Context, adminID, appID string) (*A
 		LEFT JOIN assoc_member_profiles mp ON mp.membership_id=(SELECT id FROM assoc_memberships WHERE user_id=a.user_id AND organisation_id=a.organisation_id LIMIT 1)
 		LEFT JOIN assoc_membership_categories mc ON mc.id=a.category_id
 		LEFT JOIN assoc_chapters ch ON ch.id=a.chapter_id
-		LEFT JOIN auth.users u ON u.id=a.user_id
+		LEFT JOIN public.platform_users u ON u.id=a.user_id
 		WHERE a.id=$1`
 	var app AdminApplication
 	if err := s.db.QueryRow(ctx, q, appID).Scan(

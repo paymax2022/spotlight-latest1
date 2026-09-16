@@ -17,6 +17,7 @@ import {
   type VotePackageTemplate,
 } from '@/services/votePackagesService';
 import type { StageEvictionInfo } from '@/types/competitions';
+import { listContestCategories, type ContestCategoryRow } from '@/services/contestCategoriesService';
 
 // Real contest create/edit — POST/PATCH /api/admin/contests[/[slug]], the
 // same route SME Pitch's console already uses. Previously this page was a
@@ -28,7 +29,12 @@ import type { StageEvictionInfo } from '@/types/competitions';
 // connect_contests, which is what the mobile app reads — that's the real
 // "connect it to mobile app" path, not a fabricated prize schema.
 
-const CATEGORIES: ContestCategory[] = [
+// Categories are admin-managed rows now (see /admin/competitions/categories and
+// public.contest_categories). This list is only the fallback for when that
+// request fails: it is what the server enforced before the table existed, so a
+// blip degrades to the old behaviour instead of an empty dropdown that makes
+// the form unsubmittable.
+const FALLBACK_CATEGORIES: ContestCategory[] = [
   'music', 'acting', 'comedy_content', 'dance', 'film_production',
   'stem_innovation', 'sme_pitch', 'school_campus', 'open_mic',
   'general_reality_show', 'other',
@@ -117,6 +123,28 @@ function CreateCompetitionContent() {
   const [recentLoading, setRecentLoading] = useState(true);
   const [recentError, setRecentError] = useState<string | null>(null);
   const [recentPage, setRecentPage] = useState(1);
+
+  // Active categories, loaded from the admin API. Falls back to the built-in
+  // list on failure so the form stays usable — an empty dropdown here would
+  // block creating any competition at all.
+  const [categories, setCategories] = useState<ContestCategoryRow[]>([]);
+  const [categoriesFellBack, setCategoriesFellBack] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const rows = (await listContestCategories()).filter((r) => r.active);
+        if (cancelled) return;
+        if (rows.length > 0) { setCategories(rows); setCategoriesFellBack(false); }
+        else { setCategories([]); setCategoriesFellBack(true); }
+      } catch {
+        if (!cancelled) { setCategories([]); setCategoriesFellBack(true); }
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
 
   // Stages — persisted (loaded from the API once the contest exists) plus a
   // local draft list used while still creating a contest that has no id yet.
@@ -592,10 +620,28 @@ function CreateCompetitionContent() {
 
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12, marginBottom: 12 }}>
           <div>
-            <label style={labelStyle}>Category</label>
+            <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 8 }}>
+              <label style={labelStyle}>Category</label>
+              <Link
+                href="/admin/competitions/categories"
+                style={{ fontSize: 11, color: colors.primary, textDecoration: 'none' }}
+              >
+                Manage
+              </Link>
+            </div>
             <select style={selectStyle} value={form.contestCategory} onChange={(e) => setForm((f) => ({ ...f, contestCategory: e.target.value as ContestCategory }))}>
-              {CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}
+              {categories.length > 0
+                ? categories.map((c) => <option key={c.slug} value={c.slug}>{c.label}</option>)
+                : FALLBACK_CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}
             </select>
+            {categoriesFellBack && (
+              // Say so rather than silently showing the old list: the admin may
+              // have just added a category and would otherwise wonder why it is
+              // missing.
+              <div style={{ fontSize: 11, color: colors.warning, marginTop: 4 }}>
+                Showing the built-in list — managed categories could not be loaded.
+              </div>
+            )}
           </div>
           <div>
             <label style={labelStyle}>Type</label>

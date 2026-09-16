@@ -41,7 +41,9 @@ Never expose these to a client. The Go backend reads them via `internal/config`.
 | `MAPLERAD_PUBLIC_KEY` | Maplerad publishable key (kept server-side; app never calls Maplerad directly) |
 | `MAPS_GOOGLE_KEY` | Google Maps (autocomplete, geocoding, Distance Matrix) — **all address lookup runs server-side through this** |
 | `MAPS_GEOAPIFY_KEY`, `MAPS_MAPTILER_KEY`, `MAPS_HERE_KEY`, `MAPS_MAPBOX_TOKEN` | Other map provider keys (fallbacks / tiles) |
-| `RESEND_API_KEY` | Transactional email |
+| `RESEND_API_KEY` | Transactional email (notifications — fire-and-forget) |
+| `BREVO_API_KEY` | Transactional email for server-issued OTP. **Not provisioned yet** — see `docs/runbooks/otp-email-brevo.md` |
+| `OTP_PEPPER` | HMAC key for OTP code + identifier hashing. Required whenever `FEATURE_OTP_EMAIL_ENABLED=true`; without it the stored digest of a 6-digit code is reversible by rainbow table. `openssl rand -base64 32` |
 | `ANTHROPIC_API_KEY`, `INFERMEDICA_APP_KEY` | AI / triage |
 | `VIDEOSDK_API_KEY`, `VIDEOSDK_SECRET`, `TERMII_API_KEY` | Video/SMS |
 | `EVERSEND_CLIENT_SECRET`, `INVEST_BROKER_API_KEY`, `BNPL_API_KEY`, `PAYOUT_API_KEY`, `DISBURSE_API_KEY`, `BILLING_API_KEY` (+ each `*_WEBHOOK_SECRET`) | Partner integrations |

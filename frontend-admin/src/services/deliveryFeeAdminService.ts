@@ -1,5 +1,6 @@
-import { env } from '@/config/env';
+import { apiRoot } from '@/config/env';
 import { operationKey } from './idempotency';
+import { resolveUseMock } from '@/config/useMock';
 import type {
   DeliveryFeeConfig,
   GetDeliveryConfigResponse,
@@ -7,10 +8,17 @@ import type {
 } from '@/types/deliveryFeeAdmin';
 
 // The Go restaurant admin routes hang off the /api prefix (same convention as
-// nutritionAdminService): env.apiBaseUrl ends with /api/v1 and admin routes live
-// under /api/restaurant/admin/...
+// nutritionAdminService), verified: backend/internal/app/finance_routes.go
+// `restAdmin := r.Group("/api/restaurant/admin")` with GET/PUT
+// "/delivery-config" registered on it. This used to be
+// `env.apiBaseUrl.replace(/\/api\/v1\/?$/, '/api')`, which relied on
+// apiBaseUrl ending in /api/v1 — it no longer does (see config/env.ts), so
+// that regex silently stopped matching and every live delivery-fee admin call
+// 404'd against the bare proxy origin. apiRoot() strips the /api/v1 suffix
+// (if any) so `${apiRoot()}/api` reliably lands on the API root regardless of
+// how apiBaseUrl is spelled.
 function adminApiBase(): string {
-  return env.apiBaseUrl.replace(/\/api\/v1\/?$/, '/api');
+  return `${apiRoot()}/api`;
 }
 
 function authHeaders(): Record<string, string> {
@@ -23,8 +31,7 @@ function authHeaders(): Record<string, string> {
 // Mock by default; flip with NEXT_PUBLIC_DELIVERY_FEE_ADMIN_USE_MOCK=false once
 // the live Go admin endpoints (/api/restaurant/admin/delivery-config) are
 // deployed. Matches the nutrition/mobility admin-service convention.
-const USE_FIXTURES =
-  (process.env.NEXT_PUBLIC_DELIVERY_FEE_ADMIN_USE_MOCK ?? 'true').toLowerCase() !== 'false';
+const USE_FIXTURES = resolveUseMock(process.env.NEXT_PUBLIC_DELIVERY_FEE_ADMIN_USE_MOCK);
 
 // ── Money helpers (integer kobo ↔ naira) ─────────────────────────────────────
 

@@ -11,6 +11,7 @@ import { Spacing } from '@/constants/spacing';
 import { Typography } from '@/constants/typography';
 import { shadow1 } from '@/constants/shadows';
 import { useOrders } from '@/features/food/hooks';
+import { useMyStores } from '@/features/restaurantmerchant/hooks';
 import { useRestaurantQueueRealtime } from '@/features/food/useRestaurantQueueRealtime';
 import { OrderListRow } from '@/features/food/components';
 import { isTerminalStatus } from '@/features/food/utils';
@@ -33,6 +34,12 @@ export default function RestaurantQueueScreen() {
     poll: true,
     pollMs: socketLive ? 60_000 : 6_000,
   });
+
+  // The owner's own store, so "Feature my restaurant" can carry the subject
+  // straight into the placement wizard instead of asking them to pick their own
+  // restaurant out of a list. Cheap and cached; this screen is already polling.
+  const storesQ = useMyStores();
+  const myStore = (storesQ.data ?? [])[0];
 
   const live = (data ?? []).filter((o) => !isTerminalStatus(o.status));
   const past = (data ?? []).filter((o) => isTerminalStatus(o.status));
@@ -80,6 +87,27 @@ export default function RestaurantQueueScreen() {
           message="Incoming orders will appear here in real time. If you haven't set your restaurant up, start there."
           actionLabel="Set up your restaurant"
           onAction={() => router.push('/food/restaurant/manage')}
+          // An empty queue is exactly when an owner wants to be found, so this is
+          // where promotion belongs — but it stays secondary, because an owner
+          // with no store set up should finish that first, and paying to feature
+          // an unfinished restaurant would be the worst outcome of this screen.
+          // Hidden until a store exists, for the same reason.
+          secondaryActionLabel={myStore ? 'Feature my restaurant' : undefined}
+          onSecondaryAction={
+            myStore
+              ? () =>
+                  router.push({
+                    pathname: '/featured/new',
+                    params: {
+                      subjectType: 'restaurant',
+                      subjectId: myStore.id,
+                      label: myStore.name,
+                      subtitle: myStore.address ?? undefined,
+                      deepLink: `/food/restaurant/${myStore.id}`,
+                    },
+                  })
+              : undefined
+          }
         />
       ) : (
         <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={s.content}>

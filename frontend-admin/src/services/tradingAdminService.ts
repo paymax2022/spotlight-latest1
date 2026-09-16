@@ -1,4 +1,5 @@
-import { env } from '@/config/env';
+import { apiRoot } from '@/config/env';
+import { resolveUseMock } from '@/config/useMock';
 import type {
   TradingKycRecord, TradingKycStatus, TradingKycEvent, TradingKycBypassRequest, TradingBypassEntry,
   StrategyPromotion, PromotionEvent, PromoteRequest, ReadinessRequest, DemoteRequest, TradingStage,
@@ -9,13 +10,18 @@ import type {
 // two-person maker≠checker). Fixture-backed until the routes are live (USE_FIXTURES),
 // mirroring the marketplace admin service.
 export function tradingAdminBase(): string {
-  // The Go module mounts admin routes at /api/v1/admin/trading/* (see
-  // backend/internal/trading/routes.go). This previously stripped `/api/v1` off
-  // apiBaseUrl and re-appended `/v1/trading/admin`, dropping `/api` entirely and
-  // inverting admin/trading — so every admin call 404'd once the routes went
-  // live. Normalise to the host, then use the documented path.
-  const host = env.apiBaseUrl.replace(/\/api\/v1\/?$/, '').replace(/\/api\/?$/, '').replace(/\/$/, '');
-  return `${host}/api/v1/admin/trading`;
+  // The Go module mounts admin routes at /api/v1/admin/trading/* — confirmed
+  // against backend/internal/app/finance_routes.go:557,560
+  // (`tMember := r.Group("/api/v1/trading")`, `tAdmin := r.Group("/api/v1/admin/trading")`).
+  // This previously did a 3-step manual host-recovery chain
+  // (`env.apiBaseUrl.replace(/\/api\/v1\/?$/, '').replace(/\/api\/?$/, '').replace(/\/$/, '')`)
+  // to strip `/api/v1` off apiBaseUrl and re-append `/v1/trading/admin`, which both
+  // dropped `/api` entirely and inverted admin/trading — every admin call 404'd
+  // once the routes went live. It also stopped matching altogether once
+  // apiBaseUrl became the same-origin proxy path (<origin>/api/admin-proxy, no
+  // /api/v1 suffix), making the whole chain a no-op. apiRoot() already does the
+  // equivalent host recovery correctly — use it and append the documented path.
+  return `${apiRoot()}/api/v1/admin/trading`;
 }
 
 function authHeaders(): Record<string, string> {
@@ -29,7 +35,7 @@ export function formatKobo(kobo: number | null | undefined): string {
   return `₦${(kobo / 100).toLocaleString('en-NG', { minimumFractionDigits: 2 })}`;
 }
 
-const USE_FIXTURES = (process.env.NEXT_PUBLIC_TRADING_ADMIN_USE_MOCK ?? 'true').toLowerCase() !== 'false';
+const USE_FIXTURES = resolveUseMock(process.env.NEXT_PUBLIC_TRADING_ADMIN_USE_MOCK);
 
 // Every write below has a real, RBAC-gated live endpoint (verified against
 // backend/internal/trading/routes.go), so fixture mode has nothing to add and

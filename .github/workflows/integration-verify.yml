@@ -115,14 +115,55 @@ jobs:
         run: |
           cd backend
           set -o pipefail
-          go test ./internal/savings/... ./internal/handlers/... ./internal/trading/wallet/... \
-            -race -v -run 'TestLiveDB_|TestAdminConsole_' 2>&1 | tee /tmp/livedb-test.log
+          # NOTE: ./tests/voting/... and the Tally/Registration/Mirror canaries were
+          # removed here — that package has never existed and those four Go tests are
+          # on no branch in this repo. They were added in 1ac4694e alongside 6995b8a7
+          # deleting the three frontend-web TypeScript specs that covered the same
+          # ground (connect-tally-trigger, vote-package-ladder,
+          # one-application-per-contest), i.e. a port that deleted the old tests and
+          # never wrote the new ones. `go test` then failed the whole step with
+          # "lstat ./tests/voting/: no such file or directory" before any canary ran.
+          #
+          # A canary naming a test that does not exist gates NOTHING while looking
+          # strict — the failure mode this step exists to prevent. So it now asserts
+          # only on tests that are real. Do NOT re-add a name here until the test
+          # exists; the vote-credit coverage debt is tracked separately, and the
+          # deleted connect-tally spec is worth reading first (git show 21f77f8b:
+          # frontend-web/tests/integration/voting/connect-tally-trigger.test.ts) —
+          # it documents why that projection is driven from vote_transactions rather
+          # than a route, since four entry points reach it.
+          # HISTORY, so this does not cycle a third time. 1ac4694e first added
+          # ./tests/voting/... and the Tally/Registration/Mirror canaries while the
+          # package itself was still UNTRACKED in a shared checkout, so the promotion
+          # swept the workflow edit and 6995b8a7's spec deletions but not the Go
+          # files. main went red with "lstat ./tests/voting/: no such file or
+          # directory" — go test failed before a single canary was checked — and
+          # 056bd9ff correctly backed the names out, noting: do NOT re-add a name
+          # here until the test exists.
+          #
+          # That condition is now met. backend/tests/voting exists (e1acb5af, 20
+          # tests) and carries the reasoning 056bd9ff asked to preserve: why the
+          # projection is driven from vote_transactions rather than a route, since
+          # four entry points reach it and the route-level files are brownfield-
+          # protected. The four names below resolve; `go test ./tests/voting/...`
+          # was run under -race against a live Postgres before this landed.
+          #
+          # The rule stands unchanged for the next person: a canary naming a test
+          # that does not exist gates NOTHING while looking strict, which is the
+          # exact failure this step was built to catch. Add a name only after the
+          # test does.
+          go test ./internal/savings/... ./internal/handlers/... ./internal/trading/wallet/... ./tests/voting/... \
+            -race -v -run 'TestLiveDB_|TestAdminConsole_|TestTally_|TestRegistration_|TestMirror_' 2>&1 | tee /tmp/livedb-test.log
           for t in TestLiveDB_BalanceForOwner_RejectsNonOwner \
                    TestLiveDB_TargetBalanceForMember_RejectsNonMember \
                    TestLiveDB_PenaltyRate_IsServerSideNotCallerSupplied \
                    TestLiveDB_TradingWallet_MoneyPath \
                    TestAdminConsole_Dashboard \
-                   TestAdminConsole_GetOrders; do
+                   TestAdminConsole_GetOrders \
+                   TestTally_CountsThePurchaseWhenTheWebhookCreditsIt \
+                   TestTally_RefusesToReCreditAfterARefundAndRecordsWhy \
+                   TestRegistration_RejectsASecondLiveApplicationForTheSameContest \
+                   TestMirror_CreatesTheLegacyRowSoTheContestCanHoldPackages; do
             grep -q -- "--- PASS: $t" /tmp/livedb-test.log \
               || { echo "::error::$t did not run (skipped?) — live-DB coverage is not gating"; exit 1; }
           done

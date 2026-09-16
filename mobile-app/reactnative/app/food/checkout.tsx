@@ -23,6 +23,7 @@ import { resolveRestaurantName, groupPackagesByRestaurant, UNKNOWN_RESTAURANT_ID
 import { formatNaira } from '@/features/food/utils';
 import { resolveDeliveryFee } from '@/features/food/deliveryFee';
 import { resolvePackagingFee } from '@/features/food/packagingFee';
+import { estimateTotalKobo } from '@/features/food/estimate';
 import { useRestaurant, useRestaurantNames, useCartRestaurantAvailability } from '@/features/food/hooks';
 import { usePurchasePayment, PaymentSheet } from '@/features/payments';
 import { CartNutritionSummary } from '@/features/nutrition';
@@ -162,8 +163,6 @@ export default function CheckoutScreen() {
   const deliveryFailed = Boolean(addressLocation) && quoteQ.isError && !quote;
   // Only a distance-based quote carries a breakdown worth showing.
   const haveQuote = deliveryKnown && !deliveryEstimated;
-  // Service fee shown as an estimate; the SERVER computes the authoritative total.
-  const serviceFee = Math.round(subtotal * 0.05);
   // Mandatory take-away packaging — one pack fee PER takeaway package the customer
   // added (the package is the container). Cannot be removed.
   // Unknown is not free. `restaurant?.packagingFeeKobo ?? 0` rendered ₦0 whenever
@@ -173,7 +172,15 @@ export default function CheckoutScreen() {
   const packagingFee = packagingView.feeKobo;
   const packagingKnown = packagingView.known;
   const packCount = cartPackageCount(packages);
-  const estTotal = subtotal + deliveryFee + serviceFee + packagingFee;
+  // No service fee. Checkout used to add a hardcoded 5%, which the server does
+  // not charge — it prices service fee from the restaurant's own service_fee_bp
+  // (0 for every restaurant, and never exposed to the client). That invented
+  // ₦560 on a real ₦12,801.40 order. See estimate.ts.
+  const estTotal = estimateTotalKobo({
+    subtotalKobo: subtotal,
+    deliveryKobo: deliveryFee,
+    packagingKobo: packagingFee,
+  });
   // The estimate is missing a component the server will still charge. Say so
   // rather than presenting a total that reads as complete.
   const estIncomplete = !deliveryKnown || !packagingKnown;
@@ -477,7 +484,6 @@ export default function CheckoutScreen() {
             label={`Takeaway packaging (${packCount} pack${packCount > 1 ? 's' : ''})`}
             value={packagingKnown ? formatNaira(packagingFee) : restaurantLoading ? 'Calculating…' : '—'}
           />
-          <Line label="Service fee" value={formatNaira(serviceFee)} />
           <View style={s.divider} />
           <Line label="Estimated total" value={formatNaira(estTotal)} strong />
           <Text style={s.note}>

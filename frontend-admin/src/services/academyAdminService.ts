@@ -1,13 +1,14 @@
 // ── Admin — Spotlight Academy admin console service ───────────────────────────
 // Copies the healthVetVerificationService.ts request stack EXACTLY:
-//  • adminBase() rewrites env.apiBaseUrl (…/api/v1) → …/api/academy
+//  • adminBase() rewrites apiRoot() (the proxy origin, /api/v1 already stripped) → …/api/academy
 //  • authHeaders() attaches the admin Bearer token from localStorage
 //  • getJson/sendJson unwrap { data } and throw on non-2xx
 // Per-route RBAC (academy.*) is carried by the admin session token. Mock by
 // default (NEXT_PUBLIC_ACADEMY_USE_MOCK); flip to false to hit the live Go
 // backend. Every state-change is audit-logged server-side.
 
-import { env } from '@/config/env';
+import { apiRoot } from '@/config/env';
+import { resolveUseMock } from '@/config/useMock';
 import type {
   AcademyDashboard,
   CurriculumTree, CurriculumTopic, CurriculumVersion, CurriculumVersionInput,
@@ -37,10 +38,23 @@ import type {
   BiDashboard, BiCohortRow, BiDateRange, BiExportInput, BiExportResult, BiSeriesPoint,
 } from '@/types/academyAdmin';
 
-const USE_MOCK = (process.env.NEXT_PUBLIC_ACADEMY_USE_MOCK ?? 'true').toLowerCase() !== 'false';
+const USE_MOCK = resolveUseMock(process.env.NEXT_PUBLIC_ACADEMY_USE_MOCK);
 
+// Full path = apiRoot() + '/api/academy' + <call path, which every function
+// below spells starting with '/admin/...' or '/commerce/admin/...'>. That
+// matches the real Go mounts: identity/curriculum/commerce are registered on
+// adminGroupTop5(r, "/api") with their own "/academy/..." subpaths (e.g.
+// identity's admin.Group("/academy") + "/admin/users/:id" → /api/academy/admin/users/:id),
+// while gamification/rewards/assessment/exam/fees etc. are registered directly
+// on adminGroupTop5(r, "/api/academy/admin") (see backend/internal/app/academy_routes.go).
+//
+// This used to be `env.apiBaseUrl.replace(/\/api\/v1\/?$/, '/api/academy')`, which
+// stopped matching the moment apiBaseUrl became the same-origin proxy path
+// (<origin>/api/admin-proxy, no /api/v1 suffix) — see insuranceAdminService.ts for
+// the same regression. Every request 404'd against <proxy>/admin/... instead of
+// <proxy>/api/academy/admin/...; USE_MOCK hid it whenever set.
 function adminBase(): string {
-  return env.apiBaseUrl.replace(/\/api\/v1\/?$/, '/api/academy');
+  return `${apiRoot()}/api/academy`;
 }
 function authHeaders(): Record<string, string> {
   if (typeof window === 'undefined') return {};

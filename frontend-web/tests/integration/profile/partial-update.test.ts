@@ -13,6 +13,19 @@
  * phone-only patch would also have nulled first_name, city, address and every
  * other field the caller never mentioned.
  *
+ * WHY THIS IS THE ONLY SPEC LEFT IN tests/integration. The three that sat beside
+ * it (vote package ladder, connect tally trigger, one-application-per-contest)
+ * asserted pure DATABASE behaviour — triggers, a partial unique index, an RPC —
+ * and so were ported to backend/tests/voting/*_live_db_test.go, where the CI
+ * Postgres service actually runs them. They could not be wired into
+ * integration-verify.yml as they stood: that job provides a migrated BARE
+ * Postgres with no PostgREST, so supabase-js would have found no SUPABASE_URL,
+ * skipped, and reported green while guarding nothing.
+ *
+ * This one stays because it is not a database test. It exercises
+ * updateUserProfile — application code, and the omit-undefined logic above is
+ * the thing under test — so it cannot move to a Go suite. It runs locally only:
+ *
  *   set -a; source frontend-web/.env.local; set +a
  *   npm run test:integration
  */

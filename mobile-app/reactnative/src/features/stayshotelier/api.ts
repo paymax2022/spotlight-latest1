@@ -28,6 +28,10 @@ import type {
   CreatePropertyInput,
   CreateRoomTypeInput,
   CreateRatePlanInput,
+  UpdatePropertyDetailsInput,
+  UpdatePropertyContentInput,
+  PropertyPhoto,
+  VerificationStatus,
 } from './types';
 
 export const USE_MOCK = mockAllowed(process.env.EXPO_PUBLIC_STAYS_HOTELIER_USE_MOCK, false);
@@ -48,6 +52,25 @@ function mapDetail(p: any): PropertyDetail {
     starRating: p.star_rating ?? 0,
     propertyType: p.property_type,
     status: p.status,
+    lat: p.lat ?? 0,
+    lng: p.lng ?? 0,
+    amenities: p.amenities ?? [],
+    houseRules: p.house_rules ?? '',
+    cancellationPolicy: p.cancellation_policy ?? 'FLEXIBLE',
+    checkInFrom: p.check_in_from ?? '14:00',
+    checkOutUntil: p.check_out_until ?? '12:00',
+    contactPhone: p.contact_phone ?? '',
+    contactEmail: p.contact_email ?? '',
+  };
+}
+function mapPhoto(p: any): PropertyPhoto {
+  return {
+    id: p.id,
+    roomTypeId: p.room_type_id || undefined,
+    url: p.url ?? '',
+    caption: p.caption ?? '',
+    isCover: !!p.is_cover,
+    sortOrder: p.sort_order ?? 0,
   };
 }
 function mapRoomType(r: any): RoomType {
@@ -79,6 +102,7 @@ function mapReservation(r: any): HotelierReservation {
 let mockProperties: PropertyDetail[] = [];
 let mockRoomTypes: Record<string, RoomType[]> = {};
 let mockRatePlans: Record<string, RatePlan[]> = {};
+let mockPhotos: Record<string, PropertyPhoto[]> = {};
 let seq = 0;
 const nextId = (p: string) => `${p}-${(seq += 1)}`;
 const delay = (ms = 220) => new Promise<void>((r) => setTimeout(r, ms));
@@ -100,9 +124,12 @@ export async function createProperty(input: CreatePropertyInput): Promise<{ id: 
     mockProperties.push({
       id, name: input.name, description: '', address: input.address, city: input.city,
       starRating: input.starRating ?? 0, propertyType: input.propertyType, status: 'DRAFT',
+      lat: 0, lng: 0, amenities: [], houseRules: '', cancellationPolicy: 'FLEXIBLE',
+      checkInFrom: '14:00', checkOutUntil: '12:00', contactPhone: '', contactEmail: '',
     });
     mockRoomTypes[id] = [];
     mockRatePlans[id] = [];
+    mockPhotos[id] = [];
     return { id };
   }
   const res = await api.post(`${BASE}/properties`, {
@@ -124,6 +151,105 @@ export async function getProperty(propertyId: string): Promise<PropertyDetail> {
   }
   const res = await api.get(`${BASE}/properties/${propertyId}`);
   return mapDetail(unwrap(res));
+}
+
+export async function updatePropertyContent(propertyId: string, input: UpdatePropertyContentInput): Promise<void> {
+  if (USE_MOCK) {
+    await delay();
+    const p = mockProperties.find((x) => x.id === propertyId);
+    if (p) Object.assign(p, input);
+    return;
+  }
+  await api.patch(`${BASE}/properties/${propertyId}`, {
+    name: input.name, description: input.description, address: input.address,
+    city: input.city, star_rating: input.starRating, property_type: input.propertyType,
+  });
+}
+
+export async function updatePropertyDetails(propertyId: string, input: UpdatePropertyDetailsInput): Promise<void> {
+  if (USE_MOCK) {
+    await delay();
+    const p = mockProperties.find((x) => x.id === propertyId);
+    if (p) Object.assign(p, input);
+    return;
+  }
+  await api.patch(`${BASE}/properties/${propertyId}/details`, {
+    lat: input.lat, lng: input.lng, amenities: input.amenities, house_rules: input.houseRules,
+    cancellation_policy: input.cancellationPolicy, check_in_from: input.checkInFrom,
+    check_out_until: input.checkOutUntil, contact_phone: input.contactPhone, contact_email: input.contactEmail,
+  });
+}
+
+// ── Photos ─────────────────────────────────────────────────────────────────
+// Upload is presign → PUT the picked bytes straight to R2 → confirm (persist the
+// row). Mirrors the marketplace Sell composer's image upload exactly
+// (src/features/marketplace/api/sell.api.ts uploadListingImage).
+export async function listPhotos(propertyId: string): Promise<PropertyPhoto[]> {
+  if (USE_MOCK) {
+    await delay();
+    return mockPhotos[propertyId] ?? [];
+  }
+  const res = await api.get(`${BASE}/properties/${propertyId}/photos`);
+  return (unwrap<any[]>(res) ?? []).map(mapPhoto);
+}
+
+/** Full photo upload: presign → PUT the picked file's bytes → confirm. Returns
+ *  the persisted photo (with a fetchable, freshly-presigned URL). */
+export async function uploadPropertyPhoto(
+  propertyId: string,
+  file: { uri: string; mimeType: string },
+  opts?: { roomTypeId?: string; caption?: string },
+): Promise<PropertyPhoto> {
+  if (USE_MOCK) {
+    await delay();
+    const photo: PropertyPhoto = {
+      id: nextId('photo'), roomTypeId: opts?.roomTypeId, url: file.uri,
+      caption: opts?.caption ?? '', isCover: (mockPhotos[propertyId] ?? []).length === 0,
+      sortOrder: (mockPhotos[propertyId] ?? []).length,
+    };
+    mockPhotos[propertyId] = [...(mockPhotos[propertyId] ?? []), photo];
+    return photo;
+  }
+  const presign = await api.post(`${BASE}/properties/${propertyId}/photos/presign`, { mime_type: file.mimeType });
+  const { upload_url: uploadUrl, storage_key: storageKey } = unwrap<{ upload_url: string; storage_key: string }>(presign);
+  const blob = await (await fetch(file.uri)).blob();
+  const putRes = await fetch(uploadUrl, { method: 'PUT', body: blob, headers: { 'Content-Type': file.mimeType } });
+  if (!putRes.ok) throw new Error(`Photo upload failed (${putRes.status})`);
+  const created = await api.post(`${BASE}/properties/${propertyId}/photos`, {
+    storage_key: storageKey, room_type_id: opts?.roomTypeId ?? '', caption: opts?.caption ?? '',
+  });
+  return mapPhoto(unwrap(created));
+}
+
+export async function setCoverPhoto(propertyId: string, photoId: string): Promise<void> {
+  if (USE_MOCK) {
+    await delay();
+    const list = mockPhotos[propertyId] ?? [];
+    mockPhotos[propertyId] = list.map((p) => ({ ...p, isCover: p.id === photoId }));
+    return;
+  }
+  await api.patch(`${BASE}/properties/${propertyId}/photos/${photoId}`, { is_cover: true });
+}
+
+export async function updatePhotoCaption(propertyId: string, photoId: string, caption: string): Promise<void> {
+  if (USE_MOCK) {
+    await delay();
+    const p = (mockPhotos[propertyId] ?? []).find((x) => x.id === photoId);
+    if (p) p.caption = caption;
+    return;
+  }
+  await api.patch(`${BASE}/properties/${propertyId}/photos/${photoId}`, { caption });
+}
+
+export async function deletePhoto(propertyId: string, photoId: string): Promise<void> {
+  if (USE_MOCK) {
+    await delay();
+    const wasCover = (mockPhotos[propertyId] ?? []).find((p) => p.id === photoId)?.isCover;
+    mockPhotos[propertyId] = (mockPhotos[propertyId] ?? []).filter((p) => p.id !== photoId);
+    if (wasCover && mockPhotos[propertyId]?.length) mockPhotos[propertyId][0].isCover = true;
+    return;
+  }
+  await api.delete(`${BASE}/properties/${propertyId}/photos/${photoId}`);
 }
 
 // ── Room types ─────────────────────────────────────────────────────────────
@@ -191,4 +317,55 @@ export async function listReservations(propertyId: string): Promise<HotelierRese
   }
   const res = await api.get(`${BASE}/properties/${propertyId}/reservations`, { params: { limit: 50 } });
   return (unwrap<any[]>(res) ?? []).map(mapReservation);
+}
+
+// ── Go-live verification ──────────────────────────────────────────────────
+// Not property-scoped: the backend resolves "the caller's primary property"
+// (ResolvePrimaryProperty) rather than taking a :propertyId — a hotelier is
+// assumed to be onboarding one property at a time.
+function mapVerification(v: any): VerificationStatus {
+  return {
+    propertyId: v.property_id,
+    propertyName: v.property_name,
+    overall: v.overall,
+    goLiveEligible: !!v.go_live_eligible,
+    submittedForReviewAt: v.submitted_for_review_at ?? null,
+    reviewedAt: v.reviewed_at ?? null,
+    reviewerNote: v.reviewer_note ?? null,
+    checklist: (v.checklist ?? []).map((c: any) => ({
+      key: c.key, label: c.label, stage: c.stage, status: c.status, detail: c.detail, required: !!c.required,
+    })),
+  };
+}
+
+export async function getVerificationStatus(propertyId: string): Promise<VerificationStatus> {
+  if (USE_MOCK) {
+    await delay();
+    const p = mockProperties.find((x) => x.id === propertyId);
+    const photos = mockPhotos[propertyId] ?? [];
+    const roomTypes = mockRoomTypes[propertyId] ?? [];
+    const ratePlans = mockRatePlans[propertyId] ?? [];
+    const checklist = [
+      { key: 'signup', label: 'Hotelier account created', stage: 'signup', status: 'approved' as const, required: true },
+      { key: 'property', label: 'Property registered (name, type, address, city)', stage: 'property', status: p?.address ? 'approved' as const : 'in_progress' as const, required: true },
+      { key: 'content', label: 'Property description and at least one room type with a rate plan', stage: 'content', status: (p?.description && roomTypes.length && ratePlans.length) ? 'approved' as const : 'in_progress' as const, required: true },
+      { key: 'photos', label: 'At least 8 photos uploaded (cover set)', stage: 'content', status: photos.length >= 8 ? 'approved' as const : 'in_progress' as const, required: true, detail: photos.length >= 8 ? undefined : `You have ${photos.length} — add ${8 - photos.length} more to go live.` },
+      { key: 'policies', label: 'Policies configured (check-in/out, cancellation, house rules)', stage: 'policies', status: p?.houseRules ? 'approved' as const : 'in_progress' as const, required: false },
+      { key: 'availability', label: 'Availability & rates loaded (next 90 days)', stage: 'go_live', status: 'in_progress' as const, required: true },
+    ];
+    return {
+      propertyId, propertyName: p?.name ?? '', overall: 'pending', goLiveEligible: false, checklist,
+    };
+  }
+  const res = await api.get(`${BASE}/verification`);
+  return mapVerification(unwrap(res));
+}
+
+export async function submitForReview(): Promise<VerificationStatus> {
+  if (USE_MOCK) {
+    await delay();
+    throw new Error('Submitting for review is unavailable in fixture mode — switch to the live backend.');
+  }
+  const res = await api.post(`${BASE}/verification/submit`, {});
+  return mapVerification(unwrap(res));
 }

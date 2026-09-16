@@ -1,24 +1,35 @@
 // ── Admin — Paymax Health · Vet VCN verification review (Mode B / ASSISTED) ─────
 // Mirrors healthVetAdminService.ts exactly for request building / auth / errors:
-//  • adminBase() rewrites env.apiBaseUrl (…/api/v1) → …/api/health/vet/admin
+//  • adminBase() builds the absolute backend path via apiRoot() + /api/health/vet/admin
 //  • authHeaders() attaches the admin Bearer token from localStorage
 //  • getJson/sendJson unwrap { data } and throw on non-2xx
-// These verification endpoints live under …/api/health/vet/admin/verification and
-// require RBAC permission `health.vet.review` (carried by the admin session token).
-// Mock by default (NEXT_PUBLIC_HEALTH_USE_MOCK); flip to false to hit the live Go
-// backend. Every document-url read is access-logged server-side (HL-8 / NDPA).
+// These verification endpoints live under …/api/health/vet/admin/verification
+// (backend/internal/app/health_credential_routes.go RegisterHealthVCNVerification:
+// admin param is adminGroupTop5(r, "/api/health/vet/admin"), then internally
+// `ag := admin.Group("/verification")`; this file supplies the "/verification"
+// segment itself on each call path below) and require RBAC permission
+// `health.vet.review` (carried by the admin session token). Mock by default
+// (NEXT_PUBLIC_HEALTH_USE_MOCK); flip to false to hit the live Go backend. Every
+// document-url read is access-logged server-side (HL-8 / NDPA).
+//
+// adminBase() used to do `env.apiBaseUrl.replace(/\/api\/v1\/?$/, '/api/health/vet/admin')`,
+// which stopped matching the moment apiBaseUrl became the same-origin proxy path
+// (<origin>/api/admin-proxy, no /api/v1 suffix) — see insuranceAdminService.ts for
+// the same regression. Every request 404'd against <proxy>/verification/... instead
+// of <proxy>/api/health/vet/admin/verification/...; USE_MOCK hid it whenever set.
 
-import { env } from '@/config/env';
+import { apiRoot } from '@/config/env';
+import { resolveUseMock } from '@/config/useMock';
 import type {
   VcnVerificationRecord,
   VcnQueueItem,
   VcnDecisionInput,
 } from '@/types/healthVetVerification';
 
-const USE_MOCK = (process.env.NEXT_PUBLIC_HEALTH_USE_MOCK ?? 'true').toLowerCase() !== 'false';
+const USE_MOCK = resolveUseMock(process.env.NEXT_PUBLIC_HEALTH_USE_MOCK);
 
 function adminBase(): string {
-  return env.apiBaseUrl.replace(/\/api\/v1\/?$/, '/api/health/vet/admin');
+  return `${apiRoot()}/api/health/vet/admin`;
 }
 function authHeaders(): Record<string, string> {
   if (typeof window === 'undefined') return {};

@@ -7,13 +7,32 @@
 // every write/oversight action is mocked until an admin surface is added.
 // Money is BIGINT kobo (minor units) throughout.
 
-import { env } from '@/config/env';
+import { apiV1 } from '@/config/env';
+import { resolveUseMock } from '@/config/useMock';
 
-const USE_MOCK = (process.env.NEXT_PUBLIC_TELEMEDICINE_ADMIN_USE_MOCK ?? 'true').toLowerCase() !== 'false';
+export const USE_MOCK = resolveUseMock(process.env.NEXT_PUBLIC_TELEMEDICINE_ADMIN_USE_MOCK);
+/** Named so the fixture banner can cite the exact switch. */
+export const USE_MOCK_ENV = 'NEXT_PUBLIC_TELEMEDICINE_ADMIN_USE_MOCK';
 
-// Telemedicine reads live at /api/v1/telemedicine/* (mobile-facing), not an admin group.
+// Telemedicine reads live at r.Group("/api/v1/telemedicine") in
+// backend/internal/app/finance_routes.go (mobile-facing v1Tele group — GET
+// /doctors, GET /appointments among others), not an admin group. apiV1()
+// gives the /api/v1 namespace (apiRoot() + '/api/v1'); this appends
+// '/telemedicine' onto it.
+//
+// This used to be env.apiBaseUrl.replace(/\/api\/v1\/?$/, '/api/v1/telemedicine'),
+// which stopped matching once apiBaseUrl became the same-origin proxy path
+// (<origin>/api/admin-proxy, no /api/v1 suffix) — see insuranceAdminService.ts
+// for the same regression. The replace became a no-op and every live request
+// 404'd against <proxy>/doctors instead of <proxy>/api/v1/telemedicine/doctors.
+//
+// NOTE: getTelemedDashboard() below calls '/admin/dashboard', which resolves
+// to /api/v1/telemedicine/admin/dashboard — there is no such route registered
+// (v1Tele has no /admin sub-group; see the module comment above). That is a
+// distinct, pre-existing gap unrelated to this base-URL fix — the dashboard
+// will still 404 in live mode until an admin dashboard endpoint is built.
 function readBase(): string {
-  return env.apiBaseUrl.replace(/\/api\/v1\/?$/, '/api/v1/telemedicine');
+  return `${apiV1()}/telemedicine`;
 }
 function authHeaders(): Record<string, string> {
   if (typeof window === 'undefined') return {};

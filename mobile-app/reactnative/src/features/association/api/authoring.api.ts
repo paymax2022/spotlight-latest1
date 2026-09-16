@@ -343,6 +343,36 @@ export async function registerDevice(input: DeviceInput): Promise<CreatedId> {
   return data;
 }
 
+// ── Committee lifecycle (owner only) ─────────────────────────────────────────
+//
+// Server-gated on the manageCommittees capability (association
+// requireCommitteeAdmin). The UI hides these for everyone else, but the gate
+// that matters is the server's — hiding a button is not authorisation.
+
+export interface CommitteeInput {
+  name: string;
+  description?: string | null;
+}
+
+/** Create a committee in an organisation. Returns the new committee id. */
+export async function createCommittee(orgId: string, input: CommitteeInput): Promise<string> {
+  if (USE_MOCK) { await delay(300); return `cm_${Date.now()}`; }
+  const { data } = await api.post(`${BASE}/admin/organisations/${orgId}/committees`, input);
+  return (data?.id ?? data?.data?.id) as string;
+}
+
+/** Rename a committee or change its purpose. */
+export async function updateCommittee(committeeId: string, input: CommitteeInput): Promise<void> {
+  if (USE_MOCK) { await delay(240); return; }
+  await api.patch(`${BASE}/admin/committees/${committeeId}`, input);
+}
+
+/** Delete a committee. This removes its entire roster with it — confirm first. */
+export async function deleteCommittee(committeeId: string): Promise<void> {
+  if (USE_MOCK) { await delay(240); return; }
+  await api.delete(`${BASE}/admin/committees/${committeeId}`);
+}
+
 // ── Committee membership management ──────────────────────────────────────────
 
 /**

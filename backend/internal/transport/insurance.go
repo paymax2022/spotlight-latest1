@@ -274,12 +274,12 @@ func roundBps(amountKobo, bps int64) int64 {
 // senderMissingProfileFields, never dereferenced blindly.
 func (s *Service) loadParcelSenderProfile(ctx context.Context, userID string) parcelSenderProfile {
 	var p parcelSenderProfile
-	var firstName, lastName, phone, gender, address *string
+	var firstName, lastName, email, phone, gender, address *string
 	var dob *time.Time
 	err := s.db.QueryRow(ctx, `
 		SELECT first_name, last_name, email, phone, gender, date_of_birth, address
 		FROM user_profiles WHERE id = $1`, userID,
-	).Scan(&firstName, &lastName, &p.Email, &phone, &gender, &dob, &address)
+	).Scan(&firstName, &lastName, &email, &phone, &gender, &dob, &address)
 	if err != nil {
 		return parcelSenderProfile{} // all-empty -> caught by senderMissingProfileFields
 	}
@@ -288,6 +288,9 @@ func (s *Service) loadParcelSenderProfile(ctx context.Context, userID string) pa
 	}
 	if lastName != nil {
 		p.LastName = *lastName
+	}
+	if email != nil {
+		p.Email = *email
 	}
 	if phone != nil {
 		p.Phone = *phone

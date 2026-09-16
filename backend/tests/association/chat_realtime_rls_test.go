@@ -130,6 +130,7 @@ func TestChatRealtimeGate_MatchesTheAPI(t *testing.T) {
 		t.Fatalf("publish: %v", err)
 	}
 	orgID := res.OrganisationID
+	t.Cleanup(func() { deleteOrganisation(ctx, pool, orgID) })
 
 	// A plain member: ACTIVE, no role, not on any committee.
 	plainID, plainMembership := seedMember(t, ctx, pool, orgID, "@plain.test")

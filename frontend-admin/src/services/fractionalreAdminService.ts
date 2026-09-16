@@ -2,10 +2,11 @@
 // Mock by default (mirrors estateAdminService / investAdminService). Flip with
 // NEXT_PUBLIC_FRACTIONALRE_ADMIN_USE_MOCK=false to hit the live Go backend.
 // All money is integer minor units (kobo). Live admin base:
-//   /api/finance/fractionalre/admin/...  (env.apiBaseUrl strips its /api/v1 suffix)
+//   /api/finance/fractionalre/admin/...  (apiRoot() strips any trailing /api/v1)
 // RBAC: gated by fractionalre.* permission slugs server-side.
 
-import { env } from '@/config/env';
+import { apiRoot } from '@/config/env';
+import { resolveUseMock } from '@/config/useMock';
 import type {
   FractionalReDashboard, AdminAsset, CreateAssetInput, AssetPatch, TitleVerification,
   TitleVerifyInput, AssetTransitionInput, AdminRound, CreateRoundInput, ExtendRoundInput,
@@ -16,11 +17,20 @@ import type {
   EscrowAccount, FeeRevenue, RefundResult, DocumentRecord, PresignResult, AuditEntry,
 } from '@/types/fractionalreAdmin';
 
-const USE_MOCK = (process.env.NEXT_PUBLIC_FRACTIONALRE_ADMIN_USE_MOCK ?? 'true').toLowerCase() !== 'false';
+const USE_MOCK = resolveUseMock(process.env.NEXT_PUBLIC_FRACTIONALRE_ADMIN_USE_MOCK);
 
-// env.apiBaseUrl ends with /api/v1 — strip it and target /api/finance.
+// /api/finance/fractionalre/admin is the real mount point — confirmed against
+// backend/internal/fractionalre/routes.go:119 (`admin := r.Group("/api/finance/fractionalre/admin")`)
+// and its Register() doc comment. apiRoot() strips any trailing /api/v1 from the
+// proxy base and nothing else.
+//
+// This used to be `env.apiBaseUrl.replace(/\/api\/v1\/?$/, '/api/finance/fractionalre/admin')`,
+// which stopped matching once apiBaseUrl became the same-origin proxy path
+// (<origin>/api/admin-proxy, no /api/v1 suffix) — the replace() was a no-op and
+// every request 404'd against <proxy>/dashboard instead of
+// <proxy>/api/finance/fractionalre/admin/dashboard.
 function adminBase(): string {
-  return env.apiBaseUrl.replace(/\/api\/v1\/?$/, '/api/finance/fractionalre/admin');
+  return `${apiRoot()}/api/finance/fractionalre/admin`;
 }
 
 function authHeaders(extra?: Record<string, string>): Record<string, string> {

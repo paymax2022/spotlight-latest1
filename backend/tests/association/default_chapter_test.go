@@ -75,6 +75,7 @@ func TestPublishOrganisation_DefaultsAChapterWhenNoneNamed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("publish: %v", err)
 	}
+	t.Cleanup(func() { deleteOrganisation(ctx, pool, res.OrganisationID) })
 
 	got := chapterNames(t, ctx, pool, res.OrganisationID)
 	if len(got) != 1 {
@@ -111,6 +112,7 @@ func TestPublishOrganisation_KeepsNamedChaptersAndSkipsBlanks(t *testing.T) {
 		if err != nil {
 			t.Fatalf("publish: %v", err)
 		}
+		t.Cleanup(func() { deleteOrganisation(ctx, pool, res.OrganisationID) })
 		got := chapterNames(t, ctx, pool, res.OrganisationID)
 		if len(got) != 1 || got[0] != "Ikeja Branch" {
 			t.Errorf("chapters = %v; want exactly [Ikeja Branch] — a named chapter must not also get a default", got)
@@ -127,6 +129,7 @@ func TestPublishOrganisation_KeepsNamedChaptersAndSkipsBlanks(t *testing.T) {
 		if err != nil {
 			t.Fatalf("publish: %v", err)
 		}
+		t.Cleanup(func() { deleteOrganisation(ctx, pool, res.OrganisationID) })
 		got := chapterNames(t, ctx, pool, res.OrganisationID)
 		if len(got) != 1 || got[0] != association.DefaultChapterName {
 			t.Errorf("chapters = %v; want exactly [%s] — a blank name is not a chapter", got, association.DefaultChapterName)
@@ -143,6 +146,7 @@ func TestPublishOrganisation_KeepsNamedChaptersAndSkipsBlanks(t *testing.T) {
 		if err != nil {
 			t.Fatalf("publish: %v", err)
 		}
+		t.Cleanup(func() { deleteOrganisation(ctx, pool, res.OrganisationID) })
 		got := chapterNames(t, ctx, pool, res.OrganisationID)
 		if len(got) != 1 || got[0] != "Yaba" {
 			t.Errorf("chapters = %v; want exactly [Yaba] — surrounding whitespace must not reach the row", got)

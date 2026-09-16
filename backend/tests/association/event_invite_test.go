@@ -166,6 +166,7 @@ func TestInviteToEvent_DropsForeignMemberships(t *testing.T) {
 	if err != nil {
 		t.Fatalf("publish other org: %v", err)
 	}
+	t.Cleanup(func() { deleteOrganisation(ctx, pool, resB.OrganisationID) })
 	_, foreignMembership := seedMember(t, ctx, pool, resB.OrganisationID, "@foreign.test")
 
 	var eventID string

@@ -13,6 +13,7 @@ import (
 	"spotlight/backend/internal/integrations"
 	"spotlight/backend/internal/middleware"
 	platformDB "spotlight/backend/internal/platform/db"
+	"spotlight/backend/internal/platform/realtime"
 	platformRedis "spotlight/backend/internal/platform/redis"
 	"spotlight/backend/internal/repositories"
 	"spotlight/backend/internal/services"
@@ -63,6 +64,10 @@ func NewRouter(cfg config.Config) *gin.Engine {
 	{
 		public := v1.Group("/public")
 		public.GET("/health", health.PublicHealth)
+		// Unauthenticated on purpose: the point is to verify a deploy from OUTSIDE,
+		// which is exactly the situation where you have no credentials to hand.
+		public.GET("/build", health.Build)
+		RegisterPublicMedia(public, cfg)
 
 		auth := v1.Group("/auth")
 		auth.GET("/health", health.GenericHealth)
@@ -203,6 +208,19 @@ func NewRouter(cfg config.Config) *gin.Engine {
 
 		adminGroup := v1.Group("/admin")
 		adminGroup.Use(middleware.RequireAdmin(cfg.AdminAPIKey, cfg.AppEnv))
+		// AUTH-010: this group (menu-counts, leads, chatbot sessions, handoffs,
+		// analytics, competitions, reality-tv dashboard — and, since stemRead/
+		// stemManage are sub-groups of adminGroup created below, the whole STEM
+		// admin tree too) was gated ONLY by RequireAdmin, which is satisfied by
+		// the shared x-admin-api-key. That key is attached unconditionally by
+		// frontend-admin's admin-proxy route to every request it forwards,
+		// authenticated or not — so any anonymous caller through the proxy (or
+		// anyone who obtains the key) reached real PII (lead names/emails/phones,
+		// chatbot transcripts) with no identity check at all. overviewGroup and
+		// adminConsole below already require a real, RBAC-verified admin identity
+		// on top of RequireAdmin (see RequireAdminConsoleRole); this group gets
+		// the same layering now, for the same reason.
+		adminGroup.Use(middleware.RequireAdminConsoleRole(supabase, rbacService))
 		adminGroup.GET("/menu-counts", admin.MenuCounts)
 		adminGroup.GET("/leads", leads.List)
 		adminGroup.PATCH("/leads/:id", leads.UpdateStatus)
@@ -366,10 +384,43 @@ func NewRouter(cfg config.Config) *gin.Engine {
 		}
 	}
 
+	// Shared SSE hub (one instance, one /api/v1/realtime/stream route regardless
+	// of which module publishes) — was previously built locally inside
+	// RegisterMarketplace, which meant marketplace was the only module that
+	// could ever reach the mobile client's one SSE connection. Built here so
+	// events (and any future module) can share it. Nil-Redis-safe (falls back
+	// to in-process fan-out); see platform/realtime.Hub's own doc comment.
+	rtHub := realtime.NewHub(sharedRedis)
+
+	// Server-issued email OTP (Brevo). Always registered so the surface answers
+	// 503-with-a-reason rather than 404; the service inside is nil unless
+	// FEATURE_OTP_EMAIL_ENABLED is on AND the pool, pepper and Brevo credentials
+	// are all present. See otp_routes.go.
+	//
+	// The returned issuer is what makes Register send a code. It is nil when the
+	// feature is closed, and WithOTPIssuer(nil) leaves Register exactly as it
+	// shipped — verification stays entirely with Supabase Auth.
+	if issuer, verifier, setter, signupGate := registerOTPRoutes(r, cfg, sharedPool, supabase, authService, sessionService); issuer != nil {
+		authHandler.
+			WithOTPIssuer(issuer).
+			WithOTPVerifier(verifier).
+			WithPasswordSetter(setter).
+			WithSignupGate(signupGate).
+			// Login step-up is its own flag: server-issued OTP must not silently
+			// become a second factor on every login.
+			WithLoginMFA(cfg.FeatureOTPLoginMFAEnabled)
+
+		// Registration may take the silent admin creation path ONLY now that the
+		// OTP service actually exists. Keyed off the same signal the handler uses,
+		// because branching on the flag alone created accounts with no
+		// confirmation email AND no code — unverifiable forever.
+		services.SetOTPOperational(authService, true)
+	}
+
 	// Finance modules — wired only when the shared pool is present. Returns the
 	// Direct Referral Rewards engine service (nil when flag-off) so Phase-1 revenue
 	// modules wired below (Marketplace) can emit purchase events (PRD §2.5/§7.1).
-	referralRewardsSvc := registerFinanceRoutes(r, cfg, supabase, rbacService, sharedPool)
+	referralRewardsSvc := registerFinanceRoutes(r, cfg, supabase, rbacService, sharedPool, rtHub)
 
 	// Paymax Connect module — wired only when FEATURE_CONNECT_ENABLED + shared pool.
 	registerConnectRoutes(r, cfg, supabase, rbacService, sharedPool)
@@ -389,8 +440,30 @@ func NewRouter(cfg config.Config) *gin.Engine {
 		v1 := r.Group("/api/v1")
 		adminStore := handlers.NewAdminStore(sharedPool)
 		adminConsoleHandler := handlers.NewAdminConsoleHandler(adminStore)
+
+		// Cross-module operations overview for the web console dashboard.
+		// Deliberately on RequireAdmin (the x-admin-api-key gate that
+		// frontend-admin's server-side proxy attaches) rather than the
+		// X-Admin-Role header the mobile admin console uses — the browser
+		// never holds the key, and the proxy is what supplies it.
+		//
+		// AUTH-003: RequireAdmin alone let this leak real financial/
+		// operational data to fully anonymous requests whenever ADMIN_API_KEY
+		// is unset with APP_ENV=development (the documented local-dev
+		// convenience path in admin_auth.go — intentional there, but this
+		// route had no OTHER gate to fall back on when it fires, unlike every
+		// other route in this group). Layering the same real-identity check
+		// used below closes that: the x-admin-api-key gate stays as-is
+		// (untouched, still governs the frontend-admin proxy trust boundary),
+		// and this adds an independent requirement for a real, verified admin
+		// identity that an anonymous request can never satisfy.
+		overviewGroup := v1.Group("/admin")
+		overviewGroup.Use(middleware.RequireAdmin(cfg.AdminAPIKey, cfg.AppEnv))
+		overviewGroup.Use(middleware.RequireAdminConsoleRole(supabase, rbacService))
+		overviewGroup.GET("/overview", handlers.NewAdminOverviewHandler(sharedPool).Overview)
+
 		adminConsole := v1.Group("/admin")
-		adminConsole.Use(middleware.RequireAdminConsoleRole())
+		adminConsole.Use(middleware.RequireAdminConsoleRole(supabase, rbacService))
 		adminConsole.GET("/dashboard", adminConsoleHandler.Dashboard)
 		adminConsole.GET("/users", adminConsoleHandler.GetUsers)
 		adminConsole.GET("/users/:id", adminConsoleHandler.GetUser)
@@ -461,7 +534,7 @@ func NewRouter(cfg config.Config) *gin.Engine {
 	// default off. Reuses the finance double-entry ledger for escrow; app-wiring
 	// injects Agent B's *search.Client via svc.SetSearcher when search is available.
 	if cfg.FeatureMarketplaceEnabled {
-		RegisterMarketplace(r, cfg, supabase, rbacService, sharedPool, sharedRedis, referralRewardsSvc)
+		RegisterMarketplace(r, cfg, supabase, rbacService, sharedPool, sharedRedis, rtHub, referralRewardsSvc)
 	}
 
 	// Paymax Invest · Learn Center (education-first literacy) under /api/v1/learn/*

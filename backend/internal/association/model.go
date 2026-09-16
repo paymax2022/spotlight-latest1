@@ -250,6 +250,13 @@ type AdminCapabilities struct {
 	ManageMembers  bool `json:"manageMembers"`
 	ManageFinance  bool `json:"manageFinance"`
 	ImportMembers  bool `json:"importMembers"`
+	// ManageCommittees is the committee LIFECYCLE — create, rename, delete.
+	// Deliberately narrower than ManageMembers: running a committee's roster
+	// (adding, approving, removing members, setting their role) stays with
+	// ManageMembers so a CHAPTER_ADMIN can do the day-to-day work, while
+	// creating or destroying a committee is reserved to the organisation
+	// owner. Deleting one drops every assoc_committee_members row with it.
+	ManageCommittees bool `json:"manageCommittees"`
 }
 
 type AdminAccess struct {
