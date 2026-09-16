@@ -54,10 +54,27 @@ const { store, creditedKeys, creditCalls, resetFakes } = vi.hoisted(() => {
 
 // ── Minimal chainable fake Supabase query builder ──────────────────────────────
 
+// unescapeLikePattern undoes referrals/service.ts's escapeLikePattern() so
+// this fake can compare against the ORIGINAL value the caller passed to
+// ilike() (that function backslash-escapes %, _ and \ to keep an ilike()
+// call behaving as an exact match rather than a wildcard scan; real Postgres
+// interprets that escaping itself, so the fake has to mirror it here).
+function unescapeLikePattern(pattern: string): string {
+  return pattern.replace(/\\([\\%_])/g, '$1');
+}
+
 function matchFilters(row: Record<string, any>, filters: Array<[string, string, any]>) {
   return filters.every(([col, op, val]) => {
     if (op === 'eq') return row[col] === val;
     if (op === 'in') return Array.isArray(val) && val.includes(row[col]);
+    // REF-008: finance_referral_codes lookups are now case-insensitive
+    // (resolveCodeToReferrer uses .ilike() with an escaped exact pattern
+    // instead of .eq()) — mirror that here rather than exact-matching.
+    if (op === 'ilike') {
+      const rowVal = row[col];
+      if (typeof rowVal !== 'string') return false;
+      return rowVal.toUpperCase() === unescapeLikePattern(val).toUpperCase();
+    }
     return true;
   });
 }
@@ -86,6 +103,10 @@ class FakeQueryBuilder implements PromiseLike<{ data: any; error: any }> {
   }
   eq(col: string, val: any) {
     this.filters.push([col, 'eq', val]);
+    return this;
+  }
+  ilike(col: string, val: any) {
+    this.filters.push([col, 'ilike', val]);
     return this;
   }
   in(col: string, vals: any[]) {

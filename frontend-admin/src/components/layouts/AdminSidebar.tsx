@@ -156,6 +156,12 @@ const navItemsBase: NavItem[] = [
   { label: 'Reassignments', href: '/admin/referral/attribution/reassignments', section: 'Referral', permissions: ['referral.attribution.reassign'] },
   { label: 'Campaigns', href: '/admin/referral/campaigns', section: 'Referral', permissions: ['referral.campaign.view'] },
   { label: 'Rewards & Ledger', href: '/admin/referral/rewards', section: 'Referral', permissions: ['referral.ledger.view'] },
+  // REF-007: System C (flat ₦500 vote-triggered reward, data lives in
+  // frontend-web's referral_events, reached via /api/web-proxy — same Path A
+  // pattern as the Payments & Finance entry below). finance:view is
+  // frontend-web's own permission name (checked server-side there), listed
+  // here only for sidebar visibility consistency with the other Path A entries.
+  { label: 'Vote Rewards (₦500 flat)', href: '/admin/referral/vote-rewards', section: 'Referral', permissions: ['finance:view'] },
   { label: 'Payouts', href: '/admin/referral/finance', section: 'Referral', permissions: ['referral.payout.view'] },
   { label: 'Risk & Fraud', href: '/admin/referral/risk', section: 'Referral', permissions: ['referral.risk.view'] },
   { label: 'Compliance', href: '/admin/referral/compliance', section: 'Referral', permissions: ['referral.compliance.view'] },

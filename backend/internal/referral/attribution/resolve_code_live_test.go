@@ -132,17 +132,11 @@ func TestResolveReferrer_CodeMintedViaReferralLinks_Integration(t *testing.T) {
 // finance_referral_codes table (never touched referral_links) must keep
 // resolving correctly — the fix must not break the path that already worked.
 //
-// The code is seeded directly in upper-case rather than via
-// referrals.Service.GetOrCreateCode. That generator emits lower-case hex
-// (service.go generateCode -> hex.EncodeToString), and attribution's own
-// normalizeCode() upper-cases whatever the signup form sends before resolving
-// (service.go normalizeCode) — a casing mismatch that already exists
-// independently of REF-002 and would make a hex-generated code unresolvable
-// through attribution regardless of this fix. That is a separate, pre-existing
-// defect (flagged out of scope below); this test isolates the REF-002 fix
-// itself — "does the resolver's finance_referral_codes fallback still work" —
-// from that unrelated casing bug by seeding the code the way it would need to
-// look for normalizeCode to find it at all.
+// The code is seeded in upper-case here to isolate the REF-002 fix itself
+// ("does the resolver's finance_referral_codes fallback still work at all")
+// from case handling, which has its own dedicated regression test below
+// (TestResolveReferrer_LegacyFinanceReferralCode_LowercaseStored_Integration,
+// REF-008).
 func TestResolveReferrer_LegacyFinanceReferralCode_StillWorks_Integration(t *testing.T) {
 	ctx := context.Background()
 	pool := liveAttribPool(t)
@@ -175,6 +169,46 @@ func TestResolveReferrer_LegacyFinanceReferralCode_StillWorks_Integration(t *tes
 
 	if att.IsHouse {
 		t.Fatalf("attribution routed to house (risk_flag=%q); want direct attribution to referrer %s", att.RiskFlag, referrer)
+	}
+	if att.ReferrerID != referrer {
+		t.Fatalf("referrer_id = %q, want %q", att.ReferrerID, referrer)
+	}
+}
+
+// TestResolveReferrer_LegacyFinanceReferralCode_LowercaseStored_Integration is
+// the REF-008 regression: normalizeCode() (service.go) upper-cases whatever
+// the signup form sends before calling CodeResolver.ResolveCodeToReferrer, but
+// the legacy generator that used to write into finance_referral_codes emitted
+// lower-case hex — so a code generated before the REF-004/REF-008 fix landed
+// (and any code stored in a case other than what was typed) previously never
+// matched and always fell through to the house with RiskInvalidCode. The
+// resolution-side fix (case-insensitive match against finance_referral_codes)
+// must make this resolve correctly regardless of the stored row's case.
+func TestResolveReferrer_LegacyFinanceReferralCode_LowercaseStored_Integration(t *testing.T) {
+	ctx := context.Background()
+	pool := liveAttribPool(t)
+	t.Cleanup(pool.Close)
+
+	referrer := seedAttribUser(t, pool)
+	referred := seedAttribUser(t, pool)
+
+	// Lower-case, exactly the shape the pre-fix legacy generator produced.
+	const legacyCode = "legacy2"
+	mustAttribExec(t, pool,
+		`INSERT INTO finance_referral_codes (user_id, code) VALUES ($1,$2)`,
+		referrer, legacyCode)
+
+	svc := newLiveAttributionService(pool)
+	// Entered in a different case than stored — normalizeCode() will upper-case
+	// this before it ever reaches the resolver.
+	att, err := svc.ResolveReferrer(ctx, referred, attribution.ResolveOpts{CodeEntered: "LEGACY2"})
+	if err != nil {
+		t.Fatalf("ResolveReferrer: %v", err)
+	}
+
+	if att.IsHouse {
+		t.Fatalf("attribution routed to house (risk_flag=%q); want direct attribution to referrer %s — "+
+			"a lowercase-stored legacy code must still resolve (REF-008)", att.RiskFlag, referrer)
 	}
 	if att.ReferrerID != referrer {
 		t.Fatalf("referrer_id = %q, want %q", att.ReferrerID, referrer)

@@ -30,6 +30,7 @@ vi.mock('@/src/server/wallet/service', () => ({
 import {
   resolveCodeToReferrer,
   processReferralReward,
+  generateCode,
 } from '@/src/server/referrals/service';
 import { attributeSignup } from '@/src/server/referrals/attribution';
 import { createAdminClient } from '@/lib/supabase/server';
@@ -148,14 +149,45 @@ describe('processReferralReward', () => {
 describe('resolveCodeToReferrer', () => {
   beforeEach(() => vi.clearAllMocks());
 
-  it('normalizes the code to uppercase and trims whitespace before lookup', async () => {
+  // REF-008: lookup is now case-INSENSITIVE via `.ilike()` (not an exact-case
+  // `.eq()`), because rows may be stored in whatever case they were generated
+  // in before the two generators writing into finance_referral_codes were
+  // unified onto one uppercase-only format (REF-004). Only whitespace is
+  // trimmed client-side; case folding happens in Postgres via ILIKE.
+  it('trims whitespace and looks up case-insensitively via ilike', async () => {
     const { mock, maybySingle } = setupMock();
     maybySingle.mockResolvedValueOnce({ data: { user_id: REFERRER_ID }, error: null });
 
     const result = await resolveCodeToReferrer('  spot-abc123  ');
 
     expect(result).toBe(REFERRER_ID);
-    expect(mock.eq).toHaveBeenCalledWith('code', 'SPOT-ABC123');
+    expect(mock.ilike).toHaveBeenCalledWith('code', 'spot-abc123');
+    expect(mock.eq).not.toHaveBeenCalledWith('code', expect.anything());
+  });
+
+  // A code generated in a DIFFERENT case than what the user types must still
+  // resolve — this is the exact REF-008 scenario (a legacy lowercase-hex code
+  // typed back in uppercase, or vice versa).
+  it('resolves a code regardless of case mismatch between stored and typed casing', async () => {
+    const { mock, maybySingle } = setupMock();
+    maybySingle.mockResolvedValueOnce({ data: { user_id: REFERRER_ID }, error: null });
+
+    const result = await resolveCodeToReferrer('AbCd3');
+
+    expect(result).toBe(REFERRER_ID);
+    expect(mock.ilike).toHaveBeenCalledWith('code', 'AbCd3');
+  });
+
+  // `%`/`_`/`\` are ILIKE wildcards/escape chars in Postgres; a code containing
+  // one must be escaped so the lookup stays an exact match, not a pattern scan
+  // that could hit unrelated rows.
+  it('escapes ILIKE wildcard characters so lookup behaves as an exact match', async () => {
+    const { mock, maybySingle } = setupMock();
+    maybySingle.mockResolvedValueOnce({ data: null, error: null });
+
+    await resolveCodeToReferrer('AB_CD%EF\\GH');
+
+    expect(mock.ilike).toHaveBeenCalledWith('code', 'AB\\_CD\\%EF\\\\GH');
   });
 
   it('returns null when no code matches', async () => {
@@ -164,6 +196,48 @@ describe('resolveCodeToReferrer', () => {
 
     const result = await resolveCodeToReferrer('SPOT-ZZZZZZ');
     expect(result).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// generateCode (REF-004)
+//
+// Must produce the EXACT same shape as backend/internal/finance/referrals/
+// code.go's GenerateCode(): 5 characters, uppercase, drawn only from
+// 'ABCDEFGHJKMNPQRTUVWXY346789' (A-Z + digits, minus every confusable
+// character: O/0, I/1, L, S/5, Z/2). No "SPOT-" prefix — that was this
+// generator's half of the REF-004 format mismatch.
+// ---------------------------------------------------------------------------
+
+describe('generateCode', () => {
+  const ALPHABET = 'ABCDEFGHJKMNPQRTUVWXY346789';
+
+  it('produces a 5-character code drawn only from the shared alphabet', () => {
+    for (let i = 0; i < 200; i++) {
+      const code = generateCode();
+      expect(code).toHaveLength(5);
+      for (const ch of code) {
+        expect(ALPHABET).toContain(ch);
+      }
+    }
+  });
+
+  it('never emits the old SPOT- prefix or a confusable character', () => {
+    const disallowed = 'OIL SZ012-'; // confusables + space + the old prefix separator
+    for (let i = 0; i < 200; i++) {
+      const code = generateCode();
+      expect(code.startsWith('SPOT')).toBe(false);
+      for (const ch of disallowed) {
+        expect(code).not.toContain(ch);
+      }
+    }
+  });
+
+  it('is uppercase-only', () => {
+    for (let i = 0; i < 50; i++) {
+      const code = generateCode();
+      expect(code).toBe(code.toUpperCase());
+    }
   });
 });
 

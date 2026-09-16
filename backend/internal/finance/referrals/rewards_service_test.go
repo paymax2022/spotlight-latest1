@@ -18,6 +18,7 @@ package referrals_test
 import (
 	"context"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -528,6 +529,117 @@ func TestResolveCodeToReferrer_UnknownCode_Errors_Integration(t *testing.T) {
 	}
 	if got != "" {
 		t.Fatalf("ResolveCodeToReferrer(unknown) referrerID = %q, want empty", got)
+	}
+}
+
+// ============================================================================
+// REF-004 / REF-008 — shared code format across the two generators writing
+// into finance_referral_codes, and case-insensitive resolution of whatever
+// case a legacy row happens to be stored in.
+// ============================================================================
+
+// referralCodeAlphabet mirrors codeAlphabet in code.go — duplicated here
+// (rather than exported test-only) because the point of this test is to
+// verify the LEGACY Service's generateCode delegates to the exact same
+// generator referral_links uses, not to re-test GenerateCode() itself (that
+// is code_test.go's job).
+const referralCodeAlphabet = "ABCDEFGHJKMNPQRTUVWXY346789"
+
+// TestGetOrCreateCode_Legacy_MatchesSharedAlphabetFormat_Integration is the
+// REF-004 regression: the legacy Service used to generate 8 lowercase hex
+// characters via its own generateCode(), a format incompatible with both
+// referral_links (5 chars, uppercase, curated alphabet) and the frontend's
+// then-SPOT-XXXXXX format — three shapes writing into/reading from the same
+// finance_referral_codes.code column. All issuers must now agree.
+func TestGetOrCreateCode_Legacy_MatchesSharedAlphabetFormat_Integration(t *testing.T) {
+	ctx := context.Background()
+	pool := liveRewardsPool(t)
+	t.Cleanup(pool.Close)
+	_, fin := newRewardSvc(pool)
+	legacySvc := referrals.NewService(pool, fin)
+
+	referrer := seedRewardUser(t, pool)
+	code, err := legacySvc.GetOrCreateCode(ctx, referrer)
+	if err != nil {
+		t.Fatalf("GetOrCreateCode: %v", err)
+	}
+
+	if got := len([]rune(code.Code)); got != 5 {
+		t.Fatalf("legacy generated code %q is %d characters, want 5 (the referral_links shape)", code.Code, got)
+	}
+	if code.Code != strings.ToUpper(code.Code) {
+		t.Fatalf("legacy generated code %q is not uppercase-only", code.Code)
+	}
+	for _, r := range code.Code {
+		if !strings.ContainsRune(referralCodeAlphabet, r) {
+			t.Fatalf("legacy generated code %q contains %q, not in the shared alphabet %q", code.Code, string(r), referralCodeAlphabet)
+		}
+	}
+}
+
+// TestResolveCodeToReferrer_LegacyService_CaseInsensitive_Integration is the
+// REF-008 regression on the LEGACY Service.ResolveCodeToReferrer itself
+// (distinct from RewardService's two-table resolver exercised elsewhere in
+// this file): a code stored in lowercase — exactly what the pre-fix
+// generateCode() used to emit — must still resolve when looked up in a
+// different case, mirroring what internal/referral/attribution's
+// normalizeCode() does to every code entered at signup.
+func TestResolveCodeToReferrer_LegacyService_CaseInsensitive_Integration(t *testing.T) {
+	ctx := context.Background()
+	pool := liveRewardsPool(t)
+	t.Cleanup(pool.Close)
+	_, fin := newRewardSvc(pool)
+	legacySvc := referrals.NewService(pool, fin)
+
+	referrer := seedRewardUser(t, pool)
+	const storedLowercase = "abcde"
+	mustRewardExec(t, pool,
+		`INSERT INTO finance_referral_codes (user_id, code) VALUES ($1,$2)`,
+		referrer, storedLowercase)
+
+	// Looked up in UPPERCASE — the shape normalizeCode() always produces.
+	got, err := legacySvc.ResolveCodeToReferrer(ctx, "ABCDE")
+	if err != nil {
+		t.Fatalf("ResolveCodeToReferrer(uppercase lookup of lowercase-stored code): %v", err)
+	}
+	if got != referrer {
+		t.Fatalf("ResolveCodeToReferrer(%q) = %q, want %q", "ABCDE", got, referrer)
+	}
+
+	// Looked up in the ORIGINAL stored case too — must still work.
+	got2, err := legacySvc.ResolveCodeToReferrer(ctx, storedLowercase)
+	if err != nil {
+		t.Fatalf("ResolveCodeToReferrer(original case): %v", err)
+	}
+	if got2 != referrer {
+		t.Fatalf("ResolveCodeToReferrer(%q) = %q, want %q", storedLowercase, got2, referrer)
+	}
+}
+
+// TestResolveCodeToReferrer_RewardService_LegacyLowercaseCode_Integration is
+// the REF-008 regression on the production wiring: internal/app/referral_routes.go
+// wires RewardService (not the legacy Service) as attribution's CodeResolver,
+// so its finance_referral_codes fallback — resolveCode()'s q2 — is the query
+// that actually runs at signup. A lowercase-stored legacy code must resolve
+// through it too.
+func TestResolveCodeToReferrer_RewardService_LegacyLowercaseCode_Integration(t *testing.T) {
+	ctx := context.Background()
+	pool := liveRewardsPool(t)
+	t.Cleanup(pool.Close)
+	svc, _ := newRewardSvc(pool)
+
+	referrer := seedRewardUser(t, pool)
+	const storedLowercase = "wxy34"
+	mustRewardExec(t, pool,
+		`INSERT INTO finance_referral_codes (user_id, code) VALUES ($1,$2)`,
+		referrer, storedLowercase)
+
+	got, err := svc.ResolveCodeToReferrer(ctx, "WXY34")
+	if err != nil {
+		t.Fatalf("ResolveCodeToReferrer(uppercase lookup of lowercase-stored legacy code): %v", err)
+	}
+	if got != referrer {
+		t.Fatalf("ResolveCodeToReferrer(%q) = %q, want %q", "WXY34", got, referrer)
 	}
 }
 

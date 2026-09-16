@@ -410,7 +410,18 @@ func (s *RewardService) Attribute(ctx context.Context, referredUserID, code stri
 // resolveCode maps a code to a referrer, checking the engine's referral_links
 // first, then falling back to the legacy finance_referral_codes seed so codes
 // issued by the old module still attribute.
+//
+// referral_links is looked up by exact case: GetOrCreateLink/GenerateCode
+// only ever issue uppercase codes there, so an exact match is correct and
+// this path is left untouched (REF-008 does not affect it).
+//
+// The legacy finance_referral_codes fallback is looked up case-INSENSITIVELY
+// (REF-008): its rows may be stored in whatever case they were generated in
+// before the two generators writing into that table were unified (see
+// internal/finance/referrals/code.go and frontend-web's referrals/service.ts),
+// so a case-sensitive match would leave already-issued codes unresolvable.
 func (s *RewardService) resolveCode(ctx context.Context, code string) (string, error) {
+	code = strings.TrimSpace(code)
 	const q1 = `SELECT referrer_id FROM referral_links WHERE code=$1`
 	var referrerID string
 	err := s.db.QueryRow(ctx, q1, code).Scan(&referrerID)
@@ -420,7 +431,7 @@ func (s *RewardService) resolveCode(ctx context.Context, code string) (string, e
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return "", fmt.Errorf("referrals: resolve code: %w", err)
 	}
-	const q2 = `SELECT user_id FROM finance_referral_codes WHERE code=$1`
+	const q2 = `SELECT user_id FROM finance_referral_codes WHERE UPPER(code)=UPPER($1)`
 	err = s.db.QueryRow(ctx, q2, code).Scan(&referrerID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", nil
