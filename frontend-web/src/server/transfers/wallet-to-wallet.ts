@@ -17,6 +17,7 @@ import { createAdminClient } from '@/lib/supabase/server';
 import { ApiError } from '@/src/lib/api/responses';
 import { getOrCreateAccount } from '@/src/server/wallet/service';
 import { enforceWalletLimit } from '@/src/server/tiers/service';
+import { requireTransactionPin } from '@/src/server/transfers/pin-guard';
 
 // ---------------------------------------------------------------------------
 // Fee schedule (PRD §18.2)
@@ -174,6 +175,10 @@ export interface WalletToWalletInput {
   amountKobo: number;
   idempotencyKey: string;
   narration?: string;
+  /** Raw transaction PIN, verified via requireTransactionPin() before any debit. */
+  pin: string;
+  /** Original request's Authorization header, forwarded to the Go PIN-verify endpoint. */
+  authHeader: string | null;
 }
 
 export interface WalletTransferResult {
@@ -235,6 +240,12 @@ export async function initiateWalletToWallet(
       createdAt: row.created_at,
     };
   }
+
+  // Transaction PIN — fail-closed, before any money movement (WAL-001 fix).
+  // Not checked above the idempotency-replay branch: a replay returns the
+  // already-completed transfer rather than executing a new debit, so it does
+  // not need a fresh PIN, matching the Go-native transfer paths' behavior.
+  await requireTransactionPin(input.authHeader, input.pin);
 
   // Resolve recipient
   const recipient = await resolvePaymaxUser(input.recipientIdentifier, input.senderId);

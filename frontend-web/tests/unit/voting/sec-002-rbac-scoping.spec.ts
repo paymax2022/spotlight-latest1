@@ -30,7 +30,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 vi.mock('@/lib/supabase/server', () => ({ createClient: vi.fn(), createAdminClient: vi.fn() }));
 
 import { assertAdminPermission } from '@/src/server/admin/auth';
-import { createClient } from '@/lib/supabase/server';
+import { createClient, createAdminClient } from '@/lib/supabase/server';
 import { hasPermission, parseAdminRole } from '@/src/server/admin/rbac';
 
 function jwtRequest(headers: Record<string, string> = {}) {
@@ -53,6 +53,14 @@ function mockSupabaseUser(role: string | null) {
     maybeSingle,
   };
   vi.mocked(createClient).mockResolvedValue(client as any);
+  // assertAdminPermission looks up user_profiles.role via the service-role
+  // client (createAdminClient), not the cookie/RLS-scoped one — see WAL-001 /
+  // src/server/admin/auth.ts: the RLS-scoped query silently returned zero
+  // rows for a Bearer-token caller with no session cookie, so the DB role
+  // was NEVER actually consulted for real (non-cookie) admin callers. Mock
+  // both clients identically so this suite keeps exercising the real
+  // (now-correct) code path instead of a stale one.
+  vi.mocked(createAdminClient).mockReturnValue(client as any);
   return client;
 }
 
