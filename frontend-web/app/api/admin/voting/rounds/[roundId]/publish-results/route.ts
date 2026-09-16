@@ -60,7 +60,7 @@ export async function POST(request: Request, ctx: RouteContext) {
     // contest_prizes keys off connect_contest_id, which shares round.contest_id's
     // value here — see the module header note above.
     const { data: prizeRows, error: prizesError } = await supabase
-      .from('contest_prizes')
+      .from('voting_contest_prizes')
       .select('id, position')
       .eq('connect_contest_id', contestId);
 
@@ -102,7 +102,7 @@ export async function POST(request: Request, ctx: RouteContext) {
     const prizeIdToDescription = new Map<string, string>();
     if (prizeRows && prizeRows.length > 0) {
       const { data: fullPrizeRows } = await supabase
-        .from('contest_prizes')
+        .from('voting_contest_prizes')
         .select('id, prize_description')
         .eq('connect_contest_id', contestId);
       for (const row of fullPrizeRows ?? []) {
@@ -110,9 +110,22 @@ export async function POST(request: Request, ctx: RouteContext) {
       }
     }
 
+    const contestantIds = Array.from(new Set(resultRows.map((r) => r.contestant_id).filter(Boolean)));
+    const contestantIdToName = new Map<string, string>();
+    if (contestantIds.length > 0) {
+      const { data: contestantRows } = await supabase
+        .from('contestants')
+        .select('id, name')
+        .in('id', contestantIds);
+      for (const row of contestantRows ?? []) {
+        contestantIdToName.set((row as any).id, (row as any).name);
+      }
+    }
+
     const results = resultRows
       .map((row) => ({
         contestantId: row.contestant_id,
+        contestantName: contestantIdToName.get(row.contestant_id) ?? null,
         rank: row.rank,
         totalConfirmedVotes: Number(row.total_confirmed_votes),
         paidVotes: Number(row.paid_votes),

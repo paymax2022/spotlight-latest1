@@ -17,7 +17,7 @@ export async function GET(request: Request) {
 
     const supabase = createAdminClient();
     const { data, error } = await supabase
-      .from('contest_prizes')
+      .from('voting_contest_prizes')
       .select('*')
       .eq('connect_contest_id', connectContestId)
       .order('position', { ascending: true });
@@ -60,7 +60,7 @@ export async function POST(request: Request) {
     const supabase = createAdminClient();
 
     const { data: existing } = await supabase
-      .from('contest_prizes')
+      .from('voting_contest_prizes')
       .select('id')
       .eq('connect_contest_id', body.connectContestId)
       .eq('position', body.position)
@@ -71,7 +71,7 @@ export async function POST(request: Request) {
     }
 
     const { data: inserted, error } = await supabase
-      .from('contest_prizes')
+      .from('voting_contest_prizes')
       .insert({
         connect_contest_id: body.connectContestId,
         position: body.position,

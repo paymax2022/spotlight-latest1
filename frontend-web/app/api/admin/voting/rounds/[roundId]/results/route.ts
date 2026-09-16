@@ -32,7 +32,7 @@ export async function GET(request: Request, ctx: RouteContext) {
     const prizeIdToDescription = new Map<string, string>();
     if (prizeIds.length > 0) {
       const { data: prizeRows } = await supabase
-        .from('contest_prizes')
+        .from('voting_contest_prizes')
         .select('id, prize_description')
         .in('id', prizeIds);
       for (const row of prizeRows ?? []) {
@@ -40,8 +40,21 @@ export async function GET(request: Request, ctx: RouteContext) {
       }
     }
 
+    const contestantIds = Array.from(new Set(rows.map((r: any) => r.contestant_id).filter(Boolean)));
+    const contestantIdToName = new Map<string, string>();
+    if (contestantIds.length > 0) {
+      const { data: contestantRows } = await supabase
+        .from('contestants')
+        .select('id, name')
+        .in('id', contestantIds);
+      for (const row of contestantRows ?? []) {
+        contestantIdToName.set((row as any).id, (row as any).name);
+      }
+    }
+
     const results = rows.map((row: any) => ({
       contestantId: row.contestant_id,
+      contestantName: contestantIdToName.get(row.contestant_id) ?? null,
       rank: row.rank,
       totalConfirmedVotes: Number(row.total_confirmed_votes),
       paidVotes: Number(row.paid_votes),

@@ -205,7 +205,7 @@ function ContestResultsInner() {
                   {results.results.map((row) => (
                     <tr key={row.contestantId}>
                       <td style={tdCell}>{row.rank}</td>
-                      <td style={tdCell}>{row.contestantId}</td>
+                      <td style={tdCell}>{row.contestantName || row.contestantId}</td>
                       <td style={tdCell}>{row.totalConfirmedVotes.toLocaleString('en-NG')}</td>
                       <td style={tdCell}>{row.paidVotes.toLocaleString('en-NG')}</td>
                       <td style={tdCell}>{row.prizeDescription || '—'}</td>

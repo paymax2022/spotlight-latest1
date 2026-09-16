@@ -75,7 +75,7 @@ function makeSupabase(opts: {
 
   const client: any = {
     from: (table: string) => {
-      if (table === 'contest_prizes') return prizesChain();
+      if (table === 'voting_contest_prizes') return prizesChain();
       throw new Error(`Unexpected table: ${table}`);
     },
   };

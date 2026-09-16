@@ -34,6 +34,7 @@ function makeSupabase(opts: {
   prizeRows?: any[];
   insertedRows?: any[];
   rpcError?: any;
+  contestantRows?: any[];
 }) {
   const calls: any = {};
 
@@ -54,6 +55,14 @@ function makeSupabase(opts: {
     return chain;
   }
 
+  function contestantsChain() {
+    const chain: any = {
+      select: () => chain,
+      in: () => Promise.resolve({ data: opts.contestantRows ?? [], error: null }),
+    };
+    return chain;
+  }
+
   const rpc = vi.fn().mockImplementation((name: string, args: any) => {
     calls.rpcName = name;
     calls.rpcArgs = args;
@@ -64,7 +73,8 @@ function makeSupabase(opts: {
   const client: any = {
     from: (table: string) => {
       if (table === 'voting_rounds') return roundsChain();
-      if (table === 'contest_prizes') return prizesChain();
+      if (table === 'voting_contest_prizes') return prizesChain();
+      if (table === 'contestants') return contestantsChain();
       throw new Error(`Unexpected table: ${table}`);
     },
     rpc,
@@ -130,7 +140,12 @@ describe('AD-011/VI-010: publish-results', () => {
       { contestant_id: 'enr-C', rank: 3, total_confirmed_votes: 10, paid_votes: 0, prize_id: null },
     ];
 
-    const { client, calls } = makeSupabase({ round, prizeRows, insertedRows });
+    const contestantRows = [
+      { id: 'enr-A', name: 'Contestant A' },
+      { id: 'enr-B', name: 'Contestant B' },
+      { id: 'enr-C', name: 'Contestant C' },
+    ];
+    const { client, calls } = makeSupabase({ round, prizeRows, insertedRows, contestantRows });
     vi.mocked(createAdminClient).mockReturnValue(client);
     vi.mocked(bridgedRecomputeRanksForResults).mockResolvedValue(ranks);
 
@@ -149,6 +164,7 @@ describe('AD-011/VI-010: publish-results', () => {
     expect(body.tieBreakRule).toBe('total_confirmed_votes DESC, paid_votes DESC, last_vote_at ASC');
     expect(body.results).toHaveLength(3);
     expect(body.results[2].prizeId).toBeNull();
+    expect(body.results[0].contestantName).toBe('Contestant A');
 
     expect(appendAuditLog).toHaveBeenCalledWith(
       expect.objectContaining({

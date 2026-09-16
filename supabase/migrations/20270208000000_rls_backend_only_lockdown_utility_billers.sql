@@ -9,16 +9,16 @@
 -- from querying this table directly if RLS policy logic is ever written.
 -- Service role ALWAYS bypasses RLS, so the Go backend is unaffected.
 
--- Check if RLS is already enabled to avoid redundant operations.
-DO $$
-BEGIN
-  -- Enable RLS if not already enabled.
-  IF NOT (
-    SELECT row_security
-    FROM information_schema.tables
-    WHERE table_schema = 'public' AND table_name = 'utility_billers'
-  ) THEN
-    ALTER TABLE public.utility_billers ENABLE ROW LEVEL SECURITY;
-  END IF;
-END
-$$;
+-- ENABLE ROW LEVEL SECURITY is itself already idempotent (Postgres does not
+-- error when RLS is already enabled on a table), so no existence guard is
+-- needed. The previous guard here queried a `row_security` column on
+-- information_schema.tables that does not exist in Postgres, which made
+-- this statement fail unconditionally (SQLSTATE 42703) before the ALTER
+-- ever ran — breaking any fresh replay of the migration chain (`supabase db
+-- reset`). Fixed in place rather than via a later forward-fixing migration,
+-- since a later migration cannot unblock an earlier failure in replay
+-- order, and no environment could ever have gotten past the broken
+-- statement to begin with (a DO block's error fails the whole migration
+-- transaction — there is no "already applied with the old behavior"
+-- environment to preserve compatibility with).
+ALTER TABLE public.utility_billers ENABLE ROW LEVEL SECURITY;

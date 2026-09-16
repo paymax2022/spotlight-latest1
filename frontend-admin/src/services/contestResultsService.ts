@@ -31,6 +31,7 @@ export type VotingRound = {
 
 export type ContestResultRow = {
   contestantId: string;
+  contestantName: string | null;
   rank: number;
   totalConfirmedVotes: number;
   paidVotes: number;
@@ -91,6 +92,7 @@ export async function listVotingRounds(contestId: string): Promise<VotingRound[]
 function toResultRow(row: Record<string, unknown>): ContestResultRow {
   return {
     contestantId: String(pick(row, 'contestantId', 'contestant_id') ?? ''),
+    contestantName: (pick(row, 'contestantName', 'contestant_name') as string | null) ?? null,
     rank: Number(row.rank ?? 0),
     totalConfirmedVotes: Number(pick(row, 'totalConfirmedVotes', 'total_confirmed_votes') ?? 0),
     paidVotes: Number(pick(row, 'paidVotes', 'paid_votes') ?? 0),

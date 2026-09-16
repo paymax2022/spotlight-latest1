@@ -1,6 +1,19 @@
 -- UAT Batch 6 — CS-010 / VI-009 / AD-011 / VI-010
 --
--- 1. contest_prizes — structured per-position prizes for a contest (CS-010).
+-- NAMING NOTE (fixed before this migration was ever successfully applied
+-- anywhere): originally named this table `contest_prizes`, which collides
+-- with a pre-existing, differently-shaped `public.contest_prizes` table from
+-- 20260405300000_platform_enhancements.sql (title/description/value_ngn/
+-- currency/status/awarded_to, keyed off the legacy public.contests). A
+-- `CREATE TABLE IF NOT EXISTS` against that name silently no-ops against the
+-- old table instead of creating the new one, which only surfaced when a
+-- full fresh `supabase db reset` reached the next statement (an index on a
+-- column the old table doesn't have) and failed loudly. Renamed to
+-- `voting_contest_prizes` to avoid the collision — verified via a real fresh
+-- local replay, not just mocked unit tests, before this migration was ever
+-- pushed as fixed.
+--
+-- 1. voting_contest_prizes — structured per-position prizes for a contest (CS-010).
 --    Keys off public.connect_contests, NOT the legacy public.contests table —
 --    same pattern established in 20270212000000_contest_templates_connect_bridge.sql,
 --    because registrations/voting resolve contests via connect_contests, not
@@ -21,12 +34,12 @@
 -- 20261223000000_connect_contests_bridge.sql's forward sync trigger and
 -- 20270129000000_mirror_connect_contests_to_legacy.sql's reverse mirror, both
 -- of which preserve `id` across the two tables) — the publish-results route
--- relies on that identity to look up contest_prizes by connect_contest_id
+-- relies on that identity to look up voting_contest_prizes by connect_contest_id
 -- using round.contest_id directly, without a separate resolver.
 --
 -- Additive only: no DROP, no renames, no type narrowing.
 
-CREATE TABLE IF NOT EXISTS public.contest_prizes (
+CREATE TABLE IF NOT EXISTS public.voting_contest_prizes (
   id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   connect_contest_id  UUID NOT NULL REFERENCES public.connect_contests(id) ON DELETE CASCADE,
   position            INT NOT NULL CHECK (position > 0),
@@ -38,8 +51,8 @@ CREATE TABLE IF NOT EXISTS public.contest_prizes (
   UNIQUE (connect_contest_id, position)
 );
 
-CREATE INDEX IF NOT EXISTS idx_contest_prizes_connect_contest_id
-  ON public.contest_prizes (connect_contest_id);
+CREATE INDEX IF NOT EXISTS idx_voting_contest_prizes_connect_contest_id
+  ON public.voting_contest_prizes (connect_contest_id);
 
 CREATE TABLE IF NOT EXISTS public.voting_round_results (
   id                      UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -49,7 +62,7 @@ CREATE TABLE IF NOT EXISTS public.voting_round_results (
   rank                    INT NOT NULL,
   total_confirmed_votes   INT NOT NULL,
   paid_votes              INT NOT NULL,
-  prize_id                UUID REFERENCES public.contest_prizes(id),
+  prize_id                UUID REFERENCES public.voting_contest_prizes(id),
   published_at            TIMESTAMPTZ NOT NULL DEFAULT now(),
   published_by            UUID REFERENCES public.user_profiles(id),
   UNIQUE (round_id, contestant_id)
@@ -140,12 +153,12 @@ COMMENT ON FUNCTION public.publish_voting_round_results(UUID, JSONB, UUID) IS
 -- ---------------------------------------------------------------------------
 -- RLS
 -- ---------------------------------------------------------------------------
-ALTER TABLE public.contest_prizes ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.voting_contest_prizes ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.voting_round_results ENABLE ROW LEVEL SECURITY;
 
-DROP POLICY IF EXISTS "admin_manage_contest_prizes" ON public.contest_prizes;
-CREATE POLICY "admin_manage_contest_prizes"
-ON public.contest_prizes FOR ALL TO authenticated
+DROP POLICY IF EXISTS "admin_manage_voting_contest_prizes" ON public.voting_contest_prizes;
+CREATE POLICY "admin_manage_voting_contest_prizes"
+ON public.voting_contest_prizes FOR ALL TO authenticated
 USING (
   EXISTS (SELECT 1 FROM public.user_profiles WHERE id = auth.uid() AND role = 'admin')
 )
@@ -153,9 +166,9 @@ WITH CHECK (
   EXISTS (SELECT 1 FROM public.user_profiles WHERE id = auth.uid() AND role = 'admin')
 );
 
-DROP POLICY IF EXISTS "public_read_contest_prizes" ON public.contest_prizes;
-CREATE POLICY "public_read_contest_prizes"
-ON public.contest_prizes FOR SELECT TO public
+DROP POLICY IF EXISTS "public_read_voting_contest_prizes" ON public.voting_contest_prizes;
+CREATE POLICY "public_read_voting_contest_prizes"
+ON public.voting_contest_prizes FOR SELECT TO public
 USING (true);
 
 -- voting_round_results: admin (and service-role, which bypasses RLS entirely

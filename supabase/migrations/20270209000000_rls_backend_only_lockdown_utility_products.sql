@@ -9,16 +9,9 @@
 -- from querying this table directly if RLS policy logic is ever written.
 -- Service role ALWAYS bypasses RLS, so the Go backend is unaffected.
 
--- Check if RLS is already enabled to avoid redundant operations.
-DO $$
-BEGIN
-  -- Enable RLS if not already enabled.
-  IF NOT (
-    SELECT row_security
-    FROM information_schema.tables
-    WHERE table_schema = 'public' AND table_name = 'utility_products'
-  ) THEN
-    ALTER TABLE public.utility_products ENABLE ROW LEVEL SECURITY;
-  END IF;
-END
-$$;
+-- See 20270208000000_rls_backend_only_lockdown_utility_billers.sql for why
+-- this is a direct, unguarded call: ENABLE ROW LEVEL SECURITY is already
+-- idempotent, and the previous guard's `information_schema.tables.row_security`
+-- reference does not exist in Postgres, which broke fresh replay
+-- unconditionally rather than only when RLS was already enabled.
+ALTER TABLE public.utility_products ENABLE ROW LEVEL SECURITY;

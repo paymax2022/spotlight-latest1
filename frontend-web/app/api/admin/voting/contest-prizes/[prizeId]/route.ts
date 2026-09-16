@@ -17,7 +17,7 @@ export async function PATCH(request: Request, ctx: RouteContext) {
 
     const supabase = createAdminClient();
     const { data: existing, error: fetchError } = await supabase
-      .from('contest_prizes')
+      .from('voting_contest_prizes')
       .select('id')
       .eq('id', prizeId)
       .maybeSingle();
@@ -48,7 +48,7 @@ export async function PATCH(request: Request, ctx: RouteContext) {
     updates.updated_at = new Date().toISOString();
 
     const { data: updated, error: updateError } = await supabase
-      .from('contest_prizes')
+      .from('voting_contest_prizes')
       .update(updates)
       .eq('id', prizeId)
       .select('*')
@@ -70,7 +70,7 @@ export async function DELETE(request: Request, ctx: RouteContext) {
 
     const supabase = createAdminClient();
     const { data: existing, error: fetchError } = await supabase
-      .from('contest_prizes')
+      .from('voting_contest_prizes')
       .select('id')
       .eq('id', prizeId)
       .maybeSingle();
@@ -78,7 +78,7 @@ export async function DELETE(request: Request, ctx: RouteContext) {
     if (fetchError) return errorResponse(`Failed to load prize: ${fetchError.message}`, 500);
     if (!existing) return errorResponse('Prize not found', 404);
 
-    const { error: deleteError } = await supabase.from('contest_prizes').delete().eq('id', prizeId);
+    const { error: deleteError } = await supabase.from('voting_contest_prizes').delete().eq('id', prizeId);
     if (deleteError) return errorResponse(`Failed to delete prize: ${deleteError.message}`, 500);
 
     return successResponse({ success: true });
