@@ -64,7 +64,7 @@ Living record for the full go-live UAT engagement. Never delete rows. Status is 
 | 4 | Contest | ✅ Complete & Signed Off (16 closed / 0 open, 2 accepted exceptions) |
 | 5 | Crowdfunding | ⬜ Not Started |
 | 6 | Insurance | ⬜ Not Started |
-| 7 | Wallet | ⬜ Not Started |
+| 7 | Wallet | 🚧 In Progress — Phase 1 (discovery) + Phase 2 (test plan, `docs/qa/wallet-test-plan.md`, 44 cases) done; Phase 3 (execution) not started. Real gap flagged in discovery, not yet confirmed: no PIN set/change UI located anywhere in mobile, despite server-side PIN-gating on debits (WJ-007/WJ-008) |
 | 8 | Refer & Earn | ⬜ Not Started |
 | 9 | Association | ⬜ Not Started |
 | 10 | FX Exchange | ⬜ Not Started |
