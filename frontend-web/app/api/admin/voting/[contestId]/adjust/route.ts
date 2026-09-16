@@ -25,6 +25,13 @@ export async function POST(
     if (!body.adjustmentType) return errorResponse('adjustmentType is required', 400);
     if (!body.voteQuantity || body.voteQuantity <= 0) return errorResponse('voteQuantity must be > 0', 400);
     if (!body.reason || body.reason.trim().length < 5) return errorResponse('A reason of at least 5 characters is required', 400);
+    if (!['add', 'subtract', 'reverse'].includes(body.adjustmentType)) {
+      // Previously any unrecognized adjustmentType fell through both branches
+      // below, leaving `delta` empty — incrementVoteTotals ran as a no-op and
+      // the route still returned 200 with beforeTotal === afterTotal, reporting
+      // "success" for an adjustment that changed nothing.
+      return errorResponse('adjustmentType must be one of: add, subtract, reverse', 400);
+    }
 
     const supabase = createAdminClient();
 

@@ -21,7 +21,7 @@ export default function ContestantGridScreen() {
   const [search, setSearch] = useState('');
 
   const { data: contest } = useContestDetails(contestId ?? '');
-  const { data, isLoading, refetch, isRefetching } = useContestants(contestId ?? '', { search });
+  const { data, isLoading, isError, refetch, isRefetching } = useContestants(contestId ?? '', { search });
   // Live: an admin approving an entry adds a contestant here without a reload.
   useVotingRealtime(contestId);
 
@@ -58,6 +58,17 @@ export default function ContestantGridScreen() {
 
       {isLoading ? (
         <View style={styles.loader}><ActivityIndicator size="large" color={Colors.primary} /></View>
+      ) : isError ? (
+        // Same gap as the contest list: an unreachable roster endpoint used to
+        // render as "no contestants have been added yet", which is wrong and
+        // not retriable from what the voter sees.
+        <View style={styles.empty}>
+          <Text style={styles.emptyTitle}>Could not load contestants</Text>
+          <Text style={styles.emptySub}>Check your connection and try again.</Text>
+          <Pressable onPress={() => refetch()} style={styles.backBtn}>
+            <Text style={styles.emptySub}>Retry</Text>
+          </Pressable>
+        </View>
       ) : (
         <FlatList
           data={data ?? []}
