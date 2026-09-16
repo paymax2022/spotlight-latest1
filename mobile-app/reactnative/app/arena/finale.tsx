@@ -125,7 +125,7 @@ const styles = StyleSheet.create({
   muted: { ...Typography.labelSm, color: Colors.onSurfaceVariant, lineHeight: 18 },
   revealRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.md, paddingVertical: 6 },
   revealRank: { ...Typography.titleMd, color: Colors.onSurfaceVariant, width: 24, textAlign: 'center' },
-  revealRankTop: { color: Colors.gold, fontWeight: '800' as const },
+  revealRankTop: { color: Colors.onWarning, fontWeight: '800' as const },
   revealName: { ...Typography.labelLg, color: Colors.onSurface, flex: 1 },
   revealPts: { ...Typography.labelMd, color: Colors.primary },
   tickerRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 6 },
