@@ -92,6 +92,10 @@ const navItemsBase: NavItem[] = [
   // here only for sidebar visibility consistency with the other Path A
   // entries above.
   { label: 'Payments & Finance', href: '/admin/payments-finance', section: 'Finance', permissions: ['finance:adjust:initiate'] },
+  // ADR-005 maker-checker checker-side queue (WAL-004) — finance:adjust:approve
+  // is a distinct permission from finance:adjust:initiate above; an initiator
+  // cannot approve their own proposal (enforced server-side).
+  { label: 'Adjustment Approvals', href: '/admin/payments-finance/adjustments', section: 'Finance', permissions: ['finance:adjust:approve'] },
   { label: 'KYC Queue', href: '/admin/finance/kyc', section: 'Finance', permissions: ['audit.logs.view'] },
   { label: 'KYC Verification', href: '/admin/finance/kyc-verify', section: 'Finance', permissions: ['finance.admin.kyc'] },
   { label: 'Wallet Lookup', href: '/admin/finance/wallets', section: 'Finance', permissions: ['audit.logs.view'] },
