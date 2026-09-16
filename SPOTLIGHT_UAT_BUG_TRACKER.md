@@ -45,7 +45,7 @@ Living record for the full go-live UAT engagement. Never delete rows. Status is 
 | 1 | Authentication | ✅ Complete & Signed Off (19 closed / 2 accepted exceptions) |
 | 2 | Utility Bills | ✅ Complete & Signed Off (5 closed, full Go migration) |
 | 3 | Film Academy | ✅ Complete & Signed Off (3 closed, full Go-native tuition money path + admissions/notification fixes) |
-| 4 | Contest | 🚧 In Progress — Batches 1-6 + D-010 follow-up done (image pipeline + template manager + prizes/tie-break/results-lock all built; 34/178 Pass, 30/178 Fixed, 9/178 Built); remaining: offline reconciliation, maker-checker, consent gating, TS-15 (business UAT), plus real end-to-end exercises (template upload/activate/approve against live Cloudinary; a full contest→votes→publish-results cycle) to move the Built rows to Pass — not signed off |
+| 4 | Contest | 🚧 In Progress — Batches 1-6 + D-010 follow-up done (image pipeline + template manager + prizes/tie-break/results-lock all built; 34/178 Pass, 30/178 Fixed, 9/178 Built); **offline (USSD/SMS) vote reconciliation explicitly deferred by product decision (2026-09-16) — voting is USSD/SMS/online, current scope is online only**; remaining in-scope work: maker-checker, consent gating, TS-15 (business UAT), plus real end-to-end exercises (template upload/activate/approve against live Cloudinary; a full contest→votes→publish-results cycle) to move the Built rows to Pass — not signed off |
 | 5 | Crowdfunding | ⬜ Not Started |
 | 6 | Insurance | ⬜ Not Started |
 | 7 | Wallet | ⬜ Not Started |
