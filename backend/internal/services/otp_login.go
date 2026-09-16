@@ -73,8 +73,7 @@ func (b *otpAuthBridge) WithSessions(sessions SessionService, enabled bool) *otp
 	return b
 }
 
-// gate re-runs the lockout checks and returns the platform user (nil when
-// there is no platform_users row — an ordinary case, not a refusal).
+// gate re-runs the lockout checks and returns the platform user.
 //
 // Re-run rather than trusted from the password step: minutes can pass between
 // the two factors, and an account suspended in between must not complete a
@@ -82,10 +81,22 @@ func (b *otpAuthBridge) WithSessions(sessions SessionService, enabled bool) *otp
 // whether an account is still allowed in at the moment a session is issued.
 func (b *otpAuthBridge) gate(email string) (*platformUser, error) {
 	user, err := b.svc.findPlatformUserByEmail(email)
-	if err != nil || user == nil {
-		// No platform_users row is not a refusal: login treats that the same way
-		// (the gate only applies when a row exists).
-		return nil, nil
+	if err != nil {
+		// The lookup itself failed (REST/network) — distinct from the zero-rows
+		// case below. Unchanged: propagate as-is, same as before this fix.
+		return nil, err
+	}
+	if user == nil {
+		// AUTH-014: zero platform_users rows for an email completing a step-up.
+		// This used to be treated as "the gate only applies when a row exists"
+		// and let the step-up through with zero enforcement of suspension/lock —
+		// the same bug LoginUser had. The RBAC identity-bridge trigger
+		// (20260904000000_rbac_identity_bridge.sql) mirrors auth.users into
+		// platform_users SYNCHRONOUSLY within account creation, so a normal
+		// account always has a row by the time any login step is reachable. A
+		// missing row is anomalous, not a legitimate race — refuse it the same
+		// way a suspended/locked account is refused.
+		return nil, fmt.Errorf("%w: platform user not found", ErrAccountUnavailable)
 	}
 	if err := b.svc.validateLoginStatus(user); err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrAccountUnavailable, err)

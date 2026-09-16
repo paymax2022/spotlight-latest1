@@ -118,4 +118,34 @@ describe('admin-proxy forward() — AUTH-010 session gate', () => {
     expect(res.status).toBe(401);
     expect(global.fetch).not.toHaveBeenCalled();
   });
+
+  // AUTH-020: x-stem-role was missing from the outbound-header allowlist, so
+  // the backend's RequireStemRoles middleware always saw "missing stem role"
+  // (403) regardless of what the STEM admin console UI sent — this pins the
+  // fix forwarding it, the same way Idempotency-Key and Authorization are
+  // already forwarded above.
+  it('forwards the x-stem-role header to the backend', async () => {
+    const token = makeToken(notExpired, REAL_SECRET);
+    const { GET } = await import('./route');
+    const headers = new Headers();
+    headers.set('cookie', `sb-admin-token=${token}`);
+    headers.set('x-stem-role', 'CONTEST_MANAGER');
+    const req = new Request('http://admin.invalid/api/admin-proxy/api/v1/admin/stem/overview', {
+      method: 'GET',
+      headers,
+    });
+    const res = await GET(req, { params: Promise.resolve({ path: ['api', 'v1', 'admin', 'stem', 'overview'] }) });
+    expect(res.status).toBe(200);
+    expect(global.fetch).toHaveBeenCalledTimes(1);
+    const [, init] = (global.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect((init.headers as Record<string, string>)['x-stem-role']).toBe('CONTEST_MANAGER');
+  });
+
+  it('omits x-stem-role when the caller did not send one', async () => {
+    const token = makeToken(notExpired, REAL_SECRET);
+    const res = await callForward(`sb-admin-token=${token}`);
+    expect(res.status).toBe(200);
+    const [, init] = (global.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect((init.headers as Record<string, string>)['x-stem-role']).toBeUndefined();
+  });
 });

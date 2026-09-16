@@ -5,7 +5,7 @@ import { usePathname, useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
 import type { AdminMenuCounts } from '@/types/admin';
 import { getAdminMenuCounts } from '@/services/adminApiClient';
-import { canManageStem, canReadStem, getCurrentStemRole } from '@/config/stemAccess';
+import { canManageStem, canReadStem, useStemRoles } from '@/config/stemAccess';
 import { hasAnyPermission, type AuthUser } from '@/features/auth/rbac';
 import { clearAdminSession } from '@/features/auth/adminAuth';
 import { colors, tint } from '@/components/ui/vuexy';
@@ -375,6 +375,10 @@ const navItemsBase: NavItem[] = [
   { label: 'Rider Dispatch', href: '/admin/restaurant/dispatch', section: 'Restaurant', permissions: ['restaurant.manage', 'restaurant.admin.dispatch'] },
   { label: 'Onboarding / KYC', href: '/admin/restaurant/onboarding', section: 'Restaurant', permissions: ['restaurant.manage', 'restaurant.admin.onboarding'] },
   { label: 'Payouts', href: '/admin/restaurant/payouts', section: 'Restaurant', permissions: ['restaurant.admin.payouts'] },
+  // Merchant withdrawal settle/reverse. Server routes are gated by
+  // FEATURE_RESTAURANT_WITHDRAWALS_ENABLED (default OFF) — the page explains that
+  // when a call 404s, so the entry is safe to show regardless of the flag.
+  { label: 'Withdrawals', href: '/admin/restaurant/withdrawals', section: 'Restaurant', permissions: ['restaurant.admin.payouts'] },
   { label: 'Refunds & Disputes', href: '/admin/restaurant/disputes', section: 'Restaurant', permissions: ['restaurant.manage', 'restaurant.admin.disputes'] },
   // ── Maps (MapService v2 cost/coverage + OSM contribution review) ─────────────
   // Controls which service modules the mobile app shows, per environment
@@ -554,9 +558,9 @@ export function AdminSidebar() {
   const [authUser, setAuthUser] = useState<AuthUser | null>(null);
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [loggingOut, setLoggingOut] = useState(false);
-  const role = getCurrentStemRole();
-  const allowRead = canReadStem(role);
-  const allowManage = canManageStem(role);
+  const stemRoles = useStemRoles();
+  const allowRead = canReadStem(stemRoles);
+  const allowManage = canManageStem(stemRoles);
 
   useEffect(() => {
     void getAdminMenuCounts().then(setCounts);
