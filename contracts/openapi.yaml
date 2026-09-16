@@ -15199,12 +15199,12 @@ paths:
                       paymentId: { type: string, format: uuid }
                       planId: { type: string, format: uuid }
                       applicationId: { type: string, format: uuid }
-                      amountPaidNgn: { type: integer, format: int64, description: Whole naira, never kobo. }
+                      amountPaidNgn: { type: integer, format: int64, description: 'Whole naira, never kobo.' }
                       ledgerReference: { type: string }
                       paidAt: { type: string, format: date-time }
                       nextDueDate: { type: string, format: date-time, nullable: true }
                       isPlanCompleted: { type: boolean }
-        '400': { description: Missing Idempotency-Key/required field, or amount below the installment's amount. }
+        '400': { description: "Missing Idempotency-Key/required field, or amount below the installment's amount." }
         '402': { description: Payment not confirmed by the gateway. }
         '403': { description: Payment does not belong to the authenticated user. }
         '404': { description: Payment or plan not found. }
@@ -15226,8 +15226,8 @@ paths:
                 applicationId: { type: string, format: uuid }
                 amountNgn: { type: integer, format: int64 }
       responses:
-        '200': { description: Amount is valid for the next payable installment (or the batch fee, if no plan exists yet). }
-        '400': { description: Amount does not match the next installment, or exceeds the batch fee. }
+        '200': { description: 'Amount is valid for the next payable installment (or the batch fee, if no plan exists yet).' }
+        '400': { description: 'Amount does not match the next installment, or exceeds the batch fee.' }
   /api/finance/academy/tuition/status/{application_id}:
     get:
       operationId: academyTuitionGetStatus
@@ -15266,7 +15266,7 @@ paths:
               properties:
                 applicationId: { type: string, format: uuid }
       responses:
-        '200': { description: Plan created (or the existing one, if already present). }
+        '200': { description: 'Plan created (or the existing one, if already present).' }
         '403': { description: Caller lacks academy.tuition.admin permission. }
   /api/academy/admin/tuition/plans/{id}/mark-complete:
     patch:
