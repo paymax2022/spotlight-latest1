@@ -2357,7 +2357,16 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		// 401 signs the user out, so the screen appears to log them out on open.
 		adminFinanceDisputes.Use(mapsAuth())
 		adminFinanceDisputes.Use(requireUserID())
-		adminFinanceDisputes.POST("/:id/resolve", disputesHandler.AdminResolve)
+		// FOOD-008 (P0, found executing FC-002): this route had NO permission check
+		// at all — any authenticated user, not just an admin, could call
+		// AdminResolve. That became a live money-movement bug the moment FOOD-004
+		// wired module_type=="food" disputes to a real refund/clawback delegate: a
+		// plain customer token could resolve their own dispute with a refund and
+		// have it actually post. "food" is the only module_type any dispute in this
+		// table currently has, and restaurant.admin.disputes already exists (seeded,
+		// granted to Super Admin/System Admin/Restaurant Ops) — reuse it rather than
+		// adding a new permission or a generic-but-unseeded slug.
+		adminFinanceDisputes.POST("/:id/resolve", middleware.RequirePermission(rbac, "restaurant.admin.disputes"), disputesHandler.AdminResolve)
 	}
 
 	// --- Ratings routes ---

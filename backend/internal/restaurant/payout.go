@@ -223,7 +223,19 @@ func (s *Service) loadUnpaidSettlements(ctx context.Context, providerType, provi
 			  AND res.owner_id = $1
 			  AND res.kyb_status = 'approved' -- PY-007: pay out only to a KYB-verified restaurant (verified settlement account)
 			  AND st.provider_kobo > 0
-			  AND NOT EXISTS (SELECT 1 FROM restaurant_payout_lines pl WHERE pl.settlement_id = st.id)`
+			  AND NOT EXISTS (SELECT 1 FROM restaurant_payout_lines pl WHERE pl.settlement_id = st.id)
+			  -- FOOD-009: settleOrder's Settle() call ALWAYS credits the provider's
+			  -- wallet directly at delivery time (escrow -> provider wallet,
+			  -- idempotency_key 'settle:<settlementID>:provider:credit') — every
+			  -- food_delivery settlement that ever reaches 'settled' has already been
+			  -- paid this way, with no code path leaving one genuinely pending a batch
+			  -- payout run. Without this exclusion, BuildRun picks up the SAME
+			  -- already-paid settlement (the restaurant_payout_lines check above says
+			  -- nothing about it) and ProcessRun pays it a second time. Exclude any
+			  -- settlement whose provider leg the ledger shows as already posted.
+			  AND NOT EXISTS (
+			        SELECT 1 FROM ledger_entries le
+			         WHERE le.idempotency_key = 'settle:' || st.id || ':provider:credit')`
 	case PayoutProviderRider:
 		q = `
 			SELECT st.id, o.id, (st.total_kobo - st.provider_kobo - st.fee_kobo) AS rider_kobo, 0::bigint
@@ -233,7 +245,12 @@ func (s *Service) loadUnpaidSettlements(ctx context.Context, providerType, provi
 			  AND st.status = 'settled'
 			  AND o.rider_id = $1
 			  AND (st.total_kobo - st.provider_kobo - st.fee_kobo) > 0
-			  AND NOT EXISTS (SELECT 1 FROM restaurant_payout_lines pl WHERE pl.settlement_id = st.id)`
+			  AND NOT EXISTS (SELECT 1 FROM restaurant_payout_lines pl WHERE pl.settlement_id = st.id)
+			  -- FOOD-009: same double-payment exclusion as the restaurant branch above,
+			  -- for the rider leg Settle() also always posts directly.
+			  AND NOT EXISTS (
+			        SELECT 1 FROM ledger_entries le
+			         WHERE le.idempotency_key = 'settle:' || st.id || ':rider:credit')`
 	default:
 		return nil, ErrPayoutBadProvider
 	}

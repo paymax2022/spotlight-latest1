@@ -74,7 +74,7 @@ type AdminApplication struct {
 	RestaurantName string    `json:"restaurant_name"`
 	OwnerID        string    `json:"owner_id"`
 	Address        string    `json:"address,omitempty"`
-	Status         string    `json:"status"`    // pending|approved (derived from is_open)
+	Status         string    `json:"status"`    // pending|in_review|approved|rejected (FOOD-010: derived from the REAL restaurant_kyb state, not is_open)
 	Documents      []any     `json:"documents"` // empty: no KYC doc store on restaurants yet
 	SubmittedAt    time.Time `json:"submitted_at"`
 	ReviewNote     *string   `json:"review_note,omitempty"`
@@ -140,9 +140,37 @@ func mapRiderStatus(transportStatus, verification string, onDelivery bool) strin
 // AdminListApplications lists restaurant merchant records for the onboarding/KYC
 // review queue. status filters the derived onboarding status: an open restaurant
 // is 'approved', a closed one is 'pending'. Empty status returns all.
+// kybStatusToApplicationStatus maps the real restaurant_kyb/restaurants.kyb_status
+// vocabulary to the admin console's expected application-status vocabulary
+// (FOOD-010). A restaurant with no formal KYB row at all (kybStatus == nil) is
+// "pending" — awaiting either an owner submission or a direct console decision,
+// matching AdminDecideApplication's own "no row = the console decision IS the
+// verification" precedent (see FOOD-003).
+func kybStatusToApplicationStatus(kybStatus *string) string {
+	if kybStatus == nil {
+		return "pending"
+	}
+	switch KYBStatus(*kybStatus) {
+	case KYBApproved:
+		return "approved"
+	case KYBRejected:
+		return "rejected"
+	case KYBUnderReview, KYBNeedsInfo:
+		return "in_review"
+	default: // KYBDraft, KYBSubmitted, or an unrecognized value
+		return "pending"
+	}
+}
+
 func (s *Service) AdminListApplications(ctx context.Context, status string) ([]AdminApplication, error) {
+	// FOOD-010: this used to derive Status purely from restaurants.is_open, which
+	// any owner can flip via SetAvailability — so a restaurant with a real KYB
+	// submission sitting unreviewed showed as "approved" the moment its owner
+	// opened it, and the frontend's in_review/rejected filters never matched
+	// anything since this backend never emitted those values. Status is now
+	// derived from the real kyb_status snapshot.
 	const q = `
-		SELECT r.id, r.name, r.owner_id, COALESCE(r.address,''), r.is_open, r.created_at
+		SELECT r.id, r.name, r.owner_id, COALESCE(r.address,''), r.kyb_status, r.created_at
 		FROM restaurants r
 		ORDER BY r.created_at DESC`
 	rows, err := s.db.Query(ctx, q)
@@ -153,15 +181,11 @@ func (s *Service) AdminListApplications(ctx context.Context, status string) ([]A
 	var out []AdminApplication
 	for rows.Next() {
 		var a AdminApplication
-		var isOpen bool
-		if err := rows.Scan(&a.ID, &a.RestaurantName, &a.OwnerID, &a.Address, &isOpen, &a.SubmittedAt); err != nil {
+		var kybStatus *string
+		if err := rows.Scan(&a.ID, &a.RestaurantName, &a.OwnerID, &a.Address, &kybStatus, &a.SubmittedAt); err != nil {
 			return nil, err
 		}
-		if isOpen {
-			a.Status = "approved"
-		} else {
-			a.Status = "pending"
-		}
+		a.Status = kybStatusToApplicationStatus(kybStatus)
 		// No KYC review-note column exists on `restaurants` yet (see report); the
 		// review note supplied on reject is delivered to the owner, not persisted.
 		a.Documents = []any{}

@@ -10,6 +10,11 @@ import (
 // documents. The handler maps it to HTTP 422.
 var ErrKYBIncomplete = errors.New("restaurant: KYB submission is incomplete")
 
+// ErrKYBNotApproved is returned when an action requires an approved KYB
+// verification and the restaurant doesn't have one (FOOD-010). The handler
+// maps it to HTTP 403.
+var ErrKYBNotApproved = errors.New("restaurant: business verification must be approved before opening for orders")
+
 // KYBStatus is the merchant Know-Your-Business verification state.
 type KYBStatus string
 
