@@ -2,8 +2,6 @@ package referrals
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"fmt"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -29,8 +27,11 @@ func (s *Service) GetOrCreateCode(ctx context.Context, userID string) (*Code, er
 	if err == nil {
 		return &c, nil
 	}
-	// Generate a new code.
-	code, err := generateCode()
+	// Generate a new code. Uses the canonical GenerateCode (code.go): the same
+	// uppercase, confusable-safe alphabet SetLinkCode issues admin-chosen codes
+	// from. A legacy lowercase-hex code here would never match normalizeCode's
+	// strings.ToUpper in attribution.ResolveReferrer and could never be resolved.
+	code, err := GenerateCode()
 	if err != nil {
 		return nil, fmt.Errorf("referrals: generate code: %w", err)
 	}
@@ -114,12 +115,4 @@ func (s *Service) ProcessReward(ctx context.Context, referrerID, referredID stri
 		ON CONFLICT (referrer_id, referred_id) DO NOTHING`
 	_, err = s.db.Exec(ctx, insert, referrerID, referredID, RewardAmountKobo)
 	return err
-}
-
-func generateCode() (string, error) {
-	b := make([]byte, 4)
-	if _, err := rand.Read(b); err != nil {
-		return "", err
-	}
-	return hex.EncodeToString(b), nil
 }
