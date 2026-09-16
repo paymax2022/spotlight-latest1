@@ -34,6 +34,14 @@ import {
 
 const delay = (ms = 300) => new Promise((r) => setTimeout(r, ms));
 
+// Every write below has a real live endpoint (verified against
+// backend/internal/association/routes.go and a full green run of
+// backend/tests/association), so fixture mode has nothing to add and refuses
+// loudly instead of reporting a write it did not perform — mirrors
+// frontend-admin's crowdfundingAdminService.ts NOT_IN_FIXTURE_MODE pattern.
+const notInFixtureMode = (action: string) =>
+  new Error(`${action} is unavailable in fixture mode: this app will not report a write it did not perform. Set EXPO_PUBLIC_ASSOCIATION_USE_MOCK=false to send this against the live backend.`);
+
 // ─── Announcements ────────────────────────────────────────────────────────────
 
 const toAnnSummary = (a: Announcement): AnnouncementSummary => {
@@ -59,7 +67,7 @@ export async function getAnnouncement(id: string): Promise<Announcement> {
 }
 
 export async function acknowledgeAnnouncement(id: string): Promise<{ ok: true }> {
-  if (USE_MOCK) { await delay(); return { ok: true }; }
+  if (USE_MOCK) throw notInFixtureMode('Acknowledging an announcement');
   const { data } = await api.post(`${BASE}/announcements/${id}/acknowledge`, {}, {
     headers: { 'Idempotency-Key': generateIdempotencyKey() },
   });
@@ -75,7 +83,7 @@ export async function getNotifications(): Promise<AppNotification[]> {
 }
 
 export async function markNotificationsRead(): Promise<{ ok: true }> {
-  if (USE_MOCK) { await delay(150); return { ok: true }; }
+  if (USE_MOCK) throw notInFixtureMode('Marking notifications read');
   const { data } = await api.post(`${BASE}/notifications/read`, {});
   return data;
 }
@@ -116,7 +124,7 @@ export async function getMeeting(id: string): Promise<Meeting> {
 }
 
 export async function rsvpMeeting(id: string, status: RsvpStatus): Promise<{ ok: true }> {
-  if (USE_MOCK) { await delay(); return { ok: true }; }
+  if (USE_MOCK) throw notInFixtureMode('Submitting a meeting RSVP');
   const { data } = await api.post(`${BASE}/meetings/${id}/rsvp`, { status });
   return data;
 }
@@ -131,10 +139,7 @@ export async function rsvpMeeting(id: string, status: RsvpStatus): Promise<{ ok:
  * can see. Render the returned approvalStatus.
  */
 export async function proposeMeeting(input: MeetingProposalInput): Promise<MeetingProposalResult> {
-  if (USE_MOCK) {
-    await delay();
-    return { id: `mtg_${Date.now()}`, approvalStatus: 'PENDING' };
-  }
+  if (USE_MOCK) throw notInFixtureMode('Proposing a meeting');
   const { data } = await api.post(`${BASE}/meetings`, input, {
     headers: { 'Idempotency-Key': generateIdempotencyKey() },
   });
@@ -150,13 +155,13 @@ export async function getPendingMeetings(orgId: string): Promise<PendingMeeting[
 
 /** Approve or reject a proposed meeting. Admins only; the server enforces it. */
 export async function decideMeeting(id: string, approve: boolean, note?: string): Promise<MeetingApprovalStatus> {
-  if (USE_MOCK) { await delay(); return approve ? 'APPROVED' : 'REJECTED'; }
+  if (USE_MOCK) throw notInFixtureMode('Deciding a meeting proposal');
   const { data } = await api.post(`${BASE}/admin/meetings/${id}/decision`, { approve, note: note ?? '' });
   return ((data?.data ?? data)?.approvalStatus ?? (approve ? 'APPROVED' : 'REJECTED')) as MeetingApprovalStatus;
 }
 
 export async function checkInMeeting(id: string): Promise<{ ok: true }> {
-  if (USE_MOCK) { await delay(); return { ok: true }; }
+  if (USE_MOCK) throw notInFixtureMode('Checking in to a meeting');
   const { data } = await api.post(`${BASE}/meetings/${id}/attendance`, {}, {
     headers: { 'Idempotency-Key': generateIdempotencyKey() },
   });
@@ -195,7 +200,7 @@ export async function getTask(id: string): Promise<Task> {
 }
 
 export async function updateTaskStatus(id: string, status: TaskStatus): Promise<{ ok: true }> {
-  if (USE_MOCK) { await delay(); return { ok: true }; }
+  if (USE_MOCK) throw notInFixtureMode('Updating a task status');
   const { data } = await api.patch(`${BASE}/tasks/${id}`, { status });
   return data;
 }
@@ -225,7 +230,7 @@ export async function getDocument(id: string): Promise<DocumentDetail> {
 }
 
 export async function acknowledgeDocument(id: string): Promise<{ ok: true }> {
-  if (USE_MOCK) { await delay(); return { ok: true }; }
+  if (USE_MOCK) throw notInFixtureMode('Acknowledging a document');
   const { data } = await api.post(`${BASE}/documents/${id}/acknowledge`, {}, {
     headers: { 'Idempotency-Key': generateIdempotencyKey() },
   });

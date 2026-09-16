@@ -22,34 +22,25 @@ import type { MemberProfileSummary } from '../types/association.types';
 
 const delay = (ms = 280) => new Promise((r) => setTimeout(r, ms));
 
+// Every write below has a real live endpoint (verified against
+// backend/internal/association/routes.go and a full green run of
+// backend/tests/association), so fixture mode has nothing to add and refuses
+// loudly instead of reporting a write it did not perform — mirrors
+// frontend-admin's crowdfundingAdminService.ts NOT_IN_FIXTURE_MODE pattern.
+const notInFixtureMode = (action: string) =>
+  new Error(`${action} is unavailable in fixture mode: this app will not report a write it did not perform. Set EXPO_PUBLIC_ASSOCIATION_USE_MOCK=false to send this against the live backend.`);
+
 /**
- * Session-scoped store backing the mock branch.
+ * Session-scoped store backing the read (list) mock branches.
  *
- * Without it the authoring screens would be dead in mock mode: there are no
- * fixtures for admin listings, and returning a fabricated success while the
- * list stayed empty would look exactly like a silently failing save.
+ * Writes no longer populate this — mutations throw in mock mode instead of
+ * fabricating success — so these lists stay empty under fixtures, which
+ * correctly reflects that nothing was actually created.
  */
 type MockKind = 'announcements' | 'meetings' | 'documents' | 'events' | 'tasks' | 'duesRuns';
 const mockRows: Record<MockKind, AdminContentRow[]> = {
   announcements: [], meetings: [], documents: [], events: [], tasks: [], duesRuns: [],
 };
-const mockKeys = new Set<string>();
-
-function mockCreate(kind: MockKind, title: string, subtitle: string, status: string, at: string | null, meta: Record<string, unknown>): CreatedId {
-  const id = `mock_${kind}_${Date.now()}`;
-  const now = new Date().toISOString();
-  mockRows[kind].unshift({ id, title, subtitle, status, at: at ?? now, createdAt: now, meta });
-  return { id };
-}
-
-function mockPatch(kind: MockKind, id: string, patch: Partial<AdminContentRow>): void {
-  const row = mockRows[kind].find((r) => r.id === id);
-  if (row) Object.assign(row, patch);
-}
-
-function mockDelete(kind: MockKind, id: string): void {
-  mockRows[kind] = mockRows[kind].filter((r) => r.id !== id);
-}
 
 function listParams(p?: AdminListParams) {
   return { limit: p?.limit ?? 50, offset: p?.offset ?? 0 };
@@ -64,26 +55,18 @@ export async function listAdminAnnouncements(orgId: string, p?: AdminListParams)
 }
 
 export async function createAnnouncement(orgId: string, input: AnnouncementInput): Promise<CreatedId> {
-  if (USE_MOCK) {
-    await delay(360);
-    return mockCreate('announcements', input.title, input.audience ?? 'All members',
-      input.urgent ? 'URGENT' : 'POSTED', null, { ...input });
-  }
+  if (USE_MOCK) throw notInFixtureMode('Creating an announcement');
   const { data } = await api.post(`${BASE}/admin/organisations/${orgId}/announcements`, input);
   return data;
 }
 
 export async function updateAnnouncement(id: string, input: AnnouncementInput): Promise<void> {
-  if (USE_MOCK) {
-    await delay(320);
-    mockPatch('announcements', id, { title: input.title, subtitle: input.audience ?? 'All members', status: input.urgent ? 'URGENT' : 'POSTED', meta: { ...input } });
-    return;
-  }
+  if (USE_MOCK) throw notInFixtureMode('Updating an announcement');
   await api.patch(`${BASE}/admin/announcements/${id}`, input);
 }
 
 export async function deleteAnnouncement(id: string): Promise<void> {
-  if (USE_MOCK) { await delay(260); mockDelete('announcements', id); return; }
+  if (USE_MOCK) throw notInFixtureMode('Deleting an announcement');
   await api.delete(`${BASE}/admin/announcements/${id}`);
 }
 
@@ -96,36 +79,24 @@ export async function listAdminMeetings(orgId: string, p?: AdminListParams): Pro
 }
 
 export async function createMeeting(orgId: string, input: MeetingInput): Promise<CreatedId> {
-  if (USE_MOCK) {
-    await delay(360);
-    return mockCreate('meetings', input.title, input.location ?? '', input.state, input.startsAt, { ...input });
-  }
+  if (USE_MOCK) throw notInFixtureMode('Creating a meeting');
   const { data } = await api.post(`${BASE}/admin/organisations/${orgId}/meetings`, input);
   return data;
 }
 
 export async function updateMeeting(id: string, input: MeetingInput): Promise<void> {
-  if (USE_MOCK) {
-    await delay(320);
-    mockPatch('meetings', id, { title: input.title, subtitle: input.location ?? '', status: input.state, at: input.startsAt, meta: { ...input } });
-    return;
-  }
+  if (USE_MOCK) throw notInFixtureMode('Updating a meeting');
   await api.patch(`${BASE}/admin/meetings/${id}`, input);
 }
 
 export async function deleteMeeting(id: string): Promise<void> {
-  if (USE_MOCK) { await delay(260); mockDelete('meetings', id); return; }
+  if (USE_MOCK) throw notInFixtureMode('Deleting a meeting');
   await api.delete(`${BASE}/admin/meetings/${id}`);
 }
 
 /** Publish (or retract) the minutes for a meeting. */
 export async function publishMeetingMinutes(id: string, published: boolean): Promise<void> {
-  if (USE_MOCK) {
-    await delay(300);
-    const row = mockRows.meetings.find((r) => r.id === id);
-    if (row) row.meta = { ...row.meta, minutesPublished: published };
-    return;
-  }
+  if (USE_MOCK) throw notInFixtureMode('Publishing meeting minutes');
   await api.post(`${BASE}/admin/meetings/${id}/minutes`, { published });
 }
 
@@ -138,25 +109,18 @@ export async function listAdminDocuments(orgId: string, p?: AdminListParams): Pr
 }
 
 export async function createDocument(orgId: string, input: DocumentInput): Promise<CreatedId> {
-  if (USE_MOCK) {
-    await delay(360);
-    return mockCreate('documents', input.title, input.category, input.restricted ? 'RESTRICTED' : 'OPEN', null, { ...input });
-  }
+  if (USE_MOCK) throw notInFixtureMode('Creating a document');
   const { data } = await api.post(`${BASE}/admin/organisations/${orgId}/documents`, input);
   return data;
 }
 
 export async function updateDocument(id: string, input: DocumentInput): Promise<void> {
-  if (USE_MOCK) {
-    await delay(320);
-    mockPatch('documents', id, { title: input.title, subtitle: input.category, status: input.restricted ? 'RESTRICTED' : 'OPEN', meta: { ...input } });
-    return;
-  }
+  if (USE_MOCK) throw notInFixtureMode('Updating a document');
   await api.patch(`${BASE}/admin/documents/${id}`, input);
 }
 
 export async function deleteDocument(id: string): Promise<void> {
-  if (USE_MOCK) { await delay(260); mockDelete('documents', id); return; }
+  if (USE_MOCK) throw notInFixtureMode('Deleting a document');
   await api.delete(`${BASE}/admin/documents/${id}`);
 }
 
@@ -169,20 +133,13 @@ export async function listAdminEvents(orgId: string, p?: AdminListParams): Promi
 }
 
 export async function createEvent(orgId: string, input: EventInput): Promise<CreatedId> {
-  if (USE_MOCK) {
-    await delay(360);
-    return mockCreate('events', input.title, input.location ?? '', 'UPCOMING', input.startsAt, { ...input });
-  }
+  if (USE_MOCK) throw notInFixtureMode('Creating an event');
   const { data } = await api.post(`${BASE}/admin/organisations/${orgId}/events`, input);
   return data;
 }
 
 export async function updateEvent(id: string, input: EventInput): Promise<void> {
-  if (USE_MOCK) {
-    await delay(320);
-    mockPatch('events', id, { title: input.title, subtitle: input.location ?? '', at: input.startsAt, meta: { ...input } });
-    return;
-  }
+  if (USE_MOCK) throw notInFixtureMode('Updating an event');
   await api.patch(`${BASE}/admin/events/${id}`, input);
 }
 
@@ -195,13 +152,13 @@ export async function updateEvent(id: string, input: EventInput): Promise<void> 
  * whole invite. Report the returned count, not the count that was sent.
  */
 export async function inviteToEvent(eventId: string, membershipIds: string[]): Promise<{ invited: number; requested: number }> {
-  if (USE_MOCK) { await delay(300); return { invited: membershipIds.length, requested: membershipIds.length }; }
+  if (USE_MOCK) throw notInFixtureMode('Inviting members to an event');
   const { data } = await api.post(`${BASE}/admin/events/${eventId}/invite`, { membershipIds });
   return (data?.data ?? data) as { invited: number; requested: number };
 }
 
 export async function deleteEvent(id: string): Promise<void> {
-  if (USE_MOCK) { await delay(260); mockDelete('events', id); return; }
+  if (USE_MOCK) throw notInFixtureMode('Deleting an event');
   await api.delete(`${BASE}/admin/events/${id}`);
 }
 
@@ -214,25 +171,18 @@ export async function listAdminTasks(orgId: string, p?: AdminListParams): Promis
 }
 
 export async function createTask(orgId: string, input: TaskInput): Promise<CreatedId> {
-  if (USE_MOCK) {
-    await delay(360);
-    return mockCreate('tasks', input.title, '', input.status, input.dueDate ?? null, { ...input });
-  }
+  if (USE_MOCK) throw notInFixtureMode('Creating a task');
   const { data } = await api.post(`${BASE}/admin/organisations/${orgId}/tasks`, input);
   return data;
 }
 
 export async function updateTask(id: string, input: TaskInput): Promise<void> {
-  if (USE_MOCK) {
-    await delay(320);
-    mockPatch('tasks', id, { title: input.title, status: input.status, at: input.dueDate ?? null, meta: { ...input } });
-    return;
-  }
+  if (USE_MOCK) throw notInFixtureMode('Updating a task');
   await api.patch(`${BASE}/admin/tasks/${id}`, input);
 }
 
 export async function deleteTask(id: string): Promise<void> {
-  if (USE_MOCK) { await delay(260); mockDelete('tasks', id); return; }
+  if (USE_MOCK) throw notInFixtureMode('Deleting a task');
   await api.delete(`${BASE}/admin/tasks/${id}`);
 }
 
@@ -258,23 +208,7 @@ export async function listAdminDuesRuns(orgId: string, p?: AdminListParams): Pro
  * and raises nothing.
  */
 export async function runDues(orgId: string, input: DuesRunInput, idempotencyKey: string): Promise<DuesRunResult> {
-  if (USE_MOCK) {
-    await delay(500);
-    if (mockKeys.has(idempotencyKey)) {
-      const prior = mockRows.duesRuns[0];
-      return {
-        runId: prior?.id ?? 'mock_run',
-        invoiced: Number(prior?.meta?.invoiced ?? 0),
-        skipped: Number(prior?.meta?.skipped ?? 0),
-        totalKobo: Number(prior?.meta?.totalKobo ?? 0),
-        alreadyRaised: true,
-      };
-    }
-    mockKeys.add(idempotencyKey);
-    const result = { invoiced: 24, skipped: 3, totalKobo: 24 * 2_500_000 };
-    const { id } = mockCreate('duesRuns', input.title, input.scope, 'RAISED', null, { ...input, ...result });
-    return { runId: id, ...result, alreadyRaised: false };
-  }
+  if (USE_MOCK) throw notInFixtureMode('Running a dues invoicing pass');
   const { data } = await api.post(
     `${BASE}/admin/organisations/${orgId}/dues/run`,
     input,
@@ -335,10 +269,7 @@ export async function getOrgPickerLists(orgId: string): Promise<OrgPickerLists> 
  * every visit to the devices screen and needs no Idempotency-Key.
  */
 export async function registerDevice(input: DeviceInput): Promise<CreatedId> {
-  if (USE_MOCK) {
-    const { registerMockDevice } = await import('./settings.api');
-    return registerMockDevice(input);
-  }
+  if (USE_MOCK) throw notInFixtureMode('Registering this device');
   const { data } = await api.post(`${BASE}/me/devices`, input);
   return data;
 }
@@ -356,20 +287,20 @@ export interface CommitteeInput {
 
 /** Create a committee in an organisation. Returns the new committee id. */
 export async function createCommittee(orgId: string, input: CommitteeInput): Promise<string> {
-  if (USE_MOCK) { await delay(300); return `cm_${Date.now()}`; }
+  if (USE_MOCK) throw notInFixtureMode('Creating a committee');
   const { data } = await api.post(`${BASE}/admin/organisations/${orgId}/committees`, input);
   return (data?.id ?? data?.data?.id) as string;
 }
 
 /** Rename a committee or change its purpose. */
 export async function updateCommittee(committeeId: string, input: CommitteeInput): Promise<void> {
-  if (USE_MOCK) { await delay(240); return; }
+  if (USE_MOCK) throw notInFixtureMode('Updating a committee');
   await api.patch(`${BASE}/admin/committees/${committeeId}`, input);
 }
 
 /** Delete a committee. This removes its entire roster with it — confirm first. */
 export async function deleteCommittee(committeeId: string): Promise<void> {
-  if (USE_MOCK) { await delay(240); return; }
+  if (USE_MOCK) throw notInFixtureMode('Deleting a committee');
   await api.delete(`${BASE}/admin/committees/${committeeId}`);
 }
 
@@ -383,25 +314,25 @@ export async function deleteCommittee(committeeId: string): Promise<void> {
  * one stale id cannot fail the batch. Report the returned count.
  */
 export async function addCommitteeMembers(committeeId: string, membershipIds: string[]): Promise<{ added: number; requested: number }> {
-  if (USE_MOCK) { await delay(300); return { added: membershipIds.length, requested: membershipIds.length }; }
+  if (USE_MOCK) throw notInFixtureMode('Adding committee members');
   const { data } = await api.post(`${BASE}/admin/committees/${committeeId}/members`, { membershipIds });
   return (data?.data ?? data) as { added: number; requested: number };
 }
 
 /** Accept or decline a pending request to join. Declining lets them ask again. */
 export async function decideCommitteeRequest(committeeId: string, membershipId: string, approve: boolean): Promise<void> {
-  if (USE_MOCK) { await delay(240); return; }
+  if (USE_MOCK) throw notInFixtureMode('Deciding a committee join request');
   await api.post(`${BASE}/admin/committees/${committeeId}/requests`, { membershipId, approve });
 }
 
 export async function removeCommitteeMember(committeeId: string, membershipId: string): Promise<void> {
-  if (USE_MOCK) { await delay(240); return; }
+  if (USE_MOCK) throw notInFixtureMode('Removing a committee member');
   await api.delete(`${BASE}/admin/committees/${committeeId}/members/${membershipId}`);
 }
 
 /** MEMBER | CHAIR | SECRETARY | TREASURER. Only an ACTIVE member may hold one. */
 export async function setCommitteeMemberRole(committeeId: string, membershipId: string, role: string): Promise<void> {
-  if (USE_MOCK) { await delay(240); return; }
+  if (USE_MOCK) throw notInFixtureMode('Setting a committee member role');
   await api.patch(`${BASE}/admin/committees/${committeeId}/members/${membershipId}`, { role });
 }
 
@@ -443,7 +374,7 @@ export function documentContentType(fileName: string): string {
  * The presigned URL carries its own authorisation.
  */
 export async function uploadDocumentFile(orgId: string, localUri: string, fileName: string): Promise<string> {
-  if (USE_MOCK) { await delay(400); return `association/document/mock/${Date.now()}-${fileName}`; }
+  if (USE_MOCK) throw notInFixtureMode('Uploading a document file');
 
   const contentType = documentContentType(fileName);
   const { data } = await api.post(`${BASE}/admin/organisations/${orgId}/documents/presign`, { fileName, contentType });

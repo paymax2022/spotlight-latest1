@@ -14,6 +14,14 @@ import { MOCK_AI_NOTES } from './ainotes.mock';
 
 const delay = (ms = 300) => new Promise((r) => setTimeout(r, ms));
 
+// Every write below has a real live endpoint (verified against
+// backend/internal/association/routes.go and a full green run of
+// backend/tests/association), so fixture mode has nothing to add and refuses
+// loudly instead of reporting a write it did not perform — mirrors
+// frontend-admin's crowdfundingAdminService.ts NOT_IN_FIXTURE_MODE pattern.
+const notInFixtureMode = (action: string) =>
+  new Error(`${action} is unavailable in fixture mode: this app will not report a write it did not perform. Set EXPO_PUBLIC_ASSOCIATION_USE_MOCK=false to send this against the live backend.`);
+
 /** Shape returned by POST /ai-notes/{id}/regenerate-summary. */
 export interface RegenerateResult { ok: boolean; status?: AiNoteStatus }
 
@@ -41,10 +49,7 @@ export async function getAiNote(id: string): Promise<AiNote> {
 }
 
 export async function createAiNote(input: CreateAiNoteInput): Promise<{ id: string; status: AiNoteStatus }> {
-  if (USE_MOCK) {
-    await delay(400);
-    return { id: `ai_${Date.now()}`, status: 'PROCESSING' };
-  }
+  if (USE_MOCK) throw notInFixtureMode('Creating an AI note');
   const { data } = await api.post(`${BASE}/ai-notes`, input, {
     headers: { 'Idempotency-Key': generateIdempotencyKey() },
   });
@@ -67,10 +72,7 @@ export async function awaitProcessing(id: string): Promise<{ status: AiNoteStatu
  * the screen showing `undefined` after a successful regeneration.
  */
 export async function regenerateSummary(id: string): Promise<RegenerateResult> {
-  if (USE_MOCK) {
-    await delay(900);
-    return { ok: true, status: 'READY' };
-  }
+  if (USE_MOCK) throw notInFixtureMode('Regenerating the AI note summary');
   const { data } = await api.post(`${BASE}/ai-notes/${id}/regenerate-summary`, {}, {
     headers: { 'Idempotency-Key': generateIdempotencyKey() },
   });
@@ -78,7 +80,7 @@ export async function regenerateSummary(id: string): Promise<RegenerateResult> {
 }
 
 export async function approveAiNote(id: string): Promise<{ ok: true }> {
-  if (USE_MOCK) { await delay(); return { ok: true }; }
+  if (USE_MOCK) throw notInFixtureMode('Approving an AI note');
   const { data } = await api.post(`${BASE}/ai-notes/${id}/approve`, {}, {
     headers: { 'Idempotency-Key': generateIdempotencyKey() },
   });
@@ -86,7 +88,7 @@ export async function approveAiNote(id: string): Promise<{ ok: true }> {
 }
 
 export async function publishAiNote(id: string): Promise<{ ok: true }> {
-  if (USE_MOCK) { await delay(); return { ok: true }; }
+  if (USE_MOCK) throw notInFixtureMode('Publishing an AI note');
   const { data } = await api.post(`${BASE}/ai-notes/${id}/publish`, {}, {
     headers: { 'Idempotency-Key': generateIdempotencyKey() },
   });
@@ -94,7 +96,7 @@ export async function publishAiNote(id: string): Promise<{ ok: true }> {
 }
 
 export async function convertActionItem(noteId: string, actionItemId: string): Promise<{ taskId: string }> {
-  if (USE_MOCK) { await delay(); return { taskId: `tk_${actionItemId}` }; }
+  if (USE_MOCK) throw notInFixtureMode('Converting an action item to a task');
   const { data } = await api.post(
     `${BASE}/ai-notes/${noteId}/action-items/${actionItemId}/convert`,
     {},

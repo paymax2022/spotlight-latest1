@@ -13,6 +13,15 @@ import {
 
 const delay = (ms = 260) => new Promise((r) => setTimeout(r, ms));
 
+// Every write below (except registerMockDevice — a deliberate mock-only dev
+// utility, see its own doc comment) has a real live endpoint (verified against
+// backend/internal/association/routes.go and a full green run of
+// backend/tests/association), so fixture mode has nothing to add and refuses
+// loudly instead of reporting a write it did not perform — mirrors
+// frontend-admin's crowdfundingAdminService.ts NOT_IN_FIXTURE_MODE pattern.
+const notInFixtureMode = (action: string) =>
+  new Error(`${action} is unavailable in fixture mode: this app will not report a write it did not perform. Set EXPO_PUBLIC_ASSOCIATION_USE_MOCK=false to send this against the live backend.`);
+
 // In-memory session state for mock toggles/devices.
 let prefs: NotificationPrefs = { ...MOCK_NOTIF_PREFS };
 let security: SecuritySettings = { ...MOCK_SECURITY };
@@ -25,7 +34,7 @@ export async function getPreferences(): Promise<Preferences> {
   return data;
 }
 export async function updatePreferences(next: Preferences): Promise<Preferences> {
-  if (USE_MOCK) { await delay(150); preferences = { ...next }; return preferences; }
+  if (USE_MOCK) throw notInFixtureMode('Updating your preferences');
   const { data } = await api.put(`${BASE}/me/preferences`, next);
   return data;
 }
@@ -38,7 +47,7 @@ export async function getNotificationPrefs(): Promise<NotificationPrefs> {
   return data;
 }
 export async function updateNotificationPrefs(next: NotificationPrefs): Promise<NotificationPrefs> {
-  if (USE_MOCK) { await delay(150); prefs = { ...next }; return prefs; }
+  if (USE_MOCK) throw notInFixtureMode('Updating your notification preferences');
   const { data } = await api.put(`${BASE}/me/notification-prefs`, next);
   return data;
 }
@@ -49,7 +58,7 @@ export async function getSecuritySettings(): Promise<SecuritySettings> {
   return data;
 }
 export async function updateSecuritySettings(next: SecuritySettings): Promise<SecuritySettings> {
-  if (USE_MOCK) { await delay(150); security = { ...next }; return security; }
+  if (USE_MOCK) throw notInFixtureMode('Updating your security settings');
   const { data } = await api.put(`${BASE}/me/security`, next);
   return data;
 }
@@ -60,7 +69,7 @@ export async function getDevices(): Promise<Device[]> {
   return data;
 }
 export async function revokeDevice(id: string): Promise<{ ok: true }> {
-  if (USE_MOCK) { await delay(250); devices = devices.filter((d) => d.id !== id); return { ok: true }; }
+  if (USE_MOCK) throw notInFixtureMode('Revoking a device');
   const { data } = await api.delete(`${BASE}/me/devices/${id}`);
   return data;
 }
@@ -125,7 +134,7 @@ export async function getTicket(id: string): Promise<SupportTicket> {
 }
 
 export async function createTicket(input: CreateTicketInput): Promise<{ id: string }> {
-  if (USE_MOCK) { await delay(400); return { id: `tk_${Date.now()}` }; }
+  if (USE_MOCK) throw notInFixtureMode('Creating a support ticket');
   const { data } = await api.post(`${BASE}/support/tickets`, input, {
     headers: { 'Idempotency-Key': generateIdempotencyKey() },
   });
@@ -133,10 +142,7 @@ export async function createTicket(input: CreateTicketInput): Promise<{ id: stri
 }
 
 export async function replyTicket(id: string, body: string): Promise<TicketMessage> {
-  if (USE_MOCK) {
-    await delay(160);
-    return { id: `local_${Date.now()}`, author: 'You', fromSupport: false, body, createdAt: new Date().toISOString() };
-  }
+  if (USE_MOCK) throw notInFixtureMode('Replying to a support ticket');
   const { data } = await api.post(`${BASE}/support/tickets/${id}/messages`, { body });
   return data;
 }
