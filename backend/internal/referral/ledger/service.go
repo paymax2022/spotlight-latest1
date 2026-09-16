@@ -62,18 +62,19 @@ const MinWithdrawTier = 1
 var ErrKYCRequired = fmt.Errorf("referral/ledger: verified KYC required to withdraw")
 
 // ErrAccountNotEligible is returned when the beneficiary's platform_users
-// account status blocks a withdrawal request (REF-009).
+// account status blocks referral money movement (REF-009) — both the actual
+// payout (Transition to 'paid') and a withdrawal request.
 //
-// SCOPE NOTE: this gates the WITHDRAWAL request only. It does not (and must
-// not) touch Transition/Credit above or finance/ledger.Service.Credit — a
-// suspended account's referral reward can still accrue and be transitioned to
-// 'paid' by those money-path primitives, which post the wallet credit as
-// designed. What this gate adds is a second checkpoint at the point the money
-// would leave the reward ledger for good via a WithdrawEligible call: it
-// cannot be reached while the account stays suspended/locked/deleted, which
-// narrows the blast radius of that separately-tracked accrual-side gap without
-// changing shared ledger semantics used by other modules.
-var ErrAccountNotEligible = fmt.Errorf("referral/ledger: account status blocks withdrawal")
+// SCOPE NOTE: this gates Refer & Earn's OWN money-path entry points
+// (Transition, WithdrawEligible) — it does NOT touch
+// finance/ledger.Service.Credit itself, which is the shared primitive used
+// across many other modules (wallet top-up, transfers, other reward paths).
+// Changing that function's semantics would have app-wide blast radius outside
+// this module's authority. Gating both of Refer & Earn's own callers achieves
+// the same practical outcome for this module — a suspended/locked/deleted
+// account can no longer accrue a real wallet credit through EITHER path this
+// module exposes — without touching shared infrastructure.
+var ErrAccountNotEligible = fmt.Errorf("referral/ledger: account status blocks this action")
 
 // AuditSink records a durable audit event for a money mutation. Optional; wired
 // by the route registrar to the referral events sink. Must be idempotent on key.
@@ -212,7 +213,25 @@ func (s *Service) Transition(ctx context.Context, rewardID, nextState, idempoten
 
 	// Real payout: post a balanced credit to the human beneficiary's wallet.
 	// House rows are notional and skip the wallet entirely.
+	//
+	// REF-009 (closing the accrual/payout-side half): a suspended/locked/
+	// deleted beneficiary is refused HERE too, not just at WithdrawEligible.
+	// This closes the remaining gap deliberately left open when REF-009 was
+	// first scoped to the withdrawal path alone — on reflection, gating only
+	// withdrawal while still letting the payout itself land would just move
+	// the same "money reaches a suspended account" outcome one step earlier,
+	// and would risk the exact class of bug REF-011 just fixed elsewhere in
+	// this file: a state transition succeeding while the money movement it
+	// describes silently doesn't happen (or, here, happens somewhere it
+	// shouldn't). Failing the WHOLE transition (no state change, no credit)
+	// when the gate rejects means the reward simply stays at its current
+	// state — safe to retry once the account is reinstated, matching this
+	// function's existing "state and money move together, or neither does"
+	// contract.
 	if nextState == StatePaid && !isHouse && beneficiaryID != nil && *beneficiaryID != "" && amountKobo > 0 {
+		if err := s.checkAccountEligibleForMoneyMovement(ctx, *beneficiaryID); err != nil {
+			return err
+		}
 		acc, err := s.finance.GetOrCreateStandingAccount(ctx, financeledger.AccountReferralReward)
 		if err != nil {
 			return err
@@ -363,9 +382,9 @@ func (s *Service) WithdrawEligible(ctx context.Context, beneficiaryID, idempoten
 	}
 
 	// (5) Account-status gate — a suspended/locked/deleted platform_users
-	// account may not withdraw (REF-009). See ErrAccountNotEligible for why
-	// this sits here and not in Transition/Credit.
-	if err := s.checkAccountEligibleForWithdrawal(ctx, beneficiaryID); err != nil {
+	// account may not withdraw (REF-009). The payout side (Transition to
+	// 'paid') enforces the same gate — see checkAccountEligibleForMoneyMovement.
+	if err := s.checkAccountEligibleForMoneyMovement(ctx, beneficiaryID); err != nil {
 		return nil, err
 	}
 
@@ -467,10 +486,12 @@ func (s *Service) verifiedKYCTier(ctx context.Context, userID string) (int, erro
 	return tier, nil
 }
 
-// checkAccountEligibleForWithdrawal enforces the platform_users account-status
-// gate on referral withdrawals (REF-009). It mirrors the exact statuses and
-// locked_until semantics services/auth_service.go validateLoginStatus uses for
-// login, against the same column: platform_users.status, CHECK'd to one of
+// checkAccountEligibleForMoneyMovement enforces the platform_users
+// account-status gate on referral money movement (REF-009) — both an actual
+// payout (Transition to 'paid') and a withdrawal request. It mirrors the
+// exact statuses and locked_until semantics services/auth_service.go
+// validateLoginStatus uses for login, against the same column:
+// platform_users.status, CHECK'd to one of
 // 'active','pending','suspended','locked','deleted' (see
 // supabase/migrations/20260527100000_enterprise_auth_rbac.sql).
 //
@@ -478,7 +499,7 @@ func (s *Service) verifiedKYCTier(ctx context.Context, userID string) (int, erro
 // is not itself evidence of suspension (some beneficiaries may predate or sit
 // outside platform_users sync), so this narrow, additive gate does not block
 // on absence — it blocks on an affirmatively bad status.
-func (s *Service) checkAccountEligibleForWithdrawal(ctx context.Context, userID string) error {
+func (s *Service) checkAccountEligibleForMoneyMovement(ctx context.Context, userID string) error {
 	const q = `SELECT status, locked_until, deleted_at FROM platform_users WHERE id = $1`
 	var (
 		status      string
