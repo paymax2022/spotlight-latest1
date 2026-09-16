@@ -1,7 +1,13 @@
 # ADR-029 — Admin (modules) type debt: port support files to `src/`, keep alias paths
 
 **Date:** 2026-08-12
-**Status:** Accepted
+**Status:** Superseded by ADR-047's consolidation (commit `1103469b`, "delete
+frontend-web/app/admin") — the `(modules)` tree this ADR ported support code
+for was itself deleted once every page it served got a real home in
+`frontend-admin`. 107 of the 138 ported support files were dead code with the
+tree gone and have been removed; 9 turned out to be independently
+load-bearing for unrelated `app/api/admin/*` routes and were kept. Left here
+as a historical record of why that code briefly existed.
 **Deciders:** Platform/Web
 **Scope:** `frontend-web/src/{services,types,components,features}` (files copied from
 `frontend-admin/src`), `frontend-web/tsconfig.json` (exclude entries removed),
