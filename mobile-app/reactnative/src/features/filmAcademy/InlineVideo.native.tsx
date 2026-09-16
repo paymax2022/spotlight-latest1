@@ -93,5 +93,5 @@ const styles = StyleSheet.create({
   fallback: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm,
               backgroundColor: Colors.surface, borderRadius: Radius.md,
               padding: Spacing.lg, marginTop: Spacing.sm },
-  fallbackText: { ...Typography.labelLg, color: Colors.gold, flex: 1 },
+  fallbackText: { ...Typography.labelLg, color: Colors.onWarning, flex: 1 },
 });

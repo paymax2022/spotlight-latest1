@@ -101,7 +101,7 @@ function DocRow({ label, state, last }: { label: string; state: KycStepState; la
 
 function DocBadge({ state }: { state: KycStepState }) {
   if (state === 'passed') return <View style={styles.badgeOk}><Check size={12} color={Colors.teal} /><Text style={styles.badgeOkText}>Verified</Text></View>;
-  if (state === 'pending') return <Text style={[styles.badgeText, { color: Colors.gold }]}>Pending</Text>;
+  if (state === 'pending') return <Text style={[styles.badgeText, { color: Colors.onWarning }]}>Pending</Text>;
   if (state === 'rejected') return <Text style={[styles.badgeText, { color: Colors.error }]}>Rejected</Text>;
   return <Text style={[styles.badgeText, { color: Colors.onSurfaceVariant }]}>Not started</Text>;
 }
