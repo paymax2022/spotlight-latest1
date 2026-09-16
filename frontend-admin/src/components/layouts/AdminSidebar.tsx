@@ -53,6 +53,7 @@ const navItemsBase: NavItem[] = [
   { label: 'Stages & Evictions', href: '/admin/stages-evictions', section: 'Contests', permissions: ['programs:manage'] },
   { label: 'SME Pitch', href: '/admin/sme-pitch', section: 'Contests', permissions: ['programs:manage'] },
   { label: 'Voting Packages', href: '/admin/voting/packages', section: 'Voting', permissions: ['votes:manage'] },
+  { label: 'Contest Templates', href: '/admin/voting/templates', section: 'Voting', permissions: ['votes:manage'] },
   { label: 'Voting Visibility', href: '/admin/voting/visibility', section: 'Voting', permissions: ['votes:manage'] },
   { label: 'Chat Sessions', href: '/admin/chatbot', section: 'Support' },
   { label: 'Leads Queue', href: '/admin/leads', section: 'Support' },

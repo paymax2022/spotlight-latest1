@@ -320,6 +320,27 @@ async function resolveAnyContest(slugOrId: string): Promise<ContestRegistrationD
   return null;
 }
 
+/**
+ * Look up a connect_contests.id by slug. Used by reviewRegistrationApplication
+ * (AD-003/CS-004) to resolve which contest a registration's photo template
+ * (contest_templates.connect_contest_id) should come from. There was no
+ * existing slug -> connect_contests.id lookup in this file to reuse —
+ * resolveAnyContest above resolves against public.contests / the in-memory
+ * catalog, not connect_contests. Returns null (never throws) on any miss or
+ * error — an unresolvable contest just means the template resolver is
+ * skipped and the caller falls back to the no-template pipeline.
+ */
+async function resolveConnectContestId(slug: string | undefined): Promise<string | null> {
+  if (!slug) return null;
+  const { data, error } = await getSupabase()
+    .from('connect_contests')
+    .select('id')
+    .eq('slug', slug)
+    .maybeSingle();
+  if (error || !data) return null;
+  return (data as { id: string }).id;
+}
+
 export async function startRegistrationDraft(params: {
   contestSlug: string;
   userId?: string;
@@ -827,12 +848,16 @@ export async function reviewRegistrationApplication(
   // RPC's existing COALESCE picks up the processed image with zero SQL
   // changes.
   //
-  // Full template compositing (processContestantPhoto) is NOT reachable here:
-  // contest_templates links to the legacy `contests` table, not
-  // `connect_contests` (what registrations resolve via contest_slug), so
-  // there is no way to resolve which template/slot applies to a given
-  // registration today. We use processContestantPhotoNoTemplate instead —
-  // moderation + best-effort cutout, no compositing. See
+  // AD-003/CS-004: contest_templates now has a connect_contest_id bridge
+  // column (supabase/migrations/20270212000000_contest_templates_connect_bridge.sql)
+  // linking it to connect_contests — the table registrations actually
+  // resolve via contest_slug. We resolve the registration's connect_contests
+  // id, then look up an active template for it via
+  // resolveActiveTemplateForContest(). If one is configured (with a
+  // 'contestant' slot), we run the full compositing pipeline
+  // (processContestantPhoto); otherwise (the common case, until an admin
+  // sets one up in the template manager) we fall back to
+  // processContestantPhotoNoTemplate exactly as before. See
   // src/server/registration/photo-pipeline.ts module doc.
   if (PROMOTING_STATUSES.includes(input.status)) {
     const rawPhotoUrl =
@@ -840,8 +865,31 @@ export async function reviewRegistrationApplication(
       (nextFormData['media.headshotUrl'] as string | undefined);
 
     if (rawPhotoUrl) {
-      const { processContestantPhotoNoTemplate } = await import('@/src/server/registration/photo-pipeline');
-      const pipelineResult = await processContestantPhotoNoTemplate(rawPhotoUrl);
+      const { processContestantPhoto, processContestantPhotoNoTemplate } = await import(
+        '@/src/server/registration/photo-pipeline'
+      );
+      const { resolveActiveTemplateForContest } = await import(
+        '@/src/server/registration/template-resolver'
+      );
+
+      let pipelineResult;
+
+      const connectContestId = await resolveConnectContestId(current.contestSlug);
+      const resolvedTemplate = connectContestId
+        ? await resolveActiveTemplateForContest(connectContestId)
+        : null;
+
+      if (resolvedTemplate) {
+        pipelineResult = await processContestantPhoto({
+          rawPhotoUrl,
+          templateUrl: resolvedTemplate.templateUrl,
+          templateWidth: resolvedTemplate.templateWidth,
+          templateHeight: resolvedTemplate.templateHeight,
+          slot: resolvedTemplate.slot,
+        });
+      } else {
+        pipelineResult = await processContestantPhotoNoTemplate(rawPhotoUrl);
+      }
 
       if (pipelineResult.status === 'rejected') {
         // IMG-001/SEC-010 content-safety gate: refuse the approval outright
