@@ -789,6 +789,15 @@ export async function withdrawRegistrationApplication(
  * shape immediately above: update the row, then append a
  * registration_status_events row for the audit timeline.
  */
+// Statuses that promote_registration_to_contestant() (via review_registration_application,
+// migration 20270125000000) actually fires for. Kept in sync manually with that SQL —
+// there's no shared source of truth to import from across the SQL/TS boundary.
+const PROMOTING_STATUSES: ReadonlyArray<ApplicationStatus> = [
+  'approved',
+  'selected_for_public_voting',
+  'selected_for_bootcamp',
+];
+
 export async function reviewRegistrationApplication(
   applicationId: string,
   input: RegistrationReviewInput,
@@ -798,12 +807,58 @@ export async function reviewRegistrationApplication(
 
   const now = nowIso();
   const nextFraudFlags = input.fraudFlags || current.fraudFlags;
-  const nextFormData = {
+  const nextFormData: Record<string, any> = {
     ...current.formData,
     'admin.reviewNote': input.note || '',
     'admin.reviewScore': typeof input.score === 'number' ? input.score : current.formData['admin.reviewScore'],
     'admin.requestedFields': input.requestedFields || current.formData['admin.requestedFields'],
   };
+
+  // G-IMG / TS-3 (IMG-001/SEC-010): when this decision is one that promotes
+  // the applicant to a public contestant, run their photo through moderation
+  // + background-removal BEFORE any DB write, so a failed/rejected photo
+  // leaves the application entirely untouched (admin can retry the action).
+  //
+  // promote_registration_to_contestant() reads
+  // form_data->>'media.photoUrl' (falling back to 'media.headshotUrl')
+  // verbatim into contestants.photo_url — see
+  // supabase/migrations/20260812010000_registration_contestant_seam.sql
+  // line ~104. By rewriting that same key here before the RPC fires, the
+  // RPC's existing COALESCE picks up the processed image with zero SQL
+  // changes.
+  //
+  // Full template compositing (processContestantPhoto) is NOT reachable here:
+  // contest_templates links to the legacy `contests` table, not
+  // `connect_contests` (what registrations resolve via contest_slug), so
+  // there is no way to resolve which template/slot applies to a given
+  // registration today. We use processContestantPhotoNoTemplate instead —
+  // moderation + best-effort cutout, no compositing. See
+  // src/server/registration/photo-pipeline.ts module doc.
+  if (PROMOTING_STATUSES.includes(input.status)) {
+    const rawPhotoUrl =
+      (nextFormData['media.photoUrl'] as string | undefined) ||
+      (nextFormData['media.headshotUrl'] as string | undefined);
+
+    if (rawPhotoUrl) {
+      const { processContestantPhotoNoTemplate } = await import('@/src/server/registration/photo-pipeline');
+      const pipelineResult = await processContestantPhotoNoTemplate(rawPhotoUrl);
+
+      if (pipelineResult.status === 'rejected') {
+        // IMG-001/SEC-010 content-safety gate: refuse the approval outright
+        // rather than silently promoting with no/unsafe photo. The admin
+        // sees this as a failed review action and must resolve the photo
+        // (e.g. request a new one) before retrying.
+        throw new Error(`Cannot approve: contestant photo failed content moderation (${pipelineResult.reason})`);
+      }
+
+      // 'ready' or 'fallback' — either way we have a usable URL to promote.
+      if (nextFormData['media.photoUrl'] !== undefined) {
+        nextFormData['media.photoUrl'] = pipelineResult.photoUrl;
+      } else {
+        nextFormData['media.headshotUrl'] = pipelineResult.photoUrl;
+      }
+    }
+  }
 
   // Review notes first. These are cosmetic, and writing them before the status
   // transition means a failed transition leaves notes without a false decision —
