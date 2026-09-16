@@ -60,11 +60,16 @@ func (h *Handler) Contribute(c *gin.Context) {
 
 func (h *Handler) Release(c *gin.Context) {
 	userID := c.GetString("user_id")
-	if err := h.svc.Release(c.Request.Context(), c.Param("id"), userID); err != nil {
+	result, err := h.svc.Release(c.Request.Context(), c.Param("id"), userID)
+	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"ok": true})
+	c.JSON(http.StatusOK, gin.H{
+		"ok":            true,
+		"releasedCount": result.ReleasedCount,
+		"releasedKobo":  result.ReleasedKobo,
+	})
 }
 
 func (h *Handler) Refund(c *gin.Context) {

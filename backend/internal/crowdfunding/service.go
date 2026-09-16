@@ -2,11 +2,13 @@ package crowdfunding
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"spotlight/backend/internal/finance/ledger"
 	"spotlight/backend/internal/finance/settlement"
@@ -148,6 +150,25 @@ const (
 // requiring reviewStatus too closes that gap rather than relying on Publish()
 // alone). If the campaign goal is now met, it also transitions to "funded".
 func (s *Service) Contribute(ctx context.Context, campaignID, contributorID string, req ContributeRequest) (*Contribution, error) {
+	// Idempotent replay: return the prior contribution unchanged, before any
+	// state checks below. settlement.Escrow already deduplicates the ledger
+	// posting itself (confirmed live: a replay produces zero extra ledger
+	// entries) — but this function still called Escrow() again on every
+	// retry and then tried to INSERT a second `contributions` row with the
+	// same idempotency_key, which the table's own UNIQUE constraint rejected
+	// as a raw 500 SQL error ("duplicate key value violates unique
+	// constraint"). A caller retrying after a dropped response (the exact
+	// scenario idempotency keys exist for) saw that error instead of the
+	// success they'd already paid for. True idempotency means returning what
+	// already happened, not re-validating current campaign state — a since-
+	// paused/frozen campaign must not turn an already-paid contribution into
+	// a fresh failure on replay.
+	if existing, ok, err := s.findContributionByIdempotencyKey(ctx, req.IdempotencyKey); err != nil {
+		return nil, err
+	} else if ok {
+		return existing, nil
+	}
+
 	var status, reviewStatus, creatorID string
 	var deadline time.Time
 	var pausedAt, deletedAt *time.Time
@@ -219,20 +240,52 @@ func (s *Service) Contribute(ctx context.Context, campaignID, contributorID stri
 	return contrib, nil
 }
 
+// findContributionByIdempotencyKey looks up a prior contribution by its
+// idempotency key. Returns (nil, false, nil) when none exists.
+func (s *Service) findContributionByIdempotencyKey(ctx context.Context, idempotencyKey string) (*Contribution, bool, error) {
+	const q = `
+		SELECT id, campaign_id, contributor_id, amount_kobo, status, idempotency_key, settlement_id, created_at
+		FROM contributions WHERE idempotency_key = $1`
+	c := &Contribution{}
+	err := s.db.QueryRow(ctx, q, idempotencyKey).Scan(
+		&c.ID, &c.CampaignID, &c.ContributorID, &c.AmountKobo, &c.Status, &c.IdempotencyKey, &c.SettlementID, &c.CreatedAt,
+	)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, false, nil
+		}
+		return nil, false, err
+	}
+	return c, true, nil
+}
+
+// ReleaseResult reports what Release actually did. See RefundAll's identical
+// pattern and comment for why this matters here too: Contribute() already
+// instant-settles the 90/10 split on arrival (see its own comment), so by the
+// time a campaign reaches 'funded' its contributions are typically already
+// 'released', not 'escrowed' — a funded-campaign Release() call then finds
+// nothing left to process. A bare success gave no way to tell "this call
+// just paid everyone out" from "this call did nothing, it had already
+// happened at contribute-time".
+type ReleaseResult struct {
+	ReleasedCount int   `json:"releasedCount"`
+	ReleasedKobo  int64 `json:"releasedKobo"`
+}
+
 // Release pays out all escrowed contributions to the campaign creator.
 // 90% to creator, 10% platform fee.
-func (s *Service) Release(ctx context.Context, campaignID, creatorID string) error {
+func (s *Service) Release(ctx context.Context, campaignID, creatorID string) (*ReleaseResult, error) {
 	var status string
 	if err := s.db.QueryRow(ctx, `SELECT status FROM campaigns WHERE id=$1 AND creator_id=$2`, campaignID, creatorID).Scan(&status); err != nil {
-		return fmt.Errorf("crowdfunding: campaign not found")
+		return nil, fmt.Errorf("crowdfunding: campaign not found")
 	}
 	if status != "funded" {
-		return fmt.Errorf("crowdfunding: campaign must be in 'funded' state to release funds")
+		return nil, fmt.Errorf("crowdfunding: campaign must be in 'funded' state to release funds")
 	}
 
 	rows, err := s.db.Query(ctx, `SELECT id, settlement_id, contributor_id, amount_kobo FROM contributions WHERE campaign_id=$1 AND status='escrowed'`, campaignID)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer rows.Close()
 	type c struct {
@@ -243,7 +296,7 @@ func (s *Service) Release(ctx context.Context, campaignID, creatorID string) err
 	for rows.Next() {
 		var entry c
 		if err := rows.Scan(&entry.id, &entry.settlementID, &entry.contributorID, &entry.amountKobo); err != nil {
-			return err
+			return nil, err
 		}
 		contribs = append(contribs, entry)
 	}
@@ -254,11 +307,16 @@ func (s *Service) Release(ctx context.Context, campaignID, creatorID string) err
 		ProviderPct: CreatorPayoutPct,
 		PlatformPct: PlatformFeePct,
 	}
+	result := &ReleaseResult{}
 	for _, entry := range contribs {
 		if err := s.settlement.Settle(ctx, entry.settlementID, split); err != nil {
-			return fmt.Errorf("crowdfunding: settle contribution %s: %w", entry.id, err)
+			return nil, fmt.Errorf("crowdfunding: settle contribution %s: %w", entry.id, err)
 		}
-		s.db.Exec(ctx, `UPDATE contributions SET status='released' WHERE id=$1`, entry.id)
+		if _, err := s.db.Exec(ctx, `UPDATE contributions SET status='released' WHERE id=$1`, entry.id); err != nil {
+			return nil, fmt.Errorf("crowdfunding: mark contribution %s released: %w", entry.id, err)
+		}
+		result.ReleasedCount++
+		result.ReleasedKobo += entry.amountKobo
 		// Record realized Spotlight profit into the central Commission & Profit
 		// registry. Release is crowdfunding's disbursement/settlement point — the
 		// 90/10 split above already posted the 10% platform cut to the ledger, so this
@@ -270,7 +328,7 @@ func (s *Service) Release(ctx context.Context, campaignID, creatorID string) err
 		contributorID := entry.contributorID
 		s.recordCommissionSafe(ctx, "Community", "Crowdfunding", "", entry.amountKobo, entry.id, &contributorID)
 	}
-	return nil
+	return result, nil
 }
 
 // RefundResult reports what RefundAll actually did, so a caller can tell
