@@ -9,16 +9,11 @@
 -- from querying this table directly if RLS policy logic is ever written.
 -- Service role ALWAYS bypasses RLS, so the Go backend is unaffected.
 
--- Check if RLS is already enabled to avoid redundant operations.
-DO $$
-BEGIN
-  -- Enable RLS if not already enabled.
-  IF NOT (
-    SELECT row_security
-    FROM information_schema.tables
-    WHERE table_schema = 'public' AND table_name = 'utility_billers'
-  ) THEN
-    ALTER TABLE public.utility_billers ENABLE ROW LEVEL SECURITY;
-  END IF;
-END
-$$;
+-- ENABLE ROW LEVEL SECURITY is itself idempotent (a no-op if already enabled),
+-- so no existence guard is needed — see 20261215000100_module_registry_rls.sql
+-- and 20261222000000_academy_interest_areas_rls.sql for the same pattern.
+--
+-- (This migration originally guarded on `information_schema.tables.row_security`,
+-- which is not a real Postgres column and made every fresh-replay fail outright —
+-- fixed here rather than via a correction migration since it never applied.)
+ALTER TABLE public.utility_billers ENABLE ROW LEVEL SECURITY;
