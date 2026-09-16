@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useMemo, useRef, useState } from 'react';
-import type maplibregl from 'maplibre-gl';
+import type * as maplibregl from 'maplibre-gl';
 import MapView from './MapView';
 import { mapsClient, type MapSuggestion } from '@/services/mapsClient';
 
