@@ -1,12 +1,12 @@
 // ── Direct Referral Rewards — admin service (ADR-022) ─────────────────────────
 // Mock by default (mirrors referralAdminService / connectAdminService). Flip with
 // NEXT_PUBLIC_REFERRAL_REWARDS_USE_MOCK=false to hit the live Go backend at the
-// admin mount /v1/admin/referrals. env.apiBaseUrl already ends in /api/v1, so we
 // append /admin/referrals → /api/v1/admin/referrals (proxied to the Go backend's
 // /v1/admin/referrals group). Bearer token + RBAC referral.admin.* on the server;
 // the sidebar gates the nav entries. Money is BIGINT kobo throughout.
 
-import { env } from '@/config/env';
+import { apiV1 } from '@/config/env';
+import { resolveUseMock } from '@/config/useMock';
 import type {
   ProgramConfig,
   ConfigPublishInput,
@@ -22,12 +22,11 @@ import type {
   ModuleStatus,
 } from '@/types/referralRewardsAdmin';
 
-const USE_MOCK =
-  (process.env.NEXT_PUBLIC_REFERRAL_REWARDS_USE_MOCK ?? 'true').toLowerCase() !== 'false';
+const USE_MOCK = resolveUseMock(process.env.NEXT_PUBLIC_REFERRAL_REWARDS_USE_MOCK);
 
 function adminBase(): string {
-  // env.apiBaseUrl = http://host/api/v1 → http://host/api/v1/admin/referrals
-  return `${env.apiBaseUrl.replace(/\/$/, '')}/admin/referrals`;
+  // apiV1() = http://host/api/v1 → http://host/api/v1/admin/referrals
+  return `${apiV1()}/admin/referrals`;
 }
 function authHeaders(): Record<string, string> {
   if (typeof window === 'undefined') return { 'Content-Type': 'application/json' };
@@ -37,6 +36,15 @@ function authHeaders(): Record<string, string> {
     : { 'Content-Type': 'application/json' };
 }
 const delay = (ms = 220) => new Promise((r) => setTimeout(r, ms));
+
+// All three writes below have real, verified live endpoints (backend/internal/
+// finance/referrals/rewards_handler.go — a different module from referralAdminService
+// / referralAdminOpsService, which target backend/internal/referral), so fixture
+// mode has nothing to add and refuses loudly instead of reporting a write it
+// did not perform. See docs/audit/ADMIN_SIMULATED_WRITES.md.
+const NOT_IN_FIXTURE_MODE =
+  'is unavailable in fixture mode: this console will not report a write it did not perform. ' +
+  'Set NEXT_PUBLIC_REFERRAL_REWARDS_USE_MOCK=false to make this change against the live backend.';
 
 async function getJson<T>(path: string): Promise<T> {
   const res = await fetch(`${adminBase()}${path}`, { headers: authHeaders() });
@@ -142,13 +150,7 @@ export async function getProgramConfig(): Promise<ProgramConfig> {
   return getJson<ProgramConfig>('/config');
 }
 export async function publishProgramConfig(input: ConfigPublishInput): Promise<ConfigPublishResult> {
-  if (USE_MOCK) {
-    await delay();
-    return {
-      config: { ...MOCK_CONFIG, ...input, version: MOCK_CONFIG.version + 1, effective_from: input.effective_from ?? new Date().toISOString() },
-      warning: 'Changes apply to future transactions only — already-computed rewards are never recomputed.',
-    };
-  }
+  if (USE_MOCK) throw new Error(`Publishing program config ${NOT_IN_FIXTURE_MODE}`);
   // Config publish is not a money mutation, but the backend versions forward-only.
   return sendJson<ConfigPublishResult>('PUT', '/config', input);
 }
@@ -166,7 +168,7 @@ export async function getFraudQueue(status?: string): Promise<FraudFlag[]> {
   return j.flags ?? [];
 }
 export async function actionFraudFlag(input: FraudActionInput): Promise<{ ok: true }> {
-  if (USE_MOCK) { await delay(); return { ok: true }; }
+  if (USE_MOCK) throw new Error(`Actioning a fraud flag ${NOT_IN_FIXTURE_MODE}`);
   return sendJson<{ ok: true }>('POST', '/fraud-queue', input);
 }
 
@@ -195,11 +197,36 @@ export async function getReferrerCase(referrerId: string): Promise<ReferrerCase>
   return getJson<ReferrerCase>(`/${encodeURIComponent(referrerId)}/case`);
 }
 export async function adjustReferrerCase(referrerId: string, input: CaseAdjustmentInput): Promise<{ ok: true }> {
-  if (USE_MOCK) { await delay(); return { ok: true }; }
+  if (USE_MOCK) throw new Error(`Adjusting a referrer case ${NOT_IN_FIXTURE_MODE}`);
   // Money mutation: backend requires an Idempotency-Key + audit event.
   return sendJson<{ ok: true }>('POST', `/${encodeURIComponent(referrerId)}/case`, input, {
     'Idempotency-Key': crypto.randomUUID(),
   });
+}
+
+// ─── Referral code (admin-chosen) ────────────────────────────────────────────
+/** 3-5 chars of A-Z0-9; the server normalises to uppercase and enforces this too. */
+export const REFERRAL_CODE_MAX = 5;
+export const REFERRAL_CODE_MIN = 3;
+export const REFERRAL_CODE_PATTERN = /^[A-Z0-9]{3,5}$/;
+
+/** Thrown when the chosen code already belongs to someone (HTTP 409). */
+export class ReferralCodeTakenError extends Error {
+  constructor() { super('That referral code is already in use.'); this.name = 'ReferralCodeTakenError'; }
+}
+
+export async function setReferrerCode(referrerId: string, code: string): Promise<{ code: string }> {
+  if (USE_MOCK) throw new Error(`Editing a referral code ${NOT_IN_FIXTURE_MODE}`);
+  try {
+    return await sendJson<{ code: string }>('PUT', `/${encodeURIComponent(referrerId)}/code`, { code });
+  } catch (e) {
+    // 409 is a distinct outcome, not a generic failure: the admin needs to be
+    // told the code is taken so they can pick another, rather than shown a
+    // "something went wrong" that reads as a bug.
+    const msg = e instanceof Error ? e.message : String(e);
+    if (/\b409\b|already in use/i.test(msg)) throw new ReferralCodeTakenError();
+    throw e;
+  }
 }
 
 // ─── A6 Milestone log ─────────────────────────────────────────────────────────

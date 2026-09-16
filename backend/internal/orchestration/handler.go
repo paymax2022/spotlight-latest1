@@ -157,14 +157,21 @@ func (h *Handler) GetRates(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": h.svc.Rates(c.Request.Context(), tier(c))})
 }
 
-// GetBalances handles GET /v1/balances.
+// GetBalances handles GET /v1/balances. Emits the WalletBalance shape the
+// mobile app codes against ({currency, available, ledger} — same as AddWallet);
+// a bare Money array leaked the internal ledger shape and rendered blank
+// wallet cards. available == ledger until holds are modelled.
 func (h *Handler) GetBalances(c *gin.Context) {
 	b, err := h.svc.Balances(c.Request.Context(), customerID(c))
 	if err != nil {
 		writeErr(c, asAPIError(err))
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"data": b})
+	out := make([]gin.H, 0, len(b))
+	for _, m := range b {
+		out = append(out, gin.H{"currency": m.Currency, "available": m.AmountMinor, "ledger": m.AmountMinor})
+	}
+	c.JSON(http.StatusOK, gin.H{"data": out})
 }
 
 // ListTransactions handles GET /v1/transactions.

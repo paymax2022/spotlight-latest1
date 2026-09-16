@@ -158,11 +158,20 @@ func (h *Handler) StartTrip(c *gin.Context) {
 // CompleteTrip: in_progress → completed, settles the split.
 func (h *Handler) CompleteTrip(c *gin.Context) {
 	userID := c.GetString("user_id")
-	if err := h.svc.CompleteTrip(c.Request.Context(), c.Param("id"), userID); err != nil {
+	tripID := c.Param("id")
+	if err := h.svc.CompleteTrip(c.Request.Context(), tripID, userID); err != nil {
 		respondErr(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"ok": true, "phase": string(PhaseCompleted)})
+	resp := gin.H{"ok": true, "phase": string(PhaseCompleted)}
+	// Best-effort enrichment so the driver app can render accurate cash-trip
+	// copy (fee debited, not credited) — never fails the completion itself.
+	if summary, err := h.svc.CompletionSummary(c.Request.Context(), tripID); err == nil {
+		for k, v := range summary {
+			resp[k] = v
+		}
+	}
+	c.JSON(http.StatusOK, resp)
 }
 
 // DriverEarnings returns the driver economic dashboard.

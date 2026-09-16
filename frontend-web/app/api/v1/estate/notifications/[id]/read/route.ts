@@ -4,7 +4,8 @@ import { requireRequestUser } from '@/src/lib/auth/request';
 import { createAdminClient } from '@/lib/supabase/server';
 
 // POST /api/v1/estate/notifications/[id]/read — mark one notification read.
-export async function POST(request: Request, { params }: { params: { id: string } }) {
+export async function POST(request: Request, ctx: { params: Promise<{ id: string }> }) {
+  const params = await ctx.params;
   try {
     const user = await requireRequestUser(request);
     const supabase = createAdminClient();

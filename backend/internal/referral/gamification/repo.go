@@ -70,7 +70,7 @@ func (r *Repository) queryMissions(ctx context.Context, q string, args ...any) (
 		return nil, fmt.Errorf("gamification: query missions: %w", err)
 	}
 	defer rows.Close()
-	var out []Mission
+	out := []Mission{}
 	for rows.Next() {
 		m, err := scanMission(rows)
 		if err != nil {
@@ -134,7 +134,7 @@ func (r *Repository) ListUserProgress(ctx context.Context, userID string) ([]Mis
 		return nil, fmt.Errorf("gamification: list progress: %w", err)
 	}
 	defer rows.Close()
-	var out []MissionProgress
+	out := []MissionProgress{}
 	for rows.Next() {
 		var p MissionProgress
 		if err := rows.Scan(&p.ID, &p.MissionID, &p.UserID, &p.Progress, &p.Status, &p.ClaimedAt); err != nil {
@@ -189,7 +189,7 @@ func (r *Repository) ListRanks(ctx context.Context) ([]Rank, error) {
 		return nil, fmt.Errorf("gamification: list ranks: %w", err)
 	}
 	defer rows.Close()
-	var out []Rank
+	out := []Rank{}
 	for rows.Next() {
 		var (
 			rk  Rank
@@ -234,7 +234,7 @@ func (r *Repository) ListBadges(ctx context.Context) ([]Badge, error) {
 		return nil, fmt.Errorf("gamification: list badges: %w", err)
 	}
 	defer rows.Close()
-	var out []Badge
+	out := []Badge{}
 	for rows.Next() {
 		var (
 			b          Badge
@@ -271,7 +271,7 @@ func (r *Repository) Leaderboard(ctx context.Context, period, scope string, limi
 		return nil, fmt.Errorf("gamification: leaderboard: %w", err)
 	}
 	defer rows.Close()
-	var out []LeaderboardEntry
+	out := []LeaderboardEntry{}
 	for rows.Next() {
 		var (
 			e   LeaderboardEntry
@@ -299,7 +299,7 @@ func (r *Repository) ListContests(ctx context.Context, onlyActive bool) ([]Conte
 		return nil, fmt.Errorf("gamification: list contests: %w", err)
 	}
 	defer rows.Close()
-	var out []Contest
+	out := []Contest{}
 	for rows.Next() {
 		var (
 			ct         Contest

@@ -14,12 +14,18 @@ import StateView from '@/components/StateView';
 import { HealthHubTile, RecordCard } from '@/features/health/components';
 import { useHubSummary } from '@/features/health/hooks';
 import { VERTICAL_META, NDPA_CONSENT_COPY } from '@/features/health/constants/health.constants';
+import { useFeaturedBanner } from '@/features/promotions/hooks';
+import { PromotionalBannerCard } from '@/features/promotions/components';
 import type { Vertical } from '@/features/health/types';
 
 const VERTICALS: Vertical[] = ['pharmacy', 'lab', 'vet'];
 
 export default function HealthHubScreen() {
   const { data, isLoading, isError, refetch } = useHubSummary();
+  const { data: banner, isLoading: bannerLoading } = useFeaturedBanner('health');
+  const [dismissedBannerId, setDismissedBannerId] = React.useState<string | null>(null);
+
+  const shouldShowBanner = banner && banner.id !== dismissedBannerId;
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
@@ -45,6 +51,14 @@ export default function HealthHubScreen() {
         />
       ) : (
         <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+          {/* Promotional banner (e.g., telemedicine featured service) */}
+          {shouldShowBanner && banner && (
+            <PromotionalBannerCard
+              banner={banner}
+              onClose={() => setDismissedBannerId(banner.id)}
+            />
+          )}
+
           {/* Symptom Checker — the front door to the care loop (triage, not diagnosis) */}
           <Pressable
             style={[styles.symptomCard, shadow1]}

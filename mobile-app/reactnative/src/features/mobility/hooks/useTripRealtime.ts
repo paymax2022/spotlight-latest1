@@ -1,3 +1,4 @@
+import { mockAllowed } from '@/config/mockPolicy';
 import { useEffect, useRef, useState } from 'react';
 import { useTripTracking, type TripPosition } from './useTripTracking';
 import type { LatLng, TripPhase } from '../types/mobility.types';
@@ -5,7 +6,7 @@ import type { LatLng, TripPhase } from '../types/mobility.types';
 // Live tracking is disabled in mock mode (no real backend WebSocket); screens
 // fall back to polling. Mirrors the USE_MOCK gate used across the mobility APIs.
 const USE_MOCK =
-  (process.env.EXPO_PUBLIC_MOBILITY_USE_MOCK ?? 'true').toLowerCase() !== 'false';
+  mockAllowed(process.env.EXPO_PUBLIC_MOBILITY_USE_MOCK, true);
 
 export interface TripRealtimeState {
   /** Latest live driver position, or null until the first frame arrives. */

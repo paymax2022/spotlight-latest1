@@ -286,7 +286,7 @@ func (s *Service) ConfirmMoverCompletion(ctx context.Context, jobID, userID stri
 		return err
 	}
 	if m.SettlementID != nil && m.ProviderID != nil {
-		if err := s.settleModeProvider(ctx, *m.SettlementID, *m.ProviderID); err != nil {
+		if err := s.settleModeProvider(ctx, *m.SettlementID, *m.ProviderID, 0); err != nil {
 			return fmt.Errorf("transport: settle mover: %w", err)
 		}
 	}

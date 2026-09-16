@@ -7,6 +7,7 @@
 // IRON RULES: all money is integer kobo; book/cancel carry an Idempotency-Key;
 // fares/insurance come from the SERVER — never computed here.
 
+import { mockAllowed } from '@/config/mockPolicy';
 import { api } from '@/api/client';
 import type {
   Parcel,
@@ -26,7 +27,7 @@ import {
 } from './parcel.mock';
 
 const USE_MOCK =
-  (process.env.EXPO_PUBLIC_PARCEL_USE_MOCK ?? process.env.EXPO_PUBLIC_MOBILITY_USE_MOCK ?? 'true').toLowerCase() !== 'false';
+  mockAllowed(process.env.EXPO_PUBLIC_PARCEL_USE_MOCK ?? process.env.EXPO_PUBLIC_MOBILITY_USE_MOCK, true);
 
 const BASE = '/api/v1';
 const delay = (ms = 320) => new Promise((r) => setTimeout(r, ms));

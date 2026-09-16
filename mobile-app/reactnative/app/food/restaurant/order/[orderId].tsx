@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { View, Text, ScrollView, StyleSheet, Pressable } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import { confirmAsync, alertAsync } from '@/lib/confirm';
 import * as Icons from 'lucide-react-native';
 import StateView from '@/components/StateView';
@@ -16,6 +17,7 @@ import { useOrderRealtime } from '@/features/food/useOrderRealtime';
 import { OrderChatThread, FoodStatusBadge, RiderInfoCard } from '@/features/food/components';
 import { formatNaira, STATUS_LABEL, DISPATCH_LABEL, normalizeStatus, toFoodError } from '@/features/food/utils';
 import type { OrderStatus } from '@/features/food/types';
+import { HomeMenuButton } from '@/components/HomeMenu';
 
 type Tab = 'order' | 'chat';
 
@@ -65,11 +67,14 @@ export default function RestaurantOrderScreen() {
   return (
     <SafeAreaView style={s.safe} edges={['top']}>
       <View style={s.topBar}>
-        <Pressable onPress={() => router.back()} style={s.iconButton} accessibilityLabel="Go back">
+        <Pressable onPress={() => goBack('/food/restaurant')} style={s.iconButton} accessibilityLabel="Go back">
           <Icons.ArrowLeft size={22} color={Colors.primary} strokeWidth={2.2} />
         </Pressable>
         <Text style={s.topTitle}>Manage order</Text>
-        <View style={s.iconButton}>{realtime.live ? <View style={s.liveDot} /> : null}</View>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+          <View style={s.iconButton}>{realtime.live ? <View style={s.liveDot} /> : null}</View>
+          <HomeMenuButton />
+        </View>
       </View>
 
       {isLoading ? (
@@ -113,6 +118,19 @@ export default function RestaurantOrderScreen() {
                 </View>
                 <Text style={s.addr}>Deliver to: {order.deliveryAddress}</Text>
               </View>
+
+              {/* Pickup code: hand this to the rider when they arrive — they must enter
+                  it to confirm pickup. Distinct from the customer's delivery code. */}
+              {normalizeStatus(status) === 'ready' && order.pickupCode ? (
+                <View style={[s.codeCard, shadow1]}>
+                  <View style={s.codeHead}>
+                    <Icons.KeyRound size={18} color={Colors.tertiaryContainer} strokeWidth={2} />
+                    <Text style={s.codeTitle}>Pickup code</Text>
+                  </View>
+                  <Text style={s.codeValue}>{order.pickupCode}</Text>
+                  <Text style={s.codeHint}>Give this code to the rider when they arrive: {order.pickupCode}</Text>
+                </View>
+              ) : null}
 
               {/* Dispatch state — after 'ready' the server auto-dispatches riders. */}
               {normalizeStatus(status) === 'ready' && dispatchStatus && dispatchStatus !== 'none' ? (
@@ -201,4 +219,9 @@ const s = StyleSheet.create({
   actions: { marginTop: Spacing.lg, gap: Spacing.sm },
   dispatchCard: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm, backgroundColor: Colors.iconBgBlue, borderRadius: Radius.lg, padding: Spacing.md, marginTop: Spacing.md },
   dispatchText: { ...Typography.labelMd, color: Colors.secondary, flex: 1 },
+  codeCard: { backgroundColor: Colors.iconBgTeal, borderRadius: Radius.lg, padding: Spacing.md, marginTop: Spacing.md, alignItems: 'center', gap: 4 },
+  codeHead: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  codeTitle: { ...Typography.labelLg, color: Colors.tertiaryContainer },
+  codeValue: { ...Typography.headlineMd, color: Colors.tertiaryContainer, fontWeight: '800', letterSpacing: 6, marginVertical: 4 },
+  codeHint: { ...Typography.bodySm, color: Colors.onSurface, textAlign: 'center' },
 });

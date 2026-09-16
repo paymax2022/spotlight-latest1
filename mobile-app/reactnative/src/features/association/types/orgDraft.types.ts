@@ -50,10 +50,31 @@ export interface RestrictionConfig {
 
 export interface OrgDraft {
   name:        string;
-  acronym:     string;
+  acronym:     string;          // optional
   category:    string;
   description: string;
+  location:    string;          // optional — e.g. "Lagos, Nigeria"
+  website:     string;          // optional — e.g. "https://nma.org.ng"
+  /**
+   * Founded year, held as the raw text the founder typed so the field can be
+   * partially entered without the store fighting the keyboard. Converted to a
+   * number at publish; the server rejects anything outside 1800→this year.
+   */
+  foundedYear: string;          // REQUIRED
+  /**
+   * Logo, REQUIRED. Holds the value that is SUBMITTED: either a pasted URL or,
+   * for a picked image, the R2 object key returned by the upload. Never a
+   * device-local file:// URI — that was the old behaviour, and it stored a
+   * path that resolved on the founder's phone and nowhere else.
+   */
   logoUri:     string | null;
+  /**
+   * Local file URI of a just-picked image, for preview only. Never submitted.
+   * The uploaded object is not publicly fetchable (the backend signs it on
+   * read), so without this the founder would upload a logo and then see an
+   * empty badge for the rest of the wizard.
+   */
+  logoPreviewUri: string | null;
   groupType:   GroupType | null;
   approvalRule: ApprovalRule | null;
   registrationFeeKobo: number;

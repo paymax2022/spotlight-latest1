@@ -276,7 +276,7 @@ Add to CI/CD pipeline:
 
 ## Related Documentation
 
-- `docs/adr/ADR-001-vote-bridge-idempotency.md` — Architecture & race condition fixes
-- `docs/adr/ADR-002-vote-engine-deprecation.md` — Production migration plan
+- `docs/adr/ADR-037-vote-bridge-idempotency.md` — Architecture & race condition fixes
+- `docs/adr/ADR-038-vote-engine-deprecation.md` — Production migration plan
 - `frontend-web/src/server/voting-bridge/README.md` — Bridge implementation guide
 - `VOTE_BRIDGE_IMPLEMENTATION.md` — Deployment checklist

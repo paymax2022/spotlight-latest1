@@ -3,8 +3,8 @@
  *   POST /api/registration/applications         — create draft
  *   POST /api/registration/applications/[id]/submit — submit draft
  *
- * The registration store is in-memory (globalThis Map) — no database.
- * Store functions are mocked so tests stay isolated and fast.
+ * The routes read the Supabase-backed registration store (supabase-store);
+ * its functions are mocked so tests stay isolated and fast — no database.
  * Auth (requireUser) is mocked to control auth outcomes.
  *
  * Protected sources:
@@ -31,11 +31,18 @@ vi.mock('@/src/lib/auth/server', () => ({
   requireUser: vi.fn(),
 }));
 
-vi.mock('@/src/server/registration/store', () => ({
+vi.mock('@/src/server/registration/supabase-store', () => ({
   listRegistrationApplications: vi.fn().mockReturnValue([]),
   startRegistrationDraft: vi.fn(),
   getRegistrationDraft: vi.fn(),
   submitRegistrationApplication: vi.fn(),
+  applyAccountPrefill: vi.fn(),
+}));
+
+// The route seeds each draft from the applicant's account so no contest form
+// asks for details they gave at sign-up. Mocked so these tests stay offline.
+vi.mock('@/src/server/user/profile', () => ({
+  getOrCreateUserProfile: vi.fn(),
 }));
 
 // ── Import after mocks ────────────────────────────────────────────────────────
@@ -48,7 +55,8 @@ import {
   getRegistrationDraft,
   submitRegistrationApplication,
   listRegistrationApplications,
-} from '@/src/server/registration/store';
+} from '@/src/server/registration/supabase-store';
+import { getOrCreateUserProfile } from '@/src/server/user/profile';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -56,6 +64,13 @@ const TEST_USER = { id: 'user-001', email: 'applicant@example.com', role: 'publi
 
 function authAsTestUser() {
   vi.mocked(requireUser).mockResolvedValue({ user: TEST_USER } as any);
+  // Default: an account that knows only the email it was created with.
+  vi.mocked(getOrCreateUserProfile).mockResolvedValue({
+    id: TEST_USER.id,
+    email: TEST_USER.email,
+    role: 'USER',
+    profileTypes: ['general_applicant'],
+  } as any);
 }
 
 function authUnauthorized() {
@@ -107,9 +122,61 @@ describe('POST /api/registration/applications', () => {
     expect(vi.mocked(startRegistrationDraft)).toHaveBeenCalledWith({
       contestSlug: 'reality-tv-show',
       userId: TEST_USER.id,
-      role: undefined,
+      // The route folds the app role set onto the DB-constrained store set
+      // (registrations.role CHECK) — unset roles become 'public_user'.
+      role: 'public_user',
       accountData: undefined,
+      // Seeded from the account, not from the request — see account-prefill.
+      accountPrefill: {
+        values: { 'account.email': TEST_USER.email, 'personal.email': TEST_USER.email },
+        providedKeys: ['account.email', 'personal.email'],
+      },
     });
+  });
+
+  it('seeds the draft with the name and phone already on the account', async () => {
+    vi.mocked(getOrCreateUserProfile).mockResolvedValue({
+      id: TEST_USER.id,
+      email: TEST_USER.email,
+      role: 'USER',
+      displayName: 'Ada Okafor',
+      phone: '08012345678',
+      profileTypes: ['general_applicant'],
+    } as any);
+    vi.mocked(startRegistrationDraft).mockReturnValue(makeDraft() as any);
+
+    const res = await createPost(
+      makeRequest('/api/registration/applications', {
+        body: { contestSlug: 'reality-tv-show' },
+      }),
+    );
+
+    expect(res.status).toBe(201);
+    const call = vi.mocked(startRegistrationDraft).mock.calls[0][0] as {
+      accountPrefill?: { values: Record<string, unknown>; providedKeys: string[] };
+    };
+    expect(call.accountPrefill?.values).toMatchObject({
+      'personal.firstName': 'Ada',
+      'personal.lastName': 'Okafor',
+      'personal.primaryPhone': '08012345678',
+    });
+  });
+
+  it('still creates the draft when the account profile cannot be read', async () => {
+    vi.mocked(getOrCreateUserProfile).mockRejectedValue(new Error('profile store down'));
+    vi.mocked(startRegistrationDraft).mockReturnValue(makeDraft() as any);
+
+    const res = await createPost(
+      makeRequest('/api/registration/applications', {
+        body: { contestSlug: 'reality-tv-show' },
+      }),
+    );
+
+    // Prefill is a convenience; losing it must never block an application.
+    expect(res.status).toBe(201);
+    expect(vi.mocked(startRegistrationDraft)).toHaveBeenCalledWith(
+      expect.objectContaining({ accountPrefill: undefined }),
+    );
   });
 
   it('should return 400 when contestSlug is missing', async () => {
@@ -181,7 +248,7 @@ describe('POST /api/registration/applications/[id]/submit', () => {
 
     const res = await submitPost(
       makeRequest('/api/registration/applications/draft-id-001/submit', {}),
-      { params: { id: 'draft-id-001' } },
+      { params: Promise.resolve({ id: 'draft-id-001' }) },
     );
     const body = await res.json();
 
@@ -192,11 +259,11 @@ describe('POST /api/registration/applications/[id]/submit', () => {
   });
 
   it('should return 404 when the draft does not exist', async () => {
-    vi.mocked(getRegistrationDraft).mockReturnValue(null);
+    vi.mocked(getRegistrationDraft).mockResolvedValue(null);
 
     const res = await submitPost(
       makeRequest('/api/registration/applications/unknown-id/submit', {}),
-      { params: { id: 'unknown-id' } },
+      { params: Promise.resolve({ id: 'unknown-id' }) },
     );
     const body = await res.json();
 
@@ -210,7 +277,7 @@ describe('POST /api/registration/applications/[id]/submit', () => {
 
     const res = await submitPost(
       makeRequest('/api/registration/applications/draft-id-001/submit', {}),
-      { params: { id: 'draft-id-001' } },
+      { params: Promise.resolve({ id: 'draft-id-001' }) },
     );
     const body = await res.json();
 
@@ -223,7 +290,7 @@ describe('POST /api/registration/applications/[id]/submit', () => {
 
     const res = await submitPost(
       makeRequest('/api/registration/applications/draft-id-001/submit', {}),
-      { params: { id: 'draft-id-001' } },
+      { params: Promise.resolve({ id: 'draft-id-001' }) },
     );
     const body = await res.json();
 
@@ -242,7 +309,7 @@ describe('POST /api/registration/applications/[id]/submit', () => {
 
     const res = await submitPost(
       makeRequest('/api/registration/applications/draft-id-001/submit', {}),
-      { params: { id: 'draft-id-001' } },
+      { params: Promise.resolve({ id: 'draft-id-001' }) },
     );
     const body = await res.json();
 

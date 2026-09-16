@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import PhoneNumberInput from '@/components/PhoneNumberInput';
 import { View, Text, ScrollView, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
@@ -50,7 +51,7 @@ export default function BusProviderRegisterScreen() {
         <View style={styles.card}>
           <Text style={styles.note}>List your interstate bus business on the marketplace. Registration is free — you only pay nothing to publish; customers pay when they book a seat.</Text>
           <TextInputField label="Business name" value={businessName} onChangeText={setBusinessName} placeholder="e.g. GIG Mobility" autoCapitalize="words" />
-          <TextInputField label="Contact phone" value={contactPhone} onChangeText={setContactPhone} placeholder="+234…" keyboardType="phone-pad" />
+          <PhoneNumberInput label="Contact phone" value={contactPhone} onChange={({ e164, nsn }) => (setContactPhone)(e164 || nsn)} />
           <TextInputField label="Contact email (optional)" value={contactEmail} onChangeText={setContactEmail} placeholder="ops@business.com" keyboardType="email-address" autoCapitalize="none" />
           <SelectField label="Base state" placeholder="Where you operate from" value={baseState} options={STATE_NAMES} onChange={setBaseState} />
           <TextInputField label="Description (optional)" value={description} onChangeText={setDescription} placeholder="Tell customers about your fleet & service" multiline numberOfLines={3} />

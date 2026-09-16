@@ -16,7 +16,8 @@ function mapAlert(row: any, names: Record<string, string>) {
 }
 
 // POST /api/v1/estate/emergencies/[id]/resolve
-export async function POST(request: Request, { params }: { params: { id: string } }) {
+export async function POST(request: Request, ctx: { params: Promise<{ id: string }> }) {
+  const params = await ctx.params;
   try {
     const user = await requireRequestUser(request);
     const supabase = createAdminClient();

@@ -16,7 +16,7 @@ package spotlightwealth_test
 //
 // Live-DB tests that actually call *spotlightwealth.Service against a migrated
 // Postgres + real ledger.Service live in live_db_integration_test.go
-// (skip-gated on DATABASE_URL/TEST_DATABASE_URL — see that file's bring-up
+// (skip-gated on TEST_DATABASE_URL — see that file's bring-up
 // note).
 // ---------------------------------------------------------------------------
 

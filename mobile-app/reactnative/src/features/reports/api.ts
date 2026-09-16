@@ -1,11 +1,12 @@
 // Estate Reports (Block 44) — types + dual mock/live api.
+import { mockAllowed } from '@/config/mockPolicy';
 import { api } from '@/api/client';
 
 export interface ReportMetric { label: string; value: string }
 export interface ReportSection { id: string; title: string; metrics: ReportMetric[] }
 export interface ReportsResponse { sections: ReportSection[] }
 
-export const USE_MOCK = (process.env.EXPO_PUBLIC_REPORTS_USE_MOCK ?? 'true') !== 'false';
+export const USE_MOCK = mockAllowed(process.env.EXPO_PUBLIC_REPORTS_USE_MOCK, true);
 
 // Reports/analytics are served by the resident-scoped frontend-web handlers
 // under /api/v1/estate/reports and /api/v1/estate/analytics/{type}. The current

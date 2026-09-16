@@ -6,6 +6,7 @@ import React, { useEffect, useState } from 'react';
 import { View, Text, StyleSheet, Pressable, FlatList, ScrollView } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import { ArrowLeft, Search as SearchIcon, TrendingUp, Clock, Tag } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
@@ -15,6 +16,7 @@ import SearchBar from '@/components/SearchBar';
 import { MarketColors } from '@/features/marketplace';
 import { getSecureItem, setSecureItem } from '@/lib/secureStorage';
 import { useSuggest, useTrending } from '@/features/marketplace/hooks';
+import { HomeMenuButton } from '@/components/HomeMenu';
 
 const RECENTS_KEY = 'mkt_recent_searches';
 
@@ -56,10 +58,11 @@ export default function MarketplaceSearch() {
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
       <View style={styles.topRow}>
-        <Pressable onPress={() => router.back()} hitSlop={10} accessibilityLabel="Back"><ArrowLeft size={22} color={Colors.onSurface} /></Pressable>
+        <Pressable onPress={() => goBack('/marketplace')} hitSlop={10} accessibilityLabel="Back"><ArrowLeft size={22} color={Colors.onSurface} /></Pressable>
         <View style={styles.searchFlex}>
           <SearchBar value={query} onChangeText={setQuery} autoFocus placeholder="Search phones, cars, furniture…" onSubmit={() => runSearch(query)} />
         </View>
+        <HomeMenuButton />
       </View>
 
       {typing ? (

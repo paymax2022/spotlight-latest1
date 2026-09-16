@@ -9,7 +9,8 @@ import (
 // handler_account.go — Trust & Account gap endpoints the mobile Account tab needs
 // (§ Mobile-UX-Flows.md 28–34) that the core marketplace did not yet expose:
 //
-//   • Saved items / wishlist  : POST/DELETE /listings/:id/save, GET /saved-items
+//   • Saved items / wishlist  : PATCH /listings/:id/save (toggle), GET /saved-items
+//                              (POST/DELETE kept for backwards compatibility)
 //   • Reports (safety valve)   : POST /reports
 //   • Block user               : POST/DELETE /blocks/:id, GET /blocks
 //   • Notification preferences : GET/PATCH /notification-prefs
@@ -20,7 +21,31 @@ import (
 
 // ─── Saved items / wishlist ──────────────────────────────────────────────────
 
-// SaveListing POST /listings/:id/save — add a listing to the caller's wishlist.
+// ToggleSavedItem PATCH /listings/:id/save — toggle a listing in the caller's wishlist.
+func (h *Handler) ToggleSavedItem(c *gin.Context) {
+	uid, ok := requireUser(c)
+	if !ok {
+		return
+	}
+
+	var req struct {
+		Saved bool `json:"saved" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		fail(c, fieldErr(CodeValidation, err.Error(), ""))
+		return
+	}
+
+	item, err := h.svc.ToggleSavedItem(c.Request.Context(), uid, c.Param("id"), req.Saved)
+	if err != nil {
+		fail(c, err)
+		return
+	}
+
+	respond(c, http.StatusOK, item)
+}
+
+// SaveListing POST /listings/:id/save — add a listing to the caller's wishlist (legacy, use PATCH).
 func (h *Handler) SaveListing(c *gin.Context) {
 	uid, ok := requireUser(c)
 	if !ok {
@@ -34,7 +59,7 @@ func (h *Handler) SaveListing(c *gin.Context) {
 	respond(c, http.StatusCreated, item)
 }
 
-// UnsaveListing DELETE /listings/:id/save — remove a listing from the wishlist.
+// UnsaveListing DELETE /listings/:id/save — remove a listing from the wishlist (legacy, use PATCH).
 func (h *Handler) UnsaveListing(c *gin.Context) {
 	uid, ok := requireUser(c)
 	if !ok {
@@ -133,6 +158,49 @@ func (h *Handler) ListBlocks(c *gin.Context) {
 	respond(c, http.StatusOK, blocks)
 }
 
+// ─── Followed sellers ────────────────────────────────────────────────────────
+
+// FollowSeller POST /sellers/:id/follow.
+func (h *Handler) FollowSeller(c *gin.Context) {
+	uid, ok := requireUser(c)
+	if !ok {
+		return
+	}
+	if err := h.svc.FollowSeller(c.Request.Context(), uid, c.Param("id")); err != nil {
+		fail(c, err)
+		return
+	}
+	respond(c, http.StatusCreated, gin.H{"ok": true})
+}
+
+// UnfollowSeller DELETE /sellers/:id/follow.
+func (h *Handler) UnfollowSeller(c *gin.Context) {
+	uid, ok := requireUser(c)
+	if !ok {
+		return
+	}
+	if err := h.svc.UnfollowSeller(c.Request.Context(), uid, c.Param("id")); err != nil {
+		fail(c, err)
+		return
+	}
+	respond(c, http.StatusOK, gin.H{"ok": true})
+}
+
+// ListFollowedSellers GET /followed-sellers — the caller's followed sellers,
+// newest-first.
+func (h *Handler) ListFollowedSellers(c *gin.Context) {
+	uid, ok := requireUser(c)
+	if !ok {
+		return
+	}
+	sellers, err := h.svc.ListFollowedSellers(c.Request.Context(), uid)
+	if err != nil {
+		fail(c, err)
+		return
+	}
+	respond(c, http.StatusOK, sellers)
+}
+
 // ─── Notification preferences ────────────────────────────────────────────────
 
 // GetNotificationPrefs GET /notification-prefs — the caller's per-category toggles
@@ -180,4 +248,89 @@ func (h *Handler) MeetupSafeSpots(c *gin.Context) {
 	}
 	spots := h.svc.MeetupSafeSpots(c.Query("state"), c.Query("lga"))
 	respond(c, http.StatusOK, spots)
+}
+
+// ListingInsights GET /listings/:id/insights — seller performance for one listing.
+func (h *Handler) ListingInsights(c *gin.Context) {
+	uid, ok := requireUser(c)
+	if !ok {
+		return
+	}
+	ins, err := h.svc.GetListingInsights(c.Request.Context(), uid, c.Param("id"))
+	if err != nil {
+		fail(c, err)
+		return
+	}
+	respond(c, http.StatusOK, ins)
+}
+
+// ─── Notifications (feed) ────────────────────────────────────────────────────
+
+// ListNotifications GET /notifications — the caller's notification feed (newest first).
+func (h *Handler) ListNotifications(c *gin.Context) {
+	uid, ok := requireUser(c)
+	if !ok {
+		return
+	}
+	limit, offset := pageParams(c)
+	notifs, err := h.svc.ListNotifications(c.Request.Context(), uid, limit, offset)
+	if err != nil {
+		fail(c, err)
+		return
+	}
+	respond(c, http.StatusOK, notifs)
+}
+
+// MarkNotificationRead PATCH /notifications/:id — mark a notification as read.
+func (h *Handler) MarkNotificationRead(c *gin.Context) {
+	uid, ok := requireUser(c)
+	if !ok {
+		return
+	}
+	notif, err := h.svc.MarkNotificationRead(c.Request.Context(), uid, c.Param("id"))
+	if err != nil {
+		fail(c, err)
+		return
+	}
+	respond(c, http.StatusOK, notif)
+}
+
+// MarkAllNotificationsRead PATCH /notifications/mark-all-read — mark all as read.
+func (h *Handler) MarkAllNotificationsRead(c *gin.Context) {
+	uid, ok := requireUser(c)
+	if !ok {
+		return
+	}
+	if err := h.svc.MarkAllNotificationsRead(c.Request.Context(), uid); err != nil {
+		fail(c, err)
+		return
+	}
+	respond(c, http.StatusOK, gin.H{"ok": true})
+}
+
+// DeleteNotification DELETE /notifications/:id — dismiss/delete a notification.
+func (h *Handler) DeleteNotification(c *gin.Context) {
+	uid, ok := requireUser(c)
+	if !ok {
+		return
+	}
+	if err := h.svc.DeleteNotification(c.Request.Context(), uid, c.Param("id")); err != nil {
+		fail(c, err)
+		return
+	}
+	respond(c, http.StatusOK, gin.H{"ok": true})
+}
+
+// GetUnreadCount GET /notifications/unread-count — count of unread notifications.
+func (h *Handler) GetUnreadCount(c *gin.Context) {
+	uid, ok := requireUser(c)
+	if !ok {
+		return
+	}
+	count, err := h.svc.GetUnreadNotificationCount(c.Request.Context(), uid)
+	if err != nil {
+		fail(c, err)
+		return
+	}
+	respond(c, http.StatusOK, gin.H{"unread_count": count})
 }

@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import { listUsers, setUserStatus } from '@/services/crowdfundingAdminService';
+import { listUsersPage, setUserStatus } from '@/services/crowdfundingAdminService';
 import type { CfUser, CfRiskLevel } from '@/types/crowdfunding';
 import { Page, PageHeader, Card, Button, Input, Badge, colors, thCell, tdCell } from '@/components/ui/vuexy';
 
@@ -25,13 +25,26 @@ export default function UsersPage() {
   const [selected, setSelected] = useState<CfUser | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [modal, setModal] = useState<{ id: string; to: 'ACTIVE' | 'SUSPENDED'; name: string; note: string } | null>(null);
+  const [page, setPage] = useState(1);
+  const [total, setTotal] = useState(0);
+  const PAGE_SIZE = 25;
 
   const load = useCallback(async () => {
     setLoading(true); setError(null);
-    try { setItems(await listUsers(role || undefined, status || undefined, search || undefined)); }
+    try {
+      const p = await listUsersPage(role || undefined, status || undefined, search || undefined, page, PAGE_SIZE);
+      setItems(p.users);
+      setTotal(p.total);
+    }
     catch (e) { setError(String(e)); } finally { setLoading(false); }
-  }, [role, status, search]);
+  }, [role, status, search, page]);
   useEffect(() => { load(); }, [load]);
+
+  // Changing a filter must reset to page 1: staying on page 3 of a narrower
+  // result set shows an empty table and reads as "no matches".
+  useEffect(() => { setPage(1); }, [role, status, search]);
+
+  const pageCount = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
   async function confirm() {
     if (!modal) return;
@@ -53,7 +66,10 @@ export default function UsersPage() {
         <select value={status} onChange={(e) => setStatus(e.target.value)} style={sel()}>
           <option value="">All statuses</option><option value="ACTIVE">Active</option><option value="SUSPENDED">Suspended</option><option value="RESTRICTED">Restricted</option>
         </select>
-        <Button variant="outline" sm style={{ marginLeft: 'auto' }} onClick={load}>Refresh</Button>
+        <span style={{ marginLeft: 'auto', fontSize: 12, color: colors.muted }}>
+          {loading ? '…' : `${total} user${total === 1 ? '' : 's'}${pageCount > 1 ? ` · page ${page} of ${pageCount}` : ''}`}
+        </span>
+        <Button variant="outline" sm onClick={load}>Refresh</Button>
       </div>
 
       {error && <p style={{ color: colors.danger, marginBottom: '1rem' }}>{error}</p>}
@@ -79,6 +95,20 @@ export default function UsersPage() {
             </tbody>
           </table>
         </Card>
+      )}
+
+      {!loading && items.length > 0 && pageCount > 1 && (
+        <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: 8, marginTop: 12 }}>
+          <Button variant="outline" sm disabled={page <= 1} onClick={() => setPage((p) => Math.max(1, p - 1))}>
+            Previous
+          </Button>
+          <span style={{ fontSize: 12, color: colors.muted }}>
+            Page {page} of {pageCount}
+          </span>
+          <Button variant="outline" sm disabled={page >= pageCount} onClick={() => setPage((p) => p + 1)}>
+            Next
+          </Button>
+        </div>
       )}
 
       {/* Detail drawer */}

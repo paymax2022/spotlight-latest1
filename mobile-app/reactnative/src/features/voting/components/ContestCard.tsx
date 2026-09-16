@@ -1,6 +1,6 @@
 import React from 'react';
 import { View, Text, Image, Pressable, StyleSheet } from 'react-native';
-import { Users, Vote } from 'lucide-react-native';
+import { Users, Vote, Calendar } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
 import { Radius } from '@/constants/radius';
@@ -8,7 +8,7 @@ import { Spacing } from '@/constants/spacing';
 import { shadow1 } from '@/constants/shadows';
 import ContestStatusBadge from './ContestStatusBadge';
 import CountdownTimer from './CountdownTimer';
-import { formatVoteCount } from '../utils/voteFormatters';
+import { formatVoteCount, formatContestPeriod } from '../utils/voteFormatters';
 import type { Contest } from '../types/voting.types';
 
 interface Props {
@@ -18,6 +18,8 @@ interface Props {
 }
 
 export default function ContestCard({ contest, onPress, style }: Props) {
+  const period = formatContestPeriod(contest.startsAt, contest.endsAt);
+
   return (
     <Pressable
       onPress={onPress}
@@ -56,7 +58,14 @@ export default function ContestCard({ contest, onPress, style }: Props) {
           </View>
         </View>
 
-        {contest.status === 'LIVE' && (
+        {period && (
+          <View style={styles.periodRow}>
+            <Calendar size={13} color={Colors.onSurfaceVariant} strokeWidth={2} />
+            <Text style={styles.statText}>{period}</Text>
+          </View>
+        )}
+
+        {contest.status === 'LIVE' && contest.endsAt && (
           <View style={styles.footer}>
             <Text style={styles.endsLabel}>Ends in</Text>
             <CountdownTimer endsAt={contest.endsAt} size="sm" color={Colors.primary} />
@@ -102,6 +111,7 @@ const styles = StyleSheet.create({
   statsRow:    { flexDirection: 'row', gap: Spacing.md, marginBottom: Spacing.sm },
   stat:        { flexDirection: 'row', alignItems: 'center', gap: 4 },
   statText:    { ...Typography.labelSm, color: Colors.onSurfaceVariant },
+  periodRow:   { flexDirection: 'row', alignItems: 'center', gap: 4, marginBottom: Spacing.sm },
   footer:      { flexDirection: 'row', alignItems: 'center', gap: Spacing.xs, marginTop: 4 },
   endsLabel:   { ...Typography.labelSm, color: Colors.onSurfaceVariant },
   startDate:   { ...Typography.labelSm, color: Colors.primary, fontWeight: '600' as const },

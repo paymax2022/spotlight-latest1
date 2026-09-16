@@ -2,72 +2,92 @@ package restaurant
 
 import "testing"
 
-// Packaging is a MONEY term: it is added to the escrowed order total and settles
-// to the restaurant via the provider remainder. These are pure table tests over
-// the arithmetic and the clamp, written before the wiring.
+// ---------------------------------------------------------------------------
+// Takeaway packaging pricing.
 //
-// The clamp exists because package_count arrives FROM THE CLIENT. Without it a
-// caller could send 0 to dodge the charge, or a huge number to inflate a
-// merchant's take. The server cannot cheaply re-derive the true minimum pack
-// count (the cart's packing rules are a client concern), but it can bound it:
-// at least one pack for any order, and never more packs than there are items.
-func TestPackagingKobo(t *testing.T) {
-	cases := []struct {
-		name         string
-		packageCount int
-		totalQty     int
-		feeKobo      int64
-		want         int64
-	}{
-		// ── the ordinary path ────────────────────────────────────────────
-		{"one pack", 1, 1, 20000, 20000},
-		{"three packs", 3, 6, 20000, 60000},
+// The cart is built on a "takeaway package" model: the customer adds a pack,
+// then puts food in it, and pays a fee per pack so the restaurant can package
+// the order. The pack COUNT is therefore a customer choice — they may add more
+// packs than the packing rules strictly require — so it has to come from the
+// client. That makes it the one packaging input the server cannot derive, and
+// client-supplied numbers never price money unbounded (the same reason TipKobo
+// is clamped before it reaches the escrow debit).
+// ---------------------------------------------------------------------------
 
-		// ── store does not charge for packaging ──────────────────────────
-		// Every restaurant defaults to packaging_fee_kobo = 0, so this is the
-		// behaviour for every store that has not opted in. It MUST stay zero
-		// or the migration silently repriced the whole platform.
-		{"zero fee charges nothing", 4, 8, 0, 0},
+const feePerPack = 20000 // ₦200
 
-		// ── client under-reports to dodge the charge ─────────────────────
-		{"zero packs clamps up to one", 0, 3, 20000, 20000},
-		{"negative packs clamps up to one", -5, 3, 20000, 20000},
-
-		// ── client over-reports to inflate the merchant's take ───────────
-		{"packs above item count clamps down", 99, 2, 20000, 40000},
-
-		// ── degenerate inputs ────────────────────────────────────────────
-		// An order with no items cannot happen (items is binding:"required,min=1"),
-		// but the function must not return a negative or explode if it ever does.
-		{"no items still charges one pack", 3, 0, 20000, 20000},
-		{"negative fee is treated as zero", 2, 4, -100, 0},
+func TestPackagingPricesEachPack(t *testing.T) {
+	packs, kobo := PackagingKobo(3, 4, feePerPack)
+	if packs != 3 {
+		t.Errorf("packs = %d, want 3", packs)
 	}
-
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			got := packagingKobo(tc.packageCount, tc.totalQty, tc.feeKobo)
-			if got != tc.want {
-				t.Fatalf("packagingKobo(%d, %d, %d) = %d, want %d",
-					tc.packageCount, tc.totalQty, tc.feeKobo, got, tc.want)
-			}
-			if got < 0 {
-				t.Fatalf("packaging must never be negative, got %d", got)
-			}
-		})
+	if kobo != 60000 {
+		t.Errorf("kobo = %d, want 60000 (3 × ₦200)", kobo)
 	}
 }
 
-// The charge must be exactly divisible by the unit fee — i.e. a whole number of
-// packs, never a fraction. Guards against anyone "improving" this with float math.
-func TestPackagingKoboIsAWholeNumberOfPacks(t *testing.T) {
-	const fee int64 = 33333 // deliberately not a round number
-	for packs := 1; packs <= 20; packs++ {
-		got := packagingKobo(packs, packs, fee)
-		if got%fee != 0 {
-			t.Fatalf("packs=%d: %d is not a whole multiple of the %d unit fee", packs, got, fee)
+func TestPackagingNeverExceedsOnePackPerPortion(t *testing.T) {
+	// A hostile or buggy client asking for 500 packs on a 2-portion order would
+	// otherwise add ₦100,000 to the escrow debit. A pack must hold something.
+	packs, kobo := PackagingKobo(500, 2, feePerPack)
+	if packs != 2 {
+		t.Errorf("packs = %d, want 2 (capped at one pack per portion)", packs)
+	}
+	if kobo != 40000 {
+		t.Errorf("kobo = %d, want 40000", kobo)
+	}
+}
+
+func TestPackagingAlwaysChargesAtLeastOnePack(t *testing.T) {
+	// Packaging is mandatory — the food has to leave the kitchen in something.
+	// A client that omits the field (0) or sends nonsense must not get it free.
+	for _, requested := range []int{0, -1, -999} {
+		packs, kobo := PackagingKobo(requested, 3, feePerPack)
+		if packs != 1 {
+			t.Errorf("requested %d: packs = %d, want 1", requested, packs)
 		}
-		if got/fee != int64(packs) {
-			t.Fatalf("packs=%d: charged for %d packs", packs, got/fee)
+		if kobo != feePerPack {
+			t.Errorf("requested %d: kobo = %d, want %d", requested, kobo, feePerPack)
 		}
+	}
+}
+
+func TestPackagingIsFreeWhenTheRestaurantChargesNothing(t *testing.T) {
+	// Every restaurant sat at 0 before the ₦200 default, and an owner may still
+	// choose 0. That must cost the customer nothing, not a phantom minimum.
+	packs, kobo := PackagingKobo(3, 4, 0)
+	if kobo != 0 {
+		t.Errorf("kobo = %d, want 0 when the restaurant charges no packaging", kobo)
+	}
+	if packs != 3 {
+		t.Errorf("packs = %d, want the count still reported for the receipt", packs)
+	}
+}
+
+func TestPackagingRejectsANegativeFee(t *testing.T) {
+	// restaurants_packaging_fee_kobo_check forbids this in the database; belt and
+	// braces here, because a negative fee would subtract from the escrowed total
+	// and break settlement conservation.
+	_, kobo := PackagingKobo(3, 4, -5000)
+	if kobo != 0 {
+		t.Errorf("kobo = %d, want 0 — a negative fee must never reduce the total", kobo)
+	}
+}
+
+func TestPackagingWithNoPortions(t *testing.T) {
+	// PlaceOrder requires at least one item, so this is defensive: no food means
+	// nothing to pack and nothing to charge.
+	packs, kobo := PackagingKobo(3, 0, feePerPack)
+	if packs != 0 || kobo != 0 {
+		t.Errorf("packs = %d kobo = %d, want 0 and 0", packs, kobo)
+	}
+}
+
+func TestPackagingCannotOverflow(t *testing.T) {
+	// packs × fee is integer kobo; a huge portion count paired with a huge fee
+	// must not wrap around into a negative total.
+	_, kobo := PackagingKobo(1<<30, 1<<30, 1<<40)
+	if kobo < 0 {
+		t.Errorf("kobo = %d overflowed", kobo)
 	}
 }

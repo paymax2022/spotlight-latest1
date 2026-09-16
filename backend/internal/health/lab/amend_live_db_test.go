@@ -7,11 +7,13 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"spotlight/backend/internal/testsupport"
 )
 
 // LR-006 live-DB integration test for the versioned lab-result amendment.
 //
-// SKIPPED whenever TEST_DATABASE_URL / DATABASE_URL is unset (same env-gate as the
+// SKIPPED whenever TEST_DATABASE_URL is unset (same env-gate as the
 // FX / crypto live-DB suites). Bring-up:
 //
 //	supabase start   # or any Postgres with the migrations applied
@@ -29,10 +31,7 @@ func amendLivePool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
 	dsn := os.Getenv("TEST_DATABASE_URL")
 	if dsn == "" {
-		dsn = os.Getenv("DATABASE_URL")
-	}
-	if dsn == "" {
-		t.Skip("no TEST_DATABASE_URL/DATABASE_URL set — skipping live-DB lab amendment test; see bring-up note in amend_live_db_test.go")
+		t.Skip("no TEST_DATABASE_URL set — skipping live-DB lab amendment test; see bring-up note in amend_live_db_test.go")
 	}
 	pool, err := pgxpool.New(context.Background(), dsn)
 	if err != nil {
@@ -89,7 +88,9 @@ func TestAmendResult_LiveDB(t *testing.T) {
 		}
 	}
 	seed(`INSERT INTO auth.users (id, email) VALUES ($1,$2) ON CONFLICT DO NOTHING`, patientID, patientID+"@seed.test")
+	testsupport.CleanupUser(t, pool, patientID)
 	seed(`INSERT INTO auth.users (id, email) VALUES ($1,$2) ON CONFLICT DO NOTHING`, scientistID, scientistID+"@seed.test")
+	testsupport.CleanupUser(t, pool, scientistID)
 	seed(`INSERT INTO public.health_providers (id, owner_user_id, domain, provider_type, display_name, status)
 	      VALUES ($1,$2,'LAB','lab','Seed Lab','APPROVED')`, providerID, scientistID)
 	seed(`INSERT INTO public.lab_tests (id, lab_provider_id, name, price_kobo) VALUES ($1,$2,'Widget Panel',150000)`, testID, providerID)

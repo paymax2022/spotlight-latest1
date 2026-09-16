@@ -31,9 +31,11 @@ export default function ClassSelectScreen() {
 
   const finish = () => {
     if (!classCode) return;
+    // Save the class + curriculum, then run the curriculum-grounded placement quiz
+    // (it completes onboarding once the learner finishes or skips it).
     updateProfile.mutate(
-      { classCode, curriculumVersion: detectVersion(classCode), onboardingComplete: true },
-      { onSuccess: () => router.replace('/learn/academy') },
+      { classCode, curriculumVersion: detectVersion(classCode) },
+      { onSuccess: () => router.push({ pathname: '/learn/academy/onboarding/placement', params: { class: classCode } }) },
     );
   };
 

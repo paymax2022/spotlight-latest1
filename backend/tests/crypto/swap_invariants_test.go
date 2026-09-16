@@ -16,7 +16,7 @@ package crypto_test
 //
 // Live-DB tests that actually call *crypto.Service against a migrated Postgres
 // live in live_db_integration_test.go (skip-gated on
-// DATABASE_URL/TEST_DATABASE_URL — see that file's bring-up note).
+// TEST_DATABASE_URL — see that file's bring-up note).
 // ---------------------------------------------------------------------------
 
 import (

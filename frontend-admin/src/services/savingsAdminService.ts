@@ -6,8 +6,9 @@
 // NL-7 (Ajo peer rotation — Paymax is ledger/escrow only), NL-8 (ledger),
 // NL-12 (immutable audit on every state change).
 
-import { env } from '@/config/env';
+import { apiRoot } from '@/config/env';
 import { operationKey } from './idempotency';
+import { resolveUseMock } from '@/config/useMock';
 import type {
   SavingsDashboard,
   VaultRecord,
@@ -20,10 +21,19 @@ import type {
   DefaultActionResult,
 } from '@/types/savingsAdmin';
 
-const USE_MOCK = (process.env.NEXT_PUBLIC_SAVINGS_USE_MOCK ?? 'true').toLowerCase() !== 'false';
+export const USE_MOCK = resolveUseMock(process.env.NEXT_PUBLIC_SAVINGS_USE_MOCK);
+/** Named so the fixture banner can cite the exact switch. */
+export const USE_MOCK_ENV = 'NEXT_PUBLIC_SAVINGS_USE_MOCK';
 
+// apiBaseUrl is the same-origin admin-proxy path (<origin>/api/admin-proxy),
+// not a plain API root — the old `env.apiBaseUrl.replace(/\/api\/v1\/?$/, ...)`
+// here stopped matching once the proxy migration landed (apiBaseUrl stopped
+// ending in /api/v1), silently no-op'ing this replace and leaving every call
+// pointed at the bare proxy root instead of .../api/savings/admin/... — see
+// insuranceAdminService.ts for the same regression. apiRoot() strips any
+// trailing /api/v1 from the proxy base and nothing else.
 function adminBase(): string {
-  return env.apiBaseUrl.replace(/\/api\/v1\/?$/, '/api/savings/admin');
+  return `${apiRoot()}/api/savings/admin`;
 }
 function authHeaders(): Record<string, string> {
   if (typeof window === 'undefined') return {};
@@ -33,6 +43,15 @@ function authHeaders(): Record<string, string> {
     : { 'Content-Type': 'application/json' };
 }
 const delay = (ms = 240) => new Promise((r) => setTimeout(r, ms));
+
+// Verified against backend/internal/savings (Handler.Register): the only
+// admin route registered is GET /circles/:id. No force-unlock or default-
+// handling mutation exists anywhere in the module — grepped for "ForceUnlock"/
+// "force-unlock"/"/defaults", zero hits; VaultService only has Deposit/
+// Withdraw/EarlyBreak/TransitionState, none exposed admin-side.
+const NO_BACKEND_YET =
+  'has no backend yet (see the comment on the live-mode call below). ' +
+  'This console cannot perform this action until that endpoint is built.';
 
 async function getJson<T>(path: string): Promise<T> {
   const res = await fetch(`${adminBase()}${path}`, { headers: authHeaders() });
@@ -136,10 +155,13 @@ export async function listVaults(opts?: { status?: string; q?: string }): Promis
   return getJson<VaultRecord[]>(`/vaults${qs.toString() ? `?${qs}` : ''}`);
 }
 export async function forceUnlock(vaultId: string, reason: string): Promise<ForceUnlockResult> {
-  if (USE_MOCK) {
-    await delay();
-    return { vault_id: vaultId, status: 'open', audit_id: `aud_${Math.random().toString(36).slice(2, 10)}`, message: `Vault ${vaultId} force-unlocked. Funds returned at principal (NL-2: zero yield). Action recorded to immutable audit.` };
-  }
+  // No backend at all — see the comment above. The OLD fixture message here
+  // also fabricated a compliance claim ("Action recorded to immutable
+  // audit") — exactly the pattern docs/audit/ADMIN_SIMULATED_WRITES.md calls
+  // "the most dangerous strings in this codebase", missed by the checker's
+  // claim-pattern regex only because of a lowercase "recorded" vs its
+  // capitalized "Recorded". Removed regardless.
+  if (USE_MOCK) throw new Error(`Force-unlocking a vault ${NO_BACKEND_YET}`);
   return sendJson<ForceUnlockResult>('POST', `/vaults/${vaultId}/force-unlock`, { reason });
 }
 
@@ -249,15 +271,13 @@ export async function listDefaults(opts?: { status?: string; q?: string }): Prom
   return getJson<DefaultRecord[]>(`/defaults${qs.toString() ? `?${qs}` : ''}`);
 }
 export async function handleDefault(id: string, action: DefaultAction, note?: string): Promise<DefaultActionResult> {
-  if (USE_MOCK) {
-    await delay();
-    const status =
-      action === 'recover' ? 'recovered'
-      : action === 'remove' ? 'defaulted'
-      : action === 'dismiss' ? 'dismissed'
-      : action === 'grace' ? 'grace'
-      : 'make_good';
-    return { id, status, audit_id: `aud_${Math.random().toString(36).slice(2, 10)}`, message: `Default ${id}: ${action} applied (NL-7: peer rotation — Paymax never advances credit). Recorded to immutable audit.` };
-  }
+  // No admin action exists for any of the 5 values: AjoService has a private
+  // markDefault invoked automatically by the cycle scheduler (not admin-
+  // triggerable), and the closest real capability — MakeGood
+  // (POST /savings/circles/:id/make-good) — is a MEMBER self-service route
+  // keyed on the caller's own session, not an admin action on someone else's
+  // behalf. None of grace/make_good/remove/recover/dismiss has a usable
+  // backend verb today.
+  if (USE_MOCK) throw new Error(`Handling a savings default ${NO_BACKEND_YET}`);
   return sendJson<DefaultActionResult>('POST', `/defaults/${id}/handle`, { action, note });
 }

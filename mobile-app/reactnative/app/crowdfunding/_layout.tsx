@@ -1,9 +1,13 @@
 import { Stack } from 'expo-router';
 import { Colors } from '@/constants/colors';
+import { View } from 'react-native';
+import ModuleTabBar from '@/components/ModuleTabBar';
+import { CROWDFUNDING_TABS } from '@/constants/moduleTabs';
 
 export default function CrowdfundingLayout() {
   return (
-    <Stack
+    <View style={{ flex: 1 }}>
+      <Stack
       screenOptions={{
         headerShown: false,
         contentStyle: { backgroundColor: Colors.background },
@@ -55,6 +59,8 @@ export default function CrowdfundingLayout() {
       {/* Creator dashboard (F) */}
       <Stack.Screen name="creator/index" />
       <Stack.Screen name="creator/campaigns" />
+      <Stack.Screen name="creator/campaign/[id]/index" />
+      <Stack.Screen name="creator/campaign/[id]/edit" />
       <Stack.Screen name="creator/performance/[id]" />
       <Stack.Screen name="creator/withdrawals" />
       <Stack.Screen name="creator/notifications" />
@@ -136,5 +142,7 @@ export default function CrowdfundingLayout() {
       {/* Edge & error states (Q) */}
       <Stack.Screen name="edge/[type]" options={{ animation: 'fade' }} />
     </Stack>
+  <ModuleTabBar tabs={CROWDFUNDING_TABS} />
+  </View>
   );
 }

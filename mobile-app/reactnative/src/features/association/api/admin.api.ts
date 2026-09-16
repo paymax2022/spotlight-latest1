@@ -10,6 +10,7 @@ import type {
 import {
   MOCK_KPIS, MOCK_APPLICATIONS, MOCK_FINANCE, MOCK_OFFLINE_PAYMENTS, MOCK_IMPORT_PREVIEW, MOCK_AUDIT,
 } from './admin.mock';
+import type { PickedFile } from '../utils/docPicker';
 
 const delay = (ms = 320) => new Promise((r) => setTimeout(r, ms));
 
@@ -92,9 +93,35 @@ export async function getAuditLog(action?: string): Promise<AuditEntry[]> {
 
 // ─── Bulk import ──────────────────────────────────────────────────────────────
 
-export async function getImportPreview(): Promise<ImportPreview> {
-  if (USE_MOCK) { await delay(500); return MOCK_IMPORT_PREVIEW; }
-  const { data } = await api.post(`${BASE}/admin/import/preview`, {});
+/**
+ * Upload the member spreadsheet and get the server's dry-run preview.
+ *
+ * `POST /admin/import/preview` is a multipart endpoint expecting a `file` part
+ * and an `org_id` query param. The previous implementation posted an empty JSON
+ * body, which the handler rejected with a guaranteed HTTP 400 — the screen's
+ * "Upload file" button could never succeed.
+ *
+ * Multipart is built the same way as the crowdfunding cover upload: the DOM
+ * FormData needs a real Blob on web, while RN's FormData streams a
+ * `{ uri, name, type }` descriptor on native.
+ */
+export async function getImportPreview(file: PickedFile, orgId?: string): Promise<ImportPreview> {
+  if (USE_MOCK) { await delay(500); return { ...MOCK_IMPORT_PREVIEW, fileName: file?.name ?? MOCK_IMPORT_PREVIEW.fileName }; }
+  if (!file?.uri) throw new Error('No file selected');
+
+  const type = file.mimeType ?? 'application/octet-stream';
+  const form = new FormData();
+  if (file.uri.startsWith('blob:') || file.uri.startsWith('data:')) {
+    const blob = await (await fetch(file.uri)).blob();
+    form.append('file', new File([blob], file.name, { type: blob.type || type }));
+  } else {
+    form.append('file', { uri: file.uri, name: file.name, type } as unknown as Blob);
+  }
+
+  const { data } = await api.post(`${BASE}/admin/import/preview`, form, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+    params: orgId ? { org_id: orgId } : undefined,
+  });
   return data;
 }
 

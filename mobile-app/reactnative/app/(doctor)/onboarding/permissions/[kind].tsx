@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { View, Text, ScrollView, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import {
   Bell, Camera, Mic, MapPin, ShieldQuestion,
 } from 'lucide-react-native';
@@ -62,7 +63,7 @@ export default function PermissionPrimerScreen() {
     setError(undefined);
     try {
       await record.mutateAsync({ kind, state });
-      router.back();
+      goBack('/onboarding/permissions');
     } catch {
       setError('Could not record your decision. Please try again.');
     }
@@ -118,7 +119,7 @@ export default function PermissionPrimerScreen() {
           <View style={styles.footer}>
             <PrimaryButton
               label={currentState === 'granted' ? 'Allowed — done' : 'Allow'}
-              onPress={currentState === 'granted' ? () => router.back() : requestPermission}
+              onPress={currentState === 'granted' ? () => goBack('/onboarding/permissions') : requestPermission}
               loading={record.isPending}
               style={styles.primaryBtn}
             />

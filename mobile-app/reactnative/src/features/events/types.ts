@@ -152,6 +152,24 @@ export interface GiftTicketInput {
 }
 
 // ── Steward scan ─────────────────────────────────────────────────────────────
+
+// The live, server-issued, HMAC-signed rotating token for a ticket's gate-entry
+// credential (mirrors backend/internal/credential.Token's JSON tags exactly —
+// cid/w/n/sig — so a scanned QR round-trips straight into a Go credential.Token
+// via JSON.parse). Fetched via GET /tickets/:ticketId/token, never computed
+// client-side; the server enforces its RotateTTL/anti-screenshot window.
+export interface GateToken {
+  cid: string; // credential id
+  w:   number; // rotation window bucket
+  n:   string; // per-window nonce
+  sig: string; // HMAC-SHA256(secret, cid|w|n)
+}
+
+export interface Gate {
+  id:   string;
+  name: string;
+}
+
 export interface ScanInput {
   credential_id: string;
 }
@@ -184,25 +202,27 @@ export interface EventDisplayMeta {
 // list (GET /api/finance/events?organiser scoping is not in the route table
 // either — see report). ticketsSold/grossKobo are computed from tier sold
 // counts on EventDetail where available.
+// GET /organiser/mine — real endpoint. Snake_case, matching this file's stated
+// convention (field names mirror the Go backend verbatim) rather than the
+// camelCase this type had while it was still client-derived-only.
 export interface OrganiserEventStats {
-  event:        EventSummary;
-  ticketsSold:  number;
-  ticketsTotal: number | null;
-  grossKobo:    number;
+  event:         EventSummary;
+  tickets_sold:  number;
+  tickets_total: number | null;
+  gross_kobo:    number;
 }
 
-// Attendee list: no dedicated backend endpoint exists (see report). Kept as a
-// UI type only; the attendees screen surfaces a "not available yet" state
-// rather than inventing fake data.
+// GET /:id/attendees — real, organiser/steward-gated endpoint. Snake_case, same
+// reasoning as OrganiserEventStats above.
 export interface Attendee {
-  id:             string;
-  name:           string;
-  cashtag:        string;
-  tierName:       string;
-  ticketId:       string;
-  state:          TicketState;
-  checkedIn:      boolean;
-  checkedInAtISO?: string | null;
+  id:            string;
+  name:          string;
+  cashtag:       string;
+  tier_name:     string;
+  ticket_id:     string;
+  state:         TicketState;
+  checked_in:    boolean;
+  checked_in_at?: string | null;
 }
 
 export interface VenueZone {

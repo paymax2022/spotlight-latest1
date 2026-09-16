@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import PhoneNumberInput from '@/components/PhoneNumberInput';
 import { View, Text, FlatList, StyleSheet, Pressable } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Trash2, UserPlus, Shield } from 'lucide-react-native';
@@ -60,7 +61,7 @@ export default function TrustedContactsScreen() {
             <View style={styles.form}>
               <Text style={styles.formTitle}>Add a contact</Text>
               <TextInputField label="Name" placeholder="e.g. Ada (sister)" value={name} onChangeText={setName} />
-              <TextInputField label="Phone" placeholder="+234…" value={phone} onChangeText={setPhone} keyboardType="phone-pad" />
+              <PhoneNumberInput label="Phone" value={phone} onChange={({ e164, nsn }) => (setPhone)(e164 || nsn)} />
               {error ? <Text style={styles.error}>{error}</Text> : null}
               <PrimaryButton label="Add contact" onPress={onAdd} loading={addContact.isPending} />
             </View>

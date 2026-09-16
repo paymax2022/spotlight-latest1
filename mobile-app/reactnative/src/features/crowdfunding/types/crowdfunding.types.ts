@@ -2,6 +2,10 @@
 // Source of truth the screens code against (Backend role owns this file).
 // IRON RULE: all monetary amounts are integers in minor units (kobo). Never floats.
 
+// The MODERATOR's column (`review_status` server-side). Owner-pausing is NOT a
+// value here — see `Campaign.paused`. Overloading this union would have let a
+// creator's Resume clear an admin's FROZEN fraud stop, and would have thrown
+// away whether a paused campaign was ACTIVE or COMPLETED underneath.
 export type CampaignStatus =
   | 'ACTIVE'
   | 'DRAFT'
@@ -9,7 +13,7 @@ export type CampaignStatus =
   | 'COMPLETED'
   | 'EXPIRED'
   | 'CANCELLED'
-  | 'FROZEN'
+  | 'FROZEN'          // paused by Trust & Safety — the owner cannot resume it
   | 'REJECTED';
 
 export type CampaignType =
@@ -164,11 +168,39 @@ export interface Campaign {
   urgent: boolean;
   saved?: boolean;
 
+  /**
+   * Owner-paused: hidden from public discovery and search, taking no new
+   * contributions. Funds already raised are untouched.
+   *
+   * ORTHOGONAL to `status`, deliberately. A campaign can be ACTIVE *and*
+   * paused; pausing does not move the moderator's column, and resuming
+   * re-checks it, so a campaign frozen while paused cannot be walked back onto
+   * a rail by its owner.
+   */
+  paused: boolean;
+
+  /**
+   * State of the owner's request to be featured on the discovery rail.
+   * OPTIONAL because it is owner-scoped: the public campaign payload does not
+   * carry it. When the server omits it we fall back to `featured` alone (see
+   * `featureRequestState` in crowdfundingFormatters) rather than guessing that
+   * no request is outstanding — an owner must never be shown "Request feature"
+   * for a request that is already sitting in an admin queue.
+   */
+  featureRequestStatus?: 'NONE' | 'PENDING' | 'APPROVED' | 'REJECTED';
+
   budget: BudgetItem[];
   milestones: CampaignMilestone[];
   updates: CampaignUpdate[];
   rewardTiers: RewardTier[];
   documents: CampaignDocument[];
+  /**
+   * How many comments the Q&A thread holds (questions + creator replies,
+   * excluding soft-deleted). Optional because the mock fixtures and the
+   * optimistic draft mapper do not supply it; the detail row falls back to
+   * its invitation copy when it is absent rather than rendering "0 comments".
+   */
+  commentCount?: number;
   faqs: CampaignFaq[];
   tags: string[];
   location: string | null;
@@ -180,6 +212,7 @@ export type CampaignSummary = Pick<
   | 'id' | 'title' | 'summary' | 'type' | 'status' | 'category' | 'categoryLabel'
   | 'coverImage' | 'goalKobo' | 'raisedKobo' | 'currency' | 'contributorCount'
   | 'deadline' | 'verified' | 'featured' | 'trending' | 'urgent' | 'saved' | 'location'
+  | 'paused'
 > & { creatorName: string; creatorType: CreatorType; creatorVerification: VerificationLevel };
 
 // ─── Discovery query params ───────────────────────────────────────────────────
@@ -215,11 +248,11 @@ export interface CampaignQuery extends CampaignFilter {
 export type PaymentMethod = 'WALLET' | 'CARD' | 'BANK_TRANSFER' | 'USSD';
 
 export interface FeeBreakdown {
-  contributionKobo: number;   // amount that reaches the campaign
-  platformFeeKobo: number;
-  paymentFeeKobo: number;
-  tipKobo: number;            // optional creator/platform tip
-  totalKobo: number;          // total debited from contributor
+  contributionKobo: number;     // what the contributor gives
+  platformFeeKobo: number;      // deducted from the creator's payout, NOT added to the charge
+  netToCampaignKobo: number;    // what the campaign actually receives
+  tipKobo: number;              // optional creator/platform tip
+  totalKobo: number;            // total debited from contributor
 }
 
 export interface ShippingAddress {
@@ -256,7 +289,11 @@ export interface Contribution {
   campaignTitle: string;
   campaignCover: string | null;
   amountKobo: number;
+  /** Platform cut, deducted from the creator's payout — not part of what you paid. */
   feeKobo: number;
+  /** What actually reaches the campaign: amountKobo - feeKobo. */
+  netToCampaignKobo: number;
+  /** What the contributor was debited. Equals amountKobo under the deducted model. */
   totalKobo: number;
   currency: 'NGN';
   status: ContributionStatus;
@@ -269,7 +306,15 @@ export interface Contribution {
 }
 
 export interface InitiateContributionResult {
-  reference: string;
+  /**
+   * The server-assigned contribution id. This is the handle every follow-up
+   * read uses, because it is the only identifier the contribute endpoint
+   * actually returns — the human `reference` is derived server-side and comes
+   * back on the contribution read, not on the charge.
+   */
+  contributionId: string;
+  /** Human-facing reference, only when the server already minted one. */
+  reference?: string;
   status: ContributionStatus;
   authorizationUrl?: string;   // for card/bank redirect
 }
@@ -400,6 +445,24 @@ export interface SubmitCampaignResult {
   campaignId: string;
   status: Extract<CampaignStatus, 'DRAFT' | 'PENDING_REVIEW'>;
   reference: string;
+}
+
+// ─── Owner self-management (Section G2) ───────────────────────────────────────
+
+/**
+ * Patch body for `PATCH /creator/campaigns/:id`. Every key is OPTIONAL and the
+ * server applies subset semantics: an absent key is left unchanged. That is why
+ * this is not `Partial<CampaignDraftInput>` — the wire contract distinguishes
+ * "not supplied" from "cleared", so the edit screen must send only the fields
+ * the owner actually touched.
+ */
+export interface CampaignEditInput {
+  title?: string;
+  summary?: string;
+  story?: string;
+  category?: string;
+  coverImage?: string | null;
+  goalKobo?: number;
 }
 
 // ─── Wallet, ledger & withdrawal (Section I) ──────────────────────────────────

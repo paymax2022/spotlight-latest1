@@ -2,6 +2,7 @@ import React, { useMemo, useState } from 'react';
 import { View, Text, ScrollView, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import { Award, XCircle } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
@@ -62,7 +63,7 @@ export default function QuizScreen() {
     return (
       <SafeAreaView style={styles.safe} edges={['top']}>
         <ScreenHeader title="Quiz" />
-        <StateView kind="empty" icon="HelpCircle" title="No quiz here" message="This lesson doesn't have a quiz yet." actionLabel="Back to lesson" onAction={() => router.back()} />
+        <StateView kind="empty" icon="HelpCircle" title="No quiz here" message="This lesson doesn't have a quiz yet." actionLabel="Back to lesson" onAction={() => goBack('/learn')} />
       </SafeAreaView>
     );
   }
@@ -90,7 +91,7 @@ export default function QuizScreen() {
 
           <View style={styles.resultActions}>
             <PrimaryButton label="Retake quiz" onPress={reset} variant="secondary" />
-            <PrimaryButton label="Back to lesson" onPress={() => router.back()} variant="ghost" />
+            <PrimaryButton label="Back to lesson" onPress={() => goBack('/learn')} variant="ghost" />
           </View>
         </ScrollView>
       </SafeAreaView>

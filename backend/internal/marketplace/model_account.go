@@ -57,6 +57,21 @@ type Block struct {
 	CreatedAt     time.Time `json:"created_at"`
 }
 
+// ─── Followed sellers (mkt_seller_follows, § Mobile-UX-Flows LD-005) ─────────
+
+// FollowedSeller is a follow row enriched with the followed seller's display
+// name/avatar (public.user_profiles) and live trust signals — never a stored
+// snapshot, so an unfollow-refollow or a name change is always current.
+type FollowedSeller struct {
+	ID             string    `json:"id"`
+	SellerID       string    `json:"seller_id"`
+	SellerName     string    `json:"seller_name"`
+	AvatarURL      *string   `json:"avatar_url,omitempty"`
+	TrustScore     float64   `json:"trust_score"`
+	ActiveListings int       `json:"active_listings"`
+	FollowedAt     time.Time `json:"followed_at"`
+}
+
 // ─── Notification preferences (mkt_notification_prefs) ───────────────────────
 
 // NotificationPrefs mirrors mkt_notification_prefs (one row per user). Every
@@ -110,4 +125,36 @@ type SafeSpot struct {
 	Lat      float64 `json:"lat"`
 	Lng      float64 `json:"lng"`
 	Verified bool    `json:"verified"`
+}
+
+// ─── Listing insights (seller performance) ───────────────────────────────────
+
+// ListingInsights is the seller-facing performance summary for ONE listing.
+//
+// Every figure is counted from the table that actually records the event, not
+// from a denormalised counter — mkt_listings.save_count is never written by this
+// backend, so trusting it would report 0 saves forever.
+//
+// Views are the exception and are read from mkt_listings.view_count, because
+// there is no per-view event table. See Repository.IncrementListingView.
+type ListingInsights struct {
+	ListingID string `json:"listing_id"`
+
+	Views          int64 `json:"views"`
+	Saves          int64 `json:"saves"`           // mkt_saved_items
+	Enquiries      int64 `json:"enquiries"`       // mkt_threads — buyers who opened a chat
+	Offers         int64 `json:"offers"`          // mkt_offers
+	ContactReveals int64 `json:"contact_reveals"` // mkt_contact_reveals — strongest intent signal
+	Orders         int64 `json:"orders"`          // mkt_orders
+
+	// BestOfferKobo is the highest LIVE offer (nil when none stands). Minor units,
+	// int64 — never a float.
+	BestOfferKobo *int64 `json:"best_offer_kobo,omitempty"`
+
+	// Boost state, so the seller can see whether promotion is running and until when.
+	BoostActive  bool       `json:"boost_active"`
+	BoostTier    *string    `json:"boost_tier,omitempty"`
+	BoostEndsAt  *time.Time `json:"boost_ends_at,omitempty"`
+	ListedAt     time.Time  `json:"listed_at"`
+	ExpiresAt    *time.Time `json:"expires_at,omitempty"`
 }

@@ -1,8 +1,9 @@
+import { mockAllowed } from '@/config/mockPolicy';
 import { Colors } from '@/constants/colors';
 
 // Flip to false once the live /api/v1/savings endpoints are reachable
 // (or set EXPO_PUBLIC_SAVINGS_USE_MOCK=false). Mock-first convention.
-export const USE_MOCK = (process.env.EXPO_PUBLIC_SAVINGS_USE_MOCK ?? 'true') !== 'false';
+export const USE_MOCK = mockAllowed(process.env.EXPO_PUBLIC_SAVINGS_USE_MOCK, true);
 
 // Savings REST namespace. Backend mounts the savings handler on the finance
 // member group at /api/finance/savings/* (backend/internal/app/top5_p1_routes.go).

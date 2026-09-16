@@ -1,3 +1,4 @@
+import { mockAllowed } from '@/config/mockPolicy';
 import { Colors } from '@/constants/colors';
 import type {
   AccessCodeStatus,
@@ -7,7 +8,7 @@ import type {
 
 // Flip to false once the real /visitor endpoints land (or set
 // EXPO_PUBLIC_VISITOR_USE_MOCK=false). Mirrors voting/association/fx convention.
-export const USE_MOCK = (process.env.EXPO_PUBLIC_VISITOR_USE_MOCK ?? 'true') !== 'false';
+export const USE_MOCK = mockAllowed(process.env.EXPO_PUBLIC_VISITOR_USE_MOCK, true);
 
 // Estate-scoped REST namespace served by the frontend-web API (see api/client).
 // Matches the stable /api/v1 convention used by all frontend-web route handlers.

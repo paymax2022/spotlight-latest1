@@ -48,6 +48,7 @@ const base = (over: Partial<Campaign> & Pick<Campaign, 'id' | 'title' | 'status'
   trending: false,
   urgent: false,
   saved: false,
+  paused: false,
   budget: [],
   milestones: [],
   updates: [],
@@ -72,6 +73,8 @@ export const MOCK_MY_CAMPAIGNS: Campaign[] = [
     summary: 'Rebuilding my livelihood after a market fire.', categoryLabel: 'SME', category: 'sme', type: 'SME',
     coverImage: 'https://images.unsplash.com/photo-1556905055-8f358a7a47b2?w=800&q=80',
     goalKobo: 80_000_000, raisedKobo: 41_200_000, contributorCount: 96, deadline: '2026-07-20T23:59:59Z',
+    // ACTIVE *and* paused — the orthogonal case the status union cannot express.
+    paused: true,
   }),
   base({
     id: 'my3', title: 'Annual Coding Bootcamp Scholarships', status: 'PENDING_REVIEW',

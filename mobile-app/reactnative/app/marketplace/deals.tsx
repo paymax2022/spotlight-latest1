@@ -70,6 +70,7 @@ export default function ChatInbox() {
   const threadsQ = useThreads();
   const threads = threadsQ.data ?? [];
   const [routing, setRouting] = useState<boolean>(Boolean(listingId || sellerId));
+  const [routingError, setRoutingError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!listingId && !sellerId) {
@@ -86,9 +87,20 @@ export default function ChatInbox() {
           pathname: '/marketplace/deals/[threadId]',
           params: { threadId: thread.id, ...(offer === '1' ? { offer: '1' } : {}) },
         } as never);
-      } catch {
-        // Fall back to the inbox rather than dead-ending on failure.
-        if (!cancelled) setRouting(false);
+      } catch (err) {
+        // Falling back to the inbox is right, but doing it SILENTLY is what made
+        // this look broken: tapping "Make an offer" on your own listing hit
+        // 422 CANNOT_MESSAGE_SELF and dropped the user on an empty inbox with
+        // nothing said. Keep the fallback, say why.
+        if (cancelled) return;
+        const code = (err as { response?: { data?: { error?: { code?: string } } } })
+          ?.response?.data?.error?.code;
+        setRoutingError(
+          code === 'CANNOT_MESSAGE_SELF'
+            ? "This is your own listing — you can't make an offer on it. Manage it from your listings instead."
+            : 'We could not open that conversation. Showing your inbox instead.',
+        );
+        setRouting(false);
       }
     })();
     return () => {
@@ -110,6 +122,14 @@ export default function ChatInbox() {
         <Text style={styles.headerTitle}>Chats & deals</Text>
       </View>
       <View style={styles.stripWrap}><SafetyStrip /></View>
+
+      {/* Why the inbox opened instead of the conversation. Without this the
+          fallback was indistinguishable from the feature being broken. */}
+      {routingError ? (
+        <View style={styles.routingNotice}>
+          <Text style={styles.routingNoticeText}>{routingError}</Text>
+        </View>
+      ) : null}
 
       {threadsQ.isLoading ? (
         <StateView kind="loading" message="Loading conversations…" />
@@ -139,6 +159,8 @@ const styles = StyleSheet.create({
   header: { paddingHorizontal: Spacing.containerMargin, paddingTop: Spacing.sm, paddingBottom: Spacing.xs },
   headerTitle: { ...Typography.headlineMd, color: Colors.onSurface },
   stripWrap: { paddingHorizontal: Spacing.containerMargin, paddingBottom: Spacing.sm },
+  routingNotice: { marginHorizontal: Spacing.md, marginBottom: Spacing.sm, padding: Spacing.sm, borderRadius: Radius.md, backgroundColor: MarketColors.surfaceAlt },
+  routingNoticeText: { ...Typography.bodySm, color: MarketColors.muted },
   list: { paddingHorizontal: Spacing.containerMargin, gap: Spacing.sm, paddingBottom: Spacing.xl },
   row: { flexDirection: 'row', gap: Spacing.sm, backgroundColor: MarketColors.surface, borderRadius: Radius.lg, padding: Spacing.sm + 2 },
   thumb: { width: 56, height: 56, borderRadius: Radius.md, backgroundColor: MarketColors.surfaceAlt, alignItems: 'center', justifyContent: 'center', overflow: 'hidden' },

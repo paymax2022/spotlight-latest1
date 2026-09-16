@@ -11,7 +11,8 @@ import ScreenHeader from '@/components/ScreenHeader';
 import StateView from '@/components/StateView';
 import PrimaryButton from '@/components/PrimaryButton';
 import StatusChip from '@/features/registration/components/StatusChip';
-import { useStatus, useWithdraw } from '@/features/registration/hooks/useRegistration';
+import { useStatus, useWithdraw, useRegistrationVoting } from '@/features/registration/hooks/useRegistration';
+import ContestVotingCard from '@/features/registration/components/ContestVotingCard';
 import { statusLabel } from '@/features/registration/utils/status';
 import { confirmAsync, alertAsync } from '@/lib/confirm';
 
@@ -23,6 +24,9 @@ export default function RegistrationStatusScreen() {
 
   const statusQuery = useStatus(appId);
   const withdraw = useWithdraw(appId);
+  // Voting context is loaded separately from a NEW endpoint: the status route
+  // is brownfield-protected, so it could not grow these fields.
+  const votingQuery = useRegistrationVoting(appId);
 
   const draft = statusQuery.data?.draft;
   const timeline = statusQuery.data?.timeline ?? [];
@@ -68,7 +72,13 @@ export default function RegistrationStatusScreen() {
       <ScrollView
         contentContainerStyle={styles.content}
         showsVerticalScrollIndicator={false}
-        refreshControl={<RefreshControl refreshing={statusQuery.isRefetching} onRefresh={statusQuery.refetch} tintColor={Colors.primary} />}
+        refreshControl={
+          <RefreshControl
+            refreshing={statusQuery.isRefetching || votingQuery.isRefetching}
+            onRefresh={() => { statusQuery.refetch(); votingQuery.refetch(); }}
+            tintColor={Colors.primary}
+          />
+        }
       >
         <View style={[styles.headCard, shadow1]}>
           <Text style={styles.contest}>{String(draft.formData['contest.title'] || draft.contestSlug)}</Text>
@@ -89,6 +99,8 @@ export default function RegistrationStatusScreen() {
             </Text>
           </View>
         )}
+
+        {votingQuery.data && <ContestVotingCard voting={votingQuery.data} />}
 
         <Text style={styles.sectionTitle}>Status history</Text>
         {timeline.length === 0 ? (

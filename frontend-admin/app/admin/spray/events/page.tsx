@@ -34,7 +34,7 @@ export default function SprayEventsPage() {
     <div style={{ padding: '0.5rem 0.5rem 2rem' }}>
       <PageHeader title="Spray events" subtitle="Spray contexts (events). Open a leaderboard for AML oversight." action={<button onClick={load} style={btn()}>Refresh</button>} />
       <SprayTabs active="events" />
-      <DisclosureNote>The leaderboard is the live admin endpoint (<code>/api/spray/admin/spray/leaderboard/:contextRef</code>, RBAC <code>spray.read</code>). The event list is a mock projection.</DisclosureNote>
+      <DisclosureNote>The leaderboard is the live admin endpoint (<code>/api/p2p/admin/spray/leaderboard/:contextRef</code>, RBAC <code>spray.read</code>). The event list is a mock projection.</DisclosureNote>
 
       <FilterBar>
         <div style={{ minWidth: 200 }}>

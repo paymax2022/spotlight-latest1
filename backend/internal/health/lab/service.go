@@ -214,6 +214,81 @@ func (s *Service) ListTests(ctx context.Context, labProviderID string) ([]Test, 
 	return out, nil
 }
 
+// ListPackages returns the active bundle catalog (HEALTH-BUILD §6). Mirrors
+// ListTests exactly — a package is priced/booked the same way a single test
+// is, just with test_ids attached — this is the one catalog read the mobile
+// Lab Home Screen calls that never had a backend route at all.
+func (s *Service) ListPackages(ctx context.Context, labProviderID string) ([]Package, error) {
+	const base = `
+		SELECT id, lab_provider_id, name, description, prep_instructions, tat_hours, price_kobo, test_ids, active, created_at
+		FROM lab_packages WHERE active = true`
+	q := base + labFilter(labProviderID) + ` ORDER BY name ASC LIMIT 200`
+	var rows pgx.Rows
+	var err error
+	if labProviderID != "" {
+		rows, err = s.db.Query(ctx, q, labProviderID)
+	} else {
+		rows, err = s.db.Query(ctx, q)
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Package
+	for rows.Next() {
+		var p Package
+		if err := rows.Scan(&p.ID, &p.LabProviderID, &p.Name, &p.Description, &p.PrepInstructions,
+			&p.TATHours, &p.PriceKobo, &p.TestIDs, &p.Active, &p.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, p)
+	}
+	return out, nil
+}
+
+// ListOrdersForPatient returns the caller's own LabOrders, most recent first —
+// the read the Lab Home Screen's "active order" card and an order-history
+// screen need. Scoped by WHERE patient_id = $1 rather than an object-level
+// check per row: there is nothing to authorize beyond "these are yours."
+// Each order's lines are attached the same way Get() does for a single order.
+func (s *Service) ListOrdersForPatient(ctx context.Context, patientID string) ([]Order, error) {
+	const q = `
+		SELECT id, patient_id, lab_provider_id, state, collection_method, total_kobo,
+		       escrow_id, delivery_ref, result_record_id, cancel_reason, idempotency_key, created_at
+		FROM lab_orders WHERE patient_id = $1
+		ORDER BY created_at DESC LIMIT 200`
+	rows, err := s.db.Query(ctx, q, patientID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	// Non-nil so the handler serialises [] rather than null for a patient with
+	// no orders yet — the exact shape mismatch that crashed getTests().
+	out := []Order{}
+	for rows.Next() {
+		var o Order
+		var state, method string
+		if err := rows.Scan(&o.ID, &o.PatientID, &o.LabProviderID, &state, &method, &o.TotalKobo,
+			&o.EscrowID, &o.DeliveryRef, &o.ResultRecordID, &o.CancelReason, &o.IdempotencyKey, &o.CreatedAt); err != nil {
+			return nil, err
+		}
+		o.State = OrderState(state)
+		o.CollectionMethod = CollectionMethod(method)
+		out = append(out, o)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	for i := range out {
+		lines, err := s.loadLines(ctx, out[i].ID)
+		if err != nil {
+			return nil, err
+		}
+		out[i].Lines = lines
+	}
+	return out, nil
+}
+
 func labFilter(id string) string {
 	if id == "" {
 		return ""
@@ -828,6 +903,65 @@ func (s *Service) Cancel(ctx context.Context, patientID, orderID, reason string)
 	}
 	if refunded, rerr := s.transition(ctx, patientID, orderID, StateRefunded, nil, "health.lab.order.refund"); rerr == nil {
 		out = refunded
+	}
+	return out, nil
+}
+
+// ListProviderOrders is the lab-staff order list — the operational counterpart
+// to AdminListOrders (admin.go), but object-level authZ'd to a verified OWNER
+// of providerID rather than platform-admin RBAC (health.lab.orders). Never
+// trusts the caller-supplied providerID at face value: VerifiedLabOwner
+// re-checks ownership server-side even though the client only ever discovers
+// its own provider id via the applications API (defence in depth against a
+// forged id). hasCritical is read straight from the order's own state — an
+// order in StateEscalated IS the "critical result awaiting escalation" signal,
+// no separate join to lab_results needed.
+//
+// patientID is surfaced as-is, not a resolved name — this package has no
+// cross-schema user-lookup today (name resolution for other lists in this app
+// happens client-side against user_profiles); resolving a display name here is
+// a follow-up, not attempted in this pass.
+func (s *Service) ListProviderOrders(ctx context.Context, ownerID, providerID string) ([]ProviderOrderSummary, error) {
+	if providerID == "" {
+		return nil, fmt.Errorf("lab: lab_provider_id required")
+	}
+	if s.prov != nil {
+		ok, err := s.prov.VerifiedLabOwner(ctx, ownerID, providerID)
+		if err != nil {
+			return nil, err
+		}
+		if !ok {
+			return nil, fmt.Errorf("lab: not a verified owner of this lab (HL-2)")
+		}
+	}
+	const q = `
+		SELECT o.id, o.patient_id, o.state, o.collection_method, o.created_at, sm.barcode_ref
+		FROM lab_orders o
+		LEFT JOIN lab_samples sm ON sm.order_id = o.id
+		WHERE o.lab_provider_id = $1
+		ORDER BY o.created_at DESC LIMIT 200`
+	rows, err := s.db.Query(ctx, q, providerID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []ProviderOrderSummary
+	for rows.Next() {
+		var r ProviderOrderSummary
+		var state, method string
+		if err := rows.Scan(&r.ID, &r.PatientID, &state, &method, &r.CreatedAt, &r.SampleBarcode); err != nil {
+			return nil, err
+		}
+		r.State = OrderState(state)
+		r.CollectionMethod = CollectionMethod(method)
+		r.HasCritical = r.State == StateEscalated
+		lines, _ := s.loadLines(ctx, r.ID)
+		names := make([]string, 0, len(lines))
+		for _, l := range lines {
+			names = append(names, l.TestName)
+		}
+		r.TestNames = names
+		out = append(out, r)
 	}
 	return out, nil
 }

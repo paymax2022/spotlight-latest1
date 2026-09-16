@@ -46,7 +46,7 @@ const styles = StyleSheet.create({
   card:       { backgroundColor: Colors.surfaceContainerLowest, borderRadius: Radius.lg, padding: Spacing.cardPadding, borderWidth: 1, borderColor: Colors.surfaceContainerHigh, gap: Spacing.sm },
   specialty:  { ...Typography.labelMd, color: Colors.onSurfaceVariant },
   row:        { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: Spacing.md },
-  percentile: { ...Typography.displayLg, fontSize: 44, lineHeight: 48, color: Colors.primary },
+  percentile: { ...Typography.displayLg, fontSize: 44, letterSpacing: -0.88, lineHeight: 48, color: Colors.primary },
   pctSuffix:  { ...Typography.titleMd, color: Colors.onSurfaceVariant },
   movePill:   { flexDirection: 'row', alignItems: 'center', gap: 4, height: 28, paddingHorizontal: 10, borderRadius: Radius.full },
   moveText:   { ...Typography.labelSm, fontWeight: '700' },

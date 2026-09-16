@@ -2,6 +2,7 @@ import React from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import * as Icons from 'lucide-react-native';
 import { Check, X } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
@@ -27,7 +28,7 @@ export default function SortScreen() {
       <View style={styles.grabber} />
       <View style={styles.header}>
         <Text style={styles.title}>Sort by</Text>
-        <Pressable onPress={() => router.back()} hitSlop={10} accessibilityLabel="Close">
+        <Pressable onPress={() => goBack('/crowdfunding')} hitSlop={10} accessibilityLabel="Close">
           <X size={22} color={Colors.onSurface} strokeWidth={2} />
         </Pressable>
       </View>

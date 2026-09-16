@@ -27,6 +27,9 @@ type LedgerPoster interface {
 // Satisfied by *tiers.Service.
 type TierEnforcer interface {
 	EnforceWalletDebitLimit(ctx context.Context, userID string, amountKobo int64) error
+	// Dues are a resident paying for a service, so they use the checkout gate:
+	// identical for Tier 1+, capped-but-permitted for Tier 0 (ADR-043).
+	EnforceCheckoutDebitLimit(ctx context.Context, userID string, amountKobo int64) error
 }
 
 // WithLedger wires the ledger so the dues money path can post balanced
@@ -166,7 +169,7 @@ func (s *Service) PayDues(ctx context.Context, estateID, payerID string, req Pay
 
 	// 4. Tier-limit check, fail-closed, before any money moves.
 	if s.tiers != nil {
-		if err := s.tiers.EnforceWalletDebitLimit(ctx, payerID, amount); err != nil {
+		if err := s.tiers.EnforceCheckoutDebitLimit(ctx, payerID, amount); err != nil {
 			return nil, fmt.Errorf("estate: dues payment blocked by tier limit: %w", err)
 		}
 	}

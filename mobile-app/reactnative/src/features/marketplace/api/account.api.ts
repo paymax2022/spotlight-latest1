@@ -131,7 +131,11 @@ export async function presignListingMedia(fileName: string, mimeType: string): P
       uploadUrl: `mock://upload/${encodeURIComponent(fileName)}`,
       fileUrl: `marketplace/${MOCK_ME}/${Date.now()}-${fileName}`,
       objectKey: `marketplace/${MOCK_ME}/${Date.now()}-${fileName}`,
-      bucket: 'spotlight-open-mic',
+      // Mock value on purpose: the real bucket is chosen server-side and
+      // returned by /media/presign. Naming a real bucket in a fixture is how
+      // a stale name spreads — 'spotlight-open-mic' was copied out of prose
+      // like this into config defaults, and it does not exist.
+      bucket: 'mock-bucket',
       mimeType,
       expiresIn: 600,
       method: 'PUT',

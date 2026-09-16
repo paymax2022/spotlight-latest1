@@ -20,6 +20,30 @@ export interface ComposerPhoto {
   uploading?: boolean;
   /** the durable fileUrl once uploaded (persisted as the listing mediaId). */
   fileUrl?: string;
+  /** the picked asset's real MIME type (ImagePicker's a.mimeType) — a camera
+   *  capture or gallery pick is not always a JPEG (screenshots and some Android
+   *  gallery sources are PNG). Upload must presign/PUT/name the object with the
+   *  ACTUAL type, or the stored bytes and the declared type disagree and native
+   *  Image decoders (which trust the extension/Content-Type, unlike browsers)
+   *  fail to render it. */
+  mimeType?: string;
+}
+
+/** Maps a picked asset's real mime type to a file extension for the upload's
+ *  object key. Mirrors the backend's listingMediaContentTypes allow-list exactly
+ *  (backend/internal/marketplace/presign.go: png, jpeg, webp only) — anything
+ *  else (e.g. iOS HEIC) falls back to jpg here, but presign itself is the
+ *  authority and will 400 on a genuinely unsupported mime_type. */
+export function extensionForMime(mime?: string): string {
+  switch (mime) {
+    case 'image/png':
+      return 'png';
+    case 'image/webp':
+      return 'webp';
+    case 'image/jpeg':
+    default:
+      return 'jpg';
+  }
 }
 
 interface Props {

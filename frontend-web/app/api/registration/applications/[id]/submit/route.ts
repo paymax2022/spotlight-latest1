@@ -2,14 +2,15 @@ import { successResponse, errorResponse, handleApiError } from '@/src/lib/api/re
 import { getRegistrationDraft, submitRegistrationApplication } from '@/src/server/registration/supabase-store';
 import { requireUser } from '@/src/lib/auth/server';
 
-export async function POST(request: Request, { params }: { params: { id: string } }) {
+export async function POST(request: Request, ctx: { params: Promise<{ id: string }> }) {
+  const params = await ctx.params;
   try {
     const { user } = await requireUser(request);
-    const current = getRegistrationDraft(params.id);
+    const current = await getRegistrationDraft(params.id);
     if (!current) return errorResponse('Application not found', 404);
     if (current.userId !== user.id) return errorResponse('Forbidden', 403);
 
-    const result = submitRegistrationApplication(params.id);
+    const result = await submitRegistrationApplication(params.id);
     if (!result.success) {
       return errorResponse('Application validation failed. Please complete required fields.', 400);
     }

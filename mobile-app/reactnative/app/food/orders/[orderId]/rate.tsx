@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { View, Text, ScrollView, StyleSheet, Pressable, TextInput, Platform } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import * as Icons from 'lucide-react-native';
 import StarRating from '@/features/mobility/components/StarRating';
 import PrimaryButton from '@/components/PrimaryButton';
@@ -12,6 +13,7 @@ import { Spacing } from '@/constants/spacing';
 import { Typography } from '@/constants/typography';
 import { shadow1 } from '@/constants/shadows';
 import { useOrder, useRateOrder } from '@/features/food/hooks';
+import { HomeMenuButton } from '@/components/HomeMenu';
 
 export default function RateOrderScreen() {
   const { orderId } = useLocalSearchParams<{ orderId: string }>();
@@ -33,18 +35,21 @@ export default function RateOrderScreen() {
           comment: comment.trim() || undefined,
         },
       },
-      { onSuccess: () => router.back() },
+      { onSuccess: () => goBack('/food/orders') },
     );
   };
 
   return (
     <SafeAreaView style={s.safe} edges={['top']}>
       <View style={s.topBar}>
-        <Pressable onPress={() => router.back()} style={s.iconButton} accessibilityLabel="Go back">
+        <Pressable onPress={() => goBack('/food/orders')} style={s.iconButton} accessibilityLabel="Go back">
           <Icons.ArrowLeft size={22} color={Colors.primary} strokeWidth={2.2} />
         </Pressable>
         <Text style={s.topTitle}>Rate your order</Text>
-        <View style={s.iconButton} />
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+          <View style={s.iconButton} />
+          <HomeMenuButton />
+        </View>
       </View>
 
       {isLoading ? (

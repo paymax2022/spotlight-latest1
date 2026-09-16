@@ -19,7 +19,10 @@ function naira(kobo: number): string {
   return `₦${n.toLocaleString('en-NG')}`;
 }
 
-const FILTERS = ['PENDING_REVIEW', 'CHANGES_REQUESTED', 'ACTIVE', 'FROZEN', 'REJECTED', ''];
+// 'ALL' is explicit rather than '': an empty status makes the backend fall back
+// to its PENDING_REVIEW default, so the All tab used to re-show the pending
+// queue under a different label.
+const FILTERS = ['PENDING_REVIEW', 'CHANGES_REQUESTED', 'ACTIVE', 'FROZEN', 'REJECTED', 'ALL'];
 
 export default function CampaignReviewQueue() {
   const [items, setItems] = useState<CfReviewCampaign[]>([]);
@@ -41,7 +44,7 @@ export default function CampaignReviewQueue() {
 
       <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1.25rem', flexWrap: 'wrap' }}>
         {FILTERS.map((s) => (
-          <Button key={s || 'all'} variant={filter === s ? 'primary' : 'outline'} sm onClick={() => setFilter(s)}>{s ? s.replace('_', ' ') : 'All'}</Button>
+          <Button key={s || 'all'} variant={filter === s ? 'primary' : 'outline'} sm onClick={() => setFilter(s)}>{s === 'ALL' ? 'All' : s.replace('_', ' ')}</Button>
         ))}
         <Button variant="outline" sm style={{ marginLeft: 'auto' }} onClick={load}>Refresh</Button>
       </div>

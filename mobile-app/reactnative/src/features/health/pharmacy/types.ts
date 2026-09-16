@@ -167,6 +167,8 @@ export interface PharmacyOrder {
   createdAt: string;
   /** Pickup verification code / QR payload (pickup orders). */
   pickupCode?: string;
+  /** Patient-supplied dropoff, captured at checkout (delivery orders only). */
+  deliveryAddress?: string;
   /** Live delivery rider context (delivery orders). */
   rider?: { name: string; phone: string; vehicle: string };
   etaLabel?: string;
@@ -189,6 +191,14 @@ export interface CreateOrderInput {
    * review case). Omit when the cart didn't come from symptom search.
    */
   searchEventId?: string | null;
+  /**
+   * Delivery dropoff — REQUIRED when fulfilment === 'delivery' (the backend
+   * fails the order closed without it; Dispatch can never resolve a courier
+   * route otherwise). Unused for pickup.
+   */
+  deliveryAddress?: string;
+  deliveryLat?: number;
+  deliveryLng?: number;
 }
 
 // ── Refills & medication list ────────────────────────────────────────────────

@@ -2,6 +2,7 @@ package savings
 
 import (
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -86,7 +87,10 @@ func (h *Handler) ListVaults(c *gin.Context) {
 }
 
 func (h *Handler) VaultBalance(c *gin.Context) {
-	bal, err := h.vaults.Balance(c.Request.Context(), c.Param("id"))
+	// Object-scoped: BalanceForOwner refuses a vault the caller does not own.
+	// Calling the bare Balance() here let any authenticated user read any
+	// vault's balance by id.
+	bal, err := h.vaults.BalanceForOwner(c.Request.Context(), userID(c), c.Param("id"))
 	if err != nil {
 		httpErr(c, err)
 		return
@@ -298,7 +302,8 @@ func (h *Handler) ReleaseTarget(c *gin.Context) {
 }
 
 func (h *Handler) TargetBalance(c *gin.Context) {
-	bal, err := h.targets.Balance(c.Request.Context(), c.Param("id"))
+	// Object-scoped: membership is required to read a pot's balance.
+	bal, err := h.targets.BalanceForMember(c.Request.Context(), userID(c), c.Param("id"))
 	if err != nil {
 		httpErr(c, err)
 		return
@@ -329,20 +334,51 @@ func (h *Handler) GetVault(c *gin.Context) {
 }
 
 // EarlyWithdrawVault breaks a lock vault before maturity applying a penalty (bps).
+// EarlyWithdrawQuote tells the member what breaking a lock will cost BEFORE
+// they confirm. Now that the rate is server-side, this is the only honest way
+// for a client to show the fee — without it the app would display one number
+// and the server would charge another. Read-only: no ledger entries, no
+// Idempotency-Key.
+func (h *Handler) EarlyWithdrawQuote(c *gin.Context) {
+	amount, err := strconv.ParseInt(c.Query("amount_kobo"), 10, 64)
+	if err != nil || amount <= 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": "amount_kobo must be a positive integer"})
+		return
+	}
+	v, bal, err := h.vaults.GetVault(c.Request.Context(), userID(c), c.Param("id"))
+	if err != nil {
+		httpErr(c, err)
+		return
+	}
+	penalty := h.vaults.PenaltyQuote(v, amount)
+	c.JSON(http.StatusOK, gin.H{
+		"success":      true,
+		"balance_kobo": bal,
+		"amount_kobo":  amount,
+		"penalty_bps":  h.vaults.EarlyBreakPenaltyBps(),
+		"penalty_kobo": penalty,
+		"net_kobo":     amount - penalty,
+	})
+}
+
 func (h *Handler) EarlyWithdrawVault(c *gin.Context) {
 	key, ok := requireIdem(c)
 	if !ok {
 		return
 	}
+	// penalty_bps is NO LONGER read from the body. It was the fee rate, so any
+	// member could break a LOCK vault free by sending 0. A client that still
+	// sends the field is accepted and the value ignored (older builds always
+	// sent it) — the rate now comes from service policy. Use the quote endpoint
+	// to learn what a break will cost before confirming.
 	var req struct {
 		AmountKobo int64 `json:"amount_kobo"`
-		PenaltyBps int64 `json:"penalty_bps"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": "invalid body"})
 		return
 	}
-	bal, penalty, err := h.vaults.EarlyWithdraw(c.Request.Context(), userID(c), c.Param("id"), req.AmountKobo, req.PenaltyBps, key)
+	bal, penalty, err := h.vaults.EarlyWithdraw(c.Request.Context(), userID(c), c.Param("id"), req.AmountKobo, key)
 	if err != nil {
 		httpErr(c, err)
 		return
@@ -430,6 +466,7 @@ func (h *Handler) Register(member *gin.RouterGroup, admin *gin.RouterGroup, guar
 	g.POST("/vaults/:id/deposit", h.DepositVault)
 	g.POST("/vaults/:id/withdraw", h.WithdrawVault)
 	g.POST("/vaults/:id/early-withdraw", h.EarlyWithdrawVault)
+	g.GET("/vaults/:id/early-withdraw/quote", h.EarlyWithdrawQuote)
 	g.POST("/vaults/:id/autosave", h.EnableAutoSave)
 	// Ajo / Esusu
 	g.GET("/circles", h.ListCircles)

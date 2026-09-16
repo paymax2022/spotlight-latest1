@@ -1,11 +1,32 @@
 name: _reusable go verify
 
-# Reusable: Go 1.25 build + vet for the whole backend.
-# `go build ./...` catches wiring/import breaks across every module;
-# `go vet ./...` is repo-wide static analysis. Tests are run per-module in the
-# scoped module workflows (doctor-ci.yml etc.) because the root has no test
-# runner configured yet (CLAUDE.md). When backend/tests is populated, add
-# `go test ./...` here.
+# Reusable: Go 1.25 build + vet + TEST for the whole backend, against a real
+# Postgres.
+#
+# Called only by ci.yml, as its `backend` job, and NOT path-gated — so it runs on
+# every push, including every push to develop.
+#
+# WHY THERE IS A DATABASE HERE. Until now this job was build+vet only, and the
+# live-DB suites (~46 files gated on TEST_DATABASE_URL) ran nowhere on a develop
+# push. They did not fail — they SKIPPED, and a package whose live-DB tests all
+# skip still reports "ok". integration-verify.yml is the only workflow that sets
+# TEST_DATABASE_URL, and it triggers on push:[main] + pull_request; since work
+# lands here by direct push to develop and never by PR, promotion to main was in
+# practice the FIRST moment any live-DB test executed.
+#
+# That is not theoretical. 4cb6541b moved a boost's search rank from a tier
+# lookup to a frozen mkt_boosts.weight column and left a raw-SQL test fixture
+# seeding the old shape. Its CI was green. The break surfaced days later on a
+# promotion, attributed to whoever happened to be promoting, with a failure
+# message pointing at boost weights rather than at the fixture.
+#
+# The setup below mirrors integration-verify.yml's, which is proven, rather than
+# inventing a second one. Two deliberate differences:
+#   * no -race here — that stays on main, where the slower, stricter run belongs;
+#     develop gets the functional signal quickly.
+#   * no migrate-reset — the from-zero replay + RLS gate stays on main too. It
+#     needs a max_locks_per_transaction raise and a server restart, and it is a
+#     release gate rather than a per-push one.
 
 on:
   workflow_call:
@@ -21,16 +42,76 @@ permissions:
 jobs:
   verify:
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: backend
+    services:
+      postgres:
+        # PostGIS-enabled image required: the very first migration
+        # (20260101000000_enable_extensions.sql) runs CREATE EXTENSION postgis,
+        # which a plain postgres image cannot satisfy. PG17 matches production
+        # (PostgreSQL 17 via Supabase).
+        image: postgis/postgis:17-3.4
+        env:
+          POSTGRES_USER: paymax
+          POSTGRES_PASSWORD: paymax
+          POSTGRES_DB: paymax
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U paymax" --health-interval 10s
+          --health-timeout 5s --health-retries 5
+    env:
+      DATABASE_URL: postgres://paymax:paymax@localhost:5432/paymax?sslmode=disable
+      # The live-DB suites gate on TEST_DATABASE_URL and NONE fall back to
+      # DATABASE_URL — they insert fixtures and move money, and on a developer
+      # machine DATABASE_URL is the PRODUCTION Supabase pooler. That separation
+      # is enforced by scripts/ci/check-live-db-gate.sh. Both names point at the
+      # same ephemeral service container here, which is what makes it safe.
+      TEST_DATABASE_URL: postgres://paymax:paymax@localhost:5432/paymax?sslmode=disable
+      RAILS_MODE: fake # FAKEs only — no external provider secrets in CI
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
           go-version: ${{ inputs.go-version }}
           cache-dependency-path: backend/go.sum
+
+      # The migrations assume the surface Supabase provides at runtime (auth
+      # schema + auth.uid()/role(), storage schema, anon/authenticated/
+      # service_role roles). Shim it into plain Postgres.
+      - name: Supabase-compat prelude (plain-Postgres shim)
+        run: psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -q -f scripts/ci/supabase-compat-prelude.sql
+
+      # Applied forward onto an empty database — not migrate-reset, which drops
+      # the schema first and is main's from-zero replay gate.
+      - name: Apply migrations (real Postgres)
+        run: make migrate-up
+
       - name: Build (whole backend)
-        run: go build ./...
+        run: cd backend && go build ./...
+
       - name: Vet (static analysis)
-        run: go vet ./...
+        run: cd backend && go vet ./...
+
+      - name: Test (whole backend, incl. live-DB suites)
+        run: cd backend && go test ./... -count=1
+
+      # A package whose live-DB tests all SKIP still reports "ok", so a green
+      # test step above does NOT prove the database is actually wired in. Without
+      # this, a future env change silently returns those suites to skipping and
+      # this lane stays green having verified nothing — which is precisely the
+      # state this whole job exists to end. Re-run canaries with -v and assert
+      # they executed rather than skipped.
+      - name: Prove the live-DB suites actually ran (anti-skip canary)
+        run: |
+          cd backend
+          set -o pipefail
+          go test ./tests/fx/... ./tests/marketplace/... ./internal/savings/... \
+            -count=1 -v -run 'TestLiveDB_' 2>&1 | tee /tmp/livedb.log
+          if ! grep -qE '^(=== RUN|--- PASS)' /tmp/livedb.log; then
+            echo "::error::No live-DB test executed — TEST_DATABASE_URL is not reaching the suites."
+            exit 1
+          fi
+          if [ "$(grep -c -- '--- SKIP' /tmp/livedb.log)" -gt 0 ] \
+             && [ "$(grep -c -- '--- PASS' /tmp/livedb.log)" -eq 0 ]; then
+            echo "::error::Every live-DB canary skipped — the database is not wired in."
+            exit 1
+          fi
+          echo "live-DB canaries executed: $(grep -c -- '--- PASS' /tmp/livedb.log) passed"

@@ -64,7 +64,7 @@ const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: Colors.background },
   scroll: { padding: Spacing.containerMargin, paddingBottom: Spacing.xxl, gap: Spacing.md },
   hero: { borderRadius: Radius.xl, padding: Spacing.lg, alignItems: 'center' },
-  heroPct: { ...Typography.displayLg, color: Colors.onPrimary, fontSize: 52, lineHeight: 58 },
+  heroPct: { ...Typography.displayLg, color: Colors.onPrimary, fontSize: 52, letterSpacing: -1.04, lineHeight: 58 },
   heroSub: { ...Typography.bodyMd, color: Colors.inversePrimary },
   metaRow: { flexDirection: 'row', gap: Spacing.sm },
   metaCard: { flex: 1, alignItems: 'center', backgroundColor: Colors.surfaceContainerLowest, borderRadius: Radius.lg, padding: Spacing.md, gap: 2 },

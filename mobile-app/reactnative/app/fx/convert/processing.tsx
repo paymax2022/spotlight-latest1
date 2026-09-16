@@ -7,11 +7,10 @@ import { Typography } from '@/constants/typography';
 import { Spacing } from '@/constants/spacing';
 import { Radius } from '@/constants/radius';
 import { useExecuteConversion } from '@/features/fx/hooks/useFx';
-import { buildQuote } from '@/features/fx/utils/fxFormatters';
-import type { CurrencyCode } from '@/features/fx/types/fx.types';
+import type { CurrencyCode, Quote } from '@/features/fx/types/fx.types';
 
 export default function ConvertProcessingScreen() {
-  const params = useLocalSearchParams<{ from: string; to: string; amount: string; amountType: string; expiresAt: string }>();
+  const params = useLocalSearchParams<{ from: string; to: string; amount: string; amountType: string; quote: string }>();
   const from = params.from as CurrencyCode;
   const to = params.to as CurrencyCode;
   const amount = Number(params.amount);
@@ -22,9 +21,17 @@ export default function ConvertProcessingScreen() {
   useEffect(() => {
     if (fired.current) return;
     fired.current = true;
-    const quote = buildQuote({ source: from, destination: to, amount, amountType, intent: 'conversion', lock: true });
-    // Preserve the (possibly already-expired) lock window from the review screen.
-    if (params.expiresAt) quote.expiresAt = String(params.expiresAt);
+    // The SERVER quote priced+locked on the review screen — its id is what the
+    // backend executes against; there is no client-side quote math on this path.
+    let quote: Quote | null = null;
+    try { quote = params.quote ? (JSON.parse(String(params.quote)) as Quote) : null; } catch { quote = null; }
+    if (!quote) {
+      router.replace({
+        pathname: '/fx/convert/failed',
+        params: { from, to, amount: String(amount), amountType, reason: 'The quote was lost in transit. Please request a fresh quote.', kind: 'rate_expired' },
+      });
+      return;
+    }
 
     convert.mutate(quote, {
       onSuccess: (res) => {

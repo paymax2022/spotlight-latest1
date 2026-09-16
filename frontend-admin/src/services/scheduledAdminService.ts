@@ -11,7 +11,8 @@
 // All money is integer minor units (kobo). Every mutation is server-audited
 // and REQUIRES reason_code — enforced here (defense-in-depth) and in the UI.
 
-import { env } from '@/config/env';
+import { apiRoot } from '@/config/env';
+import { resolveUseMock } from '@/config/useMock';
 import type {
   ScheduledBookingRow, ScheduledBookingDetail, ScheduledFilter,
   ScheduledStatus, ScheduledMode,
@@ -19,12 +20,21 @@ import type {
 } from '@/types/scheduledMobility';
 
 // Mock by default; flip once the admin control-plane is wired to the Go backend.
-const USE_MOCK = (process.env.NEXT_PUBLIC_SCHEDULED_ADMIN_USE_MOCK ?? 'true').toLowerCase() !== 'false';
+const USE_MOCK = resolveUseMock(process.env.NEXT_PUBLIC_SCHEDULED_ADMIN_USE_MOCK);
 
+// Admin transport lives under its own absolute root (/api/finance/admin/transport,
+// see backend/internal/app/finance_routes.go's `adminTr` group), with scheduled
+// ops nested at /scheduled per SWARM_INTEGRATION_CONTRACT — so the caller must
+// spell the full path out. apiRoot() strips any trailing /api/v1 from the proxy
+// base and nothing else.
+//
+// This used to be `env.apiBaseUrl.replace(/\/api\/v1\/?$/, '/api/finance/admin/transport') + '/scheduled'`,
+// which stopped matching the moment apiBaseUrl became the same-origin proxy
+// path (<origin>/api/admin-proxy, no /api/v1 suffix) — see insuranceAdminService.ts
+// for the same regression. Every request 404'd against <proxy>/scheduled instead
+// of <proxy>/api/finance/admin/transport/scheduled.
 function adminBase(): string {
-  // env.apiBaseUrl defaults to .../api/v1 ; scheduled admin ops live under
-  // /api/finance/admin/transport/scheduled per SWARM_INTEGRATION_CONTRACT.
-  return env.apiBaseUrl.replace(/\/api\/v1\/?$/, '/api/finance/admin/transport') + '/scheduled';
+  return `${apiRoot()}/api/finance/admin/transport/scheduled`;
 }
 function authHeaders(): Record<string, string> {
   if (typeof window === 'undefined') return {};

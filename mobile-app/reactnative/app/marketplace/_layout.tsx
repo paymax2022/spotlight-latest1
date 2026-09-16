@@ -61,6 +61,7 @@ export default function MarketplaceLayout() {
       <Tabs.Screen name="saved-items" options={{ href: null }} />
       <Tabs.Screen name="saved-searches" options={{ href: null }} />
       <Tabs.Screen name="listing/[id]" options={{ href: null }} />
+      <Tabs.Screen name="insights/[id]" options={{ href: null }} />
       <Tabs.Screen name="seller/[id]" options={{ href: null }} />
       <Tabs.Screen name="category/[id]" options={{ href: null }} />
 

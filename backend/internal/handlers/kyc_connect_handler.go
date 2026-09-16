@@ -264,10 +264,32 @@ func (h *KYCConnectHandler) GetTierStatus(c *gin.Context) {
 		return
 	}
 
+	// Today's allowance, from the SAME tiers.GetUsage the fail-closed wallet-debit
+	// gate is derived from — so a client pre-check (e.g. the mobile checkout sheet
+	// refusing to open the card gateway for a spend that would be rejected) agrees
+	// with what the server will actually do.
+	//
+	// walletDisabled and dailyUsedKobo are reported explicitly rather than left to be
+	// inferred: without them a client has to decode the (0, -1) / (0, 0) encoding of
+	// "unlimited" vs "disabled" itself, which is exactly the kind of duplicated money
+	// rule that drifts.
+	//
+	// On a usage error the three fields are OMITTED rather than zeroed — a client
+	// must not read a missing allowance as "you have none". Absence means "unknown";
+	// the server-side gate remains the authority.
 	payload := kycProfilePayload(profile)
 	if usage, err := h.tiersSvc.GetUsage(c.Request.Context(), userID); err == nil {
-		payload["dailyLimitKobo"] = usage.DailyLimitKobo
-		payload["remainingKobo"] = usage.RemainingKobo
+		payload["dailyLimitKobo"] = usage.DailyLimitKobo // 0 = unlimited (T3) or disabled (T0)
+		payload["remainingKobo"] = usage.RemainingKobo   // -1 = unlimited
+		payload["dailyUsedKobo"] = usage.DailyUsedKobo
+		payload["walletDisabled"] = usage.WalletDisabled
+		// Purchases may still be permitted while the wallet is otherwise disabled
+		// (ADR-043). Sent alongside walletDisabled, never instead of it: a client
+		// deciding about a PURCHASE consults these, one deciding about a transfer
+		// must keep reading walletDisabled.
+		payload["checkoutEnabled"] = usage.CheckoutEnabled
+		payload["checkoutAllowanceKobo"] = usage.CheckoutAllowanceKobo
+		payload["checkoutRemainingKobo"] = usage.CheckoutRemainingKobo
 	}
 
 	c.JSON(http.StatusOK, gin.H{"data": payload})

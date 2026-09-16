@@ -1,8 +1,8 @@
-import React from 'react';
-import { FlatList, View, Text, Pressable, StyleSheet } from 'react-native';
+import React, { useState } from 'react';
+import { FlatList, View, Text, Pressable, StyleSheet, ActivityIndicator, Linking } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLocalSearchParams } from 'expo-router';
-import { FileText, Image as ImageIcon, BadgeCheck, Download } from 'lucide-react-native';
+import { FileText, Image as ImageIcon, BadgeCheck, Download, Plus } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
 import { Spacing } from '@/constants/spacing';
@@ -10,14 +10,67 @@ import { Radius } from '@/constants/radius';
 import ScreenHeader from '@/components/ScreenHeader';
 import StateView from '@/components/StateView';
 import { useCampaign } from '@/features/crowdfunding/hooks/useCrowdfunding';
+import * as DocumentPicker from 'expo-document-picker';
+import { useAuthStore } from '@/store/authStore';
+import { uploadCampaignDocument, attachCampaignDocument } from '@/features/crowdfunding/api/documentUpload';
 
 export default function DocumentsScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const { data: c, isLoading, isError, refetch } = useCampaign(id);
+  const user = useAuthStore((st) => st.user);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  // Only the creator may attach — the server enforces it too, but showing the
+  // control to a backer would offer an action that can only ever fail.
+  const isCreator = !!user?.id && !!c?.creator?.id && user.id === c.creator.id;
+
+  const addDocument = async () => {
+    setError(null);
+    const picked = await DocumentPicker.getDocumentAsync({
+      type: ['application/pdf', 'image/jpeg', 'image/png', 'image/webp'],
+      copyToCacheDirectory: true,
+    });
+    if (picked.canceled || !picked.assets?.length) return;
+    const asset = picked.assets[0];
+    setBusy(true);
+    try {
+      const upload = await uploadCampaignDocument({
+        uri: asset.uri,
+        name: asset.name,
+        mimeType: asset.mimeType,
+      });
+      // The file's own name is the label unless the creator renames it later —
+      // better than an empty row, and it is what they just chose.
+      await attachCampaignDocument(id!, asset.name.replace(/\.[^.]+$/, ''), upload);
+      await refetch();
+    } catch (e) {
+      // Surface the reason. A silent failure here looks identical to a picker the
+      // user dismissed.
+      setError(e instanceof Error ? e.message : 'Could not attach that document');
+    } finally {
+      setBusy(false);
+    }
+  };
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
-      <ScreenHeader title="Documents" subtitle="Supporting evidence for this campaign" />
+      <ScreenHeader
+        title="Documents"
+        subtitle="Supporting evidence for this campaign"
+        rightSlot={
+          isCreator ? (
+            busy ? (
+              <ActivityIndicator size="small" color={Colors.primary} />
+            ) : (
+              <Pressable onPress={addDocument} hitSlop={8} accessibilityLabel="Add a document">
+                <Plus size={22} color={Colors.primary} strokeWidth={2.2} />
+              </Pressable>
+            )
+          ) : undefined
+        }
+      />
+      {error ? <Text style={styles.error}>{error}</Text> : null}
       {isLoading ? (
         <StateView kind="loading" />
       ) : isError || !c ? (
@@ -52,6 +105,7 @@ export default function DocumentsScreen() {
 }
 
 const styles = StyleSheet.create({
+  error: { ...Typography.bodySm, color: Colors.error, paddingHorizontal: Spacing.containerMargin, paddingTop: Spacing.xs },
   safe: { flex: 1, backgroundColor: Colors.background },
   list: { paddingHorizontal: Spacing.containerMargin, paddingBottom: 60, gap: Spacing.sm, flexGrow: 1 },
   row: { flexDirection: 'row', alignItems: 'center', gap: Spacing.md, backgroundColor: Colors.surfaceContainerLowest, borderRadius: Radius.lg, borderWidth: 1, borderColor: Colors.surfaceContainerHigh, padding: Spacing.md },

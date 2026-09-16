@@ -1,19 +1,23 @@
 import React from 'react';
 import { ActivityIndicator, Modal, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
-import { Wallet, CreditCard, X, ShieldCheck } from 'lucide-react-native';
+import { Wallet, CreditCard, X, ShieldCheck, ShieldAlert } from 'lucide-react-native';
+import { router } from 'expo-router';
 
 import { Colors } from '@/constants/colors';
 import type { PurchaseController } from './usePurchasePayment';
+// Shared formatter. This screen carried its own copy with minimumFractionDigits:0,
+// which trimmed the trailing zero — ₦13,645.20 rendered as "₦13,645.2" on the very
+// screen where the customer authorises the charge, disagreeing with the checkout
+// summary behind it. src/utils/money.ts exists precisely so amounts cannot drift.
+import { formatNaira } from '@/utils/money';
 
-function naira(kobo: number): string {
-  return '₦' + (kobo / 100).toLocaleString('en-NG', { minimumFractionDigits: 0, maximumFractionDigits: 2 });
-}
+
 
 // Shared checkout sheet: lets the user pay a purchase from their wallet balance
 // OR directly via card (Paystack). Drop it once near a module's pay button and
 // drive it with usePurchasePayment().
 export default function PaymentSheet({ controller }: { controller: PurchaseController<any> }) {
-  const { visible, phase, error, request, walletKobo, walletLoading, pay, submitPin, close, GatewaySheet } = controller;
+  const { visible, phase, error, request, walletKobo, walletLoading, spendBlock, pay, submitPin, close, GatewaySheet } = controller;
   // Local PIN entry state, cleared whenever we leave the PIN step.
   const [pin, setPin] = React.useState('');
   React.useEffect(() => { if (phase !== 'pin') setPin(''); }, [phase]);
@@ -21,13 +25,21 @@ export default function PaymentSheet({ controller }: { controller: PurchaseContr
 
   const amount = request.amountKobo;
   const walletCovers = walletKobo >= amount;
-  const busy = phase === 'awaiting' || phase === 'charging';
+  // 'confirming' waits on the top-up webhook and 'initializing' opens the
+  // server-side transaction — both must block dismissal, or the sheet can close
+  // mid-flight and strand a paid-for purchase the user thinks failed.
+  // 'checking' resolves the KYC spend allowance before either rail starts.
+  const busy = phase === 'awaiting' || phase === 'charging'
+    || phase === 'initializing' || phase === 'confirming' || phase === 'checking';
   // When the caller preselected a method, this screen already chose how to pay —
   // don't show the in-sheet chooser; just surface progress (and retry on error).
   const preselected = !!request.method;
 
   const phaseLabel: Record<string, string> = {
+    checking: 'Checking your limits…',
+    initializing: 'Preparing secure payment…',
     awaiting: 'Opening secure payment…',
+    confirming: 'Confirming your payment…',
     charging: 'Finalising your order…',
   };
 
@@ -45,9 +57,36 @@ export default function PaymentSheet({ controller }: { controller: PurchaseContr
             )}
           </View>
 
-          <Text style={styles.amount}>{naira(amount)}</Text>
+          <Text style={styles.amount}>{formatNaira(amount)}</Text>
 
-          {phase === 'pin' ? (
+          {phase === 'blocked' && spendBlock ? (
+            /* The caller's KYC tier will not permit this spend on ANY rail, so the
+               payment options are replaced rather than dimmed — offering a card
+               charge here would take the customer's money for an order the server
+               is going to refuse. */
+            <View style={styles.blockWrap}>
+              <View style={styles.blockIcon}>
+                <ShieldAlert size={26} color={Colors.error} strokeWidth={2} />
+              </View>
+              <Text style={styles.blockTitle}>
+                {spendBlock.reason === 'wallet_disabled' ? 'Verification needed' : "Daily limit reached"}
+              </Text>
+              <Text style={styles.blockBody}>{spendBlock.message}</Text>
+              <View style={styles.actionRow}>
+                <Pressable
+                  style={[styles.actionBtn, styles.retryBtn]}
+                  onPress={() => { close(); router.push('/kyc'); }}
+                >
+                  <Text style={styles.retryText} numberOfLines={1}>
+                    {spendBlock.reason === 'wallet_disabled' ? 'Verify my account' : 'Raise my limit'}
+                  </Text>
+                </Pressable>
+                <Pressable style={[styles.actionBtn, styles.cancelBtn]} onPress={close}>
+                  <Text style={styles.cancelText}>Not now</Text>
+                </Pressable>
+              </View>
+            </View>
+          ) : phase === 'pin' ? (
             <View style={styles.pinWrap}>
               <View style={styles.pinHeadRow}>
                 <ShieldCheck size={16} color={Colors.primary} strokeWidth={2.2} />
@@ -71,7 +110,7 @@ export default function PaymentSheet({ controller }: { controller: PurchaseContr
                 disabled={pin.length !== 4}
                 onPress={() => submitPin(pin)}
               >
-                <Text style={styles.pinBtnText}>Confirm &amp; pay {naira(amount)}</Text>
+                <Text style={styles.pinBtnText}>Confirm &amp; pay {formatNaira(amount)}</Text>
               </Pressable>
               <Text style={styles.secure}>Your PIN authorises this wallet debit.</Text>
             </View>
@@ -113,7 +152,7 @@ export default function PaymentSheet({ controller }: { controller: PurchaseContr
                 <View style={{ flex: 1 }}>
                   <Text style={styles.optTitle}>Pay with wallet</Text>
                   <Text style={styles.optSub}>
-                    {walletLoading ? 'Checking balance…' : `Balance: ${naira(walletKobo)}`}
+                    {walletLoading ? 'Checking balance…' : `Balance: ${formatNaira(walletKobo)}`}
                     {!walletLoading && !walletCovers ? '  •  insufficient' : ''}
                   </Text>
                 </View>
@@ -165,7 +204,10 @@ const styles = StyleSheet.create({
   optSub: { fontSize: 13, color: Colors.onSurfaceVariant, marginTop: 2 },
   busy: { alignItems: 'center', gap: 10, paddingVertical: 28 },
   busyText: { fontSize: 15, fontWeight: '600', color: Colors.onSurface },
-  actionRow: { flexDirection: 'row', gap: 12, marginTop: 8 },
+  // alignSelf stretch: both parents (busy / blockWrap) centre their children, which
+  // otherwise shrinks this row to its intrinsic width and leaves the two flex:1
+  // buttons too narrow for their labels.
+  actionRow: { flexDirection: 'row', gap: 12, marginTop: 8, alignSelf: 'stretch' },
   actionBtn: { flex: 1, borderRadius: 14, paddingVertical: 14, alignItems: 'center' },
   retryBtn: { backgroundColor: Colors.primary },
   retryText: { fontSize: 15, fontWeight: '700', color: Colors.surfaceContainerLowest },
@@ -174,6 +216,13 @@ const styles = StyleSheet.create({
   hint: { fontSize: 13, color: Colors.onSurfaceVariant, textAlign: 'center', paddingHorizontal: 12 },
   error: { color: Colors.error, fontSize: 13, marginTop: 4 },
   secure: { fontSize: 12, color: Colors.onSurfaceVariant, textAlign: 'center', marginTop: 4 },
+  blockWrap: { alignItems: 'center', gap: 10, paddingVertical: 16 },
+  blockIcon: {
+    width: 52, height: 52, borderRadius: 26, alignItems: 'center', justifyContent: 'center',
+    backgroundColor: Colors.surfaceContainerHigh,
+  },
+  blockTitle: { fontSize: 16, fontWeight: '700', color: Colors.onSurface },
+  blockBody: { fontSize: 14, color: Colors.onSurfaceVariant, textAlign: 'center', paddingHorizontal: 8, lineHeight: 20 },
   pinWrap: { gap: 12, paddingTop: 4 },
   pinHeadRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   pinLabel: { fontSize: 14, fontWeight: '600', color: Colors.onSurface },

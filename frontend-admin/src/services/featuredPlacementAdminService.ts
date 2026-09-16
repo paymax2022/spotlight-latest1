@@ -1,15 +1,22 @@
-import { env } from '@/config/env';
+import { apiRoot } from '@/config/env';
+import { resolveUseMock } from '@/config/useMock';
 import type {
   Campaign,
   CampaignState,
   ReviewQueueFilters,
 } from '@/types/featuredPlacementAdmin';
 
-// Backend admin placement routes hang off the Go API /api prefix, matching the
-// onboarding/mobility admin services: env.apiBaseUrl ends with /api/v1 and the
-// admin routes live under /api/placement/admin/...
+// Backend admin placement routes hang off the Go API /api prefix (verified:
+// backend/internal/app/finance_routes.go `placementAdmin := r.Group("/api/placement/admin")`),
+// matching the onboarding/mobility admin services. This used to be
+// `env.apiBaseUrl.replace(/\/api\/v1\/?$/, '/api')`, which relied on
+// apiBaseUrl ending in /api/v1 — it no longer does (see config/env.ts), so
+// that regex silently stopped matching and every live placement admin call
+// 404'd against the bare proxy origin. apiRoot() strips the /api/v1 suffix
+// (if any) so `${apiRoot()}/api` reliably lands on the API root regardless of
+// how apiBaseUrl is spelled.
 function adminApiBase(): string {
-  return env.apiBaseUrl.replace(/\/api\/v1\/?$/, '/api');
+  return `${apiRoot()}/api`;
 }
 
 function authHeaders(): Record<string, string> {
@@ -22,8 +29,7 @@ function authHeaders(): Record<string, string> {
 // Mock by default; flip with NEXT_PUBLIC_FEATURED_PLACEMENT_ADMIN_USE_MOCK=false
 // once the live Go admin endpoints (/api/placement/admin/*) are deployed.
 // Matches the onboarding/fx/mobility/realtor admin-service convention.
-const USE_FIXTURES =
-  (process.env.NEXT_PUBLIC_FEATURED_PLACEMENT_ADMIN_USE_MOCK ?? 'true').toLowerCase() !== 'false';
+const USE_FIXTURES = resolveUseMock(process.env.NEXT_PUBLIC_FEATURED_PLACEMENT_ADMIN_USE_MOCK);
 
 // ── Fixtures ────────────────────────────────────────────────────────────────
 
@@ -43,7 +49,7 @@ const fixtureCampaigns: Campaign[] = [
     duration_days: 7,
     creative: {
       headline: 'Jollof Friday — 20% off all combos',
-      image_ref: 'r2://spotlight-open-mic/placement/lagos_eats_jollof.jpg',
+      image_ref: 'r2://example-bucket/placement/lagos_eats_jollof.jpg',
       cta: 'Order now',
       deep_link: 'spotlight://restaurant/rst_889',
     },
@@ -68,7 +74,7 @@ const fixtureCampaigns: Campaign[] = [
     duration_days: 14,
     creative: {
       headline: 'Airport runs from ₦8,000 — book in 30s',
-      image_ref: 'r2://spotlight-open-mic/placement/glam_rides_airport.jpg',
+      image_ref: 'r2://example-bucket/placement/glam_rides_airport.jpg',
       cta: 'Book a ride',
       deep_link: 'spotlight://mobility/operator/opr_204',
     },
@@ -93,7 +99,7 @@ const fixtureCampaigns: Campaign[] = [
     duration_days: 7,
     creative: {
       headline: 'Free first telemedicine consult this week',
-      image_ref: 'r2://spotlight-open-mic/placement/med_plus_consult.jpg',
+      image_ref: 'r2://example-bucket/placement/med_plus_consult.jpg',
       cta: 'Start consult',
       deep_link: 'spotlight://telemedicine/provider/hp_551',
     },
@@ -118,7 +124,7 @@ const fixtureCampaigns: Campaign[] = [
     duration_days: 14,
     creative: {
       headline: 'Lekki Gardens — last 4 units, move-in ready',
-      image_ref: 'r2://spotlight-open-mic/placement/estate_pro_lekki.jpg',
+      image_ref: 'r2://example-bucket/placement/estate_pro_lekki.jpg',
       cta: 'View listing',
       deep_link: 'spotlight://estate/est_119',
     },
@@ -180,28 +186,20 @@ export async function getCampaign(id: string): Promise<Campaign> {
   return (data.campaign ?? data) as Campaign;
 }
 
+// All four actions have real, verified live endpoints (POST /placement/admin/
+// campaigns/:id/{approve,reject,request-info,suspend}), so fixture mode
+// refuses loudly instead of reporting a decision it did not perform. See
+// docs/audit/ADMIN_SIMULATED_WRITES.md.
 async function postAction(
   id: string,
   action: 'approve' | 'reject' | 'request-info' | 'suspend',
   body: Record<string, unknown> = {},
 ): Promise<Campaign> {
   if (USE_FIXTURES) {
-    await new Promise((r) => setTimeout(r, 350));
-    const campaign = fixtureCampaign(id);
-    const nextState: CampaignState =
-      action === 'approve'
-        ? 'PENDING_PAYMENT'
-        : action === 'reject'
-          ? 'REJECTED'
-          : action === 'request-info'
-            ? 'NEEDS_MORE_INFO'
-            : 'SUSPENDED';
-    return {
-      ...campaign,
-      state: nextState,
-      review_reason: (body.reason as string) ?? campaign.review_reason ?? null,
-      updated_at: new Date().toISOString(),
-    };
+    throw new Error(
+      `Placement ${action} is unavailable in fixture mode: this console will not report a write it did not perform. ` +
+      'Set NEXT_PUBLIC_FEATURED_PLACEMENT_ADMIN_USE_MOCK=false to make this change against the live backend.',
+    );
   }
   const res = await fetch(
     `${adminApiBase()}/placement/admin/campaigns/${encodeURIComponent(id)}/${action}`,

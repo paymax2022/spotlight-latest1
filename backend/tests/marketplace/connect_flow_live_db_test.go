@@ -8,7 +8,7 @@ package marketplace_test
 // their tests are historical stubs). Drives the real marketplace.Service against
 // a real Postgres.
 //
-// SKIPPED whenever MARKETPLACE_TEST_DATABASE_URL (or DATABASE_URL) is unset, so
+// SKIPPED whenever MARKETPLACE_TEST_DATABASE_URL / TEST_DATABASE_URL are unset, so
 // `go test ./...` without a DB stays green. Self-contained: it seeds a minimal
 // category + active listing, exercises the flow, and cleans up.
 //
@@ -37,10 +37,10 @@ func liveConnectService(t *testing.T) (*mkt.Service, *pgxpool.Pool) {
 	t.Helper()
 	dsn := os.Getenv("MARKETPLACE_TEST_DATABASE_URL")
 	if dsn == "" {
-		dsn = os.Getenv("DATABASE_URL")
+		dsn = os.Getenv("TEST_DATABASE_URL")
 	}
 	if dsn == "" {
-		t.Skip("no MARKETPLACE_TEST_DATABASE_URL/DATABASE_URL set — skipping live-DB connect-flow test")
+		t.Skip("no MARKETPLACE_TEST_DATABASE_URL/TEST_DATABASE_URL set — skipping live-DB connect-flow test")
 	}
 	pool, err := pgxpool.New(context.Background(), dsn)
 	if err != nil {
@@ -48,6 +48,10 @@ func liveConnectService(t *testing.T) (*mkt.Service, *pgxpool.Pool) {
 	}
 	// The connect-flow methods (messaging/offers/reviews) are pure DB — no ledger
 	// or redis path — but NewService requires a ledger; build a real one on the pool.
+	// See fixtures_test.go: registered first so it runs last, after the fixture
+	// teardown that needs the pool open. The `defer pool.Close()` this replaces
+	// fired before every t.Cleanup, so the teardown below silently no-opped.
+	t.Cleanup(pool.Close)
 	ledgerSvc := ledger.NewService(ledger.NewRepository(pool), nil)
 	return mkt.NewService(pool, ledgerSvc, nil), pool
 }
@@ -71,13 +75,15 @@ func seedActiveListing(t *testing.T, ctx context.Context, pool *pgxpool.Pool, se
 		500000, "Lagos"); err != nil {
 		t.Fatalf("seed listing: %v", err)
 	}
+	// Covers the listing too — deleteCategoryTree unwinds everything filed under
+	// the category, so the per-test teardown below is now belt-and-braces.
+	cleanupCategory(t, pool, catID)
 	return catID, listingID
 }
 
 func TestConnectFlow_LiveDB(t *testing.T) {
 	ctx := context.Background()
 	svc, pool := liveConnectService(t)
-	defer pool.Close()
 
 	// mkt_listings.seller_id (and thread/offer actor columns) are uuid — use bare UUIDs.
 	seller := uuid.NewString()
@@ -138,13 +144,14 @@ func TestConnectFlow_LiveDB(t *testing.T) {
 	}
 
 	// ── Reviews are gated on the "mark met" signal ──────────────────────────────
-	if _, rerr := svc.SubmitDealReview(ctx, buyer, thread.ID, 5, nil, "great"); rerr == nil {
+	if _, rerr := svc.SubmitDealReview(ctx, buyer, thread.ID, 5, nil, nil, "great"); rerr == nil {
 		t.Fatalf("review before mark-met: want error, got nil")
 	}
 	if merr := svc.MarkDealMet(ctx, buyer, thread.ID); merr != nil {
 		t.Fatalf("mark met: %v", merr)
 	}
-	review, err := svc.SubmitDealReview(ctx, buyer, thread.ID, 5, []string{"friendly"}, "Great deal, smooth meetup")
+	productQuality := 4
+	review, err := svc.SubmitDealReview(ctx, buyer, thread.ID, 5, &productQuality, []string{"friendly"}, "Great deal, smooth meetup")
 	if err != nil {
 		t.Fatalf("submit review after met: %v", err)
 	}
@@ -160,7 +167,10 @@ func TestConnectFlow_LiveDB(t *testing.T) {
 	if got.Rating == nil || *got.Rating != 5 {
 		t.Fatalf("review rating not persisted as 5: %+v", got.Rating)
 	}
-	if _, derr := svc.SubmitDealReview(ctx, buyer, thread.ID, 4, nil, "again"); !errors.Is(derr, mkt.ErrReviewExists) {
+	if got.ProductQualityRating == nil || *got.ProductQualityRating != 4 {
+		t.Fatalf("review product_quality_rating not persisted as 4: %+v", got.ProductQualityRating)
+	}
+	if _, derr := svc.SubmitDealReview(ctx, buyer, thread.ID, 4, nil, nil, "again"); !errors.Is(derr, mkt.ErrReviewExists) {
 		t.Fatalf("duplicate review: want ErrReviewExists, got %v", derr)
 	}
 }

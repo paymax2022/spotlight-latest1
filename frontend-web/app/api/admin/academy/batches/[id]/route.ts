@@ -2,6 +2,7 @@ import { errorResponse, handleApiError, successResponse } from '@/src/lib/api/re
 import { assertAdminPermission } from '@/src/server/admin/auth';
 import { saveAcademyBatch, deleteAcademyBatch } from '@/src/server/services/academy/service';
 import { createAdminClient } from '@/lib/supabase/server';
+import { replaceBatchAreas, getBatchAreaSlugs } from '@/src/server/services/academy/batchAreas';
 import type { AcademyBatchMutationInput } from '@/src/lib/validation/academy';
 
 function getBatchFeeFields(body: Record<string, unknown>) {
@@ -18,7 +19,8 @@ function getBatchFeeFields(body: Record<string, unknown>) {
   return extra;
 }
 
-export async function GET(request: Request, { params }: { params: { id: string } }) {
+export async function GET(request: Request, ctx: { params: Promise<{ id: string }> }) {
+  const params = await ctx.params;
   try {
     await assertAdminPermission(request, 'programs:manage');
     const supabase = createAdminClient();
@@ -28,19 +30,27 @@ export async function GET(request: Request, { params }: { params: { id: string }
       .eq('id', params.id)
       .maybeSingle();
     if (error || !data) return errorResponse('Batch not found', 404);
-    return successResponse({ success: true, batch: data });
+    // Empty = unrestricted (offers every active area), not "offers nothing".
+    const interest_area_slugs = await getBatchAreaSlugs(supabase, params.id);
+    return successResponse({ success: true, batch: { ...data, interest_area_slugs } });
   } catch (error) {
     return handleApiError(error, 'Failed to load batch');
   }
 }
 
-export async function PATCH(request: Request, { params }: { params: { id: string } }) {
+export async function PATCH(request: Request, ctx: { params: Promise<{ id: string }> }) {
+  const params = await ctx.params;
   try {
     await assertAdminPermission(request, 'programs:manage');
     const body = (await request.json()) as AcademyBatchMutationInput & Record<string, unknown>;
     const supabase = createAdminClient();
     const batch = await saveAcademyBatch(supabase as any, body, params.id);
     const extra = getBatchFeeFields(body);
+
+    // Persist the area selection BEFORE either return: this handler has two
+    // exits, and doing it in only one meant an edit that changed no fee field
+    // silently discarded the areas.
+    await replaceBatchAreas(supabase, params.id, body.interest_area_slugs);
 
     if (Object.keys(extra).length > 0) {
       const { data, error } = await supabase
@@ -60,7 +70,8 @@ export async function PATCH(request: Request, { params }: { params: { id: string
   }
 }
 
-export async function DELETE(request: Request, { params }: { params: { id: string } }) {
+export async function DELETE(request: Request, ctx: { params: Promise<{ id: string }> }) {
+  const params = await ctx.params;
   try {
     await assertAdminPermission(request, 'programs:manage');
     const supabase = createAdminClient();

@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Text, ScrollView, StyleSheet, Platform, KeyboardAvoidingView } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import { Colors } from '@/constants/colors';
 import { Spacing } from '@/constants/spacing';
 import { Typography } from '@/constants/typography';
@@ -34,7 +35,7 @@ export default function ChangePasswordScreen() {
     try {
       await change.mutateAsync({ currentPassword, newPassword });
       await alertAsync({ title: 'Password changed', message: 'Your password has been updated.' });
-      router.back();
+      goBack('/settings/security');
     } catch {
       alertAsync({ title: 'Failed', message: 'Could not change your password. Please try again.' });
     }

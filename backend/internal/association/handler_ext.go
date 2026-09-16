@@ -336,8 +336,13 @@ func (h *Handler) ImportPreview(c *gin.Context) {
 
 func (h *Handler) ConfirmImport(c *gin.Context) {
 	var b ImportConfirmRequest
-	_ = c.ShouldBindJSON(&b)
-	res, err := h.svc.ConfirmImport(c.Request.Context(), c.GetString("user_id"), b.SendInvites, ImportPreview{})
+	// batchId is required, so a bind error must not be swallowed the way it was
+	// before — the old code ignored the body entirely and confirmed nothing.
+	if err := c.ShouldBindJSON(&b); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	res, err := h.svc.ConfirmImport(c.Request.Context(), c.GetString("user_id"), b.BatchID, b.SendInvites)
 	if err != nil {
 		c.JSON(statusFor(err), gin.H{"error": err.Error()})
 		return
@@ -353,6 +358,7 @@ func (h *Handler) PublishOrganisation(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	b.IdempotencyKey = c.GetHeader("Idempotency-Key")
 	res, err := h.svc.PublishOrganisation(c.Request.Context(), c.GetString("user_id"), b)
 	if err != nil {
 		c.JSON(statusFor(err), gin.H{"error": err.Error()})

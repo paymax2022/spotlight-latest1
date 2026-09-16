@@ -4,7 +4,7 @@
  * and generate final composite images stored in Supabase storage.
  */
 
-import sharp, { OverlayOptions } from 'sharp';
+import sharp, { OverlayOptions, FitEnum } from 'sharp';
 import { isAllowedRemoteImageUrl } from '@/lib/config/media-hosts';
 
 export interface SlotConfig {
@@ -113,7 +113,7 @@ async function processSlot(
     const slotHeight = Math.round(slot.height * slot.scale);
 
     // Determine Sharp fit mode from crop_mode
-    const fitMap: Record<string, keyof sharp.FitEnum> = {
+    const fitMap: Record<string, keyof FitEnum> = {
       cover: 'cover',
       contain: 'contain',
       fill: 'fill',
@@ -129,7 +129,11 @@ async function processSlot(
     }
 
     // Convert to PNG for transparency support
-    let processedBuffer = await processed.png().toBuffer();
+    // Annotated as the general Buffer: sharp 0.35's toBuffer() returns the
+    // narrower Buffer<ArrayBuffer>, but applyBorderRadius below returns a plain
+    // Buffer (Buffer<ArrayBufferLike>), which will not assign into the narrowed
+    // inferred type.
+    let processedBuffer: Buffer = await processed.png().toBuffer();
 
     // Apply border radius (circular frames etc.)
     if (slot.border_radius > 0) {

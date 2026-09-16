@@ -14,6 +14,9 @@ import { MOCK_AI_NOTES } from './ainotes.mock';
 
 const delay = (ms = 300) => new Promise((r) => setTimeout(r, ms));
 
+/** Shape returned by POST /ai-notes/{id}/regenerate-summary. */
+export interface RegenerateResult { ok: boolean; status?: AiNoteStatus }
+
 const toSummary = (n: AiNote): AiNoteSummary => {
   const { id, meetingTitle, status, source, createdAt, durationLabel } = n;
   return { id, meetingTitle, status, source, createdAt, durationLabel };
@@ -55,15 +58,23 @@ export async function awaitProcessing(id: string): Promise<{ status: AiNoteStatu
   return data;
 }
 
-export async function regenerateSummary(id: string): Promise<{ summary: string }> {
+/**
+ * Ask the backend to regenerate the executive summary.
+ *
+ * The Go handler answers `{ ok, status }` — it does NOT return the new text, so
+ * the caller must re-fetch the note (see `useRegenerateSummary`, which
+ * invalidates the note query). The old contract assumed `{ summary }` and left
+ * the screen showing `undefined` after a successful regeneration.
+ */
+export async function regenerateSummary(id: string): Promise<RegenerateResult> {
   if (USE_MOCK) {
     await delay(900);
-    return { summary: 'Regenerated executive summary: the meeting addressed routine business, ratified the key decisions, and assigned follow-up actions with owners and due dates. Unresolved items were carried forward for the next sitting.' };
+    return { ok: true, status: 'READY' };
   }
   const { data } = await api.post(`${BASE}/ai-notes/${id}/regenerate-summary`, {}, {
     headers: { 'Idempotency-Key': generateIdempotencyKey() },
   });
-  return data;
+  return { ok: data?.ok ?? true, status: data?.status };
 }
 
 export async function approveAiNote(id: string): Promise<{ ok: true }> {

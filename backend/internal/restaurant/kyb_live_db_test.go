@@ -4,7 +4,7 @@ package restaurant
 // LIVE-DB integration test for merchant KYB onboarding (Phase 8): the owner
 // save→document→submit flow (with validation), the admin decision driving the KYB
 // state machine + go-live, and the needs_more_info bounce. Skipped unless
-// TEST_DATABASE_URL/DATABASE_URL is set. Requires the restaurant + KYB migrations.
+// TEST_DATABASE_URL is set. Requires the restaurant + KYB migrations.
 // ---------------------------------------------------------------------------
 
 import (
@@ -15,16 +15,15 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"spotlight/backend/internal/testsupport"
 )
 
 func kybLivePool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
 	dsn := os.Getenv("TEST_DATABASE_URL")
 	if dsn == "" {
-		dsn = os.Getenv("DATABASE_URL")
-	}
-	if dsn == "" {
-		t.Skip("no TEST_DATABASE_URL/DATABASE_URL set — skipping live-DB KYB test")
+		t.Skip("no TEST_DATABASE_URL set — skipping live-DB KYB test")
 	}
 	pool, err := pgxpool.New(context.Background(), dsn)
 	if err != nil {
@@ -38,7 +37,7 @@ func kybLivePool(t *testing.T) *pgxpool.Pool {
 
 func TestLiveDB_KYBOnboarding(t *testing.T) {
 	pool := kybLivePool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	svc := NewService(pool, nil)
 
@@ -49,6 +48,7 @@ func TestLiveDB_KYBOnboarding(t *testing.T) {
 		if _, err := pool.Exec(ctx, `INSERT INTO auth.users (id,email) VALUES ($1,$2) ON CONFLICT DO NOTHING`, u, u+"@seed.test"); err != nil {
 			t.Fatalf("seed user: %v", err)
 		}
+		testsupport.CleanupUser(t, pool, u)
 	}
 	// Restaurant starts CLOSED (not yet approved).
 	restID := uuid.New().String()

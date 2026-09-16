@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 )
@@ -130,6 +131,69 @@ func (r *Repository) DeleteBlock(ctx context.Context, id string) error {
 	return nil
 }
 
+// InsertFollow creates a follow row. followSelf is rejected by the CHECK
+// constraint (belt-and-braces — the service layer already rejects it first).
+func (r *Repository) InsertFollow(ctx context.Context, followerID, sellerID string) error {
+	_, err := r.db.Exec(ctx, `
+		INSERT INTO public.mkt_seller_follows (follower_id, seller_id)
+		VALUES ($1,$2)`, followerID, sellerID)
+	if err != nil {
+		if isUniqueViolation(err) {
+			return nil // already following — idempotent, not an error
+		}
+		return wrapInternal("insert follow", err)
+	}
+	return nil
+}
+
+// DeleteFollow removes a follow row. Keyed by (follower_id, seller_id) rather
+// than a row id — the frontend only ever holds the seller's id (unfollowing
+// from a seller's profile), so this avoids a round trip to look one up first.
+// Deleting a row that doesn't exist is a no-op, matching InsertFollow's
+// idempotency the other direction.
+func (r *Repository) DeleteFollow(ctx context.Context, followerID, sellerID string) error {
+	_, err := r.db.Exec(ctx, `
+		DELETE FROM public.mkt_seller_follows WHERE follower_id=$1 AND seller_id=$2`,
+		followerID, sellerID)
+	if err != nil {
+		return wrapInternal("delete follow", err)
+	}
+	return nil
+}
+
+// ListFollows returns the caller's followed sellers, newest-first, each
+// enriched with the seller's live name/avatar (public.user_profiles) and
+// trust signals (public.mkt_trust_scores / a live active-listings count) —
+// never a stored snapshot.
+func (r *Repository) ListFollows(ctx context.Context, followerID string) ([]FollowedSeller, error) {
+	rows, err := r.db.Query(ctx, `
+		SELECT
+			f.id, f.seller_id,
+			COALESCE(up.full_name, '') AS seller_name,
+			up.avatar_url,
+			COALESCE(ts.trust_score, 0.5) AS trust_score,
+			(SELECT count(*) FROM public.mkt_listings l WHERE l.seller_id = f.seller_id AND l.status = 'active') AS active_listings,
+			f.created_at
+		FROM public.mkt_seller_follows f
+		LEFT JOIN public.user_profiles up ON up.id = f.seller_id
+		LEFT JOIN public.mkt_trust_scores ts ON ts.user_id = f.seller_id
+		WHERE f.follower_id = $1
+		ORDER BY f.created_at DESC`, followerID)
+	if err != nil {
+		return nil, wrapInternal("list follows", err)
+	}
+	defer rows.Close()
+	out := []FollowedSeller{}
+	for rows.Next() {
+		var f FollowedSeller
+		if err := rows.Scan(&f.ID, &f.SellerID, &f.SellerName, &f.AvatarURL, &f.TrustScore, &f.ActiveListings, &f.FollowedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, f)
+	}
+	return out, rows.Err()
+}
+
 // ListBlocks returns the caller's blocked users newest-first.
 func (r *Repository) ListBlocks(ctx context.Context, userID string) ([]Block, error) {
 	rows, err := r.db.Query(ctx, `
@@ -207,12 +271,35 @@ func (r *Repository) SearchListingsFallback(ctx context.Context, f SearchFallbac
 		args = append(args, val)
 		q += cond + "$" + itoa(len(args))
 	}
+	// Market scope. Every other filter here is optional and caller-supplied; this one
+	// is a boundary. Without it the fallback answered a market-scoped browse with
+	// every market's listings — GET /categories is scoped to one market, so the two
+	// halves of the same screen disagreed about which market the user was shopping in.
+	if f.MarketID != "" {
+		add(" AND market_id = ", f.MarketID)
+	}
 	if f.Q != "" {
 		add(" AND title ILIKE '%' || ", f.Q)
 		q += " || '%'"
 	}
 	if f.CategoryID != "" {
-		add(" AND category_id = ", f.CategoryID)
+		// Browsing a category includes everything filed UNDER it, not just rows
+		// carrying that exact id. Listings live on leaves — a car is filed in
+		// "Cars", never in "Vehicles" — so an equality match answered every main
+		// category with an empty page while its children held the stock. That
+		// became reachable the moment the flat category list was grouped into
+		// mains with subcategories.
+		//
+		// The recursive walk degrades to a single row for a leaf, so browsing a
+		// subcategory behaves exactly as it did before.
+		add(` AND category_id IN (
+			WITH RECURSIVE sub(id) AS (
+				SELECT id FROM public.mkt_categories WHERE id = `, f.CategoryID)
+		q += `::uuid
+				UNION ALL
+				SELECT c.id FROM public.mkt_categories c JOIN sub s ON c.parent_id = s.id
+			)
+			SELECT id FROM sub)`
 	}
 	if f.Condition != "" {
 		add(" AND condition = ", f.Condition)
@@ -242,6 +329,9 @@ func (r *Repository) SearchListingsFallback(ctx context.Context, f SearchFallbac
 
 // SearchFallbackFilter is the parsed filter set for the Postgres search fallback.
 type SearchFallbackFilter struct {
+	// MarketID scopes the search to one market. It is always set (parseSearchFallback
+	// falls back to DefaultMarketID) so the fallback can never answer across markets.
+	MarketID   string
 	Q          string
 	CategoryID string
 	Condition  string
@@ -332,4 +422,200 @@ func itoa(n int) string {
 		n /= 10
 	}
 	return string(buf[i:])
+}
+
+// ─── Permanent deletion ──────────────────────────────────────────────────────
+
+// PurgeListing PERMANENTLY removes a listing and the rows that exist only to
+// describe it. Unlike DeleteListing (a soft status change to removed_user) this
+// is irreversible.
+//
+// It refuses whenever the listing carries commercial history — orders, boosts,
+// offers or buyer threads. That is not a policy invented here: those four are the
+// exact FKs the schema declares ON DELETE NO ACTION, while media, saved-items and
+// contact-reveals are ON DELETE CASCADE. The database already encodes what may be
+// erased with a listing and what must outlive it; this function reads the same
+// line, and checks up front only so the seller gets "this listing has 2 offers"
+// instead of an opaque foreign-key 500.
+//
+// Orders and boosts both carry ledger references, so erasing either would orphan
+// a money record — the strongest reason the refusal must stay.
+//
+// mkt_listings_outbox is deleted rather than blocking: it is our own search-index
+// event queue, internal plumbing rather than a record of anything a person did.
+func (r *Repository) PurgeListing(ctx context.Context, sellerID, listingID string) error {
+	const pre = `
+		SELECT (SELECT count(*) FROM public.mkt_orders  o WHERE o.listing_id = l.id),
+		       (SELECT count(*) FROM public.mkt_boosts  b WHERE b.listing_id = l.id),
+		       (SELECT count(*) FROM public.mkt_offers  f WHERE f.listing_id = l.id),
+		       (SELECT count(*) FROM public.mkt_threads t WHERE t.listing_id = l.id)
+		  FROM public.mkt_listings l
+		 WHERE l.id = $1 AND l.seller_id = $2`
+
+	var orders, boosts, offers, threads int64
+	err := r.db.QueryRow(ctx, pre, listingID, sellerID).Scan(&orders, &boosts, &offers, &threads)
+	if errors.Is(err, pgx.ErrNoRows) {
+		// Covers both "no such listing" and "not yours" — deliberately the same
+		// answer, so this cannot be used to probe other sellers' listing ids.
+		return ErrListingNotFound
+	}
+	if err != nil {
+		return wrapInternal("purge listing preconditions", err)
+	}
+	if msg := purgeBlockedBy(orders, boosts, offers, threads); msg != "" {
+		return &CodedError{Status: 409, Code: CodeListingHasHistory, Message: msg}
+	}
+
+	// Outbox rows, the listing and its audit record go together or not at all:
+	// dropping the queue entries and then failing the delete would strip the
+	// listing from search while leaving it live, and committing the delete without
+	// the audit row would erase a listing with no trace of who did it.
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return wrapInternal("purge listing begin", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	if _, err := tx.Exec(ctx, `DELETE FROM public.mkt_listings_outbox WHERE listing_id = $1`, listingID); err != nil {
+		return wrapInternal("purge listing outbox", err)
+	}
+
+	// DELETE ... RETURNING rather than SELECT-then-DELETE, so the snapshot is
+	// provably of the row that was actually removed — there is no window in which
+	// the two could disagree.
+	var (
+		title      string
+		priceKobo  int64
+		status     string
+		categoryID string
+		createdAt  time.Time
+	)
+	err = tx.QueryRow(ctx, `
+		DELETE FROM public.mkt_listings
+		 WHERE id = $1 AND seller_id = $2
+		 RETURNING title, price_kobo, status, category_id, created_at`,
+		listingID, sellerID).Scan(&title, &priceKobo, &status, &categoryID, &createdAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrListingNotFound
+	}
+	if err != nil {
+		return wrapInternal("purge listing", err)
+	}
+
+	// The audit row is written INSIDE this transaction, which is only possible
+	// because mkt_admin_audit_log carries no foreign key to mkt_listings — a FK
+	// would either cascade the record away with the listing or block the delete
+	// outright. An audit trail for a deletion has to outlive the thing deleted.
+	//
+	// Reusing the admin table for a SELLER action is a deliberate stretch of its
+	// name: it is append-only, has the right shape (text target_id, jsonb
+	// before_state), and the admin audit viewer filters by target rather than by
+	// actor — so "what happened to listing X" surfaces this row, which is the whole
+	// point. admin_role carries 'seller' so the actor is never mistaken for staff.
+	before := map[string]any{
+		"title":       title,
+		"price_kobo":  priceKobo,
+		"status":      status,
+		"category_id": categoryID,
+		"created_at":  createdAt,
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO public.mkt_admin_audit_log
+			(admin_id, admin_role, action, target_type, target_id, reason_code, before_state)
+		VALUES ($1,'seller','listing.purged','listing',$2,'seller_permanent_delete',$3)`,
+		sellerID, listingID, jsonOrNil(before)); err != nil {
+		return wrapInternal("purge listing audit", err)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return wrapInternal("purge listing commit", err)
+	}
+	return nil
+}
+
+// purgeBlockedBy returns a seller-readable reason, or "" when nothing blocks.
+func purgeBlockedBy(orders, boosts, offers, threads int64) string {
+	switch {
+	case orders > 0:
+		return "This listing has orders, so it can't be permanently deleted. Remove it instead — the record has to stay."
+	case boosts > 0:
+		return "This listing has been boosted, so it can't be permanently deleted. Remove it instead — the payment record has to stay."
+	case offers > 0:
+		return "Buyers have made offers on this listing, so it can't be permanently deleted. Remove it instead."
+	case threads > 0:
+		return "Buyers have messaged you about this listing, so it can't be permanently deleted. Remove it instead."
+	}
+	return ""
+}
+
+// ─── Listing insights ────────────────────────────────────────────────────────
+
+// GetListingInsights returns the performance summary for one listing.
+//
+// Owner-scoped in the WHERE clause (seller_id = $2), not just in the service:
+// a listing's offer count and best standing offer are commercially sensitive, so
+// a wrong id must return "not found" rather than another seller's numbers.
+//
+// Counts come from the event tables, never from mkt_listings.save_count — that
+// column has no writer in this backend, so reading it would report 0 saves for
+// every listing forever. view_count is the one denormalised figure used, because
+// there is no per-view table; IncrementListingView is its only writer.
+func (r *Repository) GetListingInsights(ctx context.Context, sellerID, listingID string) (*ListingInsights, error) {
+	const q = `
+		SELECT l.id, l.view_count,
+		       (SELECT count(*) FROM mkt_saved_items      s WHERE s.listing_id = l.id),
+		       (SELECT count(*) FROM mkt_threads          t WHERE t.listing_id = l.id),
+		       (SELECT count(*) FROM mkt_offers           o WHERE o.listing_id = l.id),
+		       (SELECT count(*) FROM mkt_contact_reveals  c WHERE c.listing_id = l.id),
+		       (SELECT count(*) FROM mkt_orders           d WHERE d.listing_id = l.id),
+		       (SELECT max(o.offer_price_kobo) FROM mkt_offers o
+		          WHERE o.listing_id = l.id AND o.status = 'pending'),
+		       b.tier, b.ends_at, l.created_at, l.expires_at
+		  FROM mkt_listings l
+		  LEFT JOIN LATERAL (
+		        SELECT tier, ends_at FROM mkt_boosts
+		         WHERE listing_id = l.id AND status = 'active' AND ends_at > now()
+		         ORDER BY ends_at DESC LIMIT 1
+		  ) b ON TRUE
+		 WHERE l.id = $1 AND l.seller_id = $2`
+
+	out := &ListingInsights{}
+	var tier *string
+	var endsAt *time.Time
+	err := r.db.QueryRow(ctx, q, listingID, sellerID).Scan(
+		&out.ListingID, &out.Views, &out.Saves, &out.Enquiries, &out.Offers,
+		&out.ContactReveals, &out.Orders, &out.BestOfferKobo,
+		&tier, &endsAt, &out.ListedAt, &out.ExpiresAt,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrListingNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	out.BoostTier, out.BoostEndsAt = tier, endsAt
+	out.BoostActive = endsAt != nil
+	return out, nil
+}
+
+// IncrementListingView bumps the view counter, skipping the seller's own visits.
+//
+// This is the ONLY writer of mkt_listings.view_count. Without it the column stays
+// at its default and every listing reports "0 views" forever, which is what the
+// seller dashboard was showing.
+//
+// viewerID is "" for anonymous browsers (the calling route is tier0_browse) and
+// those still count — the empty check below is what lets them through. When it is
+// set it comes from handler.viewerIDForCounting, which is attribution-only and
+// explicitly not authentication; see its doc.
+//
+// Deliberately fire-and-forget at the call site and never part of the read's
+// error path: a failed counter bump must not fail loading a listing.
+func (r *Repository) IncrementListingView(ctx context.Context, listingID, viewerID string) error {
+	const q = `
+		UPDATE mkt_listings
+		   SET view_count = view_count + 1
+		 WHERE id = $1 AND ($2 = '' OR seller_id <> $2::uuid)`
+	_, err := r.db.Exec(ctx, q, listingID, viewerID)
+	return err
 }

@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { View, Text, ScrollView, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import { Building2, ShieldCheck, CircleCheck, Clock, CircleAlert } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
@@ -13,6 +14,10 @@ import StateView from '@/components/StateView';
 import PrimaryButton from '@/components/PrimaryButton';
 import TextInputField from '@/components/TextInputField';
 import CredentialBadge from '@/features/health/components/CredentialBadge';
+import { UploadField } from '@/features/doctor/components';
+import type { UploadFieldState } from '@/features/doctor/components';
+import { pickFileForField } from '@/features/registration/utils/filePicker';
+import type { PickedUpload } from '@/features/registration/types/registration.types';
 import { useProviderOnboarding, useSubmitProviderOnboarding } from '@/features/health/pharmacy/hooks';
 import type { ProviderOnboardingState } from '@/features/health/pharmacy/types';
 
@@ -31,6 +36,17 @@ export default function ProviderOnboardingScreen() {
   const [businessName, setBusinessName] = useState('');
   const [pcnLicenseNo, setPcnLicenseNo] = useState('');
   const [submitted, setSubmitted] = useState(false);
+  const [uploadState, setUploadState] = useState<UploadFieldState>('empty');
+  const [licenceFile, setLicenceFile] = useState<PickedUpload>();
+  const [uploadErr, setUploadErr] = useState<string>();
+
+  const pickLicence = async () => {
+    setUploadErr(undefined);
+    const file = await pickFileForField('.pdf,.jpg,.jpeg,.png');
+    if (!file) return;
+    setLicenceFile(file);
+    setUploadState('selected');
+  };
 
   useEffect(() => {
     if (data) {
@@ -67,7 +83,7 @@ export default function ProviderOnboardingScreen() {
           title="Submitted for review"
           message="We'll verify your PCN licence and premises. You become discoverable to patients only once approved (HL-2)."
           actionLabel="Back to dashboard"
-          onAction={() => router.back()}
+          onAction={() => goBack('/health/pharmacy')}
         />
       </SafeAreaView>
     );
@@ -81,8 +97,17 @@ export default function ProviderOnboardingScreen() {
   const BannerIcon = statusMeta.tone === 'ok' ? CircleCheck : statusMeta.tone === 'warn' ? CircleAlert : Clock;
 
   const onSubmit = async () => {
-    await submit.mutateAsync({ businessName, pcnLicenseNo });
-    setSubmitted(true);
+    setUploadErr(undefined);
+    try {
+      await submit.mutateAsync({
+        businessName,
+        pcnLicenseNo,
+        licenceFile: licenceFile ? { uri: licenceFile.uri, fileName: licenceFile.name, mimeType: licenceFile.mimeType } : undefined,
+      });
+      setSubmitted(true);
+    } catch {
+      setUploadErr('Could not submit your licence document. Please try again.');
+    }
   };
 
   return (
@@ -134,6 +159,14 @@ export default function ProviderOnboardingScreen() {
           <CredentialBadge
             credential={{ authority: 'PCN', licenseNo: pcnLicenseNo || '—', status: data.pcnStatus }}
             showLicense
+          />
+          <UploadField
+            label="PCN licence document"
+            state={uploadState}
+            fileName={licenceFile?.name}
+            errorText={uploadErr}
+            hint="PDF, JPG or PNG"
+            onPick={pickLicence}
           />
         </View>
 

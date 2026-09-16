@@ -6,6 +6,18 @@
 **Supersedes:** [ADR-026](ADR-026-free-tier-hosting.md) (free-tier Render topology, *Proposed*, never adopted)
 **Scope:** The canonical deployment target for the super-app. No application code changes.
 
+> **Amendment — 2026-08-13 (web leg only).** The Vercel half of this decision was never
+> activated, and `deploy-web.yml` has been **deleted**. It never ran successfully once: its
+> workflow-level `concurrency.group` referenced `matrix.app`, and `matrix` is not an available
+> context outside a job, so GitHub failed the file at startup on every push — 198 jobless
+> `failure` runs between 2026-08-02 and 2026-08-13, ignoring the `workflow_dispatch`-only
+> trigger, because startup validation happens before trigger evaluation. Web now deploys via
+> the Railway jobs in `ci.yml` (`RAILWAY_DEPLOY_ENABLED`), with `deploy-cpanel.yml` as the
+> legacy path. The **backend → Cloud Run** decision below is unchanged. Reviving Vercel means
+> restoring the file from git history *and* fixing the concurrency group — plus reconnecting
+> the Vercel Git integration, which posts its own `Vercel` commit status independently of any
+> workflow.
+
 ## Context
 
 Two hosting paths coexisted in the tree and caused ambiguity:

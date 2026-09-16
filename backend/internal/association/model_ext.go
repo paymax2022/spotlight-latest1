@@ -150,14 +150,23 @@ type CodeRequest struct {
 	Code string `json:"code" binding:"required"`
 }
 
+// JoinDraftDocument is one uploaded supporting document. The client uploads the
+// file itself and sends the resulting URL.
+type JoinDraftDocument struct {
+	Label string  `json:"label"`
+	URL   *string `json:"url"`
+	Kind  string  `json:"kind"`
+}
+
 type JoinDraft struct {
-	OrganisationID     string   `json:"organisationId" binding:"required"`
-	CategoryID         *string  `json:"categoryId"`
-	ChapterID          *string  `json:"chapterId"`
-	LocalBranch        *string  `json:"localBranch"`
-	CommitteeInterests []string `json:"committeeInterests"`
-	SponsorName        *string  `json:"sponsorName"`
-	AcceptedRules      bool     `json:"acceptedRules"`
+	OrganisationID     string              `json:"organisationId" binding:"required"`
+	CategoryID         *string             `json:"categoryId"`
+	ChapterID          *string             `json:"chapterId"`
+	LocalBranch        *string             `json:"localBranch"`
+	CommitteeInterests []string            `json:"committeeInterests"`
+	SponsorName        *string             `json:"sponsorName"`
+	AcceptedRules      bool                `json:"acceptedRules"`
+	Documents          []JoinDraftDocument `json:"documents"`
 }
 
 type ApplicationResult struct {
@@ -181,6 +190,10 @@ type ImportRow struct {
 }
 
 type ImportPreview struct {
+	// BatchID identifies the staged batch. Confirm takes this id rather than a
+	// re-sent body: the previous flow had no way to carry the parsed rows from
+	// preview to confirm, so confirm always imported nothing.
+	BatchID    string      `json:"batchId"`
 	FileName   string      `json:"fileName"`
 	Total      int         `json:"total"`
 	Valid      int         `json:"valid"`
@@ -190,7 +203,8 @@ type ImportPreview struct {
 }
 
 type ImportConfirmRequest struct {
-	SendInvites bool `json:"sendInvites"`
+	BatchID     string `json:"batchId" binding:"required"`
+	SendInvites bool   `json:"sendInvites"`
 }
 
 type ImportResult struct {
@@ -217,18 +231,55 @@ type OrgDraftCategory struct {
 	Cadence  string `json:"cadence"`
 }
 
+// OrgDraftStateLeader is a per-state chapter leader collected by the wizard's
+// structure step when structureType is STATEWIDE.
+type OrgDraftStateLeader struct {
+	State             string `json:"state"`
+	LeaderName        string `json:"leaderName"`
+	LeaderContact     string `json:"leaderContact"`
+	CanApproveMembers bool   `json:"canApproveMembers"`
+}
+
+// OrgDraftRestrictions mirrors the wizard's access step. GraceDays is a *int so
+// an omitted value keeps the column default (30) rather than forcing 0, which
+// would mean "no grace period at all".
+type OrgDraftRestrictions struct {
+	GraceDays     *int `json:"graceDays"`
+	DisableVoting bool `json:"disableVoting"`
+	DisableEvents bool `json:"disableEvents"`
+	DisableChat   bool `json:"disableChat"`
+	DisableCard   bool `json:"disableCard"`
+}
+
 type OrgDraft struct {
-	Name                string              `json:"name" binding:"required"`
-	Acronym             string              `json:"acronym"`
-	Category            string              `json:"category" binding:"required"`
-	Description         string              `json:"description"`
-	GroupType           string              `json:"groupType" binding:"required"`
-	ApprovalRule        string              `json:"approvalRule"`
-	RegistrationFeeKobo int64               `json:"registrationFeeKobo"`
-	Chapters            []OrgDraftChapter   `json:"chapters"`
-	Committees          []OrgDraftCommittee `json:"committees"`
-	Categories          []OrgDraftCategory  `json:"categories"`
-	AcceptedTerms       bool                `json:"acceptedTerms"`
+	Name        string `json:"name" binding:"required"`
+	Acronym     string `json:"acronym"`
+	Category    string `json:"category" binding:"required"`
+	Description string `json:"description"`
+	// LogoURL is bound from `logoUri` because that is the wizard draft's field
+	// name. The client sets it either from a pasted URL or from the image
+	// picker; see the note on validateOrgIdentity about what the picker yields.
+	LogoURL  string `json:"logoUri"`
+	Location string `json:"location"`
+	Website  string `json:"website"`
+	// FoundedYear is a pointer so "absent" is distinguishable from year 0 —
+	// PublishOrganisation rejects absent, and 0 would otherwise sail through a
+	// non-zero check as a plausible-looking value.
+	FoundedYear         *int                  `json:"foundedYear"`
+	GroupType           string                `json:"groupType" binding:"required"`
+	ApprovalRule        string                `json:"approvalRule"`
+	RegistrationFeeKobo int64                 `json:"registrationFeeKobo"`
+	StructureType       string                `json:"structureType"`
+	StateLeaders        []OrgDraftStateLeader `json:"stateLeaders"`
+	Chapters            []OrgDraftChapter     `json:"chapters"`
+	Committees          []OrgDraftCommittee   `json:"committees"`
+	Categories          []OrgDraftCategory    `json:"categories"`
+	Rules               []string              `json:"rules"`
+	Restrictions        OrgDraftRestrictions  `json:"restrictions"`
+	AcceptedTerms       bool                  `json:"acceptedTerms"`
+
+	// IdempotencyKey carries the Idempotency-Key header, not a body field.
+	IdempotencyKey string `json:"-"`
 }
 
 type PublishResult struct {

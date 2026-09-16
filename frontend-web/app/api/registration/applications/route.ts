@@ -2,6 +2,9 @@ import { successResponse, errorResponse, handleApiError } from '@/src/lib/api/re
 import { listRegistrationApplications, startRegistrationDraft } from '@/src/server/registration/supabase-store';
 import type { RegistrationListFilter } from '@/src/features/registration/types';
 import { requireUser } from '@/src/lib/auth/server';
+import { getOrCreateUserProfile } from '@/src/server/user/profile';
+import { buildAccountPrefill } from '@/src/features/registration/account-prefill';
+import { RegistrationExistsError } from '@/src/server/registration-v2/registration-for-contest';
 
 export async function GET(request: Request) {
   try {
@@ -18,7 +21,7 @@ export async function GET(request: Request) {
     if (searchParams.get('minAge')) filter.minAge = Number(searchParams.get('minAge'));
     if (searchParams.get('maxAge')) filter.maxAge = Number(searchParams.get('maxAge'));
 
-    const applications = listRegistrationApplications(filter).filter((draft) => draft.userId === user.id);
+    const applications = (await listRegistrationApplications(filter)).filter((draft) => draft.userId === user.id);
     return successResponse({ success: true, applications });
   } catch (error) {
     return handleApiError(error, 'Failed to list registration applications');
@@ -39,15 +42,47 @@ export async function POST(request: Request) {
       return errorResponse('contestSlug is required', 400);
     }
 
-    const draft = startRegistrationDraft({
+    // registrations.role is DB-constrained to public_user|invited_applicant|staff
+    // (see 20260811232202 CHECK) — fold the app's wider role set onto it.
+    const storeRole =
+      body.role === 'admin' || body.role === 'super_admin' ? 'staff' : 'public_user';
+
+    // Seed the draft with what the applicant already gave at sign-up, so no
+    // contest form asks for their name, phone or contact details again. Resolved
+    // server-side from the profile — never from the request — and a failure here
+    // only costs the convenience, so it must not block starting an application.
+    let accountPrefill: { values: Record<string, unknown>; providedKeys: string[] } | undefined;
+    try {
+      const profile = await getOrCreateUserProfile({ id: user.id, email: user.email || undefined });
+      accountPrefill = buildAccountPrefill(profile);
+    } catch (error) {
+      console.warn('[registration] could not prefill from the account:', error);
+    }
+
+    const draft = await startRegistrationDraft({
       contestSlug: body.contestSlug,
       userId: user.id,
-      role: body.role,
+      role: storeRole,
       accountData: body.accountData,
+      accountPrefill,
     });
 
     return successResponse({ success: true, draft }, 201);
   } catch (error) {
+    // A second application to the same contest is not a failure the applicant
+    // can act on by retrying — hand back the one they already have so the client
+    // can route them into it.
+    if (error instanceof RegistrationExistsError) {
+      return successResponse(
+        {
+          success: false,
+          code: error.code,
+          message: error.message,
+          registration: error.registration,
+        },
+        409,
+      );
+    }
     return handleApiError(error, 'Failed to create registration draft');
   }
 }

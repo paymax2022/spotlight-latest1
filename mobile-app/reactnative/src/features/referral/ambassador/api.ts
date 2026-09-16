@@ -14,6 +14,9 @@ import type {
   AmbassadorPayouts,
   AmbassadorWithdrawResult,
   TierProgression,
+  AmbassadorApplication,
+  AmbassadorStatus,
+  ApplyInput,
 } from './types';
 
 const delay = (ms = 260) => new Promise((r) => setTimeout(r, ms));
@@ -288,4 +291,88 @@ export async function getTierProgression(): Promise<TierProgression> {
       },
     ],
   };
+}
+
+// ── Application (M-AMB-00) ───────────────────────────────────────────────────
+
+/**
+ * The disclosure an applicant must accept, stored verbatim with the
+ * application. Kept here (not only in the screen) so the exact text that was
+ * accepted is what gets persisted — a disclosure record that does not match
+ * what the user actually read is worse than none.
+ */
+export const AMBASSADOR_DISCLOSURE =
+  'I understand that as a Spotlight ambassador I earn commission when people I ' +
+  'refer complete verified activity. I agree to disclose this relationship ' +
+  'clearly and honestly whenever I promote Spotlight, and not to misrepresent ' +
+  'earnings, guarantee results, or pay anyone to sign up.';
+
+interface BackendAmbassador {
+  id: string;
+  user_id: string;
+  tier: string;
+  status: string;
+  disclosure_text?: string;
+  disclosure_accepted_at?: string | null;
+  applied_at: string;
+  approved_at?: string | null;
+}
+
+function mapApplication(a: BackendAmbassador): AmbassadorApplication {
+  return {
+    id: a.id,
+    tier: a.tier,
+    status: (a.status as AmbassadorStatus) ?? 'applied',
+    disclosureText: a.disclosure_text ?? '',
+    disclosureAcceptedAt: a.disclosure_accepted_at ?? null,
+    appliedAt: a.applied_at,
+    approvedAt: a.approved_at ?? null,
+  };
+}
+
+/**
+ * The caller's ambassador record, or null when they have never applied.
+ * GET /network/ambassador answers { ambassador: null } for a non-ambassador —
+ * an expected state, not an error.
+ */
+export async function getMyApplication(): Promise<AmbassadorApplication | null> {
+  if (USE_MOCK) {
+    await delay(200);
+    return null;
+  }
+  const res = await api.get(`${REFERRAL_API_BASE}/network/ambassador`);
+  const amb = unwrap<{ ambassador?: BackendAmbassador | null }>(res)?.ambassador;
+  return amb ? mapApplication(amb) : null;
+}
+
+/**
+ * Submit (or re-submit) an ambassador application. Idempotent per user
+ * server-side: applying again updates the existing row rather than creating a
+ * second one, so a double tap cannot produce duplicate applications.
+ */
+export async function applyAsAmbassador(input: ApplyInput): Promise<AmbassadorApplication> {
+  if (USE_MOCK) {
+    await delay(400);
+    return {
+      id: `amb_${Date.now()}`,
+      tier: input.tier,
+      status: 'applied',
+      disclosureText: AMBASSADOR_DISCLOSURE,
+      disclosureAcceptedAt: new Date().toISOString(),
+      appliedAt: new Date().toISOString(),
+      approvedAt: null,
+    };
+  }
+  const res = await api.post(
+    `${REFERRAL_API_BASE}/network/ambassador/apply`,
+    {
+      tier: input.tier,
+      // Send the exact text shown to the user, so the stored disclosure is the
+      // one they actually accepted.
+      disclosure_text: AMBASSADOR_DISCLOSURE,
+      disclosure_accepted: input.disclosureAccepted,
+    },
+    { headers: { 'Idempotency-Key': generateIdempotencyKey() } },
+  );
+  return mapApplication(unwrap<BackendAmbassador>(res));
 }

@@ -1,201 +1,321 @@
 'use client';
 
-import { useEffect, useState } from 'react';
 import Link from 'next/link';
+import { useCallback, useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
-import { getProduct, upsertProduct, formatNaira } from '@/services/insuranceAdminService';
-import type { InsuranceProductDetail } from '@/types/insuranceAdmin';
 import {
-  PageHeader, InsuranceTabs, Card, Badge, StateBlock, DisclosureNote,
-  btnPrimary, th, td, label, input, select, fmtDate,
+  getProduct,
+  setProductActive,
+  formatNaira,
+  formatPct,
+  formatRateBps,
+  productPrice,
+  commissionKoboFor,
+} from '@/services/insuranceAdminService';
+import type { InsuranceProduct, SharingFormula } from '@/types/insuranceAdmin';
+import {
+  PageHeader,
+  InsuranceTabs,
+  Card,
+  Badge,
+  NotReported,
+  LiveState,
+  EndpointErrorCard,
+  toFailure,
+  type EndpointFailure,
+  btn,
+  th,
+  td,
 } from '../../_ui';
 import { colors } from '@/components/ui/vuexy';
 
-export default function InsuranceProductEditorPage() {
-  const params = useParams();
-  const code = params.code as string;
+const dt: React.CSSProperties = {
+  fontSize: 11,
+  textTransform: 'uppercase',
+  letterSpacing: 0.3,
+  color: colors.muted,
+  fontWeight: 600,
+  marginBottom: 3,
+};
 
-  const [detail, setDetail] = useState<InsuranceProductDetail | null>(null);
+/**
+ * One product, as stored from MyCover.
+ *
+ * The commission block is the commercially important part of this page: it shows
+ * every band of the sharing formula, which slice is OURS, and — critically —
+ * whether each slice is computed from the original or the final premium. Those
+ * two bases give different naira on the same percentage, so showing the rate
+ * without the basis would be an incomplete number.
+ */
+export default function InsuranceProductDetailPage() {
+  const params = useParams<{ code: string }>();
+  const code = decodeURIComponent(String(params?.code ?? ''));
+
+  const [product, setProduct] = useState<InsuranceProduct | null>(null);
+  const [failure, setFailure] = useState<EndpointFailure | null>(null);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [saving, setSaving] = useState(false);
-  const [saved, setSaved] = useState(false);
 
-  async function load() {
-    setLoading(true); setError(null);
-    try { setDetail(await getProduct(code)); }
-    catch (e) { setError(String(e)); }
-    finally { setLoading(false); }
-  }
-  useEffect(() => { load(); }, [code]); // eslint-disable-line react-hooks/exhaustive-deps
+  const [toggling, setToggling] = useState(false);
+  const [toggleFail, setToggleFail] = useState<EndpointFailure | null>(null);
 
-  function patch<K extends keyof InsuranceProductDetail>(key: K, value: InsuranceProductDetail[K]) {
-    setSaved(false);
-    setDetail((d) => (d ? { ...d, [key]: value } : d));
-  }
-  function patchSum(key: 'min_kobo' | 'max_kobo' | 'default_kobo', value: number) {
-    setSaved(false);
-    setDetail((d) => (d ? { ...d, sum_insured: { ...d.sum_insured, [key]: value } } : d));
-  }
-
-  async function save() {
-    if (!detail) return;
-    setSaving(true); setError(null); setSaved(false);
+  const load = useCallback(async () => {
+    setLoading(true);
+    setFailure(null);
     try {
-      const updated = await upsertProduct({ ...detail, code: detail.code });
-      setDetail(updated);
-      setSaved(true);
-    } catch (e) { setError(String(e)); }
-    finally { setSaving(false); }
+      setProduct(await getProduct(code));
+    } catch (e) {
+      setProduct(null);
+      setFailure(toFailure(e));
+    } finally {
+      setLoading(false);
+    }
+  }, [code]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  /** Real PATCH against /catalog/:code/active. No optimistic local flip: the row
+   *  only changes after the server confirms, so the screen can never show a
+   *  state the database does not hold. */
+  async function toggleActive() {
+    if (!product) return;
+    setToggling(true);
+    setToggleFail(null);
+    try {
+      await setProductActive(product.code, !product.active);
+      await load();
+    } catch (e) {
+      setToggleFail(toFailure(e));
+    } finally {
+      setToggling(false);
+    }
   }
+
+  const price = product ? productPrice(product) : null;
 
   return (
     <div style={{ padding: '0.5rem 0.5rem 2rem' }}>
       <PageHeader
-        title={detail ? detail.name : 'Product'}
-        subtitle={`Catalog code ${code} — versioned product editor. Changes publish a new version.`}
-        action={<Link href="/admin/insurance/catalog" style={{ ...btnPrimary(), background: colors.card, color: colors.primary, textDecoration: 'none' }}>Back to catalog</Link>}
+        title={product?.name || code}
+        subtitle={product?.description ?? 'Product detail read live from /api/insurance/admin/catalog.'}
+        action={
+          <div style={{ display: 'flex', gap: '0.5rem' }}>
+            <Link href="/admin/insurance/catalog" style={{ ...btn(), textDecoration: 'none' }}>
+              Back to catalog
+            </Link>
+            {product ? (
+              <button onClick={toggleActive} disabled={toggling} style={{ ...btn(), opacity: toggling ? 0.6 : 1 }}>
+                {toggling ? 'Saving…' : product.active ? 'Deactivate' : 'Activate'}
+              </button>
+            ) : null}
+          </div>
+        }
       />
       <InsuranceTabs active="catalog" />
 
-      <StateBlock loading={loading} error={error && !detail ? error : null} empty={!detail} emptyText="Product not found.">
-        {detail && (
+      {toggleFail ? (
+        <div style={{ marginBottom: '1rem' }}>
+          <EndpointErrorCard failure={toggleFail} onRetry={toggleActive} />
+        </div>
+      ) : null}
+
+      <LiveState loading={loading} failure={failure} empty={!product} emptyTitle="Product not found" onRetry={load}>
+        {product && price && (
           <>
-            <DisclosureNote>
-              Underwriter <strong>{detail.underwriter}</strong> (via {detail.provider}) is disclosed on every policy & document for this product. Current version <strong>v{detail.version}</strong>, consent <strong>{detail.consent_version}</strong>.
-            </DisclosureNote>
-
-            <Card
-              title="Product configuration"
-              right={<Badge status={detail.active ? 'active' : 'inactive'} label={detail.active ? 'Active' : 'Inactive'} />}
-            >
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: '0.9rem' }}>
-                <div>
-                  <label style={label()}>Name</label>
-                  <input style={input()} value={detail.name} onChange={(e) => patch('name', e.target.value)} />
-                </div>
-                <div>
-                  <label style={label()}>Provider</label>
-                  <select style={select()} value={detail.provider} onChange={(e) => patch('provider', e.target.value as InsuranceProductDetail['provider'])}>
-                    <option value="mycover">MyCover.ai</option>
-                    <option value="octamile">Octamile</option>
-                  </select>
-                </div>
-                <div>
-                  <label style={label()}>Provider product code</label>
-                  <input style={input()} value={detail.provider_product_code} onChange={(e) => patch('provider_product_code', e.target.value)} />
-                </div>
-                <div>
-                  <label style={label()}>Underwriter (disclosed)</label>
-                  <input style={input()} value={detail.underwriter} onChange={(e) => patch('underwriter', e.target.value)} />
-                </div>
-                <div>
-                  <label style={label()}>Binding mode</label>
-                  <select style={select()} value={detail.binding_mode} onChange={(e) => patch('binding_mode', e.target.value as InsuranceProductDetail['binding_mode'])}>
-                    <option value="embedded">Embedded</option>
-                    <option value="voluntary">Voluntary</option>
-                  </select>
-                </div>
-                <div>
-                  <label style={label()}>Premium model</label>
-                  <select style={select()} value={detail.premium_model} onChange={(e) => patch('premium_model', e.target.value as InsuranceProductDetail['premium_model'])}>
-                    <option value="one_off">One-off</option>
-                    <option value="recurring">Recurring</option>
-                    <option value="per_event">Per event</option>
-                  </select>
-                </div>
-                <div>
-                  <label style={label()}>Required KYC tier (0–3)</label>
-                  <input type="number" min={0} max={3} style={input()} value={detail.required_kyc_tier} onChange={(e) => patch('required_kyc_tier', Number(e.target.value))} />
-                </div>
-                <div>
-                  <label style={label()}>Base premium (kobo)</label>
-                  <input type="number" min={0} style={input()} value={detail.base_premium_kobo} onChange={(e) => patch('base_premium_kobo', Number(e.target.value))} />
-                  <div style={{ fontSize: '0.72rem', color: colors.muted, marginTop: 2 }}>= {formatNaira(detail.base_premium_kobo)}</div>
-                </div>
-                <div>
-                  <label style={label()}>Commission basis (%)</label>
-                  <input type="number" min={0} step={0.1} style={input()} value={detail.commission_basis_pct} onChange={(e) => patch('commission_basis_pct', Number(e.target.value))} />
-                </div>
-                <div>
-                  <label style={label()}>Sum insured — min (kobo)</label>
-                  <input type="number" min={0} style={input()} value={detail.sum_insured.min_kobo} onChange={(e) => patchSum('min_kobo', Number(e.target.value))} />
-                  <div style={{ fontSize: '0.72rem', color: colors.muted, marginTop: 2 }}>= {formatNaira(detail.sum_insured.min_kobo)}</div>
-                </div>
-                <div>
-                  <label style={label()}>Sum insured — max (kobo)</label>
-                  <input type="number" min={0} style={input()} value={detail.sum_insured.max_kobo} onChange={(e) => patchSum('max_kobo', Number(e.target.value))} />
-                  <div style={{ fontSize: '0.72rem', color: colors.muted, marginTop: 2 }}>= {formatNaira(detail.sum_insured.max_kobo)}</div>
-                </div>
-                <div>
-                  <label style={label()}>Sum insured — default (kobo)</label>
-                  <input type="number" min={0} style={input()} value={detail.sum_insured.default_kobo} onChange={(e) => patchSum('default_kobo', Number(e.target.value))} />
-                  <div style={{ fontSize: '0.72rem', color: colors.muted, marginTop: 2 }}>= {formatNaira(detail.sum_insured.default_kobo)}</div>
-                </div>
-              </div>
-
-              <div style={{ marginTop: '0.9rem' }}>
-                <label style={label()}>Description</label>
-                <textarea style={{ ...input(), minHeight: 80, resize: 'vertical', fontFamily: 'inherit' }} value={detail.description} onChange={(e) => patch('description', e.target.value)} />
-              </div>
-
-              <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginTop: '0.9rem', fontSize: '0.85rem', color: colors.text }}>
-                <input type="checkbox" checked={detail.active} onChange={(e) => patch('active', e.target.checked)} />
-                Active (feature-flag enabled for binding)
-              </label>
-
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginTop: '1rem' }}>
-                <button style={{ ...btnPrimary(), opacity: saving ? 0.6 : 1, cursor: saving ? 'not-allowed' : 'pointer' }} onClick={save} disabled={saving}>
-                  {saving ? 'Saving…' : 'Save'}
-                </button>
-                {saved && <span style={{ color: colors.success, fontSize: '0.82rem', fontWeight: 600 }}>Saved — now v{detail.version}</span>}
-                {error && detail && <span style={{ color: colors.danger, fontSize: '0.82rem' }}>{error}</span>}
+            <Card title="Cover">
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 14 }}>
+                <Field label="Code">
+                  <code style={{ fontSize: 12 }}>{product.code}</code>
+                </Field>
+                <Field label="Underwriter">{product.underwriter || <NotReported />}</Field>
+                <Field label="Aggregator">{product.aggregator}</Field>
+                <Field label="Category">{product.category || product.product_line}</Field>
+                <Field label={product.is_percentage ? 'Rate' : 'Premium'}>
+                  <span style={{ fontWeight: 700 }}>{price.text}</span>
+                  {product.is_percentage ? (
+                    <div style={{ fontSize: 11, color: colors.muted }}>
+                      Percentage product: the premium is {formatRateBps(product.rate_bps)} of the sum insured, computed at
+                      quote time. There is no fixed naira price.
+                    </div>
+                  ) : null}
+                </Field>
+                <Field label="Sum insured">
+                  {product.sum_insured_kobo === null || product.sum_insured_kobo === undefined ? (
+                    <NotReported />
+                  ) : (
+                    formatNaira(product.sum_insured_kobo)
+                  )}
+                </Field>
+                <Field label="Cover period">
+                  {product.cover_period_days === null || product.cover_period_days === undefined ? (
+                    <NotReported />
+                  ) : (
+                    `${product.cover_period_days.toLocaleString('en-NG')} days`
+                  )}
+                </Field>
+                <Field label="Provider route">
+                  {product.provider_buy_path ? (
+                    <code style={{ fontSize: 12, wordBreak: 'break-all' }}>{product.provider_buy_path}</code>
+                  ) : product.provider_product_code ? (
+                    <code style={{ fontSize: 12, wordBreak: 'break-all' }}>{product.provider_product_code}</code>
+                  ) : (
+                    <NotReported hint="MyCover's purchase path is bespoke per product and is not derivable from the name." />
+                  )}
+                </Field>
+                <Field label="Status">
+                  <Badge status={product.active ? 'active' : 'inactive'} label={product.active ? 'Active' : 'Inactive'} />
+                </Field>
+                <Field label="Capabilities">
+                  <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                    <Flag on={product.is_claimable} label="Claimable" />
+                    <Flag on={product.is_renewable} label="Renewable" />
+                    <Flag on={product.is_certificateable} label="Certificate" />
+                    <Flag on={product.is_inspectable} label="Inspection" />
+                  </div>
+                </Field>
               </div>
             </Card>
 
-            <Card title="Required fields">
-              {detail.required_fields.length === 0 ? (
-                <p style={{ color: colors.muted, fontSize: '0.85rem' }}>No fields configured.</p>
-              ) : (
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.4rem' }}>
-                  {detail.required_fields.map((f) => (
-                    <span key={f} style={{ display: 'inline-block', padding: '0.2rem 0.6rem', borderRadius: 9999, background: colors.border, color: colors.text, fontSize: '0.78rem', fontWeight: 600 }}>{f}</span>
-                  ))}
-                </div>
-              )}
-            </Card>
+            <CommissionCard product={product} />
 
-            <Card title="Version history">
-              {detail.history.length === 0 ? (
-                <p style={{ color: colors.muted, fontSize: '0.85rem' }}>No version history.</p>
-              ) : (
-                <div style={{ overflowX: 'auto' }}>
-                  <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                    <thead>
-                      <tr>
-                        <th style={th()}>Version</th>
-                        <th style={th()}>Change</th>
-                        <th style={th()}>Actor</th>
-                        <th style={th()}>Date</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {detail.history.map((h) => (
-                        <tr key={h.version}>
-                          <td style={td()}>v{h.version}</td>
-                          <td style={td()}>{h.change}</td>
-                          <td style={td()}><code style={{ fontSize: '0.78rem' }}>{h.actor}</code></td>
-                          <td style={td()}>{fmtDate(h.created_at)}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-            </Card>
+            {product.key_benefits_html || product.how_it_works_html || product.how_to_claim_html ? (
+              <Card title="Policy wording (as supplied by the provider)">
+                <p style={{ fontSize: '0.75rem', color: colors.muted, marginTop: 0 }}>
+                  Provider-authored HTML, rendered here as plain text. It is deliberately not injected as
+                  markup — this content comes from a third party and is never trusted into the DOM.
+                </p>
+                <Prose label="Key benefits" html={product.key_benefits_html} />
+                <Prose label="How it works" html={product.how_it_works_html} />
+                <Prose label="How to claim" html={product.how_to_claim_html} />
+              </Card>
+            ) : null}
           </>
         )}
-      </StateBlock>
+      </LiveState>
+    </div>
+  );
+}
+
+/**
+ * The revenue view of one product.
+ *
+ * Projection uses integer kobo arithmetic (commissionKoboFor) and is labelled as
+ * a projection on a single sale, never presented as earned revenue. With zero
+ * policies sold, earned commission is zero, and this card says so.
+ */
+function CommissionCard({ product }: { product: InsuranceProduct }) {
+  const bands: SharingFormula[] = product.sharing_formula ?? [];
+  if (bands.length === 0) {
+    return (
+      <Card title="Commission">
+        <p style={{ color: colors.muted, fontSize: '0.85rem', margin: 0 }}>
+          The API did not report a sharing formula for this product, so no commission split can be shown.
+          It is not being assumed to be zero.
+        </p>
+      </Card>
+    );
+  }
+  const flat = product.is_percentage ? null : product.base_price_kobo ?? null;
+  return (
+    <Card
+      title="Commission split"
+      right={<span style={{ fontSize: '0.75rem', color: colors.muted }}>{bands.length > 1 ? `${bands.length} bands` : 'single band'}</span>}
+    >
+      <div style={{ overflowX: 'auto' }}>
+        <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+          <thead>
+            <tr>
+              <th style={th()}>Band</th>
+              <th style={th()}>Paymax (distributor)</th>
+              <th style={th()}>MyCover (mca)</th>
+              <th style={th()}>Underwriter (provider)</th>
+              <th style={th()}>Computed from</th>
+              <th style={th()}>Projected on one sale</th>
+            </tr>
+          </thead>
+          <tbody>
+            {bands.map((b, i) => {
+              const ours = flat === null ? null : commissionKoboFor(flat, b.distributor_commission_pct);
+              return (
+                <tr key={i}>
+                  <td style={td()}>
+                    {b.min || b.max ? `${b.min ?? 0} – ${b.max ?? '∞'}` : 'all'}
+                    {b.band_key ? <div style={{ fontSize: '0.68rem', color: colors.muted }}>{b.band_key}</div> : null}
+                  </td>
+                  <td style={{ ...td(), fontWeight: 700, color: colors.success }}>{formatPct(b.distributor_commission_pct)}</td>
+                  <td style={td()}>{formatPct(b.mca_commission_pct)}</td>
+                  <td style={td()}>{formatPct(b.provider_commission_pct)}</td>
+                  <td style={td()}>
+                    <div style={{ fontSize: '0.78rem' }}>
+                      ours: {b.distributor_commission_from?.replace('_', ' ') ?? <NotReported />}
+                    </div>
+                    <div style={{ fontSize: '0.72rem', color: colors.muted }}>
+                      provider: {b.provider_commission_from?.replace('_', ' ') ?? '—'}
+                    </div>
+                  </td>
+                  <td style={td()}>
+                    {ours === null ? (
+                      <NotReported hint="Percentage products have no fixed premium, so a per-sale projection needs a sum insured." />
+                    ) : (
+                      <span style={{ fontWeight: 600 }}>{formatNaira(ours)}</span>
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      <p style={{ fontSize: '0.75rem', color: colors.muted, marginBottom: 0, marginTop: '0.75rem', lineHeight: 1.5 }}>
+        <strong>Projected</strong> means &ldquo;what one sale at the listed price would earn&rdquo;. It is arithmetic on the
+        catalog price, not money received. Realised commission is on the{' '}
+        <Link href="/admin/insurance/commission" style={{ color: colors.primary }}>Commission</Link> screen and comes from
+        the ledger.
+        {product.is_percentage
+          ? ' This is a percentage product, so no per-sale figure can be projected without a sum insured.'
+          : null}
+      </p>
+    </Card>
+  );
+}
+
+function Field({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div>
+      <div style={dt}>{label}</div>
+      <div style={{ fontSize: 13, color: colors.text }}>{children}</div>
+    </div>
+  );
+}
+
+function Flag({ on, label }: { on: boolean | null | undefined; label: string }) {
+  if (on === null || on === undefined) {
+    return (
+      <span style={{ fontSize: 11, color: colors.muted, border: `1px dashed ${colors.border}`, borderRadius: 9999, padding: '0.1rem 0.45rem' }}>
+        {label}?
+      </span>
+    );
+  }
+  return <Badge status={on ? 'active' : 'inactive'} label={on ? label : `No ${label.toLowerCase()}`} />;
+}
+
+/** Strips provider HTML to text. Never dangerouslySetInnerHTML — third-party content. */
+function Prose({ label, html }: { label: string; html: string | null | undefined }) {
+  if (!html) return null;
+  const text = html
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/(p|li|div|h\d)>/gi, '\n')
+    .replace(/<[^>]+>/g, '')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+  if (!text) return null;
+  return (
+    <div style={{ marginBottom: '0.9rem' }}>
+      <div style={dt}>{label}</div>
+      <div style={{ fontSize: 13, color: colors.text, whiteSpace: 'pre-wrap', lineHeight: 1.5 }}>{text}</div>
     </div>
   );
 }

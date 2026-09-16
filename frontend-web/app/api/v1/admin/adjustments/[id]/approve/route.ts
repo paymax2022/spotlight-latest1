@@ -14,8 +14,9 @@ import { approveAdjustment } from '@/src/server/admin/fintech/service';
 
 export async function POST(
   request: Request,
-  { params }: { params: { id: string } },
+  ctx: { params: Promise<{ id: string }> },
 ) {
+  const params = await ctx.params;
   try {
     requireFeature('fintechAdmin');
 

@@ -8,29 +8,43 @@
       "developmentClient": true,
       "distribution": "internal",
       "channel": "development",
-      "env": { "EXPO_PUBLIC_SENTRY_ENVIRONMENT": "development" }
+      "env": {
+        "EXPO_PUBLIC_SENTRY_ENVIRONMENT": "development"
+      }
     },
     "preview": {
       "distribution": "internal",
+      "android": {
+        "buildType": "apk",
+        "gradleCommand": ":app:assembleRelease"
+      },
       "channel": "preview",
       "autoIncrement": true,
-      "env": { "EXPO_PUBLIC_SENTRY_ENVIRONMENT": "staging" }
+      "env": {
+        "EXPO_PUBLIC_SENTRY_ENVIRONMENT": "staging",
+        "SENTRY_SKIP_AUTO_RELEASE": "true"
+      }
     },
     "production": {
+      
+      "android": {
+        "buildType": "apk"
+      },
       "channel": "production",
       "autoIncrement": true,
-      "env": { "EXPO_PUBLIC_SENTRY_ENVIRONMENT": "production" }
-    }
-  },
-  "submit": {
-    "production": {
-      "ios": {
-        "//": "TODO(you): appleId, ascAppId, appleTeamId — or use an App Store Connect API key in EAS secrets"
-      },
-      "android": {
-        "//": "TODO(you): serviceAccountKeyPath (Play Console) + track (internal→production)",
-        "track": "internal"
+      "env": {
+        "EXPO_PUBLIC_SENTRY_ENVIRONMENT": "production"
+      }
+    },
+    "staging": {
+      "distribution": "internal",
+      "channel": "staging",
+      "autoIncrement": true,
+      "env": {
+        "EXPO_PUBLIC_APP_ENV": "staging",
+        "EXPO_PUBLIC_SENTRY_ENVIRONMENT": "staging"
       }
     }
   }
+ 
 }

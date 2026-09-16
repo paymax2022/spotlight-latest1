@@ -68,6 +68,39 @@ func (h *Handler) TrackPosition(c *gin.Context) {
 	c.JSON(http.StatusAccepted, gin.H{"ok": true})
 }
 
+// ListMessages returns a trip's chat thread. Reachable by both the rider
+// (/mobility/trips/:id/messages) and the driver (/driver/trips/:id/messages)
+// — object-level authz in Service.ListMessages is the only real gate.
+func (h *Handler) ListMessages(c *gin.Context) {
+	uid := c.GetString("user_id")
+	msgs, err := h.svc.ListMessages(c.Request.Context(), c.Param("id"), uid)
+	if err != nil {
+		respondErr(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"messages": msgs})
+}
+
+// SendMessage posts one chat message and broadcasts it over the trip WS.
+func (h *Handler) SendMessage(c *gin.Context) {
+	uid := c.GetString("user_id")
+	var req SendTripMessageRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	tripID := c.Param("id")
+	m, err := h.svc.SendMessage(c.Request.Context(), tripID, uid, req)
+	if err != nil {
+		respondErr(c, err)
+		return
+	}
+	if h.tracker != nil {
+		h.tracker.BroadcastMessage(c.Request.Context(), tripID, m)
+	}
+	c.JSON(http.StatusCreated, gin.H{"message": m})
+}
+
 // respondErr maps a service error to the right HTTP status + machine code.
 // CodedError carries an explicit status/code; everything else is a 500.
 func respondErr(c *gin.Context, err error) {

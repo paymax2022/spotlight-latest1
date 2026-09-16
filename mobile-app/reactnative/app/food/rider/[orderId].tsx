@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { View, Text, ScrollView, StyleSheet, Pressable, TextInput, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import * as Icons from 'lucide-react-native';
 import StateView from '@/components/StateView';
 import PrimaryButton from '@/components/PrimaryButton';
@@ -20,6 +21,7 @@ import {
 import { useOrderRealtime } from '@/features/food/useOrderRealtime';
 import { OrderChatThread, FoodStatusBadge } from '@/features/food/components';
 import { formatNaira, STATUS_LABEL, isLiveTrackable, normalizeStatus, toFoodError } from '@/features/food/utils';
+import { HomeMenuButton } from '@/components/HomeMenu';
 
 type Tab = 'delivery' | 'chat';
 
@@ -27,6 +29,7 @@ export default function RiderActiveDeliveryScreen() {
   const { orderId } = useLocalSearchParams<{ orderId: string }>();
   const [tab, setTab] = useState<Tab>('delivery');
 
+  const [pickupCode, setPickupCode] = useState('');
   const [code, setCode] = useState('');
   const { data: order, isLoading, isError, refetch } = useOrder(orderId, { poll: true });
   const realtime = useOrderRealtime(orderId, { status: order?.status });
@@ -50,10 +53,14 @@ export default function RiderActiveDeliveryScreen() {
   }, [order?.id, status]);
 
   const onPickup = () => {
-    if (!order) return;
-    confirmPickup.mutate(order.id, {
-      onError: (e) => Alert.alert('Could not confirm pickup', toFoodError(e).message),
-    });
+    if (!order || pickupCode.trim().length < 4) return;
+    confirmPickup.mutate(
+      { orderId: order.id, code: pickupCode.trim() },
+      {
+        onSuccess: () => setPickupCode(''),
+        onError: (e) => Alert.alert('Could not confirm pickup', toFoodError(e).message),
+      },
+    );
   };
 
   const onHandoff = () => {
@@ -70,11 +77,14 @@ export default function RiderActiveDeliveryScreen() {
   return (
     <SafeAreaView style={s.safe} edges={['top']}>
       <View style={s.topBar}>
-        <Pressable onPress={() => router.back()} style={s.iconButton} accessibilityLabel="Go back">
+        <Pressable onPress={() => goBack('/food/rider')} style={s.iconButton} accessibilityLabel="Go back">
           <Icons.ArrowLeft size={22} color={Colors.primary} strokeWidth={2.2} />
         </Pressable>
         <Text style={s.topTitle}>Active delivery</Text>
-        <View style={s.iconButton}>{realtime.live ? <View style={s.liveDot} /> : null}</View>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+          <View style={s.iconButton}>{realtime.live ? <View style={s.liveDot} /> : null}</View>
+          <HomeMenuButton />
+        </View>
       </View>
 
       {isLoading ? (
@@ -122,9 +132,31 @@ export default function RiderActiveDeliveryScreen() {
               </View>
 
               <View style={s.actions}>
-                {/* Step 1 — confirm pickup at the restaurant. */}
+                {/* Step 1 — confirm pickup at the restaurant with its pickup code. */}
                 {normalizeStatus(status) === 'assigned' || normalizeStatus(status) === 'ready' ? (
-                  <PrimaryButton label="Confirm pickup" onPress={onPickup} loading={confirmPickup.isPending} />
+                  <View style={[s.handoffCard, shadow1]}>
+                    <View style={s.handoffHead}>
+                      <Icons.KeyRound size={18} color={Colors.secondary} strokeWidth={2} />
+                      <Text style={s.handoffTitle}>Confirm pickup</Text>
+                    </View>
+                    <Text style={s.handoffHint}>Ask the restaurant for their 4-digit pickup code.</Text>
+                    <TextInput
+                      style={s.codeInput}
+                      value={pickupCode}
+                      onChangeText={(t) => setPickupCode(t.replace(/[^0-9]/g, '').slice(0, 4))}
+                      placeholder="• • • •"
+                      placeholderTextColor={Colors.onSurfaceVariant}
+                      keyboardType="number-pad"
+                      maxLength={4}
+                      accessibilityLabel="Pickup code"
+                    />
+                    <PrimaryButton
+                      label="Confirm pickup"
+                      onPress={onPickup}
+                      loading={confirmPickup.isPending}
+                      disabled={pickupCode.trim().length < 4}
+                    />
+                  </View>
                 ) : null}
 
                 {/* Step 2 — confirm handoff with the customer's delivery code. */}

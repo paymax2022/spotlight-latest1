@@ -8,7 +8,7 @@ package restaurantpayout_test
 // talks to a concrete *pgxpool.Pool for the payout-run aggregation and to the
 // real ledger.Service for the ONE balanced disbursement transfer (DR settlement
 // standing account, CR provider wallet). None of this can run without a migrated
-// Postgres, so this file is SKIPPED whenever TEST_DATABASE_URL/DATABASE_URL is
+// Postgres, so this file is SKIPPED whenever TEST_DATABASE_URL is
 // unset — the SAME env-var gate as backend/tests/crypto/live_db_integration_test.go
 // and backend/tests/association/live_db_integration_test.go. The skip is NOT a
 // stub; every step drives the real Service against real tables.
@@ -20,12 +20,12 @@ package restaurantpayout_test
 //       supabase/migrations/20260613030000_ledger_entries.sql (ledger)
 //       supabase/migrations/20260919000400_restaurant_payouts.sql (payout runs/lines)
 //     Confirm the core tables landed:
-//       psql "$DATABASE_URL" -c "\d restaurant_payout_runs"
-//       psql "$DATABASE_URL" -c "\d restaurant_payout_lines"
-//  2. Set DATABASE_URL (or TEST_DATABASE_URL) to a disposable/test database —
+//       psql "$TEST_DATABASE_URL" -c "\d restaurant_payout_runs"
+//       psql "$TEST_DATABASE_URL" -c "\d restaurant_payout_lines"
+//  2. Set TEST_DATABASE_URL to a disposable/test database —
 //     never point this at production. `supabase db reset` (local, port 54322)
 //     is the safest target:
-//       export DATABASE_URL="postgres://postgres:postgres@localhost:54322/postgres"
+//       export TEST_DATABASE_URL="postgres://postgres:postgres@localhost:54322/postgres"
 //  3. Run:
 //       cd backend && go test ./tests/restaurantpayout/... -run LiveDB -v
 //
@@ -45,17 +45,16 @@ import (
 
 	"spotlight/backend/internal/finance/ledger"
 	"spotlight/backend/internal/restaurant"
+
+	"spotlight/backend/internal/testsupport"
 )
 
-// liveDBPool connects using TEST_DATABASE_URL/DATABASE_URL, or skips.
+// liveDBPool connects using TEST_DATABASE_URL, or skips.
 func liveDBPool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
 	dsn := os.Getenv("TEST_DATABASE_URL")
 	if dsn == "" {
-		dsn = os.Getenv("DATABASE_URL")
-	}
-	if dsn == "" {
-		t.Skip("no TEST_DATABASE_URL/DATABASE_URL set — skipping live-DB restaurant payout integration test; see bring-up note in payout_live_db_test.go")
+		t.Skip("no TEST_DATABASE_URL set — skipping live-DB restaurant payout integration test; see bring-up note in payout_live_db_test.go")
 	}
 	pool, err := pgxpool.New(context.Background(), dsn)
 	if err != nil {
@@ -96,6 +95,7 @@ func seedUser(t *testing.T, ctx context.Context, pool *pgxpool.Pool) string {
 	if _, err := pool.Exec(ctx, `INSERT INTO auth.users (id, email) VALUES ($1, $2) ON CONFLICT DO NOTHING`, id, id+"@seed.test"); err != nil {
 		t.Fatalf("seed auth.users: %v", err)
 	}
+	testsupport.CleanupUser(t, pool, id)
 	return id
 }
 
@@ -172,7 +172,7 @@ func ledgerEntryCount(t *testing.T, ctx context.Context, pool *pgxpool.Pool, ref
 //     provider is never double-paid) and the run stays PAID.
 func TestLiveDB_Payout_BuildThenProcess_PostsOneBalancedTransfer_ReplaySafe(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	led := newLiveLedgerService(pool)
 	svc := newLiveRestaurantService(pool, led)
 	ctx := context.Background()
@@ -235,11 +235,6 @@ func TestLiveDB_Payout_BuildThenProcess_PostsOneBalancedTransfer_ReplaySafe(t *t
 	if err != nil {
 		t.Fatalf("provider balance before: %v", err)
 	}
-	settleBalBefore, err := balanceOf(ctx, pool, settleAcc.ID)
-	if err != nil {
-		t.Fatalf("settlement account balance before: %v", err)
-	}
-
 	key := newIdemKey(t, "rpayout-process")
 	paid, err := svc.ProcessRun(ctx, run.ID, key)
 	if err != nil {
@@ -264,12 +259,8 @@ func TestLiveDB_Payout_BuildThenProcess_PostsOneBalancedTransfer_ReplaySafe(t *t
 	if providerBalAfter-providerBalBefore != wantNet {
 		t.Errorf("provider wallet credited %d, want exactly %d (net)", providerBalAfter-providerBalBefore, wantNet)
 	}
-	settleBalAfter, err := balanceOf(ctx, pool, settleAcc.ID)
-	if err != nil {
-		t.Fatalf("settlement account balance after: %v", err)
-	}
-	if settleBalBefore-settleBalAfter != wantNet {
-		t.Errorf("settlement account debited %d, want exactly %d (net) — debit must equal credit (balanced)", settleBalBefore-settleBalAfter, wantNet)
+	if debited := -netPostedForReference(t, ctx, pool, settleAcc.ID, "rpayout:"+run.ID); debited != wantNet {
+		t.Errorf("settlement account debited %d, want exactly %d (net) — debit must equal credit (balanced)", debited, wantNet)
 	}
 
 	// ── ProcessRun REPLAY (same key) — no double-pay ─────────────────────────
@@ -321,21 +312,4 @@ func TestLiveDB_Payout_BuildThenProcess_PostsOneBalancedTransfer_ReplaySafe(t *t
 			t.Errorf("settlement %s appears on %d payout lines, want exactly 1 (bound to one run)", sid, n)
 		}
 	}
-}
-
-// balanceOf projects an account's balance directly from ledger_entries the same
-// way the ledger repo does (CREDIT − DEBIT, reversals included), so the test can
-// assert the settlement STANDING account's movement without a wallet helper.
-func balanceOf(ctx context.Context, pool *pgxpool.Pool, accountID string) (int64, error) {
-	// Mirror ledger.Repository.balanceProjectionSQL EXACTLY: CREDIT + REVERSAL_DEBIT
-	// count as +balance; everything else (DEBIT, REVERSAL_CREDIT) as −balance.
-	const q = `
-		SELECT COALESCE(SUM(
-			CASE WHEN type IN ('CREDIT','REVERSAL_DEBIT') THEN amount_kobo
-			     ELSE -amount_kobo END
-		), 0)
-		FROM ledger_entries WHERE account_id = $1`
-	var bal int64
-	err := pool.QueryRow(ctx, q, accountID).Scan(&bal)
-	return bal, err
 }

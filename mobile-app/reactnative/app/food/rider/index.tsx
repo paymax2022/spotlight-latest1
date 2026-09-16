@@ -2,6 +2,7 @@ import React from 'react';
 import { View, Text, ScrollView, StyleSheet, Pressable, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import * as Icons from 'lucide-react-native';
 import StateView from '@/components/StateView';
 import PrimaryButton from '@/components/PrimaryButton';
@@ -10,11 +11,25 @@ import { Radius } from '@/constants/radius';
 import { Spacing } from '@/constants/spacing';
 import { Typography } from '@/constants/typography';
 import { shadow1 } from '@/constants/shadows';
-import { useRiderOffers, useRiderActive, useAcceptOffer } from '@/features/food/hooks';
+import { useRiderOffers, useRiderActive, useAcceptOffer, useDeclineOffer } from '@/features/food/hooks';
 import { formatNaira, formatDistance, toFoodError } from '@/features/food/utils';
+import { confirmAsync } from '@/lib/confirm';
 import type { RiderOffer } from '@/features/food/types';
+import { HomeMenuButton } from '@/components/HomeMenu';
 
-function OfferCard({ offer, onAccept, accepting }: { offer: RiderOffer; onAccept: () => void; accepting: boolean }) {
+function OfferCard({
+  offer,
+  onAccept,
+  onDecline,
+  accepting,
+  declining,
+}: {
+  offer: RiderOffer;
+  onAccept: () => void;
+  onDecline: () => void;
+  accepting: boolean;
+  declining: boolean;
+}) {
   return (
     <View style={[c.card, shadow1]}>
       <View style={c.head}>
@@ -37,7 +52,25 @@ function OfferCard({ offer, onAccept, accepting }: { offer: RiderOffer; onAccept
           To: {offer.deliveryAddress}
         </Text>
       </View>
-      <PrimaryButton label="Accept delivery" onPress={onAccept} loading={accepting} />
+      <View style={c.actions}>
+        <PrimaryButton
+          label="Accept delivery"
+          onPress={onAccept}
+          loading={accepting}
+          disabled={declining}
+          fullWidth={false}
+          style={{ flex: 1 }}
+        />
+        <PrimaryButton
+          label="Decline"
+          variant="secondary"
+          onPress={onDecline}
+          loading={declining}
+          disabled={accepting}
+          fullWidth={false}
+          style={{ flex: 1 }}
+        />
+      </View>
     </View>
   );
 }
@@ -50,12 +83,14 @@ const c = StyleSheet.create({
   payout: { ...Typography.titleMd, color: Colors.tertiaryContainer },
   routeRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   route: { ...Typography.bodySm, color: Colors.onSurfaceVariant, flex: 1 },
+  actions: { flexDirection: 'row', gap: Spacing.sm },
 });
 
 export default function RiderOffersScreen() {
   const { data: offers, isLoading, isError, refetch } = useRiderOffers({ poll: true });
   const { data: active } = useRiderActive({ poll: true });
   const accept = useAcceptOffer();
+  const decline = useDeclineOffer();
 
   const onAccept = (orderId: string) => {
     accept.mutate(orderId, {
@@ -64,14 +99,31 @@ export default function RiderOffersScreen() {
     });
   };
 
+  const onDecline = async (orderId: string) => {
+    const ok = await confirmAsync({
+      title: 'Decline this delivery?',
+      message: "It will be offered to the next nearest rider. You won't see it again.",
+      confirmLabel: 'Decline',
+      cancelLabel: 'Keep looking',
+      destructive: true,
+    });
+    if (!ok) return;
+    decline.mutate(orderId, {
+      onError: (e) => Alert.alert('Could not decline', toFoodError(e).message),
+    });
+  };
+
   return (
     <SafeAreaView style={s.safe} edges={['top']}>
       <View style={s.topBar}>
-        <Pressable onPress={() => router.back()} style={s.iconButton} accessibilityLabel="Go back">
+        <Pressable onPress={() => goBack('/food')} style={s.iconButton} accessibilityLabel="Go back">
           <Icons.ArrowLeft size={22} color={Colors.primary} strokeWidth={2.2} />
         </Pressable>
         <Text style={s.topTitle}>Rider · Offers</Text>
-        <View style={s.iconButton} />
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+          <View style={s.iconButton} />
+          <HomeMenuButton />
+        </View>
       </View>
 
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={s.content}>
@@ -93,7 +145,14 @@ export default function RiderOffersScreen() {
           <StateView kind="empty" icon="Bike" title="No offers right now" message="New delivery offers will appear here automatically." />
         ) : (
           offers.map((offer) => (
-            <OfferCard key={offer.orderId} offer={offer} onAccept={() => onAccept(offer.orderId)} accepting={accept.isPending} />
+            <OfferCard
+              key={offer.orderId}
+              offer={offer}
+              onAccept={() => onAccept(offer.orderId)}
+              onDecline={() => onDecline(offer.orderId)}
+              accepting={accept.isPending}
+              declining={decline.isPending}
+            />
           ))
         )}
       </ScrollView>

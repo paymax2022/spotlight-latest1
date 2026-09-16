@@ -32,6 +32,7 @@ export default function ClaimCode() {
       case 'window_closed':   return 'The grace window has closed. Attribution is now locked.';
       case 'self_referral':   return 'You can’t claim your own code.';
       case 'already_claimed': return 'A code has already been claimed for your account.';
+      case 'no_attribution':  return 'There is no referral to claim on this account yet.';
       default:                return 'We couldn’t find that code. Please check it and try again.';
     }
   };

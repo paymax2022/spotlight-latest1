@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { View, Text, StyleSheet, Image, Pressable, ScrollView, FlatList, useWindowDimensions } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import { X } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
@@ -17,7 +18,7 @@ export default function GalleryScreen() {
   const [cat, setCat] = useState(0);
 
   if (prop.isLoading) return <SafeAreaView style={styles.safe}><StateView kind="loading" message="Loading photos…" /></SafeAreaView>;
-  if (prop.isError || !prop.data) return <SafeAreaView style={styles.safe}><StateView kind="error" title="Couldn't load gallery" onAction={() => router.back()} actionLabel="Back" /></SafeAreaView>;
+  if (prop.isError || !prop.data) return <SafeAreaView style={styles.safe}><StateView kind="error" title="Couldn't load gallery" onAction={() => goBack('/stays')} actionLabel="Back" /></SafeAreaView>;
 
   const p = prop.data;
   const cats = p.mediaCategories;
@@ -26,7 +27,7 @@ export default function GalleryScreen() {
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
       <View style={styles.header}>
-        <Pressable onPress={() => router.back()} hitSlop={10} style={styles.closeBtn}><X size={22} color={Colors.white} /></Pressable>
+        <Pressable onPress={() => goBack('/stays')} hitSlop={10} style={styles.closeBtn}><X size={22} color={Colors.white} /></Pressable>
         <Text style={styles.headerTitle}>{p.name}</Text>
       </View>
 

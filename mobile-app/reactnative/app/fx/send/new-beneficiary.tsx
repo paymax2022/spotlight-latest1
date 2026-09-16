@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { View, Text, ScrollView, StyleSheet, KeyboardAvoidingView, Platform } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import { BadgeCheck, ShieldAlert } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
@@ -81,11 +82,11 @@ export default function NewBeneficiaryScreen() {
     if (!validation?.valid) { await runValidate(); return; }
     if (isEdit && editId) {
       await update.mutateAsync({ id: editId, draft: draft() });
-      router.back();
+      goBack('/fx/send');
       return;
     }
     const created = await create.mutateAsync(draft());
-    if (returnTo === 'hub') { router.back(); return; }
+    if (returnTo === 'hub') { goBack('/fx/send'); return; }
     router.replace({ pathname: '/fx/send/amount', params: { beneficiaryId: created.id } });
   };
 

@@ -20,7 +20,7 @@ func NewMockExamRepository(pool *pgxpool.Pool) *MockExamRepository {
 // GetTemplate retrieves an exam template by ID
 func (r *MockExamRepository) GetTemplate(ctx context.Context, templateID string) (*MockExamTemplate, error) {
 	const query = `
-		SELECT id, version_id, class_id, name, description, exam_type, subject_ids,
+		SELECT id, version_id, class_id, name, COALESCE(description, ''), exam_type, subject_ids,
 		       sections, total_questions, total_seconds, difficulty_distribution,
 		       status, created_at
 		FROM academy_mock_exam_templates
@@ -33,7 +33,7 @@ func (r *MockExamRepository) GetTemplate(ctx context.Context, templateID string)
 // ListTemplates retrieves exam templates with optional filters
 func (r *MockExamRepository) ListTemplates(ctx context.Context, filter MockExamFilter) ([]*MockExamTemplate, error) {
 	query := `
-		SELECT id, version_id, class_id, name, description, exam_type, subject_ids,
+		SELECT id, version_id, class_id, name, COALESCE(description, ''), exam_type, subject_ids,
 		       sections, total_questions, total_seconds, difficulty_distribution,
 		       status, created_at
 		FROM academy_mock_exam_templates
@@ -165,18 +165,25 @@ func (r *MockExamRepository) GetQuestionMappings(ctx context.Context, instanceID
 	return mappings, rows.Err()
 }
 
-// CreateAttempt creates a new exam attempt for a learner
+// CreateAttempt creates a new exam attempt for a learner.
+// Lifecycle state lives on academy_attempts; mock-only state lives on
+// academy_mock_attempt_metadata, whose id is the public attempt id (ADR-028).
 func (r *MockExamRepository) CreateAttempt(ctx context.Context, userID, instanceID, templateID string) (*MockExamAttempt, error) {
 	const query = `
-		INSERT INTO academy_mock_attempt_metadata (attempt_id, instance_id, template_id, performance, created_at)
-		SELECT id, $2, $3, '{}', NOW()
-		FROM academy_attempts
-		WHERE user_id = $1 AND blueprint_id IS NULL
-		LIMIT 1
-		RETURNING id, user_id, instance_id, template_id, status, answers, performance,
-		          flagged_questions, started_at, submitted_at, created_at
+		WITH attempt AS (
+			INSERT INTO academy_attempts (user_id, state, started_at)
+			VALUES ($1, 'started', NOW())
+			RETURNING id, user_id, started_at, submitted_at, created_at
+		), meta AS (
+			INSERT INTO academy_mock_attempt_metadata (attempt_id, instance_id, template_id)
+			SELECT id, $2, $3 FROM attempt
+			RETURNING id, instance_id, template_id, answers, performance, flagged_questions
+		)
+		SELECT meta.id, attempt.user_id, meta.instance_id, meta.template_id,
+		       'in_progress'::text, meta.answers, meta.performance, meta.flagged_questions,
+		       attempt.started_at, attempt.submitted_at, attempt.created_at
+		FROM attempt, meta
 	`
-	// Note: This is a simplified version. In production, you'd create an academy_attempts record first.
 	row := r.pool.QueryRow(ctx, query, userID, instanceID, templateID)
 
 	var attempt MockExamAttempt
@@ -191,12 +198,13 @@ func (r *MockExamRepository) CreateAttempt(ctx context.Context, userID, instance
 	return &attempt, nil
 }
 
-// GetAttempt retrieves an attempt by ID
+// GetAttempt retrieves an attempt by ID via the bridge view, which projects
+// academy_attempts.state onto the mock vocabulary (in_progress|submitted|graded).
 func (r *MockExamRepository) GetAttempt(ctx context.Context, attemptID string) (*MockExamAttempt, error) {
 	const query = `
 		SELECT id, user_id, instance_id, template_id, status, answers, performance,
 		       flagged_questions, started_at, submitted_at, created_at
-		FROM academy_attempts
+		FROM v_mock_attempt_scores
 		WHERE id = $1
 	`
 	row := r.pool.QueryRow(ctx, query, attemptID)
@@ -218,7 +226,7 @@ func (r *MockExamRepository) UpdateAttempt(ctx context.Context, attemptID string
 	answersJSON, _ := json.Marshal(answers)
 
 	const query = `
-		UPDATE academy_attempts
+		UPDATE academy_mock_attempt_metadata
 		SET answers = $1, flagged_questions = $2, updated_at = NOW()
 		WHERE id = $3
 	`
@@ -226,14 +234,22 @@ func (r *MockExamRepository) UpdateAttempt(ctx context.Context, attemptID string
 	return err
 }
 
-// SubmitAttempt marks an attempt as submitted and grades it
-func (r *MockExamRepository) SubmitAttempt(ctx context.Context, attemptID string, performance json.RawMessage) error {
+// SubmitAttempt stores the final answers and grading result, then flips the
+// attempt to scored; the bridge view surfaces scored/reviewed as status='graded'.
+func (r *MockExamRepository) SubmitAttempt(ctx context.Context, attemptID string, answers, performance json.RawMessage) error {
 	const query = `
-		UPDATE academy_attempts
-		SET status = 'graded', performance = $1, submitted_at = NOW(), updated_at = NOW()
-		WHERE id = $2
+		WITH meta AS (
+			UPDATE academy_mock_attempt_metadata
+			SET answers = COALESCE($1, answers), performance = $2, updated_at = NOW()
+			WHERE id = $3
+			RETURNING attempt_id
+		)
+		UPDATE academy_attempts a
+		SET state = 'scored', submitted_at = NOW()
+		FROM meta
+		WHERE a.id = meta.attempt_id
 	`
-	_, err := r.pool.Exec(ctx, query, performance, attemptID)
+	_, err := r.pool.Exec(ctx, query, answers, performance, attemptID)
 	return err
 }
 

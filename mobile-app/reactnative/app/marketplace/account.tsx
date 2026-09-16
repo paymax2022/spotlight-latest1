@@ -86,7 +86,7 @@ export default function AccountTab() {
                     accessibilityRole="button"
                     accessibilityLabel={r.label}
                   >
-                    <View style={styles.rowIcon}><Icon size={20} color={MarketColors.brand} /></View>
+                    <View style={styles.rowIcon}><Icon size={20} color={Colors.onPrimaryContainer} /></View>
                     <View style={styles.rowBody}>
                       <Text style={styles.rowLabel}>{r.label}</Text>
                       <Text style={styles.rowSub}>{r.sub}</Text>

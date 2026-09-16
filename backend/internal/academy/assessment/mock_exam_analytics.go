@@ -130,7 +130,7 @@ func (s *AnalyticsService) GetLearnerAnalytics(ctx context.Context, userID strin
 			COALESCE(MAX(score_percent), 0) as best_score,
 			COALESCE(MIN(score_percent), 0) as worst_score,
 			COALESCE(CAST(SUM(CASE WHEN score_percent >= 60 THEN 1 ELSE 0 END) AS FLOAT) / NULLIF(COUNT(*), 0) * 100, 0) as pass_rate
-		FROM academy_mock_attempt_metadata
+		FROM v_mock_attempt_scores
 		WHERE user_id = $1 AND status = 'graded'
 	`, userID)
 
@@ -180,7 +180,7 @@ func (s *AnalyticsService) getTrendData(ctx context.Context, userID string, anal
 			SELECT
 				DATE(submitted_at) as date,
 				CAST(AVG(score_percent) AS FLOAT) as score
-			FROM academy_mock_attempt_metadata
+			FROM v_mock_attempt_scores
 			WHERE user_id = $1 AND status = 'graded'
 			GROUP BY DATE(submitted_at)
 		),
@@ -188,7 +188,7 @@ func (s *AnalyticsService) getTrendData(ctx context.Context, userID string, anal
 			SELECT
 				DATE(submitted_at) as date,
 				CAST(AVG(score_percent) AS FLOAT) as avg_score
-			FROM academy_mock_attempt_metadata
+			FROM v_mock_attempt_scores
 			WHERE status = 'graded'
 			GROUP BY DATE(submitted_at)
 		)
@@ -229,7 +229,7 @@ func (s *AnalyticsService) getSubjectPerformance(ctx context.Context, userID str
 			t.subject_ids,
 			CAST(AVG(m.score_percent) AS FLOAT) as avg_score,
 			COUNT(*) as attempts
-		FROM academy_mock_attempt_metadata m
+		FROM v_mock_attempt_scores m
 		JOIN academy_mock_exam_instances inst ON m.instance_id = inst.id
 		JOIN academy_mock_exam_templates t ON inst.template_id = t.id
 		WHERE m.user_id = $1 AND m.status = 'graded'
@@ -285,10 +285,10 @@ func (s *AnalyticsService) getWeakAreas(ctx context.Context, userID string, anal
 		FROM (
 			SELECT
 				CAST(
-					SUM(CASE WHEN (metadata->>'correct')::boolean THEN 1 ELSE 0 END)::FLOAT /
-					NULLIF(COUNT(*), 0) * 100
+					SUM((performance->>'correct_answers')::int)::FLOAT /
+					NULLIF(SUM((performance->>'total_answered')::int), 0) * 100
 				AS NUMERIC) as accuracy
-			FROM academy_mock_attempt_metadata
+			FROM v_mock_attempt_scores
 			WHERE user_id = $1 AND status = 'graded'
 		) accuracy_by_topic
 		WHERE accuracy < 70
@@ -333,7 +333,7 @@ func (s *AnalyticsService) getRecentAttempts(ctx context.Context, userID string,
 			EXTRACT(EPOCH FROM (m.submitted_at - m.created_at))::int as total_time,
 			(m.performance->>'correct_answers')::int as correct_answers,
 			(m.performance->>'total_answered')::int as total_answered
-		FROM academy_mock_attempt_metadata m
+		FROM v_mock_attempt_scores m
 		JOIN academy_mock_exam_instances inst ON m.instance_id = inst.id
 		JOIN academy_mock_exam_templates t ON inst.template_id = t.id
 		WHERE m.user_id = $1 AND m.status = 'graded'
@@ -362,7 +362,7 @@ func (s *AnalyticsService) getRecentAttempts(ctx context.Context, userID string,
 func (s *AnalyticsService) getPreferredExamType(ctx context.Context, userID string, analytics *LearnerAnalytics) {
 	row := s.pool.QueryRow(ctx, `
 		SELECT t.exam_type
-		FROM academy_mock_attempt_metadata m
+		FROM v_mock_attempt_scores m
 		JOIN academy_mock_exam_instances inst ON m.instance_id = inst.id
 		JOIN academy_mock_exam_templates t ON inst.template_id = t.id
 		WHERE m.user_id = $1 AND m.status = 'graded'
@@ -411,7 +411,7 @@ func (s *AnalyticsService) GetAdminAnalytics(ctx context.Context, timeRange stri
 
 	// Get total learners
 	row := s.pool.QueryRow(ctx, `
-		SELECT COUNT(DISTINCT user_id) FROM academy_mock_attempt_metadata WHERE status = 'graded'
+		SELECT COUNT(DISTINCT user_id) FROM v_mock_attempt_scores WHERE status = 'graded'
 	`)
 	row.Scan(&analytics.TotalLearners)
 
@@ -421,7 +421,7 @@ func (s *AnalyticsService) GetAdminAnalytics(ctx context.Context, timeRange stri
 			COUNT(*) as total_attempts,
 			COALESCE(AVG(CAST(score_percent AS FLOAT)), 0) as avg_score,
 			COALESCE(CAST(SUM(CASE WHEN score_percent >= 60 THEN 1 ELSE 0 END) AS FLOAT) / NULLIF(COUNT(*), 0) * 100, 0) as pass_rate
-		FROM academy_mock_attempt_metadata
+		FROM v_mock_attempt_scores
 		WHERE status = 'graded' AND submitted_at >= $1
 	`, startDate)
 
@@ -432,7 +432,7 @@ func (s *AnalyticsService) GetAdminAnalytics(ctx context.Context, timeRange stri
 	// Get active learners this week
 	weekAgo := now.AddDate(0, 0, -7)
 	row = s.pool.QueryRow(ctx, `
-		SELECT COUNT(DISTINCT user_id) FROM academy_mock_attempt_metadata
+		SELECT COUNT(DISTINCT user_id) FROM v_mock_attempt_scores
 		WHERE status = 'graded' AND submitted_at >= $1
 	`, weekAgo)
 	row.Scan(&analytics.ActiveThisWeek)
@@ -475,7 +475,7 @@ func (s *AnalyticsService) getActivityData(ctx context.Context, startDate time.T
 			DATE(submitted_at) as date,
 			COUNT(*) as attempts,
 			COUNT(DISTINCT user_id) as unique_learners
-		FROM academy_mock_attempt_metadata
+		FROM v_mock_attempt_scores
 		WHERE status = 'graded' AND submitted_at >= $1
 		GROUP BY DATE(submitted_at)
 		ORDER BY date DESC
@@ -510,7 +510,7 @@ func (s *AnalyticsService) getClassPerformance(ctx context.Context, startDate ti
 			CAST(AVG(m.score_percent) AS FLOAT) as avg_score,
 			CAST(SUM(CASE WHEN m.score_percent >= 60 THEN 1 ELSE 0 END) AS FLOAT) / NULLIF(COUNT(*), 0) * 100 as pass_rate,
 			COUNT(DISTINCT m.user_id) as learners
-		FROM academy_mock_attempt_metadata m
+		FROM v_mock_attempt_scores m
 		JOIN academy_mock_exam_instances inst ON m.instance_id = inst.id
 		JOIN academy_mock_exam_templates t ON inst.template_id = t.id
 		WHERE m.status = 'graded' AND m.submitted_at >= $1
@@ -545,7 +545,7 @@ func (s *AnalyticsService) getGradeDistribution(ctx context.Context, startDate t
 				ELSE 'F'
 			END as grade,
 			COUNT(*) as count
-		FROM academy_mock_attempt_metadata
+		FROM v_mock_attempt_scores
 		WHERE status = 'graded' AND submitted_at >= $1
 		GROUP BY grade
 		ORDER BY grade
@@ -574,7 +574,7 @@ func (s *AnalyticsService) getExamStatistics(ctx context.Context, startDate time
 			COUNT(*) as attempts,
 			CAST(AVG(m.score_percent) AS FLOAT) as avg_score,
 			CAST(SUM(CASE WHEN m.score_percent >= 60 THEN 1 ELSE 0 END) AS FLOAT) / NULLIF(COUNT(*), 0) * 100 as pass_rate
-		FROM academy_mock_attempt_metadata m
+		FROM v_mock_attempt_scores m
 		JOIN academy_mock_exam_instances inst ON m.instance_id = inst.id
 		JOIN academy_mock_exam_templates t ON inst.template_id = t.id
 		WHERE m.status = 'graded' AND m.submitted_at >= $1
@@ -602,7 +602,7 @@ func (s *AnalyticsService) getExamStatistics(ctx context.Context, startDate time
 func (s *AnalyticsService) getMostAttemptedExam(ctx context.Context, startDate time.Time, analytics *AdminAnalytics) {
 	row := s.pool.QueryRow(ctx, `
 		SELECT t.name
-		FROM academy_mock_attempt_metadata m
+		FROM v_mock_attempt_scores m
 		JOIN academy_mock_exam_instances inst ON m.instance_id = inst.id
 		JOIN academy_mock_exam_templates t ON inst.template_id = t.id
 		WHERE m.status = 'graded' AND m.submitted_at >= $1

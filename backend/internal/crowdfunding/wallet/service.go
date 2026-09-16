@@ -10,19 +10,31 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	financeledger "spotlight/backend/internal/finance/ledger"
 )
 
 // Service exposes the campaign wallet, ledger projection, bank accounts, and the
-// PENDING-only withdrawal request flow. It never stores a balance: every balance
-// is derived from the contributions ledger and cf_withdrawals on read.
+// withdrawal flow. It never stores a balance: every balance is derived from the
+// contributions ledger and cf_withdrawals on read.
 type Service struct {
-	db *pgxpool.Pool
+	db     *pgxpool.Pool
+	ledger *financeledger.Service // required for SubmitWithdrawal's payout leg; nil fails that path closed
 }
 
 // NewService constructs a wallet Service over a pgx pool.
 func NewService(db *pgxpool.Pool) *Service {
 	return &Service{db: db}
 }
+
+// WithLedger injects the finance ledger used by SubmitWithdrawal's payout
+// money-path. Non-breaking: existing NewService(db) callers keep a nil ledger
+// and the payout path fails closed until one is wired.
+func (s *Service) WithLedger(l *financeledger.Service) *Service { s.ledger = l; return s }
+
+// ErrLedgerUnavailable is returned when SubmitWithdrawal is invoked without a
+// wired finance ledger. Fail-closed: we refuse to transition without posting money.
+var ErrLedgerUnavailable = errors.New("crowdfunding/wallet: finance ledger not configured — cannot pay out withdrawal")
 
 // ErrCampaignNotFound is returned when a campaign id resolves to no row.
 var ErrCampaignNotFound = errors.New("crowdfunding/wallet: campaign not found")
@@ -168,7 +180,7 @@ func (s *Service) collectEntries(ctx context.Context, campaignID string) ([]rawE
 			UNION ALL
 			SELECT w.id::text AS id,
 			       'WITHDRAWAL' AS type,
-			       'Withdrawal request' AS description,
+			       'Withdrawal' AS description,
 			       -w.amount_kobo AS amount_kobo,
 			       w.reference AS reference,
 			       CASE WHEN w.status = 'COMPLETED' THEN 'POSTED'
@@ -248,20 +260,36 @@ func (s *Service) GetBankAccounts(ctx context.Context, userID string) ([]BankAcc
 	return out, rows.Err()
 }
 
-// ─── Withdrawal request (PENDING-only; never moves money) ────────────────────
+// ─── Withdrawal (money-path: pays out immediately, no admin approval) ────────
 
-// SubmitWithdrawal files a creator's withdrawal request in PENDING state.
+// SubmitWithdrawal pays out a creator's withdrawal immediately — no separate
+// admin-approval step. Campaign review is the gate on whether a campaign can
+// accept contributions at all (see crowdfunding.Service.Contribute); once it
+// can, contributions settle into the wallet on arrival and the creator may
+// withdraw at will.
 //
 // IRON RULES: requires a non-empty idempotencyKey; validates the amount against
-// the derived available balance fail-closed; inserts atomically; NEVER posts a
-// ledger entry or moves money (an admin approves the payout in a later slice).
-// Re-submitting with the same idempotency key returns the existing request.
+// the derived available balance fail-closed; posts a BALANCED double-entry via
+// the finance ledger (DEBIT AccountEscrow / CREDIT AccountProviderClearing,
+// mirroring the crowdfunding admin withdrawal money-path in
+// adminext/withdraw_approve.go) keyed deterministically on the withdrawal id so
+// a replay never posts twice; writes an immutable cf_audit_logs row in the same
+// tx as the terminal status flip. A missing ledger dependency fails closed
+// BEFORE any state change.
+//
+// TODO(prod): trigger the actual payout-rail transfer once a disbursement
+// provider is wired into this surface (see internal/provider/disbursement).
+// Funds are parked in AccountProviderClearing meanwhile — we do not fabricate a
+// provider success.
 func (s *Service) SubmitWithdrawal(ctx context.Context, creatorID, campaignID, idempotencyKey string, in WithdrawalRequestInput) (*WithdrawalResult, error) {
 	if strings.TrimSpace(idempotencyKey) == "" {
 		return nil, errors.New("crowdfunding/wallet: Idempotency-Key is required")
 	}
 	if in.AmountKobo < 100 {
 		return nil, errors.New("crowdfunding/wallet: amount must be at least 100 kobo")
+	}
+	if s.ledger == nil {
+		return nil, ErrLedgerUnavailable
 	}
 
 	// Idempotent replay: return the prior request unchanged.
@@ -303,6 +331,27 @@ func (s *Service) SubmitWithdrawal(ctx context.Context, creatorID, campaignID, i
 	reference := "SPL-CFWD-" + id[:8]
 	now := time.Now()
 
+	// Post the balanced double-entry (money leaves the CREATOR'S wallet) BEFORE
+	// the row exists — a deterministic key derived from the withdrawal id makes
+	// a retry-after-partial-failure safe to replay.
+	//
+	// DEBIT the creator's own user_wallet, not the shared escrow standing
+	// account: Contribute()'s instant settle already moved the creator's 90%
+	// share OUT of escrow and into their user_wallet via settlement.Settle
+	// (escrow → provider wallet). Debiting escrow here would have drained
+	// OTHER campaigns' unsettled contributions instead of this creator's own
+	// balance — ledger.Debit is also TOCTOU-safe (advisory-locked balance
+	// check), which the manual escrow posting below was not.
+	payoutIdem := "cf:withdraw:payout:" + id
+	clearingAcc, err := s.ledger.GetOrCreateStandingAccount(ctx, financeledger.AccountProviderClearing)
+	if err != nil {
+		return nil, fmt.Errorf("crowdfunding/wallet: resolve clearing account: %w", err)
+	}
+	if err := s.ledger.Debit(ctx, creatorID, "cf:withdraw:"+reference, payoutIdem, clearingAcc.ID, in.AmountKobo); err != nil &&
+		!errors.Is(err, financeledger.ErrDuplicate) {
+		return nil, fmt.Errorf("crowdfunding/wallet: post withdrawal payout: %w", err)
+	}
+
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
 		return nil, err
@@ -312,11 +361,17 @@ func (s *Service) SubmitWithdrawal(ctx context.Context, creatorID, campaignID, i
 	const ins = `
 		INSERT INTO cf_withdrawals
 			(id, campaign_id, creator_id, reference, amount_kobo, bank_label, status, reason, idempotency_key, requested_at)
-		VALUES ($1,$2,$3,$4,$5,$6,'PENDING',$7,$8,$9)`
+		VALUES ($1,$2,$3,$4,$5,$6,'COMPLETED',$7,$8,$9)`
 	if _, err := tx.Exec(ctx, ins,
 		id, campaignID, creatorID, reference, in.AmountKobo, bankLabel, in.Reason, idempotencyKey, now,
 	); err != nil {
 		return nil, fmt.Errorf("crowdfunding/wallet: insert withdrawal: %w", err)
+	}
+	if _, err := tx.Exec(ctx,
+		`INSERT INTO cf_audit_logs (actor, action, target, ip) VALUES ($1,'withdrawal.payout',$2,'')`,
+		creatorID, reference,
+	); err != nil {
+		return nil, fmt.Errorf("crowdfunding/wallet: write audit row: %w", err)
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, err
@@ -325,7 +380,7 @@ func (s *Service) SubmitWithdrawal(ctx context.Context, creatorID, campaignID, i
 	return &WithdrawalResult{
 		ID:          id,
 		Reference:   reference,
-		Status:      "PENDING",
+		Status:      "COMPLETED",
 		AmountKobo:  in.AmountKobo,
 		BankLabel:   bankLabel,
 		RequestedAt: now.UTC().Format(time.RFC3339),

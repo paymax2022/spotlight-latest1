@@ -88,7 +88,7 @@ const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: Colors.background },
   scroll: { padding: Spacing.containerMargin, paddingBottom: Spacing.xxl, gap: Spacing.md },
   topRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  greeting: { ...Typography.displayLg, color: Colors.onSurface, fontSize: 30, lineHeight: 36 },
+  greeting: { ...Typography.displayLg, color: Colors.onSurface, fontSize: 30, letterSpacing: -0.6, lineHeight: 36 },
   cog: { width: 48, height: 48, borderRadius: 24, alignItems: 'center', justifyContent: 'center', backgroundColor: Colors.surfaceContainerLow },
   subhead: { ...Typography.titleLg, color: Colors.onSurfaceVariant },
   grid: { flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.md },

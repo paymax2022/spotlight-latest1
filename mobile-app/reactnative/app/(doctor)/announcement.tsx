@@ -2,6 +2,7 @@ import React from 'react';
 import { View, Text, ScrollView, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import { Megaphone } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Radius } from '@/constants/radius';
@@ -20,7 +21,7 @@ export default function AnnouncementScreen() {
     if (!announcement) return;
     try {
       await dismiss.mutateAsync({ announcementId: announcement.id });
-      router.back();
+      goBack('/');
     } catch { /* surfaced */ }
   };
 

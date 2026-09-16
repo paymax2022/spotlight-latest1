@@ -17,12 +17,6 @@ export default function AccountSettings() {
 
   const groups: SettingsGroupDef[] = [
     {
-      title: 'Identity',
-      rows: [
-        { icon: 'ScanFace', label: 'Liveness verification', sub: data?.verification.liveness === 'passed' ? 'Verified' : 'Not verified', href: '/connect/onboarding/liveness' },
-      ],
-    },
-    {
       title: 'Linked account',
       rows: [
         { icon: 'Smartphone', label: 'Paymax super-app', sub: 'Single sign-on — managed in Paymax', href: '/(tabs)/profile' },

@@ -55,8 +55,8 @@ The bridge wraps the existing vote-recording functions without modifying protect
 
 | Document | Content | Status |
 |----------|---------|--------|
-| `ADR-001-vote-bridge-idempotency.md` | How bridge fixes TOCTOU races, design decisions | ✅ Complete |
-| `ADR-002-vote-engine-deprecation.md` | Production migration plan, coexistence strategy | ✅ Complete |
+| `ADR-037-vote-bridge-idempotency.md` | How bridge fixes TOCTOU races, design decisions | ✅ Complete |
+| `ADR-038-vote-engine-deprecation.md` | Production migration plan, coexistence strategy | ✅ Complete |
 | `frontend-web/src/server/voting-bridge/README.md` | Developer guide with module docs & examples | ✅ Complete |
 
 ## How the Bridge Works
@@ -218,14 +218,14 @@ After 2 weeks of stability:
 2. Disable SQL RPC functions
 3. Archive legacy data (optional)
 
-**See**: `ADR-002-vote-engine-deprecation.md` for production plan
+**See**: `ADR-038-vote-engine-deprecation.md` for production plan
 
 ## Verification Checklist
 
 - [ ] All bridge modules created (`bridge.ts`, `idempotency.ts`, `kyc-gate.ts`, `outbox.ts`, `feature-flag.ts`)
 - [ ] API routes implemented (`/api/v2/votes/free`, `/paid/initiate`, `/paid/verify`)
 - [ ] Database migrations written (idempotency keys, outbox tables)
-- [ ] Architecture documented (ADR-001, ADR-002, bridge README)
+- [ ] Architecture documented (ADR-037, ADR-038, bridge README)
 - [ ] Tests written and passing (5 test suites)
 - [ ] Migrations applied to cloud Supabase
 - [ ] Environment variables configured (VOTES_BRIDGE_ENABLED)
@@ -253,8 +253,8 @@ frontend-web/
 │   └── paid/verify/route.ts
 
 docs/adr/
-├── ADR-001-vote-bridge-idempotency.md
-└── ADR-002-vote-engine-deprecation.md
+├── ADR-037-vote-bridge-idempotency.md
+└── ADR-038-vote-engine-deprecation.md
 
 supabase/migrations/
 ├── 20260811000100_vote_bridge_idempotency.sql
@@ -377,11 +377,11 @@ Web app (http://localhost:3000) consumes:
 
 ## Questions & Support
 
-- Architecture questions? See `docs/adr/ADR-001-vote-bridge-idempotency.md`
+- Architecture questions? See `docs/adr/ADR-037-vote-bridge-idempotency.md`
 - How to use the bridge? See `frontend-web/src/server/voting-bridge/README.md`
 - Testing? See test fixtures in `tests/unit/voting/`
 - Mobile integration? See `CONTEST_API_INTEGRATION.md`
-- Production status? See `ADR-002-vote-engine-deprecation.md`
+- Production status? See `ADR-038-vote-engine-deprecation.md`
 
 ---
 

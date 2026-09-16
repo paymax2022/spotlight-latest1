@@ -36,6 +36,7 @@ import (
 	academylive "spotlight/backend/internal/academy/live"
 	"spotlight/backend/internal/academy/offlinesync"
 	"spotlight/backend/internal/academy/parent"
+	"spotlight/backend/internal/academy/placement"
 	academyplatform "spotlight/backend/internal/academy/platform"
 	"spotlight/backend/internal/academy/progression"
 	"spotlight/backend/internal/academy/rewards"
@@ -248,6 +249,9 @@ func RegisterAcademy(r *gin.Engine, finance *gin.RouterGroup, pool *pgxpool.Pool
 	if examEnabled {
 		assessment.RegisterAcademyAssessment(memberAcad, adminAcad, pool, rbac)
 		exam.RegisterAcademyExam(memberAcad, adminAcad, pool, rbac)
+		// Onboarding placement quiz — curriculum-grounded diagnostic that reads the
+		// assessment question bank; mounted alongside assessment so it shares its data.
+		placement.RegisterAcademyPlacement(memberAcad, pool)
 	}
 
 	// EdTech School Fees (invoices, vault, promotion, competition, scholarship,

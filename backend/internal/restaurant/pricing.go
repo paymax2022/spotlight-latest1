@@ -16,40 +16,6 @@ func applyBp(amountKobo int64, bp int) int64 {
 	return amountKobo * int64(bp) / 10000
 }
 
-// packagingKobo returns the takeaway-packaging charge for one order: the unit
-// fee times the number of packs, in whole kobo. Pure and table-tested.
-//
-// packageCount arrives FROM THE CLIENT (the cart decides how food is packed), so
-// it is never trusted directly:
-//   - below 1 clamps UP to 1 — any physical order needs at least one container,
-//     and this stops a caller sending 0 to dodge the charge;
-//   - above the total item quantity clamps DOWN — you cannot need more packs than
-//     you have items, and this stops a caller inflating a merchant's take.
-// The server cannot cheaply re-derive the exact minimum (the packing rules are a
-// client concern), but these bounds make the charge defensible either way.
-//
-// A non-positive unit fee yields 0, which is the default for every restaurant:
-// packaging is opt-in per store and this must stay free unless one opts in.
-func packagingKobo(packageCount int, totalQty int, feeKobo int64) int64 {
-	if feeKobo <= 0 {
-		return 0
-	}
-	// Upper bound is the item count, but never below 1: skipping the clamp when
-	// totalQty == 0 would have let a caller charge N packs for an empty order.
-	maxPacks := totalQty
-	if maxPacks < 1 {
-		maxPacks = 1
-	}
-	packs := packageCount
-	if packs < 1 {
-		packs = 1
-	}
-	if packs > maxPacks {
-		packs = maxPacks
-	}
-	return feeKobo * int64(packs)
-}
-
 // PricingConfig is a restaurant's platform-controlled pricing knobs (basis points).
 type PricingConfig struct {
 	ServiceFeeBp     int `json:"service_fee_bp"`     // platform service fee, 0–10000 (0–100% of subtotal)

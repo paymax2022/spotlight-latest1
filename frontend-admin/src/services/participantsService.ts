@@ -8,7 +8,7 @@
 // a guarded, audited, transactional operation, and going straight to the table
 // would skip the RBAC check, the audit event and the promotion.
 
-import { env } from '@/config/env';
+import { apiV1 } from '@/config/env';
 
 export type RegistrationStatus =
   | 'draft'
@@ -77,7 +77,7 @@ export const PROMOTABLE_STATUSES: RegistrationStatus[] = [
 ];
 
 function base(): string {
-  return env.apiBaseUrl.replace(/\/$/, '');
+  return apiV1();
 }
 
 function authHeaders(): Record<string, string> {

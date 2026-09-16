@@ -55,15 +55,28 @@ func (h *Handler) ClaimCode(c *gin.Context) {
 	}
 	att, err := h.svc.ClaimCode(c.Request.Context(), userID, body.Code)
 	if err != nil {
+		// Every failure carries a machine-readable `reason` alongside the human
+		// message. Status alone is ambiguous: a closed grace window, an existing
+		// non-house referrer and a missing attribution row are three different
+		// situations that all answer 409, and a client mapping on status can only
+		// show one message for all three — telling a user with no attribution at
+		// all that they "already claimed" one.
 		switch {
 		case errors.Is(err, ErrWindowClosed):
-			c.JSON(http.StatusConflict, gin.H{"error": "grace window closed"})
+			c.JSON(http.StatusConflict, gin.H{
+				"error": "grace window closed", "reason": "window_closed"})
 		case errors.Is(err, ErrSelfClaim):
-			c.JSON(http.StatusForbidden, gin.H{"error": "self-referral cannot be claimed"})
+			c.JSON(http.StatusForbidden, gin.H{
+				"error": "self-referral cannot be claimed", "reason": "self_referral"})
 		case errors.Is(err, ErrInvalidCode):
-			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid code"})
-		case errors.Is(err, ErrNotHouse), errors.Is(err, ErrNoAttribution):
-			c.JSON(http.StatusConflict, gin.H{"error": "attribution not claimable"})
+			c.JSON(http.StatusBadRequest, gin.H{
+				"error": "invalid code", "reason": "invalid_code"})
+		case errors.Is(err, ErrNotHouse):
+			c.JSON(http.StatusConflict, gin.H{
+				"error": "attribution already assigned to a referrer", "reason": "already_claimed"})
+		case errors.Is(err, ErrNoAttribution):
+			c.JSON(http.StatusConflict, gin.H{
+				"error": "no attribution to claim", "reason": "no_attribution"})
 		default:
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		}

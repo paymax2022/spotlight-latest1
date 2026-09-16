@@ -2,6 +2,7 @@ import React, { useEffect } from 'react';
 import { View, Text, ScrollView, StyleSheet, Pressable, Linking } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import {
   Siren,
   PhoneCall,
@@ -63,7 +64,7 @@ export default function SymptomEscalationScreen() {
     return (
       <SafeAreaView style={styles.safeEmergency} edges={['top', 'bottom']}>
         <View style={styles.topBar}>
-          <Pressable onPress={() => router.back()} hitSlop={12} accessibilityLabel="Close" style={styles.closeBtn}>
+          <Pressable onPress={() => goBack('/health/pharmacy/symptom')} hitSlop={12} accessibilityLabel="Close" style={styles.closeBtn}>
             <X size={22} color={Colors.onPrimary} strokeWidth={2.5} />
           </Pressable>
         </View>

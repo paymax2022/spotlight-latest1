@@ -4,7 +4,7 @@ package restaurant
 // LIVE-DB integration test for grouped menu-item modifiers (Phase 3): the owner
 // CRUD (CreateModifierGroup / AddModifier), the loader (loadItemModifierGroups),
 // and the pure resolver driven off DB-loaded groups. Skipped unless
-// TEST_DATABASE_URL/DATABASE_URL is set. Requires the restaurant + menu_modifiers
+// TEST_DATABASE_URL is set. Requires the restaurant + menu_modifiers
 // migrations. No escrow/wallet is exercised — this covers the catalog + pricing
 // resolution, not the money move.
 // ---------------------------------------------------------------------------
@@ -17,16 +17,15 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"spotlight/backend/internal/testsupport"
 )
 
 func modifiersLivePool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
 	dsn := os.Getenv("TEST_DATABASE_URL")
 	if dsn == "" {
-		dsn = os.Getenv("DATABASE_URL")
-	}
-	if dsn == "" {
-		t.Skip("no TEST_DATABASE_URL/DATABASE_URL set — skipping live-DB modifier test")
+		t.Skip("no TEST_DATABASE_URL set — skipping live-DB modifier test")
 	}
 	pool, err := pgxpool.New(context.Background(), dsn)
 	if err != nil {
@@ -40,7 +39,7 @@ func modifiersLivePool(t *testing.T) *pgxpool.Pool {
 
 func TestLiveDB_MenuModifiers(t *testing.T) {
 	pool := modifiersLivePool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	svc := NewService(pool, nil)
 
@@ -49,6 +48,7 @@ func TestLiveDB_MenuModifiers(t *testing.T) {
 	if _, err := pool.Exec(ctx, `INSERT INTO auth.users (id, email) VALUES ($1,$2) ON CONFLICT DO NOTHING`, owner, owner+"@seed.test"); err != nil {
 		t.Fatalf("seed user: %v", err)
 	}
+	testsupport.CleanupUser(t, pool, owner)
 	restID := uuid.New().String()
 	if _, err := pool.Exec(ctx, `INSERT INTO restaurants (id, owner_id, name, address, is_open) VALUES ($1,$2,'Mod Kitchen','1 St',TRUE)`, restID, owner); err != nil {
 		t.Fatalf("seed restaurant: %v", err)
@@ -77,6 +77,7 @@ func TestLiveDB_MenuModifiers(t *testing.T) {
 	if _, err := pool.Exec(ctx, `INSERT INTO auth.users (id, email) VALUES ($1,$2) ON CONFLICT DO NOTHING`, stranger, stranger+"@seed.test"); err != nil {
 		t.Fatalf("seed stranger: %v", err)
 	}
+	testsupport.CleanupUser(t, pool, stranger)
 	if _, err := svc.AddModifier(ctx, restID, stranger, size.ID, AddModifierRequest{Name: "Hacked", PriceDeltaKobo: 0}); err == nil {
 		t.Fatal("stranger must not add a modifier to another owner's group")
 	}

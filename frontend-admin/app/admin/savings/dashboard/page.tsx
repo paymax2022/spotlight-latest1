@@ -5,6 +5,8 @@ import { getSavingsDashboard, formatNaira } from '@/services/savingsAdminService
 import type { SavingsDashboard } from '@/types/savingsAdmin';
 import { SavingsTabs, Kpi, DisclosureNote, StateBlock, timeAgo, pct } from '../_ui';
 import { Page, PageHeader, Card, Button, Badge, colors, thCell, tdCell } from '@/components/ui/vuexy';
+import { FixtureBanner } from '../../_shared/ui';
+import { USE_MOCK, USE_MOCK_ENV } from '@/services/savingsAdminService';
 
 const SUCCESS_STATUSES = new Set(['active', 'open', 'matured', 'completed', 'settled', 'reconciled', 'resolved', 'paid', 'healthy', 'approved', 'on_track', 'recovered', 'cleared', 'balanced', 'verified', 'contribution']);
 const DANGER_STATUSES = new Set(['rejected', 'failed', 'defaulted', 'blocked', 'high', 'critical', 'breached', 'suspended', 'impersonation', 'abuse']);
@@ -49,6 +51,7 @@ export default function SavingsDashboardPage() {
         subtitle="Float liability, vault / Ajo circle / group-target totals, payout queue and auto-save health across the savings book."
         actions={<Button variant="outline" onClick={load}>Refresh</Button>}
       />
+      <FixtureBanner active={USE_MOCK} envVar={USE_MOCK_ENV} />
       <SavingsTabs active="overview" />
 
       <DisclosureNote>

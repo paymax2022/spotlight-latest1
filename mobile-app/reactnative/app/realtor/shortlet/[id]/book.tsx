@@ -1,4 +1,5 @@
 import React, { useMemo, useState } from 'react';
+import PhoneNumberInput from '@/components/PhoneNumberInput';
 import { View, Text, ScrollView, StyleSheet, Pressable } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
@@ -97,7 +98,7 @@ export default function ShortletBookScreen() {
 
         <Text style={[styles.label, { marginTop: Spacing.lg }]}>Guest details</Text>
         <TextInputField label="Lead guest name" placeholder="Full name" value={name} onChangeText={setName} />
-        <TextInputField label="Phone number" placeholder="080..." keyboardType="phone-pad" value={phone} onChangeText={setPhone} />
+        <PhoneNumberInput label="Phone number" value={phone} onChange={({ e164, nsn }) => (setPhone)(e164 || nsn)} />
 
         <View style={{ marginTop: Spacing.sm }}>
           <PaymentMethodSelector selected={method} onSelect={setMethod} walletBalance={MOCK_WALLET_NAIRA} amount={(quote.data?.total ?? 0) / 100} />

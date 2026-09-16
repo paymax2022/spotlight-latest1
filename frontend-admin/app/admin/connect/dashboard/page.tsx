@@ -5,6 +5,8 @@ import { getConnectDashboard, formatNaira } from '@/services/connectAdminService
 import type { ConnectDashboard } from '@/types/connectAdmin';
 import { ConnectTabs, timeAgo } from '../_ui';
 import { Page, PageHeader, Card, Button, Badge, colors, thCell, tdCell } from '@/components/ui/vuexy';
+import { FixtureBanner } from '../../_shared/ui';
+import { USE_MOCK, USE_MOCK_ENV } from '@/services/connectAdminService';
 
 function kindColor(kind: string): string {
   if (kind === 'resolved' || kind === 'closed') return colors.success;
@@ -29,6 +31,7 @@ export default function ConnectDashboardPage() {
   return (
     <Page>
       <PageHeader title="Connect dashboard" subtitle="Trust & money control-plane — KPIs, queues and critical alerts (role-scoped, §11.1)." actions={<Button variant="outline" sm onClick={load}>Refresh</Button>} />
+      <FixtureBanner active={USE_MOCK} envVar={USE_MOCK_ENV} />
       <ConnectTabs active="overview" />
       {error && <p style={{ color: colors.danger }}>{error}</p>}
 

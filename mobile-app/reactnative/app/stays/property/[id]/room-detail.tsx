@@ -2,6 +2,7 @@ import React, { useMemo } from 'react';
 import { View, Text, StyleSheet, Image, ScrollView, FlatList, useWindowDimensions } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import { Users, BedDouble, Maximize } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
@@ -25,7 +26,7 @@ export default function RoomDetailScreen() {
       {rooms.isLoading ? (
         <StateView kind="loading" message="Loading room…" />
       ) : !room ? (
-        <StateView kind="error" title="Room not found" actionLabel="Back" onAction={() => router.back()} />
+        <StateView kind="error" title="Room not found" actionLabel="Back" onAction={() => goBack('/stays')} />
       ) : (
         <>
           <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>

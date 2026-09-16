@@ -2,6 +2,7 @@ import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
 import { Spacing } from '@/constants/spacing';
@@ -33,7 +34,7 @@ export default function ContributeToCircle() {
       amountKobo,
       title: `Contribute to ${c.name}`,
       charge: () => contribute.mutateAsync(amountKobo),
-      onPaid: () => router.back(),
+      onPaid: () => goBack('/savings'),
     });
   };
 
@@ -77,7 +78,7 @@ const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: Colors.background },
   body: { padding: Spacing.containerMargin, gap: Spacing.md, alignItems: 'center' },
   circle: { ...Typography.titleMd, color: SavingsColors.muted, marginTop: Spacing.md },
-  amount: { ...Typography.displayLg, color: Colors.primary, fontSize: 44, lineHeight: 50 },
+  amount: { ...Typography.displayLg, color: Colors.primary, fontSize: 44, letterSpacing: -0.88, lineHeight: 50 },
   sub: { ...Typography.bodyMd, color: SavingsColors.muted },
   card: { width: '100%', backgroundColor: SavingsColors.surface, borderRadius: Radius.lg, padding: Spacing.cardPadding, gap: Spacing.sm, ...shadow1 },
   row: { flexDirection: 'row', justifyContent: 'space-between' },

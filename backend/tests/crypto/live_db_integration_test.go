@@ -8,7 +8,7 @@ package crypto_test
 // a concrete *pgxpool.Pool for every mutation (Buy, Sell, Swap, AddAddress,
 // Withdraw, ConfirmWithdrawal) and to the real ledger.Service for the
 // balanced double-entry cash legs. None of this can run without a migrated
-// Postgres. This file is SKIPPED whenever DATABASE_URL/TEST_DATABASE_URL is
+// Postgres. This file is SKIPPED whenever TEST_DATABASE_URL is
 // unset (same pattern as backend/tests/association/live_db_integration_test.go),
 // but is fully written end-to-end so it can be un-skipped the moment infra is
 // available — the skip is NOT a stub; every step below drives the real
@@ -20,15 +20,15 @@ package crypto_test
 //     crypto_swap_orders, crypto_addresses, crypto_withdrawals,
 //     crypto_withdrawal_events, crypto_price_snapshots, crypto_audit_log.
 //     Confirm the core tables landed:
-//       psql "$DATABASE_URL" -c "\d crypto_assets"
-//       psql "$DATABASE_URL" -c "\d crypto_withdrawals"
+//       psql "$TEST_DATABASE_URL" -c "\d crypto_assets"
+//       psql "$TEST_DATABASE_URL" -c "\d crypto_withdrawals"
 //  2. Also apply the finance/ledger migrations (standing accounts, journal
 //     tables) since Buy/Sell/Swap/Withdraw post through the real
 //     ledger.Service (escrow + paymax_revenue standing accounts).
-//  3. Set DATABASE_URL (or TEST_DATABASE_URL) to a disposable/test database —
+//  3. Set TEST_DATABASE_URL to a disposable/test database —
 //     never point this at production. `supabase db reset` (local, port 54322)
 //     is the safest target:
-//       export DATABASE_URL="postgres://postgres:postgres@localhost:54322/postgres"
+//       export TEST_DATABASE_URL="postgres://postgres:postgres@localhost:54322/postgres"
 //  4. Run:
 //       cd backend && go test ./tests/crypto/... -run LiveDB -v
 //
@@ -49,16 +49,15 @@ import (
 
 	"spotlight/backend/internal/crypto"
 	"spotlight/backend/internal/finance/ledger"
+
+	"spotlight/backend/internal/testsupport"
 )
 
 func liveDBPool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
 	dsn := os.Getenv("TEST_DATABASE_URL")
 	if dsn == "" {
-		dsn = os.Getenv("DATABASE_URL")
-	}
-	if dsn == "" {
-		t.Skip("no TEST_DATABASE_URL/DATABASE_URL set — skipping live-DB crypto integration test; see bring-up note in live_db_integration_test.go")
+		t.Skip("no TEST_DATABASE_URL set — skipping live-DB crypto integration test; see bring-up note in live_db_integration_test.go")
 	}
 	pool, err := pgxpool.New(context.Background(), dsn)
 	if err != nil {
@@ -131,12 +130,13 @@ func seedUser(t *testing.T, ctx context.Context, pool *pgxpool.Pool) string {
 	if _, err := pool.Exec(ctx, `INSERT INTO auth.users (id, email) VALUES ($1, $2) ON CONFLICT DO NOTHING`, id, id+"@seed.test"); err != nil {
 		t.Fatalf("seed auth.users: %v", err)
 	}
+	testsupport.CleanupUser(t, pool, id)
 	return id
 }
 
 func TestLiveDB_Swap_NetWalletDeltaZero_SpreadToRevenue_Idempotent(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	led := newLiveLedgerService(pool)
 	svc := crypto.NewService(pool, led, nil) // nil -> MockPriceProvider (deterministic)
 	ctx := context.Background()
@@ -236,7 +236,7 @@ func TestLiveDB_Swap_NetWalletDeltaZero_SpreadToRevenue_Idempotent(t *testing.T)
 // and leaves both holdings completely untouched.
 func TestLiveDB_Swap_OversellRejected_HoldingsUnchanged(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	led := newLiveLedgerService(pool)
 	svc := crypto.NewService(pool, led, nil)
 	ctx := context.Background()
@@ -303,7 +303,7 @@ func seedWallet(t *testing.T, ctx context.Context, led *ledger.Service, userID s
 // enforcement) and never parks any units.
 func TestLiveDB_Withdraw_RequiresWhitelistedAddress(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	led := newLiveLedgerService(pool)
 	svc := crypto.NewService(pool, led, nil)
 	ctx := context.Background()
@@ -343,7 +343,7 @@ func TestLiveDB_Withdraw_RequiresWhitelistedAddress(t *testing.T) {
 // same code path Withdraw itself uses internally on a provider reject.
 func TestLiveDB_Withdraw_ParksUnitsOnCreate_ReturnsOnProviderFailure(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	led := newLiveLedgerService(pool)
 	svc := crypto.NewService(pool, led, nil)
 	ctx := context.Background()
@@ -422,7 +422,7 @@ func TestLiveDB_Withdraw_ParksUnitsOnCreate_ReturnsOnProviderFailure(t *testing.
 // units exactly once and returns the same withdrawal id.
 func TestLiveDB_Withdraw_IdempotentCreate_ParksUnitsOnce(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	led := newLiveLedgerService(pool)
 	svc := crypto.NewService(pool, led, nil)
 	ctx := context.Background()
@@ -484,7 +484,7 @@ func TestLiveDB_Withdraw_IdempotentCreate_ParksUnitsOnce(t *testing.T) {
 // nothing.
 func TestLiveDB_Withdraw_OverWithdrawalRejected_HoldingUnchanged(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	led := newLiveLedgerService(pool)
 	svc := crypto.NewService(pool, led, nil)
 	ctx := context.Background()

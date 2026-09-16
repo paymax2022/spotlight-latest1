@@ -5,6 +5,8 @@ import { useEffect, useState } from 'react';
 import { getReferralDashboard, formatNaira } from '@/services/referralAdminService';
 import type { ReferralDashboard } from '@/types/referralAdmin';
 import { Page, PageHeader, Card, Button, Badge, colors, thCell, tdCell } from '@/components/ui/vuexy';
+import { FixtureBanner } from '../../_shared/ui';
+import { USE_MOCK, USE_MOCK_ENV } from '@/services/referralAdminService';
 
 const REFERRAL_TABS = [
   { href: '/admin/referral/dashboard', label: 'Overview', key: 'dashboard' },
@@ -86,6 +88,7 @@ export default function ReferralDashboardPage() {
         subtitle="K-factor, referral CAC, GMV, fraud rate & reward burn (A-SADM-01). True K-factor EXCLUDES house-captured organic signups (§7A.6)."
         actions={<Button variant="outline" sm onClick={load}>Refresh</Button>}
       />
+      <FixtureBanner active={USE_MOCK} envVar={USE_MOCK_ENV} />
       <ReferralTabs active="dashboard" />
 
       {loading ? (

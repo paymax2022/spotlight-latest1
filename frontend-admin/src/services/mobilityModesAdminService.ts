@@ -1,27 +1,40 @@
 // ── Admin — Paymax Mobility multi-modal service ──────────────────────────────
-// Parcel · Bus · Towing · Movers · Car hire. Mock-backed (Go backend admin
-// endpoints not live yet). Mirrors mobilityAdminService: flip USE_MOCK to false
-// and the fetch branches hit /api/finance/admin/transport/{parcels,couriers,
-// bus,towing,movers,car-hire} per BUILD-CONTRACT-MODES.
+// Parcel · Bus · Towing · Movers · Car hire. Mock by default; flip USE_MOCK to
+// false and the fetch branches hit /api/finance/admin/transport/{parcels,
+// bus,towing,movers,car-hire}. Most of this surface IS live — registered under
+// backend/internal/app/finance_routes.go's FeatureTransportModesEnabled block —
+// the OLD "Go backend admin endpoints not live yet" claim here was stale; a few
+// mutations genuinely have no backend action yet, and each says so on its own
+// throw rather than in this header.
 // All money is integer minor units (kobo). Every mutation is server-audited.
 
-import { env } from '@/config/env';
+import { apiRoot } from '@/config/env';
+import { resolveUseMock } from '@/config/useMock';
 import type {
-  ParcelRow, ParcelStatus, PodStatus, CourierRow,
+  ParcelRow, ParcelStatus, PodStatus,
   BusOperator, BusRoute, BusSchedule, BusManifestRow,
   TowingRow, TowingStatus,
-  MoverRow, MoverDetail, MoverStatus,
+  MoverRow, MoverDetail, MoverBid, MoverStatus,
   CarHireRow, CarHireStatus,
   ModeStatusPatch,
 } from '@/types/mobilityModes';
 
 // Mock by default; flip with NEXT_PUBLIC_MOBILITY_MODES_USE_MOCK=false once the
 // admin control-plane endpoints are live on the Go backend.
-const USE_MOCK = (process.env.NEXT_PUBLIC_MOBILITY_MODES_USE_MOCK ?? 'true').toLowerCase() !== 'false';
+const USE_MOCK = resolveUseMock(process.env.NEXT_PUBLIC_MOBILITY_MODES_USE_MOCK);
 
+// Admin transport lives under its own absolute root (/api/finance/admin/transport,
+// see backend/internal/app/finance_routes.go's `adminTr` group), so the caller
+// must spell the full path out. apiRoot() strips any trailing /api/v1 from the
+// proxy base and nothing else.
+//
+// This used to be `env.apiBaseUrl.replace(/\/api\/v1\/?$/, '/api/finance/admin/transport')`,
+// which stopped matching the moment apiBaseUrl became the same-origin proxy
+// path (<origin>/api/admin-proxy, no /api/v1 suffix) — see insuranceAdminService.ts
+// for the same regression. Every request 404'd against <proxy>/parcels instead
+// of <proxy>/api/finance/admin/transport/parcels.
 function adminBase(): string {
-  // env.apiBaseUrl defaults to .../api/v1 ; admin transport lives under /api/finance/admin/transport
-  return env.apiBaseUrl.replace(/\/api\/v1\/?$/, '/api/finance/admin/transport');
+  return `${apiRoot()}/api/finance/admin/transport`;
 }
 function authHeaders(): Record<string, string> {
   if (typeof window === 'undefined') return {};
@@ -32,9 +45,145 @@ function authHeaders(): Record<string, string> {
 }
 const delay = (ms = 300) => new Promise((r) => setTimeout(r, ms));
 
+// Unlike this file's own header comment ("Go backend admin endpoints not live
+// yet"), most of these routes ARE live — registered under
+// backend/internal/app/finance_routes.go's FeatureTransportModesEnabled block
+// (adminTr.PATCH("/parcels/:id/status", ...) etc.). But every "live" branch
+// below shared the same bug as fxAdminService.ts once had: they call
+// fetch(...) and then unconditionally return { ok: true }, discarding the
+// response and its status code, so a 404 (or a wrong URL, which several of
+// these had — see per-function comments) was reported as success too. Both
+// the fixture-mode fabrication and the live-mode one are fixed here. See
+// docs/audit/ADMIN_SIMULATED_WRITES.md.
+const NOT_IN_FIXTURE_MODE =
+  'is unavailable in fixture mode: this console will not report a write it did not perform. ' +
+  'Set NEXT_PUBLIC_MOBILITY_MODES_USE_MOCK=false to make this change against the live backend.';
+const NO_BACKEND_YET =
+  'has no backend yet (see the comment on the live-mode call below). ' +
+  'This console cannot perform this action until that endpoint is built.';
+async function writeOk(url: string, init: RequestInit): Promise<{ ok: boolean }> {
+  const res = await fetch(url, init);
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body?.error || body?.message || `Request failed (${res.status})`);
+  }
+  return { ok: true };
+}
+
+// The GET branches below had the same untested-assumption problem as the writes:
+// several called a URL with an extra path segment that matches no registered
+// route (404), and every one of them (even the correctly-pathed ones) did
+// `fetch(...).json()` with no res.ok check and no envelope unwrap — the admin
+// handlers reply `{ parcels: [...] }` / `{ jobs: [...] }` / `{ bookings: [...] }`
+// / `{ routes: [...] }` / `{ manifest: [...] }`, never a bare array. Route lists
+// with no admin backend at all (see per-function comments) throw NO_BACKEND_YET
+// instead of silently 404ing.
+async function readList(url: string, key: string): Promise<any[]> {
+  const res = await fetch(url, { headers: authHeaders() });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body?.error || body?.message || `Request failed (${res.status})`);
+  }
+  const j = await res.json();
+  return Array.isArray(j) ? j : (j?.[key] ?? []);
+}
+
+// ─── Row → camelCase mappers (parcels/towing/movers/car-hire) ────────────────
+// admin_modes.go's ListParcels/ListTowingJobs/ListMoverJobs/ListCarHireBookings
+// return snake_case rows (joined with user_profiles/drivers for names and
+// settlements for escrow state — see that file), while the console types here
+// are camelCase. Mirrors mobilityAdminService.ts's mapTrip/mapDriverSummary
+// pattern. Bus endpoints don't get a mapper: their backend rows were never
+// enriched the same way, so readList()'s raw pass-through is all there is.
+// Fields the backend does not track yet (zone — no mode table has a per-job
+// zone column, only a pricing-config default) get the same honest 'default'
+// fallback used in mobilityAdminService.ts rather than a fabricated value.
+type Row = Record<string, any>;
+
+function mapParcelRow(p: Row): ParcelRow {
+  return {
+    id: p.id,
+    senderName: p.sender_name ?? (p.sender_id ? `sender ${String(p.sender_id).slice(0, 8)}` : 'Unknown'),
+    courierName: p.courier_name ?? (p.courier_id ? `courier ${String(p.courier_id).slice(0, 8)}` : null),
+    courierId: p.courier_id ?? null,
+    status: p.status,
+    category: p.category ?? '',
+    size: p.size ?? '',
+    speed: p.speed ?? '',
+    pickupAddress: p.pickup_address ?? '',
+    dropoffAddress: p.dropoff_address ?? '',
+    zone: p.zone ?? 'default',
+    fareKobo: p.fare_kobo ?? 0,
+    declaredValueKobo: p.declared_value_kobo ?? 0,
+    podStatus: (p.pod_status ?? 'pending') as PodStatus,
+    podProofUrl: p.pod_proof_url ?? null,
+    escrowStatus: p.escrow_status ?? 'none',
+    createdAt: p.created_at ?? '',
+    updatedAt: p.updated_at ?? p.created_at ?? '',
+  };
+}
+
+function mapTowingRow(t: Row): TowingRow {
+  return {
+    id: t.id,
+    customerName: t.customer_name ?? (t.user_id ? `customer ${String(t.user_id).slice(0, 8)}` : 'Unknown'),
+    operatorName: t.operator_name ?? (t.operator_id ? `operator ${String(t.operator_id).slice(0, 8)}` : null),
+    operatorId: t.operator_id ?? null,
+    status: t.status,
+    serviceType: t.service_type ?? '',
+    pickupAddress: t.pickup_address ?? '',
+    destAddress: t.dest_address ?? '',
+    zone: t.zone ?? 'default',
+    calloutKobo: t.callout_kobo ?? 0,
+    fareKobo: t.fare_kobo ?? 0,
+    escrowStatus: t.escrow_status ?? 'none',
+    createdAt: t.created_at ?? '',
+    updatedAt: t.updated_at ?? t.created_at ?? '',
+  };
+}
+
+function mapMoverRow(m: Row): MoverRow {
+  return {
+    id: m.id,
+    customerName: m.customer_name ?? (m.user_id ? `customer ${String(m.user_id).slice(0, 8)}` : 'Unknown'),
+    status: m.status,
+    pickupAddress: m.pickup_address ?? '',
+    dropoffAddress: m.dropoff_address ?? '',
+    truckSize: m.truck_size ?? '',
+    helpers: m.helpers ?? 0,
+    moveAt: m.move_at ?? '',
+    acceptedAmountKobo: m.accepted_amount_kobo ?? null,
+    escrowStatus: m.escrow_status ?? 'none',
+    bidsCount: m.bids_count ?? 0,
+    createdAt: m.created_at ?? '',
+    updatedAt: m.updated_at ?? m.created_at ?? '',
+  };
+}
+
+function mapCarHireRow(c: Row): CarHireRow {
+  return {
+    id: c.id,
+    customerName: c.customer_name ?? (c.user_id ? `customer ${String(c.user_id).slice(0, 8)}` : 'Unknown'),
+    driverName: c.driver_name ?? (c.driver_id ? `driver ${String(c.driver_id).slice(0, 8)}` : null),
+    driverId: c.driver_id ?? null,
+    status: c.status,
+    hireType: c.hire_type ?? '',
+    vehicleClass: c.vehicle_class ?? '',
+    chauffeur: Boolean(c.chauffeur),
+    startAt: c.start_at ?? '',
+    durationHours: c.duration_hours ?? 0,
+    fareKobo: c.fare_kobo ?? 0,
+    depositKobo: c.deposit_kobo ?? 0,
+    escrowStatus: c.escrow_status ?? 'none',
+    zone: c.zone ?? 'default',
+    createdAt: c.created_at ?? '',
+    updatedAt: c.updated_at ?? c.created_at ?? '',
+  };
+}
+
 // ─── Mock datasets ────────────────────────────────────────────────────────────
 
-let PARCELS: ParcelRow[] = [
+const PARCELS: ParcelRow[] = [
   { id: 'pcl_3001', senderName: 'Ngozi A.', courierName: 'Tunde Adeyemi', courierId: 'drv_1003', status: 'in_transit', category: 'documents', size: 'small', speed: 'express', pickupAddress: 'Victoria Island', dropoffAddress: 'Lekki Phase 1', zone: 'Lagos Island', fareKobo: 1_800_00, declaredValueKobo: 50_000_00, podStatus: 'pending', podProofUrl: null, escrowStatus: 'held', createdAt: '2026-06-20T10:00:00Z', updatedAt: '2026-06-20T10:25:00Z' },
   { id: 'pcl_3002', senderName: 'Bola I.', courierName: 'Ibrahim S.', courierId: 'drv_2012', status: 'dropoff_verified', category: 'electronics', size: 'medium', speed: 'standard', pickupAddress: 'Ikeja GRA', dropoffAddress: 'Maryland', zone: 'Ikeja', fareKobo: 2_400_00, declaredValueKobo: 180_000_00, podStatus: 'submitted', podProofUrl: '#', escrowStatus: 'held', createdAt: '2026-06-20T09:10:00Z', updatedAt: '2026-06-20T10:40:00Z' },
   { id: 'pcl_3003', senderName: 'Sola M.', courierName: null, courierId: null, status: 'created', category: 'parcel', size: 'large', speed: 'standard', pickupAddress: 'Surulere', dropoffAddress: 'Yaba', zone: 'Surulere', fareKobo: 3_100_00, declaredValueKobo: 30_000_00, podStatus: 'pending', podProofUrl: null, escrowStatus: 'held', createdAt: '2026-06-20T11:00:00Z', updatedAt: '2026-06-20T11:00:00Z' },
@@ -42,26 +191,19 @@ let PARCELS: ParcelRow[] = [
   { id: 'pcl_2985', senderName: 'David N.', courierName: 'Femi K.', courierId: 'drv_2010', status: 'disputed', category: 'fragile', size: 'medium', speed: 'standard', pickupAddress: 'Yaba', dropoffAddress: 'Surulere', zone: 'Yaba', fareKobo: 2_000_00, declaredValueKobo: 75_000_00, podStatus: 'rejected', podProofUrl: '#', escrowStatus: 'held', createdAt: '2026-06-19T12:00:00Z', updatedAt: '2026-06-19T14:30:00Z' },
 ];
 
-const COURIERS: CourierRow[] = [
-  { id: 'drv_1003', name: 'Tunde Adeyemi', phone: '+2348034567890', zone: 'Lagos Island', status: 'active', rating: 4.8, activeParcels: 1, completedParcels: 412 },
-  { id: 'drv_2012', name: 'Ibrahim S.', phone: '+2348044567811', zone: 'Lekki', status: 'active', rating: 4.7, activeParcels: 1, completedParcels: 188 },
-  { id: 'drv_2011', name: 'Grace E.', phone: '+2348044567822', zone: 'Ikeja', status: 'active', rating: 4.9, activeParcels: 0, completedParcels: 256 },
-  { id: 'drv_2010', name: 'Femi K.', phone: '+2348044567833', zone: 'Yaba', status: 'suspended', rating: 4.1, activeParcels: 0, completedParcels: 97 },
-];
-
-let BUS_OPERATORS: BusOperator[] = [
+const BUS_OPERATORS: BusOperator[] = [
   { id: 'bop_1', businessName: 'GreenLine Express', ownerUserId: 'usr_9001', baseState: 'Lagos', verificationStatus: 'verified', verified: true, status: 'active', ratingAvg: 4.6, ratingCount: 312, routeCount: 6, createdAt: '2026-05-01T10:00:00Z' },
   { id: 'bop_2', businessName: 'CityHopper Transit', ownerUserId: 'usr_9002', baseState: 'Lagos', verificationStatus: 'pending', verified: false, status: 'active', ratingAvg: 4.2, ratingCount: 88, routeCount: 4, createdAt: '2026-06-10T10:00:00Z' },
   { id: 'bop_3', businessName: 'Naija Coaches', ownerUserId: 'usr_9003', baseState: 'Oyo', verificationStatus: 'suspended', verified: false, status: 'inactive', ratingAvg: 3.4, ratingCount: 41, routeCount: 2, createdAt: '2026-04-18T10:00:00Z' },
 ];
 
-let BUS_ROUTES: BusRoute[] = [
+const BUS_ROUTES: BusRoute[] = [
   { id: 'rte_1', operatorId: 'bop_1', operatorName: 'GreenLine Express', origin: 'Yaba', destination: 'Lekki', fareKobo: 1_200_00, fareApproved: true, active: true },
   { id: 'rte_2', operatorId: 'bop_1', operatorName: 'GreenLine Express', origin: 'Ikeja', destination: 'Victoria Island', fareKobo: 1_800_00, fareApproved: false, active: true },
   { id: 'rte_3', operatorId: 'bop_2', operatorName: 'CityHopper Transit', origin: 'Surulere', destination: 'Ajah', fareKobo: 2_000_00, fareApproved: true, active: true },
 ];
 
-let BUS_SCHEDULES: BusSchedule[] = [
+const BUS_SCHEDULES: BusSchedule[] = [
   { id: 'sch_1', routeId: 'rte_1', routeLabel: 'Yaba → Lekki', operatorName: 'GreenLine Express', departAt: '2026-06-22T07:30:00Z', fareKobo: 1_200_00, fareApproved: true, seatsTotal: 30, seatsBooked: 22, status: 'scheduled' },
   { id: 'sch_2', routeId: 'rte_2', routeLabel: 'Ikeja → Victoria Island', operatorName: 'GreenLine Express', departAt: '2026-06-22T08:00:00Z', fareKobo: 1_800_00, fareApproved: false, seatsTotal: 30, seatsBooked: 5, status: 'scheduled' },
   { id: 'sch_3', routeId: 'rte_3', routeLabel: 'Surulere → Ajah', operatorName: 'CityHopper Transit', departAt: '2026-06-21T18:00:00Z', fareKobo: 2_000_00, fareApproved: true, seatsTotal: 24, seatsBooked: 24, status: 'boarding' },
@@ -79,13 +221,13 @@ const BUS_MANIFEST: Record<string, BusManifestRow[]> = {
   ],
 };
 
-let TOWING: TowingRow[] = [
+const TOWING: TowingRow[] = [
   { id: 'tow_4001', customerName: 'Emeka O.', operatorName: 'RapidTow Lagos', operatorId: 'drv_3001', status: 'in_progress', serviceType: 'flatbed', pickupAddress: 'Third Mainland Bridge', destAddress: 'Mechanic Village Ikeja', zone: 'Ikeja', calloutKobo: 5_000_00, fareKobo: 12_500_00, escrowStatus: 'held', createdAt: '2026-06-20T09:00:00Z', updatedAt: '2026-06-20T10:00:00Z' },
   { id: 'tow_4002', customerName: 'Aisha B.', operatorName: null, operatorId: null, status: 'requested', serviceType: 'wheel_lift', pickupAddress: 'Lekki Toll', destAddress: 'Ajah', zone: 'Lekki', calloutKobo: 5_000_00, fareKobo: 8_000_00, escrowStatus: 'held', createdAt: '2026-06-20T11:00:00Z', updatedAt: '2026-06-20T11:00:00Z' },
   { id: 'tow_3990', customerName: 'Chidi N.', operatorName: 'RapidTow Lagos', operatorId: 'drv_3001', status: 'completed', serviceType: 'flatbed', pickupAddress: 'Victoria Island', destAddress: 'Surulere', zone: 'Lagos Island', calloutKobo: 5_000_00, fareKobo: 15_000_00, escrowStatus: 'released', createdAt: '2026-06-19T14:00:00Z', updatedAt: '2026-06-19T16:00:00Z' },
 ];
 
-let MOVERS: MoverDetail[] = [
+const MOVERS: MoverDetail[] = [
   {
     id: 'mov_5001', customerName: 'Ngozi A.', status: 'bids_received', pickupAddress: 'Lekki Phase 1', dropoffAddress: 'Ikoyi', truckSize: 'large', helpers: 3, moveAt: '2026-06-25T08:00:00Z', acceptedAmountKobo: null, escrowStatus: 'none', bidsCount: 2, createdAt: '2026-06-20T10:00:00Z', updatedAt: '2026-06-20T12:00:00Z',
     inventory: '3-bedroom flat: sofas, fridge, beds, ~40 boxes',
@@ -110,7 +252,7 @@ let MOVERS: MoverDetail[] = [
   },
 ];
 
-let CAR_HIRE: CarHireRow[] = [
+const CAR_HIRE: CarHireRow[] = [
   { id: 'car_6001', customerName: 'Tunde A.', driverName: 'James O.', driverId: 'drv_5001', status: 'active', hireType: 'with_driver', vehicleClass: 'suv', chauffeur: true, startAt: '2026-06-21T08:00:00Z', durationHours: 8, fareKobo: 60_000_00, depositKobo: 20_000_00, escrowStatus: 'held', zone: 'Lagos Island', createdAt: '2026-06-20T10:00:00Z', updatedAt: '2026-06-21T08:00:00Z' },
   { id: 'car_6002', customerName: 'Aisha B.', driverName: null, driverId: null, status: 'quoted', hireType: 'self_drive', vehicleClass: 'sedan', chauffeur: false, startAt: '2026-06-23T09:00:00Z', durationHours: 24, fareKobo: 45_000_00, depositKobo: 50_000_00, escrowStatus: 'none', zone: 'Lekki', createdAt: '2026-06-20T12:00:00Z', updatedAt: '2026-06-20T12:00:00Z' },
   { id: 'car_5990', customerName: 'Chidi N.', driverName: 'James O.', driverId: 'drv_5001', status: 'completed', hireType: 'with_driver', vehicleClass: 'luxury', chauffeur: true, startAt: '2026-06-18T07:00:00Z', durationHours: 10, fareKobo: 120_000_00, depositKobo: 30_000_00, escrowStatus: 'released', zone: 'Ikeja', createdAt: '2026-06-17T10:00:00Z', updatedAt: '2026-06-18T18:00:00Z' },
@@ -125,42 +267,28 @@ export async function getParcels(status?: ParcelStatus | ''): Promise<ParcelRow[
     return list;
   }
   const q = status ? `?status=${status}` : '';
-  const res = await fetch(`${adminBase()}/parcels${q}`, { headers: authHeaders() });
-  return res.json();
+  const rows = await readList(`${adminBase()}/parcels${q}`, 'parcels');
+  return rows.map(mapParcelRow);
 }
 
 export async function setParcelStatus(id: string, patch: ModeStatusPatch): Promise<{ ok: boolean }> {
-  if (USE_MOCK) {
-    await delay(400);
-    PARCELS = PARCELS.map((p) => (p.id === id ? { ...p, status: patch.status as ParcelStatus, updatedAt: new Date().toISOString() } : p));
-    return { ok: true };
-  }
-  await fetch(`${adminBase()}/parcels/${id}/status`, { method: 'PATCH', headers: authHeaders(), body: JSON.stringify(patch) });
-  return { ok: true };
+  if (USE_MOCK) throw new Error(`Setting a parcel status ${NOT_IN_FIXTURE_MODE}`);
+  // backend: PATCH /parcels/:id/status (transportAdmin.AdminParcelStatus).
+  return writeOk(`${adminBase()}/parcels/${id}/status`, { method: 'PATCH', headers: authHeaders(), body: JSON.stringify(patch) });
 }
 
 export async function reviewParcelPod(id: string, decision: PodStatus, reason: string): Promise<{ ok: boolean }> {
-  if (USE_MOCK) {
-    await delay(400);
-    PARCELS = PARCELS.map((p) => (p.id === id ? { ...p, podStatus: decision, updatedAt: new Date().toISOString() } : p));
-    return { ok: true };
-  }
-  await fetch(`${adminBase()}/parcels/${id}/pod-review`, { method: 'PATCH', headers: authHeaders(), body: JSON.stringify({ decision, reason }) });
-  return { ok: true };
-}
-
-export async function getCouriers(): Promise<CourierRow[]> {
-  if (USE_MOCK) { await delay(); return [...COURIERS]; }
-  const res = await fetch(`${adminBase()}/couriers`, { headers: authHeaders() });
-  return res.json();
+  // No backend at all: the parcels admin surface only has AdminParcelStatus
+  // (a general status PATCH) — no distinct proof-of-delivery review action
+  // exists in backend/internal/app/finance_routes.go's parcels admin routes.
+  if (USE_MOCK) throw new Error(`Reviewing a parcel proof of delivery ${NO_BACKEND_YET}`);
+  return writeOk(`${adminBase()}/parcels/${id}/pod-review`, { method: 'PATCH', headers: authHeaders(), body: JSON.stringify({ decision, reason }) });
 }
 
 // ─── Bus ────────────────────────────────────────────────────────────────────--
 export async function getBusOperators(): Promise<BusOperator[]> {
   if (USE_MOCK) { await delay(); return [...BUS_OPERATORS]; }
-  const res = await fetch(`${adminBase()}/bus/operators`, { headers: authHeaders() });
-  const j = await res.json();
-  return Array.isArray(j) ? j : (j.operators ?? []);
+  return readList(`${adminBase()}/bus/operators`, 'operators');
 }
 
 export async function setBusProviderVerification(
@@ -168,55 +296,43 @@ export async function setBusProviderVerification(
   status: 'verified' | 'suspended' | 'pending',
   reason: string,
 ): Promise<{ ok: boolean }> {
-  if (USE_MOCK) {
-    await delay(400);
-    BUS_OPERATORS = BUS_OPERATORS.map((o) =>
-      o.id === id
-        ? { ...o, verificationStatus: status, verified: status === 'verified', status: status === 'suspended' ? 'inactive' : 'active' }
-        : o,
-    );
-    return { ok: true };
-  }
-  await fetch(`${adminBase()}/bus/operators/${id}/verification`, { method: 'PATCH', headers: authHeaders(), body: JSON.stringify({ status, reason }) });
-  return { ok: true };
+  if (USE_MOCK) throw new Error(`Setting bus provider verification ${NOT_IN_FIXTURE_MODE}`);
+  // backend: PATCH /bus/operators/:id/verification (transportAdmin.AdminBusSetProviderVerification).
+  return writeOk(`${adminBase()}/bus/operators/${id}/verification`, { method: 'PATCH', headers: authHeaders(), body: JSON.stringify({ status, reason }) });
 }
 
 export async function getBusRoutes(): Promise<BusRoute[]> {
   if (USE_MOCK) { await delay(); return [...BUS_ROUTES]; }
-  const res = await fetch(`${adminBase()}/bus/routes`, { headers: authHeaders() });
-  return res.json();
+  return readList(`${adminBase()}/bus/routes`, 'routes');
 }
 
 export async function approveBusRouteFare(id: string, reason: string): Promise<{ ok: boolean }> {
-  if (USE_MOCK) {
-    await delay(400);
-    BUS_ROUTES = BUS_ROUTES.map((r) => (r.id === id ? { ...r, fareApproved: true } : r));
-    return { ok: true };
-  }
-  await fetch(`${adminBase()}/bus/routes/${id}/approve-fare`, { method: 'PATCH', headers: authHeaders(), body: JSON.stringify({ reason }) });
-  return { ok: true };
+  // No backend at all: only schedule-level fare approval exists
+  // (POST /bus/schedules/:id/approve-fare, transportAdmin.AdminBusApproveFare)
+  // — there is no route-level equivalent in finance_routes.go's bus admin routes.
+  if (USE_MOCK) throw new Error(`Approving a bus route fare ${NO_BACKEND_YET}`);
+  return writeOk(`${adminBase()}/bus/routes/${id}/approve-fare`, { method: 'PATCH', headers: authHeaders(), body: JSON.stringify({ reason }) });
 }
 
 export async function getBusSchedules(): Promise<BusSchedule[]> {
   if (USE_MOCK) { await delay(); return [...BUS_SCHEDULES]; }
-  const res = await fetch(`${adminBase()}/bus/schedules`, { headers: authHeaders() });
-  return res.json();
+  // No backend at all: finance_routes.go registers no admin GET for schedules —
+  // only POST /bus/schedules (create) and POST /bus/schedules/:id/approve-fare.
+  // GET /bus/schedules exists only on the customer-facing `mob` group (different
+  // base path, requires a route_id) and is not reachable from adminBase().
+  throw new Error(`Listing bus schedules ${NO_BACKEND_YET}`);
 }
 
 export async function approveBusScheduleFare(id: string, reason: string): Promise<{ ok: boolean }> {
-  if (USE_MOCK) {
-    await delay(400);
-    BUS_SCHEDULES = BUS_SCHEDULES.map((s) => (s.id === id ? { ...s, fareApproved: true } : s));
-    return { ok: true };
-  }
-  await fetch(`${adminBase()}/bus/schedules/${id}/approve-fare`, { method: 'PATCH', headers: authHeaders(), body: JSON.stringify({ reason }) });
-  return { ok: true };
+  if (USE_MOCK) throw new Error(`Approving a bus schedule fare ${NOT_IN_FIXTURE_MODE}`);
+  // backend: POST /bus/schedules/:id/approve-fare (transportAdmin.AdminBusApproveFare) —
+  // the OLD method here was PATCH; the registered route is POST.
+  return writeOk(`${adminBase()}/bus/schedules/${id}/approve-fare`, { method: 'POST', headers: authHeaders(), body: JSON.stringify({ reason }) });
 }
 
 export async function getBusManifest(scheduleId: string): Promise<BusManifestRow[]> {
   if (USE_MOCK) { await delay(); return BUS_MANIFEST[scheduleId] ?? []; }
-  const res = await fetch(`${adminBase()}/bus/manifest?schedule_id=${encodeURIComponent(scheduleId)}`, { headers: authHeaders() });
-  return res.json();
+  return readList(`${adminBase()}/bus/manifest?schedule_id=${encodeURIComponent(scheduleId)}`, 'manifest');
 }
 
 // ─── Towing ─────────────────────────────────────────────────────────────────--
@@ -227,22 +343,39 @@ export async function getTowingJobs(status?: TowingStatus | ''): Promise<TowingR
     if (status) list = list.filter((t) => t.status === status);
     return list;
   }
+  // backend: GET /towing (transportAdmin.AdminTowingList) — the OLD /towing/jobs
+  // path here had an extra "jobs" segment that matched no route, same bug as
+  // setTowingStatus's PATCH path had before it was fixed.
   const q = status ? `?status=${status}` : '';
-  const res = await fetch(`${adminBase()}/towing/jobs${q}`, { headers: authHeaders() });
-  return res.json();
+  const rows = await readList(`${adminBase()}/towing${q}`, 'jobs');
+  return rows.map(mapTowingRow);
 }
 
 export async function setTowingStatus(id: string, patch: ModeStatusPatch): Promise<{ ok: boolean }> {
-  if (USE_MOCK) {
-    await delay(400);
-    TOWING = TOWING.map((t) => (t.id === id ? { ...t, status: patch.status as TowingStatus, updatedAt: new Date().toISOString() } : t));
-    return { ok: true };
-  }
-  await fetch(`${adminBase()}/towing/jobs/${id}/status`, { method: 'PATCH', headers: authHeaders(), body: JSON.stringify(patch) });
-  return { ok: true };
+  if (USE_MOCK) throw new Error(`Setting a towing job status ${NOT_IN_FIXTURE_MODE}`);
+  // backend: PATCH /towing/:id/status (transportAdmin.AdminTowingStatus) — the OLD
+  // /towing/jobs/:id/status path here had an extra "jobs" segment that matched no route.
+  return writeOk(`${adminBase()}/towing/${id}/status`, { method: 'PATCH', headers: authHeaders(), body: JSON.stringify(patch) });
 }
 
 // ─── Movers ───────────────────────────────────────────────────────────────────
+// Both the list (AdminMoversList) and the detail (AdminMoverDetail) handlers
+// reply with the same snake_case row shape (see admin_modes.go's
+// ListMoverJobs / MoverJobDetail) — mapMoverRow (defined above, alongside the
+// parcel/towing/car-hire mappers) and mapMoverBid below translate that into
+// the camelCase MoverRow/MoverBid shape this page renders.
+function mapMoverBid(raw: any): MoverBid {
+  return {
+    id: raw.id,
+    moverName: raw.mover_name ?? raw.moverName ?? 'Unknown',
+    moverId: raw.mover_id ?? raw.moverId ?? '',
+    amountKobo: raw.amount_kobo ?? raw.amountKobo ?? 0,
+    crewSize: raw.crew_size ?? raw.crewSize ?? 0,
+    accepted: !!raw.accepted,
+    createdAt: raw.created_at ?? raw.createdAt,
+  };
+}
+
 export async function getMoverJobs(status?: MoverStatus | ''): Promise<MoverRow[]> {
   if (USE_MOCK) {
     await delay();
@@ -250,9 +383,12 @@ export async function getMoverJobs(status?: MoverStatus | ''): Promise<MoverRow[
     if (status) list = list.filter((m) => m.status === status);
     return list;
   }
+  // backend: GET /movers (transportAdmin.AdminMoversList) — the OLD /movers/jobs
+  // path here had an extra "jobs" segment that matched no route, same bug as
+  // setMoverStatus's PATCH path had before it was fixed.
   const q = status ? `?status=${status}` : '';
-  const res = await fetch(`${adminBase()}/movers/jobs${q}`, { headers: authHeaders() });
-  return res.json();
+  const rows = await readList(`${adminBase()}/movers${q}`, 'jobs');
+  return rows.map(mapMoverRow);
 }
 
 export async function getMoverJob(id: string): Promise<MoverDetail> {
@@ -262,18 +398,27 @@ export async function getMoverJob(id: string): Promise<MoverDetail> {
     if (!m) throw new Error('Mover job not found');
     return m;
   }
-  const res = await fetch(`${adminBase()}/movers/jobs/${id}`, { headers: authHeaders() });
-  return res.json();
+  // backend: GET /movers/:id (transportAdmin.AdminMoverDetail), returning the
+  // job row plus its bids in one object (not list-wrapped, unlike readList's
+  // callers) — see admin_modes.go's MoverJobDetail.
+  const res = await fetch(`${adminBase()}/movers/${id}`, { headers: authHeaders() });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body?.error || body?.message || `Request failed (${res.status})`);
+  }
+  const raw = await res.json();
+  return {
+    ...mapMoverRow(raw),
+    inventory: typeof raw.inventory === 'string' ? raw.inventory : (raw.inventory ? JSON.stringify(raw.inventory) : ''),
+    bids: Array.isArray(raw.bids) ? raw.bids.map(mapMoverBid) : [],
+  };
 }
 
 export async function setMoverStatus(id: string, patch: ModeStatusPatch): Promise<{ ok: boolean }> {
-  if (USE_MOCK) {
-    await delay(400);
-    MOVERS = MOVERS.map((m) => (m.id === id ? { ...m, status: patch.status as MoverStatus, updatedAt: new Date().toISOString() } : m));
-    return { ok: true };
-  }
-  await fetch(`${adminBase()}/movers/jobs/${id}/status`, { method: 'PATCH', headers: authHeaders(), body: JSON.stringify(patch) });
-  return { ok: true };
+  if (USE_MOCK) throw new Error(`Setting a mover job status ${NOT_IN_FIXTURE_MODE}`);
+  // backend: PATCH /movers/:id/status (transportAdmin.AdminMoverStatus) — the OLD
+  // /movers/jobs/:id/status path here had an extra "jobs" segment that matched no route.
+  return writeOk(`${adminBase()}/movers/${id}/status`, { method: 'PATCH', headers: authHeaders(), body: JSON.stringify(patch) });
 }
 
 // ─── Car hire ─────────────────────────────────────────────────────────────────
@@ -284,17 +429,18 @@ export async function getCarHireBookings(status?: CarHireStatus | ''): Promise<C
     if (status) list = list.filter((c) => c.status === status);
     return list;
   }
+  // backend: GET /car-hire (transportAdmin.AdminCarHireList) — the OLD
+  // /car-hire/bookings path here had an extra "bookings" segment that matched
+  // no route, same bug as setCarHireStatus's PATCH path had before it was fixed.
   const q = status ? `?status=${status}` : '';
-  const res = await fetch(`${adminBase()}/car-hire/bookings${q}`, { headers: authHeaders() });
-  return res.json();
+  const rows = await readList(`${adminBase()}/car-hire${q}`, 'bookings');
+  return rows.map(mapCarHireRow);
 }
 
 export async function setCarHireStatus(id: string, patch: ModeStatusPatch): Promise<{ ok: boolean }> {
-  if (USE_MOCK) {
-    await delay(400);
-    CAR_HIRE = CAR_HIRE.map((c) => (c.id === id ? { ...c, status: patch.status as CarHireStatus, updatedAt: new Date().toISOString() } : c));
-    return { ok: true };
-  }
-  await fetch(`${adminBase()}/car-hire/bookings/${id}/status`, { method: 'PATCH', headers: authHeaders(), body: JSON.stringify(patch) });
-  return { ok: true };
+  if (USE_MOCK) throw new Error(`Setting a car-hire booking status ${NOT_IN_FIXTURE_MODE}`);
+  // backend: PATCH /car-hire/:id/status (transportAdmin.AdminCarHireStatus) — the OLD
+  // /car-hire/bookings/:id/status path here had an extra "bookings" segment that
+  // matched no route.
+  return writeOk(`${adminBase()}/car-hire/${id}/status`, { method: 'PATCH', headers: authHeaders(), body: JSON.stringify(patch) });
 }

@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { View, Text, ScrollView, StyleSheet, Pressable, TextInput } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import { ArrowLeft, Search, Sparkles, Wallet, BookOpen } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
@@ -12,6 +13,7 @@ import SectionHeader from '@/components/SectionHeader';
 import CreatorStorefrontCard from '@/features/creators/components/creator-StorefrontCard';
 import { useCreators } from '@/features/creators/hooks';
 import { CreatorsColors } from '@/features/creators/constants/creators.constants';
+import { HomeMenuButton } from '@/components/HomeMenu';
 
 export default function CreatorsDiscover() {
   const [query, setQuery] = useState('');
@@ -20,14 +22,14 @@ export default function CreatorsDiscover() {
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
       <View style={styles.header}>
-        <Pressable onPress={() => router.back()} hitSlop={10} style={styles.iconBtn} accessibilityLabel="Go back">
+        <Pressable onPress={() => goBack('/')} hitSlop={10} style={styles.iconBtn} accessibilityLabel="Go back">
           <ArrowLeft size={22} color={Colors.onSurface} strokeWidth={2} />
         </Pressable>
         <View style={styles.headerTitleWrap}>
           <Text style={styles.eyebrow}>Paymax</Text>
           <Text style={styles.headerTitle}>Creators</Text>
         </View>
-        <View style={styles.iconBtn} />
+        <HomeMenuButton />
       </View>
 
       <View style={styles.searchWrap}>

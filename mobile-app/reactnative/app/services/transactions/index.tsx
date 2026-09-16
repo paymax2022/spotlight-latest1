@@ -4,6 +4,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import { ArrowLeft } from 'lucide-react-native';
 import { useQuery } from '@tanstack/react-query';
 import { Colors } from '@/constants/colors';
@@ -14,6 +15,7 @@ import { Typography } from '@/constants/typography';
 import { shadow1 } from '@/constants/shadows';
 import { getTransactions } from '@/api/transactions.api';
 import { Transaction, ServiceType, TransactionStatus } from '@/types/transaction';
+import { HomeMenuButton } from '@/components/HomeMenu';
 
 const SERVICE_FILTERS: Array<{ label: string; value: string }> = [
   { label: 'All', value: '' },
@@ -76,11 +78,11 @@ export default function TransactionsScreen() {
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
       <View style={styles.topBar}>
-        <Pressable onPress={() => router.back()} style={styles.iconBtn}>
+        <Pressable onPress={() => goBack('/services')} style={styles.iconBtn}>
           <ArrowLeft size={22} color={Colors.primary} strokeWidth={2.2} />
         </Pressable>
         <Text style={styles.topTitle}>Transactions</Text>
-        <View style={{ width: 40 }} />
+        <HomeMenuButton />
       </View>
 
       <ScrollView

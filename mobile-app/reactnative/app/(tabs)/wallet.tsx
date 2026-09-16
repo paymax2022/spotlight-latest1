@@ -15,13 +15,13 @@ import { Radius } from '@/constants/radius';
 import { shadow1 } from '@/constants/shadows';
 import { getWallet } from '@/api/wallet.api';
 import { getWalletLedger, getWalletFlowSummary, type WalletLedgerEntry } from '@/api/walletLedger.api';
+// Shared formatter — this screen's own copy used minimumFractionDigits:0, so a
+// total ending in a round ten of kobo lost its last digit (₦13,645.20 read as
+// "₦13,645.2"). Its comment claimed "one place so every wallet number matches";
+// src/utils/money.ts is that place.
+import { formatNaira } from '@/utils/money';
 
 const TABS = ['All', 'Credit', 'Debit'];
-
-// Naira formatting from integer kobo — one place so every wallet number matches.
-function nairaFromKobo(kobo: number): string {
-  return (kobo / 100).toLocaleString('en-NG', { minimumFractionDigits: 0, maximumFractionDigits: 2 });
-}
 
 // A ledger entry → a display row. Icon/colour reflect the money direction; the
 // title prefers the ledger description, falling back to the reference/type.
@@ -102,14 +102,14 @@ export default function WalletScreen() {
               <ArrowDownLeft size={18} color={Colors.teal} strokeWidth={2} />
             </View>
             <Text style={styles.statLabel}>Income</Text>
-            <Text style={[styles.statAmount, { color: Colors.teal }]}>₦{nairaFromKobo(totalInKobo)}</Text>
+            <Text style={[styles.statAmount, { color: Colors.teal }]}>{formatNaira(totalInKobo)}</Text>
           </LinearGradient>
           <LinearGradient colors={['rgba(220,38,38,0.06)', 'rgba(220,38,38,0.02)']} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={[styles.statCard, shadow1]}>
             <View style={[styles.statIcon, { backgroundColor: 'rgba(220,38,38,0.08)' }]}>
               <ArrowUpRight size={18} color={Colors.error} strokeWidth={2} />
             </View>
             <Text style={styles.statLabel}>Expenses</Text>
-            <Text style={[styles.statAmount, { color: Colors.error }]}>₦{nairaFromKobo(totalOutKobo)}</Text>
+            <Text style={[styles.statAmount, { color: Colors.error }]}>{formatNaira(totalOutKobo)}</Text>
           </LinearGradient>
         </View>
 

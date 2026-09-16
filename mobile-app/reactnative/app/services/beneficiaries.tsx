@@ -1,8 +1,9 @@
 import React, { useState } from 'react';
-import { View, Text, ScrollView, StyleSheet, Pressable, Platform, Alert, KeyboardAvoidingView } from 'react-native';
+import { View, Text, ScrollView, StyleSheet, Pressable, Platform, KeyboardAvoidingView } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import * as Icons from 'lucide-react-native';
 import { ArrowLeft, Plus, Trash2 } from 'lucide-react-native';
+import { confirmAsync } from '@/lib/confirm';
 import PrimaryButton from '@/components/PrimaryButton';
 import TextInputField from '@/components/TextInputField';
 import SelectField from '@/components/SelectField';
@@ -20,6 +21,8 @@ import { Spacing } from '@/constants/spacing';
 import { Typography } from '@/constants/typography';
 import { shadow1 } from '@/constants/shadows';
 import { router } from 'expo-router';
+import { goBack } from '@/lib/navigation';
+import { HomeMenuButton } from '@/components/HomeMenu';
 
 function BillerIcon({ name, color }: { name: string; color: string }) {
   const Cmp = (Icons as unknown as Record<string, Icons.LucideIcon>)[name] ?? Icons.Receipt;
@@ -48,27 +51,34 @@ export default function BeneficiariesScreen() {
     setAdding(false);
   };
 
-  const confirmDelete = (biller: SavedBiller) =>
-    Alert.alert('Remove beneficiary', `Remove "${biller.title}" from your saved billers?`, [
-      { text: 'Cancel', style: 'cancel' },
-      { text: 'Remove', style: 'destructive', onPress: () => remove(biller.id) },
-    ]);
+  const confirmDelete = async (biller: SavedBiller) => {
+    const ok = await confirmAsync({
+      title: 'Remove beneficiary',
+      message: `Remove "${biller.title}" from your saved billers?`,
+      confirmLabel: 'Remove',
+      destructive: true,
+    });
+    if (ok) remove(biller.id);
+  };
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
       <View style={styles.topBar}>
-        <Pressable onPress={() => router.back()} style={styles.iconBtn} accessibilityRole="button" accessibilityLabel="Go back">
+        <Pressable onPress={() => goBack('/services')} style={styles.iconBtn} accessibilityRole="button" accessibilityLabel="Go back">
           <ArrowLeft size={22} color={Colors.primary} strokeWidth={2.2} />
         </Pressable>
         <Text style={styles.topTitle}>Beneficiaries</Text>
-        <Pressable
-          onPress={() => setAdding((v) => !v)}
-          style={styles.iconBtn}
-          accessibilityRole="button"
-          accessibilityLabel={adding ? 'Close add form' : 'Add beneficiary'}
-        >
-          <Plus size={20} color={Colors.primary} strokeWidth={2} />
-        </Pressable>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+          <Pressable
+            onPress={() => setAdding((v) => !v)}
+            style={styles.iconBtn}
+            accessibilityRole="button"
+            accessibilityLabel={adding ? 'Close add form' : 'Add beneficiary'}
+          >
+            <Plus size={20} color={Colors.primary} strokeWidth={2} />
+          </Pressable>
+          <HomeMenuButton />
+        </View>
       </View>
 
       <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.flex}>

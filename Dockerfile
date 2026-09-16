@@ -1,5 +1,13 @@
 # Multi-stage build: compile Go backend binaries
-FROM golang:1.25-alpine AS build
+# Base image must satisfy backend/go.mod's `go` directive. The official golang
+# images set GOTOOLCHAIN=local, so an older image CANNOT auto-download a newer
+# toolchain the way a CI runner does — it fails with
+#   go: go.mod requires go >= 1.26.6 (running go 1.25.14; GOTOOLCHAIN=local)
+# This broke main once already: 1b64f24c raised go.mod to 1.26.6 for a security
+# bump while this line still said 1.25, and nothing caught it until
+# integration-verify's docker build, which only runs on push:main. When you bump
+# the go directive, bump this line in the SAME commit.
+FROM golang:1.26-alpine AS build
 WORKDIR /app
 COPY backend/ .
 RUN go mod download \
@@ -16,6 +24,11 @@ COPY --from=build /app/server /app/server
 COPY --from=build /app/marketplace-indexer /app/marketplace-indexer
 COPY --from=build /app/marketplace-cron /app/marketplace-cron
 COPY --from=build /app/transport-scheduler /app/transport-scheduler
+# Run as a non-root user (trivy DS-0002). The binaries are world-readable and
+# the service binds 8080, so no privileged port and nothing to chown — the
+# process simply does not need root to execute a static Go binary.
+RUN addgroup -S app && adduser -S -G app app
+USER app
 EXPOSE 8080
 HEALTHCHECK --interval=15s --timeout=5s --retries=5 --start-period=10s \
   CMD curl -f http://localhost:8080/api/v1/public/health || exit 1

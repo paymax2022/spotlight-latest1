@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { View, Text, Pressable, ScrollView, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import * as Icons from 'lucide-react-native';
 import { X, Check, Lock } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
@@ -42,7 +43,7 @@ export default function RedeemRewards() {
     <SafeAreaView style={styles.safe} edges={['top']}>
       <View style={styles.header}>
         <Text style={styles.title}>Redeem rewards</Text>
-        <Pressable onPress={() => router.back()} hitSlop={8}><X size={24} color={Colors.onSurface} /></Pressable>
+        <Pressable onPress={() => goBack('/learn/academy/rewards')} hitSlop={8}><X size={24} color={Colors.onSurface} /></Pressable>
       </View>
 
       {done ? (
@@ -50,7 +51,7 @@ export default function RedeemRewards() {
           <View style={styles.successIcon}><Check size={32} color={Colors.onPrimary} strokeWidth={3} /></View>
           <Text style={styles.successTitle}>Redeemed!</Text>
           <Text style={styles.successSub}>{item?.name} is on its way. {item?.walletValueKobo ? 'Wallet credited.' : ''} The redemption will reconcile if you’re offline.</Text>
-          <View style={{ width: '100%', marginTop: Spacing.lg }}><PrimaryButton label="Done" onPress={() => router.back()} /></View>
+          <View style={{ width: '100%', marginTop: Spacing.lg }}><PrimaryButton label="Done" onPress={() => goBack('/learn/academy/rewards')} /></View>
         </View>
       ) : locked ? (
         <View style={styles.lockedWrap}>

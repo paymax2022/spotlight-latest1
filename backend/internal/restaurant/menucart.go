@@ -16,6 +16,19 @@ const (
 	// maxDietaryTags / maxTagLen bound the per-item dietary label set (MN-009).
 	maxDietaryTags = 12
 	maxTagLen      = 32
+	// maxLineQuantity and maxOrderSubtotalKobo bound the cart so the derived pricing
+	// arithmetic stays inside int64. They are SANITY bounds, far above any real food
+	// order (1,000 units of one dish; ₦10,000,000 of food), not business policy.
+	//
+	// They matter because the surge/service-fee maths multiplies BEFORE it divides:
+	// applyBp computes `amountKobo * bp` first, and with surge_bp at its 50,000 ceiling
+	// that overflows int64 once the subtotal passes ~1.845e14 kobo. Quantity was
+	// otherwise only bounded below (>= 1), so a client sending quantity 2,000,000 of a
+	// max-priced item reached that on its own — and a wrapped-negative subtotal on the
+	// money path is not a state worth reasoning about. order_items.quantity is a
+	// Postgres INT, but that only errors AFTER the escrow debit has been posted.
+	maxLineQuantity      = 1_000
+	maxOrderSubtotalKobo = 1_000_000_000_000
 )
 
 // validateItemPriceKobo enforces the menu-item price bounds (MN-004): non-negative and

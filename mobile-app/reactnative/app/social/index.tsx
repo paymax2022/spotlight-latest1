@@ -2,6 +2,7 @@ import React from 'react';
 import { View, Text, ScrollView, StyleSheet, Pressable } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import { ArrowLeft, AtSign, Send, HandCoins, Split, Users } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
@@ -14,6 +15,7 @@ import CashtagAvatar from '@/features/social/components/CashtagAvatar';
 import ActivityRow from '@/features/social/components/ActivityRow';
 import { useMyCashtag, useActivity } from '@/features/social/hooks';
 import { SocialColors, formatNaira } from '@/features/social/constants/social.constants';
+import { HomeMenuButton } from '@/components/HomeMenu';
 
 export default function SocialHome() {
   const me = useMyCashtag();
@@ -28,16 +30,19 @@ export default function SocialHome() {
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
       <View style={styles.header}>
-        <Pressable onPress={() => router.back()} hitSlop={10} style={styles.iconBtn} accessibilityLabel="Go back">
+        <Pressable onPress={() => goBack('/')} hitSlop={10} style={styles.iconBtn} accessibilityLabel="Go back">
           <ArrowLeft size={22} color={Colors.onSurface} strokeWidth={2} />
         </Pressable>
         <View style={styles.headerTitleWrap}>
           <Text style={styles.eyebrow}>Paymax</Text>
           <Text style={styles.headerTitle}>Social Pay</Text>
         </View>
-        <Pressable onPress={() => router.push('/social/cashtag-setup')} hitSlop={10} style={styles.iconBtn} accessibilityLabel="Cashtag settings">
-          <AtSign size={20} color={Colors.onSurface} strokeWidth={2} />
-        </Pressable>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+          <Pressable onPress={() => router.push('/social/cashtag-setup')} hitSlop={10} style={styles.iconBtn} accessibilityLabel="Cashtag settings">
+            <AtSign size={20} color={Colors.onSurface} strokeWidth={2} />
+          </Pressable>
+          <HomeMenuButton />
+        </View>
       </View>
 
       {loading ? (

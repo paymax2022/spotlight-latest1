@@ -2,6 +2,7 @@ package referrals
 
 import (
 	"crypto/subtle"
+	"errors"
 	"net/http"
 	"strconv"
 	"time"
@@ -330,6 +331,41 @@ func (h *RewardHandler) AdminAdjustCase(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"status": "ok"})
+}
+
+// AdminSetCode handles PUT /v1/admin/referrals/:referrerId/code.
+//
+// Lets an admin replace a referrer's generated code with a memorable one. The
+// 409 branch is the feature's whole safety story: codes are the key attribution
+// resolves on, so handing one person a code that already belongs to another
+// would silently redirect the original owner's rewards.
+func (h *RewardHandler) AdminSetCode(c *gin.Context) {
+	referrerID := c.Param("referrerId")
+	if referrerID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "referrerId required"})
+		return
+	}
+	var req struct {
+		Code string `json:"code"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid body"})
+		return
+	}
+	link, err := h.svc.SetLinkCode(c.Request.Context(), referrerID, req.Code)
+	switch {
+	case errors.Is(err, ErrCodeTaken):
+		// 409, not 400: the request is well formed, the code is simply spoken
+		// for. The admin UI needs to tell those apart to say anything useful.
+		c.JSON(http.StatusConflict, gin.H{"error": "that referral code is already in use"})
+		return
+	case err != nil:
+		// Validation messages name the offending character on purpose — "invalid
+		// code" would leave an admin guessing which of five characters is wrong.
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"code": link.Code, "referrer_id": link.ReferrerID})
 }
 
 // AdminMilestonesLog handles GET /v1/admin/referrals/milestones-log (A6).

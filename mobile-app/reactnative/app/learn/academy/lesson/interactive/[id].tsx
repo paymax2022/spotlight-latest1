@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { View, Text, Pressable, ScrollView, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import { Sparkles, RotateCcw, CheckCircle2, Hand } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
@@ -109,7 +110,7 @@ export default function InteractiveLesson() {
         {!checked ? (
           <PrimaryButton label="Check answers" onPress={check} disabled={!allAssigned} />
         ) : allCorrect ? (
-          <PrimaryButton label="Done" onPress={() => router.back()} />
+          <PrimaryButton label="Done" onPress={() => goBack('/learn/academy')} />
         ) : (
           <PrimaryButton label="Try again" variant="secondary" onPress={reset} />
         )}

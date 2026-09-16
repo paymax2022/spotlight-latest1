@@ -82,6 +82,8 @@ func withdrawalErrStatus(err error) int {
 		return http.StatusPaymentRequired // 402 — not enough wallet balance
 	case errors.Is(err, ErrWithdrawNotReady):
 		return http.StatusConflict
+	case errors.Is(err, ErrTierGateUnwired):
+		return http.StatusServiceUnavailable // misconfigured deployment, not a bad request
 	default:
 		return http.StatusInternalServerError
 	}
@@ -164,4 +166,3 @@ func (h *Handler) AdminReverseWithdrawal(c *gin.Context) {
 	}
 	c.JSON(http.StatusOK, gin.H{"data": w})
 }
-

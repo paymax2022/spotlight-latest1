@@ -1,0 +1,29 @@
+{
+  "rules": [
+    {
+      "allowed": {
+        "origins": [
+          "http://localhost:8081",
+          "http://localhost:8083",
+          "http://localhost:8084",
+          "http://localhost:3000",
+          "http://localhost:3001",
+          "http://192.168.1.162:8083",
+          "http://192.168.1.162:8084"
+        ],
+        "methods": [
+          "PUT",
+          "GET",
+          "HEAD"
+        ],
+        "headers": [
+          "content-type"
+        ]
+      },
+      "exposeHeaders": [
+        "ETag"
+      ],
+      "maxAgeSeconds": 3600
+    }
+  ]
+}

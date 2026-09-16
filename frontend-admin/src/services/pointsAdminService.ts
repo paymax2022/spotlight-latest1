@@ -2,19 +2,30 @@
 // Mock by default. Flip with NEXT_PUBLIC_POINTS_ADMIN_USE_MOCK=false to hit the live
 // Go backend. NOTE: the points admin surface is THIN — points are administered via
 // the loyalty admin group. The only relevant real admin route is
-// GET /api/loyalty/admin/loyalty/memberships/:userId (RBAC loyalty.read), which
+// GET /api/loyalty/admin/memberships/:userId (RBAC loyalty.read), which
 // returns a member's loyalty membership incl. points balance + tier. The member
 // reads points at /api/finance/points/{balance,catalog}. The points LEDGER is
 // append-only — points accrue only as a side effect of live-module actions, never
 // via a self-award endpoint (NL-4). Ledger listing here is mock-only.
 
-import { env } from '@/config/env';
+import { apiRoot } from '@/config/env';
+import { resolveUseMock } from '@/config/useMock';
 
-const USE_MOCK = (process.env.NEXT_PUBLIC_POINTS_ADMIN_USE_MOCK ?? 'true').toLowerCase() !== 'false';
+export const USE_MOCK = resolveUseMock(process.env.NEXT_PUBLIC_POINTS_ADMIN_USE_MOCK);
+/** Named so the fixture banner can cite the exact switch. */
+export const USE_MOCK_ENV = 'NEXT_PUBLIC_POINTS_ADMIN_USE_MOCK';
 
-// Points admin oversight lives under the loyalty admin group at /api/loyalty/admin/*.
+// Points admin oversight lives under the loyalty admin group at /api/loyalty/admin/*
+// (verified against backend/internal/app/top5_p2_routes.go RegisterLoyalty, same
+// group loyaltyAdminService.ts uses).
+//
+// This used to be `env.apiBaseUrl.replace(/\/api\/v1\/?$/, '/api/loyalty/admin')`,
+// which was correct only while apiBaseUrl ended in /api/v1. It no longer does —
+// it is the same-origin proxy path (<origin>/api/admin-proxy) — so the regex
+// stopped matching, the replace was a no-op, and the one live call
+// (lookupMembership) went to the bare proxy root and 404'd.
 function adminBase(): string {
-  return env.apiBaseUrl.replace(/\/api\/v1\/?$/, '/api/loyalty/admin');
+  return `${apiRoot()}/api/loyalty/admin`;
 }
 function authHeaders(): Record<string, string> {
   if (typeof window === 'undefined') return {};
@@ -98,7 +109,7 @@ export async function listPointsLedger(opts?: { kind?: string; q?: string }): Pr
   return rows;
 }
 
-// ── Balances — real endpoint: GET /api/loyalty/admin/loyalty/memberships/:userId ─
+// ── Balances — real endpoint: GET /api/loyalty/admin/memberships/:userId ─────
 const MEMBERSHIPS: Record<string, PointsMembership> = {
   usr_2210: { user_id: 'usr_2210', tier: 'Gold', points_balance: 8_400, lifetime_points: 42_100, joined_at: iso(8_760) },
   usr_1980: { user_id: 'usr_1980', tier: 'Silver', points_balance: 1_200, lifetime_points: 12_800, joined_at: iso(4_380) },
@@ -110,5 +121,5 @@ export async function lookupMembership(userId: string): Promise<PointsMembership
     if (m) return { ...m };
     return { user_id: userId, tier: 'Bronze', points_balance: 0, lifetime_points: 0, joined_at: iso(720) };
   }
-  return getJson<PointsMembership>(`/loyalty/memberships/${encodeURIComponent(userId)}`);
+  return getJson<PointsMembership>(`/memberships/${encodeURIComponent(userId)}`);
 }

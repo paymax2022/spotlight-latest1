@@ -76,10 +76,8 @@ migrate-up: # apply all additive supabase migrations to $(DATABASE_URL)
 	  psql "$(DATABASE_URL)" -v ON_ERROR_STOP=1 -q -f "$$f"; \
 	done; echo "migrations applied"
 
-migrate-reset: # drop + recreate public schema, then re-apply (idempotency/clean-apply check)
+migrate-reset: # drop + recreate public schema, then re-apply from zero (fresh-replay check)
 	psql "$(DATABASE_URL)" -v ON_ERROR_STOP=1 -c "DROP SCHEMA IF EXISTS public CASCADE; CREATE SCHEMA public;"
-	$(MAKE) migrate-up
-	@echo "re-applying to verify idempotency (additive migrations are forward-only)"
 	$(MAKE) migrate-up
 	$(MAKE) rls-check
 

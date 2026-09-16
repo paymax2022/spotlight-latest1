@@ -7,8 +7,9 @@
 // NL-10 (KYC/AML), NL-12 (immutable audit). Separation-of-duties enforced on
 // arbitration: the arbitrator must differ from the underlying release approver.
 
-import { env } from '@/config/env';
+import { apiRoot } from '@/config/env';
 import { operationKey } from './idempotency';
+import { resolveUseMock } from '@/config/useMock';
 import type {
   EscrowDashboard,
   DisputeListItem,
@@ -20,10 +21,29 @@ import type {
   EscrowFraudActionResult,
 } from '@/types/escrowAdmin';
 
-const USE_MOCK = (process.env.NEXT_PUBLIC_SOCIAL_USE_MOCK ?? 'true').toLowerCase() !== 'false';
+export const USE_MOCK = resolveUseMock(process.env.NEXT_PUBLIC_SOCIAL_USE_MOCK);
+/** Named so the fixture banner can cite the exact switch. */
+export const USE_MOCK_ENV = 'NEXT_PUBLIC_SOCIAL_USE_MOCK';
 
+// /api/p2p/admin is the real mount point — confirmed against
+// backend/internal/app/finance_routes.go's RegisterP2PMarket(..., adminGroupTop5(r,
+// "/api/p2p/admin"), ...) and internal/p2pmarket/handler.go's Register doc comment.
+// apiRoot() strips any trailing /api/v1 from the proxy base and nothing else.
+//
+// This used to be `env.apiBaseUrl.replace(/\/api\/v1\/?$/, '/api/p2p/admin')`,
+// which stopped matching once apiBaseUrl became the same-origin proxy path
+// (<origin>/api/admin-proxy, no /api/v1 suffix) — the replace() was a no-op.
+//
+// ⚠️ Even with the base fixed, the *sub-paths* this file calls under it
+// (/escrow/dashboard, /disputes, /disputes/:id, /disputes/:id/arbitrate,
+// /escrow/fraud*) are NOT registered anywhere in the Go backend today. The only
+// real route under /api/p2p/admin is
+// POST /p2p/orders/:orderId/arbitrate (see p2pmarketAdminService.ts's
+// `arbitrate()`, which hits that exact endpoint). So fixing this base makes live
+// mode fail with real, honest 404s instead of a proxy-root 404 — it does not
+// make this console actually live. See docs/audit/ADMIN_SIMULATED_WRITES.md.
 function adminBase(): string {
-  return env.apiBaseUrl.replace(/\/api\/v1\/?$/, '/api/p2p/admin');
+  return `${apiRoot()}/api/p2p/admin`;
 }
 function authHeaders(): Record<string, string> {
   if (typeof window === 'undefined') return {};
@@ -62,7 +82,11 @@ export function formatNaira(kobo: number): string {
 const iso = (hoursAgo: number) => new Date(Date.now() - hoursAgo * 3_600_000).toISOString();
 const isoAhead = (hours: number) => new Date(Date.now() + hours * 3_600_000).toISOString();
 const dateStr = (daysAgo: number) => new Date(Date.now() - daysAgo * 86_400_000).toISOString().slice(0, 10);
-const aud = () => `aud_${Math.random().toString(36).slice(2, 10)}`;
+// Fixture audit id. Deliberately NOT shaped like a real one: the fixture path
+// writes no audit record, and returning `aud_7f3k9x2p` made the response look
+// like proof that one exists. If this string ever appears in a support ticket or
+// a screenshot, it should be self-evidently not an audit trail.
+const aud = () => 'fixture-no-audit-record';
 
 // The currently-acting arbitrator (mock). Used to enforce separation-of-duties:
 // an arbitrator cannot decide a dispute whose release they previously approved.
@@ -179,14 +203,14 @@ export async function arbitrateDispute(id: string, decision: ArbitrationDecision
       throw new Error('Separation-of-duties violation: you approved the underlying release for this escrow and cannot also arbitrate it. Reassign to a different arbitrator.');
     }
     if (decision === 'request_evidence') {
-      return { id, status: 'awaiting_evidence', escrow_state: 'disputed', audit_id: aud(), message: `Dispute ${id}: evidence requested from both parties. Escrow remains HELD/DISPUTED — Paymax never funds the gap (NL-6). Recorded to immutable audit (NL-12).` };
+      return { id, status: 'awaiting_evidence', escrow_state: 'disputed', audit_id: aud(), message: `Fixture — nothing was saved. Dispute ${id}: evidence requested from both parties.` };
     }
     if (decision === 'assign') {
-      return { id, status: 'in_review', escrow_state: 'disputed', audit_id: aud(), message: `Dispute ${id}: assigned to arbitrator ${CURRENT_ARBITRATOR}. Recorded to immutable audit (NL-12).` };
+      return { id, status: 'in_review', escrow_state: 'disputed', audit_id: aud(), message: `Fixture — nothing was saved. Dispute ${id}: assigned to arbitrator ${CURRENT_ARBITRATOR}.` };
     }
     const status = decision === 'release' ? 'resolved_release' : 'resolved_refund';
     const escrow_state = decision === 'release' ? 'released' : 'refunded';
-    return { id, status, escrow_state, audit_id: aud(), message: `Dispute ${id} arbitrated → ${decision.toUpperCase()}. Escrow ${escrow_state.toUpperCase()} (DISPUTED → ${escrow_state.toUpperCase()}). Holds only, never lends (NL-6). Recorded to immutable audit (NL-12).` };
+    return { id, status, escrow_state, audit_id: aud(), message: `Fixture — nothing was saved. Dispute ${id} arbitrated → ${decision.toUpperCase()}. Escrow ${escrow_state.toUpperCase()} (DISPUTED → ${escrow_state.toUpperCase()}).` };
   }
   return sendJson<ArbitrationResult>('POST', `/disputes/${id}/arbitrate`, { decision, note });
 }
@@ -219,10 +243,12 @@ export async function listEscrowFraud(opts?: { status?: string; kind?: string; q
   return getJson<EscrowFraudSignal[]>(`/escrow/fraud${qs.toString() ? `?${qs}` : ''}`);
 }
 export async function decideEscrowFraud(id: string, action: EscrowFraudAction, note?: string): Promise<EscrowFraudActionResult> {
-  if (USE_MOCK) {
-    await delay();
-    const status = action === 'investigate' ? 'investigating' : action === 'clear' ? 'cleared' : 'blocked';
-    return { id, status, audit_id: aud(), message: `Escrow fraud signal ${id}: ${action} applied. Recorded to immutable audit (NL-12).` };
-  }
+    // No endpoint exists for this action, so there is nothing this can do but
+    // say so. Returning a success value here told the operator the decision had
+    // been applied when nothing had — see docs/audit/ADMIN_SIMULATED_WRITES.md.
+    // Client-side validation above still runs, so bad input is still caught.
+    throw new Error(
+      'Escrow fraud actions is not available in this environment — no backend endpoint exists yet. Nothing was changed.',
+    );
   return sendJson<EscrowFraudActionResult>('POST', `/escrow/fraud/${id}/action`, { action, note });
 }

@@ -7,10 +7,14 @@ package ledger
 //   (3) State machine — eligible rows move to paid; remaining eligible = 0.
 //   (4) Fail-closed KYC gate — tier below MinWithdrawTier is rejected.
 //
-// SKIPPED whenever DATABASE_URL / TEST_DATABASE_URL is unset (same pattern as the
-// other live-DB tests). Bring-up: point DATABASE_URL at a disposable, migrated
-// Postgres — never production. It creates only rows keyed by fresh UUIDs and does
-// not truncate tables, so it is safe to run repeatedly.
+// SKIPPED whenever TEST_DATABASE_URL is unset, and it does NOT fall back to
+// DATABASE_URL: the root .env points DATABASE_URL at the PRODUCTION Supabase
+// pooler and this test moves money. Bring-up: point TEST_DATABASE_URL at a
+// disposable, migrated Postgres. It creates only rows keyed by fresh UUIDs and
+// does not truncate tables, so it is safe to run repeatedly.
+//
+//	TEST_DATABASE_URL='postgresql://postgres:postgres@127.0.0.1:54322/postgres' \
+//	  go test ./internal/referral/ledger/ -v
 
 import (
 	"context"
@@ -21,16 +25,15 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	financeledger "spotlight/backend/internal/finance/ledger"
+
+	"spotlight/backend/internal/testsupport"
 )
 
 func liveDBPool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
-	dsn := os.Getenv("DATABASE_URL")
+	dsn := os.Getenv("TEST_DATABASE_URL")
 	if dsn == "" {
-		dsn = os.Getenv("TEST_DATABASE_URL")
-	}
-	if dsn == "" {
-		t.Skip("DATABASE_URL/TEST_DATABASE_URL not set — skipping live-DB withdraw test")
+		t.Skip("TEST_DATABASE_URL not set — skipping live-DB withdraw test")
 	}
 	pool, err := pgxpool.New(context.Background(), dsn)
 	if err != nil {
@@ -53,6 +56,7 @@ func seedVerifiedUser(t *testing.T, pool *pgxpool.Pool, tier int, status string)
 	uid := uuid.NewString()
 	email := "wd-" + uid + "@test.local"
 	mustExec(t, pool, `INSERT INTO auth.users (id, email) VALUES ($1,$2)`, uid, email)
+	testsupport.CleanupUser(t, pool, uid)
 	mustExec(t, pool,
 		`INSERT INTO user_profiles (id, email, kyc_tier, kyc_status) VALUES ($1,$2,$3,$4)
 		 ON CONFLICT (id) DO UPDATE SET kyc_tier=EXCLUDED.kyc_tier, kyc_status=EXCLUDED.kyc_status`,
@@ -77,7 +81,7 @@ func newSvc(pool *pgxpool.Pool) *Service {
 func TestWithdrawEligible_Integration(t *testing.T) {
 	ctx := context.Background()
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	svc := newSvc(pool)
 	fin := financeledger.NewService(financeledger.NewRepository(pool), nil)
 
@@ -138,7 +142,7 @@ func TestWithdrawEligible_Integration(t *testing.T) {
 func TestWithdrawEligible_KYCGate_Integration(t *testing.T) {
 	ctx := context.Background()
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	svc := newSvc(pool)
 
 	// Unverified / tier-0 user with an eligible reward must be rejected fail-closed.

@@ -4,7 +4,7 @@
 // build/test (no DB); run with: go test -tags=integration ./internal/maps/...
 // against a migrated Postgres+PostGIS (CI boots Supabase; see maps-ci.yml).
 //
-// Set TEST_DATABASE_URL (or DATABASE_URL) to a DB where the 20260626* maps
+// Set TEST_DATABASE_URL to a DB where the 20260626* maps
 // migrations have been applied. The test cleans up everything it creates.
 package maps
 
@@ -17,16 +17,15 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"spotlight/backend/internal/testsupport"
 )
 
 func itestPool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
 	dsn := os.Getenv("TEST_DATABASE_URL")
 	if dsn == "" {
-		dsn = os.Getenv("DATABASE_URL")
-	}
-	if dsn == "" {
-		t.Skip("no TEST_DATABASE_URL/DATABASE_URL — skipping PostGIS integration test")
+		t.Skip("no TEST_DATABASE_URL — skipping PostGIS integration test")
 	}
 	pool, err := pgxpool.New(context.Background(), dsn)
 	if err != nil {
@@ -41,7 +40,7 @@ func itestPool(t *testing.T) *pgxpool.Pool {
 func TestIntegration_NearbyAndZone(t *testing.T) {
 	ctx := context.Background()
 	pool := itestPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 
 	const etype = "itest_merchant"
 	_, _ = pool.Exec(ctx, `DELETE FROM merchant_locations WHERE entity_type=$1`, etype)
@@ -107,7 +106,7 @@ func TestIntegration_NearbyAndZone(t *testing.T) {
 func TestIntegration_GeocodeCache(t *testing.T) {
 	ctx := context.Background()
 	pool := itestPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 
 	cache := NewCache(pool, time.Hour)
 	key := NormalizeQuery("itest 10 Awolowo Road, Ikoyi")
@@ -141,7 +140,7 @@ func TestIntegration_GeocodeCache(t *testing.T) {
 func TestIntegration_UsageCap(t *testing.T) {
 	ctx := context.Background()
 	pool := itestPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 
 	const prov = "itest_prov"
 	month := currentMonth()
@@ -177,12 +176,13 @@ func TestIntegration_UsageCap(t *testing.T) {
 func TestIntegration_TriggerSync(t *testing.T) {
 	ctx := context.Background()
 	pool := itestPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 
 	uid := uuid.New().String()
 	if _, err := pool.Exec(ctx, `INSERT INTO auth.users (id, email) VALUES ($1,$2) ON CONFLICT (id) DO NOTHING`, uid, uid+"@itest.local"); err != nil {
 		t.Skipf("cannot seed auth.users (%v) — skipping trigger sync test", err)
 	}
+	testsupport.CleanupUser(t, pool, uid)
 	t.Cleanup(func() { _, _ = pool.Exec(ctx, `DELETE FROM auth.users WHERE id=$1`, uid) })
 
 	rid := uuid.New().String()

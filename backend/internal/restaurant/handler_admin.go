@@ -20,30 +20,65 @@ import (
 
 // AdminListRiders → GET /api/restaurant/admin/riders (restaurant.admin.dispatch).
 // Rider roster + live status from the shared transport driver pool.
+// Paged: ?status, ?vehicle, ?q, ?sort=recent|name|rating, ?limit (default 25,
+// max 200), ?offset. `status_counts` spans every status under the OTHER filters
+// so the board's tiles are not scoped to the page on screen.
+//
+// An unknown ?status is a 400, not a silently empty roster.
 func (h *Handler) AdminListRiders(c *gin.Context) {
-	riders, err := h.svc.AdminListRiders(c.Request.Context())
+	if !ValidateRiderStatus(c.Query("status")) {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error":            "unknown rider status filter",
+			"allowed_statuses": riderStatuses,
+		})
+		return
+	}
+	page, err := h.svc.AdminListRidersPage(c.Request.Context(), AdminRiderParams{
+		Status:  c.Query("status"),
+		Vehicle: c.Query("vehicle"),
+		Query:   c.Query("q"),
+		Sort:    c.Query("sort"),
+		Limit:   queryInt(c, "limit"),
+		Offset:  queryInt(c, "offset"),
+	})
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	if riders == nil {
-		riders = []AdminRider{}
-	}
-	c.JSON(http.StatusOK, riders)
+	c.JSON(http.StatusOK, page)
 }
 
 // AdminDispatchQueue → GET /api/restaurant/admin/dispatch/queue
 // (restaurant.admin.dispatch). Orders awaiting or in dispatch.
+// Paged: ?dispatch, ?q, ?restaurant_id, ?stalled=1,
+// ?sort=waiting|newest|oldest, ?limit (default 25, max 200), ?offset.
+// Default order is longest-waiting first — a dispatch board is worked
+// worst-first. `stalled_total` and `dispatch_counts` cover the whole filtered
+// set, and `stalled_after_minutes` tells the client the SERVER's threshold so it
+// does not keep its own copy.
 func (h *Handler) AdminDispatchQueue(c *gin.Context) {
-	queue, err := h.svc.AdminDispatchQueue(c.Request.Context())
+	if !ValidateDispatchStatus(c.Query("dispatch")) {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error":            "unknown dispatch status filter",
+			"allowed_dispatch": dispatchStatuses,
+		})
+		return
+	}
+	stalled := c.Query("stalled")
+	page, err := h.svc.AdminDispatchQueuePage(c.Request.Context(), AdminDispatchParams{
+		Dispatch:     c.Query("dispatch"),
+		Query:        c.Query("q"),
+		RestaurantID: c.Query("restaurant_id"),
+		StalledOnly:  stalled == "1" || stalled == "true",
+		Sort:         c.Query("sort"),
+		Limit:        queryInt(c, "limit"),
+		Offset:       queryInt(c, "offset"),
+	})
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	if queue == nil {
-		queue = []AdminDispatchOrder{}
-	}
-	c.JSON(http.StatusOK, queue)
+	c.JSON(http.StatusOK, page)
 }
 
 // AdminAssignRider → POST /api/restaurant/admin/orders/:id/assign
@@ -59,6 +94,28 @@ func (h *Handler) AdminAssignRider(c *gin.Context) {
 		return
 	}
 	if err := h.svc.AdminAssignRider(c.Request.Context(), c.Param("id"), body.RiderID); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"ok": true})
+}
+
+// AdminRedispatch → POST /api/restaurant/admin/orders/:id/dispatch
+// (restaurant.admin.dispatch). Re-runs rider sourcing for an order still looking
+// for a courier.
+//
+// WHY A SEPARATE HANDLER FROM Redispatch
+// The member handler is OWNER-gated in the handler itself
+// (`if actorID != owner { 403 "only the restaurant may re-dispatch" }`), and an
+// operator is never the owner — so the ops console's Re-dispatch button, which
+// pointed at that route, could only ever answer 403. Re-dispatching is exactly
+// the intervention a dispatch operator exists to make.
+//
+// RBAC is the security boundary here, as it is for the admin store routes: this
+// is mounted behind restaurant.admin.dispatch. It calls the SAME idempotent
+// DispatchOrder the owner path uses — no second sourcing implementation.
+func (h *Handler) AdminRedispatch(c *gin.Context) {
+	if err := h.svc.DispatchOrder(c.Request.Context(), c.Param("id")); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}

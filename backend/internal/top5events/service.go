@@ -42,6 +42,13 @@ type CommissionRecorder interface {
 		sourceModule, sourceRef string, userID *string, idempotencyKey string) error
 }
 
+// RealtimePublisher is the minimal seam ScanTicket needs to push a live
+// check-in event to an organiser's (and their stewards') connected clients.
+// Satisfied by *platform/realtime.Hub; nil is safe and disables the push.
+type RealtimePublisher interface {
+	PublishToUser(ctx context.Context, userID, eventType string, payload any) error
+}
+
 // Service is the Event Ticketing + cashless Event Wallet core. It owns NO bespoke
 // money primitive: ticket checkout uses wallet.Debit; the cashless wallet is a
 // closed-loop sub-balance backed by the shared escrow standing account; vendor
@@ -58,6 +65,7 @@ type Service struct {
 	audit Auditor
 
 	commission CommissionRecorder // optional; nil ⇒ realized-profit recording is a no-op
+	rt         RealtimePublisher  // optional; nil ⇒ ScanTicket's live check-in push is a no-op
 }
 
 func NewService(db *pgxpool.Pool, led *ledger.Service, wal *wallet.Service, sett *settlement.Service, tiersSvc *tiers.Service, cred *credential.Service, tags *cashtag.Service, audit Auditor) *Service {
@@ -67,6 +75,10 @@ func NewService(db *pgxpool.Pool, led *ledger.Service, wal *wallet.Service, sett
 // SetCommissionRecorder injects the central profit-recording seam (app-wiring,
 // post-construction). Nil is accepted and disables recording.
 func (s *Service) SetCommissionRecorder(cr CommissionRecorder) { s.commission = cr }
+
+// SetRealtime injects the live-push seam (app-wiring, post-construction). Nil is
+// accepted and disables ScanTicket's check-in push.
+func (s *Service) SetRealtime(rt RealtimePublisher) { s.rt = rt }
 
 // recordCommissionSafe records realized Spotlight profit for a settled ticket
 // purchase. It is best-effort and MUST NEVER affect the caller's outcome: a nil
@@ -674,15 +686,129 @@ func (s *Service) GiftTicket(ctx context.Context, ownerID, ticketID, recipientHa
 
 // ScanTicket validates a presented gate token (steward action). Single-use is
 // enforced inside the credential core; on accept the ticket flips to USED.
-func (s *Service) ScanTicket(ctx context.Context, tok credential.Token, gate credential.Gate) (*credential.Result, error) {
+// ScanTicket validates a presented gate token and, on acceptance, marks the
+// ticket USED. callerID must be the event's organiser or a steward the
+// organiser has designated for that specific event — resolved BEFORE calling
+// Validate so an unauthorized caller never learns anything about the token's
+// validity, only that they're forbidden. A credential that doesn't resolve to
+// any ticket (bad/forged id) skips the authz check and falls through to
+// Validate, which rejects it on its own terms (ReasonNotFound) — there's no
+// event to scope the check against, and Validate's rejection is exactly the
+// signal a scanner should see either way.
+func (s *Service) ScanTicket(ctx context.Context, callerID string, tok credential.Token, gate credential.Gate) (*credential.Result, error) {
+	var eventID, ticketID, organiserID string
+	resolveErr := s.db.QueryRow(ctx,
+		`SELECT t.id, t.event_id, e.organiser_id FROM event_tickets t
+		 JOIN events e ON e.id = t.event_id WHERE t.credential_id = $1`, tok.CredentialID,
+	).Scan(&ticketID, &eventID, &organiserID)
+	if resolveErr == nil {
+		if err := s.assertStewardOrOrganiser(ctx, eventID, organiserID, callerID); err != nil {
+			return nil, err
+		}
+	}
+
 	res, err := s.cred.Validate(ctx, tok, gate)
 	if err != nil {
 		return nil, err
 	}
 	if res.OK {
-		_, _ = s.db.Exec(ctx, `UPDATE event_tickets SET state='USED' WHERE credential_id=$1 AND state IN ('ISSUED','TRANSFERRED')`, res.CredentialID)
+		_, _ = s.db.Exec(ctx, `UPDATE event_tickets SET state='USED', checked_in_at=now() WHERE credential_id=$1 AND state IN ('ISSUED','TRANSFERRED')`, res.CredentialID)
+		s.publishCheckinSafe(ctx, eventID, organiserID, ticketID, res.CredentialID)
 	}
 	return res, nil
+}
+
+// assertStewardOrOrganiser fails closed: the organiser always passes, anyone
+// else must be a currently-designated steward for THAT event. A steward removed
+// from event_stewards loses access immediately (no cached grant).
+func (s *Service) assertStewardOrOrganiser(ctx context.Context, eventID, organiserID, callerID string) error {
+	if organiserID == callerID {
+		return nil
+	}
+	var exists bool
+	if err := s.db.QueryRow(ctx,
+		`SELECT EXISTS(SELECT 1 FROM event_stewards WHERE event_id=$1 AND user_id=$2)`, eventID, callerID,
+	).Scan(&exists); err != nil {
+		return err
+	}
+	if !exists {
+		return ErrForbidden
+	}
+	return nil
+}
+
+// publishCheckinSafe is a best-effort live push (organiser dashboard SSE, wired
+// in a later stage via SetRealtime) — a nil publisher or a delivery failure must
+// never affect the scan's own accept/reject result.
+func (s *Service) publishCheckinSafe(ctx context.Context, eventID, organiserID, ticketID, credentialID string) {
+	if s.rt == nil {
+		return
+	}
+	payload := map[string]any{
+		"event_id": eventID, "ticket_id": ticketID, "credential_id": credentialID, "scanned_at": time.Now(),
+	}
+	recipients := []string{organiserID}
+	rows, err := s.db.Query(ctx, `SELECT user_id FROM event_stewards WHERE event_id=$1`, eventID)
+	if err == nil {
+		for rows.Next() {
+			var uid string
+			if rows.Scan(&uid) == nil {
+				recipients = append(recipients, uid)
+			}
+		}
+		rows.Close()
+	}
+	for _, u := range recipients {
+		_ = s.rt.PublishToUser(ctx, u, "events.checkin", payload)
+	}
+}
+
+// AddSteward grants userID scanning rights for a specific event. Organiser-only
+// (assertOwner) — a steward cannot grant stewardship to others.
+func (s *Service) AddSteward(ctx context.Context, organiserID, eventID, userID string) error {
+	if err := s.assertOwner(ctx, eventID, organiserID); err != nil {
+		return err
+	}
+	const ins = `INSERT INTO event_stewards (id, event_id, user_id, added_by) VALUES ($1,$2,$3,$4)
+	             ON CONFLICT (event_id, user_id) DO NOTHING`
+	if _, err := s.db.Exec(ctx, ins, uuid.New().String(), eventID, userID, organiserID); err != nil {
+		return fmt.Errorf("events: add steward: %w", err)
+	}
+	s.log(organiserID, "events.steward.add", eventID, map[string]any{"user_id": userID})
+	return nil
+}
+
+// RemoveSteward revokes a steward's scanning rights for an event. Organiser-only.
+func (s *Service) RemoveSteward(ctx context.Context, organiserID, eventID, userID string) error {
+	if err := s.assertOwner(ctx, eventID, organiserID); err != nil {
+		return err
+	}
+	if _, err := s.db.Exec(ctx, `DELETE FROM event_stewards WHERE event_id=$1 AND user_id=$2`, eventID, userID); err != nil {
+		return fmt.Errorf("events: remove steward: %w", err)
+	}
+	s.log(organiserID, "events.steward.remove", eventID, map[string]any{"user_id": userID})
+	return nil
+}
+
+// ListStewards lists an event's current stewards. Organiser-only.
+func (s *Service) ListStewards(ctx context.Context, organiserID, eventID string) ([]Steward, error) {
+	if err := s.assertOwner(ctx, eventID, organiserID); err != nil {
+		return nil, err
+	}
+	rows, err := s.db.Query(ctx, `SELECT event_id, user_id, added_by, created_at FROM event_stewards WHERE event_id=$1 ORDER BY created_at DESC`, eventID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []Steward{}
+	for rows.Next() {
+		var st Steward
+		if err := rows.Scan(&st.EventID, &st.UserID, &st.AddedBy, &st.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, st)
+	}
+	return out, rows.Err()
 }
 
 // MyTickets lists the caller's tickets.
@@ -715,6 +841,29 @@ func (s *Service) getTicket(ctx context.Context, id string) (*Ticket, error) {
 	}
 	t.State = TicketState(state)
 	return &t, nil
+}
+
+// TicketToken returns the caller's own live rotating gate token for a ticket they
+// own — the real, server-issued, HMAC-signed token the credential package already
+// mints on purchase/gift (s.cred.Issue), NOT a client-computed value. The ticket
+// holder's app re-fetches this roughly every RotateTTL so the rendered QR/pass
+// changes on the same schedule the server enforces, closing the loop with
+// ScanTicket's window-staleness check (anti-screenshot).
+func (s *Service) TicketToken(ctx context.Context, callerID, ticketID string) (*credential.Token, error) {
+	t, err := s.getTicket(ctx, ticketID)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			return nil, ErrNotFound
+		}
+		return nil, err
+	}
+	if t.OwnerID != callerID {
+		return nil, ErrForbidden
+	}
+	if t.CredentialID == "" {
+		return nil, fmt.Errorf("events: ticket has no credential")
+	}
+	return s.cred.CurrentToken(ctx, t.CredentialID)
 }
 
 // ---------- Cashless Event Wallet (closed-loop sub-balance, NL-3) ----------
@@ -1097,7 +1246,12 @@ func (s *Service) walletBalanceTx(ctx context.Context, tx pgx.Tx, walletID strin
 }
 
 func (s *Service) loadWallet(ctx context.Context, walletID string) (*EventWallet, error) {
-	const q = `SELECT id, event_id, owner_id, state, COALESCE(credential_id,''), created_at FROM event_wallets WHERE id=$1`
+	// credential_id is a uuid column — COALESCE(credential_id,'') fails type
+	// unification against the '' literal (invalid input syntax for type uuid)
+	// whenever the column is actually NULL, i.e. every event-wallet that was
+	// never issued a wallet-band credential. The ::text cast (already used the
+	// same way for event_tickets/event_vendors elsewhere in this file) avoids it.
+	const q = `SELECT id, event_id, owner_id, state, COALESCE(credential_id::text,''), created_at FROM event_wallets WHERE id=$1`
 	var w EventWallet
 	var state string
 	if err := s.db.QueryRow(ctx, q, walletID).Scan(&w.ID, &w.EventID, &w.OwnerID, &state, &w.CredentialID, &w.CreatedAt); err != nil {

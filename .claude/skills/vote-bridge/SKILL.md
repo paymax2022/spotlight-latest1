@@ -210,7 +210,7 @@ on different logical domains (fintech ledger vs voting engine). Use the outbox +
 
 ## ADRs required before ship
 
-1. `docs/adr/ADR-001-vote-engine-deprecation.md` — document which engine is live in production
+1. `docs/adr/ADR-038-vote-engine-deprecation.md` — document which engine is live in production
    and the plan to stop `contestant_votes` writes.
-2. `docs/adr/ADR-002-vote-bridge-idempotency.md` — document why `INSERT ON CONFLICT` +
+2. `docs/adr/ADR-037-vote-bridge-idempotency.md` — document why `INSERT ON CONFLICT` +
    `SELECT FOR UPDATE` was chosen over distributed locks or optimistic concurrency.

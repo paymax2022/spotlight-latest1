@@ -11,6 +11,7 @@ import WizardHeader from '@/features/crowdfunding/components/WizardHeader';
 import PrimaryButton from '@/components/PrimaryButton';
 import { useCampaignDraft } from '@/features/crowdfunding/store/campaignDraftStore';
 import type { CampaignType } from '@/features/crowdfunding/types/crowdfunding.types';
+import { useKycStepUp } from '@/features/kycverify/useKycStepUp';
 
 const TYPES: { value: CampaignType; label: string; desc: string; icon: React.ComponentType<{ size?: number; color?: string; strokeWidth?: number }> }[] = [
   { value: 'DONATION', label: 'Donation', desc: 'Raise money for a cause, person, or emergency — no reward expected.', icon: HandHeart },
@@ -21,9 +22,20 @@ const TYPES: { value: CampaignType; label: string; desc: string; icon: React.Com
 
 export default function CreateTypeScreen() {
   const { draft, patch, reset } = useCampaignDraft();
+  // Creating a campaign requires a BVN-verified identity (Tier 1) — contributions
+  // credit the creator's wallet directly with no admin-approved withdrawal step,
+  // so this is the one checkpoint standing between "anyone" and real money.
+  // Reuses the existing multi-provider kyc-verify step-up gate (Dojah BVN lookup
+  // auto-elevates the tier server-side; no bespoke crowdfunding KYC).
+  const stepUp = useKycStepUp(1);
 
   // Fresh start each time the wizard is entered from the dashboard.
   React.useEffect(() => { if (!draft.type) reset(); /* eslint-disable-next-line */ }, []);
+
+  async function onContinue() {
+    if (!(await stepUp.ensure())) return;
+    router.push('/crowdfunding/create/category');
+  }
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
@@ -48,7 +60,7 @@ export default function CreateTypeScreen() {
         })}
       </ScrollView>
       <View style={styles.footer}>
-        <PrimaryButton label="Continue" onPress={() => router.push('/crowdfunding/create/category')} disabled={!draft.type} />
+        <PrimaryButton label="Continue" onPress={onContinue} disabled={!draft.type || stepUp.isLoading} />
       </View>
     </SafeAreaView>
   );

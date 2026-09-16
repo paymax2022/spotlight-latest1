@@ -41,12 +41,13 @@ export interface AiAttendee { id: string; name: string; present: boolean }
 export interface AiNote extends AiNoteSummary {
   summary:      string;        // editable executive summary
   minutes:      string;        // full minutes (markdown-ish plain text)
-  decisions:    AiDecision[];
-  actionItems:  AiActionItem[];
-  unresolved:   string[];
-  financialCommitments: AiFinancialCommitment[];
-  attendees:    AiAttendee[];
-  transcriptPreview: string;
+  /** All collections are optional: a PROCESSING note carries none of them. */
+  decisions?:   AiDecision[];
+  actionItems?: AiActionItem[];
+  unresolved?:  string[];
+  financialCommitments?: AiFinancialCommitment[];
+  attendees?:   AiAttendee[];
+  transcriptPreview?: string;
   meetingId:    string | null;
 }
 

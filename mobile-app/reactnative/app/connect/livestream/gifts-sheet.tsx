@@ -2,6 +2,7 @@ import React, { useMemo, useState } from 'react';
 import { View, Text, ScrollView, Pressable, StyleSheet, ActivityIndicator } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import * as Icons from 'lucide-react-native';
 import { Lock, CircleCheck } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
@@ -75,7 +76,7 @@ export default function GiftsSheetScreen() {
           <Text style={styles.successTitle}>{formatKobo(sent.amountKobo)} gift sent</Text>
           <Text style={styles.successBody}>Real money was debited from your wallet and a balanced ledger entry recorded.</Text>
           <View style={{ width: '100%', marginTop: Spacing.lg }}>
-            <PrimaryButton label="Back to stream" onPress={() => router.back()} />
+            <PrimaryButton label="Back to stream" onPress={() => goBack('/connect')} />
           </View>
         </View>
       </SafeAreaView>

@@ -64,6 +64,10 @@ func RegisterHealthPharmacy(member *gin.RouterGroup, admin *gin.RouterGroup, poo
 		&payoutGateAdapter{kyc: kycSvc},
 		nil, // audit sink injected by orchestrator (HL-12) — nil-safe here
 	)
+	svc.SetRxLister(&rxListerAdapter{rx: rxSvc})
+	// DP-002 dispense-match: was left permanently nil (dead check) — the seam
+	// existed but nothing ever called SetRxItems. See rxItemsAdapter above.
+	svc.SetRxItems(&rxItemsAdapter{db: pool})
 
 	// Central Commission & Profit recording at the pharmacy order settlement point
 	// (Complete → escrow release). Best-effort + idempotent + nil-safe: constructed
@@ -85,21 +89,31 @@ func RegisterHealthPharmacy(member *gin.RouterGroup, admin *gin.RouterGroup, poo
 	// --- Member routes (/api/finance/health/pharmacy) — HEALTH-BUILD §6 ---
 	pg := member.Group("/health/pharmacy")
 	pg.GET("/products", h.ListProducts)                         // NAFDAC-gated, Rx flag (HL-5)
+	pg.GET("/products/mine", h.MyProducts)                      // owner shelf incl. off-sale (before :id)
 	pg.GET("/products/:id", h.GetProduct)                       // single product + owning pharmacy
 	pg.POST("/products", h.UpsertProduct)                       // pharmacy owner, HL-5 write-gate
+	pg.GET("/prescriptions", h.ListMyPrescriptions)             // patient's own list
 	pg.POST("/prescriptions/:id/verify", h.VerifyPrescription)  // pharmacist, HL-3
 	pg.GET("/pharmacies", h.DiscoverPharmacies)                 // browse ALL pharmacies — proximity/rating (HL-2)
 	pg.GET("/pharmacies/:id", h.GetPharmacy)                    // pharmacy detail
 	pg.GET("/pharmacies/:id/reviews", h.ListPharmacyReviews)    // public rating feed
 	pg.POST("/pharmacies/:id/profile", h.UpsertPharmacyProfile) // verified owner storefront settings (HL-2)
 	pg.POST("/orders", h.CreateOrder)                           // patient, payment HELD (HL-9)
-	pg.GET("/orders/:id", h.Get)                                // object-level authZ
-	pg.POST("/orders/:id/confirm", h.Confirm)                   // HL-3 verified e-Rx gate
-	pg.POST("/orders/:id/dispense", h.Dispense)                 // pharmacist (HL-1/HL-3)
-	pg.POST("/orders/:id/dispatch", h.Dispatch)                 // transport last-mile rail
-	pg.POST("/orders/:id/complete", h.Complete)                 // release payment (HL-9)
-	pg.POST("/orders/:id/cancel", h.Cancel)                     // pre-dispense → refund (HL-9)
-	pg.POST("/orders/:id/reviews", h.SubmitReview)              // patient, order must be completed
+	// The pharmacist's inbox — orders for the pharmacies the caller OWNS. Declared
+	// BEFORE /orders/:id so Gin routes the literal path rather than binding "orders"
+	// as an :id.
+	pg.GET("/orders", h.ListMine) // owner-scoped fulfilment queue
+	// The patient's own order history — a distinct path from /orders (the owner
+	// inbox above) so the two never collide. Also declared before /orders/:id.
+	pg.GET("/orders/mine", h.ListMyOrders)         // patient-scoped order history
+	pg.GET("/earnings", h.Earnings)                // owner-scoped money view
+	pg.GET("/orders/:id", h.Get)                   // object-level authZ
+	pg.POST("/orders/:id/confirm", h.Confirm)      // HL-3 verified e-Rx gate
+	pg.POST("/orders/:id/dispense", h.Dispense)    // pharmacist (HL-1/HL-3)
+	pg.POST("/orders/:id/dispatch", h.Dispatch)    // transport last-mile rail
+	pg.POST("/orders/:id/complete", h.Complete)    // release payment (HL-9)
+	pg.POST("/orders/:id/cancel", h.Cancel)        // pre-dispense → refund (HL-9)
+	pg.POST("/orders/:id/reviews", h.SubmitReview) // patient, order must be completed
 
 	// --- Admin routes (/api/health/pharmacy/admin, RBAC health.pharmacy.*) ---
 	ag := admin.Group("")
@@ -195,6 +209,57 @@ func (a *rxVerifierAdapter) BeginVerify(ctx context.Context, pharmacistID, rxID 
 	return err
 }
 
+// rxListerAdapter bridges the pharmacy "My Prescriptions" read to healthrx,
+// mapping its concrete Prescription rows onto pharmacy's own narrow
+// PrescriptionSummary read model (pharmacy never imports healthrx's types
+// directly — same seam discipline as rxGateAdapter/rxVerifierAdapter above).
+type rxListerAdapter struct{ rx *healthrx.Service }
+
+func (a *rxListerAdapter) ListForPatient(ctx context.Context, patientID string) ([]healthpharmacy.PrescriptionSummary, error) {
+	rows, err := a.rx.ListForPatient(ctx, patientID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]healthpharmacy.PrescriptionSummary, len(rows))
+	for i, r := range rows {
+		out[i] = healthpharmacy.PrescriptionSummary{
+			ID:                 r.ID,
+			State:              string(r.State),
+			PrescriberID:       r.PrescriberID,
+			PharmacyProviderID: r.PharmacyProviderID,
+			RejectReason:       r.RejectReason,
+			ItemCount:          len(r.Items),
+			CreatedAt:          r.CreatedAt,
+		}
+	}
+	return out, nil
+}
+
+// rxItemsAdapter backs the DP-002 dispense-match safety gate (Service.SetRxItems)
+// — direct parameterised SQL against health_prescription_items, same pattern as
+// rxGateAdapter above, rather than going through healthrx.Service.Get (whose
+// requester-authZ is shaped for a patient/prescriber/pharmacist READING their own
+// Rx, not for this internal, already-authorized dispense-time check).
+type rxItemsAdapter struct{ db *pgxpool.Pool }
+
+func (a *rxItemsAdapter) PrescribedItems(ctx context.Context, rxID string) ([]healthpharmacy.PrescribedItem, error) {
+	const q = `SELECT nafdac_ref, quantity, drug_name FROM health_prescription_items WHERE prescription_id=$1`
+	rows, err := a.db.Query(ctx, q, rxID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []healthpharmacy.PrescribedItem
+	for rows.Next() {
+		var it healthpharmacy.PrescribedItem
+		if err := rows.Scan(&it.NAFDACRef, &it.Quantity, &it.DrugName); err != nil {
+			return nil, err
+		}
+		out = append(out, it)
+	}
+	return out, rows.Err()
+}
+
 // dispatchAdapter creates a medication delivery as a parcel job on the transport
 // last-mile rail (REUSE — no routing rebuild). The pharmacy supplies the route;
 // here the minimal job is booked under the patient as sender. The returned
@@ -285,12 +350,26 @@ func (a *dispatchAdapter) CreateDelivery(ctx context.Context, senderID, referenc
 }
 
 // patientDropoff resolves the patient's delivery coordinates + address for an
-// order. The current pharmacy schema does not persist a per-order delivery address
-// or geo, so this returns ok=false and the caller fails the dispatch closed rather
-// than routing to a 0,0 placeholder. It is the single seam to wire real dropoff
-// data once the order-time delivery address is captured.
-func patientDropoff(_ context.Context, _ *pgxpool.Pool, _ string) (lat, lng float64, address string, ok bool) {
-	return 0, 0, "", false
+// order, captured at CreateOrder time (delivery_address/delivery_lat/delivery_lng
+// on pharmacy_orders — CreateOrder requires all three for a DELIVERY order, so a
+// missing coordinate here means the order predates that requirement). Returns
+// ok=false rather than a 0,0 placeholder so the caller still fails the dispatch
+// closed for any such stale row.
+func patientDropoff(ctx context.Context, db *pgxpool.Pool, orderID string) (lat, lng float64, address string, ok bool) {
+	var dLat, dLng *float64
+	var dAddr *string
+	const q = `SELECT delivery_lat, delivery_lng, delivery_address FROM pharmacy_orders WHERE id=$1`
+	if err := db.QueryRow(ctx, q, orderID).Scan(&dLat, &dLng, &dAddr); err != nil {
+		return 0, 0, "", false
+	}
+	if dLat == nil || dLng == nil {
+		return 0, 0, "", false
+	}
+	addr := ""
+	if dAddr != nil {
+		addr = *dAddr
+	}
+	return *dLat, *dLng, addr, true
 }
 
 // providerGateAdapter enforces HL-2 against health_providers (parameterised).

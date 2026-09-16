@@ -7,7 +7,8 @@
 // All money is integer minor units (kobo). PN-1: raw trust/strength numbers are
 // never emitted — only coarse TrustBand labels.
 
-import { env } from '@/config/env';
+import { apiRoot } from '@/config/env';
+import { resolveUseMock } from '@/config/useMock';
 import type {
   JobPosting,
   BountyPayout,
@@ -21,10 +22,17 @@ import type {
   ReviewResult,
 } from '@/types/connectNetworkAdmin';
 
-const USE_MOCK = (process.env.NEXT_PUBLIC_CONNECT_ADMIN_USE_MOCK ?? 'true').toLowerCase() !== 'false';
+const USE_MOCK = resolveUseMock(process.env.NEXT_PUBLIC_CONNECT_ADMIN_USE_MOCK);
 
+// adminBase() used to do `env.apiBaseUrl.replace(/\/api\/v1\/?$/, '/api/connect/admin')`,
+// which relied on apiBaseUrl ending in /api/v1. It no longer does (same-origin
+// proxy origin instead), so the regex became a silent no-op and every live call
+// 404'd. apiRoot() strips any trailing /api/v1 explicitly, so this keeps working
+// no matter how apiBaseUrl is spelled. Each call site below appends its own
+// /networking/... path onto this same /api/connect/admin base (see
+// connect_network_routes.go: admin routes normalize to /networking/*).
 function adminBase(): string {
-  return env.apiBaseUrl.replace(/\/api\/v1\/?$/, '/api/connect/admin');
+  return `${apiRoot()}/api/connect/admin`;
 }
 function authHeaders(): Record<string, string> {
   if (typeof window === 'undefined') return {};

@@ -1,4 +1,6 @@
 import { api } from '@/api/client';
+import * as envelope from './envelope';
+import { vaultStatus } from './envelope';
 import { USE_MOCK, API_BASE } from './constants/savings.constants';
 import type {
   Vault,
@@ -15,14 +17,16 @@ import type {
 const delay = (ms = 280) => new Promise((r) => setTimeout(r, ms));
 
 // Backend wraps success payloads as { success: true, [key]: value } or { data: T }.
-// This unwrap extracts the actual data by looking for a nested 'data' field (if present)
-// or returning the payload as-is. This matches the fx.api.ts pattern.
+// unwrap() returns that ENVELOPE — not the entity inside it. Mutation callers
+// below rely on that, because they read `balance_kobo` directly off the
+// envelope (`{ success, balance_kobo }`).
+//
+// Entity/list reads must therefore go through the `envelope.*` helpers to pull
+// their payload out by key. Calling unwrap() alone for a list yields the
+// envelope object, `Array.isArray()` is false, and the read silently degrades
+// to `[]` — an empty screen with no error. See ./envelope.ts.
 function unwrap<T>(res: { data: unknown }): T {
-  const body = res?.data;
-  if (body && typeof body === 'object' && !Array.isArray(body) && 'data' in body) {
-    return (body as { data: T }).data;
-  }
-  return body as T;
+  return envelope.body(res) as T;
 }
 
 // Convert snake_case Go response to camelCase TypeScript types.
@@ -34,7 +38,12 @@ function vaultFromBackend(raw: any): Vault {
     id: raw.id,
     name: raw.name,
     emoji: raw.emoji,
-    status: raw.state?.toUpperCase() === 'LOCK' ? 'LOCKED' : raw.state || 'OPEN',
+    // Go has TWO distinct fields: state (OPEN|MATURED|CLOSED) and kind
+    // (FLEX|LOCK). This used to test `state === 'LOCK'` — comparing a state
+    // against a KIND value — so no vault was ever 'LOCKED' and every
+    // lock-dependent branch (notably the early-break penalty) silently took the
+    // unlocked path.
+    status: vaultStatus(raw.state, raw.kind),
     balanceKobo: raw.balance_kobo ?? 0,
     targetKobo: raw.target_kobo ?? null,
     maturesAtISO: raw.matures_at ?? null,
@@ -185,8 +194,11 @@ const MOCK_TARGETS: GroupTarget[] = [
 ];
 
 // ── Reads ────────────────────────────────────────────────────────────────────
-// NOTE: the Go backend has no aggregate /summary endpoint — it's derived
-// client-side from the vaults/circles/targets lists (same shape as mock).
+// GET /summary → { success, summary: { vault_count, vault_balance_kobo,
+// circle_count, target_count, target_balance_kobo, total_saved_kobo } }.
+// Deriving this client-side from the lists cannot work: list rows carry no
+// balances, so every total would be 0. The Go aggregate is ledger-derived
+// (member_reads.go BuildSummary, "never a cached column — NL-8").
 export async function getSummary(): Promise<SavingsSummary> {
   if (USE_MOCK) {
     await delay();
@@ -197,19 +209,15 @@ export async function getSummary(): Promise<SavingsSummary> {
       targetCount: MOCK_TARGETS.length,
     };
   }
-  const [vaults, circles, targets] = await Promise.all([listVaults(), listCircles(), listTargets()]);
-  return {
-    totalSavedKobo: vaults.reduce((s, v) => s + v.balanceKobo, 0),
-    vaultCount: vaults.length,
-    circleCount: circles.length,
-    targetCount: targets.length,
-  };
+  return envelope.summary(await api.get(`${API_BASE}/summary`));
 }
 
 export async function listVaults(): Promise<Vault[]> {
   if (USE_MOCK) { await delay(); return MOCK_VAULTS; }
-  const raw = unwrap<any[]>(await api.get(`${API_BASE}/vaults`));
-  return (Array.isArray(raw) ? raw : []).map(vaultFromBackend);
+  // Vault rows carry balance_kobo, projected from the append-only ledger by
+  // the list query itself (NL-8 — never a stored column). Before PR #102 the
+  // list returned no balance at all and every tile rendered 0.
+  return envelope.list(await api.get(`${API_BASE}/vaults`), 'vaults').map(vaultFromBackend);
 }
 
 export async function getVault(id: string): Promise<Vault> {
@@ -219,16 +227,15 @@ export async function getVault(id: string): Promise<Vault> {
     if (!v) throw new Error('Vault not found');
     return v;
   }
-  // No single-vault GET on the backend — list + find (small per-user vault counts).
-  const vaults = await listVaults();
-  const found = vaults.find((v) => v.id === id);
-  if (!found) throw new Error('Vault not found');
-  return found;
+  // GET /vaults/:id → { success, vault, balance_kobo }. Since PR #102 the list
+  // endpoint projects a balance too, and the two are the same ledger sum — this
+  // route is no longer the only source of one.
+  return vaultFromBackend(envelope.vaultDetail(await api.get(`${API_BASE}/vaults/${id}`)));
 }
 
-// NOTE: the backend has no early-withdraw quote/execute route — only regular
-// deposit/withdraw. This computes the quote client-side (display-only estimate)
-// pending a MISSING backend endpoint: GET /vaults/:id/early-withdraw/quote.
+// Both routes exist: POST /vaults/:id/early-withdraw performs the break, and
+// GET /vaults/:id/early-withdraw/quote prices it first. The quote runs the same
+// server function as the charge, so what is displayed is what is debited.
 export async function getEarlyWithdrawQuote(id: string): Promise<EarlyWithdrawQuote> {
   if (USE_MOCK) {
     await delay();
@@ -238,25 +245,32 @@ export async function getEarlyWithdrawQuote(id: string): Promise<EarlyWithdrawQu
     const penaltyKobo = locked ? Math.round(balanceKobo * 0.05) : 0;
     return { vaultId: id, balanceKobo, penaltyKobo, netKobo: balanceKobo - penaltyKobo, allowed: true };
   }
+  // Ask the SERVER. The rate is server policy now, so any client-side estimate
+  // could differ from what is actually debited; this endpoint runs the very same
+  // function the charge uses, so quote and charge cannot disagree.
   const v = await getVault(id);
-  const locked = v.status === 'LOCKED';
-  const penaltyKobo = locked ? Math.round(v.balanceKobo * 0.05) : 0;
-  return { vaultId: id, balanceKobo: v.balanceKobo, penaltyKobo, netKobo: v.balanceKobo - penaltyKobo, allowed: true };
+  const q = envelope.body(
+    await api.get(`${API_BASE}/vaults/${id}/early-withdraw/quote`, { params: { amount_kobo: v.balanceKobo } }),
+  );
+  return {
+    vaultId: id,
+    balanceKobo: q?.balance_kobo ?? v.balanceKobo,
+    penaltyKobo: q?.penalty_kobo ?? 0,
+    netKobo: q?.net_kobo ?? v.balanceKobo,
+    allowed: true,
+  };
 }
 
 export async function listCircles(): Promise<AjoCircle[]> {
   if (USE_MOCK) { await delay(); return MOCK_CIRCLES; }
-  // Backend has no list-all-circles route (member circles are looked up by id
-  // once created/joined elsewhere) — MISSING backend endpoint: GET /circles.
-  const raw = unwrap<any[]>(await api.get(`${API_BASE}/circles`));
-  return (Array.isArray(raw) ? raw : []).map(circleFromBackend);
+  // GET /circles exists (handler.go:435) and returns { success, circles }.
+  return envelope.list(await api.get(`${API_BASE}/circles`), 'circles').map(circleFromBackend);
 }
 
-// MISSING backend endpoint: GET /circles/discover (forming circles open to join).
+// GET /circles/discover exists (handler.go:436) — forming circles open to join.
 export async function discoverCircles(): Promise<AjoCircle[]> {
   if (USE_MOCK) { await delay(); return MOCK_CIRCLES.filter((c) => c.status === 'FORMING'); }
-  const raw = unwrap<any[]>(await api.get(`${API_BASE}/circles/discover`));
-  return (Array.isArray(raw) ? raw : []).map(circleFromBackend);
+  return envelope.list(await api.get(`${API_BASE}/circles/discover`), 'circles').map(circleFromBackend);
 }
 
 export async function getCircle(id: string): Promise<AjoCircle> {
@@ -266,18 +280,21 @@ export async function getCircle(id: string): Promise<AjoCircle> {
     if (!c) throw new Error('Circle not found');
     return c;
   }
-  const raw = unwrap<any>(await api.get(`${API_BASE}/circles/${id}`));
-  return circleFromBackend(raw);
+  // { success, circle, members } — members live BESIDE the circle on the
+  // envelope, so they must be folded in for circleFromBackend to see them.
+  return circleFromBackend(envelope.circleDetail(await api.get(`${API_BASE}/circles/${id}`)));
 }
 
-// MISSING backend endpoint: GET /targets (list all group targets for the user).
+// GET /targets exists (handler.go:444) and returns { success, targets }.
 export async function listTargets(): Promise<GroupTarget[]> {
   if (USE_MOCK) { await delay(); return MOCK_TARGETS; }
-  const raw = unwrap<any[]>(await api.get(`${API_BASE}/targets`));
-  return (Array.isArray(raw) ? raw : []).map(targetFromBackend);
+  return envelope.list(await api.get(`${API_BASE}/targets`), 'targets').map(targetFromBackend);
 }
 
-// MISSING backend endpoint: GET /targets/:id (detail incl. contributors).
+// GET /targets/:id exists (handler.go:446). Contributor rows are thin, though:
+// GroupTargetMember is { id, target_id, user_id, approved, joined_at } — no
+// names or per-contributor amounts, so those render blank/0 until the Go side
+// widens the row.
 // Only /targets/:id/balance exists today.
 export async function getTarget(id: string): Promise<GroupTarget> {
   if (USE_MOCK) {
@@ -286,8 +303,9 @@ export async function getTarget(id: string): Promise<GroupTarget> {
     if (!t) throw new Error('Target not found');
     return t;
   }
-  const raw = unwrap<any>(await api.get(`${API_BASE}/targets/${id}`));
-  return targetFromBackend(raw);
+  // { success, target, members, balance_kobo } — the Go GroupTarget struct has
+  // no saved_kobo, so the envelope's balance_kobo IS the saved amount.
+  return targetFromBackend(envelope.targetDetail(await api.get(`${API_BASE}/targets/${id}`)));
 }
 
 // ── Mutations (each carries an Idempotency-Key) ──────────────────────────────
@@ -301,11 +319,11 @@ export async function createVault(input: CreateVaultInput): Promise<Vault> {
       streak: 0, interestKobo: 0, autoSave: null,
     };
   }
-  const raw = unwrap<any>(await api.post(
+  const raw = envelope.entity(await api.post(
     `${API_BASE}/vaults`,
     { name: input.name, kind: input.lock, target_kobo: input.targetKobo, matures_at: input.maturesAtISO ?? null, initial_kobo: input.initialKobo },
     { headers: { 'Idempotency-Key': idempotencyKey() } },
-  ));
+  ), 'vault');
   return vaultFromBackend(raw);
 }
 
@@ -374,16 +392,16 @@ export async function createCircle(input: CreateCircleInput): Promise<AjoCircle>
   const intervalSecsByFrequency: Record<string, number> = {
     daily: 86_400, weekly: 7 * 86_400, monthly: 30 * 86_400,
   };
-  const raw = unwrap<any>(await api.post(
+  const raw = envelope.entity(await api.post(
     `${API_BASE}/circles`,
     { name: input.name, contribution_kobo: input.contributionKobo, interval_secs: intervalSecsByFrequency[input.frequency] ?? 30 * 86_400, member_count: input.memberCount },
     { headers: { 'Idempotency-Key': idempotencyKey() } },
-  ));
+  ), 'circle');
   return circleFromBackend(raw);
 }
 
-// MISSING backend endpoint: POST /circles/:id/contribute (cycle contributions
-// are currently only modeled through /circles/:id/make-good for defaults).
+// POST /circles/:id/contribute exists (handler.go:441); /circles/:id/make-good
+// (:442) covers defaults separately.
 export async function contributeToCircle(id: string, amountKobo: number): Promise<ContributionResult> {
   if (USE_MOCK) { await delay(); return { ok: true, newBalanceKobo: amountKobo }; }
   const res = await unwrap<any>(await api.post(`${API_BASE}/circles/${id}/contribute`, { amount_kobo: amountKobo }, { headers: { 'Idempotency-Key': idempotencyKey() } }));
@@ -405,11 +423,11 @@ export async function createGroupTarget(input: CreateGroupTargetInput): Promise<
       contributors: [{ id: 'g1', name: 'You', handle: '@you', avatarColor: '#340075', pledgedKobo: 0, savedKobo: 0 }],
     };
   }
-  const raw = unwrap<any>(await api.post(
+  const raw = envelope.entity(await api.post(
     `${API_BASE}/targets`,
     { name: input.name, target_kobo: input.targetKobo, withdrawal_rule: input.withdrawalRule, target_date: input.deadlineISO },
     { headers: { 'Idempotency-Key': idempotencyKey() } },
-  ));
+  ), 'target');
   return targetFromBackend(raw);
 }
 

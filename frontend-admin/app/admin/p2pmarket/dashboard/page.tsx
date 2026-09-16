@@ -4,6 +4,8 @@ import { useEffect, useState } from 'react';
 import { getP2PMarketDashboard, formatNaira, type P2PMarketDashboard } from '@/services/p2pmarketAdminService';
 import { P2PMarketTabs, Kpi, DisclosureNote, StateBlock, timeAgo } from '../_ui';
 import { Page, PageHeader, Card, Button, Badge, colors, thCell, tdCell } from '@/components/ui/vuexy';
+import { FixtureBanner } from '../../_shared/ui';
+import { USE_MOCK, USE_MOCK_ENV } from '@/services/p2pmarketAdminService';
 
 function statusColor(kind: string): string {
   switch (kind) {
@@ -38,6 +40,7 @@ export default function P2PMarketDashboardPage() {
         subtitle="Escrow-backed peer marketplace — listings, orders in escrow, GMV and dispute arbitration."
         actions={<Button variant="outline" onClick={load}>Refresh</Button>}
       />
+      <FixtureBanner active={USE_MOCK} envVar={USE_MOCK_ENV} />
       <P2PMarketTabs active="overview" />
 
       <DisclosureNote>

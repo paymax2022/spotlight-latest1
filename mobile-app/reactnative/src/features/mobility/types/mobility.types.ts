@@ -136,10 +136,11 @@ export interface Trip {
   status: TripStatus;
   serviceType: ServiceType;
   pricingMode: PricingMode;
-  // Mock trips carry full Place objects; live backend trips return flat
-  // pickupAddress/destAddress strings instead — screens must tolerate both.
-  pickup?: Place;
-  dest?: Place;
+  // Always present: live backend trips return flat pickupAddress/destAddress
+  // strings, and flattenTrip (mobility.api.ts) synthesizes Place objects from
+  // them so screens can rely on pickup/dest unconditionally.
+  pickup: Place;
+  dest: Place;
   pickupAddress?: string;
   destAddress?: string;
   distanceM: number;
@@ -350,6 +351,42 @@ export interface DriverTripSummary {
   destLabel: string;
 }
 
+// ─── Rider ride-preference settings (GET/PUT /mobility/profile) ───────────────
+// Distinct from the lightweight display MobilityProfile above (name/photo/
+// rating on the home payload) — this is the rider's saved preferences: trust
+// level, default payment method, and saved home/work addresses.
+export interface RideSettings {
+  trustLevel: string;
+  defaultPayment: PaymentMethod;
+  homeAddress?: string | null;
+  workAddress?: string | null;
+  rating: number;
+  completedTrips: number;
+  status: string;
+}
+
+export interface UpdateRideSettingsInput {
+  defaultPayment?: PaymentMethod;
+  homeAddress?: string | null;
+  workAddress?: string | null;
+}
+
+// ─── Trip chat ────────────────────────────────────────────────────────────────
+// Pre-arrival/en-route logistics between the rider and the assigned driver
+// ("I'm outside", "which gate", "is this the right address") — distinct from
+// the trip PIN, which is an at-the-door identity check, not free-form chat.
+export type TripChatRole = 'rider' | 'driver';
+
+export interface TripMessage {
+  id: string;
+  tripId: string;
+  senderId: string;
+  senderRole: TripChatRole;
+  body: string;
+  attachmentUrl?: string | null;
+  createdAt: string;
+}
+
 // ─── API error shape ─────────────────────────────────────────────────────────
 export type MobilityErrorCode =
   | 'FARE_BELOW_FLOOR'
@@ -361,7 +398,8 @@ export type MobilityErrorCode =
   | 'INVALID_STATE'
   | 'NOT_PERMITTED'
   | 'RESTRICTED'
-  | 'INVALID_PIN';
+  | 'INVALID_PIN'
+  | 'INSUFFICIENT_DRIVER_BALANCE';
 
 export interface MobilityError extends Error {
   code?: MobilityErrorCode;

@@ -34,6 +34,69 @@ func adminCtx(c *gin.Context) context.Context {
 	return WithAdminOverride(c.Request.Context())
 }
 
+// AdminListRestaurants → GET /api/restaurant/admin/restaurants
+// (restaurant.manage). The operator's register: EVERY restaurant row, open or
+// closed, approved or not — see admin_register.go for why the console cannot use
+// the customer discovery list for this.
+//
+// Params: ?q, ?status=open|closed|all, ?review=<listing_review_status>,
+// ?sort=newest|name|rating|updated, ?limit (default 25, max 200), ?offset.
+// Read-only, so no ownership override is needed.
+func (h *Handler) AdminListRestaurants(c *gin.Context) {
+	page, err := h.svc.AdminListRestaurants(c.Request.Context(), AdminRestaurantParams{
+		Query:  c.Query("q"),
+		Status: c.Query("status"),
+		Review: c.Query("review"),
+		Sort:   c.Query("sort"),
+		Limit:  queryInt(c, "limit"),
+		Offset: queryInt(c, "offset"),
+	})
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, page)
+}
+
+// AdminListOrders → GET /api/restaurant/admin/orders (restaurant.manage).
+//
+// The platform-wide order feed. The console previously read the owner-scoped
+// member route and therefore saw none of the 2,174 orders — see admin_orders.go.
+//
+// Params: ?status, ?dispatch, ?q, ?restaurant_id, ?rider_id, ?unassigned=1,
+// ?sort=newest|oldest|total|updated, ?limit (default 25, max 200), ?offset.
+// Read-only, so no ownership override and no Idempotency-Key.
+//
+// An unknown ?status is a 400 rather than a silently empty page: the console
+// used to filter on five statuses this column cannot hold, and a quiet empty
+// result is indistinguishable from "no orders in that state".
+func (h *Handler) AdminListOrders(c *gin.Context) {
+	if !ValidateStatus(c.Query("status")) {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error":            "unknown status filter",
+			"allowed_statuses": AdminOrderStatuses,
+		})
+		return
+	}
+	unassigned := c.Query("unassigned")
+	page, err := h.svc.AdminListOrders(c.Request.Context(), AdminOrderParams{
+		Status:       c.Query("status"),
+		Dispatch:     c.Query("dispatch"),
+		Query:        c.Query("q"),
+		RestaurantID: c.Query("restaurant_id"),
+		RiderID:      c.Query("rider_id"),
+		Unassigned:   unassigned == "1" || unassigned == "true",
+		Sort:         c.Query("sort"),
+		Limit:        queryInt(c, "limit"),
+		Offset:       queryInt(c, "offset"),
+	})
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, page)
+}
+
 // AdminGetRestaurant → GET /api/restaurant/admin/restaurants/:id
 // (restaurant.manage). Store profile + full menu, for the console detail page.
 // Read-only, so no override is needed — GetRestaurantDetail never checked owner.
@@ -60,6 +123,67 @@ func (h *Handler) AdminUpdateRestaurant(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, r)
+}
+
+// AdminModerationQueue → GET /admin/restaurant/listings/pending
+//
+// Listings awaiting review, oldest first — a moderation queue is worked in the
+// order people have been waiting.
+func (h *Handler) AdminModerationQueue(c *gin.Context) {
+	list, err := h.svc.PendingListings(adminCtx(c))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"listings": list, "count": len(list)})
+}
+
+// AdminDecideListing → POST /admin/restaurant/listings/:id/decision
+//
+// Body {decision: approve|reject|changes, reason}. Rejecting or requesting
+// changes without a reason is refused by the service — the owner needs something
+// to act on.
+func (h *Handler) AdminDecideListing(c *gin.Context) {
+	var body struct {
+		Decision string `json:"decision" binding:"required"`
+		Reason   string `json:"reason"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	var to ListingReviewStatus
+	switch body.Decision {
+	case "approve":
+		to = ListingApproved
+	case "reject":
+		to = ListingRejected
+	case "changes":
+		to = ListingChangesRequested
+	default:
+		c.JSON(http.StatusBadRequest, gin.H{"error": "decision must be approve|reject|changes"})
+		return
+	}
+	if err := h.svc.DecideListing(adminCtx(c), c.Param("id"), c.GetString("user_id"), to, body.Reason); err != nil {
+		c.JSON(http.StatusUnprocessableEntity, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true})
+}
+
+// AdminUnclaimedRestaurants → GET /admin/restaurants/unclaimed
+//
+// Shops with no identifiable merchant: no owner, or an owner with no active
+// merchant profile. Empty today (the linking migration resolved all 1539 legacy
+// owners); it exists so an imported or admin-seeded row cannot sit unmanaged and
+// unnoticed.
+func (h *Handler) AdminUnclaimedRestaurants(c *gin.Context) {
+	list, err := h.svc.UnclaimedRestaurants(adminCtx(c))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"restaurants": list, "count": len(list)})
 }
 
 // AdminSetAvailability → PATCH /api/restaurant/admin/restaurants/:id/availability

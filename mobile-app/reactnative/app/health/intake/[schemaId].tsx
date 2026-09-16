@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { View, Text, ScrollView, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import { Check } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
@@ -69,7 +70,7 @@ export default function IntakeRendererScreen() {
       { schemaId: schema.id, schemaVersion: schema.version, values, subjectId },
       {
         onSuccess: () => {
-          alertAsync({ title: 'Submitted', message: 'Your responses were sent to your provider.', buttonLabel: 'Done' }).then(() => router.back());
+          alertAsync({ title: 'Submitted', message: 'Your responses were sent to your provider.', buttonLabel: 'Done' }).then(() => goBack('/health'));
         },
         onError: () => alertAsync({ title: 'Could not submit', message: 'Please try again.' }),
       },

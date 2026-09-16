@@ -1,7 +1,7 @@
 import React from 'react';
 import { View, Text, ScrollView, Pressable, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { router } from 'expo-router';
+import { router, useLocalSearchParams } from 'expo-router';
 import { Snowflake, ArrowDownToLine, ReceiptText, ChevronRight } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
@@ -11,6 +11,7 @@ import ScreenHeader from '@/components/ScreenHeader';
 import StateView from '@/components/StateView';
 import PrimaryButton from '@/components/PrimaryButton';
 import { useCampaignWallet, useLedger } from '@/features/crowdfunding/hooks/useExtras';
+import { useDefaultCampaignId } from '@/features/crowdfunding/hooks/useCreator';
 import { formatNaira, formatNairaCompact, relativeTime } from '@/features/crowdfunding/utils/crowdfundingFormatters';
 import type { LedgerEntryType } from '@/features/crowdfunding/types/crowdfunding.types';
 
@@ -21,14 +22,27 @@ const TYPE_LABEL: Record<LedgerEntryType, string> = {
 };
 
 export default function CampaignWalletScreen() {
-  const wallet = useCampaignWallet();
-  const ledger = useLedger();
+  // Opened either with a specific campaign (from owner management/performance
+  // screens) or bare (from the crowdfunding/creator home "Wallet" links). The
+  // bare case used to call useCampaignWallet() with no id at all, which sent
+  // `/wallet/undefined` to the API — fall back to the creator's own most
+  // recent campaign instead, same as the withdraw screen falls back to the
+  // loaded wallet's campaign.
+  const { campaign: routeCampaign } = useLocalSearchParams<{ campaign?: string }>();
+  const defaultCampaign = useDefaultCampaignId();
+  const campaignId = routeCampaign ?? defaultCampaign.id;
+  const resolvingCampaign = !routeCampaign && defaultCampaign.isLoading;
+
+  const wallet = useCampaignWallet(campaignId);
+  const ledger = useLedger(campaignId);
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
       <ScreenHeader title="Campaign wallet" />
-      {wallet.isLoading ? (
+      {resolvingCampaign || wallet.isLoading ? (
         <StateView kind="loading" />
+      ) : !campaignId ? (
+        <StateView kind="empty" icon="Wallet" title="No campaigns yet" message="Start a campaign to see its wallet here." />
       ) : wallet.isError || !wallet.data ? (
         <StateView kind="error" title="Couldn't load wallet" actionLabel="Retry" onAction={() => wallet.refetch()} />
       ) : (
@@ -59,11 +73,11 @@ export default function CampaignWalletScreen() {
             <View style={{ flex: 1 }}>
               <PrimaryButton
                 label="Withdraw"
-                onPress={() => router.push('/crowdfunding/wallet/withdraw')}
+                onPress={() => router.push({ pathname: '/crowdfunding/wallet/withdraw', params: { campaign: campaignId } })}
                 disabled={wallet.data.frozen || wallet.data.availableKobo <= 0}
               />
             </View>
-            <Pressable style={styles.ledgerBtn} onPress={() => router.push('/crowdfunding/wallet/ledger')} accessibilityRole="button">
+            <Pressable style={styles.ledgerBtn} onPress={() => router.push({ pathname: '/crowdfunding/wallet/ledger', params: { campaign: campaignId } })} accessibilityRole="button">
               <ReceiptText size={18} color={Colors.secondary} strokeWidth={2} />
               <Text style={styles.ledgerBtnText}>Ledger</Text>
             </Pressable>
@@ -72,7 +86,7 @@ export default function CampaignWalletScreen() {
           {/* Recent ledger preview */}
           <View style={styles.recentHead}>
             <Text style={styles.recentTitle}>Recent activity</Text>
-            <Pressable onPress={() => router.push('/crowdfunding/wallet/ledger')} hitSlop={8}><Text style={styles.seeAll}>See all</Text></Pressable>
+            <Pressable onPress={() => router.push({ pathname: '/crowdfunding/wallet/ledger', params: { campaign: campaignId } })} hitSlop={8}><Text style={styles.seeAll}>See all</Text></Pressable>
           </View>
           <View style={styles.recentCard}>
             {ledger.isLoading ? (

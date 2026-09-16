@@ -10,7 +10,7 @@ package restaurantpayout_test
 //
 // This locks the state transitions the merchant order-detail screen drives
 // (app/food/restaurant/order/[orderId].tsx: Confirm → Start preparing →
-// Mark ready). Skips unless TEST_DATABASE_URL/DATABASE_URL is set.
+// Mark ready). Skips unless TEST_DATABASE_URL is set.
 // ---------------------------------------------------------------------------
 
 import (
@@ -22,7 +22,7 @@ import (
 
 func TestLiveDB_MerchantOrderLifecycle(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	svc := newLiveRestaurantService(pool, newLiveLedgerService(pool))
 

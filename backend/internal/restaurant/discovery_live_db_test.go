@@ -3,7 +3,7 @@ package restaurant
 // ---------------------------------------------------------------------------
 // LIVE-DB integration test for discovery completeness (Phase 13): dish search,
 // dietary filter, and saved-address CRUD (default invariant). Skipped unless
-// TEST_DATABASE_URL/DATABASE_URL is set.
+// TEST_DATABASE_URL is set.
 // ---------------------------------------------------------------------------
 
 import (
@@ -13,16 +13,15 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"spotlight/backend/internal/testsupport"
 )
 
 func discoveryPool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
 	dsn := os.Getenv("TEST_DATABASE_URL")
 	if dsn == "" {
-		dsn = os.Getenv("DATABASE_URL")
-	}
-	if dsn == "" {
-		t.Skip("no TEST_DATABASE_URL/DATABASE_URL set — skipping live-DB discovery test")
+		t.Skip("no TEST_DATABASE_URL set — skipping live-DB discovery test")
 	}
 	pool, err := pgxpool.New(context.Background(), dsn)
 	if err != nil {
@@ -36,7 +35,7 @@ func discoveryPool(t *testing.T) *pgxpool.Pool {
 
 func TestLiveDB_Discovery(t *testing.T) {
 	pool := discoveryPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	svc := NewService(pool, nil)
 
@@ -44,6 +43,7 @@ func TestLiveDB_Discovery(t *testing.T) {
 	customer := uuid.New().String()
 	for _, u := range []string{owner, customer} {
 		_, _ = pool.Exec(ctx, `INSERT INTO auth.users (id,email) VALUES ($1,$2) ON CONFLICT DO NOTHING`, u, u+"@seed.test")
+		testsupport.CleanupUser(t, pool, u)
 	}
 	// A restaurant whose name doesn't match, but which serves a dish that does.
 	uniqueDish := "Zebra" + uuid.New().String()[:8] // unique so the search is deterministic

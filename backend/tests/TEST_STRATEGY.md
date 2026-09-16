@@ -63,8 +63,83 @@ Anti-pattern to avoid: the ice-cream cone (mostly slow e2e). Push logic down.
 
 - Tests create the state they need; no order dependence, no shared mutable
   fixtures, no real PII. Money tests use synthetic kobo amounts.
-- DB integration tests (when added) must run against an ephemeral database and
-  roll back / reset between tests.
+- DB integration tests run against an ephemeral database — see the live-DB gate
+  below.
+
+## Live-DB suites: the `TEST_DATABASE_URL` gate
+
+46 test files across 26 packages talk to a real Postgres, gated on
+`TEST_DATABASE_URL`. Three rules keep them honest:
+
+**1. Gate on `TEST_DATABASE_URL` only — never fall back to `DATABASE_URL`.**
+The root `.env` points `DATABASE_URL` at the PRODUCTION Supabase pooler, and
+these suites INSERT fixtures and move money. A fallback writes to production.
+
+```go
+dsn := os.Getenv("TEST_DATABASE_URL")
+if dsn == "" {
+    t.Skip("TEST_DATABASE_URL not set — skipping live-DB test")
+}
+```
+
+This is now enforced: `scripts/ci/check-live-db-gate.sh` fails the build if any
+`*_test.go` under `backend/` reads `os.Getenv("DATABASE_URL")`, and runs on every
+PR from `ci.yml`. Module-specific test vars (`MARKETPLACE_TEST_DATABASE_URL`,
+`DOCTOR_TEST_DATABASE_URL`) are fine — only bare `DATABASE_URL` is rejected.
+Non-test code (`cmd/` binaries) reads it legitimately and is not scanned.
+
+Until 2026-08-14, 48 of the 49 live-DB test files reached `DATABASE_URL`: 44 as a
+fallback, and 4 under `internal/trading` (including 5 money-path tests) with no
+test-var escape at all. All now gate on `TEST_DATABASE_URL` alone.
+
+The fallback also hid the failure mode this section exists to prevent. Because CI
+set only `DATABASE_URL`, the two suites that correctly declined to fall back —
+`internal/savings` (9 tests) and `internal/handlers` (24 admin-console tests) —
+skipped silently and gated nothing, for months. Nobody noticed until someone set
+`TEST_DATABASE_URL` and watched them fail — the admin-console suite still carried
+mock-era assertions and expected rows only a developer's populated database had,
+and three of the store queries behind it had been 500ing in production the whole
+time. Which brings us to rule 2.
+
+**2. Self-seed. Never depend on ambient rows.**
+A suite that expects rows a developer happened to have is a suite that skips in
+CI and fails the day someone runs it for real. Create fixtures with fresh UUIDs
+per run and assert against *those*:
+
+- Seed `auth.users (id, email, created_at)` for anything user-scoped. `email` is
+  required (an `on_auth_user_created` trigger mirrors into `user_profiles`, whose
+  `email` is NOT NULL) — use an RFC 2606 `.invalid` address. Set `created_at`
+  explicitly: real Supabase declares it with **no default**, and NULL sorts
+  differently from `now()` under `ORDER BY ... DESC`.
+- Reference pattern: `internal/savings/list_balance_live_db_test.go`,
+  `internal/savings/balance_authz_penalty_live_db_test.go`, and
+  `internal/handlers/admin_console_handler_test.go` (global, unscoped reads).
+
+**3. For GLOBAL reads, assert presence — not counts.**
+Endpoints that read every user / payout / audit row have no owner to scope to,
+and `go test ./...` runs packages concurrently against one database. Asserting
+`Len(rows, 2)` is a statement about the whole database and will flake or rot.
+Seed identifiable fixtures, look them up by id, and assert their shape. Where an
+aggregate must be checked, assert a lower bound, not an exact value or a
+before/after delta.
+
+Also: pair any indexed read (`rows[0]`) with `require.Len`, not `assert.Len` —
+`assert` records the failure and continues, so the index panics and takes the
+whole package down instead of failing one test.
+
+**CI wiring.** `integration-verify.yml` sets `TEST_DATABASE_URL` at job level to
+the same ephemeral Postgres service as `DATABASE_URL`, so `make test` runs every
+live-DB suite. Reproduce locally against local Supabase — never the pooler:
+
+```bash
+cd backend && TEST_DATABASE_URL='postgresql://postgres:postgres@127.0.0.1:54322/postgres' \
+  RAILS_MODE=fake go test ./... -race -count=1
+```
+
+Separate gates exist and are NOT covered by the above:
+`MARKETPLACE_TEST_DATABASE_URL` (`tests/marketplace`, still unwired — several
+suites skip unconditionally with a documented reason) and
+`DOCTOR_TEST_DATABASE_URL` (`internal/doctor`).
 
 ## When a bug escapes
 

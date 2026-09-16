@@ -1,4 +1,4 @@
-import { env } from '@/config/env';
+import { apiRoot } from '@/config/env';
 import type {
   OnboardingApplication,
   OnboardingQueueRow,
@@ -9,11 +9,23 @@ import {
   onboardingApplicationFixture,
 } from '@/services/onboardingFixtures';
 
-// Backend admin onboarding routes live under the /admin prefix on the Go API,
-// matching usersService: env.apiBaseUrl ends with /api/v1 and admin routes
-// hang off /api/admin/...
+/**
+ * Onboarding admin routes hang off r.Group("/api/admin/onboarding") in
+ * backend/internal/onboarding/routes.go — the doc comment there notes it
+ * deliberately uses the engine-level /api/admin convention (matching
+ * rbacAdmin + this admin frontend's adminApiBase), NOT /api/v1/admin.
+ * apiRoot() strips any trailing /api/v1 from the same-origin proxy base and
+ * nothing else.
+ *
+ * This used to be env.apiBaseUrl.replace(/\/api\/v1\/?$/, '/api'), which
+ * stopped matching once apiBaseUrl became the proxy path itself
+ * (<origin>/api/admin-proxy, no /api/v1 suffix) — see
+ * insuranceAdminService.ts for the same regression. The replace became a
+ * no-op and every request 404'd against <proxy>/admin/onboarding/... instead
+ * of <proxy>/api/admin/onboarding/....
+ */
 function adminApiBase(): string {
-  return env.apiBaseUrl.replace(/\/api\/v1\/?$/, '/api');
+  return `${apiRoot()}/api`;
 }
 
 function authHeaders(): Record<string, string> {
@@ -23,12 +35,19 @@ function authHeaders(): Record<string, string> {
   return { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
 }
 
-// Toggle to true to render against fixtures while the live API is being wired.
-// When the backend endpoints are deployed, set USE_FIXTURES = false (or remove).
-// Mock by default; flip with NEXT_PUBLIC_ONBOARDING_ADMIN_USE_MOCK=false once the
-// live Go admin endpoints (/api/admin/onboarding/*) are deployed. Matches the
-// fx/mobility/realtor/invest admin-service convention.
-const USE_FIXTURES = (process.env.NEXT_PUBLIC_ONBOARDING_ADMIN_USE_MOCK ?? 'true').toLowerCase() !== 'false';
+// LIVE by default against the Go admin endpoints (/api/admin/onboarding/*).
+// Set NEXT_PUBLIC_ONBOARDING_ADMIN_USE_MOCK=true to render fixtures instead.
+//
+// It used to default the OTHER way, and the failure mode was quiet and severe:
+// in fixture mode postAction SIMULATES a decision — 350ms of latency, then an
+// application echoing APPROVED. The reviewer saw success and nothing happened
+// server-side. No role granted, no merchant profile activated, no workspace
+// route written; the real application sat in SUBMITTED forever.
+//
+// That was survivable while the mobile wizard was also mocked. It stopped being
+// survivable when the wizard went live, because real applications then arrived
+// in the Go engine while reviewers worked a fixture queue.
+const USE_FIXTURES = (process.env.NEXT_PUBLIC_ONBOARDING_ADMIN_USE_MOCK ?? 'false').toLowerCase() === 'true';
 
 function toQuery(filters: OnboardingQueueFilters): string {
   const params = new URLSearchParams();
@@ -77,34 +96,20 @@ export async function getApplication(id: string): Promise<OnboardingApplication>
   return (data.data ?? data.application ?? data) as OnboardingApplication;
 }
 
+// All four actions have real, verified live endpoints (POST /admin/onboarding/
+// applications/:id/{approve,reject,request-info,escalate}), so fixture mode
+// refuses loudly instead of reporting a decision it did not perform. See
+// docs/audit/ADMIN_SIMULATED_WRITES.md.
 async function postAction(
   id: string,
   action: 'approve' | 'reject' | 'request-info' | 'escalate',
   body: Record<string, unknown> = {},
 ): Promise<OnboardingApplication> {
   if (USE_FIXTURES) {
-    // Simulate latency + an updated application echoing the decision.
-    await new Promise((r) => setTimeout(r, 350));
-    const app = await onboardingApplicationFixture(id);
-    const nextStatus =
-      action === 'approve'
-        ? 'APPROVED'
-        : action === 'reject'
-          ? 'REJECTED'
-          : action === 'request-info'
-            ? 'NEEDS_MORE_INFO'
-            : 'UNDER_REVIEW';
-    return {
-      ...app,
-      status: nextStatus,
-      decisionReason: (body.reason as string) ?? app.decisionReason,
-      infoChecklist: (body.checklist as string[]) ?? app.infoChecklist,
-      decidedAt:
-        action === 'approve' || action === 'reject'
-          ? new Date().toISOString()
-          : app.decidedAt,
-      updatedAt: new Date().toISOString(),
-    };
+    throw new Error(
+      `Onboarding ${action} is unavailable in fixture mode: this console will not report a write it did not perform. ` +
+      'Set NEXT_PUBLIC_ONBOARDING_ADMIN_USE_MOCK=false (the default) to make this change against the live backend.',
+    );
   }
   const res = await fetch(
     `${adminApiBase()}/admin/onboarding/applications/${encodeURIComponent(id)}/${action}`,

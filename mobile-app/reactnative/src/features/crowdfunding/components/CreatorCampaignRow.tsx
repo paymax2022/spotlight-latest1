@@ -10,7 +10,7 @@ import { formatNairaCompact, progressPct } from '../utils/crowdfundingFormatters
 import type { Campaign } from '../types/crowdfunding.types';
 
 interface Props {
-  campaign: Pick<Campaign, 'id' | 'title' | 'status' | 'coverImage' | 'raisedKobo' | 'goalKobo' | 'contributorCount'>;
+  campaign: Pick<Campaign, 'id' | 'title' | 'status' | 'paused' | 'coverImage' | 'raisedKobo' | 'goalKobo' | 'contributorCount'>;
   onPress: () => void;
 }
 
@@ -22,7 +22,7 @@ export default function CreatorCampaignRow({ campaign, onPress }: Props) {
       style={({ pressed }) => [styles.row, pressed && { opacity: 0.85 }]}
       onPress={onPress}
       accessibilityRole="button"
-      accessibilityLabel={`${campaign.title}, ${campaign.status.toLowerCase()}, ${pct}% funded`}
+      accessibilityLabel={`${campaign.title}, ${campaign.status.toLowerCase()}${campaign.paused ? ', paused' : ''}, ${pct}% funded`}
     >
       <View style={styles.thumb}>
         {campaign.coverImage ? <Image source={{ uri: campaign.coverImage }} style={styles.thumbImg} /> : <ImageOff size={18} color={Colors.outline} />}
@@ -30,7 +30,7 @@ export default function CreatorCampaignRow({ campaign, onPress }: Props) {
       <View style={styles.body}>
         <Text style={styles.title} numberOfLines={1}>{campaign.title}</Text>
         <View style={styles.badgeRow}>
-          <CampaignStatusBadge status={campaign.status} size="sm" />
+          <CampaignStatusBadge status={campaign.status} paused={campaign.paused} size="sm" />
         </View>
         <View style={styles.track}><View style={[styles.fill, { width: `${pct}%` }]} /></View>
         <Text style={styles.meta}>

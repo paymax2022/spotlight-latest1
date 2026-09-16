@@ -15,6 +15,7 @@ import { Spacing } from '@/constants/spacing';
 import { Typography } from '@/constants/typography';
 import { shadow1 } from '@/constants/shadows';
 import { getReceipt } from '@/api/transactions.api';
+import { HomeMenuButton } from '@/components/HomeMenu';
 
 const STATUS_META: Record<string, { icon: React.ReactNode; color: string; label: string }> = {
   SUCCESSFUL: { icon: <CheckCircle2 size={48} color="#16A34A" strokeWidth={1.8} />, color: '#16A34A', label: 'Payment Successful' },
@@ -99,9 +100,12 @@ export default function ReceiptScreen() {
           <ArrowLeft size={22} color={Colors.primary} strokeWidth={2.2} />
         </Pressable>
         <Text style={styles.topTitle}>Receipt</Text>
-        <Pressable onPress={handleShare} style={styles.iconBtn} disabled={!receipt}>
-          <Share2 size={21} color={Colors.primary} strokeWidth={2} />
-        </Pressable>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+          <Pressable onPress={handleShare} style={styles.iconBtn} disabled={!receipt}>
+            <Share2 size={21} color={Colors.primary} strokeWidth={2} />
+          </Pressable>
+          <HomeMenuButton />
+        </View>
       </View>
 
       {isLoading ? (

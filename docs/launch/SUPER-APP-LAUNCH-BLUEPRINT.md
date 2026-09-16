@@ -123,8 +123,8 @@ install → lint → typecheck → unit tests (regression + money invariants)
 
 - **`ci.yml`** stays the always-on PR gate. **Add a security lane** (`security.yml`): CodeQL (Go + JS/TS), `govulncheck`, `gitleaks`, Trivy (image + filesystem), `npm audit`/`osv-scanner`. Block merge on high/critical.
 - **Build once**: `deploy.yml` builds the backend image, tags it `:{sha}`, pushes to Artifact Registry, and the **same digest** is deployed to staging then prod.
-- **Web**: `deploy-web.yml` deploys both Next apps to Vercel — preview on PR, production alias on `main`.
-- Keep pipelines fast: dependency caching, path filters (per-module lanes already do this), parallel jobs, `concurrency` cancellation (already set).
+- **Web**: the Railway jobs in `ci.yml` deploy both Next apps per environment (`develop` → Development, `staging` → Staging, `prod` → Production), gated on `RAILWAY_DEPLOY_ENABLED`. *(The original Vercel path, `deploy-web.yml`, was deleted 2026-08-13 — see the amendment in ADR-027.)*
+- Keep pipelines fast: dependency caching, parallel jobs, `concurrency` cancellation (already set), and **one pipeline per push** — `ci.yml` calls the 14 module lanes as reusable workflows, gated on which modules changed (`.github/module-filters.json` → `scripts/ci/changed-modules.py`), instead of each lane carrying its own trigger and starting a rival run.
 
 ### Rollback (must exist before first deploy)
 
@@ -264,7 +264,7 @@ Enforced by CLAUDE.md + the backend-engineering discipline. Launch checklist:
 1. **Git governance**: branch protection, CODEOWNERS, PR template, Dependabot, secret scanning. *(implemented in this change)*
 2. **CI security lane**: CodeQL + govulncheck + gitleaks + Trivy + audit. *(implemented in this change)*
 3. **Backend prod-readiness**: `/healthz`+`/readyz`, graceful shutdown, `$PORT`. *(implemented in this change)*
-4. **IaC + real deploy**: Terraform skeleton; `deploy.yml` → Cloud Run (build-once, OIDC, staging→gate→prod); `deploy-web.yml` → Vercel. *(scaffolded in this change — fill GCP project values)*
+4. **IaC + real deploy**: Terraform skeleton; `deploy.yml` → Cloud Run (build-once, OIDC, staging→gate→prod); web → Railway via `ci.yml`. *(scaffolded in this change — fill GCP project values. The `deploy-web.yml` → Vercel leg was deleted 2026-08-13; see ADR-027.)*
 5. **Managed Redis + Supabase staging/prod projects + Secret Manager** wired.
 6. **Observability**: Sentry (web+backend), uptime on `/healthz`, one paging alert per service.
 7. **Migration gate** in pipeline (expand/contract); reconcile env drift.
@@ -298,7 +298,7 @@ Enforced by CLAUDE.md + the backend-engineering discipline. Launch checklist:
 - `.github/CODEOWNERS`, `.github/pull_request_template.md`, `.github/dependabot.yml`.
 - `.github/workflows/security.yml` — CodeQL, govulncheck, gitleaks, Trivy, audit.
 - `.github/workflows/deploy.yml` — **real** build-once → Artifact Registry → Cloud Run staging → gated prod (OIDC), replacing the TODO stubs.
-- `.github/workflows/deploy-web.yml` — Vercel deploy for both Next apps.
+- ~~`.github/workflows/deploy-web.yml` — Vercel deploy for both Next apps.~~ *Deleted 2026-08-13 (never ran successfully; see ADR-027). Web deploys via the Railway jobs in `ci.yml`.*
 - `infra/terraform/**` — Cloud Run + Artifact Registry + Secret Manager + WIF skeleton with a reusable `cloud-run-service` module and bootstrap README.
 - Backend: `/healthz` + `/readyz` + graceful shutdown wired into `cmd/server`.
 

@@ -2,6 +2,7 @@ import React from 'react';
 import { View, Text, ScrollView, StyleSheet, Pressable } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import * as Icons from 'lucide-react-native';
 import StateView from '@/components/StateView';
 import { Colors } from '@/constants/colors';
@@ -13,6 +14,7 @@ import { useMyPromotions } from '@/features/featured/hooks';
 import { StatusBadge } from '@/features/featured/components';
 import { formatNaira, countdownLabel, canRenew } from '@/features/featured/utils';
 import type { Campaign } from '@/features/featured/types';
+import { HomeMenuButton } from '@/components/HomeMenu';
 
 function PromotionRow({ campaign, onPress, onRenew }: { campaign: Campaign; onPress: () => void; onRenew: () => void }) {
   const live = campaign.state === 'ACTIVE' || campaign.state === 'SCHEDULED' || campaign.state === 'PAUSED';
@@ -51,13 +53,16 @@ export default function MyPromotionsScreen() {
   return (
     <SafeAreaView style={s.safe} edges={['top']}>
       <View style={s.topBar}>
-        <Pressable onPress={() => router.back()} style={s.iconButton} accessibilityLabel="Go back">
+        <Pressable onPress={() => goBack('/')} style={s.iconButton} accessibilityLabel="Go back">
           <Icons.ArrowLeft size={22} color={Colors.primary} strokeWidth={2.2} />
         </Pressable>
         <Text style={s.topTitle}>My promotions</Text>
-        <Pressable onPress={() => router.push('/featured/new')} style={s.iconButton} accessibilityLabel="New promotion">
-          <Icons.Plus size={22} color={Colors.primary} strokeWidth={2.2} />
-        </Pressable>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+          <Pressable onPress={() => router.push('/featured/new')} style={s.iconButton} accessibilityLabel="New promotion">
+            <Icons.Plus size={22} color={Colors.primary} strokeWidth={2.2} />
+          </Pressable>
+          <HomeMenuButton />
+        </View>
       </View>
 
       {isLoading ? (

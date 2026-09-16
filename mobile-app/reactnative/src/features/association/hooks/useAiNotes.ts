@@ -30,8 +30,19 @@ export function useAwaitProcessing() {
   return useMutation({ mutationFn: (id: string) => awaitProcessing(id) });
 }
 
+/**
+ * Regeneration is asynchronous server-side and answers `{ ok, status }` — not
+ * the new text. Invalidate the note so the screen re-reads the stored summary.
+ */
 export function useRegenerateSummary() {
-  return useMutation({ mutationFn: (id: string) => regenerateSummary(id) });
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => regenerateSummary(id),
+    onSuccess: (_d, id) => {
+      qc.invalidateQueries({ queryKey: [KEY, 'aiNote', id] });
+      qc.invalidateQueries({ queryKey: [KEY, 'aiNotes'] });
+    },
+  });
 }
 
 export function useApproveAiNote() {

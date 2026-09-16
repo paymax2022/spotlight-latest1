@@ -11,11 +11,20 @@ import * as authApi from '@/api/auth.api';
 import { setSecureItem } from '@/lib/secureStorage';
 import { useAuthStore } from '@/store/authStore';
 import { getErrorMessage } from '@/utils/errorMapper';
+import { showToast } from '@/store/toastStore';
+import { otpLength, distributeOtpInput, nextOtpFocus } from '@/features/auth/otp';
 
-const OTP_LENGTH = 6;
+// Was hardcoded 6 while PRODUCTION issues 8-digit codes, so a production user
+// could not enter the code they were sent. Must match the project's
+// mailer_otp_length; see docs/audit/USER_MANAGEMENT_AUDIT.md B2.
+const OTP_LENGTH = otpLength();
 
 export default function VerifyOtpScreen() {
-  const { email } = useLocalSearchParams<{ email: string }>();
+  // mode distinguishes the two things this screen redeems. 'login' is the
+  // sign-in second factor, which returns a SESSION; the default is the sign-up
+  // code, which confirms the account and returns none.
+  const { email, mode } = useLocalSearchParams<{ email: string; mode?: string }>();
+  const isLoginStepUp = mode === 'login';
   const { setUser } = useAuthStore();
   const [otp, setOtp]         = useState<string[]>(Array(OTP_LENGTH).fill(''));
   const [loading, setLoading] = useState(false);
@@ -25,10 +34,12 @@ export default function VerifyOtpScreen() {
   const inputs = useRef<(TextInput | null)[]>([]);
 
   const handleChange = (text: string, index: number) => {
-    const next = [...otp];
-    next[index] = text.slice(-1);
+    // Autofill and paste deliver the WHOLE code into one box; the old
+    // `text.slice(-1)` kept only its last character, so the code looked entered
+    // and verification failed with nothing on screen to explain why.
+    const next = distributeOtpInput(otp, index, text);
     setOtp(next);
-    if (text && index < OTP_LENGTH - 1) inputs.current[index + 1]?.focus();
+    if (text) inputs.current[nextOtpFocus(next, index)]?.focus();
   };
 
   const handleKeyPress = (key: string, index: number) => {
@@ -39,10 +50,38 @@ export default function VerifyOtpScreen() {
 
   const handleVerify = async () => {
     const code = otp.join('');
-    if (code.length < OTP_LENGTH) { setApiError('Enter all 6 digits.'); return; }
+    if (code.length < OTP_LENGTH) { setApiError(`Enter all ${OTP_LENGTH} digits.`); return; }
     setApiError(''); setLoading(true);
     try {
-      await authApi.verifyOtp({ email: email ?? '', otp: code });
+      if (isLoginStepUp) {
+        // Redeeming the sign-in code returns a session directly; there is no
+        // "verified, now go and log in" step, because logging in is what this IS.
+        const result = await authApi.verifyLoginOtp({ email: email ?? '', otp: code });
+        setUser(result.user);
+        router.replace('/(tabs)/home');
+        return;
+      }
+
+      const { signedIn } = await authApi.verifyOtp({ email: email ?? '', otp: code });
+
+      // The two verification backends differ here and the screen has to branch.
+      // Supabase's signup OTP signs the user in; the server-issued one confirms
+      // the account and stops, because control of a mailbox is not proof of the
+      // password. Calling getMe() without a session would fail and show the user
+      // an error after a verification that actually SUCCEEDED.
+      if (!signedIn) {
+        // Raised BEFORE the navigation on purpose: ToastHost is mounted at the
+        // app root and its state lives outside the route tree, so the toast
+        // outlives this screen and is still on screen once login renders.
+        showToast({
+          variant: 'success',
+          title: 'Email verified',
+          message: 'Please sign in to continue.',
+        });
+        router.replace('/(auth)/login');
+        return;
+      }
+
       const user = await authApi.getMe();
       setUser(user);
       router.replace('/(tabs)/home');
@@ -56,6 +95,14 @@ export default function VerifyOtpScreen() {
   const handleResend = async () => {
     setResendMsg(''); setApiError(''); setResending(true);
     try {
+      if (isLoginStepUp) {
+        // Sign-in codes are issued only by the password step — /otp/request
+        // refuses purpose=login, and that refusal is what keeps this a second
+        // factor rather than passwordless sign-in. So resending means signing in
+        // again.
+        setApiError('To get a new sign-in code, enter your password again.');
+        return;
+      }
       await authApi.resendOtp({ email: email ?? '' });
       setResendMsg('A new code has been sent.');
     } catch (err) {
@@ -66,7 +113,11 @@ export default function VerifyOtpScreen() {
   };
 
   return (
-    <AuthScreenWrapper title="Verify your email" subtitle={`Enter the 6-digit code sent to ${email ?? 'your email'}.`} showBack>
+    <AuthScreenWrapper
+      title={isLoginStepUp ? 'Finish signing in' : 'Verify your email'}
+      subtitle={`Enter the ${OTP_LENGTH}-digit code sent to ${email ?? 'your email'}.`}
+      showBack
+    >
       <View style={styles.otpRow}>
         {otp.map((digit, i) => (
           <TextInput
@@ -77,7 +128,7 @@ export default function VerifyOtpScreen() {
             onChangeText={(t) => handleChange(t, i)}
             onKeyPress={({ nativeEvent }) => handleKeyPress(nativeEvent.key, i)}
             keyboardType="number-pad"
-            maxLength={1}
+            maxLength={OTP_LENGTH}
             selectTextOnFocus
           />
         ))}

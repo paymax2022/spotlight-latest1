@@ -1,9 +1,10 @@
+import { mockAllowed } from '@/config/mockPolicy';
 import { Colors } from '@/constants/colors';
 import type { MeetingMode, MeetingStatus, RsvpResponse } from '../types/meetings.types';
 
 // Flip to false once the estate meetings endpoints are verified (or set
 // EXPO_PUBLIC_MEETINGS_USE_MOCK=false). Mirrors the visitor/election convention.
-export const USE_MOCK = (process.env.EXPO_PUBLIC_MEETINGS_USE_MOCK ?? 'true') !== 'false';
+export const USE_MOCK = mockAllowed(process.env.EXPO_PUBLIC_MEETINGS_USE_MOCK, true);
 
 // Meetings are served by the resident-scoped frontend-web handlers under
 // /api/v1/estate/meetings (GET list, POST create, GET /{mid}, POST /{mid}/rsvp,

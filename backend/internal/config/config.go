@@ -154,10 +154,15 @@ type Config struct {
 	PaymaxWebhookSecret           string
 	FeatureGroupsEnabled          bool
 	FeatureAssociationsEnabled    bool
-	FeatureEventsEnabled          bool
-	FeatureEstateEnabled          bool
-	FeatureCrowdfundingEnabled    bool
-	FeatureRestaurantEnabled      bool
+	// AssocCardSigningSecret is the HMAC secret for digital membership cards.
+	// Empty outside development is a hard startup failure: the fallback is a
+	// constant compiled into this (public) repo, so anyone could forge a
+	// structurally valid card token for a known membership id.
+	AssocCardSigningSecret     string
+	FeatureEventsEnabled       bool
+	FeatureEstateEnabled       bool
+	FeatureCrowdfundingEnabled bool
+	FeatureRestaurantEnabled   bool
 	// FeatureRestaurantWithdrawalsEnabled gates the merchant WITHDRAWAL money path
 	// (bank-account capture + payout requests + admin settle/reverse). Default OFF:
 	// RequestWithdrawal reserves a balanced ledger post (DR merchant wallet → CR
@@ -165,11 +170,16 @@ type Config struct {
 	// settle/reverse pair moves real money, so the module must never become
 	// reachable implicitly. See backend/internal/restaurant/withdrawal.go.
 	FeatureRestaurantWithdrawalsEnabled bool
-	FeatureNutritionEnabled       bool // Nutrition Resolution Engine (NRE)
-	FeatureTelemedicineEnabled    bool
-	FeatureVoteBridgeEnabled      bool
-	FeatureTransportEnabled       bool
-	FeatureTransportModesEnabled  bool // parcel/bus/towing/movers/car-hire expansion
+	// FeatureModuleGateEnforce turns the server-side module gate from observe-only
+	// (logs what it would refuse) into enforcing (503s unpublished modules). Default
+	// false: the gate's route map is hand-built and must be validated against real
+	// traffic before it can refuse anything.
+	FeatureModuleGateEnforce     bool
+	FeatureNutritionEnabled      bool // Nutrition Resolution Engine (NRE)
+	FeatureTelemedicineEnabled   bool
+	FeatureVoteBridgeEnabled     bool
+	FeatureTransportEnabled      bool
+	FeatureTransportModesEnabled bool // parcel/bus/towing/movers/car-hire expansion
 	// Transport Trip Scheduling: schedule a future logistics movement (ride/parcel/
 	// airport/bus) that the transport-scheduler worker materializes + escrows at a
 	// lead time before pickup. DEFAULT OFF. Gates the member /api/finance/mobility/
@@ -189,7 +199,22 @@ type Config struct {
 	FeaturePharmacySymptomSearchEnabled bool
 	FeatureOnboardingEnabled            bool
 	FeatureInvestEnabled                bool // stock-trading (Paymax Invest) module
-	FeatureInvestPINDevBypass           bool // dev only: accept any well-formed PIN
+
+	// AI-trading fund (backend/internal/trading). Two gates, matching the
+	// module's own contract:
+	//   FeatureTradingEnabled   – mounts Module-KYC + fund wallet (subscribe/redeem).
+	//   FeatureAITradingEnabled – ALSO exposes the decision pipeline (/evaluate)
+	//                             and the promotion-ladder admin routes.
+	// Neither executes a real venue order in this build; cash moves only through
+	// the finance ledger.
+	FeatureTradingEnabled   bool
+	FeatureAITradingEnabled bool
+
+	// Performance-fee terms for the fund, in basis points. TradingFeeBps must be
+	// in (0,10000] or PerformanceFee fails closed and charges nothing.
+	TradingFeeBps             int  // e.g. 2000 = 20% performance fee
+	TradingHurdleBps          int  // 0 = pure high-water-mark, no hurdle
+	FeatureInvestPINDevBypass bool // dev only: accept any well-formed PIN
 	// Invest provider adapters — when a base URL is set the real HTTP adapter is
 	// used; otherwise the deterministic mock is used (mock-first, real last).
 	InvestMarketDataBaseURL   string
@@ -229,6 +254,20 @@ type Config struct {
 	// Crypto buy/sell module. DEFAULT OFF. Gates the /api/v1/crypto[/admin] surface
 	// (internal/crypto): mock-first price feed, reuses the finance ledger.
 	FeatureCryptoEnabled bool
+
+	// FeatureTelemedicinePlatformFeeEnabled turns on the platform booking fee
+	// charged on top of a doctor's consultation fee (ADR-044). Default OFF: it is a
+	// patient-visible price increase, so it is opt-in, and switching it off is the
+	// rollback — the app renders whatever quote the server returns, so no client
+	// release is needed either way.
+	FeatureTelemedicinePlatformFeeEnabled bool
+
+	// FeatureCheckoutTopupTier0 lets an UNVERIFIED (Tier 0) account pay for a
+	// purchase under a capped allowance (ADR-042 funds it, ADR-043 lets it be
+	// spent). This MUST be the same value as frontend-web's
+	// FEATURE_CHECKOUT_TOPUP_TIER0: enabling only the funding half charges a
+	// customer for a purchase that is then refused at escrow. Default OFF.
+	FeatureCheckoutTopupTier0 bool
 
 	// ── Business Registry (CAC business-name verification + registration) ─────
 	// Gates the member /api/finance/business/* + admin /api/business/admin/*
@@ -301,12 +340,18 @@ type Config struct {
 	// Top-5 expansion modules (no-new-licence; ride existing wallet/ledger rails).
 	// DEFAULT OFF. Each gates /api/finance/<mod> + /api/<mod>/admin (internal/<mod>).
 	// (FeatureEventsEnabled is declared once above with the other module flags.)
-	FeatureSocialPayEnabled  bool // Social Payments & P2P Escrow
-	FeatureP2PMarketEnabled  bool // P2P Marketplace
-	FeatureSavingsEnabled    bool // Group & Goal Savings (Ajo/Esusu)
-	FeatureCreatorsEnabled   bool // Creator & Talent Monetisation
-	FeatureLoyaltyEnabled    bool // Unified Loyalty & Paymax Black
-	FeatureCommissionEnabled bool // Central Commission & Profit management
+	FeatureSocialPayEnabled bool // Social Payments & P2P Escrow
+	FeatureP2PMarketEnabled bool // P2P Marketplace
+	FeatureSavingsEnabled   bool // Group & Goal Savings (Ajo/Esusu)
+
+	// SavingsEarlyBreakPenaltyBps is the fee for breaking a LOCK vault before
+	// maturity, in basis points (1000 = 10%). MUST stay server-side: it used to
+	// be read from the request body, so a member could break a lock for free by
+	// sending 0.
+	SavingsEarlyBreakPenaltyBps int
+	FeatureCreatorsEnabled      bool // Creator & Talent Monetisation
+	FeatureLoyaltyEnabled       bool // Unified Loyalty & Paymax Black
+	FeatureCommissionEnabled    bool // Central Commission & Profit management
 
 	// Health verticals (marketplace; licensed partners deliver care). DEFAULT OFF.
 	// FeatureHealthEnabled gates the shared platform (internal/health/*); the
@@ -452,8 +497,62 @@ type Config struct {
 
 	// ── Notification providers ────────────────────────────────────────────────
 	// Resend: email delivery. Key from resend.com dashboard.
+	// Per-IP, per-route auth throttles. See middleware.AuthRateLimit.
+	AuthRateLimitPerMin       int
+	AuthResetRateLimitPerHour int
+
 	ResendAPIKey    string
-	ResendFromEmail string // e.g. "Paymax <noreply@mail.paymax.ng>"
+	ResendFromEmail string // must be @spotlightng.com — the only domain verified on the Resend account
+
+	// ── Brevo: server-issued email OTP ───────────────────────────────────────
+	// Brevo joins Resend rather than replacing it. Resend is the fire-and-forget
+	// notification path where a silent failure is tolerable; an undelivered OTP
+	// is a failed login, so that path reports and classifies its failures.
+	//
+	// FeatureOTPEmailEnabled defaults OFF and the routes 503 until it is on. No
+	// Brevo credentials exist in this repo or any .env today — the account,
+	// sender domain and template have to be provisioned before this can be
+	// switched on anywhere. See docs/audit/USER_MANAGEMENT_AUDIT.md B1.
+	FeatureOTPEmailEnabled bool
+	// FeatureOTPLoginMFAEnabled turns a correct password into a code challenge
+	// instead of a session. SEPARATE from FeatureOTPEmailEnabled on purpose:
+	// enabling server-issued OTP should not silently add a second factor to
+	// every login.
+	//
+	// ⚠️ It fails CLOSED, which is the point of a second factor and also means an
+	// email outage is a TOTAL LOGIN OUTAGE for everyone. There is no enrolment,
+	// no opt-out and no recovery code: a user who loses access to their mailbox
+	// cannot sign in. Read docs/runbooks/otp-email-brevo.md before enabling it.
+	FeatureOTPLoginMFAEnabled bool
+	BrevoAPIKey               string
+	BrevoSenderName           string
+	BrevoSenderEmail          string
+	BrevoOTPTemplateID        int64
+	BrevoTimeoutSeconds       int
+
+	// OTPPepper is the server-side HMAC key for code and identifier hashing.
+	// REQUIRED whenever the feature is on: otp.NewService refuses to construct
+	// without it, and the routes then answer 503 misconfigured rather than
+	// storing digests that a rainbow table reverses. Generate with
+	// `openssl rand -base64 32`. Rotating it invalidates every in-flight code,
+	// which is acceptable.
+	OTPPepper                string
+	OTPLength                int
+	OTPTTLMinutes            int
+	OTPMaxAttempts           int
+	OTPResendCooldownSeconds int
+	OTPMaxSendsPerHour       int
+	OTPMaxSendsPerIPPerHour  int
+	OTPMaxVerifyPerIPPerHour int
+
+	// SignupRateLimitPer5Min replaces GoTrue's sign_in_sign_ups limit on the
+	// admin creation path, which that endpoint does not enforce. Defaulted to
+	// GoTrue's own default (30 per 5 minutes per IP) so switching creation paths
+	// does not quietly change the budget.
+	SignupRateLimitPer5Min int
+	// AdminAppBaseURL: origin of frontend-admin, used to build links inside
+	// transactional emails (e.g. the hotelier staff invite accept link).
+	AdminAppBaseURL string
 	// Termii: SMS delivery. Key from termii.com dashboard.
 	TermiiAPIKey   string
 	TermiiSenderID string // approved sender ID
@@ -583,11 +682,13 @@ func Load() Config {
 		PaymaxWebhookSecret:                   getEnv("PAYMAX_WEBHOOK_SECRET", ""),
 		FeatureGroupsEnabled:                  getEnvBool("FEATURE_GROUPS_ENABLED", false),
 		FeatureAssociationsEnabled:            getEnvBool("FEATURE_ASSOCIATIONS_ENABLED", false),
+		AssocCardSigningSecret:                getEnv("ASSOC_CARD_SIGNING_SECRET", ""),
 		FeatureEventsEnabled:                  getEnvBool("FEATURE_EVENTS_ENABLED", false),
 		FeatureEstateEnabled:                  getEnvBool("FEATURE_ESTATE_ENABLED", false),
 		FeatureCrowdfundingEnabled:            getEnvBool("FEATURE_CROWDFUNDING_ENABLED", false),
 		FeatureRestaurantEnabled:              getEnvBool("FEATURE_RESTAURANT_ENABLED", false),
 		FeatureRestaurantWithdrawalsEnabled:   getEnvBool("FEATURE_RESTAURANT_WITHDRAWALS_ENABLED", false),
+		FeatureModuleGateEnforce:              getEnvBool("FEATURE_MODULE_GATE_ENFORCE", false),
 		FeatureNutritionEnabled:               getEnvBool("FEATURE_NUTRITION_ENABLED", false),
 		FeatureTelemedicineEnabled:            getEnvBool("FEATURE_TELEMEDICINE_ENABLED", false),
 		FeatureVoteBridgeEnabled:              getEnvBool("FEATURE_VOTE_BRIDGE_ENABLED", false),
@@ -626,6 +727,8 @@ func Load() Config {
 		FeaturePropertySuiteEnabled:           getEnvBool("FEATURE_PROPERTY_SUITE_ENABLED", false),
 		FeatureFractionalREEnabled:            getEnvBool("FEATURE_FRACTIONAL_RE_ENABLED", false),
 		FeatureCryptoEnabled:                  getEnvBool("FEATURE_CRYPTO_ENABLED", false),
+		FeatureTelemedicinePlatformFeeEnabled: getEnvBool("FEATURE_TELEMEDICINE_PLATFORM_FEE_ENABLED", false),
+		FeatureCheckoutTopupTier0:             getEnvBool("FEATURE_CHECKOUT_TOPUP_TIER0", false),
 		FeatureBusinessRegistryEnabled:        getEnvBool("FEATURE_BUSINESS_REGISTRY_ENABLED", false),
 		CACVASBaseURL:                         getEnv("CAC_VAS_BASE_URL", ""),
 		CACVASApiKey:                          getEnv("CAC_VAS_API_KEY", ""),
@@ -644,6 +747,11 @@ func Load() Config {
 		FeatureSocialPayEnabled:               getEnvBool("FEATURE_SOCIAL_PAY_ENABLED", false),
 		FeatureP2PMarketEnabled:               getEnvBool("FEATURE_P2P_MARKET_ENABLED", false),
 		FeatureSavingsEnabled:                 getEnvBool("FEATURE_SAVINGS_ENABLED", false),
+		FeatureTradingEnabled:                 getEnvBool("FEATURE_TRADING_ENABLED", false),
+		FeatureAITradingEnabled:               getEnvBool("FEATURE_AI_TRADING_ENABLED", false),
+		TradingFeeBps:                         getEnvInt("TRADING_FEE_BPS", 2000),
+		TradingHurdleBps:                      getEnvInt("TRADING_HURDLE_BPS", 0),
+		SavingsEarlyBreakPenaltyBps:           getEnvInt("SAVINGS_EARLY_BREAK_PENALTY_BPS", 1000),
 		FeatureCreatorsEnabled:                getEnvBool("FEATURE_CREATORS_ENABLED", false),
 		FeatureLoyaltyEnabled:                 getEnvBool("FEATURE_LOYALTY_ENABLED", false),
 		FeatureCommissionEnabled:              getEnvBool("FEATURE_COMMISSION_ENABLED", false),
@@ -690,7 +798,14 @@ func Load() Config {
 		ConnectVerificationPepper: getEnv("CONNECT_VERIFICATION_PEPPER", ""),
 
 		R2AccountEndpoint: getEnv("R2_ACCOUNT_ENDPOINT", ""),
-		R2Bucket:          getEnv("R2_BUCKET", "spotlight-open-mic"),
+		// No default. The previous default was "spotlight-open-mic", a bucket that
+		// does not exist in the R2 account — and because Configured() only checks
+		// that the fields are non-empty, that default made the module look
+		// configured: presign answered 200 and the upload then died at the PUT with
+		// NoSuchBucket, which the client can only report as "couldn't be uploaded".
+		// Empty fails closed at Configured() instead, so an unset bucket says
+		// "uploads are not configured" up front.
+		R2Bucket:          getEnv("R2_BUCKET", ""),
 		R2AccessKeyID:     getEnv("R2_ACCESS_KEY_ID", ""),
 		R2SecretAccessKey: getEnv("R2_SECRET_ACCESS_KEY", ""),
 		R2Region:          getEnv("R2_REGION", "auto"),
@@ -713,10 +828,35 @@ func Load() Config {
 		BillingAPIKey:        getEnv("BILLING_API_KEY", ""),
 		BillingWebhookSecret: getEnv("BILLING_WEBHOOK_SECRET", ""),
 
+		// Auth throttling. Login/register/password-reset had no limit at all; these
+		// are per-IP-per-route budgets. Deliberately tight — a real person signs in a
+		// handful of times a minute, a credential-stuffer does not.
+		AuthRateLimitPerMin:       getEnvInt("AUTH_RATE_LIMIT_PER_MIN", 10),
+		AuthResetRateLimitPerHour: getEnvInt("AUTH_RESET_RATE_LIMIT_PER_HOUR", 5),
+
 		ResendAPIKey:    getEnv("RESEND_API_KEY", ""),
-		ResendFromEmail: getEnv("RESEND_FROM_EMAIL", "Paymax <noreply@mail.paymax.ng>"),
-		TermiiAPIKey:    getEnv("TERMII_API_KEY", ""),
-		TermiiSenderID:  getEnv("TERMII_SENDER_ID", "Paymax"),
-		ExpoPushToken:   getEnv("EXPO_PUSH_TOKEN", ""),
+		ResendFromEmail: getEnv("RESEND_FROM_EMAIL", "Spotlight <no-reply@spotlightng.com>"),
+
+		FeatureOTPEmailEnabled:    getEnvBool("FEATURE_OTP_EMAIL_ENABLED", false),
+		FeatureOTPLoginMFAEnabled: getEnvBool("FEATURE_OTP_LOGIN_MFA_ENABLED", false),
+		BrevoAPIKey:               getEnv("BREVO_API_KEY", ""),
+		BrevoSenderName:           getEnv("BREVO_SENDER_NAME", "Spotlight"),
+		BrevoSenderEmail:          getEnv("BREVO_SENDER_EMAIL", ""),
+		BrevoOTPTemplateID:        int64(getEnvInt("BREVO_OTP_TEMPLATE_ID", 0)),
+		BrevoTimeoutSeconds:       getEnvInt("BREVO_TIMEOUT_SECONDS", 10),
+
+		OTPPepper:                getEnv("OTP_PEPPER", ""),
+		OTPLength:                getEnvInt("OTP_LENGTH", 6),
+		OTPTTLMinutes:            getEnvInt("OTP_TTL_MINUTES", 10),
+		OTPMaxAttempts:           getEnvInt("OTP_MAX_ATTEMPTS", 5),
+		OTPResendCooldownSeconds: getEnvInt("OTP_RESEND_COOLDOWN_SECONDS", 60),
+		OTPMaxSendsPerHour:       getEnvInt("OTP_MAX_SENDS_PER_HOUR", 5),
+		OTPMaxSendsPerIPPerHour:  getEnvInt("OTP_MAX_SENDS_PER_IP_PER_HOUR", 20),
+		OTPMaxVerifyPerIPPerHour: getEnvInt("OTP_MAX_VERIFY_PER_IP_PER_HOUR", 20),
+		SignupRateLimitPer5Min:   getEnvInt("AUTH_SIGNUP_RATE_LIMIT_PER_5MIN", 30),
+		AdminAppBaseURL:          getEnv("ADMIN_APP_BASE_URL", "https://admin.spotlightng.com"),
+		TermiiAPIKey:             getEnv("TERMII_API_KEY", ""),
+		TermiiSenderID:           getEnv("TERMII_SENDER_ID", "Paymax"),
+		ExpoPushToken:            getEnv("EXPO_PUSH_TOKEN", ""),
 	}
 }

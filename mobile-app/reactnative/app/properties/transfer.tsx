@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { View, Text, StyleSheet, ScrollView, KeyboardAvoidingView, Platform } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
 import { Spacing } from '@/constants/spacing';
@@ -26,7 +27,7 @@ export default function PropertyTransferScreen() {
   const onSubmit = () => {
     transfer.mutate(
       { id: propertyId, toUserId: toUserId.trim(), transferType, reason: reason.trim() || undefined },
-      { onSuccess: () => router.back() },
+      { onSuccess: () => goBack('/properties') },
     );
   };
 

@@ -2,6 +2,7 @@ import React, { useMemo, useState } from 'react';
 import { View, Text, Pressable, ScrollView, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import { ShieldCheck, ShieldAlert, TriangleAlert } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
@@ -60,7 +61,7 @@ export default function NewAddressScreen() {
 
   const save = async () => {
     await add.mutateAsync({ label: label.trim(), symbol: selected.symbol, networkId: activeNetwork.id, address: address.trim() });
-    router.back();
+    goBack('/crypto/addresses');
   };
 
   return (

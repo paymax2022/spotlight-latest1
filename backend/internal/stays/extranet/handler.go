@@ -8,9 +8,11 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// Handler exposes the hotelier extranet routes. RBAC stays.hotelier.* is applied at
-// the route by the aggregator; this handler adds the object-level property scope
-// check (delegated to the service guard).
+// Handler exposes the hotelier extranet routes. Authorization is object-level
+// only (delegated to the service guard: an ACTIVE stays_hotelier_profile grant
+// on the property) — same self-serve model as the restaurant module, chosen
+// because stays.hotelier.* RBAC permissions have no self-service grant path
+// (seeded only onto super-admin/system-admin).
 type Handler struct {
 	svc *Service
 }
@@ -26,6 +28,10 @@ func mapErr(c *gin.Context, err error) {
 		c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
 	case errors.Is(err, ErrNotFound):
 		c.JSON(http.StatusNotFound, gin.H{"error": "not found"})
+	case errors.Is(err, ErrInviteNotValid):
+		c.JSON(http.StatusBadRequest, gin.H{"error": "this invite is not valid"})
+	case errors.Is(err, ErrValidation):
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 	default:
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 	}
@@ -36,10 +42,25 @@ func mapErr(c *gin.Context, err error) {
 func (h *Handler) Register(g *gin.RouterGroup) {
 	// Extranet landing — the set of properties the hotelier may act on.
 	g.GET("/me/properties", h.MyProperties)
+	// Self-list a new property (hotel/shortlet/apartment); grants the caller OWNER.
+	g.POST("/properties", h.CreateProperty)
+
+	// Onboarding & go-live verification — scoped to the caller's primary property
+	// (no :propertyId in these routes; ResolvePrimaryProperty picks it).
+	g.GET("/verification", h.GetVerificationStatus)
+	g.GET("/verification/business", h.GetBusinessVerification)
+	g.POST("/verification/submit", h.SubmitForReview)
 
 	// Property content.
 	g.GET("/properties/:propertyId", h.GetProperty)
 	g.PATCH("/properties/:propertyId", h.UpdateContent)
+	g.PATCH("/properties/:propertyId/details", h.UpdateDetails)
+	// Photos (property_photos.go).
+	g.POST("/properties/:propertyId/photos/presign", h.PresignPhoto)
+	g.GET("/properties/:propertyId/photos", h.ListPhotos)
+	g.POST("/properties/:propertyId/photos", h.CreatePhoto)
+	g.PATCH("/properties/:propertyId/photos/:photoId", h.UpdatePhoto)
+	g.DELETE("/properties/:propertyId/photos/:photoId", h.DeletePhoto)
 	// Room types + rate plans.
 	g.GET("/properties/:propertyId/room-types", h.ListRoomTypes)
 	g.POST("/properties/:propertyId/room-types", h.CreateRoomType)
@@ -69,6 +90,11 @@ func (h *Handler) Register(g *gin.RouterGroup) {
 	// Account / staff.
 	g.GET("/properties/:propertyId/staff", h.ListStaff)
 	g.POST("/properties/:propertyId/staff", h.UpsertStaff)
+	g.POST("/properties/:propertyId/staff/invite", h.InviteStaffByEmail)
+	// Not property-scoped: the token names the property, and the invitee is by
+	// definition not yet staff there (same shape as the restaurant module's
+	// /staff/accept — the one staff route that isn't outlet-scoped).
+	g.POST("/staff/invite/accept", h.AcceptStaffInvite)
 }
 
 // MyProperties: GET /me/properties
@@ -79,6 +105,30 @@ func (h *Handler) MyProperties(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": out})
+}
+
+// CreateProperty: POST /properties {name, property_type, address, city, star_rating}
+func (h *Handler) CreateProperty(c *gin.Context) {
+	var b struct {
+		Name         string `json:"name" binding:"required"`
+		PropertyType string `json:"property_type"`
+		Address      string `json:"address"`
+		City         string `json:"city"`
+		StarRating   int    `json:"star_rating"`
+	}
+	if err := c.ShouldBindJSON(&b); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if b.StarRating < 0 || b.StarRating > 5 {
+		b.StarRating = 0
+	}
+	id, err := h.svc.CreateProperty(c.Request.Context(), uid(c), b.Name, b.PropertyType, b.Address, b.City, b.StarRating)
+	if err != nil {
+		mapErr(c, err)
+		return
+	}
+	c.JSON(http.StatusCreated, gin.H{"data": gin.H{"id": id}})
 }
 
 // GetProperty: GET /properties/:propertyId
@@ -107,6 +157,39 @@ func (h *Handler) UpdateContent(c *gin.Context) {
 	}
 	if err := h.svc.UpdateContent(c.Request.Context(), uid(c), c.Param("propertyId"),
 		b.Name, b.Description, b.Address, b.City, b.StarRating, b.PropertyType); err != nil {
+		mapErr(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": gin.H{"ok": true}})
+}
+
+// UpdateDetails: PATCH /properties/:propertyId/details {lat?, lng?, amenities?,
+// house_rules?, cancellation_policy?, check_in_from?, check_out_until?,
+// contact_phone?, contact_email?} — every field optional; only fields present
+// in the body are changed. A separate route from UpdateContent (above) so the
+// two PATCH bodies keep their own, independently-evolving validation.
+func (h *Handler) UpdateDetails(c *gin.Context) {
+	var b struct {
+		Lat                *float64  `json:"lat"`
+		Lng                *float64  `json:"lng"`
+		Amenities          *[]string `json:"amenities"`
+		HouseRules         *string   `json:"house_rules"`
+		CancellationPolicy *string   `json:"cancellation_policy"`
+		CheckInFrom        *string   `json:"check_in_from"`
+		CheckOutUntil      *string   `json:"check_out_until"`
+		ContactPhone       *string   `json:"contact_phone"`
+		ContactEmail       *string   `json:"contact_email"`
+	}
+	if err := c.ShouldBindJSON(&b); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	patch := PropertyDetailsPatch{
+		Lat: b.Lat, Lng: b.Lng, Amenities: b.Amenities, HouseRules: b.HouseRules,
+		CancellationPolicy: b.CancellationPolicy, CheckInFrom: b.CheckInFrom,
+		CheckOutUntil: b.CheckOutUntil, ContactPhone: b.ContactPhone, ContactEmail: b.ContactEmail,
+	}
+	if err := h.svc.UpdateDetails(c.Request.Context(), uid(c), c.Param("propertyId"), patch); err != nil {
 		mapErr(c, err)
 		return
 	}
@@ -333,6 +416,45 @@ func (h *Handler) UpsertStaff(c *gin.Context) {
 		return
 	}
 	if err := h.svc.UpsertStaff(c.Request.Context(), uid(c), c.Param("propertyId"), b.UserID, b.Role, b.Status); err != nil {
+		mapErr(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": gin.H{"ok": true}})
+}
+
+// InviteStaffByEmail: POST /properties/:propertyId/staff/invite {name, email, role}
+// Grants immediately if a platform user already owns the email; otherwise
+// creates a pending invite and emails an accept link. See staff_invite.go.
+func (h *Handler) InviteStaffByEmail(c *gin.Context) {
+	var b struct {
+		Name  string `json:"name"`
+		Email string `json:"email" binding:"required"`
+		Role  string `json:"role"`
+	}
+	if err := c.ShouldBindJSON(&b); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	out, err := h.svc.InviteStaffByEmail(c.Request.Context(), uid(c), c.Param("propertyId"), b.Name, b.Email, b.Role)
+	if err != nil {
+		mapErr(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": out})
+}
+
+// AcceptStaffInvite: POST /staff/invite/accept {token}
+// The invitee must already be signed in — the invite's email is matched
+// against their own authenticated identity, never a client-supplied value.
+func (h *Handler) AcceptStaffInvite(c *gin.Context) {
+	var b struct {
+		Token string `json:"token" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&b); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if err := h.svc.AcceptStaffInvite(c.Request.Context(), uid(c), c.GetString("user_email"), b.Token); err != nil {
 		mapErr(c, err)
 		return
 	}

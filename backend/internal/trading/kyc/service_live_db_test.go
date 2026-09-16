@@ -3,8 +3,10 @@ package kyc
 // LIVE-DB test for the Module-KYC service: the full transition graph, the
 // mandatory-reason reject, the two-person/time-boxed bypass policy + register,
 // the expiry sweep, and — critically — that HasTradingAccess (the wallet's gate)
-// grants access ONLY for APPROVED or an unexpired BYPASSED record. Skipped unless
-// DATABASE_URL is set.
+// grants access ONLY for APPROVED or an unexpired BYPASSED record.
+// Skipped unless TEST_DATABASE_URL is set —
+// deliberately with NO fallback to DATABASE_URL, which the root .env points
+// at the PRODUCTION Supabase pooler.
 
 import (
 	"context"
@@ -18,9 +20,9 @@ import (
 
 func liveKyc(t *testing.T) (*Service, *pgxpool.Pool) {
 	t.Helper()
-	dsn := os.Getenv("DATABASE_URL")
+	dsn := os.Getenv("TEST_DATABASE_URL")
 	if dsn == "" {
-		t.Skip("no DATABASE_URL — skipping trading KYC live-DB test")
+		t.Skip("no TEST_DATABASE_URL — skipping trading KYC live-DB test")
 	}
 	pool, err := pgxpool.New(context.Background(), dsn)
 	if err != nil {
@@ -40,7 +42,7 @@ func access(t *testing.T, ctx context.Context, s *Service, u string) bool {
 
 func TestLiveDB_KYC_HappyPathAndGate(t *testing.T) {
 	svc, pool := liveKyc(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	u := uuid.NewString()
 
@@ -75,7 +77,7 @@ func TestLiveDB_KYC_HappyPathAndGate(t *testing.T) {
 
 func TestLiveDB_KYC_RejectRequiresReasonAndResubmit(t *testing.T) {
 	svc, pool := liveKyc(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	u := uuid.NewString()
 	reviewer := uuid.NewString()
@@ -101,7 +103,7 @@ func TestLiveDB_KYC_RejectRequiresReasonAndResubmit(t *testing.T) {
 
 func TestLiveDB_KYC_BypassPolicyAndRegister(t *testing.T) {
 	svc, pool := liveKyc(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	u := uuid.NewString()
 	maker := uuid.NewString()
@@ -138,7 +140,7 @@ func TestLiveDB_KYC_BypassPolicyAndRegister(t *testing.T) {
 
 func TestLiveDB_KYC_BypassExpirySweep(t *testing.T) {
 	svc, pool := liveKyc(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	u := uuid.NewString()
 	if err := svc.Bypass(ctx, uuid.NewString(), uuid.NewString(), u, "temp", 7*24*time.Hour, nil); err != nil {

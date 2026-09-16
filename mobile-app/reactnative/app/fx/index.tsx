@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useState } from 'react';
 import { View, Text, Pressable, ScrollView, StyleSheet, RefreshControl } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
@@ -22,11 +22,17 @@ import TransactionRow from '@/features/fx/components/TransactionRow';
 import { useBalances, useRates, useTransactions, useRateHistory } from '@/features/fx/hooks/useFx';
 import { useVerification } from '@/features/fx/hooks/useFxKyc';
 import { ShieldCheck, Settings, Megaphone } from 'lucide-react-native';
-import { FX_ANNOUNCEMENTS } from '@/features/fx/constants/fx.constants';
+import { FX_ANNOUNCEMENTS, CURRENCY_ORDER } from '@/features/fx/constants/fx.constants';
 import { midRate, formatPct, formatRate } from '@/features/fx/utils/fxFormatters';
+import type { CurrencyCode } from '@/features/fx/types/fx.types';
 import { Dimensions } from 'react-native';
 
 const LOW_BALANCE_NGN = 50_000_00; // ₦50k threshold for the low-balance alert
+
+// Currencies the headline toggle always offers, even before the user has opened
+// that wallet — tapping USD then shows a true $0.00 next to the "Add currency
+// wallet" CTA, rather than hiding the option until money is already there.
+const HEADLINE_CURRENCIES: CurrencyCode[] = ['NGN', 'USD'];
 
 export default function FxHomeScreen() {
   const balances = useBalances();
@@ -43,10 +49,21 @@ export default function FxHomeScreen() {
     ? { title: 'Verification needs attention', sub: 'Please resubmit your details to continue.', cta: '/fx/kyc/status' as const }
     : { title: 'Verify your account', sub: 'Required before you can convert, send or hold money.', cta: '/fx/kyc' as const };
 
-  const totalNgn = useMemo(() => {
-    if (!balances.data) return 0;
-    return balances.data.reduce((sum, b) => sum + Math.round(b.available * midRate(b.currency, 'NGN')), 0);
+  const [selected, setSelected] = useState<CurrencyCode>('NGN');
+
+  // The toggle offers NGN + USD plus anything else the user actually holds, in
+  // the app's canonical currency order.
+  const walletCurrencies = useMemo(() => {
+    const held = (balances.data ?? []).map((b) => b.currency);
+    const set = new Set<CurrencyCode>([...HEADLINE_CURRENCIES, ...held]);
+    return CURRENCY_ORDER.filter((c) => set.has(c));
   }, [balances.data]);
+
+  // The headline is the SELECTED wallet's own fetched balance in its own
+  // currency. It used to be every wallet summed into naira at `midRate` — a
+  // hardcoded client-side rate table, so the figure was never a real balance and
+  // could not be reconciled against anything the backend held.
+  const selectedBalance = (balances.data ?? []).find((b) => b.currency === selected)?.available ?? 0;
 
   const pending = (txns.data ?? []).filter((t) => t.status === 'processing' || t.status === 'pending');
   const lowWallet = (balances.data ?? []).find(
@@ -109,7 +126,14 @@ export default function FxHomeScreen() {
               </Pressable>
             ) : null}
 
-            <BalanceCard balance={totalNgn / 100} currency="NGN" quickActions={quickActions} />
+            <BalanceCard
+              balance={selectedBalance / 100}
+              currency={selected}
+              label={`${selected} Wallet`}
+              currencies={walletCurrencies}
+              onSelectCurrency={(c) => setSelected(c as CurrencyCode)}
+              quickActions={quickActions}
+            />
 
             {/* Live rate ticker */}
             <View style={styles.tickerWrap}>

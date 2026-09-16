@@ -86,7 +86,7 @@ func (h *Handler) UpdateProfile(c *gin.Context) {
 
 // GET /associations/admin/audit-log
 func (h *Handler) GetAuditLog(c *gin.Context) {
-	v, err := h.svc.GetAuditLog(c.Request.Context(), c.GetString("user_id"), c.Query("action"))
+	v, err := h.svc.GetAuditLog(c.Request.Context(), c.GetString("user_id"), c.Query("action"), c.Query("org_id"))
 	if err != nil {
 		c.JSON(statusFor(err), gin.H{"error": err.Error()})
 		return

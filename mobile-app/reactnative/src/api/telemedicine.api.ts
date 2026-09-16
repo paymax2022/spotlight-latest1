@@ -6,9 +6,15 @@
 // the doctor.client.ts / fx.api.ts convention. Flip to live by setting
 // `EXPO_PUBLIC_TELEMEDICINE_USE_MOCK=false`.
 
+import { mockAllowed } from '@/config/mockPolicy';
 import { Colors } from '@/constants/colors';
 import { api } from '@/api/client';
 import { generateIdempotencyKey } from '@/utils/idempotency';
+import {
+  mapAppointmentMoney,
+  mapDoctorMoney,
+  withDemoQuote,
+} from '@/features/telemedicine/pricing';
 import type {
   Specialty,
   Doctor,
@@ -29,7 +35,7 @@ const wait = <T>(value: T, ms = 350): Promise<T> =>
 // ─── Feature flag: flip to false once the Go backend is ready ─────────────────
 // Mock by default; flip with EXPO_PUBLIC_TELEMEDICINE_USE_MOCK=false to hit the
 // live /api/v1/telemedicine/* routes (see backend/internal/app/finance_routes.go).
-const TELEMEDICINE_USE_MOCK = (process.env.EXPO_PUBLIC_TELEMEDICINE_USE_MOCK ?? 'true') !== 'false';
+const TELEMEDICINE_USE_MOCK = mockAllowed(process.env.EXPO_PUBLIC_TELEMEDICINE_USE_MOCK, true);
 
 // All live telemedicine endpoints live under this prefix on the API base URL.
 const BASE = '/api/v1/telemedicine';
@@ -40,6 +46,9 @@ function unwrap<T>(res: { data?: unknown }): T {
   const body = res.data as { data?: unknown } | undefined;
   return ((body && typeof body === 'object' && 'data' in body ? body.data : body) ?? body) as T;
 }
+
+// Money fields are mapped in @/features/telemedicine/pricing — kept out of this
+// file so the mapping is unit-testable without pulling in the axios client.
 
 // ─── Demo data ───────────────────────────────────────────────────────────────
 
@@ -54,13 +63,17 @@ export const DEMO_SPECIALTIES: Specialty[] = [
   { id: 'nutrition', name: 'Nutrition',     icon: 'Apple',       accent: '#16A34A',        bg: 'rgba(22,163,74,0.08)', doctorCount: 5 },
 ];
 
-export const DEMO_DOCTORS: Doctor[] = [
+const DEMO_DOCTORS_RAW: Doctor[] = [
   {
     id: 'doc-1', name: 'Dr. Amaka Obi', title: 'MBBS, FWACP', specialtyId: 'gp',
     specialties: ['General Practice', 'Family Medicine'],
     bio: 'Family physician with over a decade of experience in primary care, chronic disease management and preventive health.',
     initials: 'AO', avatarColor: Colors.primary, feeKobo: 350000, rating: 4.9, reviewCount: 312,
     yearsExperience: 12, languages: ['English', 'Igbo'], isOnline: true, nextAvailable: 'Today, 4:30 PM',
+    // One featured fixture so mock mode exercises the SAME path as the live API:
+    // without it `getDoctors({ featured: true })` could only ever return [], and the
+    // landing screen's Featured section would be unreachable in mock mode.
+    featured: true,
   },
   {
     id: 'doc-2', name: 'Dr. Tunde Bello', title: 'MBBS, FMCP (Cardiology)', specialtyId: 'cardio',
@@ -98,6 +111,12 @@ export const DEMO_DOCTORS: Doctor[] = [
     yearsExperience: 8, languages: ['English', 'Yoruba'], isOnline: false, nextAvailable: 'Tomorrow, 2:00 PM',
   },
 ];
+
+// Demo doctors carry a booking quote from the moment they are exported. Screens
+// use these as react-query `placeholderData`, and a placeholder with no quote
+// would make a priced checkout flash "Pricing unavailable" before the real
+// response lands.
+export const DEMO_DOCTORS: Doctor[] = DEMO_DOCTORS_RAW.map(withDemoQuote);
 
 function buildSlots(): Slot[] {
   const slots: Slot[] = [];
@@ -157,17 +176,67 @@ export async function getSpecialties(): Promise<Specialty[]> {
   return unwrap<Specialty[]>(await api.get(`${BASE}/specialties`));
 }
 
-export async function getDoctors(specialtyId?: string): Promise<Doctor[]> {
+export interface DoctorFilters {
+  specialtyId?:   string;
+  search?:        string;
+  /** Minimum star rating, 0-5. */
+  minRating?:     number;
+  /** Minimum years of practice. */
+  minExperience?: number;
+  /** Only doctors with an open slot right now. */
+  availableNow?:  boolean;
+  /** Only editorially featured doctors. An empty result is a valid answer. */
+  featured?:      boolean;
+}
+
+/**
+ * List doctors.
+ *
+ * Params are sent in the SERVER's snake_case. There is no case-transforming
+ * interceptor on this axios client (see src/api/client.ts) and the Next.js proxy
+ * forwards `url.search` verbatim, so a camelCase param never reaches a Go
+ * `c.Query("...")` lookup. A bare `{ specialtyId }` is therefore silently
+ * dropped by the backend and every call returns the UNFILTERED list — a filter
+ * that looks applied and is not.
+ */
+export async function getDoctors(filters?: DoctorFilters | string): Promise<Doctor[]> {
+  const f: DoctorFilters = typeof filters === 'string' ? { specialtyId: filters } : (filters ?? {});
+
   if (TELEMEDICINE_USE_MOCK) {
-    const list = specialtyId ? DEMO_DOCTORS.filter((d) => d.specialtyId === specialtyId) : DEMO_DOCTORS;
+    let list = DEMO_DOCTORS;
+    if (f.specialtyId)          list = list.filter((d) => d.specialtyId === f.specialtyId);
+    if (f.availableNow)         list = list.filter((d) => d.isOnline);
+    if (f.featured)             list = list.filter((d) => d.featured === true);
+    if (f.minRating)            list = list.filter((d) => d.rating >= f.minRating!);
+    if (f.minExperience)        list = list.filter((d) => d.yearsExperience >= f.minExperience!);
+    if (f.search?.trim()) {
+      const q = f.search.trim().toLowerCase();
+      list = list.filter((d) => d.name.toLowerCase().includes(q)
+        || d.specialties.join(' ').toLowerCase().includes(q));
+    }
     return wait(list);
   }
-  return unwrap<Doctor[]>(await api.get(`${BASE}/doctors`, { params: specialtyId ? { specialtyId } : undefined }));
+
+  const params: Record<string, string> = {};
+  if (f.specialtyId)      params.specialty_id   = f.specialtyId;
+  if (f.search?.trim())   params.search         = f.search.trim();
+  if (f.minRating)        params.min_rating     = String(f.minRating);
+  if (f.minExperience)    params.min_experience = String(f.minExperience);
+  if (f.availableNow)     params.available_now  = 'true';
+  if (f.featured)         params.featured       = 'true';
+
+  const raw = unwrap<unknown[]>(await api.get(`${BASE}/doctors`, {
+    params: Object.keys(params).length ? params : undefined,
+  }));
+  return (raw ?? []).map(mapDoctorMoney);
 }
 
 export async function getDoctor(id: string): Promise<Doctor | undefined> {
-  if (TELEMEDICINE_USE_MOCK) { return wait(DEMO_DOCTORS.find((d) => d.id === id)); }
-  return unwrap<Doctor | undefined>(await api.get(`${BASE}/doctors/${id}`));
+  if (TELEMEDICINE_USE_MOCK) {
+    return wait(DEMO_DOCTORS.find((d) => d.id === id));
+  }
+  const raw = unwrap<unknown>(await api.get(`${BASE}/doctors/${id}`));
+  return raw ? mapDoctorMoney(raw) : undefined;
 }
 
 export async function getDoctorAvailability(doctorId: string): Promise<Slot[]> {
@@ -183,13 +252,18 @@ export async function getDoctorReviews(doctorId: string): Promise<Review[]> {
 }
 
 export async function getAppointments(): Promise<Appointment[]> {
-  if (TELEMEDICINE_USE_MOCK) { return wait(DEMO_APPOINTMENTS); }
-  return unwrap<Appointment[]>(await api.get(`${BASE}/appointments`));
+  if (TELEMEDICINE_USE_MOCK) { return wait(DEMO_APPOINTMENTS.map(mapAppointmentMoney)); }
+  const raw = unwrap<unknown[]>(await api.get(`${BASE}/appointments`));
+  return (raw ?? []).map(mapAppointmentMoney);
 }
 
 export async function getAppointment(id: string): Promise<Appointment | undefined> {
-  if (TELEMEDICINE_USE_MOCK) { return wait(DEMO_APPOINTMENTS.find((a) => a.id === id)); }
-  return unwrap<Appointment | undefined>(await api.get(`${BASE}/appointments/${id}`));
+  if (TELEMEDICINE_USE_MOCK) {
+    const found = DEMO_APPOINTMENTS.find((a) => a.id === id);
+    return wait(found ? mapAppointmentMoney(found) : undefined);
+  }
+  const raw = unwrap<unknown>(await api.get(`${BASE}/appointments/${id}`));
+  return raw ? mapAppointmentMoney(raw) : undefined;
 }
 
 export async function getPrescription(appointmentId: string): Promise<Prescription> {
@@ -216,8 +290,21 @@ export async function bookAppointment(input: BookAppointmentInput): Promise<Book
   }
   // MONEY PATH: requires Idempotency-Key.
   const idempotencyKey = input.idempotencyKey || generateIdempotencyKey();
+  // The server prices the booking itself and ignores any amount we send; the only
+  // money field here is `expected_total_kobo`, the total we quoted the patient. If
+  // it disagrees with the server's own computation the booking is rejected with a
+  // 409 before any money moves — which is what stops the card rail (already
+  // charged at the PSP) from settling against a different amount (ADR-040).
+  const body = {
+    doctor_id:           input.doctorId,
+    scheduled_at:        input.scheduledAt,
+    consultation_type:   input.consultType,
+    notes:               input.reason,
+    idempotency_key:     idempotencyKey,
+    expected_total_kobo: input.expectedTotalKobo ?? 0,
+  };
   return unwrap<BookAppointmentResult>(
-    await api.post(`${BASE}/appointments`, input, { headers: { 'Idempotency-Key': idempotencyKey } }),
+    await api.post(`${BASE}/appointments`, body, { headers: { 'Idempotency-Key': idempotencyKey } }),
   );
 }
 

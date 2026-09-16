@@ -5,6 +5,8 @@ import { getBlackDashboard, formatNaira } from '@/services/blackAdminService';
 import type { BlackDashboard } from '@/types/blackAdmin';
 import { BlackTabs, Kpi, DisclosureNote, StateBlock, timeAgo } from '../../creators/_ui';
 import { Page, PageHeader, Card, Button, Badge, colors, thCell, tdCell } from '@/components/ui/vuexy';
+import { FixtureBanner } from '../../_shared/ui';
+import { USE_MOCK, USE_MOCK_ENV } from '@/services/blackAdminService';
 
 function statusColor(kind: string): string {
   switch (kind) {
@@ -41,6 +43,7 @@ export default function BlackDashboardPage() {
         subtitle="Premium membership: members, perk redemptions, perk cost/liability, partner offers and partner settlement due."
         actions={<Button variant="outline" onClick={load}>Refresh</Button>}
       />
+      <FixtureBanner active={USE_MOCK} envVar={USE_MOCK_ENV} />
       <BlackTabs active="overview" />
 
       <DisclosureNote>

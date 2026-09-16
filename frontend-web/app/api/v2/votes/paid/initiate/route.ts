@@ -7,7 +7,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { validateRequest } from '@/lib/auth/request';
 import { createAdminClient } from '@/lib/supabase/admin';
-import { v4 as uuidv4 } from 'uuid';
+import { randomUUID as uuidv4 } from 'crypto';
 
 export async function POST(request: NextRequest) {
   try {

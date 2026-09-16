@@ -7,6 +7,7 @@
 // IRON RULES: all money is integer kobo; create/book carry an Idempotency-Key;
 // fares/totals come from the SERVER — never computed here.
 
+import { mockAllowed } from '@/config/mockPolicy';
 import { api } from '@/api/client';
 import type {
   EventTransportOffer,
@@ -24,7 +25,7 @@ import {
 } from './event.mock';
 
 const USE_MOCK =
-  (process.env.EXPO_PUBLIC_EVENT_USE_MOCK ?? process.env.EXPO_PUBLIC_MOBILITY_USE_MOCK ?? 'true').toLowerCase() !== 'false';
+  mockAllowed(process.env.EXPO_PUBLIC_EVENT_USE_MOCK ?? process.env.EXPO_PUBLIC_MOBILITY_USE_MOCK, true);
 
 const BASE = '/api/v1';
 const delay = (ms = 320) => new Promise((r) => setTimeout(r, ms));

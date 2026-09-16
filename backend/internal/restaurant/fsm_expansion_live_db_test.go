@@ -3,7 +3,7 @@ package restaurant
 // ---------------------------------------------------------------------------
 // LIVE-DB integration test for the expanded order lifecycle (Phase 14): restaurant
 // reject→refund, dispatch-failed→refund, delivery-failed marker (no refund), and the
-// authz on each. Skipped unless TEST_DATABASE_URL/DATABASE_URL is set.
+// authz on each. Skipped unless TEST_DATABASE_URL is set.
 // ---------------------------------------------------------------------------
 
 import (
@@ -20,16 +20,15 @@ import (
 
 	"spotlight/backend/internal/finance/ledger"
 	"spotlight/backend/internal/finance/settlement"
+
+	"spotlight/backend/internal/testsupport"
 )
 
 func fsmPool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
 	dsn := os.Getenv("TEST_DATABASE_URL")
 	if dsn == "" {
-		dsn = os.Getenv("DATABASE_URL")
-	}
-	if dsn == "" {
-		t.Skip("no TEST_DATABASE_URL/DATABASE_URL set — skipping live-DB FSM test")
+		t.Skip("no TEST_DATABASE_URL set — skipping live-DB FSM test")
 	}
 	pool, err := pgxpool.New(context.Background(), dsn)
 	if err != nil {
@@ -70,7 +69,7 @@ func seedOrderWithEscrow(t *testing.T, ctx context.Context, pool *pgxpool.Pool, 
 
 func TestLiveDB_OrderFSMExpansion(t *testing.T) {
 	pool := fsmPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	svc := fsmService(pool)
 
@@ -80,6 +79,7 @@ func TestLiveDB_OrderFSMExpansion(t *testing.T) {
 	stranger := uuid.New().String()
 	for _, u := range []string{owner, customer, rider, stranger} {
 		_, _ = pool.Exec(ctx, `INSERT INTO auth.users (id,email) VALUES ($1,$2) ON CONFLICT DO NOTHING`, u, u+"@seed.test")
+		testsupport.CleanupUser(t, pool, u)
 	}
 	restID := uuid.New().String()
 	if _, err := pool.Exec(ctx, `INSERT INTO restaurants (id, owner_id, name, address, is_open) VALUES ($1,$2,'FSM Kitchen','1 St',TRUE)`, restID, owner); err != nil {

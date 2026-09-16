@@ -202,6 +202,8 @@ export interface MktFlagActionRequest {
   reason_code: string;
 }
 
+// Alias used by the real-time dashboard service/page.
+// (Same row shape as the console's audit entries.)
 export interface MktAdminAuditLogEntry {
   id: number;
   admin_id: string;
@@ -439,6 +441,16 @@ export interface MktBoostPackage {
   is_active: boolean;
 }
 
+// The single admin-set ₦/day rate used to price a custom date-range boost
+// (mkt_boost_daily_rate) — "start date+time / end date+time" boosts on the
+// mobile Boost screen, priced at duration (rounded up to whole days) × this
+// rate. Editing applies to NEW custom-boost purchases only (ADM-001).
+export interface MktBoostDailyRate {
+  daily_rate_kobo: number;
+  updated_at?: string | null;
+  updated_by?: string | null;
+}
+
 export interface MktCommissionConfig {
   default_bps: number; // platform take-rate default (per-category override lives in Taxonomy)
   boost_revenue_bps: number; // platform cut already implicit in boost price; shown for transparency
@@ -537,3 +549,6 @@ export interface MktCategoryContentInput {
   seo_description: string;
   reason_code: string;
 }
+
+
+export type AuditLog = MktAdminAuditLogEntry;

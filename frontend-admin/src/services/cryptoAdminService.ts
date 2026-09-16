@@ -8,7 +8,7 @@
 // value_kobo are NGN kobo. units / minor_unit_scale are integer asset-minor-unit
 // fields — never rendered as money, only formatKobo() output is money-facing.
 
-import { env } from '@/config/env';
+import { apiV1 } from '@/config/env';
 import { operationKey } from './idempotency';
 import type {
   CryptoAsset, CryptoOrder, CryptoAssetConfigRequest,
@@ -17,12 +17,21 @@ import type {
   CryptoReconRow, CryptoReconSummary,
 } from '@/types/cryptoAdmin';
 
-const USE_MOCK = (process.env.NEXT_PUBLIC_CRYPTO_ADMIN_USE_MOCK ?? 'true').toLowerCase() !== 'false';
+// LIVE by default. Set NEXT_PUBLIC_CRYPTO_ADMIN_USE_MOCK=true for fixtures.
+//
+// Verified before flipping: every path this service calls exists at
+// /api/v1/admin/crypto (internal/crypto/routes.go) with matching methods —
+// GET addresses/assets/orders/reconciliation/swaps/withdrawals, POST assets,
+// POST withdrawals/:id/decision, POST addresses/:id/decision.
+//
+// It mattered most for adminDecideWithdrawal: approving a crypto withdrawal
+// mutated an in-memory array and reported success, so the operator believed a
+// payout had been released.
+const USE_MOCK = (process.env.NEXT_PUBLIC_CRYPTO_ADMIN_USE_MOCK ?? 'false').toLowerCase() === 'true';
 
 function base(): string {
-  // env.apiBaseUrl already ends with /api/v1; crypto admin is mounted directly
   // at /api/v1/admin/crypto (no extra prefix-stripping needed, unlike marketplace).
-  return `${env.apiBaseUrl}/admin/crypto`;
+  return `${apiV1()}/admin/crypto`;
 }
 
 function authHeaders(): Record<string, string> {
@@ -41,6 +50,13 @@ export function formatKobo(kobo: number | null | undefined): string {
 function delay<T = void>(value?: T, ms = 220): Promise<T> {
   return new Promise((r) => setTimeout(() => r(value as T), ms));
 }
+
+// adminConfigAsset has a real, verified live endpoint (see the header comment
+// above), so fixture mode has nothing to add and refuses loudly instead of
+// reporting a write it did not perform. See docs/audit/ADMIN_SIMULATED_WRITES.md.
+const NOT_IN_FIXTURE_MODE =
+  'is unavailable in fixture mode: this console will not report a write it did not perform. ' +
+  'Unset NEXT_PUBLIC_CRYPTO_ADMIN_USE_MOCK (or set it to false — the default) to make this change against the live backend.';
 
 async function parseErrorMessage(res: Response, fallback: string): Promise<string> {
   try {
@@ -102,22 +118,7 @@ export async function adminConfigAsset(input: CryptoAssetConfigRequest): Promise
   if (!input.symbol || !input.symbol.trim()) throw new Error('symbol is required.');
   if (!input.name || !input.name.trim()) throw new Error('name is required.');
   if (!input.minor_unit_scale || input.minor_unit_scale <= 0) throw new Error('minor_unit_scale must be a positive integer.');
-  if (USE_MOCK) {
-    await delay();
-    const existing = MOCK_ASSETS.find((a) => a.symbol === input.symbol.trim().toUpperCase());
-    const updated: CryptoAsset = {
-      id: existing?.id ?? `ast_${input.symbol.trim().toLowerCase()}`,
-      symbol: input.symbol.trim().toUpperCase(),
-      name: input.name.trim(),
-      minor_unit_scale: input.minor_unit_scale,
-      is_active: input.is_active,
-      created_at: existing?.created_at ?? new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-    };
-    if (existing) Object.assign(existing, updated);
-    else MOCK_ASSETS.push(updated);
-    return updated;
-  }
+  if (USE_MOCK) throw new Error(`Configuring a crypto asset ${NOT_IN_FIXTURE_MODE}`);
   const res = await fetch(`${base()}/assets`, {
     method: 'POST', headers: authHeaders(), body: JSON.stringify(input),
   });

@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { View, Text, ScrollView, StyleSheet, Pressable, Platform, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import { Zap, SlidersHorizontal, ChevronRight } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Radius } from '@/constants/radius';
@@ -33,7 +34,7 @@ export default function AvailabilityScreen() {
     try {
       await update.mutateAsync({ schedule });
       Alert.alert('Saved', 'Your availability has been updated.');
-      router.back();
+      goBack('/');
     } catch {
       Alert.alert('Save failed', 'Please try again.');
     }

@@ -57,17 +57,22 @@ export const btn = (): CSSProperties => ({ padding: '0.35rem 0.8rem', borderRadi
 export const th = (): CSSProperties => ({ padding: '0.4rem 0.5rem', fontWeight: 600, textAlign: 'left', color: colors.muted, fontSize: '0.78rem', textTransform: 'uppercase', letterSpacing: '0.02em' });
 export const td = (): CSSProperties => ({ padding: '0.5rem 0.5rem', color: colors.text, borderTop: `1px solid ${colors.border}` });
 
+// Keyed on the `orders_status_check` vocabulary. It used to be keyed on
+// `placed`/`accepted`/`assigned`/`refunded`/`no_rider`, none of which
+// orders.status can hold — so half of any real row set fell through to the grey
+// default, and the three states that most need to stand out (rejected,
+// dispatch_failed, delivery_failed) had no colour at all.
 const STATUS_COLORS: Record<string, { bg: string; fg: string }> = {
-  placed: { bg: tint(colors.primary, 0.12), fg: colors.primary },
-  accepted: { bg: tint(colors.primary, 0.12), fg: colors.primary },
+  pending: { bg: tint(colors.primary, 0.12), fg: colors.primary },
+  confirmed: { bg: tint(colors.primary, 0.12), fg: colors.primary },
   preparing: { bg: tint(colors.warning, 0.12), fg: colors.warning },
   ready: { bg: tint(colors.warning, 0.12), fg: colors.warning },
-  assigned: { bg: tint(colors.info, 0.12), fg: colors.info },
   picked_up: { bg: tint(colors.info, 0.12), fg: colors.info },
   delivered: { bg: tint(colors.success, 0.12), fg: colors.success },
   cancelled: { bg: colors.bg, fg: colors.muted },
-  refunded: { bg: colors.bg, fg: colors.muted },
-  no_rider: { bg: tint(colors.danger, 0.12), fg: colors.danger },
+  rejected: { bg: tint(colors.danger, 0.12), fg: colors.danger },
+  dispatch_failed: { bg: tint(colors.danger, 0.12), fg: colors.danger },
+  delivery_failed: { bg: tint(colors.danger, 0.12), fg: colors.danger },
 };
 
 export function Badge({ status, label }: { status: string; label?: string }) {

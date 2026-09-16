@@ -77,6 +77,15 @@ func (s *Service) CreateApplication(ctx context.Context, userID string, req Crea
 	if mt.Status != "open" {
 		return nil, ErrModuleClosed
 	}
+	// An open merchant type under a CLOSED module must also be rejected — the
+	// module toggle is the coarse kill-switch and wins over the per-type status.
+	modStatus, err := s.repo.GetModuleStatus(ctx, mt.ModuleID)
+	if err != nil {
+		return nil, err
+	}
+	if modStatus != "open" {
+		return nil, ErrModuleClosed
+	}
 	dup, err := s.repo.HasActiveApplicationOrProfile(ctx, userID, req.MerchantTypeID)
 	if err != nil {
 		return nil, err

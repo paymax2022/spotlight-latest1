@@ -16,6 +16,18 @@ type Batch = {
   training_fee_ngn: number; one_off_discount_pct: number;
   installments_count: number; fee_frequency: string;
 };
+/**
+ * The applicant's details as the ACCOUNT already holds them, returned by
+ * GET /api/academy/apply. Name, email and phone are shown read-only — the user
+ * gave them at sign-up and must not be asked again; the rest just pre-fill.
+ * An empty string means the profile genuinely has no value, so the form still
+ * asks for it (and the server saves the answer back to the profile).
+ */
+type Applicant = {
+  full_name: string; email: string; phone: string;
+  gender: string; date_of_birth: string; state: string; city: string; country: string;
+};
+
 type AcademySettings = {
   registration_type: 'free' | 'paid';
   application_fee: number;
@@ -32,6 +44,20 @@ const lbl: React.CSSProperties = {
   fontSize: 11, fontWeight: 700, color: 'rgba(255,255,255,0.5)',
   textTransform: 'uppercase', letterSpacing: '0.07em', display: 'block', marginBottom: 5,
 };
+
+const knownBox: React.CSSProperties = {
+  background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.10)',
+  borderRadius: 10, padding: '12px 14px',
+};
+
+function KnownRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, padding: '3px 0' }}>
+      <span style={{ fontSize: 12, color: 'rgba(255,255,255,0.5)' }}>{label}</span>
+      <span style={{ fontSize: 13, color: '#f1f5f9', textAlign: 'right', overflowWrap: 'anywhere' }}>{value}</span>
+    </div>
+  );
+}
 
 const AREAS = ['film_directing','cinematography','script_writing','video_editing','sound_design','production_management','acting'];
 const SCHEDULES: Record<string, string> = { weekdays: 'Mon–Fri', weekends: 'Sat–Sun', accelerated: 'Intensive' };
@@ -55,6 +81,7 @@ export default function AcademyApplyPage({ embedded = false }: { embedded?: bool
   const [submitting, setSubmitting] = useState(false);
   const [error, setError]       = useState('');
   const [applicationId, setApplicationId] = useState('');
+  const [applicant, setApplicant] = useState<Applicant | null>(null);
 
   const [form, setForm] = useState({
     batch_id: prefillBatch,
@@ -84,6 +111,23 @@ export default function AcademyApplyPage({ embedded = false }: { embedded?: bool
         const appliedIds = Array.isArray(json.appliedBatchIds) ? json.appliedBatchIds : [];
         setBatches(json.batches ?? []);
         setAppliedBatchIds(appliedIds);
+
+        if (json.applicant) {
+          const known = json.applicant as Applicant;
+          setApplicant(known);
+          // Fill from the account, but never clobber anything already typed —
+          // this resolves after the form is interactive.
+          setForm((p) => ({
+            ...p,
+            full_name:     p.full_name     || known.full_name || '',
+            email:         p.email         || known.email || '',
+            phone:         p.phone         || known.phone || '',
+            gender:        p.gender        || known.gender || '',
+            date_of_birth: p.date_of_birth || known.date_of_birth || '',
+            state:         p.state         || known.state || '',
+            country:       known.country   || p.country,
+          }));
+        }
         if (json.settings) {
           setSettings({
             registration_type: json.settings.registration_type === 'paid' ? 'paid' : 'free',
@@ -488,20 +532,40 @@ export default function AcademyApplyPage({ embedded = false }: { embedded?: bool
               </div>
             )}
 
-            {/* Personal details */}
+            {/* Personal details. Anything the account already holds is shown
+                read-only — the user gave it at sign-up, so this form does not
+                ask for it again. Only a genuinely missing field gets an input,
+                and the server saves that answer to the profile. */}
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
-              <div style={{ gridColumn: '1/-1' }}>
-                <label style={lbl}>Full Name *</label>
-                <input style={inp} required value={form.full_name} onChange={(e) => setForm((p) => ({ ...p, full_name: e.target.value }))} />
-              </div>
-              <div>
-                <label style={lbl}>Email Address *</label>
-                <input style={inp} type="email" required value={form.email} onChange={(e) => setForm((p) => ({ ...p, email: e.target.value }))} />
-              </div>
-              <div>
-                <label style={lbl}>Phone *</label>
-                <input style={inp} type="tel" required value={form.phone} onChange={(e) => setForm((p) => ({ ...p, phone: e.target.value }))} />
-              </div>
+              {(applicant?.full_name || applicant?.email || applicant?.phone) && (
+                <div style={{ gridColumn: '1/-1', ...knownBox }}>
+                  <div style={{ ...lbl, marginBottom: 8 }}>Your details</div>
+                  {!!applicant?.full_name && <KnownRow label="Name" value={applicant.full_name} />}
+                  {!!applicant?.email     && <KnownRow label="Email" value={applicant.email} />}
+                  {!!applicant?.phone     && <KnownRow label="Phone" value={applicant.phone} />}
+                  <p style={{ fontSize: 11, color: 'rgba(255,255,255,0.45)', margin: '8px 0 0' }}>
+                    Taken from your account. Update them in your profile if anything has changed.
+                  </p>
+                </div>
+              )}
+              {!applicant?.full_name && (
+                <div style={{ gridColumn: '1/-1' }}>
+                  <label style={lbl}>Full Name *</label>
+                  <input style={inp} required value={form.full_name} onChange={(e) => setForm((p) => ({ ...p, full_name: e.target.value }))} />
+                </div>
+              )}
+              {!applicant?.email && (
+                <div>
+                  <label style={lbl}>Email Address *</label>
+                  <input style={inp} type="email" required value={form.email} onChange={(e) => setForm((p) => ({ ...p, email: e.target.value }))} />
+                </div>
+              )}
+              {!applicant?.phone && (
+                <div>
+                  <label style={lbl}>Phone *</label>
+                  <input style={inp} type="tel" required value={form.phone} onChange={(e) => setForm((p) => ({ ...p, phone: e.target.value }))} />
+                </div>
+              )}
               <div>
                 <label style={lbl}>Gender</label>
                 <select style={inp} value={form.gender} onChange={(e) => setForm((p) => ({ ...p, gender: e.target.value }))}>

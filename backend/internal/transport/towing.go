@@ -386,7 +386,7 @@ func (s *Service) CompleteTowing(ctx context.Context, id, driverUserID string) e
 		return err
 	}
 	if t.SettlementID != nil && t.OperatorID != nil {
-		if err := s.settleModeProvider(ctx, *t.SettlementID, *t.OperatorID); err != nil {
+		if err := s.settleModeProvider(ctx, *t.SettlementID, *t.OperatorID, 0); err != nil {
 			return fmt.Errorf("transport: settle towing: %w", err)
 		}
 	}

@@ -7,7 +7,8 @@
 // `map.admin.review` (carried by the admin session token).
 // Mock by default (NEXT_PUBLIC_MAPS_USE_MOCK); flip to false to hit the live Go backend.
 
-import { env } from '@/config/env';
+import { apiRoot } from '@/config/env';
+import { resolveUseMock } from '@/config/useMock';
 import type {
   MapDashboard,
   ResolutionEvent,
@@ -17,10 +18,17 @@ import type {
   ContributionStatus,
 } from '@/types/mapServiceAdmin';
 
-const USE_MOCK = (process.env.NEXT_PUBLIC_MAPS_USE_MOCK ?? 'true').toLowerCase() !== 'false';
+const USE_MOCK = resolveUseMock(process.env.NEXT_PUBLIC_MAPS_USE_MOCK);
 
+// apiRoot() strips any trailing /api/v1 off env.apiBaseUrl → /api/maps/admin
+// (verified: backend/internal/maps/routes_v2.go `grp := r.Group("/api/maps/admin")`,
+// registered via RegisterMapsV2Admin in finance_routes.go). This used to be a
+// regex on env.apiBaseUrl itself, which relied on apiBaseUrl ending in
+// /api/v1 — it no longer does (see config/env.ts), so that regex silently
+// stopped matching and every live maps admin call 404'd against the bare
+// proxy origin.
 function adminBase(): string {
-  return env.apiBaseUrl.replace(/\/api\/v1\/?$/, '/api/maps/admin');
+  return `${apiRoot()}/api/maps/admin`;
 }
 function authHeaders(): Record<string, string> {
   if (typeof window === 'undefined') return {};
@@ -30,6 +38,15 @@ function authHeaders(): Record<string, string> {
     : { 'Content-Type': 'application/json' };
 }
 const delay = (ms = 240) => new Promise((r) => setTimeout(r, ms));
+
+// reviewContribution has a real, verified live endpoint (POST /contributions/:id/review,
+// backend/internal/maps/routes_v2.go reviewContribution, feature-flag gated on
+// FeatureMapsV2Enabled), so fixture mode has nothing to add and refuses loudly
+// instead of reporting a review it did not perform. See
+// docs/audit/ADMIN_SIMULATED_WRITES.md.
+const NOT_IN_FIXTURE_MODE =
+  'is unavailable in fixture mode: this console will not report a write it did not perform. ' +
+  'Set NEXT_PUBLIC_MAPS_USE_MOCK=false to make this change against the live backend.';
 
 async function getJson<T>(path: string): Promise<T> {
   const res = await fetch(`${adminBase()}${path}`, { headers: authHeaders() });
@@ -136,14 +153,6 @@ export async function listContributions(status: ContributionStatus = 'pending'):
 }
 
 export async function reviewContribution(id: string, input: ContributionReviewInput): Promise<ContributionCandidate> {
-  if (USE_MOCK) {
-    await delay();
-    const base = MOCK_CONTRIBUTIONS.find((c) => c.id === id) ?? MOCK_CONTRIBUTIONS[0];
-    return {
-      ...base,
-      status: input.action === 'approve' ? 'approved' : 'rejected',
-      reviewer_id: 'ops_admin_1',
-    };
-  }
+  if (USE_MOCK) throw new Error(`Reviewing a map contribution ${NOT_IN_FIXTURE_MODE}`);
   return sendJson<ContributionCandidate>('POST', `/contributions/${id}/review`, input);
 }

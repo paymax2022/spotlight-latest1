@@ -1,10 +1,11 @@
-import { env } from '@/config/env';
+import { apiRoot } from '@/config/env';
 import type {
   MktListing,
   MktFlag,
   MktFlagActionRequest,
   MktAdminAuditLogEntry,
   MktBoost,
+  MktBoostDailyRate,
 } from '@/types/marketplaceAdmin';
 
 // Paymax Marketplace admin console — service layer.
@@ -16,10 +17,17 @@ import type {
 // Escrow/orders/disputes were REMOVED from the backend per ADR-023 — this console
 // only covers moderation, flags, boosts, and the audit log.
 //
-// env.apiBaseUrl looks like http://localhost:8080/api/v1 → strip the /api/v1
-// suffix entirely to reach the engine root, then append /v1/marketplace/admin.
+// apiRoot() strips any trailing /api/v1 from the proxy base and nothing else,
+// leaving the engine root — append /v1/marketplace/admin onto that.
+//
+// This used to be `env.apiBaseUrl.replace(/\/api\/v1\/?$/, '')`, which stopped
+// matching the moment apiBaseUrl became the same-origin proxy path
+// (<origin>/api/admin-proxy, no /api/v1 suffix). Every request then went to
+// <proxy>/v1/marketplace/admin/... intact rather than silently breaking here —
+// but the same broken replace() also poisoned getModerationListing below,
+// which built a *different* URL from the same dead regex.
 export function marketplaceAdminBase(): string {
-  return `${env.apiBaseUrl.replace(/\/api\/v1\/?$/, '')}/v1/marketplace/admin`;
+  return `${apiRoot()}/v1/marketplace/admin`;
 }
 
 function authHeaders(): Record<string, string> {
@@ -41,8 +49,7 @@ function delay<T>(value: T): Promise<T> {
 // Backend / feature flag (FEATURE_MARKETPLACE_ENABLED) may not be live yet —
 // default to deterministic fixtures unless explicitly disabled, so every screen
 // renders. Mirrors arenaAdminService / featuredPlacementAdminService.
-const USE_FIXTURES =
-  (process.env.NEXT_PUBLIC_MARKETPLACE_ADMIN_USE_MOCK ?? 'true').toLowerCase() !== 'false';
+const USE_FIXTURES = resolveUseMock(process.env.NEXT_PUBLIC_MARKETPLACE_ADMIN_USE_MOCK);
 
 async function parseErrorMessage(res: Response, fallback: string): Promise<string> {
   try {
@@ -131,7 +138,7 @@ export async function getModerationListing(id: string): Promise<MktListing> {
   // No dedicated admin GET-by-id in the frozen route list; the queue already
   // returns full listing objects, so the detail page is hydrated from the
   // cached queue result and falls back to the public listing GET if needed.
-  const res = await fetch(`${env.apiBaseUrl.replace(/\/api\/v1\/?$/, '')}/v1/marketplace/listings/${encodeURIComponent(id)}`, { cache: 'no-store', headers: authHeaders() });
+  const res = await fetch(`${apiRoot()}/v1/marketplace/listings/${encodeURIComponent(id)}`, { cache: 'no-store', headers: authHeaders() });
   if (!res.ok) throw new Error(await parseErrorMessage(res, 'Listing fetch failed'));
   return res.json();
 }
@@ -375,6 +382,26 @@ export async function upsertBoostPackage(data: any, reasonCode?: string): Promis
   return res.json();
 }
 
+// The custom-range "N/day" rate (ADM-002/MO-002) — separate from the preset
+// boost packages above: this is what prices a mobile buyer's own
+// start-date+time/end-date+time boost, at duration (rounded up to whole
+// days) × this rate.
+export async function getBoostDailyRate(): Promise<MktBoostDailyRate> {
+  if (USE_FIXTURES) return delay({ daily_rate_kobo: 10_000 }); // mirrors the backend's seeded default (₦100/day)
+  const res = await fetch(`${marketplaceAdminBase()}/pricing/boosts/daily-rate`, { cache: 'no-store', headers: authHeaders() });
+  if (!res.ok) throw new Error(await parseErrorMessage(res, 'Boost daily rate fetch failed'));
+  return res.json();
+}
+
+export async function setBoostDailyRate(dailyRateKobo: number, reasonCode: string): Promise<MktBoostDailyRate> {
+  if (USE_FIXTURES) return delay({ daily_rate_kobo: dailyRateKobo });
+  const res = await fetch(`${marketplaceAdminBase()}/pricing/boosts/daily-rate`, {
+    method: 'PUT', headers: authHeaders(), body: JSON.stringify({ daily_rate_kobo: dailyRateKobo, reason_code: reasonCode }),
+  });
+  if (!res.ok) throw new Error(await parseErrorMessage(res, 'Set boost daily rate failed'));
+  return res.json();
+}
+
 export async function getCommissionConfig(): Promise<any> {
   if (USE_FIXTURES) return delay({ category_commissions: {} });
   const res = await fetch(`${marketplaceAdminBase()}/pricing/commission`, { cache: 'no-store', headers: authHeaders() });
@@ -615,4 +642,285 @@ export async function createAnnouncement(data: any): Promise<any> {
   });
   if (!res.ok) throw new Error(await parseErrorMessage(res, 'Create announcement failed'));
   return res.json();
+}
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Real-time dashboard service (class API) — used by app/admin/marketplace/page.tsx
+// for live metrics/activity/audit polling. Grafted alongside the functional
+// console API above during the feat/admin-portal-consolidation merge; both
+// surfaces share the same backend and types.
+// ─────────────────────────────────────────────────────────────────────────────
+
+import type { AuditLog } from '@/types/marketplaceAdmin';
+import { resolveUseMock } from '@/config/useMock';
+
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8091/api/v1';
+
+interface Metrics {
+  total_active_listings: number;
+  listings_created_today: number;
+  total_gmv_kobo: number;
+  unique_sellers_today: number;
+  unique_buyers_today: number;
+  messages_sent_today: number;
+  offers_made_today: number;
+  recent_activity_count: number;
+}
+
+interface ActivityEvent {
+  id: string;
+  event_type: string;
+  entity_type: string;
+  entity_id: string;
+  actor_id: string;
+  display_text: string;
+  listing_title?: string;
+  listing_price_kobo?: number;
+  actor_name: string;
+  severity: 'info' | 'warning' | 'error';
+  created_at: string;
+}
+
+interface Listing {
+  id: string;
+  user_id: string;
+  title: string;
+  description: string;
+  category: string;
+  price_kobo: number;
+  currency: string;
+  status: string;
+  condition?: string;
+  location_text?: string;
+  image_urls: string[];
+  created_at: string;
+  updated_at: string;
+  published_at?: string;
+  deleted_at?: string;
+}
+
+class MarketplaceAdminService {
+  private getHeaders(): HeadersInit {
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    // Same key every other admin service reads (adminAuth.ts on sign-in) —
+    // this class used to read a 'auth_token' key nothing in this app ever
+    // writes, so every request here went out with no Authorization header
+    // at all and 401'd (or, once the route existed, still 401'd) silently.
+    if (typeof window !== 'undefined') {
+      const token = localStorage.getItem('spotlight_admin_access_token');
+      if (token) headers.Authorization = `Bearer ${token}`;
+    }
+    return headers;
+  }
+
+  /**
+   * Get real-time metrics for the marketplace
+   */
+  async getMetrics(): Promise<Metrics> {
+    // NOT API_BASE_URL + '/admin/marketplace/metrics' — that's the
+    // /api/v1-prefixed shape almost every other module uses, but
+    // RegisterMarketplace mounts this module straight off the engine root
+    // at /v1/marketplace/admin/* with no /api prefix (see marketplaceAdminBase's
+    // own doc comment above). That mismatch 404'd even after the route existed.
+    const response = await fetch(
+      `${marketplaceAdminBase()}/metrics`,
+      {
+        method: 'GET',
+        headers: this.getHeaders(),
+      }
+    );
+
+    if (!response.ok) {
+      throw new Error(`Failed to fetch metrics: ${response.statusText}`);
+    }
+
+    // Every marketplace admin route replies {"data": ...} (respond() in
+    // admin_handler.go) — this class used to return the envelope itself as
+    // if it were the payload.
+    const json = await response.json();
+    return (json?.data ?? json) as Metrics;
+  }
+
+  /**
+   * Get live activity feed
+   */
+  async getActivityFeed(): Promise<ActivityEvent[]> {
+    const response = await fetch(
+      `${marketplaceAdminBase()}/activity-feed`,
+      {
+        method: 'GET',
+        headers: this.getHeaders(),
+      }
+    );
+
+    if (!response.ok) {
+      throw new Error(`Failed to fetch activity feed: ${response.statusText}`);
+    }
+
+    const json = await response.json();
+    return (json?.data ?? json ?? []) as ActivityEvent[];
+  }
+
+  /**
+   * Get audit logs for a specific listing
+   */
+  async getAuditTrail(listingId: string, limit: number = 100): Promise<AuditLog[]> {
+    const response = await fetch(
+      `${API_BASE_URL}/marketplace/listings/${listingId}/audit?limit=${limit}`,
+      {
+        method: 'GET',
+        headers: this.getHeaders(),
+      }
+    );
+
+    if (!response.ok) {
+      throw new Error(`Failed to fetch audit trail: ${response.statusText}`);
+    }
+
+    return response.json();
+  }
+
+  /**
+   * Get all audit logs (admin only)
+   */
+  async getAllAuditLogs(limit: number = 500): Promise<AuditLog[]> {
+    const response = await fetch(
+      `${API_BASE_URL}/admin/marketplace/audit-logs?limit=${limit}`,
+      {
+        method: 'GET',
+        headers: this.getHeaders(),
+      }
+    );
+
+    if (!response.ok) {
+      throw new Error(`Failed to fetch audit logs: ${response.statusText}`);
+    }
+
+    return response.json();
+  }
+
+  /**
+   * Get all listings (admin view)
+   */
+  async getAllListings(page: number = 1, pageSize: number = 50): Promise<{
+    listings: Listing[];
+    total: number;
+    page: number;
+  }> {
+    const response = await fetch(
+      `${API_BASE_URL}/admin/marketplace/listings?page=${page}&page_size=${pageSize}`,
+      {
+        method: 'GET',
+        headers: this.getHeaders(),
+      }
+    );
+
+    if (!response.ok) {
+      throw new Error(`Failed to fetch listings: ${response.statusText}`);
+    }
+
+    return response.json();
+  }
+
+  /**
+   * Get a single listing
+   */
+  async getListing(listingId: string): Promise<Listing> {
+    const response = await fetch(
+      `${API_BASE_URL}/marketplace/listings/${listingId}`,
+      {
+        method: 'GET',
+        headers: this.getHeaders(),
+      }
+    );
+
+    if (!response.ok) {
+      throw new Error(`Failed to fetch listing: ${response.statusText}`);
+    }
+
+    return response.json();
+  }
+
+  /**
+   * Subscribe to real-time marketplace updates via WebSocket
+   */
+  subscribe(onMessage: (event: ActivityEvent) => void, onError?: (error: Error) => void) {
+    const protocol = typeof window !== 'undefined' && window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const wsUrl = `${protocol}//localhost:8091/ws/marketplace/updates`;
+
+    const ws = new WebSocket(wsUrl);
+
+    ws.onopen = () => {
+      console.log('Connected to marketplace real-time updates');
+    };
+
+    ws.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        onMessage(data);
+      } catch (err) {
+        console.error('Failed to parse WebSocket message:', err);
+      }
+    };
+
+    ws.onerror = (error) => {
+      console.error('WebSocket error:', error);
+      if (onError) {
+        onError(new Error('WebSocket connection failed'));
+      }
+    };
+
+    ws.onclose = () => {
+      console.log('Disconnected from marketplace real-time updates');
+    };
+
+    // Return unsubscribe function
+    return () => {
+      ws.close();
+    };
+  }
+
+  /**
+   * Subscribe to Server-Sent Events (alternative to WebSocket)
+   */
+  subscribeSSE(onMessage: (event: ActivityEvent) => void, onError?: (error: Error) => void) {
+    const eventSource = new EventSource(
+      `${API_BASE_URL}/admin/marketplace/events`,
+      {
+        // @ts-ignore - credentials option not in TypeScript types
+        withCredentials: true,
+      }
+    );
+
+    eventSource.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        onMessage(data);
+      } catch (err) {
+        console.error('Failed to parse SSE message:', err);
+      }
+    };
+
+    eventSource.onerror = (error) => {
+      console.error('SSE error:', error);
+      eventSource.close();
+      if (onError) {
+        onError(new Error('SSE connection failed'));
+      }
+    };
+
+    // Return unsubscribe function
+    return () => {
+      eventSource.close();
+    };
+  }
+}
+
+// Export singleton instance
+export const marketplaceAdminService = new MarketplaceAdminService();
+
+// Export hook for React components
+export function useMarketplaceAdminService() {
+  return marketplaceAdminService;
 }

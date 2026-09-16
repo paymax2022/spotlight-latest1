@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import PhoneNumberInput from '@/components/PhoneNumberInput';
 import { View, Text, StyleSheet, ScrollView, Pressable } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
@@ -56,14 +57,7 @@ export default function GuardianConsentScreen() {
           </View>
         ) : (
           <>
-            <TextInputField
-              label="Parent / guardian phone number"
-              placeholder="0803 000 0000"
-              value={phone}
-              onChangeText={setPhone}
-              keyboardType="phone-pad"
-              leftIcon={<Phone size={18} color={Colors.outline} />}
-            />
+            <PhoneNumberInput label="Parent / guardian phone number" value={phone} onChange={({ e164, nsn }) => (setPhone)(e164 || nsn)} />
             <Pressable style={styles.ackRow} onPress={() => setAcked((a) => !a)} accessibilityRole="checkbox" accessibilityState={{ checked: acked }}>
               <View style={[styles.checkbox, acked && styles.checkboxOn]}>
                 {acked ? <Check size={14} color={Colors.onPrimary} strokeWidth={3} /> : null}

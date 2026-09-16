@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { View, Text, ScrollView, StyleSheet, Pressable } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import {
   ShoppingCart,
   MessageCircle,
@@ -89,7 +90,7 @@ export default function SymptomResultsScreen() {
                 : 'Check your connection and try again — or ask a pharmacist directly, free of charge.'
             }
             actionLabel={notMatched ? 'Try different words' : 'Retry'}
-            onAction={notMatched ? () => router.back() : () => refetch()}
+            onAction={notMatched ? () => goBack('/health/pharmacy/symptom') : () => refetch()}
           />
           <Pressable style={[styles.fallbackCard, shadow1]} onPress={openPharmacistChat}>
             <View style={[styles.fallbackIcon, { backgroundColor: Colors.iconBgBlue }]}>

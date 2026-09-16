@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { View, Text, StyleSheet, Pressable } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import { List } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
@@ -34,7 +35,7 @@ export default function ResultsMap() {
         title="Map"
         subtitle={query.destination || 'Search results'}
         rightSlot={
-          <Pressable onPress={() => router.back()} hitSlop={8} accessibilityLabel="List view">
+          <Pressable onPress={() => goBack('/stays')} hitSlop={8} accessibilityLabel="List view">
             <List size={22} color={Colors.onSurface} strokeWidth={2} />
           </Pressable>
         }

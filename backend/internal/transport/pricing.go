@@ -29,7 +29,8 @@ func (s *Service) queryPricing(ctx context.Context, zone, serviceType string) (*
 	const q = `
 		SELECT id, zone, service_type, currency, base_fare_kobo, per_km_kobo, per_min_kobo,
 		       min_fare_kobo, fare_floor_pct, fare_ceiling_pct, driver_profit_floor_kobo,
-		       surge_multiplier, cancellation_fee_kobo, waiting_fee_per_min_kobo, active
+		       surge_multiplier, cancellation_fee_kobo, waiting_fee_per_min_kobo,
+		       insurance_rate_bps, active
 		FROM transport_pricing_config
 		WHERE zone=$1 AND service_type=$2 AND active=TRUE
 		LIMIT 1`
@@ -37,7 +38,8 @@ func (s *Service) queryPricing(ctx context.Context, zone, serviceType string) (*
 	if err := s.db.QueryRow(ctx, q, zone, serviceType).Scan(
 		&c.ID, &c.Zone, &c.ServiceType, &c.Currency, &c.BaseFareKobo, &c.PerKMKobo, &c.PerMinKobo,
 		&c.MinFareKobo, &c.FareFloorPct, &c.FareCeilingPct, &c.DriverProfitFloorKobo,
-		&c.SurgeMultiplier, &c.CancellationFeeKobo, &c.WaitingFeePerMinKobo, &c.Active,
+		&c.SurgeMultiplier, &c.CancellationFeeKobo, &c.WaitingFeePerMinKobo,
+		&c.InsuranceRateBps, &c.Active,
 	); err != nil {
 		return nil, fmt.Errorf("transport: pricing config not found for zone=%s service=%s", zone, serviceType)
 	}

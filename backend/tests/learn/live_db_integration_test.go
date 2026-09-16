@@ -6,7 +6,7 @@ package learn_test
 // learn.Service (learn.NewService(pool, audit)) talks to a concrete
 // *pgxpool.Pool for every read and for the one mutation (SubmitQuiz). None of
 // this can run without a migrated Postgres. This file is SKIPPED whenever
-// DATABASE_URL/TEST_DATABASE_URL is unset (same pattern as
+// TEST_DATABASE_URL is unset (same pattern as
 // backend/tests/association/live_db_integration_test.go), but is fully written
 // end-to-end so it can be un-skipped the moment infra is available — the skip
 // is NOT a stub; every step below drives the real Service against real tables.
@@ -14,16 +14,16 @@ package learn_test
 // ── Bring-up note (read before running) ───────────────────────────────────
 //  1. Apply the learn-center migration (seeds learn_* tables/CHECK constraints).
 //     Confirm the core tables landed:
-//       psql "$DATABASE_URL" -c "\d learn_quizzes"
-//       psql "$DATABASE_URL" -c "\d learn_quiz_options"
-//       psql "$DATABASE_URL" -c "\d learn_quiz_attempts"
+//       psql "$TEST_DATABASE_URL" -c "\d learn_quizzes"
+//       psql "$TEST_DATABASE_URL" -c "\d learn_quiz_options"
+//       psql "$TEST_DATABASE_URL" -c "\d learn_quiz_attempts"
 //  2. These tests seed their own path/lesson/quiz/question/option rows with
 //     fresh uuid.New() ids — no truncation, no shared fixtures, safe to run
 //     repeatedly against the same test database.
-//  3. Set DATABASE_URL (or TEST_DATABASE_URL) to a disposable/test database —
+//  3. Set TEST_DATABASE_URL to a disposable/test database —
 //     never point this at production. `supabase db reset` (local, port 54322)
 //     is the safest target:
-//       export DATABASE_URL="postgres://postgres:postgres@localhost:54322/postgres"
+//       export TEST_DATABASE_URL="postgres://postgres:postgres@localhost:54322/postgres"
 //  4. Run:
 //       cd backend && go test ./tests/learn/... -run LiveDB -v
 // ---------------------------------------------------------------------------
@@ -37,16 +37,15 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"spotlight/backend/internal/learn"
+
+	"spotlight/backend/internal/testsupport"
 )
 
 func liveDBPool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
 	dsn := os.Getenv("TEST_DATABASE_URL")
 	if dsn == "" {
-		dsn = os.Getenv("DATABASE_URL")
-	}
-	if dsn == "" {
-		t.Skip("no TEST_DATABASE_URL/DATABASE_URL set — skipping live-DB learn integration test; see bring-up note in live_db_integration_test.go")
+		t.Skip("no TEST_DATABASE_URL set — skipping live-DB learn integration test; see bring-up note in live_db_integration_test.go")
 	}
 	pool, err := pgxpool.New(context.Background(), dsn)
 	if err != nil {
@@ -143,12 +142,13 @@ func seedUser(t *testing.T, ctx context.Context, pool *pgxpool.Pool) string {
 	if _, err := pool.Exec(ctx, `INSERT INTO auth.users (id, email) VALUES ($1, $2) ON CONFLICT DO NOTHING`, id, id+"@seed.test"); err != nil {
 		t.Fatalf("seed auth.users: %v", err)
 	}
+	testsupport.CleanupUser(t, pool, id)
 	return id
 }
 
 func TestLiveDB_GetQuiz_AnswerKeyNeverSerialized(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	svc := learn.NewService(pool, nil)
 
@@ -175,7 +175,7 @@ func TestLiveDB_GetQuiz_AnswerKeyNeverSerialized(t *testing.T) {
 // pass (1.0 >= 0.7), and must persist an attempt row + write an audit entry.
 func TestLiveDB_SubmitQuiz_ScoresAuthoritativelyAndPasses(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	auditor := &recordingAuditor{}
 	svc := learn.NewService(pool, auditor)
@@ -213,7 +213,7 @@ func TestLiveDB_SubmitQuiz_ScoresAuthoritativelyAndPasses(t *testing.T) {
 // scores 0/1 and fails.
 func TestLiveDB_SubmitQuiz_WrongAnswerFails(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	svc := learn.NewService(pool, nil)
 
@@ -236,7 +236,7 @@ func TestLiveDB_SubmitQuiz_WrongAnswerFails(t *testing.T) {
 // ErrForbidden }`) fires end-to-end and writes NO attempt row.
 func TestLiveDB_SubmitQuiz_RequiresAuthenticatedUser(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	svc := learn.NewService(pool, nil)
 
@@ -264,7 +264,7 @@ func TestLiveDB_SubmitQuiz_RequiresAuthenticatedUser(t *testing.T) {
 // ProgressPct advances accordingly (progress() — service.go:107-119).
 func TestLiveDB_GetLesson_MarksProgressAndAdvancesPathPercent(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	svc := learn.NewService(pool, nil)
 

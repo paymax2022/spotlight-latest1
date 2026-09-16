@@ -1,0 +1,29 @@
+# Required status checks on `develop` (GitHub branch protection).
+#
+# These are CHECK-RUN names, not workflow names — you cannot require "ci.yml".
+# For a job that calls a reusable workflow the name is "<caller job name> / <job
+# id inside the reusable>"; for an inline job it is just the job's `name:`.
+#
+# ⚠️ RENAMING A JOB HERE BREAKS EVERY PR. Branch protection matches on the exact
+# string; the old context simply never reports again, so PRs sit forever on
+# "Expected — waiting for status" with nothing explaining why. That is why
+# scripts/ci/test-changed-modules.py asserts every name below still exists in
+# ci.yml — rename a job and CI fails loudly instead of merges hanging silently.
+#
+# Only UNCONDITIONAL jobs belong here. Module lanes are gated on the router and
+# report "skipped" when their module did not change; GitHub does treat a skipped
+# check as satisfied, but requiring them couples branch protection to routing for
+# no gain — a lane that must run already runs.
+#
+# To change the set: edit this file, run the test, then re-apply protection with
+#   scripts/ci/apply-branch-protection.sh develop
+
+backend (go build + vet) / verify
+frontend-admin (type-check) / typecheck
+frontend-web (regression + money + contract + tsc + lint) / verify
+hygiene (client secrets + live-DB test gate + migration versions)
+migrations (additive-only guard) / guard
+mobile (whole-app tsc) / typecheck
+openapi (validate all contracts) / validate
+which modules changed
+workflows (actionlint)

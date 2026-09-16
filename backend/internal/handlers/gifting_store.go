@@ -93,14 +93,20 @@ type Recipient struct {
 }
 
 // GetRecipients retrieves user's saved gift recipients.
+//
+// Reads platform_users, not auth.users: this pool runs as service_role, which
+// Supabase never grants auth-schema access to, and platform_users.id mirrors
+// auth.users.id 1:1. The name join also had to move off "profiles" — that
+// table has no name/nickname column, only user_profiles does (via full_name);
+// there is no nickname anywhere in the schema, so it is always empty.
 func (s *GiftingStore) GetRecipients(ctx context.Context, senderUserID string) ([]Recipient, error) {
 	rows, err := s.db.Query(ctx, `
 		SELECT DISTINCT
 			u.id as user_id, u.email,
-			COALESCE(p.name, '') as name,
-			COALESCE(p.nickname, '') as nickname
-		FROM auth.users u
-		LEFT JOIN profiles p ON u.id = p.user_id
+			COALESCE(p.full_name, '') as name,
+			'' as nickname
+		FROM platform_users u
+		LEFT JOIN user_profiles p ON u.id = p.id
 		WHERE u.id != $1
 		ORDER BY u.created_at DESC
 		LIMIT 50
@@ -271,19 +277,23 @@ func (s *GiftingStore) GetGiftTransaction(ctx context.Context, userID string, tx
 	return &gt, nil
 }
 
-// enrichGiftTransaction loads sender/recipient names and item name
+// enrichGiftTransaction loads sender/recipient names and item name.
+//
+// Reads platform_users/user_profiles, not auth.users/profiles: this pool runs
+// as service_role (no auth-schema grants), and the old "profiles" table has
+// no name column at all — full_name lives on user_profiles, keyed by id.
 func (s *GiftingStore) enrichGiftTransaction(ctx context.Context, gt *GiftTransaction) {
 	// Get sender name
 	_ = s.db.QueryRow(ctx, `
-		SELECT COALESCE(name, email) FROM auth.users u
-		LEFT JOIN profiles p ON u.id = p.user_id
+		SELECT COALESCE(NULLIF(p.full_name, ''), u.email) FROM platform_users u
+		LEFT JOIN user_profiles p ON u.id = p.id
 		WHERE u.id = $1
 	`, gt.SenderID).Scan(&gt.SenderName)
 
 	// Get recipient name
 	_ = s.db.QueryRow(ctx, `
-		SELECT COALESCE(name, email) FROM auth.users u
-		LEFT JOIN profiles p ON u.id = p.user_id
+		SELECT COALESCE(NULLIF(p.full_name, ''), u.email) FROM platform_users u
+		LEFT JOIN user_profiles p ON u.id = p.id
 		WHERE u.id = $1
 	`, gt.RecipientID).Scan(&gt.RecipientName)
 

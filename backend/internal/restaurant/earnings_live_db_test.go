@@ -3,7 +3,7 @@ package restaurant
 // ---------------------------------------------------------------------------
 // LIVE-DB integration test for payouts completeness (Phase 17): the KYB-verified
 // payout gate (PY-007), refunded settlements excluded (PY-005), and the earnings
-// statement (PY-008). Skipped unless TEST_DATABASE_URL/DATABASE_URL is set.
+// statement (PY-008). Skipped unless TEST_DATABASE_URL is set.
 // ---------------------------------------------------------------------------
 
 import (
@@ -19,16 +19,15 @@ import (
 
 	"spotlight/backend/internal/finance/ledger"
 	"spotlight/backend/internal/finance/settlement"
+
+	"spotlight/backend/internal/testsupport"
 )
 
 func earningsPool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
 	dsn := os.Getenv("TEST_DATABASE_URL")
 	if dsn == "" {
-		dsn = os.Getenv("DATABASE_URL")
-	}
-	if dsn == "" {
-		t.Skip("no TEST_DATABASE_URL/DATABASE_URL set — skipping live-DB earnings test")
+		t.Skip("no TEST_DATABASE_URL set — skipping live-DB earnings test")
 	}
 	pool, err := pgxpool.New(context.Background(), dsn)
 	if err != nil {
@@ -62,7 +61,7 @@ func seedSettledOrder(t *testing.T, ctx context.Context, pool *pgxpool.Pool, res
 
 func TestLiveDB_PayoutsComplete(t *testing.T) {
 	pool := earningsPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	led := ledger.NewService(ledger.NewRepository(pool), (*goredis.Client)(nil))
 	svc := NewService(pool, settlement.NewService(pool, led)).WithLedger(led)
@@ -71,6 +70,7 @@ func TestLiveDB_PayoutsComplete(t *testing.T) {
 	customer := uuid.New().String()
 	for _, u := range []string{owner, customer} {
 		_, _ = pool.Exec(ctx, `INSERT INTO auth.users (id,email) VALUES ($1,$2) ON CONFLICT DO NOTHING`, u, u+"@seed.test")
+		testsupport.CleanupUser(t, pool, u)
 	}
 	// A KYB-approved restaurant is payable; an unverified one is not (PY-007).
 	verified := uuid.New().String()

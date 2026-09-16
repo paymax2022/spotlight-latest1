@@ -81,18 +81,18 @@ ALTER TABLE public.registration_status_events ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "Users can view their own registrations"
   ON public.registrations
   FOR SELECT
-  USING (auth.uid() = user_id OR current_user_id IS NULL); -- NULL allows service role
+  USING (auth.uid() = user_id OR auth.uid() IS NULL); -- NULL allows service role
 
 CREATE POLICY "Users can create registrations"
   ON public.registrations
   FOR INSERT
-  WITH CHECK (auth.uid() = user_id OR current_user_id IS NULL);
+  WITH CHECK (auth.uid() = user_id OR auth.uid() IS NULL);
 
 CREATE POLICY "Users can update their own registrations"
   ON public.registrations
   FOR UPDATE
-  USING (auth.uid() = user_id OR current_user_id IS NULL)
-  WITH CHECK (auth.uid() = user_id OR current_user_id IS NULL);
+  USING (auth.uid() = user_id OR auth.uid() IS NULL)
+  WITH CHECK (auth.uid() = user_id OR auth.uid() IS NULL);
 
 -- Status events are read-only for users
 CREATE POLICY "Users can view status events for their registrations"
@@ -102,7 +102,7 @@ CREATE POLICY "Users can view status events for their registrations"
     EXISTS (
       SELECT 1 FROM public.registrations
       WHERE registrations.id = registration_status_events.registration_id
-      AND (registrations.user_id = auth.uid() OR current_user_id IS NULL)
+      AND (registrations.user_id = auth.uid() OR auth.uid() IS NULL)
     )
   );
 

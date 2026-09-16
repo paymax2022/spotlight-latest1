@@ -2,12 +2,14 @@ import React from 'react';
 import { View, Text, Pressable, StyleSheet, Share } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import { X, Link2, MessageCircle, Facebook, Twitter, Linkedin, QrCode } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
 import { Spacing } from '@/constants/spacing';
 import { Radius } from '@/constants/radius';
 import { useCampaign } from '@/features/crowdfunding/hooks/useCrowdfunding';
+import { recordCampaignEvent } from '@/features/crowdfunding/api/crowdfunding.api';
 
 const CHANNELS = [
   { key: 'copy', label: 'Copy link', icon: Link2, bg: Colors.iconBgPurple, fg: Colors.primary },
@@ -24,6 +26,13 @@ export default function ShareScreen() {
   const url = `https://spotlight.ng/c/${id}`;
 
   const onChannel = async (key: string) => {
+    // Record the share against the channel the creator will see in their
+    // traffic-source breakdown. 'copy' and 'qr' produce a link with no channel
+    // of its own, so they count as 'direct'. Fired before the native sheet
+    // because we cannot tell whether the user completed or dismissed it, and an
+    // intent to share is the signal the creator cares about.
+    void recordCampaignEvent(id, 'SHARE', key === 'copy' || key === 'qr' ? 'direct' : key);
+
     if (key === 'whatsapp' || key === 'facebook' || key === 'x' || key === 'linkedin') {
       try {
         await Share.share({ message: `${c?.title ?? 'Support this campaign'} — ${url}`, url });
@@ -37,7 +46,7 @@ export default function ShareScreen() {
       <View style={styles.grabber} />
       <View style={styles.header}>
         <Text style={styles.title}>Share campaign</Text>
-        <Pressable onPress={() => router.back()} hitSlop={10} accessibilityLabel="Close"><X size={22} color={Colors.onSurface} strokeWidth={2} /></Pressable>
+        <Pressable onPress={() => goBack('/crowdfunding')} hitSlop={10} accessibilityLabel="Close"><X size={22} color={Colors.onSurface} strokeWidth={2} /></Pressable>
       </View>
 
       <Text style={styles.subtitle} numberOfLines={2}>{c?.title ?? 'Help this campaign reach more supporters.'}</Text>

@@ -8,7 +8,7 @@ package transport_scheduled_test
 // GetScheduled, CancelScheduled, DispatchScheduled, DueForDispatch,
 // ExpireStale, SendDueReminders) and to the real settlement.Service for
 // escrow/refund. None of this can run without a migrated Postgres. This file
-// is SKIPPED whenever DATABASE_URL/TEST_DATABASE_URL is unset (the pattern
+// is SKIPPED whenever TEST_DATABASE_URL is unset (the pattern
 // used by backend/internal/top5events/service_integration_test.go), but is
 // fully written end-to-end so it can be un-skipped the moment infra is
 // available — do not treat the skip as "this is a stub"; every step below
@@ -19,7 +19,7 @@ package transport_scheduled_test
 //       supabase/migrations/2026090600000X_transport_scheduled_bookings.sql
 //     (table transport_scheduled_bookings + scheduled_booking_status enum +
 //     the transport.admin.scheduled.* RBAC perms). Confirm it landed:
-//       psql "$DATABASE_URL" -c "\d transport_scheduled_bookings"
+//       psql "$TEST_DATABASE_URL" -c "\d transport_scheduled_bookings"
 //  2. This test needs a wallet with a positive balance for the test rider
 //     (escrow debits fail closed otherwise) — seed one via the existing
 //     wallet top-up path or a direct ledger credit to a synthetic test user
@@ -27,10 +27,10 @@ package transport_scheduled_test
 //     boundary; if the environment has no seeded balance the dispatch step
 //     will fail at the tier/escrow gate and this test SKIPS with a clear
 //     message rather than reporting a false negative on the scheduling logic.
-//  3. Set DATABASE_URL (or TEST_DATABASE_URL) to a disposable/test database —
+//  3. Set TEST_DATABASE_URL to a disposable/test database —
 //     never point this at production. `supabase db reset` (local, port 54322)
 //     is the safest target:
-//       export DATABASE_URL="postgres://postgres:postgres@localhost:54322/postgres"
+//       export TEST_DATABASE_URL="postgres://postgres:postgres@localhost:54322/postgres"
 //  4. Run:
 //       cd backend && go test ./tests/transport_scheduled/... -run LiveDB -v
 //
@@ -53,17 +53,16 @@ import (
 	"spotlight/backend/internal/finance/ledger"
 	"spotlight/backend/internal/finance/settlement"
 	"spotlight/backend/internal/transport"
+
+	"spotlight/backend/internal/testsupport"
 )
 
-// liveDBPool connects using DATABASE_URL/TEST_DATABASE_URL, or skips.
+// liveDBPool connects using TEST_DATABASE_URL, or skips.
 func liveDBPool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
 	dsn := os.Getenv("TEST_DATABASE_URL")
 	if dsn == "" {
-		dsn = os.Getenv("DATABASE_URL")
-	}
-	if dsn == "" {
-		t.Skip("no TEST_DATABASE_URL/DATABASE_URL set — skipping live-DB transport-scheduling integration test; see bring-up note in live_db_integration_test.go")
+		t.Skip("no TEST_DATABASE_URL set — skipping live-DB transport-scheduling integration test; see bring-up note in live_db_integration_test.go")
 	}
 	pool, err := pgxpool.New(context.Background(), dsn)
 	if err != nil {
@@ -101,6 +100,7 @@ func seedUser(t *testing.T, ctx context.Context, pool *pgxpool.Pool) string {
 	if _, err := pool.Exec(ctx, `INSERT INTO auth.users (id, email) VALUES ($1, $2) ON CONFLICT DO NOTHING`, id, id+"@seed.test"); err != nil {
 		t.Fatalf("seed auth.users: %v", err)
 	}
+	testsupport.CleanupUser(t, pool, id)
 	return id
 }
 
@@ -140,7 +140,7 @@ func checkWalletSeeded(ctx context.Context, pool *pgxpool.Pool, userID string) (
 // different user is forbidden.
 func TestLiveDB_CreateScheduled_ThenGet_OLA_Enforced(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	svc := newLiveSchedulingService(pool)
 	ctx := context.Background()
 
@@ -193,7 +193,7 @@ func TestLiveDB_CreateScheduled_ThenGet_OLA_Enforced(t *testing.T) {
 // s.loadPricingConfig, a DB read).
 func TestLiveDB_EstimateScheduled_ReturnsFareWithoutCreatingBooking(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	svc := newLiveSchedulingService(pool)
 	ctx := context.Background()
 
@@ -230,7 +230,7 @@ func TestLiveDB_EstimateScheduled_ReturnsFareWithoutCreatingBooking(t *testing.T
 // INVALID_MODE guard fires for estimate as for create.
 func TestLiveDB_EstimateScheduled_UnsupportedModeRejected(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	svc := newLiveSchedulingService(pool)
 	ctx := context.Background()
 
@@ -250,7 +250,7 @@ func TestLiveDB_EstimateScheduled_UnsupportedModeRejected(t *testing.T) {
 // byIdempotencyKey fallback).
 func TestLiveDB_CreateScheduled_IdempotentOnRetry(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	svc := newLiveSchedulingService(pool)
 	ctx := context.Background()
 
@@ -290,7 +290,7 @@ func TestLiveDB_CreateScheduled_IdempotentOnRetry(t *testing.T) {
 // (settlement_id was never set).
 func TestLiveDB_CancelScheduled_BeforeDispatch_NoRefundNeeded(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	svc := newLiveSchedulingService(pool)
 	ctx := context.Background()
 
@@ -340,7 +340,7 @@ func TestLiveDB_CancelScheduled_BeforeDispatch_NoRefundNeeded(t *testing.T) {
 // wallet balance for `rider` (see bring-up note); skips cleanly if absent.
 func TestLiveDB_DispatchScheduled_IdempotentSingleCharge(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	svc := newLiveSchedulingService(pool)
 	ctx := context.Background()
 
@@ -416,7 +416,7 @@ func TestLiveDB_DispatchScheduled_IdempotentSingleCharge(t *testing.T) {
 // then asserts DueForDispatch returns the due one and not the far-future one.
 func TestLiveDB_DueForDispatch_OnlySelectsWithinLeadWindow(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	svc := newLiveSchedulingService(pool)
 	ctx := context.Background()
 
@@ -476,7 +476,7 @@ func TestLiveDB_DueForDispatch_OnlySelectsWithinLeadWindow(t *testing.T) {
 // a booking still comfortably in the future is untouched.
 func TestLiveDB_ExpireStale_OnlyExpiresPastDueScheduled(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	svc := newLiveSchedulingService(pool)
 	ctx := context.Background()
 
@@ -541,7 +541,7 @@ func TestLiveDB_ExpireStale_OnlyExpiresPastDueScheduled(t *testing.T) {
 // can see this specific row in its RETURNING set).
 func TestLiveDB_SendDueReminders_FiresOnceUnderConcurrentInvocation(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	svc := newLiveSchedulingService(pool)
 	ctx := context.Background()
 

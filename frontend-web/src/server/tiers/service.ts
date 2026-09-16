@@ -17,6 +17,7 @@ import {
   type KycTier,
 } from '@/src/server/kyc/types';
 import { ApiError } from '@/src/lib/api/responses';
+import { WALLET_ACCOUNT_TYPE } from '@/src/server/wallet/account-type';
 import { featureFlags } from '@/src/lib/feature-flags';
 
 // ---------------------------------------------------------------------------
@@ -107,12 +108,14 @@ export async function enforceWalletLimit(
   const todayUtc = new Date();
   todayUtc.setUTCHours(0, 0, 0, 0);
 
-  // Fetch account id for this user
+  // Fetch account id for this user. MUST be the same type the debit will hit
+  // (ADR-045) — reading a different plane returns an empty account, a daily total
+  // of 0, and a limit that silently never binds.
   const { data: acct, error: acctErr } = await supabase
     .from('ledger_accounts')
     .select('id')
     .eq('user_id', userId)
-    .eq('type', 'wallet')
+    .eq('type', WALLET_ACCOUNT_TYPE)
     .maybeSingle();
 
   if (acctErr || !acct) {

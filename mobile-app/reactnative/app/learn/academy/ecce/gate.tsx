@@ -78,7 +78,7 @@ const styles = StyleSheet.create({
   title: { ...Typography.headlineMd, color: Colors.onSurface },
   sub: { ...Typography.bodyMd, color: Colors.onSurfaceVariant, textAlign: 'center' },
   questionCard: { backgroundColor: Colors.surfaceContainerLowest, borderRadius: Radius.xl, paddingVertical: Spacing.lg, paddingHorizontal: Spacing.xl, marginTop: Spacing.md },
-  question: { ...Typography.displayLg, color: Colors.primary, fontSize: 40, lineHeight: 46 },
+  question: { ...Typography.displayLg, color: Colors.primary, fontSize: 40, letterSpacing: -0.8, lineHeight: 46 },
   optionsGrid: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', gap: Spacing.sm, marginTop: Spacing.md },
   option: { width: '40%', alignItems: 'center', paddingVertical: Spacing.lg, borderRadius: Radius.lg, backgroundColor: Colors.surfaceContainerLowest, borderWidth: 1.5, borderColor: Colors.outlineVariant },
   optionText: { ...Typography.headlineMd, color: Colors.onSurface },

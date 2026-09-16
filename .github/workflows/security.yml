@@ -46,7 +46,11 @@ jobs:
   govulncheck:
     name: govulncheck (Go)
     runs-on: ubuntu-latest
-    continue-on-error: true  # advisory during launch — flip to blocking once the backlog is clean
+    # BLOCKING: every prior finding was a Go stdlib CVE tied to the pinned
+    # go.mod version (1.25.0), not a third-party dependency — bumping the `go`
+    # directive to a patched point release closes all of them (verified
+    # locally against the exact go1.25.13 toolchain setup-go installs from
+    # go-version-file). A NEW finding now means a real regression.
     strategy:
       matrix:
         module: [backend, mobile-app/reactnative/backend]
@@ -65,14 +69,30 @@ jobs:
   gitleaks:
     name: gitleaks (secret scan)
     runs-on: ubuntu-latest
-    continue-on-error: true  # advisory during launch — flip to blocking once the backlog is clean
+    # BLOCKING: the CLI (unlike gitleaks-action@v3) needs no licence, and with
+    # the curated .gitleaks.toml allowlist below a full-history scan exits 0
+    # (verified locally, gitleaks v8.30.1). A NEW finding — an actual secret —
+    # is exactly what should fail this job now that the backlog is triaged.
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - uses: gitleaks/gitleaks-action@v2
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # gitleaks-action@v2/@v3 both require a paid GITLEAKS_LICENSE for
+      # organisation accounts ("[paymax2022] is an organization") — the action
+      # aborted before scanning anything, and continue-on-error made that
+      # indistinguishable from a clean scan. The CLI itself is free; this
+      # downloads the pinned release directly rather than using either action.
+      # Pin bumps here should re-verify locally before merging (a newer
+      # ruleset can surface findings the allowlist doesn't cover yet).
+      - name: Install gitleaks CLI
+        run: |
+          set -euo pipefail
+          curl -sSL "https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_x64.tar.gz" -o /tmp/gitleaks.tar.gz
+          tar -xzf /tmp/gitleaks.tar.gz -C /tmp gitleaks
+          sudo install /tmp/gitleaks /usr/local/bin/gitleaks
+          gitleaks version
+      - name: Scan full history against the curated allowlist
+        run: gitleaks detect --source . --redact -v
 
   trivy-fs:
     name: trivy (filesystem — deps + IaC misconfig)
@@ -80,7 +100,10 @@ jobs:
     continue-on-error: true  # advisory during launch — flip to blocking once the backlog is clean
     steps:
       - uses: actions/checkout@v4
-      - uses: aquasecurity/trivy-action@0.24.0
+      # 0.24.0 NEVER EXISTED — the tag 404s, so this step failed at "Set up job"
+      # and trivy scanned nothing at all while the run still showed a job for it.
+      # Upstream tags are v-prefixed; v0.36.0 is the current release.
+      - uses: aquasecurity/trivy-action@v0.36.0
         with:
           scan-type: fs
           scanners: vuln,secret,misconfig
@@ -98,16 +121,33 @@ jobs:
   npm-audit:
     name: npm audit (${{ matrix.dir }})
     runs-on: ubuntu-latest
-    continue-on-error: true  # advisory during launch — flip to blocking once the backlog is clean
+    # Now BLOCKING. It was advisory ("flip once the backlog is clean") because it
+    # could never pass: every residual advisory needs a framework major. It is now
+    # a DIFFERENTIAL gate against an explicit baseline, so it passes today and
+    # fails the moment a NEW advisory appears — which is the signal that was
+    # missing while it sat permanently red.
     strategy:
       fail-fast: false
       matrix:
-        dir: [frontend-web, frontend-admin, mobile-app/reactnative]
+        include:
+          - dir: frontend-web
+            baseline: frontend-web
+          - dir: frontend-admin
+            baseline: frontend-admin
+          - dir: mobile-app/reactnative
+            baseline: mobile-app-reactnative
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 20
-      - name: Audit (fail on high/critical)
+      - name: Install (production dependencies only)
         working-directory: ${{ matrix.dir }}
-        run: npm audit --audit-level=high || (echo "::warning::npm audit found high/critical vulns in ${{ matrix.dir }}" && exit 1)
+        run: npm ci --omit=dev --ignore-scripts --no-audit --no-fund
+      # Scoped to PRODUCTION dependencies: the gate reflects what ships, not the
+      # build/test toolchain. Known-and-accepted advisories live in
+      # .github/npm-audit-baseline/, each with a reason; the gate fails on anything
+      # not listed, and ALSO on a baselined entry that has disappeared, so the
+      # baseline cannot rot into a list of things that stopped being true.
+      - name: Audit production dependencies against the baseline
+        run: node .github/scripts/npm-audit-gate.mjs "${{ matrix.dir }}" ".github/npm-audit-baseline/${{ matrix.baseline }}.json"

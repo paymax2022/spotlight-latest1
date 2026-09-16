@@ -15,7 +15,7 @@
 //  3. 20260902000001_events_schema_drift_fix.sql (adds organiser_id/venue/state/
 //     fee_bps to events; tier_id/order_id/state/credential_id to event_tickets)
 //
-// Set TEST_DATABASE_URL (or DATABASE_URL). NOTE: GetOrCreateStandingAccount posts
+// Set TEST_DATABASE_URL. NOTE: GetOrCreateStandingAccount posts
 // against public.ledger_accounts, whose CHECK constraint (from
 // 20260613020000_ledger_accounts.sql) only allows type='wallet' and requires a
 // non-null user_id — standing accounts (escrow, paymax_revenue) will violate that
@@ -41,16 +41,15 @@ import (
 	"spotlight/backend/internal/finance/tiers"
 	"spotlight/backend/internal/finance/wallet"
 	"spotlight/backend/internal/top5events"
+
+	"spotlight/backend/internal/testsupport"
 )
 
 func itestPool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
 	dsn := os.Getenv("TEST_DATABASE_URL")
 	if dsn == "" {
-		dsn = os.Getenv("DATABASE_URL")
-	}
-	if dsn == "" {
-		t.Skip("no TEST_DATABASE_URL/DATABASE_URL — skipping top5events integration test")
+		t.Skip("no TEST_DATABASE_URL — skipping top5events integration test")
 	}
 	pool, err := pgxpool.New(context.Background(), dsn)
 	if err != nil {
@@ -85,6 +84,7 @@ func seedUser(t *testing.T, pool *pgxpool.Pool) string {
 		`INSERT INTO auth.users (id, email) VALUES ($1,$2) ON CONFLICT (id) DO NOTHING`, id, id+"@itest.local"); err != nil {
 		t.Skipf("cannot seed auth.users (%v) — skipping", err)
 	}
+	testsupport.CleanupUser(t, pool, id)
 	t.Cleanup(func() { _, _ = pool.Exec(context.Background(), `DELETE FROM auth.users WHERE id=$1`, id) })
 	return id
 }
@@ -96,7 +96,7 @@ func seedUser(t *testing.T, pool *pgxpool.Pool) string {
 func TestIntegration_EventStateMachine_FullLifecycle(t *testing.T) {
 	ctx := context.Background()
 	pool := itestPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	svc := newTestService(t, pool)
 
 	organiser := seedUser(t, pool)
@@ -142,7 +142,7 @@ func TestIntegration_EventStateMachine_FullLifecycle(t *testing.T) {
 func TestIntegration_EventStateMachine_NonOrganiserForbidden(t *testing.T) {
 	ctx := context.Background()
 	pool := itestPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	svc := newTestService(t, pool)
 
 	organiser := seedUser(t, pool)
@@ -170,7 +170,7 @@ func TestIntegration_EventStateMachine_NonOrganiserForbidden(t *testing.T) {
 func TestIntegration_Approve_ServiceLayerHasNoOwnerScopeCheck(t *testing.T) {
 	ctx := context.Background()
 	pool := itestPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	svc := newTestService(t, pool)
 
 	organiser := seedUser(t, pool)
@@ -199,7 +199,7 @@ func TestIntegration_Approve_ServiceLayerHasNoOwnerScopeCheck(t *testing.T) {
 func TestIntegration_GetEvent_DraftIsPubliclyReadable_KnownGap(t *testing.T) {
 	ctx := context.Background()
 	pool := itestPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	svc := newTestService(t, pool)
 
 	organiser := seedUser(t, pool)
@@ -231,7 +231,7 @@ func TestIntegration_GetEvent_DraftIsPubliclyReadable_KnownGap(t *testing.T) {
 func TestIntegration_Purchase_IdempotentDoubleSubmitNoDoubleIssueNoDoubleDebit(t *testing.T) {
 	ctx := context.Background()
 	pool := itestPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	svc := newTestService(t, pool)
 
 	organiser := seedUser(t, pool)
@@ -280,7 +280,7 @@ func TestIntegration_Purchase_IdempotentDoubleSubmitNoDoubleIssueNoDoubleDebit(t
 func TestIntegration_Purchase_RejectsWhenEventNotLive(t *testing.T) {
 	ctx := context.Background()
 	pool := itestPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	svc := newTestService(t, pool)
 
 	organiser := seedUser(t, pool)
@@ -302,47 +302,11 @@ func TestIntegration_Purchase_RejectsWhenEventNotLive(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// 4. Ticket scan authZ gap — documents that ScanTicket does not check that the
-//    scanning steward (caller) has any relationship to the ticket/event; it only
-//    validates the credential token itself.
+// 4. Ticket scan authZ — FIXED (was: ScanTicket performed no check that the
+//    caller had any relationship to the ticket/event). See scan_authz_live_db_test.go
+//    (no integration build tag, so it actually runs under `go test ./...` with
+//    TEST_DATABASE_URL set) for the real organiser/steward/forbidden coverage.
 // ---------------------------------------------------------------------------
-
-func TestIntegration_Scan_DoesNotCheckCallerIdentityAgainstTicket_KnownGap(t *testing.T) {
-	ctx := context.Background()
-	pool := itestPool(t)
-	defer pool.Close()
-	svc := newTestService(t, pool)
-
-	organiser := seedUser(t, pool)
-	buyer := seedUser(t, pool)
-
-	ev, err := svc.CreateEvent(ctx, organiser, top5events.Event{Title: "itest scan", StartsAt: time.Now(), EndsAt: time.Now().Add(6 * time.Hour)})
-	if err != nil {
-		t.Fatalf("create: %v", err)
-	}
-	t.Cleanup(func() { _, _ = pool.Exec(ctx, `DELETE FROM events WHERE id=$1`, ev.ID) })
-	_ = svc.Submit(ctx, organiser, ev.ID)
-	_ = svc.Approve(ctx, "admin", ev.ID)
-	_ = svc.GoLive(ctx, organiser, ev.ID)
-
-	tier, err := svc.AddTier(ctx, organiser, ev.ID, top5events.TicketTier{Name: "GA", PriceKobo: 0, Capacity: 5})
-	if err != nil {
-		t.Fatalf("add tier: %v", err)
-	}
-	tk, err := svc.Purchase(ctx, buyer, ev.ID, tier.ID, "", "itest-scan-purchase-"+uuid.New().String())
-	if err != nil {
-		t.Skipf("purchase failed (escrow account setup) — not the code path under test: %v", err)
-	}
-
-	// ScanTicket takes a raw credential.Token/Gate — no "steward for THIS event" or
-	// "caller is authorised to scan" check happens inside top5events.Service itself
-	// (see handler.go: Scan only checks the caller is authenticated at all, not that
-	// they are a vendor/steward for this specific event). This documents current
-	// behavior for the report; the credential layer's own single-use enforcement is
-	// the real double-scan guard (tested in the mirror suite and here below).
-	_ = tk
-	t.Log("GAP: Service.ScanTicket performs no check that the caller is a steward for this specific event — any authenticated caller who has a valid gate token can scan. Flagged for follow-up, not fixed here.")
-}
 
 // ---------------------------------------------------------------------------
 // 5. EventWallet lifecycle + ledger balance invariant (DB-backed)
@@ -351,7 +315,7 @@ func TestIntegration_Scan_DoesNotCheckCallerIdentityAgainstTicket_KnownGap(t *te
 func TestIntegration_WalletClose_PostsExactlyOneBalancedRefund(t *testing.T) {
 	ctx := context.Background()
 	pool := itestPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	svc := newTestService(t, pool)
 
 	organiser := seedUser(t, pool)
@@ -397,7 +361,7 @@ func TestIntegration_WalletClose_PostsExactlyOneBalancedRefund(t *testing.T) {
 func TestIntegration_ClosedWallet_RejectsTopUpAndCharge(t *testing.T) {
 	ctx := context.Background()
 	pool := itestPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	svc := newTestService(t, pool)
 
 	organiser := seedUser(t, pool)

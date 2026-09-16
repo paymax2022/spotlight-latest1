@@ -38,6 +38,31 @@ func (h *Handler) ListTests(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"success": true, "tests": tests})
 }
 
+// ListPackages — GET /packages?lab_provider_id=  (bundle catalog, same shape as ListTests)
+func (h *Handler) ListPackages(c *gin.Context) {
+	packages, err := h.svc.ListPackages(c.Request.Context(), c.Query("lab_provider_id"))
+	if err != nil {
+		fail(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "packages": packages})
+}
+
+// ListMyOrders — GET /orders  (patient's own order history + active-order card)
+func (h *Handler) ListMyOrders(c *gin.Context) {
+	id := uid(c)
+	if id == "" {
+		fail(c, http.StatusUnauthorized, "unauthenticated")
+		return
+	}
+	orders, err := h.svc.ListOrdersForPatient(c.Request.Context(), id)
+	if err != nil {
+		fail(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "orders": orders})
+}
+
 // UpsertTest — POST /tests  (lab owner, HL-2 catalog governance)
 func (h *Handler) UpsertTest(c *gin.Context) {
 	id := uid(c)
@@ -56,6 +81,21 @@ func (h *Handler) UpsertTest(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusCreated, gin.H{"success": true, "test": out})
+}
+
+// ListProviderOrders — GET /provider/orders?lab_provider_id=  (lab staff order list)
+func (h *Handler) ListProviderOrders(c *gin.Context) {
+	id := uid(c)
+	if id == "" {
+		fail(c, http.StatusUnauthorized, "unauthenticated")
+		return
+	}
+	rows, err := h.svc.ListProviderOrders(c.Request.Context(), id, c.Query("lab_provider_id"))
+	if err != nil {
+		fail(c, http.StatusForbidden, err.Error())
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "orders": rows})
 }
 
 // CreateOrder — POST /orders  (patient, payment HELD, HL-9)

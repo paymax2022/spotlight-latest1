@@ -36,6 +36,7 @@ func Register(member, admin *gin.RouterGroup, svc *Service, rbac services.RBACSe
 	ag := admin.Group("/network")
 	ag.GET("/ambassadors", guard("referral.amb.view"), h.Directory)
 	ag.POST("/ambassadors/:id/status", guard("referral.amb.manage"), h.SetStatus)
+	ag.GET("/networks", guard("referral.amb.view"), h.ListNetworks)
 	ag.GET("/override-policies", guard("referral.amb.view"), h.ListPolicies)
 	ag.PUT("/override-policies", guard("referral.amb.manage"), h.SetPolicy)
 	ag.POST("/overrides/accrue", guard("referral.amb.manage"), h.AccrueOverride)
@@ -142,6 +143,17 @@ func (h *Handler) SetStatus(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"ok": true})
+}
+
+// ListNetworks — GET /api/referral/admin/network/networks.
+// Agent-network directory with member counts. Optional ?status= filter.
+func (h *Handler) ListNetworks(c *gin.Context) {
+	list, err := h.svc.ListNetworks(c.Request.Context(), c.Query("status"))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"networks": list})
 }
 
 func (h *Handler) ListPolicies(c *gin.Context) {

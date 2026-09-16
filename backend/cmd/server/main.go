@@ -12,6 +12,7 @@ import (
 
 	"spotlight/backend/internal/app"
 	"spotlight/backend/internal/config"
+	"spotlight/backend/internal/platform/buildinfo"
 	"spotlight/backend/internal/platform/observability"
 )
 
@@ -21,6 +22,15 @@ func main() {
 	// secrets; log advisory warnings in dev/staging.
 	if err := cfg.Validate(); err != nil {
 		log.Fatalf("startup aborted: %v", err)
+	}
+
+	// Say which source this process is actually serving. A server is a snapshot
+	// of its tree at start time, and the shared dev backend runs from whichever
+	// checkout someone last started it in — so "the fix is on develop" tells you
+	// nothing about what is answering requests. Skipped in production: a deployed
+	// image has no .git, and there is no shared-checkout ambiguity to resolve.
+	if cfg.AppEnv != "production" {
+		log.Print(buildinfo.Line(buildinfo.Describe(context.Background(), ".")))
 	}
 
 	// Error tracking (Sentry) + tracing (OTel→Cloud Trace); no-op unless configured.

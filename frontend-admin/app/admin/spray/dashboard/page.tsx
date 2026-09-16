@@ -3,6 +3,8 @@
 import { useEffect, useState } from 'react';
 import { getSprayDashboard, formatNaira, type SprayDashboard } from '@/services/sprayAdminService';
 import { PageHeader, SprayTabs, Card, Kpi, Badge, DisclosureNote, StateBlock, btn, th, td, timeAgo } from '../_ui';
+import { FixtureBanner } from '../../_shared/ui';
+import { USE_MOCK, USE_MOCK_ENV } from '@/services/sprayAdminService';
 
 export default function SprayDashboardPage() {
   const [data, setData] = useState<SprayDashboard | null>(null);
@@ -24,11 +26,12 @@ export default function SprayDashboardPage() {
         subtitle="Event money-spraying — volume, unique sprayers and AML oversight across spray contexts."
         action={<button onClick={load} style={btn()}>Refresh</button>}
       />
+      <FixtureBanner active={USE_MOCK} envVar={USE_MOCK_ENV} />
       <SprayTabs active="overview" />
 
       <DisclosureNote>
         Thin admin surface — the only backend admin route is the per-event <strong>leaderboard</strong>
-        (<code>/api/spray/admin/spray/leaderboard/:contextRef</code>, RBAC <code>spray.read</code>) for AML oversight.
+        (<code>/api/p2p/admin/spray/leaderboard/:contextRef</code>, RBAC <code>spray.read</code>) for AML oversight.
         Spray enforces single / daily-amount / daily-count AML limits server-side. Payout settlement is not yet
         exposed on the backend admin surface (mock view).
       </DisclosureNote>

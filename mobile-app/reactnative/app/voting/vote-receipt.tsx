@@ -2,6 +2,7 @@ import React from 'react';
 import { View, Text, ScrollView, StyleSheet, Pressable, Platform } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import { ArrowLeft, Share2 } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
@@ -12,6 +13,7 @@ import PrimaryButton from '@/components/PrimaryButton';
 import { getVoteReceipt } from '@/features/voting/api/voting.api';
 import VoteReceiptCard from '@/features/voting/components/VoteReceiptCard';
 import ShareBottomSheet from '@/features/voting/components/ShareBottomSheet';
+import { HomeMenuButton } from '@/components/HomeMenu';
 
 export default function VoteReceiptScreen() {
   const { transactionId } = useLocalSearchParams<{ transactionId: string }>();
@@ -26,13 +28,16 @@ export default function VoteReceiptScreen() {
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
       <View style={styles.header}>
-        <Pressable onPress={() => router.back()} style={styles.backBtn}>
+        <Pressable onPress={() => goBack('/voting')} style={styles.backBtn}>
           <ArrowLeft size={22} color={Colors.onSurface} strokeWidth={2} />
         </Pressable>
         <Text style={styles.title}>Vote Receipt</Text>
-        <Pressable onPress={() => setShareOpen(true)} style={styles.backBtn}>
-          <Share2 size={20} color={Colors.onSurface} strokeWidth={2} />
-        </Pressable>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+          <Pressable onPress={() => setShareOpen(true)} style={styles.backBtn}>
+            <Share2 size={20} color={Colors.onSurface} strokeWidth={2} />
+          </Pressable>
+          <HomeMenuButton />
+        </View>
       </View>
 
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.content}>

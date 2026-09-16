@@ -1,4 +1,5 @@
 'use client';
+import { formatNaira, type TuitionForApplicant } from '@/src/features/academy/revenue';
 
 import { useState } from 'react';
 import Link from 'next/link';
@@ -18,7 +19,7 @@ const STATUS_TEXT: Record<string, string> = {
 };
 
 export default function ApplicationReviewRow({
-  application, batchId,
+  application, batchId, tuition,
 }: {
   application: {
     id: string; full_name: string; email: string; phone?: string;
@@ -26,6 +27,8 @@ export default function ApplicationReviewRow({
     areas_of_interest?: string[]; created_at: string;
   };
   batchId: string;
+  /** Undefined when the applicant has no instalment plan — deliberately not zeroes. */
+  tuition?: TuitionForApplicant;
 }) {
   const [status, setStatus] = useState(application.status);
   const [busy, setBusy] = useState(false);
@@ -66,14 +69,53 @@ export default function ApplicationReviewRow({
           color: STATUS_TEXT[status] ?? '#64748b',
         }}>{status}</span>
 
-        {/* Payment status */}
-        <span style={{
-          fontSize: 11, fontWeight: 600, padding: '3px 10px', borderRadius: 20,
-          background: application.payment_status === 'paid' ? 'rgba(16,185,129,0.1)' : 'rgba(239,68,68,0.1)',
-          color: application.payment_status === 'paid' ? '#10b981' : '#ef4444',
-        }}>
-          {application.payment_status === 'paid' ? '✓ Fee Paid' : 'Fee Pending'}
-        </span>
+        {/* Payment status.
+            Three states, not two: the apply route writes 'not_required' when no
+            application fee is configured, and the old two-way test coloured those
+            a red "Fee Pending" that could never be cleared.
+            The amount is shown because application_fee_paid is NUMERIC NAIRA — the
+            sum collected — not a boolean, and "paid" without a figure hides it. */}
+        {(() => {
+          const paid = application.payment_status === 'paid';
+          const waived = application.payment_status === 'not_required';
+          const amount = Number(application.application_fee_paid ?? 0);
+          return (
+            <span style={{
+              fontSize: 11, fontWeight: 600, padding: '3px 10px', borderRadius: 20,
+              background: paid ? 'rgba(16,185,129,0.1)' : waived ? 'rgba(100,116,139,0.15)' : 'rgba(239,68,68,0.1)',
+              color: paid ? '#10b981' : waived ? '#64748b' : '#ef4444',
+            }}>
+              {paid
+                ? `✓ Fee Paid${amount > 0 ? ` ${formatNaira(amount)}` : ''}`
+                : waived ? 'No Fee Required' : 'Fee Pending'}
+            </span>
+          );
+        })()}
+
+        {/* Tuition. Distinct from the application fee above: this is the training
+            fee, which lives on the instalment plan. Absent means no plan exists
+            yet, which is not the same as a plan with nothing paid. */}
+        {tuition ? (
+          <span
+            title={tuition.overdueNgn > 0 ? `${formatNaira(tuition.overdueNgn)} past due` : undefined}
+            style={{
+              fontSize: 11, fontWeight: 600, padding: '3px 10px', borderRadius: 20,
+              background: tuition.overdueNgn > 0 ? 'rgba(239,68,68,0.1)'
+                : tuition.outstandingNgn > 0 ? 'rgba(245,158,11,0.1)' : 'rgba(16,185,129,0.1)',
+              color: tuition.overdueNgn > 0 ? '#ef4444'
+                : tuition.outstandingNgn > 0 ? '#f59e0b' : '#10b981',
+            }}
+          >
+            {tuition.outstandingNgn > 0
+              ? `Tuition ${formatNaira(tuition.paidNgn)} paid · ${formatNaira(tuition.outstandingNgn)} due`
+              : `✓ Tuition ${formatNaira(tuition.paidNgn)}`}
+          </span>
+        ) : (
+          <span style={{
+            fontSize: 11, fontWeight: 600, padding: '3px 10px', borderRadius: 20,
+            background: 'rgba(100,116,139,0.15)', color: '#64748b',
+          }}>No tuition plan</span>
+        )}
 
         {/* Review actions */}
         {status === 'pending' && (

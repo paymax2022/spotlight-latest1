@@ -8,6 +8,7 @@
 //  • every money mutation (request/accept-counter/rate) carries an Idempotency-Key;
 //  • fare floors/ceilings/commission come from the SERVER — never computed here.
 
+import { mockAllowed } from '@/config/mockPolicy';
 import { api } from '@/api/client';
 import type {
   MobilityHome,
@@ -31,6 +32,10 @@ import type {
   DriverEarnings,
   Kobo,
   LatLng,
+  TripMessage,
+  TripChatRole,
+  RideSettings,
+  UpdateRideSettingsInput,
 } from '../types/mobility.types';
 import {
   mockEstimate,
@@ -45,11 +50,15 @@ import {
   mockDriver,
   mockDriverRequests,
   mockEarnings,
+  mockListTripMessages,
+  mockSendTripMessage,
+  mockGetRideSettings,
+  mockUpdateRideSettings,
 } from './mobility.mock';
 
 // ─── Feature flag: mock by default; flip to hit the Go backend ─────────────────
 const USE_MOCK =
-  (process.env.EXPO_PUBLIC_MOBILITY_USE_MOCK ?? 'true').toLowerCase() !== 'false';
+  mockAllowed(process.env.EXPO_PUBLIC_MOBILITY_USE_MOCK, true);
 
 // Go backend mounts the mobility + driver route groups directly under
 // /api/finance (siblings of the legacy /transport group). The frontend-web Next
@@ -72,16 +81,28 @@ type TripEnvelope = {
   vehicle?: Trip['vehicle'];
   fareOffer?: Trip['fareOffer'];
 };
+// Live trips carry flat pickupAddress/destAddress strings (no coordinates in
+// the payload); screens type against full Place objects. Synthesize a Place
+// from the flat address when the nested one is absent so Trip.pickup/dest are
+// ALWAYS present — the type stays strict and no screen needs a guard.
+function ensurePlaces(trip: Partial<Trip>): Trip {
+  return {
+    ...(trip as Trip),
+    pickup: trip.pickup ?? { lat: 0, lng: 0, address: trip.pickupAddress ?? '' },
+    dest: trip.dest ?? { lat: 0, lng: 0, address: trip.destAddress ?? '' },
+  };
+}
+
 function flattenTrip(raw: TripEnvelope | Trip | null | undefined): Trip {
   const env = (raw ?? {}) as TripEnvelope & Partial<Trip>;
   // Flat shape already: no nested `trip` key → the object *is* the trip.
-  if (!env.trip) return raw as Trip;
-  return {
+  if (!env.trip) return ensurePlaces(env as Partial<Trip>);
+  return ensurePlaces({
     ...(env.trip as Trip),
     driver: env.driver ?? env.trip.driver ?? null,
     vehicle: env.vehicle ?? env.trip.vehicle ?? null,
     fareOffer: env.fareOffer ?? env.trip.fareOffer ?? null,
-  };
+  });
 }
 
 // ─── Home ─────────────────────────────────────────────────────────────────────
@@ -374,9 +395,10 @@ export async function getHistory(): Promise<Trip[]> {
     await delay();
     return [...MOCK_HISTORY].sort((a, b) => +new Date(b.createdAt) - +new Date(a.createdAt));
   }
-  // Backend wraps the list: { trips: [...] }. History rows are flat trips.
-  const body = unwrap<{ trips?: Trip[] }>(await api.get(`${BASE}/mobility/history`));
-  return body?.trips ?? [];
+  // Backend wraps the list: { trips: [...] }. History rows are flat trips —
+  // run them through flattenTrip so pickup/dest Places are always present.
+  const body = unwrap<{ trips?: Partial<Trip>[] }>(await api.get(`${BASE}/mobility/history`));
+  return (body?.trips ?? []).map((t) => flattenTrip(t as Trip));
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -419,7 +441,9 @@ export async function submitDriverOnboarding(draft: OnboardingSubmitDraft): Prom
 // presigned R2 PUT URL from the backend, then the caller PUTs the file binary to
 // it and submits the resulting object key via uploadDriverDocument(). No storage
 // backend is invented here — this reuses the same R2 presign pattern (Cloudflare
-// R2, bucket spotlight-open-mic) the rest of the app uses.
+// R2, whichever bucket R2_BUCKET names) the rest of the app uses. The bucket is
+// deliberately not written down here: it is environment config, and the last
+// name hardcoded in prose outlived the bucket itself.
 //
 // Request body is snake_case; the response is camelCase (matches the rest of the
 // mobility contract). In mock mode we return a mock:// URL so the client PUT is a
@@ -597,9 +621,17 @@ export async function driverStart(tripId: string): Promise<Trip> {
   return unwrap<Trip>(await api.post(`${BASE}/driver/trips/${tripId}/start`, {}));
 }
 
-export async function driverComplete(tripId: string): Promise<Trip> {
+/**
+ * Completing a trip settles it — for wallet/card trips the escrowed fare
+ * splits to the driver's wallet as usual; for a CASH trip there is no
+ * escrow (the rider paid the driver directly), so the platform instead
+ * debits the driver's own wallet for its commission. platformFeeKobo is
+ * only present on that cash path — the driver screen uses it to show
+ * "₦X was deducted as the platform fee" instead of the wallet-credit copy.
+ */
+export async function driverComplete(tripId: string): Promise<Trip & { platformFeeKobo?: number }> {
   if (USE_MOCK) { await delay(500); return makeTrip({ id: tripId, phase: 'completed', status: 'completed', paymentStatus: 'settled', driver: MOCK_DRIVER, vehicle: MOCK_VEHICLE, completedAt: new Date().toISOString(), tripPin: null }); }
-  return unwrap<Trip>(await api.post(`${BASE}/driver/trips/${tripId}/complete`, {}));
+  return unwrap<Trip & { platformFeeKobo?: number }>(await api.post(`${BASE}/driver/trips/${tripId}/complete`, {}));
 }
 
 export async function getDriverEarnings(): Promise<DriverEarnings> {
@@ -658,6 +690,61 @@ function advanceMockTrip(trip: Trip): Trip {
 /** Clears the mock active trip (used after rider finishes the completed flow). */
 export function clearMockActiveTrip(): void {
   if (USE_MOCK) mockStore.activeTrip = null;
+}
+
+// ─── Trip chat ────────────────────────────────────────────────────────────────
+// Registered under both /mobility (rider) and /driver (driver) on the backend,
+// pointing at the same handler — object-level authz is the real gate, not the
+// URL prefix. `role` here only selects which prefix this app's own client uses,
+// matching every other rider/driver-split function in this file.
+function chatBase(role: TripChatRole): string {
+  return role === 'driver' ? `${BASE}/driver` : `${BASE}/mobility`;
+}
+
+/** Maps the raw (snake_case) wire shape to the camelCase TripMessage type. */
+function mapTripMessage(raw: any): TripMessage {
+  return {
+    id: raw.id,
+    tripId: raw.trip_id,
+    senderId: raw.sender_id,
+    senderRole: raw.sender_role,
+    body: raw.body,
+    attachmentUrl: raw.attachment_url ?? null,
+    createdAt: raw.created_at,
+  };
+}
+
+export async function listTripMessages(tripId: string, role: TripChatRole): Promise<TripMessage[]> {
+  if (USE_MOCK) { await delay(200); return mockListTripMessages(tripId); }
+  const res = await api.get(`${chatBase(role)}/trips/${encodeURIComponent(tripId)}/messages`);
+  const raw = res.data?.messages;
+  return Array.isArray(raw) ? raw.map(mapTripMessage) : [];
+}
+
+export async function sendTripMessage(tripId: string, role: TripChatRole, body: string): Promise<TripMessage> {
+  if (USE_MOCK) { await delay(250); return mockSendTripMessage(tripId, role, body); }
+  const res = await api.post(`${chatBase(role)}/trips/${encodeURIComponent(tripId)}/messages`, { body });
+  return mapTripMessage(res.data?.message);
+}
+
+// ─── Rider ride-preference settings ────────────────────────────────────────────
+// GET/PUT /mobility/profile. The backend lazily creates a default row on first
+// GET, so this is always safe to call. PUT is a partial update (COALESCE on the
+// server): an omitted field keeps its current value.
+export async function getRideSettings(): Promise<RideSettings> {
+  if (USE_MOCK) { await delay(220); return mockGetRideSettings(); }
+  return unwrap<RideSettings>(await api.get(`${BASE}/mobility/profile`));
+}
+
+export async function updateRideSettings(patch: UpdateRideSettingsInput): Promise<RideSettings> {
+  if (USE_MOCK) { await delay(300); return mockUpdateRideSettings(patch); }
+  return unwrap<RideSettings>(
+    await api.put(`${BASE}/mobility/profile`, {
+      default_payment: patch.defaultPayment ?? '',
+      home_address: patch.homeAddress,
+      work_address: patch.workAddress,
+    }),
+  );
 }
 
 export { USE_MOCK };

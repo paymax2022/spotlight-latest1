@@ -11,6 +11,7 @@ import { create } from 'zustand';
 import { Platform } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import type { CartLine, CartPackage, MenuItem } from './types';
+import { pruneCart, type PruneResult } from './cartPrune';
 
 export const MAX_SAME_FOOD_PER_PACKAGE = 2;
 
@@ -47,8 +48,17 @@ interface CartState {
   packages: CartPackage[];
   activePackageId: string | null;
 
-  /** Add an empty takeaway package and make it active. Returns its id. */
-  addPackage: () => string;
+  /**
+   * Add an empty takeaway package and make it active. Returns its id.
+   *
+   * Takes the restaurant it is being added FOR. Without it an empty pack could
+   * not be attributed to anything, so a screen showing "this restaurant's packs"
+   * had to fall back to the cart-level restaurantId — which holds whichever
+   * restaurant was added FIRST. Adding a pack from any other restaurant's page
+   * then created it and immediately filtered it out of view, so the button
+   * looked dead while quietly growing the cart.
+   */
+  addPackage: (restaurantId?: string, restaurantName?: string) => string;
   removePackage: (packageId: string) => void;
   setActivePackage: (packageId: string) => void;
 
@@ -68,6 +78,13 @@ interface CartState {
   ) => AddItemResult;
   decrementItem: (packageId: string, itemId: string) => void;
   removeItem: (packageId: string, itemId: string) => void;
+  /**
+   * Drop every trace of restaurants that no longer exist, returning what went.
+   * The decision of WHICH ids are gone belongs to the caller (only a 404 counts
+   * — see availability.ts); this just applies it. Reducer lives in cartPrune.ts
+   * so it can be tested without React Native.
+   */
+  removeRestaurants: (goneIds: string[]) => PruneResult;
   clear: () => void;
 }
 
@@ -77,9 +94,16 @@ export const useCartStore = create<CartState>((set) => ({
   packages: [],
   activePackageId: null,
 
-  addPackage: () => {
+  addPackage: (restaurantId, restaurantName) => {
     const id = newPkgId();
-    set((st) => ({ packages: [...st.packages, { id, lines: [] }], activePackageId: id }));
+    set((st) => ({
+      packages: [...st.packages, { id, lines: [], restaurantId: restaurantId ?? null }],
+      activePackageId: id,
+      // Keep the legacy first-wins cart fields in step for callers that still
+      // read them; they are only filled when empty, exactly as addItem does.
+      restaurantId: st.restaurantId || restaurantId || null,
+      restaurantName: st.restaurantName || restaurantName || null,
+    }));
     return id;
   },
 
@@ -99,7 +123,10 @@ export const useCartStore = create<CartState>((set) => ({
   addItem: (restaurantId, restaurantName, item, packageId, opts) => {
     const autoOverflow = opts?.autoOverflow === true;
     const isProtein = item.foodType === 'protein';
-    const newLine = (): CartLine => ({ itemId: item.id, name: item.name, priceKobo: item.priceKobo, qty: 1, isProtein, restaurantId });
+    // restaurantName is recorded per line, not just once on the store: the
+    // top-level field keeps the FIRST restaurant only, so a multi-restaurant
+    // cart could not name its other sections.
+    const newLine = (): CartLine => ({ itemId: item.id, name: item.name, priceKobo: item.priceKobo, qty: 1, isProtein, restaurantId, restaurantName });
     let result: AddItemResult = { ok: true };
 
     set((st) => {
@@ -111,7 +138,7 @@ export const useCartStore = create<CartState>((set) => ({
       let targetId = packageId ?? active ?? packages[packages.length - 1]?.id ?? null;
       if (!targetId || !packages.some((p) => p.id === targetId)) {
         targetId = newPkgId();
-        packages = [...packages, { id: targetId, lines: [] }];
+        packages = [...packages, { id: targetId, lines: [], restaurantId }];
       }
 
       const target = packages.find((p) => p.id === targetId)!;
@@ -134,7 +161,7 @@ export const useCartStore = create<CartState>((set) => ({
         // Auto-overflow: the active pack is full for this regular item → open a NEW
         // pack with the selected item and make it active; shopping continues there.
         const overflowId = newPkgId();
-        packages = [...packages, { id: overflowId, lines: [newLine()] }];
+        packages = [...packages, { id: overflowId, lines: [newLine()], restaurantId }];
         result = { ok: true, overflowed: true, packageId: overflowId, packageIndex: idxOf(overflowId) };
         return {
           restaurantId: st.restaurantId || restaurantId,
@@ -191,6 +218,25 @@ export const useCartStore = create<CartState>((set) => ({
       return { ...st, packages };
     }),
 
+  removeRestaurants: (goneIds) => {
+    const st = useCartStore.getState();
+    const out = pruneCart(st, goneIds);
+    // `repointed` matters as much as `removedIds` here. A dead cart-level
+    // pointer with no food behind it removes NOTHING, so gating on removedIds
+    // alone computed the re-derivation and then threw it away — leaving the
+    // pointer aimed at a deleted kitchen, which is what kept the delivery fee
+    // and packaging price from ever resolving.
+    if (out.removedIds.length > 0 || out.repointed) {
+      set({
+        restaurantId: out.restaurantId,
+        restaurantName: out.restaurantName,
+        packages: out.packages,
+        activePackageId: out.activePackageId,
+      });
+    }
+    return out;
+  },
+
   clear: () => set({ restaurantId: null, restaurantName: null, packages: [], activePackageId: null }),
 }));
 
@@ -223,11 +269,12 @@ export function aggregateCartLines(packages: CartPackage[]): CartLine[] {
     for (const l of p.lines) {
       const cur = byId.get(l.itemId);
       if (cur) cur.qty += l.qty;
-      else byId.set(l.itemId, { ...l, restaurantId: l.restaurantId });
+      else byId.set(l.itemId, { ...l, restaurantId: l.restaurantId, restaurantName: l.restaurantName });
     }
   }
   return Array.from(byId.values());
 }
+
 
 /** Per-package payload (non-empty packages only) for the order request. */
 export function cartPackagesPayload(packages: CartPackage[]): { items: { itemId: string; qty: number }[] }[] {

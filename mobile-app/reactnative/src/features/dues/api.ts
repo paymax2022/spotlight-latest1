@@ -1,4 +1,5 @@
 // Estate Dues / Payments (Block 29) — types + dual mock/live api + constants.
+import { mockAllowed } from '@/config/mockPolicy';
 import { api } from '@/api/client';
 import { Colors } from '@/constants/colors';
 import { generateIdempotencyKey } from '@/utils/idempotency';
@@ -12,7 +13,7 @@ export interface DuesInvoice {
 }
 export interface PayResult { success: boolean; alreadyProcessed: boolean; payment: { id: string; amountKobo: number; reference?: string; createdAt: string }; invoice: DuesInvoice; }
 
-export const USE_MOCK = (process.env.EXPO_PUBLIC_DUES_USE_MOCK ?? 'true') !== 'false';
+export const USE_MOCK = mockAllowed(process.env.EXPO_PUBLIC_DUES_USE_MOCK, true);
 
 // Dues are served by the resident-scoped frontend-web handlers under
 // /api/v1/estate/dues (GET list, POST /{id}/pay). The current resident's

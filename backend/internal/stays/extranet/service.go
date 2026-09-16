@@ -3,6 +3,9 @@ package extranet
 import (
 	"context"
 	"errors"
+	"fmt"
+	"regexp"
+	"strings"
 	"time"
 
 	"spotlight/backend/internal/stays/ari"
@@ -10,8 +13,9 @@ import (
 
 // Sentinel errors.
 var (
-	ErrForbidden = errors.New("extranet: caller lacks an active grant on this property")
-	ErrNotFound  = errors.New("extranet: not found")
+	ErrForbidden  = errors.New("extranet: caller lacks an active grant on this property")
+	ErrNotFound   = errors.New("extranet: not found")
+	ErrValidation = errors.New("extranet: invalid input")
 )
 
 // Service is the hotelier extranet application layer. It enforces object-level
@@ -22,11 +26,26 @@ type Service struct {
 	repo  *Repository
 	authz *AuthZ
 	allot ari.Allotment // re-opens allotment on hotel cancel / no-show
+
+	mailer       StaffInviteMailer // staff-invite email delivery (see staff_invite.go)
+	adminBaseURL string            // frontend-admin origin, for building accept links
+
+	photos PhotoPresigner // R2 presigner for property photo uploads (see property_photos.go)
 }
 
-// NewService constructs the extranet service.
-func NewService(repo *Repository, authz *AuthZ, allot ari.Allotment) *Service {
-	return &Service{repo: repo, authz: authz, allot: allot}
+// NewService constructs the extranet service. mailer/adminBaseURL back the
+// email-based staff invite flow (staff_invite.go) — pass extranet.NewResendStaffInviteMailer
+// and cfg.AdminAppBaseURL from the caller.
+func NewService(repo *Repository, authz *AuthZ, allot ari.Allotment, mailer StaffInviteMailer, adminBaseURL string) *Service {
+	return &Service{repo: repo, authz: authz, allot: allot, mailer: mailer, adminBaseURL: adminBaseURL}
+}
+
+// WithPhotoPresigner attaches the R2 presigner used for property photo
+// uploads/reads (property_photos.go). Without it, photo endpoints fail closed
+// with ErrUploadsNotConfigured rather than issuing a fabricated URL.
+func (s *Service) WithPhotoPresigner(p PhotoPresigner) *Service {
+	s.photos = p
+	return s
 }
 
 // guard performs the object-level scope check (used by every mutating op).
@@ -40,6 +59,19 @@ func (s *Service) guard(ctx context.Context, userID, propertyID string) error {
 // MyProperties lists the properties the user may act on (extranet landing).
 func (s *Service) MyProperties(ctx context.Context, userID string) ([]map[string]any, error) {
 	return s.repo.MyProperties(ctx, userID)
+}
+
+// CreateProperty self-lists a new property and grants the caller OWNER on it.
+// Unlike every other extranet operation this has no object to scope against —
+// it IS how the caller gets one — so there is deliberately no s.guard call here.
+func (s *Service) CreateProperty(ctx context.Context, userID, name, propertyType, address, city string, starRating int) (string, error) {
+	if userID == "" {
+		return "", ErrForbidden
+	}
+	if name == "" {
+		return "", errors.New("extranet: property name required")
+	}
+	return s.repo.CreateProperty(ctx, userID, name, propertyType, address, city, starRating)
 }
 
 // --- content ---
@@ -58,6 +90,60 @@ func (s *Service) UpdateContent(ctx context.Context, userID, propertyID, name, d
 		return err
 	}
 	return s.repo.UpdatePropertyContent(ctx, propertyID, name, desc, address, city, star, ptype)
+}
+
+var validCancellationPolicies = map[string]bool{"FLEXIBLE": true, "MODERATE": true, "STRICT": true, "NON_REFUNDABLE": true}
+
+var checkInOutFormat = regexp.MustCompile(`^([01][0-9]|2[0-3]):[0-5][0-9]$`)
+
+// UpdateDetails edits the Airbnb-style listing fields (location, amenities,
+// house rules, cancellation policy, contact, check-in/out) — object-scoped.
+// Re-validates independently of the client (the mobile form's own checks are
+// convenience only), matching the CHECK constraints on stays_property.
+func (s *Service) UpdateDetails(ctx context.Context, userID, propertyID string, patch PropertyDetailsPatch) error {
+	if err := s.guard(ctx, userID, propertyID); err != nil {
+		return err
+	}
+	if (patch.Lat == nil) != (patch.Lng == nil) {
+		return fmt.Errorf("%w: lat and lng must be set together", ErrValidation)
+	}
+	if patch.Lat != nil && (*patch.Lat < -90 || *patch.Lat > 90 || *patch.Lng < -180 || *patch.Lng > 180) {
+		return fmt.Errorf("%w: lat/lng out of range", ErrValidation)
+	}
+	if patch.CancellationPolicy != nil && !validCancellationPolicies[*patch.CancellationPolicy] {
+		return fmt.Errorf("%w: invalid cancellation_policy", ErrValidation)
+	}
+	if patch.CheckInFrom != nil && !checkInOutFormat.MatchString(*patch.CheckInFrom) {
+		return fmt.Errorf("%w: check_in_from must be HH:MM", ErrValidation)
+	}
+	if patch.CheckOutUntil != nil && !checkInOutFormat.MatchString(*patch.CheckOutUntil) {
+		return fmt.Errorf("%w: check_out_until must be HH:MM", ErrValidation)
+	}
+	if patch.Amenities != nil {
+		cleaned := normalizeAmenities(*patch.Amenities)
+		patch.Amenities = &cleaned
+	}
+	return s.repo.UpdatePropertyDetails(ctx, propertyID, patch)
+}
+
+// normalizeAmenities trims, drops blanks, and de-duplicates case-insensitively
+// while preserving the caller's first-seen casing.
+func normalizeAmenities(in []string) []string {
+	seen := map[string]bool{}
+	out := make([]string, 0, len(in))
+	for _, a := range in {
+		a = strings.TrimSpace(a)
+		if a == "" {
+			continue
+		}
+		key := strings.ToLower(a)
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		out = append(out, a)
+	}
+	return out
 }
 
 // ListRoomTypes / CreateRoomType (object-scoped).

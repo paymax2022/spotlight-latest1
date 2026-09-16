@@ -12,6 +12,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"spotlight/backend/internal/finance/ledger"
 	"spotlight/backend/internal/finance/settlement"
 	"spotlight/backend/internal/finance/tiers"
 )
@@ -23,6 +24,9 @@ import (
 // this small means the wiring in NewService is unchanged and idiomatic.
 type tierLimiter interface {
 	EnforceWalletDebitLimit(ctx context.Context, userID string, amountKobo int64) error
+	// Rider fares are consumer purchases, so they use the checkout gate: identical
+	// for Tier 1+, capped-but-permitted for Tier 0 (ADR-043).
+	EnforceCheckoutDebitLimit(ctx context.Context, userID string, amountKobo int64) error
 }
 
 // Service manages driver registration, trip lifecycle, fare negotiation, and settlement.
@@ -32,6 +36,8 @@ type Service struct {
 	tiers      tierLimiter // fail-closed KYC-tier / daily-spend gate on rider money moves
 	maps       MapsAdapter
 	commission CommissionRecorder // optional; nil ⇒ realized-profit recording is a no-op
+	insurance  InsuranceBinder    // optional; nil ⇒ parcels book/deliver with no real cover
+	ledger     *ledger.Service    // required for cash-ride driver-wallet fee debits (WithLedger)
 }
 
 // NewService wires the transport service. A MockMaps adapter is used when none
@@ -42,6 +48,31 @@ type Service struct {
 // refactor centralises the tiers service, inject it here and drop this line.
 func NewService(db *pgxpool.Pool, settlement *settlement.Service) *Service {
 	return &Service{db: db, settlement: settlement, tiers: tiers.NewService(db), maps: NewMockMaps()}
+}
+
+// WithTiers injects a pre-configured tier gate, taking the refactor the comment
+// above invited. Routes pass the shared, flag-configured service so a rider fare
+// honours the Tier-0 checkout allowance (ADR-043) rather than the strict default
+// this service builds for itself.
+//
+// Optional and fail-safe: without it the self-built gate applies, which refuses
+// Tier 0 exactly as before. An unwired call site is stricter, never looser.
+func (s *Service) WithTiers(t tierLimiter) *Service {
+	if t != nil {
+		s.tiers = t
+	}
+	return s
+}
+
+// WithLedger injects the shared ledger service used to debit a driver's own
+// wallet for the platform's commission on a cash-paid trip (no escrow exists
+// to split for those — the rider paid the driver directly). Without this, cash
+// trips fail closed: see driverCanCoverCashFee / settleCashTrip.
+func (s *Service) WithLedger(l *ledger.Service) *Service {
+	if l != nil {
+		s.ledger = l
+	}
+	return s
 }
 
 // enforceTierLimit is a fail-closed guard applied before any rider-funded wallet
@@ -56,7 +87,7 @@ func (s *Service) enforceTierLimit(ctx context.Context, riderID string, amountKo
 	if amountKobo <= 0 {
 		return nil
 	}
-	if err := s.tiers.EnforceWalletDebitLimit(ctx, riderID, amountKobo); err != nil {
+	if err := s.tiers.EnforceCheckoutDebitLimit(ctx, riderID, amountKobo); err != nil {
 		// Surface as a client-visible forbidden — the rider must complete KYC or is
 		// over their daily limit. Do NOT let money move.
 		return codedErr(http.StatusForbidden, CodeForbidden, err.Error())
@@ -278,6 +309,7 @@ type tripRow struct {
 	Status         string
 	ServiceType    string
 	PricingMode    string
+	PaymentMethod  string
 	FareEstimate   *int64
 	FinalFare      *int64
 	SettlementID   string
@@ -292,12 +324,12 @@ type tripRow struct {
 
 func (s *Service) loadTrip(ctx context.Context, tripID string, t *tripRow) error {
 	const q = `
-		SELECT id, rider_id, driver_id, phase, status, service_type, pricing_mode,
-		       fare_estimate_kobo, final_fare_kobo, settlement_id, trip_pin,
+		SELECT id, rider_id, driver_id, phase, status, service_type, pricing_mode, payment_method,
+		       fare_estimate_kobo, final_fare_kobo, COALESCE(settlement_id::text,''), trip_pin,
 		       pickup_lat, pickup_lng, dest_lat, dest_lng, safety_status, idempotency_key
 		FROM trips WHERE id=$1`
 	return s.db.QueryRow(ctx, q, tripID).Scan(
-		&t.ID, &t.RiderID, &t.DriverID, &t.Phase, &t.Status, &t.ServiceType, &t.PricingMode,
+		&t.ID, &t.RiderID, &t.DriverID, &t.Phase, &t.Status, &t.ServiceType, &t.PricingMode, &t.PaymentMethod,
 		&t.FareEstimate, &t.FinalFare, &t.SettlementID, &t.TripPin,
 		&t.PickupLat, &t.PickupLng, &t.DestLat, &t.DestLng, &t.SafetyStatus, &t.IdempotencyKey,
 	)
@@ -358,6 +390,14 @@ func (s *Service) settleTrip(ctx context.Context, t *tripRow) error {
 	for _, id := range ids {
 		if err := s.settlement.Settle(ctx, id, split); err != nil {
 			return fmt.Errorf("transport: settle %s: %w", id, err)
+		}
+	}
+	// Cash trips have no escrow (the ids loop above is empty for them) — the
+	// platform's commission instead comes straight out of the driver's own
+	// wallet, since the rider already paid the driver directly, out of band.
+	if isCashPayment(t.PaymentMethod) {
+		if err := s.settleCashTrip(ctx, t); err != nil {
+			return fmt.Errorf("transport: settle cash fee: %w", err)
 		}
 	}
 	// Record realized Spotlight profit into the central Commission & Profit registry.

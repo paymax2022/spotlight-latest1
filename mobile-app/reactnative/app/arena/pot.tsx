@@ -102,7 +102,7 @@ const styles = StyleSheet.create({
   content: { padding: Spacing.containerMargin, gap: Spacing.md },
   totalCard: { backgroundColor: Colors.primary, borderRadius: Radius.xl, padding: Spacing.lg, alignItems: 'center', gap: 2 },
   totalIcon: { width: 48, height: 48, borderRadius: Radius.full, backgroundColor: 'rgba(255,255,255,0.15)', alignItems: 'center', justifyContent: 'center', marginBottom: Spacing.xs },
-  totalValue: { ...Typography.displayLg, color: Colors.onPrimary, fontSize: 36, lineHeight: 44 },
+  totalValue: { ...Typography.displayLg, color: Colors.onPrimary, fontSize: 36, letterSpacing: -0.72, lineHeight: 44 },
   totalSub: { ...Typography.labelSm, color: Colors.inversePrimary },
   stamp: { ...Typography.caption, color: Colors.inverseOnSurface, marginTop: Spacing.xs },
   card: { backgroundColor: Colors.surfaceContainerLowest, borderRadius: Radius.xl, padding: Spacing.lg, gap: Spacing.sm, borderWidth: 1, borderColor: Colors.surfaceContainerHigh },

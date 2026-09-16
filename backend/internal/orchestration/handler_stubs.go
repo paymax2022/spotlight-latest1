@@ -11,11 +11,12 @@ package orchestration
 // (see mobile src/features/fx/types/fx.types.ts) so the app renders, WITHOUT
 // pretending to persist anything.
 //
-// NOT money-path: none of these post ledger entries or move value. Add-wallet
-// only provisions a zero-balance wallet view; disputes/alerts/beneficiaries are
-// metadata. When these graduate to real features they must gain persistence and,
-// for any value movement, idempotency + double-entry per the iron rules — at
-// which point delete the corresponding stub here.
+// NOT money-path: none of these post ledger entries or move value.
+// disputes/alerts/beneficiaries are metadata. When these graduate to real
+// features they must gain persistence and, for any value movement, idempotency +
+// double-entry per the iron rules — at which point delete the corresponding stub
+// here. AddWallet has already graduated: it persists (Store.OpenWallet) instead
+// of echoing a wallet the server immediately forgot.
 
 import (
 	"encoding/json"
@@ -35,7 +36,18 @@ func nowISO() string { return time.Now().UTC().Format(time.RFC3339) }
 func stubID(prefix string) string { return fmt.Sprintf("%s_%d", prefix, time.Now().UnixNano()) }
 
 // ─── Balances: add wallet (POST /balances) ───────────────────────────────────
-// Provisioning only — opens a zero-balance wallet view for a currency. No ledger.
+// Provisioning only — opens a zero-balance wallet for a currency. No value moves,
+// so no ledger entry and no Idempotency-Key: re-opening is a no-op, not a reset.
+//
+// This used to echo {available: 0} without writing anything, so an added wallet
+// disappeared on the next GET /balances and there was no way to hold a currency.
+
+// walletCurrencies is the set a customer may open, mirroring WALLET_CURRENCIES in
+// mobile src/features/fx/constants/fx.constants.ts. Closed by design: without it
+// any string would create a junk orch_balances row that the app cannot render.
+var walletCurrencies = map[string]bool{
+	"NGN": true, "USD": true, "EUR": true, "GBP": true, "GHS": true, "KES": true,
+}
 
 func (h *Handler) AddWallet(c *gin.Context) {
 	var req struct {
@@ -45,12 +57,27 @@ func (h *Handler) AddWallet(c *gin.Context) {
 		writeErr(c, NewError(ErrInvalidRequest, "invalid_request", "currency is required").WithParam("currency"))
 		return
 	}
-	// Returns the WalletBalance shape { currency, available, ledger } directly.
-	c.JSON(http.StatusCreated, gin.H{
-		"currency":  strings.ToUpper(req.Currency),
-		"available": 0,
-		"ledger":    0,
-	})
+	cur := strings.ToUpper(strings.TrimSpace(req.Currency))
+	if !walletCurrencies[cur] {
+		writeErr(c, NewError(ErrInvalidRequest, "unsupported_currency", cur+" wallets are not available.").WithParam("currency"))
+		return
+	}
+
+	customer := customerID(c)
+	if err := h.svc.OpenWallet(c.Request.Context(), customer, cur); err != nil {
+		writeErr(c, asAPIError(err))
+		return
+	}
+	// Echo the balance as STORED, not a hardcoded zero: re-opening a funded wallet
+	// must return what is in it, or the client would render a zero over real money.
+	bal, err := h.svc.Balance(c.Request.Context(), customer, cur)
+	if err != nil {
+		writeErr(c, asAPIError(err))
+		return
+	}
+	// The WalletBalance shape { currency, available, ledger }. available == ledger
+	// until holds are modelled (same contract as GetBalances).
+	c.JSON(http.StatusCreated, gin.H{"currency": cur, "available": bal, "ledger": bal})
 }
 
 // ─── Rates: history (GET /rates/history?from&to&range) ───────────────────────

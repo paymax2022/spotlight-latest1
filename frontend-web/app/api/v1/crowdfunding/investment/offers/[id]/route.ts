@@ -4,7 +4,8 @@ import { proxyToGoBackend } from '@/src/lib/go-backend';
 import { errorResponse, handleApiError } from '@/src/lib/api/responses';
 
 // GET /api/v1/crowdfunding/investment/offers/[id] — single offer detail.
-export async function GET(request: Request, { params }: { params: { id: string } }) {
+export async function GET(request: Request, ctx: { params: Promise<{ id: string }> }) {
+  const params = await ctx.params;
   if (!featureFlags.crowdfunding()) return errorResponse('Crowdfunding is not available.', 503);
   try {
     await requireRequestUser(request);

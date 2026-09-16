@@ -19,7 +19,12 @@ var devLANOrigin = regexp.MustCompile(`^https?://(10\.\d{1,3}\.\d{1,3}\.\d{1,3}|
 // cross-origin request fails (net::ERR_FAILED) even though the server responds.
 var devLoopbackOrigin = regexp.MustCompile(`^https?://(localhost|127\.0\.0\.1)(:\d+)?$`)
 
-func CORSMiddleware(allowedOriginsCSV string, appEnv string) gin.HandlerFunc {
+// AllowedOriginChecker builds a reusable "is this Origin trusted" predicate from
+// the same allowlist CORSMiddleware uses (an explicit CSV plus, outside
+// production, any localhost/127.0.0.1 or private-LAN origin). Shared with the
+// WebSocket hub (backend/internal/platform/ws) so the two enforcement points
+// can never drift apart on which origins are trusted.
+func AllowedOriginChecker(allowedOriginsCSV string, appEnv string) func(origin string) bool {
 	allowed := map[string]struct{}{}
 	for _, origin := range strings.Split(allowedOriginsCSV, ",") {
 		trimmed := strings.TrimSpace(origin)
@@ -29,13 +34,20 @@ func CORSMiddleware(allowedOriginsCSV string, appEnv string) gin.HandlerFunc {
 	}
 	allowDevLAN := appEnv != "production"
 
+	return func(origin string) bool {
+		if _, ok := allowed[origin]; ok {
+			return true
+		}
+		return allowDevLAN && (devLANOrigin.MatchString(origin) || devLoopbackOrigin.MatchString(origin))
+	}
+}
+
+func CORSMiddleware(allowedOriginsCSV string, appEnv string) gin.HandlerFunc {
+	isAllowed := AllowedOriginChecker(allowedOriginsCSV, appEnv)
+
 	return func(c *gin.Context) {
 		origin := c.GetHeader("Origin")
-		_, ok := allowed[origin]
-		if !ok && allowDevLAN && (devLANOrigin.MatchString(origin) || devLoopbackOrigin.MatchString(origin)) {
-			ok = true
-		}
-		if ok {
+		if isAllowed(origin) {
 			c.Writer.Header().Set("Access-Control-Allow-Origin", origin)
 			c.Writer.Header().Set("Vary", "Origin")
 			c.Writer.Header().Set("Access-Control-Allow-Credentials", "true")

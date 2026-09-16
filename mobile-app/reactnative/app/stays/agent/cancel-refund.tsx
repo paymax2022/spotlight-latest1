@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { View, Text, StyleSheet, ScrollView, Pressable } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import { Wallet, Check, CircleCheckBig } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
@@ -90,7 +91,7 @@ export default function AgentCancelRefundScreen() {
       </ScrollView>
 
       <View style={styles.footer}>
-        <PrimaryButton label="Keep booking" variant="secondary" onPress={() => router.back()} />
+        <PrimaryButton label="Keep booking" variant="secondary" onPress={() => goBack('/stays')} />
         <PrimaryButton label={cancelM.isPending ? 'Cancelling…' : 'Cancel & refund'} variant="danger" loading={cancelM.isPending} disabled={!confirm} onPress={cancel} />
         {cancelM.isError ? <Text style={styles.err}>Couldn't cancel. Please try again.</Text> : null}
       </View>

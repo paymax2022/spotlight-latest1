@@ -8,6 +8,11 @@
 import { brandFont } from './fonts';
 
 export const Typography = {
+  // OVERRIDING fontSize? RE-STATE letterSpacing TOO.
+  // -0.96 is -0.02em at THIS size. Spreading the style and changing only the
+  // size keeps the absolute -0.96, which is tighter than the scale intends —
+  // -0.027em at 36px, -0.032em at 30px. Use `letterSpacing: fontSize * -0.02`.
+  // Thirty-nine call sites had drifted this way before anyone noticed.
   displayLg: {
     fontFamily: brandFont('800'),
     fontSize:   48,

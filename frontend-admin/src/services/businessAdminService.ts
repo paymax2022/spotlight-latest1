@@ -1,8 +1,13 @@
 // ── Admin — Business Registry (CAC business-name verify/register) service ──────
 // Copies the commissionService.ts / academyAdminService.ts request stack EXACTLY:
-//  • businessBase() rewrites env.apiBaseUrl (…/api/v1) → …/api/business
-//    (these admin routes live under /api/business/admin/*, NOT /api/finance or
-//     /api/academy — mirroring how sibling services target a non-v1 sub-path).
+//  • businessBase() is apiRoot() + /api/business (these admin routes live under
+//    /api/business/admin/*, NOT /api/finance or /api/academy — mirroring how
+//    sibling services target a non-v1 sub-path). apiRoot() strips a trailing
+//    /api/v1 from env.apiBaseUrl (if any) and nothing else — the old
+//    `env.apiBaseUrl.replace(/\/api\/v1\/?$/, '/api/business')` stopped
+//    matching once apiBaseUrl became the same-origin proxy path
+//    (<origin>/api/admin-proxy, no /api/v1 suffix), so every live call 404'd
+//    against <proxy>/admin/... instead of <proxy>/api/business/admin/....
 //  • authHeaders() attaches the admin Bearer token from localStorage.
 //  • getJson/sendJson unwrap the { data } envelope and throw on non-2xx.
 //
@@ -12,9 +17,10 @@
 // shows ₦ (feeKobo/100). Mock by default (NEXT_PUBLIC_BUSINESS_USE_MOCK); flip to
 // false to hit the live Go backend. Every state-change is audit-logged server-side.
 
-import { env } from '@/config/env';
+import { apiRoot } from '@/config/env';
+import { resolveUseMock } from '@/config/useMock';
 
-const USE_MOCK = (process.env.NEXT_PUBLIC_BUSINESS_USE_MOCK ?? 'true').toLowerCase() !== 'false';
+const USE_MOCK = resolveUseMock(process.env.NEXT_PUBLIC_BUSINESS_USE_MOCK);
 
 // ── Domain types (mirror the backend JSON tags — camelCase) ───────────────────
 export type BusinessStatus =
@@ -76,7 +82,7 @@ export interface ListOpts {
 
 // ── Request stack ─────────────────────────────────────────────────────────────
 function businessBase(): string {
-  return env.apiBaseUrl.replace(/\/api\/v1\/?$/, '/api/business');
+  return `${apiRoot()}/api/business`;
 }
 function authHeaders(): Record<string, string> {
   if (typeof window === 'undefined') return {};
@@ -86,6 +92,13 @@ function authHeaders(): Record<string, string> {
     : { 'Content-Type': 'application/json' };
 }
 const delay = (ms = 220) => new Promise((r) => setTimeout(r, ms));
+
+// Both writes below have real, verified live endpoints (see the header comment
+// above), so fixture mode has nothing to add and refuses loudly instead of
+// reporting a write it did not perform. See docs/audit/ADMIN_SIMULATED_WRITES.md.
+const NOT_IN_FIXTURE_MODE =
+  'is unavailable in fixture mode: this console will not report a write it did not perform. ' +
+  'Set NEXT_PUBLIC_BUSINESS_USE_MOCK=false to make this change against the live backend.';
 
 async function getJson<T>(path: string): Promise<T> {
   const res = await fetch(`${businessBase()}${path}`, { headers: authHeaders() });
@@ -226,22 +239,13 @@ export async function get(id: string): Promise<Business> {
 
 // POST /api/business/admin/:id/approve → { data: business } (manual override → success terminal)
 export async function approve(id: string): Promise<Business> {
-  if (USE_MOCK) {
-    await delay();
-    const base = MOCK_BUSINESSES.find((b) => b.id === id) ?? MOCK_BUSINESSES[0];
-    const terminal: BusinessStatus = base.mode === 'verify_existing' ? 'verified' : 'registered';
-    return { ...base, status: terminal, registeredAt: terminal === 'registered' ? new Date().toISOString() : base.registeredAt, updatedAt: new Date().toISOString() };
-  }
+  if (USE_MOCK) throw new Error(`Approving a business ${NOT_IN_FIXTURE_MODE}`);
   return sendJson<Business>('POST', `/admin/${encodeURIComponent(id)}/approve`, {});
 }
 
 // POST /api/business/admin/:id/reject { reason } → { data: business }
 export async function reject(id: string, reason: string): Promise<Business> {
-  if (USE_MOCK) {
-    await delay();
-    const base = MOCK_BUSINESSES.find((b) => b.id === id) ?? MOCK_BUSINESSES[0];
-    return { ...base, status: 'rejected', metadata: { ...(base.metadata ?? {}), rejectReason: reason }, updatedAt: new Date().toISOString() };
-  }
+  if (USE_MOCK) throw new Error(`Rejecting a business ${NOT_IN_FIXTURE_MODE}`);
   return sendJson<Business>('POST', `/admin/${encodeURIComponent(id)}/reject`, { reason });
 }
 
