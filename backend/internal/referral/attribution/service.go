@@ -54,9 +54,14 @@ const (
 	StatusLocked = "locked"
 )
 
-// CodeResolver maps a referral code to its owning referrer user id. The existing
-// finance/referrals.Service satisfies this (ResolveCodeToReferrer), so the engine
-// reuses the seed without breaking it.
+// CodeResolver maps a referral code to its owning referrer user id. Both
+// finance/referrals.Service (legacy, finance_referral_codes only) and
+// finance/referrals.RewardService (checks referral_links THEN
+// finance_referral_codes — see its ResolveCodeToReferrer) satisfy this. Wiring
+// MUST use RewardService (see internal/app/referral_routes.go) so a code minted
+// through the newer Direct Referral Rewards Engine is visible to attribution
+// (REF-002) — the legacy Service alone would silently miss it and route the
+// signup to the house with RiskInvalidCode.
 type CodeResolver interface {
 	ResolveCodeToReferrer(ctx context.Context, code string) (string, error)
 }

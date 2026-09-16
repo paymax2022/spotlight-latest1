@@ -431,6 +431,27 @@ func (s *RewardService) resolveCode(ctx context.Context, code string) (string, e
 	return referrerID, nil
 }
 
+// ResolveCodeToReferrer adapts resolveCode to the referral/attribution.CodeResolver
+// interface (ResolveCodeToReferrer(ctx, code) (string, error)), so the §7A
+// signup-attribution engine (System A) can resolve codes through this engine's
+// (System B's) two-table lookup — referral_links first, then the legacy
+// finance_referral_codes seed — instead of the older Service.ResolveCodeToReferrer,
+// which only ever checked finance_referral_codes and made codes minted into
+// referral_links invisible to attribution (REF-002). Mirrors the error contract
+// of the older method: an unresolved code returns a non-nil error (not just an
+// empty string), since CodeResolver callers treat "err != nil || referrerID == """
+// as the same "invalid code" case.
+func (s *RewardService) ResolveCodeToReferrer(ctx context.Context, code string) (string, error) {
+	referrerID, err := s.resolveCode(ctx, code)
+	if err != nil {
+		return "", err
+	}
+	if referrerID == "" {
+		return "", fmt.Errorf("referrals: resolve code %q: %w", code, pgx.ErrNoRows)
+	}
+	return referrerID, nil
+}
+
 // GetDashboard builds the Referral Hub payload (§5.1 screen 1).
 func (s *RewardService) GetDashboard(ctx context.Context, referrerID string) (*Dashboard, error) {
 	link, err := s.GetOrCreateLink(ctx, referrerID)
