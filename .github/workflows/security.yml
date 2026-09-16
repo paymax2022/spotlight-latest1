@@ -91,8 +91,15 @@ jobs:
           tar -xzf /tmp/gitleaks.tar.gz -C /tmp gitleaks
           sudo install /tmp/gitleaks /usr/local/bin/gitleaks
           gitleaks version
-      - name: Scan full history against the curated allowlist
-        run: gitleaks detect --source . --redact -v
+      # `--log-opts="HEAD"` pins gitleaks' traversal to this ref's own ancestry.
+      # Without it, gitleaks' default (`--all`-equivalent) walks every ref the
+      # checkout step fetched — and `fetch-depth: 0` here fetches
+      # +refs/heads/*:refs/remotes/origin/*, i.e. every branch on the remote,
+      # not just this one. In a repo with many concurrently-pushed branches
+      # that means this job fails on OTHER branches' unmerged, untriaged test
+      # fixtures — not on anything reachable from the commit under test.
+      - name: Scan this ref's history against the curated allowlist
+        run: gitleaks detect --source . --log-opts="HEAD" --redact -v
 
   trivy-fs:
     name: trivy (filesystem — deps + IaC misconfig)
