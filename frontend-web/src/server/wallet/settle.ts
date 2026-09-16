@@ -1,7 +1,32 @@
 import { createAdminClient } from '@/lib/supabase/server';
-import { creditWallet } from './service';
+import { creditWallet, resolveBillingEmail } from './service';
 import { buildIdempotencyKey } from './ledger';
 import { topupDescription } from './checkout-domain';
+import { notifyTopupFailed, notifyTopupSuccess } from './notifications';
+
+/**
+ * WAL-002: best-effort, fire-and-forget — a notification failure (or a user
+ * with no valid billable email) must never affect settlement, which is why
+ * this is called after `markIntent` and never awaited by its caller.
+ */
+async function notifySettlementOutcome(
+  intent: TopupIntent,
+  reference: string,
+  outcome: { success: true } | { success: false; reason: string },
+): Promise<void> {
+  try {
+    const to = await resolveBillingEmail(intent.user_id, '');
+    if (outcome.success) {
+      notifyTopupSuccess({ to, amountKobo: Number(intent.amount_kobo ?? 0), reference });
+    } else {
+      notifyTopupFailed({ to, amountKobo: Number(intent.amount_kobo ?? 0), reference, reason: outcome.reason });
+    }
+  } catch (err) {
+    // resolveBillingEmail throws when the user has no valid billable email —
+    // not an error worth logging loudly, just skip the notification.
+    console.error('[wallet-email] skipped topup notification:', err instanceof Error ? err.message : err);
+  }
+}
 
 /**
  * The one place a wallet top-up is settled.
@@ -71,6 +96,7 @@ export async function settleTopupIntent(
   if (!Number.isInteger(paidKobo) || paidKobo !== intentKobo) {
     const error = `Amount mismatch for ${reference}: charged ${paidKobo} kobo, intent expects ${intentKobo} kobo`;
     await markIntent(intent.id, { status: 'failed', error_message: error });
+    void notifySettlementOutcome(intent, reference, { success: false, reason: error });
     return { settled: false, alreadySettled: false, error };
   }
 
@@ -93,10 +119,12 @@ export async function settleTopupIntent(
     });
 
     await markIntent(intent.id, { status: 'completed' });
+    void notifySettlementOutcome(intent, reference, { success: true });
     return { settled: true, alreadySettled: false };
   } catch (err) {
     const error = err instanceof Error ? err.message : String(err);
     await markIntent(intent.id, { status: 'failed', error_message: error });
+    void notifySettlementOutcome(intent, reference, { success: false, reason: error });
     return { settled: false, alreadySettled: false, error };
   }
 }
