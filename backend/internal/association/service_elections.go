@@ -575,6 +575,15 @@ func (s *Service) PublishResults(ctx context.Context, userID, electionID string)
 // wrongly exclude them.
 func (s *Service) ListElections(ctx context.Context, userID, orgIDOverride string) ([]ElectionSummary, error) {
 	var orgID string
+	// includeDraft: an explicit org_id override is only ever passed by the
+	// admin console (resolveOrgID requires SOME admin capability in that org
+	// to succeed) — an admin needs to see the DRAFT election they just
+	// created to add candidates and open it, or it is permanently
+	// unreachable through this list. A plain member's own self-service call
+	// (no override, resolved from their own primary membership) keeps
+	// excluding DRAFT: members should never see an election before an
+	// officer opens it.
+	includeDraft := orgIDOverride != ""
 	if orgIDOverride != "" {
 		var err error
 		orgID, err = s.resolveOrgID(ctx, userID, orgIDOverride)
@@ -588,11 +597,15 @@ func (s *Service) ListElections(ctx context.Context, userID, orgIDOverride strin
 			return nil, err
 		}
 	}
+	statusFilter := "e.status <> 'DRAFT'"
+	if includeDraft {
+		statusFilter = "TRUE"
+	}
 	rows, err := s.db.Query(ctx, `
 		SELECT e.id, e.title, e.status, e.voting_opens_at::text, e.voting_closes_at::text,
 		       (SELECT count(*) FROM assoc_election_positions p WHERE p.election_id=e.id)
 		FROM assoc_elections e
-		WHERE e.organisation_id=$1 AND e.status <> 'DRAFT'
+		WHERE e.organisation_id=$1 AND `+statusFilter+`
 		ORDER BY e.created_at DESC`, orgID)
 	if err != nil {
 		return nil, fmt.Errorf("association: list elections: %w", err)
@@ -623,18 +636,32 @@ func (s *Service) GetElection(ctx context.Context, userID, electionID string) (*
 		return nil, fmt.Errorf("association: election not found: %w", err)
 	}
 
-	// Viewer must be a member of the election's org (scope); compute eligibility.
+	// Viewer scoping. A real member of the org gets the normal voter-eligibility
+	// computation below. A caller with NO membership row here used to be an
+	// unconditional ErrForbidden — which made this page (the ONLY page that
+	// can add candidates, open/close voting, or publish results) unreachable
+	// for the admin console's actual users: a platform admin overseeing many
+	// associations is not personally a member of most of them, the same gap
+	// GetMember had before it was given an admin bypass. An election officer
+	// (org admin role, or platform super-admin) for THIS org now bypasses the
+	// membership requirement and can view/manage the election; they are
+	// correctly marked ineligible to vote in it themselves, since they hold
+	// no membership to cast a ballot from.
 	var voterMembership, mStatus, standing string
 	if err := s.db.QueryRow(ctx, `SELECT id, status, payment_standing FROM assoc_memberships WHERE user_id=$1 AND organisation_id=$2`, userID, org).Scan(&voterMembership, &mStatus, &standing); err != nil {
-		return nil, ErrForbidden // not a member of this org
-	}
-	switch {
-	case mStatus != "ACTIVE":
-		d.Eligible, d.EligibilityReason = false, "Membership is not active."
-	case requireGood && standing == "OVERDUE":
-		d.Eligible, d.EligibilityReason = false, "Dues are in arrears."
-	default:
-		d.Eligible = true
+		if s.requireElectionOfficer(ctx, userID, org) != nil {
+			return nil, ErrForbidden
+		}
+		d.Eligible, d.EligibilityReason = false, "Not a member of this organisation."
+	} else {
+		switch {
+		case mStatus != "ACTIVE":
+			d.Eligible, d.EligibilityReason = false, "Membership is not active."
+		case requireGood && standing == "OVERDUE":
+			d.Eligible, d.EligibilityReason = false, "Dues are in arrears."
+		default:
+			d.Eligible = true
+		}
 	}
 
 	// Positions + candidates + hasVoted for the viewer.
@@ -678,7 +705,11 @@ func (s *Service) GetElection(ctx context.Context, userID, electionID string) (*
 		if err := crows.Err(); err != nil {
 			return nil, err
 		}
-		_ = s.db.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM assoc_election_ballots_cast WHERE position_id=$1 AND voter_membership_id=$2)`, p.ID, voterMembership).Scan(&p.HasVoted)
+		// An officer viewing without a membership of their own (voterMembership
+		// empty, see above) cannot have voted — nothing to look up.
+		if voterMembership != "" {
+			_ = s.db.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM assoc_election_ballots_cast WHERE position_id=$1 AND voter_membership_id=$2)`, p.ID, voterMembership).Scan(&p.HasVoted)
+		}
 	}
 
 	// Sealed results: choices/tallies are only exposed once PUBLISHED.
