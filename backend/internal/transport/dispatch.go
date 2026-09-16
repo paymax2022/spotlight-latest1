@@ -61,10 +61,17 @@ func (s *Service) NearbyDrivers(ctx context.Context, lat, lng float64, radiusM f
 }
 
 // OpenRequests returns open ride requests visible to a driver (dispatch feed).
+//
+// Cash requests are filtered out when the driver's own wallet balance can't
+// cover the platform's commission on that trip's current fare — the platform
+// fee normally comes out of escrow at settlement, but a cash trip has no
+// escrow, so it comes straight out of the driver's wallet at completion
+// instead. A driver who can't afford that must not be able to see (or,
+// via DriverAccept, accept) the ride until they top up.
 func (s *Service) OpenRequests(ctx context.Context, driverUserID string) ([]map[string]any, error) {
 	const q = `
 		SELECT id, pickup_address, dest_address, pickup_lat, pickup_lng, dest_lat, dest_lng,
-		       fare_kobo, fare_estimate_kobo, pricing_mode, phase, distance_m, duration_s, created_at
+		       fare_kobo, fare_estimate_kobo, pricing_mode, payment_method, phase, distance_m, duration_s, created_at
 		FROM trips
 		WHERE driver_id IS NULL AND phase IN ('requested','fare_negotiating')
 		ORDER BY created_at DESC LIMIT 50`
@@ -75,20 +82,26 @@ func (s *Service) OpenRequests(ctx context.Context, driverUserID string) ([]map[
 	defer rows.Close()
 	var out []map[string]any
 	for rows.Next() {
-		var id, pickup, dest, mode, phase string
+		var id, pickup, dest, mode, payment, phase string
 		var plat, plng, dlat, dlng *float64
 		var fare int64
 		var est *int64
 		var distM, durS *int
 		var createdAt time.Time
-		if err := rows.Scan(&id, &pickup, &dest, &plat, &plng, &dlat, &dlng, &fare, &est, &mode, &phase, &distM, &durS, &createdAt); err != nil {
+		if err := rows.Scan(&id, &pickup, &dest, &plat, &plng, &dlat, &dlng, &fare, &est, &mode, &payment, &phase, &distM, &durS, &createdAt); err != nil {
 			return nil, err
+		}
+		if isCashPayment(payment) {
+			ok, err := s.driverCanCoverCashFee(ctx, driverUserID, fare)
+			if err != nil || !ok {
+				continue // fails closed: an error or an unaffordable fee hides the request
+			}
 		}
 		out = append(out, map[string]any{
 			"id": id, "pickupAddress": pickup, "destAddress": dest,
 			"pickup":   map[string]any{"lat": plat, "lng": plng},
 			"dest":     map[string]any{"lat": dlat, "lng": dlng},
-			"fareKobo": fare, "fareEstimateKobo": est, "pricingMode": mode,
+			"fareKobo": fare, "fareEstimateKobo": est, "pricingMode": mode, "paymentMethod": payment,
 			"phase": phase, "distanceM": distM, "durationS": durS, "createdAt": createdAt,
 		})
 	}
@@ -126,6 +139,19 @@ func (s *Service) DriverAccept(ctx context.Context, tripID, driverUserID string)
 	s.db.QueryRow(ctx, `SELECT commission_tier FROM drivers WHERE id=$1`, driverID).Scan(&tier)
 	if err := s.validateAcceptedFare(ctx, accepted, systemFare, tier, cfg); err != nil {
 		return nil, err
+	}
+	// Defense-in-depth: OpenRequests already hides unaffordable cash requests,
+	// but re-check here too — the driver's balance may have changed since they
+	// loaded the feed, or they may have hit this endpoint directly.
+	if isCashPayment(t.PaymentMethod) {
+		ok, err := s.driverCanCoverCashFee(ctx, driverUserID, accepted)
+		if err != nil {
+			return nil, codedErr(http.StatusForbidden, CodeInsufficientDriverBalance, "could not verify wallet balance")
+		}
+		if !ok {
+			return nil, codedErr(http.StatusForbidden, CodeInsufficientDriverBalance,
+				"your wallet balance is below the platform fee for this cash ride — top up to accept")
+		}
 	}
 
 	tx, err := s.db.Begin(ctx)

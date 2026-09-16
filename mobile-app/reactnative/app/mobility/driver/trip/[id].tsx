@@ -35,6 +35,7 @@ export default function DriverTripScreen() {
   const [pin, setPin] = useState('');
   const [pinError, setPinError] = useState<string | null>(null);
   const [completedFare, setCompletedFare] = useState<number | null>(null);
+  const [completedFeeKobo, setCompletedFeeKobo] = useState<number | null>(null);
 
   const t = trip.data;
   // Live position over the trip WebSocket (the driver app feeds GPS upstream).
@@ -55,7 +56,11 @@ export default function DriverTripScreen() {
   };
   const onStart = () => id && start.mutate(id, { onSuccess: () => setPhase('in_progress') });
   const onComplete = () => id && complete.mutate(id, {
-    onSuccess: (done) => { setCompletedFare(done.fareKobo); setPhase('completed'); },
+    onSuccess: (done) => {
+      setCompletedFare(done.fareKobo);
+      setCompletedFeeKobo(done.platformFeeKobo ?? null);
+      setPhase('completed');
+    },
   });
   const onSos = async () => {
     await driverSos({ lat: 6.45, lng: 3.46 }, id);
@@ -88,7 +93,14 @@ export default function DriverTripScreen() {
           <View style={styles.doneIcon}><CheckCircle2 size={40} color={Colors.tertiaryContainer} strokeWidth={2} /></View>
           <Text style={styles.doneTitle}>Trip completed</Text>
           <Text style={styles.doneFare}>{formatNairaWhole(completedFare ?? t.fareKobo)}</Text>
-          <Text style={styles.doneSub}>Fare settled. Your share (after commission) has been added to your wallet.</Text>
+          {t.paymentMethod === 'cash' ? (
+            <Text style={styles.doneSub}>
+              You collected this in cash from the rider.
+              {completedFeeKobo != null ? ` ${formatNairaWhole(completedFeeKobo)} was deducted from your wallet as the platform fee.` : ' The platform fee was deducted from your wallet.'}
+            </Text>
+          ) : (
+            <Text style={styles.doneSub}>Fare settled. Your share (after commission) has been added to your wallet.</Text>
+          )}
           <View style={styles.doneActions}>
             <PrimaryButton label="Next request" onPress={() => router.replace('/mobility/driver/requests')} />
             <PrimaryButton label="Driver home" variant="secondary" onPress={() => router.replace('/mobility/driver')} />
@@ -140,6 +152,7 @@ export default function DriverTripScreen() {
 
       <View style={styles.footer}>
         <SafetyButton onSos={onSos} variant="bar" />
+        <PrimaryButton label="Message rider" variant="secondary" onPress={() => router.push(`/mobility/driver/trip/${id}/chat`)} />
         {phase === 'driver_assigned' && (
           <PrimaryButton label="I've arrived at pickup" onPress={onArrive} loading={arrive.isPending} />
         )}
@@ -172,7 +185,7 @@ const styles = StyleSheet.create({
   doneBody: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: Spacing.lg, gap: Spacing.sm },
   doneIcon: { width: 76, height: 76, borderRadius: 38, backgroundColor: Colors.tertiaryFixed, alignItems: 'center', justifyContent: 'center', marginBottom: Spacing.sm },
   doneTitle: { ...Typography.headlineMd, color: Colors.onSurface },
-  doneFare: { ...Typography.displayLg, fontSize: 40, lineHeight: 46, color: Colors.primary, fontWeight: '800' as const },
+  doneFare: { ...Typography.displayLg, fontSize: 40, letterSpacing: -0.8, lineHeight: 46, color: Colors.primary, fontWeight: '800' as const },
   doneSub: { ...Typography.bodyMd, color: Colors.onSurfaceVariant, textAlign: 'center', lineHeight: 22, marginBottom: Spacing.lg },
   doneActions: { width: '100%', gap: Spacing.sm },
 });

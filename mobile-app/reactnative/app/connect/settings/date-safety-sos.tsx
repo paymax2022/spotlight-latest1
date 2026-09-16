@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import PhoneNumberInput from '@/components/PhoneNumberInput';
 import { ScrollView, View, Text, Pressable, StyleSheet, Modal } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Siren, Plus, Phone } from 'lucide-react-native';
@@ -84,7 +85,7 @@ export default function DateSafetySos() {
           <View style={styles.sheet}>
             <Text style={styles.sheetTitle}>Add emergency contact</Text>
             <TextInputField label="Name" value={name} onChangeText={setName} placeholder="e.g. Mum" autoCapitalize="words" />
-            <TextInputField label="Phone" value={phone} onChangeText={setPhone} placeholder="e.g. 0803 000 0000" keyboardType="phone-pad" />
+            <PhoneNumberInput label="Phone" value={phone} onChange={({ e164, nsn }) => (setPhone)(e164 || nsn)} />
             <PrimaryButton label="Add contact" onPress={onAdd} disabled={name.trim().length < 2 || phone.trim().length < 6} loading={addContact.isPending} />
             <PrimaryButton label="Cancel" variant="ghost" onPress={() => setAdding(false)} />
           </View>

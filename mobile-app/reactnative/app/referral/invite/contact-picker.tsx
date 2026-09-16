@@ -90,6 +90,7 @@ export default function ContactPickerScreen() {
                   onPress={() => toggle(item)}
                   accessibilityRole="checkbox"
                   accessibilityState={{ checked: isSel, disabled: item.alreadyJoined }}
+                  aria-checked={isSel}
                 >
                   <View style={styles.avatar}><Users size={16} color={Colors.onSurfaceVariant} strokeWidth={2} /></View>
                   <View style={{ flex: 1 }}>

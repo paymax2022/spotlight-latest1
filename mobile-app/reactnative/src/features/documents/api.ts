@@ -1,4 +1,5 @@
 // Estate Documents (Block 36) — types + dual mock/live api + constants.
+import { mockAllowed } from '@/config/mockPolicy';
 import { api } from '@/api/client';
 
 export type DocumentCategory = 'general' | 'bylaws' | 'minutes' | 'finance' | 'notice' | 'form' | 'contract' | 'map';
@@ -9,7 +10,7 @@ export interface EstateDocument {
 }
 export interface CreateDocumentInput { title: string; category: DocumentCategory; fileUrl: string; restricted?: boolean; }
 
-export const USE_MOCK = (process.env.EXPO_PUBLIC_DOCUMENTS_USE_MOCK ?? 'true') !== 'false';
+export const USE_MOCK = mockAllowed(process.env.EXPO_PUBLIC_DOCUMENTS_USE_MOCK, true);
 
 // Documents are served by the resident-scoped frontend-web handler under
 // /api/v1/estate/documents (GET list, POST create). The current resident's

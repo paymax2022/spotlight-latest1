@@ -13,7 +13,8 @@ test.describe('Bills E2E - Provider switching and redundancy', () => {
 
   test('surfaces provider timeout as a friendly retryable payment error', async ({ page }) => {
     let purchaseAttempts = 0;
-    await page.route('**/services/airtime/purchase', async (route) => {
+    // Airtime purchase posts to /api/v1/utility/pay (postUtilityPayment).
+    await page.route('**/api/v1/utility/pay', async (route) => {
       purchaseAttempts += 1;
       await route.fulfill({
         status: 504,

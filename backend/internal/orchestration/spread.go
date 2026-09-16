@@ -1,6 +1,10 @@
 package orchestration
 
-import "strings"
+import (
+	"context"
+	"strings"
+	"sync"
+)
 
 // SpreadRule is a configurable markup for a corridor × customer-tier (spec §9).
 // Spread is expressed in basis points over the provider all-in rate, with an
@@ -14,10 +18,25 @@ type SpreadRule struct {
 	MaxBPS     int
 }
 
+// SpreadSource loads the spread rule card from durable storage. Implemented by
+// the pgx-backed source over public.fx_markup_rates — the SAME table the legacy
+// wallet FX service prices from, so one admin change moves both surfaces
+// (ADR-032). A nil source leaves the engine on its in-code rules, which is what
+// unit tests and any non-DB wiring use.
+type SpreadSource interface {
+	LoadRules(ctx context.Context) (defaultBPS int, rules []SpreadRule, err error)
+}
+
 // SpreadEngine resolves the effective spread for a corridor/tier and applies it.
+//
+// The rule card is swappable at runtime (Refresh), so it is guarded by a mutex:
+// Refresh runs on the request path while resolve is being read by the candidate
+// loop of a concurrent quote.
 type SpreadEngine struct {
+	mu         sync.RWMutex
 	rules      []SpreadRule
 	defaultBPS int
+	source     SpreadSource
 }
 
 // NewSpreadEngine builds an engine with a flat default and optional overrides.
@@ -25,8 +44,50 @@ func NewSpreadEngine(defaultBPS int, rules ...SpreadRule) *SpreadEngine {
 	return &SpreadEngine{rules: rules, defaultBPS: defaultBPS}
 }
 
+// WithSource attaches a durable rule card. The in-code rules stay as the value
+// used until the first successful Refresh.
+func (e *SpreadEngine) WithSource(src SpreadSource) *SpreadEngine {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.source = src
+	return e
+}
+
+// HasSource reports whether a durable rule card is attached.
+func (e *SpreadEngine) HasSource() bool {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	return e.source != nil
+}
+
+// Refresh reloads the rule card from the source, so an admin rate change is live
+// on the next quote with no restart. A nil source is a no-op (in-code rules).
+//
+// Callers MUST treat an error as fatal to the operation: pricing from a rule card
+// we could not confirm would charge a spread nobody configured. Refresh is called
+// once per user-facing operation, not once per candidate, so this is one query
+// per quote.
+func (e *SpreadEngine) Refresh(ctx context.Context) error {
+	e.mu.RLock()
+	src := e.source
+	e.mu.RUnlock()
+	if src == nil {
+		return nil
+	}
+	defaultBPS, rules, err := src.LoadRules(ctx)
+	if err != nil {
+		return err
+	}
+	e.mu.Lock()
+	e.defaultBPS, e.rules = defaultBPS, rules
+	e.mu.Unlock()
+	return nil
+}
+
 // resolve picks the most specific matching rule (corridor+tier > corridor > tier > default).
 func (e *SpreadEngine) resolve(corridor, tier string) SpreadRule {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
 	corridor, tier = strings.ToUpper(corridor), strings.ToLower(tier)
 	var best *SpreadRule
 	bestScore := -1

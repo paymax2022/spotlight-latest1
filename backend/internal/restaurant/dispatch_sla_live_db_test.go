@@ -3,9 +3,9 @@ package restaurant
 // ---------------------------------------------------------------------------
 // LIVE-DB integration test for dispatch fairness + SLA (Phase 7): the candidate
 // gatherer (load + last-assigned + distance signals) and the DispatchOrder SLA
-// timeline (first_offered_at / dispatch_attempts). Skipped unless TEST_DATABASE_URL/
-// DATABASE_URL is set. Requires the restaurant, autodispatch, transport `drivers`,
-// and dispatch-SLA migrations.
+// timeline (first_offered_at / dispatch_attempts). Skipped unless TEST_DATABASE_URL
+// is set. Requires the restaurant, autodispatch, transport `drivers`, and
+// dispatch-SLA migrations.
 // ---------------------------------------------------------------------------
 
 import (
@@ -15,16 +15,15 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"spotlight/backend/internal/testsupport"
 )
 
 func dispatchLivePool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
 	dsn := os.Getenv("TEST_DATABASE_URL")
 	if dsn == "" {
-		dsn = os.Getenv("DATABASE_URL")
-	}
-	if dsn == "" {
-		t.Skip("no TEST_DATABASE_URL/DATABASE_URL set — skipping live-DB dispatch test")
+		t.Skip("no TEST_DATABASE_URL set — skipping live-DB dispatch test")
 	}
 	pool, err := pgxpool.New(context.Background(), dsn)
 	if err != nil {
@@ -44,6 +43,7 @@ func seedDriver(t *testing.T, ctx context.Context, pool *pgxpool.Pool, lat, lng 
 	if _, err := pool.Exec(ctx, `INSERT INTO auth.users (id,email) VALUES ($1,$2) ON CONFLICT DO NOTHING`, id, id+"@seed.test"); err != nil {
 		t.Fatalf("seed user: %v", err)
 	}
+	testsupport.CleanupUser(t, pool, id)
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO drivers (user_id, name, vehicle_reg, status, verification_status, current_lat, current_lng)
 		VALUES ($1,'Rider','ABC-123','online','approved',$2,$3)
@@ -56,7 +56,7 @@ func seedDriver(t *testing.T, ctx context.Context, pool *pgxpool.Pool, lat, lng 
 
 func TestLiveDB_DispatchFairnessAndSLA(t *testing.T) {
 	pool := dispatchLivePool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	svc := NewService(pool, nil)
 
@@ -73,6 +73,7 @@ func TestLiveDB_DispatchFairnessAndSLA(t *testing.T) {
 		if _, err := pool.Exec(ctx, `INSERT INTO auth.users (id,email) VALUES ($1,$2) ON CONFLICT DO NOTHING`, u, u+"@seed.test"); err != nil {
 			t.Fatalf("seed user: %v", err)
 		}
+		testsupport.CleanupUser(t, pool, u)
 	}
 	restID := uuid.New().String()
 	if _, err := pool.Exec(ctx, `INSERT INTO restaurants (id, owner_id, name, address, is_open, geo_lat, geo_lng) VALUES ($1,$2,'Dispatch Kitchen','1 St',TRUE,6.5,3.4)`, restID, owner); err != nil {

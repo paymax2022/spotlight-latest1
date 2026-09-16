@@ -11,7 +11,7 @@ import ScreenHeader from '@/components/ScreenHeader';
 import StateView from '@/components/StateView';
 import { DisclosureCard } from '@/features/referral/components';
 import { formatNaira } from '@/features/referral/constants/format';
-import { useAmbassadorDashboard } from '@/features/referral/ambassador/hooks';
+import { useAmbassadorDashboard, useMyAmbassadorApplication } from '@/features/referral/ambassador/hooks';
 
 // M-AMB-01 — Ambassador dashboard: advanced funnel clicks → conversion → earnings.
 const LINKS = [
@@ -24,6 +24,40 @@ const LINKS = [
 
 export default function AmbassadorDashboardScreen() {
   const { data, isLoading, isError, refetch } = useAmbassadorDashboard();
+  const { data: application, isLoading: loadingApp } = useMyAmbassadorApplication();
+
+  // The zone previously rendered its tools for everyone, so someone who had
+  // never applied saw a "starter ambassador · ₦0" dashboard linking to tools
+  // they cannot use. Gate on the actual application state instead.
+  if (loadingApp) {
+    return (
+      <SafeAreaView style={styles.safe} edges={['top']}>
+        <ScreenHeader title="Ambassador Zone" subtitle="Advanced earning tools" />
+        <StateView kind="loading" message="Loading…" />
+      </SafeAreaView>
+    );
+  }
+
+  if (!application || application.status !== 'approved') {
+    const pending = application?.status === 'applied';
+    return (
+      <SafeAreaView style={styles.safe} edges={['top', 'bottom']}>
+        <ScreenHeader title="Ambassador Zone" subtitle="Advanced earning tools" />
+        <StateView
+          kind="empty"
+          icon={pending ? 'Clock' : 'Megaphone'}
+          title={pending ? 'Application under review' : 'Become an ambassador'}
+          message={
+            pending
+              ? 'We are reviewing your application. Your ambassador tools unlock once it is approved.'
+              : 'Ambassadors earn commission when people they refer complete verified activity, and get creative tools, audience insights and tier progression.'
+          }
+          actionLabel={pending ? 'View application' : 'Apply now'}
+          onAction={() => router.push('/referral/ambassador/apply')}
+        />
+      </SafeAreaView>
+    );
+  }
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>

@@ -7,7 +7,7 @@ export default function Pricing1() {
                 <img src="/assets/img/pricing-left-shape.png" alt="shape-img" />
             </div>
             <div className="right-shape">
-                <img src="/assets/img/shape/pricing-right-shape.png" alt="shape-img" />
+                    <img src="/assets/img/pricing-right-shape.png" alt="shape-img" />
             </div>
             <div className="container">
                 <div className="section-title-area mb-5">
@@ -120,4 +120,3 @@ export default function Pricing1() {
         </section>
     )
 }
-

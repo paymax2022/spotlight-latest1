@@ -41,12 +41,17 @@ export function useCampaigns(query?: CampaignQuery) {
   });
 }
 
-export function useCampaign(id?: string) {
+export function useCampaign(
+  id?: string,
+  options?: { refetchInterval?: number | false; refetchIntervalInBackground?: boolean },
+) {
   return useQuery({
     queryKey: [KEY, 'campaign', id],
     queryFn: () => getCampaign(id as string),
     enabled: Boolean(id),
     staleTime: 30_000,
+    refetchInterval: options?.refetchInterval,
+    refetchIntervalInBackground: options?.refetchIntervalInBackground,
   });
 }
 

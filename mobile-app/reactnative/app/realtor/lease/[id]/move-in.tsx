@@ -2,6 +2,7 @@ import React from 'react';
 import { View, Text, ScrollView, StyleSheet, Pressable } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import { Check, KeyRound, PartyPopper } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
@@ -30,7 +31,7 @@ export default function MoveInScreen() {
     return (
       <SafeAreaView style={styles.safe} edges={['top']}>
         <ScreenHeader title="Move-in" />
-        <StateView kind="error" title="Move-in not available" message="Complete payment first." actionLabel="Back" onAction={() => router.back()} />
+        <StateView kind="error" title="Move-in not available" message="Complete payment first." actionLabel="Back" onAction={() => goBack('/realtor')} />
       </SafeAreaView>
     );
   }

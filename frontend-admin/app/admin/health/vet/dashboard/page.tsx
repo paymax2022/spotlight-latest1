@@ -5,6 +5,8 @@ import { getVetDashboard, formatNaira } from '@/services/healthVetAdminService';
 import type { VetDashboard } from '@/types/healthVetAdmin';
 import { PageHeader, VetTabs, Card, Kpi, Badge, DisclosureNote, StateBlock, btn, th, td, timeAgo, pct } from '../../_ui';
 import { colors } from '@/components/ui/vuexy';
+import { FixtureBanner } from '../../../_shared/ui';
+import { USE_MOCK, USE_MOCK_ENV } from '@/services/healthVetAdminService';
 
 export default function VetDashboardPage() {
   const [data, setData] = useState<VetDashboard | null>(null);
@@ -28,6 +30,7 @@ export default function VetDashboardPage() {
         subtitle="Appointments, consults, GMV, VCN credential gating, e-prescription discipline, emergency (SOS) routing, payout gating and held→released payment flow across the VCN-verified vet network."
         action={<button onClick={load} style={btn()}>Refresh</button>}
       />
+      <FixtureBanner active={USE_MOCK} envVar={USE_MOCK_ENV} />
       <VetTabs active="overview" />
 
       <DisclosureNote>

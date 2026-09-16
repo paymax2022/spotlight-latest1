@@ -1,4 +1,10 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+// Pure-logic unit tests: mobile registration validation stays in sync with the
+// backend's messages/rules (see memory: client-side validation mirrors server).
+// Run: node --experimental-strip-types --import ./tests/unit/register-ts-paths.mjs --test "tests/unit/registration/*.spec.ts"
+// (node:test + assert — this app has no vitest; matches the other unit suites.)
+
+import { describe, it } from 'node:test';
+import assert from 'node:assert/strict';
 import {
   validateField,
   validateStep,
@@ -49,7 +55,7 @@ describe('Registration Validation Sync', () => {
   };
 
   const step: RegistrationStep = {
-    key: 'personal_info',
+    key: 'personal_information',
     title: 'Personal Information',
     description: 'Enter your personal details',
     fields: [requiredTextField, optionalTextField],
@@ -58,47 +64,47 @@ describe('Registration Validation Sync', () => {
   describe('validateField', () => {
     it('should fail validation for required text field with empty value', () => {
       const error = validateField(requiredTextField, '');
-      expect(error).toBe('First Name is required.');
+      assert.equal(error, 'First Name is required.');
     });
 
     it('should fail validation for required text field with whitespace only', () => {
       const error = validateField(requiredTextField, '   ');
-      expect(error).toBe('First Name is required.');
+      assert.equal(error, 'First Name is required.');
     });
 
     it('should pass validation for required text field with value', () => {
       const error = validateField(requiredTextField, 'John');
-      expect(error).toBeNull();
+      assert.equal(error, null);
     });
 
     it('should pass validation for optional field with empty value', () => {
       const error = validateField(optionalTextField, '');
-      expect(error).toBeNull();
+      assert.equal(error, null);
     });
 
     it('should fail validation for required email field with invalid format', () => {
       const error = validateField(requiredEmailField, 'not-an-email');
-      expect(error).toBe('Please enter a valid email for Email.');
+      assert.equal(error, 'Please enter a valid email for Email.');
     });
 
     it('should pass validation for required email field with valid format', () => {
       const error = validateField(requiredEmailField, 'user@example.com');
-      expect(error).toBeNull();
+      assert.equal(error, null);
     });
 
     it('should fail validation for required checkbox field with false', () => {
       const error = validateField(requiredCheckboxField, false);
-      expect(error).toBe('I accept the terms is required.');
+      assert.equal(error, 'I accept the terms is required.');
     });
 
     it('should pass validation for required checkbox field with true', () => {
       const error = validateField(requiredCheckboxField, true);
-      expect(error).toBeNull();
+      assert.equal(error, null);
     });
 
-    it('should pass validation for required checkbox field with string true', () => {
+    it('should fail validation for required checkbox field with string "true" (must be boolean)', () => {
       const error = validateField(requiredCheckboxField, 'true');
-      expect(error).toBe('I accept the terms is required.');
+      assert.equal(error, 'I accept the terms is required.');
     });
   });
 
@@ -109,7 +115,7 @@ describe('Registration Validation Sync', () => {
         'personal.middleName': '',
       };
       const errors = validateStep(step, formData);
-      expect(Object.keys(errors).length).toBe(0);
+      assert.equal(Object.keys(errors).length, 0);
     });
 
     it('should return errors for invalid step data', () => {
@@ -118,8 +124,8 @@ describe('Registration Validation Sync', () => {
         'personal.middleName': 'Doe',
       };
       const errors = validateStep(step, formData);
-      expect(errors['personal.firstName']).toBe('First Name is required.');
-      expect(errors['personal.middleName']).toBeUndefined();
+      assert.equal(errors['personal.firstName'], 'First Name is required.');
+      assert.equal(errors['personal.middleName'], undefined);
     });
   });
 
@@ -132,7 +138,7 @@ describe('Registration Validation Sync', () => {
         'personal.firstName': '', // User cleared it
       };
       const errors = validateRequiredFields(step, formData, edits);
-      expect(errors['personal.firstName']).toBe('First Name is required.');
+      assert.equal(errors['personal.firstName'], 'First Name is required.');
     });
 
     it('should pass if required field is in draft formData', () => {
@@ -143,7 +149,7 @@ describe('Registration Validation Sync', () => {
         'personal.middleName': 'Doe',
       };
       const errors = validateRequiredFields(step, formData, edits);
-      expect(Object.keys(errors).length).toBe(0);
+      assert.equal(Object.keys(errors).length, 0);
     });
 
     it('should only validate required, non-readonly fields', () => {
@@ -158,7 +164,7 @@ describe('Registration Validation Sync', () => {
       const formData = {};
       const edits = {};
       const errors = validateRequiredFields(stepWithReadOnly, formData, edits);
-      expect(Object.keys(errors).length).toBe(0); // readOnly field is skipped
+      assert.equal(Object.keys(errors).length, 0); // readOnly field is skipped
     });
   });
 
@@ -169,14 +175,14 @@ describe('Registration Validation Sync', () => {
       };
       const edits = {};
       const result = areAllRequiredFieldsFilled(step, formData, edits);
-      expect(result).toBe(true);
+      assert.equal(result, true);
     });
 
     it('should return false if required field is missing', () => {
       const formData = {};
       const edits = {};
       const result = areAllRequiredFieldsFilled(step, formData, edits);
-      expect(result).toBe(false);
+      assert.equal(result, false);
     });
 
     it('should return true if required field is filled by edits', () => {
@@ -185,7 +191,7 @@ describe('Registration Validation Sync', () => {
         'personal.firstName': 'Jane',
       };
       const result = areAllRequiredFieldsFilled(step, formData, edits);
-      expect(result).toBe(true);
+      assert.equal(result, true);
     });
   });
 
@@ -206,7 +212,7 @@ describe('Registration Validation Sync', () => {
         fileName: 'passport.pdf',
         storageKey: 'r2://...',
       });
-      expect(error).toBeNull();
+      assert.equal(error, null);
     });
 
     it('should accept file object with storageKey', () => {
@@ -214,41 +220,41 @@ describe('Registration Validation Sync', () => {
         fileName: 'passport.pdf',
         storageKey: 'r2://uploads/passport',
       });
-      expect(error).toBeNull();
+      assert.equal(error, null);
     });
 
     it('should fail if file object is empty', () => {
       const error = validateField(fileField, {});
-      expect(error).toBe('Passport is required.');
+      assert.equal(error, 'Passport is required.');
     });
 
     it('should accept string value (web preview URL)', () => {
       const error = validateField(fileField, 'https://example.com/preview.png');
-      expect(error).toBeNull();
+      assert.equal(error, null);
     });
 
     it('should fail for empty string', () => {
       const error = validateField(fileField, '');
-      expect(error).toBe('Passport is required.');
+      assert.equal(error, 'Passport is required.');
     });
   });
 
   describe('Backend Sync: Error Messages Match', () => {
     it('should use exact backend error message for required field', () => {
       const error = validateField(requiredTextField, '');
-      expect(error).toBe('First Name is required.');
+      assert.equal(error, 'First Name is required.');
       // Backend: `${field.label} is required.`
     });
 
     it('should use exact backend error message for email validation', () => {
       const error = validateField(requiredEmailField, 'invalid');
-      expect(error).toBe('Please enter a valid email for Email.');
+      assert.equal(error, 'Please enter a valid email for Email.');
       // Backend: `Please enter a valid email for ${field.label}.`
     });
 
     it('should use exact backend error message for checkbox', () => {
       const error = validateField(requiredCheckboxField, false);
-      expect(error).toBe('I accept the terms is required.');
+      assert.equal(error, 'I accept the terms is required.');
       // Backend: `${field.label} is required.`
     });
   });

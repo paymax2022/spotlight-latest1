@@ -7,12 +7,15 @@ const supabase = createClient(
 );
 
 // GET contestant votes
+// Next 15 made route params async: the second argument is a Promise and must
+// be awaited. The sync `{ params: { id: string } }` shape is a build-time type
+// error, not just a deprecation warning.
 export async function GET(
   req: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const { id } = params;
+    const { id } = await params;
 
     // Fetch contestant votes from database
     const { data: adminVotes, error: votesError } = await supabase
@@ -69,10 +72,10 @@ export async function GET(
 // POST add votes
 export async function POST(
   req: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const { id } = params;
+    const { id } = await params;
     const body = await req.json();
     const { voteCount, adminName, adminId, competitionId } = body;
 

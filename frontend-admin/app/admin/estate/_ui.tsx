@@ -69,6 +69,7 @@ export function EstateTabs({ active }: { active: string }) {
     { href: '/admin/estate/residents', label: 'Residents & units', key: 'residents' },
     { href: '/admin/estate/dues', label: 'Dues & collections', key: 'dues' },
     { href: '/admin/estate/gates', label: 'Gates & security', key: 'gates' },
+    { href: '/admin/estate/facilities', label: 'Facilities', key: 'facilities' },
     { href: '/admin/estate/vendors', label: 'Vendors', key: 'vendors' },
   ];
   return (

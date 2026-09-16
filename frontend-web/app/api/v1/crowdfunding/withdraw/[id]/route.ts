@@ -10,7 +10,8 @@ const GO_BACKEND_URL = process.env.GO_BACKEND_URL || 'http://localhost:8080';
 // which the shared proxy helper does not forward, so this route forwards the
 // upstream request itself (Authorization + Idempotency-Key + body). The Go
 // handler only files a PENDING request — no money is moved here.
-export async function POST(request: Request, { params }: { params: { id: string } }) {
+export async function POST(request: Request, ctx: { params: Promise<{ id: string }> }) {
+  const params = await ctx.params;
   if (!featureFlags.crowdfunding()) return errorResponse('Crowdfunding is not available.', 503);
 
   const idempotencyKey = (request.headers.get('Idempotency-Key') ?? '').trim();

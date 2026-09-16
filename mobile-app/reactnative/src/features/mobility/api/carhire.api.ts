@@ -3,6 +3,7 @@
 // escrows the delta; complete settles the driver split and releases the deposit.
 // Money mutations carry an Idempotency-Key. Fare + deposit come from the SERVER.
 
+import { mockAllowed } from '@/config/mockPolicy';
 import { api } from '@/api/client';
 import type {
   CarHireBooking,
@@ -19,7 +20,7 @@ import {
 } from './carhire.mock';
 
 const USE_MOCK =
-  (process.env.EXPO_PUBLIC_CARHIRE_USE_MOCK ?? process.env.EXPO_PUBLIC_MOBILITY_USE_MOCK ?? 'true').toLowerCase() !== 'false';
+  mockAllowed(process.env.EXPO_PUBLIC_CARHIRE_USE_MOCK ?? process.env.EXPO_PUBLIC_MOBILITY_USE_MOCK, true);
 
 const BASE = '/api/v1';
 const delay = (ms = 320) => new Promise((r) => setTimeout(r, ms));

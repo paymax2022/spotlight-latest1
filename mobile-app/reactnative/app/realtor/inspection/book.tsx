@@ -1,4 +1,5 @@
 import React, { useMemo, useState } from 'react';
+import PhoneNumberInput from '@/components/PhoneNumberInput';
 import { View, Text, ScrollView, StyleSheet, Pressable } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
@@ -140,7 +141,7 @@ export default function BookInspectionScreen() {
         {/* Attendee */}
         <Text style={styles.label}>Attendee details</Text>
         <TextInputField label="Full name" placeholder="Your name" value={name} onChangeText={setName} />
-        <TextInputField label="Phone number" placeholder="080..." keyboardType="phone-pad" value={phone} onChangeText={setPhone} />
+        <PhoneNumberInput label="Phone number" value={phone} onChange={({ e164, nsn }) => (setPhone)(e164 || nsn)} />
         <TextInputField label="Note to agent (optional)" placeholder="Anything the agent should know" value={note} onChangeText={setNote} multiline />
 
         {/* Optional fee */}

@@ -2,6 +2,7 @@
 // Covers spec I (business/multi-user), J (notifications), K (settings).
 // Mock-flagged; flip USE_MOCK=false once endpoints land. Money in minor units.
 
+import { mockAllowed } from '@/config/mockPolicy';
 import { api } from '@/api/client';
 import type {
   TeamMember, TeamRole, ApprovalRequest, ApprovalThreshold, ActivityEvent,
@@ -9,7 +10,7 @@ import type {
   StablecoinAddress, TierLimits, CurrencyCode,
 } from '../types/fx.types';
 
-const USE_MOCK = (process.env.EXPO_PUBLIC_FX_USE_MOCK ?? 'true').toLowerCase() !== 'false';
+const USE_MOCK = mockAllowed(process.env.EXPO_PUBLIC_FX_USE_MOCK, true);
 const delay = (ms = 300) => new Promise((r) => setTimeout(r, ms));
 // Unwrap { data: ... } by key presence so an empty { data: null } yields null,
 // not the wrapper object (see fx.api.ts). arr() coerces list payloads to arrays.

@@ -6,7 +6,7 @@ package restaurantpayout_test
 // owner-scoped (assertOwner) — a non-owner must be rejected, and the destructive
 // paths must guard (category-with-items blocked, missing rows → not found).
 //
-// Skips unless TEST_DATABASE_URL/DATABASE_URL is set (same gate as the sibling
+// Skips unless TEST_DATABASE_URL is set (same gate as the sibling
 // live-DB tests). Reuses seedUser/seedRestaurant + the live service helpers.
 // ---------------------------------------------------------------------------
 
@@ -20,7 +20,7 @@ import (
 
 func TestLiveDB_StoreAndMenuManagement(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	svc := newLiveRestaurantService(pool, newLiveLedgerService(pool))
 

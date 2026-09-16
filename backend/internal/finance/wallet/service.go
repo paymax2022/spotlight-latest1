@@ -75,6 +75,40 @@ func (s *Service) ListTransactions(ctx context.Context, userID string, limit, of
 	if err != nil {
 		return nil, err
 	}
+	return buildTransactionsResponse(entries, limit, offset), nil
+}
+
+// AdminGetBalance returns a user's balance for back-office reporting, summed
+// across every pot they hold. The member-facing GetBalance reads only the Go
+// module's 'user_wallet' pot, which omits Paystack top-ups and transfers posted
+// by the Next.js wallet into 'wallet' — admins must see the whole picture.
+func (s *Service) AdminGetBalance(ctx context.Context, userID string) (*BalanceResponse, error) {
+	balKobo, err := s.ledger.GetBalanceAcrossPots(ctx, userID)
+	if err != nil {
+		return nil, fmt.Errorf("wallet: admin get balance: %w", err)
+	}
+	return &BalanceResponse{
+		UserID:       userID,
+		BalanceKobo:  balKobo,
+		BalanceNaira: float64(balKobo) / 100,
+	}, nil
+}
+
+// AdminListTransactions returns a user's ledger entries across every pot they
+// hold, so back-office reporting shows Paystack top-ups alongside Go-module
+// activity. Reporting counterpart to ListTransactions.
+func (s *Service) AdminListTransactions(ctx context.Context, userID string, limit, offset int) (*TransactionsResponse, error) {
+	if limit <= 0 || limit > 100 {
+		limit = 20
+	}
+	entries, err := s.ledger.ListTransactionsAcrossPots(ctx, userID, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	return buildTransactionsResponse(entries, limit, offset), nil
+}
+
+func buildTransactionsResponse(entries []ledger.Entry, limit, offset int) *TransactionsResponse {
 	txns := make([]Transaction, len(entries))
 	for i, e := range entries {
 		txType := "debit"
@@ -93,5 +127,5 @@ func (s *Service) ListTransactions(ctx context.Context, userID string, limit, of
 		Transactions: txns,
 		Limit:        limit,
 		Offset:       offset,
-	}, nil
+	}
 }

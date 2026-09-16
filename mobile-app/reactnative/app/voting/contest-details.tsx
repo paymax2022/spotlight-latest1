@@ -4,21 +4,25 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
-import { ArrowLeft, Users, Trophy, Share2, ShieldCheck } from 'lucide-react-native';
+import { goBack } from '@/lib/navigation';
+import { ArrowLeft, Users, Trophy, Share2, ShieldCheck, Calendar } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
 import { Spacing } from '@/constants/spacing';
 import { Radius } from '@/constants/radius';
 import { shadow1 } from '@/constants/shadows';
 import PrimaryButton from '@/components/PrimaryButton';
+import { formatDate } from '@/features/voting/utils/voteFormatters';
 import { useContestDetails } from '@/features/voting/hooks/useContestDetails';
 import { useContestants } from '@/features/voting/hooks/useContestants';
+import { useMyRegistrationForContest } from '@/features/registration/hooks/useRegistration';
 import ContestHero from '@/features/voting/components/ContestHero';
 import SponsorBanner from '@/features/voting/components/SponsorBanner';
 import ContestantCard from '@/features/voting/components/ContestantCard';
 import VotingRulesCard from '@/features/voting/components/VotingRulesCard';
 import ContestStatusBadge from '@/features/voting/components/ContestStatusBadge';
 import ShareBottomSheet from '@/features/voting/components/ShareBottomSheet';
+import { HomeMenuButton } from '@/components/HomeMenu';
 
 export default function ContestDetailsScreen() {
   const { contestId } = useLocalSearchParams<{ contestId: string }>();
@@ -27,6 +31,11 @@ export default function ContestDetailsScreen() {
   const { data: contest, isLoading, isError } = useContestDetails(contestId ?? '');
   const { data: contestants } = useContestants(contestId ?? '');
   const preview = (contestants ?? []).slice(0, 4);
+  // An applicant who already applied gets a way back into their application
+  // rather than a second apply button. Undefined while loading — the CTA stays
+  // on 'Apply' until we know, since offering 'Manage' for an application that
+  // does not exist is the worse of the two wrong answers.
+  const { data: myRegistration } = useMyRegistrationForContest({ contestId: contestId ?? '' });
 
   if (isLoading) {
     return (
@@ -41,7 +50,7 @@ export default function ContestDetailsScreen() {
       <SafeAreaView style={styles.safe} edges={['top']}>
         <View style={styles.errorBox}>
           <Text style={styles.errorText}>Could not load contest. Please try again.</Text>
-          <Pressable onPress={() => router.back()} style={styles.backLink}>
+          <Pressable onPress={() => goBack('/voting')} style={styles.backLink}>
             <Text style={styles.backLinkText}>Go back</Text>
           </Pressable>
         </View>
@@ -53,12 +62,15 @@ export default function ContestDetailsScreen() {
     <SafeAreaView style={styles.safe} edges={['top']}>
       {/* Floating back + share */}
       <View style={styles.floatingBar}>
-        <Pressable onPress={() => router.back()} style={styles.floatBtn}>
+        <Pressable onPress={() => goBack('/voting')} style={styles.floatBtn}>
           <ArrowLeft size={20} color={Colors.onSurface} strokeWidth={2} />
         </Pressable>
-        <Pressable onPress={() => setShareOpen(true)} style={styles.floatBtn}>
-          <Share2 size={20} color={Colors.onSurface} strokeWidth={2} />
-        </Pressable>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+          <Pressable onPress={() => setShareOpen(true)} style={styles.floatBtn}>
+            <Share2 size={20} color={Colors.onSurface} strokeWidth={2} />
+          </Pressable>
+          <HomeMenuButton />
+        </View>
       </View>
 
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.content}>
@@ -93,6 +105,16 @@ export default function ContestDetailsScreen() {
               <Text style={styles.statValue}>{contest.paidVotingEnabled ? 'Yes' : 'No'}</Text>
               <Text style={styles.statLabel}>Paid Voting</Text>
             </View>
+          </View>
+
+          {/* Voting window */}
+          <View style={[styles.section, styles.windowRow, shadow1]}>
+            <Calendar size={18} color={Colors.primary} strokeWidth={1.5} />
+            <Text style={styles.windowText}>
+              {contest.endsAt
+                ? `Voting closes ${formatDate(contest.endsAt)}`
+                : 'No end date set for this contest yet'}
+            </Text>
           </View>
 
           {/* Prizes */}
@@ -137,14 +159,27 @@ export default function ContestDetailsScreen() {
           )}
 
           {/* Voting rules */}
-          <VotingRulesCard />
+          <VotingRulesCard freeVotesPerDay={contest.freeVotesPerDay} rulesText={contest.rulesText} />
 
           {/* CTA */}
           <View style={styles.ctaRow}>
-            <PrimaryButton
-              label="Register / Apply to Compete"
-              onPress={() => router.push('/registration')}
-            />
+            {myRegistration ? (
+              <PrimaryButton
+                label={myRegistration.submitted ? 'Manage Your Application' : 'Continue Your Application'}
+                onPress={() =>
+                  router.push(
+                    myRegistration.submitted
+                      ? `/registration/${myRegistration.id}/status`
+                      : `/registration/${myRegistration.id}/wizard`,
+                  )
+                }
+              />
+            ) : (
+              <PrimaryButton
+                label="Register / Apply to Compete"
+                onPress={() => router.push({ pathname: '/registration', params: { contestId: contest.id, contestTitle: contest.title } } as never)}
+              />
+            )}
             <PrimaryButton
               label="View All Contestants"
               onPress={() => router.push(`/voting/contestants?contestId=${contest.id}`)}
@@ -190,6 +225,8 @@ const styles = StyleSheet.create({
   statValue:  { ...Typography.titleLg, color: Colors.onSurface, fontWeight: '700' as const },
   statLabel:  { ...Typography.labelSm, color: Colors.onSurfaceVariant, textAlign: 'center' },
   statDivider: { width: 1, backgroundColor: Colors.surfaceContainerHigh },
+  windowRow:  { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm, padding: Spacing.md },
+  windowText: { ...Typography.bodySm, color: Colors.onSurfaceVariant, flex: 1 },
   prizeRow:   { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm },
   prizeDot:   { width: 8, height: 8, borderRadius: 4, backgroundColor: Colors.onSurfaceVariant },
   prizeDotGold: { backgroundColor: '#F59E0B' },

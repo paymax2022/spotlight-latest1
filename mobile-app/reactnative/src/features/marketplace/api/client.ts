@@ -27,6 +27,7 @@
 // mock stays the default so the group is demoable/offline out of the box.
 // Money POSTs attach an Idempotency-Key.
 
+import { mockAllowed } from '@/config/mockPolicy';
 import { api } from '@/api/client';
 
 /** Base path on the frontend-web proxy. Proxy → Go /v1/marketplace/* (route lives at
@@ -39,7 +40,7 @@ export const MKT_BASE = '/api/v1/marketplace';
  * real proxy. Case-insensitive: only the literal 'false' turns mocks off.
  */
 export const MKT_USE_MOCK =
-  (process.env.EXPO_PUBLIC_MARKETPLACE_USE_MOCK ?? 'true').toLowerCase() !== 'false';
+  mockAllowed(process.env.EXPO_PUBLIC_MARKETPLACE_USE_MOCK, true);
 
 // ─── Case conversion helpers ─────────────────────────────────────────────────
 

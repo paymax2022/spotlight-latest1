@@ -12,6 +12,7 @@ import TextInputField from '@/components/TextInputField';
 import StateView from '@/components/StateView';
 import { ReferralHeader, DisclosureCard } from '@/features/referral/components';
 import { useReportAbuse } from '@/features/referral/foundation/hooks';
+import { isNoReferrerToReport } from '@/features/referral/foundation/api';
 import type { AbuseReport } from '@/features/referral/foundation/api';
 
 // M-ACC-02 — Report abuse / suspicious referral. Trust & safety reporting.
@@ -27,10 +28,25 @@ export default function ReportAbuse() {
   const [category, setCategory] = useState<AbuseReport['category'] | null>(null);
   const [detail, setDetail] = useState('');
   const [ticketId, setTicketId] = useState<string | null>(null);
+  const [submitError, setSubmitError] = useState<string | null>(null);
 
   const onSubmit = () => {
     if (!category) return;
-    report.mutate({ category, detail: detail.trim() }, { onSuccess: (r) => setTicketId(r.ticketId) });
+    setSubmitError(null);
+    report.mutate(
+      { category, detail: detail.trim() },
+      {
+        onSuccess: (r) => setTicketId(r.ticketId),
+        // Without this the mutation failed silently — the user tapped Submit and
+        // nothing at all happened.
+        onError: (e: unknown) =>
+          setSubmitError(
+            isNoReferrerToReport(e)
+              ? 'You do not have a referrer to report yet.'
+              : 'We could not submit your report. Please try again.',
+          ),
+      },
+    );
   };
 
   if (ticketId) {
@@ -83,6 +99,7 @@ export default function ReportAbuse() {
         />
       </ScrollView>
       <View style={styles.footer}>
+        {submitError && <Text style={styles.submitError}>{submitError}</Text>}
         <PrimaryButton label="Submit report" onPress={onSubmit} disabled={!category} loading={report.isPending} />
       </View>
     </SafeAreaView>
@@ -90,6 +107,7 @@ export default function ReportAbuse() {
 }
 
 const styles = StyleSheet.create({
+  submitError: { ...Typography.bodySm, color: Colors.error, marginBottom: Spacing.sm },
   safe: { flex: 1, backgroundColor: Colors.background },
   scroll: { paddingHorizontal: Spacing.containerMargin, paddingTop: Spacing.sm, paddingBottom: Spacing.xl, gap: Spacing.md },
   label: { ...Typography.titleMd, color: Colors.onSurface },

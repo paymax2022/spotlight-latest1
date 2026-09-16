@@ -198,6 +198,20 @@ type OrderLine struct {
 	UnitPriceKobo int64  `json:"unit_price_kobo"`
 }
 
+// ProviderOrderSummary is the lab-staff order-list row (Service.ListProviderOrders)
+// — an enriched, owner-scoped view distinct from the raw admin oversight rows
+// AdminListOrders returns.
+type ProviderOrderSummary struct {
+	ID               string           `json:"id"`
+	PatientID        string           `json:"patient_id"`
+	State            OrderState       `json:"state"`
+	CollectionMethod CollectionMethod `json:"collection_method"`
+	CreatedAt        time.Time        `json:"created_at"`
+	SampleBarcode    *string          `json:"sample_barcode,omitempty"`
+	TestNames        []string         `json:"test_names"`
+	HasCritical      bool             `json:"has_critical"`
+}
+
 // ─── Sample + custody ────────────────────────────────────────────────────────
 
 // Sample is a specimen collected for a LabOrder. State tracks the chain-of-custody

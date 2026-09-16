@@ -374,6 +374,12 @@ export interface SubmitOnboardingInput {
   displayName: string;
   vcnLicenseNo: string;
   clinicName: string;
+  // Previously the onboarding screen only ever collected the VCN licence
+  // NUMBER — no document upload — so the credential vault's AddCredential
+  // (which requires a real uploaded file) could never be called. Optional:
+  // when supplied, submitProviderOnboarding presigns + uploads it and
+  // records a real VCN credential before submitting the application.
+  licenceFile?: { uri: string; fileName: string; mimeType: string };
 }
 
 export interface UpdateProfileInput {

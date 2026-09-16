@@ -14,6 +14,7 @@ import {
   getSpecialties, getDoctors, DEMO_SPECIALTIES, DEMO_DOCTORS,
 } from '@/api/telemedicine.api';
 import { TeleHeader, SpecialtyChip, DoctorCard } from '@/features/telemedicine/components';
+import { ProviderOnboardingCard } from '@/features/health/components';
 
 export default function TelemedicineHome() {
   const { data: specialties = [] } = useQuery({
@@ -102,6 +103,11 @@ export default function TelemedicineHome() {
           </View>
           <ChevronRight size={20} color={Colors.onSurfaceVariant} strokeWidth={2} />
         </Pressable>
+
+        {/* Provider onboarding */}
+        <View style={styles.providerCard}>
+          <ProviderOnboardingCard />
+        </View>
       </ScrollView>
     </SafeAreaView>
   );
@@ -129,4 +135,5 @@ const styles = StyleSheet.create({
   apptIcon:    { width: 44, height: 44, borderRadius: Radius.md, backgroundColor: Colors.iconBgBlue, alignItems: 'center', justifyContent: 'center' },
   apptTitle:   { ...Typography.labelLg, color: Colors.onSurface },
   apptSub:     { ...Typography.caption, color: Colors.onSurfaceVariant },
+  providerCard:{ marginTop: Spacing.lg },
 });

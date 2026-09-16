@@ -61,9 +61,17 @@ func (h *Handler) CreatePet(c *gin.Context) {
 
 // ListPets — GET /pets  (owner reads own pets only, HL-8)
 func (h *Handler) ListPets(c *gin.Context) {
-	pets, err := h.svc.ListPets(c.Request.Context(), uid(c))
+	id := uid(c)
+	if id == "" {
+		fail(c, http.StatusUnauthorized, "unauthenticated")
+		return
+	}
+	// Anything ListPets returns past the auth check is an internal failure
+	// (e.g. a DB error), not an auth one — mapping it to 401 like the old code
+	// did made a query bug indistinguishable from a bad/missing token.
+	pets, err := h.svc.ListPets(c.Request.Context(), id)
 	if err != nil {
-		fail(c, http.StatusUnauthorized, err.Error())
+		fail(c, http.StatusInternalServerError, err.Error())
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "pets": pets})

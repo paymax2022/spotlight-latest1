@@ -2,6 +2,7 @@ import React, { useMemo, useState } from 'react';
 import { View, Text, ScrollView, StyleSheet, Pressable } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import { ArrowLeft, Ticket as TicketIcon, Plus } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
@@ -13,6 +14,7 @@ import StateView from '@/components/StateView';
 import EventCard from '@/features/events/components/EventCard';
 import { useEvents } from '@/features/events/hooks';
 import { EVENT_CATEGORIES } from '@/features/events/constants/events.constants';
+import { HomeMenuButton } from '@/components/HomeMenu';
 
 export default function EventsDiscovery() {
   const [query, setQuery] = useState('');
@@ -31,16 +33,19 @@ export default function EventsDiscovery() {
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
       <View style={styles.header}>
-        <Pressable onPress={() => router.back()} hitSlop={10} style={styles.iconBtn} accessibilityLabel="Go back">
+        <Pressable onPress={() => goBack('/')} hitSlop={10} style={styles.iconBtn} accessibilityLabel="Go back">
           <ArrowLeft size={22} color={Colors.onSurface} strokeWidth={2} />
         </Pressable>
         <View style={styles.headerTitleWrap}>
           <Text style={styles.eyebrow}>Paymax</Text>
           <Text style={styles.headerTitle}>Events</Text>
         </View>
-        <Pressable onPress={() => router.push('/events/my-tickets')} hitSlop={10} style={styles.iconBtn} accessibilityLabel="My tickets">
-          <TicketIcon size={22} color={Colors.onSurface} strokeWidth={2} />
-        </Pressable>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+          <Pressable onPress={() => router.push('/events/my-tickets')} hitSlop={10} style={styles.iconBtn} accessibilityLabel="My tickets">
+            <TicketIcon size={22} color={Colors.onSurface} strokeWidth={2} />
+          </Pressable>
+          <HomeMenuButton />
+        </View>
       </View>
 
       <SearchBar placeholder="Search events, venues, cities…" value={query} onChangeText={setQuery} />

@@ -176,7 +176,7 @@ const styles = StyleSheet.create({
   content:     { paddingHorizontal: Spacing.containerMargin, paddingTop: Spacing.xs, paddingBottom: Platform.OS === 'ios' ? 40 : 24, flexGrow: 1 },
   hero:        { borderRadius: Radius.xl, padding: Spacing.cardPadding, marginBottom: Spacing.md, gap: Spacing.xs },
   heroLabel:   { ...Typography.labelSm, color: 'rgba(255,255,255,0.7)' },
-  heroValue:   { ...Typography.displayLg, fontSize: 32, lineHeight: 40, color: Colors.onPrimary },
+  heroValue:   { ...Typography.displayLg, fontSize: 32, letterSpacing: -0.64, lineHeight: 40, color: Colors.onPrimary },
   card:        { marginBottom: Spacing.md },
   list:        { gap: Spacing.sm },
   tier:        { gap: Spacing.xs, paddingVertical: Spacing.xs },

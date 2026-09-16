@@ -3,6 +3,8 @@
 import { useEffect, useState } from 'react';
 import { getPointsDashboard, type PointsDashboard } from '@/services/pointsAdminService';
 import { PageHeader, PointsTabs, Card, Kpi, Badge, DisclosureNote, StateBlock, btn, th, td, timeAgo } from '../_ui';
+import { FixtureBanner } from '../../_shared/ui';
+import { USE_MOCK, USE_MOCK_ENV } from '@/services/pointsAdminService';
 
 const num = (n: number) => n.toLocaleString('en-NG');
 
@@ -26,11 +28,12 @@ export default function PointsDashboardPage() {
         subtitle="Loyalty points liability, earn / redeem flow and the points ledger across the member base."
         action={<button onClick={load} style={btn()}>Refresh</button>}
       />
+      <FixtureBanner active={USE_MOCK} envVar={USE_MOCK_ENV} />
       <PointsTabs active="overview" />
 
       <DisclosureNote>
         Thin admin surface — points are administered via the loyalty admin group. The live admin route is a member
-        membership lookup (<code>/api/loyalty/admin/loyalty/memberships/:userId</code>, RBAC <code>loyalty.read</code>),
+        membership lookup (<code>/api/loyalty/admin/memberships/:userId</code>, RBAC <code>loyalty.read</code>),
         surfaced on the Balances tab. The points ledger is <strong>append-only</strong> — points accrue only as a
         side effect of live-module actions, never via a self-award endpoint (NL-4).
       </DisclosureNote>

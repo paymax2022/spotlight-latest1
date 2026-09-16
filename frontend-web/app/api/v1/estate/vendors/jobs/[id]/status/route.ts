@@ -9,7 +9,8 @@ const COLS = 'id, estate_id, vendor_id, repair_request_id, status, amount_kobo, 
 const STATUSES = ['available', 'accepted', 'rejected', 'en_route', 'in_progress', 'completed', 'paid'];
 
 // POST /api/v1/estate/vendors/jobs/[id]/status
-export async function POST(request: Request, { params }: { params: { id: string } }) {
+export async function POST(request: Request, ctx: { params: Promise<{ id: string }> }) {
+  const params = await ctx.params;
   try {
     const user = await requireRequestUser(request);
     const supabase = createAdminClient();

@@ -78,7 +78,15 @@ export default function MembershipCardView({ card, showQr = true }: Props) {
           <Text style={styles.chipText}>{payStyle.label}</Text>
         </View>
         <View style={{ flex: 1 }} />
-        <Text style={styles.valid}>Valid thru {formatDate(card.validThrough)}</Text>
+        {/*
+          Rendered only when the card actually carries an expiry.
+          `validThrough` is nullable on the live DTO, and formatting a missing
+          one is how this line came to read "Valid thru 1 Jan 1970" — a
+          real-looking date that made a perfectly valid card look long expired.
+        */}
+        {card.validThrough ? (
+          <Text style={styles.valid}>Valid thru {formatDate(card.validThrough)}</Text>
+        ) : null}
       </View>
 
       {/* QR */}

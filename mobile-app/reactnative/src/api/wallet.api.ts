@@ -60,13 +60,33 @@ export { getTransactions as getWalletTransactions } from '@/api/transactions.api
 // ─── Wallet funding (server-side Paystack operations) ─────────────────────────
 
 export async function initiateFunding(payload: {
-  amount: number;
+  /**
+   * Amount in KOBO (integer minor units) — it is sent straight through as
+   * `amount_kobo`. Named explicitly because the previous name (`amount`) read as
+   * naira and had already produced a 100x under-top-up in features/payments/api.ts.
+   */
+  amountKobo: number;
   callbackUrl?: string;
+  /**
+   * 'checkout' when this top-up funds a purchase the user is completing right now
+   * (the card rail, ADR-041). It carries a different KYC gate server-side — an
+   * unverified account may be allowed a capped checkout top-up while standalone
+   * funding still requires Tier 1 (ADR-042). Defaults to standalone funding.
+   */
+  purpose?: 'wallet' | 'checkout';
+  /**
+   * What the checkout is buying — 'vote_purchase', 'food_order', ... Recorded
+   * server-side so the funding is not filed as an anonymous wallet top-up.
+   * Ignored for standalone funding, which is not buying anything.
+   */
+  domain?: string;
 }): Promise<{ authorizationUrl: string; reference: string }> {
   const res  = await api.post('/api/v1/wallet/topup',
     {
-      amount_kobo: payload.amount,
+      amount_kobo: payload.amountKobo,
+      checkout_domain: payload.domain,
       callback_url: payload.callbackUrl,
+      purpose: payload.purpose ?? 'wallet',
     },
     { headers: { 'Idempotency-Key': generateIdempotencyKey() } },
   );
@@ -80,3 +100,31 @@ export async function initiateFunding(payload: {
 // NOTE: manual funding verification was removed — there is no backend route for it.
 // Wallet top-ups are confirmed asynchronously by the Paystack webhook
 // (frontend-web/app/api/webhooks/paystack/route.ts), which credits the ledger.
+
+// ─── Bank transfer (dedicated virtual account) ─────────────────────────────────
+
+export interface VirtualAccount {
+  accountNumber: string;
+  accountName: string;
+  bankName: string;
+  currency: string;
+}
+
+/**
+ * Fetches the caller's dedicated bank-transfer account, provisioning it on the
+ * server on first call if it doesn't exist yet — so this always returns real
+ * account details for a Tier-1+ user rather than a "come back later" state.
+ * Requires KYC Tier 1; the server 403s below that (see topup-gate.ts's
+ * STANDALONE_TOPUP_TIER, the same gate card top-up uses for standalone funding).
+ */
+export async function getVirtualAccount(): Promise<VirtualAccount> {
+  const res = await api.get('/api/v1/virtual-accounts/me');
+  const data = (res.data?.data ?? res.data) as Record<string, unknown>;
+  const account = (data.account ?? {}) as Record<string, unknown>;
+  return {
+    accountNumber: String(account.account_number ?? ''),
+    accountName:   String(account.account_name ?? ''),
+    bankName:      String(account.bank_name ?? ''),
+    currency:      String(account.currency ?? 'NGN'),
+  };
+}

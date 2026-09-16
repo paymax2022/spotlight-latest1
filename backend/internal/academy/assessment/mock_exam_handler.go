@@ -308,31 +308,41 @@ func (h *MockExamHandler) GetResults(c *gin.Context) {
 		return
 	}
 
-	var performance map[string]interface{}
-	if attempt.Performance != nil {
-		json.Unmarshal(attempt.Performance, &performance)
-	}
+	c.JSON(http.StatusOK, gin.H{"data": buildMockExamResult(attempt)})
+}
 
+// buildMockExamResult hydrates the read-back response from the persisted
+// performance JSON. The keys are score_raw/score_pct/grade — the shape
+// gradeExam writes and v_mock_attempt_scores projects.
+func buildMockExamResult(attempt *MockExamAttempt) MockExamResultResponse {
 	result := MockExamResultResponse{
 		ID:          attempt.ID,
 		TemplateID:  attempt.TemplateID,
 		Status:      attempt.Status,
-		SubmittedAt: *attempt.SubmittedAt,
-		GradedAt:    attempt.SubmittedAt,
+		Performance: attempt.Performance,
 	}
 
-	if perf, ok := performance["score"].(float64); ok {
-		result.Score = perf
-	}
-	if perf, ok := performance["score_percent"].(float64); ok {
-		result.ScorePercent = perf
-	}
-	if perf, ok := performance["grade"].(string); ok {
-		result.Grade = perf
+	if attempt.SubmittedAt != nil {
+		result.SubmittedAt = *attempt.SubmittedAt
+		result.GradedAt = attempt.SubmittedAt
+		result.TotalTime = int(attempt.SubmittedAt.Sub(attempt.StartedAt).Seconds())
 	}
 
-	result.Performance = attempt.Performance
-	c.JSON(http.StatusOK, gin.H{"data": result})
+	var performance map[string]interface{}
+	if attempt.Performance != nil {
+		json.Unmarshal(attempt.Performance, &performance)
+	}
+	if v, ok := performance["score_raw"].(float64); ok {
+		result.Score = v
+	}
+	if v, ok := performance["score_pct"].(float64); ok {
+		result.ScorePercent = v
+	}
+	if v, ok := performance["grade"].(string); ok {
+		result.Grade = v
+	}
+
+	return result
 }
 
 // GetStatistics returns aggregate performance stats for a template

@@ -3,6 +3,7 @@
 // (escrow fund) and carries an Idempotency-Key; escrow releases only on
 // completion confirmation. Bid amounts come from providers via the SERVER.
 
+import { mockAllowed } from '@/config/mockPolicy';
 import { api } from '@/api/client';
 import type { MoverJob, MoverQuoteRequest } from '../types/modes.types';
 import {
@@ -13,7 +14,7 @@ import {
 } from './movers.mock';
 
 const USE_MOCK =
-  (process.env.EXPO_PUBLIC_MOVERS_USE_MOCK ?? process.env.EXPO_PUBLIC_MOBILITY_USE_MOCK ?? 'true').toLowerCase() !== 'false';
+  mockAllowed(process.env.EXPO_PUBLIC_MOVERS_USE_MOCK ?? process.env.EXPO_PUBLIC_MOBILITY_USE_MOCK, true);
 
 const BASE = '/api/v1';
 const delay = (ms = 320) => new Promise((r) => setTimeout(r, ms));

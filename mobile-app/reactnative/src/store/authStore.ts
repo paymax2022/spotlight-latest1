@@ -9,7 +9,8 @@ interface AuthState {
   user: User | null;
   pendingVerifyEmail: string | null;
   init: () => Promise<void>;
-  login: (email: string, password: string) => Promise<void>;
+  /** identifier is an email OR a phone number — resolved server-side. */
+  login: (identifier: string, password: string) => Promise<void>;
   register: (payload: { fullName: string; email: string; phone: string; password: string }) => Promise<{ needsOtp: boolean; email: string }>;
   logout: () => Promise<void>;
   setUser: (user: User | null) => void;
@@ -65,9 +66,10 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     }
   },
 
-  login: async (email, password) => {
-    // Supabase persists the session automatically via the SecureStore adapter.
-    const result = await authApi.login({ email, password });
+  login: async (identifier, password) => {
+    // Supabase persists the session automatically via the SecureStore adapter; the
+    // backend proxy hands us a real session, which authApi.login adopts.
+    const result = await authApi.login({ identifier, password });
     set({ user: result.user });
   },
 

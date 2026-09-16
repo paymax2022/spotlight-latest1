@@ -2,12 +2,14 @@ import React from 'react';
 import { View, Text, ScrollView, StyleSheet, Pressable, Linking } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import { ArrowLeft, MessageCircle, Mail, Phone, HelpCircle } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
 import { Spacing } from '@/constants/spacing';
 import { Radius } from '@/constants/radius';
 import { shadow1 } from '@/constants/shadows';
+import { HomeMenuButton } from '@/components/HomeMenu';
 
 const FAQS = [
   { q: 'How many free votes do I get per day?', a: 'You get 5 free votes per contest per day. They reset at midnight WAT.' },
@@ -27,11 +29,11 @@ export default function VotingSupportScreen() {
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
       <View style={styles.header}>
-        <Pressable onPress={() => router.back()} style={styles.backBtn}>
+        <Pressable onPress={() => goBack('/voting')} style={styles.backBtn}>
           <ArrowLeft size={22} color={Colors.onSurface} strokeWidth={2} />
         </Pressable>
         <Text style={styles.title}>Help & Support</Text>
-        <View style={{ width: 40 }} />
+        <HomeMenuButton />
       </View>
 
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.content}>

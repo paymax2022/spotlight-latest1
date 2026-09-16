@@ -11,6 +11,11 @@ import {
   runBasicFraudChecks,
   validateStepData,
 } from '@/src/features/registration/validation';
+import { ACCOUNT_PROVIDED_KEYS } from '@/src/features/registration/account-prefill';
+import {
+  findLiveRegistrationForContest,
+  RegistrationExistsError,
+} from '@/src/server/registration-v2/registration-for-contest';
 import {
   listRegistrationContests,
   getRegistrationContestBySlug,
@@ -18,12 +23,17 @@ import {
 // Contest definitions also stay in the in-memory catalog; re-export so routes
 // importing them from this module resolve.
 export { listRegistrationContests, getRegistrationContestBySlug } from '@/src/server/registration/store';
+import {
+  getPersistedContestBySlug,
+  getPersistedContestById,
+} from '@/src/server/registration-v2/contest-store';
 import type {
   ContestRegistrationDefinition,
   ApplicationStatus,
   RegistrationDraft,
   RegistrationStepKey,
   RegistrationStatusEvent,
+  RegistrationReviewInput,
 } from '@/src/features/registration/types';
 
 // Service-role Supabase client, created LAZILY. A module-level createClient()
@@ -102,7 +112,7 @@ export async function saveRegistrationStep(params: {
   };
 
   // Lock contest identity
-  const lockedContest = getRegistrationContestBySlug(draft.contestSlug) || resolveContestRegistration(draft.contestSlug);
+  const lockedContest = await resolveAnyContest(draft.contestSlug);
   if (lockedContest) {
     mergedData['contestSlug'] = lockedContest.slug;
     mergedData['contest.title'] = lockedContest.title;
@@ -217,15 +227,118 @@ export async function saveRegistrationStep(params: {
   return { draft: nextDraft, validation };
 }
 
+/**
+ * Fill an EXISTING draft's blanks from the applicant's account, once.
+ *
+ * Drafts started before account prefill existed carry no marker and would keep
+ * asking for a name and phone the platform already has. This backfills them the
+ * first time such a draft is opened.
+ *
+ * Blanks only: an answer the applicant already typed is never overwritten, and
+ * a draft that is no longer editable is left completely alone. Returns the draft
+ * unchanged when there is nothing to add, so it is safe to call on every read.
+ */
+export async function applyAccountPrefill(
+  draft: RegistrationDraft,
+  prefill: { values: Record<string, unknown>; providedKeys: string[] },
+): Promise<RegistrationDraft> {
+  if (draft.status !== 'draft') return draft;
+  if (Array.isArray(draft.formData?.[ACCOUNT_PROVIDED_KEYS])) return draft;
+
+  const merged = { ...draft.formData };
+  const filled: string[] = [];
+  for (const key of prefill.providedKeys) {
+    const current = merged[key];
+    if (current !== undefined && current !== null && String(current).trim() !== '') continue;
+    merged[key] = prefill.values[key];
+    filled.push(key);
+  }
+  // Records only what the backfill actually WROTE. A value already sitting in an
+  // old draft was typed by the applicant, and marking that as account-supplied
+  // would lock their own answer where they can no longer edit it.
+  merged[ACCOUNT_PROVIDED_KEYS] = filled;
+
+  const { error } = await getSupabase()
+    .from('registrations')
+    .update({ form_data: merged, updated_at: nowIso() })
+    .eq('id', draft.id);
+
+  // A failed backfill costs the convenience, not the application — the draft is
+  // returned with the values applied for this response and retried next read.
+  if (error) console.warn('[registration] account prefill backfill failed:', error.message);
+
+  return { ...draft, formData: merged };
+}
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * Resolve a contest for registration by slug OR by a real contest's id.
+ *
+ * Checks, in order:
+ *   1. The in-memory catalog (the 5 hand-tailored templates, plus anything
+ *      created through the older in-memory-only admin path) — unchanged
+ *      behaviour, zero risk to what already works.
+ *   2. A real Postgres contest (public.contests, admin-managed) by slug.
+ *   3. The same, by id — what a deep link from the voting/mobile UI actually
+ *      carries (contest.id), since a real contest was never given a slug the
+ *      registration catalog knew about. This is the missing link: without
+ *      it, "Apply to Compete" on a real contest had nothing to resolve to
+ *      and either 404'd or (client-side) fell back to guessing a match by
+ *      title against unrelated templates.
+ *
+ * A real contest resolved this way has no bespoke forms/<slug>.ts template
+ * (registrationFormBuilders is keyed on the 5 known slugs) and no admin
+ * formSchema unless one was set — buildStepsForContest's existing fallback
+ * to buildDefaultSteps handles that by design, so nothing else needs to
+ * change for a real contest's application to render correctly.
+ */
+async function resolveAnyContest(slugOrId: string): Promise<ContestRegistrationDefinition | null> {
+  const inMemory = getRegistrationContestBySlug(slugOrId) || resolveContestRegistration(slugOrId);
+  if (inMemory) return inMemory;
+
+  const bySlug = await getPersistedContestBySlug(slugOrId);
+  if (bySlug) return bySlug;
+
+  if (UUID_RE.test(slugOrId)) {
+    const byId = await getPersistedContestById(slugOrId);
+    if (byId) return byId;
+  }
+
+  return null;
+}
+
 export async function startRegistrationDraft(params: {
   contestSlug: string;
   userId?: string;
   role?: 'public_user' | 'invited_applicant' | 'staff';
   accountData?: Record<string, unknown>;
+  /**
+   * Details resolved SERVER-SIDE from the applicant's account, plus the keys
+   * they filled. Spread after `accountData` so a client-supplied blob can never
+   * pass itself off as account-verified — see `features/registration/account-prefill`.
+   */
+  accountPrefill?: { values: Record<string, unknown>; providedKeys: string[] };
 }) {
-  const contest = getRegistrationContestBySlug(params.contestSlug) || resolveContestRegistration(params.contestSlug);
+  const contest = await resolveAnyContest(params.contestSlug);
   if (!contest) {
     throw new Error('Contest not found.');
+  }
+
+  // One live application per contest per user.
+  //
+  // The check sits HERE, after resolution, rather than in the route: callers
+  // pass either a slug or a contest id (the mobile contest screen passes an id),
+  // so a check on the raw request value would miss half the duplicates. Migration
+  // 20270125000000 adds a partial unique index as the real authority; this exists
+  // to hand back the existing application instead of a constraint violation.
+  if (params.userId) {
+    const existing = await findLiveRegistrationForContest(params.userId, {
+      contestSlug: contest.slug,
+    });
+    if (existing) {
+      throw new RegistrationExistsError(existing);
+    }
   }
 
   const contests = listRegistrationContests();
@@ -233,6 +346,8 @@ export async function startRegistrationDraft(params: {
 
   const formData = {
     ...(params.accountData || {}),
+    ...(params.accountPrefill?.values || {}),
+    [ACCOUNT_PROVIDED_KEYS]: params.accountPrefill?.providedKeys || [],
     'contest.title': contest.title,
     'contest.category': contest.contestCategory,
     'contest.type': contest.contestType,
@@ -262,7 +377,12 @@ export async function startRegistrationDraft(params: {
     .from('registrations')
     .insert({
       user_id: params.userId,
-      contest_slug: params.contestSlug,
+      // The RESOLVED slug, not params.contestSlug verbatim — a caller may have
+      // passed a real contest's id (see resolveAnyContest above), which must
+      // never end up stored as the draft's contest_slug: every later lookup
+      // (saveRegistrationStep's contest lock, buildStepsForContest) resolves
+      // by slug, not id.
+      contest_slug: contest.slug,
       reference,
       form_data: formData,
       current_step: 'contest_selection',
@@ -350,18 +470,210 @@ export async function submitRegistrationApplication(applicationId: string) {
   return { success: true, draft, message: `Your application has been submitted. Reference: ${draft.reference}.` };
 }
 
-// Payment intents stay in the in-memory store BY DESIGN (see its module note:
-// the intent record is replay-safety/audit for the Paystack gateway and moves
-// to Postgres only alongside a dedicated table mirroring utility_paystack_intents).
-// Delegate instead of stubbing — the previous stubs threw/returned null, which
-// silently broke registration payments when routes switched to this store.
-export {
-  findRegistrationPaymentIntentByIdempotencyKey,
-  createRegistrationPaymentIntent,
-  getRegistrationPaymentIntentByReference,
-  markRegistrationPaymentIntentStatus,
-  applyRegistrationPaymentSuccess,
-} from '@/src/server/registration/store';
+// Payment intents live in public.registration_payment_intents — real
+// Postgres, not the in-memory store. They used to delegate to
+// registration/store.ts's in-memory Map (a prior fix's comment called this
+// "BY DESIGN", reasoning the table wasn't wired up yet), which meant every
+// intent vanished on a server restart/redeploy — a verified, successful
+// Paystack charge could still leave an application looking unpaid forever
+// because the record proving it happened was gone. Fixed: the table already
+// existed for exactly this (its own migration says so); this is that move.
+//
+// applyRegistrationPaymentSuccess had the same bug one level up: it wrote
+// "paid" onto the in-memory store.ts draft Map, which getRegistrationDraft
+// (above, Postgres-only) never reads — so even a successful verify() call
+// never actually marked the real draft as paid. Fixed the same way, via the
+// same update-in-place pattern saveRegistrationStep already uses.
+export type RegistrationPaymentIntent = {
+  id: string;
+  applicationId: string;
+  amountKobo: number;
+  method: 'PAYSTACK';
+  paymentReference: string;
+  idempotencyKey: string;
+  // Matches registration_payment_intents_status_check exactly — 'pending'
+  // (the in-memory type's original value) isn't a value the DB constraint
+  // allows.
+  status: 'initiated' | 'completed' | 'verified' | 'failed';
+  failureReason?: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+function rowToPaymentIntent(row: Record<string, unknown>): RegistrationPaymentIntent {
+  return {
+    id: row.id as string,
+    applicationId: row.application_id as string,
+    amountKobo: Number(row.amount_kobo),
+    method: 'PAYSTACK',
+    paymentReference: row.reference as string,
+    idempotencyKey: row.idempotency_key as string,
+    status: row.status as RegistrationPaymentIntent['status'],
+    failureReason: (row.failure_reason as string | null) ?? undefined,
+    createdAt: row.created_at as string,
+    updatedAt: row.updated_at as string,
+  };
+}
+
+export async function findRegistrationPaymentIntentByIdempotencyKey(
+  idempotencyKey: string,
+): Promise<RegistrationPaymentIntent | null> {
+  const { data, error } = await getSupabase()
+    .from('registration_payment_intents')
+    .select('*')
+    .eq('idempotency_key', idempotencyKey)
+    .maybeSingle();
+  if (error) throw new Error(`Failed to look up payment intent: ${error.message}`);
+  return data ? rowToPaymentIntent(data) : null;
+}
+
+export async function getRegistrationPaymentIntentByReference(
+  reference: string,
+): Promise<RegistrationPaymentIntent | null> {
+  const { data, error } = await getSupabase()
+    .from('registration_payment_intents')
+    .select('*')
+    .eq('reference', reference)
+    .maybeSingle();
+  if (error) throw new Error(`Failed to look up payment intent: ${error.message}`);
+  return data ? rowToPaymentIntent(data) : null;
+}
+
+// `unique_payment_per_app_method` allows only ONE row per (application_id,
+// method) — a second `initiate` call for the same application (page refresh,
+// back button, a retry with a fresh Idempotency-Key) is invisible to the
+// idempotency-key lookup above and previously fell straight into an INSERT,
+// hitting that constraint and 500ing. Callers must check this before
+// inserting: reuse (retry) the existing row for 'initiated'/'failed', or
+// short-circuit entirely for 'completed'/'verified'.
+export async function getRegistrationPaymentIntentByApplicationAndMethod(
+  applicationId: string,
+  method: 'PAYSTACK',
+): Promise<RegistrationPaymentIntent | null> {
+  const { data, error } = await getSupabase()
+    .from('registration_payment_intents')
+    .select('*')
+    .eq('application_id', applicationId)
+    .eq('method', method)
+    .maybeSingle();
+  if (error) throw new Error(`Failed to look up payment intent: ${error.message}`);
+  return data ? rowToPaymentIntent(data) : null;
+}
+
+export async function createRegistrationPaymentIntent(input: {
+  applicationId: string;
+  amountKobo: number;
+  paymentReference: string;
+  idempotencyKey: string;
+}): Promise<RegistrationPaymentIntent> {
+  const { data, error } = await getSupabase()
+    .from('registration_payment_intents')
+    .insert({
+      application_id: input.applicationId,
+      reference: input.paymentReference,
+      amount_kobo: input.amountKobo,
+      method: 'PAYSTACK',
+      idempotency_key: input.idempotencyKey,
+      status: 'initiated',
+    })
+    .select('*')
+    .single();
+  if (error) throw new Error(`Failed to create payment intent: ${error.message}`);
+  return rowToPaymentIntent(data);
+}
+
+// Re-issues a fresh Paystack reference onto an existing 'initiated'/'failed'
+// intent row, in place — required because `unique_payment_per_app_method`
+// permits only one row per (application_id, method), so a retry can never be
+// a second INSERT. `reference` and `idempotency_key` both carry their own
+// UNIQUE constraint too; both must be values not already in use, which a
+// freshly generated reference and the caller's new Idempotency-Key satisfy.
+export async function retryRegistrationPaymentIntent(
+  id: string,
+  input: { paymentReference: string; idempotencyKey: string; amountKobo: number },
+): Promise<RegistrationPaymentIntent> {
+  const { data, error } = await getSupabase()
+    .from('registration_payment_intents')
+    .update({
+      reference: input.paymentReference,
+      idempotency_key: input.idempotencyKey,
+      amount_kobo: input.amountKobo,
+      status: 'initiated',
+      failure_reason: null,
+      updated_at: nowIso(),
+    })
+    .eq('id', id)
+    .select('*')
+    .single();
+  if (error) throw new Error(`Failed to retry payment intent: ${error.message}`);
+  return rowToPaymentIntent(data);
+}
+
+export async function markRegistrationPaymentIntentStatus(
+  id: string,
+  status: 'completed' | 'failed',
+  failureReason?: string,
+): Promise<RegistrationPaymentIntent | null> {
+  const { data, error } = await getSupabase()
+    .from('registration_payment_intents')
+    .update({ status, failure_reason: failureReason ?? null, updated_at: nowIso() })
+    .eq('id', id)
+    .select('*')
+    .maybeSingle();
+  if (error) throw new Error(`Failed to update payment intent: ${error.message}`);
+  return data ? rowToPaymentIntent(data) : null;
+}
+
+// Applies a verified Paystack success onto the draft — the same formData
+// shape the (former) mock client wrote, so nothing downstream (submit screen,
+// completion %) needs to change.
+/**
+ * What a Paystack-settled registration fee records in `payment.method`.
+ *
+ * Must stay a verbatim member of that field's `options` in every paid form, or
+ * validation rejects it — see tests/unit/registration/payment-method-value.spec.ts.
+ *
+ * 'Card' rather than the true channel because we cannot read one: Paystack's
+ * verify response does expose `channel` ('card' | 'bank' | 'ussd' | ...), but
+ * verifyPaystackPayment does not surface it and lives in a protected legacy file
+ * (src/server/voting/payment/paystack.ts) that must be wrapped, not edited. Card
+ * is the dominant Paystack channel, so it is the least-wrong default; plumbing
+ * the real channel through an adapter would let this become exact.
+ */
+export const PAYSTACK_METHOD_OPTION = 'Card';
+
+export async function applyRegistrationPaymentSuccess(
+  applicationId: string,
+  params: { reference: string; method: 'PAYSTACK' },
+): Promise<RegistrationDraft> {
+  const draft = await getRegistrationDraft(applicationId);
+  if (!draft) throw new Error('Application not found.');
+
+  const mergedData = {
+    ...draft.formData,
+    'payment.paymentStatus': 'paid',
+    'payment.transactionReference': params.reference,
+    // NOT params.method. That is the GATEWAY ('PAYSTACK'), while payment.method
+    // is the applicant-facing "how did you pay", whose options are
+    // Card / Bank Transfer / USSD / Wallet. Writing the gateway here meant
+    // validateStepData's select-option check rejected the very value this
+    // function had just recorded, so a successfully PAID application could
+    // never be submitted (submitRegistration validates every step).
+    'payment.method': PAYSTACK_METHOD_OPTION,
+    // The gateway is still worth keeping; it just does not belong in a field
+    // that means something else.
+    'payment.gateway': params.method,
+  };
+  const updatedAt = nowIso();
+
+  const { error } = await getSupabase()
+    .from('registrations')
+    .update({ form_data: mergedData, updated_at: updatedAt })
+    .eq('id', applicationId);
+  if (error) throw new Error(`Failed to record payment success: ${error.message}`);
+
+  return { ...draft, formData: mergedData, updatedAt };
+}
 
 export async function listRegistrationApplications(filter: {
   contestSlug?: string;
@@ -452,6 +764,76 @@ export async function withdrawRegistrationApplication(
   });
 
   return rowToDraft(data);
+}
+
+/**
+ * ADMIN CONSOLIDATION, slice 5 (see docs/adr/ADR-047). This did not exist here
+ * before — the admin review/approve/reject/shortlist routes called the
+ * in-memory registration/store version instead, which writes to a Map nothing
+ * else reads. Every real application lives in the `registrations` table (see
+ * startRegistrationDraft/saveRegistrationStep above), so an admin clicking
+ * "Approve" updated a map the applicant's real record never saw — the decision
+ * looked successful and silently didn't apply. Mirrors withdrawRegistrationApplication's
+ * shape immediately above: update the row, then append a
+ * registration_status_events row for the audit timeline.
+ */
+export async function reviewRegistrationApplication(
+  applicationId: string,
+  input: RegistrationReviewInput,
+): Promise<RegistrationDraft> {
+  const current = await getRegistrationDraft(applicationId);
+  if (!current) throw new Error('Application not found.');
+
+  const now = nowIso();
+  const nextFraudFlags = input.fraudFlags || current.fraudFlags;
+  const nextFormData = {
+    ...current.formData,
+    'admin.reviewNote': input.note || '',
+    'admin.reviewScore': typeof input.score === 'number' ? input.score : current.formData['admin.reviewScore'],
+    'admin.requestedFields': input.requestedFields || current.formData['admin.requestedFields'],
+  };
+
+  // Review notes first. These are cosmetic, and writing them before the status
+  // transition means a failed transition leaves notes without a false decision —
+  // never the other way round.
+  const { error: notesError } = await getSupabase()
+    .from('registrations')
+    .update({
+      form_data: nextFormData,
+      fraud_flags: nextFraudFlags,
+      updated_at: now,
+    })
+    .eq('id', applicationId);
+
+  if (notesError) {
+    throw new Error(`Failed to review registration: ${notesError.message}`);
+  }
+
+  // The status transition goes through review_registration_application (migration
+  // 20270125000000), which changes the status, records the audit event AND moves
+  // the voting roster in one transaction.
+  //
+  // This used to be a plain UPDATE here. It looked fine and it was not: approving
+  // from the admin console changed the status but never called
+  // promote_registration_to_contestant, so the applicant never became a
+  // contestant and the mobile app had nothing to show them. The Go path
+  // (RegistrationAdminStore.SetStatus) had always done it correctly — this was a
+  // second implementation of the same operation that had drifted. Both now end up
+  // in the same function, so they cannot drift again.
+  const { error: reviewError } = await getSupabase().rpc('review_registration_application', {
+    p_registration_id: applicationId,
+    p_status: input.status,
+    p_note: input.note || 'Admin review action',
+    p_actor_role: 'admin',
+  });
+
+  if (reviewError) {
+    throw new Error(`Failed to review registration: ${reviewError.message}`);
+  }
+
+  const updated = await getRegistrationDraft(applicationId);
+  if (!updated) throw new Error('Application not found after review.');
+  return updated;
 }
 
 export async function getRegistrationStatusTimeline(

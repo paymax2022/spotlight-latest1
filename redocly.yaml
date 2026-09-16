@@ -19,7 +19,6 @@ ignore:
   - contracts/placement.openapi.yaml
   - contracts/transport.openapi.yaml
   - contracts/visitor.openapi.yaml
-  - contracts/associations.openapi.yaml
   - contracts/connect-phases-2to6.openapi.yaml
 
 rules:

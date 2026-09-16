@@ -5,6 +5,7 @@ import React from 'react';
 import { View, Text, StyleSheet, Pressable, FlatList } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import { ArrowLeft, Search as SearchIcon, Trash2 } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
@@ -15,6 +16,7 @@ import SegmentedControl from '@/components/SegmentedControl';
 import { MarketColors } from '@/features/marketplace';
 import type { AlertFrequency, SavedSearch } from '@/features/marketplace';
 import { useSavedSearches, useDeleteSavedSearch, useToggleSavedSearch } from '@/features/marketplace/hooks';
+import { HomeMenuButton } from '@/components/HomeMenu';
 
 const FREQ_OPTIONS: { value: AlertFrequency; label: string }[] = [
   { value: 'instant', label: 'Instant' },
@@ -50,8 +52,11 @@ export default function SavedSearches() {
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
       <View style={styles.topRow}>
-        <Pressable onPress={() => router.back()} hitSlop={10} accessibilityLabel="Back"><ArrowLeft size={22} color={Colors.onSurface} /></Pressable>
-        <Text style={styles.title}>Saved searches</Text>
+        <Pressable onPress={() => goBack('/marketplace')} hitSlop={10} accessibilityLabel="Back"><ArrowLeft size={22} color={Colors.onSurface} /></Pressable>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+          <Text style={styles.title}>Saved searches</Text>
+          <HomeMenuButton />
+        </View>
       </View>
 
       {searches.isLoading && !searches.data ? (

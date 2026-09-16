@@ -4,7 +4,8 @@
 // /api/referral/admin/*. RBAC: referral.* gates wired on the sidebar by the
 // orchestrator. Money is BIGINT kobo throughout.
 
-import { env } from '@/config/env';
+import { apiRoot } from '@/config/env';
+import { resolveUseMock } from '@/config/useMock';
 import type {
   Payout,
   Reconciliation,
@@ -38,10 +39,19 @@ import type {
   MerchantDetail,
 } from '@/types/referralAdminOps';
 
-const USE_MOCK = (process.env.NEXT_PUBLIC_REFERRAL_USE_MOCK ?? 'true').toLowerCase() !== 'false';
+const USE_MOCK = resolveUseMock(process.env.NEXT_PUBLIC_REFERRAL_USE_MOCK);
 
+// adminBase() used to do `env.apiBaseUrl.replace(/\/api\/v1\/?$/, '/api/referral/admin')`,
+// which relied on apiBaseUrl ending in /api/v1. It no longer does (same-origin
+// proxy origin instead), so the regex became a silent no-op and every live call
+// 404'd. apiRoot() strips any trailing /api/v1 explicitly, so this keeps working
+// no matter how apiBaseUrl is spelled. Note: /api/referral/admin (RegisterReferral
+// et al. in referral_routes.go / referral_econ_routes.go / referral_trust_routes.go)
+// is a DIFFERENT admin surface from the newer Direct Referral Rewards engine's
+// /v1/admin/referrals (referral_rewards_routes.go) — every path this file calls
+// matches the former, so this base is correct as-is.
 function adminBase(): string {
-  return env.apiBaseUrl.replace(/\/api\/v1\/?$/, '/api/referral/admin');
+  return `${apiRoot()}/api/referral/admin`;
 }
 function authHeaders(): Record<string, string> {
   if (typeof window === 'undefined') return {};
@@ -51,6 +61,20 @@ function authHeaders(): Record<string, string> {
     : { 'Content-Type': 'application/json' };
 }
 const delay = (ms = 240) => new Promise((r) => setTimeout(r, ms));
+
+// Verified against the real Go routes: backend/internal/referral/{risk,merchant,
+// analytics}/handlers.go. Functions with a real route throw NOT_IN_FIXTURE_MODE;
+// functions with no reachable route throw NO_BACKEND_YET instead, since
+// flipping the mock flag would not reach a working call either way. See
+// docs/audit/ADMIN_SIMULATED_WRITES.md — and the "Ambassador approval queue
+// (live)" section below, which already documents the same pattern for
+// decideApplication.
+const NOT_IN_FIXTURE_MODE =
+  'is unavailable in fixture mode: this console will not report a write it did not perform. ' +
+  'Set NEXT_PUBLIC_REFERRAL_USE_MOCK=false to make this change against the live backend.';
+const NO_BACKEND_YET =
+  'has no backend yet (see the comment on the live-mode call below). ' +
+  'This console cannot perform this action until that endpoint is built.';
 
 async function getJson<T>(path: string): Promise<T> {
   const res = await fetch(`${adminBase()}${path}`, { headers: authHeaders() });
@@ -415,7 +439,13 @@ export async function listPayouts(status?: string): Promise<Payout[]> {
   return getJson<Payout[]>(`/finance/payouts${status && status !== 'all' ? `?status=${encodeURIComponent(status)}` : ''}`);
 }
 export async function approvePayout(id: string, note: string): Promise<{ ok: true }> {
-  if (USE_MOCK) { await delay(); return { ok: true }; }
+    // No endpoint exists for this action, so there is nothing this can do but
+    // say so. Returning a success value here told the operator the decision had
+    // been applied when nothing had — see docs/audit/ADMIN_SIMULATED_WRITES.md.
+    // Client-side validation above still runs, so bad input is still caught.
+    throw new Error(
+      'Referral payout approval is not available in this environment — no backend endpoint exists yet. Nothing was changed.',
+    );
   // Money mutation: backend requires Idempotency-Key + audit event.
   return sendJson<{ ok: true }>('POST', `/finance/payouts/${id}/approve`, { note }, true);
 }
@@ -458,16 +488,23 @@ export async function listClawbacks(status?: string): Promise<ClawbackRecord[]> 
   return getJson<ClawbackRecord[]>(`/risk/clawbacks${status && status !== 'all' ? `?status=${encodeURIComponent(status)}` : ''}`);
 }
 export async function executeClawbackOps(rewardId: string, reason: string): Promise<{ ok: true }> {
-  if (USE_MOCK) { await delay(); return { ok: true }; }
-  return sendJson<{ ok: true }>('POST', `/risk/rewards/${rewardId}/clawback`, { reason }, true);
+  if (USE_MOCK) throw new Error(`Executing a clawback ${NOT_IN_FIXTURE_MODE}`);
+  // backend: POST /risk/clawbacks (risk.Handler.ExecuteClawback), NOT
+  // /risk/rewards/:id/clawback — the reward id and reason travel in the body as
+  // {reward_id, reason_code}, not a path param + {reason}.
+  return sendJson<{ ok: true }>('POST', '/risk/clawbacks', { reward_id: rewardId, reason_code: reason }, true);
 }
 export async function listReviewQueue(): Promise<ReviewItem[]> {
   if (USE_MOCK) { await delay(); return [...REVIEW_QUEUE]; }
   return getJson<ReviewItem[]>('/risk/review-queue');
 }
 export async function decideReview(id: string, decision: 'approved' | 'rejected', note: string): Promise<{ ok: true }> {
-  if (USE_MOCK) { await delay(); return { ok: true }; }
-  return sendJson<{ ok: true }>('POST', `/risk/review-queue/${id}/decide`, { decision, note }, true);
+  if (USE_MOCK) throw new Error(`Deciding a review ${NOT_IN_FIXTURE_MODE}`);
+  // backend: risk review decisions are split into discrete POST verbs, not a
+  // combined /decide route — POST /risk/review-queue/:id/{approve,reject}
+  // (risk.Handler.{ApproveReview,RejectReview}).
+  const verb = decision === 'approved' ? 'approve' : 'reject';
+  return sendJson<{ ok: true }>('POST', `/risk/review-queue/${id}/${verb}`, { note }, true);
 }
 
 // ─── COMPLIANCE (A-CMPL) ──────────────────────────────────────────────────────
@@ -510,8 +547,10 @@ export async function getReferralUser360(id: string): Promise<ReferralUser360 | 
   return getJson<ReferralUser360>(`/users/${id}`);
 }
 export async function interveneUser(input: InterveneInput): Promise<{ ok: true }> {
-  if (USE_MOCK) { await delay(); return { ok: true }; }
-  // Money-affecting / account-state mutation: audited + idempotent.
+  // No backend at all: the referral users admin surface has exactly one route,
+  // GET /users/:id/referral-360 (analytics.Handler.User360, a read) — no
+  // intervention/mutation action exists anywhere in backend/internal/referral.
+  if (USE_MOCK) throw new Error(`Intervening on a user ${NO_BACKEND_YET}`);
   return sendJson<{ ok: true }>('POST', `/users/${input.user_id}/intervene`, input, true);
 }
 
@@ -557,7 +596,12 @@ export async function listApplications(status?: string): Promise<AmbassadorAppli
   return getJson<AmbassadorApplication[]>(`/ambassadors/applications${status && status !== 'all' ? `?status=${encodeURIComponent(status)}` : ''}`);
 }
 export async function decideApplication(id: string, decision: 'approved' | 'rejected', note: string): Promise<{ ok: true }> {
-  if (USE_MOCK) { await delay(); return { ok: true }; }
+  // No backend at all for this shape — see the "Ambassador approval queue
+  // (live)" section below: setAmbassadorStatus() is the real, verified
+  // replacement (POST /network/ambassadors/:id/status), but it serves a
+  // differently-shaped row and is wired to a different page. Not repointed
+  // here for the same reason that comment gives.
+  if (USE_MOCK) throw new Error(`Deciding an ambassador application ${NO_BACKEND_YET}`);
   return sendJson<{ ok: true }>('POST', `/ambassadors/applications/${id}/decide`, { decision, note }, true);
 }
 export async function listNetworks(): Promise<AgentNetwork[]> {
@@ -579,6 +623,195 @@ export async function getMerchant(id: string): Promise<MerchantDetail | null> {
   return getJson<MerchantDetail>(`/merchants/${id}`);
 }
 export async function approveMerchantCampaign(merchantId: string, campaignId: string, note: string): Promise<{ ok: true }> {
-  if (USE_MOCK) { await delay(); return { ok: true }; }
+  // No "approve" action exists: the merchant admin surface has POST /campaigns
+  // (create), /campaigns/:mcid/fund, and /campaigns/:mcid/settle
+  // (merchant.Handler.{CreateCampaign,Fund,Settle}) — no separate approval step.
+  if (USE_MOCK) throw new Error(`Approving a merchant campaign ${NO_BACKEND_YET}`);
   return sendJson<{ ok: true }>('POST', `/merchants/${merchantId}/campaigns/${campaignId}/approve`, { note }, true);
+}
+
+
+// ── Ambassador approval queue (live) ─────────────────────────────────────────
+// These hit the endpoints the Go backend actually exposes:
+//   GET  /api/referral/admin/network/ambassadors?status=<status>   referral.amb.view
+//   POST /api/referral/admin/network/ambassadors/:id/status        referral.amb.manage
+//
+// The older listAmbassadors/listApplications/decideApplication above target
+// paths (/ambassadors/applications/:id/decide) that no backend route serves.
+// They are left untouched for the existing directory page rather than
+// repointed, since that page's row shape differs from this one.
+
+/** Backend lifecycle for referral_ambassadors.status. */
+export type AmbassadorQueueStatus = 'applied' | 'approved' | 'suspended' | 'rejected';
+
+/** A decision an admin can take. 'applied' is the inbox, not a decision. */
+export type AmbassadorDecision = 'approved' | 'suspended' | 'rejected';
+
+export interface AmbassadorQueueRow {
+  id: string;
+  userId: string;
+  tier: string;
+  status: AmbassadorQueueStatus;
+  /** The disclosure the applicant accepted, stored verbatim. */
+  disclosureText: string;
+  disclosureAcceptedAt: string | null;
+  appliedAt: string;
+  approvedBy: string | null;
+  approvedAt: string | null;
+}
+
+interface BackendAmbassadorRow {
+  id: string;
+  user_id: string;
+  tier: string;
+  status: string;
+  disclosure_text?: string;
+  disclosure_accepted_at?: string | null;
+  applied_at: string;
+  approved_by?: string | null;
+  approved_at?: string | null;
+}
+
+function mapAmbassadorRow(a: BackendAmbassadorRow): AmbassadorQueueRow {
+  return {
+    id: a.id,
+    userId: a.user_id,
+    tier: a.tier,
+    status: (a.status as AmbassadorQueueStatus) ?? 'applied',
+    disclosureText: a.disclosure_text ?? '',
+    disclosureAcceptedAt: a.disclosure_accepted_at ?? null,
+    appliedAt: a.applied_at,
+    approvedBy: a.approved_by ?? null,
+    approvedAt: a.approved_at ?? null,
+  };
+}
+
+/** Surfaces the backend's own message — "missing permission: ..." beats "(403)". */
+async function readAmbErr(res: Response): Promise<string> {
+  try {
+    const b = await res.json();
+    if (typeof b?.error === 'string' && b.error.trim()) return b.error;
+  } catch { /* non-JSON body */ }
+  if (res.status === 401) return 'Your admin session has expired. Sign in again.';
+  if (res.status === 403) return 'You do not have permission to do that.';
+  return `Request failed (${res.status})`;
+}
+
+export async function listAmbassadorQueue(status?: string): Promise<AmbassadorQueueRow[]> {
+  const qs = status && status !== 'all' ? `?status=${encodeURIComponent(status)}` : '';
+  const res = await fetch(`${adminBase()}/network/ambassadors${qs}`, { headers: authHeaders() });
+  if (!res.ok) throw new Error(await readAmbErr(res));
+  const body = await res.json();
+  const rows = (body?.ambassadors ?? body?.data?.ambassadors ?? []) as BackendAmbassadorRow[];
+  return rows.map(mapAmbassadorRow);
+}
+
+export async function setAmbassadorStatus(id: string, status: AmbassadorDecision): Promise<void> {
+  const res = await fetch(`${adminBase()}/network/ambassadors/${id}/status`, {
+    method: 'POST',
+    headers: authHeaders(),
+    body: JSON.stringify({ status }),
+  });
+  if (!res.ok) throw new Error(await readAmbErr(res));
+}
+
+
+// ── Override policies (live) ─────────────────────────────────────────────────
+// GET /api/referral/admin/network/override-policies  (referral.network.view)
+//
+// The older getOverridePolicy() above targets /ambassadors/override-policy,
+// which no backend route serves, and its shape carries policy-level flags
+// (activity_based_only, max_depth, recruitment_earnings_blocked,
+// house_excluded_from_overrides) that no endpoint returns — they were mock
+// inventions. They are NOT reproduced here: rendering an unsourced
+// "Recruitment earnings: Blocked" tile asserts a compliance property the
+// system never actually reported.
+
+export interface OverridePolicyRow {
+  id: string;
+  tier: string;
+  /** Override rate in basis points; 200 bps = 2%. */
+  overrideBps: number;
+  perMemberCapKobo: number;
+  monthlyCapKobo: number;
+  isActive: boolean;
+}
+
+interface BackendOverridePolicy {
+  id: string;
+  tier: string;
+  override_bps: number;
+  per_member_cap_kobo: number;
+  monthly_cap_kobo: number;
+  is_active: boolean;
+}
+
+export async function listOverridePolicies(): Promise<OverridePolicyRow[]> {
+  const res = await fetch(`${adminBase()}/network/override-policies`, { headers: authHeaders() });
+  if (!res.ok) throw new Error(await readAmbErr(res));
+  const body = await res.json();
+  const rows = (body?.policies ?? body?.data?.policies ?? []) as BackendOverridePolicy[];
+  return rows
+    .map((p) => ({
+      id: p.id,
+      tier: p.tier,
+      overrideBps: p.override_bps ?? 0,
+      perMemberCapKobo: p.per_member_cap_kobo ?? 0,
+      monthlyCapKobo: p.monthly_cap_kobo ?? 0,
+      isActive: !!p.is_active,
+    }))
+    // The API returns tiers alphabetically (bronze, gold, platinum, silver),
+    // which reads as arbitrary in a ladder. Order by rate so the table climbs
+    // in tier order without hardcoding tier names the backend may add to.
+    .sort((a, b) => a.overrideBps - b.overrideBps);
+}
+
+
+// ── Agent networks (live) ────────────────────────────────────────────────────
+// GET /api/referral/admin/network/networks  (referral.amb.view)
+//
+// The older listNetworks() above targets /ambassadors/networks, which no
+// backend route served — the admin endpoint did not exist until it was added
+// alongside this. Its shape also carried depth / max_depth_cap /
+// verified_activity_kobo / override_paid_kobo, none of which the API returns.
+
+export interface AgentNetworkRow {
+  id: string;
+  leadUserId: string;
+  name: string;
+  networkType: string;
+  status: string;
+  memberCount: number;
+  /** Members excluded from override chains (house-attributed, §7A.2). */
+  houseAttributedCount: number;
+  createdAt: string;
+}
+
+interface BackendNetworkSummary {
+  id: string;
+  lead_user_id: string;
+  name: string;
+  network_type: string;
+  status: string;
+  created_at: string;
+  member_count: number;
+  house_attributed_count: number;
+}
+
+export async function listAgentNetworks(status?: string): Promise<AgentNetworkRow[]> {
+  const qs = status && status !== 'all' ? `?status=${encodeURIComponent(status)}` : '';
+  const res = await fetch(`${adminBase()}/network/networks${qs}`, { headers: authHeaders() });
+  if (!res.ok) throw new Error(await readAmbErr(res));
+  const body = await res.json();
+  const rows = (body?.networks ?? body?.data?.networks ?? []) as BackendNetworkSummary[];
+  return rows.map((n) => ({
+    id: n.id,
+    leadUserId: n.lead_user_id,
+    name: n.name,
+    networkType: n.network_type,
+    status: n.status,
+    memberCount: n.member_count ?? 0,
+    houseAttributedCount: n.house_attributed_count ?? 0,
+    createdAt: n.created_at,
+  }));
 }

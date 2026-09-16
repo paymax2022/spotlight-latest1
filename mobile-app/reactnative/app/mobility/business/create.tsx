@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import PhoneNumberInput from '@/components/PhoneNumberInput';
 import { View, Text, ScrollView, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
@@ -72,7 +73,7 @@ export default function CreateDeliveryScreen() {
 
         <Text style={styles.section}>Receiver</Text>
         <TextInputField label="Receiver name" value={receiverName} onChangeText={setReceiverName} placeholder="Full name" />
-        <TextInputField label="Receiver phone" value={receiverPhone} onChangeText={setReceiverPhone} placeholder="+234…" keyboardType="phone-pad" />
+        <PhoneNumberInput label="Receiver phone" value={receiverPhone} onChange={({ e164, nsn }) => (setReceiverPhone)(e164 || nsn)} />
 
         <Text style={styles.section}>Parcel size</Text>
         <View style={styles.list}>

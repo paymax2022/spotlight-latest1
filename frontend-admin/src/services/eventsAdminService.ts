@@ -5,7 +5,8 @@
 // Money is BIGINT kobo (minor units) throughout. Surfaces NL-3 (closed-loop +
 // residual refund), NL-10 (KYC payout gate), NL-12 (immutable audit).
 
-import { env } from '@/config/env';
+import { apiRoot } from '@/config/env';
+import { resolveUseMock } from '@/config/useMock';
 import type {
   EventsDashboard,
   EventApprovalItem,
@@ -24,10 +25,17 @@ import type {
   EventFraudActionResult,
 } from '@/types/eventsAdmin';
 
-const USE_MOCK = (process.env.NEXT_PUBLIC_EVENTS_USE_MOCK ?? 'true').toLowerCase() !== 'false';
+export const USE_MOCK = resolveUseMock(process.env.NEXT_PUBLIC_EVENTS_USE_MOCK);
+/** Named so the fixture banner can cite the exact switch. */
+export const USE_MOCK_ENV = 'NEXT_PUBLIC_EVENTS_USE_MOCK';
 
+// apiRoot() strips any trailing /api/v1 off env.apiBaseUrl. This used to be a
+// regex on env.apiBaseUrl itself, which relied on apiBaseUrl ending in
+// /api/v1 — it no longer does (see config/env.ts), so that regex silently
+// stopped matching and every live events admin call 404'd against the bare
+// proxy origin.
 function adminBase(): string {
-  return env.apiBaseUrl.replace(/\/api\/v1\/?$/, '/api/events/admin');
+  return `${apiRoot()}/api/events/admin`;
 }
 function authHeaders(): Record<string, string> {
   if (typeof window === 'undefined') return {};
@@ -37,6 +45,29 @@ function authHeaders(): Record<string, string> {
     : { 'Content-Type': 'application/json' };
 }
 const delay = (ms = 240) => new Promise((r) => setTimeout(r, ms));
+
+// UPDATED: the admin surface now also has 7 real GET reads (RBAC
+// events.admin.view) — dashboard/events/events/:id/tickets/cashless/vendors/
+// settlement, all in backend/internal/top5events/admin_reads.go — alongside
+// the original 3 write routes (approve/suspend/settle). getEventsDashboard,
+// listEvents, getEvent, listTickets, getCashlessFloat, listVendors, and
+// getSettlement below already called these exact paths/shapes in live mode
+// before the backend existed; no code change was needed here, only the
+// routes landing. The functions below that still throw do so because the
+// admin UI's REVIEW/DECISION model (reject, request_changes, a
+// approve/reject payout decision, settlement-break resolution, fraud
+// actions) has no backend equivalent at all — not because a route is
+// missing, but because the underlying capability doesn't exist server-side.
+// Functions with a real route throw NOT_IN_FIXTURE_MODE; functions with no
+// reachable route throw NO_BACKEND_YET instead, since flipping the mock flag
+// would not reach a working call either way. See
+// docs/audit/ADMIN_SIMULATED_WRITES.md.
+const NOT_IN_FIXTURE_MODE =
+  'is unavailable in fixture mode: this console will not report a write it did not perform. ' +
+  'Set NEXT_PUBLIC_EVENTS_USE_MOCK=false to make this change against the live backend.';
+const NO_BACKEND_YET =
+  'has no backend yet (see the comment on the live-mode call below). ' +
+  'This console cannot perform this action until that endpoint is built.';
 
 async function getJson<T>(path: string): Promise<T> {
   const res = await fetch(`${adminBase()}${path}`, { headers: authHeaders() });
@@ -116,6 +147,12 @@ const APPROVALS: EventApprovalItem[] = [
   { id: 'evt_9004', title: 'Port Harcourt Comedy Night', organiser_masked: 'PH Laughs•••', category: 'Comedy', city: 'Port Harcourt', status: 'draft', starts_at: dateAhead(45), capacity: 1200, tiers_count: 2, cashless_enabled: false, submitted_at: null, cms_complete: false, flagged_terms: false, created_at: iso(30) },
   { id: 'evt_9005', title: 'Owambe Owners Convention', organiser_masked: 'Lekki Events•••', category: 'Conference', city: 'Lagos', status: 'submitted', starts_at: dateAhead(60), capacity: 3000, tiers_count: 4, cashless_enabled: true, submitted_at: iso(40), cms_complete: true, flagged_terms: false, created_at: iso(120) },
 ];
+// Deliberately NOT wired to the real GET /events?status=submitted (the
+// backend has no separate /approvals route — that filter IS the approvals
+// queue). EventApprovalItem's tiers_count is derivable from real data, but
+// cms_complete and flagged_terms are content-moderation flags with no
+// backend concept at all — wiring this would mean fabricating those two
+// fields rather than honestly reporting them, so this stays mock-only.
 export async function listEventApprovals(opts?: { status?: string; q?: string }): Promise<EventApprovalItem[]> {
   if (USE_MOCK) {
     await delay();
@@ -133,16 +170,16 @@ export async function listEventApprovals(opts?: { status?: string; q?: string })
   return getJson<EventApprovalItem[]>(`/approvals${qs.toString() ? `?${qs}` : ''}`);
 }
 export async function decideEvent(id: string, decision: EventApprovalDecision, note?: string): Promise<EventDecisionResult> {
-  if (USE_MOCK) {
-    await delay();
-    const status =
-      decision === 'approve' ? 'approved'
-      : decision === 'reject' ? 'draft'
-      : decision === 'suspend' ? 'suspended'
-      : 'submitted';
-    return { id, status, audit_id: `aud_${Math.random().toString(36).slice(2, 10)}`, message: `Event ${id}: ${decision} applied. State machine DRAFT→SUBMITTED→APPROVED enforced. Recorded to immutable audit (NL-12).` };
+  if (USE_MOCK) throw new Error(`Deciding an event ${NOT_IN_FIXTURE_MODE}`);
+  // backend: only two verbs exist — POST /:id/approve and POST /:id/suspend
+  // (top5events.Handler.{Approve,Suspend}), both with no body. "reject" and
+  // "request_changes" have no backend equivalent — the service only has
+  // Approve/Suspend state-transition methods.
+  if (decision === 'reject' || decision === 'request_changes') {
+    throw new Error(`Deciding "${decision}" on an event ${NO_BACKEND_YET}`);
   }
-  return sendJson<EventDecisionResult>('POST', `/approvals/${id}/decide`, { decision, note });
+  const verb = decision === 'approve' ? 'approve' : 'suspend';
+  return sendJson<EventDecisionResult>('POST', `/${id}/${verb}`, {});
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -277,14 +314,16 @@ export async function listVendors(opts?: { payout_status?: string; q?: string })
   return getJson<VendorRecord[]>(`/vendors${qs.toString() ? `?${qs}` : ''}`);
 }
 export async function decideVendorPayout(id: string, decision: 'approve' | 'reject', note?: string): Promise<VendorPayoutResult> {
-  if (USE_MOCK) {
-    await delay();
-    const v = VENDORS.find((x) => x.id === id);
-    if (decision === 'approve' && v && !v.kyc_verified) {
-      return { id, payout_status: 'kyc_hold', audit_id: `aud_${Math.random().toString(36).slice(2, 10)}`, message: `Payout blocked — vendor ${id} KYC tier insufficient (NL-10). Payout stays fail-closed until KYC clears. Recorded to immutable audit.` };
-    }
-    return { id, payout_status: decision === 'approve' ? 'approved' : 'rejected', audit_id: `aud_${Math.random().toString(36).slice(2, 10)}`, message: `Vendor ${id} payout ${decision === 'approve' ? 'approved' : 'rejected'}. KYC gate (NL-10) passed. Recorded to immutable audit (NL-12).` };
-  }
+  // No "decide" concept exists: the real capability is POST
+  // /:eventId/vendors/:vendorId/settle (top5events.Handler.SettleVendor) — an
+  // UNCONDITIONAL, irreversible pay-now action requiring BOTH the event id and
+  // vendor id plus an Idempotency-Key header, with no request body and no
+  // "decision" parameter at all (it fails closed on missing KYC, but there is
+  // no separate approve/reject step). This function only has the vendor id in
+  // scope, and "reject" has no backend equivalent regardless. Treated as a
+  // genuine gap rather than silently firing an irreversible settlement in
+  // place of what the UI presents as a reviewable decision.
+  if (USE_MOCK) throw new Error(`Deciding a vendor payout ${NO_BACKEND_YET}`);
   return sendJson<VendorPayoutResult>('POST', `/vendors/${id}/payout`, { decision, note });
 }
 
@@ -310,11 +349,12 @@ export async function getSettlement(): Promise<Settlement> {
   return getJson<Settlement>('/settlement');
 }
 export async function resolveSettlementBreak(id: string, action: 'investigate' | 'resolve' | 'reconcile', note?: string): Promise<SettlementResolveResult> {
-  if (USE_MOCK) {
-    await delay();
-    const status = action === 'investigate' ? 'investigating' : action === 'resolve' ? 'resolved' : 'reconciled';
-    return { id, status, audit_id: `aud_${Math.random().toString(36).slice(2, 10)}`, message: `Settlement break ${id}: ${action} applied. Ledger projection reconciled (NL-8). Recorded to immutable audit (NL-12).` };
-  }
+  // No backend at all: grepped backend/internal/top5events for "settlement
+  // break"/"break"/"reconcil" — only order-payment reconciliation exists
+  // (StartPendingOrderReconciler), unrelated to settlement breaks. No GET
+  // /settlement either — the events admin group has exactly 3 routes total
+  // (approve/suspend/vendor-settle).
+  if (USE_MOCK) throw new Error(`Resolving a settlement break ${NO_BACKEND_YET}`);
   return sendJson<SettlementResolveResult>('POST', `/settlement/${id}/resolve`, { action, note });
 }
 
@@ -346,10 +386,8 @@ export async function listEventFraud(opts?: { status?: string; kind?: string; q?
   return getJson<EventFraudSignal[]>(`/fraud${qs.toString() ? `?${qs}` : ''}`);
 }
 export async function decideEventFraud(id: string, action: EventFraudAction, note?: string): Promise<EventFraudActionResult> {
-  if (USE_MOCK) {
-    await delay();
-    const status = action === 'investigate' ? 'investigating' : action === 'clear' ? 'cleared' : 'blocked';
-    return { id, status, audit_id: `aud_${Math.random().toString(36).slice(2, 10)}`, message: `Fraud signal ${id}: ${action} applied. Recorded to immutable audit (NL-12).` };
-  }
+  // No backend at all: grepped backend/internal/top5events for "fraud" — zero
+  // matches. No fraud queue or action verb exists anywhere in the module.
+  if (USE_MOCK) throw new Error(`Actioning an event fraud signal ${NO_BACKEND_YET}`);
   return sendJson<EventFraudActionResult>('POST', `/fraud/${id}/action`, { action, note });
 }

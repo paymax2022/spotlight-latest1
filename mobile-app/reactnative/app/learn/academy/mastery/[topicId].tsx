@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { View, Text, ScrollView, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import { Target, Lock, Unlock } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
@@ -101,7 +102,7 @@ export default function MasteryCheck() {
         </ScrollView>
         <View style={styles.footer}>
           {passed
-            ? <PrimaryButton label="Continue" onPress={() => router.back()} />
+            ? <PrimaryButton label="Continue" onPress={() => goBack('/learn/academy')} />
             : <PrimaryButton label="Review & retry" variant="secondary" onPress={() => { setResult(null); setIdx(0); setAnswers({}); }} />}
         </View>
       </SafeAreaView>
@@ -140,7 +141,7 @@ const styles = StyleSheet.create({
   scroll: { padding: Spacing.containerMargin, paddingBottom: Spacing.xxl, gap: Spacing.md },
   footer: { padding: Spacing.containerMargin, borderTopWidth: 1, borderTopColor: Colors.outlineVariant },
   scoreCard: { alignItems: 'center', borderRadius: Radius.lg, padding: Spacing.lg, gap: 4 },
-  scoreNum: { ...Typography.displayLg, color: Colors.onSurface, fontSize: 44, lineHeight: 50 },
+  scoreNum: { ...Typography.displayLg, color: Colors.onSurface, fontSize: 44, letterSpacing: -0.88, lineHeight: 50 },
   scoreSub: { ...Typography.bodyMd, color: Colors.onSurface, textAlign: 'center' },
   reviewCard: { backgroundColor: Colors.surfaceContainerLowest, borderRadius: Radius.lg, padding: Spacing.md, borderLeftWidth: 4 },
   reviewStem: { ...Typography.bodyMd, color: Colors.onSurface },

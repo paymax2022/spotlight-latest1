@@ -17,11 +17,15 @@ import type {
 
 const KEY = 'crowdfunding';
 
+// Callers may not have a campaign id resolved yet (e.g. a bare wallet entry
+// point still waiting on the creator's default campaign) — `enabled` holds
+// the request rather than sending `campaignId` as the literal string
+// "undefined" to the API.
 export function useCampaignWallet(campaignId?: string) {
-  return useQuery({ queryKey: [KEY, 'wallet', campaignId ?? 'me'], queryFn: () => getCampaignWallet(campaignId), staleTime: 20_000 });
+  return useQuery({ queryKey: [KEY, 'wallet', campaignId ?? 'me'], queryFn: () => getCampaignWallet(campaignId), staleTime: 20_000, enabled: Boolean(campaignId) });
 }
 export function useLedger(campaignId?: string, type?: string) {
-  return useQuery({ queryKey: [KEY, 'ledger', campaignId ?? 'me', type ?? 'all'], queryFn: () => getLedger(campaignId, type), staleTime: 20_000 });
+  return useQuery({ queryKey: [KEY, 'ledger', campaignId ?? 'me', type ?? 'all'], queryFn: () => getLedger(campaignId, type), staleTime: 20_000, enabled: Boolean(campaignId) });
 }
 export function useLedgerEntry(id?: string) {
   return useQuery({ queryKey: [KEY, 'ledger-entry', id], queryFn: () => getLedgerEntry(id as string), enabled: Boolean(id) });

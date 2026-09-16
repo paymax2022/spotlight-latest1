@@ -86,7 +86,11 @@ const styles = StyleSheet.create({
   },
   summaryTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   summaryLabel: { ...Typography.labelMd, color: Colors.onSurfaceVariant },
-  summaryAmount: { ...Typography.displayLg, fontSize: 36, lineHeight: 42, color: Colors.onSurface },
+  // letterSpacing is re-stated because displayLg's -0.96 is tuned to its own
+  // 48px (-0.02em). Spreading the style and overriding only the size keeps the
+  // ABSOLUTE tracking, which at 36px is -0.027em — tighter than the type scale
+  // intends. -0.72 is the same -0.02em at this size.
+  summaryAmount: { ...Typography.displayLg, fontSize: 36, lineHeight: 42, letterSpacing: -0.72, color: Colors.onSurface },
   divider: { height: 1, backgroundColor: Colors.outlineVariant, marginVertical: Spacing.sm },
   summaryRow: { flexDirection: 'row', justifyContent: 'space-between' },
   summarySub: { ...Typography.labelMd, color: Colors.onSurfaceVariant },

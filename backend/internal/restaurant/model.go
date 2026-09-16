@@ -30,6 +30,26 @@ type Restaurant struct {
 	// Store coordinates, for map rendering and the distance-based delivery quote.
 	GeoLat *float64 `json:"geo_lat,omitempty"`
 	GeoLng *float64 `json:"geo_lng,omitempty"`
+
+	// HasPromo reports a promo that is live RIGHT NOW (see livePromoExists in
+	// discovery_page.go). Populated by the discovery reads only; the code and
+	// terms are deliberately NOT here — a discount is validated and priced
+	// server-side at PlaceOrder, and this is purely the "offer available" badge.
+	HasPromo bool `json:"has_promo"`
+
+	// IsFeatured reports an ACTIVE paid placement in the RESTAURANT_TOP zone
+	// right now (see featuredFirstOrder in discovery_page.go, which already
+	// used this predicate to sort featured restaurants first — this just
+	// surfaces the same fact as a badge/filter instead of only an ordering).
+	IsFeatured bool `json:"is_featured,omitempty"`
+
+	// LikeCount is a live COUNT(*) over restaurant_likes, never a denormalized
+	// counter — see 20270166000000_restaurant_likes.sql. Liked is whether the
+	// AUTHENTICATED CALLER liked this restaurant; populated only by discovery
+	// reads that know who's asking (attachLikedFlags in discovery_page.go),
+	// omitted (false) elsewhere rather than guessed.
+	LikeCount int64 `json:"like_count"`
+	Liked     bool  `json:"liked,omitempty"`
 }
 
 // MenuCategory groups menu items (e.g. "Starters", "Mains").
@@ -91,9 +111,20 @@ type Order struct {
 	// SurgeKobo is peak dynamic pricing added to the item subtotal (part of the 80/10/10
 	// settlement gross). ServiceFeeKobo is the platform service fee (a 100%-platform
 	// settlement leg). Both default to 0.
-	SurgeKobo           int64  `json:"surge_kobo"`
-	ServiceFeeKobo      int64  `json:"service_fee_kobo"`
+	SurgeKobo      int64 `json:"surge_kobo"`
+	ServiceFeeKobo int64 `json:"service_fee_kobo"`
+	// PackagingFeeKobo is what the customer paid for takeaway packs
+	// (PackageCount × the restaurant's packaging_fee_kobo, priced at order time so a
+	// later price change never reprices a placed order). It settles 100% to the
+	// restaurant via settlement.Split.ProviderFeeKobo — the restaurant buys the
+	// packs, so platform and rider take no cut.
+	PackagingFeeKobo    int64  `json:"packaging_fee_kobo"`
+	PackageCount        int    `json:"package_count"`
 	SpecialInstructions string `json:"special_instructions,omitempty"`
+	// ScheduledFor is the future slot this order was booked for, or nil for an immediate
+	// order. While set, the order waits in `pending`; ActivateScheduledOrders clears it
+	// at the slot (releasing it into the live queue) or cancels + refunds it (SG-002).
+	ScheduledFor *time.Time `json:"scheduled_for,omitempty"`
 	// DiscountKobo is the promo discount taken off the item subtotal; PromoID and
 	// PromoFunder snapshot which promo applied and who bore it. TotalKobo (escrowed) =
 	// SubtotalKobo − DiscountKobo + DeliveryKobo + TipKobo.
@@ -111,6 +142,10 @@ type Order struct {
 	// DeliveryCode is the customer's handoff code. The rider must enter it at
 	// drop-off to confirm the handoff. Returned only to the order's participants.
 	DeliveryCode *string `json:"delivery_code,omitempty"`
+	// PickupCode is the restaurant's handoff code, generated on `ready`. The
+	// rider must enter it in ConfirmPickup to prove they collected the food
+	// from THIS restaurant — distinct from DeliveryCode (rider → customer).
+	PickupCode *string `json:"pickup_code,omitempty"`
 	// Distance/time-based fee inputs + breakdown (persisted for transparency/audit).
 	// Zero/empty when the order fell back to the flat DeliveryFeeKobo (no coords).
 	DistanceMeters    *float64              `json:"distance_meters,omitempty"`
@@ -183,6 +218,14 @@ type PlaceOrderRequest struct {
 	// ScheduledFor, when set, places the order for a future slot (SG-001) — validated
 	// against the restaurant's hours + a lead/horizon window. Still escrowed now.
 	ScheduledFor *time.Time `json:"scheduled_for,omitempty"`
+
+	// PackageCount is how many takeaway packs the customer arranged their food into.
+	// The cart's packing rules set a floor, but adding extra packs is a customer
+	// choice, so the count cannot be derived server-side and comes from the client —
+	// then gets clamped to [1, total portions] by PackagingKobo before it prices
+	// anything. Omitted (0) means one pack: packaging is mandatory, never free by
+	// silence.
+	PackageCount int `json:"package_count,omitempty"`
 }
 
 // LatLng is a nested coordinate object accepted on delivery requests.

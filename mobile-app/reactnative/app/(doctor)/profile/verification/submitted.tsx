@@ -66,7 +66,7 @@ export default function VerificationSubmittedScreen() {
           <Text style={styles.nextText}>You do not need to visit the MDCN portal or any external site — Paymax handles verification for you.</Text>
         </View>
 
-        <PrimaryButton label="Track status" onPress={() => router.replace('/(doctor)/signup/pending')} style={styles.btn} />
+        <PrimaryButton label="Track status" onPress={() => router.replace('/(doctor)/credentialing/pending')} style={styles.btn} />
         <PrimaryButton label="Go to dashboard" onPress={() => router.replace('/(doctor)/(tabs)')} variant="secondary" style={styles.btnGap} />
       </ScrollView>
     </SafeAreaView>

@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import PhoneNumberInput from '@/components/PhoneNumberInput';
 import { ScrollView, StyleSheet, Platform, KeyboardAvoidingView } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
@@ -77,7 +78,7 @@ export default function VetPersonalInfoScreen() {
 
           <SectionCard title="Contact" style={styles.card}>
             <TextInputField label="Email" placeholder="you@example.com" value={form.email} onChangeText={(email) => set({ email })} keyboardType="email-address" autoCapitalize="none" />
-            <TextInputField label="Phone" placeholder="+234 ..." value={form.phone} onChangeText={(phone) => set({ phone })} keyboardType="phone-pad" />
+            <PhoneNumberInput label="Phone" value={form.phone} onChange={({ e164, nsn }) => ((phone) => set({ phone }))(e164 || nsn)} />
           </SectionCard>
 
           <SectionCard title="Location" style={styles.card}>

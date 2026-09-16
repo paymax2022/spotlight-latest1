@@ -136,7 +136,7 @@
    - Implementation checklist
    - Usage examples
 
-2. **docs/adr/ADR-022-voting-contest-eviction.md** - Architecture Decision Record
+2. **docs/adr/ADR-036-voting-contest-eviction.md** - Architecture Decision Record
    - Problem statement
    - Design decisions with rationale
    - Consequences (positive/negative)
@@ -368,7 +368,7 @@ Feature is production-ready when:
 ## References
 
 - **Feature Spec**: `docs/features/VOTING_CONTEST_EVICTION.md`
-- **Architecture Decision**: `docs/adr/ADR-022-voting-contest-eviction.md`
+- **Architecture Decision**: `docs/adr/ADR-036-voting-contest-eviction.md`
 - **Database Migration**: `supabase/migrations/20260807000000_voting_contest_stages_eviction.sql`
 - **Backend Code**:
   - `backend/internal/connect/voting/eviction_handlers.go`
@@ -383,6 +383,6 @@ Feature is production-ready when:
 ## Support & Questions
 
 For questions about this implementation, refer to:
-1. ADR-022 for design decisions
+1. ADR-036 for design decisions
 2. Feature spec for business requirements  
 3. Code comments in RPC functions for atomic operation details

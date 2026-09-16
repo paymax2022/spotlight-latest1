@@ -244,7 +244,10 @@ func RegisterHealthTriageGovernance(member, admin *gin.RouterGroup, pool *pgxpoo
 	rev := middleware.RequirePermission(rbac, "health.triage.review")
 
 	// Admin (RBAC health.triage.review) — content lifecycle.
-	cg := admin.Group("/health/triage/admin")
+	// admin is already rooted at /api/health/triage/admin (adminGroupTop5 in
+	// health_triage_routes.go) — this used to re-prepend "/health/triage/admin",
+	// doubling the segment and 404ing every governance admin call.
+	cg := admin.Group("")
 	cg.GET("/content", rev, h.ListContent)
 	cg.POST("/content", rev, h.CreateContent)
 	cg.PUT("/content/:id", rev, h.EditContent)

@@ -68,7 +68,7 @@ func (r *Repository) ListMerchants(ctx context.Context) ([]Merchant, error) {
 		return nil, fmt.Errorf("merchant: list: %w", err)
 	}
 	defer rows.Close()
-	var out []Merchant
+	out := []Merchant{}
 	for rows.Next() {
 		m, err := scanMerchant(rows)
 		if err != nil {
@@ -119,7 +119,7 @@ func (r *Repository) ListMCByMerchant(ctx context.Context, merchantID string) ([
 		return nil, fmt.Errorf("merchant: list campaigns: %w", err)
 	}
 	defer rows.Close()
-	var out []MerchantCampaign
+	out := []MerchantCampaign{}
 	for rows.Next() {
 		mc, err := scanMC(rows)
 		if err != nil {
@@ -183,7 +183,7 @@ func (r *Repository) ListPartnerKeys(ctx context.Context, merchantID string) ([]
 		return nil, fmt.Errorf("merchant: list partner keys: %w", err)
 	}
 	defer rows.Close()
-	var out []PartnerKey
+	out := []PartnerKey{}
 	for rows.Next() {
 		var (
 			k   PartnerKey

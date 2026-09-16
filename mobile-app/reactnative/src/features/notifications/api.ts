@@ -1,4 +1,5 @@
 // Estate Notifications center (Block 43) — types + dual mock/live api + constants.
+import { mockAllowed } from '@/config/mockPolicy';
 import { api } from '@/api/client';
 
 export type NotificationCategory = 'general' | 'payment' | 'meeting' | 'election' | 'security' | 'maintenance' | 'facility' | 'announcement' | 'system';
@@ -8,7 +9,7 @@ export interface EstateNotification {
   title: string; body?: string; deepLink?: string; readAt?: string; createdAt: string;
 }
 
-export const USE_MOCK = (process.env.EXPO_PUBLIC_NOTIFICATIONS_USE_MOCK ?? 'true') !== 'false';
+export const USE_MOCK = mockAllowed(process.env.EXPO_PUBLIC_NOTIFICATIONS_USE_MOCK, true);
 
 // The in-app notification feed here is the Estate module's notification
 // center (Block 43), served by the resident-scoped frontend-web handlers under

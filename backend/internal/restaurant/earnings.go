@@ -9,7 +9,7 @@ import (
 // EarningsLine is one settled order's contribution to a restaurant's earnings (PY-008).
 type EarningsLine struct {
 	OrderID      string    `json:"order_id"`
-	GrossKobo    int64     `json:"gross_kobo"`    // order total escrowed
+	GrossKobo    int64     `json:"gross_kobo"`    // order total escrowed, net of rider tip + platform service fee
 	ProviderKobo int64     `json:"provider_kobo"` // the restaurant's settled share
 	FeeKobo      int64     `json:"fee_kobo"`      // platform commission on this order
 	SettledAt    time.Time `json:"settled_at"`
@@ -31,14 +31,21 @@ type EarningsStatement struct {
 // (owner only). Derived from the immutable settled `settlements` — a read, it moves no
 // money. Totals are summed server-side so the exported figures are authoritative.
 func (s *Service) EarningsStatement(ctx context.Context, restaurantID, userID string, from, to time.Time) (*EarningsStatement, error) {
-	if err := s.assertOwner(ctx, restaurantID, userID); err != nil {
+	if err := s.AssertStaffPermission(ctx, restaurantID, userID, PermViewEarnings); err != nil {
 		return nil, err
 	}
 	if to.Before(from) {
 		return nil, fmt.Errorf("restaurant: `to` must be on or after `from`")
 	}
+	// Gross is reported NET of the two fixed legs escrowed in st.total_kobo that were
+	// paid straight through and that the percentages never priced: the rider tip and the
+	// platform service fee. Both are money that was never the merchant's — including
+	// them would inflate the statement's gross and stop it tying out against the
+	// restaurant's own share + the platform cut. Surge is NOT deducted: it is food
+	// revenue inside the gross, split 80/10/10 like any other item money, so the
+	// restaurant genuinely earned its share of it.
 	const q = `
-		SELECT o.id, st.total_kobo, st.provider_kobo, st.fee_kobo, st.settled_at
+		SELECT o.id, st.total_kobo - COALESCE(o.tip_kobo,0) - COALESCE(o.service_fee_kobo,0), st.provider_kobo, st.fee_kobo, st.settled_at
 		FROM settlements st
 		JOIN orders o ON o.id = replace(st.reference, 'order:', '')::uuid
 		WHERE st.module_type = 'food_delivery'

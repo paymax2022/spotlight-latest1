@@ -2,6 +2,7 @@ package risk
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	referralevents "spotlight/backend/internal/referral/events"
@@ -405,11 +406,30 @@ func (s *Service) MyFraudStatus(ctx context.Context, userID string) (*FraudStatu
 	}, nil
 }
 
+// ErrNoReferrerToReport is returned when a member reports abuse but has no
+// referrer to report — the caller should tell them so rather than failing
+// generically.
+var ErrNoReferrerToReport = errors.New("risk: no referrer to report")
+
 // ReportAbuse lets a member report a suspected abusive referral. Stored as an
 // open alert with a reason code only (no free-text PII persisted).
 func (s *Service) ReportAbuse(ctx context.Context, reporterID string, in ReportInput) (*Alert, error) {
+	// An empty target means "report whoever referred me" — the only report a
+	// member can actually make from the app, which has no way to name another
+	// account. Resolve it server-side: accepting a client-supplied id here would
+	// let anyone open a fraud alert against any account.
 	if in.TargetUserID == "" {
-		return nil, fmt.Errorf("risk: report requires a target user")
+		referrer, err := s.repo.ReferrerOf(ctx, reporterID)
+		if err != nil {
+			return nil, err
+		}
+		if referrer == "" {
+			return nil, ErrNoReferrerToReport
+		}
+		in.TargetUserID = referrer
+	}
+	if in.TargetUserID == reporterID {
+		return nil, fmt.Errorf("risk: cannot report yourself")
 	}
 	reason := in.ReasonCode
 	if reason == "" {

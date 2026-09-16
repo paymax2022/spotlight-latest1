@@ -8,8 +8,7 @@ package businessregistry_test
 // Asserts the money invariant: the fee is debited EXACTLY once (idempotent
 // replay posts no second debit), and — when the sandbox provider registers —
 // the profile reaches a verified/registered state that satisfies the
-// merchant-upgrade gate (HasVerifiedBusiness). Skips unless TEST_DATABASE_URL/
-// DATABASE_URL is set.
+// merchant-upgrade gate (HasVerifiedBusiness). Skips unless TEST_DATABASE_URL is set.
 // ---------------------------------------------------------------------------
 
 import (
@@ -26,16 +25,15 @@ import (
 	"spotlight/backend/internal/finance/tiers"
 	"spotlight/backend/internal/finance/wallet"
 	"spotlight/backend/internal/provider/cac"
+
+	"spotlight/backend/internal/testsupport"
 )
 
 func liveDB(t *testing.T) *pgxpool.Pool {
 	t.Helper()
 	dsn := os.Getenv("TEST_DATABASE_URL")
 	if dsn == "" {
-		dsn = os.Getenv("DATABASE_URL")
-	}
-	if dsn == "" {
-		t.Skip("no TEST_DATABASE_URL/DATABASE_URL set — skipping CAC fee-debit live-DB test")
+		t.Skip("no TEST_DATABASE_URL set — skipping CAC fee-debit live-DB test")
 	}
 	pool, err := pgxpool.New(context.Background(), dsn)
 	if err != nil {
@@ -50,6 +48,7 @@ func seedUser(t *testing.T, ctx context.Context, pool *pgxpool.Pool) string {
 	if _, err := pool.Exec(ctx, `INSERT INTO auth.users (id, email) VALUES ($1,$2) ON CONFLICT DO NOTHING`, id, id+"@seed.test"); err != nil {
 		t.Fatalf("seed user: %v", err)
 	}
+	testsupport.CleanupUser(t, pool, id)
 	return id
 }
 
@@ -64,7 +63,7 @@ func balance(t *testing.T, ctx context.Context, w *wallet.Service, uid string) i
 
 func TestLiveDB_CACFeeDebit_FundedHappyPath(t *testing.T) {
 	pool := liveDB(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 
 	led := ledger.NewService(ledger.NewRepository(pool), (*goredis.Client)(nil))

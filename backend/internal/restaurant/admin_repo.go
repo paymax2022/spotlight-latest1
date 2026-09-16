@@ -49,6 +49,19 @@ type AdminDispatchOrder struct {
 	ReadyAt         *time.Time `json:"ready_at,omitempty"`
 	CreatedAt       time.Time  `json:"created_at"`
 	WaitingMinutes  int        `json:"waiting_minutes"`
+
+	// Courier-sourcing state. This is a DISPATCH board and `dispatch_status` is
+	// the column that actually drives it — the query filtered on it but never
+	// projected it, so the console could not tell "ready, nobody looking yet"
+	// from "actively searching" from "assigned to a rider", and its own
+	// DispatchOrder type declared a field the server never sent.
+	DispatchStatus string `json:"dispatch_status"`
+	// RiderCandidateID is a rider the order has been OFFERED to who has not
+	// accepted yet — distinct from RiderID (accepted). Without it an offer in
+	// flight is indistinguishable from no offer at all.
+	RiderCandidateID *string    `json:"rider_candidate_id,omitempty"`
+	DispatchAttempts int        `json:"dispatch_attempts"`
+	FirstOfferedAt   *time.Time `json:"first_offered_at,omitempty"`
 }
 
 // AdminApplication mirrors the restaurant merchant record for the onboarding/KYC
@@ -90,77 +103,15 @@ type AdminPayoutRun struct {
 // AdminListRiders returns the platform rider roster from the shared transport
 // `drivers` pool, mapping transport status/verification to the console's rider
 // status and attaching the rider's currently-active food order if any.
-func (s *Service) AdminListRiders(ctx context.Context) ([]AdminRider, error) {
-	const q = `
-		SELECT d.user_id, d.name, d.phone, d.vehicle_type, d.status,
-		       d.verification_status, d.current_lat, d.current_lng, d.rating, d.updated_at,
-		       (SELECT o.id FROM orders o
-		         WHERE o.rider_id = d.user_id
-		           AND o.status NOT IN ('delivered','cancelled')
-		         ORDER BY o.created_at DESC LIMIT 1) AS active_order_id
-		FROM drivers d
-		WHERE ARRAY['ride_hailing','food_delivery','delivery'] && d.service_categories
-		   OR d.service_categories IS NULL
-		ORDER BY d.updated_at DESC`
-	rows, err := s.db.Query(ctx, q)
-	if err != nil {
-		// service_categories may be absent on very old rows; fall back to a plain read.
-		return s.adminListRidersFallback(ctx)
-	}
-	defer rows.Close()
-	var out []AdminRider
-	for rows.Next() {
-		var r AdminRider
-		var transportStatus, verification string
-		var rating *float64
-		var updatedAt *time.Time
-		if err := rows.Scan(&r.ID, &r.Name, &r.Phone, &r.Vehicle, &transportStatus,
-			&verification, &r.Lat, &r.Lng, &rating, &updatedAt, &r.ActiveOrderID); err != nil {
-			return nil, err
-		}
-		r.Status = mapRiderStatus(transportStatus, verification, r.ActiveOrderID != nil)
-		r.Rating = rating
-		r.LastSeenAt = updatedAt
-		out = append(out, r)
-	}
-	return out, rows.Err()
-}
-
-func (s *Service) adminListRidersFallback(ctx context.Context) ([]AdminRider, error) {
-	const q = `
-		SELECT d.user_id, d.name, d.phone, d.vehicle_type, d.status,
-		       COALESCE(d.verification_status,'approved'), d.current_lat, d.current_lng, d.rating, d.updated_at,
-		       (SELECT o.id FROM orders o
-		         WHERE o.rider_id = d.user_id
-		           AND o.status NOT IN ('delivered','cancelled')
-		         ORDER BY o.created_at DESC LIMIT 1) AS active_order_id
-		FROM drivers d
-		ORDER BY d.updated_at DESC`
-	rows, err := s.db.Query(ctx, q)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var out []AdminRider
-	for rows.Next() {
-		var r AdminRider
-		var transportStatus, verification string
-		var rating *float64
-		var updatedAt *time.Time
-		if err := rows.Scan(&r.ID, &r.Name, &r.Phone, &r.Vehicle, &transportStatus,
-			&verification, &r.Lat, &r.Lng, &rating, &updatedAt, &r.ActiveOrderID); err != nil {
-			return nil, err
-		}
-		r.Status = mapRiderStatus(transportStatus, verification, r.ActiveOrderID != nil)
-		r.Rating = rating
-		r.LastSeenAt = updatedAt
-		out = append(out, r)
-	}
-	return out, rows.Err()
-}
-
 // mapRiderStatus maps the transport driver status + verification onto the ops
 // console's rider status vocabulary (available|on_delivery|offline|suspended).
+//
+// NOT called in production any more (ADR-050) — the roster computes status in SQL, because
+// it now filters, counts and pages on it and none of that can be done to a value
+// derived after the rows come back. This is kept deliberately as the executable
+// SPECIFICATION that riderStatusSQL is tested against
+// (TestRiderStatusSQLMatchesGo). Do not delete it as dead code: it is what stops
+// the SQL drifting the way the terminal-status set did.
 func mapRiderStatus(transportStatus, verification string, onDelivery bool) string {
 	switch verification {
 	case "suspended", "rejected":
@@ -184,41 +135,6 @@ func mapRiderStatus(transportStatus, verification string, onDelivery bool) strin
 // AdminDispatchQueue lists orders awaiting or in dispatch (ready/searching for a
 // rider, assigned, or picked_up but not delivered), newest first. waiting_minutes
 // is time since the order became ready (from ready_at when set, else created_at).
-func (s *Service) AdminDispatchQueue(ctx context.Context) ([]AdminDispatchOrder, error) {
-	const q = `
-		SELECT o.id, o.restaurant_id, r.name, o.status, o.rider_id,
-		       (SELECT d.name FROM drivers d WHERE d.user_id = o.rider_id) AS rider_name,
-		       o.delivery_address, o.total_kobo, o.delivery_kobo, o.ready_at, o.created_at
-		FROM orders o
-		JOIN restaurants r ON r.id = o.restaurant_id
-		WHERE o.status IN ('ready','picked_up')
-		   OR (o.status NOT IN ('delivered','cancelled') AND o.dispatch_status IN ('searching','assigned'))
-		ORDER BY o.created_at DESC`
-	rows, err := s.db.Query(ctx, q)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	now := time.Now()
-	var out []AdminDispatchOrder
-	for rows.Next() {
-		var d AdminDispatchOrder
-		if err := rows.Scan(&d.ID, &d.RestaurantID, &d.RestaurantName, &d.Status, &d.RiderID,
-			&d.RiderName, &d.DeliveryAddr, &d.TotalKobo, &d.DeliveryFeeKobo, &d.ReadyAt, &d.CreatedAt); err != nil {
-			return nil, err
-		}
-		since := d.CreatedAt
-		if d.ReadyAt != nil {
-			since = *d.ReadyAt
-		}
-		if mins := int(now.Sub(since).Minutes()); mins > 0 {
-			d.WaitingMinutes = mins
-		}
-		out = append(out, d)
-	}
-	return out, rows.Err()
-}
-
 // ── Onboarding review queue ───────────────────────────────────────────────────
 
 // AdminListApplications lists restaurant merchant records for the onboarding/KYC
@@ -270,6 +186,46 @@ func (s *Service) AdminDecideApplication(ctx context.Context, restaurantID, admi
 	if !exists {
 		return fmt.Errorf("restaurant: application not found")
 	}
+	var target KYBStatus
+	switch decision {
+	case "approve":
+		target = KYBApproved
+	case "reject":
+		target = KYBRejected
+	case "needs_info":
+		target = KYBNeedsInfo
+	default:
+		return fmt.Errorf("restaurant: invalid decision %q (want approve|reject|needs_info)", decision)
+	}
+	if decision != "approve" && note == "" {
+		return fmt.Errorf("restaurant: a reviewer note is required to %s", decision)
+	}
+
+	// When a KYB record exists, the decision must be a legal KYB transition and is
+	// recorded on it (plus the restaurants.kyb_status snapshot payout gating reads).
+	k, hasKYB, err := s.loadKYB(ctx, restaurantID)
+	if err != nil {
+		return err
+	}
+	if hasKYB {
+		if !kybCanTransition(k.Status, target) {
+			return fmt.Errorf("restaurant: cannot move KYB from %s to %s", k.Status, target)
+		}
+		if _, err := s.db.Exec(ctx,
+			`UPDATE restaurant_kyb SET status=$2, decision_reason=NULLIF($3,''), reviewed_by=$4,
+			        decided_at=now(), updated_at=now() WHERE restaurant_id=$1`,
+			restaurantID, string(target), note, adminID); err != nil {
+			return err
+		}
+		if _, err := s.db.Exec(ctx,
+			`UPDATE restaurants SET kyb_status=$2, updated_at=now() WHERE id=$1`,
+			restaurantID, string(target)); err != nil {
+			return err
+		}
+	} else if decision == "needs_info" {
+		return fmt.Errorf("restaurant: no KYB submission to request more info on")
+	}
+
 	switch decision {
 	case "approve":
 		if _, err := s.db.Exec(ctx,
@@ -277,15 +233,10 @@ func (s *Service) AdminDecideApplication(ctx context.Context, restaurantID, admi
 			return err
 		}
 	case "reject":
-		if note == "" {
-			return fmt.Errorf("restaurant: a reviewer note is required to reject")
-		}
 		if _, err := s.db.Exec(ctx,
 			`UPDATE restaurants SET is_open=false, updated_at=now() WHERE id=$1`, restaurantID); err != nil {
 			return err
 		}
-	default:
-		return fmt.Errorf("restaurant: invalid decision %q (want approve|reject)", decision)
 	}
 	// Best-effort audit via the shared notifier (owner is informed of the decision).
 	var owner string
@@ -293,8 +244,12 @@ func (s *Service) AdminDecideApplication(ctx context.Context, restaurantID, admi
 	if owner != "" {
 		title := "Restaurant approved"
 		body := "Your restaurant has been approved and is now live."
-		if decision == "reject" {
+		switch decision {
+		case "reject":
 			title = "Restaurant application rejected"
+			body = note
+		case "needs_info":
+			title = "More information needed"
 			body = note
 		}
 		s.notify(ctx, Notification{UserID: owner, Event: EventOnboardingDecision, Title: title, Body: body,

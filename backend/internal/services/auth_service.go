@@ -2,10 +2,14 @@ package services
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
+	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -16,10 +20,8 @@ import (
 )
 
 type AuthService interface {
-	RegisterUser(in domain.RegisterRequest) error
+	RegisterUser(in domain.RegisterRequest) (*RegisterResult, error)
 	LoginUser(in domain.LoginRequest) (map[string]any, error)
-	VerifyEmailToken(token string) error
-	ResendVerificationLink(email string) error
 	RequestPasswordReset(email string) error
 	ResetPassword(token, password string) error
 	ChangePassword(accessToken, currentPassword, newPassword string) error
@@ -27,6 +29,19 @@ type AuthService interface {
 }
 
 type authService struct {
+	// otpOperational is true only when the OTP service was ACTUALLY BUILT — flag
+	// on AND pepper AND Brevo credentials AND a database. It is not the flag.
+	//
+	// Branching on the flag alone produced accounts nobody could ever verify: with
+	// the flag on but credentials missing, this service took the silent admin
+	// creation path (so GoTrue sent nothing) while the register handler, which
+	// checks the WIRED ISSUER rather than the flag, sent nothing either. The
+	// account existed, unconfirmed, with no code and no way to request one —
+	// /api/auth/otp/request answers 503 in that state. Login refused it forever.
+	//
+	// The two decisions must be made from the same signal, so this carries it.
+	otpOperational bool
+
 	supabase *integrations.SupabaseRestClient
 	rbac     RBACService
 	cfg      config.Config
@@ -36,41 +51,252 @@ func NewAuthService(supabase *integrations.SupabaseRestClient, rbac RBACService,
 	return &authService{supabase: supabase, rbac: rbac, cfg: cfg}
 }
 
-func (s *authService) RegisterUser(in domain.RegisterRequest) error {
-	if in.Password != in.ConfirmPassword {
-		return fmt.Errorf("password confirmation mismatch")
+// RegisterResult is what registration produces, rather than the bare error the
+// caller used to get. Discarding the response body meant this endpoint could
+// never return a user or a session, which is why the web and mobile apps each
+// grew their own signUp call instead of using it.
+type RegisterResult struct {
+	UserID string
+	Email  string
+	// Session is nil when email confirmation is required — which both cloud
+	// projects require — and the caller must then send the user to enter a code.
+	AccessToken  string
+	RefreshToken string
+}
+
+// NeedsVerification reports whether the account still has to confirm an emailed
+// code before it can be used.
+func (r *RegisterResult) NeedsVerification() bool {
+	return r == nil || strings.TrimSpace(r.AccessToken) == ""
+}
+
+// signupResponse covers BOTH Supabase signup shapes: with confirmation OFF the
+// body is {access_token, user:{id}}; with it ON there is no session and the user
+// object IS the body, {id, email}. Handling one shape would break silently the
+// moment an environment differed — which is precisely what audit item B3 was.
+type signupResponse struct {
+	ID           string `json:"id"`
+	Email        string `json:"email"`
+	AccessToken  string `json:"access_token"`
+	RefreshToken string `json:"refresh_token"`
+	User         struct {
+		ID    string `json:"id"`
+		Email string `json:"email"`
+	} `json:"user"`
+}
+
+func parseSignupResponse(body []byte) *RegisterResult {
+	var p signupResponse
+	if err := json.Unmarshal(body, &p); err != nil {
+		return &RegisterResult{}
 	}
-	payload := map[string]any{
-		"email":    strings.TrimSpace(strings.ToLower(in.Email)),
-		"password": in.Password,
-		"data": map[string]any{
-			"first_name": in.FirstName,
-			"last_name":  in.LastName,
-			"user_type":  in.UserType,
-			"phone":      in.Phone,
-		},
+	out := &RegisterResult{AccessToken: p.AccessToken, RefreshToken: p.RefreshToken}
+	if strings.TrimSpace(p.User.ID) != "" {
+		out.UserID, out.Email = p.User.ID, p.User.Email
+	} else {
+		out.UserID, out.Email = strings.TrimSpace(p.ID), p.Email
 	}
+	return out
+}
+
+// extractSignupUserID is retained for callers that only need the id.
+func extractSignupUserID(body []byte) string { return parseSignupResponse(body).UserID }
+
+// ErrSignupDisabled is returned when the project has closed new sign-ups and the
+// admin creation path — which GoTrue does not gate for us — refuses on its behalf.
+var ErrSignupDisabled = errors.New("signups are disabled")
+
+func (s *authService) RegisterUser(in domain.RegisterRequest) (*RegisterResult, error) {
+	// Only when the client actually sent it — see domain.RegisterRequest.
+	if strings.TrimSpace(in.ConfirmPassword) != "" && in.Password != in.ConfirmPassword {
+		return nil, fmt.Errorf("password confirmation mismatch")
+	}
+
+	// full_name is what the on_auth_user_created trigger (handle_new_user) copies
+	// into user_profiles: COALESCE(raw_user_meta_data->>'full_name', ''). Sending
+	// only first_name/last_name gave every account an EMPTY profile name.
+	fullName := in.FullNameOrJoin()
+
+	meta := map[string]any{
+		"full_name":  fullName,
+		"first_name": in.FirstName,
+		"last_name":  in.LastName,
+		"user_type":  in.UserTypeOrDefault(),
+		"phone":      in.Phone,
+	}
+	email := strings.TrimSpace(strings.ToLower(in.Email))
+
+	// WHICH GOTRUE ENDPOINT CREATES THE ACCOUNT — and why it depends on a flag.
+	//
+	// /auth/v1/signup sends GoTrue's own confirmation email. There is no setting
+	// that keeps the account unconfirmed while suppressing that mail:
+	// enable_confirmations (mailer_autoconfirm on cloud) governs BOTH, so turning
+	// the mailer off auto-confirms every signup and removes email verification
+	// altogether. Disabling SMTP wholesale is not an option either — the
+	// password-reset LINK deliberately still goes through it.
+	//
+	// /auth/v1/admin/users creates the same row and sends NOTHING. With
+	// email_confirm false the account is unconfirmed exactly as before, login
+	// still answers 403 email_not_confirmed, and our own code (issued by the
+	// register handler) becomes the single verification email.
+	//
+	// Only when the OTP feature is ON. With it off there would be no code, and an
+	// account nobody can ever confirm is worse than a duplicate email.
+	//
+	// Two behaviours differ on the admin path and are accepted deliberately:
+	//   - GoTrue's sign_in_sign_ups rate limit does not apply. The /register route
+	//     already carries middleware.AuthRateLimiter (AUTH_RATE_LIMIT_PER_MIN).
+	//   - GoTrue's own enable_signup switch does not apply. If signups are ever
+	//     closed at the project level, this path must be closed here too.
+	//
+	// Note the metadata key: /signup takes "data", the admin endpoint takes
+	// "user_metadata". Both land in raw_user_meta_data, which is what
+	// handle_new_user reads for full_name — send the wrong one and every profile
+	// is created nameless.
+	path := "/auth/v1/signup"
+	payload := map[string]any{"email": email, "password": in.Password, "data": meta}
+	if s.otpOperational {
+		// The admin endpoint is not gated by the project's enable_signup switch —
+		// that is the price of a creation call that sends no mail. Enforce the
+		// policy here instead, from GoTrue's own /settings, so there is one source
+		// of truth rather than a mirrored flag that drifts.
+		//
+		// Read on every attempt rather than cached: registration is already
+		// throttled per IP by middleware.AuthRateLimiter, and a cache is a window
+		// in which a door the project just closed is still open.
+		//
+		// Fails CLOSED. /settings and /admin/users are the same service, so a
+		// settings read that fails is a strong signal the create would fail too;
+		// treating the error as "signups are open" would let a partial outage
+		// reopen the door.
+		disabled, err := s.supabase.SignupDisabled(context.Background())
+		if err != nil {
+			log.Printf("[auth] register: could not read the project signup policy, refusing: %v", err)
+			return nil, ErrSignupDisabled
+		}
+		if disabled {
+			return nil, ErrSignupDisabled
+		}
+
+		path = "/auth/v1/admin/users"
+		payload = map[string]any{
+			"email":         email,
+			"password":      in.Password,
+			"email_confirm": false,
+			"user_metadata": meta,
+		}
+	}
+
 	b, _ := json.Marshal(payload)
-	req, err := http.NewRequest(http.MethodPost, strings.TrimRight(s.supabase.BaseURL(), "/")+"/auth/v1/signup", bytes.NewReader(b))
+	req, err := http.NewRequest(http.MethodPost, strings.TrimRight(s.supabase.BaseURL(), "/")+path, bytes.NewReader(b))
 	if err != nil {
-		return err
+		return nil, err
 	}
 	req.Header.Set("apikey", s.supabase.APIKey())
 	req.Header.Set("Authorization", "Bearer "+s.supabase.APIKey())
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer resp.Body.Close()
+	respBody, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode >= 400 {
-		return fmt.Errorf("registration failed: %d", resp.StatusCode)
+		// The handler does not echo this: a distinguishable "already registered"
+		// would be an account-enumeration oracle.
+		return nil, fmt.Errorf("registration failed: %d", resp.StatusCode)
 	}
-	return nil
+
+	result := parseSignupResponse(respBody)
+
+	// The trigger does not copy phone, so it needs an explicit write. Best-effort:
+	// the ACCOUNT EXISTS by now, and failing here would send the user back to
+	// register and meet "already registered" on an account that is genuinely theirs.
+	if phone := strings.TrimSpace(in.Phone); phone != "" && result.UserID != "" {
+		if err := s.supabase.REST(http.MethodPatch, "user_profiles",
+			map[string]string{"id": "eq." + result.UserID},
+			map[string]any{"phone": phone}, nil); err != nil {
+			log.Printf("[auth] register: profile phone update failed for %s: %v", result.UserID, err)
+		}
+	}
+	return result, nil
 }
 
+// resolveLoginEmail turns a client-supplied identifier into the account email.
+//
+// A phone is resolved SERVER-SIDE and the email is never returned to the caller. A
+// public "phone -> email" endpoint would be an enumeration oracle: anyone could walk a
+// range of numbers and harvest the address behind each. Resolving inside the login call
+// means a wrong phone is indistinguishable from a wrong password.
+//
+// Stored phones are not normalised, so the match is on the last 10 digits (see
+// NormalizePhone and the user_profiles_phone_nsn_idx functional index).
+func (s *authService) resolveLoginEmail(identifier, fallbackEmail string) string {
+	id := strings.TrimSpace(identifier)
+	if id == "" {
+		return strings.TrimSpace(strings.ToLower(fallbackEmail))
+	}
+	if LooksLikeEmail(id) {
+		return strings.ToLower(id)
+	}
+	nsn := NormalizePhone(id)
+	if nsn == "" {
+		return "" // not an email, not a usable phone — no match
+	}
+	return s.phoneToEmail(nsn)
+}
+
+// phoneToEmail finds the account email behind a normalised 10-digit national number.
+//
+// PostgREST cannot express "last 10 digits of a de-punctuated column", so the match is
+// done here: fetch the candidate rows whose stored phone ENDS in those digits (a
+// `like` PostgREST can index-assist), then confirm with the same normalisation the
+// caller used. Returns "" on no match or ambiguity — two accounts sharing a number is
+// a data problem, and guessing between them would sign somebody into the wrong account.
+func (s *authService) phoneToEmail(nsn string) string {
+	var rows []map[string]any
+	if err := s.supabase.REST(http.MethodGet, "user_profiles", map[string]string{
+		"phone":  "like.*" + nsn,
+		"select": "email,phone",
+		"limit":  "5",
+	}, nil, &rows); err != nil {
+		return ""
+	}
+	var found string
+	for _, r := range rows {
+		if NormalizePhone(asString(r["phone"])) != nsn {
+			continue
+		}
+		email := strings.ToLower(strings.TrimSpace(asString(r["email"])))
+		if email == "" {
+			continue
+		}
+		if found != "" && found != email {
+			return "" // ambiguous — refuse rather than pick
+		}
+		found = email
+	}
+	return found
+}
+
+// ErrEmailNotConfirmed means the credentials were CORRECT but the address has
+// not been verified yet.
+//
+// Safe to distinguish from a bad password, which is not obvious and was checked
+// against the live server before relying on it: Supabase returns
+// email_not_confirmed ONLY when the password is right. A wrong password on an
+// unconfirmed account, and an address with no account at all, both come back as
+// invalid_credentials. So this reveals nothing to someone who does not already
+// hold the password, and it is the only way to offer the user a route forward.
+var ErrEmailNotConfirmed = errors.New("email not confirmed")
+
 func (s *authService) LoginUser(in domain.LoginRequest) (map[string]any, error) {
-	email := strings.TrimSpace(strings.ToLower(in.Email))
+	email := s.resolveLoginEmail(in.Identifier, in.Email)
+	if email == "" {
+		// Same error the wrong-password path returns, deliberately: a distinct
+		// "no such account" would leak which phone numbers are registered.
+		return nil, fmt.Errorf("invalid credentials")
+	}
 	user, err := s.findPlatformUserByEmail(email)
 	if err == nil && user != nil {
 		if err := s.validateLoginStatus(user); err != nil {
@@ -93,6 +319,20 @@ func (s *authService) LoginUser(in domain.LoginRequest) (map[string]any, error) 
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode >= 400 {
+		errBody, _ := io.ReadAll(resp.Body)
+		var upstream struct {
+			ErrorCode string `json:"error_code"`
+		}
+		_ = json.Unmarshal(errBody, &upstream)
+
+		// The password was CORRECT — only verification is missing. Counting this as
+		// a failed attempt locks the account out after MaxFailedLoginAttempts for
+		// doing nothing wrong, and the user cannot escape it: every retry is
+		// another strike, and the thing they need to fix is not their password.
+		if upstream.ErrorCode == "email_not_confirmed" {
+			return nil, ErrEmailNotConfirmed
+		}
+
 		if user != nil {
 			_ = s.bumpFailedLogin(user)
 		}
@@ -102,6 +342,11 @@ func (s *authService) LoginUser(in domain.LoginRequest) (map[string]any, error) 
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
 		return nil, err
 	}
+	// The ACCOUNT email, which is not the same as what the caller sent — login
+	// accepts a phone number and resolves it server-side. A second factor has to
+	// be emailed to the resolved address, and the handler has no other way to
+	// learn it. Internal hint, stripped before the response leaves the handler.
+	out["__email"] = email
 	if user != nil {
 		_ = s.supabase.REST(http.MethodPatch, "platform_users", map[string]string{"id": "eq." + user.ID}, map[string]any{
 			"failed_login_attempts": 0,
@@ -137,8 +382,20 @@ func (s *authService) RequestPasswordReset(email string) error {
 		return err
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode >= 400 {
+
+	// A 4xx is EXPECTED and must stay quiet: Supabase answers this way for an
+	// address with no account, and the endpoint deliberately does not disclose
+	// whether one exists. Reporting it would turn the reset form into an account
+	// enumeration oracle.
+	if resp.StatusCode >= 400 && resp.StatusCode < 500 {
 		return nil
+	}
+	// A 5xx is NOT expected. It previously returned nil too, so an outage looked
+	// exactly like success: the user was told to check their email and no email
+	// was ever going to arrive. The caller still answers the user identically —
+	// this exists so the failure reaches the logs instead of vanishing.
+	if resp.StatusCode >= 500 {
+		return fmt.Errorf("password reset upstream returned %d", resp.StatusCode)
 	}
 	return nil
 }
@@ -148,21 +405,6 @@ func (s *authService) ResetPassword(token, password string) error {
 		return fmt.Errorf("invalid reset payload")
 	}
 	// Supabase reset completion is client-token based; backend keeps this endpoint for contract compatibility.
-	return nil
-}
-
-func (s *authService) VerifyEmailToken(token string) error {
-	if strings.TrimSpace(token) == "" {
-		return fmt.Errorf("token is required")
-	}
-	return nil
-}
-
-func (s *authService) ResendVerificationLink(email string) error {
-	if strings.TrimSpace(email) == "" {
-		return fmt.Errorf("email is required")
-	}
-	// Supabase handles re-sending verification links by signup/recovery configurations.
 	return nil
 }
 

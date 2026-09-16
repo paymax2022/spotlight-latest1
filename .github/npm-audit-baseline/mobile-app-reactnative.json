@@ -1,0 +1,19 @@
+{
+  "workspace": "mobile-app/reactnative",
+  "reviewed": "2026-09-08",
+  "why": "image-size is only fixable by a framework major upgrade — expo@57 + react-native@0.72 — which is a migration, not a patch. It's BUILD-TIME tooling reached through metro/expo (image-size parser DoS), not a runtime path an external caller reaches. Tracked for the framework-upgrade work; the gate fails on anything NOT listed here. postcss/decode-uri-component/@xmldom/xmldom/uuid were previously accepted here too, but are now forced to patched versions via package.json overrides (trivy findings #83-88) and removed from this list — a baselined entry that has disappeared fails the gate on purpose, so don't re-add them without re-verifying the override still resolves.",
+  "accepted": [
+    {
+      "package": "image-size",
+      "ghsa": "GHSA-5p2g-fcmc-qvqq",
+      "severity": "high",
+      "title": "image-size: JXL and HEIF parsers allow denial of service through infinite loops"
+    },
+    {
+      "package": "image-size",
+      "ghsa": "GHSA-w3rx-r6r6-pgpr",
+      "severity": "high",
+      "title": "image-size: ICNS parser allows denial of service through an infinite loop"
+    }
+  ]
+}

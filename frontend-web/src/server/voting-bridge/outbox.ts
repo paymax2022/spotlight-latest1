@@ -11,7 +11,12 @@ export type OutboxEventType =
   | 'votes.wallet.cast'
   | 'referral.triggered'
   | 'votes.analytics'
-  | 'leaderboard.updated';
+  | 'leaderboard.updated'
+  // Written by trg_connect_tally_follows_credit when a credited purchase could
+  // not be projected into connect_votes. Retried by handleTallySkipped below —
+  // without a handler these rows were an unread audit trail of buyers who paid
+  // and were shown nothing.
+  | 'votes.paid.tally_skipped';
 
 export interface OutboxEvent {
   id?: string;
@@ -161,7 +166,10 @@ async function handleOutboxEvent(event: OutboxEvent): Promise<boolean> {
       case 'leaderboard.updated':
         return await handleLeaderboardUpdated(event.payload);
 
-      default:
+      case 'votes.paid.tally_skipped':
+      return handleTallySkipped(event.payload);
+
+    default:
         console.warn(`[Outbox] Unknown event type: ${event.event_type}`);
         return false;
     }
@@ -252,4 +260,40 @@ export async function getPendingEventCount(): Promise<number> {
     console.error('[Outbox] getPendingEventCount error:', error);
     return 0;
   }
+}
+
+/**
+ * Re-attempt a projection the trigger could not make.
+ *
+ * Most reasons are permanent (a refunded purchase, a contestant on no roster) and
+ * must NOT be retried into existence — returning true marks them done so they stop
+ * cycling. Only a transient failure is worth another attempt, and the retry is the
+ * cheapest possible one: touch vote_credit_status so the trigger re-evaluates with
+ * the same idempotency key, which collapses if the row now exists.
+ */
+async function handleTallySkipped(payload: Record<string, any>): Promise<boolean> {
+  const terminal = new Set([
+    'recredit_after_refund',
+    'contestant_not_in_contest',
+    'contest_not_in_connect_plane',
+    'missing_voter',
+    'invalid_quantity',
+    'invalid_amount',
+  ]);
+  if (terminal.has(String(payload?.reason ?? ''))) return true;
+
+  const supabase = createAdminClient();
+  const { data } = await supabase
+    .from('connect_votes')
+    .select('id')
+    .eq('idempotency_key', `connect-tally:${payload?.paymentReference}`)
+    .maybeSingle();
+  if (data) return true;  // already projected — nothing to do
+
+  const { error } = await supabase
+    .from('vote_transactions')
+    .update({ vote_credit_status: 'credited' })
+    .eq('id', payload?.transactionId)
+    .eq('vote_credit_status', 'credited');
+  return !error;
 }

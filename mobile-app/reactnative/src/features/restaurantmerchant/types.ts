@@ -15,6 +15,12 @@ export interface MerchantStore {
   logoUrl?: string | null;
   isOpen: boolean;
   createdAt?: string;
+  /**
+   * Price of ONE takeaway pack, integer kobo. The platform seeds ₦200; the owner
+   * sets their own, and 0 is a legitimate choice meaning "I don't charge for
+   * packaging". Absent from an older payload reads as unknown, not as free.
+   */
+  packagingFeeKobo?: Kobo;
 }
 
 export interface MerchantMenuItem {
@@ -52,6 +58,9 @@ export interface UpdateStoreInput {
   description?: string;
   address?: string;
   logoUrl?: string;
+  /** Integer kobo per takeaway pack. 0 is a real value, so this is only omitted
+   *  when the owner is not changing the price. */
+  packagingFeeKobo?: Kobo;
 }
 
 export interface EarningsRun {
@@ -67,3 +76,53 @@ export interface MerchantEarnings {
   pendingKobo: Kobo;
   runs: EarningsRun[];
 }
+
+/**
+ * Per-outlet payout readiness — the capability↔KYB bridge (foodhub A17).
+ *
+ * The merchant capability lets a person trade; KYB lets an OUTLET be paid
+ * (payout runs select `kyb_status = 'approved'`, PY-007). They are separate on
+ * purpose — banking is per outlet — so this reports the join.
+ */
+export interface OutletPayoutReadiness {
+  restaurantId: string;
+  name: string;
+  /** 'none' when the outlet has no KYB record at all. */
+  kybStatus: string;
+  payable: boolean;
+  /** Owner-facing, empty when payable. */
+  reason?: string;
+  /** Settled earnings already held behind the gate, integer kobo. */
+  unpaidKobo: Kobo;
+}
+
+/** A member of one outlet's staff. */
+export interface StaffMember {
+  userId: string;
+  email?: string;
+  role: 'OWNER' | 'MANAGER' | 'CASHIER' | 'KITCHEN' | 'RIDER';
+  status: 'INVITED' | 'ACTIVE' | 'SUSPENDED' | 'REMOVED';
+  acceptedAt?: string | null;
+  createdAt?: string;
+}
+
+/**
+ * The one-time invite token.
+ *
+ * Only its hash is stored server-side, so this value is unrecoverable once the
+ * screen loses it. The UI must hand it over immediately rather than promise to
+ * show it again later.
+ */
+export interface StaffInvite {
+  userId: string;
+  role: StaffMember['role'];
+  token: string;
+}
+
+// UserLookup used to be declared here too, as { userId, ... } — a second
+// definition of the same name, disagreeing with the one in api.ts ({ user_id,
+// ... }, matching the Go handler's json:"user_id" tag exactly). Nothing ever
+// consumed this copy; useUserLookup's data flows from api.ts's lookupUser(),
+// so this one was dead except for a stray import in staff.tsx that happened
+// to reach for the wrong same-named type. Removed rather than fixed in place,
+// so the mistake can't be made again by importing from here. See api.ts.

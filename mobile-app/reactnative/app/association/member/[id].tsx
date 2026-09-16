@@ -38,6 +38,7 @@ export default function MemberDetail() {
 
   const m = member.data;
   const canContact = !m.contactRestricted && (m.phone || m.email);
+  const committees = m.committees ?? [];
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
@@ -65,11 +66,11 @@ export default function MemberDetail() {
         </View>
 
         {/* Committees */}
-        {m.committees.length > 0 ? (
+        {committees.length > 0 ? (
           <>
             <Text style={styles.sectionTitle}>Committees</Text>
             <View style={styles.chipRow}>
-              {m.committees.map((c) => (
+              {committees.map((c) => (
                 <View key={c} style={styles.committeeChip}><Text style={styles.committeeText}>{c}</Text></View>
               ))}
             </View>

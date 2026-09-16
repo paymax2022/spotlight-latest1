@@ -8,11 +8,13 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"spotlight/backend/internal/testsupport"
 )
 
 // TM-003 live-DB integration test for consent-gated consult recording.
 //
-// SKIPPED whenever TEST_DATABASE_URL / DATABASE_URL is unset (same env-gate as the
+// SKIPPED whenever TEST_DATABASE_URL is unset (same env-gate as the
 // FX / lab-amendment / rx-refills live-DB suites). Bring-up:
 //
 //	supabase start   # or any Postgres with the migrations applied
@@ -27,10 +29,7 @@ func recordingLivePool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
 	dsn := os.Getenv("TEST_DATABASE_URL")
 	if dsn == "" {
-		dsn = os.Getenv("DATABASE_URL")
-	}
-	if dsn == "" {
-		t.Skip("no TEST_DATABASE_URL/DATABASE_URL set — skipping live-DB consult recording test; see bring-up note in recording_live_db_test.go")
+		t.Skip("no TEST_DATABASE_URL set — skipping live-DB consult recording test; see bring-up note in recording_live_db_test.go")
 	}
 	pool, err := pgxpool.New(context.Background(), dsn)
 	if err != nil {
@@ -60,7 +59,9 @@ func TestRecordingConsent_LiveDB(t *testing.T) {
 		}
 	}
 	seed(`INSERT INTO auth.users (id, email) VALUES ($1,$2) ON CONFLICT DO NOTHING`, patientID, patientID+"@seed.test")
+	testsupport.CleanupUser(t, pool, patientID)
 	seed(`INSERT INTO auth.users (id, email) VALUES ($1,$2) ON CONFLICT DO NOTHING`, providerOwnerID, providerOwnerID+"@seed.test")
+	testsupport.CleanupUser(t, pool, providerOwnerID)
 	seed(`INSERT INTO public.health_providers (id, owner_user_id, domain, provider_type, display_name, status)
 	      VALUES ($1,$2,'PHARMACY','pharmacist','Seed Clinic','APPROVED')`, providerID, providerOwnerID)
 	seed(`INSERT INTO public.health_consults (id, provider_id, patient_id, state, recording_enabled)

@@ -3,6 +3,7 @@ import { View, Text, ScrollView, StyleSheet, Pressable, Platform, KeyboardAvoidi
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { alertAsync } from '@/lib/confirm';
 import { router, useLocalSearchParams } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import { Sparkles, RefreshCw } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Radius } from '@/constants/radius';
@@ -57,7 +58,7 @@ export default function AiNoteSummaryScreen() {
     try {
       await accept.mutateAsync({ appointmentId: apptId, output: draft, edited });
       await alertAsync({ title: 'Draft accepted', message: 'The summary has been saved to the consultation notes.', buttonLabel: 'Done' });
-      router.back();
+      goBack('/');
     } catch {
       alertAsync({ title: 'Failed', message: 'Could not save the draft. Please try again.' });
     }

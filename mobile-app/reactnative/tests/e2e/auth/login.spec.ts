@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { loginAs, mockAuth } from '../helpers/auth';
+import { loginAs, mockAuth, mockPinStatus, seedSession } from '../helpers/auth';
 import { mockWallet } from '../helpers/wallet';
 import { mockBillsCatalog } from '../helpers/bills';
 import { users } from '../helpers/testData';
@@ -45,28 +45,29 @@ test.describe('Auth E2E - Login flow', () => {
     await mockAuth(page);
     await mockWallet(page);
     await mockBillsCatalog(page);
+    await mockPinStatus(page, true);
 
-    // Simulate already-logged-in state by pre-seeding localStorage token
-    await page.goto('/login');
-    await page.evaluate((token) => {
-      localStorage.setItem('paymax_secure_access_token', token);
-    }, users.funded.accessToken);
+    // Simulate an already-logged-in state by pre-seeding the session, then land
+    // on /login. seedSession writes the key the app actually reads — the old
+    // 'paymax_secure_access_token' was consumed by nothing, so the app stayed
+    // signed out and this never exercised the redirect it claims to test.
+    await seedSession(page);
+    await page.goto('/login', { waitUntil: 'domcontentloaded' });
 
-    await page.reload();
-    // AuthGate should detect the token and redirect to home
+    // AuthGate should detect the session and redirect away from login to home.
     await expect(page.getByText('Explore Services')).toBeVisible({ timeout: 15_000 });
   });
 
-  test('401 on /auth/me clears session and redirects to login', async ({ page }) => {
+  test('a 401 from the API clears the session and redirects to login', async ({ page }) => {
     await mockWallet(page);
     await mockBillsCatalog(page);
     await loginAs(page);
 
-    // Now re-route /auth/me to fail (simulates session expiry)
-    await page.route('**/auth/me', async (route) => {
-      await route.fulfill({ status: 401, contentType: 'application/json', body: JSON.stringify({ code: 'UNAUTHORIZED' }) });
-    });
-    await page.route('**/dashboard', async (route) => {
+    // Simulate session expiry on a call the protected screen actually makes
+    // through the intercepted axios client (getWallet → /api/v1/wallet/balance).
+    // The old test 401'd /auth/me and /dashboard, which the app no longer calls
+    // at all, so nothing ever triggered the interceptor.
+    await page.route('**/api/v1/wallet/balance', async (route) => {
       await route.fulfill({ status: 401, contentType: 'application/json', body: JSON.stringify({ code: 'UNAUTHORIZED' }) });
     });
 

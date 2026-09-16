@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { ScrollView, View, Text, StyleSheet, KeyboardAvoidingView, Platform } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import { ShieldCheck } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
@@ -32,7 +33,7 @@ export default function AddCardScreen() {
     return (
       <SafeAreaView style={styles.safe} edges={['top']}>
         <ScreenHeader title="Card added" showBack={false} />
-        <StateView kind="empty" icon="CircleCheck" title="Card added securely" message="Your card has been tokenised and saved for faster contributions." actionLabel="Done" onAction={() => router.back()} />
+        <StateView kind="empty" icon="CircleCheck" title="Card added securely" message="Your card has been tokenised and saved for faster contributions." actionLabel="Done" onAction={() => goBack('/crowdfunding/settings')} />
       </SafeAreaView>
     );
   }

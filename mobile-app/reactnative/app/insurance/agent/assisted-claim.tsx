@@ -2,6 +2,7 @@ import React, { useMemo, useRef, useState } from 'react';
 import { View, Text, ScrollView, StyleSheet, Pressable } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import { ChevronRight, CircleCheck } from 'lucide-react-native';
 import ScreenHeader from '@/components/ScreenHeader';
 import StateView from '@/components/StateView';
@@ -49,7 +50,7 @@ export default function AssistedClaim() {
     return (
       <SafeAreaView style={styles.safe} edges={['top']}>
         <ScreenHeader title="Assisted claim" />
-        <StateView kind="error" title="Customer not found" actionLabel="Back" onAction={() => router.back()} />
+        <StateView kind="error" title="Customer not found" actionLabel="Back" onAction={() => goBack('/insurance')} />
       </SafeAreaView>
     );
   }

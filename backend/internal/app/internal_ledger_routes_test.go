@@ -10,7 +10,7 @@ package app
 //   (3) A balanceChecked overdraw is rejected 409 insufficient_funds (fail-closed).
 //   (4) The service-token guard rejects a missing / wrong Bearer token.
 //
-// SKIPPED whenever TEST_DATABASE_URL / DATABASE_URL is unset — the SAME gate the
+// SKIPPED whenever TEST_DATABASE_URL is unset — the SAME gate the
 // other finance/ledger live-DB tests use (see
 // backend/internal/referral/ledger/withdraw_integration_test.go). Point it at a
 // disposable, migrated Postgres — NEVER production. Every row is keyed by a fresh
@@ -35,6 +35,8 @@ import (
 
 	"spotlight/backend/internal/config"
 	financeledger "spotlight/backend/internal/finance/ledger"
+
+	"spotlight/backend/internal/testsupport"
 )
 
 const testServiceToken = "test-service-token-abc123"
@@ -43,10 +45,7 @@ func internalLedgerPool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
 	dsn := os.Getenv("TEST_DATABASE_URL")
 	if dsn == "" {
-		dsn = os.Getenv("DATABASE_URL")
-	}
-	if dsn == "" {
-		t.Skip("no TEST_DATABASE_URL/DATABASE_URL set — skipping internal ledger API live-DB test")
+		t.Skip("no TEST_DATABASE_URL set — skipping internal ledger API live-DB test")
 	}
 	pool, err := pgxpool.New(context.Background(), dsn)
 	if err != nil {
@@ -64,6 +63,7 @@ func seedAuthUser(t *testing.T, pool *pgxpool.Pool) string {
 		`INSERT INTO auth.users (id, email) VALUES ($1,$2)`, uid, "il-"+uid+"@test.local"); err != nil {
 		t.Fatalf("seed auth user: %v", err)
 	}
+	testsupport.CleanupUser(t, pool, uid)
 	return uid
 }
 
@@ -97,7 +97,7 @@ func postJournal(t *testing.T, r *gin.Engine, token string, body map[string]any)
 
 func TestInternalLedgerAPI_PostMovesBalance_Integration(t *testing.T) {
 	pool := internalLedgerPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	r, ledgerSvc := newInternalLedgerRouter(pool)
 	ctx := context.Background()
 
@@ -207,7 +207,7 @@ func TestInternalLedgerAPI_PostMovesBalance_Integration(t *testing.T) {
 // missing and a wrong token BEFORE any ledger mutation runs.
 func TestInternalLedgerAPI_ServiceTokenGuard_Integration(t *testing.T) {
 	pool := internalLedgerPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	r, _ := newInternalLedgerRouter(pool)
 	uid := seedAuthUser(t, pool)
 

@@ -20,6 +20,9 @@ max_size_bytes=$((max_size_mb * 1024 * 1024))
 blocked_pattern='(^|/)\.next/|(^|/)\.npm-cache/|(^|/)node_modules/|(^|/)\.DS_Store$|\.tsbuildinfo$|(^|/).*\.pem$|(^|/).*\.key$|(^|/).*\.p12$|(^|/).*\.pfx$|(^|/).*\.jks$|(^|/)id_rsa$|(^|/)id_dsa$'
 
 tmp_refs="$(mktemp)"
+tmp_objects="$(mktemp)"
+trap 'rm -f "$tmp_refs" "$tmp_objects" "${tmp_objects}.uniq" "${tmp_objects}.check"' EXIT
+
 cat >"$tmp_refs"
 
 if [[ ! -s "$tmp_refs" ]]; then
@@ -27,7 +30,6 @@ if [[ ! -s "$tmp_refs" ]]; then
 fi
 
 zero_sha="0000000000000000000000000000000000000000"
-tmp_objects="$(mktemp)"
 
 # For new-branch pushes, only scan objects the remote does not already have.
 # Prefer the pushing remote's tracking refs; fall back to all remotes.
@@ -45,6 +47,9 @@ while read -r local_ref local_sha remote_ref remote_sha; do
   fi
 
   if [[ "$remote_sha" == "$zero_sha" ]]; then
+    # New branch: only enumerate objects the remote does not already have.
+    # Without the negation this walks the full history (20k+ objects) on
+    # every new branch.
     git rev-list --objects "$local_sha" "${exclude_known[@]}" >>"$tmp_objects"
   else
     git rev-list --objects "${remote_sha}..${local_sha}" >>"$tmp_objects"
@@ -56,6 +61,12 @@ if [[ ! -s "$tmp_objects" ]]; then
 fi
 
 sort -u "$tmp_objects" >"${tmp_objects}.uniq"
+
+# One batched cat-file resolves type+size for every object; the previous
+# per-object `git cat-file -t` / `-s` spawned two processes per object,
+# which took >10 minutes for a full-history object list on macOS.
+git cat-file --batch-check='%(objecttype) %(objectsize) %(rest)' \
+  <"${tmp_objects}.uniq" >"${tmp_objects}.check"
 
 violations=0
 declare -a messages=()
@@ -85,7 +96,7 @@ while read -r obj_type obj_size path; do
     messages+=("large file: ${path} (${size_mb} MiB > ${max_size_mb} MiB limit)")
     violations=1
   fi
-done < <(git cat-file --batch-check='%(objecttype) %(objectsize) %(rest)' <"${tmp_objects}.uniq")
+done <"${tmp_objects}.check"
 
 if (( violations )); then
   echo "pre-push check failed:"

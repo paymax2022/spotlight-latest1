@@ -2,6 +2,7 @@ import React from 'react';
 import { View, Text, ScrollView, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import ScreenHeader from '@/components/ScreenHeader';
 import StateView from '@/components/StateView';
 import PrimaryButton from '@/components/PrimaryButton';
@@ -29,7 +30,7 @@ export default function PartnerInspectionUpload() {
     return (
       <SafeAreaView style={styles.safe} edges={['top']}>
         <ScreenHeader title="Inspection" />
-        <StateView kind="error" title="Couldn't load claim" actionLabel="Back" onAction={() => router.back()} />
+        <StateView kind="error" title="Couldn't load claim" actionLabel="Back" onAction={() => goBack('/insurance')} />
       </SafeAreaView>
     );
   }

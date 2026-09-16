@@ -4,6 +4,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import { ArrowLeft, Search, X, SlidersHorizontal } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
@@ -13,6 +14,7 @@ import { useContestants } from '@/features/voting/hooks/useContestants';
 import { useVotingRealtime } from '@/features/voting/hooks/useVotingRealtime';
 import { useContestDetails } from '@/features/voting/hooks/useContestDetails';
 import ContestantCard from '@/features/voting/components/ContestantCard';
+import { HomeMenuButton } from '@/components/HomeMenu';
 
 export default function ContestantGridScreen() {
   const { contestId } = useLocalSearchParams<{ contestId: string }>();
@@ -27,14 +29,14 @@ export default function ContestantGridScreen() {
     <SafeAreaView style={styles.safe} edges={['top']}>
       {/* Header */}
       <View style={styles.header}>
-        <Pressable onPress={() => router.back()} style={styles.backBtn}>
+        <Pressable onPress={() => goBack('/voting')} style={styles.backBtn}>
           <ArrowLeft size={22} color={Colors.onSurface} strokeWidth={2} />
         </Pressable>
         <View style={styles.titleBlock}>
           <Text style={styles.title}>Contestants</Text>
           {contest && <Text style={styles.subtitle} numberOfLines={1}>{contest.title}</Text>}
         </View>
-        <View style={{ width: 40 }} />
+        <HomeMenuButton />
       </View>
 
       {/* Search */}

@@ -1,6 +1,11 @@
 import { successResponse, handleApiError } from '@/src/lib/api/responses';
 import { assertAdminPermission } from '@/src/server/admin/auth';
-import { listRegistrationApplications } from '@/src/server/registration/store';
+// ADMIN CONSOLIDATION, slice 5 (see docs/adr/ADR-047): registration/store is
+// the in-memory version nothing real ever writes to — real applications live
+// in Supabase (registration/supabase-store). This route backs the Judges &
+// Scores console shipped over Path A in slice 4; it was scoring against an
+// applicant list that was always empty.
+import { listRegistrationApplications } from '@/src/server/registration/supabase-store';
 import { getScoreSummary, getScoredApplicationIds, getRubricForContest } from '@/src/server/services/scoring/store';
 
 export async function GET(request: Request) {
@@ -14,10 +19,10 @@ export async function GET(request: Request) {
     // Pull submitted/under-review/shortlisted applications eligible for judge scoring
     const SCOREABLE_STATUSES = ['submitted', 'under_review', 'shortlisted', 'callback_invited', 'approved'];
 
-    let apps = listRegistrationApplications({
+    let apps = (await listRegistrationApplications({
       contestSlug,
       status: statusFilter as never ?? undefined,
-    }).filter((a) => SCOREABLE_STATUSES.includes(a.status));
+    })).filter((a) => SCOREABLE_STATUSES.includes(a.status));
 
     if (query) {
       const q = query.toLowerCase();
@@ -28,10 +33,10 @@ export async function GET(request: Request) {
       });
     }
 
-    const scoredIds = getScoredApplicationIds();
+    const scoredIds = await getScoredApplicationIds();
 
-    const enriched = apps.map((a) => {
-      const summary = getScoreSummary(a.id);
+    const enriched = await Promise.all(apps.map(async (a) => {
+      const summary = await getScoreSummary(a.id);
       const rubric  = getRubricForContest(a.contestSlug);
       return {
         id:           a.id,
@@ -50,7 +55,7 @@ export async function GET(request: Request) {
         createdAt:    a.createdAt,
         updatedAt:    a.updatedAt,
       };
-    });
+    }));
 
     // Stats
     const total   = enriched.length;

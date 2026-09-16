@@ -10,13 +10,14 @@
 // mode the policy is enforced client-side (ai.mock.ts); in production the same
 // policy is enforced server-side and surfaced via the disclaimer flag.
 
+import { mockAllowed } from '@/config/mockPolicy';
 import { api } from '@/api/client';
 import { DISCLAIMER, REFUSAL } from '../constants/ai.constants';
 import { answerFor, explainAssetFor, isAdviceSeeking } from './ai.mock';
 import type { AskContext, ChatMessage } from '../types/ai.types';
 
 // ─── Feature flag: flip to false once real endpoints are ready ────────────────
-const USE_MOCK = (process.env.EXPO_PUBLIC_AI_USE_MOCK ?? 'true').toLowerCase() !== 'false';
+const USE_MOCK = mockAllowed(process.env.EXPO_PUBLIC_AI_USE_MOCK, true);
 
 /** Simulated network latency so the typing indicator renders in mock mode. */
 const delay = (ms = 700) => new Promise((r) => setTimeout(r, ms));

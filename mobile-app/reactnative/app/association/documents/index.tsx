@@ -2,7 +2,7 @@ import React, { useMemo, useState } from 'react';
 import { View, Text, FlatList, Pressable, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
-import { FileText, FileImage, Lock, ChevronRight, AlertCircle } from 'lucide-react-native';
+import { FileText, FileImage, Lock, ChevronRight, AlertCircle, Plus } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
 import { Spacing } from '@/constants/spacing';
@@ -12,12 +12,15 @@ import ScreenHeader from '@/components/ScreenHeader';
 import SearchBar from '@/components/SearchBar';
 import SegmentedControl from '@/components/SegmentedControl';
 import StateView from '@/components/StateView';
+import { useAdminAccess } from '@/features/association/hooks/useAdminMembers';
 import { useDocuments } from '@/features/association/hooks/useEngagement';
 import { formatDate } from '@/features/association/utils/associationFormatters';
 import { DOC_SEGMENTS, DOC_CATEGORY_LABEL } from '@/features/association/constants/engagement.constants';
 import type { DocumentSummary } from '@/features/association/types/engagement.types';
 
 export default function DocumentsVault() {
+  const access = useAdminAccess();
+  const isAdmin = Boolean(access.data?.isAdmin);
   const docs = useDocuments();
   const [search, setSearch] = useState('');
   const [cat, setCat] = useState<string>('all');
@@ -58,6 +61,16 @@ export default function DocumentsVault() {
           renderItem={({ item }) => <DocRow doc={item} />}
         />
       )}
+      {isAdmin ? (
+        <Pressable
+          style={styles.fab}
+          onPress={() => router.push('/association/documents/new')}
+          accessibilityRole="button"
+          accessibilityLabel="Upload document"
+        >
+          <Plus size={22} color={Colors.onPrimary} strokeWidth={2.6} />
+        </Pressable>
+      ) : null}
     </SafeAreaView>
   );
 }
@@ -92,6 +105,11 @@ function DocRow({ doc: d }: { doc: DocumentSummary }) {
 }
 
 const styles = StyleSheet.create({
+  fab: {
+    position: 'absolute', right: Spacing.containerMargin, bottom: Spacing.xl,
+    width: 52, height: 52, borderRadius: Radius.full, backgroundColor: Colors.primary,
+    alignItems: 'center', justifyContent: 'center',
+  },
   safe: { flex: 1, backgroundColor: Colors.background },
   searchWrap: { paddingTop: Spacing.sm, paddingBottom: Spacing.sm },
   segWrap: { paddingBottom: Spacing.sm },

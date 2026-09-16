@@ -115,6 +115,9 @@ type Order struct {
 	EscrowID           *string          `json:"escrow_id,omitempty"`
 	DeliveryRef        *string          `json:"delivery_ref,omitempty"`    // transport last-mile ref
 	PickupCode         *string          `json:"pickup_code,omitempty"`     // pickup QR/code credential
+	DeliveryAddress    *string          `json:"delivery_address,omitempty"` // patient-supplied dropoff (DELIVERY only)
+	DeliveryLat        *float64         `json:"delivery_lat,omitempty"`
+	DeliveryLng        *float64         `json:"delivery_lng,omitempty"`
 	SearchEventID      *string          `json:"search_event_id,omitempty"` // originating symptom search (PRD §10)
 	IdempotencyKey     string           `json:"idempotency_key"`
 	Lines              []OrderLine      `json:"lines,omitempty"`
@@ -250,4 +253,21 @@ type PharmacyReview struct {
 	Rating             int       `json:"rating"`
 	Body               string    `json:"body"`
 	CreatedAt          time.Time `json:"created_at"`
+}
+
+// PharmacyEarnings is the owner's money view for their pharmacies.
+//
+// Sourced from escrow_holds, not from order workflow states: an order can look
+// finished by a path that never released funds (cancelled, refunded), and a
+// number shown to a merchant must not be a guess about a lifecycle.
+type PharmacyEarnings struct {
+	// ReleasedKobo is what has actually reached the owner. escrow.Release credits
+	// the payee the FULL held amount — commission is recorded separately in the
+	// profit registry, not deducted — so this is exact, not an estimate.
+	ReleasedKobo int64 `json:"released_kobo"`
+	// HeldKobo is customer money still in escrow: paid, not yet released. The
+	// pharmacist's lever on it is completing the order.
+	HeldKobo int64 `json:"held_kobo"`
+	// OrdersPaid counts released orders, so the figure above can be read per order.
+	OrdersPaid int `json:"orders_paid"`
 }

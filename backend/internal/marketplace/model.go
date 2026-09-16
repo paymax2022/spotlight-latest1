@@ -51,7 +51,7 @@ const (
 	DisputeAppealed       DisputeStatus = "appealed"
 )
 
-// BoostStatus: purchased,active,completed,rejected_with_reason,auto_refunded
+// BoostStatus: purchased,active,completed,rejected_with_reason,cancelled_by_seller,auto_refunded
 type BoostStatus string
 
 const (
@@ -59,7 +59,12 @@ const (
 	BoostActive             BoostStatus = "active"
 	BoostCompleted          BoostStatus = "completed"
 	BoostRejectedWithReason BoostStatus = "rejected_with_reason"
-	BoostAutoRefunded       BoostStatus = "auto_refunded"
+	// BoostCancelledBySeller is the seller-initiated counterpart to
+	// BoostRejectedWithReason (admin, policy violation, mandatory reason code) —
+	// same "stop an active boost early" shape, same auto_refunded destination,
+	// but the seller chose to stop it, not a moderator.
+	BoostCancelledBySeller BoostStatus = "cancelled_by_seller"
+	BoostAutoRefunded      BoostStatus = "auto_refunded"
 )
 
 // KYCTier: tier0_browse,tier1_buy,tier2_sell,tier3_business
@@ -131,7 +136,36 @@ type Listing struct {
 	UpdatedAt            time.Time      `json:"updated_at"`
 	ExpiresAt            time.Time      `json:"expires_at"`
 	SoldAt               *time.Time     `json:"sold_at,omitempty"`
-	Version              int            `json:"-"` // optimistic-lock companion (mkt_listings not shown; additive)
+	// ThumbURL is a short-lived presigned GET for the listing's first photo, or
+	// "" when it has none. The mobile ListingCard reads `thumbUrl` and has always
+	// expected it; nothing ever populated it, which is why every card fell back to
+	// a placeholder. Not a column — attached by Service.attachThumbs from
+	// mkt_listing_media, because the objects live in a PRIVATE R2 bucket and a raw
+	// object key is not fetchable by the client.
+	ThumbURL string `json:"thumb_url,omitempty"`
+	// Media is the full photo gallery for the LISTING DETAIL screen only (never
+	// populated on search/list results — those need one card thumbnail, not a
+	// whole gallery's worth of presigned URLs per row). The mobile detail screen
+	// (app/marketplace/listing/[id].tsx) has always read `media` expecting this
+	// shape; nothing on the backend ever populated it, so the gallery always
+	// rendered its zero-photos placeholder even once ThumbURL started working
+	// for cards. Attached by Service.attachFullMedia from mkt_listing_media.
+	Media   []ListingMediaItem `json:"media,omitempty"`
+	Version int                `json:"-"` // optimistic-lock companion (mkt_listings not shown; additive)
+}
+
+// ListingMediaItem is one presigned photo on a listing's detail gallery.
+// url_thumb/url_card/url_full are the same underlying object today (see
+// InsertListingMedia) — each is presigned from that one key rather than
+// signed three times, since a later derivative pipeline can only ever make
+// the three diverge, never require three separate reads now.
+type ListingMediaItem struct {
+	ID        string `json:"id"`
+	URLThumb  string `json:"url_thumb"`
+	URLCard   string `json:"url_card"`
+	URLFull   string `json:"url_full"`
+	Blurhash  string `json:"blurhash"`
+	SortOrder int    `json:"sort_order"`
 }
 
 // Order mirrors mkt_orders (the critical-path escrow row).
@@ -191,17 +225,64 @@ type Boost struct {
 	Tier                string      `json:"tier"`
 	DurationDays        int         `json:"duration_days"`
 	PriceKobo           int64       `json:"price_kobo"`
+	Weight              float64     `json:"weight"`
 	LedgerChargeRef     string      `json:"ledger_charge_ref"`
 	Status              BoostStatus `json:"status"`
 	RejectionReasonCode *string     `json:"rejection_reason_code,omitempty"`
 	RefundRef           *string     `json:"refund_ref,omitempty"`
+	// RefundedKobo is the ACTUAL amount refunded, set only once a refund has
+	// posted. Not always PriceKobo: RejectBoost (admin) refunds in full, but
+	// CancelBoost (seller) prorates for the unused days — the client must read
+	// this, not assume PriceKobo, once Status is BoostAutoRefunded.
+	RefundedKobo *int64 `json:"refunded_kobo,omitempty"`
 	StartsAt            *time.Time  `json:"starts_at,omitempty"`
 	EndsAt              *time.Time  `json:"ends_at,omitempty"`
 	CreatedAt           time.Time   `json:"created_at"`
 }
 
-// Offer mirrors mkt_offers. JSON is camelCase to match the mobile Offer type
-// (src/features/marketplace/types.ts) — the only consumer of this shape.
+// BoostPackage mirrors mkt_boost_packages — the admin-editable catalog of
+// preset boost tiers (ADM-002/MO-002). Mirrors frontend-admin's MktBoostPackage
+// (types/marketplaceAdmin.ts) field-for-field so the pricing console renders
+// the backend response unchanged.
+type BoostPackage struct {
+	Tier         string     `json:"tier"`
+	Label        string     `json:"label"`
+	DurationDays int        `json:"duration_days"`
+	PriceKobo    int64      `json:"price_kobo"`
+	Weight       float64    `json:"weight"`
+	IsActive     bool       `json:"is_active"`
+	UpdatedAt    *time.Time `json:"updated_at,omitempty"`
+	UpdatedBy    *string    `json:"updated_by,omitempty"`
+	CreatedAt    *time.Time `json:"created_at,omitempty"`
+}
+
+// BoostDailyRate mirrors mkt_boost_daily_rate — the single admin-set ₦/day
+// rate used to price a custom (non-package) date-range boost.
+type BoostDailyRate struct {
+	DailyRateKobo int64      `json:"daily_rate_kobo"`
+	UpdatedAt     *time.Time `json:"updated_at,omitempty"`
+	UpdatedBy     *string    `json:"updated_by,omitempty"`
+}
+
+// BoostQuote is the authoritative, server-computed price for a would-be boost
+// purchase — returned by both GET /boosts/quote (preview) and internally by
+// PurchaseBoost, from the SAME ComputeBoostQuote call, so the two can never
+// price the same request differently.
+type BoostQuote struct {
+	Mode         string    `json:"mode"` // "package" | "custom"
+	Tier         string    `json:"tier,omitempty"`
+	DurationDays int       `json:"duration_days"`
+	PriceKobo    int64     `json:"price_kobo"`
+	Weight       float64   `json:"weight"`
+	StartsAt     time.Time `json:"starts_at"`
+	EndsAt       time.Time `json:"ends_at"`
+}
+
+// Offer mirrors mkt_offers. RESPONSE JSON is camelCase, which is harmless: the
+// mobile client deep-camels every response, so either casing arrives correctly.
+// Do NOT copy this casing onto a REQUEST struct — the same client deep-SNAKES
+// every outbound body, so a camelCase request field can never be populated.
+// Doing exactly that silently broke offers/counter/threads (see handler.go).
 type Offer struct {
 	ID             string    `json:"id"`
 	ListingID      string    `json:"listingId"`
@@ -240,11 +321,17 @@ type SavedSearch struct {
 
 // Category mirrors mkt_categories (subset consumed by the API).
 type Category struct {
-	ID              string          `json:"id"`
-	MarketID        string          `json:"market_id"`
-	ParentID        *string         `json:"parent_id,omitempty"`
-	Slug            string          `json:"slug"`
-	Name            string          `json:"name"`
+	ID       string  `json:"id"`
+	MarketID string  `json:"market_id"`
+	ParentID *string `json:"parent_id,omitempty"`
+	Slug     string  `json:"slug"`
+	Name     string  `json:"name"`
+	// Icon is a LUCIDE ICON NAME (e.g. "Car"), not a URL or a glyph: the client
+	// renders it as Icons[icon]. Empty means the client's Package fallback.
+	Icon string `json:"icon,omitempty"`
+	// SortOrder places a category within its parent. Ordering by name alone put
+	// Agriculture first and buried Vehicles and Property mid-alphabet.
+	SortOrder       int             `json:"sort_order"`
 	AttributeSchema json.RawMessage `json:"attribute_schema"`
 	RiskTier        int             `json:"risk_tier"`
 	CommissionBps   int             `json:"commission_bps"`
@@ -342,10 +429,14 @@ type UpdateListingInput struct {
 	Attrs       map[string]any `json:"attrs,omitempty"`
 }
 
-// CreateBoostInput is the purchase-boost request body (§2.4).
+// CreateBoostInput is the purchase-boost request body (§2.4). Exactly ONE of
+// Tier (a preset package) or EndsAt (a custom date-range boost, priced by the
+// admin-set ₦/day rate) is expected — ComputeBoostQuote is the single place
+// that resolves and validates which.
 type CreateBoostInput struct {
-	ListingID string `json:"listing_id"`
-	Tier      string `json:"tier"`
+	ListingID string     `json:"listing_id"`
+	Tier      string     `json:"tier,omitempty"`
+	EndsAt    *time.Time `json:"ends_at,omitempty"`
 }
 
 // DecideDisputeInput is the admin dispute-decision body (§6.3).

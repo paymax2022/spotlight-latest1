@@ -6,10 +6,11 @@ import {
   getAnnouncements, getAnnouncement, acknowledgeAnnouncement,
   getNotifications, markNotificationsRead,
   getMeetings, getMeeting, rsvpMeeting, checkInMeeting,
+  proposeMeeting, getPendingMeetings, decideMeeting,
   getTasks, getTask, updateTaskStatus,
   getDocuments, getDocument, acknowledgeDocument,
 } from '../api/engagement.api';
-import type { RsvpStatus, TaskScope, TaskStatus } from '../types/engagement.types';
+import type { RsvpStatus, TaskScope, TaskStatus, MeetingProposalInput } from '../types/engagement.types';
 
 const KEY = 'association';
 
@@ -56,6 +57,38 @@ export function useRsvpMeeting() {
     mutationFn: ({ id, status }: { id: string; status: RsvpStatus }) => rsvpMeeting(id, status),
     onSuccess: (_d, { id }) => {
       qc.invalidateQueries({ queryKey: [KEY, 'meeting', id] });
+      qc.invalidateQueries({ queryKey: [KEY, 'meetings'] });
+    },
+  });
+}
+export function useProposeMeeting() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: MeetingProposalInput) => proposeMeeting(input),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: [KEY, 'meetings'] });
+      // An admin's own proposal is approved on insert and leaves the queue
+      // untouched; a member's adds to it. Invalidating both covers either.
+      qc.invalidateQueries({ queryKey: [KEY, 'pendingMeetings'] });
+    },
+  });
+}
+export function usePendingMeetings(orgId?: string) {
+  return useQuery({
+    queryKey: [KEY, 'pendingMeetings', orgId],
+    queryFn: () => getPendingMeetings(orgId as string),
+    enabled: Boolean(orgId),
+    staleTime: 15_000,
+  });
+}
+export function useDecideMeeting() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, approve, note }: { id: string; approve: boolean; note?: string }) =>
+      decideMeeting(id, approve, note),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: [KEY, 'pendingMeetings'] });
+      // An approval puts the meeting on the calendar, so the list changes too.
       qc.invalidateQueries({ queryKey: [KEY, 'meetings'] });
     },
   });

@@ -52,7 +52,13 @@ export default function AiNoteReview() {
   const n = note.data;
   const liveStatus: AiNoteStatus = publish.isSuccess ? 'PUBLISHED' : approve.isSuccess ? 'APPROVED' : n.status;
   const st = AI_STATUS_STYLE[liveStatus];
-  const summary = summaryDraft ?? n.summary;
+  const summary = summaryDraft ?? n.summary ?? '';
+  // Every collection is optional on the live DTO (and empty while PROCESSING).
+  const unresolved = n.unresolved ?? [];
+  const financialCommitments = n.financialCommitments ?? [];
+  const decisions = n.decisions ?? [];
+  const actionItems = n.actionItems ?? [];
+  const attendees = n.attendees ?? [];
   const canApprove = liveStatus === 'READY';
   const canPublish = liveStatus === 'APPROVED';
 
@@ -105,7 +111,7 @@ export default function AiNoteReview() {
               <Sparkles size={15} color={Colors.primary} strokeWidth={2} />
               <Text style={styles.cardTitle}>Executive summary</Text>
               <Pressable
-                onPress={() => regen.mutate(n.id, { onSuccess: (r) => { setSummaryDraft(r.summary); setEditing(false); } })}
+                onPress={() => regen.mutate(n.id, { onSuccess: () => { setSummaryDraft(null); setEditing(false); } })}
                 hitSlop={8}
                 disabled={regen.isPending}
                 accessibilityLabel="Regenerate summary"
@@ -129,18 +135,18 @@ export default function AiNoteReview() {
             ) : (
               <Text style={styles.body}>{summary}</Text>
             )}
-            {n.unresolved.length > 0 ? (
+            {unresolved.length > 0 ? (
               <>
                 <Text style={styles.subHead}>Unresolved</Text>
-                {n.unresolved.map((u, i) => (
+                {unresolved.map((u, i) => (
                   <View key={i} style={styles.bulletRow}><AlertCircle size={14} color={Colors.gold} strokeWidth={2} /><Text style={styles.bulletText}>{u}</Text></View>
                 ))}
               </>
             ) : null}
-            {n.financialCommitments.length > 0 ? (
+            {financialCommitments.length > 0 ? (
               <>
                 <Text style={styles.subHead}>Financial commitments</Text>
-                {n.financialCommitments.map((f) => (
+                {financialCommitments.map((f) => (
                   <View key={f.id} style={styles.finRow}>
                     <Wallet size={14} color={Colors.teal} strokeWidth={2} />
                     <Text style={styles.bulletText}>{f.label}</Text>
@@ -160,7 +166,8 @@ export default function AiNoteReview() {
 
         {tab === 'decisions' ? (
           <View style={styles.gap8}>
-            {n.decisions.map((d) => (
+            {decisions.length === 0 ? <Text style={styles.emptyText}>No decisions were extracted.</Text> : null}
+            {decisions.map((d) => (
               <View key={d.id} style={[styles.itemCard, shadow1]}>
                 <Gavel size={16} color={Colors.primary} strokeWidth={2} />
                 <Text style={styles.itemText}>{d.text}</Text>
@@ -171,7 +178,8 @@ export default function AiNoteReview() {
 
         {tab === 'actions' ? (
           <View style={styles.gap8}>
-            {n.actionItems.map((a) => {
+            {actionItems.length === 0 ? <Text style={styles.emptyText}>No action items were extracted.</Text> : null}
+            {actionItems.map((a) => {
               const isConverted = a.convertedTaskId != null || converted[a.id];
               return (
                 <View key={a.id} style={[styles.itemCard, shadow1]}>
@@ -198,9 +206,9 @@ export default function AiNoteReview() {
           <View style={[styles.card, shadow1]}>
             <View style={styles.cardHead}>
               <Users size={15} color={Colors.primary} strokeWidth={2} />
-              <Text style={styles.cardTitle}>Attendance ({n.attendees.filter((a) => a.present).length}/{n.attendees.length})</Text>
+              <Text style={styles.cardTitle}>Attendance ({attendees.filter((a) => a.present).length}/{attendees.length})</Text>
             </View>
-            {n.attendees.map((a) => (
+            {attendees.map((a) => (
               <View key={a.id} style={styles.attRow}>
                 <View style={[styles.attDot, { backgroundColor: a.present ? Colors.teal : Colors.outline }]} />
                 <Text style={styles.attName}>{a.name}</Text>
@@ -208,7 +216,7 @@ export default function AiNoteReview() {
               </View>
             ))}
             <Text style={styles.subHead}>Transcript preview</Text>
-            <Text style={styles.transcript}>{n.transcriptPreview}</Text>
+            <Text style={styles.transcript}>{n.transcriptPreview ?? 'No transcript preview available.'}</Text>
           </View>
         ) : null}
       </ScrollView>
@@ -273,6 +281,7 @@ const styles = StyleSheet.create({
   attName: { ...Typography.bodyMd, color: Colors.onSurface, flex: 1 },
   attStatus: { ...Typography.labelSm },
   transcript: { ...Typography.bodySm, color: Colors.onSurfaceVariant, fontStyle: 'italic' },
+  emptyText: { ...Typography.bodySm, color: Colors.onSurfaceVariant },
   footer: { paddingHorizontal: Spacing.containerMargin, paddingTop: Spacing.sm, paddingBottom: Spacing.lg, backgroundColor: Colors.background, borderTopWidth: 1, borderTopColor: Colors.outlineVariant },
   footerBtns: { flexDirection: 'row', gap: Spacing.sm },
   footerBtn: { flex: 1 },

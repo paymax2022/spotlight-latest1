@@ -16,6 +16,10 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { View, Text, ScrollView, StyleSheet, Pressable, TextInput, Image, Switch } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
+// Aliased: this screen already has a local `goBack` that steps back through
+// the wizard. Without the alias my call sites resolved to THAT function and
+// recursed into it with an argument it does not take.
+import { goBack as leaveScreen } from '@/lib/navigation';
 import * as ImagePicker from 'expo-image-picker';
 import { ArrowLeft, Camera, ImagePlus, CheckCircle2, ShieldCheck, Truck, MapPin, Handshake } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
@@ -33,19 +37,24 @@ import type { ListingCondition, DeliveryOption } from '@/features/marketplace';
 import { aiPrefill, estimateFairPriceBand, uploadListingImage, isEscrowEligibleCategory } from '@/features/marketplace/api/sell.api';
 import type { AiPrefillResult } from '@/features/marketplace/api/sell.api';
 import { useSellCategories, useSellCategory, useCreateListing, useSubmitListing } from '@/features/marketplace/sell.hooks';
-import PhotoStrip, { type ComposerPhoto } from '@/features/marketplace/components/sell/PhotoStrip';
+import { mainCategories, subcategoriesOf, breadcrumb } from '@/features/marketplace/categoryTree';
+import PhotoStrip, { type ComposerPhoto, extensionForMime } from '@/features/marketplace/components/sell/PhotoStrip';
 import AiPrefillCard from '@/features/marketplace/components/sell/AiPrefillCard';
 import ComposerValidation, { checkBannedPatterns, countWords } from '@/features/marketplace/components/sell/ComposerValidation';
 import AttributeFields, { normalizeSchema, missingRequired } from '@/features/marketplace/components/sell/AttributeFields';
 import FairPriceMeter from '@/features/marketplace/components/sell/FairPriceMeter';
 import { confirmAsync, alertAsync } from '@/lib/confirm';
+import { HomeMenuButton } from '@/components/HomeMenu';
 
 function track(event: string, props: Record<string, unknown>) {
   if (__DEV__) console.log(`[analytics] ${event}`, props);
 }
 
 type Step = 'capture' | 'composer' | 'attributes' | 'price' | 'preview';
-const CONDITIONS: ListingCondition[] = ['new', 'foreign_used', 'local_used', 'used', 'refurbished'];
+// "Foreign used" (Tokunbo) vs "local used" is a Vehicles-specific distinction —
+// every other category just needs a plain new/used/refurbished split.
+const VEHICLE_CONDITIONS: ListingCondition[] = ['new', 'foreign_used', 'local_used'];
+const DEFAULT_CONDITIONS: ListingCondition[] = ['new', 'used', 'refurbished'];
 const DELIVERY_OPTIONS: Array<{ key: DeliveryOption | 'seller_arranged'; label: string; icon: React.ComponentType<{ size?: number; color?: string }> }> = [
   { key: 'pickup', label: 'Pickup', icon: MapPin },
   { key: 'rider_delivery', label: 'Paymax logistics', icon: Truck },
@@ -80,6 +89,14 @@ export default function SellWizard() {
   const [aiDismissed, setAiDismissed] = useState(false);
 
   const categoriesQuery = useSellCategories();
+  // Two-step picker. One flat row of every category was 84 chips deep once the
+  // taxonomy gained subcategories, and — worse — it let a seller file a listing
+  // against a MAIN category. Nothing lives in a main: browsing one searches its
+  // descendants, so a listing parked on the main itself would be invisible in
+  // every subcategory and turn up only on the main's own page.
+  const [mainId, setMainId] = useState('');
+  const mains = mainCategories(categoriesQuery.data);
+  const subs = subcategoriesOf(categoriesQuery.data, mainId);
   const categoryQuery = useSellCategory(categoryId);
   const createListing = useCreateListing();
   const submitListing = useSubmitListing();
@@ -100,6 +117,21 @@ export default function SellWizard() {
     if (categoryId) setEscrowReady(isEscrowEligibleCategory(categoryId));
   }, [categoryId]);
 
+  // "Foreign used" / "local used" only make sense for Vehicles — the category's
+  // root ancestor, since a listing is filed against a leaf subcategory (e.g.
+  // "Cars"), not against "Vehicles" itself.
+  const isVehicleCategory = categoryId
+    ? breadcrumb(categoriesQuery.data, categoryId)[0]?.slug === 'vehicles'
+    : false;
+  const conditions = isVehicleCategory ? VEHICLE_CONDITIONS : DEFAULT_CONDITIONS;
+
+  // Clamp the selected condition whenever the category swaps in/out of Vehicles,
+  // so a "Local used" pick from a prior vehicle category can't survive onto a
+  // listing in a category where it isn't a valid option (or vice versa).
+  useEffect(() => {
+    setCondition((prev) => (conditions.includes(prev) ? prev : conditions[0]));
+  }, [conditions]);
+
   // ── Live validation (composer step) ──
   const bannedMatches = useMemo(() => checkBannedPatterns(`${title} ${description}`), [title, description]);
   const wordCount = countWords(description);
@@ -117,7 +149,7 @@ export default function SellWizard() {
     wordCount >= minWords &&
     bannedMatches.length === 0 &&
     !hasDuplicatePhoto &&
-    title.trim().length >= 6 &&
+    title.trim().length >= 1 &&
     !!categoryId;
 
   const requiredMissing = missingRequired(schema, attrs);
@@ -154,6 +186,12 @@ export default function SellWizard() {
       uri: a.uri,
       phash: phashOf(a.uri),
       uploading: true,
+      // A camera capture or gallery pick is not always a JPEG — screenshots and
+      // some Android gallery sources are PNG. Presigning/uploading with the
+      // WRONG declared type stores real PNG bytes under a .jpg key with
+      // Content-Type: image/jpeg, which native Image decoders (unlike browsers)
+      // fail to render even though the object fetches fine.
+      mimeType: a.mimeType || 'image/jpeg',
     }));
     setPhotos((prev) => [...prev, ...added]);
     track('composer_photo_captured', { count: added.length, via: fromCamera ? 'camera' : 'gallery' });
@@ -167,7 +205,8 @@ export default function SellWizard() {
     // Upload each picked photo (presign → PUT). Non-blocking; the composer works
     // while uploads run, and Publish waits for fileUrls.
     for (const p of added) {
-      uploadListingImage({ uri: p.uri, name: `${p.id}.jpg`, mimeType: 'image/jpeg' })
+      const mimeType = p.mimeType || 'image/jpeg';
+      uploadListingImage({ uri: p.uri, name: `${p.id}.${extensionForMime(mimeType)}`, mimeType })
         .then((fileUrl) => setPhotos((prev) => prev.map((x) => (x.id === p.id ? { ...x, uploading: false, fileUrl } : x))))
         .catch(() => setPhotos((prev) => prev.map((x) => (x.id === p.id ? { ...x, uploading: false } : x))));
     }
@@ -238,7 +277,7 @@ export default function SellWizard() {
   const goBack = () => {
     const order: Step[] = ['capture', 'composer', 'attributes', 'price', 'preview'];
     const i = order.indexOf(step);
-    if (i <= 0) { router.back(); return; }
+    if (i <= 0) { leaveScreen('/marketplace/sell'); return; }
     setStep(order[i - 1]);
   };
 
@@ -251,7 +290,7 @@ export default function SellWizard() {
           <ArrowLeft size={22} color={Colors.onSurface} />
         </Pressable>
         <Text style={styles.headerTitle}>{HEADER_TITLE[step]}</Text>
-        <View style={styles.iconBtn} />
+        <HomeMenuButton />
       </View>
       <StepBar step={step} />
 
@@ -278,16 +317,42 @@ export default function SellWizard() {
 
               <Text style={styles.label}>Category</Text>
               <View style={styles.chipRow}>
-                {(categoriesQuery.data ?? []).map((c) => (
-                  <Pressable key={c.id} style={[styles.chip, categoryId === c.id && styles.chipActive]} onPress={() => setCategoryId(c.id)}>
-                    <Text style={[styles.chipText, categoryId === c.id && styles.chipTextActive]}>{c.name}</Text>
-                  </Pressable>
-                ))}
+                {mains.map((c) => {
+                  const children = subcategoriesOf(categoriesQuery.data, c.id);
+                  const selected = mainId === c.id;
+                  return (
+                    <Pressable
+                      key={c.id}
+                      style={[styles.chip, selected && styles.chipActive]}
+                      onPress={() => {
+                        setMainId(c.id);
+                        // A main with no children IS the leaf, so it is a valid
+                        // choice; one with children is only a step on the way.
+                        setCategoryId(children.length === 0 ? c.id : '');
+                      }}
+                    >
+                      <Text style={[styles.chipText, selected && styles.chipTextActive]}>{c.name}</Text>
+                    </Pressable>
+                  );
+                })}
               </View>
+
+              {subs.length > 0 ? (
+                <>
+                  <Text style={styles.label}>Subcategory</Text>
+                  <View style={styles.chipRow}>
+                    {subs.map((c) => (
+                      <Pressable key={c.id} style={[styles.chip, categoryId === c.id && styles.chipActive]} onPress={() => setCategoryId(c.id)}>
+                        <Text style={[styles.chipText, categoryId === c.id && styles.chipTextActive]}>{c.name}</Text>
+                      </Pressable>
+                    ))}
+                  </View>
+                </>
+              ) : null}
 
               <Text style={styles.label}>Condition</Text>
               <View style={styles.chipRow}>
-                {CONDITIONS.map((c) => (
+                {conditions.map((c) => (
                   <Pressable key={c} style={[styles.chip, condition === c && styles.chipActive]} onPress={() => setCondition(c)}>
                     <Text style={[styles.chipText, condition === c && styles.chipTextActive]}>{conditionLabel(c)}</Text>
                   </Pressable>

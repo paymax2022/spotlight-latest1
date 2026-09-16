@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { View, Text, ScrollView, StyleSheet, Pressable, Platform, KeyboardAvoidingView } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import { FlaskConical, ChevronRight } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Radius } from '@/constants/radius';
@@ -59,7 +60,7 @@ export default function PetLabOrderScreen() {
     try {
       const result = await create.mutateAsync({ petId, testIds, clinicalNote, priority });
       await alertAsync({ title: 'Lab order created', message: `${result.ref} has been sent to the lab.`, buttonLabel: 'Done' });
-      router.back();
+      goBack('/vet');
     } catch {
       alertAsync({ title: 'Failed', message: 'Could not create the lab order. Please try again.' });
     }

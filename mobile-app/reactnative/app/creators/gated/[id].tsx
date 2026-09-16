@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { View, Text, ScrollView, StyleSheet, Pressable } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import { ArrowLeft, Lock, Play, ShieldAlert, Eye } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
@@ -12,6 +13,7 @@ import PrimaryButton from '@/components/PrimaryButton';
 import { PaymentSheet, usePurchasePayment } from '@/features/payments';
 import { useContent, useUnlockContent } from '@/features/creators/hooks';
 import { CreatorsColors, formatNaira, NL11_AGE_GATE_NOTICE } from '@/features/creators/constants/creators.constants';
+import { HomeMenuButton } from '@/components/HomeMenu';
 
 export default function GatedViewer() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -43,9 +45,9 @@ export default function GatedViewer() {
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
       <View style={styles.header}>
-        <Pressable onPress={() => router.back()} hitSlop={10} style={styles.iconBtn} accessibilityLabel="Go back"><ArrowLeft size={22} color={Colors.onSurface} /></Pressable>
+        <Pressable onPress={() => goBack('/creators')} hitSlop={10} style={styles.iconBtn} accessibilityLabel="Go back"><ArrowLeft size={22} color={Colors.onSurface} /></Pressable>
         <Text style={styles.headerTitle} numberOfLines={1}>{item?.title ?? 'Content'}</Text>
-        <View style={styles.iconBtn} />
+        <HomeMenuButton />
       </View>
 
       {content.isLoading ? (
@@ -61,7 +63,7 @@ export default function GatedViewer() {
               <Text style={styles.gateTitle}>18+ content</Text>
               <Text style={styles.gateText}>{NL11_AGE_GATE_NOTICE}</Text>
               <PrimaryButton label="I am 18 or older — continue" onPress={() => setAgeConfirmed(true)} style={{ marginTop: Spacing.md }} />
-              <Pressable onPress={() => router.back()} style={{ marginTop: Spacing.sm }}><Text style={styles.cancel}>Go back</Text></Pressable>
+              <Pressable onPress={() => goBack('/creators')} style={{ marginTop: Spacing.sm }}><Text style={styles.cancel}>Go back</Text></Pressable>
             </View>
           ) : entitled ? (
             <>

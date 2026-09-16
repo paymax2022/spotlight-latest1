@@ -11,6 +11,7 @@ export const ambassadorKeys = {
   analytics: () => [...referralKeys.all, 'ambassador', 'analytics'] as const,
   payouts: () => [...referralKeys.all, 'ambassador', 'payouts'] as const,
   tiers: () => [...referralKeys.all, 'ambassador', 'tiers'] as const,
+  application: () => [...referralKeys.all, 'ambassador', 'application'] as const,
 };
 
 export function useAmbassadorDashboard() {
@@ -48,4 +49,28 @@ export function useWithdrawAmbassadorPayout() {
 
 export function useTierProgression() {
   return useQuery({ queryKey: ambassadorKeys.tiers(), queryFn: ambApi.getTierProgression, staleTime: 60_000 });
+}
+
+// ── Application (M-AMB-00) ───────────────────────────────────────────────────
+
+/** The caller's ambassador record, or null when they have never applied. */
+export function useMyAmbassadorApplication() {
+  return useQuery({
+    queryKey: ambassadorKeys.application(),
+    queryFn: ambApi.getMyApplication,
+    staleTime: 30_000,
+  });
+}
+
+export function useApplyAsAmbassador() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ambApi.applyAsAmbassador,
+    onSuccess: () => {
+      // The application drives what the whole ambassador zone shows, so refresh
+      // the record and the dashboard that keys off its tier.
+      void qc.invalidateQueries({ queryKey: ambassadorKeys.application() });
+      void qc.invalidateQueries({ queryKey: ambassadorKeys.dashboard() });
+    },
+  });
 }

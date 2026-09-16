@@ -1,6 +1,7 @@
 import { featureFlags } from '@/src/lib/feature-flags';
 import { requireRequestUser } from '@/src/lib/auth/request';
-import { requireKycTier } from '@/src/server/kyc/gate';
+import { assertTopupAllowed, type TopupPurpose } from '@/src/server/wallet/topup-gate';
+import { sanitiseCheckoutDomain } from '@/src/server/wallet/checkout-domain';
 import { createTopupIntent } from '@/src/server/wallet/service';
 import { errorResponse, handleApiError } from '@/src/lib/api/responses';
 import { NextResponse } from 'next/server';
@@ -15,7 +16,6 @@ export async function POST(request: Request) {
 
   try {
     const user = await requireRequestUser(request);
-    await requireKycTier(user.id, 1);
 
     const body = await request.json() as Record<string, unknown>;
     const amountKobo = body.amount_kobo;
@@ -24,12 +24,28 @@ export async function POST(request: Request) {
       return errorResponse('amount_kobo must be a positive integer (kobo).', 400);
     }
 
+    // A checkout top-up exists to fund the purchase that raised it (ADR-041), so it
+    // carries a different KYC gate from standalone funding: it may be permitted
+    // below Tier 1 under a capped allowance (ADR-042). Anything not explicitly
+    // 'checkout' is treated as standalone funding and keeps the Tier 1 gate — an
+    // unrecognised value must never buy the weaker gate.
+    const purpose: TopupPurpose = body.purpose === 'checkout' ? 'checkout' : 'wallet';
+    await assertTopupAllowed(user.id, amountKobo, purpose);
+
     const callbackUrl = typeof body.callback_url === 'string' ? body.callback_url : undefined;
+
+    // What the checkout is buying, so this stops being an anonymous top-up.
+    // Only meaningful for the checkout rail — a standalone funding is not
+    // buying anything, and letting it carry a domain would mislabel it.
+    const checkoutDomain =
+      purpose === 'checkout' ? sanitiseCheckoutDomain(body.checkout_domain) : null;
 
     const result = await createTopupIntent(user.id, user.email ?? '', {
       amountKobo,
       idempotencyKey,
       callbackUrl,
+      purpose,
+      checkoutDomain,
     });
 
     return NextResponse.json(

@@ -3,7 +3,7 @@
 import { Fragment, useCallback, useEffect, useState } from 'react';
 import { listAuditLog, type AuditLogEntry } from '@/services/associationAdminService';
 import {
-  AssociationTabs, DisclosureNote, StateBlock, FilterBar, fmtDate,
+  AssociationTabs, DisclosureNote, StateBlock, FilterBar, fmtDate, OrgPicker, useSelectedOrg,
   useAssociationPermissions, ASSOCIATION_PERMS, PermissionBanner,
 } from '../_ui';
 import { Page, PageHeader, Card, Button, Input, colors, thCell, tdCell } from '@/components/ui/vuexy';
@@ -11,6 +11,7 @@ import { Page, PageHeader, Card, Button, Input, colors, thCell, tdCell } from '@
 export default function AssociationAuditLogPage() {
   const { can } = useAssociationPermissions();
   const canRead = can(ASSOCIATION_PERMS.auditRead);
+  const orgId = useSelectedOrg();
 
   const [rows, setRows] = useState<AuditLogEntry[]>([]);
   const [loading, setLoading] = useState(true);
@@ -25,7 +26,7 @@ export default function AssociationAuditLogPage() {
     finally { setLoading(false); }
   }, [action]);
 
-  useEffect(() => { void load(); }, [load]);
+  useEffect(() => { void load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [load, orgId]);
 
   return (
     <Page>
@@ -35,6 +36,7 @@ export default function AssociationAuditLogPage() {
         actions={<Button variant="outline" onClick={() => void load()}>Refresh</Button>}
       />
       <AssociationTabs active="audit" />
+      <OrgPicker />
       <DisclosureNote>
         Backed by <code>GET /api/finance/associations/admin/audit-log</code>. Every admin mutation across this module
         writes here automatically — never optionally (NL-12). This view never mutates anything.

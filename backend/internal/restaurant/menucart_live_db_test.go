@@ -3,7 +3,7 @@ package restaurant
 // ---------------------------------------------------------------------------
 // LIVE-DB integration test for menu/cart completeness (Phase 12): dietary tags on
 // items, the min-order gate, item price bounds, and special-instructions handling.
-// Skipped unless TEST_DATABASE_URL/DATABASE_URL is set.
+// Skipped unless TEST_DATABASE_URL is set.
 // ---------------------------------------------------------------------------
 
 import (
@@ -13,16 +13,15 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"spotlight/backend/internal/testsupport"
 )
 
 func menuCartPool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
 	dsn := os.Getenv("TEST_DATABASE_URL")
 	if dsn == "" {
-		dsn = os.Getenv("DATABASE_URL")
-	}
-	if dsn == "" {
-		t.Skip("no TEST_DATABASE_URL/DATABASE_URL set — skipping live-DB menu/cart test")
+		t.Skip("no TEST_DATABASE_URL set — skipping live-DB menu/cart test")
 	}
 	pool, err := pgxpool.New(context.Background(), dsn)
 	if err != nil {
@@ -36,7 +35,7 @@ func menuCartPool(t *testing.T) *pgxpool.Pool {
 
 func TestLiveDB_MenuCart(t *testing.T) {
 	pool := menuCartPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	svc := NewService(pool, nil)
 
@@ -44,6 +43,7 @@ func TestLiveDB_MenuCart(t *testing.T) {
 	if _, err := pool.Exec(ctx, `INSERT INTO auth.users (id,email) VALUES ($1,$2) ON CONFLICT DO NOTHING`, owner, owner+"@seed.test"); err != nil {
 		t.Fatalf("seed user: %v", err)
 	}
+	testsupport.CleanupUser(t, pool, owner)
 	restID := uuid.New().String()
 	if _, err := pool.Exec(ctx, `INSERT INTO restaurants (id, owner_id, name, address, is_open) VALUES ($1,$2,'MenuCart Kitchen','1 St',TRUE)`, restID, owner); err != nil {
 		t.Fatalf("seed restaurant: %v", err)
@@ -86,6 +86,7 @@ func TestLiveDB_MenuCart(t *testing.T) {
 	// A ₦2,500 cart (below the ₦5,000 minimum) is rejected before escrow.
 	customer := uuid.New().String()
 	_, _ = pool.Exec(ctx, `INSERT INTO auth.users (id,email) VALUES ($1,$2) ON CONFLICT DO NOTHING`, customer, customer+"@seed.test")
+	testsupport.CleanupUser(t, pool, customer)
 	_, err = svc.PlaceOrder(ctx, restID, customer, PlaceOrderRequest{
 		Items:           []OrderItemInput{{MenuItemID: it.ID, Quantity: 1}},
 		DeliveryAddress: "1 Test St", IdempotencyKey: "mincart-" + uuid.New().String(),

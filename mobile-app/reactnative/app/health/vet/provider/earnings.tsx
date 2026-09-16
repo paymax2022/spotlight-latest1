@@ -105,7 +105,7 @@ const styles = StyleSheet.create({
   content: { padding: Spacing.containerMargin, gap: Spacing.md, paddingBottom: 40 },
   balanceCard: { backgroundColor: Colors.primary, borderRadius: Radius.xl, padding: Spacing.lg, gap: 4 },
   balanceLabel: { ...Typography.labelMd, color: Colors.inversePrimary },
-  balanceVal: { ...Typography.displayLg, fontSize: 34, color: Colors.white },
+  balanceVal: { ...Typography.displayLg, fontSize: 34, letterSpacing: -0.68, color: Colors.white },
   metaRow: { flexDirection: 'row', gap: Spacing.sm },
   metaCard: { flex: 1, backgroundColor: Colors.surfaceContainerLowest, borderRadius: Radius.lg, padding: Spacing.md, gap: 4 },
   metaLabel: { ...Typography.labelSm, color: Colors.onSurfaceVariant },

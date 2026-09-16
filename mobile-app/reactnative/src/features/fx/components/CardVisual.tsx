@@ -31,7 +31,7 @@ export default function CardVisual({ card, sensitive, compact }: Props) {
 
   return (
     <LinearGradient
-      colors={CARD_GRADIENTS[card.color] ?? CARD_GRADIENTS.slate ?? ['#334155', '#0f172a']}
+      colors={CARD_GRADIENTS[card.color] ?? CARD_GRADIENTS.graphite}
       start={{ x: 0, y: 0 }}
       end={{ x: 1, y: 1 }}
       style={[styles.card, compact && styles.compact, shadow3, frozen && styles.frozen]}

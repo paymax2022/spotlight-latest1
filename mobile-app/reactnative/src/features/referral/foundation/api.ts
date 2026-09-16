@@ -286,12 +286,25 @@ export async function claimCode(code: string): Promise<ClaimCodeResult> {
     );
     return { ok: true, attribution: mapAttribution(unwrap<BackendAttribution>(res)) };
   } catch (err: unknown) {
-    const status = (err as { response?: { status?: number } })?.response?.status;
+    const res = (err as { response?: { status?: number; data?: { reason?: string } } })?.response;
+    // The backend sends a machine-readable `reason`; status alone cannot
+    // separate a closed grace window from an existing referrer from having no
+    // attribution at all — all three answer 409.
+    const REASONS: Record<string, ClaimCodeResult['error']> = {
+      window_closed: 'window_closed',
+      self_referral: 'self_referral',
+      already_claimed: 'already_claimed',
+      no_attribution: 'no_attribution',
+      invalid_code: 'invalid',
+    };
+    const byReason = res?.data?.reason ? REASONS[res.data.reason] : undefined;
+    if (byReason) return { ok: false, error: byReason };
+
+    // Fallback for an older backend that sends no reason.
+    const status = res?.status;
     let error: ClaimCodeResult['error'] = 'invalid';
     if (status === 409) error = 'already_claimed';
     else if (status === 403) error = 'self_referral';
-    // TODO(referral phase3): backend does not distinguish 'window_closed' from
-    // 'already_claimed' — both surface as 409.
     return { ok: false, error };
   }
 }
@@ -412,10 +425,9 @@ export async function reportAbuse(report: AbuseReport): Promise<{ ok: true; tick
     return { ok: true, ticketId: `RPT-${Math.floor(Math.random() * 9000 + 1000)}` };
   }
   // POST /risk/report-abuse body { target_user_id, reason_code } → { alert: {...} }.
-  // TODO(referral phase3): the frontend AbuseReport has no target_user_id field —
-  // send an empty target so the backend attributes the report to the caller's
-  // most-recent attribution/referrer; category maps to reason_code, detail rides
-  // along for context.
+  // The target is deliberately empty: a member can only report whoever referred
+  // them, and the backend resolves that from their attribution. Sending a
+  // client-chosen id would let anyone open a fraud alert against any account.
   const res = await api.post(
     `${REFERRAL_API_BASE}/risk/report-abuse`,
     {
@@ -427,6 +439,16 @@ export async function reportAbuse(report: AbuseReport): Promise<{ ok: true; tick
   );
   const body = unwrap<{ alert?: { id?: string } }>(res);
   return { ok: true, ticketId: body.alert?.id ?? `RPT-${Date.now()}` };
+}
+
+/**
+ * True when a report failed because the caller has no referrer to report.
+ * The backend answers 409 with reason "no_referrer"; callers should show that
+ * as an explanation rather than a generic failure.
+ */
+export function isNoReferrerToReport(err: unknown): boolean {
+  const res = (err as { response?: { status?: number; data?: { reason?: string } } })?.response;
+  return res?.status === 409 && res?.data?.reason === 'no_referrer';
 }
 
 // ── Consent ──────────────────────────────────────────────────────────────────
@@ -444,20 +466,41 @@ export async function getConsent(): Promise<ConsentState> {
 
 // Reduce a list of backend consents into the frontend ConsentState. For each
 // consent_type keep the created_at of the most recent granted record.
+/**
+ * App consent kind -> backend consent_type.
+ *
+ * 'terms' is this app's name for the backend's long-standing 'earnings_terms'
+ * purpose. 'contacts' and 'nudges' are their own purposes server-side and are
+ * deliberately NOT folded into 'marketing': consent records are per-purpose, so
+ * conflating them would misstate what the user agreed to.
+ *
+ * Shared by the read and write paths — mapping in only one of them is how the
+ * write started succeeding while the toggle still read back as off.
+ */
+const CONSENT_TYPE: Record<ConsentKind, string> = {
+  terms: 'earnings_terms',
+  contacts: 'contacts',
+  nudges: 'nudges',
+};
+
 function consentStateFromList(consents: BackendConsent[]): ConsentState {
+  // The table is append-only: a withdrawal is a NEW row with granted=false, not
+  // an edit of the grant. So "is this consent currently held?" is the granted
+  // flag on the MOST RECENT row for the type — not "does any granted row
+  // exist". Scanning only granted rows would find the older grant after a
+  // withdrawal and leave the toggle stuck on.
+  //
+  // The backend returns rows newest-first (ordered by seq, which is monotonic;
+  // created_at ties because now() is transaction-constant), so the first match
+  // is the current one.
   const latest = (type: string): string | null => {
-    let ts: string | null = null;
-    for (const c of consents) {
-      if (c.consent_type === type && c.granted) {
-        if (!ts || c.created_at > ts) ts = c.created_at;
-      }
-    }
-    return ts;
+    const current = consents.find((c) => c.consent_type === type);
+    return current && current.granted ? current.created_at : null;
   };
   return {
-    termsAcceptedAt: latest('terms'),
-    contactsConsentAt: latest('contacts'),
-    nudgesConsentAt: latest('nudges'),
+    termsAcceptedAt: latest(CONSENT_TYPE.terms),
+    contactsConsentAt: latest(CONSENT_TYPE.contacts),
+    nudgesConsentAt: latest(CONSENT_TYPE.nudges),
   };
 }
 
@@ -476,10 +519,14 @@ export async function recordConsent(kind: ConsentKind, granted: boolean): Promis
   // POST /compliance/consents body { consent_type, disclosure_id, granted,
   // version, source } → { consent: Consent }. We POST the single toggled record,
   // then re-derive the full ConsentState (the write only returns one consent).
+  //
+  // 'terms' is the app's name for the backend's long-standing 'earnings_terms'
+  // purpose; 'contacts' and 'nudges' are their own purposes server-side and are
+  // deliberately NOT folded into 'marketing'.
   await api.post(
     `${REFERRAL_API_BASE}/compliance/consents`,
     {
-      consent_type: kind,
+      consent_type: CONSENT_TYPE[kind],
       // TODO(referral phase3): frontend has no disclosure/version context — send
       // stable defaults so the compliance record is well-formed. version is an
       // int on the backend (ConsentInput.Version int); v1 = 1.

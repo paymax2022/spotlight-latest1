@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"fmt"
 	"math/big"
+	"time"
 
 	"github.com/google/uuid"
 )
@@ -25,13 +26,15 @@ const dispatchFanOut = 7
 // riders (UNIQUE(order_id, rider_id) prevents duplicate offers). A delivery
 // code for the customer↔rider handoff is generated here if not already set.
 func (s *Service) DispatchOrder(ctx context.Context, orderID string) error {
-	// Resolve the order, its restaurant, and the restaurant's pin.
+	// Resolve the order, its restaurant, the restaurant's pin, and the SLA clock.
 	var restaurantID string
 	var existingRider *string
 	var status string
+	var readyAt *time.Time
+	var attempts int
 	if err := s.db.QueryRow(ctx,
-		`SELECT restaurant_id, rider_id, status FROM orders WHERE id=$1`, orderID).
-		Scan(&restaurantID, &existingRider, &status); err != nil {
+		`SELECT restaurant_id, rider_id, status, ready_at, dispatch_attempts FROM orders WHERE id=$1`, orderID).
+		Scan(&restaurantID, &existingRider, &status, &readyAt, &attempts); err != nil {
 		return fmt.Errorf("restaurant: order not found")
 	}
 	if existingRider != nil {
@@ -46,41 +49,55 @@ func (s *Service) DispatchOrder(ctx context.Context, orderID string) error {
 	if err != nil {
 		return err
 	}
+	// Also (re-)ensure the restaurant pickup code — idempotent, so this is the
+	// retry path if the ready-transition's own generation hit a hiccup: the
+	// restaurant re-triggering dispatch (Redispatch) picks it up here too.
+	if _, err := s.ensurePickupCode(ctx, orderID); err != nil {
+		return err
+	}
 	if _, err := s.db.Exec(ctx,
 		`UPDATE orders SET dispatch_status='searching', ready_at=COALESCE(ready_at, now()) WHERE id=$1`,
 		orderID); err != nil {
 		return err
 	}
 
-	// Find the nearest available riders. When the restaurant has no pin (rlat
-	// nil), fall back to most-recently-online. drivers.user_id is the rider's
-	// auth user id used everywhere else (rider_id).
+	// Gather sourcing candidates with the fairness signals (proximity, in-flight
+	// load, last assignment), then rank + trim via selectFairRiders. The fan-out
+	// and load cap escalate on a re-dispatch that has slipped past the SLA target
+	// (dispatchTuning). drivers.user_id is the rider's auth user id (rider_id).
+	fanOut, maxLoad, _ := dispatchTuning(readyAt, time.Now(), attempts)
 	const q = `
-		SELECT user_id
-		FROM drivers
-		WHERE status = 'online' AND verification_status = 'approved'
-		ORDER BY
-		  CASE WHEN $2::float8 IS NULL OR current_lat IS NULL THEN 1 ELSE 0 END,
-		  CASE WHEN $2::float8 IS NULL OR current_lat IS NULL THEN 0
-		       ELSE (current_lat - $2::float8) * (current_lat - $2::float8)
-		          + (current_lng - $3::float8) * (current_lng - $3::float8) END ASC,
-		  updated_at DESC
-		LIMIT $1`
-	rows, err := s.db.Query(ctx, q, dispatchFanOut, rlat, rlng)
+		SELECT d.user_id,
+		       (d.current_lat IS NOT NULL AND $1::float8 IS NOT NULL) AS has_distance,
+		       CASE WHEN d.current_lat IS NOT NULL AND $1::float8 IS NOT NULL
+		            THEN (d.current_lat - $1::float8) * (d.current_lat - $1::float8)
+		               + (d.current_lng - $2::float8) * (d.current_lng - $2::float8)
+		            ELSE 0 END AS dist_sq,
+		       (SELECT count(*) FROM orders o
+		          WHERE o.rider_id = d.user_id
+		            AND o.status NOT IN ('delivered','cancelled','rejected','dispatch_failed','delivery_failed')) AS active_load,
+		       (SELECT max(o2.assigned_at) FROM orders o2 WHERE o2.rider_id = d.user_id) AS last_assigned
+		FROM drivers d
+		WHERE d.status = 'online' AND d.verification_status = 'approved'`
+	rows, err := s.db.Query(ctx, q, rlat, rlng)
 	if err != nil {
 		return fmt.Errorf("restaurant: find riders: %w", err)
 	}
 	defer rows.Close()
-	var riders []string
+	var cands []riderCandidate
 	for rows.Next() {
-		var rid string
-		if err := rows.Scan(&rid); err != nil {
+		var c riderCandidate
+		if err := rows.Scan(&c.RiderID, &c.HasDistance, &c.DistanceSq, &c.ActiveLoad, &c.LastAssigned); err != nil {
 			return err
 		}
-		riders = append(riders, rid)
+		cands = append(cands, c)
 	}
 	if err := rows.Err(); err != nil {
 		return err
+	}
+	var riders []string
+	for _, c := range selectFairRiders(cands, fanOut, maxLoad) {
+		riders = append(riders, c.RiderID)
 	}
 
 	// No riders online — leave the order searching and tell the restaurant so it
@@ -111,20 +128,40 @@ func (s *Service) DispatchOrder(ctx context.Context, orderID string) error {
 			Body:  "A nearby order is ready for pickup — accept to deliver.",
 			Data:  map[string]any{"order_id": orderID}})
 	}
+	// SLA timeline: stamp the first time offers actually went out, and count this
+	// sourcing attempt (dispatchTuning escalates once attempts > 0 past the target).
+	if _, err := s.db.Exec(ctx,
+		`UPDATE orders SET first_offered_at = COALESCE(first_offered_at, now()),
+		        dispatch_attempts = dispatch_attempts + 1 WHERE id=$1`, orderID); err != nil {
+		return err
+	}
 	s.broadcastStatus(orderID, OrderStatus("searching_rider"))
 	_ = code
 	return nil
 }
 
 // ConfirmPickup lets the assigned rider mark a ready order as picked up. Only
-// the order's rider may call it; advances ready → picked_up.
-func (s *Service) ConfirmPickup(ctx context.Context, orderID, riderID string) error {
-	_, _, rider, err := s.orderParties(ctx, orderID)
-	if err != nil {
-		return err
+// the order's rider may call it, and only with the restaurant's pickup code
+// (generated when the order went ready — ensurePickupCode) — this proves the
+// rider actually collected the food from the restaurant, distinct from the
+// delivery_code proof-of-delivery at the customer end. Advances ready → picked_up.
+func (s *Service) ConfirmPickup(ctx context.Context, orderID, riderID, code string) error {
+	var rider *string
+	var dbCode *string
+	var status string
+	if err := s.db.QueryRow(ctx,
+		`SELECT rider_id, pickup_code, status FROM orders WHERE id=$1`, orderID).
+		Scan(&rider, &dbCode, &status); err != nil {
+		return fmt.Errorf("restaurant: order not found")
 	}
-	if rider == "" || rider != riderID {
+	if rider == nil || *rider != riderID {
 		return fmt.Errorf("restaurant: only the assigned rider may confirm pickup")
+	}
+	if dbCode == nil || *dbCode == "" {
+		return fmt.Errorf("restaurant: no pickup code on this order")
+	}
+	if code == "" || code != *dbCode {
+		return fmt.Errorf("restaurant: incorrect pickup code")
 	}
 	if _, err := s.db.Exec(ctx, `UPDATE orders SET picked_up_at=COALESCE(picked_up_at, now()) WHERE id=$1`, orderID); err != nil {
 		return err
@@ -184,7 +221,7 @@ func (s *Service) ensureDeliveryCode(ctx context.Context, orderID string) (strin
 	if existing != nil && *existing != "" {
 		return *existing, nil
 	}
-	code, err := generateDeliveryCode()
+	code, err := generateHandoffCode()
 	if err != nil {
 		return "", err
 	}
@@ -194,8 +231,31 @@ func (s *Service) ensureDeliveryCode(ctx context.Context, orderID string) (strin
 	return code, nil
 }
 
-// generateDeliveryCode returns a random 4-digit handoff code (0000–9999).
-func generateDeliveryCode() (string, error) {
+// ensurePickupCode sets a 4-digit restaurant-pickup code on the order if
+// absent and returns it. Generated as soon as the order goes `ready` — the
+// restaurant hands it to the rider, who must enter it in ConfirmPickup before
+// the order advances to picked_up. Distinct from delivery_code (rider→customer).
+func (s *Service) ensurePickupCode(ctx context.Context, orderID string) (string, error) {
+	var existing *string
+	if err := s.db.QueryRow(ctx, `SELECT pickup_code FROM orders WHERE id=$1`, orderID).Scan(&existing); err != nil {
+		return "", fmt.Errorf("restaurant: order not found")
+	}
+	if existing != nil && *existing != "" {
+		return *existing, nil
+	}
+	code, err := generateHandoffCode()
+	if err != nil {
+		return "", err
+	}
+	if _, err := s.db.Exec(ctx, `UPDATE orders SET pickup_code=$1 WHERE id=$2`, code, orderID); err != nil {
+		return "", err
+	}
+	return code, nil
+}
+
+// generateHandoffCode returns a random 4-digit handoff code (0000–9999), used
+// for both the restaurant pickup code and the customer delivery code.
+func generateHandoffCode() (string, error) {
 	n, err := rand.Int(rand.Reader, big.NewInt(10000))
 	if err != nil {
 		return "", err

@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { ScrollView, View, Text, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import { CircleCheck } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
@@ -42,7 +43,7 @@ export default function Appeal() {
             Case {submit.data.id} is now under review. We'll notify you when there's an update.
           </Text>
           <View style={{ width: '100%', marginTop: Spacing.lg }}>
-            <PrimaryButton label="Done" onPress={() => router.back()} />
+            <PrimaryButton label="Done" onPress={() => goBack('/connect/settings')} />
           </View>
         </View>
       ) : (

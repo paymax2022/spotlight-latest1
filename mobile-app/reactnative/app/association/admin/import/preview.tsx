@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { View, Text, ScrollView, Switch, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
-import { useQuery } from '@tanstack/react-query';
+import { useQueryClient } from '@tanstack/react-query';
 import { FileSpreadsheet, AlertTriangle, Copy, CheckCircle2 } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
@@ -12,33 +12,36 @@ import { shadow1 } from '@/constants/shadows';
 import ScreenHeader from '@/components/ScreenHeader';
 import StateView from '@/components/StateView';
 import PrimaryButton from '@/components/PrimaryButton';
-import { getImportPreview } from '@/features/association/api/admin.api';
-import { useConfirmImport } from '@/features/association/hooks/useAdmin';
-import type { ImportIssue, ImportResult } from '@/features/association/types/admin.types';
+import { useConfirmImport, IMPORT_PREVIEW_KEY } from '@/features/association/hooks/useAdmin';
+import type { ImportIssue, ImportPreview, ImportResult } from '@/features/association/types/admin.types';
 
 const ISSUE_LABEL: Record<Exclude<ImportIssue, null>, string> = {
   duplicate: 'Duplicate', invalid_phone: 'Invalid phone', invalid_email: 'Invalid email', missing_field: 'Missing field',
 };
 
 export default function ImportPreviewScreen() {
-  const preview = useQuery({ queryKey: ['association', 'importPreview'], queryFn: getImportPreview, staleTime: 60_000 });
+  // The preview is produced by uploading a file on the previous step and is
+  // cached there. It cannot be re-fetched here: the endpoint is multipart and
+  // the picked file does not survive navigation, so a query with no file would
+  // always 400. If there is nothing cached, send the admin back to upload.
+  const qc = useQueryClient();
+  const p = qc.getQueryData<ImportPreview>(IMPORT_PREVIEW_KEY);
   const confirm = useConfirmImport();
   const [sendInvites, setSendInvites] = useState(true);
   const [result, setResult] = useState<ImportResult | null>(null);
 
-  if (preview.isLoading) {
+  if (!p && !result) {
     return (
       <SafeAreaView style={styles.safe} edges={['top']}>
         <ScreenHeader title="Import preview" />
-        <StateView kind="loading" message="Analysing file…" />
-      </SafeAreaView>
-    );
-  }
-  if (preview.isError || !preview.data) {
-    return (
-      <SafeAreaView style={styles.safe} edges={['top']}>
-        <ScreenHeader title="Import preview" />
-        <StateView kind="error" title="Couldn't read file" message="Please try again." actionLabel="Retry" onAction={() => preview.refetch()} />
+        <StateView
+          kind="empty"
+          icon="FileSpreadsheet"
+          title="No file to preview"
+          message="Choose a member spreadsheet to analyse before importing."
+          actionLabel="Choose a file"
+          onAction={() => router.replace('/association/admin/import')}
+        />
       </SafeAreaView>
     );
   }
@@ -60,11 +63,11 @@ export default function ImportPreviewScreen() {
     );
   }
 
-  const p = preview.data;
-
   const onConfirm = () => {
     confirm.mutate(sendInvites, { onSuccess: setResult });
   };
+
+  if (!p) return null;
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
@@ -80,7 +83,7 @@ export default function ImportPreviewScreen() {
         {/* Rows */}
         <Text style={styles.sectionTitle}>{p.total} rows</Text>
         <View style={[styles.card, shadow1]}>
-          {p.rows.map((r, i) => (
+          {(p.rows ?? []).map((r, i) => (
             <View key={r.rowNum} style={[styles.row, i > 0 && styles.rowDivider]}>
               <View style={styles.rowIcon}>
                 {r.issue === null ? <CheckCircle2 size={16} color={Colors.teal} strokeWidth={2} />

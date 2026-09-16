@@ -1,10 +1,12 @@
 import React, { useRef, useState } from 'react';
+import PhoneNumberInput from '@/components/PhoneNumberInput';
 import {
   View, Text, ScrollView, StyleSheet, Pressable, Platform, Modal,
   ActivityIndicator, TextInput, Linking,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import { LinearGradient } from 'expo-linear-gradient';
 import { ArrowLeft, CircleHelp, CheckCircle2, ShieldCheck, X } from 'lucide-react-native';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
@@ -28,6 +30,7 @@ import { getErrorMessage } from '@/utils/errorMapper';
 import { generateIdempotencyKey } from '@/utils/idempotency';
 import { sanitizeMoneyInput } from '@/utils/money';
 import { Network } from '@/types/billing';
+import { HomeMenuButton } from '@/components/HomeMenu';
 
 const AMOUNTS = [100, 200, 500, 1000, 2000, 5000];
 
@@ -199,13 +202,16 @@ export default function AirtimeScreen() {
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
       <View style={styles.topBar}>
-        <Pressable onPress={() => router.back()} style={styles.iconBtn}>
+        <Pressable onPress={() => goBack('/services')} style={styles.iconBtn}>
           <ArrowLeft size={22} color={Colors.primary} strokeWidth={2.2} />
         </Pressable>
         <Text style={styles.topTitle}>Buy Airtime</Text>
-        <Pressable style={styles.iconBtn}>
-          <CircleHelp size={21} color={Colors.primary} strokeWidth={2} />
-        </Pressable>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+          <Pressable style={styles.iconBtn}>
+            <CircleHelp size={21} color={Colors.primary} strokeWidth={2} />
+          </Pressable>
+          <HomeMenuButton />
+        </View>
       </View>
 
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.content}>
@@ -262,14 +268,7 @@ export default function AirtimeScreen() {
             name="phoneNumber"
             control={control}
             render={({ field }) => (
-              <TextInputField
-                label="Phone Number"
-                placeholder="0801 234 5678"
-                keyboardType="phone-pad"
-                error={errors.phoneNumber?.message}
-                value={field.value}
-                onChangeText={field.onChange}
-              />
+              <PhoneNumberInput label="Phone Number" value={field.value} onChange={({ e164, nsn }) => (field.onChange)(e164 || nsn)} error={errors.phoneNumber?.message} />
             )}
           />
 

@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { ScrollView, View, Text, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import { TriangleAlert, CircleCheck } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
@@ -67,7 +68,7 @@ export default function DeleteAccount() {
             disabled={!canDelete}
             loading={del.isPending}
           />
-          <PrimaryButton label="Cancel" variant="ghost" onPress={() => router.back()} />
+          <PrimaryButton label="Cancel" variant="ghost" onPress={() => goBack('/connect/settings')} />
         </ScrollView>
       )}
     </SafeAreaView>

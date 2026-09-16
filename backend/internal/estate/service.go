@@ -1095,11 +1095,11 @@ func (s *Service) GetResidentCard(ctx context.Context, estateID, userID string) 
 	const q = `
 		SELECT r.id, r.estate_id, e.name, r.unit, r.role,
 		       COALESCE(rp.occupancy_type,'resident'), COALESCE(rp.profile_photo_url,''),
-		       COALESCE(au.raw_user_meta_data->>'full_name', au.email, '')
+		       COALESCE(NULLIF(btrim(au.first_name || ' ' || au.last_name), ''), au.email, '')
 		FROM estate_residents r
 		JOIN estates e ON e.id = r.estate_id
 		LEFT JOIN resident_profiles rp ON rp.resident_id = r.id
-		JOIN auth.users au ON au.id = r.user_id::uuid
+		JOIN public.platform_users au ON au.id = r.user_id::uuid
 		WHERE r.estate_id = $1 AND r.user_id = $2`
 	if err := s.db.QueryRow(ctx, q, estateID, userID).Scan(
 		&card.ResidentID, &card.EstateID, &card.EstateName, &card.Unit, &card.Role,

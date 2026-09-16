@@ -1,0 +1,24 @@
+# Trivy misconfiguration allowlist for the security.yml trivy-fs lane.
+#
+# DS-0002 ("Image user should not be 'root'") — accepted for
+# .devcontainer/Dockerfile only. Verified 2026-09-15: `trivy fs .` over the
+# full repo currently reports exactly one DS-0002 finding, in that file;
+# every deployed image (backend, frontend-web, frontend-admin,
+# mobile-app/reactnative, mobile-app/reactnative/backend) already sets a
+# non-root USER. .devcontainer/Dockerfile's own header already explains why
+# it's a false positive there (devcontainer.json sets "remoteUser": "vscode";
+# the toolchain FEATURES that layer onto this image need root at build time)
+# and carries a `# trivy:ignore:DS-0002` comment — but that inline form does
+# not suppress this specific check (confirmed empirically: it has no effect
+# regardless of placement, tested at the top of the file, directly above
+# FROM, and as the very last line, with both `DS-0002` and `AVD-DS-0002`
+# spellings — likely because DS-0002 reports against the image as a whole
+# rather than a single instruction, so it has no AST node for a Dockerfile
+# inline comment to attach to; DS-0026 in the same file, which IS
+# instruction-scoped, suppresses correctly via its own inline comment). This
+# file's default-discovery (`--ignorefile` defaults to ".trivyignore" at cwd,
+# and `trivy fs .` runs from the repo root) is the actual suppression
+# mechanism. If a future Dockerfile is added without a USER directive, this
+# entry will ALSO silence its finding — re-verify per-file before assuming
+# it's still only .devcontainer/Dockerfile affected.
+DS-0002

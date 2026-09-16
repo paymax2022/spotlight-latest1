@@ -8,11 +8,13 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"spotlight/backend/internal/testsupport"
 )
 
 // DP-006 live-DB integration test for proof-of-delivery.
 //
-// SKIPPED whenever TEST_DATABASE_URL / DATABASE_URL is unset (gated same as rx/lab tests).
+// SKIPPED whenever TEST_DATABASE_URL is unset (gated same as rx/lab tests).
 // Bring-up:
 //
 //	supabase start   # or any Postgres with migrations including 20260902000000
@@ -29,10 +31,7 @@ func deliveryProofLivePool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
 	dsn := os.Getenv("TEST_DATABASE_URL")
 	if dsn == "" {
-		dsn = os.Getenv("DATABASE_URL")
-	}
-	if dsn == "" {
-		t.Skip("no TEST_DATABASE_URL/DATABASE_URL set — skipping live-DB pharmacy delivery proof test; see bring-up note in delivery_proof_live_db_test.go")
+		t.Skip("no TEST_DATABASE_URL set — skipping live-DB pharmacy delivery proof test; see bring-up note in delivery_proof_live_db_test.go")
 	}
 	pool, err := pgxpool.New(context.Background(), dsn)
 	if err != nil {
@@ -73,10 +72,11 @@ func TestDeliveryProof_LiveDB(t *testing.T) {
 		pharmacistID, pharmacistID+"@seed.test")
 	seed(`INSERT INTO auth.users (id, email) VALUES ($1,$2) ON CONFLICT DO NOTHING`,
 		driverID, driverID+"@seed.test")
+	testsupport.CleanupUsers(t, pool, patientID, pharmacyID, pharmacistID, driverID)
 
 	// Seed pharmacy provider (HL-2 APPROVED)
-	seed(`INSERT INTO public.health_providers (id, user_id, provider_type, credential_status, credential_verified_at)
-	      VALUES ($1,$2,'PHARMACY','APPROVED',now()) ON CONFLICT DO NOTHING`,
+	seed(`INSERT INTO public.health_providers (id, owner_user_id, domain, provider_type, display_name, status)
+	      VALUES ($1,$2,'PHARMACY','pharmacy','Seed Pharmacy','APPROVED') ON CONFLICT DO NOTHING`,
 		pharmacyID, pharmacyID)
 
 	// Seed pharmacy order (DISPENSED state, delivery fulfillment)
@@ -195,9 +195,10 @@ func TestDeliveryProof_InvalidProof(t *testing.T) {
 		pharmacistID, pharmacistID+"@seed.test")
 	seed(`INSERT INTO auth.users (id, email) VALUES ($1,$2) ON CONFLICT DO NOTHING`,
 		driverID, driverID+"@seed.test")
+	testsupport.CleanupUsers(t, pool, patientID, pharmacyID, pharmacistID, driverID)
 
-	seed(`INSERT INTO public.health_providers (id, user_id, provider_type, credential_status, credential_verified_at)
-	      VALUES ($1,$2,'PHARMACY','APPROVED',now()) ON CONFLICT DO NOTHING`,
+	seed(`INSERT INTO public.health_providers (id, owner_user_id, domain, provider_type, display_name, status)
+	      VALUES ($1,$2,'PHARMACY','pharmacy','Seed Pharmacy','APPROVED') ON CONFLICT DO NOTHING`,
 		pharmacyID, pharmacyID)
 
 	seed(`INSERT INTO public.pharmacy_orders (id, patient_id, pharmacy_provider_id, state, fulfilment_method, total_kobo, idempotency_key, created_at)

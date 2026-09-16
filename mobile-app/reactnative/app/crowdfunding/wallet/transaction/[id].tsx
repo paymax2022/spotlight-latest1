@@ -54,7 +54,7 @@ const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: Colors.background },
   body: { paddingHorizontal: Spacing.containerMargin, paddingBottom: 60 },
   head: { alignItems: 'center', paddingVertical: Spacing.lg, gap: 4 },
-  amount: { ...Typography.displayLg, fontSize: 38, lineHeight: 46 },
+  amount: { ...Typography.displayLg, fontSize: 38, letterSpacing: -0.76, lineHeight: 46 },
   desc: { ...Typography.bodyMd, color: Colors.onSurfaceVariant, textAlign: 'center' },
   card: { backgroundColor: Colors.surfaceContainerLowest, borderRadius: Radius.lg, borderWidth: 1, borderColor: Colors.surfaceContainerHigh, padding: Spacing.md, gap: Spacing.sm },
   row: { flexDirection: 'row', justifyContent: 'space-between', gap: Spacing.md },

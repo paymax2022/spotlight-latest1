@@ -1,4 +1,5 @@
 // Estate Facilities / Amenities (Block 33) — types + dual mock/live api + constants.
+import { mockAllowed } from '@/config/mockPolicy';
 import { api } from '@/api/client';
 import { Colors } from '@/constants/colors';
 import { generateIdempotencyKey } from '@/utils/idempotency';
@@ -13,7 +14,7 @@ export interface FacilityBooking {
 }
 export interface CreateBookingInput { facilityId: string; startsAt: string; endsAt: string; idempotencyKey: string; }
 
-export const USE_MOCK = (process.env.EXPO_PUBLIC_FACILITIES_USE_MOCK ?? 'true') !== 'false';
+export const USE_MOCK = mockAllowed(process.env.EXPO_PUBLIC_FACILITIES_USE_MOCK, true);
 export const FACILITIES_API_BASE = '/api/v1/estate/facilities';
 
 export const KIND_META: Record<FacilityKind, { label: string; icon: string }> = {

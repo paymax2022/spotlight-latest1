@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text, ScrollView, StyleSheet, Pressable } from 'react-native';
+import { View, Text, ScrollView, StyleSheet, Pressable, Image } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import {
@@ -23,10 +23,19 @@ import ScreenHeader from '@/components/ScreenHeader';
 import SearchBar from '@/components/SearchBar';
 import StateView from '@/components/StateView';
 import PharmacyProductCard from '@/features/health/components/PharmacyProductCard';
+import { ProviderOnboardingCard } from '@/features/health/components';
 import { useProducts, usePrescriptions } from '@/features/health/pharmacy/hooks';
 import { useCartStore } from '@/features/health/pharmacy/cartStore';
 import { formatNaira } from '@/features/health/constants/health.constants';
 import { PHARMACY_SYMPTOM_SEARCH_ENABLED } from '@/features/health/api/symptomSearch.api';
+import { api } from '@/api/client';
+
+// Marketing banner — stored in the shared R2 media bucket, never bundled into
+// the app, so it can be swapped without a release. Served through the Go
+// backend's public media route (see backend/internal/app/media_routes.go),
+// which redirects to a short-lived presigned R2 GET.
+const PHARMACY_BANNER_URL = `${api.defaults.baseURL}/api/v1/public/media/banners/pharmacy.png`;
+const PHARMACY_BANNER_ASPECT_RATIO = 2048 / 768;
 
 const QUICK_ACTIONS = [
   { key: 'upload', label: 'Upload Rx', icon: Upload, href: '/health/pharmacy/upload-rx', bg: Colors.iconBgBlue, color: Colors.secondary },
@@ -38,7 +47,19 @@ const QUICK_ACTIONS = [
 export default function PharmacyHomeScreen() {
   const { data: products, isLoading, isError, refetch } = useProducts();
   const { data: prescriptions } = usePrescriptions();
+  // Subscribe to `lines` (not just count()) so the per-product steppers and the
+  // cart CTA's amount re-render on every quantity change, not only when the
+  // number of units happens to change.
+  const lines = useCartStore((s) => s.lines);
+  const addToCart = useCartStore((s) => s.add);
+  const setCartQty = useCartStore((s) => s.setQty);
   const count = useCartStore((s) => s.count());
+  const subtotalKobo = useCartStore((s) => s.cart().subtotalKobo);
+  const qtyFor = React.useCallback(
+    (productId: string) => lines.find((l) => l.productId === productId)?.qty ?? 0,
+    [lines],
+  );
+  const [bannerFailed, setBannerFailed] = React.useState(false);
 
   const verifyingRx = (prescriptions ?? []).find((r) => r.status === 'verifying');
 
@@ -66,6 +87,16 @@ export default function PharmacyHomeScreen() {
       />
 
       <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+        {/* Promo banner, media-server hosted — renders nothing if it fails to load */}
+        {!bannerFailed ? (
+          <Image
+            source={{ uri: PHARMACY_BANNER_URL }}
+            style={styles.banner}
+            resizeMode="cover"
+            onError={() => setBannerFailed(true)}
+          />
+        ) : null}
+
         {/* Symptom-based search entry (addon PRD Journey A) — flag-gated */}
         {PHARMACY_SYMPTOM_SEARCH_ENABLED ? (
           <Pressable style={[styles.symptomEntry, shadow1]} onPress={() => router.push('/health/pharmacy/symptom')}>
@@ -149,6 +180,9 @@ export default function PharmacyHomeScreen() {
                 <PharmacyProductCard
                   product={p}
                   onPress={() => router.push({ pathname: '/health/pharmacy/product/[id]', params: { id: p.id } })}
+                  onAdd={() => addToCart(p)}
+                  inCartQty={qtyFor(p.id)}
+                  onSetQty={(qty) => setCartQty(p.id, qty)}
                 />
               </View>
             ))}
@@ -167,9 +201,12 @@ export default function PharmacyHomeScreen() {
           <Pressable style={[styles.cartCta, shadow1]} onPress={() => router.push('/health/pharmacy/cart')}>
             <ShoppingCart size={18} color={Colors.onPrimary} strokeWidth={2} />
             <Text style={styles.cartCtaText}>View cart · {count} item{count > 1 ? 's' : ''}</Text>
-            <Text style={styles.cartCtaAmount}>{formatNaira(useCartStore.getState().cart().subtotalKobo)}</Text>
+            <Text style={styles.cartCtaAmount}>{formatNaira(subtotalKobo)}</Text>
           </Pressable>
         ) : null}
+
+        {/* Provider onboarding */}
+        <ProviderOnboardingCard />
       </ScrollView>
     </SafeAreaView>
   );
@@ -191,6 +228,12 @@ const styles = StyleSheet.create({
     paddingHorizontal: 3,
   },
   badgeText: { ...Typography.caption, color: Colors.onSecondary, fontWeight: '700' as const, fontSize: 10 },
+  banner: {
+    width: '100%',
+    aspectRatio: PHARMACY_BANNER_ASPECT_RATIO,
+    borderRadius: Radius.xl,
+    backgroundColor: Colors.surfaceContainerLowest,
+  },
   hero: {
     flexDirection: 'row',
     alignItems: 'center',

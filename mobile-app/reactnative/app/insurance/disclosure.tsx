@@ -1,6 +1,7 @@
 import React from 'react';
 import { View, StyleSheet } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import DisclosureSheet from '@/features/insurance/components/DisclosureSheet';
 
 /**
@@ -17,7 +18,7 @@ export default function DisclosureRoute() {
           underwriter: underwriter ?? 'NAICOM-licensed insurer',
           aggregator: aggregator ?? 'Paymax partner',
         }}
-        onClose={() => router.back()}
+        onClose={() => goBack('/insurance')}
       />
     </View>
   );

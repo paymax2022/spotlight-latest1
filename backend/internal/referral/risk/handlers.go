@@ -1,6 +1,7 @@
 package risk
 
 import (
+	"errors"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -94,6 +95,13 @@ func (h *Handler) ReportAbuse(c *gin.Context) {
 	}
 	a, err := h.svc.ReportAbuse(c.Request.Context(), id, in)
 	if err != nil {
+		// A reporter with no referrer is an expected state, not a malformed
+		// request; give it a machine-readable reason so the app can say so.
+		if errors.Is(err, ErrNoReferrerToReport) {
+			c.JSON(http.StatusConflict, gin.H{
+				"error": "you have no referrer to report", "reason": "no_referrer"})
+			return
+		}
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}

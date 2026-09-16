@@ -223,7 +223,27 @@ enable_signup = true
 # addresses. If disabled, only the new email is required to confirm.
 double_confirm_changes = true
 # If enabled, users need to confirm their email address before signing in.
-enable_confirmations = false
+# Both cloud projects set mailer_autoconfirm = false, i.e. they REQUIRE email
+# confirmation. Leaving this false locally meant every local sign-up auto-confirmed
+# and skipped the verify screen entirely — dev exercised the one path production
+# never uses, so the OTP flow was untested by construction.
+#
+# ⚠️ DO NOT SET THIS TO false TO STOP THE CONFIRMATION EMAIL. It governs BOTH
+# whether the mail is sent AND whether the account starts unconfirmed, so turning
+# it off does not leave our own OTP in place — it auto-confirms every sign-up and
+# removes email verification entirely. The signal our register handler keys on
+# ("signup returned no session") disappears with it, so no code is ever issued.
+#
+# The supported way to stop GoTrue's confirmation mail is
+# FEATURE_OTP_EMAIL_ENABLED, which makes RegisterUser create the account through
+# /auth/v1/admin/users instead of /auth/v1/signup. That sends nothing, leaves the
+# account unconfirmed, and makes our code the only verification email. See
+# backend/internal/services/auth_service.go and docs/runbooks/otp-email-brevo.md.
+#
+# Codes land in the local mail catcher on http://localhost:54324. It is MAILPIT,
+# not Inbucket, despite the section name below: the API is /api/v1/messages, and
+# Inbucket's /api/v1/mailbox/<box> answers 404.
+enable_confirmations = true
 # If enabled, users will need to reauthenticate or have logged in recently to change their password.
 secure_password_change = false
 # Controls the minimum amount of time that must pass before sending another signup confirmation or password reset email.
@@ -242,6 +262,14 @@ otp_expiry = 3600
 # pass = "env(SENDGRID_API_KEY)"
 # admin_email = "admin@email.com"
 # sender_name = "Admin"
+
+# Sign-up confirmation sends an OTP CODE, not a link. Supabase's default body is
+# {{ .ConfirmationURL }}; with codes chosen, that default sends mail containing no
+# code for the app's entry screen to accept. See docs/audit/USER_MANAGEMENT_AUDIT.md.
+# NOTE: this configures LOCAL only — each cloud project holds its own template.
+[auth.email.template.confirmation]
+subject = "Your Spotlight verification code"
+content_path = "./supabase/templates/confirmation.html"
 
 # Uncomment to customize email template
 # [auth.email.template.invite]

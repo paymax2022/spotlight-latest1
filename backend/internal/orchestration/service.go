@@ -2,6 +2,7 @@ package orchestration
 
 import (
 	"context"
+	"log"
 	"strings"
 	"time"
 
@@ -119,6 +120,16 @@ func (s *Service) CreateQuote(ctx context.Context, customerID, tier string, req 
 	rail := req.DestinationRail
 	if rail == "" {
 		rail = defaultRail(req.Intent)
+	}
+
+	// Pull the current spread rule card once per quote (ADR-032): the markup lives
+	// in fx_markup_rates, shared with the legacy FX service, so an admin change is
+	// live on the very next quote. One query per quote, not one per candidate.
+	//
+	// Fail closed. Pricing from a rule card we could not confirm would charge a
+	// spread nobody configured.
+	if err := s.spread.Refresh(ctx); err != nil {
+		return nil, NewError(ErrInternal, "spread_unavailable", "Pricing is temporarily unavailable. Please try again.")
 	}
 	corridor := Corridor(source, dest)
 
@@ -454,7 +465,11 @@ func (s *Service) CreateCollection(ctx context.Context, customerID string, req C
 	}
 	va := &VirtualAccount{
 		ID: newID("va"), CustomerID: customerID, Currency: currency, Type: req.Type,
-		Provider: prov.Name(), Status: "active", Details: res.Details, CreatedAt: s.now(),
+		Provider: prov.Name(), Status: "active",
+		// Persist the provider's handle. Dropping it here is what left an inbound
+		// deposit with no way to find its owner.
+		ProviderRef: res.ProviderRef,
+		Details:     res.Details, CreatedAt: s.now(),
 	}
 	if err := s.store.SaveCollection(ctx, va); err != nil {
 		return nil, asAPIError(err)
@@ -481,6 +496,18 @@ func (s *Service) Balances(ctx context.Context, customerID string) ([]Money, err
 	return s.store.Balances(ctx, customerID)
 }
 
+// Balance returns one currency's held balance. Read-only — never the sufficiency
+// gate for a debit (see Store.Balance / customer_wallet.go).
+func (s *Service) Balance(ctx context.Context, customerID, currency string) (int64, error) {
+	return s.store.Balance(ctx, customerID, strings.ToUpper(currency))
+}
+
+// OpenWallet provisions a zero-balance wallet for a currency. Provisioning only:
+// no value moves, so no ledger entry and no idempotency key.
+func (s *Service) OpenWallet(ctx context.Context, customerID, currency string) error {
+	return s.store.OpenWallet(ctx, customerID, strings.ToUpper(currency))
+}
+
 // Transactions returns the unified ledger view (spec §5.6).
 func (s *Service) Transactions(ctx context.Context, customerID string) ([]TxView, error) {
 	return s.store.Transactions(ctx, customerID)
@@ -504,6 +531,13 @@ type IndicativeRate struct {
 
 // Rates returns indicative mid + Paymax sell rates for the common pairs.
 func (s *Service) Rates(ctx context.Context, tier string) []IndicativeRate {
+	// Best-effort refresh: this board is explicitly INDICATIVE and charges nothing,
+	// so a transient config-read failure degrades to the last-known rule card
+	// rather than blanking every pair. CreateQuote — which prices a real charge —
+	// fails closed instead.
+	if err := s.spread.Refresh(ctx); err != nil {
+		log.Printf("[orchestration] spread refresh failed, serving indicative rates from the last-known card: %v", err)
+	}
 	pairs := [][2]string{{"USD", "NGN"}, {"EUR", "NGN"}, {"GBP", "NGN"}, {"USD", "GHS"}, {"USD", "KES"}, {"USD", "XAF"}}
 	now := time.Now().UTC().Format(time.RFC3339)
 	out := make([]IndicativeRate, 0, len(pairs))

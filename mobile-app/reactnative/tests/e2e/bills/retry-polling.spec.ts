@@ -14,6 +14,9 @@ test.describe('Bills E2E - Retry and polling states', () => {
   test('FAILED transaction detail shows retry button', async ({ page }) => {
     // Override single-transaction route to return a FAILED transaction
     await page.route('**/transactions/tx-provider-failed', async (route) => {
+      // The app route /services/transactions/<id> matches this pattern too —
+      // without this guard page.goto() renders the mocked JSON, not the screen.
+      if (route.request().resourceType() === 'document') return route.fallback();
       if (route.request().method() === 'GET') {
         await route.fulfill({
           status: 200,
@@ -56,35 +59,16 @@ test.describe('Bills E2E - Retry and polling states', () => {
   test('retry dispatches POST to retry endpoint and navigates to new receipt', async ({ page }) => {
     const retryCalls: Record<string, unknown>[] = [];
 
-    await page.route('**/transactions/tx-provider-failed', async (route) => {
-      if (route.request().method() === 'POST') {
-        retryCalls.push({ url: route.request().url() });
-        await route.fulfill({
-          status: 200,
-          contentType: 'application/json',
-          body: JSON.stringify({ data: { transactionId: 'tx-airtime-success', status: 'SUCCESSFUL' } }),
-        });
-      } else {
-        await route.fulfill({
-          status: 200,
-          contentType: 'application/json',
-          body: JSON.stringify({
-            data: {
-              id: 'tx-provider-failed',
-              serviceType: 'AIRTIME',
-              status: 'FAILED',
-              amount: 500,
-              charges: 0,
-              totalAmount: 500,
-              reference: 'PMX-FAILED-001',
-              customerIdentifier: '08031234567',
-              providerName: 'MTN',
-              productName: 'Airtime',
-              createdAt: '2026-06-14T09:30:00.000Z',
-            },
-          }),
-        });
-      }
+    // Retry POSTs to /api/v1/utility/transactions/:id/requery (retryTransaction
+    // in src/api/transactions.api.ts). The FAILED row itself comes from the
+    // Supabase fixture in mockBillsCatalog — the detail read is not a REST call.
+    await page.route('**/api/v1/utility/transactions/*/requery', async (route) => {
+      retryCalls.push({ url: route.request().url() });
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ data: { transaction: { id: 'tx-airtime-success' } } }),
+      });
     });
 
     await page.goto('/services/transactions/tx-provider-failed');
@@ -98,6 +82,7 @@ test.describe('Bills E2E - Retry and polling states', () => {
 
   test('PROCESSING transaction shows spinner and no retry button', async ({ page }) => {
     await page.route('**/transactions/tx-processing', async (route) => {
+      if (route.request().resourceType() === 'document') return route.fallback();
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
@@ -127,7 +112,9 @@ test.describe('Bills E2E - Retry and polling states', () => {
   });
 
   test('provider timeout during purchase surfaces retryable error message', async ({ page }) => {
-    await page.route('**/services/airtime/purchase', async (route) => {
+    // Airtime purchase posts to /api/v1/utility/pay (postUtilityPayment), not the
+    // legacy /services/airtime/purchase route.
+    await page.route('**/api/v1/utility/pay', async (route) => {
       await route.fulfill({
         status: 504,
         contentType: 'application/json',
@@ -140,7 +127,11 @@ test.describe('Bills E2E - Retry and polling states', () => {
     await page.getByPlaceholder('0801 234 5678').fill('08031234567');
     await page.getByText('₦500').first().click();
     await page.getByText('Review Purchase').click();
-    await page.getByText('Confirm & Pay').click();
+    // The confirm dialog gates on the transaction PIN — without it the payment
+    // never fires and no provider error can surface.
+    await page.getByPlaceholder('Enter 4-digit PIN').fill('1234');
+    await page.mouse.wheel(0, 900);
+    await page.getByText('Confirm & Pay').last().click();
 
     // Error message should appear — modal stays open or closes with error below button
     await expect(page.getByText(/timed out|try again|retry/i).first()).toBeVisible();

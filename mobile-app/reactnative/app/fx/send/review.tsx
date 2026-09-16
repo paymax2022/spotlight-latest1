@@ -13,10 +13,10 @@ import StateView from '@/components/StateView';
 import QuoteBreakdown from '@/features/fx/components/QuoteBreakdown';
 import RateLockCountdown from '@/features/fx/components/RateLockCountdown';
 import SummaryRow from '@/features/fx/components/SummaryRow';
-import { useBeneficiaries } from '@/features/fx/hooks/useFx';
-import { buildQuote, maskAccount } from '@/features/fx/utils/fxFormatters';
+import { useBeneficiaries, useCreateQuote } from '@/features/fx/hooks/useFx';
+import { maskAccount } from '@/features/fx/utils/fxFormatters';
 import { RAIL_LABEL } from '@/features/fx/constants/fx.constants';
-import type { CurrencyCode, Quote } from '@/features/fx/types/fx.types';
+import type { CurrencyCode } from '@/features/fx/types/fx.types';
 
 export default function SendReviewScreen() {
   const p = useLocalSearchParams<{ beneficiaryId: string; source: string; amount: string; narration: string }>();
@@ -25,31 +25,52 @@ export default function SendReviewScreen() {
   const source = p.source as CurrencyCode;
   const amount = Number(p.amount);
 
-  const makeQuote = useCallback((): Quote | null => {
-    if (!beneficiary) return null;
-    return buildQuote({
+  // Server-priced quote (quote → lock → execute): the backend prices the
+  // corridor, picks the provider route, and returns the lock window. The
+  // all-in cost shown below is the number the payout will execute at.
+  const createQuote = useCreateQuote();
+  const quote = createQuote.data ?? null;
+  const [expired, setExpired] = useState(false);
+
+  const requestQuote = useCallback(() => {
+    if (!beneficiary) return;
+    setExpired(false);
+    createQuote.mutate({
       source, destination: beneficiary.currency, amount, amountType: 'source',
       intent: 'transfer', destinationRail: beneficiary.rail, lock: true,
     });
-  }, [beneficiary, source, amount]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [beneficiary?.id, source, amount]);
 
-  const [quote, setQuote] = useState<Quote | null>(makeQuote);
-  const [expired, setExpired] = useState(false);
+  // Price once the beneficiary resolves (async list load).
+  React.useEffect(() => { if (beneficiary && !quote && !createQuote.isPending && !createQuote.isError) requestQuote(); }, [beneficiary, quote, createQuote.isPending, createQuote.isError, requestQuote]);
 
-  // Initialize quote once beneficiary resolves (async list load).
-  React.useEffect(() => { if (!quote && beneficiary) setQuote(makeQuote()); }, [beneficiary, quote, makeQuote]);
+  if (createQuote.isError) {
+    return (
+      <SafeAreaView style={styles.safe}>
+        <ScreenHeader title="Review payout" />
+        <StateView
+          kind="error"
+          title="Couldn't price this payout"
+          message={(createQuote.error as Error | null)?.message ?? 'The rate service is unavailable. Try again.'}
+          actionLabel="Retry"
+          onAction={requestQuote}
+        />
+      </SafeAreaView>
+    );
+  }
 
   if (isLoading || !beneficiary || !quote) {
     return <SafeAreaView style={styles.safe}><ScreenHeader title="Review payout" /><StateView kind="loading" /></SafeAreaView>;
   }
 
-  const reQuote = () => { setQuote(makeQuote()); setExpired(false); };
+  const reQuote = () => requestQuote();
 
   const authorize = () => {
     if (expired) { reQuote(); return; }
     router.push({
       pathname: '/fx/send/processing',
-      params: { beneficiaryId: beneficiary.id, source, amount: String(amount), narration: p.narration ?? '', expiresAt: quote.expiresAt },
+      params: { beneficiaryId: beneficiary.id, source, amount: String(amount), narration: p.narration ?? '', quote: JSON.stringify(quote) },
     });
   };
 

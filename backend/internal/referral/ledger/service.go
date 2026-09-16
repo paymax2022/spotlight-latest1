@@ -337,7 +337,7 @@ func (s *Service) WithdrawEligible(ctx context.Context, beneficiaryID, idempoten
 		amount   int64
 		currency string
 	}
-	var eligible []eligibleRow
+	eligible := []eligibleRow{}
 	for rows.Next() {
 		var r eligibleRow
 		if err := rows.Scan(&r.id, &r.amount, &r.currency); err != nil {
@@ -438,7 +438,7 @@ func (s *Service) ListByBeneficiary(ctx context.Context, beneficiaryID string, l
 	}
 	defer rows.Close()
 
-	var out []Entry
+	out := []Entry{}
 	for rows.Next() {
 		var (
 			e              Entry

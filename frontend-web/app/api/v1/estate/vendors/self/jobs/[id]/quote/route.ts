@@ -18,7 +18,8 @@ function mapJob(row: any, vendorName?: string) {
 // submits a quote for one of their jobs (Block 42). Resident-scoped: estate +
 // vendor resolved server-side. Body: { amount_kobo } (kobo). Records the quote
 // and sets the job amount.
-export async function POST(request: Request, { params }: { params: { id: string } }) {
+export async function POST(request: Request, ctx: { params: Promise<{ id: string }> }) {
+  const params = await ctx.params;
   try {
     const user = await requireRequestUser(request);
     const supabase = createAdminClient();

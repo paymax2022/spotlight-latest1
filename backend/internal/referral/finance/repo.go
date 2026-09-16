@@ -114,7 +114,7 @@ func (r *Repository) ListPayouts(ctx context.Context, status string, limit int) 
 		return nil, fmt.Errorf("finance: list payouts: %w", err)
 	}
 	defer rows.Close()
-	var out []Payout
+	out := []Payout{}
 	for rows.Next() {
 		p, err := scanPayout(rows)
 		if err != nil {
@@ -248,7 +248,7 @@ func (r *Repository) ListReconciliations(ctx context.Context) ([]Reconciliation,
 		return nil, fmt.Errorf("finance: list reconciliations: %w", err)
 	}
 	defer rows.Close()
-	var out []Reconciliation
+	out := []Reconciliation{}
 	for rows.Next() {
 		rc, err := scanRecon(rows)
 		if err != nil {
@@ -314,7 +314,7 @@ func (r *Repository) ListBudgets(ctx context.Context) ([]Budget, error) {
 		return nil, fmt.Errorf("finance: list budgets: %w", err)
 	}
 	defer rows.Close()
-	var out []Budget
+	out := []Budget{}
 	for rows.Next() {
 		b, err := scanBudget(rows)
 		if err != nil {

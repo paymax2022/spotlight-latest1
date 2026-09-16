@@ -1,4 +1,5 @@
 import React, { useMemo, useState } from 'react';
+import PhoneNumberInput from '@/components/PhoneNumberInput';
 import { View, Text, ScrollView, StyleSheet, Pressable, KeyboardAvoidingView, Platform } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
@@ -9,8 +10,10 @@ import { Typography } from '@/constants/typography';
 import { Spacing } from '@/constants/spacing';
 import { Radius } from '@/constants/radius';
 import ScreenHeader from '@/components/ScreenHeader';
+import StateView from '@/components/StateView';
 import TextInputField from '@/components/TextInputField';
 import PrimaryButton from '@/components/PrimaryButton';
+import DatePickerField from '@/components/DatePickerField';
 import CodeTypeSelector from '@/features/visitor/components/CodeTypeSelector';
 import ContactPickerModal from '@/features/visitor/components/ContactPickerModal';
 import RecurrenceEditor from '@/features/visitor/components/RecurrenceEditor';
@@ -36,6 +39,17 @@ function addHoursISO(hours: number): string {
   return new Date(Date.now() + hours * 3_600_000).toISOString();
 }
 
+// Date-specific access is anchored to a chosen calendar date, not "starting
+// now" — the code is valid for that whole day (00:00-23:59 local), unlike
+// every other type here which counts hours forward from the moment of
+// creation. YYYY-MM-DD in, ISO start/end out.
+function specificDayWindow(dateISO: string): { start: string; end: string } {
+  return {
+    start: new Date(`${dateISO}T00:00:00`).toISOString(),
+    end: new Date(`${dateISO}T23:59:59`).toISOString(),
+  };
+}
+
 export default function CreateAccessCodeScreen() {
   const qc = useQueryClient();
   const restriction = useRestrictionStatus();
@@ -47,6 +61,7 @@ export default function CreateAccessCodeScreen() {
   const [purpose, setPurpose] = useState('');
   const [plate, setPlate] = useState('');
   const [validityHours, setValidityHours] = useState(6);
+  const [specificDate, setSpecificDate] = useState('');
   const [partySize, setPartySize] = useState(1);
   const [usageMode, setUsageMode] = useState<CodeUsageMode>('one_time');
   const [recurrenceRule, setRecurrenceRule] = useState<string | undefined>(undefined);
@@ -56,17 +71,27 @@ export default function CreateAccessCodeScreen() {
   const meta = codeTypeMeta(codeType);
   const needsVehicle = codeType === 'ride_hailing' || codeType === 'delivery';
   const isScheduled = codeType === 'recurring' || codeType === 'domestic_staff';
+  const isDateSpecific = codeType === 'date_specific';
 
   // VM-108: if hard-banned, never show the form.
   const hardBanned = restriction.data?.state === 'hard_ban';
+  // Issuing a code requires being a resident of an estate: POST /visitor/codes
+  // refuses a non-resident with 403 "Not a resident of any estate". Without this
+  // the screen let someone fill in the visitor, dates and purpose and only then
+  // refused, with the reason arriving as a generic form error. Only an explicit
+  // `false` counts — a response that predates the field must never lock anyone out.
+  const notResident = restriction.data?.isResident === false;
   React.useEffect(() => {
     if (hardBanned) router.replace('/visitor/restricted');
   }, [hardBanned]);
 
-  const validityLabel = useMemo(
-    () => VALIDITY_PRESETS.find((p) => p.hours === validityHours)?.label ?? `${validityHours} hrs`,
-    [validityHours],
-  );
+  const validityLabel = useMemo(() => {
+    if (isDateSpecific) {
+      if (!specificDate) return 'pick a date';
+      return new Date(`${specificDate}T00:00:00`).toLocaleDateString('en-NG', { month: 'short', day: 'numeric' });
+    }
+    return VALIDITY_PRESETS.find((p) => p.hours === validityHours)?.label ?? `${validityHours} hrs`;
+  }, [isDateSpecific, specificDate, validityHours]);
 
   const onSelectType = (t: CodeType) => {
     setCodeType(t);
@@ -82,6 +107,17 @@ export default function CreateAccessCodeScreen() {
       setFormError('Please enter the visitor’s name.');
       return;
     }
+    if (isDateSpecific && !specificDate) {
+      setFormError('Please pick the date this visitor is expected.');
+      return;
+    }
+    if (isDateSpecific && new Date(`${specificDate}T23:59:59`) < new Date()) {
+      setFormError('That date has already passed — pick a future date.');
+      return;
+    }
+    const window = isDateSpecific
+      ? specificDayWindow(specificDate)
+      : { start: new Date().toISOString(), end: addHoursISO(validityHours) };
     createCode.mutate(
       {
         codeType,
@@ -89,8 +125,8 @@ export default function CreateAccessCodeScreen() {
         visitorPhone: phone.trim() || undefined,
         purpose: purpose.trim() || undefined,
         vehiclePlate: plate.trim() || undefined,
-        validityStart: new Date().toISOString(),
-        validityEnd: addHoursISO(validityHours),
+        validityStart: window.start,
+        validityEnd: window.end,
         usageMode,
         partySize,
         recurrenceRule: isScheduled ? recurrenceRule : undefined,
@@ -111,6 +147,20 @@ export default function CreateAccessCodeScreen() {
       },
     );
   };
+
+  if (notResident) {
+    return (
+      <SafeAreaView style={styles.safe} edges={['top']}>
+        <ScreenHeader title="Invite a visitor" />
+        <StateView
+          kind="empty"
+          icon="Home"
+          title="You're not registered to an estate"
+          message="Visitor codes are issued by residents. Ask your estate manager to add you, then invite visitors from here."
+        />
+      </SafeAreaView>
+    );
+  }
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
@@ -135,13 +185,7 @@ export default function CreateAccessCodeScreen() {
               <Text style={styles.contactsText}>Choose from contacts</Text>
             </Pressable>
 
-            <TextInputField
-              label="Phone number (optional)"
-              placeholder="+234 800 000 0000"
-              value={phone}
-              onChangeText={setPhone}
-              keyboardType="phone-pad"
-            />
+            <PhoneNumberInput label="Phone number (optional)" value={phone} onChange={({ e164, nsn }) => (setPhone)(e164 || nsn)} />
             <TextInputField
               label="Purpose (optional)"
               placeholder="e.g. Family visit, package delivery"
@@ -197,24 +241,38 @@ export default function CreateAccessCodeScreen() {
           {/* Recurring schedule (VM-105) */}
           {isScheduled ? <RecurrenceEditor onChange={setRecurrenceRule} /> : null}
 
-          {/* Validity */}
-          <Text style={styles.label}>Valid for</Text>
-          <View style={styles.presetRow}>
-            {VALIDITY_PRESETS.map((p) => {
-              const selected = p.hours === validityHours;
-              return (
-                <Pressable
-                  key={p.label}
-                  onPress={() => setValidityHours(p.hours)}
-                  accessibilityRole="button"
-                  accessibilityState={{ selected }}
-                  style={[styles.preset, selected && styles.presetSelected]}
-                >
-                  <Text style={[styles.presetText, selected && styles.presetTextSelected]}>{p.label}</Text>
-                </Pressable>
-              );
-            })}
-          </View>
+          {/* Validity — date-specific codes are anchored to a chosen calendar
+              date (valid that whole day) instead of counting hours forward
+              from now, so they get a date picker instead of the hour presets. */}
+          {isDateSpecific ? (
+            <DatePickerField
+              label="Expected date"
+              value={specificDate || undefined}
+              onChange={setSpecificDate}
+              minYear={new Date().getFullYear()}
+              maxYear={new Date().getFullYear() + 1}
+            />
+          ) : (
+            <>
+              <Text style={styles.label}>Valid for</Text>
+              <View style={styles.presetRow}>
+                {VALIDITY_PRESETS.map((p) => {
+                  const selected = p.hours === validityHours;
+                  return (
+                    <Pressable
+                      key={p.label}
+                      onPress={() => setValidityHours(p.hours)}
+                      accessibilityRole="button"
+                      accessibilityState={{ selected }}
+                      style={[styles.preset, selected && styles.presetSelected]}
+                    >
+                      <Text style={[styles.presetText, selected && styles.presetTextSelected]}>{p.label}</Text>
+                    </Pressable>
+                  );
+                })}
+              </View>
+            </>
+          )}
 
           <View style={styles.summary}>
             <Clock size={16} color={Colors.onSurfaceVariant} strokeWidth={1.8} />

@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { View, Text, ScrollView, StyleSheet, Pressable } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import { Plus, Trash2 } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
@@ -93,7 +94,7 @@ export default function CreateEvent() {
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
-      <ScreenHeader title="Create event" subtitle={`Step ${step + 1} of ${totalSteps}`} onBack={() => (step === 0 ? router.back() : setStep((s) => s - 1))} />
+      <ScreenHeader title="Create event" subtitle={`Step ${step + 1} of ${totalSteps}`} onBack={() => (step === 0 ? goBack('/events') : setStep((s) => s - 1))} />
       <View style={styles.progress}>
         {Array.from({ length: totalSteps }).map((_, i) => (
           <View key={i} style={[styles.bar, i <= step && styles.barActive]} />

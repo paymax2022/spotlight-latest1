@@ -5,7 +5,9 @@ package wallet
 // the ledger, units mint/redeem correctly, idempotent replays never double-move
 // money, a second depositor doesn't dilute the first, the performance fee leaves
 // other holders' NAV unchanged, over-redeem is blocked, deposits are access-gated,
-// and reconciliation holds throughout. Skipped unless DATABASE_URL is set.
+// and reconciliation holds throughout. Skipped unless TEST_DATABASE_URL is set —
+// deliberately with NO fallback to DATABASE_URL, which the root .env points
+// at the PRODUCTION Supabase pooler.
 
 import (
 	"context"
@@ -18,6 +20,8 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"spotlight/backend/internal/finance/ledger"
+
+	"spotlight/backend/internal/testsupport"
 )
 
 type allowGate struct{ allow bool }
@@ -26,9 +30,9 @@ func (g allowGate) HasTradingAccess(context.Context, string) (bool, error) { ret
 
 func liveFund(t *testing.T, feeBps, hurdleBps int64, allow bool) (*Service, *ledger.Service, *pgxpool.Pool) {
 	t.Helper()
-	dsn := os.Getenv("DATABASE_URL")
+	dsn := os.Getenv("TEST_DATABASE_URL")
 	if dsn == "" {
-		t.Skip("no DATABASE_URL — skipping trading live-DB money-path test")
+		t.Skip("no TEST_DATABASE_URL — skipping trading live-DB money-path test")
 	}
 	pool, err := pgxpool.New(context.Background(), dsn)
 	if err != nil {
@@ -62,6 +66,7 @@ func seedUser(t *testing.T, ctx context.Context, pool *pgxpool.Pool) string {
 	if _, err := pool.Exec(ctx, `INSERT INTO auth.users (id, email) VALUES ($1,$2) ON CONFLICT DO NOTHING`, id, id+"@seed.test"); err != nil {
 		t.Fatalf("seed auth.users: %v", err)
 	}
+	testsupport.CleanupUser(t, pool, id)
 	return id
 }
 
@@ -76,7 +81,7 @@ func fundWallet(t *testing.T, ctx context.Context, led *ledger.Service, userID s
 
 func TestLiveDB_TradingWallet_MoneyPath(t *testing.T) {
 	svc, led, pool := liveFund(t, 2000, 0, true) // 20% perf fee, no hurdle
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	resetFund(t, ctx, pool, led)
 	run := uuid.NewString() + ":"
@@ -186,7 +191,7 @@ func TestLiveDB_TradingWallet_MoneyPath(t *testing.T) {
 // must be rejected as an idem conflict, with no cash movement.
 func TestLiveDB_TradingWallet_IdemConflictNoCashout(t *testing.T) {
 	svc, led, pool := liveFund(t, 2000, 0, true)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	resetFund(t, ctx, pool, led)
 	run := uuid.NewString() + ":"
@@ -222,7 +227,7 @@ func TestLiveDB_TradingWallet_IdemConflictNoCashout(t *testing.T) {
 // debit the wallet again.
 func TestLiveDB_TradingWallet_ReplayPinsUnits(t *testing.T) {
 	svc, led, pool := liveFund(t, 2000, 0, true)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	resetFund(t, ctx, pool, led)
 	run := uuid.NewString() + ":"
@@ -261,7 +266,7 @@ func TestLiveDB_TradingWallet_ReplayPinsUnits(t *testing.T) {
 // normally — units are minted ONLY once the debit is durably posted.
 func TestLiveDB_TradingWallet_NoPhantomMintOnUnpaidReservation(t *testing.T) {
 	svc, led, pool := liveFund(t, 2000, 0, true)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	resetFund(t, ctx, pool, led)
 	repo := NewRepository(pool)
@@ -303,7 +308,7 @@ func TestLiveDB_TradingWallet_NoPhantomMintOnUnpaidReservation(t *testing.T) {
 
 func TestLiveDB_TradingWallet_AccessGate(t *testing.T) {
 	svc, led, pool := liveFund(t, 2000, 0, false) // gate DENIES access
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	resetFund(t, ctx, pool, led)
 	u := seedUser(t, ctx, pool)

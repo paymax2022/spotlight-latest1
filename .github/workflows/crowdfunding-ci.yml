@@ -1,3 +1,9 @@
+# Called by ci.yml, which is the single pipeline for a push or PR. This lane no
+# longer has its own push/pull_request trigger: fourteen workflows starting on one
+# push meant fourteen queued pipelines competing for the same runners. ci.yml now
+# decides whether this module changed (scripts/ci/changed-modules.py, driven by
+# .github/module-filters.json) and calls this file as a reusable workflow, so its
+# jobs report inside that one run. Paths live ONLY in module-filters.json now.
 name: Crowdfunding CI
 
 # Runs the environment-blocked verification for the crowdfunding module on a
@@ -8,20 +14,7 @@ name: Crowdfunding CI
 # typecheck, and an additive-only migration guard.
 
 on:
-  push:
-    paths:
-      - 'backend/internal/crowdfunding/**'
-      - 'backend/internal/app/finance_routes.go'
-      - 'supabase/migrations/*crowdfunding*.sql'
-      - 'frontend-web/app/api/v1/crowdfunding/**'
-      - 'mobile-app/reactnative/src/features/crowdfunding/**'
-      - 'mobile-app/reactnative/app/crowdfunding/**'
-      - 'mobile-app/reactnative/tsconfig.crowdfunding.json'
-      - 'frontend-admin/src/services/crowdfundingAdminService.ts'
-      - 'frontend-admin/src/types/crowdfunding.ts'
-      - 'frontend-admin/app/admin/crowdfunding/**'
-      - '.github/workflows/crowdfunding-ci.yml'
-  pull_request:
+  workflow_call:
   workflow_dispatch:
 
 jobs:
@@ -42,8 +35,11 @@ jobs:
         run: go vet ./internal/crowdfunding/...
       - name: Test (crowdfunding — state machine + query builder + handlers)
         run: go test ./internal/crowdfunding/... -count=1 -v
-      - name: Test (all — regression)
-        run: go test ./... -count=1
+      # Repo-wide `go test ./...` removed: ci.yml's ungated `backend` job now runs
+      # the whole backend suite against a real Postgres, so this lane repeating it
+      # WITHOUT a database was both slower and weaker — every live-DB suite skipped
+      # here while reporting "ok". The scoped run above stays: it is fast, it is
+      # verbose, and it names this module when it fails.
 
   mobile-typecheck:
     runs-on: ubuntu-latest
@@ -55,23 +51,15 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
+          # Without this the RN dependency tree is installed from scratch every
+          # run: npm ci measured 421s here against 6s for the typecheck it exists
+          # to enable. ci.yml's own mobile job has had the cache all along; these
+          # lanes were simply never given it.
+          cache: npm
+          cache-dependency-path: mobile-app/reactnative/package-lock.json
       - run: npm ci || npm install
       - name: Typecheck crowdfunding screens + feature
         run: npx tsc -p tsconfig.crowdfunding.json
-
-  admin-typecheck:
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: frontend-admin
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-      - run: npm ci || npm install
-      - name: Typecheck admin
-        run: npx tsc --noEmit
 
   migration-guard:
     runs-on: ubuntu-latest

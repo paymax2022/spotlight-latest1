@@ -3,6 +3,7 @@
 // Mock-flagged; flip USE_MOCK=false once /v1/cards endpoints land.
 // IRON RULES: money is minor units; every money mutation carries an Idempotency-Key.
 
+import { mockAllowed } from '@/config/mockPolicy';
 import { api } from '@/api/client';
 import type {
   Card,
@@ -17,7 +18,7 @@ import {
   MOCK_CARD_TRANSACTIONS,
 } from './fxCards.mock';
 
-const USE_MOCK = (process.env.EXPO_PUBLIC_FX_USE_MOCK ?? 'true').toLowerCase() !== 'false';
+const USE_MOCK = mockAllowed(process.env.EXPO_PUBLIC_FX_USE_MOCK, true);
 const delay = (ms = 320) => new Promise((r) => setTimeout(r, ms));
 // Unwrap { data: ... } by key presence so an empty { data: null } yields null,
 // not the wrapper object (see fx.api.ts). arr() coerces list payloads to arrays.

@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { View, Text, ScrollView, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import { ShieldCheck } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
@@ -48,7 +49,7 @@ export default function LeasePayScreen() {
     return (
       <SafeAreaView style={styles.safe} edges={['top']}>
         <ScreenHeader title="Pay rent & deposit" />
-        <StateView kind="error" title="Invoice not ready" message="Sign the lease first to generate your invoice." actionLabel="Back" onAction={() => router.back()} />
+        <StateView kind="error" title="Invoice not ready" message="Sign the lease first to generate your invoice." actionLabel="Back" onAction={() => goBack('/realtor')} />
       </SafeAreaView>
     );
   }

@@ -1,6 +1,7 @@
 package healthproviders
 
 import (
+	"errors"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -61,6 +62,33 @@ func (h *Handler) AddCredential(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusCreated, gin.H{"success": true, "credential": out})
+}
+
+// PresignCredential — POST /providers/applications/:id/credentials/presign
+func (h *Handler) PresignCredential(c *gin.Context) {
+	id := uid(c)
+	if id == "" {
+		fail(c, http.StatusUnauthorized, "unauthenticated")
+		return
+	}
+	var req struct {
+		FileName    string `json:"file_name" binding:"required"`
+		ContentType string `json:"content_type" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		fail(c, http.StatusBadRequest, "invalid body")
+		return
+	}
+	res, err := h.svc.PresignCredential(c.Request.Context(), id, c.Param("id"), req.FileName, req.ContentType)
+	if err != nil {
+		if errors.Is(err, ErrUploadsNotConfigured) {
+			fail(c, http.StatusServiceUnavailable, err.Error())
+			return
+		}
+		fail(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "presign": res})
 }
 
 // Submit — POST /providers/applications/:id/submit

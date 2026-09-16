@@ -48,8 +48,15 @@ export interface TransferRecipient {
  * Look up a Paymax user by phone number or email address.
  * Returns a safe preview — no full phone or sensitive PII exposed.
  *
- * Normalises phone input: strips leading +234 or 0 prefix and matches
- * both formats stored in user_profiles.
+ * Phone matching is by 10-digit NSN, because user_profiles was never normalised:
+ * the same subscriber is stored as "8159491618", "08159491618" or
+ * "+2348159491618" depending on which signup path wrote the row. The candidate
+ * list is generated from the NSN we computed, never from the caller's raw
+ * string — that string used to be spliced into a PostgREST `.or()` filter, where
+ * a comma let a caller append their own condition.
+ *
+ * Throws 409 when two accounts carry the same number. Picking one would move
+ * money to a stranger, and a wallet credit cannot be clawed back.
  */
 export async function resolvePaymaxUser(
   identifier: string,
@@ -60,38 +67,58 @@ export async function resolvePaymaxUser(
   }
 
   const raw = identifier.trim();
+  const isEmail = raw.includes('@');
+  const nsn = isEmail ? '' : normalizeNsn(raw);
+
+  // Not an email and not a usable Nigerian mobile — no match. Never fall back to
+  // a looser comparison: that is what let a crafted identifier match everyone.
+  if (!isEmail && !nsn) {
+    throw new ApiError('No Paymax user found for this identifier', 404);
+  }
+
   const supabase = createAdminClient();
+  const base = supabase.from('user_profiles').select('id, full_name, phone, avatar_url');
 
-  // Build candidate phone variants so we match "08012345678", "+2348012345678", etc.
-  const phoneVariants = buildPhoneVariants(raw);
+  // Both filters are built from values WE produced (an NSN of exactly 10 digits,
+  // or a lower-cased email passed as a bound value), so nothing the caller typed
+  // is ever interpolated into a filter expression.
+  const scoped = isEmail
+    ? base.eq('email', raw.toLowerCase())
+    : base.in('phone', phoneVariantsForNsn(nsn));
 
-  // Query user_profiles — search by phone or email
-  const { data: profiles, error } = await supabase
-    .from('user_profiles')
-    .select('id, full_name, phone, avatar_url')
-    .or(
-      [
-        ...phoneVariants.map(p => `phone.eq.${p}`),
-        raw.includes('@') ? `email.eq.${raw.toLowerCase()}` : null,
-      ]
-        .filter(Boolean)
-        .join(','),
-    )
-    .limit(2);
+  // 5, not 2: we must be able to SEE a second account on the same number rather
+  // than truncate it away and resolve to whichever row came back first.
+  const { data: profiles, error } = await scoped.limit(5);
 
   if (error) throw new ApiError('Failed to resolve recipient', 500);
 
-  // Filter out the requesting user (can't send to yourself)
-  const match = (profiles ?? []).find(p => (p as { id: string }).id !== requestingUserId);
-
-  if (!match) throw new ApiError('No Paymax user found for this identifier', 404);
-
-  const profile = match as {
+  type ProfileRow = {
     id: string;
     full_name: string | null;
     phone: string | null;
     avatar_url: string | null;
   };
+
+  // Can't send to yourself — drop the requester before judging ambiguity.
+  let candidates = ((profiles ?? []) as ProfileRow[]).filter(p => p.id !== requestingUserId);
+
+  // Re-confirm in code that each row really carries this NSN. The IN list is an
+  // exact-string match against known spellings; anything else the database
+  // returned was never a real candidate.
+  if (!isEmail) {
+    candidates = candidates.filter(p => normalizeNsn(p.phone ?? '') === nsn);
+  }
+
+  if (candidates.length === 0) {
+    throw new ApiError('No Paymax user found for this identifier', 404);
+  }
+
+  const distinct = new Set(candidates.map(p => p.id));
+  if (distinct.size > 1) {
+    throw new ApiError('More than one account uses this phone number', 409);
+  }
+
+  const profile = candidates[0];
 
   return {
     userId: profile.id,
@@ -105,23 +132,30 @@ export async function resolvePaymaxUser(
 // Helpers
 // ---------------------------------------------------------------------------
 
-function buildPhoneVariants(raw: string): string[] {
-  const digits = raw.replace(/\D/g, '');
-  const variants = new Set<string>();
-  variants.add(raw);
-  if (digits.length === 11 && digits.startsWith('0')) {
-    variants.add(digits);
-    variants.add(`+234${digits.slice(1)}`);
-    variants.add(`234${digits.slice(1)}`);
-  } else if (digits.length === 10) {
-    variants.add(`0${digits}`);
-    variants.add(`+234${digits}`);
-    variants.add(`234${digits}`);
-  } else if (digits.length === 13 && digits.startsWith('234')) {
-    variants.add(`0${digits.slice(3)}`);
-    variants.add(`+${digits}`);
-  }
-  return Array.from(variants);
+/**
+ * Reduce a phone number to its 10-digit national significant number, so every
+ * spelling of one number resolves to one account. Returns '' when the input
+ * cannot be a Nigerian mobile; callers MUST treat that as "no match".
+ *
+ * Mirrors NormalizePhone in backend/internal/services/phone_identifier.go. The
+ * two must agree: if they disagree about which account owns a number, the app
+ * and the API resolve the same transfer to different people.
+ */
+export function normalizeNsn(raw: string): string {
+  const d = (raw ?? '').replace(/\D/g, '');
+  if (d.length === 13 && d.startsWith('234')) return d.slice(3);
+  if (d.length === 11 && d.startsWith('0')) return d.slice(1);
+  if (d.length === 10) return d;
+  return '';
+}
+
+/**
+ * Every spelling of one NSN that user_profiles is known to hold. The bare NSN
+ * form is deliberately first — it is a real stored format that the previous
+ * variant list never generated, so those recipients could not be found at all.
+ */
+export function phoneVariantsForNsn(nsn: string): string[] {
+  return [nsn, `0${nsn}`, `+234${nsn}`, `234${nsn}`];
 }
 
 function maskPhone(phone: string): string {

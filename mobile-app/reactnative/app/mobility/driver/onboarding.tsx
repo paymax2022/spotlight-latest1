@@ -1,7 +1,9 @@
 import React, { useMemo, useState } from 'react';
+import PhoneNumberInput from '@/components/PhoneNumberInput';
 import { View, Text, ScrollView, StyleSheet, Pressable, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import { Check, FileUp, CheckCircle2, Clock } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
@@ -113,7 +115,7 @@ export default function DriverOnboardingScreen() {
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
-      <ScreenHeader title={STEP_TITLE[step]} subtitle={step !== 'status' ? `Step ${stepIndex + 1} of 3` : undefined} onBack={() => (stepIndex > 0 && step !== 'status' ? setStep(STEP_ORDER[stepIndex - 1]) : router.back())} />
+      <ScreenHeader title={STEP_TITLE[step]} subtitle={step !== 'status' ? `Step ${stepIndex + 1} of 3` : undefined} onBack={() => (stepIndex > 0 && step !== 'status' ? setStep(STEP_ORDER[stepIndex - 1]) : goBack('/mobility/driver'))} />
 
       {/* Progress */}
       {step !== 'status' && (
@@ -133,7 +135,7 @@ export default function DriverOnboardingScreen() {
                 <Text style={styles.towBannerText}>Register your tow truck and documents to start receiving tow & roadside jobs on Paymax.</Text>
               </View>
             )}
-            <TextInputField label="Phone number" placeholder="+234…" value={phone} onChangeText={setPhone} keyboardType="phone-pad" />
+            <PhoneNumberInput label="Phone number" value={phone} onChange={({ e164, nsn }) => (setPhone)(e164 || nsn)} />
             <TextInputField label="Email" placeholder="you@email.com" value={email} onChangeText={setEmail} keyboardType="email-address" autoCapitalize="none" />
             <Text style={styles.fieldLabel}>Service categories</Text>
             <View style={styles.chips}>

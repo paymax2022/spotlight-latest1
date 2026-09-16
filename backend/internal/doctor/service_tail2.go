@@ -2,8 +2,10 @@ package doctor
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"time"
 )
 
 // service_tail2.go — business logic for the Wave-3 "coverage close-out" endpoints
@@ -264,9 +266,35 @@ func (s *Service) GetAppStatus(ctx context.Context, userID string) (*AppStatus, 
 
 // ── Vet reads ─────────────────────────────────────────────────────────────────
 
+// getVetProfileOrFresh has the same rationale as GetProfileDraft (service_account.go):
+// no doctor_vet_profiles row is the STARTING state for a vet who hasn't reached
+// SaveVetProfileDraft's first write yet, not a missing resource. Every vet read
+// delegated straight to GetVetProfile with no such fallback, so any of the three
+// vet reads below 404'd for a fresh vet — worse than the equivalent human case,
+// since nothing on the vet onboarding handoff (provider-type.tsx → builder.tsx)
+// ever creates this row before the profile builder's first screen loads it.
+func (s *Service) getVetProfileOrFresh(ctx context.Context, userID string) (*VetProfile, error) {
+	vp, err := s.repo.GetVetProfile(ctx, userID)
+	if err == nil {
+		return vp, nil
+	}
+	if !errors.Is(err, ErrNotFound) {
+		return nil, err
+	}
+	now := time.Now().UTC()
+	return &VetProfile{
+		UserID:       userID,
+		Verification: "unsubmitted",
+		ProfileDraft: json.RawMessage("{}"),
+		Detail:       json.RawMessage("{}"),
+		CreatedAt:    now,
+		UpdatedAt:    now,
+	}, nil
+}
+
 // GetVetLicence projects the vet licence info from the doctor_vet_profiles row.
 func (s *Service) GetVetLicence(ctx context.Context, userID string) (*VetLicenceInfo, error) {
-	vp, err := s.repo.GetVetProfile(ctx, userID)
+	vp, err := s.getVetProfileOrFresh(ctx, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -274,15 +302,15 @@ func (s *Service) GetVetLicence(ctx context.Context, userID string) (*VetLicence
 }
 
 // GetVetVerification returns the vet profile (whose verification field is the
-// submission state). Reuses GetVetProfile.
+// submission state). Reuses getVetProfileOrFresh.
 func (s *Service) GetVetVerification(ctx context.Context, userID string) (*VetProfile, error) {
-	return s.repo.GetVetProfile(ctx, userID)
+	return s.getVetProfileOrFresh(ctx, userID)
 }
 
 // GetVetProfileDraft returns the vet profile (carrying the profile_draft field).
-// Reuses GetVetProfile.
+// Reuses getVetProfileOrFresh.
 func (s *Service) GetVetProfileDraft(ctx context.Context, userID string) (*VetProfile, error) {
-	return s.repo.GetVetProfile(ctx, userID)
+	return s.getVetProfileOrFresh(ctx, userID)
 }
 
 // ── Static content catalogues (no backing table) ──────────────────────────────

@@ -18,7 +18,7 @@ import type {
 const LAGOS: LatLng = { lat: 6.5244, lng: 3.3792 };
 
 /** A stable 4-digit customer handoff code (mock parity with the backend). */
-function makeDeliveryCode(): string {
+function makeHandoffCode(): string {
   return String(1000 + Math.floor(Math.random() * 9000));
 }
 
@@ -41,6 +41,9 @@ export const MOCK_RESTAURANTS: Restaurant[] = [
     isOpen: true,
     address: '14 Adeola Odeku, Victoria Island',
     location: { lat: 6.4281, lng: 3.4219 },
+    likeCount: 342,
+    liked: false,
+    isFeatured: true,
   },
   {
     id: 'r2',
@@ -60,6 +63,8 @@ export const MOCK_RESTAURANTS: Restaurant[] = [
     isOpen: true,
     address: '3 Allen Avenue, Ikeja',
     location: { lat: 6.6018, lng: 3.3515 },
+    likeCount: 210,
+    liked: false,
   },
   {
     id: 'r3',
@@ -79,6 +84,8 @@ export const MOCK_RESTAURANTS: Restaurant[] = [
     isOpen: true,
     address: '22 Awolowo Road, Ikoyi',
     location: { lat: 6.4488, lng: 3.4316 },
+    likeCount: 98,
+    liked: false,
   },
   {
     id: 'r4',
@@ -98,6 +105,9 @@ export const MOCK_RESTAURANTS: Restaurant[] = [
     isOpen: true,
     address: '9 Admiralty Way, Lekki Phase 1',
     location: { lat: 6.4452, lng: 3.4744 },
+    likeCount: 156,
+    liked: false,
+    isFeatured: true,
   },
   {
     id: 'r5',
@@ -117,6 +127,8 @@ export const MOCK_RESTAURANTS: Restaurant[] = [
     isOpen: true,
     address: '5 Karimu Kotun, Victoria Island',
     location: { lat: 6.4302, lng: 3.4198 },
+    likeCount: 289,
+    liked: false,
   },
   {
     id: 'r6',
@@ -136,6 +148,8 @@ export const MOCK_RESTAURANTS: Restaurant[] = [
     isOpen: false,
     address: '17 Herbert Macaulay, Yaba',
     location: { lat: 6.5095, lng: 3.3711 },
+    likeCount: 64,
+    liked: false,
   },
 ];
 
@@ -330,7 +344,24 @@ function defaultMenu(): MenuCategory[] {
 
 export function mockRestaurantDetail(id: string): RestaurantDetail {
   const base = MOCK_RESTAURANTS.find((r) => r.id === id) ?? MOCK_RESTAURANTS[0];
-  return { ...base, menu: MENU_BY_RESTAURANT[id] ?? defaultMenu() };
+  return { ...withMockLikeState(base), menu: MENU_BY_RESTAURANT[id] ?? defaultMenu() };
+}
+
+// ─── Likes (mock) ────────────────────────────────────────────────────────────
+// Mock mode has no caller identity — one Set stands in for "the current user's
+// likes", the same simplification the mock uses everywhere else (a single
+// customer/rider/restaurant role rather than per-account state).
+const mockLikedIds = new Set<string>();
+
+export function mockToggleLike(id: string, liked: boolean): void {
+  if (liked) mockLikedIds.add(id);
+  else mockLikedIds.delete(id);
+}
+
+/** Overlay the mock caller's like state on a restaurant's seeded base count. */
+export function withMockLikeState<T extends Restaurant>(r: T): T {
+  const liked = mockLikedIds.has(r.id);
+  return { ...r, likeCount: r.likeCount + (liked ? 1 : 0), liked };
 }
 
 // ─── In-memory order store ────────────────────────────────────────────────────
@@ -339,9 +370,11 @@ interface MockState {
   messages: Record<string, ChatMessage[]>;
   /** ms timestamp each order was last advanced. */
   advancedAt: Record<string, number>;
+  /** Order ids the demo rider has declined — hidden from mockRiderOffers (mirrors DeclineDelivery). */
+  declinedOffers: Set<string>;
 }
 
-export const mockStore: MockState = { orders: {}, messages: {}, advancedAt: {} };
+export const mockStore: MockState = { orders: {}, messages: {}, advancedAt: {}, declinedOffers: new Set() };
 
 const MOCK_RIDER = {
   id: 'rider-1',
@@ -362,7 +395,10 @@ export function makeOrder(
   const id = partial.id ?? `o${orderSeq++}-${Date.now().toString(36)}`;
   const items = partial.items ?? [];
   const subtotal = items.reduce((sum, it) => sum + it.priceKobo * it.qty, 0);
-  const delivery = r.deliveryFeeKobo;
+  // Every MOCK_RESTAURANTS entry defines a flat fee, but the field is optional on
+  // Restaurant because the live DTO has no such column — so narrow it here. An
+  // Order always carries a concrete delivery fee.
+  const delivery = r.deliveryFeeKobo ?? 0;
   const service = Math.round(subtotal * 0.05);
   // Mandatory take-away packaging: one pack fee PER takeaway package (the
   // container). Falls back to one pack per portion only if no package count was
@@ -389,7 +425,8 @@ export function makeOrder(
     // (the backend escrows payment and returns delivery_code on the Order).
     dispatchStatus: partial.dispatchStatus ?? 'none',
     riderId: partial.riderId ?? null,
-    deliveryCode: partial.deliveryCode ?? makeDeliveryCode(),
+    deliveryCode: partial.deliveryCode ?? makeHandoffCode(),
+    pickupCode: partial.pickupCode ?? makeHandoffCode(),
     createdAt: partial.createdAt ?? new Date().toISOString(),
     deliveredAt: partial.deliveredAt ?? null,
     rated: partial.rated ?? false,
@@ -533,7 +570,9 @@ export function mockRiderOffers(): RiderOffer[] {
   // Auto-dispatch: surface 'ready' orders that are searching for a rider and
   // not yet assigned. This mirrors the server's auto-populated rider offers.
   const open = Object.values(mockStore.orders)
-    .filter((o) => !o.rider && o.status === 'ready' && o.dispatchStatus === 'searching')
+    .filter(
+      (o) => !o.rider && o.status === 'ready' && o.dispatchStatus === 'searching' && !mockStore.declinedOffers.has(o.id),
+    )
     .map<RiderOffer>((o) => ({
       orderId: o.id,
       restaurantName: o.restaurantName,
@@ -585,10 +624,28 @@ export function mockAcceptOffer(orderId: string): Order {
   return { ...order };
 }
 
+/**
+ * Rider declines an offer — mirrors the real `DeclineDelivery`: no money moves,
+ * the order stays `ready`/`searching` and is simply hidden from this rider's
+ * offer list, as if auto re-dispatched to someone else.
+ */
+export function mockDeclineOffer(orderId: string): void {
+  mockStore.declinedOffers.add(orderId);
+  const order = mockStore.orders[orderId];
+  if (order) pushSystem(orderId, 'A rider declined this delivery — searching for another rider.');
+}
+
 /** Rider confirms pickup at the restaurant → picked_up. */
-export function mockConfirmPickup(orderId: string): Order {
+export function mockConfirmPickup(orderId: string, code: string): Order {
   const order = mockStore.orders[orderId];
   if (!order) throw new Error('Order not found');
+  if (!order.pickupCode || code.trim() !== order.pickupCode) {
+    const err = new Error('Incorrect pickup code. Ask the restaurant to read it again.') as Error & {
+      code?: string;
+    };
+    err.code = 'INVALID_PICKUP_CODE';
+    throw err;
+  }
   order.status = 'picked_up';
   if (!order.rider) order.rider = { ...MOCK_RIDER };
   order.riderId = order.rider.id;

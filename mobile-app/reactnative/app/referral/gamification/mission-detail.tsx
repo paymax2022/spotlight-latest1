@@ -4,6 +4,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLocalSearchParams } from 'expo-router';
 import { Check, Circle, Sparkles, Coins, Award } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
+import { showToast } from '@/store/toastStore';
 import { Typography } from '@/constants/typography';
 import { Spacing } from '@/constants/spacing';
 import { Radius } from '@/constants/radius';
@@ -96,7 +97,16 @@ export default function MissionDetailScreen() {
           {data.status === 'completed' ? (
             <PrimaryButton
               label="Claim reward"
-              onPress={() => claim.mutate(id)}
+              onPress={() =>
+                claim.mutate(id, {
+                  onError: () =>
+                    showToast({
+                      variant: 'error',
+                      title: 'Could not claim this mission',
+                      message: 'Please try again.',
+                    }),
+                })
+              }
               loading={claim.isPending}
             />
           ) : null}

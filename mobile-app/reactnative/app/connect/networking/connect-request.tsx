@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { View, Text, StyleSheet, ScrollView } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import { CircleCheck, Handshake } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
@@ -34,7 +35,7 @@ export default function ConnectRequestScreen() {
       {
         onSuccess: () => {
           setSent(true);
-          setTimeout(() => router.back(), 1100);
+          setTimeout(() => goBack('/connect'), 1100);
         },
       },
     );

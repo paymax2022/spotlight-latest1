@@ -22,6 +22,15 @@ type Auditor interface {
 // AutoSaveJobType is the scheduler handler key for recurring vault auto-save.
 const AutoSaveJobType = "savings.autosave"
 
+// DefaultEarlyBreakPenaltyBps is the rate charged for breaking a LOCK vault
+// before maturity, in basis points (1000 = 10%). It matches the 10% the central
+// commission module already assumes for this fee (see app wiring). Override per
+// deployment with SAVINGS_EARLY_BREAK_PENALTY_BPS.
+//
+// This rate MUST be server-side. It previously arrived in the request body, so
+// any member could break a lock penalty-free by sending penalty_bps: 0.
+const DefaultEarlyBreakPenaltyBps int64 = 1000
+
 // VaultService owns the Vault sub-balance. The dedicated sub-balance is an
 // append-only ledger (savings_vault_ledger): balance is the SUM of its entries
 // (NL-8). Deposits move real money out of the user's main wallet (finance
@@ -34,10 +43,54 @@ type VaultService struct {
 	sched      *scheduler.Service
 	audit      Auditor
 	commission CommissionRecorder // optional; nil ⇒ realized-profit recording is a no-op
+
+	// earlyBreakPenaltyBps is policy, never caller input. See penaltyFor.
+	earlyBreakPenaltyBps int64
 }
 
 func NewVaultService(db *pgxpool.Pool, led *ledger.Service, sched *scheduler.Service, audit Auditor) *VaultService {
-	return &VaultService{db: db, led: led, sched: sched, audit: audit}
+	return &VaultService{
+		db: db, led: led, sched: sched, audit: audit,
+		earlyBreakPenaltyBps: DefaultEarlyBreakPenaltyBps,
+	}
+}
+
+// SetEarlyBreakPenaltyBps overrides the early-break rate from config. It fails
+// closed: an out-of-range value is rejected and the previous rate is kept,
+// rather than silently charging a nonsense amount.
+func (s *VaultService) SetEarlyBreakPenaltyBps(bps int64) error {
+	if bps < 0 || bps > 10000 {
+		return fmt.Errorf("savings: early-break penalty_bps out of range: %d", bps)
+	}
+	s.earlyBreakPenaltyBps = bps
+	return nil
+}
+
+// EarlyBreakPenaltyBps exposes the configured rate so callers (and the quote
+// endpoint) can show the member what a break will cost BEFORE they confirm.
+func (s *VaultService) EarlyBreakPenaltyBps() int64 { return s.earlyBreakPenaltyBps }
+
+// PenaltyQuote is the exported, read-only view of penaltyFor for the quote
+// endpoint. Same function the charge uses, so a quote can never disagree with
+// what is actually debited.
+func (s *VaultService) PenaltyQuote(v *Vault, amountKobo int64) int64 {
+	return s.penaltyFor(v, amountKobo)
+}
+
+// penaltyFor computes the early-break penalty for withdrawing amountKobo from v.
+// A penalty applies ONLY to breaking a still-locked LOCK vault before maturity;
+// FLEX vaults and matured locks are always free. Integer math throughout — the
+// division truncates toward zero, so the member is never overcharged by rounding.
+func (s *VaultService) penaltyFor(v *Vault, amountKobo int64) int64 {
+	if v == nil || amountKobo <= 0 {
+		return 0
+	}
+	locked := v.Kind == VaultLock && v.State == VaultOpen &&
+		(v.MaturesAt == nil || time.Now().Before(*v.MaturesAt))
+	if !locked {
+		return 0
+	}
+	return amountKobo * s.earlyBreakPenaltyBps / 10000
 }
 
 // CommissionRecorder is the nil-safe seam into the central Commission & Profit
@@ -129,6 +182,27 @@ func (s *VaultService) CreateVault(ctx context.Context, ownerID, name string, ki
 }
 
 // Balance returns the derived vault sub-balance in kobo (NL-8).
+// BalanceForOwner is the ONLY balance read that may be reached from a request
+// handler. Balance() below takes no owner and therefore cannot be authorized —
+// it is safe only on paths that have already established ownership (Deposit,
+// Withdraw, EarlyWithdraw, GetVault). Exposing Balance() directly is what made
+// any authenticated user able to read any vault's balance by id.
+//
+// Note RLS is no defense here: the backend connects through the pgx pool as the
+// table owner, so savings_vault_ledger_own never applies. The check must be in
+// Go.
+func (s *VaultService) BalanceForOwner(ctx context.Context, ownerID, vaultID string) (int64, error) {
+	v, err := s.getVault(ctx, vaultID)
+	if err != nil {
+		return 0, err
+	}
+	if v.OwnerUserID != ownerID {
+		return 0, ErrForbidden
+	}
+	return s.Balance(ctx, vaultID)
+}
+
+// Balance is UNAUTHORIZED by construction — see BalanceForOwner.
 func (s *VaultService) Balance(ctx context.Context, vaultID string) (int64, error) {
 	const q = `SELECT COALESCE(SUM(CASE WHEN direction='CREDIT' THEN amount_kobo ELSE -amount_kobo END),0)
 	           FROM savings_vault_ledger WHERE vault_id=$1`
@@ -264,8 +338,16 @@ func (s *VaultService) TransitionState(ctx context.Context, ownerID, vaultID str
 
 // ListVaults returns the owner's vaults (object-level: owner only).
 func (s *VaultService) ListVaults(ctx context.Context, ownerID string) ([]Vault, error) {
-	const q = `SELECT id, owner_user_id, name, kind, state, target_kobo, config_version, matures_at, autosave_job_id, created_at, updated_at
-	           FROM savings_vaults WHERE owner_user_id=$1 ORDER BY created_at DESC`
+	// The balance is projected from the append-only ledger in the same pass
+	// (NL-8: never a stored column). Without it every vault in a list read
+	// carried 0, so funded vaults rendered as ₦0 on the list screens. Same
+	// expression as BuildSummary's per-vault subquery, kept in one round trip
+	// rather than N+1 Balance() calls.
+	const q = `SELECT v.id, v.owner_user_id, v.name, v.kind, v.state, v.target_kobo, v.config_version,
+	                  v.matures_at, v.autosave_job_id, v.created_at, v.updated_at,
+	                  COALESCE((SELECT SUM(CASE WHEN l.direction='CREDIT' THEN l.amount_kobo ELSE -l.amount_kobo END)
+	                            FROM savings_vault_ledger l WHERE l.vault_id=v.id),0) AS balance_kobo
+	           FROM savings_vaults v WHERE v.owner_user_id=$1 ORDER BY v.created_at DESC`
 	rows, err := s.db.Query(ctx, q, ownerID)
 	if err != nil {
 		return nil, err
@@ -276,7 +358,8 @@ func (s *VaultService) ListVaults(ctx context.Context, ownerID string) ([]Vault,
 		var v Vault
 		var kind, state string
 		if err := rows.Scan(&v.ID, &v.OwnerUserID, &v.Name, &kind, &state, &v.TargetKobo,
-			&v.ConfigVersion, &v.MaturesAt, &v.AutoSaveJobID, &v.CreatedAt, &v.UpdatedAt); err != nil {
+			&v.ConfigVersion, &v.MaturesAt, &v.AutoSaveJobID, &v.CreatedAt, &v.UpdatedAt,
+			&v.BalanceKobo); err != nil {
 			return nil, err
 		}
 		v.Kind = VaultKind(kind)

@@ -14,6 +14,8 @@ import {
   pct,
 } from '../_ui';
 import { Page, PageHeader, Button, colors, thCell, tdCell } from '@/components/ui/vuexy';
+import { FixtureBanner } from '../../_shared/ui';
+import { USE_MOCK, USE_MOCK_ENV } from '@/services/staysAdminService';
 
 export default function StaysDashboardPage() {
   const [data, setData] = useState<StaysDashboard | null>(null);
@@ -37,6 +39,7 @@ export default function StaysDashboardPage() {
         subtitle="GMV, take rate, conversion, commission, reconciliation breaks & supplier mix across the bedbank (RateHawk, ZentrumHub) and direct rails."
         actions={<Button variant="outline" sm onClick={load}>Refresh</Button>}
       />
+      <FixtureBanner active={USE_MOCK} envVar={USE_MOCK_ENV} />
       <StaysTabs active="overview" />
 
       <DisclosureNote>

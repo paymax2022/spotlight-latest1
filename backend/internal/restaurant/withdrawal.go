@@ -178,11 +178,13 @@ func (s *Service) RequestWithdrawal(ctx context.Context, ownerID string, in Requ
 	}
 	if s.tiers == nil {
 		// Fail-closed: a money path with no tier gate must refuse to move money.
-		return nil, fmt.Errorf("restaurant: withdrawals require a tier gate (WithTiers not wired)")
+		// Shares PlaceOrder's sentinel so both money paths report an unwired gate
+		// identically (503 via escrowErrStatus / withdrawalErrStatus).
+		return nil, ErrTierGateUnwired
 	}
 
 	// Fast idempotency path: a prior request with this key already reserved funds.
-	if existing, err := s.getWithdrawalByIdem(ctx, in.IdempotencyKey); err == nil && existing != nil {
+	if existing, err := s.getWithdrawalByIdem(ctx, in.IdempotencyKey, ownerID); err == nil && existing != nil {
 		existing.AlreadyProcessed = true
 		return existing, nil
 	}
@@ -234,7 +236,7 @@ func (s *Service) RequestWithdrawal(ctx context.Context, ownerID string, in Requ
 
 	// Re-check idempotency INSIDE the lock: a concurrent request with the same key
 	// that beat us to commit is returned as-is rather than colliding on the reserve.
-	if existing, ierr := s.getWithdrawalByIdemTx(ctx, tx, in.IdempotencyKey); ierr == nil && existing != nil {
+	if existing, ierr := s.getWithdrawalByIdemTx(ctx, tx, in.IdempotencyKey, ownerID); ierr == nil && existing != nil {
 		_ = tx.Rollback(ctx)
 		existing.AlreadyProcessed = true
 		return existing, nil
@@ -278,7 +280,7 @@ func (s *Service) RequestWithdrawal(ctx context.Context, ownerID string, in Requ
 		// Lost the race on the unique key — the reserve legs we just tried to insert
 		// would also have conflicted, so the tx is rolled back and the winner returned.
 		_ = tx.Rollback(ctx)
-		existing, gerr := s.getWithdrawalByIdem(ctx, in.IdempotencyKey)
+		existing, gerr := s.getWithdrawalByIdem(ctx, in.IdempotencyKey, ownerID)
 		if gerr != nil || existing == nil {
 			return nil, fmt.Errorf("restaurant: withdrawal idempotent replay lookup: %w", gerr)
 		}
@@ -536,12 +538,17 @@ func (s *Service) GetWithdrawal(ctx context.Context, ownerID, id string) (*Withd
 }
 
 // getWithdrawalByIdem resolves a withdrawal by its idempotency key (idempotent replay).
-func (s *Service) getWithdrawalByIdem(ctx context.Context, idemKey string) (*Withdrawal, error) {
+// Scoped to the requesting merchant: Idempotency-Keys are client-chosen, so an
+// unscoped lookup would hand a merchant another merchant's withdrawal record (amount,
+// bank account, provider reference) whenever they replayed that merchant's key. A key
+// that exists but belongs to someone else is a miss here. Same reasoning as
+// findOrderByIdempotencyKey on the order-escrow path.
+func (s *Service) getWithdrawalByIdem(ctx context.Context, idemKey, userID string) (*Withdrawal, error) {
 	const q = `
 		SELECT id, user_id, bank_account_id, amount_kobo, currency, status, ledger_ref,
 		       provider_reference, failure_reason, idempotency_key, created_at, updated_at
-		FROM restaurant_withdrawals WHERE idempotency_key=$1`
-	w, err := s.scanWithdrawal(s.db.QueryRow(ctx, q, idemKey))
+		FROM restaurant_withdrawals WHERE idempotency_key=$1 AND user_id=$2`
+	w, err := s.scanWithdrawal(s.db.QueryRow(ctx, q, idemKey, userID))
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil // not found is not an error for the fast idempotency probe
@@ -574,12 +581,12 @@ func (s *Service) lockWithdrawalTx(ctx context.Context, tx pgx.Tx, id string) (*
 
 // getWithdrawalByIdemTx is the in-transaction variant used for the race-safe
 // re-check under the wallet advisory lock.
-func (s *Service) getWithdrawalByIdemTx(ctx context.Context, tx pgx.Tx, idemKey string) (*Withdrawal, error) {
+func (s *Service) getWithdrawalByIdemTx(ctx context.Context, tx pgx.Tx, idemKey, userID string) (*Withdrawal, error) {
 	const q = `
 		SELECT id, user_id, bank_account_id, amount_kobo, currency, status, ledger_ref,
 		       provider_reference, failure_reason, idempotency_key, created_at, updated_at
-		FROM restaurant_withdrawals WHERE idempotency_key=$1`
-	w, err := s.scanWithdrawal(tx.QueryRow(ctx, q, idemKey))
+		FROM restaurant_withdrawals WHERE idempotency_key=$1 AND user_id=$2`
+	w, err := s.scanWithdrawal(tx.QueryRow(ctx, q, idemKey, userID))
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil

@@ -1,11 +1,12 @@
 // ── Referral (Earn hub) — Constants ──────────────────────────────────────────
 // Mirrors the Connect mock-first convention. Money is ALWAYS integer kobo.
 
+import { mockAllowed } from '@/config/mockPolicy';
 import { Colors } from '@/constants/colors';
 
 // Flip to false once the live Go-backend /referral endpoints are reachable from
 // the app (or set EXPO_PUBLIC_REFERRAL_USE_MOCK=false). Phase 0 stays mock-first.
-export const USE_MOCK = (process.env.EXPO_PUBLIC_REFERRAL_USE_MOCK ?? 'true') !== 'false';
+export const USE_MOCK = mockAllowed(process.env.EXPO_PUBLIC_REFERRAL_USE_MOCK, true);
 
 // Referral REST namespace (frontend-web proxy → Go backend /api/finance/referral).
 export const REFERRAL_API_BASE = '/api/v1/referral';

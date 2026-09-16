@@ -109,3 +109,28 @@ export interface TierProgression {
   activatedToNext: number | null;
   tiers: AmbassadorTier[];
 }
+
+// ── Application (M-AMB-00) ───────────────────────────────────────────────────
+// Becoming an ambassador. The disclosure is mandatory and stored verbatim: the
+// programme pays commission on referrals, and NDPC/FTC-style rules require the
+// ambassador to have acknowledged that they must disclose it to their audience.
+
+/** Backend lifecycle for referral_ambassadors.status. */
+export type AmbassadorStatus = 'applied' | 'approved' | 'suspended' | 'rejected';
+
+export interface AmbassadorApplication {
+  id: string;
+  tier: string;
+  status: AmbassadorStatus;
+  /** The disclosure the applicant accepted, stored verbatim. */
+  disclosureText: string;
+  disclosureAcceptedAt: string | null;
+  appliedAt: string;
+  approvedAt: string | null;
+}
+
+export interface ApplyInput {
+  tier: string;
+  /** Must be true; the backend rejects an unaccepted disclosure with 400. */
+  disclosureAccepted: boolean;
+}

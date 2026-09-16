@@ -88,6 +88,16 @@ func RegisterConnectMoney(member *gin.RouterGroup, admin *gin.RouterGroup, cfg c
 		log.Println("[connect-money] commission recording wired → Contest/Voting (earning-row only; no ledger re-post)")
 	}
 	connectvoting.Register(member, voteSvc, cfg)
+	// Contest expiry loop — closes contests past their voting deadline so a
+	// finished contest stops advertising itself as LIVE on the phone and in the
+	// web list. Votes were already refused correctly by the closes_at window; this
+	// makes the STATUS agree with that. House pattern for periodic work is a
+	// background ticker (no pg_cron, no asynq scheduler in this repo).
+	// context.Background(): this ticker lives for the process, and
+	// RegisterConnectMoney takes no ctx — the same choice finance_routes.go makes
+	// for StartReconScheduler. Widening the signature would ripple to the
+	// orchestrator for no behavioural gain.
+	connectvoting.StartExpiryCloser(context.Background(), pool, connectvoting.DefaultExpiryInterval)
 
 	// --- Payouts (creator gift-revenue payout request) ---
 	payoutSvc := connectpayouts.NewService(

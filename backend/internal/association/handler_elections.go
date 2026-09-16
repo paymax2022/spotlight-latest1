@@ -10,7 +10,7 @@ import (
 // (requireElectionOfficer); voter actions are fail-closed on eligibility + window.
 
 func (h *Handler) ListElections(c *gin.Context) {
-	v, err := h.svc.ListElections(c.Request.Context(), c.GetString("user_id"))
+	v, err := h.svc.ListElections(c.Request.Context(), c.GetString("user_id"), c.Query("org_id"))
 	if err != nil {
 		c.JSON(statusFor(err), gin.H{"error": err.Error()})
 		return
@@ -33,7 +33,7 @@ func (h *Handler) CreateElection(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	id, err := h.svc.CreateElection(c.Request.Context(), c.GetString("user_id"), in)
+	id, err := h.svc.CreateElection(c.Request.Context(), c.GetString("user_id"), c.Query("org_id"), in)
 	if err != nil {
 		c.JSON(statusFor(err), gin.H{"error": err.Error()})
 		return

@@ -2,6 +2,7 @@ package marketplace
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"strings"
 	"time"
@@ -12,6 +13,33 @@ import (
 // minDescriptionWords is the §2.1 submit guard (description ≥ 8 words).
 const minDescriptionWords = 8
 
+// validConditions are the item conditions this module accepts. `condition` is
+// a free TEXT column (20260905000000_marketplace_v1.sql, documented only by a
+// comment) with no CHECK constraint, so nothing previously caught a typo or an
+// invented value before it became a fact on a listing.
+var validConditions = map[string]bool{
+	"new": true, "used": true, "refurbished": true, "foreign_used": true, "local_used": true,
+}
+
+// vehicleOnlyConditions is the "foreign used" (Tokunbo) vs. "local used" split
+// — meaningful only for a listing filed under the Vehicles category tree; every
+// other category just gets new/used/refurbished.
+var vehicleOnlyConditions = map[string]bool{"foreign_used": true, "local_used": true}
+
+// validateCondition checks a listing's condition value is known, and that a
+// vehicle-only condition is confined to a listing filed under Vehicles. Pure/
+// testable — the DB-backed "is this a Vehicles category" check that produces
+// isVehicleCategory lives in CreateListing, one level up.
+func validateCondition(condition string, isVehicleCategory bool) error {
+	if !validConditions[condition] {
+		return fieldErr(CodeValidation, "invalid condition", "condition")
+	}
+	if vehicleOnlyConditions[condition] && !isVehicleCategory {
+		return fieldErr(CodeValidation, "foreign_used/local_used only applies to Vehicles categories", "condition")
+	}
+	return nil
+}
+
 // autoApproveTrustScore is the §2.1 auto-approve guard threshold (seller ≥ 0.6).
 const autoApproveTrustScore = 0.6
 
@@ -20,8 +48,11 @@ func (s *Service) CreateListing(ctx context.Context, sellerID string, in CreateL
 	if sellerID == "" {
 		return nil, ErrUnauthenticated
 	}
-	if n := len(strings.TrimSpace(in.Title)); n < 10 || n > 100 {
-		return nil, fieldErr(CodeValidation, "title must be 10–100 characters", "title")
+	// No minimum beyond non-empty: "iPhone 15", "Sofa" and "Bike" are all real
+	// titles under ten characters. The 100 ceiling stays — it is what keeps a title
+	// inside the fixed-height listing card. See migration 20270157000000.
+	if n := len(strings.TrimSpace(in.Title)); n < 1 || n > 100 {
+		return nil, fieldErr(CodeValidation, "title must be 1–100 characters", "title")
 	}
 	if wordCount(in.Description) < minDescriptionWords {
 		return nil, newErr(422, CodeDescriptionTooShort, "description must be at least 8 words")
@@ -45,7 +76,32 @@ func (s *Service) CreateListing(ctx context.Context, sellerID string, in CreateL
 	if !cat.IsActive {
 		return nil, fieldErr(CodeValidation, "category is not active", "category_id")
 	}
+	// The listing below is stamped DefaultMarketID while category_id is whatever the
+	// caller sent, so without this the two could disagree — and they did: 210 of 229
+	// local listings sit in market NG under a category from another market. Market is
+	// this module's tenancy boundary (categories and search are both scoped to one),
+	// so such a listing shows up in one half of a market's UI and not the other.
+	//
+	// The category is already loaded for the attrs check, so this costs no extra
+	// query. The composite FK added in 20270119000000 is the backstop; this exists so
+	// the caller gets a field error naming category_id instead of a raw FK violation.
+	if cat.MarketID != DefaultMarketID {
+		return nil, fieldErr(CodeValidation, "category belongs to a different market", "category_id")
+	}
 	if err := validateAttrs(cat.AttributeSchema, in.Attrs); err != nil {
+		return nil, err
+	}
+	condition := orStr(in.Condition, "used")
+	// Only spend the ancestor-walk query when the condition actually needs it.
+	isVehicle := false
+	if vehicleOnlyConditions[condition] {
+		var verr error
+		isVehicle, verr = s.repo.IsCategoryDescendantOfSlug(ctx, in.CategoryID, "vehicles")
+		if verr != nil {
+			return nil, verr
+		}
+	}
+	if err := validateCondition(condition, isVehicle); err != nil {
 		return nil, err
 	}
 	escrowEligible := true
@@ -60,19 +116,67 @@ func (s *Service) CreateListing(ctx context.Context, sellerID string, in CreateL
 		Title:          in.Title,
 		Description:    in.Description,
 		PriceKobo:      in.PriceKobo,
-		Condition:      orStr(in.Condition, "used"),
+		Condition:      condition,
 		Attrs:          in.Attrs,
 		Status:         ListingDraft,
 		EscrowEligible: escrowEligible,
 		State:          in.State,
 		LGA:            in.LGA,
 	}
-	return s.repo.InsertListing(ctx, l)
+	created, err := s.repo.InsertListing(ctx, l)
+	if err != nil {
+		return nil, err
+	}
+	// Persist the photos. MediaIDs was parsed and thrown away before this, so
+	// mkt_listing_media stayed empty and every listing rendered without an image.
+	//
+	// A failure here does NOT fail the create: the listing itself is valid and
+	// already written, and losing a draft because a photo row would not insert is
+	// the worse outcome. It is logged so the gap is visible rather than silent.
+	if keys := ownedMediaKeys(sellerID, in.MediaIDs); len(keys) > 0 {
+		if merr := s.repo.InsertListingMedia(ctx, created.ID, keys); merr != nil {
+			log.Printf("[marketplace] listing %s created but media not saved: %v", created.ID, merr)
+		} else {
+			created.ThumbURL = s.presignThumb(keys[0])
+		}
+	}
+	return created, nil
+}
+
+// ownedMediaKeys filters client-supplied media ids down to object keys this
+// seller actually uploaded.
+//
+// Two things make this necessary. The composer sends `fileUrl ?? photo.id` — so
+// when an upload fails it posts a LOCAL photo id, which would otherwise be stored
+// as if it were an object key and render as a broken image forever. And a key is
+// just a string from the client, so without the ownership check a caller could
+// claim another seller's object by guessing its path.
+//
+// The shape is the one presign mints: marketplace/<seller-uuid>/<32 hex><ext>.
+func ownedMediaKeys(sellerID string, ids []string) []string {
+	prefix := "marketplace/" + sellerID + "/"
+	out := make([]string, 0, len(ids))
+	for _, id := range ids {
+		if !strings.HasPrefix(id, prefix) {
+			continue
+		}
+		if name := strings.TrimPrefix(id, prefix); name == "" || strings.Contains(name, "/") {
+			continue
+		}
+		out = append(out, id)
+	}
+	return out
 }
 
 // GetListing returns a listing (public detail).
 func (s *Service) GetListing(ctx context.Context, id string) (*Listing, error) {
-	return s.repo.GetListing(ctx, id)
+	l, err := s.repo.GetListing(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	s.attachThumbs(ctx, []*Listing{l})
+	s.attachFullMedia(ctx, l)
+	return l, nil
 }
 
 // UpdateListing edits the mutable subset. §8: while any non-terminal order
@@ -147,6 +251,142 @@ func requiresRemoderation(in UpdateListingInput) bool {
 	return in.Title != nil || in.Description != nil || in.Attrs != nil
 }
 
+// maxListingPhotos mirrors the compose wizard's own selectionLimit — a
+// client-side cap is advisory only, so the API enforces it too.
+const maxListingPhotos = 10
+
+// remoderatePhotosEdit re-enters an ACTIVE listing into pending_review after a
+// photo add/remove — the same trust rationale UpdateListing already applies to
+// an edited title/description/attrs (EDIT-AFTER-APPROVE RE-MODERATION,
+// LM-002/MOD-010/EC-010): a seller could otherwise bait-and-switch an approved
+// ad's photos without the content going back through review. l reflects the
+// listing's status BEFORE this edit; a non-active listing is left untouched —
+// there is no live search listing to protect.
+func (s *Service) remoderatePhotosEdit(ctx context.Context, l *Listing, actorID, auditAction string) error {
+	if l.Status != ListingActive {
+		return nil
+	}
+	if err := guardListingTransition(ListingActive, ListingPendingReview); err != nil {
+		return err
+	}
+	reason := "photos_edited"
+	if err := s.repo.SetListingStatus(ctx, l.ID, ListingActive, ListingPendingReview, &reason); err != nil {
+		return err
+	}
+	_ = s.repo.InsertOutbox(ctx, nil, l.ID, OutboxDelete, map[string]any{"listing_id": l.ID})
+	_ = s.writeAudit(ctx, AuditEntry{
+		AdminID: actorID, Action: auditAction, TargetType: "listing", TargetID: l.ID, ReasonCode: reason,
+		BeforeState: map[string]any{"status": string(ListingActive)},
+		AfterState:  map[string]any{"status": string(ListingPendingReview)},
+	})
+	s.notifySafe(ctx, l.SellerID, "mkt.listing.remoderation", "Your edit is under review before your listing goes live again.")
+	return nil
+}
+
+// listingWithMedia re-fetches a listing plus its presigned gallery, the shape
+// every media-mutating endpoint below returns so a client can render the new
+// state without a second round trip.
+func (s *Service) listingWithMedia(ctx context.Context, id string) (*Listing, error) {
+	updated, err := s.repo.GetListing(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	s.attachThumbs(ctx, []*Listing{updated})
+	s.attachFullMedia(ctx, updated)
+	return updated, nil
+}
+
+// AddListingMedia appends new photos to an existing listing (OLA: owner-only).
+// mediaIDs are fresh presign fileUrls, exactly like CreateListingInput.MediaIDs
+// — ownedMediaKeys applies the identical ownership/shape check so a caller
+// cannot claim another seller's object or replay a failed-upload local id.
+func (s *Service) AddListingMedia(ctx context.Context, sellerID, id string, mediaIDs []string) (*Listing, error) {
+	l, err := s.repo.GetListing(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if l.SellerID != sellerID {
+		return nil, ErrForbidden
+	}
+	keys := ownedMediaKeys(sellerID, mediaIDs)
+	if len(keys) == 0 {
+		return nil, fieldErr(CodeValidation, "no valid photo to add", "media_ids")
+	}
+	existing, err := s.repo.ListMediaForListing(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if len(existing)+len(keys) > maxListingPhotos {
+		return nil, fieldErr(CodeValidation, fmt.Sprintf("a listing can have at most %d photos", maxListingPhotos), "media_ids")
+	}
+	if err := s.repo.AppendListingMedia(ctx, id, keys, len(existing)); err != nil {
+		return nil, err
+	}
+	if err := s.remoderatePhotosEdit(ctx, l, sellerID, "mkt.listing.photo_added"); err != nil {
+		return nil, err
+	}
+	return s.listingWithMedia(ctx, id)
+}
+
+// RemoveListingMedia deletes one photo from a listing (OLA: owner-only).
+func (s *Service) RemoveListingMedia(ctx context.Context, sellerID, id, mediaID string) (*Listing, error) {
+	l, err := s.repo.GetListing(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if l.SellerID != sellerID {
+		return nil, ErrForbidden
+	}
+	n, err := s.repo.DeleteListingMedia(ctx, id, mediaID)
+	if err != nil {
+		return nil, err
+	}
+	if n == 0 {
+		return nil, newErr(404, CodeNotFound, "photo not found on this listing")
+	}
+	if err := s.remoderatePhotosEdit(ctx, l, sellerID, "mkt.listing.photo_removed"); err != nil {
+		return nil, err
+	}
+	return s.listingWithMedia(ctx, id)
+}
+
+// ReorderListingMedia rewrites the gallery order (OLA: owner-only). Purely
+// cosmetic — it changes no content a moderator approved, so unlike add/remove
+// it never re-enters review. orderedMediaIDs must be exactly the listing's
+// current photo ids, each once; anything else is rejected rather than
+// silently dropping or duplicating a photo.
+func (s *Service) ReorderListingMedia(ctx context.Context, sellerID, id string, orderedMediaIDs []string) (*Listing, error) {
+	l, err := s.repo.GetListing(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if l.SellerID != sellerID {
+		return nil, ErrForbidden
+	}
+	existing, err := s.repo.ListMediaForListing(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	existingIDs := make(map[string]bool, len(existing))
+	for _, m := range existing {
+		existingIDs[m.ID] = true
+	}
+	if len(orderedMediaIDs) != len(existing) {
+		return nil, fieldErr(CodeValidation, "reorder must include every existing photo exactly once", "media_ids")
+	}
+	seen := make(map[string]bool, len(orderedMediaIDs))
+	for _, mid := range orderedMediaIDs {
+		if !existingIDs[mid] || seen[mid] {
+			return nil, fieldErr(CodeValidation, "reorder must include every existing photo exactly once", "media_ids")
+		}
+		seen[mid] = true
+	}
+	if err := s.repo.ReorderListingMedia(ctx, id, orderedMediaIDs); err != nil {
+		return nil, err
+	}
+	return s.listingWithMedia(ctx, id)
+}
+
 // SubmitListing runs the §2.1 submit guard and either auto-approves (risk_tier 0 AND
 // seller trust ≥ 0.6 → active) or routes to review (pending_review). OLA: owner.
 func (s *Service) SubmitListing(ctx context.Context, sellerID, id string) (*Listing, error) {
@@ -216,6 +456,23 @@ func (s *Service) PauseListing(ctx context.Context, sellerID, id string) (*Listi
 	return s.sellerListingTransition(ctx, sellerID, id, ListingActive, ListingPaused)
 }
 
+// MarkSoldListing (seller) active → sold. Terminal: the FSM has no outgoing edge
+// from sold, which is deliberate — a sold listing must not silently return to
+// discovery. SetListingStatus stamps sold_at, and the outbox delete removes it
+// from search.
+//
+// The mobile client has called POST /listings/:id/mark-sold since the Sell group
+// was built; the route was never registered, so "Mark as sold" 404ed and the
+// listing stayed live with the item gone.
+//
+// A PAUSED listing cannot be marked sold: paused only leads to active, expired or
+// removed_user. A seller who paused and then sold has to resume first, which is a
+// product question rather than a bug — widening the FSM is a deliberate decision
+// and this does not take it.
+func (s *Service) MarkSoldListing(ctx context.Context, sellerID, id string) (*Listing, error) {
+	return s.sellerListingTransition(ctx, sellerID, id, ListingActive, ListingSold)
+}
+
 // ResumeListing (seller) paused → active if not expired, re-adding to search.
 func (s *Service) ResumeListing(ctx context.Context, sellerID, id string) (*Listing, error) {
 	l, err := s.repo.GetListing(ctx, id)
@@ -229,6 +486,41 @@ func (s *Service) ResumeListing(ctx context.Context, sellerID, id string) (*List
 		return nil, newErr(422, CodeListingNotActive, "listing has expired; renew instead")
 	}
 	return s.sellerListingTransition(ctx, sellerID, id, ListingPaused, ListingActive)
+}
+
+// RenewListing (seller) expired → active, pushing expires_at out another 60
+// days. The FSM has always documented expired → active as "renew"
+// (fsm_listing.go), and the mobile client has called POST /listings/:id/renew
+// since the Sell group was built, but no handler/route/service method ever
+// existed for it — every renew attempt on an expired listing 404ed, same class
+// of gap as MarkSoldListing's history (see its doc comment).
+func (s *Service) RenewListing(ctx context.Context, sellerID, id string) (*Listing, error) {
+	l, err := s.repo.GetListing(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if l.SellerID != sellerID {
+		return nil, ErrForbidden
+	}
+	// Renew is specifically expired → active. guardListingTransition(l.Status,
+	// ListingActive) alone would also pass for draft/pending_review (their own,
+	// differently-gated paths to active) — checking the FROM status explicitly
+	// here is what keeps renew from becoming a moderation bypass.
+	if l.Status != ListingExpired {
+		return nil, newErr(422, CodeListingNotActive, "only an expired listing can be renewed")
+	}
+	if err := guardListingTransition(l.Status, ListingActive); err != nil {
+		return nil, err
+	}
+	if err := s.repo.RenewListing(ctx, id, l.Status, ListingActive); err != nil {
+		return nil, err
+	}
+	l.Status = ListingActive
+	l.ExpiresAt = time.Now().Add(60 * 24 * time.Hour)
+	if op, emit := listingOutboxOp(ListingActive); emit {
+		_ = s.repo.InsertOutbox(ctx, nil, id, op, s.searchPayload(ctx, l))
+	}
+	return l, nil
 }
 
 // DeleteListing (owner) any → removed_user, removing from search.
@@ -323,7 +615,17 @@ func (s *Service) RejectListing(ctx context.Context, adminID, id, reasonCode str
 	if err := guardListingTransition(l.Status, ListingRemovedPolicy); err != nil {
 		return nil, err
 	}
-	if err := s.repo.SetListingStatus(ctx, id, ListingPendingReview, ListingRemovedPolicy, &reasonCode); err != nil {
+	// The from-state is the status we just READ and just guarded, not a fixed
+	// pending_review. SetListingStatus updates `WHERE status = from`, so hardcoding
+	// pending_review meant rejecting an ACTIVE listing matched zero rows and came
+	// back as ErrConflict ("conflicting concurrent write") — pointing at a race
+	// that was not happening, on the one moderation action you most need to work:
+	// pulling a live, selling, prohibited listing. active → removed_policy is an
+	// explicit edge in the FSM and the guard above allows it, so the write must
+	// too; the boost cascade below never ran either, since the error returned
+	// first. RemoveListing has always passed l.Status — this now matches it.
+	prior := l.Status
+	if err := s.repo.SetListingStatus(ctx, id, prior, ListingRemovedPolicy, &reasonCode); err != nil {
 		return nil, err
 	}
 	l.Status = ListingRemovedPolicy
@@ -347,7 +649,11 @@ func (s *Service) RejectListing(ctx context.Context, adminID, id, reasonCode str
 
 	_ = s.writeAudit(ctx, AuditEntry{
 		AdminID: adminID, Action: "mkt.listing.reject", TargetType: "listing", TargetID: id, ReasonCode: reasonCode,
-		BeforeState: map[string]any{"status": string(ListingPendingReview)},
+		// The real prior status, for the same reason: an audit row asserting
+		// "before: pending_review" for a listing rejected while active is a false
+		// record of a moderation decision, and moderation audit is what gets read
+		// back when a removal is disputed.
+		BeforeState: map[string]any{"status": string(prior)},
 		AfterState:  map[string]any{"status": string(ListingRemovedPolicy), "reason_code": reasonCode},
 	})
 	s.notifySafe(ctx, l.SellerID, "mkt.listing.rejected", "Your listing was removed: "+reasonCode)
@@ -406,15 +712,23 @@ func (s *Service) searchPayload(ctx context.Context, l *Listing) map[string]any 
 	}
 }
 
-// maxBoostWeight returns the largest catalog weight among the given (already
-// active + unexpired) boosts, or 0 if none. Pure/testable. §4: boost_mode:sum, so a
-// listing gets the single strongest boost's additive weight, not the sum of stacked
-// boosts (stacking must not let a seller buy their way to unbounded dominance).
+// maxBoostWeight returns the largest weight among the given (already active +
+// unexpired) boosts, or 0 if none. Pure/testable. §4: boost_mode:sum, so a
+// listing gets the single strongest boost's additive weight, not the sum of
+// stacked boosts (stacking must not let a seller buy their way to unbounded
+// dominance).
+//
+// Reads Boost.Weight — frozen on the row at purchase time by
+// ComputeBoostQuote/PurchaseBoost — rather than looking the tier up against
+// the current catalog. A live lookup would let an admin's later price/weight
+// change on mkt_boost_packages silently reweight an already-purchased boost,
+// which contradicts the pricing console's own disclosure that config changes
+// apply to new purchases only (ADM-001).
 func maxBoostWeight(boosts []Boost) float64 {
 	var max float64
 	for i := range boosts {
-		if t, ok := lookupBoostTier(boosts[i].Tier); ok && t.Weight > max {
-			max = t.Weight
+		if boosts[i].Weight > max {
+			max = boosts[i].Weight
 		}
 	}
 	return max

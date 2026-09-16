@@ -9,6 +9,7 @@ import { Spacing } from '@/constants/spacing';
 import { Radius } from '@/constants/radius';
 import StateView from '@/components/StateView';
 import { ReferralHeader } from '@/features/referral/components';
+import { showToast } from '@/store/toastStore';
 import { useNotificationPrefs, useUpdateNotificationPrefs, useConsent, useRecordConsent } from '@/features/referral/foundation/hooks';
 import type { NotificationChannel } from '@/features/referral/foundation/types';
 
@@ -28,9 +29,27 @@ export default function ReferralSettings() {
   const loading = prefs.isLoading || consent.isLoading;
   const errored = prefs.isError || consent.isError;
 
+  // A settings write that fails silently is worse than one that errors: the
+  // switch stays flipped and the user believes the preference was saved. Every
+  // mutation here reports failure and refetches, so the UI falls back to
+  // whatever the server actually holds.
+  const saveFailed = (what: string) => () => {
+    showToast({ variant: 'error', title: `Could not save ${what}`, message: 'Please try again.' });
+  };
+
   const toggleChannel = (key: NotificationChannel, v: boolean) => {
     if (!prefs.data) return;
-    updatePrefs.mutate({ ...prefs.data, channels: { ...prefs.data.channels, [key]: v } });
+    updatePrefs.mutate(
+      { ...prefs.data, channels: { ...prefs.data.channels, [key]: v } },
+      { onError: () => { saveFailed('your notification settings')(); void prefs.refetch(); } },
+    );
+  };
+
+  const setConsent = (kind: 'contacts' | 'nudges', granted: boolean) => {
+    recordConsent.mutate(
+      { kind, granted },
+      { onError: () => { saveFailed('your privacy choice')(); void consent.refetch(); } },
+    );
   };
 
   return (
@@ -50,14 +69,14 @@ export default function ReferralSettings() {
               sub="Use your contacts to suggest people to invite"
               value={!!consent.data?.contactsConsentAt}
               busy={recordConsent.isPending}
-              onChange={(v) => recordConsent.mutate({ kind: 'contacts', granted: v })}
+              onChange={(v) => setConsent('contacts', v)}
             />
             <ToggleRow
               label="Earning nudges"
               sub="Reminders about pending invitees and unlocks"
               value={!!consent.data?.nudgesConsentAt}
               busy={recordConsent.isPending}
-              onChange={(v) => recordConsent.mutate({ kind: 'nudges', granted: v })}
+              onChange={(v) => setConsent('nudges', v)}
               last
             />
           </View>

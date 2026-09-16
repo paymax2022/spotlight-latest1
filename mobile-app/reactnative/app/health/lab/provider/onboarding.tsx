@@ -13,6 +13,10 @@ import ScreenHeader from '@/components/ScreenHeader';
 import StateView from '@/components/StateView';
 import PrimaryButton from '@/components/PrimaryButton';
 import TextInputField from '@/components/TextInputField';
+import { UploadField } from '@/features/doctor/components';
+import type { UploadFieldState } from '@/features/doctor/components';
+import { pickFileForField } from '@/features/registration/utils/filePicker';
+import type { PickedUpload } from '@/features/registration/types/registration.types';
 
 import { useProviderOnboarding, useSubmitProviderOnboarding } from '@/features/health/lab/hooks';
 import type { ProviderOnboardingState } from '@/features/health/lab/types';
@@ -73,6 +77,17 @@ export default function LabProviderOnboardingScreen() {
   const [mlscnLicenseNo, setMlscnLicenseNo] = useState('');
   const [contactName, setContactName] = useState('');
   const [submitted, setSubmitted] = useState(false);
+  const [uploadState, setUploadState] = useState<UploadFieldState>('empty');
+  const [licenceFile, setLicenceFile] = useState<PickedUpload>();
+  const [uploadErr, setUploadErr] = useState<string>();
+
+  const pickLicence = async () => {
+    setUploadErr(undefined);
+    const file = await pickFileForField('.pdf,.jpg,.jpeg,.png');
+    if (!file) return;
+    setLicenceFile(file);
+    setUploadState('selected');
+  };
 
   const data = onboarding.data;
 
@@ -133,12 +148,18 @@ export default function LabProviderOnboardingScreen() {
     contactName.trim().length > 0;
 
   const onSubmit = async () => {
-    await submit.mutateAsync({
-      businessName: businessName.trim(),
-      mlscnLicenseNo: mlscnLicenseNo.trim(),
-      contactName: contactName.trim(),
-    });
-    setSubmitted(true);
+    setUploadErr(undefined);
+    try {
+      await submit.mutateAsync({
+        businessName: businessName.trim(),
+        mlscnLicenseNo: mlscnLicenseNo.trim(),
+        contactName: contactName.trim(),
+        licenceFile: licenceFile ? { uri: licenceFile.uri, fileName: licenceFile.name, mimeType: licenceFile.mimeType } : undefined,
+      });
+      setSubmitted(true);
+    } catch {
+      setUploadErr('Could not submit your licence document. Please try again.');
+    }
   };
 
   return (
@@ -180,6 +201,14 @@ export default function LabProviderOnboardingScreen() {
           <Text style={styles.note}>
             Your lab becomes discoverable to patients only once your MLSCN licence is verified (HL-2).
           </Text>
+          <UploadField
+            label="MLSCN licence document"
+            state={uploadState}
+            fileName={licenceFile?.name}
+            errorText={uploadErr}
+            hint="PDF, JPG or PNG"
+            onPick={pickLicence}
+          />
         </View>
 
         <PrimaryButton

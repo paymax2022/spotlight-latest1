@@ -1,4 +1,12 @@
-import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query';
+import { QueryClient, QueryClientProvider, useQuery, QueryCache, MutationCache } from '@tanstack/react-query';
+import { fetchModuleVisibility, MODULE_VISIBILITY_KEY } from '@/features/modules/visibility';
+import { visibilityFor } from '@/features/modules/rules';
+import {
+  moduleKeyForSegments,
+  guardAppliesTo,
+  MODULE_UNAVAILABLE_ROUTE,
+  MODULE_LABELS,
+} from '@/features/modules/routeModuleKeys';
 import { Stack, useRouter, useSegments, usePathname, useGlobalSearchParams } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import * as SplashScreen from 'expo-splash-screen';
@@ -7,9 +15,11 @@ import { ActivityIndicator, View } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import ToastHost from '@/components/ToastHost';
 import ConfirmHost from '@/components/ConfirmHost';
+import HomeMenuHost from '@/components/HomeMenu';
 import { Colors } from '@/constants/colors';
 import { useAuthStore } from '@/store/authStore';
 import { getPinStatus } from '@/features/transfers/api';
+import { requiresTransactionPin } from '@/features/security/moneyRoutes';
 import { rememberResume, toParamMap } from '@/lib/resume';
 import { useBrandFonts } from '@/lib/brandFonts';
 import { createSupabaseClient } from '@/lib/supabase';
@@ -17,6 +27,8 @@ import { usePushNotifications } from '@/lib/push';
 import { useVisitorPushBridge } from '@/features/visitor/hooks/useVisitorPushBridge';
 import { useElectionPushBridge } from '@/features/election/hooks/useElectionPushBridge';
 import * as Sentry from '@sentry/react-native';
+import { isUnauthorized, currentPathForReturn } from '@/lib/authError';
+import { promptSignIn } from '@/lib/authRedirect';
 
 // Error tracking + native crash capture. Inert until EXPO_PUBLIC_SENTRY_DSN is set,
 // so local/dev and Expo Go are unaffected.
@@ -31,9 +43,35 @@ Sentry.init({
 // Keep the native splash visible until the brand font is ready (best-effort).
 SplashScreen.preventAutoHideAsync().catch(() => {});
 
+// A DEAD SESSION IS HANDLED ONCE, HERE, FOR EVERY SCREEN.
+//
+// 726 screens render the same generic "Couldn't load. Please try again." with a
+// Retry button. When the cause is an expired session that button cannot work —
+// it resends the same dead token — so the user is offered the one action
+// guaranteed to fail and never told the real remedy. Fixing that screen by
+// screen would be 726 edits; the query client sees every one of those failures
+// already.
+//
+// promptSignIn is throttled, so the several queries a screen fires in parallel
+// produce ONE navigation rather than a router.replace storm — a crash this file
+// has met before (see the "Maximum update depth exceeded" note below).
 const queryClient = new QueryClient({
+  queryCache: new QueryCache({
+    onError: (error) => { if (isUnauthorized(error)) promptSignIn(); },
+  }),
+  mutationCache: new MutationCache({
+    // A 401 on a write is the same dead session, and arguably worse: the user
+    // believes they submitted something.
+    onError: (error) => { if (isUnauthorized(error)) promptSignIn(); },
+  }),
   defaultOptions: {
-    queries: { retry: 1, staleTime: 30_000 },
+    queries: {
+      // Never retry a 401. The default retried it once, which cannot succeed and
+      // only delays the sign-in prompt by a round trip.
+      retry: (failureCount, error) => !isUnauthorized(error) && failureCount < 1,
+      staleTime: 30_000,
+    },
+    mutations: { retry: false },
   },
 });
 
@@ -42,6 +80,13 @@ function AuthGate({ children }: { children: React.ReactNode }) {
   const segments = useSegments();
   const router   = useRouter();
   const pathname = usePathname();
+  // Module publication for this environment. Read once here and shared by the
+  // deep-link guard below; the render gates use the same cached query.
+  const { data: moduleVisibility, isLoading: moduleVisibilityLoading } = useQuery({
+    queryKey: MODULE_VISIBILITY_KEY,
+    queryFn: fetchModuleVisibility,
+    staleTime: 60_000,
+  });
   // useGlobalSearchParams() returns a NEW object every render; keeping it in the
   // gate effect's deps made the effect re-run on every render and storm router.replace
   // during redirects ("Maximum update depth exceeded"). It's only needed to snapshot
@@ -98,8 +143,17 @@ function AuthGate({ children }: { children: React.ReactNode }) {
 
     if (!user && !inAuth) {
       // Pass the current route so login can return the user here after success.
-      if (isModuleRoute) {
-        const returnTo = '/' + segments.join('/');
+      //
+      // COLD BOOT loses this if we rely on segments alone. Deep-linking to
+      // /properties while signed out runs this gate before the router has
+      // populated segments, so isModuleRoute is false, the else branch fires and
+      // the destination is thrown away — the user signs in and lands on the home
+      // grid having asked for something else. Observed exactly that: a cold
+      // /properties with an expired session redirected to /login with no
+      // returnTo. currentPathForReturn() reads the address bar, which is already
+      // correct at that moment (and refuses login paths, so this cannot loop).
+      const returnTo = isModuleRoute ? '/' + segments.join('/') : currentPathForReturn();
+      if (returnTo) {
         router.replace({ pathname: '/(auth)/login', params: { returnTo } } as never);
       } else {
         router.replace('/(auth)/login');
@@ -111,10 +165,17 @@ function AuthGate({ children }: { children: React.ReactNode }) {
     // must always land on the module-grid home.
     if (user && inPreAuth) router.replace('/(tabs)/home');
 
-    // Transaction-PIN block: keep a PIN-less user on the set-PIN screen. Runs
-    // only for a signed-in user who is not mid-auth and isn't already there.
+    // Transaction-PIN block: send a PIN-less user to the set-PIN screen when —
+    // and only when — they are heading somewhere money moves.
+    //
+    // This used to fire on EVERY route, so a signed-in user could not read their
+    // contest application, an announcement or a lab result without first
+    // creating a payment credential they had no immediate use for. Enforcement
+    // was never the reason: every wallet debit is checked server-side (403
+    // `pin_not_set`), so narrowing this changes when the user is asked, not
+    // whether the PIN is required. See features/security/moneyRoutes.ts.
     const onSetPin = segments[0] === 'security'; // only /security/set-pin lives here
-    if (user && !inAuth && pinMissing && !onSetPin) {
+    if (user && !inAuth && pinMissing && !onSetPin && requiresTransactionPin(segments)) {
       // Remember where the user was so we can return them after they set the PIN.
       rememberResume({ pathname, params: toParamMap(globalParamsRef.current) });
       router.replace('/security/set-pin');
@@ -122,6 +183,30 @@ function AuthGate({ children }: { children: React.ReactNode }) {
     // globalParams intentionally omitted (read via ref) — see note above.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initialized, user, segments, router, pinMissing, pathname]);
+
+  // ── Module guard (deep links) ──────────────────────────────────────────────
+  // Gating the module lists stops a module being DISCOVERED; this stops it being
+  // REACHED by a saved link, a push notification or a typed URL. One guard here
+  // covers every route via the segment map, rather than 36 per-screen checks.
+  //
+  // Runs AFTER the auth guard above and skips the auth stack, so the two never
+  // fight over navigation. Fails OPEN: while the registry is loading, or if it
+  // could not be read, nothing is redirected — the same reasoning as the render
+  // gates. Blocking a working screen is worse than leaving one reachable.
+  useEffect(() => {
+    if (!initialized || !user) return;
+    if (moduleVisibilityLoading || !moduleVisibility) return;
+    if (!guardAppliesTo(segments)) return;
+
+    const key = moduleKeyForSegments(segments);
+    if (!key) return;
+    if (visibilityFor(moduleVisibility, key)) return;
+
+    router.replace({
+      pathname: MODULE_UNAVAILABLE_ROUTE,
+      params: { module: MODULE_LABELS[key] ?? 'This service' },
+    } as never);
+  }, [initialized, user, segments, router, moduleVisibility, moduleVisibilityLoading]);
 
   if (!initialized) {
     return (
@@ -205,6 +290,10 @@ function RootLayout() {
         <ToastHost />
         {/* Web renderer for confirmAsync/alertAsync (no-op on native). */}
         <ConfirmHost />
+        {/* Global "back to the module grid" hamburger + sheet. Above the
+            navigator for the same reason as the toasts: it must outlive screen
+            changes, and the floating fallback needs to sit over any screen. */}
+        <HomeMenuHost />
       </SafeAreaProvider>
     </QueryClientProvider>
   );

@@ -19,3 +19,26 @@ RUN arch="$(dpkg --print-architecture)" \
 
 # Deploy CLI placeholder — install flyctl/gcloud/aws here for your target.
 # RUN curl -L https://fly.io/install.sh | sh
+
+# ── trivy DS-0002 ("Image user should not be 'root'") — DELIBERATELY NOT FIXED ──
+# This one is a false positive and adding `USER` here would make things worse.
+#
+# devcontainer.json already sets "remoteUser": "vscode", so the container runs
+# as a non-root user in practice — trivy only reads this Dockerfile and cannot
+# see that. Meanwhile the Go and Node toolchains are layered by devcontainer
+# FEATURES, which run at build time and need root; pinning a USER here would
+# break that layering to satisfy a scanner about a container that is never
+# deployed and only ever runs on a developer's machine.
+#
+# Silenced via the repo-root .trivyignore (DS-0002), not an inline comment
+# here — an inline `# trivy:ignore:DS-0002` comment (tried at several
+# placements) has no effect on this specific check, unlike DS-0026 below;
+# DS-0002 reports against the image as a whole rather than one instruction,
+# so it has no line to attach an inline ignore to. See .trivyignore's own
+# comment for how that was verified.
+#
+# ── trivy DS-0026 ("No HEALTHCHECK defined") — also not applicable here ────────
+# Nothing ever orchestrates or polls this image for liveness; it's opened
+# interactively by VS Code / Codespaces on a developer's own machine, not run
+# as a service. A HEALTHCHECK would have no consumer.
+# trivy:ignore:DS-0026

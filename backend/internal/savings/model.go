@@ -42,6 +42,14 @@ type Vault struct {
 	AutoSaveJobID *string    `json:"autosave_job_id,omitempty"`
 	CreatedAt     time.Time  `json:"created_at"`
 	UpdatedAt     time.Time  `json:"updated_at"`
+
+	// BalanceKobo is the ledger-derived balance (SUM of savings_vault_ledger),
+	// never a stored column — NL-8. It is populated by the READ paths that
+	// project it (ListVaults, GetVault) and is 0 on a freshly created vault,
+	// which is its true balance. NO omitempty: a real zero balance must
+	// serialise, or a funded-then-emptied vault would be indistinguishable
+	// from one whose balance was never projected.
+	BalanceKobo int64 `json:"balance_kobo"`
 }
 
 // ──────────────────────────────────────────────────────────────────────────

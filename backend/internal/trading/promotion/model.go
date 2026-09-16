@@ -21,14 +21,16 @@ const (
 )
 
 // Strategy mirrors public.trading_strategy_promotions.
+// Strategy is serialised to BOTH the member /strategies route (mobile
+// src/features/aitrading) and the admin promotions list — json tags required.
 type Strategy struct {
-	StrategyID       string
-	Stage            ladder.Stage
-	ValidationPassed bool
-	TrackRecordDays  int
-	CircuitTripped   bool
-	Version          int
-	UpdatedAt        time.Time
+	StrategyID       string       `json:"strategy_id"`
+	Stage            ladder.Stage `json:"stage"`
+	ValidationPassed bool         `json:"validation_passed"`
+	TrackRecordDays  int          `json:"track_record_days"`
+	CircuitTripped   bool         `json:"circuit_tripped"`
+	Version          int          `json:"version"`
+	UpdatedAt        time.Time    `json:"updated_at"`
 }
 
 // Event mirrors public.trading_promotion_events (append-only audit).

@@ -20,6 +20,7 @@
 // backend's /api/v1/learn/*. Once that proxy lands, flip the flag — the live
 // paths below already match the Go routes exactly.
 
+import { mockAllowed } from '@/config/mockPolicy';
 import { api } from '@/api/client';
 import { QUIZ_PASS_RATIO } from '../constants/learn.constants';
 import {
@@ -38,7 +39,7 @@ import type {
 } from '../types/learn.types';
 
 // ─── Feature flag: flip to false once real endpoints are ready ────────────────
-const USE_MOCK = (process.env.EXPO_PUBLIC_LEARN_USE_MOCK ?? 'true').toLowerCase() !== 'false';
+const USE_MOCK = mockAllowed(process.env.EXPO_PUBLIC_LEARN_USE_MOCK, true);
 
 /** Simulated network latency so loading states render in mock mode. */
 const delay = (ms = 300) => new Promise((r) => setTimeout(r, ms));

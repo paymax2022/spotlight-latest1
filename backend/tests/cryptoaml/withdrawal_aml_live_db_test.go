@@ -12,7 +12,7 @@ package cryptoaml_test
 // the approve→broadcast STATE TRANSITION is exercisable end-to-end without a real
 // dispatch. We therefore assert the STATE, not a real network side effect.
 //
-// This file is SKIPPED whenever TEST_DATABASE_URL/DATABASE_URL is unset — the SAME
+// This file is SKIPPED whenever TEST_DATABASE_URL is unset — the SAME
 // env-var gate as backend/tests/crypto/live_db_integration_test.go and
 // backend/tests/association/live_db_integration_test.go. The skip is NOT a stub;
 // every step drives the real Service against real tables.
@@ -24,11 +24,11 @@ package cryptoaml_test
 //         crypto_withdrawals.status to include 'pending_review' and 'approved')
 //     plus the finance/ledger migrations (Buy/Withdraw post through the real
 //     ledger.Service). Confirm:
-//       psql "$DATABASE_URL" -c "\d crypto_withdrawals"
-//  2. Set DATABASE_URL (or TEST_DATABASE_URL) to a disposable/test database —
+//       psql "$TEST_DATABASE_URL" -c "\d crypto_withdrawals"
+//  2. Set TEST_DATABASE_URL to a disposable/test database —
 //     never point this at production. `supabase db reset` (local, port 54322)
 //     is the safest target:
-//       export DATABASE_URL="postgres://postgres:postgres@localhost:54322/postgres"
+//       export TEST_DATABASE_URL="postgres://postgres:postgres@localhost:54322/postgres"
 //  3. Run:
 //       cd backend && go test ./tests/cryptoaml/... -run LiveDB -v
 //
@@ -48,17 +48,16 @@ import (
 
 	"spotlight/backend/internal/crypto"
 	"spotlight/backend/internal/finance/ledger"
+
+	"spotlight/backend/internal/testsupport"
 )
 
-// liveDBPool connects using TEST_DATABASE_URL/DATABASE_URL, or skips.
+// liveDBPool connects using TEST_DATABASE_URL, or skips.
 func liveDBPool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
 	dsn := os.Getenv("TEST_DATABASE_URL")
 	if dsn == "" {
-		dsn = os.Getenv("DATABASE_URL")
-	}
-	if dsn == "" {
-		t.Skip("no TEST_DATABASE_URL/DATABASE_URL set — skipping live-DB crypto AML withdrawal integration test; see bring-up note in withdrawal_aml_live_db_test.go")
+		t.Skip("no TEST_DATABASE_URL set — skipping live-DB crypto AML withdrawal integration test; see bring-up note in withdrawal_aml_live_db_test.go")
 	}
 	pool, err := pgxpool.New(context.Background(), dsn)
 	if err != nil {
@@ -97,6 +96,7 @@ func seedUser(t *testing.T, ctx context.Context, pool *pgxpool.Pool) string {
 	if _, err := pool.Exec(ctx, `INSERT INTO auth.users (id, email) VALUES ($1, $2) ON CONFLICT DO NOTHING`, id, id+"@seed.test"); err != nil {
 		t.Fatalf("seed auth.users: %v", err)
 	}
+	testsupport.CleanupUser(t, pool, id)
 	return id
 }
 
@@ -163,7 +163,7 @@ func holdingUnits(t *testing.T, ctx context.Context, svc *crypto.Service, userID
 // tx_hash), and the parked units left the holding.
 func TestLiveDB_Withdraw_ParksAtPendingReview_NoBroadcast(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	led := newLiveLedgerService(pool)
 	svc := newLiveCryptoService(pool, led)
 	ctx := context.Background()
@@ -238,7 +238,7 @@ func TestLiveDB_Withdraw_ParksAtPendingReview_NoBroadcast(t *testing.T) {
 // provider accepts), i.e. money is cleared to leave ONLY after the AML approval.
 func TestLiveDB_AdminApprove_AdvancesPastPendingReview_BroadcastFires(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	led := newLiveLedgerService(pool)
 	svc := newLiveCryptoService(pool, led)
 	ctx := context.Background()
@@ -295,7 +295,7 @@ func TestLiveDB_AdminApprove_AdvancesPastPendingReview_BroadcastFires(t *testing
 // compensating transition), with no broadcast.
 func TestLiveDB_AdminReject_FailsAndReturnsParkedUnits(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	led := newLiveLedgerService(pool)
 	svc := newLiveCryptoService(pool, led)
 	ctx := context.Background()

@@ -20,6 +20,7 @@
 // Money is always an integer in kobo (Section A has no money fields).
 
 import { DOCTOR_USE_MOCK, doctorGet, doctorPost } from '@/api/doctor.client';
+import { LEGAL_DOC_ORDER, PERMISSION_ORDER, PERMISSION_LABELS } from '@/features/doctor/constants/onboarding';
 // Re-export the shared money formatter so Section A screens can import it here too.
 export { formatKobo } from '@/api/doctor.api';
 // Re-export the REUSED Batch 7 account-status read so entries 17–20 pull the
@@ -29,6 +30,8 @@ export { getAccountStatus, DEMO_ACCOUNT_STATUS } from '@/api/doctor.batch7.api';
 import type {
   OnboardingSlide,
   MerchantUpgradeStatus,
+  MerchantUpgradeState,
+  ProviderType,
   ConsentStatus,
   LegalDocument,
   LegalDocKind,
@@ -43,6 +46,8 @@ import type {
   AcceptConsentResult,
   RecordPermissionDecisionInput,
   RecordPermissionDecisionResult,
+  AppPermissionKind,
+  PermissionState,
 } from '@/types/doctor.onboarding';
 
 // Simulate network latency so loading states are exercised in the UI.
@@ -182,25 +187,132 @@ export async function getMerchantUpgradeStatus(): Promise<MerchantUpgradeStatus>
 }
 
 // ── Entries 8–12 ──
+// GET /onboarding/legal is wired server-side to the SAME read as ListConsents
+// (internal/doctor/service_account_tail.go: "Read-only thin projection over the
+// existing ListConsents read") — it returns the caller's own acceptance records,
+// never document content. There is no title/body/sections/version for any kind
+// anywhere in the backend; nothing to fetch, versioned or otherwise. Calling it
+// crashed consent/[kind].tsx on `doc.sections.length` for every kind, for every
+// user, the moment they tapped in from the (now-working) consents hub.
+//
+// The consents hub already labels this content "Demo legal copy" to users, so
+// the live path now serves the same LEGAL_DOCS_BY_KIND fixture the mock branch
+// always has — real, complete copy for all five kinds, not new text invented
+// here. DOCTOR_USE_MOCK stops mattering for this one call because both branches
+// resolve to the same content; that is a statement about what actually exists,
+// not a bug.
 export async function getLegalDocument(kind: LegalDocKind): Promise<LegalDocument> {
   if (DOCTOR_USE_MOCK) return wait(DEMO_LEGAL_DOCUMENTS[kind]);
-  return doctorGet<LegalDocument>('/onboarding/legal', { kind });
+  return LEGAL_DOCS_BY_KIND[kind];
+}
+
+// GET /onboarding/consents returns a flat, ungrouped list — one row per
+// (kind, version) ever decided, not the {accepted, outstanding, allAccepted}
+// object ConsentStatus promises (internal/doctor: ListConsents -> Service
+// .ListConsents -> Repository.ListConsents, all typed []LegalConsent). No
+// endpoint anywhere computes that aggregate; it has only ever existed as a
+// client-side type. consents.tsx read `status.outstanding` straight off
+// whatever this returned, so `status` was really the bare array, `.outstanding`
+// was `undefined` on it, and reading `.length` off that crashed on the very
+// first visit for any user who reached this step. See LegalConsentWire below
+// for the wire shape (camelCase, unconverted — the same as SelectProviderTypeInput
+// needed to match verbatim).
+interface LegalConsentWire {
+  consentKind: LegalDocKind;
+  version: string;
+  accepted: boolean;
+  acceptedAt?: string;
 }
 
 export async function getConsentStatus(): Promise<ConsentStatus> {
   if (DOCTOR_USE_MOCK) return wait(DEMO_CONSENT_STATUS);
-  return doctorGet<ConsentStatus>('/onboarding/consents');
+  const rows = await doctorGet<LegalConsentWire[]>('/onboarding/consents');
+
+  // ORDER BY created_at DESC server-side, so the FIRST row seen per kind is the
+  // most recent decision for it — exactly what "currently accepted" means when
+  // the same kind can carry more than one version over time.
+  const latestByKind = new Map<LegalDocKind, LegalConsentWire>();
+  for (const row of rows) {
+    if (!latestByKind.has(row.consentKind)) latestByKind.set(row.consentKind, row);
+  }
+
+  const accepted: LegalConsentRecord[] = [];
+  for (const row of latestByKind.values()) {
+    if (row.accepted) accepted.push({ kind: row.consentKind, version: row.version, acceptedAt: row.acceptedAt ?? '' });
+  }
+  const acceptedKinds = new Set(accepted.map((r) => r.kind));
+  const outstanding = LEGAL_DOC_ORDER.filter((k) => !acceptedKinds.has(k));
+
+  return {
+    accepted,
+    outstanding,
+    allAccepted: outstanding.length === 0,
+    updatedAt: new Date().toISOString(),
+  };
 }
 
 // ── Entries 13–16 ──
+// Same "aggregate exists only as a client type" pattern as getConsentStatus
+// above. GET /onboarding/permissions (internal/doctor: ListPermissions ->
+// Service.ListPermissions -> Repository.ListPermissions, typed []AppPermission)
+// returns a flat, per-kind row list — never the {permissions, updatedAt}
+// wrapper PermissionStates promises. Two more differences layer on top:
+//   - the field is permissionKind on the wire, not kind (AppPermissionStatus.kind)
+//   - Go's AppPermission carries no `required` field at all; PERMISSION_LABELS
+//     is already this client's own source of truth for it (permissions/index.tsx
+//     reads PERMISSION_LABELS[k].required directly for its own "all required
+//     decided?" check), so the aggregate reuses that rather than inventing a
+//     second copy of the camera/microphone-are-required rule.
+// UNIQUE(user_id, permission_kind) server-side means at most one row per kind —
+// no dedup needed, unlike the consents aggregate where a kind can carry rows
+// across several versions.
+interface AppPermissionWire {
+  permissionKind: AppPermissionKind;
+  state:          PermissionState;
+  decidedAt?:     string;
+}
+
 export async function getPermissionStates(): Promise<PermissionStates> {
   if (DOCTOR_USE_MOCK) return wait(DEMO_PERMISSION_STATES);
-  return doctorGet<PermissionStates>('/onboarding/permissions');
+  const rows = await doctorGet<AppPermissionWire[]>('/onboarding/permissions');
+  const byKind = new Map(rows.map((r) => [r.permissionKind, r]));
+
+  // Always all four kinds, matching permissions/index.tsx's own comment ("always
+  // four kinds; an 'empty' permission is undetermined") — a kind the user has
+  // never decided on is a real, meaningful state here, not an absence to omit.
+  const permissions: AppPermissionStatus[] = PERMISSION_ORDER.map((kind) => {
+    const row = byKind.get(kind);
+    return {
+      kind,
+      state: row?.state ?? 'undetermined',
+      required: PERMISSION_LABELS[kind].required,
+      decidedAt: row?.decidedAt,
+    };
+  });
+
+  return { permissions, updatedAt: new Date().toISOString() };
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
 // MUTATIONS
 // ═══════════════════════════════════════════════════════════════════════════
+
+// POST /onboarding/merchant-upgrade (internal/doctor Service.RequestMerchantUpgrade)
+// returns the doctor_merchant_upgrades row directly — {id, userId, state,
+// selectedType?, requestedAt?, completedAt?, detail?, createdAt, updatedAt} —
+// not the {status: MerchantUpgradeStatus} wrapper RequestMerchantUpgradeResult
+// promises. The live JSON has no top-level `status` key, so any caller reading
+// `result.status.state` got `undefined`; no screen does today (the upgrade
+// screen only branches on success/failure), so this was dormant, not crashing.
+// Translated at the call site: same fields, correct wrapper, and the wire's
+// `requestedAt` mapped to the client's `startedAt` (a naming difference, not a
+// missing value — the row is written the moment the upgrade is requested).
+interface MerchantUpgradeWire {
+  state:         MerchantUpgradeState;
+  selectedType?: ProviderType;
+  requestedAt?:  string;
+  updatedAt:     string;
+}
 
 // ── Entry 3 — request user→merchant (provider) upgrade ──
 export async function requestMerchantUpgrade(input: RequestMerchantUpgradeInput): Promise<RequestMerchantUpgradeResult> {
@@ -211,18 +323,49 @@ export async function requestMerchantUpgrade(input: RequestMerchantUpgradeInput)
     };
     return wait({ status }, 500);
   }
-  return doctorPost<RequestMerchantUpgradeResult>('/onboarding/merchant-upgrade', input, input.idempotencyKey);
+  const wire = await doctorPost<MerchantUpgradeWire>('/onboarding/merchant-upgrade', input, input.idempotencyKey);
+  return {
+    status: {
+      state: wire.state,
+      selectedType: wire.selectedType,
+      startedAt: wire.requestedAt,
+      updatedAt: wire.updatedAt,
+    },
+  };
 }
 
-// ── Entry 4 — choose provider type ──
+// POST /onboarding/provider-type (internal/doctor Service.SetProviderType)
+// returns the doctor profile draft — id, providerType, name, title,
+// specialtyId, feeKobo, rating, isPublished, profileDraft, ... — an entirely
+// different entity from MerchantUpgrade, not the {status: MerchantUpgradeStatus}
+// SelectProviderTypeResult promises. Also dormant today: provider-type.tsx
+// awaits the mutation but never reads its resolved value, relying instead on
+// the separately-invalidated useMerchantUpgradeStatus query.
+//
+// The profile draft has no `state` field to report anyway — SetProviderType's
+// own doc comment notes the canonical upgrade state only flips at publish, this
+// call just patch-merges the choice into the draft. So rather than parse an
+// unrelated entity for fields it cannot supply, synthesize the status from what
+// this call is actually guaranteed to mean: a 2xx response IS the profile
+// draft's `providerType` having been saved (the endpoint's entire job, and the
+// same `profile_draft->>'providerType'` field GetMerchantUpgrade already reads
+// back as `selectedType` — see GetSelectedProviderType) — i.e. exactly
+// 'type_selected' with this input's provider type.
 export async function selectProviderType(input: SelectProviderTypeInput): Promise<SelectProviderTypeResult> {
   if (DOCTOR_USE_MOCK) {
     const status: MerchantUpgradeStatus = {
-      state: 'type_selected', selectedType: input.type, startedAt: iso(0), updatedAt: iso(0),
+      state: 'type_selected', selectedType: input.providerType, startedAt: iso(0), updatedAt: iso(0),
     };
     return wait({ status }, 500);
   }
-  return doctorPost<SelectProviderTypeResult>('/onboarding/provider-type', input, input.idempotencyKey);
+  await doctorPost<unknown>('/onboarding/provider-type', input, input.idempotencyKey);
+  return {
+    status: {
+      state: 'type_selected',
+      selectedType: input.providerType,
+      updatedAt: new Date().toISOString(),
+    },
+  };
 }
 
 // ── Entries 8–12 — accept a legal document (versioned) ──
@@ -242,7 +385,21 @@ export async function acceptConsent(input: AcceptConsentInput): Promise<AcceptCo
     };
     return wait({ record, status }, 500);
   }
-  return doctorPost<AcceptConsentResult>('/onboarding/consents', input, input.idempotencyKey);
+  // Wire body must name the field consentKind, not kind: Go's AcceptConsentRequest
+  // has json:"consentKind" with binding:"required" (internal/doctor/model_account.go),
+  // so a body key of `kind` left it permanently unpopulated and every acceptance
+  // failed binding with a 400 before touching the database — nobody has ever
+  // been able to accept a legal document through this screen.
+  //
+  // AcceptConsentInput itself keeps `kind`, matching every other client type in
+  // this module (LegalConsentRecord.kind, AppPermissionStatus.kind, …); only the
+  // wire body translates, the same way viewerIDForCounting translates at its own
+  // boundary rather than renaming a name used everywhere else.
+  return doctorPost<AcceptConsentResult>(
+    '/onboarding/consents',
+    { consentKind: input.kind, version: input.version },
+    input.idempotencyKey,
+  );
 }
 
 // ── Entries 13–16 — record an OS permission decision ──
@@ -254,5 +411,12 @@ export async function recordPermissionDecision(input: RecordPermissionDecisionIn
     };
     return wait({ permission }, 400);
   }
-  return doctorPost<RecordPermissionDecisionResult>('/onboarding/permissions', input, input.idempotencyKey);
+  // Same class of bug as acceptConsent above: Go's RecordPermissionRequest needs
+  // json:"permissionKind" with binding:"required", not `kind` — every decision
+  // failed binding with a 400 before this translated the wire body.
+  return doctorPost<RecordPermissionDecisionResult>(
+    '/onboarding/permissions',
+    { permissionKind: input.kind, state: input.state },
+    input.idempotencyKey,
+  );
 }

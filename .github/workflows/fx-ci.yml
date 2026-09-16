@@ -1,3 +1,9 @@
+# Called by ci.yml, which is the single pipeline for a push or PR. This lane no
+# longer has its own push/pull_request trigger: fourteen workflows starting on one
+# push meant fourteen queued pipelines competing for the same runners. ci.yml now
+# decides whether this module changed (scripts/ci/changed-modules.py, driven by
+# .github/module-filters.json) and calls this file as a reusable workflow, so its
+# jobs report inside that one run. Paths live ONLY in module-filters.json now.
 name: FX CI
 
 # Runs the two environment-blocked verification steps automatically in a
@@ -5,15 +11,7 @@ name: FX CI
 # type-checks. (Authoring sandbox had no Go toolchain and no network.)
 
 on:
-  push:
-    paths:
-      - 'backend/**'
-      - 'mobile-app/reactnative/src/features/fx/**'
-      - 'mobile-app/reactnative/app/fx/**'
-      - 'frontend-admin/app/admin/fx/**'
-      - 'contracts/openapi.yaml'
-      - '.github/workflows/fx-ci.yml'
-  pull_request:
+  workflow_call:
   workflow_dispatch:
 
 jobs:
@@ -34,8 +32,11 @@ jobs:
         run: go vet ./...
       - name: Test (orchestration)
         run: go test ./internal/orchestration/... -count=1 -v
-      - name: Test (all)
-        run: go test ./... -count=1
+      # Repo-wide `go test ./...` removed: ci.yml's ungated `backend` job now runs
+      # the whole backend suite against a real Postgres, so this lane repeating it
+      # WITHOUT a database was both slower and weaker — every live-DB suite skipped
+      # here while reporting "ok". The scoped run above stays: it is fast, it is
+      # verbose, and it names this module when it fails.
 
   openapi:
     runs-on: ubuntu-latest
@@ -53,20 +54,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
-        with: { node-version: '20' }
+        with:
+          node-version: '20'
+          # Without this the RN dependency tree is installed from scratch every
+          # run: npm ci measured 276-421s here against 5-6s for the typecheck it
+          # exists to enable. ci.yml's own mobile job has had the cache all along;
+          # these lanes were simply never given it.
+          cache: npm
+          cache-dependency-path: mobile-app/reactnative/package-lock.json
       - run: npm ci
       - name: Typecheck FX module
         run: npx tsc --noEmit -p tsconfig.fxcheck.json
-
-  admin-typecheck:
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: frontend-admin
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with: { node-version: '20' }
-      - run: npm ci
-      - name: Typecheck
-        run: npx tsc --noEmit

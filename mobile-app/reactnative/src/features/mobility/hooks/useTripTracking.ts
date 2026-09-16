@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { createSupabaseClient } from '@/lib/supabase';
+import { openWebSocket } from '@/lib/nativeWebSocket';
 import { tripWsUrl } from '../api/tracking.api';
 
 export interface TripPosition {
@@ -48,16 +49,7 @@ export function useTripTracking(tripId?: string) {
         /* connect unauthenticated — server will reject, then we back off */
       }
       try {
-        // RN's WebSocket accepts a 3rd `options` arg (headers) at runtime, but
-        // its TS type only declares (url, protocols). Construct via an any-cast.
-        const WS = WebSocket as unknown as new (
-          url: string,
-          protocols?: string | string[],
-          options?: { headers?: Record<string, string> },
-        ) => WebSocket;
-        const ws = new WS(tripWsUrl(), undefined, {
-          headers: token ? { Authorization: `Bearer ${token}` } : {},
-        });
+        const ws = openWebSocket(tripWsUrl(), token ? { Authorization: `Bearer ${token}` } : {});
         wsRef.current = ws;
         ws.onopen = () => {
           setConnected(true);

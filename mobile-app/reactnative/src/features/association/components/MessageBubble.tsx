@@ -20,6 +20,9 @@ function timeLabel(iso: string): string {
 }
 
 export default function MessageBubble({ message: m, showAuthor, onReact }: Props) {
+  // The live DTO omits `reactions` entirely when a message has none.
+  const reactions = m.reactions ?? [];
+
   if (m.system) {
     return (
       <View style={styles.systemWrap}>
@@ -49,7 +52,7 @@ export default function MessageBubble({ message: m, showAuthor, onReact }: Props
 
       {/* Reactions + quick-react */}
       <View style={[styles.reactRow, m.mine ? styles.reactRowMine : styles.reactRowOther]}>
-        {m.reactions.map((r) => (
+        {reactions.map((r) => (
           <Pressable
             key={r.emoji}
             onPress={() => onReact?.(r.emoji)}
@@ -62,7 +65,7 @@ export default function MessageBubble({ message: m, showAuthor, onReact }: Props
           </Pressable>
         ))}
         {onReact ? (
-          QUICK.filter((e) => !m.reactions.some((r) => r.emoji === e)).map((e) => (
+          QUICK.filter((e) => !reactions.some((r) => r.emoji === e)).map((e) => (
             <Pressable key={e} onPress={() => onReact(e)} style={styles.quickReact} hitSlop={4} accessibilityRole="button" accessibilityLabel={`React ${e}`}>
               <Text style={styles.quickEmoji}>{e}</Text>
             </Pressable>

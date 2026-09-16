@@ -19,14 +19,40 @@ interface Props {
   balance:      number;
   currency?:    string;
   quickActions: QuickAction[];
+  /** Overrides the "Total Balance" caption (e.g. "NGN Wallet"). */
+  label?:       string;
+  /**
+   * Makes the currency pill a real toggle. Pass the codes the holder actually
+   * has a wallet in, together with onSelectCurrency; `currency` is the selected
+   * one. Omit both and the pill keeps its original static appearance, so the
+   * screens that were already using this card are untouched.
+   */
+  currencies?:  string[];
+  onSelectCurrency?: (currency: string) => void;
 }
 
-function fmt(n: number): string {
-  return n.toLocaleString('en-NG', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+// Minor-unit symbols for the currencies a wallet can be denominated in. The card
+// used to hardcode "₦", so any non-NGN balance rendered with the wrong symbol —
+// a $12.00 wallet read as ₦12.00.
+const SYMBOLS: Record<string, string> = {
+  NGN: '₦', USD: '$', EUR: '€', GBP: '£', GHS: '₵', KES: 'KSh', XAF: 'FCFA', ZAR: 'R',
+};
+
+function fmt(n: number, currency: string): string {
+  const body = n.toLocaleString('en-NG', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const symbol = SYMBOLS[currency] ?? '';
+  // KES/XAF read better with the code trailing; everything else takes a prefix.
+  if (currency === 'KES' || currency === 'XAF') return `${body} ${symbol}`;
+  return symbol ? `${symbol}${body}` : `${body} ${currency}`;
 }
 
-export default function BalanceCard({ balance, currency = 'NGN', quickActions }: Props) {
+export default function BalanceCard({
+  balance, currency = 'NGN', quickActions, label, currencies, onSelectCurrency,
+}: Props) {
   const [hidden, setHidden] = useState(false);
+  // Interactive only when the caller supplies both the options and the handler —
+  // otherwise the pill would look tappable and silently do nothing.
+  const toggleable = Boolean(currencies && currencies.length > 1 && onSelectCurrency);
 
   return (
     <LinearGradient
@@ -38,9 +64,9 @@ export default function BalanceCard({ balance, currency = 'NGN', quickActions }:
       {/* Top row */}
       <View style={styles.topRow}>
         <View>
-          <Text style={styles.balanceLabel}>Total Balance</Text>
+          <Text style={styles.balanceLabel}>{label ?? 'Total Balance'}</Text>
           <View style={styles.amountRow}>
-            <Text style={styles.amount}>{hidden ? '••••••' : `₦${fmt(balance)}`}</Text>
+            <Text style={styles.amount}>{hidden ? '••••••' : fmt(balance, currency)}</Text>
             <Pressable onPress={() => setHidden((h) => !h)} style={styles.eyeBtn} hitSlop={8}>
               {hidden
                 ? <Eye    size={18} color="rgba(255,255,255,0.7)" />
@@ -52,11 +78,30 @@ export default function BalanceCard({ balance, currency = 'NGN', quickActions }:
 
         {/* Currency pill + QR */}
         <View style={styles.topRight}>
-          <View style={styles.currencyPill}>
-            <Text style={styles.currencyText}>{currency}</Text>
-            <View style={styles.currencyDivider} />
-            <Text style={[styles.currencyText, styles.currencyAlt]}>USD</Text>
-          </View>
+          {toggleable ? (
+            <View style={styles.currencyPill} accessibilityRole="tablist">
+              {currencies!.map((code, i) => (
+                <React.Fragment key={code}>
+                  {i > 0 ? <View style={styles.currencyDivider} /> : null}
+                  <Pressable
+                    onPress={() => onSelectCurrency!(code)}
+                    hitSlop={6}
+                    accessibilityRole="tab"
+                    accessibilityState={{ selected: code === currency }}
+                    accessibilityLabel={`Show ${code} wallet`}
+                  >
+                    <Text style={[styles.currencyText, code !== currency && styles.currencyAlt]}>{code}</Text>
+                  </Pressable>
+                </React.Fragment>
+              ))}
+            </View>
+          ) : (
+            <View style={styles.currencyPill}>
+              <Text style={styles.currencyText}>{currency}</Text>
+              <View style={styles.currencyDivider} />
+              <Text style={[styles.currencyText, styles.currencyAlt]}>USD</Text>
+            </View>
+          )}
           <Pressable style={styles.qr}>
             <QrCode size={20} color="rgba(255,255,255,0.6)" strokeWidth={1.5} />
           </Pressable>

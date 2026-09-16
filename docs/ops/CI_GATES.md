@@ -22,20 +22,18 @@ A merge to `main` should be blocked unless all five jobs are green. Configure
 these as **required status checks** on the protected branch (branch-protection is
 a GitHub setting, not committed config — set it in repo settings).
 
-## Known mismatch to fix (one-line)
+## Resolved: `test:regression` now exists
 
-CLAUDE.md says `npm run test:regression`, but `frontend-web/package.json` has no
-`test:regression` script. The golden-path specs live in
-`frontend-web/tests/unit/golden-path/`. The reusable workflow runs that folder
-directly when the script is absent, so the gate is real today. To make it a
-one-word command, add to `frontend-web/package.json` scripts:
+`frontend-web/package.json` defines:
 
 ```json
 "test:regression": "vitest run tests/unit/golden-path"
 ```
 
-(Application-package change — owned by the frontend team, left to them so DevOps
-stays in CI/infra/docs only.)
+so CLAUDE.md's `npm run test:regression` is a real command (run it from
+`frontend-web` — there is no root `package.json`). The reusable workflow's
+fallback to invoking `tests/unit/golden-path` directly is retained on purpose, so
+the gate still holds on branches predating the script.
 
 ## Build-once / promote (DevOps skill)
 

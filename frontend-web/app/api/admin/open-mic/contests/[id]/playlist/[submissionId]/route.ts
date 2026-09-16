@@ -5,8 +5,9 @@ import { addAuditEvent } from '@/src/server/admin/audit';
 
 export async function PATCH(
   request: Request,
-  context: { params: { id: string; submissionId: string } }
+  context: { params: Promise<{ id: string; submissionId: string }> }
 ) {
+  const params = await context.params;
   try {
     const identity = await assertOpenMicScoreAdmin(request);
     const body = (await request.json()) as {
@@ -15,7 +16,7 @@ export async function PATCH(
       judgeScore?: number;
       audienceReactionScore?: number;
     };
-    const item = await updateFinalePlaybackItem(context.params.id, context.params.submissionId, {
+    const item = await updateFinalePlaybackItem(params.id, params.submissionId, {
       played: body.played,
       djCueNote: body.djCueNote,
       judgeScore: body.judgeScore,
@@ -27,7 +28,7 @@ export async function PATCH(
       action: 'open_mic_playback_item_update',
       module: 'open_mic',
       entityType: 'finale_playlist_item',
-      entityId: `${context.params.id}:${context.params.submissionId}`,
+      entityId: `${params.id}:${params.submissionId}`,
       reason: 'Updated finale playback metadata',
       newValue: {
         played: body.played,

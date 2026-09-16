@@ -7,8 +7,7 @@ package restaurantpayout_test
 // owner-scoped and move a settlement's amount from `pending` to `paid` after a
 // payout run is processed.
 //
-// Reuses the payout test's seed helpers. Skips unless TEST_DATABASE_URL/
-// DATABASE_URL is set.
+// Reuses the payout test's seed helpers. Skips unless TEST_DATABASE_URL is set.
 // ---------------------------------------------------------------------------
 
 import (
@@ -20,7 +19,7 @@ import (
 
 func TestLiveDB_MerchantEarnings(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	svc := newLiveRestaurantService(pool, newLiveLedgerService(pool))
 

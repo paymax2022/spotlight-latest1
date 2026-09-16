@@ -1,7 +1,12 @@
 import { handleApiError, successResponse } from '@/src/lib/api/responses';
 import { addAuditEvent } from '@/src/server/admin/audit';
 import { assertAdminPermission } from '@/src/server/admin/auth';
-import { reviewRegistrationApplication } from '@/src/server/registration/store';
+// ADMIN CONSOLIDATION, slice 5 (see docs/adr/ADR-047): registration/store is
+// the in-memory version nothing real ever reads back — the applicant's actual
+// application lives in Supabase (registration/supabase-store). This used to
+// write a bulk approve/reject/shortlist decision into the memory map only, so
+// it looked successful but never touched the applicant's real record.
+import { reviewRegistrationApplication } from '@/src/server/registration/supabase-store';
 import { reviewApplication as reviewStemApplication } from '@/src/server/stem/persistence';
 
 interface BulkActionPayload {
@@ -63,7 +68,7 @@ export async function POST(request: Request) {
     for (const applicationId of body.applicationIds) {
       try {
         if (body.target === 'registration') {
-          reviewRegistrationApplication(applicationId, {
+          await reviewRegistrationApplication(applicationId, {
             status: mapRegistrationStatus(body.action) as any,
             note: body.reason,
             score: body.score,

@@ -1,6 +1,6 @@
 // ── Admin — central Commission & Profit module service ────────────────────────
 // Copies the staysAdminService.ts / academyAdminService.ts request stack EXACTLY:
-//  • financeBase() rewrites env.apiBaseUrl (…/api/v1) → …/api/finance
+//  • financeBase() builds the absolute backend path via apiRoot() + /api/finance
 //  • authHeaders() attaches the admin Bearer token from localStorage
 //  • getJson/sendJson throw on non-2xx; the commission handler wraps payloads in a
 //    { success, ... } envelope (NOT { data }), so each caller reads its named field.
@@ -9,10 +9,17 @@
 // integer minor units (kobo); all rates are integer basis points (bps). The UI shows
 // ₦ (kobo/100) and % (bps/100) but ALWAYS converts back to integer kobo/bps on submit
 // (see toBps/toKobo) — floats never cross the wire for money.
+//
+// financeBase() used to do `env.apiBaseUrl.replace(/\/api\/v1\/?$/, '/api/finance')`,
+// which stopped matching the moment apiBaseUrl became the same-origin proxy path
+// (<origin>/api/admin-proxy, no /api/v1 suffix) — see insuranceAdminService.ts for
+// the same regression. Every request 404'd against <proxy>/commission/... instead
+// of <proxy>/api/finance/commission/...; USE_MOCK hid it whenever set.
 
-import { env } from '@/config/env';
+import { apiRoot } from '@/config/env';
+import { resolveUseMock } from '@/config/useMock';
 
-const USE_MOCK = (process.env.NEXT_PUBLIC_COMMISSION_USE_MOCK ?? 'true').toLowerCase() !== 'false';
+const USE_MOCK = resolveUseMock(process.env.NEXT_PUBLIC_COMMISSION_USE_MOCK);
 
 // ── Domain types (mirror commission/model.go JSON tags — camelCase) ───────────
 export type FeeModel = 'commission' | 'platform_charge' | 'fixed' | 'commission_plus_fee' | 'none';
@@ -103,7 +110,7 @@ export type GroupBy = 'category' | 'service' | 'day';
 
 // ── Request stack ─────────────────────────────────────────────────────────────
 function financeBase(): string {
-  return env.apiBaseUrl.replace(/\/api\/v1\/?$/, '/api/finance');
+  return `${apiRoot()}/api/finance`;
 }
 function authHeaders(): Record<string, string> {
   if (typeof window === 'undefined') return {};

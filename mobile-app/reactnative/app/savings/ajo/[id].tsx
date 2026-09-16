@@ -2,6 +2,7 @@ import React from 'react';
 import { View, Text, ScrollView, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import { Users, HandCoins, Trophy } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
@@ -59,7 +60,7 @@ export default function CircleDetail() {
             <PrimaryButton label="Payouts" variant="secondary" onPress={() => router.push({ pathname: '/savings/ajo/payout', params: { id: circleId } })} style={{ flex: 1 }} />
           </View>
         ) : isForming ? (
-          <PrimaryButton label="Join this circle" onPress={async () => { await join.mutateAsync(); router.back(); }} loading={join.isPending} />
+          <PrimaryButton label="Join this circle" onPress={async () => { await join.mutateAsync(); goBack('/savings'); }} loading={join.isPending} />
         ) : null}
 
         <Text style={styles.sectionTitle}>Members ({c.members.length})</Text>

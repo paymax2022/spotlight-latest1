@@ -125,6 +125,16 @@ export interface RestrictionStatus {
   residentId: string;
   estateId: string;
   state: RestrictionState;
+  /**
+   * Whether the caller is a resident of any estate at all.
+   *
+   * Separate from `state` on purpose: RestrictionState is source:'payments' and
+   * drives the payment banner, whereas this answers "may you use the visitor
+   * module in the first place". Optional because the mock and older responses
+   * predate it; treat only an explicit `false` as "not a resident", so a missing
+   * field never locks anyone out.
+   */
+  isResident?: boolean;
   outstandingBalanceKobo: number;   // minor units (kobo) per money iron-rules
   effectiveFrom: string;            // ISO
   source: 'payments';

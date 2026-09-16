@@ -2,6 +2,7 @@ import React from 'react';
 import { View, Text, Pressable, StyleSheet, Share } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
 import { Spacing } from '@/constants/spacing';
@@ -23,7 +24,7 @@ export default function EdgeStateScreen() {
 
   const run = (action: EdgeAction) => {
     switch (action) {
-      case 'retry': router.canGoBack() ? router.back() : router.replace('/fx'); break;
+      case 'retry': router.canGoBack() ? goBack('/fx') : router.replace('/fx'); break;
       case 'login': router.replace('/(auth)/login'); break;
       case 'kyc': router.replace('/fx/kyc'); break;
       case 'status': router.replace('/fx/kyc/status'); break;

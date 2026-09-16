@@ -105,13 +105,12 @@ func TestChaos_GatewayTimeout_FundOrderRejectsPastWindow(t *testing.T) {
 // (see sequence_flow_test.go's WebhookIdempotencyIsStructural, which locks the
 // state-set that triggers the no-op, and the live-DB test below).
 func TestChaos_DuplicateWebhook_DeliveryConfirmedIsNoOp(t *testing.T) {
-	svc, ok := newTestService(t)
-	if !ok {
-		t.Skip("requires live Postgres to seed an order + call HandleDeliveryConfirmed twice with the same delivery_ref; " +
-			"see MARKETPLACE_TEST_DATABASE_URL in QA_REPORT.md. The state-set logic is verified DB-free in " +
-			"sequence_flow_test.go:TestFlow_DeliveryToAutoRelease_WebhookIdempotencyIsStructural.")
-	}
-	_ = svc
+	// ADR-023 removed the escrow order/dispute/webhook path this drives. The
+	// old gate claimed a live database would run it, which no environment
+	// could satisfy — newTestService skips unconditionally and the code under
+	// test no longer exists. The intended assertions below are kept as the
+	// design record if the path returns.
+	t.Skip(adr023ChaosSkip)
 	// ---- intended assertions once live ----
 	// o1, _ := svc.HandleDeliveryConfirmed(ctx, mkt.DeliveryConfirmedInput{OrderID: id, DeliveryRef: "d-dup-1", PODPhotoURL: "x", OTP: "1234"})
 	// o2, _ := svc.HandleDeliveryConfirmed(ctx, mkt.DeliveryConfirmedInput{OrderID: id, DeliveryRef: "d-dup-1", PODPhotoURL: "x", OTP: "1234"})
@@ -215,13 +214,12 @@ func TestChaos_DisputeAfterAutoRelease_RaceGuardReturnsNotDisputable(t *testing.
 // TestChaos_DisputeAfterAutoRelease_LiveRace is the live-DB version that actually
 // races AutoReleaseDue against OpenDispute at the row level.
 func TestChaos_DisputeAfterAutoRelease_LiveRace(t *testing.T) {
-	svc, ok := newTestService(t)
-	if !ok {
-		t.Skip("requires live Postgres: seed an order in inspection_window with a past deadline, " +
-			"call AutoReleaseDue, THEN call OpenDispute, and assert the error is exactly " +
-			"(422, CodeOrderNotDisputable). See MARKETPLACE_TEST_DATABASE_URL in QA_REPORT.md.")
-	}
-	_ = svc
+	// ADR-023 removed the escrow order/dispute/webhook path this drives. The
+	// old gate claimed a live database would run it, which no environment
+	// could satisfy — newTestService skips unconditionally and the code under
+	// test no longer exists. The intended assertions below are kept as the
+	// design record if the path returns.
+	t.Skip(adr023ChaosSkip)
 }
 
 // ─── 4. Two buyers, same single listing = second gets 422 LISTING_NOT_ACTIVE ──
@@ -265,18 +263,12 @@ func TestChaos_TwoBuyersRaceListing_GuardIsStatusEquality(t *testing.T) {
 // asserts exactly one succeeds and the other gets 422 LISTING_NOT_ACTIVE with
 // zero ghost orders left behind.
 func TestChaos_TwoBuyersRaceListing_LiveConcurrentCreate(t *testing.T) {
-	svc, ok := newTestService(t)
-	if !ok {
-		t.Skip("requires live Postgres: seed one active single-quantity listing, fire two goroutines " +
-			"calling CreateOrder concurrently with distinct Idempotency-Keys, assert exactly one 201 and " +
-			"one 422 LISTING_NOT_ACTIVE, and that mkt_orders has exactly one row for the listing. " +
-			"NOTE: the current CreateOrder implementation guards on listing.status=active read BEFORE insert, " +
-			"which is a read-then-write race window unless the DB enforces true mutual exclusion (e.g. a " +
-			"partial unique index on (listing_id) WHERE status NOT IN (terminal order states), or " +
-			"SELECT ... FOR UPDATE on the listing row) — this live test is the one that would catch a " +
-			"regression to a naive read-check-write. Flag this to Agent A/C if no such DB-level constraint exists.")
-	}
-	_ = svc
+	// ADR-023 removed the escrow order/dispute/webhook path this drives. The
+	// old gate claimed a live database would run it, which no environment
+	// could satisfy — newTestService skips unconditionally and the code under
+	// test no longer exists. The intended assertions below are kept as the
+	// design record if the path returns.
+	t.Skip(adr023ChaosSkip)
 }
 
 // ─── 5. Edit listing with in_delivery order = 409 LISTING_HAS_ACTIVE_ORDER ───
@@ -318,13 +310,12 @@ func TestChaos_EditListingWithActiveOrder_GuardOnlyBlocksPriceChanges(t *testing
 // and assert 409 LISTING_HAS_ACTIVE_ORDER; then attempt a description-only
 // UpdateListing and assert it SUCCEEDS despite the same active order.
 func TestChaos_EditListingWithActiveOrder_LiveGuard(t *testing.T) {
-	svc, ok := newTestService(t)
-	if !ok {
-		t.Skip("requires live Postgres: seed listing + order in in_delivery, then UpdateListing with " +
-			"PriceKobo set (expect 409 LISTING_HAS_ACTIVE_ORDER) and with only Description set (expect success). " +
-			"See MARKETPLACE_TEST_DATABASE_URL in QA_REPORT.md.")
-	}
-	_ = svc
+	// ADR-023 removed the escrow order/dispute/webhook path this drives. The
+	// old gate claimed a live database would run it, which no environment
+	// could satisfy — newTestService skips unconditionally and the code under
+	// test no longer exists. The intended assertions below are kept as the
+	// design record if the path returns.
+	t.Skip(adr023ChaosSkip)
 }
 
 // ─── 6. Boost on rejected listing = auto_refunded, not dangling ─────────────
@@ -363,19 +354,10 @@ func TestChaos_BoostOnRejectedListing_RejectBoostAlwaysAutoRefunds(t *testing.T)
 // listing that has an active boost, and assert the boost is now auto_refunded
 // with RefundRef populated and the seller wallet credited back the exact
 // PriceKobo, in the SAME operation as the listing's removed_policy transition.
-func TestChaos_BoostOnRejectedListing_LiveAutoRefund(t *testing.T) {
-	svc, ok := newTestService(t)
-	if !ok {
-		t.Skip("requires live Postgres + ledger.Service: seed a listing with an active boost, call " +
-			"RejectListing (or the moderation flow that cascades into RejectBoost), and assert boost.Status " +
-			"== mkt.BoostAutoRefunded, boost.RefundRef != nil, and the seller wallet balance reflects the " +
-			"refund. See MARKETPLACE_TEST_DATABASE_URL in QA_REPORT.md. NOTE FOR AGENT A: confirm RejectListing " +
-			"actually CASCADES into RejectBoost for any boosts on the listing — service_listing.go's " +
-			"RejectListing as read does not appear to call RejectBoost itself; if moderation rejection doesn't " +
-			"auto-cascade to active boosts, this is a real gap against §8's row, not just a missing test.")
-	}
-	_ = svc
-}
+// (removed) TestChaos_BoostOnRejectedListing_LiveAutoRefund was a stub that could never run.
+// It is now genuinely executed as TestLiveDB_BoostOnRejectedListing_AutoRefundsSeller
+// in chaos_live_db_test.go, against live Postgres. Unlike the escrow tests below,
+// the code it covers still exists, so it was implemented rather than skipped.
 
 // ─── 7. KYC-provider outage never regresses an already-verified badge ────────
 
@@ -411,15 +393,10 @@ func TestChaos_KYCOutage_BadgeIsMonotonicSetOnly(t *testing.T) {
 // call VerifyID twice (simulating a retried request after a timeout) and assert
 // it stays true and no error occurs on the second call (idempotent upsert, not
 // a toggle).
-func TestChaos_KYCOutage_LiveVerifyIsIdempotentUpsertOnly(t *testing.T) {
-	svc, ok := newTestService(t)
-	if !ok {
-		t.Skip("requires live Postgres: call svc.VerifyID(ctx, userID) twice and assert no error and " +
-			"the trust_scores row's verified_id_badge stays true (never flips back to false). " +
-			"See MARKETPLACE_TEST_DATABASE_URL in QA_REPORT.md.")
-	}
-	_ = svc
-}
+// (removed) TestChaos_KYCOutage_LiveVerifyIsIdempotentUpsertOnly was a stub that could never run.
+// It is now genuinely executed as TestLiveDB_VerifyID_IsIdempotentUpsertOnly
+// in chaos_live_db_test.go, against live Postgres. Unlike the escrow tests below,
+// the code it covers still exists, so it was implemented rather than skipped.
 
 // ─── small local helpers (avoid depending on unexported package helpers) ─────
 

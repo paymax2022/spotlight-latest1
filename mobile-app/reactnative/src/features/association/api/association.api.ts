@@ -288,7 +288,11 @@ export async function castVote(electionId: string, positionId: string, candidate
     mockBallots[positionId] = { receipt };
     return { receipt, positionId, confirmedAt: new Date().toISOString(), alreadyCast: false };
   }
-  const { data } = await api.post(`${BASE}/elections/${electionId}/vote`, { positionId, candidateId });
+  const { data } = await api.post(
+    `${BASE}/elections/${electionId}/vote`,
+    { positionId, candidateId },
+    { headers: { 'Idempotency-Key': generateIdempotencyKey() } },
+  );
   return data;
 }
 

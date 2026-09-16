@@ -17,7 +17,7 @@ import (
 
 func TestLiveDB_Card_ValidCardVerifies(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	svc := newLiveAssociationService(pool)
 	ctx := context.Background()
 
@@ -45,7 +45,7 @@ func TestLiveDB_Card_ValidCardVerifies(t *testing.T) {
 
 func TestLiveDB_Card_TamperedAndForgedRejected(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	svc := newLiveAssociationService(pool)
 	ctx := context.Background()
 
@@ -82,7 +82,7 @@ func TestLiveDB_Card_TamperedAndForgedRejected(t *testing.T) {
 
 func TestLiveDB_Card_SuspendedExpiredArrearsFailLiveCheck(t *testing.T) {
 	pool := liveDBPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	svc := newLiveAssociationService(pool)
 	ctx := context.Background()
 

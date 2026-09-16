@@ -186,8 +186,15 @@ export interface RequestMerchantUpgradeResult {
 }
 
 // ─── Entry 4 — choose the provider type ──────────────────────────────────────
+// Field named providerType, not type: doctorPost sends this object as-is (no
+// snake/camel conversion, no key remapping — see doctorPost in doctor.client.ts),
+// and the Go handler's SetProviderTypeRequest requires json:"providerType". A
+// body key of `type` left that field permanently absent server-side, so every
+// selection failed binding's `required` check with a 400 — "Could not save your
+// choice" for every provider, on every attempt, with no way to proceed past this
+// screen.
 export interface SelectProviderTypeInput {
-  type:           ProviderType;
+  providerType:   ProviderType;
   idempotencyKey: string;
 }
 

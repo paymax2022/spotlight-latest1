@@ -10,7 +10,13 @@ export async function GET(request: Request) {
     const user = await requireRequestUser(request);
     const supabase = createAdminClient();
     const ctx = await getResidentContext(supabase, user.id);
-    if (!ctx) return NextResponse.json({ state: 'good_standing' });
+    // A non-resident is not "in good standing" — they have no standing at all, and
+    // saying good_standing told the app it could proceed to POST /codes, which then
+    // refuses with 403 "Not a resident of any estate" after the whole form is
+    // filled in. `state` stays payments-only (RestrictionState is documented
+    // source:'payments' and drives the payment banner), so residency is reported
+    // as its own field rather than smuggled into that union.
+    if (!ctx) return NextResponse.json({ state: 'good_standing', isResident: false });
 
     // Check payment_standing if the column exists; gracefully fall back.
     const { data: resident } = await supabase
@@ -21,7 +27,7 @@ export async function GET(request: Request) {
       .maybeSingle();
 
     const standing = (resident as any)?.payment_standing ?? 'good_standing';
-    return NextResponse.json({ state: standing });
+    return NextResponse.json({ state: standing, isResident: true, estateId: ctx.estateId, unit: ctx.unit });
   } catch (error) {
     return handleApiError(error, 'Failed to load restriction state');
   }

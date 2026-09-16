@@ -186,28 +186,35 @@ func (s *MockExamService) gradeExam(ctx context.Context, instance *MockExamInsta
 	var markingScheme map[string]interface{}
 	json.Unmarshal(instance.MarkingScheme, &markingScheme)
 
-	totalMarks := 100 // Default; would come from marking_scheme["total_marks"]
-	scoredMarks := 0
+	totalMarks := 100.0
+	if v, ok := markingScheme["total_marks"].(float64); ok && v > 0 {
+		totalMarks = v
+	}
 	correctAnswers := 0
 	totalAnswered := len(answers)
+	totalQuestions := 0
 
 	// Simple grading: compare against answer_keys
 	if answerKeys, ok := markingScheme["answer_keys"].(map[string]interface{}); ok {
+		totalQuestions = len(answerKeys)
 		for qID, answered := range answers {
 			if correct, exists := answerKeys[qID]; exists {
 				// Simple string comparison for now
 				if fmt.Sprintf("%v", answered) == fmt.Sprintf("%v", correct) {
 					correctAnswers++
-					scoredMarks += (totalMarks / len(answerKeys)) // distribute marks evenly
 				}
 			}
 		}
 	}
 
+	// Marks are the fraction of the key answered correctly, in float math —
+	// per-question integer division (totalMarks / n) floors to 0-1 marks and
+	// caps a perfect 60-question exam at 60%.
 	scorePercent := 0.0
-	if len(answers) > 0 {
-		scorePercent = (float64(scoredMarks) / float64(totalMarks)) * 100
+	if totalQuestions > 0 {
+		scorePercent = float64(correctAnswers) / float64(totalQuestions) * 100
 	}
+	scoredMarks := scorePercent / 100 * totalMarks
 
 	grade := s.calculateGrade(scorePercent)
 
@@ -225,7 +232,7 @@ func (s *MockExamService) gradeExam(ctx context.Context, instance *MockExamInsta
 	}
 
 	return &ExamGradingResult{
-		Score:          float64(scoredMarks),
+		Score:          scoredMarks,
 		ScorePercent:   scorePercent,
 		Grade:          grade,
 		CorrectAnswers: correctAnswers,

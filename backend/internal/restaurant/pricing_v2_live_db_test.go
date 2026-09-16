@@ -3,7 +3,7 @@ package restaurant
 // ---------------------------------------------------------------------------
 // LIVE-DB integration test for pricing v2 (Phase 10): the free-delivery promo
 // (discount == the delivery fee) and the platform pricing-config setter
-// (service_fee_bp / surge_bp). Skipped unless TEST_DATABASE_URL/DATABASE_URL is set.
+// (service_fee_bp / surge_bp). Skipped unless TEST_DATABASE_URL is set.
 // The settlement money legs (service fee → platform, surge in gross) are proven by
 // the settlement package's pure conservation tests.
 // ---------------------------------------------------------------------------
@@ -16,16 +16,15 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"spotlight/backend/internal/testsupport"
 )
 
 func pricingV2LivePool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
 	dsn := os.Getenv("TEST_DATABASE_URL")
 	if dsn == "" {
-		dsn = os.Getenv("DATABASE_URL")
-	}
-	if dsn == "" {
-		t.Skip("no TEST_DATABASE_URL/DATABASE_URL set — skipping live-DB pricing v2 test")
+		t.Skip("no TEST_DATABASE_URL set — skipping live-DB pricing v2 test")
 	}
 	pool, err := pgxpool.New(context.Background(), dsn)
 	if err != nil {
@@ -39,7 +38,7 @@ func pricingV2LivePool(t *testing.T) *pgxpool.Pool {
 
 func TestLiveDB_PricingV2(t *testing.T) {
 	pool := pricingV2LivePool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	svc := NewService(pool, nil)
 
@@ -49,6 +48,7 @@ func TestLiveDB_PricingV2(t *testing.T) {
 		if _, err := pool.Exec(ctx, `INSERT INTO auth.users (id,email) VALUES ($1,$2) ON CONFLICT DO NOTHING`, u, u+"@seed.test"); err != nil {
 			t.Fatalf("seed user: %v", err)
 		}
+		testsupport.CleanupUser(t, pool, u)
 	}
 	restID := uuid.New().String()
 	if _, err := pool.Exec(ctx, `INSERT INTO restaurants (id, owner_id, name, address, is_open) VALUES ($1,$2,'Pricing Kitchen','1 St',TRUE)`, restID, owner); err != nil {

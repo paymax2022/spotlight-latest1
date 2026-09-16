@@ -3,9 +3,23 @@ import { ApiError } from '@/src/lib/api/responses';
 import { validateAmountKobo, buildIdempotencyKey } from './ledger';
 import type { LedgerEntryRow } from './ledger';
 import { checkIdempotencyKey, checkTopupIdempotencyKey } from './idempotency';
+import {
+  buildJournalLegs,
+  getOrCreateStandingAccount,
+  postJournal,
+  DEFAULT_CREDIT_COUNTER,
+  DEFAULT_DEBIT_COUNTER,
+  type StandingAccountType,
+} from './journal';
 import { enforceWalletLimit } from '@/src/server/tiers/service';
+import { WALLET_ACCOUNT_TYPE, SPENDABLE_WALLET_TYPES } from './account-type';
 
 const MIN_TOPUP_KOBO = 10_000; // ₦100 minimum
+
+// Reserved / non-routable TLDs (RFC 2606 + RFC 6761) plus the .internal suffix
+// used by our own fixtures. Paystack rejects these with a generic 400, so we
+// catch them here and return an actionable error instead of an opaque 502.
+const NON_ROUTABLE_TLDS = ['internal', 'local', 'localhost', 'test', 'invalid', 'example'];
 
 // ---------------------------------------------------------------------------
 // Account management
@@ -14,6 +28,11 @@ const MIN_TOPUP_KOBO = 10_000; // ₦100 minimum
 /**
  * Find or create the wallet ledger_account for a user.
  * Handles the concurrent-insert race via a re-fetch on UNIQUE conflict.
+ *
+ * Resolves WALLET_ACCOUNT_TYPE ('user_wallet') — the SAME row the Go finance
+ * ledger creates via GetOrCreateUserWallet, keyed by the shared
+ * ledger_accounts_user_type_key. Both processes now mutate one pot, so money
+ * credited here is spendable by a Go module escrow and vice versa (ADR-045).
  */
 export async function getOrCreateAccount(userId: string): Promise<string> {
   const supabase = createAdminClient();
@@ -22,7 +41,7 @@ export async function getOrCreateAccount(userId: string): Promise<string> {
     .from('ledger_accounts')
     .select('id')
     .eq('user_id', userId)
-    .eq('type', 'wallet')
+    .eq('type', WALLET_ACCOUNT_TYPE)
     .eq('currency', 'NGN')
     .maybeSingle();
 
@@ -31,7 +50,7 @@ export async function getOrCreateAccount(userId: string): Promise<string> {
   const newId = crypto.randomUUID();
   const { error } = await supabase
     .from('ledger_accounts')
-    .insert({ id: newId, user_id: userId, type: 'wallet', currency: 'NGN' });
+    .insert({ id: newId, user_id: userId, type: WALLET_ACCOUNT_TYPE, currency: 'NGN' });
 
   if (error) {
     // Race: another concurrent request inserted first — re-fetch
@@ -39,7 +58,7 @@ export async function getOrCreateAccount(userId: string): Promise<string> {
       .from('ledger_accounts')
       .select('id')
       .eq('user_id', userId)
-      .eq('type', 'wallet')
+      .eq('type', WALLET_ACCOUNT_TYPE)
       .eq('currency', 'NGN')
       .maybeSingle();
     if (raced) return raced.id as string;
@@ -68,19 +87,24 @@ async function migrateLegacyMobileBalanceIfNeeded(userId: string, accountId: str
   if (legacyBalance <= 0) return;
 
   const amountKobo = Math.round(legacyBalance * 100);
-  const { error } = await supabase.from('ledger_entries').insert({
-    account_id: accountId,
-    type: 'CREDIT',
-    amount_kobo: amountKobo,
-    reference: `LEGACY-MOBILE-${userId}`,
-    idempotency_key: `legacy-mobile-fintech:${userId}:initial-credit`,
-    description: 'Migrated legacy mobile wallet balance',
-    metadata: { source: 'mobile_fintech_accounts', currency: legacy?.currency ?? 'NGN' },
-  });
 
-  if (error && error.code !== '23505') {
-    throw new ApiError(`Failed to migrate legacy wallet balance: ${error.message}`, 500);
-  }
+  // ADR-040: an opening balance carried over from the legacy mobile system is
+  // still a money movement — DR settlement (the platform owed those funds all
+  // along) / CR the user's wallet.
+  const counterAccountId = await getOrCreateStandingAccount('settlement');
+  await postJournal(
+    buildJournalLegs({
+      primaryAccountId: accountId,
+      counterAccountId,
+      primarySide: 'CREDIT',
+      amountKobo,
+      reference: `LEGACY-MOBILE-${userId}`,
+      idempotencyKey: `legacy-mobile-fintech:${userId}:initial-credit`,
+      description: 'Migrated legacy mobile wallet balance',
+      metadata: { source: 'mobile_fintech_accounts', currency: legacy?.currency ?? 'NGN' },
+    }),
+    'Failed to migrate legacy wallet balance',
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -98,17 +122,16 @@ export async function getBalance(userId: string): Promise<WalletBalance> {
   await migrateLegacyMobileBalanceIfNeeded(userId, accountId);
   const supabase = createAdminClient();
 
-  // The user's spendable funds live across TWO ledger account types: 'wallet'
-  // (this Next.js wallet) and 'user_wallet' (the Go finance ledger — the
-  // money-path authority that transport/gifting/payouts debit). Read-only sum
-  // of both so the displayed balance reflects real spendable money; mutations
-  // still go through each system's own ledger.
+  // Mutations are unified on WALLET_ACCOUNT_TYPE (ADR-045). This read still sums
+  // the legacy plane too, so any residue the sweep migration has not yet moved —
+  // or anything credited in the deploy window — stays VISIBLE rather than
+  // appearing to vanish. Once the legacy plane is empty this is a no-op.
   const { data: walletAccounts } = await supabase
     .from('ledger_accounts')
     .select('id')
     .eq('user_id', userId)
     .eq('currency', 'NGN')
-    .in('type', ['wallet', 'user_wallet']);
+    .in('type', SPENDABLE_WALLET_TYPES as unknown as string[]);
   const accountIds = (walletAccounts ?? []).map((a) => a.id as string);
   if (!accountIds.includes(accountId)) accountIds.push(accountId);
 
@@ -161,6 +184,15 @@ export interface WalletMutationInput {
   idempotencyKey: string;
   description?: string;
   metadata?: Record<string, unknown>;
+  /**
+   * Standing account carrying the counter-leg (ADR-040). Defaults to
+   * `provider_clearing` for credits and `settlement` for debits/reversals.
+   * Pass an explicit one where the counterparty is known — e.g. a referral
+   * bonus is funded by `referral_reward_expense`, not by a payment provider.
+   * A reversal MUST name the same account the original movement used, so the
+   * correction drains the pot it filled.
+   */
+  counterAccount?: StandingAccountType;
 }
 
 export interface WalletMutationResult {
@@ -180,27 +212,29 @@ export async function creditWallet(
   }
 
   const accountId = await getOrCreateAccount(userId);
-  const supabase = createAdminClient();
 
-  const { error } = await supabase.from('ledger_entries').insert({
-    account_id: accountId,
-    type: 'CREDIT',
-    amount_kobo: input.amountKobo,
-    reference: input.reference,
-    idempotency_key: input.idempotencyKey,
-    description: input.description ?? null,
-    metadata: input.metadata ?? null,
-  });
+  // ADR-040: money entering a wallet has a source. Post the balanced pair —
+  // DR the counter account / CR the wallet — in one atomic insert. A UNIQUE
+  // violation on either leg rolls back both, so `alreadyProcessed` still means
+  // "this exact event was already posted", never "half of it was".
+  const counterAccountId = await getOrCreateStandingAccount(
+    input.counterAccount ?? DEFAULT_CREDIT_COUNTER,
+  );
+  const { duplicate } = await postJournal(
+    buildJournalLegs({
+      primaryAccountId: accountId,
+      counterAccountId,
+      primarySide: 'CREDIT',
+      amountKobo: input.amountKobo,
+      reference: input.reference,
+      idempotencyKey: input.idempotencyKey,
+      description: input.description,
+      metadata: input.metadata,
+    }),
+    'Failed to credit wallet',
+  );
 
-  if (error) {
-    if (error.code === '23505') {
-      // UNIQUE violation — concurrent insert with same idempotency_key; treat as duplicate
-      return { alreadyProcessed: true, amountKobo: input.amountKobo };
-    }
-    throw new ApiError(`Failed to credit wallet: ${error.message}`, 500);
-  }
-
-  return { alreadyProcessed: false, amountKobo: input.amountKobo };
+  return { alreadyProcessed: duplicate, amountKobo: input.amountKobo };
 }
 
 export async function debitWallet(
@@ -208,6 +242,20 @@ export async function debitWallet(
   input: WalletMutationInput,
 ): Promise<WalletMutationResult> {
   validateAmountKobo(input.amountKobo);
+
+  // ADR-040: this path posts its counter-leg INSIDE debit_wallet_atomic, which
+  // hardcodes `settlement` — the RPC's argument list is deliberately unchanged.
+  // Accepting a different counterAccount here would silently post to the wrong
+  // account (it type-checks, reads correctly, and lands somewhere else), so
+  // refuse it. Callers needing another counterparty must post through the
+  // journal helper directly.
+  if (input.counterAccount && input.counterAccount !== DEFAULT_DEBIT_COUNTER) {
+    throw new ApiError(
+      `debitWallet cannot post to counter account '${input.counterAccount}': ` +
+      `debit_wallet_atomic always posts to '${DEFAULT_DEBIT_COUNTER}' (ADR-040).`,
+      500,
+    );
+  }
 
   const hit = await checkIdempotencyKey(input.idempotencyKey);
   if (hit.alreadyProcessed) {
@@ -269,26 +317,29 @@ export async function reverseWalletDebit(
   }
 
   const accountId = await getOrCreateAccount(userId);
-  const supabase = createAdminClient();
 
-  const { error } = await supabase.from('ledger_entries').insert({
-    account_id: accountId,
-    type: 'REVERSAL_DEBIT',
-    amount_kobo: input.amountKobo,
-    reference: input.reference,
-    idempotency_key: input.idempotencyKey,
-    description: input.description ?? null,
-    metadata: input.metadata ?? null,
-  });
+  // ADR-040: the correction is a balanced pair too — REVERSAL_DEBIT restores the
+  // wallet, REVERSAL_CREDIT drains the account the original debit credited.
+  // Default `settlement` mirrors debit_wallet_atomic's counter-leg, so a refund
+  // of a debit posted through that RPC returns the funds to the same pot.
+  const counterAccountId = await getOrCreateStandingAccount(
+    input.counterAccount ?? DEFAULT_DEBIT_COUNTER,
+  );
+  const { duplicate } = await postJournal(
+    buildJournalLegs({
+      primaryAccountId: accountId,
+      counterAccountId,
+      primarySide: 'REVERSAL_DEBIT',
+      amountKobo: input.amountKobo,
+      reference: input.reference,
+      idempotencyKey: input.idempotencyKey,
+      description: input.description,
+      metadata: input.metadata,
+    }),
+    'Failed to reverse wallet debit',
+  );
 
-  if (error) {
-    if (error.code === '23505') {
-      return { alreadyProcessed: true, amountKobo: input.amountKobo };
-    }
-    throw new ApiError(`Failed to reverse wallet debit: ${error.message}`, 500);
-  }
-
-  return { alreadyProcessed: false, amountKobo: input.amountKobo };
+  return { alreadyProcessed: duplicate, amountKobo: input.amountKobo };
 }
 
 // ---------------------------------------------------------------------------
@@ -325,6 +376,20 @@ export interface TopupInput {
   amountKobo: number;
   idempotencyKey: string;
   callbackUrl?: string;
+  /**
+   * 'checkout' marks a top-up raised by a module checkout's card rail. It is
+   * persisted because the Tier-0 checkout allowance is summed over checkout
+   * intents only (ADR-042) — an unrecorded purpose would let each top-up see a
+   * fresh allowance. Defaults to 'wallet' (standalone funding).
+   */
+  purpose?: 'wallet' | 'checkout';
+  /**
+   * What the checkout is buying — 'vote_purchase', 'food_order', and so on.
+   * Recorded so a funded purchase is distinguishable from someone simply adding
+   * money to their wallet, in the intent, on the ledger entry and at the PSP.
+   * NULL for standalone funding.
+   */
+  checkoutDomain?: string | null;
 }
 
 export interface TopupIntentResult {
@@ -333,6 +398,45 @@ export interface TopupIntentResult {
   paymentReference: string;
   authorizationUrl: string;
   amountKobo: number;
+}
+
+/**
+ * Resolve the email Paystack should bill against.
+ *
+ * The session email is preferred, but phone-only signups have none, so we fall
+ * back to the profile email before giving up. Paystack rejects anything that
+ * is not a routable address, so the result is shape-checked here — otherwise
+ * the failure surfaces as an opaque 502 from the provider.
+ */
+export async function resolveBillingEmail(userId: string, sessionEmail: string): Promise<string> {
+  let email = sessionEmail.trim();
+
+  if (!isBillableEmail(email)) {
+    const supabase = createAdminClient();
+    const { data: profile } = await supabase
+      .from('user_profiles')
+      .select('email')
+      .eq('id', userId)
+      .maybeSingle();
+
+    const profileEmail = typeof profile?.email === 'string' ? profile.email.trim() : '';
+    if (isBillableEmail(profileEmail)) email = profileEmail;
+  }
+
+  if (!isBillableEmail(email)) {
+    throw new ApiError(
+      'A valid email address is required to fund your wallet. Add one to your profile and try again.',
+      400,
+    );
+  }
+
+  return email;
+}
+
+function isBillableEmail(email: string): boolean {
+  if (!email || !/^[^\s@]+@[^\s@.]+(\.[^\s@.]+)+$/.test(email)) return false;
+  const tld = email.split('.').pop()?.toLowerCase() ?? '';
+  return !NON_ROUTABLE_TLDS.includes(tld);
 }
 
 export async function createTopupIntent(
@@ -349,10 +453,43 @@ export async function createTopupIntent(
     );
   }
 
-  // Idempotency — return existing intent if key already used
+  const billingEmail = await resolveBillingEmail(userId, email);
+
+  // Idempotency — return existing intent if key already used.
+  // An intent with no authorization_url never reached Paystack (init failed), so
+  // it is re-driven below against its ORIGINAL reference rather than replayed as
+  // a success: returning it as-is would hand the app an empty checkout URL and
+  // permanently strand that idempotency key.
   const existing = await checkTopupIdempotencyKey(input.idempotencyKey);
-  if (existing) {
+  if (existing?.authorizationUrl) {
     return { alreadyProcessed: true, ...existing };
+  }
+
+  if (existing) {
+    if (existing.amountKobo !== input.amountKobo) {
+      throw new ApiError(
+        'This Idempotency-Key was already used for a different amount.',
+        409,
+      );
+    }
+
+    const retryUrl = await initializeTopupWithPaystack({
+      intentId: existing.intentId,
+      reference: existing.paymentReference,
+      email: billingEmail,
+      amountKobo: existing.amountKobo,
+      callbackUrl: input.callbackUrl,
+      userId,
+      checkoutDomain: input.checkoutDomain ?? null,
+    });
+
+    return {
+      alreadyProcessed: false,
+      intentId: existing.intentId,
+      paymentReference: existing.paymentReference,
+      authorizationUrl: retryUrl,
+      amountKobo: existing.amountKobo,
+    };
   }
 
   const paymentReference = `TOPUP_${crypto.randomUUID().replace(/-/g, '').slice(0, 16).toUpperCase()}`;
@@ -366,6 +503,10 @@ export async function createTopupIntent(
     amount_kobo: input.amountKobo,
     payment_reference: paymentReference,
     idempotency_key: input.idempotencyKey,
+    purpose: input.purpose ?? 'wallet',
+    // What this money is buying. NULL for standalone funding — that really is
+    // just a top-up. See ADR-PR<pr-number>-topup-checkout-domain.
+    checkout_domain: input.checkoutDomain ?? null,
     status: 'pending',
   });
 
@@ -378,24 +519,15 @@ export async function createTopupIntent(
     throw new ApiError('Failed to create topup intent', 500);
   }
 
-  // Call Paystack initialize
-  const authorizationUrl = await initializePaystackPayment({
+  const authorizationUrl = await initializeTopupWithPaystack({
+    intentId,
     reference: paymentReference,
-    email,
+    email: billingEmail,
     amountKobo: input.amountKobo,
     callbackUrl: input.callbackUrl,
-    metadata: {
-      type: 'wallet_topup',
-      topup_intent_id: intentId,
-      user_id: userId,
-    },
+    userId,
+    checkoutDomain: input.checkoutDomain ?? null,
   });
-
-  // Store the authorization URL
-  await supabase
-    .from('wallet_topup_intents')
-    .update({ authorization_url: authorizationUrl })
-    .eq('id', intentId);
 
   return {
     alreadyProcessed: false,
@@ -409,6 +541,57 @@ export async function createTopupIntent(
 // ---------------------------------------------------------------------------
 // Paystack initialization (wallet-owned, independent of voting module)
 // ---------------------------------------------------------------------------
+
+/**
+ * Drive Paystack initialize for an intent row that already exists, persisting
+ * the outcome either way. A provider failure marks the intent 'failed' with its
+ * reason so the row does not sit at 'pending' forever with nothing recorded.
+ */
+async function initializeTopupWithPaystack(input: {
+  intentId: string;
+  reference: string;
+  email: string;
+  amountKobo: number;
+  callbackUrl?: string;
+  userId: string;
+  checkoutDomain?: string | null;
+}): Promise<string> {
+  const supabase = createAdminClient();
+
+  try {
+    const authorizationUrl = await initializePaystackPayment({
+      reference: input.reference,
+      email: input.email,
+      amountKobo: input.amountKobo,
+      callbackUrl: input.callbackUrl,
+      metadata: {
+        // The webhook matches on `type`, so it must stay 'wallet_topup' — the rail
+        // is a top-up regardless of what raised it. checkout_domain rides
+        // alongside so the PSP dashboard shows why the charge exists.
+        type: 'wallet_topup',
+        topup_intent_id: input.intentId,
+        user_id: input.userId,
+        checkout_domain: input.checkoutDomain ?? null,
+      },
+    });
+
+    await supabase
+      .from('wallet_topup_intents')
+      .update({ authorization_url: authorizationUrl, error_message: null })
+      .eq('id', input.intentId);
+
+    return authorizationUrl;
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+
+    await supabase
+      .from('wallet_topup_intents')
+      .update({ status: 'failed', error_message: message, updated_at: new Date().toISOString() })
+      .eq('id', input.intentId);
+
+    throw err;
+  }
+}
 
 async function initializePaystackPayment(input: {
   reference: string;
@@ -439,7 +622,10 @@ async function initializePaystackPayment(input: {
   });
 
   if (!res.ok) {
-    throw new ApiError(`Paystack initialization failed: ${res.statusText}`, 502);
+    // Paystack puts the actionable reason in the body ("Invalid Email Address
+    // Passed", "Amount too low"…); res.statusText is always a bare "Bad Request".
+    const reason = await readPaystackError(res);
+    throw new ApiError(`Paystack initialization failed: ${reason}`, 502);
   }
 
   const json = await res.json() as { status: boolean; data?: { authorization_url?: string } };
@@ -449,6 +635,16 @@ async function initializePaystackPayment(input: {
   }
 
   return authorizationUrl;
+}
+
+async function readPaystackError(res: Response): Promise<string> {
+  try {
+    const body = await res.json() as { message?: string };
+    if (typeof body.message === 'string' && body.message.trim()) return body.message.trim();
+  } catch {
+    // Non-JSON error body — fall through to the status line.
+  }
+  return res.statusText || `HTTP ${res.status}`;
 }
 
 // ---------------------------------------------------------------------------

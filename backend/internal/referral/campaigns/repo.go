@@ -79,7 +79,7 @@ func (r *Repository) queryCampaigns(ctx context.Context, q string, args ...any) 
 		return nil, fmt.Errorf("campaigns: query: %w", err)
 	}
 	defer rows.Close()
-	var out []Campaign
+	out := []Campaign{}
 	for rows.Next() {
 		c, err := scanCampaign(rows)
 		if err != nil {

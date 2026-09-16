@@ -7,6 +7,7 @@ import {
   getImportPreview, confirmImport, getAuditLog,
 } from '../api/admin.api';
 import type { ApplicationJurisdiction, ApprovalDecision } from '../types/admin.types';
+import type { PickedFile } from '../utils/docPicker';
 
 const KEY = 'association';
 
@@ -62,8 +63,17 @@ export function useAuditLog(action: string = 'all') {
   return useQuery({ queryKey: [KEY, 'auditLog', action], queryFn: () => getAuditLog(action), staleTime: 20_000 });
 }
 
+/** Cache key the preview screen reads the uploaded dry-run from. */
+export const IMPORT_PREVIEW_KEY = [KEY, 'importPreview'] as const;
+
 export function useImportPreview() {
-  return useMutation({ mutationFn: getImportPreview });
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ file, orgId }: { file: PickedFile; orgId?: string }) => getImportPreview(file, orgId),
+    // The preview screen cannot re-fetch (multipart endpoint, no file in hand),
+    // so hand it the result through the cache.
+    onSuccess: (data) => qc.setQueryData(IMPORT_PREVIEW_KEY, data),
+  });
 }
 
 export function useConfirmImport() {

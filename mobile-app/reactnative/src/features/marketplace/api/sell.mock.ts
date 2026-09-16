@@ -12,6 +12,7 @@
 
 import type {
   Boost,
+  BoostQuote,
   BoostTier,
   Category,
   CreateListingInput,
@@ -36,14 +37,56 @@ export const MOCK_SELF_SELLER_ID = 'seller_self';
 // schema-per-category so the Attribute form has something to render. Shape mirrors
 // a config-driven form: { fields: [{ key, label, type, required, options?, unit? }] }.
 
+export interface AttributeFieldOption {
+  value: string;
+  label: string;
+  /**
+   * For a dependent field (see `dependsOnKey`): this option is only offered
+   * when the parent field's current value equals `dependsOnValue`. Options
+   * with no `dependsOnValue` are always offered.
+   */
+  dependsOnValue?: string;
+}
+
 export interface AttributeField {
   key: string;
   label: string;
-  type: 'text' | 'number' | 'enum' | 'bool';
+  /**
+   * Widget to render. 'enum' and 'bool' are legacy aliases of 'select' and
+   * 'toggle' kept for backward compatibility with pre-existing fixtures/DB
+   * rows — the dispatcher treats each pair identically.
+   */
+  type:
+    | 'text'
+    | 'number'
+    | 'currency'
+    | 'enum'
+    | 'select'
+    | 'multiselect'
+    | 'radio'
+    | 'segmented'
+    | 'bool'
+    | 'toggle'
+    | 'stepper'
+    | 'date'
+    | 'color';
   required?: boolean;
-  options?: Array<{ value: string; label: string }>;
+  /** Surfaced on the search/filter UI when true. Purely descriptive to the client. */
+  filterable?: boolean;
+  /** Section heading this field renders under (e.g. "Specifications"). */
+  group?: string;
+  options?: AttributeFieldOption[];
   unit?: string;
   placeholder?: string;
+  min?: number;
+  max?: number;
+  /**
+   * Marks this field as dependent on another field's value (e.g. Model
+   * depends on Brand). The renderer filters `options` down to those whose
+   * `dependsOnValue` matches the current value of the field named here, and
+   * disables the control until the parent has a value.
+   */
+  dependsOnKey?: string;
 }
 
 export interface AttributeSchema {
@@ -394,6 +437,55 @@ export async function mockUpdateListing(id: string, input: UpdateListingInput): 
   return next;
 }
 
+const MAX_MOCK_LISTING_PHOTOS = 10;
+
+/** Active listing photo edits re-enter review, mirroring the live backend's
+ *  edit-after-approve re-moderation so the demo doesn't lie about the flow. */
+function reModerateIfActive(l: Listing): Listing {
+  return l.status === 'active' ? { ...l, status: 'pending_review' } : l;
+}
+
+export async function mockAddListingMedia(id: string, mediaIds: string[]): Promise<Listing> {
+  await mockDelay(260);
+  const existing = listingStore.get(id);
+  if (!existing) throw Object.assign(new Error('Listing not found'), { code: 'LISTING_NOT_FOUND', status: 404 });
+  if (existing.media.length + mediaIds.length > MAX_MOCK_LISTING_PHOTOS) {
+    throw Object.assign(new Error(`a listing can have at most ${MAX_MOCK_LISTING_PHOTOS} photos`), { code: 'VALIDATION', status: 422, field: 'media_ids' });
+  }
+  const appended = mediaIds.map((mid, i) => ({
+    id: mid, urlThumb: mid, urlCard: mid, urlFull: mid, blurhash: '', sortOrder: existing.media.length + i,
+  }));
+  const next = reModerateIfActive({ ...existing, media: [...existing.media, ...appended], updatedAt: now() });
+  listingStore.set(id, next);
+  return next;
+}
+
+export async function mockRemoveListingMedia(id: string, mediaId: string): Promise<Listing> {
+  await mockDelay(220);
+  const existing = listingStore.get(id);
+  if (!existing) throw Object.assign(new Error('Listing not found'), { code: 'LISTING_NOT_FOUND', status: 404 });
+  if (!existing.media.some((m) => m.id === mediaId)) {
+    throw Object.assign(new Error('photo not found on this listing'), { code: 'NOT_FOUND', status: 404 });
+  }
+  const next = reModerateIfActive({ ...existing, media: existing.media.filter((m) => m.id !== mediaId), updatedAt: now() });
+  listingStore.set(id, next);
+  return next;
+}
+
+export async function mockReorderListingMedia(id: string, mediaIds: string[]): Promise<Listing> {
+  await mockDelay(220);
+  const existing = listingStore.get(id);
+  if (!existing) throw Object.assign(new Error('Listing not found'), { code: 'LISTING_NOT_FOUND', status: 404 });
+  const byId = new Map(existing.media.map((m) => [m.id, m]));
+  if (mediaIds.length !== existing.media.length || mediaIds.some((mid) => !byId.has(mid))) {
+    throw Object.assign(new Error('reorder must include every existing photo exactly once'), { code: 'VALIDATION', status: 422, field: 'media_ids' });
+  }
+  const reordered = mediaIds.map((mid, i) => ({ ...byId.get(mid)!, sortOrder: i }));
+  const next: Listing = { ...existing, media: reordered, updatedAt: now() };
+  listingStore.set(id, next);
+  return next;
+}
+
 /** Submit a draft → moderation. Auto-approve low-risk categories to 'active'. */
 export async function mockSubmitListing(id: string): Promise<Listing> {
   await mockDelay(420);
@@ -457,10 +549,14 @@ export async function mockPresignMedia(input: { fileName: string; mimeType: stri
 // ─── Boosts ───────────────────────────────────────────────────────────────────
 
 const BOOST_TIERS: BoostTier[] = [
-  { tier: 'spotlight_3d', durationDays: 3, priceKobo: 50_000, label: 'Spotlight — 3 days', description: 'Top of category results and a highlighted card for 3 days.' },
-  { tier: 'spotlight_7d', durationDays: 7, priceKobo: 100_000, label: 'Spotlight — 7 days', description: 'A full week of premium placement — best value for fast-moving items.' },
-  { tier: 'premium_14d', durationDays: 14, priceKobo: 180_000, label: 'Premium — 14 days', description: 'Two weeks across category, search, and the "Near you" home rail.' },
+  { tier: 'spotlight_3d', durationDays: 3, priceKobo: 50_000, weight: 1.0, label: 'Spotlight — 3 days', description: 'Top of category results and a highlighted card for 3 days.' },
+  { tier: 'spotlight_7d', durationDays: 7, priceKobo: 100_000, weight: 2.0, label: 'Spotlight — 7 days', description: 'A full week of premium placement — best value for fast-moving items.' },
+  { tier: 'premium_14d', durationDays: 14, priceKobo: 180_000, weight: 3.0, label: 'Premium — 14 days', description: 'Two weeks across category, search, and the "Near you" home rail.' },
 ];
+
+// Mirrors the real backend's seeded default (mkt_boost_daily_rate: ₦100/day).
+const MOCK_BOOST_DAILY_RATE_KOBO = 10_000;
+const MOCK_BASE_BOOST_WEIGHT = 1.0;
 
 const boostStore = new Map<string, Boost>();
 
@@ -469,25 +565,61 @@ export async function mockBoostTiers(): Promise<BoostTier[]> {
   return BOOST_TIERS;
 }
 
-export async function mockCreateBoost(listingId: string, tier: string): Promise<Boost> {
+// Mirrors the real ComputeBoostQuote: package mode looks up the tier;
+// custom mode rounds the [now, endsAt) range up to whole days and prices at
+// the flat daily rate — so the mock quote and the mock purchase always agree,
+// same as the real endpoint and PurchaseBoost share one computation.
+export async function mockBoostQuote(params: { tier?: string; endsAt?: string }): Promise<BoostQuote> {
+  await mockDelay(120);
+  const startsAt = now();
+  if (params.tier) {
+    const t = BOOST_TIERS.find((x) => x.tier === params.tier);
+    if (!t) throw Object.assign(new Error('Unknown boost tier'), { code: 'INVALID_BOOST_TIER', status: 400 });
+    return { mode: 'package', tier: t.tier, durationDays: t.durationDays, priceKobo: t.priceKobo, weight: t.weight, startsAt, endsAt: daysFromNow(t.durationDays) };
+  }
+  if (!params.endsAt) throw Object.assign(new Error('tier or endsAt is required'), { code: 'SCHEMA_VALIDATION_FAILED', status: 400 });
+  const days = customBoostDaysFor(params.endsAt);
+  return { mode: 'custom', durationDays: days, priceKobo: days * MOCK_BOOST_DAILY_RATE_KOBO, weight: MOCK_BASE_BOOST_WEIGHT, startsAt, endsAt: params.endsAt };
+}
+
+function customBoostDaysFor(endsAtIso: string): number {
+  const ms = new Date(endsAtIso).getTime() - Date.now();
+  return Math.max(1, Math.ceil(ms / (24 * 60 * 60 * 1000)));
+}
+
+export async function mockCreateBoost(listingId: string, tier?: string, endsAt?: string): Promise<Boost> {
   await mockDelay(420);
-  const t = BOOST_TIERS.find((x) => x.tier === tier);
-  if (!t) throw Object.assign(new Error('Unknown boost tier'), { code: 'BOOST_TIER_NOT_FOUND', status: 404 });
   const id = `bst_${Date.now()}`;
   // Simulate an occasional reason-coded rejection → instant auto-refund, so the
   // Boost status screen's rejection/refund branch is exercisable in mock mode.
   const rejected = /reject/i.test(listingId);
+
+  let boostTier: string, durationDays: number, priceKobo: number, weight: number;
+  if (tier) {
+    const t = BOOST_TIERS.find((x) => x.tier === tier);
+    if (!t) throw Object.assign(new Error('Unknown boost tier'), { code: 'BOOST_TIER_NOT_FOUND', status: 404 });
+    boostTier = t.tier; durationDays = t.durationDays; priceKobo = t.priceKobo; weight = t.weight;
+  } else if (endsAt) {
+    boostTier = 'custom';
+    durationDays = customBoostDaysFor(endsAt);
+    priceKobo = durationDays * MOCK_BOOST_DAILY_RATE_KOBO;
+    weight = MOCK_BASE_BOOST_WEIGHT;
+  } else {
+    throw Object.assign(new Error('tier or endsAt is required'), { code: 'SCHEMA_VALIDATION_FAILED', status: 400 });
+  }
+
   const boost: Boost = {
     id,
     listingId,
     sellerId: MOCK_SELF_SELLER_ID,
-    tier: t.tier,
-    durationDays: t.durationDays,
-    priceKobo: t.priceKobo,
+    tier: boostTier,
+    durationDays,
+    priceKobo,
+    weight,
     status: rejected ? 'rejected_with_reason' : 'active',
     rejectionReasonCode: rejected ? 'listing_quality_below_threshold' : null,
     startsAt: rejected ? null : now(),
-    endsAt: rejected ? null : daysFromNow(t.durationDays),
+    endsAt: rejected ? null : (endsAt ?? daysFromNow(durationDays)),
     createdAt: now(),
   };
   boostStore.set(id, boost);
@@ -499,4 +631,25 @@ export async function mockGetBoost(id: string): Promise<Boost> {
   const b = boostStore.get(id);
   if (!b) throw Object.assign(new Error('Boost not found'), { code: 'BOOST_NOT_FOUND', status: 404 });
   return b;
+}
+
+/** Mirrors the backend's proratedBoostRefund: the fraction of the price for
+ *  time remaining between now and endsAt, out of the full startsAt→endsAt
+ *  window. Mock-only stand-in so the Stop-boost UI is exercisable offline. */
+export async function mockCancelBoost(id: string): Promise<Boost> {
+  await mockDelay(320);
+  const b = boostStore.get(id);
+  if (!b) throw Object.assign(new Error('Boost not found'), { code: 'BOOST_NOT_FOUND', status: 404 });
+  if (b.status !== 'active') {
+    throw Object.assign(new Error(`cannot cancel a boost in status ${b.status}`), { code: 'INVALID_BOOST_TRANSITION', status: 409 });
+  }
+  let refundedKobo = 0;
+  if (b.startsAt && b.endsAt) {
+    const total = new Date(b.endsAt).getTime() - new Date(b.startsAt).getTime();
+    const remaining = Math.max(0, Math.min(total, new Date(b.endsAt).getTime() - Date.now()));
+    if (total > 0) refundedKobo = Math.floor(b.priceKobo * (remaining / total));
+  }
+  const cancelled: Boost = { ...b, status: 'auto_refunded', rejectionReasonCode: 'seller_cancelled', refundedKobo };
+  boostStore.set(id, cancelled);
+  return cancelled;
 }

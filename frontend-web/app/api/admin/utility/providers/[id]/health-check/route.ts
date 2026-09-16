@@ -2,7 +2,8 @@ import { successResponse, handleApiError } from '@/src/lib/api/responses';
 import { adminHealthCheckProvider } from '@/src/server/utility/service';
 import { auditUtilityAdminAction, requireUtilityManager, utilityAdminUnavailableResponse } from '../../../_utils';
 
-export async function POST(request: Request, { params }: { params: { id: string } }) {
+export async function POST(request: Request, ctx: { params: Promise<{ id: string }> }) {
+  const params = await ctx.params;
   const unavailable = utilityAdminUnavailableResponse();
   if (unavailable) return unavailable;
   try {

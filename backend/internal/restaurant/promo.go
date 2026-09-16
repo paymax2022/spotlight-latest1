@@ -4,9 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 )
 
 // ErrPromoInvalid is returned when a supplied promo code cannot be applied (unknown,
@@ -197,6 +199,151 @@ func (s *Service) resolvePromo(ctx context.Context, restaurantID, userID, code s
 	return appliedPromo{PromoID: p.ID, Funder: p.Funder, DiscountKobo: discount}, nil
 }
 
+// reservePromoRedemption is the AUTHORITATIVE usage-limit check. It claims this order's
+// slot on the promo in ONE short transaction: lock the promo row, count the redemptions
+// that are by then committed, and — if there is room — write this order's redemption.
+//
+// The lock is what makes the limit real. promoUsageOK (used earlier, to size the
+// discount) reads the counts on the pool with nothing locked, and a count-and-compare at
+// READ COMMITTED is not a constraint: N concurrent placements each see only committed
+// rows plus their own, so all N pass and all N commit — every one of them redeeming a
+// usage_limit=1 code. That was tolerable while no discount was ever applied; now the
+// counter gates real money (a platform-funded code spends the platform's settlement leg
+// on every redemption), so it has to actually hold. SELECT ... FOR UPDATE serializes
+// concurrent redeemers of the SAME promo; committing publishes this redemption to the
+// next waiter. Different promos never contend.
+//
+// TRANSACTION SCOPE IS LOAD-BEARING. This runs in its own short tx that commits before
+// settlement.Escrow is called, and it must stay that way. An earlier shape took this
+// lock on the ORDER's transaction and held it across Escrow — but Escrow needs a second
+// pool connection, so every in-flight order pinned two, and at concurrency ≥ half the
+// pool every connection was held by an order tx waiting for a connection that could
+// never free. That is a deadlock of the whole order path, not a slowdown.
+//
+// The reservation is still taken BEFORE the escrow, so a loser of the limit race is
+// rejected with no money to unwind. The cost of the split is that the redemption is no
+// longer atomic with the order row: a crash between here and the order insert leaves a
+// reservation pointing at an order that will never exist, burning one allowance. Every
+// non-crash failure path calls releasePromoReservationSafe to give it back, and one
+// stranded allowance is a far better failure than a deadlocked order path.
+func (s *Service) reservePromoRedemption(ctx context.Context, promoID, orderID, userID string, discountKobo int64) error {
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("restaurant: begin promo reservation: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	var usageLimit, perUserLimit *int
+	if err := tx.QueryRow(ctx,
+		`SELECT usage_limit, per_user_limit FROM restaurant_promos WHERE id=$1 FOR UPDATE`, promoID).
+		Scan(&usageLimit, &perUserLimit); err != nil {
+		// Deleted between resolution and here — treat as unusable, not as a 500.
+		return fmt.Errorf("%w: promo is no longer available", ErrPromoInvalid)
+	}
+	if usageLimit != nil {
+		var total int
+		if err := tx.QueryRow(ctx,
+			`SELECT count(*) FROM restaurant_promo_redemptions WHERE promo_id=$1`, promoID).Scan(&total); err != nil {
+			return err
+		}
+		if total >= *usageLimit {
+			return fmt.Errorf("%w: usage limit reached", ErrPromoInvalid)
+		}
+	}
+	if perUserLimit != nil {
+		var mine int
+		if err := tx.QueryRow(ctx,
+			`SELECT count(*) FROM restaurant_promo_redemptions WHERE promo_id=$1 AND user_id=$2`, promoID, userID).Scan(&mine); err != nil {
+			return err
+		}
+		if mine >= *perUserLimit {
+			return fmt.Errorf("%w: per-user limit reached", ErrPromoInvalid)
+		}
+	}
+	// Claim the slot while still holding the lock, so the next waiter counts it.
+	// ON CONFLICT (order_id) DO NOTHING is defensive: orderID is a fresh UUID here.
+	if _, err := tx.Exec(ctx,
+		`INSERT INTO restaurant_promo_redemptions (id, promo_id, order_id, user_id, discount_kobo)
+		 VALUES ($1,$2,$3,$4,$5) ON CONFLICT (order_id) DO NOTHING`,
+		uuid.New().String(), promoID, orderID, userID, discountKobo); err != nil {
+		return fmt.Errorf("restaurant: record promo redemption: %w", err)
+	}
+	return tx.Commit(ctx)
+}
+
+// releasePromoReservationSafe gives a reservation back when the order it was claimed for
+// does not get created (escrow declined, insert failed, idempotent replay). Best-effort
+// and never returns: the caller is already on a failure path and returning its own error,
+// and a promo allowance is campaign bookkeeping, not money. A leaked reservation costs
+// one redemption slot; failing the caller's error with this one would hide why the order
+// actually failed.
+func (s *Service) releasePromoReservationSafe(ctx context.Context, promoID *string, orderID string) {
+	if promoID == nil {
+		return
+	}
+	if _, err := s.db.Exec(ctx,
+		`DELETE FROM restaurant_promo_redemptions WHERE order_id=$1`, orderID); err != nil {
+		log.Printf("[restaurant] could not release promo reservation for abandoned order %s (promo %s): %v — one redemption slot is stranded",
+			orderID, *promoID, err)
+	}
+}
+
+// releasePromoRedemption gives a promo redemption back when an order is cancelled or
+// refunded before delivery. Without it a single-use campaign can be killed for free:
+// place an order with the code, cancel immediately (full refund, zero cost), and the
+// redemption row keeps counting against usage_limit forever. It also stops a
+// restaurant-initiated cancellation from silently burning a customer's per-user
+// allowance. Runs on the caller's tx so it commits with the cancellation itself.
+//
+// This is NOT a ledger record — redemptions are campaign bookkeeping, so deleting the
+// row is the correct way to un-consume it; the money movement is reversed separately by
+// settlement.Refund, which posts its own balanced entries and rewrites nothing.
+func releasePromoRedemption(ctx context.Context, tx pgx.Tx, orderID string) error {
+	_, err := tx.Exec(ctx, `DELETE FROM restaurant_promo_redemptions WHERE order_id=$1`, orderID)
+	return err
+}
+
+// promoFunderCapKobo is the LARGEST discount the declared funder can actually bear on
+// an order whose settlement gross is grossKobo.
+//
+// The escrow only ever holds what the customer paid (gross − discount) — there is no
+// outside pot to draw a discount from, so it is funded by shrinking exactly ONE
+// settlement leg (settlement.Split.DiscountFundedByPlatform picks which). Settle fails
+// closed when that leg would go negative, which for an ALREADY-ESCROWED order means a
+// settlement that can never complete and an escrow stranded forever. So the bound is
+// checked at placement instead, before any money moves, and it is derived from the very
+// same arithmetic Settle uses (int64(float64(gross)*pct)) so the two cannot drift:
+//
+//   - platform-funded   → it comes out of the platform leg, which is splitPlatformPct
+//     of the gross;
+//   - restaurant-funded → it falls out of the provider REMAINDER (total − platform −
+//     rider), so the cap is the gross less the other two legs. The with-rider shape is
+//     used because it is the tighter of the two and a rider can still be assigned after
+//     placement (rider-less settles 90/10, a strictly looser bound).
+func promoFunderCapKobo(funder PromoFunder, grossKobo int64) int64 {
+	if grossKobo <= 0 {
+		return 0
+	}
+	platformLeg := int64(float64(grossKobo) * splitPlatformPct)
+	if funder == FunderPlatform {
+		return platformLeg
+	}
+	riderLeg := int64(float64(grossKobo) * splitRiderPct)
+	return grossKobo - platformLeg - riderLeg
+}
+
+// assertDiscountFundable rejects a resolved promo whose discount the declared funder
+// cannot cover out of its settlement leg. Returns ErrPromoInvalid so the caller (and
+// the handler's 422 mapping) treats it as the client error it is: the code is real, it
+// simply cannot be applied to THIS order.
+func assertDiscountFundable(ap appliedPromo, grossKobo int64) error {
+	if maxKobo := promoFunderCapKobo(ap.Funder, grossKobo); ap.DiscountKobo > maxKobo {
+		return fmt.Errorf("%w: a %s-funded discount of %d kobo exceeds the %d kobo that funder's settlement share can bear on this order",
+			ErrPromoInvalid, ap.Funder, ap.DiscountKobo, maxKobo)
+	}
+	return nil
+}
+
 // CreatePromoRequest is the body for an owner creating a promo for their restaurant.
 type CreatePromoRequest struct {
 	Code            string     `json:"code" binding:"required,min=2,max=40"`
@@ -216,7 +363,7 @@ type CreatePromoRequest struct {
 // settlement share — a platform-funded (or platform-wide) promo would let a merchant
 // spend platform money and must be created through an admin path instead.
 func (s *Service) CreatePromo(ctx context.Context, restaurantID, userID string, req CreatePromoRequest) (*Promo, error) {
-	if err := s.assertOwner(ctx, restaurantID, userID); err != nil {
+	if err := s.AssertStaffPermission(ctx, restaurantID, userID, PermManageStore); err != nil {
 		return nil, err
 	}
 	switch req.Kind {

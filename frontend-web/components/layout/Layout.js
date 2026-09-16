@@ -33,11 +33,21 @@ export default function Layout({
     const handleSearch = () => setSearch(!isSearch)
 
     useEffect(() => {
-        const WOW = require('wowjs')
-        window.wow = new WOW.WOW({
-            live: false
-        })
-        window.wow.init()
+        // wowjs is a legacy UMD library that breaks under Next's bundler: its
+        // `this.WOW = ...` binds to the global, so the module namespace comes back
+        // as { default: {} } and the old `new WOW.WOW()` threw "WOW.WOW is not a
+        // constructor". Probe every shape the interop can produce — including
+        // window.WOW, which is where it actually lands here — and no-op if none is
+        // constructible: the scroll-reveal is cosmetic and must never crash the page.
+        import('wowjs')
+            .then((mod) => {
+                const WOW = [mod?.WOW, mod?.default?.WOW, mod?.default, window.WOW]
+                    .find((candidate) => typeof candidate === 'function')
+                if (!WOW) return
+                window.wow = new WOW({ live: false })
+                window.wow.init()
+            })
+            .catch(() => { /* animation is non-critical */ })
 
         document.addEventListener("scroll", () => {
             const scrollCheck = window.scrollY > 100

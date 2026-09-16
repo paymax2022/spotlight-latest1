@@ -201,7 +201,7 @@ export default function TripScreen() {
               driver={t.driver}
               subtitle={t.driver.phoneMasked ?? undefined}
               onCall={() => Alert.alert('Calling driver', 'Connecting via anonymous number…')}
-              onMessage={() => Alert.alert('Message', 'In-app chat opening…')}
+              onMessage={() => router.push(`/mobility/trip/${id}/chat`)}
             />
             <View style={{ height: Spacing.md }} />
             <VehicleCard vehicle={t.vehicle} />

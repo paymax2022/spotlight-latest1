@@ -1801,6 +1801,8 @@ components:
                  mental_health, womens_health, neurology, eye_care, nutrition, dentistry,
                  oncology, orthopedic]
         consult_fee_kobo: { type: integer, format: int64 }
+        booking:
+          $ref: '#/components/schemas/BookingQuote'
         is_available: { type: boolean }
         is_online: { type: boolean }
         is_hmo_verified: { type: boolean }
@@ -2293,8 +2295,47 @@ components:
         starts_at: { type: string, format: date-time, nullable: true }
         status: { type: string, enum: [booked, confirmed, completed, cancelled] }
         notes: { type: string }
-        fee_kobo: { type: integer, format: int64 }
+        fee_kobo:
+          type: integer
+          format: int64
+          description: >-
+            The doctor's CONSULTATION fee only, excluding the platform booking
+            fee. Doctor earnings are 85% of this. Not a patient-facing total —
+            use total_kobo for what the patient paid (ADR-040).
+        platform_fee_kobo:
+          type: integer
+          format: int64
+          description: >-
+            Platform booking fee charged on top of the consultation fee, computed
+            server-side. 0 for appointments booked before ADR-040.
+        total_kobo:
+          type: integer
+          format: int64
+          description: >-
+            What was escrowed and what the patient paid = fee_kobo +
+            platform_fee_kobo. Also the amount refunded on cancellation.
         created_at: { type: string, format: date-time }
+
+    BookingQuote:
+      type: object
+      description: >-
+        Server-computed price breakdown for booking a consultation with this
+        doctor. The client renders these values and must never compute the rate
+        itself — see ADR-040.
+      properties:
+        consult_fee_kobo: { type: integer, format: int64 }
+        platform_fee_bp:
+          type: integer
+          description: Platform booking fee rate in basis points (500 = 5%).
+        platform_fee_kobo:
+          type: integer
+          format: int64
+          description: >-
+            consult_fee_kobo x platform_fee_bp / 10000, floored to whole kobo.
+        total_kobo:
+          type: integer
+          format: int64
+          description: consult_fee_kobo + platform_fee_kobo.
 
     Slot:
       type: object
@@ -3615,9 +3656,10 @@ components:
     MktBoostTier:
       type: object
       properties:
-        tier: { type: string, enum: [start, vip, vip_gold, diamond, enterprise] }
+        tier: { type: string, description: "A preset package tier, or 'custom' for a date-range boost." }
         duration_days: { type: integer }
         price_kobo: { type: integer, format: int64 }
+        weight: { type: number, description: "Additive search-rank weight (ES function_score boost_mode:sum)." }
 
     MktBoost:
       type: object
@@ -3625,9 +3667,10 @@ components:
         id: { type: string, format: uuid }
         listing_id: { type: string, format: uuid }
         seller_id: { type: string, format: uuid }
-        tier: { type: string, enum: [start, vip, vip_gold, diamond, enterprise] }
+        tier: { type: string, description: "A preset package tier, or 'custom' for a date-range boost." }
         duration_days: { type: integer }
         price_kobo: { type: integer, format: int64 }
+        weight: { type: number, description: "Search-rank weight frozen onto this boost at purchase time." }
         ledger_charge_ref: { type: string }
         status: { $ref: '#/components/schemas/MktBoostStatus' }
         rejection_reason_code: { type: string, nullable: true }
@@ -3637,10 +3680,65 @@ components:
 
     MktBoostPurchaseRequest:
       type: object
-      required: [listing_id, tier]
+      required: [listing_id]
+      description: >
+        Exactly ONE of `tier` (a preset package) or `ends_at` (a custom
+        date-range boost, priced by the admin-set ₦/day rate — starts
+        immediately at purchase time, ends_at rounds UP to the next whole day)
+        is expected. GET /boosts/quote resolves either into the same price
+        before the caller commits to this request.
       properties:
         listing_id: { type: string, format: uuid }
-        tier: { type: string, enum: [start, vip, vip_gold, diamond, enterprise] }
+        tier: { type: string, description: "A preset package tier from GET /boosts/tiers. Omit for a custom date-range boost." }
+        ends_at: { type: string, format: date-time, description: "Custom-boost end date+time. Omit tier when set." }
+
+    MktBoostQuote:
+      type: object
+      description: Server-authoritative price preview for a would-be boost purchase (GET /boosts/quote).
+      properties:
+        mode: { type: string, enum: [package, custom] }
+        tier: { type: string, nullable: true }
+        duration_days: { type: integer }
+        price_kobo: { type: integer, format: int64 }
+        weight: { type: number }
+        starts_at: { type: string, format: date-time }
+        ends_at: { type: string, format: date-time }
+
+    MktBoostPackage:
+      type: object
+      description: Admin-editable boost package (ADM-002/MO-002).
+      properties:
+        tier: { type: string }
+        label: { type: string }
+        duration_days: { type: integer }
+        price_kobo: { type: integer, format: int64 }
+        weight: { type: number }
+        is_active: { type: boolean }
+        updated_at: { type: string, format: date-time, nullable: true }
+        updated_by: { type: string, format: uuid, nullable: true }
+
+    MktBoostPackageUpsertRequest:
+      allOf:
+        - $ref: '#/components/schemas/MktBoostPackage'
+        - type: object
+          required: [tier, label, duration_days, price_kobo, reason_code]
+          properties:
+            reason_code: { type: string, description: Mandatory; every pricing change is audited. }
+
+    MktBoostDailyRate:
+      type: object
+      description: The single admin-set ₦/day rate used to price a custom date-range boost.
+      properties:
+        daily_rate_kobo: { type: integer, format: int64 }
+        updated_at: { type: string, format: date-time, nullable: true }
+        updated_by: { type: string, format: uuid, nullable: true }
+
+    MktBoostDailyRateSetRequest:
+      type: object
+      required: [daily_rate_kobo, reason_code]
+      properties:
+        daily_rate_kobo: { type: integer, format: int64 }
+        reason_code: { type: string, description: Mandatory; every pricing change is audited. }
 
     MktSavedSearch:
       type: object
@@ -4075,6 +4173,176 @@ security:
 # ── KYC endpoints ─────────────────────────────────────────────────────────────
 
 paths:
+  /api/auth/reset-password:
+    post:
+      operationId: resetPasswordWithCode
+      summary: Complete a password reset with an emailed code
+      description: >
+        Requires `email` + `code` + `newPassword`. The former `{token, newPassword}`
+        form is REFUSED with 400: it was answered with "Password reset successful"
+        for any non-empty token while changing nothing, which is the same defect
+        the audit removed as B4 on verify-email. No client used it — web and
+        mobile both complete resets through Supabase's own recovery session.
+
+
+        Answers identically whether or not an account exists for the address.
+        Gated behind FEATURE_OTP_EMAIL_ENABLED; 503 when closed.
+      tags: [OTP]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, code, newPassword]
+              properties:
+                email: { type: string, format: email }
+                code: { type: string, example: "482913" }
+                newPassword: { type: string, minLength: 8 }
+      responses:
+        '200': { description: "Password reset (or the address has no account — indistinguishable by design)" }
+        '400': { description: "Invalid or expired code, or the removed token-only form" }
+        '403': { description: Account suspended or locked }
+        '429': { description: Attempt ceiling reached }
+        '500': { description: "The code was consumed but the password could not be set" }
+        '503': { description: Feature disabled }
+
+  # ╔══════════════════════════════════════════════════════════════════════╗
+  # ║ SERVER-ISSUED EMAIL OTP (Brevo)                                        ║
+  # ║ Feature flag: FEATURE_OTP_EMAIL_ENABLED (default OFF).                 ║
+  # ║ When OFF — or ON with OTP_PEPPER / Brevo credentials missing — both    ║
+  # ║ endpoints return 503 naming the reason. They are never 404.            ║
+  # ║                                                                        ║
+  # ║ This is a SECOND OTP system. Supabase Auth still mints and mails its   ║
+  # ║ own codes (docs/audit/USER_MANAGEMENT_AUDIT.md B1), so while that      ║
+  # ║ project mailer is enabled a registering user receives TWO codes from   ║
+  # ║ two systems, redeemed at two different endpoints. Turning it off is a  ║
+  # ║ prerequisite for enabling this anywhere real.                          ║
+  # ║                                                                        ║
+  # ║ REGISTRATION IS WIRED: POST /api/auth/register issues a verify_email   ║
+  # ║ code when signup returns no session, and redeeming that code confirms  ║
+  # ║ the account in GoTrue so login stops answering 403 email_not_confirmed.║
+  # ║ Issuing is best-effort — the account already exists, so a send failure ║
+  # ║ never fails registration; the user asks again at /otp/request.         ║
+  # ║                                                                        ║
+  # ║ LOGIN IS A STEP-UP, NOT PASSWORDLESS. With                             ║
+  # ║ FEATURE_OTP_LOGIN_MFA_ENABLED on, POST /api/auth/login returns         ║
+  # ║ mfaRequired and NO tokens; redeeming the login code here mints the     ║
+  # ║ session. login codes are therefore NOT self-issuable — /otp/request    ║
+  # ║ refuses purpose=login, because anything that can mint a login code can ║
+  # ║ log in without a password. To resend, submit the password again.       ║
+  # ║ ⚠️ Login MFA fails closed: an email outage is a total login outage.     ║
+  # ║                                                                        ║
+  # ║ PASSWORD RESET is wired at /api/auth/reset-password (code form).       ║
+  # ║                                                                        ║
+  # ║ Both endpoints are unauthenticated and answer identically whether or   ║
+  # ║ not an account exists — otherwise they enumerate users.                ║
+  # ╚══════════════════════════════════════════════════════════════════════╝
+  /api/auth/otp/request:
+    post:
+      operationId: requestEmailOTP
+      summary: Send a one-time code to an email address
+      description: >
+        Always answers 200 with the same message whether or not the address
+        belongs to a user, and whether or not delivery succeeded. Reporting
+        either would turn this into a user-enumeration oracle. 429 is the one
+        exception: a caller who is rate limited already knows they asked, and
+        needs to be told to wait.
+      tags: [OTP]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, purpose]
+              properties:
+                email: { type: string, format: email }
+                purpose:
+                  type: string
+                  enum: [verify_email, password_reset]
+                  description: >
+                    Scopes the code; a code for one purpose cannot complete another.
+                    `login` is deliberately absent — a login code mints a session, so
+                    it is issued only by POST /api/auth/login after the password, never
+                    on request. Asking for one here returns 400.
+
+                name:
+                  type: string
+                  description: Optional display name for the email greeting. Defaults to "there".
+      responses:
+        '200':
+          description: Accepted (says nothing about whether the address exists)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean, example: true }
+                  message: { type: string, example: "if an account exists for that address, a code has been sent" }
+                  expiresInSeconds: { type: integer, example: 600 }
+        '400': { description: Malformed address or unknown purpose }
+        '429': { description: Send budget or resend cooldown exceeded }
+        '503': { description: "Feature disabled, or enabled but misconfigured (body names which)" }
+  /api/auth/otp/verify:
+    post:
+      operationId: verifyEmailOTP
+      summary: Verify a one-time code
+      description: >
+        On success the code is consumed and cannot be replayed. A wrong code, an
+        unknown address and a mismatched purpose all return the same 400
+        "invalid code" — distinguishing them would leak which addresses are real.
+        Expiry and lockout are distinguished because the user must be told to
+        request a new code.
+
+
+        purpose=verify_email additionally confirms the account in GoTrue, which
+        is what lets the user log in. The response does NOT say whether an
+        account was found: the request endpoint accepts any address on purpose,
+        so reporting the lookup outcome would rebuild the enumeration oracle. A
+        500 here means the code was spent but activation failed — the user's next
+        step is a new code.
+      tags: [OTP]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, code, purpose]
+              properties:
+                email: { type: string, format: email }
+                code: { type: string, example: "482913" }
+                purpose:
+                  type: string
+                  enum: [login, verify_email, password_reset]
+      responses:
+        '200':
+          description: >
+            The caller controls the mailbox. For verify_email the account is now
+            confirmed. For login a SESSION is returned, in the same three shapes
+            POST /api/auth/login uses. For password_reset the code is simply
+            consumed — the new password is submitted to /api/auth/reset-password.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean, example: true }
+                  verified: { type: boolean, example: true }
+                  purpose: { type: string, example: login }
+                  session:
+                    type: object
+                    description: login only — the minted session
+                    nullable: true
+                  access_token: { type: string, description: login only }
+                  refresh_token: { type: string, description: login only }
+        '400': { description: Invalid or expired code }
+        '403': { description: "login only: the account was suspended or locked between the two factors" }
+        '429': { description: "Attempt ceiling reached, or per-IP verify budget exceeded" }
+        '500': { description: "The code was consumed but the account could not be confirmed, or the session could not be minted" }
+        '503': { description: "Feature disabled, or enabled but misconfigured" }
+
   # ╔══════════════════════════════════════════════════════════════════════╗
   # ║ SESSION HARDENING — #19 (refresh rotation + suspicious-login response)  ║
   # ║ Feature flag: FEATURE_SESSION_HARDENING_ENABLED (default OFF).          ║
@@ -5832,14 +6100,38 @@ paths:
     get:
       operationId: fxGetBalances
       summary: Customer multi-currency balances
+      description: >-
+        Every wallet the customer holds. NGN is the platform's main wallet — the
+        same ledger-projected balance the wallet, checkout and other NGN modules
+        read — and is always present, even at zero. Other currencies are the FX
+        pots the customer has opened. Amounts are integer minor units.
       tags: [FX Orchestration]
       security: [{ bearerAuth: [] }]
       responses:
         '200':
-          description: Balances array
+          description: Balances array (WalletBalance shape, minor units)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      required: [currency, available, ledger]
+                      properties:
+                        currency: { type: string, description: ISO-4217 }
+                        available: { type: integer, format: int64, description: spendable minor units }
+                        ledger: { type: integer, format: int64, description: posted minor units }
     post:
       operationId: fxAddWallet
-      summary: Open (provision) a zero-balance wallet for a currency (no ledger)
+      summary: Open (provision) a wallet for a currency (persisted, no ledger entry)
+      description: >-
+        Provisioning only — no value moves, so no Idempotency-Key is required and
+        re-opening an existing wallet is a no-op that returns its current balance
+        rather than resetting it. NGN needs no provisioning (it is the main
+        wallet). Currency must be one of NGN, USD, EUR, GBP, GHS, KES.
       tags: [FX Orchestration]
       security: [{ bearerAuth: [] }]
       requestBody:
@@ -5849,17 +6141,69 @@ paths:
             schema:
               type: object
               required: [currency]
-              properties: { currency: { type: string, description: ISO-4217 } }
+              properties:
+                currency:
+                  type: string
+                  description: ISO-4217
+                  enum: [NGN, USD, EUR, GBP, GHS, KES]
       responses:
         '201':
-          description: Provisioned wallet
+          description: Provisioned wallet, carrying its stored balance
           content:
             application/json:
               schema: { $ref: '#/components/schemas/FxWalletBalance' }
+        '400':
+          description: Missing currency, or a currency wallets are not offered in
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FxError' }
+  /api/v1/fx/webhooks/{provider}:
+    post:
+      operationId: fxProviderWebhook
+      summary: Provider async callback — status updates and inbound collections
+      description: >-
+        Signature-verified (HMAC-SHA256 over the raw body, `Webhook-Signature`;
+        Maplerad may send `X-Maplerad-Signature`). Verification FAILS CLOSED — an
+        unconfigured `*_WEBHOOK_SECRET` rejects every delivery rather than
+        accepting unsigned ones.
+
+
+        Transfer and conversion events update the record's status. A collection
+        event (`collection.successful` / `collection.success` /
+        `virtual_account.credit`) is an inbound DEPOSIT: it is matched to the
+        virtual account it was paid into and credits that account's owner, once,
+        deduped on the provider event id. An unmatched reference is acknowledged
+        and credits nothing — a deposit with no owner is never guessed at. A
+        payload currency that disagrees with the account's own currency is
+        refused.
+      tags: [FX Orchestration]
+      security: []
+      parameters:
+        - { name: provider, in: path, required: true, schema: { type: string, enum: [maplerad, eversend] } }
+        - { name: Webhook-Signature, in: header, required: false, schema: { type: string }, description: "HMAC-SHA256 of the raw body, hex-encoded." }
+        - { name: X-Maplerad-Signature, in: header, required: false, schema: { type: string }, description: Alternate header name used by Maplerad. }
+      requestBody:
+        required: true
+        description: Raw provider event payload.
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: true }
+      responses:
+        '200':
+          description: Received (acknowledged even when nothing matched, to stop provider retries)
+        '401':
+          description: Signature verification failed
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FxError' }
   /api/v1/fx/transactions:
     get:
       operationId: fxListTransactions
       summary: Unified ledger view (conversions, transfers, collections)
+      description: >-
+        Conversions, payouts and inbound collection DEPOSITS. Every row carries a
+        currency on both money legs; a collection is money arriving 1:1, so its
+        source and destination are equal.
       tags: [FX Orchestration]
       security: [{ bearerAuth: [] }]
       responses:
@@ -6443,6 +6787,58 @@ paths:
                   verified_at: { type: string, format: date-time, nullable: true }
         '401': { $ref: '#/components/responses/Unauthorized' }
 
+  /me/tier:
+    get:
+      operationId: getMyTierAllowance
+      summary: Get the caller's KYC tier and today's remaining wallet-debit allowance
+      description: >-
+        Reports the caller's tier alongside TODAY's wallet-debit allowance, read from
+        the same finance/tiers usage the fail-closed debit gate is derived from — so a
+        client pre-check agrees with what the server will actually enforce.
+
+
+        Clients use this to decline a spend BEFORE taking payment: the mobile checkout
+        will not open the card gateway for an amount the server is going to refuse,
+        which would otherwise charge the customer for an order they cannot receive.
+
+
+        The allowance fields (dailyLimitKobo, dailyUsedKobo, remainingKobo,
+        walletDisabled) are OMITTED together when the server cannot compute usage. A
+        client MUST treat their absence as "unknown" and defer to the server, never as
+        "no allowance".
+      tags: [KYC]
+      responses:
+        '200':
+          description: Tier status and today's allowance
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    required: [tier]
+                    properties:
+                      tier: { $ref: '#/components/schemas/KycTier' }
+                      label: { type: string }
+                      status: { $ref: '#/components/schemas/KycStatus' }
+                      dailyLimitKobo:
+                        type: integer
+                        format: int64
+                        description: Daily wallet-debit cap in kobo. 0 means unlimited (Tier 3) OR disabled (Tier 0) — read walletDisabled to disambiguate.
+                      dailyUsedKobo:
+                        type: integer
+                        format: int64
+                        description: Wallet debits already posted today, in kobo.
+                      remainingKobo:
+                        type: integer
+                        format: int64
+                        description: Allowance left today, in kobo. -1 means unlimited.
+                      walletDisabled:
+                        type: boolean
+                        description: True for Tier 0 — the wallet cannot be debited at all until KYC completes.
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
   /kyc/initiate:
     post:
       operationId: initiateKyc
@@ -6554,6 +6950,34 @@ paths:
                   format: int64
                   minimum: 10000
                   description: Amount to top up in kobo (min ₦100)
+                purpose:
+                  type: string
+                  enum: [wallet, checkout]
+                  default: wallet
+                  description: >-
+                    What this top-up is for, which selects the KYC gate (ADR-042).
+                    `wallet` — standalone funding; requires KYC Tier 1.
+                    `checkout` — funds a purchase being completed right now via the
+                    card rail (ADR-041); may be permitted below Tier 1 under a
+                    capped rolling allowance when FEATURE_CHECKOUT_TOPUP_TIER0 is
+                    on. Any unrecognised value is treated as `wallet`, so the
+                    weaker gate can only be reached by asking for it explicitly.
+                checkout_domain:
+                  type: string
+                  pattern: '^[a-z][a-z0-9_]*$'
+                  maxLength: 48
+                  example: vote_purchase
+                  description: >-
+                    What the checkout is buying — `vote_purchase`, `food_order`,
+                    `ride`, and so on. Because the card rail funds the wallet and
+                    then spends it (ADR-041), without this every module checkout
+                    is recorded as an indistinguishable wallet top-up: it is
+                    persisted on the intent, sent to the PSP, and written onto the
+                    ledger entry's description so a statement can say what the
+                    money bought. Ignored unless `purpose` is `checkout`, since
+                    standalone funding is not buying anything. Not an enum — the
+                    set grows with every module, and a value outside the pattern
+                    is dropped as unlabelled rather than failing the payment.
       responses:
         '200':
           description: Paystack payment initialized
@@ -6749,7 +7173,20 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404':
-          description: No Paymax user found for this identifier
+          description: |
+            No Paymax user found for this identifier. Phone identifiers are matched on the
+            10-digit national significant number, so "08159491618", "8159491618" and
+            "+2348159491618" all resolve to the same account; a 404 means no account carries
+            that number, not that the caller used the wrong format.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '409':
+          description: |
+            More than one account carries this phone number, so the recipient is ambiguous
+            (code `ambiguous_recipient`). The transfer is refused rather than resolved to an
+            arbitrary account — a wallet credit cannot be clawed back. Requires operator
+            intervention to de-duplicate the accounts.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
@@ -6810,7 +7247,17 @@ paths:
               schema: { $ref: '#/components/schemas/Error' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404':
-          description: Recipient not found
+          description: |
+            Recipient not found. Phone identifiers are matched on the 10-digit national
+            significant number, so every spelling of one number resolves to one account.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '409':
+          description: |
+            More than one account carries this phone number (code `ambiguous_recipient`).
+            The transfer is refused before any debit — no money moves, and no ledger entry
+            is posted. Paying an arbitrary one of the matching accounts is unrecoverable.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
@@ -7791,12 +8238,30 @@ paths:
                 scheduled_at: { type: string, format: date-time }
                 notes: { type: string }
                 idempotency_key: { type: string }
+                expected_total_kobo:
+                  type: integer
+                  format: int64
+                  description: >-
+                    The total the client quoted the patient (from the doctor's
+                    `booking` quote). When non-zero and it disagrees with the
+                    server's own computation, the booking is rejected before any
+                    money moves — this bounds the card rail, which charges the
+                    client-side amount at the PSP before the server escrows.
+                    Omit or send 0 to skip the check (ADR-040).
       responses:
         '201':
           description: Appointment booked
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Appointment' }
+        '409':
+          description: >-
+            Stale quote — either expected_total_kobo disagrees with the
+            server-computed total, or this Idempotency-Key was already escrowed at
+            a different price. No appointment was created and nothing was escrowed
+            on this call; re-read the doctor's booking quote and start a new
+            booking. NOTE: on the client-side card rail the PSP charge has already
+            completed by this point (see ADR-040, "Not addressed here").
 
   /telemedicine/appointments/{id}/complete:
     post:
@@ -13061,6 +13526,26 @@ paths:
 
   # ── Offers ─────────────────────────────────────────────────────────────
   /v1/marketplace/offers:
+    get:
+      operationId: mktListOffers
+      summary: Negotiation history for a listing
+      description: >-
+        Participant-scoped: the listing's seller sees every offer on it, any
+        other caller sees only their own.
+      tags: [Marketplace]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: listing_id, in: query, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: Offers on the listing, oldest first
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/MktOffer' }
+        '400': { $ref: '#/components/responses/MktBadRequest' }
+        '401': { $ref: '#/components/responses/MktUnauthorized' }
     post:
       operationId: mktCreateOffer
       summary: Make an offer on a listing
@@ -13151,6 +13636,26 @@ paths:
           content:
             application/json:
               schema: { type: array, items: { $ref: '#/components/schemas/MktBoostTier' } }
+  /v1/marketplace/boosts/quote:
+    get:
+      operationId: mktGetBoostQuote
+      summary: Preview a boost's authoritative price before purchasing
+      description: >
+        Pass EITHER `tier` (a preset package) OR `ends_at` (a custom
+        date-range boost, RFC3339). Public — no auth required, pricing info
+        only. PurchaseBoost resolves the SAME quote server-side, so the price
+        shown here and what is actually charged can never drift.
+      tags: [Marketplace]
+      parameters:
+        - { name: tier, in: query, required: false, schema: { type: string } }
+        - { name: ends_at, in: query, required: false, schema: { type: string, format: date-time } }
+      responses:
+        '200':
+          description: Computed quote
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MktBoostQuote' }
+        '400': { $ref: '#/components/responses/MktBadRequest' }
   /v1/marketplace/boosts:
     post:
       operationId: mktPurchaseBoost
@@ -13466,6 +13971,79 @@ paths:
         '403': { $ref: '#/components/responses/MktForbidden' }
   # Admin orders/aging REMOVED (ADR-023): no orders to age. MktOrder schema +
   # orders.aging RBAC perm retained (additive-only), unreachable.
+
+  # ── Boost pricing (ADM-002/MO-002) ─────────────────────────────────────
+  /v1/marketplace/admin/pricing/boosts:
+    get:
+      operationId: mktAdminListBoostPackages
+      summary: List boost packages (admin pricing console)
+      tags: [MarketplaceAdmin]
+      security: [{ bearerAuth: [] }]
+      description: "Requires marketplace.admin.pricing"
+      responses:
+        '200':
+          description: Boost package list
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: '#/components/schemas/MktBoostPackage' } }
+        '403': { $ref: '#/components/responses/MktForbidden' }
+    put:
+      operationId: mktAdminUpsertBoostPackage
+      summary: Create or edit a boost package's price/duration/weight/active state
+      tags: [MarketplaceAdmin]
+      security: [{ bearerAuth: [] }]
+      description: >
+        Requires marketplace.admin.pricing. reason_code mandatory, every
+        change audited (mkt_admin_audit_log). Applies to NEW purchases only —
+        an already-purchased boost keeps its bought terms (ADM-001).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/MktBoostPackageUpsertRequest' }
+      responses:
+        '200':
+          description: Saved package
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MktBoostPackage' }
+        '400': { $ref: '#/components/responses/MktBadRequest' }
+        '403': { $ref: '#/components/responses/MktForbidden' }
+  /v1/marketplace/admin/pricing/boosts/daily-rate:
+    get:
+      operationId: mktAdminGetBoostDailyRate
+      summary: Get the custom-range boost ₦/day rate
+      tags: [MarketplaceAdmin]
+      security: [{ bearerAuth: [] }]
+      description: "Requires marketplace.admin.pricing"
+      responses:
+        '200':
+          description: Current daily rate
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MktBoostDailyRate' }
+        '403': { $ref: '#/components/responses/MktForbidden' }
+    put:
+      operationId: mktAdminSetBoostDailyRate
+      summary: Set the custom-range boost ₦/day rate
+      tags: [MarketplaceAdmin]
+      security: [{ bearerAuth: [] }]
+      description: >
+        Requires marketplace.admin.pricing. reason_code mandatory, every
+        change audited. Applies to NEW custom-boost purchases only.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/MktBoostDailyRateSetRequest' }
+      responses:
+        '200':
+          description: Updated rate
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MktBoostDailyRate' }
+        '400': { $ref: '#/components/responses/MktBadRequest' }
+        '403': { $ref: '#/components/responses/MktForbidden' }
 
   # ── Trust & Account gap endpoints (Mobile-UX-Flows.md §28–34; ADR-021) ──
   # Non-money metadata (no Idempotency-Key). Bearer auth; owner-scoped (OLA).
@@ -14241,6 +14819,49 @@ paths:
               schema: { $ref: '#/components/schemas/SuccessResponse' }
         '400': { description: reason is required }
         '403': { description: Missing referral.admin.case (Support Lead) }
+  /api/v1/admin/referrals/{referrerId}/code:
+    put:
+      operationId: setReferralReferrerCode
+      summary: Set a referrer's referral code (admin-chosen, must be unique)
+      description: >-
+        Replaces a referrer's generated code with a chosen one, 3-5 characters of
+        A-Z0-9 (normalised to uppercase). Returns 409 when the code already
+        belongs to another user. Uniqueness is checked across BOTH referral_links
+        and the legacy finance_referral_codes, because attribution resolves
+        referral_links first and falls back to the legacy table — a code
+        duplicated across the two would silently redirect the legacy owner's
+        referrals to the new holder.
+      tags: [Referral Admin]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: referrerId, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [code]
+              properties:
+                code:
+                  type: string
+                  minLength: 3
+                  maxLength: 5
+                  pattern: '^[A-Za-z0-9]{3,5}$'
+                  example: SALES
+      responses:
+        '200':
+          description: Code updated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code: { type: string, example: SALES }
+                  referrer_id: { type: string, format: uuid }
+        '400': { description: 'Code is empty, wrong length, or contains characters outside A-Z0-9' }
+        '403': { description: Missing referral.admin.case }
+        '409': { description: That referral code is already in use }
   /api/v1/admin/referrals/milestones-log:
     get:
       operationId: getReferralMilestonesLog
@@ -14276,3 +14897,55 @@ paths:
                 properties:
                   modules: { type: array, items: { $ref: '#/components/schemas/ReferralModuleRewardStat' } }
         '403': { description: Missing referral.admin.module }
+
+  /api/media/banners/{slug}:
+    get:
+      operationId: getMarketingBanner
+      summary: Resolve a marketing banner to a short-lived Cloudflare R2 URL
+      description: >
+        Marketing banner artwork lives in Cloudflare R2, not in the app bundle.
+        This resolver maps a slug from a closed server-side whitelist onto an
+        object key and returns a presigned GET URL for it.
+
+
+        The bucket is NOT public: it also holds estate documents, insurance
+        documents and marketplace photos, so enabling an r2.dev public domain
+        would expose all of them to anyone who can guess a key. Reads therefore
+        go through a presigned GET, as every other R2 read in this API does.
+
+
+        Unauthenticated on purpose — banners are public marketing art, and the
+        slug whitelist means a caller can never steer this at an arbitrary
+        object key. Clients should treat this as an advisory read: a failure
+        means "render the screen without a banner", never an error state.
+      tags: [Media]
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema: { type: string, example: health-vet }
+          description: Whitelisted banner slug. Unknown slugs return 404.
+      responses:
+        '200':
+          description: Presigned banner URL plus the intrinsic size needed to reserve layout space
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [slug, url, width, height, aspectRatio, alt, expiresAt]
+                properties:
+                  slug: { type: string, example: health-vet }
+                  url:
+                    type: string
+                    format: uri
+                    description: Presigned R2 GET URL. Expires — do not persist it.
+                  width: { type: integer, example: 1536 }
+                  height: { type: integer, example: 576 }
+                  aspectRatio: { type: number, format: float, example: 2.667 }
+                  alt:
+                    type: string
+                    description: Alt text authored alongside the artwork, for screen readers.
+                  expiresAt: { type: string, format: date-time }
+        '404': { description: Unknown banner slug }
+        '502': { description: Presigning failed }
+        '503': { description: R2 is not configured in this environment }

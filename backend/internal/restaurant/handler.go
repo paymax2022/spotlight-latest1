@@ -6,6 +6,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"spotlight/backend/internal/finance/ledger"
+	"spotlight/backend/internal/finance/tiers"
 	"spotlight/backend/internal/platform/ws"
 )
 
@@ -70,10 +72,55 @@ func (h *Handler) PlaceOrder(c *gin.Context) {
 	}
 	order, err := h.svc.PlaceOrder(c.Request.Context(), c.Param("id"), userID, req)
 	if err != nil {
+		// An unusable promo code is the CLIENT's input being wrong (unknown code, out
+		// of window, under the minimum, at its usage cap, or a discount the funder
+		// cannot bear) — not a server fault. 422 so the app can surface "that code
+		// doesn't apply" and let the customer retry without it, instead of the generic
+		// 500 that made every rejection look like an outage.
+		if errors.Is(err, ErrPromoInvalid) {
+			c.JSON(http.StatusUnprocessableEntity, gin.H{"error": err.Error()})
+			return
+		}
+		// A bad modifier selection is a malformed cart — an option that isn't on this
+		// item, a duplicate, or a group's min/max/required rule broken. 400, so the app
+		// can point at the offending line instead of showing a server-error page.
+		if errors.Is(err, ErrInvalidModifierSelection) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		// Tier-gate and wallet-state rejections carry their own statuses (402/403/…).
+		if code, ok := escrowErrStatus(err); ok {
+			c.JSON(code, gin.H{"error": err.Error()})
+			return
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 	c.JSON(http.StatusCreated, order)
+}
+
+// escrowErrStatus maps the fail-closed money-path refusals a wallet-escrowing order
+// placement can return to their HTTP status. It reports ok=false for anything else so
+// each caller keeps its own default (PlaceOrder → 500, group finalize → statusCodeFor).
+//
+// Mirrors withdrawalErrStatus (handler_withdrawal.go) — the two money paths in this
+// module must answer the same refusal with the same code.
+func escrowErrStatus(err error) (int, bool) {
+	switch {
+	case errors.Is(err, tiers.ErrWalletDisabled), errors.Is(err, tiers.ErrDailyLimitExceeded):
+		// The caller's KYC tier forbids this debit (no wallet at Tier 0, or today's
+		// cap is spent). 403, not 400 — the request is well-formed, the caller isn't
+		// permitted to spend this much today.
+		return http.StatusForbidden, true
+	case errors.Is(err, ledger.ErrInsufficientFunds):
+		return http.StatusPaymentRequired, true // 402 — wallet is short of the total
+	case errors.Is(err, ErrTierGateUnwired):
+		// Server misconfiguration, not the caller's fault, and retryable once wired.
+		return http.StatusServiceUnavailable, true
+	case errors.Is(err, ErrOrderMissingIdem):
+		return http.StatusBadRequest, true
+	}
+	return 0, false
 }
 
 // DeliveryQuote previews the delivery fee for a destination before order placement.

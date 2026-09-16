@@ -1,5 +1,6 @@
-import { env } from '@/config/env';
+import { apiRoot } from '@/config/env';
 import { operationKey } from './idempotency';
+import { resolveUseMock } from '@/config/useMock';
 import type {
   VendorRow,
   VendorFilters,
@@ -16,9 +17,16 @@ import type {
 // admin aggregate route; the live branches below call the per-estate endpoints
 // under /api/finance/estate/:id/... and this service composes the aggregate.
 // Mock by default (NEXT_PUBLIC_VENDORS_ADMIN_USE_MOCK=false to go live).
+//
+// Vendor endpoints hang off the finance group: /api/finance/estate/... . This
+// used to be env.apiBaseUrl.replace(/\/api\/v1\/?$/, '/api/finance'), which
+// stopped matching once apiBaseUrl became the same-origin proxy path
+// (<origin>/api/admin-proxy, no /api/v1 suffix) instead of ending in /api/v1 —
+// every live call 404'd against <proxy>/estate/... instead of
+// <proxy>/api/finance/estate/.... apiRoot() strips that trailing /api/v1 (if
+// any) and nothing else, so the module path can be appended unconditionally.
 function financeApiBase(): string {
-  // Vendor endpoints hang off the finance group: /api/finance/estate/...
-  return env.apiBaseUrl.replace(/\/api\/v1\/?$/, '/api/finance');
+  return `${apiRoot()}/api/finance`;
 }
 
 function authHeaders(): Record<string, string> {
@@ -28,8 +36,7 @@ function authHeaders(): Record<string, string> {
   return { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
 }
 
-const USE_FIXTURES =
-  (process.env.NEXT_PUBLIC_VENDORS_ADMIN_USE_MOCK ?? 'true').toLowerCase() !== 'false';
+const USE_FIXTURES = resolveUseMock(process.env.NEXT_PUBLIC_VENDORS_ADMIN_USE_MOCK);
 
 // ── Fixtures ─────────────────────────────────────────────────────────────────
 
@@ -242,9 +249,14 @@ export async function setVendorStatus(
   vendorId: string,
   status: VendorStatus,
 ): Promise<{ status: VendorStatus }> {
+  // Real, verified live endpoint (see the comment above) — fixture mode
+  // refuses loudly instead of reporting a write it did not perform. See
+  // docs/audit/ADMIN_SIMULATED_WRITES.md.
   if (USE_FIXTURES) {
-    await new Promise((r) => setTimeout(r, 300));
-    return { status };
+    throw new Error(
+      'Setting vendor status is unavailable in fixture mode: this console will not report a write it did not perform. ' +
+      'Set NEXT_PUBLIC_VENDORS_ADMIN_USE_MOCK=false to make this change against the live backend.',
+    );
   }
   const res = await fetch(
     `${financeApiBase()}/estate/${encodeURIComponent(estateId)}/vendors/${encodeURIComponent(vendorId)}/verify`,

@@ -64,15 +64,16 @@ func canTransition(from, to TripPhase) bool {
 
 // Error codes returned to clients (BUILD-CONTRACT error conventions).
 const (
-	CodeFareBelowFloor   = "FARE_BELOW_FLOOR"
-	CodeFareAboveCeiling = "FARE_ABOVE_CEILING"
-	CodeFareBelowSystem  = "FARE_BELOW_FLOOR" // offer below fare-floor pct also surfaces as below-floor
-	CodeProfitFloor      = "FARE_BELOW_FLOOR" // accepted fare net of commission < driver profit floor
-	CodeInvalidState     = "INVALID_STATE"
-	CodeNotFound         = "NOT_FOUND"
-	CodeForbidden        = "FORBIDDEN"
-	CodeNotApproved      = "DRIVER_NOT_APPROVED"
-	CodePinMismatch      = "PIN_MISMATCH"
+	CodeFareBelowFloor            = "FARE_BELOW_FLOOR"
+	CodeFareAboveCeiling          = "FARE_ABOVE_CEILING"
+	CodeFareBelowSystem           = "FARE_BELOW_FLOOR" // offer below fare-floor pct also surfaces as below-floor
+	CodeProfitFloor               = "FARE_BELOW_FLOOR" // accepted fare net of commission < driver profit floor
+	CodeInvalidState              = "INVALID_STATE"
+	CodeNotFound                  = "NOT_FOUND"
+	CodeForbidden                 = "FORBIDDEN"
+	CodeNotApproved               = "DRIVER_NOT_APPROVED"
+	CodePinMismatch               = "PIN_MISMATCH"
+	CodeInsufficientDriverBalance = "INSUFFICIENT_DRIVER_BALANCE"
 )
 
 // CodedError carries an HTTP status + machine-readable code alongside a message.
@@ -194,6 +195,7 @@ type PricingConfig struct {
 	SurgeMultiplier       float64 `json:"surgeMultiplier"`
 	CancellationFeeKobo   int64   `json:"cancellationFeeKobo"`
 	WaitingFeePerMinKobo  int64   `json:"waitingFeePerMinKobo"`
+	InsuranceRateBps      int64   `json:"insuranceRateBps"`
 	Active                bool    `json:"active"`
 }
 
@@ -288,7 +290,7 @@ type RequestRideRequest struct {
 	ServiceType    string `json:"service_type"`
 	PricingMode    string `json:"pricing_mode" binding:"required,oneof=instant offer"`
 	OfferKobo      int64  `json:"offer_kobo"`
-	PaymentMethod  string `json:"payment_method"`
+	PaymentMethod  string `json:"payment_method" binding:"omitempty,oneof=wallet card cash"`
 	IdempotencyKey string `json:"idempotency_key"`
 }
 
@@ -330,7 +332,7 @@ type VerifyPinRequest struct {
 // UpsertProfileRequest is PUT /mobility/profile.
 type UpsertProfileRequest struct {
 	TrustLevel     string  `json:"trust_level"`
-	DefaultPayment string  `json:"default_payment"`
+	DefaultPayment string  `json:"default_payment" binding:"omitempty,oneof=wallet card cash"`
 	HomeAddress    *string `json:"home_address"`
 	WorkAddress    *string `json:"work_address"`
 }

@@ -165,7 +165,7 @@ type UpdateProfileRequest struct {
 
 // UpdateRestaurantProfile updates an owner's restaurant discovery fields (owner only).
 func (s *Service) UpdateRestaurantProfile(ctx context.Context, restaurantID, userID string, req UpdateProfileRequest) error {
-	if err := s.assertOwner(ctx, restaurantID, userID); err != nil {
+	if err := s.AssertStaffPermission(ctx, restaurantID, userID, PermManageStore); err != nil {
 		return err
 	}
 	if req.Cuisine != nil {

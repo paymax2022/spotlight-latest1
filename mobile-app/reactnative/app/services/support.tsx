@@ -1,7 +1,9 @@
 import React, { useState } from 'react';
-import { View, Text, ScrollView, StyleSheet, Pressable, Platform, Alert, KeyboardAvoidingView, Linking } from 'react-native';
+import { View, Text, ScrollView, StyleSheet, Pressable, Platform, KeyboardAvoidingView, Linking } from 'react-native';
+import { alertAsync } from '@/lib/confirm';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import { ArrowLeft, Headphones, Mail, MessageCircle, Phone, ChevronDown } from 'lucide-react-native';
 import PrimaryButton from '@/components/PrimaryButton';
 import TextInputField from '@/components/TextInputField';
@@ -11,6 +13,7 @@ import { Radius } from '@/constants/radius';
 import { Spacing } from '@/constants/spacing';
 import { Typography } from '@/constants/typography';
 import { shadow1 } from '@/constants/shadows';
+import { HomeMenuButton } from '@/components/HomeMenu';
 
 // Shared support / help screen for the money-services surfaces (FX, bills, cards).
 // A minimal but functional contact form (subject + category + message) plus direct
@@ -42,26 +45,29 @@ export default function SupportScreen() {
     if (!ready || sending) return;
     setSending(true);
     // Fire-and-forget: a real ticket endpoint would post here. We confirm locally.
-    setTimeout(() => {
+    setTimeout(async () => {
       setSending(false);
-      Alert.alert(
-        'Message sent',
-        "Thanks — our support team will reply to your registered email, usually within a few hours.",
-        [{ text: 'Done', onPress: () => router.back() }],
-      );
+      await alertAsync({
+        title: 'Message sent',
+        message: 'Thanks — our support team will reply to your registered email, usually within a few hours.',
+        buttonLabel: 'Done',
+      });
+      goBack('/services');
     }, 600);
   };
 
-  const openChannel = (url: string) => Linking.openURL(url).catch(() => Alert.alert('Unavailable', 'We could not open that just now. Please try another channel.'));
+  const openChannel = (url: string) =>
+    Linking.openURL(url).catch(() =>
+      alertAsync({ title: 'Unavailable', message: 'We could not open that just now. Please try another channel.' }));
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
       <View style={styles.topBar}>
-        <Pressable onPress={() => router.back()} style={styles.iconBtn} accessibilityRole="button" accessibilityLabel="Go back">
+        <Pressable onPress={() => goBack('/services')} style={styles.iconBtn} accessibilityRole="button" accessibilityLabel="Go back">
           <ArrowLeft size={22} color={Colors.primary} strokeWidth={2.2} />
         </Pressable>
         <Text style={styles.topTitle}>Help & support</Text>
-        <View style={styles.iconBtn} />
+        <HomeMenuButton />
       </View>
 
       <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.flex}>

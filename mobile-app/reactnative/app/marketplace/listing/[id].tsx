@@ -6,9 +6,10 @@
 // non-binding price proposal, plus tertiary tap-to-reveal Call. Sold/expired
 // shows a banner over a dimmed gallery, never a 404.
 import React, { useEffect, useState } from 'react';
-import { View, Text, StyleSheet, Pressable, ScrollView, Image, Dimensions } from 'react-native';
+import { Linking, View, Text, StyleSheet, Pressable, ScrollView, Image, useWindowDimensions } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
+import { goBack } from '@/lib/navigation';
 import { ArrowLeft, Heart, Flag, ShieldAlert, Phone, ChevronRight } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
@@ -17,18 +18,29 @@ import { Radius } from '@/constants/radius';
 import { shadow1 } from '@/constants/shadows';
 import StateView from '@/components/StateView';
 import PrimaryButton from '@/components/PrimaryButton';
+import { useAuthStore } from '@/store/authStore';
+import { revealSellerContact } from '@/features/marketplace/api/sell.api';
 import { MarketColors, formatNaira, conditionLabel, fairPriceVerdict, FAIR_PRICE_LABEL, MEETUP_SAFETY_NUDGE } from '@/features/marketplace';
 import { useListing } from '@/features/marketplace/hooks';
 import * as accountApi from '@/features/marketplace/api/account.api';
 import SellerTrustCard from '@/features/marketplace/components/SellerTrustCard';
-
-const { width } = Dimensions.get('window');
+import { HomeMenuButton } from '@/components/HomeMenu';
 
 export default function ListingDetail() {
   const { id } = useLocalSearchParams<{ id: string }>();
+  // Dimensions.get('window') read once at module scope froze at 0 on web: it
+  // runs before the RN-Web root has synced with the real window size, and
+  // being a plain const, it never updates after. Every gallery/slide size
+  // below derived from it, so the whole gallery silently laid out at 0x0 —
+  // invisible until a listing actually had photos to render into it.
+  // useWindowDimensions() reads live and re-renders on resize.
+  const { width } = useWindowDimensions();
   const listing = useListing(id!);
   const [saved, setSaved] = useState(false);
-  const [callRevealed, setCallRevealed] = useState(false);
+  const [revealedPhone, setRevealedPhone] = useState<string | null>(null);
+  const [revealing, setRevealing] = useState(false);
+  const [revealError, setRevealError] = useState<string | null>(null);
+  const currentUserId = useAuthStore((st) => st.user?.id);
   const [gallery, setGallery] = useState(0);
 
   // Reflect the server's saved state once the listing loads (hook stays above the
@@ -47,13 +59,46 @@ export default function ListingDetail() {
   if (listing.isError || !listing.data) {
     return (
       <SafeAreaView style={styles.safe} edges={['top']}>
-        <View style={styles.topRow}><Pressable onPress={() => router.back()} hitSlop={10}><ArrowLeft size={22} color={Colors.onSurface} /></Pressable></View>
-        <StateView kind="error" title="Couldn't load listing" actionLabel="Retry" onAction={() => listing.refetch()} />
+        <View style={styles.topRow}><Pressable onPress={() => goBack('/marketplace')} hitSlop={10}><ArrowLeft size={22} color={Colors.onSurface} /></Pressable></View>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+          <StateView kind="error" title="Couldn't load listing" actionLabel="Retry" onAction={() => listing.refetch()} />
+          <HomeMenuButton />
+        </View>
       </SafeAreaView>
     );
   }
 
   const l = listing.data;
+  // Ownership decides which half of this screen a viewer gets.
+  const isOwnListing = !!currentUserId && l.sellerId === currentUserId;
+
+  // Reveal, then dial. A revealed number stays on screen rather than opening the
+  // dialer immediately: the viewer asked to SEE it, and a second tap to call is
+  // cheaper than an accidental call.
+  const onRevealPhone = async () => {
+    if (revealedPhone) {
+      Linking.openURL(`tel:${revealedPhone.replace(/[^0-9+]/g, '')}`).catch(() => {});
+      return;
+    }
+    setRevealing(true);
+    setRevealError(null);
+    try {
+      const contact = await revealSellerContact(l.id);
+      setRevealedPhone(contact.phone);
+    } catch (err) {
+      const code = (err as { response?: { data?: { error?: { code?: string } } } })
+        ?.response?.data?.error?.code;
+      setRevealError(
+        code === 'CONTACT_REVEAL_LIMIT'
+          ? 'Too many numbers revealed this hour — try again later'
+          : code === 'SELLER_HAS_NO_PHONE'
+            ? 'This seller has not added a phone number'
+            : "Couldn't reveal the number — tap to retry",
+      );
+    } finally {
+      setRevealing(false);
+    }
+  };
   const media = l.media ?? [];
   const unavailable = l.status === 'sold' || l.status === 'expired' || l.status === 'removed_policy' || l.status === 'removed_user';
   const verdict = fairPriceVerdict(l.priceKobo, l.fairPriceBand);
@@ -81,24 +126,25 @@ export default function ListingDetail() {
     <SafeAreaView style={styles.safe} edges={['top']}>
       {/* Floating top bar */}
       <View style={styles.topBar}>
-        <Pressable style={styles.roundBtn} onPress={() => router.back()} hitSlop={8} accessibilityLabel="Back"><ArrowLeft size={20} color={Colors.onSurface} /></Pressable>
+        <Pressable style={styles.roundBtn} onPress={() => goBack('/marketplace')} hitSlop={8} accessibilityLabel="Back"><ArrowLeft size={20} color={Colors.onSurface} /></Pressable>
         <View style={styles.topBarRight}>
           <Pressable style={styles.roundBtn} onPress={toggleSave} hitSlop={8} accessibilityLabel="Save listing">
             <Heart size={18} color={saved ? MarketColors.danger : Colors.onSurface} fill={saved ? MarketColors.danger : 'transparent'} />
           </Pressable>
           <Pressable style={styles.roundBtn} onPress={openReport} hitSlop={8} accessibilityLabel="Report listing"><Flag size={18} color={Colors.onSurface} /></Pressable>
+          <HomeMenuButton />
         </View>
       </View>
 
       <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
         {/* Gallery */}
-        <View style={[styles.gallery, unavailable && styles.galleryDimmed]}>
+        <View style={[styles.gallery, { width, height: width * 0.9 }, unavailable && styles.galleryDimmed]}>
           {media.length > 0 ? (
             <>
               <ScrollView horizontal pagingEnabled showsHorizontalScrollIndicator={false} onMomentumScrollEnd={(e) => setGallery(Math.round(e.nativeEvent.contentOffset.x / width))}>
                 {media.map((m) => (
-                  <View key={m.id} style={styles.slide}>
-                    {m.urlFull ? <Image source={{ uri: m.urlFull }} style={StyleSheet.absoluteFill} /> : <View style={styles.slidePlaceholder} />}
+                  <View key={m.id} style={[styles.slide, { width, height: width * 0.9 }]}>
+                    {m.urlFull ? <Image source={{ uri: m.urlFull }} style={StyleSheet.absoluteFill} /> : <View style={[styles.slidePlaceholder, { width, height: width * 0.9 }]} />}
                   </View>
                 ))}
               </ScrollView>
@@ -107,7 +153,7 @@ export default function ListingDetail() {
               ) : null}
             </>
           ) : (
-            <View style={styles.slidePlaceholder} />
+            <View style={[styles.slidePlaceholder, { width, height: width * 0.9 }]} />
           )}
           {unavailable ? (
             <View style={styles.soldBanner}><Text style={styles.soldBannerText}>{l.status === 'sold' ? 'Sold' : 'No longer available'}</Text></View>
@@ -162,12 +208,29 @@ export default function ListingDetail() {
             <Text style={[styles.safetyText, styles.safetyTextWarn]}>{MEETUP_SAFETY_NUDGE}</Text>
           </View>
 
-          {/* Tertiary: tap-to-reveal Call */}
+          {/* Tertiary: tap-to-reveal Call.
+              This used to set a local boolean and relabel itself to "Call seller
+              (revealed)" without ever fetching a number — there was nothing in
+              the stack to fetch. It now calls POST /listings/:id/contact, which
+              is budgeted at 10 distinct listings per hour per viewer and records
+              each reveal so a seller can ask who was given their number. */}
           {!unavailable ? (
-            <Pressable style={styles.callRow} onPress={() => setCallRevealed(true)}>
+            <Pressable
+              style={styles.callRow}
+              disabled={revealing || !!revealedPhone}
+              onPress={onRevealPhone}
+              accessibilityRole="button"
+              accessibilityLabel={revealedPhone ? `Call seller on ${revealedPhone}` : 'Reveal seller phone number'}
+            >
               <Phone size={16} color={MarketColors.muted} />
-              <Text style={styles.callText}>{callRevealed ? 'Call seller (revealed)' : 'Tap to reveal seller phone'}</Text>
-              {!callRevealed ? <ChevronRight size={16} color={MarketColors.muted} /> : null}
+              <Text style={styles.callText}>
+                {revealing
+                  ? 'Revealing…'
+                  : revealedPhone
+                    ? `Call ${revealedPhone}`
+                    : revealError ?? 'Tap to reveal seller phone'}
+              </Text>
+              {!revealedPhone && !revealing ? <ChevronRight size={16} color={MarketColors.muted} /> : null}
             </Pressable>
           ) : null}
         </View>
@@ -175,7 +238,27 @@ export default function ListingDetail() {
 
       {/* Sticky CTA bar — Contact seller opens the Deal Room; Make Offer sends a
           non-binding price proposal. No escrow / checkout in the connect model. */}
-      {!unavailable ? (
+      {isOwnListing ? (
+        /* Your own listing. The buyer CTAs used to render here regardless, and
+           both dead-ended: POST /threads answers 422 CANNOT_MESSAGE_SELF, which
+           the deals screen swallowed, leaving you on an empty inbox with nothing
+           explaining why. Offer the seller's own actions instead. */
+        <View style={styles.ctaBar}>
+          <Pressable
+            style={styles.offerBtn}
+            onPress={() => router.push(`/marketplace/boost/${l.id}` as never)}
+            accessibilityLabel="Boost this listing"
+          >
+            <Text style={styles.offerBtnText}>Boost</Text>
+          </Pressable>
+          <View style={styles.ctaPrimary}>
+            <PrimaryButton
+              label="Edit listing"
+              onPress={() => router.push(`/marketplace/sell/edit/${l.id}` as never)}
+            />
+          </View>
+        </View>
+      ) : !unavailable ? (
         <View style={styles.ctaBar}>
           <Pressable
             style={styles.offerBtn}
@@ -209,10 +292,10 @@ const styles = StyleSheet.create({
   topBarRight: { flexDirection: 'row', gap: Spacing.xs },
   roundBtn: { width: 38, height: 38, borderRadius: 19, backgroundColor: 'rgba(255,255,255,0.9)', alignItems: 'center', justifyContent: 'center', ...shadow1 },
   scroll: { paddingBottom: 120 },
-  gallery: { width, height: width * 0.9, backgroundColor: MarketColors.surfaceAlt },
+  gallery: { backgroundColor: MarketColors.surfaceAlt },
   galleryDimmed: { opacity: 0.55 },
-  slide: { width, height: width * 0.9 },
-  slidePlaceholder: { width, height: width * 0.9, backgroundColor: MarketColors.surfaceAlt },
+  slide: {},
+  slidePlaceholder: { backgroundColor: MarketColors.surfaceAlt },
   dots: { position: 'absolute', bottom: 12, alignSelf: 'center', flexDirection: 'row', gap: 6 },
   dot: { width: 6, height: 6, borderRadius: 3, backgroundColor: 'rgba(255,255,255,0.6)' },
   dotActive: { backgroundColor: '#FFFFFF', width: 16 },

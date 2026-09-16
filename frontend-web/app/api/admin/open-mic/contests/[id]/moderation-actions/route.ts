@@ -6,7 +6,8 @@ import {
   bulkUpdatePaymentEventStatus,
 } from '@/src/server/openmic/persistence';
 
-export async function POST(request: Request, context: { params: { id: string } }) {
+export async function POST(request: Request, context: { params: Promise<{ id: string }> }) {
+  const params = await context.params;
   try {
     await assertOpenMicAdmin(request);
     const body = await request.json().catch(() => ({}));
@@ -15,11 +16,11 @@ export async function POST(request: Request, context: { params: { id: string } }
     if (ids.length === 0) throw new Error('No target ids provided.');
 
     if (action === 'mark_notifications_sent') {
-      const updated = await bulkMarkNotificationsSent(context.params.id, ids);
+      const updated = await bulkMarkNotificationsSent(params.id, ids);
       return successResponse({ success: true, action, updatedCount: updated.length });
     }
     if (action === 'resolve_fraud_alerts') {
-      const updated = await bulkResolveFraudAlerts(context.params.id, ids, body?.resolutionNote);
+      const updated = await bulkResolveFraudAlerts(params.id, ids, body?.resolutionNote);
       return successResponse({ success: true, action, updatedCount: updated.length });
     }
     if (action === 'update_payment_status') {
@@ -27,7 +28,7 @@ export async function POST(request: Request, context: { params: { id: string } }
       if (!['pending', 'successful', 'failed', 'refunded', 'waived'].includes(nextStatus)) {
         throw new Error('Invalid paymentStatus.');
       }
-      const updated = await bulkUpdatePaymentEventStatus(context.params.id, ids, nextStatus as any);
+      const updated = await bulkUpdatePaymentEventStatus(params.id, ids, nextStatus as any);
       return successResponse({ success: true, action, updatedCount: updated.length, paymentStatus: nextStatus });
     }
 

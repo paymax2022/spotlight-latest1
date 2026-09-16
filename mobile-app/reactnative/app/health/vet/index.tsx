@@ -22,9 +22,11 @@ import ScreenHeader from '@/components/ScreenHeader';
 import StateView from '@/components/StateView';
 import PetCard from '@/features/health/vet/components/PetCard';
 import VetStatusPill from '@/features/health/vet/components/VetStatusPill';
+import { ProviderOnboardingCard } from '@/features/health/components';
 import { usePets, useAppointments } from '@/features/health/vet/hooks';
 import { APPT_TYPE_META } from '@/features/health/vet/constants';
 import { formatNaira } from '@/features/health/constants/health.constants';
+import { RemoteBanner } from '@/features/media/banners';
 
 const QUICK_ACTIONS = [
   { key: 'find', label: 'Find a vet', icon: Stethoscope, href: '/health/vet/find-vet', bg: Colors.iconBgPurple, color: Colors.primary },
@@ -54,6 +56,11 @@ export default function VetHubScreen() {
       />
 
       <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+        {/* Hero banner — artwork served from Cloudflare R2 via the gateway's
+            banner resolver, not bundled with the app. Its CTA ("Book a Vet
+            Consultation Now") lands on vet discovery. */}
+        <RemoteBanner slug="health-vet" onPress={() => router.push('/health/vet/find-vet')} />
+
         {/* Quick actions */}
         <View style={styles.quickRow}>
           {QUICK_ACTIONS.map((a) => (
@@ -152,6 +159,9 @@ export default function VetHubScreen() {
             </Pressable>
           </View>
         )}
+
+        {/* Provider onboarding */}
+        <ProviderOnboardingCard />
       </ScrollView>
     </SafeAreaView>
   );

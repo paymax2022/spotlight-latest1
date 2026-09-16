@@ -1,4 +1,5 @@
 // Estate Admin panel (Block 41) — types + dual mock/live api.
+import { mockAllowed } from '@/config/mockPolicy';
 import { api } from '@/api/client';
 
 export interface AdminSummary {
@@ -14,7 +15,7 @@ export interface AdminSummary {
   upcomingMeetings: number;
 }
 
-export const USE_MOCK = (process.env.EXPO_PUBLIC_ESTATEADMIN_USE_MOCK ?? 'true') !== 'false';
+export const USE_MOCK = mockAllowed(process.env.EXPO_PUBLIC_ESTATEADMIN_USE_MOCK, true);
 // Only GET /api/v1/estate/admin/summary exists as a Next.js route today
 // (frontend-web/app/api/v1/estate/admin/summary/route.ts). There is NO Next.js
 // route (and no blanket rewrite — /api/finance/:path* does not cover
