@@ -120,17 +120,37 @@ export async function getRoundResults(roundId: string): Promise<RoundResults> {
 }
 
 /**
- * Computes final ranks with the fixed tie-break, assigns prizes by
- * rank<->position, inserts an immutable snapshot, and flips the round to
- * results_published. ONE-TIME — a second call on an already-published round
- * throws with the server's 409 message ("Results already published and
- * locked for this round").
+ * Result of proposing (not executing) a results publish — the endpoint now
+ * returns HTTP 202 with this shape instead of executing immediately (SEC-005/
+ * G-MC maker-checker). A second approver must act on it via
+ * contestApprovalsService before the round's status actually flips to
+ * results_published; poll getRoundResults() for the real state.
  */
-export async function publishRoundResults(roundId: string): Promise<RoundResults> {
+export type PublishProposedResult = {
+  proposed: true;
+  approvalId: string;
+  message: string;
+};
+
+/**
+ * Proposes computing final ranks with the fixed tie-break, assigning prizes
+ * by rank<->position, and locking the round — this no longer executes in
+ * the same request. The server returns 202 with an approvalId; a second
+ * approver (super_admin, via /admin/voting/approvals) must approve it
+ * before the round's status actually flips to results_published and an
+ * immutable snapshot is inserted. ONE-TIME once executed — a second publish
+ * attempt on an already-published round throws with the server's 409
+ * message ("Results already published and locked for this round").
+ */
+export async function publishRoundResults(roundId: string): Promise<PublishProposedResult> {
   const res = await fetch(`${webProxyBase()}/api/admin/voting/rounds/${encodeURIComponent(roundId)}/publish-results`, {
     method: 'POST',
     headers: authHeaders({ 'Content-Type': 'application/json' }),
   });
   const json = await readJsonOrThrow(res, 'Publishing results');
-  return toRoundResults(json);
+  return {
+    proposed: true,
+    approvalId: String(json.approvalId ?? ''),
+    message: String(json.message ?? 'Proposed — awaiting a second approver.'),
+  };
 }

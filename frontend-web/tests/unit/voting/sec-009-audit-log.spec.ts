@@ -2,19 +2,19 @@
  * SEC-009: admin actions produce an attributable, append-only audit log
  * entry in `vote_audit_logs`.
  *
- * Exercises two real admin routes (not protected) end-to-end against
- * `appendAuditLog` (src/server/voting/audit.service.ts, not protected):
- *   - POST /api/admin/voting/[contestId]/adjust  → 'admin_vote_adjustment'
- *   - POST /api/admin/voting/votes/[voteId]/reverse → 'vote_reversed'
- *
- * Confirms: the actor (from the verified JWT / admin identity, never from
- * the request body) and the before/after values are recorded, and that the
- * insert always targets `vote_audit_logs` with no update/delete path
- * exposed anywhere in audit.service.ts (append-only by construction — there
- * is no exported update/delete function to audit rows).
+ * UAT Batch 8 (SEC-005/G-MC): POST /api/admin/voting/[contestId]/adjust and
+ * POST /api/admin/voting/votes/[voteId]/reverse no longer execute directly —
+ * they only PROPOSE a contest_admin_approvals row now (dual control), so
+ * appendAuditLog is no longer called at propose time. The actual
+ * 'admin_vote_adjustment' / 'vote_reversed' audit entries are written by
+ * executeVoteAdjustment / executeVoteReversal at APPROVE (execute) time —
+ * that invariant (real actor id, before/after values) is now covered by
+ * sensitive-actions-service.test.ts, since that's where the behavior lives
+ * post-refactor. This file now confirms the propose-time contract: no audit
+ * entry yet, and the append-only shape of audit.service.ts itself.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { makeSupabaseMock } from '../golden-path/_fixtures';
+import { makeSupabaseMock, chainableInsert } from '../golden-path/_fixtures';
 
 vi.mock('@/src/server/admin/auth', () => ({ assertAdminPermission: vi.fn() }));
 vi.mock('@/src/server/voting/totals.service', () => ({
@@ -46,14 +46,9 @@ describe('SEC-009: admin actions are recorded to the audit log', () => {
     vi.mocked(assertAdminPermission).mockResolvedValue({ actorId: 'admin-1', role: 'contest_manager' } as any);
   });
 
-  it('vote adjustment: appendAuditLog is called with the real actor id, action, and before/after totals', async () => {
-    vi.mocked(getVoteTotals)
-      .mockResolvedValueOnce({ totalConfirmedVotes: 10 } as any) // before
-      .mockResolvedValueOnce({ totalConfirmedVotes: 60 } as any); // after
-    vi.mocked(incrementVoteTotals).mockResolvedValue(undefined as any);
-
+  it('vote adjustment: propose (202) does NOT append an audit entry — execution (and its audit entry) happens later, at approve time', async () => {
     const { mock, insertFn } = makeSupabaseMock();
-    insertFn.mockResolvedValue({ error: null });
+    insertFn.mockReturnValue(chainableInsert({ id: 'approval-1', status: 'pending_approval' }));
     vi.mocked(createAdminClient).mockReturnValue(mock as any);
 
     const res = await adjustPOST(
@@ -66,48 +61,35 @@ describe('SEC-009: admin actions are recorded to the audit log', () => {
       { params: Promise.resolve({ contestId: 'contest-1' }) },
     );
 
-    expect(res.status).toBe(200);
-    expect(vi.mocked(appendAuditLog)).toHaveBeenCalledTimes(1);
-    const entry = vi.mocked(appendAuditLog).mock.calls[0][0] as any;
+    expect(res.status).toBe(202);
+    expect(vi.mocked(appendAuditLog)).not.toHaveBeenCalled();
+    expect(vi.mocked(getVoteTotals)).not.toHaveBeenCalled();
+    expect(vi.mocked(incrementVoteTotals)).not.toHaveBeenCalled();
 
-    // Actor comes from the verified admin identity, NOT anything client-supplied.
-    expect(entry.actorId).toBe('admin-1');
-    expect(entry.actorRole).toBe('contest_manager');
-    expect(entry.action).toBe('admin_vote_adjustment');
-    expect(entry.entityType).toBe('vote_totals');
-    expect(entry.oldValue).toMatchObject({ totalConfirmedVotes: 10 });
-    expect(entry.newValue).toMatchObject({ totalConfirmedVotes: 60, adjustmentType: 'add', voteQuantity: 50 });
-    expect(entry.reason).toBe('Manual correction after fraud review');
+    // But the initiator identity IS recorded on the proposal itself, so the
+    // "attributable" half of the invariant still holds pre-execution.
+    const insertedRow = insertFn.mock.calls[0][0] as any;
+    expect(insertedRow.initiator_id).toBe('admin-1');
+    expect(insertedRow.initiator_role).toBe('contest_manager');
   });
 
-  it('vote reversal: appendAuditLog records the reversal with old/new vote_status', async () => {
-    const { mock, maybySingle, insertFn } = makeSupabaseMock();
-    maybySingle.mockResolvedValueOnce({
-      data: {
-        id: 'vote-1', contest_id: 'contest-1', contestant_id: 'contestant-1',
-        vote_status: 'confirmed', vote_quantity: 5, transaction_id: null,
-      },
-      error: null,
-    });
-    insertFn.mockResolvedValue({ error: null });
+  it('vote reversal: propose (202) does NOT append an audit entry — execution (and its audit entry) happens later, at approve time', async () => {
+    const { mock, insertFn } = makeSupabaseMock();
+    insertFn.mockReturnValue(chainableInsert({ id: 'approval-2', status: 'pending_approval' }));
     vi.mocked(createAdminClient).mockReturnValue(mock as any);
-    vi.mocked(incrementVoteTotals).mockResolvedValue(undefined as any);
 
     const res = await reversePOST(
       req('/api/admin/voting/votes/vote-1/reverse', { reason: 'Confirmed fraud via IP cluster' }),
       { params: Promise.resolve({ voteId: 'vote-1' }) },
     );
 
-    expect(res.status).toBe(200);
-    expect(vi.mocked(appendAuditLog)).toHaveBeenCalledTimes(1);
-    const entry = vi.mocked(appendAuditLog).mock.calls[0][0] as any;
+    expect(res.status).toBe(202);
+    expect(vi.mocked(appendAuditLog)).not.toHaveBeenCalled();
+    expect(vi.mocked(incrementVoteTotals)).not.toHaveBeenCalled();
 
-    expect(entry.actorId).toBe('admin-1');
-    expect(entry.action).toBe('vote_reversed');
-    expect(entry.entityType).toBe('vote');
-    expect(entry.entityId).toBe('vote-1');
-    expect(entry.oldValue).toMatchObject({ vote_status: 'confirmed' });
-    expect(entry.newValue).toMatchObject({ vote_status: 'reversed' });
+    const insertedRow = insertFn.mock.calls[0][0] as any;
+    expect(insertedRow.initiator_id).toBe('admin-1');
+    expect(insertedRow.payload).toMatchObject({ voteId: 'vote-1', reason: 'Confirmed fraud via IP cluster' });
   });
 
   it('audit.service exposes no update/delete function — inserts are the only write path (append-only by construction)', async () => {

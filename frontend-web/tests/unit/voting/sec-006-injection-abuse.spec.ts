@@ -11,7 +11,7 @@
  *   - POST /api/leaderboard/[contestId] query-string injection (GET, unprotected route)
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { makeSupabaseMock } from '../golden-path/_fixtures';
+import { makeSupabaseMock, chainableInsert } from '../golden-path/_fixtures';
 
 vi.mock('next/server', () => ({
   NextResponse: {
@@ -89,10 +89,13 @@ describe('SEC-006: malformed JSON is rejected, not crashed on', () => {
   });
 
   it('admin adjust route rejects a SQL-injection-shaped reason string as a plain string value (parameterized query, no crash)', async () => {
+    // UAT Batch 8: the adjust route now only PROPOSES the adjustment (202) —
+    // the payload (still an opaque string value, never concatenated into SQL)
+    // is stored as-is in contest_admin_approvals.payload for later execution.
     vi.mocked(assertAdminPermission).mockResolvedValue({ actorId: 'admin-1', role: 'contest_manager' } as any);
     const { mock, maybySingle, insertFn } = makeSupabaseMock();
     maybySingle.mockResolvedValue({ data: { totalConfirmedVotes: 0 }, error: null });
-    insertFn.mockResolvedValue({ error: null });
+    insertFn.mockReturnValue(chainableInsert({ id: 'approval-1', status: 'pending_approval' }));
     vi.mocked(createAdminClient).mockReturnValue(mock as any);
 
     const res = await adjustPOST(
@@ -106,9 +109,10 @@ describe('SEC-006: malformed JSON is rejected, not crashed on', () => {
     );
     // Supabase client parameterizes `.eq()`/`.insert()` values — a string payload
     // is never concatenated into SQL. The route should process it as an opaque
-    // string and return normally (200) rather than erroring or executing anything.
+    // string and return normally (202 — proposed) rather than erroring or
+    // executing anything.
     expect(res).toBeInstanceOf(Response);
-    expect(res.status).toBe(200);
+    expect(res.status).toBe(202);
     // The mocked insert call received the raw string, unmodified/unexecuted.
     const insertedCalls = insertFn.mock.calls.map((c) => c[0]);
     const hasRawPayload = insertedCalls.some((row: any) => JSON.stringify(row).includes(SQLI_PAYLOAD));
@@ -135,7 +139,7 @@ describe('SEC-006: malformed JSON is rejected, not crashed on', () => {
     vi.mocked(assertAdminPermission).mockResolvedValue({ actorId: 'admin-1', role: 'contest_manager' } as any);
     const { mock, maybySingle, insertFn } = makeSupabaseMock();
     maybySingle.mockResolvedValue({ data: { totalConfirmedVotes: 0 }, error: null });
-    insertFn.mockResolvedValue({ error: null });
+    insertFn.mockReturnValue(chainableInsert({ id: 'approval-2', status: 'pending_approval' }));
     vi.mocked(createAdminClient).mockReturnValue(mock as any);
 
     const res = await adjustPOST(
@@ -150,7 +154,8 @@ describe('SEC-006: malformed JSON is rejected, not crashed on', () => {
     expect(res).toBeInstanceOf(Response);
     // Supabase/Postgres has no operator-injection surface for a JSON object
     // passed as a column value (it's not Mongo) — the route just runs with it
-    // as an opaque value. No crash either way is the assertion here.
-    expect([200, 400, 500]).toContain(res.status);
+    // as an opaque value. No crash either way is the assertion here (202 —
+    // proposed — is the expected happy path post-Batch-8).
+    expect([200, 202, 400, 500]).toContain(res.status);
   });
 });

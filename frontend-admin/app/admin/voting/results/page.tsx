@@ -103,20 +103,25 @@ function ContestResultsInner() {
     if (!roundId) return;
     const round = rounds.find((r) => r.id === roundId);
     const confirmed = window.confirm(
-      `Publish & lock final results for "${round?.name || roundId}"?\n\n` +
-      'This computes ranks with the fixed tie-break rule, assigns prizes by rank, and ' +
-      'creates an IMMUTABLE results snapshot. There is no unpublish or edit afterward. Continue?'
+      `Propose publish & lock of final results for "${round?.name || roundId}"?\n\n` +
+      'This proposes computing ranks with the fixed tie-break rule, assigning prizes by rank, and ' +
+      'creating an IMMUTABLE results snapshot — a second approver (super_admin) must approve it in ' +
+      'Contest Approvals before it actually executes. There is no unpublish or edit once executed. Continue?'
     );
     if (!confirmed) return;
 
     setPublishing(true); setError(null); setNotice(null);
     try {
+      // Proposes only — does NOT execute in this request (SEC-005/G-MC
+      // maker-checker). Do not set any local "done"/"published" flag off
+      // this response; results.published stays false until a second
+      // approver executes the proposal and the round's real status flips,
+      // which loadResults() (backed by GET .../results) will reflect.
       const r = await publishRoundResults(roundId);
-      setResults(r);
-      setNotice('Results published and locked.');
+      setNotice(r.message || 'Proposed — awaiting a second approver.');
     } catch (e) {
       // 409: already published — "Results already published and locked for this round".
-      setError(e instanceof Error ? e.message : 'Could not publish results');
+      setError(e instanceof Error ? e.message : 'Could not propose results publish');
     } finally {
       setPublishing(false);
     }
@@ -140,8 +145,13 @@ function ContestResultsInner() {
     <Page>
       <PageHeader
         title="Contest Results"
-        subtitle="Compute, publish and lock a round's final tie-broken leaderboard. Publishing is one-time and irreversible."
-        actions={<Link href="/admin/voting/prizes"><Button variant="outline">Contest Prizes</Button></Link>}
+        subtitle="Propose computing, publishing and locking a round's final tie-broken leaderboard. A second approver (super_admin) must approve before it executes — see Contest Approvals. Once executed, publishing is one-time and irreversible."
+        actions={
+          <div style={{ display: 'flex', gap: 8 }}>
+            <Link href="/admin/voting/approvals"><Button variant="outline">Contest Approvals</Button></Link>
+            <Link href="/admin/voting/prizes"><Button variant="outline">Contest Prizes</Button></Link>
+          </div>
+        }
       />
 
       <Card>
@@ -226,7 +236,7 @@ function ContestResultsInner() {
               <TieBreakNote rule={results.tieBreakRule} />
               <div style={{ marginTop: 16 }}>
                 <Button variant="primary" disabled={publishing || !roundId} onClick={() => void publish()}>
-                  {publishing ? 'Publishing…' : 'Publish & Lock Results'}
+                  {publishing ? 'Proposing…' : 'Propose Publish & Lock Results'}
                 </Button>
               </div>
             </div>

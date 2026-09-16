@@ -12,7 +12,7 @@
  * and the public votes/* routes are).
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { makeSupabaseMock } from '../golden-path/_fixtures';
+import { makeSupabaseMock, chainableInsert } from '../golden-path/_fixtures';
 
 vi.mock('@/src/server/admin/auth', () => ({ assertAdminPermission: vi.fn() }));
 vi.mock('@/src/server/voting/audit.service', () => ({ appendAuditLog: vi.fn() }));
@@ -99,13 +99,14 @@ describe('AD-007: leaderboard freeze/unfreeze', () => {
 });
 
 describe('AD-007: manual vote adjustment correctness', () => {
-  it('add: increments totals by exactly voteQuantity and reports the real before/after totals', async () => {
-    vi.mocked(getVoteTotals)
-      .mockResolvedValueOnce({ totalConfirmedVotes: 100 } as any)
-      .mockResolvedValueOnce({ totalConfirmedVotes: 150 } as any);
-    vi.mocked(incrementVoteTotals).mockResolvedValue(undefined as any);
+  // UAT Batch 8 (SEC-005/G-MC): the adjust route now only PROPOSES (202) —
+  // it no longer touches vote_totals directly. The add/subtract delta
+  // correctness assertions that used to live here now target
+  // executeVoteAdjustment directly in sensitive-actions-service.test.ts,
+  // since that's where the behavior actually lives post-refactor.
+  it('add: proposes (202) without touching totals — nothing executes at propose time', async () => {
     const { mock, insertFn } = makeSupabaseMock();
-    insertFn.mockResolvedValue({ error: null });
+    insertFn.mockReturnValue(chainableInsert({ id: 'approval-1', status: 'pending_approval' }));
     vi.mocked(createAdminClient).mockReturnValue(mock as any);
 
     const res = await adjustPOST(
@@ -115,27 +116,33 @@ describe('AD-007: manual vote adjustment correctness', () => {
       ctx(),
     );
     const body = await res.json();
-    expect(res.status).toBe(200);
-    expect(body).toMatchObject({ beforeTotal: 100, afterTotal: 150, adjustment: 50 });
-    expect(incrementVoteTotals).toHaveBeenCalledWith('contest-1', 'contestant-1', { adminAdjustmentVotes: 50 });
+    expect(res.status).toBe(202);
+    expect(body.approvalId).toBe('approval-1');
+    expect(getVoteTotals).not.toHaveBeenCalled();
+    expect(incrementVoteTotals).not.toHaveBeenCalled();
+
+    const insertedRow = insertFn.mock.calls[0][0] as any;
+    expect(insertedRow.action_type).toBe('vote_adjustment');
+    expect(insertedRow.payload).toMatchObject({
+      contestId: 'contest-1', contestantId: 'contestant-1', adjustmentType: 'add', voteQuantity: 50,
+    });
   });
 
-  it('subtract: applies a reversedVotes delta, not a raw negative add', async () => {
-    vi.mocked(getVoteTotals)
-      .mockResolvedValueOnce({ totalConfirmedVotes: 100 } as any)
-      .mockResolvedValueOnce({ totalConfirmedVotes: 80 } as any);
-    vi.mocked(incrementVoteTotals).mockResolvedValue(undefined as any);
+  it('subtract: proposes (202) with the subtract payload intact — no delta applied yet', async () => {
     const { mock, insertFn } = makeSupabaseMock();
-    insertFn.mockResolvedValue({ error: null });
+    insertFn.mockReturnValue(chainableInsert({ id: 'approval-2', status: 'pending_approval' }));
     vi.mocked(createAdminClient).mockReturnValue(mock as any);
 
-    await adjustPOST(
+    const res = await adjustPOST(
       req('/api/admin/voting/contest-1/adjust', {
         contestantId: 'contestant-1', adjustmentType: 'subtract', voteQuantity: 20, reason: 'Fraud reversal',
       }),
       ctx(),
     );
-    expect(incrementVoteTotals).toHaveBeenCalledWith('contest-1', 'contestant-1', { reversedVotes: 20 });
+    expect(res.status).toBe(202);
+    expect(incrementVoteTotals).not.toHaveBeenCalled();
+    const insertedRow = insertFn.mock.calls[0][0] as any;
+    expect(insertedRow.payload).toMatchObject({ adjustmentType: 'subtract', voteQuantity: 20 });
   });
 
   it('rejects a non-positive voteQuantity', async () => {

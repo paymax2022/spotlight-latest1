@@ -11,13 +11,21 @@
  *   2. POST /api/admin/voting/votes/[voteId]/reverse — the actual
  *      invalidation: marks the vote `reversed`, refunds a wallet-funded
  *      purchase (idempotent), decrements totals via `incrementVoteTotals`,
- *      and (as of this pass) calls `recomputeRanks` so the leaderboard rank
- *      reflects the invalidation immediately instead of going stale until
- *      the next unrelated recompute — an admin reviewing a fraud flag and
- *      then reversing the vote via this endpoint no longer leaves a
+ *      and calls `recomputeRanks` so the leaderboard rank reflects the
+ *      invalidation immediately instead of going stale until the next
+ *      unrelated recompute — an admin reviewing a fraud flag and then
+ *      reversing the vote via this endpoint no longer leaves a
  *      momentarily-wrong rank. `recomputeRanks` failure is non-fatal — the
  *      reversal itself (already committed + audited) must not be undone by
  *      a best-effort rank refresh failing.
+ *
+ *      UAT Batch 8 (SEC-005/G-MC): this route now only PROPOSES the
+ *      reversal (dual control) — the execution behavior described above
+ *      (wallet refund, totals decrement, rank recompute, audit) lives in
+ *      `executeVoteReversal` (sensitive-actions.service.ts) and runs at
+ *      approve time. That behavior is covered in
+ *      sensitive-actions-service.test.ts; this file now asserts the
+ *      propose-time contract only.
  *
  * A true ONE-CLICK "resolve flag -> vote is reversed in the same call" flow
  * does not exist (the two endpoints are separate, deliberately — resolving a
@@ -147,81 +155,47 @@ describe('POST /api/admin/voting/votes/[voteId]/reverse — the real invalidatio
     });
   }
 
-  function primeVote(overrides: Partial<Record<string, unknown>> = {}) {
-    const { mock, maybySingle, updateEq } = makeSupabaseMock();
-    maybySingle.mockResolvedValueOnce({
-      data: {
-        id: 'vote-1', contest_id: 'contest-1', contestant_id: 'enr-1',
-        vote_status: 'confirmed', vote_quantity: 3, transaction_id: null,
-        ...overrides,
-      },
-      error: null,
+  function primeProposeMock() {
+    const { mock, insertFn } = makeSupabaseMock();
+    insertFn.mockReturnValue({
+      select: () => ({
+        single: () => Promise.resolve({ data: { id: 'approval-1', status: 'pending_approval' }, error: null }),
+      }),
     });
-    updateEq.mockResolvedValue({ data: null, error: null });
     vi.mocked(createAdminClient).mockReturnValue(mock as any);
-    return { mock, maybySingle, updateEq };
+    return { mock, insertFn };
   }
 
-  it('marks the vote reversed, decrements totals, recomputes ranks, and audits — no wallet refund for a non-wallet vote', async () => {
-    primeVote();
+  it('proposes a pending approval (202) instead of executing — no totals/rank/audit/wallet touch at propose time', async () => {
+    const { insertFn } = primeProposeMock();
 
     const res = await reverseVote(req('Confirmed bot-cluster vote, reversing per fraud review'), ctx());
     const body = await res.json();
 
-    expect(res.status).toBe(200);
-    expect(body.reversedQuantity).toBe(3);
-    expect(incrementVoteTotals).toHaveBeenCalledWith('contest-1', 'enr-1', { reversedVotes: 3 });
-    expect(recomputeRanks).toHaveBeenCalledWith('contest-1');
-    expect(appendAuditLog).toHaveBeenCalledWith(expect.objectContaining({ action: 'vote_reversed', entityId: 'vote-1' }));
+    expect(res.status).toBe(202);
+    expect(body.approvalId).toBe('approval-1');
+    expect(body.status).toBe('pending_approval');
+    expect(incrementVoteTotals).not.toHaveBeenCalled();
+    expect(recomputeRanks).not.toHaveBeenCalled();
+    expect(appendAuditLog).not.toHaveBeenCalled();
     expect(reverseWalletDebit).not.toHaveBeenCalled();
+
+    const insertedRow = insertFn.mock.calls[0][0] as any;
+    expect(insertedRow.action_type).toBe('vote_reversal');
+    expect(insertedRow.payload).toMatchObject({ voteId: 'vote-1', reason: 'Confirmed bot-cluster vote, reversing per fraud review' });
   });
 
-  it('refunds the wallet when the vote was wallet-funded', async () => {
-    const { mock, maybySingle } = primeVote({ transaction_id: 'tx-1' });
-    maybySingle.mockResolvedValueOnce({
-      data: { id: 'tx-1', payment_provider: 'wallet', payment_reference: 'ref-1', amount_paid: 500, voter_user_id: 'u-1' },
-      error: null,
-    });
-    vi.mocked(reverseWalletDebit).mockResolvedValue({ alreadyProcessed: false } as any);
-
-    const res = await reverseVote(req('Wallet-funded vote reversal'), ctx());
-    const body = await res.json();
-
-    expect(res.status).toBe(200);
-    expect(reverseWalletDebit).toHaveBeenCalledWith('u-1', expect.objectContaining({
-      amountKobo: 50000,
-      idempotencyKey: 'vote-reversal-refund:tx-1',
-    }));
-    expect(body.walletRefund.refunded).toBe(true);
-  });
-
-  it('rejects a reason under 5 characters (400) without touching totals/ranks', async () => {
-    primeVote();
+  it('rejects a reason under 5 characters (400) without proposing anything', async () => {
+    const { insertFn } = primeProposeMock();
     const res = await reverseVote(req('hi'), ctx());
     expect(res.status).toBe(400);
+    expect(insertFn).not.toHaveBeenCalled();
     expect(incrementVoteTotals).not.toHaveBeenCalled();
     expect(recomputeRanks).not.toHaveBeenCalled();
-  });
-
-  it('refuses to double-reverse an already-reversed vote (idempotency guard)', async () => {
-    primeVote({ vote_status: 'reversed' });
-    const res = await reverseVote(req('Trying to reverse again'), ctx());
-    expect(res.status).toBe(400);
-    expect(incrementVoteTotals).not.toHaveBeenCalled();
-    expect(recomputeRanks).not.toHaveBeenCalled();
-  });
-
-  it('a recomputeRanks failure is non-fatal — the reversal itself still succeeds and is audited', async () => {
-    primeVote();
-    vi.mocked(recomputeRanks).mockRejectedValueOnce(new Error('RPC down'));
-
-    const res = await reverseVote(req('Reversal should survive a rank-recompute hiccup'), ctx());
-    expect(res.status).toBe(200);
-    expect(appendAuditLog).toHaveBeenCalledWith(expect.objectContaining({ action: 'vote_reversed' }));
   });
 
   it('401s without admin credentials', async () => {
-    primeVote();
+    primeProposeMock();
     const res = await reverseVote(req('reason', { 'content-type': 'application/json' } as any), ctx());
     expect(res.status).toBe(401);
     expect(incrementVoteTotals).not.toHaveBeenCalled();

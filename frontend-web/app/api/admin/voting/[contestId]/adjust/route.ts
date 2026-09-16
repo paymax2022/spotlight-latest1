@@ -1,17 +1,21 @@
 import { errorResponse, handleApiError, successResponse } from '@/src/lib/api/responses';
 import { assertAdminPermission } from '@/src/server/admin/auth';
-import { createAdminClient } from '@/lib/supabase/server';
-import { getVoteTotals, incrementVoteTotals } from '@/src/server/voting/totals.service';
-import { appendAuditLog } from '@/src/server/voting/audit.service';
+import { proposeApproval } from '@/src/server/voting/contest-approvals.service';
 import type { AdminAdjustmentType } from '@/src/features/voting/types';
 
+// UAT Batch 8 (SEC-005/G-MC): this route used to apply the adjustment
+// immediately under a single admin's authority. It now only PROPOSES the
+// action — the actual adjustment runs from
+// sensitive-actions.service.ts#executeVoteAdjustment, invoked by a second
+// approver via POST /api/admin/voting/approvals/[approvalId]/approve.
+//
 // Admin vote adjustment — every change requires a reason and creates an audit trail.
 export async function POST(
   request: Request,
   context: { params: Promise<{ contestId: string }> },
 ) {
   try {
-    const identity = await assertAdminPermission(request, 'votes:manage');
+    const identity = await assertAdminPermission(request, 'votes:sensitive:initiate');
     const { contestId } = await context.params;
 
     const body = (await request.json()) as {
@@ -33,81 +37,34 @@ export async function POST(
       return errorResponse('adjustmentType must be one of: add, subtract, reverse', 400);
     }
 
-    const supabase = createAdminClient();
+    const idempotencyKey =
+      request.headers.get('Idempotency-Key') || request.headers.get('idempotency-key') || undefined;
 
-    // Fetch current totals
-    const currentTotals = await getVoteTotals(contestId, body.contestantId);
-    const beforeTotal = currentTotals?.totalConfirmedVotes ?? 0;
-
-    // Apply the adjustment
-    let delta: { adminAdjustmentVotes?: number; reversedVotes?: number } = {};
-    let voteRecord: Record<string, unknown> = {};
-
-    if (body.adjustmentType === 'add') {
-      delta = { adminAdjustmentVotes: body.voteQuantity };
-      voteRecord = {
-        contest_id: contestId,
-        contestant_id: body.contestantId,
-        vote_type: 'admin_adjustment',
-        vote_quantity: body.voteQuantity,
-        vote_status: 'confirmed',
-        fraud_score: 0,
-        fraud_status: 'clean',
-        confirmed_at: new Date().toISOString(),
-      };
-    } else if (body.adjustmentType === 'subtract' || body.adjustmentType === 'reverse') {
-      delta = { reversedVotes: body.voteQuantity };
-      voteRecord = {
-        contest_id: contestId,
-        contestant_id: body.contestantId,
-        vote_type: 'fraud_reversal',
-        vote_quantity: -body.voteQuantity,
-        vote_status: 'reversed',
-        reversal_reason: body.reason,
-        reversed_at: new Date().toISOString(),
-        fraud_score: 0,
-        fraud_status: 'clean',
-      };
-    }
-
-    await incrementVoteTotals(contestId, body.contestantId, delta);
-
-    if (Object.keys(voteRecord).length > 0) {
-      await supabase.from('votes').insert(voteRecord);
-    }
-
-    const afterTotals = await getVoteTotals(contestId, body.contestantId);
-    const afterTotal = afterTotals?.totalConfirmedVotes ?? 0;
-
-    // Record the adjustment with full audit trail
-    await supabase.from('admin_vote_adjustments').insert({
-      contest_id: contestId,
-      contestant_id: body.contestantId,
-      admin_id: identity.actorId,
-      adjustment_type: body.adjustmentType,
-      vote_quantity: body.voteQuantity,
-      reason: body.reason,
-      before_total: beforeTotal,
-      after_total: afterTotal,
-      status: 'applied',
-      applied_at: new Date().toISOString(),
-    });
-
-    await appendAuditLog({
-      actorId: identity.actorId,
-      actorRole: identity.role,
-      action: 'admin_vote_adjustment',
-      entityType: 'vote_totals',
-      entityId: body.contestantId,
+    const result = await proposeApproval({
+      actionType: 'vote_adjustment',
       contestId,
-      contestantId: body.contestantId,
-      oldValue: { totalConfirmedVotes: beforeTotal },
-      newValue: { totalConfirmedVotes: afterTotal, adjustmentType: body.adjustmentType, voteQuantity: body.voteQuantity },
-      reason: body.reason,
+      payload: {
+        contestId,
+        contestantId: body.contestantId,
+        adjustmentType: body.adjustmentType,
+        voteQuantity: body.voteQuantity,
+        reason: body.reason.trim(),
+      },
+      initiatorId: identity.actorId,
+      initiatorRole: identity.role,
+      idempotencyKey,
     });
 
-    return successResponse({ success: true, beforeTotal, afterTotal, adjustment: body.voteQuantity });
+    return successResponse(
+      {
+        success: true,
+        approvalId: result.id,
+        status: result.status,
+        message: 'Proposed — awaiting a second approver.',
+      },
+      202,
+    );
   } catch (error) {
-    return handleApiError(error, 'Failed to apply vote adjustment');
+    return handleApiError(error, 'Failed to propose vote adjustment');
   }
 }
