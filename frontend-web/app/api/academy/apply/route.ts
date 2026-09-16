@@ -324,7 +324,7 @@ export async function POST(request: Request) {
 
     const { data: batch, error: batchError } = await supabase
       .from('academy_batches')
-      .select('id')
+      .select('id, max_students')
       .eq('id', batchId)
       .maybeSingle();
 
@@ -340,6 +340,29 @@ export async function POST(request: Request) {
 
       if (existingApplication) {
         return errorResponse('You have already applied for this Film Academy batch.', 409);
+      }
+    }
+
+    // Capacity, not enrolled_count. academy_batches.enrolled_count is bumped by
+    // a DB trigger on every INSERT into academy_applications regardless of
+    // status, so a pile of rejected applications would inflate it forever —
+    // it is not "seats taken" and must not be read here. A seat is occupied by
+    // a 'pending' application (awaiting review, might still be approved) or an
+    // 'approved' one; a 'rejected' application gave its seat back and must not
+    // count against the cap. max_students === null means unlimited — skip the
+    // check entirely rather than treating null as zero.
+    const maxStudents = (batch as { max_students: number | null }).max_students;
+    if (maxStudents !== null && maxStudents !== undefined) {
+      const { count: seatsTaken, error: capacityError } = await supabase
+        .from('academy_applications')
+        .select('id', { count: 'exact', head: true })
+        .eq('batch_id', batchId)
+        .in('status', ['pending', 'approved']);
+
+      if (capacityError) throw capacityError;
+
+      if ((seatsTaken ?? 0) >= maxStudents) {
+        return errorResponse('This batch is at full capacity', 409);
       }
     }
 

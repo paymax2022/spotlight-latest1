@@ -143,6 +143,95 @@ async function sendAcademyPaymentConfirmationEmail(input: {
   });
 }
 
+export async function sendAcademyApplicationApprovedEmail(input: {
+  email: string;
+  fullName: string;
+  batchName?: string | null;
+  tuitionOwedNgn?: number | null;
+}) {
+  const siteUrl = getOptionalEnv('NEXT_PUBLIC_SITE_URL', 'http://localhost:4028') || '';
+  const batchLabel = input.batchName || 'Film Academy';
+  const hasTuitionOwed = Boolean(input.tuitionOwedNgn && input.tuitionOwedNgn > 0);
+
+  return sendTransactionalEmail({
+    to: input.email,
+    subject: 'Your Spotlight Film Academy Application Has Been Approved',
+    text: [
+      `Hello ${input.fullName},`,
+      '',
+      `Congratulations! Your application to the Spotlight Film Academy (${batchLabel}) has been approved.`,
+      '',
+      hasTuitionOwed
+        ? 'Your next step is to settle your tuition from your academy dashboard.'
+        : 'Head to your academy dashboard to see your next steps.',
+      '',
+      `Academy dashboard: ${siteUrl}/film-academy/dashboard`,
+      '',
+      'Welcome aboard,',
+      'Spotlight Team',
+    ].join('\n'),
+    html: `
+      <div style="font-family: Arial, sans-serif; color: #111827; line-height: 1.6;">
+        <h2 style="margin-bottom: 12px;">Application Approved</h2>
+        <p>Hello ${input.fullName},</p>
+        <p>Congratulations! Your application to the Spotlight Film Academy (<strong>${batchLabel}</strong>) has been approved.</p>
+        <p>
+          ${
+            hasTuitionOwed
+              ? 'Your next step is to settle your tuition from your academy dashboard.'
+              : 'Head to your academy dashboard to see your next steps.'
+          }
+        </p>
+        <p>
+          <a href="${siteUrl}/film-academy/dashboard">${siteUrl}/film-academy/dashboard</a>
+        </p>
+        <p>Welcome aboard,<br />Spotlight Team</p>
+      </div>
+    `,
+  });
+}
+
+export async function sendAcademyApplicationRejectedEmail(input: {
+  email: string;
+  fullName: string;
+  batchName?: string | null;
+  rejectionReason?: string | null;
+}) {
+  const siteUrl = getOptionalEnv('NEXT_PUBLIC_SITE_URL', 'http://localhost:4028') || '';
+  const batchLabel = input.batchName || 'Film Academy';
+  const reasonText = input.rejectionReason?.trim();
+
+  return sendTransactionalEmail({
+    to: input.email,
+    subject: 'Update on Your Spotlight Film Academy Application',
+    text: [
+      `Hello ${input.fullName},`,
+      '',
+      `Thank you for applying to the Spotlight Film Academy (${batchLabel}).`,
+      'After careful review, we are unable to offer you a place in this batch.',
+      ...(reasonText ? ['', `Reviewer notes: ${reasonText}`] : []),
+      '',
+      `We encourage you to apply again for a future batch: ${siteUrl}/film-academy`,
+      '',
+      'Spotlight Team',
+    ].join('\n'),
+    html: `
+      <div style="font-family: Arial, sans-serif; color: #111827; line-height: 1.6;">
+        <h2 style="margin-bottom: 12px;">Application Update</h2>
+        <p>Hello ${input.fullName},</p>
+        <p>Thank you for applying to the Spotlight Film Academy (<strong>${batchLabel}</strong>).</p>
+        <p>After careful review, we are unable to offer you a place in this batch.</p>
+        ${reasonText ? `<p><strong>Reviewer notes:</strong> ${reasonText}</p>` : ''}
+        <p>
+          We encourage you to apply again for a future batch:
+          <a href="${siteUrl}/film-academy">${siteUrl}/film-academy</a>
+        </p>
+        <p>Spotlight Team</p>
+      </div>
+    `,
+  });
+}
+
 async function resolveApplicationOwnerId(supabase: ServerSupabaseClient) {
   const {
     data: { user },

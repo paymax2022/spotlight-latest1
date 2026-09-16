@@ -15152,6 +15152,162 @@ paths:
         '422': { description: Insufficient wallet funds }
         '429': { description: Wallet tier daily limit or category daily limit exceeded }
         '503': { description: 'No viable provider route, or the category is switched off' }
+  /api/finance/academy/tuition/confirm:
+    post:
+      operationId: academyTuitionConfirmPayment
+      summary: Confirm a Film Academy tuition installment payment
+      description: >-
+        Verifies a Paystack charge reference against the gateway (fail-closed on any
+        non-success status or amount short of the installment), then posts a balanced
+        ledger journal (provider_clearing DR / settlement CR — no user wallet is
+        touched) and marks the installment paid. A money mutation — Idempotency-Key is
+        REQUIRED (rejected in the service layer, not middleware).
+
+
+        Idempotent at two layers: a Redis key claim (fast path) and a conditional
+        UPDATE on the payment row (durable fallback) — replaying the SAME
+        (planId, paymentId) after it already settled returns the original result
+        rather than double-posting. A payment reference that already settled a
+        DIFFERENT installment is rejected (409).
+      tags: [Academy Tuition]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [planId, paymentId, reference]
+              properties:
+                planId: { type: string, format: uuid }
+                paymentId: { type: string, format: uuid }
+                reference: { type: string, description: The Paystack transaction reference to verify. }
+      responses:
+        '200':
+          description: Installment confirmed paid (or an idempotent replay of an already-confirmed payment).
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  data:
+                    type: object
+                    properties:
+                      paymentId: { type: string, format: uuid }
+                      planId: { type: string, format: uuid }
+                      applicationId: { type: string, format: uuid }
+                      amountPaidNgn: { type: integer, format: int64, description: 'Whole naira, never kobo.' }
+                      ledgerReference: { type: string }
+                      paidAt: { type: string, format: date-time }
+                      nextDueDate: { type: string, format: date-time, nullable: true }
+                      isPlanCompleted: { type: boolean }
+        '400': { description: "Missing Idempotency-Key/required field, or amount below the installment's amount." }
+        '402': { description: Payment not confirmed by the gateway. }
+        '403': { description: Payment does not belong to the authenticated user. }
+        '404': { description: Payment or plan not found. }
+        '409': { description: 'Idempotency-Key collision (payment already being processed), or the reference already settled a different installment.' }
+  /api/finance/academy/tuition/validate:
+    post:
+      operationId: academyTuitionValidatePayment
+      summary: Validate a tuition payment amount before charging (quote endpoint)
+      tags: [Academy Tuition]
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [applicationId, amountNgn]
+              properties:
+                applicationId: { type: string, format: uuid }
+                amountNgn: { type: integer, format: int64 }
+      responses:
+        '200': { description: 'Amount is valid for the next payable installment (or the batch fee, if no plan exists yet).' }
+        '400': { description: 'Amount does not match the next installment, or exceeds the batch fee.' }
+  /api/finance/academy/tuition/status/{application_id}:
+    get:
+      operationId: academyTuitionGetStatus
+      summary: Get the tuition plan and payment status for an application
+      description: Used for enrollment gating — IsReadyForAccess is true once at least one installment is paid or waived.
+      tags: [Academy Tuition]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: application_id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200': { description: Tuition status returned. Plan/payments are null/empty if no plan has been created yet. }
+        '403': { description: Application does not belong to the authenticated user. }
+        '404': { description: Application not found. }
+  /api/academy/admin/tuition/plans:
+    post:
+      operationId: academyTuitionAdminCreatePlan
+      summary: 'Admin: create an installment plan (and its full schedule) for an approved application'
+      description: >-
+        Derives the plan's total/discount/installment-count/frequency from the
+        application's batch configuration and payment_preference — the same
+        derivation ConfirmPayment performs lazily on first payment if no plan exists
+        yet. Idempotent: if a plan already exists for the application, it is returned
+        unchanged rather than duplicated.
+      tags: [Academy Tuition]
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [applicationId]
+              properties:
+                applicationId: { type: string, format: uuid }
+      responses:
+        '200': { description: 'Plan created (or the existing one, if already present).' }
+        '403': { description: Caller lacks academy.tuition.admin permission. }
+  /api/academy/admin/tuition/plans/{id}/mark-complete:
+    patch:
+      operationId: academyTuitionAdminMarkPlanCompleted
+      summary: 'Admin: force-complete a plan (e.g. after manual reconciliation)'
+      tags: [Academy Tuition]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200': { description: Plan marked completed. }
+        '403': { description: Caller lacks academy.tuition.admin permission. }
+        '404': { description: Plan not found. }
+  /api/academy/admin/tuition/payments/{id}/waive:
+    patch:
+      operationId: academyTuitionAdminWaivePayment
+      summary: 'Admin: waive one installment payment'
+      description: Auto-completes the plan if this was the last unpaid/unwaived installment.
+      tags: [Academy Tuition]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason: { type: string }
+      responses:
+        '200': { description: Payment waived. }
+        '400': { description: Payment is already in a terminal state (paid or waived). }
+        '403': { description: Caller lacks academy.tuition.admin permission. }
+        '404': { description: Payment not found. }
   /api/finance/utilitybills/transactions:
     get:
       operationId: utilityBillsListTransactions
