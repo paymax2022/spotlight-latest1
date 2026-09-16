@@ -129,7 +129,8 @@ export async function provisionVirtualAccount(
       const raced = await getVirtualAccount(userId);
       if (raced) return raced;
     }
-    throw new ApiError(`Failed to save virtual account: ${error.message}`, 500);
+    console.error('[virtual-accounts] Failed to save virtual account:', error.message);
+    throw new ApiError("We couldn't set up your virtual account right now. Please try again.", 500);
   }
 
   return {
@@ -187,7 +188,8 @@ async function paystackPost<T>(path: string, body: Record<string, unknown>): Pro
 
   if (!res.ok) {
     const text = await res.text().catch(() => res.statusText);
-    throw new ApiError(`Paystack API error (${path}): ${text}`, 502);
+    console.error(`[virtual-accounts] Paystack request failed (${path}) [${res.status}]:`, text);
+    throw new ApiError("We couldn't reach our banking partner right now. Please try again in a moment.", 502);
   }
 
   return res.json() as Promise<T>;

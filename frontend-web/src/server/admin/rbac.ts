@@ -15,7 +15,13 @@ export type AdminRole =
   | 'event_manager'
   | 'support_agent'
   | 'auditor'
-  | 'executive_readonly';
+  | 'executive_readonly'
+  // WAL-010: sentinel for unrecognized/missing role input. NOT an assignable
+  // admin role — never offer it in a role picker, never provision a user
+  // with it directly. It exists only so parseAdminRole() has a genuinely
+  // permission-less value to fall back to (see rolePermissions below and the
+  // comment on parseAdminRole). Do NOT add any permission to it.
+  | 'no_access';
 
 export type AdminPermission =
   | 'dashboard:view'
@@ -81,17 +87,38 @@ const rolePermissions: Record<AdminRole, AdminPermission[]> = {
   support_agent: ['dashboard:view', 'applications:review', 'utility:support'],
   auditor: ['dashboard:view', 'audit:view', 'utility:support', 'reports:export'],
   executive_readonly: ['dashboard:view', 'finance:view', 'audit:view', 'utility:support'],
+  // WAL-010: deliberately empty. See the AdminRole comment above — this is
+  // the fail-closed fallback for input that isn't a real admin role (plain
+  // customer 'user', null/empty, typos, garbage). Never add a permission
+  // here; doing so silently reopens WAL-010 for every route gated on that
+  // permission.
+  no_access: [],
 };
 
+// WAL-010 (P0): previously fell back to 'executive_readonly' for ANY
+// unrecognized input — including the ordinary customer role 'user', empty
+// string, and null — and executive_readonly carries real permissions
+// (finance:view, audit:view, dashboard:view, utility:support). That silently
+// granted those permissions to every authenticated non-admin caller. The
+// fallback must resolve to a role with ZERO permissions ('no_access'), never
+// to any role that has one. executive_readonly remains a real, assignable
+// admin role for legitimately-provisioned executive/readonly staff — it is
+// only ever reached here via an exact, explicit match below.
 export function parseAdminRole(input: string | null | undefined): AdminRole {
-  if (!input) return 'executive_readonly';
+  if (!input) return 'no_access';
   const normalized = input.trim().toLowerCase();
   const aliasMap: Record<string, AdminRole> = {
     admin: 'super_admin',
     operations_manager: 'program_manager',
   };
   const mapped = (aliasMap[normalized] || normalized) as AdminRole;
-  return mapped in rolePermissions ? mapped : 'executive_readonly';
+  // 'no_access' is a sentinel, not a role anyone should be able to claim by
+  // literally passing the string "no_access" — treat that input the same as
+  // any other unrecognized value (it already resolves here since it's not a
+  // real assignable role's alias, but this guard keeps that true even if the
+  // rolePermissions map or aliasMap changes shape later).
+  if (mapped === 'no_access') return 'no_access';
+  return mapped in rolePermissions ? mapped : 'no_access';
 }
 
 export function hasPermission(role: AdminRole, permission: AdminPermission) {

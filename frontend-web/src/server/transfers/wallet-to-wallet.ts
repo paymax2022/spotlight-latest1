@@ -298,7 +298,8 @@ export async function initiateWalletToWallet(
     if (rpcError.message?.includes('SELF_TRANSFER')) {
       throw new ApiError('You cannot transfer to yourself', 422);
     }
-    throw new ApiError(`Transfer failed: ${rpcError.message}`, 500);
+    console.error('[transfers] wallet-to-wallet RPC failed unexpectedly:', rpcError.message);
+    throw new ApiError("We couldn't complete this transfer. Please try again.", 500);
   }
 
   const row = (rpcRows as Array<{

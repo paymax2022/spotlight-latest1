@@ -159,10 +159,11 @@ export default function PaymentsFinanceAdminPage() {
 
       {data && (
         <>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12, marginBottom: 20 }}>
-            <StatTile label="Wallet balance" value={formatNaira(data.stats.totalBalanceKobo)} note="Across listed wallet accounts" />
-            <StatTile label="Credit volume" value={formatNaira(data.stats.creditVolumeKobo)} note="Recent ledger credits" />
-            <StatTile label="Debit volume" value={formatNaira(data.stats.debitVolumeKobo)} note="Recent ledger debits" />
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 12, marginBottom: 20 }}>
+            <StatTile label="Wallet balance" value={formatNaira(data.stats.totalBalanceKobo)} note="True total across ALL customer wallets" />
+            <StatTile label="Credit volume" value={formatNaira(data.stats.creditVolumeKobo)} note={`Last ${data.stats.statsWindowDays} days`} />
+            <StatTile label="Debit volume" value={formatNaira(data.stats.debitVolumeKobo)} note={`Last ${data.stats.statsWindowDays} days`} />
+            <StatTile label="Active wallets" value={String(data.stats.activeWalletsCount)} note={`Moved money in the last ${data.stats.statsWindowDays} days`} />
             <StatTile label="Pending KYC" value={String(data.stats.pendingKyc)} note="Manual review queue" />
           </div>
 

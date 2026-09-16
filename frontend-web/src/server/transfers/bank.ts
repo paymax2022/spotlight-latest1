@@ -57,7 +57,11 @@ async function paystackRequest<T>(
 
   if (!res.ok) {
     const body = await res.text().catch(() => '');
-    throw new ApiError(`Paystack error ${res.status}: ${body}`, res.status >= 500 ? 502 : res.status);
+    console.error(`[bank-transfer] Paystack request failed (${path}) [${res.status}]:`, body);
+    throw new ApiError(
+      "We couldn't reach our banking partner right now. Please try again in a moment.",
+      res.status >= 500 ? 502 : res.status,
+    );
   }
 
   return res.json() as Promise<T>;

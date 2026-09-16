@@ -97,8 +97,13 @@ export interface PaymentsFinanceConsole {
     totalBalanceKobo: number;
     creditVolumeKobo: number;
     debitVolumeKobo: number;
+    /** WAL-013: distinct wallets with >=1 ledger movement within statsWindowDays. */
+    activeWalletsCount: number;
+    /** WAL-013: rolling window (days) the volume + active-wallet figures are computed over. */
+    statsWindowDays: number;
     pendingKyc: number;
     verifiedKyc: number;
+    error?: string | null;
   };
 }
 

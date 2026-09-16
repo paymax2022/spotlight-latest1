@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useLayoutEffect, useRef, useState } from 'react';
 import { View, Text, ScrollView, StyleSheet, Platform, Pressable, ActivityIndicator, RefreshControl } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Plus, Send, ArrowDown, RefreshCw, ArrowUpRight, ArrowDownLeft, ShieldCheck, ChevronRight } from 'lucide-react-native';
@@ -22,6 +22,44 @@ import { getWalletLedger, getWalletFlowSummary, type WalletLedgerEntry } from '@
 import { formatNaira } from '@/utils/money';
 
 const TABS = ['All', 'Credit', 'Debit'];
+
+// WAL-014: at narrow widths (360px) a wide stat amount ("₦200,000.00") wrapped
+// mid-digit across two lines. `adjustsFontSizeToFit` is the standard RN fix for
+// "must render on one line, shrink don't wrap/clip" — but react-native-web does
+// not implement it (confirmed against a live Expo-web render: the DOM node's
+// fontSize never changed, and with numberOfLines=1 the text was instead
+// silently clipped with an ellipsis, which is worse than the original wrap for
+// a money amount). Native (iOS/Android) gets the real prop below and shrinks
+// correctly there; on web this hook measures the *actual rendered* DOM node
+// (its own font, not an approximation) and shrinks the font size itself so the
+// full amount stays on one line and fully legible there too.
+const STAT_AMOUNT_BASE_SIZE = 18; // Typography.titleMd.fontSize
+
+function useWebFitFontSize(text: string, minScale = 0.6) {
+  const ref = useRef<any>(null);
+  const [fontSize, setFontSize] = useState(STAT_AMOUNT_BASE_SIZE);
+
+  useLayoutEffect(() => {
+    if (Platform.OS !== 'web') return;
+    const node = ref.current as HTMLElement | null;
+    if (!node || typeof node.scrollWidth !== 'number') return;
+    // Measure at the base size so repeated renders (a new amount after a
+    // refetch) always start from the same reference point.
+    const prevInlineFontSize = node.style.fontSize;
+    node.style.fontSize = `${STAT_AMOUNT_BASE_SIZE}px`;
+    const available = node.clientWidth;
+    const needed = node.scrollWidth;
+    node.style.fontSize = prevInlineFontSize;
+    if (available > 0 && needed > available) {
+      const scale = Math.max(minScale, available / needed);
+      setFontSize(Math.floor(STAT_AMOUNT_BASE_SIZE * scale));
+    } else {
+      setFontSize(STAT_AMOUNT_BASE_SIZE);
+    }
+  }, [text]);
+
+  return { fontSize, ref };
+}
 
 // A ledger entry → a display row. Icon/colour reflect the money direction; the
 // title prefers the ledger description, falling back to the reference/type.
@@ -74,6 +112,11 @@ export default function WalletScreen() {
 
   const handleRefresh = () => { refetchWallet(); refetchTx(); refetchSummary(); };
 
+  const incomeAmountText   = formatNaira(totalInKobo);
+  const expensesAmountText = formatNaira(totalOutKobo);
+  const incomeFit   = useWebFitFontSize(incomeAmountText);
+  const expensesFit = useWebFitFontSize(expensesAmountText);
+
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
       <ScrollView
@@ -116,14 +159,30 @@ export default function WalletScreen() {
               <ArrowDownLeft size={18} color={Colors.teal} strokeWidth={2} />
             </View>
             <Text style={styles.statLabel}>Income</Text>
-            <Text style={[styles.statAmount, { color: Colors.teal }]}>{formatNaira(totalInKobo)}</Text>
+            <Text
+              ref={incomeFit.ref}
+              style={[styles.statAmount, { color: Colors.teal, fontSize: incomeFit.fontSize }]}
+              numberOfLines={1}
+              adjustsFontSizeToFit
+              minimumFontScale={0.6}
+            >
+              {incomeAmountText}
+            </Text>
           </LinearGradient>
           <LinearGradient colors={['rgba(220,38,38,0.06)', 'rgba(220,38,38,0.02)']} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={[styles.statCard, shadow1]}>
             <View style={[styles.statIcon, { backgroundColor: 'rgba(220,38,38,0.08)' }]}>
               <ArrowUpRight size={18} color={Colors.error} strokeWidth={2} />
             </View>
             <Text style={styles.statLabel}>Expenses</Text>
-            <Text style={[styles.statAmount, { color: Colors.error }]}>{formatNaira(totalOutKobo)}</Text>
+            <Text
+              ref={expensesFit.ref}
+              style={[styles.statAmount, { color: Colors.error, fontSize: expensesFit.fontSize }]}
+              numberOfLines={1}
+              adjustsFontSizeToFit
+              minimumFontScale={0.6}
+            >
+              {expensesAmountText}
+            </Text>
           </LinearGradient>
         </View>
 
