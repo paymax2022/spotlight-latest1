@@ -3,18 +3,33 @@
 // ── Admin — Voting Visibility control ────────────────────────────────────────
 // Controls the universal voting engine's PUBLIC visibility: whether a contest (or
 // a phase inside it) exposes the leaderboard, vote count and rank to the public.
-// Backend (do NOT change) lives at /api/admin/voting/* and requires the
-// `votes:manage` permission. Money is NOT involved here — these are display flags.
+// Backend (do NOT change) lives at /api/admin/voting/* — in frontend-web, not the
+// Go backend — and requires the `votes:manage` permission. Money is NOT involved
+// here — these are display flags.
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { env } from '@/config/env';
+import { webProxyBase } from '@/config/env';
 import { hasAnyPermission, type AuthUser } from '@/features/auth/rbac';
 import { Page, PageHeader, Card, Button, Input, colors, thCell, tdCell } from '@/components/ui/vuexy';
 
 // ─── Auth / fetch plumbing (mirrors connect/crowdfunding admin services) ──────
 
+/**
+ * PATH A (frontend-web via /api/web-proxy) — same as votePackagesService.
+ *
+ * This used to derive its base from env.apiBaseUrl (the /api/admin-proxy
+ * same-origin proxy to the GO BACKEND), stripping a trailing "/api/v1" to
+ * splice in "/api/admin/voting". That regex hasn't matched since apiBaseUrl
+ * stopped ending in "/api/v1" (see config/env.ts's apiRoot() comment on the
+ * same regression) — .replace() became a no-op, so every call here actually
+ * requested things like ".../api/admin-proxy/settings", which admin-proxy
+ * forwards to the Go backend's bare "/settings", a route that has never
+ * existed there. These endpoints are real Next.js routes in frontend-web
+ * (frontend-web/app/api/admin/voting/**), not the Go backend, so they belong
+ * on the web proxy, not the admin proxy.
+ */
 function votingBase(): string {
-  return env.apiBaseUrl.replace(/\/api\/v1\/?$/, '/api/admin/voting');
+  return `${webProxyBase()}/api/admin/voting`;
 }
 function authHeaders(): Record<string, string> {
   if (typeof window === 'undefined') return {};
