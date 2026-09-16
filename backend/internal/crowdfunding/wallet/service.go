@@ -49,24 +49,41 @@ var ErrCampaignNotFound = errors.New("crowdfunding/wallet: campaign not found")
 //   - released        = Σ contributions in (released)            [settled to creator]
 //   - totalWithdrawn  = Σ cf_withdrawals in (COMPLETED)
 //   - pending         = Σ cf_withdrawals in (PENDING, PROCESSING, APPROVED) [in-flight out]
-//   - available       = released − totalWithdrawn − pending      [withdrawable now]
+//   - available       = the creator's REAL ledger user_wallet balance − pending
+//
+// "available" used to be derived as released − totalWithdrawn − pending — the
+// FULL gross contribution total, with no accounting for the 10% platform cut
+// Contribute() already deducted via settlement.Settle before the money ever
+// reached the creator's own wallet. That overstated what a creator could
+// actually withdraw by exactly the platform fee: a campaign that raised
+// ₦10,000 shows ₦10,000 "available", but only ₦9,000 ever lands in the
+// creator's user_wallet — requesting the full displayed amount passed this
+// function's own available-balance check and then failed downstream with an
+// unexplained "insufficient funds" from SubmitWithdrawal's ledger.Debit,
+// which checks the SAME account this now reads. Reading that real balance
+// directly (rather than re-deriving an approximation of it) means the two
+// can never disagree again. Falls back to the old approximation only when no
+// ledger is wired (s.ledger == nil, e.g. a read-only context that never
+// configured one) — a read that can't reach the real balance is better than
+// no read at all, but a wired payout path must never trust it as a gate.
 func (s *Service) GetWallet(ctx context.Context, campaignID string) (*CampaignWalletSummary, error) {
 	var (
-		title   string
-		frozen  bool
-		escrow  int64
-		release int64
+		title     string
+		creatorID string
+		frozen    bool
+		escrow    int64
+		release   int64
 	)
 	const campQ = `
-		SELECT c.title,
+		SELECT c.title, c.creator_id,
 		       (c.review_status = 'FROZEN') AS frozen,
 		       COALESCE(SUM(co.amount_kobo) FILTER (WHERE co.status = 'escrowed'), 0) AS escrow_kobo,
 		       COALESCE(SUM(co.amount_kobo) FILTER (WHERE co.status = 'released'), 0) AS released_kobo
 		FROM campaigns c
 		LEFT JOIN contributions co ON co.campaign_id = c.id
 		WHERE c.id = $1
-		GROUP BY c.id, c.title, c.review_status`
-	if err := s.db.QueryRow(ctx, campQ, campaignID).Scan(&title, &frozen, &escrow, &release); err != nil {
+		GROUP BY c.id, c.title, c.creator_id, c.review_status`
+	if err := s.db.QueryRow(ctx, campQ, campaignID).Scan(&title, &creatorID, &frozen, &escrow, &release); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrCampaignNotFound
 		}
@@ -83,7 +100,16 @@ func (s *Service) GetWallet(ctx context.Context, campaignID string) (*CampaignWa
 		return nil, err
 	}
 
-	available := release - withdrawn - pending
+	var available int64
+	if s.ledger != nil {
+		balance, err := s.ledger.GetBalance(ctx, creatorID)
+		if err != nil {
+			return nil, fmt.Errorf("crowdfunding/wallet: read creator balance: %w", err)
+		}
+		available = balance - pending
+	} else {
+		available = release - withdrawn - pending
+	}
 	if available < 0 {
 		available = 0
 	}

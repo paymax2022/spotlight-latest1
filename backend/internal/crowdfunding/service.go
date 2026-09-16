@@ -273,40 +273,72 @@ func (s *Service) Release(ctx context.Context, campaignID, creatorID string) err
 	return nil
 }
 
-// RefundAll refunds all escrowed contributions when a campaign fails or is cancelled.
-func (s *Service) RefundAll(ctx context.Context, campaignID, creatorID string) error {
+// RefundResult reports what RefundAll actually did, so a caller can tell
+// "every contributor got their money back" apart from "the campaign was
+// cancelled but nothing was refundable" — see RefundAll's own comment for
+// why that distinction matters here.
+type RefundResult struct {
+	RefundedCount int   `json:"refundedCount"`
+	RefundedKobo  int64 `json:"refundedKobo"`
+}
+
+// RefundAll refunds every contribution still sitting in escrow when a
+// campaign fails or is cancelled, then marks the campaign failed.
+//
+// Contribute() settles the 90/10 split IMMEDIATELY on arrival (see that
+// function's own comment) — a contribution only stays 'escrowed' if that
+// instant settle failed and is waiting on a manual sweep. So on a campaign
+// where every contribution settled normally, this refunds NOTHING: there is
+// nothing left in escrow to give back, the money already left for the
+// creator. That is an accepted product tradeoff (08a2b51a), not a bug this
+// function should silently paper over — but returning a bare success with no
+// indication of it was: a caller (and eventually a UI) had no way to tell
+// "we refunded everyone" from "we refunded no one, they'd already been
+// paid" apart from independently re-querying every contribution. Report the
+// real count/amount so that distinction is visible to whoever calls this.
+func (s *Service) RefundAll(ctx context.Context, campaignID, creatorID string) (*RefundResult, error) {
 	var status string
 	if err := s.db.QueryRow(ctx, `SELECT status FROM campaigns WHERE id=$1 AND creator_id=$2`, campaignID, creatorID).Scan(&status); err != nil {
-		return fmt.Errorf("crowdfunding: campaign not found")
+		return nil, fmt.Errorf("crowdfunding: campaign not found")
 	}
 	if status == "funded" {
-		return fmt.Errorf("crowdfunding: cannot refund a funded campaign")
+		return nil, fmt.Errorf("crowdfunding: cannot refund a funded campaign")
 	}
 
-	rows, err := s.db.Query(ctx, `SELECT id, settlement_id FROM contributions WHERE campaign_id=$1 AND status='escrowed'`, campaignID)
+	rows, err := s.db.Query(ctx, `SELECT id, settlement_id, amount_kobo FROM contributions WHERE campaign_id=$1 AND status='escrowed'`, campaignID)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer rows.Close()
-	type c struct{ id, settlementID string }
+	type c struct {
+		id, settlementID string
+		amountKobo       int64
+	}
 	var contribs []c
 	for rows.Next() {
 		var entry c
-		if err := rows.Scan(&entry.id, &entry.settlementID); err != nil {
-			return err
+		if err := rows.Scan(&entry.id, &entry.settlementID, &entry.amountKobo); err != nil {
+			return nil, err
 		}
 		contribs = append(contribs, entry)
 	}
 	rows.Close()
 
+	result := &RefundResult{}
 	for _, entry := range contribs {
 		if err := s.settlement.Refund(ctx, entry.settlementID, "campaign_cancelled"); err != nil {
-			return fmt.Errorf("crowdfunding: refund contribution %s: %w", entry.id, err)
+			return nil, fmt.Errorf("crowdfunding: refund contribution %s: %w", entry.id, err)
 		}
-		s.db.Exec(ctx, `UPDATE contributions SET status='refunded' WHERE id=$1`, entry.id)
+		if _, err := s.db.Exec(ctx, `UPDATE contributions SET status='refunded' WHERE id=$1`, entry.id); err != nil {
+			return nil, fmt.Errorf("crowdfunding: mark contribution %s refunded: %w", entry.id, err)
+		}
+		result.RefundedCount++
+		result.RefundedKobo += entry.amountKobo
 	}
-	_, err = s.db.Exec(ctx, `UPDATE campaigns SET status='failed' WHERE id=$1`, campaignID)
-	return err
+	if _, err := s.db.Exec(ctx, `UPDATE campaigns SET status='failed' WHERE id=$1`, campaignID); err != nil {
+		return nil, err
+	}
+	return result, nil
 }
 
 func (s *Service) checkAndMarkFunded(ctx context.Context, campaignID string) {
