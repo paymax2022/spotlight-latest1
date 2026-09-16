@@ -56,10 +56,22 @@ function nowIso() {
   return new Date().toISOString();
 }
 
-function makeReference(contestSlug: string) {
+// Exported for RG-005 (contestant/reference number uniqueness) test coverage.
+//
+// The random suffix used to be 4 base36 chars (~1.68M combinations). Under a
+// registration burst (many applicants submitting in the same millisecond —
+// the `stamp` component only changes once per ms), the birthday bound puts a
+// collision at ~99.9% likely by ~5000 same-millisecond calls — confirmed by
+// tests/unit/registration/dedup-and-reference-uniqueness.spec.ts, which
+// reproduced a real collision at that volume before this fix. Reference is a
+// human-facing/support-lookup value (the DB row identity is the UUID `id`,
+// unaffected), but a collided reference is still a real support/traceability
+// defect, so the suffix is widened to 6 chars (~2.18B combinations) — the same
+// per-slug format, just far lower collision odds at realistic burst sizes.
+export function makeReference(contestSlug: string) {
   const prefix = contestSlug.replace(/[^a-z0-9]/gi, '').slice(0, 6).toUpperCase() || 'SPOT';
   const stamp = Date.now().toString().slice(-6);
-  const rand = Math.random().toString(36).slice(2, 6).toUpperCase();
+  const rand = Math.random().toString(36).slice(2, 8).toUpperCase();
   return `${prefix}-${stamp}-${rand}`;
 }
 

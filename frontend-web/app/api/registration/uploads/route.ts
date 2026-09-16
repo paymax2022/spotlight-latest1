@@ -6,22 +6,36 @@ import { createR2UploadUrl, createR2DownloadUrl, hasR2Config } from '@/src/lib/s
 import { saveLocalUpload } from '@/src/lib/storage/local-uploads';
 
 const MAX_FILE_SIZE_MB = 100;
-const allowedExtensions = new Set([
-  '.jpg',
-  '.jpeg',
-  '.png',
-  '.webp',
-  '.mp4',
-  '.mov',
-  '.mp3',
-  '.wav',
-  '.m4a',
-  '.pdf',
-  '.doc',
-  '.docx',
-  '.ppt',
-  '.pptx',
-]);
+
+// SEC-007: extension → canonical, server-trusted content type. `.svg` is
+// deliberately absent — inline SVG can carry <script>/onload XSS, and this
+// module has no sanitizer/re-encode step to neutralize that.
+//
+// The Content-Type served back to browsers (R2 presigned GET / local dev
+// route) MUST come from this map, never from the client-supplied
+// `file.type` field on the multipart upload. Trusting the client value lets
+// an attacker upload a file named "photo.png" with `file.type:
+// "image/svg+xml"` (or "text/html"); some browsers render the response body
+// per the Content-Type header regardless of the URL's extension, which would
+// turn an "image upload" into stored XSS. Extension is still the sole gate
+// on what can be uploaded at all (checked below); this map only fixes what
+// Content-Type we promise to serve it back as.
+const allowedExtensions: Record<string, string> = {
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.png': 'image/png',
+  '.webp': 'image/webp',
+  '.mp4': 'video/mp4',
+  '.mov': 'video/quicktime',
+  '.mp3': 'audio/mpeg',
+  '.wav': 'audio/wav',
+  '.m4a': 'audio/mp4',
+  '.pdf': 'application/pdf',
+  '.doc': 'application/msword',
+  '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  '.ppt': 'application/vnd.ms-powerpoint',
+  '.pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+};
 
 // Durable storage for registration uploads lives in Cloudflare R2, in whichever
 // bucket `R2_BUCKET`/`R2_BUCKET_NAME` names — src/lib/storage/r2.ts resolves it
@@ -42,7 +56,8 @@ export async function POST(request: Request) {
     }
 
     const ext = path.extname(file.name).toLowerCase();
-    if (!allowedExtensions.has(ext)) {
+    const canonicalContentType = allowedExtensions[ext];
+    if (!canonicalContentType) {
       return errorResponse('Unsupported file format', 400);
     }
 
@@ -52,7 +67,9 @@ export async function POST(request: Request) {
     }
 
     const buffer = Buffer.from(await file.arrayBuffer());
-    const contentType = file.type || 'application/octet-stream';
+    // Server-trusted content type derived from the (already whitelisted)
+    // extension — never the client-supplied `file.type`. See SEC-007 note above.
+    const contentType = canonicalContentType;
     const objectKey = `registration/${user.id}/${randomUUID()}${ext}`;
 
     // Stable retrieval route — encodes the full (slash-containing) key into a

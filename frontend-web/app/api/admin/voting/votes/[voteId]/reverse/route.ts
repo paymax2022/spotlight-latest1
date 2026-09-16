@@ -1,7 +1,7 @@
 import { errorResponse, handleApiError, successResponse } from '@/src/lib/api/responses';
 import { assertAdminPermission } from '@/src/server/admin/auth';
 import { createAdminClient } from '@/lib/supabase/server';
-import { incrementVoteTotals } from '@/src/server/voting/totals.service';
+import { incrementVoteTotals, recomputeRanks } from '@/src/server/voting/totals.service';
 import { appendAuditLog } from '@/src/server/voting/audit.service';
 import { reverseWalletDebit } from '@/src/server/wallet/service';
 
@@ -129,6 +129,17 @@ export async function POST(
     await incrementVoteTotals(v.contest_id, v.contestant_id, {
       reversedVotes: quantity,
     });
+
+    // VI-008: an invalidated vote must be reflected in the leaderboard
+    // immediately — otherwise the fraud-review "invalidation" is audited but
+    // the public/admin leaderboard keeps showing the stale rank until the
+    // next unrelated recompute. Best-effort: never fail the reversal itself
+    // (which already succeeded and is audited below) if rank recompute errors.
+    try {
+      await recomputeRanks(v.contest_id);
+    } catch {
+      // non-fatal — ranks will self-correct on the next vote/recompute
+    }
 
     await appendAuditLog({
       actorId: identity.actorId,
