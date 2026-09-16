@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useRef } from 'react';
-import type * as maplibregl from 'maplibre-gl';
+import type maplibregl from 'maplibre-gl';
 import MapView from './MapView';
 import { mapsClient, type MapPoint } from '@/services/mapsClient';
 
