@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"time"
+
+	"spotlight/backend/internal/integrations/rtc"
 )
 
 // service_clinical_tail.go — business logic for the "clinical tail" endpoint groups.
@@ -273,7 +275,7 @@ func (s *Service) SubmitCallFeedback(ctx context.Context, userID, appointmentID 
 // SwitchCallProvider updates the call session's RTC provider for an appointment.
 func (s *Service) SwitchCallProvider(ctx context.Context, userID, appointmentID string, raw json.RawMessage) (*CallSession, error) {
 	p := parseOpsPatch(raw)
-	return s.repo.SwitchCallProvider(ctx, userID, appointmentID, strOrDefault(p.Provider, "agora"), raw)
+	return s.repo.SwitchCallProvider(ctx, userID, appointmentID, strOrDefault(p.Provider, rtc.ProviderVideoSDK), raw)
 }
 
 // ══ CHAT ════════════════════════════════════════════════════════════════════

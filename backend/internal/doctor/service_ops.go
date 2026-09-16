@@ -233,7 +233,7 @@ func (s *Service) StartCallSession(ctx context.Context, userID, appointmentID, i
 	}
 	p := parseOpsPatch(raw)
 	mode := strOrDefault(p.Mode, "video")
-	provider := strOrDefault(p.Provider, rtc.ProviderAgora)
+	provider := strOrDefault(p.Provider, rtc.ProviderVideoSDK)
 
 	token, uid, expiresAt, configured := s.issueCallToken(provider, appointmentID, userID)
 
@@ -260,7 +260,7 @@ func (s *Service) IssueCallToken(ctx context.Context, userID, appointmentID stri
 	if err != nil {
 		return nil, err
 	}
-	provider := strOrDefault(sess.Provider, rtc.ProviderAgora)
+	provider := strOrDefault(sess.Provider, rtc.ProviderVideoSDK)
 	token, _, expiresAt, configured := s.issueCallToken(provider, appointmentID, userID)
 	annotateCallToken(sess, token, provider, expiresAt, configured)
 	return sess, nil
