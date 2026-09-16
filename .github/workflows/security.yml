@@ -34,7 +34,7 @@ jobs:
           - language: javascript-typescript
             build-mode: none
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: github/codeql-action/init@v3
         with:
           languages: ${{ matrix.language }}
@@ -55,7 +55,7 @@ jobs:
       matrix:
         module: [backend, mobile-app/reactnative/backend]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-go@v5
         with:
           go-version-file: ${{ matrix.module }}/go.mod
@@ -74,7 +74,7 @@ jobs:
     # (verified locally, gitleaks v8.30.1). A NEW finding — an actual secret —
     # is exactly what should fail this job now that the backlog is triaged.
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
       # gitleaks-action@v2/@v3 both require a paid GITLEAKS_LICENSE for
@@ -106,7 +106,7 @@ jobs:
     runs-on: ubuntu-latest
     continue-on-error: true  # advisory during launch — flip to blocking once the backlog is clean
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       # 0.24.0 NEVER EXISTED — the tag 404s, so this step failed at "Set up job"
       # and trivy scanned nothing at all while the run still showed a job for it.
       # Upstream tags are v-prefixed; v0.36.0 is the current release.
@@ -144,7 +144,7 @@ jobs:
           - dir: mobile-app/reactnative
             baseline: mobile-app-reactnative
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-node@v4
         with:
           node-version: 20
