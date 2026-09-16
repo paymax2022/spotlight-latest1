@@ -398,6 +398,77 @@ describe('initiatePaidVote (real logic, mocked Supabase) — PV-012 currency/pri
     expect(initCall.currency).toBe('USD');
     expect(initCall.amount).toBe(500); // 5 USD * 100
   });
+
+  // NF-007 -------------------------------------------------------------------
+  // Contest UAT Batch 3, TS-11 NF-007 (payment gateway outage degrades
+  // safely). PV-007 above already proves the VERIFY side of this for a
+  // network drop mid-verification; this is the missing INITIATE-side half —
+  // the paystack init call is the only thing initiate does that can reach the
+  // gateway, and it runs AFTER the pending vote_transactions row is already
+  // written. Nothing in initiatePaidVote credits votes or moves money (that
+  // only happens in verifyAndCreditPaidVote), so "no votes/no charge on
+  // outage" is structurally true here — what's worth confirming is that (a)
+  // a thrown gateway error propagates as a clean failure rather than being
+  // swallowed into a false-success response, and (b) it doesn't corrupt the
+  // pending transaction row into a state a retry can't recover from — a
+  // fresh initiate call right after must still succeed normally.
+  it('a gateway outage during initiate propagates the failure and does not block a subsequent retry', async () => {
+    vi.mocked(initializePaystackPayment).mockRejectedValueOnce(new Error('ETIMEDOUT'));
+
+    const { client: outageClient } = makeTableClient({
+      voting_settings: [{ data: settingsRow({ currency: 'NGN' }), error: null }],
+      vote_packages: [
+        {
+          data: {
+            id: 'pkg-ngn-10', contest_id: 'contest-usd', name: '10 votes',
+            votes: 10, bonus_votes: 0, amount: 500, currency: 'NGN',
+            is_active: true, is_recommended: false, display_order: 0,
+          },
+          error: null,
+        },
+      ],
+      vote_transactions: [{ data: { id: 'tx-outage-1' }, error: null }],
+    });
+    vi.mocked(createAdminClient).mockReturnValue(outageClient);
+
+    const req = {
+      contestId: 'contest-usd',
+      contestantId: 'contestant-A',
+      voterEmail: 'voter@example.com',
+      voterName: 'Test Voter',
+      packageId: 'pkg-ngn-10',
+      callbackUrl: 'https://example.com/callback',
+    } as any;
+
+    // (a) the outage surfaces as a real rejection, not a masked success.
+    await expect(initiatePaidVote(req, '10.0.0.1', 'UA/1.0', 'user-1')).rejects.toThrow('ETIMEDOUT');
+    // No initiate audit entry for a call that never actually initiated anything.
+    expect(vi.mocked(appendAuditLog)).not.toHaveBeenCalled();
+
+    // (b) retry after the outage clears: a fresh initiate call succeeds normally
+    // — the earlier failed attempt's pending row (never returned to the caller,
+    // who has no id to retry against) doesn't block a new one.
+    vi.mocked(initializePaystackPayment).mockResolvedValueOnce('https://checkout.paystack.com/retry');
+    const { client: retryClient } = makeTableClient({
+      voting_settings: [{ data: settingsRow({ currency: 'NGN' }), error: null }],
+      vote_packages: [
+        {
+          data: {
+            id: 'pkg-ngn-10', contest_id: 'contest-usd', name: '10 votes',
+            votes: 10, bonus_votes: 0, amount: 500, currency: 'NGN',
+            is_active: true, is_recommended: false, display_order: 0,
+          },
+          error: null,
+        },
+      ],
+      vote_transactions: [{ data: { id: 'tx-outage-2' }, error: null }],
+    });
+    vi.mocked(createAdminClient).mockReturnValue(retryClient);
+
+    const result = await initiatePaidVote(req, '10.0.0.1', 'UA/1.0', 'user-1');
+    expect(result.transactionId).toBe('tx-outage-2');
+    expect(result.authorizationUrl).toBe('https://checkout.paystack.com/retry');
+  });
 });
 
 // ---------------------------------------------------------------------------

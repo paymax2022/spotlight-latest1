@@ -125,6 +125,16 @@ func deleteContestTree(ctx context.Context, pool *pgxpool.Pool, contestID string
 	for _, q := range []string{
 		`DELETE FROM public.bridge_outbox      WHERE payload->>'contestId' = $1`,
 		`DELETE FROM public.connect_votes      WHERE contest_id = $1`,
+		// Legacy voting-engine rails (claim_free_vote / credit_paid_vote_transaction
+		// write here) — added for the NF-001/004/005 surge/atomicity/retry-storm
+		// suites, which call those RPCs directly against the mirrored legacy
+		// contest row. contests(id) has no ON DELETE CASCADE from these tables, so
+		// leaving any of them in place makes the final `DELETE FROM public.contests`
+		// below fail its FK check and silently leak the fixture contest forever
+		// (errors here are swallowed by design — see comment above).
+		`DELETE FROM public.votes                        WHERE contest_id = $1`,
+		`DELETE FROM public.vote_totals                   WHERE contest_id = $1`,
+		`DELETE FROM public.voter_contestant_daily_limits WHERE contest_id = $1`,
 		`DELETE FROM public.vote_transactions  WHERE contest_id = $1`,
 		`DELETE FROM public.vote_packages      WHERE contest_id = $1`,
 		`DELETE FROM public.voting_settings    WHERE contest_id = $1`,
