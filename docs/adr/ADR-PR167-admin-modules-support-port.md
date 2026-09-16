@@ -1,4 +1,9 @@
-# ADR-029 — Admin (modules) type debt: port support files to `src/`, keep alias paths
+# ADR-PR167 — Admin (modules) type debt: port support files to `src/`, keep alias paths
+
+> Numbering note: this ADR predates ADR-assign automation and had hand-picked
+> `ADR-029`, which is now taken by the orchestration ledger fix
+> (`ADR-029-orch-ledger-per-currency-double-entry.md`). Renamed to the
+> `ADR-PR<n>` placeholder so a real number is assigned on merge instead.
 
 **Date:** 2026-08-12
 **Status:** Superseded by ADR-047's consolidation (commit `1103469b`, "delete
