@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { View, Text, ScrollView, StyleSheet, Platform, Pressable, ActivityIndicator, RefreshControl } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Plus, Send, ArrowDown, RefreshCw, ArrowUpRight, ArrowDownLeft } from 'lucide-react-native';
+import { Plus, Send, ArrowDown, RefreshCw, ArrowUpRight, ArrowDownLeft, ShieldCheck, ChevronRight } from 'lucide-react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { router } from 'expo-router';
 import { useQuery } from '@tanstack/react-query';
@@ -96,6 +96,20 @@ export default function WalletScreen() {
           ]}
         />
 
+        <Pressable
+          style={({ pressed }) => [styles.tierBanner, shadow1, pressed && { opacity: 0.85 }]}
+          onPress={() => router.push('/connect/wallet/tier/status' as never)}
+        >
+          <View style={styles.tierBannerIcon}>
+            <ShieldCheck size={18} color={Colors.primary} strokeWidth={2} />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.tierBannerTitle}>Account tier & limits</Text>
+            <Text style={styles.tierBannerSubtitle}>View your verification tier and transaction limits</Text>
+          </View>
+          <ChevronRight size={18} color={Colors.onSurfaceVariant} strokeWidth={2} />
+        </Pressable>
+
         <View style={styles.statsRow}>
           <LinearGradient colors={[Colors.iconBgTeal, 'rgba(72,184,172,0.04)']} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={[styles.statCard, shadow1]}>
             <View style={[styles.statIcon, { backgroundColor: Colors.iconBgTeal }]}>
@@ -148,6 +162,10 @@ const styles = StyleSheet.create({
   safe:     { flex: 1, backgroundColor: Colors.background },
   header:   { paddingHorizontal: Spacing.containerMargin, paddingTop: Spacing.md, paddingBottom: Spacing.sm },
   title:    { ...Typography.headlineMd, color: Colors.onSurface },
+  tierBanner: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm, marginHorizontal: Spacing.containerMargin, marginBottom: Spacing.lg, padding: Spacing.md, borderRadius: Radius.lg, backgroundColor: Colors.surfaceContainerLowest, borderWidth: 1, borderColor: Colors.surfaceContainerHigh },
+  tierBannerIcon: { width: 36, height: 36, borderRadius: Radius.sm + 4, alignItems: 'center', justifyContent: 'center', backgroundColor: Colors.iconBgPurple },
+  tierBannerTitle: { ...Typography.labelMd, color: Colors.onSurface, fontWeight: '600' },
+  tierBannerSubtitle: { ...Typography.labelSm, color: Colors.onSurfaceVariant, marginTop: 2 },
   statsRow: { flexDirection: 'row', gap: Spacing.md, paddingHorizontal: Spacing.containerMargin, marginBottom: Spacing.lg },
   statCard: { flex: 1, borderRadius: Radius.lg, padding: Spacing.md, gap: Spacing.xs, backgroundColor: Colors.surfaceContainerLowest, borderWidth: 1, borderColor: Colors.surfaceContainerHigh },
   statIcon: { width: 36, height: 36, borderRadius: Radius.sm + 4, alignItems: 'center', justifyContent: 'center' },

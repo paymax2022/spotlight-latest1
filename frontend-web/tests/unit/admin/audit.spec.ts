@@ -49,6 +49,22 @@ function makeSupabase(insertResult: { error: unknown } = { error: null }) {
   return { client, inserts };
 }
 
+/** Supabase double for `admin_audit_logs` reads: `.select().order().limit()` resolves to `selectResult`. */
+function makeSelectSupabase(selectResult: { data: unknown; error: unknown }) {
+  const client = {
+    from: vi.fn().mockImplementation((table: string) => {
+      expect(table).toBe('admin_audit_logs');
+      const builder: any = {
+        select: () => builder,
+        order: () => builder,
+        limit: () => Promise.resolve(selectResult),
+      };
+      return builder;
+    }),
+  };
+  return { client };
+}
+
 /**
  * Wait for the fire-and-forget insert promise to settle, by polling `until`
  * rather than a fixed tick count. A fixed 2-tick `setTimeout` wait was found
@@ -188,5 +204,119 @@ describe('addAuditEvent — durability (WAL-005)', () => {
 
     expect(inserts).toHaveLength(1);
     expect(consoleErrorSpy).toHaveBeenCalled();
+  });
+});
+
+describe('listAuditEventsDurable — merged read path (WAL-009)', () => {
+  beforeEach(() => {
+    vi.resetModules();
+    (globalThis as unknown as Record<string, unknown>).__spotlightAdminAuditStore = undefined;
+  });
+
+  it('merges DB rows and in-memory events, deduping by id', async () => {
+    const dbOnlyRow = {
+      id: 'db-only-1',
+      admin_id: 'admin-1',
+      action_type: 'settings_update',
+      target_table: 'system_setting',
+      target_id: null,
+      old_value: null,
+      new_value: null,
+      reason: null,
+      ip_address: null,
+      created_at: '2026-09-10T00:00:00.000Z',
+    };
+    const { client: readClient } = makeSelectSupabase({ data: [dbOnlyRow], error: null });
+    mockAdmin.mockReturnValue(readClient);
+
+    const { addAuditEvent, listAuditEventsDurable } = await import('@/src/server/admin/audit');
+    const memoryEvent = addAuditEvent({
+      adminUser: 'admin-2',
+      role: 'super_admin',
+      action: 'cms_update',
+      module: 'cms',
+      entityType: 'cms_page',
+      entityId: 'page-1',
+    });
+
+    const events = await listAuditEventsDurable(50);
+
+    expect(events).toHaveLength(2);
+    expect(events.find((e) => e.id === 'db-only-1')).toBeTruthy();
+    expect(events.find((e) => e.id === memoryEvent.id)).toEqual(memoryEvent);
+  });
+
+  it('dedupes an event both durably persisted and still in memory, preferring the in-memory copy', async () => {
+    const { client: readClient } = makeSelectSupabase({ data: [], error: null });
+    mockAdmin.mockReturnValue(readClient);
+
+    const { addAuditEvent, listAuditEventsDurable } = await import('@/src/server/admin/audit');
+    const event = addAuditEvent({
+      adminUser: 'admin-1',
+      role: 'super_admin',
+      action: 'settings_update',
+      module: 'settings',
+      entityType: 'system_setting',
+      entityId: 'setting-1',
+    });
+
+    const sameRow = {
+      id: event.id,
+      admin_id: 'admin-1',
+      action_type: 'settings_update',
+      target_table: 'system_setting',
+      target_id: 'setting-1',
+      old_value: null,
+      new_value: null,
+      reason: null,
+      ip_address: null,
+      created_at: event.timestamp,
+    };
+    (readClient.from as ReturnType<typeof vi.fn>).mockImplementation((table: string) => {
+      expect(table).toBe('admin_audit_logs');
+      const builder: any = {
+        select: () => builder,
+        order: () => builder,
+        limit: () => Promise.resolve({ data: [sameRow], error: null }),
+      };
+      return builder;
+    });
+
+    const events = await listAuditEventsDurable(50);
+
+    expect(events).toHaveLength(1);
+    expect(events[0]).toEqual(event);
+  });
+
+  it('falls back to the in-memory-only view when the DB read fails', async () => {
+    const client = {
+      from: vi.fn().mockImplementation((table: string) => {
+        expect(table).toBe('admin_audit_logs');
+        const builder: any = {
+          select: () => builder,
+          order: () => builder,
+          limit: () => Promise.reject(new Error('connection reset')),
+        };
+        return builder;
+      }),
+    };
+    mockAdmin.mockReturnValue(client);
+
+    const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const { addAuditEvent, listAuditEventsDurable } = await import('@/src/server/admin/audit');
+    const event = addAuditEvent({
+      adminUser: 'admin-1',
+      role: 'super_admin',
+      action: 'settings_update',
+      module: 'settings',
+      entityType: 'system_setting',
+      entityId: 'setting-1',
+    });
+
+    const events = await listAuditEventsDurable(50);
+
+    expect(events).toEqual([event]);
+    expect(consoleErrorSpy).toHaveBeenCalled();
+    consoleErrorSpy.mockRestore();
   });
 });

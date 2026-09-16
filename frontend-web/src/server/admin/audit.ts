@@ -72,6 +72,11 @@ export function addAuditEvent(input: Omit<AdminAuditEvent, 'id' | 'timestamp'>) 
 async function persistAuditEvent(event: AdminAuditEvent): Promise<void> {
   const supabase = createAdminClient();
   const { error } = await supabase.from('admin_audit_logs').insert({
+    // Carry the same id as the in-memory event so listAuditEventsDurable()'s merge
+    // (see below) can dedupe an event that is present in both the in-memory store
+    // (this process, since restart) and the DB (every process, ever) by id, rather
+    // than by any fuzzier heuristic.
+    id: event.id,
     admin_id: toUuidOrNull(event.adminUser),
     action_type: event.action,
     target_table: event.entityType,
@@ -86,4 +91,72 @@ async function persistAuditEvent(event: AdminAuditEvent): Promise<void> {
 
 export function listAuditEvents(limit = 100) {
   return getStore().events.slice(0, Math.max(1, Math.min(limit, 500)));
+}
+
+type AuditLogRow = {
+  id: string;
+  admin_id: string | null;
+  action_type: string;
+  target_table: string;
+  target_id: string | null;
+  old_value: unknown;
+  new_value: unknown;
+  reason: string | null;
+  ip_address: string | null;
+  created_at: string;
+};
+
+function rowToEvent(row: AuditLogRow): AdminAuditEvent {
+  return {
+    id: row.id,
+    adminUser: row.admin_id ?? 'system',
+    role: '',
+    action: row.action_type,
+    module: row.target_table,
+    entityType: row.target_table,
+    entityId: row.target_id ?? undefined,
+    oldValue: row.old_value ?? undefined,
+    newValue: row.new_value ?? undefined,
+    reason: row.reason ?? undefined,
+    ipAddress: row.ip_address ?? undefined,
+    timestamp: row.created_at,
+  };
+}
+
+/**
+ * WAL-009: `listAuditEvents()` alone only ever reflects this process's in-memory
+ * events since its last restart — never any other worker process, and nothing
+ * from before a restart. This reads `admin_audit_logs` (the durable store
+ * `addAuditEvent()` now writes to — see WAL-005) and merges it with the
+ * in-memory store, deduping by id (an event this process both wrote to memory
+ * AND durably persisted appears once). Falls back to the in-memory-only view on
+ * any DB read failure, so the admin console's audit page degrades rather than
+ * breaking outright.
+ */
+export async function listAuditEventsDurable(limit = 100): Promise<AdminAuditEvent[]> {
+  const capped = Math.max(1, Math.min(limit, 500));
+  const inMemory = listAuditEvents(capped);
+
+  try {
+    const supabase = createAdminClient();
+    const { data, error } = await supabase
+      .from('admin_audit_logs')
+      .select('id, admin_id, action_type, target_table, target_id, old_value, new_value, reason, ip_address, created_at')
+      .order('created_at', { ascending: false })
+      .limit(capped);
+    if (error) throw error;
+
+    const byId = new Map<string, AdminAuditEvent>();
+    for (const row of (data ?? []) as AuditLogRow[]) byId.set(row.id, rowToEvent(row));
+    for (const event of inMemory) byId.set(event.id, event);
+
+    return Array.from(byId.values())
+      .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
+      .slice(0, capped);
+  } catch (err) {
+    console.error('[admin-audit] failed to read admin_audit_logs, falling back to in-memory only', {
+      error: err instanceof Error ? err.message : err,
+    });
+    return inMemory;
+  }
 }
