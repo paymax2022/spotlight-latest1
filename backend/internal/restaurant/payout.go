@@ -310,6 +310,39 @@ func (s *Service) ProcessRun(ctx context.Context, runID, idempotencyKey string) 
 		if existing.Status == PayoutStatusPaid {
 			return &existing.PayoutRun, nil // already disbursed — idempotent no-op
 		}
+		// FOOD-002: a run can be left stuck at 'processing' forever if the
+		// process dies between the PostJournal below succeeding and the
+		// finalise UPDATE committing — the money has already moved, but
+		// nothing ever re-checks that and finalises the run. Recover here:
+		// if the run's own idempotency key already has a posted ledger entry,
+		// the transfer landed: finalise to 'paid' now (idempotently — this
+		// UPDATE only ever affects a still-'processing' row) instead of
+		// leaving a paid provider's run reporting as unprocessed forever.
+		if existing.Status == PayoutStatusProcessing {
+			posted, perr := s.ledger.Posted(ctx, existing.IdempotencyKey)
+			if perr == nil && posted {
+				ledgerRef := "rpayout:" + existing.ID
+				const recoverFinalise = `
+					UPDATE restaurant_payout_runs
+					SET status = 'paid', ledger_reference = $2, processed_at = now()
+					WHERE id = $1 AND status = 'processing'
+					RETURNING id, period_key, provider_type, provider_id, gross_minor, fee_minor,
+					          net_minor, status, idempotency_key, ledger_reference, created_at, processed_at`
+				var recovered PayoutRun
+				if rerr := s.db.QueryRow(ctx, recoverFinalise, runID, ledgerRef).Scan(
+					&recovered.ID, &recovered.PeriodKey, &recovered.ProviderType, &recovered.ProviderID,
+					&recovered.GrossMinor, &recovered.FeeMinor, &recovered.NetMinor, &recovered.Status,
+					&recovered.IdempotencyKey, &recovered.LedgerReference, &recovered.CreatedAt, &recovered.ProcessedAt,
+				); rerr == nil {
+					return &recovered, nil
+				}
+				// Lost a race with another finaliser/recoverer; re-read and treat a
+				// resulting 'paid' status as the success it now is.
+				if reread, rgerr := s.GetRun(ctx, runID); rgerr == nil && reread.Status == PayoutStatusPaid {
+					return &reread.PayoutRun, nil
+				}
+			}
+		}
 		return nil, fmt.Errorf("restaurant: payout run %s not disbursable (status %s)", runID, existing.Status)
 	}
 	if err != nil {

@@ -59,20 +59,20 @@ Given the module's maturity, Phase 2/3 here is weighted toward **verification of
 
 | ID | Case | Priority | Expected | Status | Notes |
 |---|---|---|---|---|---|
-| FA-001 | Restaurant list/detail/menu editor loads and writes real data | P1 | Accurate, real writes | ⬜ Not Run | |
-| FA-002 | Dispatch board loads real rider/queue data (not the stale "mock-first" comment) | P1 | Real data | ⬜ Not Run | Confirm Phase 1's finding that this comment is stale |
-| FA-003 | Disputes resolution (approve/reject, refund/clawback trigger) | P1 | Functional, correct money movement | ⬜ Not Run | |
-| FA-004 | Payout runs (build, process, view history) | P1 | Functional, balanced ledger | ⬜ Not Run | |
-| FA-005 | Withdrawals | P1 | Functional | ⬜ Not Run | |
-| FA-006 | Moderation, unclaimed-listing handling | P2 | Functional | ⬜ Not Run | |
-| FA-007 | KYB onboarding review | P1 | Functional — this is the exact surface the mock-mode incident (709 stuck outlets) happened on; confirm the fix holds | ⬜ Not Run | |
+| FA-001 | Restaurant list/detail/menu editor loads and writes real data | P1 | Accurate, real writes | ✅ Pass | Real HTTP create/edit/menu-category calls all persisted correctly, DB-confirmed |
+| FA-002 | Dispatch board loads real rider/queue data (not the stale "mock-first" comment) | P1 | Real data | ✅ Pass | Confirmed live-wired to real handlers; the "mock-first" UI comment is stale/cosmetic only |
+| FA-003 | Disputes resolution (approve/reject, refund/clawback trigger) | P0 | Functional, correct money movement | ❌ Fail | **FOOD-004 (Blocker)** — resolving a food dispute with a refund returns 200 and flips status, but posts ZERO ledger movement; `refund_kobo` is sent by the client and never even read server-side. The real refund-cap/tip-clawback engine exists but is unreachable dead code. Confirmed independently via source read, not just live repro |
+| FA-004 | Payout runs (build, process, view history) | P0 | Functional, balanced ledger | ✅ Pass | Real HTTP build+process produced a genuine balanced double-entry, DB-confirmed |
+| FA-005 | Withdrawals | P0 | Functional | ❌ Fail | **FOOD-005 (Blocker)** — no route exists anywhere (owner or admin), no admin UI page exists, despite a complete backend service (`withdrawal.go`) and DB table already built |
+| FA-006 | Moderation, unclaimed-listing handling | P2 | Functional | 🚧 Partial | Moderation confirmed functional with real writes. Unclaimed-listing read confirmed live; the claim-decision workflow itself wasn't exercised (no fixture existed) |
+| FA-007 | KYB onboarding review | P0 | Functional — this is the exact surface the mock-mode incident (709 stuck outlets) happened on; confirm the fix holds | ❌ Fail | **FOOD-003 (Blocker)** — the `USE_MOCK=false` fix only stopped writes from landing in a fake array; it did nothing for a second, independent gap: KYB submission routes are unregistered (owners can never create a real KYB row), and admin approval skips `restaurants.kyb_status` entirely when no KYB row exists — so every restaurant approved through today's live console is permanently unpayable. Confirmed independently via source read + live payout-readiness check |
 
 ## 5. Non-functional
 
 | ID | Case | Priority | Expected | Status | Notes |
 |---|---|---|---|---|---|
-| FN-001 | Full live-DB test suite (30 `_live_db_test.go` files) actually passes | P0 | 100% green | ⬜ Not Run | Phase 1 could not run this (no DB in its sandbox) |
-| FN-002 | `payout.go ProcessRun` has real, not just transitive, test coverage | P0 | Confirmed or gap closed | ⬜ Not Run | Phase 1 flagged this as unclear |
+| FN-001 | Full live-DB test suite (30 `_live_db_test.go` files) actually passes | P0 | 100% green | ✅ Pass | Confirmed clean against real local Postgres, including `-race` |
+| FN-002 | `payout.go ProcessRun` has real, not just transitive, test coverage | P0 | Confirmed or gap closed | 🔧 Fixed | **FOOD-001** — confirmed zero coverage existed (`grep` for `ProcessRun` in any test file returned nothing); 6 new live-DB tests added covering happy path, double-payment protection, mixed-provider batches, concurrent-claim single-winner, and unknown-run handling. While adding this coverage, found and fixed a real bug — **FOOD-002**, see defect log |
 | FN-003 | Concurrency at scale: many simultaneous orders against one restaurant/rider | P1 | No lost/duplicate escrow or settlement | ⬜ Not Run | |
 | FN-004 | Secrets exposure: no leaked payment/bank details in logs | P1 | Clean | ⬜ Not Run | |
 
@@ -82,4 +82,32 @@ _Populated after Phase 3 execution._
 
 ## 7. Defect log
 
-_(populated as Phase 3 execution finds issues)_
+### FOOD-001 — `payout.go`'s `ProcessRun`/`BuildRun` disbursement logic had zero test coverage — FIXED
+- **Description**: `backend/internal/restaurant/payout.go` — the actual functions that post real money transfers to restaurant owners and riders — had no test file at all. The only payout-adjacent test (`payout_readiness_live_db_test.go`) covers a separate, read-only eligibility-check file, not the disbursement transfer logic.
+- **Fix**: New `payout_processrun_live_db_test.go` (6 tests): happy path (real balanced double-entry, DB-confirmed), double-payment protection (replay + a second run over an already-claimed settlement), mixed-provider batch (restaurant + rider runs never cross-credit), concurrent-claim single-winner (5 racing goroutines, exactly one transfer lands), and unknown-run clean failure.
+- **Status**: Closed.
+
+### FOOD-002 — A crash between posting the payout ledger transfer and finalising the run leaves it stuck at 'processing' forever, though the money already moved — FIXED
+- **Description**: Found while writing FOOD-001's tests. `ProcessRun`'s real sequence is: (1) atomically claim `draft→processing`, (2) post the ledger transfer, (3) atomically finalise `processing→paid`. If the process dies between (2) committing and (3) committing, the run is stuck at `processing` permanently — a retry's claim requires `status='draft'` (fails), falls through to the `existing.Status` check, sees `processing` (not `paid`), and returns a bare "not disbursable" error forever. The money already moved; nothing ever re-checks that and finalises the run. Confirmed no reconciler/cron/admin-retry path exists anywhere in the codebase for this state.
+- **Root cause**: The finalise step's only success path assumed it would always run in the same call as the post; no recovery branch existed for the two committing separately across a crash.
+- **Fix**: The `existing.Status == PayoutStatusProcessing` fallback now calls `ledger.Posted()` (an existing helper, already used by 6 other callers in this codebase for exactly this "did my transfer already land" crash-recovery check) against the run's own idempotency key. If the transfer already posted, the run is finalised to `paid` right there — idempotently, guarded by the same `WHERE status='processing'` pattern as the original finalise — instead of erroring forever.
+- **Test**: New `TestLiveDB_ProcessRunRecoversFromCrashBetweenPostAndFinalise` — manually reproduces the exact crash window (claims the run, posts the real transfer, deliberately skips finalising), then calls `ProcessRun` again exactly as an operator retrying a stuck run would; confirms it now recovers to `paid` using the SAME transfer (wallet balance unchanged by the recovery call — no double-pay). Full package suite (including the 6 new FOOD-001 tests): all pass with `-race`.
+- **Status**: Closed.
+
+### FOOD-003 — Restaurant KYB approval is broken end-to-end; every restaurant approved through the live console today is permanently unpayable
+- **Description**: Two compounding gaps. (1) `kyb_handler.go`'s `SaveKYB`/`AddKYBDocument`/`SubmitKYB`/`GetKYB` are never registered on any route — live-confirmed 404 on both submit and read. No restaurant owner can ever create a real `restaurant_kyb` row through the live product. (2) `admin_repo.go`'s `AdminDecideApplication`: when no KYB row exists (`hasKYB==false` — true for every restaurant today, per (1)), approving sets `restaurants.is_open=true` but never touches `restaurants.kyb_status` (that update only runs inside the `if hasKYB` branch) — so `payout.go`'s `AND res.kyb_status='approved'` gate refuses that restaurant's payouts forever. Live-confirmed: an admin-approved test restaurant's `GET /api/finance/restaurant/payout-readiness` (as the owner) returned `{"kyb_status":"none","payable":false,"reason":"Business verification not started..."}` — after admin approval.
+- **Root cause**: The `USE_MOCK=false` admin-console fix (which closed the ORIGINAL 709-stuck-outlets incident this module's own code comments describe) only stopped writes from landing in a fake in-memory array. It did nothing for this second, independent gap in the real write path itself.
+- **Severity**: Blocker.
+- **Status**: Open, remediation dispatched.
+
+### FOOD-004 — Admin-resolved food-delivery disputes never move any money, despite claiming to
+- **Description**: The admin console's dispute-resolve action sends `{resolution, admin_note, refund_kobo}` to `POST /api/finance/admin/disputes/:id/resolve`, and the service code's own comment claims "posts the reversing ledger entry on refund." The actual handler (`internal/finance/disputes/service.go:69 Resolve()`) is a bare `UPDATE disputes SET status='resolved'...` — it never reads `refund_kobo` at all, never posts a ledger entry, never triggers a tip clawback. Live-confirmed: resolving a real food dispute with a refund returns 200 and flips `disputes.status`, but `ledger_entries` count is unchanged and `restaurant_dispute_refunds`/`restaurant_dispute_tip_clawbacks` both stay at 0 rows. Meanwhile a real, correct implementation (`restaurant/disputes_service.go:112 AdminResolveFoodDispute`, with the refund-cap and tip-clawback logic this module's own ADRs describe) exists but is unreachable — no route registers it. A code comment in `finance_routes.go` explicitly documents the ("Disputes are NOT here — the console reuses /api/finance/{disputes,admin/disputes}") consolidation decision, but that consolidation was never actually finished: the generic disputes module was never wired to dispatch food-delivery disputes to the real logic.
+- **Root cause**: An intentional route-consolidation decision whose implementation was never completed.
+- **Severity**: Blocker.
+- **Status**: Open, remediation dispatched.
+
+### FOOD-005 — No withdrawal route or admin UI exists anywhere, despite a complete backend service already built
+- **Description**: `backend/internal/restaurant/withdrawal.go` fully implements `RequestWithdrawal`/`ListWithdrawals`/`MarkWithdrawalPaid`/`MarkWithdrawalFailed` against a real `restaurant_withdrawals` table — but none of it is registered on any route (owner-facing or admin), and `frontend-admin/app/admin/restaurant/` has no `withdrawals/` directory at all. This is distinct from the working `payouts` surface (which pays a provider FROM the platform's settlement account INTO their wallet) — withdrawal is the separate, subsequent step of moving money FROM the wallet OUT to a bank account, and that step is completely unreachable today.
+- **Root cause**: A complete backend implementation was built but never wired to any route or UI.
+- **Severity**: Blocker.
+- **Status**: Open, remediation dispatched.
