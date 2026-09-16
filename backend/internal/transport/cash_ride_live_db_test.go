@@ -187,10 +187,6 @@ func TestLiveDB_CashRideNoEscrowAndBalanceGate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("balance before: %v", err)
 	}
-	revenueBefore, err := ledgerSvc.GetAccountBalance(ctx, revAcc.ID)
-	if err != nil {
-		t.Fatalf("revenue before: %v", err)
-	}
 
 	if err := svc.CompleteTrip(ctx, tripID, richDriver); err != nil {
 		t.Fatalf("CompleteTrip: %v", err)
@@ -208,16 +204,26 @@ func TestLiveDB_CashRideNoEscrowAndBalanceGate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("balance after: %v", err)
 	}
-	revenueAfter, err := ledgerSvc.GetAccountBalance(ctx, revAcc.ID)
-	if err != nil {
-		t.Fatalf("revenue after: %v", err)
-	}
-
 	if got := balanceBefore - balanceAfter; got != wantFee {
 		t.Errorf("driver wallet debited %d kobo, want %d kobo (20%% of fare %d)", got, wantFee, fareKobo)
 	}
-	if got := revenueAfter - revenueBefore; got != wantFee {
-		t.Errorf("platform revenue credited %d kobo, want %d kobo", got, wantFee)
+
+	// paymax_revenue is a global standing account (singleton, keyed by type —
+	// see ledger.Service.GetOrCreateStandingAccount) shared by every live-DB
+	// suite across the backend, and `go test ./...` runs packages concurrently
+	// against the same TEST_DATABASE_URL. A before/after balance diff on that
+	// account races against unrelated concurrent postings (e.g. another
+	// package's own seed-fund Credit), so assert on THIS trip's own ledger
+	// entry by its idempotency key instead of a snapshot diff of shared state.
+	var creditedAmount int64
+	if err := pool.QueryRow(ctx,
+		`SELECT amount_kobo FROM ledger_entries WHERE idempotency_key=$1 AND account_id=$2 AND type='CREDIT'`,
+		"cash_fee:"+tripID+":credit", revAcc.ID,
+	).Scan(&creditedAmount); err != nil {
+		t.Fatalf("read platform revenue credit entry: %v", err)
+	}
+	if creditedAmount != wantFee {
+		t.Errorf("platform revenue credited %d kobo, want %d kobo", creditedAmount, wantFee)
 	}
 
 	// The rider's wallet was never touched at any point in a cash ride.
