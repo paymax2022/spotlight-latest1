@@ -78,6 +78,8 @@ func (s *Service) SetCommissionRecorder(cr CommissionRecorder) { s.commission = 
 
 // BankAccountResolver is the nil-safe seam into real bank-account name
 // verification (Paystack NUBAN resolve, https://paystack.com/docs/identity-verification/verify-account-number/).
+// See ADR-PR184 for the full design rationale (interface seam, gating, fail-open
+// vs fail-closed split, and the RequestPayout/UpdatePayoutAccount enforcement).
 // Modeled as a LOCAL interface, mirroring CommissionRecorder, so doctor never
 // imports the provider/paystack package at compile time — app-wiring injects a
 // thin adapter over the shared Paystack client. A nil resolver (no
