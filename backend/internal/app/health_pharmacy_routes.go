@@ -13,6 +13,7 @@ import (
 	"spotlight/backend/internal/finance/commission"
 	"spotlight/backend/internal/finance/kyc"
 	"spotlight/backend/internal/finance/ledger"
+	"spotlight/backend/internal/finance/settlement"
 	healthpharmacy "spotlight/backend/internal/health/pharmacy"
 	healthrx "spotlight/backend/internal/health/rx"
 	"spotlight/backend/internal/middleware"
@@ -51,7 +52,14 @@ func RegisterHealthPharmacy(member *gin.RouterGroup, admin *gin.RouterGroup, poo
 	ledgerSvc := ledger.NewService(ledger.NewRepository(pool), nil)
 	escrowSvc := escrow.NewService(pool, ledgerSvc, nil)
 	rxSvc := healthrx.NewService(pool, nil)
-	transportSvc := transport.NewService(pool, nil)
+	// transport.Service needs a real settlement instance for its own escrow
+	// (last-mile courier payout) — a nil settlement service isn't a no-op,
+	// it's a nil pointer BookParcel dereferences unconditionally. Found live
+	// via UAT: dispatching any DELIVERY-fulfilment pharmacy order panicked
+	// (500) inside settlement.Service.Escrow, so the entire DELIVERY
+	// lifecycle for this vertical could never progress past DISPENSED.
+	// Mirrors finance_routes.go's own transport.NewService wiring.
+	transportSvc := transport.NewService(pool, settlement.NewService(pool, ledgerSvc))
 	kycSvc := kyc.NewService(pool)
 
 	svc := healthpharmacy.NewService(
