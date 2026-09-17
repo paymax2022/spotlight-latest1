@@ -12,6 +12,7 @@ import (
 	"spotlight/backend/internal/config"
 	"spotlight/backend/internal/finance/commission"
 	"spotlight/backend/internal/finance/ledger"
+	"spotlight/backend/internal/finance/tiers"
 	// referrals is retained ONLY for the RegisterMarketplace signature: router.go
 	// still passes referralRewardsSvc, but the escrow settle/refund emit was removed
 	// in the listings-and-connect pivot (ADR-023), so the param is now a no-op.
@@ -177,6 +178,19 @@ func RegisterMarketplace(
 	ledgerSvc := ledger.NewService(ledger.NewRepository(pool), redis)
 
 	svc := marketplace.NewService(pool, ledgerSvc, redis)
+
+	// Fail-closed KYC-tier gate on the boost wallet debit (§6 "Tier/KYC gate"
+	// FINDING in docs/qa/modules/marketplace.md — the boost charge previously
+	// called s.ledger.Debit directly with no tier-limit/KYC gate at all, the
+	// only money path in this codebase missing one). Built self-contained from
+	// the shared pool here — mirroring ledgerSvc above — rather than threading
+	// app-wiring's single tiersSvc instance out of registerFinanceRoutes,
+	// since RegisterMarketplace is deliberately callable as one
+	// feature-flag-guarded line from router.go (see doc comment above).
+	// tiers.NewService only needs the pool; the checkout-allowance variant
+	// (WithCheckoutAllowance) is irrelevant here — a boost purchase is a
+	// direct wallet debit, not a checkout/escrow allowance case.
+	svc.WithTiers(tiers.NewService(pool))
 
 	// ── Realtime (SSE) live-push seam for chat. Shared hub built once at the router
 	// level (so other modules — events' check-in feed — can share the same

@@ -111,6 +111,8 @@ const (
 	CodeInvalidBoostTransition = "INVALID_BOOST_TRANSITION"
 	CodeInvalidBoostTier       = "INVALID_BOOST_TIER"
 	CodeInvalidBoostRange      = "INVALID_BOOST_DATE_RANGE"
+	CodeTierLimitExceeded      = "TIER_LIMIT_EXCEEDED"
+	CodeTierGateUnwired        = "TIER_GATE_UNWIRED"
 
 	// Offers / reviews / misc
 	CodeOfferNotFound  = "OFFER_NOT_FOUND"
@@ -164,6 +166,14 @@ var (
 	ErrReasonRequired       = newErr(http.StatusBadRequest, CodeReasonCodeRequired, "reason_code is required")
 	ErrIdemMissing          = newErr(http.StatusBadRequest, CodeIdempotencyMissing, "Idempotency-Key header required")
 	ErrConflict             = newErr(http.StatusConflict, CodeConflict, "conflicting concurrent write")
+	// ErrTierGateUnwired is returned by PurchaseBoost when the Service was built
+	// without a TierEnforcer. A nil gate is a deployment misconfiguration, not a
+	// dev-mode bypass: CLAUDE.md's iron rule requires every money mutation to pass
+	// a fail-closed tier-limit check, so "no gate wired" must mean "no boost
+	// purchase" rather than "the limit is unlimited". Mirrors
+	// internal/restaurant's ErrTierGateUnwired. 503: server misconfiguration, not
+	// the caller's fault, and retryable once wired.
+	ErrTierGateUnwired = newErr(http.StatusServiceUnavailable, CodeTierGateUnwired, "boost purchase is temporarily unavailable (tier gate not wired)")
 	// ErrListingNotActiveRace is returned by InsertOrderAtomic when the DB-level
 	// optimistic lock finds the listing is no longer purchasable (status flipped, or
 	// another buyer's order already holds this single-quantity listing). The service
