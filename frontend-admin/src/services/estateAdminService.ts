@@ -362,6 +362,30 @@ export async function listOversightFacilities(estateId?: string): Promise<Oversi
   return getRows<OversightFacility>(`/estate-admin/ops/facilities${qs(estateId)}`);
 }
 
+// createFacility: the oversight surface (/estate-admin/ops/facilities) is
+// READ-ONLY (see estate_admin_routes.go — only GET verbs are registered).
+// Facility creation is a resident-role-gated write (assertEstateAdmin:
+// estate_residents.role='estate_admin'), same pattern already used by
+// banResident/verifyVendor/etc. above: POST /estate/:id/facilities against
+// the pinned console estate id. Body keys are snake_case to match
+// CreateFacilityRequest's binding tags (name, kind, capacity, fee_kobo) —
+// postJson does not auto-convert request payloads.
+export async function createFacility(input: { name: string; kind: string; capacity: number | null; feeKobo: number }): Promise<OversightFacility> {
+  if (USE_MOCK) {
+    await delay(280);
+    const created: OversightFacility = {
+      id: `of-${Date.now()}`, estateId: estateId(), name: input.name, kind: input.kind,
+      capacity: input.capacity, feeKobo: input.feeKobo, createdAt: new Date().toISOString(),
+    };
+    O_FACILITIES.push(created);
+    return created;
+  }
+  const row = await postJson<Record<string, unknown>>(`/estate/${estateId()}/facilities`, {
+    name: input.name, kind: input.kind, capacity: input.capacity, fee_kobo: input.feeKobo,
+  });
+  return toCamel<OversightFacility>(row);
+}
+
 // Content -----------------------------------------------------------------------
 export async function listOversightAnnouncements(estateId?: string): Promise<OversightAnnouncement[]> {
   if (USE_MOCK) { await delay(); return O_ANNOUNCEMENTS.filter((r) => !estateId || r.estateId === estateId); }
