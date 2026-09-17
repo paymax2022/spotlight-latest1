@@ -655,12 +655,18 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 			RegisterHealthLab(finance, r.Group("/api/health/lab/admin"), pool, rbac, auditSink, cfg, supabase)
 		}
 		if cfg.FeatureHealthVetEnabled {
-			RegisterHealthVet(finance, adminGroupTop5(r, "/api/health/vet/admin"), pool, rbac, cfg)
+			// PHARMACY-006/LAB-003-shaped bug: NOT adminGroupTop5 — see the
+			// comment on RegisterHealthVet's own ag.Use(RequireAuthContext(...))
+			// call for why (identical ordering hazard, fixed the same way).
+			RegisterHealthVet(finance, r.Group("/api/health/vet/admin"), pool, rbac, cfg, supabase)
 			// Mode-B (assisted) VCN verification: vet gets verified without ever
 			// seeing the VCN portal; ops confirms out-of-band; capability granted
 			// only on approval. Member /api/finance/health/vet/verification/*,
 			// admin /api/health/vet/admin/verification/* (health.vet.review).
-			RegisterHealthVCNVerification(finance, adminGroupTop5(r, "/api/health/vet/admin"), pool, rbac)
+			// Same adminGroupTop5 fix applies — this is a second, independent
+			// admin group instance sharing the path prefix, not the same
+			// middleware chain as RegisterHealthVet's own group above.
+			RegisterHealthVCNVerification(finance, r.Group("/api/health/vet/admin"), pool, rbac, supabase)
 		}
 		// AI Symptom Checker (triage & navigation, NOT diagnosis) — reuses the care
 		// loop + wallet + clinician-governed red-flag layer. SC-1..SC-12 enforced.
