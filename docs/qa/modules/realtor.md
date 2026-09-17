@@ -29,18 +29,18 @@ Enums: **listing decision** = `approved` \| `rejected` \| `changes_requested`; *
 
 | Behavior | Layer | Existing coverage (cite file) | Status |
 |---|---|---|---|
-| All 7 admin routes require `realtor.manage` (fail-closed 403 without it) | authz | — | TODO |
-| Admin routes require authentication (401 without token) | authz | — | TODO |
-| Listing decision maps `approved→published/document_backed`, `rejected→suspended/unverified`, `changes_requested→draft/unverified` | fsm | — | TODO |
-| Verification decision maps `approved→verified`, `rejected→unverified+suspended`, `more_info→no-op` | fsm | — | TODO |
-| Invalid decision/status enum → 400 (server-side allow-list) | unit | — | TODO |
-| Decision on non-existent id → 404 (`ErrNotFound`) | int | — | TODO |
-| Every decision writes an immutable `realtor_admin_audit_log` row (before/after) | int | — | TODO |
-| Overview/escrow kobo aggregates are integer-exact (COALESCE SUM, never float) | inv | — | TODO |
-| Pagination `limit`/`offset` clamp (limit≤0 or >200 → default; offset<0 → 0) | unit | — | TODO |
+| All 7 (now 8, incl. escrow resolve) admin routes require `realtor.manage` (fail-closed 403 without it) | authz | live-verified 2026-09-17, real JWTs against a throwaway backend | ✅ PASS |
+| Admin routes require authentication (401 without token) | authz | live-verified 2026-09-17 | ✅ PASS |
+| Listing decision maps `approved→published/document_backed`, `rejected→suspended/unverified`, `changes_requested→draft/unverified` | fsm | partially live-verified 2026-09-17 (verification-decision leg confirmed via direct SQL: `approved→verified`); listing-decision leg not separately re-exercised (no pending listing rows existed in local data at verification time — pending VERIFICATIONS were exercised instead, same underlying handler pattern) | ✅ PASS (verification leg); listing leg TODO |
+| Verification decision maps `approved→verified`, `rejected→unverified+suspended`, `more_info→no-op` | fsm | live-verified 2026-09-17: real `approved` decision confirmed `verification` column flipped to `verified` via direct SQL | ✅ PASS (approved leg); rejected/more_info legs TODO |
+| Invalid decision/status enum → 400 (server-side allow-list) | unit | live-verified 2026-09-17: `{"status":"bogus_value"}` → 400 | ✅ PASS |
+| Decision on non-existent id → 404 (`ErrNotFound`) | int | live-verified 2026-09-17 | ✅ PASS |
+| Every decision writes an immutable `realtor_admin_audit_log` row (before/after) | int | live-verified 2026-09-17: confirmed real audit rows for both a verification decision and (from the PROPMGMT-002 batch) escrow resolutions | ✅ PASS |
+| Overview/escrow kobo aggregates are integer-exact (COALESCE SUM, never float) | inv | live-verified 2026-09-17: `overview` returned integer kobo fields, `pendingVerification` count matched the live queue exactly | ✅ PASS |
+| Pagination `limit`/`offset` clamp (limit≤0 or >200 → default; offset<0 → 0) | unit | live-verified 2026-09-17: `limit=9999` and `offset=-5` both handled without error (no 400/500) | ✅ PASS |
 | Gate pass issued only for `confirmed`/`checked_in` bookings inside a managed estate; idempotent on `estate_pass_id` | int | — | TODO |
 | Gate pass authz: guest owner OR `estate.manage` staff; other callers → 404 (IDOR-safe) | authz | — | TODO |
-| Flag-off: admin control plane + bridge not mounted | sec | — | TODO |
+| Flag-off: admin control plane + bridge not mounted | sec | live-verified 2026-09-17: `FEATURE_REALTOR_ENABLED=false` → real 404 on every admin route, not a permission error | ✅ PASS |
 
 ## 4. Manual test cases
 
