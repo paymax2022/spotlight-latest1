@@ -164,6 +164,14 @@ const routePermissions: Array<{ prefix: string; permissions: string[] }> = [
   { prefix: '/admin/association/content', permissions: ['savings.admin.recon', 'savings.admin.view'] },
   { prefix: '/admin/association', permissions: ['savings.admin.view', 'savings.admin.dashboard', 'savings.admin.recon'] },
   { prefix: '/admin/realtor', permissions: ['realtor.admin.view'] },
+  // Property Management Suite (estate↔realtor unification umbrella): the whole
+  // page is a rent-passport screening tool over another user's payment history
+  // (see PROPERTY-AUTHZ-014/015 in docs/qa/modules/property.md), so it is gated
+  // on the SAME permission slug the Go backend enforces on the lookup endpoint
+  // (RequirePermission(rbac, "property.manage")) rather than a looser view-only
+  // permission — an operator who cannot call the lookup should not be shown a
+  // page whose one real feature will 403.
+  { prefix: '/admin/property', permissions: ['property.manage'] },
   { prefix: '/admin/telemedicine', permissions: ['health.admin.view'] },
   { prefix: '/admin/health', permissions: ['health.admin.view'] },
   { prefix: '/admin/intake', permissions: ['health.admin.intake'] },

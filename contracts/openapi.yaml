@@ -50,6 +50,66 @@ components:
       properties:
         success: { type: boolean }
 
+    # ── Property Management Suite ─────────────────────────────────────────────
+    PropertyContextRef:
+      type: object
+      required: [type, id]
+      properties:
+        type: { type: string, enum: [estate, property, agency, org] }
+        id: { type: string }
+    PropertyContextEntity:
+      type: object
+      required: [type, id, name, roles]
+      properties:
+        type: { type: string, enum: [estate, property, agency, org] }
+        id: { type: string }
+        name: { type: string }
+        roles:
+          type: array
+          items: { type: string, enum: [resident, estate_admin, landlord, tenant, agency_owner] }
+    PropertyContextResponse:
+      type: object
+      required: [activeContext, contexts]
+      properties:
+        activeContext:
+          allOf: [{ $ref: '#/components/schemas/PropertyContextRef' }]
+          nullable: true
+        contexts:
+          type: array
+          items: { $ref: '#/components/schemas/PropertyContextEntity' }
+    RentRecentPayment:
+      type: object
+      required: [source, amountKobo, category, onTime, paidAt]
+      properties:
+        source: { type: string, enum: [estate, realtor] }
+        amountKobo: { type: integer, format: int64, description: Minor units (kobo) }
+        category: { type: string, enum: [rent, service_charge, lease, other] }
+        onTime: { type: boolean }
+        paidAt: { type: string, format: date-time }
+    RentPassport:
+      type: object
+      required: [userId, score, onTimeRate, totalPaidKobo, paymentsCount, recentPayments]
+      properties:
+        userId: { type: string, format: uuid }
+        score:
+          type: integer
+          minimum: 0
+          maximum: 100
+          description: >
+            round(onTimeRate*90) + tenure bonus (up to 10, +2 per 6 months
+            tenure), clamped 0-100. 0 when there are zero comparable
+            (due-dated) payments — fail-closed; absence is never treated as
+            good credit.
+        onTimeRate: { type: number, format: double, minimum: 0, maximum: 1, description: On-time payments / comparable (due-dated) payments }
+        totalPaidKobo: { type: integer, format: int64, description: Lifetime successful payments, minor units (kobo), exact integer sum }
+        paymentsCount: { type: integer, description: Uncapped count; recentPayments below is capped at 20 }
+        oldestTenancy: { type: string, format: date-time, nullable: true }
+        recentPayments:
+          type: array
+          maxItems: 20
+          description: Most-recent-first, capped at 20.
+          items: { $ref: '#/components/schemas/RentRecentPayment' }
+
     # ── MapService (provider-agnostic maps abstraction) ───────────────────────
     # Every result carries `provider` + `source`. `source` is the licensing
     # stack ('openstack' | 'google' | 'mapbox' | 'own'); the client may only
@@ -5061,6 +5121,103 @@ paths:
         - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
       responses: { '200': { description: Report snapshot } }
   # ── END ESTATE SUPER-APP block ────────────────────────────────────────────
+  # ── Property Management Suite (unification umbrella; behind
+  #    FEATURE_PROPERTY_SUITE_ENABLED) ──────────────────────────────────────
+  # Read-mostly aggregation over the estate + realtor money paths. Owns no
+  # ledger mutation itself. See backend/internal/property/{context,handler,
+  # rentpassport}.go and docs/qa/modules/property.md for the full contract
+  # this was derived from.
+  /api/finance/property/context:
+    get:
+      operationId: propertyGetContext
+      summary: Aggregate the caller's role assignments across estates/properties/agencies (self)
+      description: >
+        Reads existing tables only (estate_residents, estates.admin_id,
+        estate_properties, realtor_portfolios) — no writes. Roles are merged
+        per entity. Returns the caller's persisted active context alongside.
+      tags: [Property]
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: Role-context aggregation
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PropertyContextResponse' }
+        '401': { description: Authentication required }
+  /api/finance/property/context/switch:
+    post:
+      operationId: propertySwitchContext
+      summary: Switch the caller's active property context (fail-closed membership check)
+      description: >
+        Metadata-only upsert into property_active_context. Membership is
+        re-derived from GetContext on every call, so a contextType/contextId
+        the caller holds no role in is rejected — a forged value can never
+        be persisted.
+      tags: [Property]
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [contextType, contextId]
+              properties:
+                contextType: { type: string, enum: [estate, property, agency, org] }
+                contextId: { type: string }
+      responses:
+        '200':
+          description: Active context switched
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  activeContext: { $ref: '#/components/schemas/PropertyContextRef' }
+        '400': { description: Missing/invalid contextType or contextId }
+        '401': { description: Authentication required }
+        '403': { description: Caller has no role in the requested context (fail-closed) }
+  /api/finance/property/rent-passport/me:
+    get:
+      operationId: propertyGetMyRentPassport
+      summary: Get the caller's own portable rent/dues trust profile
+      description: >
+        Computed read-only over successful estate + realtor payments (never
+        mutated). Score 0-100; see RentPassport schema for the formula.
+        Realtor-schema-absent is tolerated (estate-only deployments still get
+        a passport from estate history alone).
+      tags: [Property]
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: Rent passport
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RentPassport' }
+        '401': { description: Authentication required }
+  /api/finance/property/rent-passport/lookup/{userId}:
+    get:
+      operationId: propertyLookupRentPassport
+      summary: Landlord/agency screening lookup of ANY user's rent passport (RBAC-gated)
+      description: >
+        Object-level authz is the top risk on this endpoint: it returns
+        another user's payment history and trust score. Gated on
+        RequirePermission(rbac, "property.manage") — there is no per-target
+        ownership relationship checked, so the permission alone is the
+        boundary. No passport body is returned on the 403 path.
+      tags: [Property]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: userId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: Rent passport of the target user
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RentPassport' }
+        '401': { description: Authentication required }
+        '403': { description: Caller lacks property.manage (IDOR guard; no body leaked) }
+  # ── END Property Management Suite block ───────────────────────────────────
   # ── MapService (provider-agnostic maps abstraction) ───────────────────────
   # All provider keys are server-side; the client calls ONLY these endpoints.
   # findNearbyOwn (/nearby) and isInZone (/in-zone) run on PostGIS, not a maps API.

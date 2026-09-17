@@ -24,6 +24,7 @@ import type {
   OversightRepair, OversightTask, OversightMeeting, OversightFacility,
   OversightAnnouncement, OversightDocument,
   OversightElection, ElectionResultRow, ElectionAudit,
+  AdminProperty, OccupancyStatus, PropertyTransferRequest, TransferType,
 } from '@/types/estateAdmin';
 
 const USE_MOCK = resolveUseMock(process.env.NEXT_PUBLIC_ESTATE_ADMIN_USE_MOCK);
@@ -195,6 +196,102 @@ export async function listVendors(): Promise<AdminVendor[]> {
 export async function verifyVendor(id: string): Promise<{ id: string; status: VendorStatus }> {
   if (USE_MOCK) { await delay(280); VENDORS = VENDORS.map((v) => (v.id === id ? { ...v, status: 'verified' } : v)); return { id, status: 'verified' }; }
   return postJson<{ id: string; status: VendorStatus }>(`/estate/${estateId()}/vendors/${id}/verify`, {});
+}
+
+// ─── Property management (Block 29 — backend/internal/estate/property_mgmt.go) ─
+// Estate-admin scoped (assertEstateAdmin: estate_residents.role='estate_admin'
+// for the pinned estateId()), NOT the cross-estate /estate-admin/* oversight
+// namespace above. Same pinned-estate pattern as listResidents/listVendors.
+const MOCK_PROPERTIES: AdminProperty[] = [
+  { id: 'p1', estateId: 'demo-estate', unitLabel: 'Flat 4', propertyType: 'apartment', floor: '2', block: 'B', occupancyStatus: 'occupied', landlordId: 'r1', tenantId: null, archived: false, createdAt: days(400) },
+  { id: 'p2', estateId: 'demo-estate', unitLabel: 'Flat 9', propertyType: 'apartment', floor: '3', block: 'A', occupancyStatus: 'occupied', landlordId: 'r4', tenantId: 'r2', archived: false, createdAt: days(300) },
+  { id: 'p3', estateId: 'demo-estate', unitLabel: 'Flat 11', propertyType: 'apartment', floor: '1', block: 'C', occupancyStatus: 'occupied', landlordId: 'r3', tenantId: 'r3', archived: false, createdAt: days(200) },
+  { id: 'p4', estateId: 'demo-estate', unitLabel: 'Flat 7', propertyType: 'apartment', floor: '2', block: 'D', occupancyStatus: 'vacant', landlordId: null, tenantId: null, archived: false, createdAt: days(60) },
+];
+let MOCK_TRANSFERS: PropertyTransferRequest[] = [
+  { id: 't1', estateId: 'demo-estate', propertyId: 'p4', requestedBy: 'r5', toUserId: 'r5', transferType: 'tenancy', reason: 'New tenant moving in', status: 'pending', reviewedBy: null, reviewedAt: null, createdAt: hrs(5) },
+];
+
+export async function listProperties(): Promise<AdminProperty[]> {
+  if (USE_MOCK) { await delay(); return [...MOCK_PROPERTIES]; }
+  return getRows<AdminProperty>(`/estate/${estateId()}/properties`);
+}
+
+export async function updatePropertyOccupancy(propertyId: string, status: OccupancyStatus): Promise<AdminProperty> {
+  if (USE_MOCK) {
+    await delay(280);
+    const idx = MOCK_PROPERTIES.findIndex((p) => p.id === propertyId);
+    if (idx >= 0) MOCK_PROPERTIES[idx] = { ...MOCK_PROPERTIES[idx], occupancyStatus: status };
+    return MOCK_PROPERTIES[idx];
+  }
+  const row = await postJson<Record<string, unknown>>(`/estate/${estateId()}/properties/${propertyId}/occupancy`, { status });
+  return toCamel<AdminProperty>(row);
+}
+
+export async function assignLandlord(propertyId: string, userId: string): Promise<AdminProperty> {
+  if (USE_MOCK) {
+    await delay(280);
+    const idx = MOCK_PROPERTIES.findIndex((p) => p.id === propertyId);
+    if (idx >= 0) MOCK_PROPERTIES[idx] = { ...MOCK_PROPERTIES[idx], landlordId: userId };
+    return MOCK_PROPERTIES[idx];
+  }
+  const row = await postJson<Record<string, unknown>>(`/estate/${estateId()}/properties/${propertyId}/landlord`, { user_id: userId });
+  return toCamel<AdminProperty>(row);
+}
+
+export async function assignTenant(propertyId: string, userId: string): Promise<AdminProperty> {
+  if (USE_MOCK) {
+    await delay(280);
+    const idx = MOCK_PROPERTIES.findIndex((p) => p.id === propertyId);
+    if (idx >= 0) MOCK_PROPERTIES[idx] = { ...MOCK_PROPERTIES[idx], tenantId: userId, occupancyStatus: 'occupied' };
+    return MOCK_PROPERTIES[idx];
+  }
+  const row = await postJson<Record<string, unknown>>(`/estate/${estateId()}/properties/${propertyId}/tenant`, { user_id: userId });
+  return toCamel<AdminProperty>(row);
+}
+
+export async function archiveProperty(propertyId: string): Promise<{ archived: boolean }> {
+  if (USE_MOCK) {
+    await delay(280);
+    const idx = MOCK_PROPERTIES.findIndex((p) => p.id === propertyId);
+    if (idx >= 0) MOCK_PROPERTIES[idx] = { ...MOCK_PROPERTIES[idx], archived: true };
+    return { archived: true };
+  }
+  return postJson<{ archived: boolean }>(`/estate/${estateId()}/properties/${propertyId}/archive`, {});
+}
+
+export async function listTransferRequests(status?: string): Promise<PropertyTransferRequest[]> {
+  if (USE_MOCK) { await delay(); return status ? MOCK_TRANSFERS.filter((r) => r.status === status) : [...MOCK_TRANSFERS]; }
+  return getRows<PropertyTransferRequest>(`/estate/${estateId()}/property-transfers${qs(undefined, status ? { status } : undefined)}`);
+}
+
+export async function requestPropertyTransfer(propertyId: string, toUserId: string, transferType: TransferType, reason?: string): Promise<PropertyTransferRequest> {
+  if (USE_MOCK) {
+    await delay(280);
+    const r: PropertyTransferRequest = { id: `t${MOCK_TRANSFERS.length + 1}`, estateId: estateId(), propertyId, requestedBy: 'admin-demo', toUserId, transferType, reason: reason ?? '', status: 'pending', reviewedBy: null, reviewedAt: null, createdAt: new Date().toISOString() };
+    MOCK_TRANSFERS = [...MOCK_TRANSFERS, r];
+    return r;
+  }
+  const row = await postJson<Record<string, unknown>>(`/estate/${estateId()}/properties/${propertyId}/transfer-request`, { to_user_id: toUserId, transfer_type: transferType, reason: reason ?? '' });
+  return toCamel<PropertyTransferRequest>(row);
+}
+
+export async function reviewTransferRequest(requestId: string, decision: 'approved' | 'rejected'): Promise<PropertyTransferRequest> {
+  if (USE_MOCK) {
+    await delay(280);
+    MOCK_TRANSFERS = MOCK_TRANSFERS.map((r) => (r.id === requestId ? { ...r, status: decision, reviewedBy: 'admin-demo', reviewedAt: new Date().toISOString() } : r));
+    const updated = MOCK_TRANSFERS.find((r) => r.id === requestId);
+    if (decision === 'approved' && updated) {
+      const idx = MOCK_PROPERTIES.findIndex((p) => p.id === updated.propertyId);
+      if (idx >= 0) {
+        const col = updated.transferType === 'ownership' ? 'landlordId' : 'tenantId';
+        MOCK_PROPERTIES[idx] = { ...MOCK_PROPERTIES[idx], [col]: updated.toUserId };
+      }
+    }
+    return updated as PropertyTransferRequest;
+  }
+  const row = await postJson<Record<string, unknown>>(`/estate/${estateId()}/property-transfers/${requestId}/review`, { decision });
+  return toCamel<PropertyTransferRequest>(row);
 }
 
 export async function getRentPassport(userId: string): Promise<RentPassport> {

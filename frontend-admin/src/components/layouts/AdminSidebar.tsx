@@ -350,6 +350,7 @@ const navItemsBase: NavItem[] = [
   // Estate workspace (gated on estate.manage; dashboard also visible to estate.admin)
   { label: 'Estate Dashboard', href: '/admin/estate', section: 'Property Management', permissions: ['estate.manage', 'estate.admin'] },
   { label: 'Residents & Units', href: '/admin/estate/residents', section: 'Property Management', permissions: ['estate.manage'] },
+  { label: 'Properties', href: '/admin/estate/properties', section: 'Property Management', permissions: ['estate.manage'] },
   { label: 'Dues & Collections', href: '/admin/estate/dues', section: 'Property Management', permissions: ['estate.manage'] },
   { label: 'Gates & Security', href: '/admin/estate/gates', section: 'Property Management', permissions: ['estate.manage'] },
   { label: 'Vendors', href: '/admin/estate/vendors', section: 'Property Management', permissions: ['estate.manage'] },
@@ -362,6 +363,10 @@ const navItemsBase: NavItem[] = [
   { label: 'Vendor Directory', href: '/admin/vendors', section: 'Property Management', permissions: ['estate.manage', 'estate.admin'] },
   { label: 'Vendor Onboarding', href: '/admin/vendors/onboarding', section: 'Property Management', permissions: ['estate.manage'] },
   { label: 'Vendor Payouts', href: '/admin/vendors/payouts', section: 'Property Management', permissions: ['estate.manage', 'estate.admin'] },
+  // Property Management Suite (unification umbrella over estate + realtor;
+  // rent-passport screening lookup is RBAC-gated on property.manage — see
+  // backend/internal/property and docs/qa/modules/property.md)
+  { label: 'Property Suite', href: '/admin/property', section: 'Property Management', permissions: ['property.manage'] },
   // Realtor marketplace (existing hrefs unchanged)
   { label: 'Realtor Overview', href: '/admin/realtor', section: 'Property Management' },
   { label: 'Listing Moderation', href: '/admin/realtor/moderation', section: 'Property Management' },

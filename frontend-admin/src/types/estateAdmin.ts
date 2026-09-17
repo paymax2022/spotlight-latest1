@@ -303,3 +303,36 @@ export interface ElectionAudit {
   status: string | null;
   doubleVoteDetected: boolean;
 }
+
+// ── Block 29: Property management (backend/internal/estate/property_mgmt.go) ──
+export type OccupancyStatus = 'vacant' | 'occupied' | 'reserved';
+export type TransferType = 'ownership' | 'tenancy';
+export type TransferStatus = 'pending' | 'approved' | 'rejected';
+
+export interface AdminProperty {
+  id: string;
+  estateId: string;
+  unitLabel: string;
+  propertyType: string; // apartment | house | commercial | land | other
+  floor: string;
+  block: string;
+  occupancyStatus: OccupancyStatus;
+  landlordId: string | null;
+  tenantId: string | null;
+  archived: boolean;
+  createdAt: string;
+}
+
+export interface PropertyTransferRequest {
+  id: string;
+  estateId: string;
+  propertyId: string;
+  requestedBy: string;
+  toUserId: string;
+  transferType: TransferType;
+  reason: string;
+  status: TransferStatus;
+  reviewedBy: string | null;
+  reviewedAt: string | null;
+  createdAt: string;
+}

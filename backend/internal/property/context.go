@@ -125,8 +125,8 @@ func (s *Service) GetContext(ctx context.Context, userID string) (*ContextRespon
 	// Per-property landlord / tenant assignments (estate_properties).
 	rows, err = s.db.Query(ctx, `
 		SELECT id::TEXT, unit_label,
-		       (landlord_id = $1) AS is_landlord,
-		       (tenant_id   = $1) AS is_tenant
+		       COALESCE(landlord_id = $1, FALSE) AS is_landlord,
+		       COALESCE(tenant_id   = $1, FALSE) AS is_tenant
 		FROM estate_properties
 		WHERE landlord_id = $1 OR tenant_id = $1`, userID)
 	if err != nil {

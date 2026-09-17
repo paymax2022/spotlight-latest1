@@ -148,6 +148,17 @@
       "description": "Throwaway admin console on :3025 pointed at the FOOD-005 throwaway backend (:8096), for live withdrawals-page verification without touching the shared :8091/:3001."
     },
     {
+      "name": "admin-property-uat",
+      "runtimeExecutable": "bash",
+      "runtimeArgs": [
+        "-c",
+        "ADMIN_API_BASE_URL=http://localhost:8130 NEXT_PUBLIC_PROPERTY_ADMIN_USE_MOCK=false exec npx next dev --port 3026"
+      ],
+      "cwd": "frontend-admin",
+      "port": 3026,
+      "description": "Throwaway admin console on :3026 pointed at a throwaway Go backend on :8130 (FEATURE_PROPERTY_SUITE_ENABLED=true), for PROPMGMT-003 rent-passport admin UI live verification without touching the shared :8091/:3001."
+    },
+    {
       "name": "mobile-worktree",
       "runtimeExecutable": "npx",
       "runtimeArgs": [

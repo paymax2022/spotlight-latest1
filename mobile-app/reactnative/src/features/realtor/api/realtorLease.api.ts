@@ -1,9 +1,21 @@
 // ── Spotlight Realtor — Lease / payment / move-in data layer (V2) ────────────
 // Mock by default (REALTOR_USE_MOCK). Real branch hits Supabase tables in
-// supabase/migrations/20260620010000 + atomic RPCs in 20260620020000:
-//   realtor_sign_lease, realtor_pay_invoice (idempotent money path).
+// supabase/migrations/20260620010000 + the atomic RPC in 20260620020000:
+//   realtor_sign_lease.
+//
+// realtor_pay_invoice is NOT called directly from here anymore. It used to be
+// (SECURITY DEFINER, GRANTed to `authenticated`) and would finalize a lease
+// payment with zero verification that any money moved. It is now locked to
+// service_role (supabase/migrations/20270220000000_realtor_pay_invoice_
+// require_verified_debit.sql); payInvoice() below posts to frontend-web's
+// /api/v1/realtor/invoices/{id}/pay route instead, mirroring
+// mobile-app/reactnative/src/features/dues/api.ts — that route debits the
+// wallet via the shared ledger primitive FIRST, then calls the (now-hardened)
+// RPC to finalize.
 
 import { createSupabaseClient } from '@/lib/supabase';
+import { api } from '@/api/client';
+import { generateIdempotencyKey } from '@/utils/idempotency';
 import { REALTOR_USE_MOCK } from './realtorEnv';
 import type {
   Lease,
@@ -203,15 +215,24 @@ export async function payInvoice(draft: PayInvoiceDraft): Promise<PaymentReceipt
       paidAt: inv.paidAt, escrowHeld: deposit,
     };
   }
-  const supabase = createSupabaseClient();
-  const { data, error } = await supabase.rpc('realtor_pay_invoice', {
-    p_invoice_id: draft.invoiceId, p_channel: draft.channel, p_idempotency_key: newIdempotencyKey(),
-  });
-  if (error) throw error;
+  // Real payment path: frontend-web's server posts the wallet debit (fail-closed
+  // tier check + balanced ledger entry) BEFORE finalizing the invoice/lease/
+  // escrow rows via the hardened realtor_pay_invoice RPC. The idempotency key
+  // identifies this ONE payment attempt end-to-end so a client retry cannot
+  // double-charge.
+  const idempotencyKey = generateIdempotencyKey();
+  const { data } = await api.post(
+    `/api/v1/realtor/invoices/${draft.invoiceId}/pay`,
+    { channel: draft.channel },
+    { headers: { 'Idempotency-Key': idempotencyKey } },
+  );
+  const payment = data.payment ?? {};
   return {
-    id: data.id, invoiceId: data.invoice_id, status: data.status, amount: Number(data.amount),
-    channel: draft.channel, reference: data.reference, paidAt: data.paid_at,
-    escrowHeld: Number(data.escrow_held ?? 0),
+    id: payment.id, invoiceId: payment.invoiceId ?? draft.invoiceId, status: payment.status ?? 'paid',
+    amount: Number(payment.amountKobo ?? 0),
+    channel: draft.channel, reference: payment.reference ?? idempotencyKey,
+    paidAt: payment.paidAt ?? new Date().toISOString(),
+    escrowHeld: Number(data.escrow_held_kobo ?? payment.escrowHeldKobo ?? 0),
   };
 }
 
