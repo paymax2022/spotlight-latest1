@@ -82,6 +82,21 @@ import (
 
 // registerFinanceRoutes wires up all financial module routes under /api/finance/...
 // Each route group is gated behind its feature flag.
+// doctorBankResolverAdapter bridges doctor's type-decoupled BankAccountResolver seam
+// (ResolveAccount(ctx, bankCode, accountNumber) (string, error)) to the concrete
+// Paystack client's ResolveAccount, which returns (*provider.AccountResolution, error).
+// This is the ONE place that imports both packages (doctor never imports
+// provider/paystack at compile time — mirrors commissionRecorderAdapter above).
+type doctorBankResolverAdapter struct{ ps *paystack.Client }
+
+func (a doctorBankResolverAdapter) ResolveAccount(ctx context.Context, bankCode, accountNumber string) (string, error) {
+	res, err := a.ps.ResolveAccount(ctx, bankCode, accountNumber)
+	if err != nil {
+		return "", err
+	}
+	return res.AccountName, nil
+}
+
 // If DATABASE_URL is not set, financial routes are skipped entirely.
 //
 // It RETURNS the *referrals.RewardService built by the Direct Referral Rewards engine
@@ -203,11 +218,13 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 	// --- Providers ---
 	var paymentProvider providerInterfaces.PaymentProvider
 	var vaProvider providerInterfaces.VirtualAccountProvider
+	var paystackClient *paystack.Client // kept for seams that need the concrete client (e.g. doctor bank-account NUBAN resolve)
 
 	if cfg.PaystackSecretKey != "" {
 		ps := paystack.New(cfg.PaystackSecretKey)
 		paymentProvider = ps
 		vaProvider = ps
+		paystackClient = ps
 	}
 
 	// Maplerad overrides VA provider when its key is set (preferred for NGN DVAs + FX).
@@ -2512,6 +2529,16 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		// feature flag — when off the recorder stays nil and recording is a no-op.
 		if cfg.FeatureCommissionEnabled {
 			doctorSvc.SetCommissionRecorder(commissionRecorderAdapter{svc: commission.NewService(commission.NewRepository(pool), nil)})
+		}
+		// Real bank-account name verification (Paystack NUBAN resolve —
+		// https://paystack.com/docs/identity-verification/verify-account-number/)
+		// for POST /profile/bank-account. Independent of FEATURE_BANK_TRANSFERS_ENABLED
+		// (that flag gates outbound money movement and requires Monnify creds too;
+		// this is a read-only name lookup that only needs PAYSTACK_SECRET_KEY). No key
+		// configured ⇒ resolver stays nil ⇒ CreateBankAccount keeps its old
+		// store-unverified behaviour rather than blocking onboarding.
+		if paystackClient != nil {
+			doctorSvc.SetBankAccountResolver(doctorBankResolverAdapter{ps: paystackClient})
 		}
 		// Backend-owned presigned R2 uploads (profile photo / documents / licence /
 		// chat attachments / dispute evidence). Unconfigured creds → the presign

@@ -82,6 +82,8 @@ func (h *Handler) fail(c *gin.Context, err error) {
 		c.JSON(http.StatusConflict, gin.H{"error": "duplicate request"})
 	case errors.Is(err, ledger.ErrInsufficientFunds):
 		c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "insufficient available balance"})
+	case errors.Is(err, ErrBankAccountUnresolvable), errors.Is(err, ErrBankAccountUnverified):
+		c.JSON(http.StatusUnprocessableEntity, gin.H{"error": err.Error()})
 	case errors.Is(err, ErrIdempotencyRequired), errors.Is(err, ErrInvalidAmount):
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 	default:

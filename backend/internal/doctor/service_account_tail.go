@@ -173,12 +173,27 @@ func maskAccountNumber(b *BankAccount) {
 // ── Profile ──────────────────────────────────────────────────────────────────
 
 // CreateBankAccount upserts a bank account (idempotent) and masks the account
-// number in the response.
+// number in the response. When a real BankAccountResolver is wired (Paystack NUBAN
+// resolve), it verifies the bank+account pair BEFORE persisting: the resolved
+// account_name overrides whatever name the client sent (never trust a client-
+// supplied "isVerified"/name for a field that feeds payouts), and a resolution
+// failure rejects the request outright rather than silently saving an unverifiable
+// account. With no resolver configured (e.g. no PAYSTACK_SECRET_KEY in local dev),
+// this keeps the pre-existing behaviour of storing the account unverified.
 func (s *Service) CreateBankAccount(ctx context.Context, userID, idemKey string, req BankAccountRequest) (*BankAccount, error) {
 	if idemKey == "" {
 		return nil, ErrIdempotencyRequired
 	}
-	acct, err := s.repo.UpsertBankAccount(ctx, userID, idemKey, req)
+	verified := false
+	if s.bankResolver != nil && req.BankCode != nil && req.AccountNumber != nil {
+		name, err := s.bankResolver.ResolveAccount(ctx, *req.BankCode, *req.AccountNumber)
+		if err != nil {
+			return nil, ErrBankAccountUnresolvable
+		}
+		req.AccountName = &name
+		verified = true
+	}
+	acct, err := s.repo.UpsertBankAccount(ctx, userID, idemKey, req, verified)
 	if err != nil {
 		return nil, err
 	}
@@ -223,8 +238,29 @@ func (s *Service) GetPayoutReport(ctx context.Context, userID string) (*PayoutRe
 
 // UpdatePayoutAccount sets/updates the default payout bank account and masks the
 // account number in the response. This is NOT a ledger posting.
+//
+// Whenever this request changes bank_code or account_number, the account's
+// identity has changed and its PRIOR is_verified value can no longer be trusted
+// for it — re-verifying (or, with no resolver configured / an incomplete pair,
+// resetting to unverified) closes the bypass where re-pointing an already-
+// verified row at a different account silently kept it "verified". A request
+// that touches neither field (e.g. just flipping is_default) leaves is_verified
+// untouched (verified stays nil -> repo's COALESCE keeps the existing value).
 func (s *Service) UpdatePayoutAccount(ctx context.Context, userID string, req PayoutAccountRequest) (*BankAccount, error) {
-	acct, err := s.repo.SetDefaultBankAccount(ctx, userID, req)
+	var verified *bool
+	if req.BankCode != nil || req.AccountNumber != nil {
+		v := false
+		if s.bankResolver != nil && req.BankCode != nil && req.AccountNumber != nil {
+			name, err := s.bankResolver.ResolveAccount(ctx, *req.BankCode, *req.AccountNumber)
+			if err != nil {
+				return nil, ErrBankAccountUnresolvable
+			}
+			req.AccountName = &name
+			v = true
+		}
+		verified = &v
+	}
+	acct, err := s.repo.SetDefaultBankAccount(ctx, userID, req, verified)
 	if err != nil {
 		return nil, err
 	}

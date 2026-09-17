@@ -19,6 +19,7 @@ package doctor_test
 
 import (
 	"context"
+	"errors"
 	"os"
 	"testing"
 
@@ -403,3 +404,314 @@ func TestGetMerchantUpgrade_SurfacesSelectedType(t *testing.T) {
 		t.Errorf("selectedType = %q, want specialist", *after.SelectedType)
 	}
 }
+
+// ── CreateBankAccount / BankAccountResolver (real Paystack NUBAN verification) ──
+//
+// Regression coverage for the bug this fix closes: POST /profile/bank-account
+// previously always stored is_verified=false (hardcoded in the INSERT) with
+// whatever accountName the client happened to send (usually none), so the
+// "Verify account" step on /profile/setup/bank-account never actually verified
+// anything against a real bank. These tests exercise CreateBankAccount end to
+// end against Postgres with a fake resolver standing in for the Paystack client
+// (the adapter itself, doctorBankResolverAdapter, is a 4-line pass-through
+// wired in internal/app/finance_routes.go and not independently testable
+// without a live Paystack sandbox call).
+
+type fakeIntegrationBankResolver struct {
+	name string
+	err  error
+}
+
+func (f fakeIntegrationBankResolver) ResolveAccount(_ context.Context, _, _ string) (string, error) {
+	return f.name, f.err
+}
+
+// TestCreateBankAccount_ResolverSuccess_PersistsRealNameAndMarksVerified is the
+// happy path: a resolver that successfully names the account must persist that
+// EXACT name (never the empty/absent name the old code left it as) and flip
+// is_verified to true — the column the INSERT used to hardcode to false no
+// matter what.
+func TestCreateBankAccount_ResolverSuccess_PersistsRealNameAndMarksVerified(t *testing.T) {
+	svc, _, pool, cleanup := newIntegrationService(t)
+	t.Cleanup(cleanup)
+	ctx := context.Background()
+
+	userID := seedAuthUser(t, pool)
+	svc.SetBankAccountResolver(fakeIntegrationBankResolver{name: "AMAKA OBI"})
+
+	bankName, bankCode, accountNumber := "Guaranty Trust Bank (GTBank)", "058", "0123456789"
+	acct, err := svc.CreateBankAccount(ctx, userID, "bank-"+uuid.NewString(), doctor.BankAccountRequest{
+		BankName: &bankName, BankCode: &bankCode, AccountNumber: &accountNumber,
+	})
+	if err != nil {
+		t.Fatalf("CreateBankAccount: %v", err)
+	}
+	if !acct.IsVerified {
+		t.Error("IsVerified = false, want true once the resolver confirms the account")
+	}
+	if acct.AccountName == nil || *acct.AccountName != "AMAKA OBI" {
+		t.Errorf("AccountName = %v, want the resolver's real name (AMAKA OBI)", acct.AccountName)
+	}
+}
+
+// TestCreateBankAccount_ClientSuppliedAccountNameIsIgnored proves the trust
+// boundary: whatever accountName the client sends in the request is NEVER what
+// gets stored once a resolver is configured — only the resolver's own answer is
+// trusted, since this field feeds payouts (a forged "isVerified"/name would be a
+// way to redirect earnings to a name-mismatched account).
+func TestCreateBankAccount_ClientSuppliedAccountNameIsIgnored(t *testing.T) {
+	svc, _, pool, cleanup := newIntegrationService(t)
+	t.Cleanup(cleanup)
+	ctx := context.Background()
+
+	userID := seedAuthUser(t, pool)
+	svc.SetBankAccountResolver(fakeIntegrationBankResolver{name: "REAL RESOLVED NAME"})
+
+	bankCode, accountNumber, forgedName := "058", "0123456789", "NOT THE REAL OWNER"
+	acct, err := svc.CreateBankAccount(ctx, userID, "bank-"+uuid.NewString(), doctor.BankAccountRequest{
+		BankCode: &bankCode, AccountNumber: &accountNumber, AccountName: &forgedName,
+	})
+	if err != nil {
+		t.Fatalf("CreateBankAccount: %v", err)
+	}
+	if acct.AccountName == nil || *acct.AccountName != "REAL RESOLVED NAME" {
+		t.Errorf("AccountName = %v, want the resolver's name to override the client-supplied one", acct.AccountName)
+	}
+}
+
+// TestCreateBankAccount_ResolverFailure_PersistsNothing is the fail-closed
+// guarantee against real Postgres: when the resolver cannot verify the account
+// (wrong number, wrong bank, account not found), CreateBankAccount must return
+// ErrBankAccountUnresolvable and leave NO row behind — not even an unverified one.
+func TestCreateBankAccount_ResolverFailure_PersistsNothing(t *testing.T) {
+	svc, _, pool, cleanup := newIntegrationService(t)
+	t.Cleanup(cleanup)
+	ctx := context.Background()
+
+	userID := seedAuthUser(t, pool)
+	svc.SetBankAccountResolver(fakeIntegrationBankResolver{err: errors.New("paystack: resolve account: Could not resolve account")})
+
+	bankCode, accountNumber := "058", "0000000000"
+	idem := "bank-" + uuid.NewString()
+	acct, err := svc.CreateBankAccount(ctx, userID, idem, doctor.BankAccountRequest{
+		BankCode: &bankCode, AccountNumber: &accountNumber,
+	})
+	if !errors.Is(err, doctor.ErrBankAccountUnresolvable) {
+		t.Fatalf("err = %v, want ErrBankAccountUnresolvable", err)
+	}
+	if acct != nil {
+		t.Errorf("result must be nil when verification fails, got %+v", acct)
+	}
+
+	var count int
+	if err := pool.QueryRow(ctx,
+		`SELECT count(*) FROM doctor_bank_accounts WHERE user_id = $1 AND idempotency_key = $2`,
+		userID, idem).Scan(&count); err != nil {
+		t.Fatalf("count rows: %v", err)
+	}
+	if count != 0 {
+		t.Errorf("a failed verification left %d row(s) behind, want 0 — an unverifiable account must never be persisted", count)
+	}
+}
+
+// ── RequestPayout fail-closed bank-account verification gate ────────────────
+//
+// Regression coverage for the money-safety gap the review flagged: verifying an
+// account only gated the mobile UI's "Continue" button — RequestPayout itself
+// never checked is_verified, so an unverified account (or one re-pointed at a
+// different, unverified account via PUT /payout-account) could already receive
+// a real payout. These tests exercise the new gate against Postgres + the real
+// ledger, proving a debit never posts when the destination account isn't
+// verified — this is the fail-closed control that makes verification mean
+// something for money movement, not just onboarding UX.
+
+// TestRequestPayout_RejectsUnverifiedDefaultAccount: an account created with no
+// resolver configured (the documented dev fallback) is unverified by
+// construction. A payout with no explicit BankAccountID falls back to the
+// doctor's default account and must reject before any ledger debit.
+func TestRequestPayout_RejectsUnverifiedDefaultAccount(t *testing.T) {
+	svc, ledgerSvc, pool, cleanup := newIntegrationService(t)
+	t.Cleanup(cleanup)
+	ctx := context.Background()
+
+	userID := seedAuthUser(t, pool)
+	seedTier(t, pool, userID, 3)
+	fundWallet(t, ledgerSvc, userID, 50_000)
+	// svc.SetBankAccountResolver is intentionally left nil: CreateBankAccount's
+	// documented no-resolver fallback stores the account unverified.
+	bankCode, accountNumber := "058", "0123456789"
+	if _, err := svc.CreateBankAccount(ctx, userID, "bank-"+uuid.NewString(), doctor.BankAccountRequest{
+		BankCode: &bankCode, AccountNumber: &accountNumber, IsDefault: boolPtr(true),
+	}); err != nil {
+		t.Fatalf("CreateBankAccount: %v", err)
+	}
+
+	before, err := ledgerSvc.GetBalance(ctx, userID)
+	if err != nil {
+		t.Fatalf("balance before: %v", err)
+	}
+
+	_, err = svc.RequestPayout(ctx, userID, "payout-"+uuid.NewString(), doctor.RequestPayoutRequest{AmountKobo: 20_000})
+	if !errors.Is(err, doctor.ErrBankAccountUnverified) {
+		t.Fatalf("err = %v, want ErrBankAccountUnverified", err)
+	}
+
+	after, err := ledgerSvc.GetBalance(ctx, userID)
+	if err != nil {
+		t.Fatalf("balance after: %v", err)
+	}
+	if before != after {
+		t.Errorf("balance moved from %d to %d — a rejected payout must not debit the wallet", before, after)
+	}
+}
+
+// TestRequestPayout_RejectsWithNoBankAccountOnFile: a doctor who never set up a
+// payout account at all must not be able to request one — there is nowhere
+// verified for the money to go.
+func TestRequestPayout_RejectsWithNoBankAccountOnFile(t *testing.T) {
+	svc, ledgerSvc, pool, cleanup := newIntegrationService(t)
+	t.Cleanup(cleanup)
+	ctx := context.Background()
+
+	userID := seedAuthUser(t, pool)
+	seedTier(t, pool, userID, 3)
+	fundWallet(t, ledgerSvc, userID, 50_000)
+
+	_, err := svc.RequestPayout(ctx, userID, "payout-"+uuid.NewString(), doctor.RequestPayoutRequest{AmountKobo: 20_000})
+	if !errors.Is(err, doctor.ErrNotFound) {
+		t.Fatalf("err = %v, want it to wrap ErrNotFound (no bank account on file)", err)
+	}
+}
+
+// TestRequestPayout_SucceedsWithVerifiedDefaultAccount is the regression check
+// that the new gate doesn't block the legitimate happy path: a resolver-
+// verified default account still lets a payout through exactly as before.
+func TestRequestPayout_SucceedsWithVerifiedDefaultAccount(t *testing.T) {
+	svc, ledgerSvc, pool, cleanup := newIntegrationService(t)
+	t.Cleanup(cleanup)
+	ctx := context.Background()
+
+	userID := seedAuthUser(t, pool)
+	seedTier(t, pool, userID, 3)
+	fundWallet(t, ledgerSvc, userID, 50_000)
+	svc.SetBankAccountResolver(fakeIntegrationBankResolver{name: "AMAKA OBI"})
+	bankCode, accountNumber := "058", "0123456789"
+	if _, err := svc.CreateBankAccount(ctx, userID, "bank-"+uuid.NewString(), doctor.BankAccountRequest{
+		BankCode: &bankCode, AccountNumber: &accountNumber, IsDefault: boolPtr(true),
+	}); err != nil {
+		t.Fatalf("CreateBankAccount: %v", err)
+	}
+
+	res, err := svc.RequestPayout(ctx, userID, "payout-"+uuid.NewString(), doctor.RequestPayoutRequest{AmountKobo: 20_000})
+	if err != nil {
+		t.Fatalf("RequestPayout: %v", err)
+	}
+	if res == nil || res.PayoutID == "" {
+		t.Fatalf("expected a payout result with id, got %+v", res)
+	}
+}
+
+// ── UpdatePayoutAccount: changing bank details must not keep a stale is_verified ──
+
+// TestUpdatePayoutAccount_ChangingAccountNumberWithNoResolverResetsVerification
+// closes the bypass: re-pointing an already-verified default account at a
+// DIFFERENT account_number, with no resolver configured to re-check it, must
+// reset is_verified to false rather than silently keep it true for an account
+// nothing has actually confirmed.
+func TestUpdatePayoutAccount_ChangingAccountNumberWithNoResolverResetsVerification(t *testing.T) {
+	svc, _, pool, cleanup := newIntegrationService(t)
+	t.Cleanup(cleanup)
+	ctx := context.Background()
+
+	userID := seedAuthUser(t, pool)
+	svc.SetBankAccountResolver(fakeIntegrationBankResolver{name: "AMAKA OBI"})
+	bankCode, accountNumber := "058", "0123456789"
+	created, err := svc.CreateBankAccount(ctx, userID, "bank-"+uuid.NewString(), doctor.BankAccountRequest{
+		BankCode: &bankCode, AccountNumber: &accountNumber, IsDefault: boolPtr(true),
+	})
+	if err != nil {
+		t.Fatalf("CreateBankAccount: %v", err)
+	}
+	if !created.IsVerified {
+		t.Fatal("precondition: account must start verified")
+	}
+
+	// Now drop the resolver (simulating no PAYSTACK_SECRET_KEY) and re-point the
+	// SAME default account at a different, unresolvable account number.
+	svc.SetBankAccountResolver(nil)
+	newAccountNumber := "9999999999"
+	updated, err := svc.UpdatePayoutAccount(ctx, userID, doctor.PayoutAccountRequest{
+		AccountNumber: &newAccountNumber,
+	})
+	if err != nil {
+		t.Fatalf("UpdatePayoutAccount: %v", err)
+	}
+	if updated.IsVerified {
+		t.Error("IsVerified = true after changing account_number with no resolver — a re-pointed account must not keep the old verified flag")
+	}
+}
+
+// TestUpdatePayoutAccount_ChangingAccountNumberWithResolverReVerifies is the
+// companion happy path: when a resolver IS configured, changing account_number
+// re-runs real verification and updates the account name to the new resolved
+// owner rather than leaving the old name in place.
+func TestUpdatePayoutAccount_ChangingAccountNumberWithResolverReVerifies(t *testing.T) {
+	svc, _, pool, cleanup := newIntegrationService(t)
+	t.Cleanup(cleanup)
+	ctx := context.Background()
+
+	userID := seedAuthUser(t, pool)
+	svc.SetBankAccountResolver(fakeIntegrationBankResolver{name: "AMAKA OBI"})
+	bankCode, accountNumber := "058", "0123456789"
+	if _, err := svc.CreateBankAccount(ctx, userID, "bank-"+uuid.NewString(), doctor.BankAccountRequest{
+		BankCode: &bankCode, AccountNumber: &accountNumber, IsDefault: boolPtr(true),
+	}); err != nil {
+		t.Fatalf("CreateBankAccount: %v", err)
+	}
+
+	svc.SetBankAccountResolver(fakeIntegrationBankResolver{name: "DIFFERENT OWNER"})
+	newAccountNumber := "1111111111"
+	updated, err := svc.UpdatePayoutAccount(ctx, userID, doctor.PayoutAccountRequest{
+		AccountNumber: &newAccountNumber,
+	})
+	if err != nil {
+		t.Fatalf("UpdatePayoutAccount: %v", err)
+	}
+	if !updated.IsVerified {
+		t.Error("IsVerified = false after a successful re-resolve, want true")
+	}
+	if updated.AccountName == nil || *updated.AccountName != "DIFFERENT OWNER" {
+		t.Errorf("AccountName = %v, want the newly resolved owner (DIFFERENT OWNER)", updated.AccountName)
+	}
+}
+
+// TestUpdatePayoutAccount_TouchingOnlyIsDefaultLeavesVerificationUntouched: a
+// request that changes neither bank_code nor account_number (e.g. just
+// re-selecting an existing account as default) must NOT reset is_verified —
+// nothing about the account's identity changed, so there is nothing to re-check.
+func TestUpdatePayoutAccount_TouchingOnlyIsDefaultLeavesVerificationUntouched(t *testing.T) {
+	svc, _, pool, cleanup := newIntegrationService(t)
+	t.Cleanup(cleanup)
+	ctx := context.Background()
+
+	userID := seedAuthUser(t, pool)
+	svc.SetBankAccountResolver(fakeIntegrationBankResolver{name: "AMAKA OBI"})
+	bankCode, accountNumber := "058", "0123456789"
+	created, err := svc.CreateBankAccount(ctx, userID, "bank-"+uuid.NewString(), doctor.BankAccountRequest{
+		BankCode: &bankCode, AccountNumber: &accountNumber, IsDefault: boolPtr(true),
+	})
+	if err != nil {
+		t.Fatalf("CreateBankAccount: %v", err)
+	}
+
+	svc.SetBankAccountResolver(nil) // must not matter: no bank_code/account_number in this request
+	updated, err := svc.UpdatePayoutAccount(ctx, userID, doctor.PayoutAccountRequest{AccountID: &created.ID})
+	if err != nil {
+		t.Fatalf("UpdatePayoutAccount: %v", err)
+	}
+	if !updated.IsVerified {
+		t.Error("IsVerified flipped to false when only is_default was touched — nothing about the account's identity changed")
+	}
+}
+
+func boolPtr(b bool) *bool { return &b }
