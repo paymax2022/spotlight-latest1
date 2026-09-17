@@ -121,6 +121,58 @@ func TestLiveDB_BoostOnRejectedListing_AutoRefundsSeller(t *testing.T) {
 	}
 }
 
+// TestLiveDB_RejectBoost_ReRejectAlreadyRefundedIsIdempotentNoOp covers
+// docs/qa/modules/marketplace.md §5b (Boost FSM table) / §4 MKT-FSM-015:
+// re-rejecting a boost that is already auto_refunded must be an idempotent
+// no-op (200, unchanged row), not a 409 INVALID_BOOST_TRANSITION. Live HTTP
+// testing on a throwaway backend (:8099) found the guard fired unconditionally
+// on the second call, even though the boost's own state was never corrupted —
+// a response-contract gap in RejectBoost, fixed by short-circuiting on an
+// already-terminal status before the FSM guard runs.
+func TestLiveDB_RejectBoost_ReRejectAlreadyRefundedIsIdempotentNoOp(t *testing.T) {
+	svc, pool := liveMktService(t)
+	ctx := context.Background()
+
+	seller := seedLedgerCapableSeller(t, ctx, pool) // must hold a wallet: a regression would post a second reversal
+	admin := seedTrustedSeller(t, ctx, pool)
+	cat := seedRiskTier0Category(t, ctx, pool)
+	listing := activate(t, ctx, svc, seller, admin, cat, "Boosted then rejected twice", 500000)
+	boostID := seedActiveBoost(t, ctx, pool, listing.ID, seller, "vip", "now()+interval '6 days'")
+
+	first, err := svc.RejectBoost(ctx, admin, boostID, "prohibited_item")
+	if err != nil {
+		t.Fatalf("first reject: %v", err)
+	}
+	if first.Status != mkt.BoostAutoRefunded {
+		t.Fatalf("precondition: first reject should auto-refund, got %s", first.Status)
+	}
+	balAfterFirst := walletBalanceKobo(t, ctx, pool, seller)
+
+	second, err := svc.RejectBoost(ctx, admin, boostID, "prohibited_item")
+	if err != nil {
+		t.Fatalf("re-reject on an already-refunded boost must be an idempotent no-op, got error: %v", err)
+	}
+	if second.Status != mkt.BoostAutoRefunded {
+		t.Errorf("re-reject status = %s, want unchanged %s", second.Status, mkt.BoostAutoRefunded)
+	}
+	if second.RefundRef == nil || first.RefundRef == nil || *second.RefundRef != *first.RefundRef {
+		t.Errorf("re-reject must return the SAME refund ref, first=%v second=%v", first.RefundRef, second.RefundRef)
+	}
+
+	balAfterSecond := walletBalanceKobo(t, ctx, pool, seller)
+	if balAfterSecond != balAfterFirst {
+		t.Errorf("re-reject must not move money: balance went from %d to %d", balAfterFirst, balAfterSecond)
+	}
+
+	after, err := svc.GetBoost(ctx, boostID)
+	if err != nil {
+		t.Fatalf("get boost after re-reject: %v", err)
+	}
+	if after.Status != mkt.BoostAutoRefunded {
+		t.Errorf("boost status in DB = %s after re-reject, want unchanged %s", after.Status, mkt.BoostAutoRefunded)
+	}
+}
+
 // TestLiveDB_VerifyID_IsIdempotentUpsertOnly executes the badge-permanence
 // guarantee against the database: VerifyID is an upsert that only ever SETS, so a
 // retried call after a provider timeout must not toggle an existing badge off.
