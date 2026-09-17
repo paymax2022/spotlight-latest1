@@ -87,7 +87,15 @@ const (
 )
 
 var allowedSampleTransitions = map[SampleState]map[SampleState]bool{
-	SampleCollected:         {SampleInCustody: true, SampleAccessioned: true, SampleBreached: true},
+	// SampleHandedOver is missing here would make Handover() unreachable from
+	// its own documented starting state — Handover's switch treats
+	// SampleCollected as valid (the phlebotomist → courier handoff, per the
+	// package's own "phlebotomist → courier → lab" doc comment), but without
+	// this edge canTransitionSample rejects every such call with "illegal
+	// sample transition COLLECTED -> HANDED_OVER" regardless of caller.
+	// Found live via UAT — the standard courier handover step was completely
+	// blocked end to end.
+	SampleCollected:         {SampleInCustody: true, SampleHandedOver: true, SampleAccessioned: true, SampleBreached: true},
 	SampleInCustody:         {SampleHandedOver: true, SampleAccessioned: true, SampleBreached: true},
 	SampleHandedOver:        {SampleAccessioned: true, SampleBreached: true},
 	SampleAccessioned:       {},
