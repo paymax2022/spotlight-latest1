@@ -8,13 +8,24 @@ import (
 	"github.com/google/uuid"
 )
 
-// roleIn returns the caller's role within an estate, or an error if not a member.
+// roleIn returns the caller's role within an estate, or an error if not a
+// member. Fails closed on banned/deleted membership, mirroring assertRoles /
+// getResidentID — this was previously missing here, which let a banned or
+// deleted member keep reading data (e.g. ListInvoices) through any of the 5
+// call sites that resolve membership via this helper. ESTATE-AUTHZ-003 (UAT).
 func (s *Service) roleIn(ctx context.Context, estateID, userID string) (string, error) {
 	var role string
+	var banned, deleted bool
 	if err := s.db.QueryRow(ctx,
-		`SELECT role FROM estate_residents WHERE estate_id=$1 AND user_id=$2`, estateID, userID,
-	).Scan(&role); err != nil {
+		`SELECT role, banned_at IS NOT NULL, deleted_at IS NOT NULL FROM estate_residents WHERE estate_id=$1 AND user_id=$2`, estateID, userID,
+	).Scan(&role, &banned, &deleted); err != nil {
 		return "", fmt.Errorf("estate: not a member of this estate")
+	}
+	if deleted {
+		return "", fmt.Errorf("estate: this account has been deleted")
+	}
+	if banned {
+		return "", fmt.Errorf("estate: this account is banned from the estate")
 	}
 	return role, nil
 }
