@@ -1330,6 +1330,7 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		// Block 33: Facilities / Amenities
 		estGroup.GET("/:id/facilities", estateHandler.ListFacilities)
 		estGroup.POST("/:id/facilities", estateHandler.CreateFacility)
+		estGroup.PATCH("/:id/facilities/:facilityId", estateHandler.UpdateFacility)
 		estGroup.POST("/:id/facilities/:facilityId/book", estateHandler.BookFacility)
 		estGroup.GET("/:id/bookings", estateHandler.ListMyBookings)
 

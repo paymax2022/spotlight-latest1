@@ -101,6 +101,7 @@ func RegisterEstateAdmin(
 	a.GET("/ops/tasks", guard("estate.admin.ops"), h.ListTasks)
 	a.GET("/ops/meetings", guard("estate.admin.ops"), h.ListMeetings)
 	a.GET("/ops/facilities", guard("estate.admin.ops"), h.ListFacilities)
+	a.GET("/ops/facilities/:facilityId/bookings", guard("estate.admin.facilities.bookings.view"), h.ListFacilityBookings)
 
 	// ── Content (announcements / documents) ──
 	a.GET("/content/announcements", guard("estate.admin.content"), h.ListAnnouncements)
@@ -502,6 +503,44 @@ func (h *estateAdminHandler) ListFacilities(c *gin.Context) {
 		return map[string]any{
 			"id": id, "estate_id": estateID, "name": name, "kind": kind,
 			"capacity": capacity, "fee_kobo": feeKobo, "created_at": createdAt,
+		}, nil
+	})
+}
+
+// ListFacilityBookings surfaces every resident's bookings for one facility —
+// the estate service only exposes ListMyBookings (caller's own bookings), which
+// is the wrong shape for an operator auditing a facility's reservation history.
+// resident_name is a best-effort LEFT JOIN onto platform_users (id-mirrored from
+// auth.users by the RBAC identity bridge, see rbac_identity_bridge migration);
+// it comes back null rather than erroring when a resident row predates the
+// bridge or was created via a path the bridge doesn't cover.
+func (h *estateAdminHandler) ListFacilityBookings(c *gin.Context) {
+	facilityID := c.Param("facilityId")
+	statusClause := ""
+	args := []any{facilityID}
+	if st := c.Query("status"); st != "" {
+		args = append(args, st)
+		statusClause = " AND fb.status=$" + strconv.Itoa(len(args))
+	}
+	sql := `SELECT fb.id, fb.estate_id, fb.facility_id, fb.resident_id,
+	               COALESCE(NULLIF(TRIM(pu.first_name || ' ' || pu.last_name), ''), NULL),
+	               fb.starts_at, fb.ends_at, fb.status, fb.amount_kobo, fb.created_at
+	        FROM facility_bookings fb
+	        LEFT JOIN platform_users pu ON pu.id = fb.resident_id
+	        WHERE fb.facility_id=$1` + statusClause + `
+	        ORDER BY fb.starts_at DESC LIMIT ` + strconv.Itoa(limitOf(c, 200))
+	h.jsonRows(c, sql, args, func(r pgxRows) (map[string]any, error) {
+		var id, estateID, facID, residentID, status string
+		var residentName *string
+		var startsAt, endsAt, createdAt any
+		var amountKobo int64
+		if err := r.Scan(&id, &estateID, &facID, &residentID, &residentName, &startsAt, &endsAt, &status, &amountKobo, &createdAt); err != nil {
+			return nil, err
+		}
+		return map[string]any{
+			"id": id, "estate_id": estateID, "facility_id": facID, "resident_id": residentID,
+			"resident_name": residentName, "starts_at": startsAt, "ends_at": endsAt,
+			"status": status, "amount_kobo": amountKobo, "created_at": createdAt,
 		}, nil
 	})
 }

@@ -211,6 +211,21 @@ func (h *Handler) ListFacilities(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": fs})
 }
 
+func (h *Handler) UpdateFacility(c *gin.Context) {
+	adminID := c.GetString("user_id")
+	var req UpdateFacilityRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	f, err := h.svc.UpdateFacility(c.Request.Context(), c.Param("id"), adminID, c.Param("facilityId"), req)
+	if err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, f)
+}
+
 func (h *Handler) BookFacility(c *gin.Context) {
 	userID := c.GetString("user_id")
 	var req BookFacilityRequest

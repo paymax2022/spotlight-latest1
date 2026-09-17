@@ -228,6 +228,26 @@ func (s *Service) CreateFacility(ctx context.Context, estateID, adminID string, 
 	return f, nil
 }
 
+// UpdateFacility edits a facility's name/capacity/fee. Kind is immutable here —
+// changing what a facility IS (pool vs hall) is a bigger operational change than
+// this edit form covers; residents create new facilities for that instead.
+func (s *Service) UpdateFacility(ctx context.Context, estateID, adminID, facilityID string, req UpdateFacilityRequest) (*Facility, error) {
+	if err := s.assertEstateAdmin(ctx, estateID, adminID); err != nil {
+		return nil, err
+	}
+	f := &Facility{ID: facilityID, EstateID: estateID}
+	const q = `UPDATE estate_facilities SET name=$3, capacity=$4, fee_kobo=$5
+		WHERE id=$1 AND estate_id=$2
+		RETURNING kind, created_at`
+	if err := s.db.QueryRow(ctx, q, facilityID, estateID, req.Name, req.Capacity, req.FeeKobo).Scan(&f.Kind, &f.CreatedAt); err != nil {
+		return nil, fmt.Errorf("estate: facility not found in this estate")
+	}
+	f.Name = req.Name
+	f.Capacity = req.Capacity
+	f.FeeKobo = req.FeeKobo
+	return f, nil
+}
+
 func (s *Service) ListFacilities(ctx context.Context, estateID, userID string) ([]Facility, error) {
 	if err := s.assertResident(ctx, estateID, userID); err != nil {
 		return nil, err
