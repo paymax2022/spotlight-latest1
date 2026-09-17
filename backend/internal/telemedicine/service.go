@@ -21,6 +21,11 @@ type Service struct {
 	// means the flag is off and consultations price exactly as they did before
 	// ADR-044 — the patient pays the consultation fee alone.
 	platformFeeBp int
+	// audit is the admin-console audit sink (TELEMEDICINE-004), wired via
+	// WithAudit (admin_service.go). Nil is valid — unwired, VerifyDoctor still
+	// applies the decision but skips the audit row rather than failing the
+	// request over a logging concern.
+	audit AuditWriter
 }
 
 // NewService builds the service with the platform booking fee OFF. The fee is a

@@ -24,7 +24,7 @@ export default function ConsultationsPage() {
     <div style={{ padding: '0.5rem 0.5rem 2rem' }}>
       <PageHeader title="Consultations" subtitle="Consultation (appointment) oversight — patient identity is masked." action={<button onClick={load} style={btn()}>Refresh</button>} />
       <TelemedTabs active="consultations" />
-      <DisclosureNote>Read-only — backed by member appointment projections. No admin write surface exists on the backend yet.</DisclosureNote>
+      <DisclosureNote>Read-only — backed by the real system-wide admin appointment list (GET /admin/appointments, TELEMEDICINE-004), not the caller-scoped member projection. Patient identity is shown masked (id only) — the backend does not join a patient display name.</DisclosureNote>
 
       <FilterBar>
         <div style={{ minWidth: 200 }}>

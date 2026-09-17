@@ -1852,8 +1852,12 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		}
 		log.Printf("[telemedicine] platform booking fee: %d bp (FEATURE_TELEMEDICINE_PLATFORM_FEE_ENABLED=%t)",
 			platformFeeBp, cfg.FeatureTelemedicinePlatformFeeEnabled)
+		// WithAudit reuses the SAME audit sink the doctor module's own MDCN review
+		// console writes to (doctor_compliance_audit via doctor.Repository), so an
+		// approve/reject recorded from EITHER admin console lands in one trail.
 		telemedSvc := telemedicine.NewService(pool, settlementSvcT).
-			WithPlatformFeeBp(platformFeeBp)
+			WithPlatformFeeBp(platformFeeBp).
+			WithAudit(doctor.NewRepository(pool))
 		telemedHandler := telemedicine.NewHandler(telemedSvc)
 
 		// Legacy /api/finance/telemedicine/... (kept for backward compat)
@@ -1897,6 +1901,20 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		v1Tele.PATCH("/doctor/availability", telemedHandler.ToggleAvailability)
 		v1Tele.POST("/doctor/notes", telemedHandler.SubmitSOAPNote)
 		v1Tele.POST("/doctor/licence", telemedHandler.UploadLicenceDoc)
+
+		// Admin console (TELEMEDICINE-004) — platform-wide oversight, distinct
+		// from the member/doctor-scoped routes above. GETs read-gated on
+		// telemedicine.admin.view; the verify POST (a real decision, mirroring
+		// doctor_verifications) on telemedicine.admin.manage — same view/action
+		// split marketplace's admin console uses (see
+		// 20261028000300_marketplace_users_ts_rbac_perms.sql). Seeded by
+		// 20270227000000_telemedicine_admin_rbac.sql.
+		teleAdmin := r.Group("/api/v1/telemedicine/admin")
+		teleAdmin.Use(middleware.RequireAuthContext(supabase, rbac))
+		teleAdmin.GET("/dashboard", middleware.RequirePermission(rbac, "telemedicine.admin.view"), telemedHandler.AdminGetDashboard)
+		teleAdmin.GET("/doctors", middleware.RequirePermission(rbac, "telemedicine.admin.view"), telemedHandler.AdminListDoctors)
+		teleAdmin.GET("/appointments", middleware.RequirePermission(rbac, "telemedicine.admin.view"), telemedHandler.AdminListAppointments)
+		teleAdmin.POST("/doctors/:userId/verify", middleware.RequirePermission(rbac, "telemedicine.admin.manage"), telemedHandler.AdminVerifyDoctor)
 	}
 
 	// --- Pharmacy routes ---
