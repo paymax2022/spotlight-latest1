@@ -64,6 +64,11 @@ const routePermissions: Array<{ prefix: string; permissions: string[] }> = [
   // baseline below, which none of those roles hold, and the route is
   // unreachable for them even though the server would have allowed them in.
   { prefix: '/admin/payments-finance', permissions: ['finance:view', 'finance:adjust:initiate', 'finance:adjust:approve'] },
+  // Same Path A pattern as payments-finance above: real check is server-side
+  // in frontend-web (requireUtilitySupport/requireUtilityManager), listed
+  // here with its colon-notation permission strings so utility:support /
+  // utility:manage roles pass this client-side gate too.
+  { prefix: '/admin/utility-payments', permissions: ['utility:support', 'utility:manage'] },
   { prefix: '/admin/finance/transfers', permissions: ['finance.admin.transfers'] },
   { prefix: '/admin/finance/kyc-verify', permissions: ['finance.admin.kyc'] },
   { prefix: '/admin/finance/kyc', permissions: ['finance.admin.kyc'] },
