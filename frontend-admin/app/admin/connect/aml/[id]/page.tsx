@@ -26,17 +26,22 @@ export default function ConnectAmlCaseDetailPage({ params }: { params: Promise<{
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [filed, setFiled] = useState<string | null>(null);
-  const [reasonCode, setReasonCode] = useState('');
-  const [narrativeRef, setNarrativeRef] = useState('');
+  // Real POST /aml/cases/:id/file-str body is {filedRef, narrative} (models.go
+  // FileSTRRequest) — filedRef is the NFIU acknowledgement reference obtained
+  // when the STR/SAR is filed with the NFIU directly; there's no "reason
+  // code" input on that endpoint (reason codes are set once, at case-open
+  // time — see connectAdminService.ts openAmlCase).
+  const [filedRef, setFiledRef] = useState('');
+  const [narrative, setNarrative] = useState('');
 
   async function load() { setLoading(true); setError(null); try { setC(await getAmlCase(id)); } catch (e) { setError(String(e)); } finally { setLoading(false); } }
   useEffect(() => { load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [id]);
 
   async function submitStr() {
-    if (!reasonCode.trim() || !narrativeRef.trim()) { setError('Reason code and narrative reference are required to file an STR.'); return; }
+    if (!filedRef.trim() || !narrative.trim()) { setError('NFIU filed reference and narrative are required to record an STR filing.'); return; }
     setBusy(true); setError(null);
     try {
-      const res = await fileStr(id, { reason_code: reasonCode.trim(), narrative_ref: narrativeRef.trim() });
+      const res = await fileStr(id, { filed_ref: filedRef.trim(), narrative: narrative.trim() });
       setFiled(res.str_reference);
       await load();
     } catch (e) { setError(String(e)); }
@@ -87,12 +92,12 @@ export default function ConnectAmlCaseDetailPage({ params }: { params: Promise<{
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', marginTop: 12 }}>
               <label style={{ fontSize: '0.8rem', color: colors.text }}>
-                AML reason code
-                <Input value={reasonCode} onChange={(e) => setReasonCode(e.target.value)} placeholder="e.g. STRUCT_SUB_THRESHOLD" style={{ display: 'block', width: '100%', marginTop: '0.25rem' }} />
+                NFIU filed reference (acknowledgement #)
+                <Input value={filedRef} onChange={(e) => setFiledRef(e.target.value)} placeholder="e.g. NFIU-STR-2026-0418" style={{ display: 'block', width: '100%', marginTop: '0.25rem' }} />
               </label>
               <label style={{ fontSize: '0.8rem', color: colors.text }}>
-                Narrative reference (vault pointer)
-                <Input value={narrativeRef} onChange={(e) => setNarrativeRef(e.target.value)} placeholder="vault://str/narrative-id" style={{ display: 'block', width: '100%', marginTop: '0.25rem' }} />
+                Narrative (reason codes only — no raw PII)
+                <Input value={narrative} onChange={(e) => setNarrative(e.target.value)} placeholder="vault://str/narrative-id" style={{ display: 'block', width: '100%', marginTop: '0.25rem' }} />
               </label>
               <Button variant="primary" disabled={busy} onClick={submitStr} style={{ marginTop: '0.35rem' }}>{busy ? 'Filing…' : 'File STR with NFIU'}</Button>
               <p style={{ fontSize: '0.75rem', color: colors.muted, margin: 0 }}>Action is audited. Reason codes only — no raw PII in the filing record.</p>
