@@ -60,6 +60,7 @@ Cross-cutting invariants apply and are **not** re-derived here — reference: [`
 | Chat | 5 | `GET /chat/threads[/:id]`, `POST /chat/threads/:id/{messages,messages/:messageId/react,mute}` | auth, thread membership scoped |
 | AI notes (read) | 4 | `GET /ai-notes[/:id]`, `GET /ai-notes/:id/status`, `POST /ai-notes`, `POST /ai-notes/:id/regenerate-summary` | auth, scoped |
 | Join / validation | 2 | `POST /invites/validate`, `POST /access-codes/validate` | auth |
+| Elections / governance | 10 | `GET|POST /elections[/:id]`, `POST /elections/:id/{candidates,open,close,publish,handover,vote}`, `GET /elections/:id/tally` | auth (voter reads/votes), `requireElectionOfficer` (mutations — see §6 `ASSOCIATION-DECISION-001`) |
 
 ## 3. Test matrix by layer
 
@@ -161,6 +162,7 @@ Allowed `assoc_ai_notes.status` (DB CHECK): `PROCESSING, READY, APPROVED, PUBLIS
 - **Commission double-count.** Recorder is wired WITHOUT a ledger (nil) on purpose — the dues split already routes the 5% platform fee, so it appends an earning ROW only; a second ledger post would double-count (`ASSOCIATION-INT-008`, `finance_routes.go` L855-861).
 - **Fail-closed on dependency errors.** Ledger/settlement-account errors abort the pay with no partial writes (tx rollback). KYC/tier gating is not applied at this module (dues debit routes through the ledger wallet) — see [`../cross-cutting/kyc-and-tiers.md`](../cross-cutting/kyc-and-tiers.md) for the wallet-side gate.
 - **Feature flag.** No flag ⇒ no recorder and no mounted routes (`ASSOCIATION-SEC-014`).
+- **Election-officer gate bypasses the capability model (product-decision call-out, not a bug).** `requireElectionOfficer` (`service_elections.go`) admits ANY holder of an org role != NONE — including `SECRETARY`, whose `AdminCapabilities{}` are all false everywhere else in the module — to create/manage/open/close/publish an election end to end. Live-confirmed exactly as read (`TestLiveDB_Election_SecretaryIsAFullOfficer`), flagged as `ASSOC-DECISION-001` for an explicit product/business call before go-live, not fixed as a defect.
 
 ## 7. Automated specs to add
 

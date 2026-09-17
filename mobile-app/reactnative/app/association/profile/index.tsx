@@ -88,14 +88,14 @@ export default function ProfileDashboard() {
           <Detail icon={<Phone size={16} color={Colors.onSurfaceVariant} strokeWidth={2} />} label="Phone" value={p.phone} />
           <Detail icon={<Mail size={16} color={Colors.onSurfaceVariant} strokeWidth={2} />} label="Email" value={p.email} />
           <Detail icon={<Briefcase size={16} color={Colors.onSurfaceVariant} strokeWidth={2} />} label="Profession" value={p.profession} />
-          <Detail icon={<Heart size={16} color={Colors.onSurfaceVariant} strokeWidth={2} />} label="Emergency" value={`${p.emergency.name} · ${p.emergency.phone}`} />
-          <Detail icon={<Users size={16} color={Colors.onSurfaceVariant} strokeWidth={2} />} label="Next of kin" value={`${p.nextOfKin.name} (${p.nextOfKin.relationship})`} />
+          <Detail icon={<Heart size={16} color={Colors.onSurfaceVariant} strokeWidth={2} />} label="Emergency" value={p.emergency.name ? `${p.emergency.name} · ${p.emergency.phone}` : 'Not set'} />
+          <Detail icon={<Users size={16} color={Colors.onSurfaceVariant} strokeWidth={2} />} label="Next of kin" value={p.nextOfKin.name ? `${p.nextOfKin.name} (${p.nextOfKin.relationship})` : 'Not set'} />
         </View>
 
         {/* Links */}
         <LinkRow icon={<ShieldCheck size={18} color={Colors.primary} strokeWidth={2} />} label="Privacy settings" onPress={() => router.push('/association/profile/privacy')} />
         <LinkRow icon={<History size={18} color={Colors.primary} strokeWidth={2} />} label="Activity history" onPress={() => router.push('/association/profile/activity')} />
-        <LinkRow icon={<Check size={18} color={Colors.primary} strokeWidth={2} />} label="View public profile" onPress={() => router.push('/association/member/m1')} />
+        <LinkRow icon={<Check size={18} color={Colors.primary} strokeWidth={2} />} label="View public profile" onPress={() => router.push(`/association/member/${p.membershipId}`)} />
         <LinkRow icon={<LifeBuoy size={18} color={Colors.primary} strokeWidth={2} />} label="Help & support" onPress={() => router.push('/association/support')} />
         <LinkRow icon={<Settings size={18} color={Colors.primary} strokeWidth={2} />} label="Settings" onPress={() => router.push('/association/settings')} />
       </ScrollView>

@@ -214,6 +214,7 @@ type MemberDashboard struct {
 }
 
 type MyProfile struct {
+	MembershipID  string         `json:"membershipId"`
 	FullName      string         `json:"fullName"`
 	MemberID      string         `json:"memberId"`
 	PhotoURL      *string        `json:"photoUrl"`

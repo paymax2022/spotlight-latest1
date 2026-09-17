@@ -3,6 +3,7 @@
 import type { MyProfile, PrivacySettings, ActivityEntry } from '../types/profile.types';
 
 export const MOCK_MY_PROFILE: MyProfile = {
+  membershipId: 'mock-membership-1',
   fullName: 'Dr. Chidinma Okeke',
   memberId: 'NMA/LA/2024/0192',
   photoUrl: 'https://images.unsplash.com/photo-1559839734-2b71ea197ec2?w=400&q=80',

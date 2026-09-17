@@ -577,7 +577,7 @@ func (s *Service) GetCard(ctx context.Context, userID string) (MembershipCard, e
 // GetProfile returns the caller's full editable profile.
 func (s *Service) GetProfile(ctx context.Context, userID string) (*MyProfile, error) {
 	const q = `
-		SELECT COALESCE(mp.full_name, ''), m.member_code, mp.photo_url,
+		SELECT m.id::text, COALESCE(mp.full_name, ''), m.member_code, mp.photo_url,
 		       COALESCE(mp.email, ''), COALESCE(mp.phone, ''),
 		       COALESCE(mp.profession, ''), COALESCE(mp.location, ''),
 		       mp.dob::text, COALESCE(mp.bio, ''),
@@ -592,7 +592,7 @@ func (s *Service) GetProfile(ctx context.Context, userID string) (*MyProfile, er
 	var p MyProfile
 	var emergency, nextOfKin []byte
 	if err := s.db.QueryRow(ctx, q, userID).Scan(
-		&p.FullName, &p.MemberID, &p.PhotoURL, &p.Email, &p.Phone,
+		&p.MembershipID, &p.FullName, &p.MemberID, &p.PhotoURL, &p.Email, &p.Phone,
 		&p.Profession, &p.Location, &p.DOB, &p.Bio,
 		&emergency, &nextOfKin,
 		&p.CategoryLabel, &p.ChapterName,

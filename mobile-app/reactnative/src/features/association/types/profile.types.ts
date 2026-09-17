@@ -4,6 +4,7 @@ export interface EmergencyContact { name: string; phone: string }
 export interface NextOfKin { name: string; relationship: string; phone: string }
 
 export interface MyProfile {
+  membershipId: string;
   fullName:    string;
   memberId:    string;
   photoUrl:    string | null;
