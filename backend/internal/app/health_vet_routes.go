@@ -138,6 +138,11 @@ func RegisterHealthVet(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pg
 	// plain r.Group(...) instead of adminGroupTop5, and RequireAuthContext
 	// runs here as this group's own first middleware.
 	ag.Use(middleware.RequireAuthContext(supabase, rbac))
+	// Dashboard is an extension of the SAME admin-oversight surface
+	// /appointments already sits behind — reusing health.vet.appointments
+	// rather than minting a new permission slug (mirrors lab's and
+	// pharmacy's own dashboard routes).
+	ag.GET("/dashboard", guard("health.vet.appointments"), h.AdminDashboard)                    // platform-wide KPI aggregate
 	ag.GET("/appointments", guard("health.vet.appointments"), h.AdminListAppointments)          // appointment oversight
 	ag.GET("/vcn-audit", guard("health.vet.vcn"), h.AdminVCNAudit)                              // VCN credential audit (HL-2)
 	ag.GET("/erx-audit", guard("health.vet.erx"), h.AdminERxAudit)                              // e-prescription audit (HL-3)
