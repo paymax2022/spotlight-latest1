@@ -648,7 +648,11 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 			}
 		}
 		if cfg.FeatureHealthLabEnabled {
-			RegisterHealthLab(finance, adminGroupTop5(r, "/api/health/lab/admin"), pool, rbac, auditSink, cfg)
+			// PHARMACY-006-shaped bug: NOT adminGroupTop5 — see the comment on
+			// RegisterHealthLab's own ag.Use(RequireAuthContext(...)) call for
+			// why (identical ordering hazard to pharmacy's admin group, fixed
+			// the same way).
+			RegisterHealthLab(finance, r.Group("/api/health/lab/admin"), pool, rbac, auditSink, cfg, supabase)
 		}
 		if cfg.FeatureHealthVetEnabled {
 			RegisterHealthVet(finance, adminGroupTop5(r, "/api/health/vet/admin"), pool, rbac, cfg)
