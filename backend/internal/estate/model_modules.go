@@ -191,6 +191,13 @@ type BookFacilityRequest struct {
 	EndsAt   time.Time `json:"ends_at" binding:"required"`
 }
 
+// UpdateFacilityRequest is the body for PATCH /estate/:id/facilities/:facilityId (admin).
+type UpdateFacilityRequest struct {
+	Name     string `json:"name" binding:"required,min=2,max=200"`
+	Capacity *int   `json:"capacity"`
+	FeeKobo  int64  `json:"fee_kobo"`
+}
+
 // Announcement is a community notice posted by an estate admin.
 type Announcement struct {
 	ID        string    `json:"id"`
