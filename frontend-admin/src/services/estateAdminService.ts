@@ -21,7 +21,7 @@ import type {
   RentPassport, PropertyContext, ResidentStatus, VendorStatus,
   OversightIncident, OversightGuardShift, OversightVisitorLog, OversightEmergency,
   DuesReconciliationRow, OversightPayment, OversightRestriction,
-  OversightRepair, OversightTask, OversightMeeting, OversightFacility,
+  OversightRepair, OversightTask, OversightMeeting, OversightFacility, OversightFacilityBooking,
   OversightAnnouncement, OversightDocument,
   OversightElection, ElectionResultRow, ElectionAudit,
 } from '@/types/estateAdmin';
@@ -62,6 +62,12 @@ async function getJson<T>(path: string): Promise<T> {
 }
 async function postJson<T>(path: string, payload: unknown): Promise<T> {
   const res = await fetch(`${financeBase()}${path}`, { method: 'POST', headers: authHeaders(), body: JSON.stringify(payload) });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body?.error || `Request failed (${res.status})`);
+  return (body?.data ?? body) as T;
+}
+async function patchJson<T>(path: string, payload: unknown): Promise<T> {
+  const res = await fetch(`${financeBase()}${path}`, { method: 'PATCH', headers: authHeaders(), body: JSON.stringify(payload) });
   const body = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(body?.error || `Request failed (${res.status})`);
   return (body?.data ?? body) as T;
@@ -285,6 +291,11 @@ const O_FACILITIES: OversightFacility[] = [
   { id: 'of2', estateId: 'demo-estate', name: 'Swimming Pool', kind: 'pool', capacity: 40, feeKobo: 0, createdAt: days(300) },
   { id: 'of3', estateId: 'demo-estate', name: 'Tennis Court', kind: 'court', capacity: 8, feeKobo: 1_000_000_00, createdAt: days(300) },
 ];
+const O_FACILITY_BOOKINGS: OversightFacilityBooking[] = [
+  { id: 'ofb1', estateId: 'demo-estate', facilityId: 'of1', residentId: 'res-01', residentName: 'Ngozi Umeh', startsAt: days(-2), endsAt: days(-2), status: 'confirmed', amountKobo: 5_000_000_00, createdAt: days(-3) },
+  { id: 'ofb2', estateId: 'demo-estate', facilityId: 'of1', residentId: 'res-02', residentName: 'Tunde Bakare', startsAt: days(2), endsAt: days(2), status: 'pending', amountKobo: 5_000_000_00, createdAt: hrs(6) },
+  { id: 'ofb3', estateId: 'demo-estate', facilityId: 'of3', residentId: 'res-03', residentName: 'Aisha Bello', startsAt: days(-10), endsAt: days(-10), status: 'cancelled', amountKobo: 1_000_000_00, createdAt: days(-12) },
+];
 const O_ANNOUNCEMENTS: OversightAnnouncement[] = [
   { id: 'oa1', estateId: 'demo-estate', title: 'Water supply interruption', body: 'Mains maintenance Saturday 6-10am.', kind: 'maintenance', createdBy: 'estate-admin', createdAt: hrs(8) },
   { id: 'oa2', estateId: 'demo-estate', title: 'AGM nominations open', body: 'Submit candidacy by Friday.', kind: 'election', createdBy: 'estate-admin', createdAt: days(2) },
@@ -384,6 +395,43 @@ export async function createFacility(input: { name: string; kind: string; capaci
     name: input.name, kind: input.kind, capacity: input.capacity, fee_kobo: input.feeKobo,
   });
   return toCamel<OversightFacility>(row);
+}
+
+// getFacility: there is no single-facility GET on the backend — only the list
+// endpoints (oversight ListFacilities and the resident-scoped ListFacilities).
+// The console only ever operates within its pinned estateId(), so fetching that
+// estate's full facility list and finding the id client-side is the minimal
+// fix rather than adding a new backend route for one row.
+export async function getFacility(facilityId: string): Promise<OversightFacility | null> {
+  const rows = await listOversightFacilities(estateId());
+  return rows.find((f) => f.id === facilityId) ?? null;
+}
+
+// updateFacility: same write-authorization shape as createFacility — the
+// oversight surface is read-only, so this hits the resident-role-gated
+// PATCH /estate/:id/facilities/:facilityId (assertEstateAdmin), matching the
+// POST create route it sits beside in finance_routes.go.
+export async function updateFacility(facilityId: string, input: { name: string; capacity: number | null; feeKobo: number }): Promise<OversightFacility> {
+  if (USE_MOCK) {
+    await delay(280);
+    const idx = O_FACILITIES.findIndex((f) => f.id === facilityId);
+    if (idx === -1) throw new Error('Facility not found');
+    O_FACILITIES[idx] = { ...O_FACILITIES[idx], name: input.name, capacity: input.capacity, feeKobo: input.feeKobo };
+    return O_FACILITIES[idx];
+  }
+  const row = await patchJson<Record<string, unknown>>(`/estate/${estateId()}/facilities/${facilityId}`, {
+    name: input.name, capacity: input.capacity, fee_kobo: input.feeKobo,
+  });
+  return toCamel<OversightFacility>(row);
+}
+
+// listFacilityBookings: cross-resident booking history for one facility. The
+// estate service only exposes ListMyBookings (the caller's own bookings), so
+// this reads the new estate-admin oversight route instead — read-only, gated
+// on the previously-unused estate.admin.facilities.bookings.view slug.
+export async function listFacilityBookings(facilityId: string): Promise<OversightFacilityBooking[]> {
+  if (USE_MOCK) { await delay(); return O_FACILITY_BOOKINGS.filter((b) => b.facilityId === facilityId); }
+  return getRows<OversightFacilityBooking>(`/estate-admin/ops/facilities/${facilityId}/bookings`);
 }
 
 // Content -----------------------------------------------------------------------

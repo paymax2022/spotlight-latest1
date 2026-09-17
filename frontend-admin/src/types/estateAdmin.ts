@@ -255,6 +255,19 @@ export interface OversightFacility {
   createdAt: string;
 }
 
+export interface OversightFacilityBooking {
+  id: string;
+  estateId: string;
+  facilityId: string;
+  residentId: string;
+  residentName: string | null;
+  startsAt: string;
+  endsAt: string;
+  status: string;
+  amountKobo: number;
+  createdAt: string;
+}
+
 export interface OversightAnnouncement {
   id: string;
   estateId: string;
