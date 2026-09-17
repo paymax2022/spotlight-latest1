@@ -166,6 +166,24 @@ var (
 	ErrReasonRequired       = newErr(http.StatusBadRequest, CodeReasonCodeRequired, "reason_code is required")
 	ErrIdemMissing          = newErr(http.StatusBadRequest, CodeIdempotencyMissing, "Idempotency-Key header required")
 	ErrConflict             = newErr(http.StatusConflict, CodeConflict, "conflicting concurrent write")
+	// ErrNotFound is a generic 404 for admin sub-resources (MKT-007 users/appeals)
+	// that don't warrant their own dedicated CodedError constant.
+	ErrNotFound = newErr(http.StatusNotFound, CodeNotFound, "not found")
+	// ErrAppealNotFound — MKT-007 appeals admin.
+	ErrAppealNotFound = newErr(http.StatusNotFound, CodeNotFound, "appeal not found")
+	// ErrNoPendingAction — MKT-007 maker-checker second-sign attempted with
+	// nothing PENDING (already approved/rejected, or never proposed).
+	ErrNoPendingAction = newErr(http.StatusConflict, CodeConflict, "no pending action awaiting approval")
+	// ErrSameApproverNotAllowed — MKT-007 maker-checker: the checker must be a
+	// DIFFERENT admin than the maker who proposed the action (four-eyes). Reuses
+	// the CodeSameApproverNotAllowed taxonomy entry this module already defines
+	// for disputes (§ Disputes error codes above) so the wire shape is identical
+	// across both dual-approval flows in this module.
+	ErrSameApproverNotAllowed = newErr(http.StatusConflict, CodeSameApproverNotAllowed, "the approver must be a different admin than the one who proposed this action")
+	// ErrInvalidUserAction — action value outside {suspend,ban,reinstate}.
+	ErrInvalidUserAction = newErr(http.StatusBadRequest, CodeValidation, "action must be one of suspend, ban, reinstate")
+	// ErrInvalidAppealDecision — decision value outside {uphold,overturn}.
+	ErrInvalidAppealDecision = newErr(http.StatusBadRequest, CodeValidation, "decision must be one of uphold, overturn")
 	// ErrTierGateUnwired is returned by PurchaseBoost when the Service was built
 	// without a TierEnforcer. A nil gate is a deployment misconfiguration, not a
 	// dev-mode bypass: CLAUDE.md's iron rule requires every money mutation to pass
