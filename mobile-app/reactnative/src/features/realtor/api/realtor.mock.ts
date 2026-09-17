@@ -13,8 +13,9 @@ import type {
 const IMG = (seed: string) => `https://picsum.photos/seed/${seed}/800/600`;
 
 const AGENTS: AgentRef[] = [
-  { id: 'ag_01', name: 'Adaeze Okafor', verified: true, rating: 4.8, reviewCount: 126, responseTime: '~20 min', avatarUrl: IMG('agent1') },
-  { id: 'ag_02', name: 'Tunde Bakare', verified: true, rating: 4.6, reviewCount: 84, responseTime: '~1 hr', avatarUrl: IMG('agent2') },
+  { id: 'ag_01', name: 'Adaeze Okafor', verified: true, rating: 4.8, reviewCount: 126, responseTime: '~20 min', avatarUrl: IMG('agent1'), phone: '+2348012345678' },
+  { id: 'ag_02', name: 'Tunde Bakare', verified: true, rating: 4.6, reviewCount: 84, responseTime: '~1 hr', avatarUrl: IMG('agent2'), phone: '+2348023456789' },
+  // No phone on file — exercises the "no contact number available" state.
   { id: 'ag_03', name: 'Kingsway Realty', verified: false, rating: 4.1, reviewCount: 19, responseTime: '~3 hr', avatarUrl: IMG('agent3') },
 ];
 
