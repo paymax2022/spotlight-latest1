@@ -25,6 +25,9 @@
 -- feature needs a narrow non-admin read (e.g. a realtor listing exposing its
 -- own agent's phone to an interested buyer), it should get its own
 -- purpose-built, column-scoped policy rather than reopening this one.
+--
+-- See ADR-PR181 (docs/adr/ADR-PR181-user-profiles-admin-rls-fix.md) for the
+-- full decision record.
 
 DROP POLICY IF EXISTS "admin_read_all_user_profiles" ON public.user_profiles;
 CREATE POLICY "admin_read_all_user_profiles"
