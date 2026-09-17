@@ -30,27 +30,41 @@ const KEY = 'idem-key-abc';
 // ---------------------------------------------------------------------------
 interface Cfg {
   invoice: any;
-  priorPayment?: any;          // returned by estate_payments .maybeSingle()
-  upsertResult?: any;          // returned by estate_payments upsert().single()
+  priorPayment?: any;          // returned by estate_payments .maybeSingle() (fast-path / reconcile-refetch)
+  insertResult?: any;          // returned by estate_payments insert().single()
+  insertError?: any;           // error returned by estate_payments insert().single() (e.g. { code: '23505', message } )
+  refetchAfterConflict?: any;  // returned by the .eq('reference',...).maybeSingle() refetch AFTER a 23505
   updateError?: any;           // error returned when awaiting invoice update().eq()
 }
 function makeSupabase(cfg: Cfg) {
-  const calls: any = { upsertPayload: null, upsertConflict: null, updatePayload: null, updatedTable: null };
+  const calls: any = { insertPayload: null, updatePayload: null, updatedTable: null };
+  // maybeSingle() on estate_payments is called at up to two different points
+  // (the initial idempotent fast-path, and — only after a 23505 — the
+  // post-conflict refetch). Track how many times we've been asked so each
+  // call can return its own configured row.
+  let paymentMaybeSingleCalls = 0;
   function builder(table: string) {
-    const ctx = { table, op: 'select' as 'select' | 'upsert' | 'update' };
+    const ctx = { table, op: 'select' as 'select' | 'insert' | 'update' };
     const chain: any = {
       select: () => chain,
       eq: () => chain,
       is: () => chain,
-      upsert: (payload: any, opts: any) => { ctx.op = 'upsert'; calls.upsertPayload = payload; calls.upsertConflict = opts?.onConflict; return chain; },
+      insert: (payload: any) => { ctx.op = 'insert'; calls.insertPayload = payload; return chain; },
       update: (payload: any) => { ctx.op = 'update'; calls.updatePayload = payload; calls.updatedTable = table; return chain; },
       maybeSingle: async () => {
         if (table === 'estate_dues_invoices') return { data: cfg.invoice, error: null };
-        if (table === 'estate_payments') return { data: cfg.priorPayment ?? null, error: null };
+        if (table === 'estate_payments') {
+          paymentMaybeSingleCalls += 1;
+          if (paymentMaybeSingleCalls === 1) return { data: cfg.priorPayment ?? null, error: null };
+          return { data: cfg.refetchAfterConflict ?? null, error: null };
+        }
         return { data: null, error: null };
       },
       single: async () => {
-        if (table === 'estate_payments' && ctx.op === 'upsert') return { data: cfg.upsertResult ?? null, error: null };
+        if (table === 'estate_payments' && ctx.op === 'insert') {
+          if (cfg.insertError) return { data: null, error: cfg.insertError };
+          return { data: cfg.insertResult ?? null, error: null };
+        }
         return { data: null, error: null };
       },
       // Make the chain awaitable for `await supabase.from(t).update(..).eq(..)`.
@@ -130,7 +144,7 @@ describe('payInvoice — status guards', () => {
 
 describe('payInvoice — happy path', () => {
   it('debits the wallet exactly once with kobo + idempotency key and records the payment', async () => {
-    const { client, calls } = makeSupabase({ invoice: invoiceRow(), priorPayment: null, upsertResult: paymentRow() });
+    const { client, calls } = makeSupabase({ invoice: invoiceRow(), priorPayment: null, insertResult: paymentRow() });
     vi.mocked(createAdminClient).mockReturnValue(client as any);
     vi.mocked(debitWallet).mockResolvedValue({ alreadyProcessed: false, amountKobo: 7_500_000 } as any);
 
@@ -144,9 +158,10 @@ describe('payInvoice — happy path', () => {
     expect(arg.idempotencyKey).toBe(KEY);
     expect(arg.metadata).toMatchObject({ kind: 'estate_dues', estate_id: ESTATE, invoice_id: 'inv-1', payer_id: USER });
 
-    // Payment recorded idempotently (upsert on the unique reference) + invoice paid.
-    expect(calls.upsertConflict).toBe('reference');
-    expect(calls.upsertPayload).toMatchObject({ status: 'successful', method: 'wallet', amount_kobo: 7_500_000, reference: KEY });
+    // Payment recorded via a plain insert (NOT upsert — uidx_payments_reference
+    // is a PARTIAL unique index, which PostgREST's upsert onConflict shorthand
+    // cannot target; see payInvoice's own comment) + invoice paid.
+    expect(calls.insertPayload).toMatchObject({ status: 'successful', method: 'wallet', amount_kobo: 7_500_000, reference: KEY });
     expect(calls.updatedTable).toBe('estate_dues_invoices');
     expect(calls.updatePayload).toMatchObject({ status: 'paid' });
     expect(res.invoice.status).toBe('paid');
@@ -162,29 +177,64 @@ describe('payInvoice — idempotent replay (no double-charge)', () => {
     const res = await payInvoice({ userId: USER, invoiceId: 'inv-1', idempotencyKey: KEY });
 
     expect(debitWallet).not.toHaveBeenCalled();      // no second debit
-    expect(calls.upsertPayload).toBeNull();          // no duplicate payment row
+    expect(calls.insertPayload).toBeNull();          // no duplicate payment row
     expect(res.alreadyProcessed).toBe(true);
     expect(res.payment.id).toBe('pay-1');
   });
 
   it('reconciles when the wallet was already debited but no payment row was written', async () => {
     // Fast-path finds no prior payment; debit reports alreadyProcessed (ledger UNIQUE);
-    // re-check still finds none → upsert recreates the payment row (no second debit).
-    const { client, calls } = makeSupabase({ invoice: invoiceRow(), priorPayment: null, upsertResult: paymentRow() });
+    // re-check still finds none → a fresh insert recreates the payment row (no second debit).
+    const { client, calls } = makeSupabase({ invoice: invoiceRow(), priorPayment: null, insertResult: paymentRow() });
     vi.mocked(createAdminClient).mockReturnValue(client as any);
     vi.mocked(debitWallet).mockResolvedValue({ alreadyProcessed: true, amountKobo: 7_500_000 } as any);
 
     const res = await payInvoice({ userId: USER, invoiceId: 'inv-1', idempotencyKey: KEY });
 
     expect(debitWallet).toHaveBeenCalledTimes(1);
-    expect(calls.upsertConflict).toBe('reference');  // idempotent insert
+    expect(calls.insertPayload).toMatchObject({ reference: KEY });
     expect(res.alreadyProcessed).toBe(true);
+  });
+
+  it('a concurrent insert winning the race (23505 on the partial unique index) is reconciled, not errored', async () => {
+    // This is the exact bug found live in UAT: the wallet was genuinely
+    // debited, but a concurrent/retried insert lost the race on
+    // uidx_payments_reference. The fix must treat a 23505 unique-violation as
+    // "someone else already recorded the receipt" and refetch it — never
+    // throw 500 with money already moved and a real receipt already sitting
+    // in the table.
+    const { client, calls } = makeSupabase({
+      invoice: invoiceRow(),
+      priorPayment: null,
+      insertError: { code: '23505', message: 'duplicate key value violates unique constraint "uidx_payments_reference"' },
+      refetchAfterConflict: paymentRow(),
+    });
+    vi.mocked(createAdminClient).mockReturnValue(client as any);
+    vi.mocked(debitWallet).mockResolvedValue({ alreadyProcessed: false, amountKobo: 7_500_000 } as any);
+
+    const res = await payInvoice({ userId: USER, invoiceId: 'inv-1', idempotencyKey: KEY });
+
+    expect(calls.insertPayload).toMatchObject({ reference: KEY }); // the insert was genuinely attempted
+    expect(res.payment.id).toBe('pay-1');                          // but the CANONICAL row was returned
+    expect(res.invoice.status).toBe('paid');
+  });
+
+  it('a non-conflict insert error still throws 500 (never silently swallowed)', async () => {
+    const { client } = makeSupabase({
+      invoice: invoiceRow(),
+      priorPayment: null,
+      insertError: { code: '42P10', message: 'some other real failure' },
+    });
+    vi.mocked(createAdminClient).mockReturnValue(client as any);
+    vi.mocked(debitWallet).mockResolvedValue({ alreadyProcessed: false, amountKobo: 7_500_000 } as any);
+
+    await expect(payInvoice({ userId: USER, invoiceId: 'inv-1', idempotencyKey: KEY })).rejects.toMatchObject({ status: 500 });
   });
 });
 
 describe('payInvoice — error surfacing (no silent divergence)', () => {
   it('throws 500 when the invoice-status update fails (not fire-and-forget)', async () => {
-    const { client } = makeSupabase({ invoice: invoiceRow(), priorPayment: null, upsertResult: paymentRow(), updateError: { message: 'db down' } });
+    const { client } = makeSupabase({ invoice: invoiceRow(), priorPayment: null, insertResult: paymentRow(), updateError: { message: 'db down' } });
     vi.mocked(createAdminClient).mockReturnValue(client as any);
     vi.mocked(debitWallet).mockResolvedValue({ alreadyProcessed: false, amountKobo: 7_500_000 } as any);
 

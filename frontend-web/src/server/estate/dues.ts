@@ -127,11 +127,23 @@ export async function payInvoice(input: PayInvoiceInput) {
     // through and (re)create it idempotently below to reconcile.
   }
 
-  // Record the domain payment (audit trail). Idempotent upsert on the unique
-  // `reference` index means a concurrent/retry insert collapses to one row.
-  const { data: payment, error: payErr } = await supabase
+  // Record the domain payment (audit trail). `uidx_payments_reference` is a
+  // PARTIAL unique index (WHERE reference IS NOT NULL) — PostgREST's upsert
+  // onConflict shorthand only accepts a bare column list and cannot express
+  // that predicate, so Postgres can't infer the target and rejects the
+  // upsert outright on every call, not just real conflicts (found live via
+  // UAT: the wallet was genuinely debited but this insert failed 100% of the
+  // time, leaving residents charged with no receipt and the invoice still
+  // pending — same bug class fixed in the Go PayDues path, applied here to
+  // the separate Next.js implementation mobile actually calls). Fixed by
+  // using a plain insert and treating a unique-violation (23505) on
+  // `reference` as "someone else already recorded this receipt" — refetch
+  // it instead of trying to upsert over it, mirroring debitWallet()'s own
+  // handling of the identical race in src/server/wallet/service.ts.
+  let payment: any;
+  const { data: inserted, error: payErr } = await supabase
     .from('estate_payments')
-    .upsert({
+    .insert({
       estate_id: ctx.estateId,
       invoice_id: invoiceId,
       payer_id: userId,
@@ -139,12 +151,26 @@ export async function payInvoice(input: PayInvoiceInput) {
       method: 'wallet',
       status: 'successful',
       reference: idempotencyKey,
-    }, { onConflict: 'reference' })
+    })
     .select('id, estate_id, invoice_id, payer_id, amount_kobo, method, status, reference, created_at')
     .single();
   if (payErr) {
-    // Ledger already posted; surface a clear error so the payment can be reconciled.
-    throw new ApiError(`Wallet debited but payment record failed: ${payErr.message}`, 500);
+    if (payErr.code === '23505') {
+      const { data: existing, error: refetchErr } = await supabase
+        .from('estate_payments')
+        .select('id, estate_id, invoice_id, payer_id, amount_kobo, method, status, reference, created_at')
+        .eq('reference', idempotencyKey)
+        .maybeSingle();
+      if (refetchErr || !existing) {
+        throw new ApiError(`Wallet debited but payment record failed and could not be reconciled: ${refetchErr?.message ?? payErr.message}`, 500);
+      }
+      payment = existing;
+    } else {
+      // Ledger already posted; surface a clear error so the payment can be reconciled.
+      throw new ApiError(`Wallet debited but payment record failed: ${payErr.message}`, 500);
+    }
+  } else {
+    payment = inserted;
   }
 
   await ensureInvoicePaid(supabase, invoiceId);

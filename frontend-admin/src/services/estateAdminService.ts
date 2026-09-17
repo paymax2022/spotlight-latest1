@@ -16,8 +16,8 @@
 import { apiRoot } from '@/config/env';
 import { resolveUseMock } from '@/config/useMock';
 import type {
-  EstateKpis, EstateActivity, AdminResident, AdminDuesInvoice,
-  AdminGate, AdminGuardShift, AdminIncident, AdminVendor,
+  EstateKpis, EstateActivity, AdminResident, AdminDuesInvoice, DuesStatus,
+  AdminGate, GateStatus, AdminGuardShift, AdminIncident, IncidentSeverity, IncidentStatus, AdminVendor,
   RentPassport, PropertyContext, ResidentStatus, VendorStatus,
   OversightIncident, OversightGuardShift, OversightVisitorLog, OversightEmergency,
   DuesReconciliationRow, OversightPayment, OversightRestriction,
@@ -73,9 +73,9 @@ const days = (n: number) => new Date(Date.now() - n * 86_400_000).toISOString();
 
 // ─── Mock datasets ────────────────────────────────────────────────────────────
 const KPIS: EstateKpis = {
-  residents: 318, units: 240,
-  collectionsThisCycleKobo: 41_200_000_00, expectedThisCycleKobo: 58_000_000_00,
-  openIncidents: 4, activeVendors: 27, arrearsKobo: 16_800_000_00,
+  residents: 318, bannedResidents: 3, openRepairs: 6,
+  openIncidents: 4, defaulters: 22, activeVendors: 27,
+  arrearsKobo: 16_800_000_00, pendingTransfers: 2,
 };
 
 const ACTIVITY: EstateActivity[] = [
@@ -143,19 +143,82 @@ const CONTEXT: PropertyContext = {
 };
 
 // ─── API ──────────────────────────────────────────────────────────────────────
+// getEstateKpis: the live handler (backend/internal/estate/admin.go
+// GetAdminDashboard) returns AdminDashboard {estate_id, residents,
+// banned_residents, open_repairs, open_incidents, defaulters,
+// outstanding_dues_kobo, verified_vendors, pending_transfers} — NOT the
+// {units, collectionsThisCycleKobo, expectedThisCycleKobo, arrearsKobo,
+// activeVendors} shape this used to declare and fetch with raw getJson (no
+// snake->camel mapping at all). That mismatch meant every KPI tile silently
+// rendered undefined/NaN in live mode. Mapped to the real fields below;
+// `units`/`collectionsThisCycleKobo`/`expectedThisCycleKobo` have no backend
+// source (no billing-cycle concept in this endpoint) and are UNAVAILABLE —
+// flagged as a backend gap, not fabricated here.
 export async function getEstateKpis(): Promise<EstateKpis> {
   if (USE_MOCK) { await delay(); return { ...KPIS }; }
-  return getJson<EstateKpis>(`/estate/${estateId()}/admin/dashboard`);
+  const row = await getJson<Record<string, unknown>>(`/estate/${estateId()}/admin/dashboard`);
+  const r = toCamel<Record<string, unknown>>(row);
+  return {
+    residents: Number(r.residents ?? 0),
+    bannedResidents: Number(r.bannedResidents ?? 0),
+    openRepairs: Number(r.openRepairs ?? 0),
+    openIncidents: Number(r.openIncidents ?? 0),
+    defaulters: Number(r.defaulters ?? 0),
+    arrearsKobo: Number(r.outstandingDuesKobo ?? 0),
+    activeVendors: Number(r.verifiedVendors ?? 0),
+    pendingTransfers: Number(r.pendingTransfers ?? 0),
+  };
 }
 
+// getEstateActivity: NO backend route exists for
+// /estate/:id/admin/dashboard/activity (grepped finance_routes.go and
+// handler.go/admin.go — not registered anywhere). This always 404s live,
+// which — via Promise.all in app/admin/estate/page.tsx — used to fail the
+// WHOLE dashboard load (KPIs included) because one rejected promise sinks
+// Promise.all. Fails soft to [] so the KPI tiles still render; the missing
+// endpoint itself is a backend gap (see UAT report), not fixable here.
 export async function getEstateActivity(): Promise<EstateActivity[]> {
   if (USE_MOCK) { await delay(); return [...ACTIVITY]; }
-  return getJson<EstateActivity[]>(`/estate/${estateId()}/admin/dashboard/activity`);
+  try {
+    return await getJson<EstateActivity[]>(`/estate/${estateId()}/admin/dashboard/activity`);
+  } catch {
+    return [];
+  }
 }
 
+// listResidents: the live handler (estate.Service.ListResidents) returns
+// AdminResident {id, user_id, unit, role, banned, deleted, created_at} — it
+// has NO name/phone/arrearsKobo fields at all, and this call used raw
+// getJson (no camel mapping) typed as the mock AdminResident shape
+// {id,name,unit,role,phone,status,arrearsKobo,joinedAt}. Every field except
+// id/unit/role silently rendered undefined, and critically `status` was
+// always undefined so the ban/restore button never reflected real state
+// (see app/admin/estate/residents/page.tsx `r.status === 'banned'`). Mapped
+// to the real fields; name/phone/arrears are UNAVAILABLE from this endpoint
+// (backend gap — flagged, not invented here).
 export async function listResidents(): Promise<AdminResident[]> {
   if (USE_MOCK) { await delay(); return [...RESIDENTS]; }
-  return getJson<AdminResident[]>(`/estate/${estateId()}/admin/residents`);
+  const rows = await getJson<Array<Record<string, unknown>>>(`/estate/${estateId()}/admin/residents`);
+  return (rows ?? []).map((row) => {
+    const r = toCamel<Record<string, unknown>>(row);
+    // IMPORTANT: id is set to user_id, not the estate_residents row PK. The
+    // ban/restore routes are POST .../admin/residents/:uid/ban|restore and
+    // the backend resolves :uid as targetUserID (BanResident/RestoreResident
+    // scan WHERE estate_id=$1 AND user_id=$2 — see handler.go BanResident /
+    // service admin.go). Using the row's own `id` here (as the previous
+    // getJson<AdminResident[]> pass-through effectively did once compiled)
+    // would 400 every ban/restore with "resident not found in this estate".
+    return {
+      id: String(r.userId ?? r.id),
+      name: String(r.userId ?? '—'), // no display-name field on this endpoint (backend gap)
+      unit: String(r.unit ?? ''),
+      role: r.role as AdminResident['role'],
+      phone: '—', // not returned by this endpoint (backend gap)
+      status: (r.banned ? 'banned' : 'active') as ResidentStatus,
+      arrearsKobo: 0, // not returned by this endpoint (backend gap)
+      joinedAt: String(r.createdAt ?? ''),
+    } as AdminResident;
+  });
 }
 
 export async function banResident(id: string): Promise<{ id: string; status: ResidentStatus }> {
@@ -168,34 +231,139 @@ export async function restoreResident(id: string): Promise<{ id: string; status:
   return postJson<{ id: string; status: ResidentStatus }>(`/estate/${estateId()}/admin/residents/${id}/restore`, {});
 }
 
+// listDuesInvoices: live DuesInvoice rows are {id, estate_id, property_id,
+// resident_id, category, amount_kobo, due_date, status, created_at} — raw
+// getJson (no camel mapping) typed as the mock AdminDuesInvoice shape
+// {reference, unit, residentName, description, amountKobo, paidKobo, dueAt,
+// restricted} broke every one of those: amountKobo was undefined (backend
+// key is amount_kobo) so totals/arrears math (`amountKobo - paidKobo`)
+// silently NaN'd the whole page. Mapped to real fields; reference/unit/
+// residentName/paidKobo/restricted have NO backend source on this endpoint
+// (backend gap, flagged) — paidKobo/restricted are derived from the real
+// `status` field (paid ⇒ fully paid; restricted status ⇒ restricted=true),
+// which is a safe derivation of data the backend DID send, not fabrication.
 export async function listDuesInvoices(): Promise<AdminDuesInvoice[]> {
   if (USE_MOCK) { await delay(); return [...INVOICES]; }
-  return getJson<AdminDuesInvoice[]>(`/estate/${estateId()}/dues/invoices`);
+  const rows = await getJson<Array<Record<string, unknown>>>(`/estate/${estateId()}/dues/invoices`);
+  return (rows ?? []).map((row) => {
+    const r = toCamel<Record<string, unknown>>(row);
+    const amountKobo = Number(r.amountKobo ?? 0);
+    const status = String(r.status ?? 'pending');
+    return {
+      id: String(r.id),
+      reference: String(r.id).slice(0, 8).toUpperCase(),
+      unit: r.propertyId ? String(r.propertyId) : '—',
+      residentName: String(r.residentId ?? '—'),
+      description: String(r.category ?? ''),
+      amountKobo,
+      paidKobo: status === 'paid' ? amountKobo : 0,
+      status: status as DuesStatus,
+      dueAt: String(r.dueDate ?? r.createdAt ?? ''),
+      restricted: status === 'restricted',
+    } as AdminDuesInvoice;
+  });
 }
 
+// listGates: live Gate rows are {id, estate_id, name, gate_type, active,
+// created_at} — raw getJson typed as AdminGate {location, status,
+// guardsOnDuty, lastHeartbeat} left all four fields undefined. Mapped
+// `status` from the real `active` boolean; location/guardsOnDuty/
+// lastHeartbeat have NO backend source (backend gap, flagged).
 export async function listGates(): Promise<AdminGate[]> {
   if (USE_MOCK) { await delay(); return [...GATES]; }
-  return getJson<AdminGate[]>(`/estate/${estateId()}/gates`);
+  const rows = await getJson<Array<Record<string, unknown>>>(`/estate/${estateId()}/gates`);
+  return (rows ?? []).map((row) => {
+    const r = toCamel<Record<string, unknown>>(row);
+    return {
+      id: String(r.id),
+      name: String(r.name ?? ''),
+      location: String(r.gateType ?? '—'),
+      status: (r.active ? 'online' : 'offline') as GateStatus,
+      guardsOnDuty: 0,
+      lastHeartbeat: String(r.createdAt ?? ''),
+    } as AdminGate;
+  });
 }
 
+// listGuardShifts: NO backend route exists for GET /estate/:id/guard/shifts
+// (finance_routes.go only registers POST .../guard/shift-handover — a
+// one-shot handover action, not a listable shift roster). This call always
+// 404s live. Previously it was awaited inside a Promise.all alongside
+// listGates/listIncidents in app/admin/estate/gates/page.tsx, so the 404
+// sank the ENTIRE page (gates + incidents tables both went blank behind an
+// error banner) even though those two endpoints work. Fails soft to [] so
+// the rest of the page still renders; the missing endpoint is a backend gap
+// (see UAT report), not fixable from this file.
 export async function listGuardShifts(): Promise<AdminGuardShift[]> {
   if (USE_MOCK) { await delay(); return [...SHIFTS]; }
-  return getJson<AdminGuardShift[]>(`/estate/${estateId()}/guard/shifts`);
+  try {
+    return await getJson<AdminGuardShift[]>(`/estate/${estateId()}/guard/shifts`);
+  } catch {
+    return [];
+  }
 }
 
+// listIncidents: live IncidentReport rows are {id, estate_id, guard_id,
+// gate_id, incident_type, description, evidence_url, escalated,
+// created_at} — raw getJson typed as AdminIncident {title, severity,
+// status, reportedBy, reportedAt} left all of those undefined. Mapped
+// title←incident_type, reportedBy←guard_id, reportedAt←created_at, and
+// severity derived from the real `escalated` flag. The backend
+// IncidentReport model has NO resolution-status field at all (no
+// open/investigating/resolved lifecycle) — status is hardcoded 'open' here
+// and that lifecycle gap is flagged as a backend defect, not invented.
 export async function listIncidents(): Promise<AdminIncident[]> {
   if (USE_MOCK) { await delay(); return [...INCIDENTS]; }
-  return getJson<AdminIncident[]>(`/estate/${estateId()}/guard/incidents`);
+  const rows = await getJson<Array<Record<string, unknown>>>(`/estate/${estateId()}/guard/incidents`);
+  return (rows ?? []).map((row) => {
+    const r = toCamel<Record<string, unknown>>(row);
+    return {
+      id: String(r.id),
+      title: String(r.incidentType ?? 'Incident'),
+      gate: String(r.gateId ?? '—'),
+      severity: (r.escalated ? 'high' : 'medium') as IncidentSeverity,
+      status: 'open' as IncidentStatus,
+      reportedBy: String(r.guardId ?? '—'),
+      reportedAt: String(r.createdAt ?? ''),
+    } as AdminIncident;
+  });
 }
 
+// listVendors: live Vendor rows are {id, estate_id, user_id, name,
+// category, phone, status, rating, created_at} — raw getJson typed as
+// AdminVendor {trade, jobsCompleted, submittedAt}. name/phone/rating/status
+// happen to render (single-word keys, no snake_case to lose in translation)
+// but trade/jobsCompleted/submittedAt were silently undefined. Mapped
+// trade←category, submittedAt←created_at; jobsCompleted has NO backend
+// source on this endpoint (backend gap, flagged).
 export async function listVendors(): Promise<AdminVendor[]> {
   if (USE_MOCK) { await delay(); return [...VENDORS]; }
-  return getJson<AdminVendor[]>(`/estate/${estateId()}/vendors`);
+  const rows = await getJson<Array<Record<string, unknown>>>(`/estate/${estateId()}/vendors`);
+  return (rows ?? []).map((row) => {
+    const r = toCamel<Record<string, unknown>>(row);
+    return {
+      id: String(r.id),
+      name: String(r.name ?? ''),
+      trade: String(r.category ?? '—'),
+      phone: String(r.phone ?? ''),
+      rating: Number(r.rating ?? 0),
+      jobsCompleted: 0,
+      status: r.status as VendorStatus,
+      submittedAt: String(r.createdAt ?? ''),
+    } as AdminVendor;
+  });
 }
 
+// verifyVendor: the live handler (Handler.VerifyVendor) requires a JSON body
+// {"status": "verified"|"suspended"|"pending"} — `binding:"required"` on
+// body.Status. This used to POST an empty body ({}), which 400s
+// ("Key: 'Status' Error:Field validation...") on every real click; the
+// vendors page's optimistic UI made it LOOK like it worked because the row
+// was already patched client-side before the request's error was surfaced.
 export async function verifyVendor(id: string): Promise<{ id: string; status: VendorStatus }> {
   if (USE_MOCK) { await delay(280); VENDORS = VENDORS.map((v) => (v.id === id ? { ...v, status: 'verified' } : v)); return { id, status: 'verified' }; }
-  return postJson<{ id: string; status: VendorStatus }>(`/estate/${estateId()}/vendors/${id}/verify`, {});
+  const res = await postJson<{ status: VendorStatus }>(`/estate/${estateId()}/vendors/${id}/verify`, { status: 'verified' });
+  return { id, status: res.status };
 }
 
 // ─── Property management (Block 29 — backend/internal/estate/property_mgmt.go) ─

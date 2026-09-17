@@ -1,14 +1,24 @@
 // ── Admin — Estate control plane types ───────────────────────────────────────
 // All money is integer minor units (kobo). Mirrors realtorAdmin.ts conventions.
 
+// Mirrors the live AdminDashboard struct (backend/internal/estate/admin.go
+// GetAdminDashboard) exactly — {estate_id, residents, banned_residents,
+// open_repairs, open_incidents, defaulters, outstanding_dues_kobo,
+// verified_vendors, pending_transfers}. `units`, `collectionsThisCycleKobo`
+// and `expectedThisCycleKobo` were part of the old mock-only shape and have
+// NO backend source on this endpoint (no billing-cycle concept exists here)
+// — dropped rather than left silently undefined. `arrearsKobo` maps to
+// outstanding_dues_kobo and `activeVendors` to verified_vendors, the closest
+// real semantics available.
 export interface EstateKpis {
   residents: number;
-  units: number;
-  collectionsThisCycleKobo: number; // collected so far this billing cycle
-  expectedThisCycleKobo: number;    // total billed this cycle
+  bannedResidents: number;
+  openRepairs: number;
   openIncidents: number;
-  activeVendors: number;
-  arrearsKobo: number;
+  defaulters: number;
+  arrearsKobo: number;   // outstanding_dues_kobo
+  activeVendors: number; // verified_vendors
+  pendingTransfers: number;
 }
 
 export interface EstateActivity {

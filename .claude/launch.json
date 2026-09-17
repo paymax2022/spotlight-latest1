@@ -159,6 +159,28 @@
       "description": "Throwaway admin console on :3026 pointed at a throwaway Go backend on :8130 (FEATURE_PROPERTY_SUITE_ENABLED=true), for PROPMGMT-003 rent-passport admin UI live verification without touching the shared :8091/:3001."
     },
     {
+      "name": "backend-estate-uat",
+      "runtimeExecutable": "bash",
+      "runtimeArgs": [
+        "-c",
+        "set -a; . ./.env; set +a; APP_PORT=8140 FEATURE_ESTATE_ENABLED=true exec go run ./cmd/server"
+      ],
+      "cwd": "backend",
+      "port": 8140,
+      "description": "Throwaway Go backend on :8140 (FEATURE_ESTATE_ENABLED=true) for the estate admin-console UAT batch, so it doesn't collide with other worktrees on :8091/:8092/.../:8130."
+    },
+    {
+      "name": "admin-estate-uat",
+      "runtimeExecutable": "bash",
+      "runtimeArgs": [
+        "-c",
+        "ADMIN_API_BASE_URL=http://localhost:8140 NEXT_PUBLIC_ESTATE_ADMIN_USE_MOCK=false exec npx next dev --port 3027"
+      ],
+      "cwd": "frontend-admin",
+      "port": 3027,
+      "description": "Throwaway admin console on :3027 pointed at backend-estate-uat (:8140), for the estate admin-console UAT batch live verification without touching the shared :8091/:3001."
+    },
+    {
       "name": "mobile-worktree",
       "runtimeExecutable": "npx",
       "runtimeArgs": [
