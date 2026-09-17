@@ -10,12 +10,13 @@ import { hasAnyPermission, type AuthUser } from '@/features/auth/rbac';
 import { clearAdminSession } from '@/features/auth/adminAuth';
 import { colors, tint } from '@/components/ui/vuexy';
 
-type SectionIcon = '📊' | '🏆' | '👥' | '💰' | '🏥' | '🎓' | '🏨' | '🚗' | '🍽️' | '🏠' | '⚙️';
+type SectionIcon = '📊' | '🏆' | '👥' | '💰' | '💳' | '🏥' | '🎓' | '🏨' | '🚗' | '🍽️' | '🏠' | '⚙️';
 
 const sectionIcons: Record<string, SectionIcon> = {
   'Overview': '📊',
   'Contests': '🏆',
   'Support': '👥',
+  'Transactions': '💳',
   'Finance': '💰',
   'Health': '🏥',
   'Academy': '🎓',
@@ -38,6 +39,11 @@ type NavItem = {
 const navItemsBase: NavItem[] = [
   { label: 'Dashboard', href: '/admin', section: 'Overview' },
   { label: 'Analytics', href: '/admin/analytics', section: 'Overview' },
+  // Centralized, read-only view of ALL ledger_entries across every module (no
+  // per-module transactions table exists). Kept as its OWN top-level section
+  // (not nested under 'Finance') so it is a first-class, always-visible entry
+  // point rather than buried in that section's existing 7-item collapsed list.
+  { label: 'Transactions', href: '/admin/finance/transactions', section: 'Transactions', permissions: ['finance.admin.transactions.view'] },
   { label: 'Contests Dashboard', href: '/admin/competitions', section: 'Contests', countKey: 'open_mic', permissions: ['contest.create', 'contest.update', 'contest.publish'] },
   { label: 'Competitions', href: '/admin/competitions/list', section: 'Contests', permissions: ['contest.create', 'contest.update'] },
   { label: 'Participants', href: '/admin/competitions/participants', section: 'Contests', permissions: ['contest.create', 'contest.update'] },
@@ -563,7 +569,7 @@ const navItemsBase: NavItem[] = [
   { label: 'Compliance (SU-12)', href: '/admin/platform/edtech/compliance', section: 'Platform · EdTech', permissions: ['platform_edtech_admin'] },
 ];
 
-const sections = ['Overview', 'Contests', 'Voting', 'Support', 'Programs', 'Finance', 'Commission', 'Crowdfunding', 'Connect', 'Connect · Network', 'Referral', 'Referral Rewards', 'Insurance', 'Stays', 'Stays Extranet', 'Savings', 'Social Pay', 'Events', 'Loyalty', 'Health', 'Community', 'Academy', 'Creators', 'Social Escrow', 'Paymax Black', 'FX Orchestration', 'Property Management', 'Mobility', 'Restaurant', 'Fractional RE', 'Platform', 'Arena', 'Marketplace', 'Crypto', 'Business Registry', 'Platform · EdTech'];
+const sections = ['Overview', 'Transactions', 'Contests', 'Voting', 'Support', 'Programs', 'Finance', 'Commission', 'Crowdfunding', 'Connect', 'Connect · Network', 'Referral', 'Referral Rewards', 'Insurance', 'Stays', 'Stays Extranet', 'Savings', 'Social Pay', 'Events', 'Loyalty', 'Health', 'Community', 'Academy', 'Creators', 'Social Escrow', 'Paymax Black', 'FX Orchestration', 'Property Management', 'Mobility', 'Restaurant', 'Fractional RE', 'Platform', 'Arena', 'Marketplace', 'Crypto', 'Business Registry', 'Platform · EdTech'];
 
 export function AdminSidebar() {
   const pathname = usePathname() ?? '';

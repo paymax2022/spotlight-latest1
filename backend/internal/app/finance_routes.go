@@ -385,6 +385,16 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 	transfersAdmin.POST("/:id/retry", middleware.RequirePermission(rbac, "finance.admin.transfers"), transfersAdminHandler.Retry)
 	transfersAdmin.POST("/:id/reverse", middleware.RequirePermission(rbac, "finance.admin.transfers"), transfersAdminHandler.Reverse)
 
+	// --- Centralized admin transactions console (RBAC finance.admin.transactions.view) ---
+	// READ-ONLY reporting over ledger_entries — the only source of truth for money
+	// movement across every module (there is no per-module transactions table).
+	// Deliberately a NEW permission slug, not a reuse of finance.admin.transfers
+	// (that slug is scoped to the bank-transfer console, not all ledger activity).
+	ledgerAdminHandler := ledger.NewAdminHandler(ledgerSvc)
+	ledgerAdmin := r.Group("/api/finance/admin/transactions")
+	ledgerAdmin.Use(mapsAuth()) // RequireAuthContext + mirror user_id
+	ledgerAdmin.GET("", middleware.RequirePermission(rbac, "finance.admin.transactions.view"), ledgerAdminHandler.ListTransactions)
+
 	// --- KYC routes ---
 	if cfg.FeatureKYCEnabled {
 		kycGroup := finance.Group("/kyc")

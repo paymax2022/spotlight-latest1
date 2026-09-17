@@ -25,13 +25,16 @@
     },
     {
       "name": "mobile",
-      "runtimeExecutable": "npm",
+      "runtimeExecutable": "npx",
       "runtimeArgs": [
-        "run",
-        "web"
+        "expo",
+        "start",
+        "--web"
       ],
       "cwd": "mobile-app/reactnative",
-      "port": 8083
+      "port": 8083,
+      "autoPort": true,
+      "description": "npm run web hardcodes --port 8083 in package.json; invoking expo directly here instead so autoPort can actually reassign when a stale worktree's Metro is already squatting 8083 (recurring issue, see mobile-web-uat-devserver memory)."
     },
     {
       "name": "expo-web-fx",
@@ -54,13 +57,12 @@
         "expo",
         "start",
         "--web",
-        "--port",
-        "8083",
         "-c"
       ],
       "cwd": "mobile-app/reactnative",
       "port": 8083,
-      "description": "Expo web against STAGING. -c clears the cache: EXPO_PUBLIC_* is baked into the bundle, so without it a running Metro keeps serving the previous environment."
+      "autoPort": true,
+      "description": "Expo web against STAGING. -c clears the cache: EXPO_PUBLIC_* is baked into the bundle, so without it a running Metro keeps serving the previous environment. Hardcoded --port removed (autoPort added) since another worktree's Metro squatting 8083 is a recurring issue here."
     },
     {
       "name": "web-worktree",
@@ -179,6 +181,28 @@
       "cwd": "frontend-admin",
       "port": 3027,
       "description": "Throwaway admin console on :3027 pointed at backend-estate-uat (:8140), for the estate admin-console UAT batch live verification without touching the shared :8091/:3001."
+    },
+    {
+      "name": "backend-txadmin-uat",
+      "runtimeExecutable": "bash",
+      "runtimeArgs": [
+        "-c",
+        "set -a; . ./.env; set +a; APP_PORT=8099 exec go run ./cmd/server"
+      ],
+      "cwd": "backend",
+      "port": 8099,
+      "description": "Throwaway Go backend on :8099 for the new centralized admin Transactions console verification, so it doesn't collide with the shared :8091 or other worktrees on :8092/.../:8140."
+    },
+    {
+      "name": "admin-txadmin-uat",
+      "runtimeExecutable": "bash",
+      "runtimeArgs": [
+        "-c",
+        "ADMIN_API_BASE_URL=http://localhost:8099 exec npx next dev --port 3028"
+      ],
+      "cwd": "frontend-admin",
+      "port": 3028,
+      "description": "Throwaway admin console on :3028 pointed at backend-txadmin-uat (:8099), for GET /api/finance/admin/transactions live-UI verification without touching the shared :8091/:3001."
     },
     {
       "name": "mobile-worktree",
