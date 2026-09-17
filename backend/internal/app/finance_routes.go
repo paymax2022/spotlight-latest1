@@ -626,7 +626,16 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 	if cfg.FeatureHealthEnabled && pool != nil {
 		RegisterHealth(finance, adminGroupTop5(r, "/api/health/admin"), pool, rbac, cfg, auditSink) // shared platform
 		if cfg.FeatureHealthPharmacyEnabled {
-			pharmacySvc := RegisterHealthPharmacy(finance, adminGroupTop5(r, "/api/health/pharmacy/admin"), pool, rbac, cfg)
+			// PHARMACY-001: NOT adminGroupTop5 — that helper applies requireUserID()
+			// on the group, which would run BEFORE RegisterHealthPharmacy's own
+			// ag.Use(RequireAuthContext(...)) and abort every request with
+			// "authentication required" before auth ever ran (Gin group
+			// middleware executes in registration order; a group inherits its
+			// parent's chain ahead of anything added later). RequireAuthContext
+			// already rejects a missing/invalid token itself, so requireUserID()
+			// adds nothing here besides that ordering hazard — see
+			// health_pharmacy_routes.go's own comment at ag.Use(...).
+			pharmacySvc := RegisterHealthPharmacy(finance, r.Group("/api/health/pharmacy/admin"), pool, rbac, cfg, supabase)
 			// Symptom-based medication search addon — its own flag AND'd with
 			// the pharmacy flag (FEATURE_PHARMACY_SYMPTOM_SEARCH_ENABLED).
 			if cfg.FeaturePharmacySymptomSearchEnabled {
