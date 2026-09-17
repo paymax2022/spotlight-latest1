@@ -116,6 +116,10 @@ func RegisterHealthLab(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pg
 	// r.Group(...) instead of adminGroupTop5, and RequireAuthContext runs
 	// here as this group's own first middleware.
 	ag.Use(middleware.RequireAuthContext(supabase, rbac))
+	// Dashboard is an extension of the SAME admin-oversight surface /orders
+	// already sits behind — reusing health.lab.orders rather than minting a
+	// new permission slug (mirrors pharmacy's PHARMACY-001 dashboard route).
+	ag.GET("/dashboard", guard("health.lab.orders"), h.AdminDashboard)                   // platform-wide KPI aggregate
 	ag.GET("/orders", guard("health.lab.orders"), h.AdminListOrders)                     // order/results oversight
 	ag.GET("/custody-audit", guard("health.lab.custody"), h.AdminCustodyAudit)           // chain-of-custody oversight (HL-6)
 	ag.GET("/escalations", guard("health.lab.escalation"), h.AdminEscalations)           // critical-result escalation (HL-7)

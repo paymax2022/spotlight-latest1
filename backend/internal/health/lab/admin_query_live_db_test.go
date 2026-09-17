@@ -120,7 +120,7 @@ func TestLiveDB_AdminCustodyAudit_FilterByLabProviderIDDoesNotErrorOnUUID(t *tes
 	ctx := context.Background()
 	svc, labID, _ := seedAdminQueryFixture(t, ctx, pool)
 
-	if _, err := svc.AdminCustodyAudit(ctx, labID); err != nil {
+	if _, err := svc.AdminCustodyAudit(ctx, labID, ""); err != nil {
 		t.Fatalf("AdminCustodyAudit with a real lab_provider_id filter must not error: %v", err)
 	}
 }
