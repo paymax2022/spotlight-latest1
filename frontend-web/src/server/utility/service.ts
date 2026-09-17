@@ -735,6 +735,17 @@ export async function payUtility(userId: string, input: UtilityPayInput & { idem
     });
     await supabase.from('utility_transactions').update({ status: 'reversed', updated_at: new Date().toISOString() }).eq('id', transactionId);
     await addEvent(transactionId, 'wallet_reversed', 'Wallet debit reversed after provider failure.');
+  } else if (providerResult.status === 'failed' && paymentSource === 'paystack') {
+    // Paystack already captured the charge — there's no wallet debit to
+    // reverse, so unlike the branch above this can't self-heal. Someone has
+    // to notice and issue an out-of-band Paystack refund (see
+    // reverseUtilityTransaction's payment_source guard). Flag it for finance
+    // instead of leaving a paid-but-unserviced transaction silent.
+    queueUtilityAdminAlert({
+      title: 'Utility payment charged but not fulfilled',
+      message: `${receipt} (${category}): Paystack charged the customer but the biller failed — ${providerResult.message ?? 'no service delivered'}. Needs an out-of-band Paystack refund.`,
+      audience: 'finance',
+    });
   }
 
   const { data: finalRow } = await supabase.from('utility_transactions').select('*').eq('id', transactionId).maybeSingle();
@@ -838,20 +849,35 @@ export async function requeryUtilityTransaction(transaction: UtilityTransactionR
 
 export async function reverseUtilityTransaction(transaction: UtilityTransactionRow, reason: string) {
   if (!canReverseUtilityTransaction(transaction.status)) throw new ApiError('Transaction is not eligible for reversal.', 400);
-  await reverseWalletDebit(transaction.user_id, {
-    amountKobo: transaction.retail_amount_kobo,
-    reference: transaction.receipt_number ?? transaction.id,
-    idempotencyKey: `utility:${transaction.id}:ADMIN_REVERSAL_DEBIT`,
-    description: `Admin utility reversal: ${reason}`,
-    metadata: { utility_transaction_id: transaction.id, reason },
-  });
+  // Only wallet-funded transactions ever debited the wallet ledger — that's the
+  // only case where crediting it back is a real reversal. A Paystack-funded
+  // transaction never touched the ledger, so crediting the wallet here would
+  // fabricate an unbacked credit (the customer would get both a wallet credit
+  // AND keep whatever Paystack refund support issues out-of-band). Same policy
+  // as the voting module's vote-reversal route: refund Paystack-funded
+  // purchases out-of-band, never here.
+  if (transaction.payment_source === 'wallet') {
+    await reverseWalletDebit(transaction.user_id, {
+      amountKobo: transaction.retail_amount_kobo,
+      reference: transaction.receipt_number ?? transaction.id,
+      idempotencyKey: `utility:${transaction.id}:ADMIN_REVERSAL_DEBIT`,
+      description: `Admin utility reversal: ${reason}`,
+      metadata: { utility_transaction_id: transaction.id, reason },
+    });
+  }
   const supabase = createAdminClient();
   await supabase.from('utility_transactions').update({
     status: 'reversed',
     failure_reason: reason,
     updated_at: new Date().toISOString(),
   }).eq('id', transaction.id);
-  await addEvent(transaction.id, 'admin_reversed', reason);
+  await addEvent(
+    transaction.id,
+    'admin_reversed',
+    transaction.payment_source === 'wallet'
+      ? reason
+      : `${reason} (Paystack-funded — refund must be issued out-of-band via Paystack, not the wallet ledger)`,
+  );
   const { data } = await supabase.from('utility_transactions').select('*').eq('id', transaction.id).maybeSingle();
   const updated = (data ?? transaction) as UtilityTransactionRow;
   await notifyUtilityTransactionStatus(updated, reason);
