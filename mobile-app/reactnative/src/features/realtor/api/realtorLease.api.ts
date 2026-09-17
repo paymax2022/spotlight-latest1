@@ -25,6 +25,7 @@ import type {
   PaymentReceipt,
   EscrowDeposit,
   MoveIn,
+  MoveOut,
 } from '../types/realtor.lease.types';
 import { newIdempotencyKey } from '../utils/realtorFormatters';
 
@@ -89,6 +90,7 @@ const leases: Record<string, Lease> = {};
 const invoices: Record<string, RentInvoice> = {};
 const escrows: Record<string, EscrowDeposit> = {};
 const moveIns: Record<string, MoveIn> = {};
+const moveOuts: Record<string, MoveOut> = {};
 
 function seedLease(applicationId: string): Lease {
   const id = `lease_${applicationId}`;
@@ -306,4 +308,48 @@ export async function activateOccupancy(leaseId: string): Promise<MoveIn> {
     .eq('lease_id', leaseId).select('*').single();
   if (error) throw error;
   return mapMoveInRow(data);
+}
+
+// ── Move-out (PROPMGMT-002) ──────────────────────────────────────────────────
+// Non-monetary, tenant-facing, Supabase-direct — mirrors the move-in calls
+// above exactly. realtor_move_outs has no auto-seed row (unlike
+// realtor_move_ins, seeded by realtor_pay_invoice), so this is an upsert:
+// the first submit creates the row, a later resubmission before an admin has
+// acted just updates the checklist/submitted_at. RLS-protected
+// ("Tenant manages own move-out" — supabase/migrations/
+// 20270221000000_realtor_escrow_release.sql) so a tenant can only ever touch
+// their own lease's row. No backend route: unlike payInvoice, nothing here
+// moves money, so there is nothing for the shared ledger to gate.
+function mapMoveOutRow(row: any): MoveOut {
+  const checklist = Array.isArray(row.checklist) ? row.checklist : [];
+  return {
+    leaseId: row.lease_id,
+    checklist,
+    submitted: row.submitted_at != null,
+    submittedAt: row.submitted_at ?? undefined,
+  };
+}
+
+export async function getMoveOut(leaseId: string): Promise<MoveOut | null> {
+  if (USE_MOCK) { await delay(200); return moveOuts[leaseId] ?? null; }
+  const supabase = createSupabaseClient();
+  const { data, error } = await supabase.from('realtor_move_outs').select('*').eq('lease_id', leaseId).maybeSingle();
+  if (error) throw error;
+  if (!data) return null;
+  return mapMoveOutRow(data);
+}
+
+export async function submitMoveOut(leaseId: string, checklist: MoveOut['checklist']): Promise<MoveOut> {
+  if (USE_MOCK) {
+    await delay(420);
+    const mo: MoveOut = { leaseId, checklist, submitted: true, submittedAt: new Date().toISOString() };
+    moveOuts[leaseId] = mo;
+    return mo;
+  }
+  const supabase = createSupabaseClient();
+  const { data, error } = await supabase.from('realtor_move_outs')
+    .upsert({ lease_id: leaseId, checklist, submitted_at: new Date().toISOString() }, { onConflict: 'lease_id' })
+    .select('*').single();
+  if (error) throw error;
+  return mapMoveOutRow(data);
 }

@@ -3108,6 +3108,7 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		DB:       pool,
 		Supabase: supabase,
 		RBAC:     rbac,
+		Ledger:   ledgerSvc,
 		Enabled:  cfg.FeatureRealtorEnabled,
 	})
 

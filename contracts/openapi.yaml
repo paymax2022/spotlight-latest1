@@ -110,6 +110,87 @@ components:
           description: Most-recent-first, capped at 20.
           items: { $ref: '#/components/schemas/RentRecentPayment' }
 
+    # ── Realtor admin control plane (backend/internal/realtor) ────────────────
+    # Mounted under /api/realtor/admin, RBAC-gated on realtor.manage, behind
+    # FEATURE_REALTOR_ENABLED. Read + moderation-status-write only — the module
+    # posts no ledger entries itself. See docs/qa/modules/realtor.md.
+    RealtorOverview:
+      type: object
+      properties:
+        listingsLive: { type: integer }
+        pendingModeration: { type: integer }
+        pendingVerification: { type: integer }
+        activeLeases: { type: integer }
+        escrowHeldKobo: { type: integer, format: int64 }
+        payoutsDueKobo: { type: integer, format: int64 }
+        gmvKobo: { type: integer, format: int64, description: 30-day paid GMV, minor units (kobo) }
+        openDisputes: { type: integer }
+        fraudFlags: { type: integer }
+    RealtorAdminListing:
+      type: object
+      required: [id, title, area, city, mode, priceKobo, verification, ownerName, ownerVerified, riskFlags, submittedAt]
+      properties:
+        id: { type: string, format: uuid }
+        title: { type: string }
+        area: { type: string }
+        city: { type: string }
+        mode: { type: string }
+        priceKobo: { type: integer, format: int64 }
+        verification: { type: string }
+        ownerName: { type: string }
+        ownerVerified: { type: boolean }
+        riskFlags: { type: array, items: { type: string } }
+        submittedAt: { type: string, format: date-time }
+    RealtorVerificationRequest:
+      type: object
+      required: [id, kind, subjectName, documents, status, submittedAt]
+      properties:
+        id: { type: string, format: uuid }
+        kind: { type: string }
+        subjectName: { type: string }
+        documents:
+          type: array
+          items:
+            type: object
+            properties:
+              label: { type: string }
+              uploaded: { type: boolean }
+        status: { type: string }
+        submittedAt: { type: string, format: date-time }
+        riskNote: { type: string }
+    RealtorAdminPayment:
+      type: object
+      required: [id, reference, amountKobo, escrowHeldKobo, status, createdAt]
+      properties:
+        id: { type: string, format: uuid }
+        reference: { type: string }
+        kind: { type: string }
+        amountKobo: { type: integer, format: int64 }
+        escrowHeldKobo: { type: integer, format: int64 }
+        status: { type: string }
+        payer: { type: string }
+        createdAt: { type: string, format: date-time }
+    RealtorEscrowAccount:
+      type: object
+      required: [id, amountKobo, status, heldSince]
+      properties:
+        id: { type: string, format: uuid }
+        leaseOrBooking: { type: string }
+        amountKobo: { type: integer, format: int64 }
+        status: { type: string, enum: [held, release_requested, released, disputed] }
+        heldSince: { type: string, format: date-time }
+
+    RealtorEscrowResolution:
+      type: object
+      required: [id, leaseId, amountKobo, status]
+      properties:
+        id: { type: string, format: uuid }
+        leaseId: { type: string, format: uuid }
+        amountKobo: { type: integer, format: int64 }
+        status: { type: string, enum: [held, release_requested, released, disputed] }
+        resolvedTo: { type: string, enum: [tenant, landlord] }
+        resolutionNote: { type: string }
+
     # ── MapService (provider-agnostic maps abstraction) ───────────────────────
     # Every result carries `provider` + `source`. `source` is the licensing
     # stack ('openstack' | 'google' | 'mapbox' | 'own'); the client may only
@@ -5218,6 +5299,211 @@ paths:
         '401': { description: Authentication required }
         '403': { description: Caller lacks property.manage (IDOR guard; no body leaked) }
   # ── END Property Management Suite block ───────────────────────────────────
+  # ── Realtor admin control plane (backend/internal/realtor, gated on
+  #    FEATURE_REALTOR_ENABLED) ──────────────────────────────────────────────
+  # Mounted at /api/realtor/admin, RBAC-gated on realtor.manage. Read +
+  # moderation-status-write only. See backend/internal/realtor/{admin,
+  # repository,routes}.go and docs/qa/modules/realtor.md.
+  /api/realtor/admin/overview:
+    get:
+      operationId: realtorAdminOverview
+      summary: Headline dashboard counts/aggregates for the realtor admin console
+      tags: [RealtorAdmin]
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: Overview aggregates
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RealtorOverview' }
+        '401': { description: Authentication required }
+        '403': { description: Caller lacks realtor.manage }
+  /api/realtor/admin/listings/pending:
+    get:
+      operationId: realtorAdminPendingListings
+      summary: Listings moderation queue (status=pending_verification)
+      tags: [RealtorAdmin]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: limit, in: query, schema: { type: integer, default: 50, maximum: 200 } }
+        - { name: offset, in: query, schema: { type: integer, default: 0 } }
+      responses:
+        '200':
+          description: Pending listings
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { type: array, items: { $ref: '#/components/schemas/RealtorAdminListing' } }
+        '401': { description: Authentication required }
+        '403': { description: Caller lacks realtor.manage }
+  /api/realtor/admin/listings/{id}/decision:
+    post:
+      operationId: realtorAdminDecideListing
+      summary: Apply an approve/reject/changes_requested moderation decision
+      description: Audited to realtor_admin_audit_log. No money moves here — moderation only.
+      tags: [RealtorAdmin]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [decision]
+              properties:
+                decision: { type: string, enum: [approved, rejected, changes_requested] }
+                reason: { type: string }
+      responses:
+        '200':
+          description: Decision applied
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id: { type: string, format: uuid }
+                  status: { type: string }
+        '400': { description: Invalid decision value }
+        '401': { description: Authentication required }
+        '403': { description: Caller lacks realtor.manage }
+        '404': { description: Listing not found }
+  /api/realtor/admin/verifications:
+    get:
+      operationId: realtorAdminPendingVerifications
+      summary: Property-verification queue (derived from listings.verification)
+      tags: [RealtorAdmin]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: limit, in: query, schema: { type: integer, default: 50, maximum: 200 } }
+        - { name: offset, in: query, schema: { type: integer, default: 0 } }
+      responses:
+        '200':
+          description: Pending verifications
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { type: array, items: { $ref: '#/components/schemas/RealtorVerificationRequest' } }
+        '401': { description: Authentication required }
+        '403': { description: Caller lacks realtor.manage }
+  /api/realtor/admin/verifications/{id}/decision:
+    post:
+      operationId: realtorAdminDecideVerification
+      summary: Apply an approve/reject/more_info verification decision
+      description: Audited. No money moves here — trust-and-safety verification only.
+      tags: [RealtorAdmin]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status: { type: string, enum: [approved, rejected, more_info] }
+                reason: { type: string }
+      responses:
+        '200':
+          description: Decision applied
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id: { type: string, format: uuid }
+                  status: { type: string }
+        '400': { description: Invalid status value }
+        '401': { description: Authentication required }
+        '403': { description: Caller lacks realtor.manage }
+        '404': { description: Verification subject not found }
+  /api/realtor/admin/payments:
+    get:
+      operationId: realtorAdminPayments
+      summary: List realtor payments (read-only)
+      tags: [RealtorAdmin]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: limit, in: query, schema: { type: integer, default: 50, maximum: 200 } }
+        - { name: offset, in: query, schema: { type: integer, default: 0 } }
+      responses:
+        '200':
+          description: Payments
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { type: array, items: { $ref: '#/components/schemas/RealtorAdminPayment' } }
+        '401': { description: Authentication required }
+        '403': { description: Caller lacks realtor.manage }
+  /api/realtor/admin/escrow:
+    get:
+      operationId: realtorAdminEscrow
+      summary: List escrow deposits (read-only)
+      tags: [RealtorAdmin]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: limit, in: query, schema: { type: integer, default: 50, maximum: 200 } }
+        - { name: offset, in: query, schema: { type: integer, default: 0 } }
+      responses:
+        '200':
+          description: Escrow deposits
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { type: array, items: { $ref: '#/components/schemas/RealtorEscrowAccount' } }
+        '401': { description: Authentication required }
+        '403': { description: Caller lacks realtor.manage }
+  /api/realtor/admin/escrow/{id}/resolve:
+    post:
+      operationId: realtorAdminResolveEscrow
+      summary: Inspection-gated release/forfeiture/dispute of a refundable lease deposit (PROPMGMT-002)
+      description: >-
+        released_to_tenant and forfeited_to_landlord REQUIRE a submitted
+        realtor_move_outs move-out inspection for the lease (422 otherwise).
+        disputed does not require a move-out submission and does not move
+        money. Money moves via the shared finance ledger (PostReversal /
+        PostJournal against the 'settlement' standing account) — idempotent
+        per deposit id, so a retried call is a safe no-op. Re-resolving an
+        already-released deposit is refused with 409. Audited to
+        realtor_admin_audit_log.
+      tags: [RealtorAdmin]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [decision]
+              properties:
+                decision: { type: string, enum: [released_to_tenant, forfeited_to_landlord, disputed] }
+                note: { type: string }
+      responses:
+        '200':
+          description: Escrow deposit resolved
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RealtorEscrowResolution' }
+        '400': { description: Invalid decision value }
+        '401': { description: Authentication required }
+        '403': { description: Caller lacks realtor.manage }
+        '404': { description: Escrow deposit not found }
+        '409': { description: Escrow deposit already released }
+        '422': { description: Move-out inspection has not been submitted for this lease }
+  # ── END Realtor admin control plane block ──────────────────────────────────
   # ── MapService (provider-agnostic maps abstraction) ───────────────────────
   # All provider keys are server-side; the client calls ONLY these endpoints.
   # findNearbyOwn (/nearby) and isInZone (/in-zone) run on PostGIS, not a maps API.

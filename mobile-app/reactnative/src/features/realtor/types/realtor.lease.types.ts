@@ -113,3 +113,22 @@ export interface MoveIn {
   keysHandedOver: boolean;
   occupancyActivated: boolean;
 }
+
+// ── Move-out (PROPMGMT-002: gates escrow deposit release) ────────────────────
+// Submitting a move-out does NOT move money — it only unlocks the admin
+// escrow resolve endpoint (POST /api/realtor/admin/escrow/{id}/resolve) to
+// release/forfeit the deposit. See supabase/migrations/
+// 20270221000000_realtor_escrow_release.sql.
+
+export interface MoveOutChecklistItem {
+  id: string;
+  label: string;
+  done: boolean;
+}
+
+export interface MoveOut {
+  leaseId: string;
+  checklist: MoveOutChecklistItem[];
+  submitted: boolean;
+  submittedAt?: string;
+}

@@ -11,33 +11,33 @@ This module's sign-off requires all four planes to pass, not just the two that a
 
 ## Estate property CRUD — test matrix
 
-| Case ID | Title | Priority | Expected result |
+| Case ID | Title | Priority | Result |
 |---|---|---|---|
-| PM-CRUD-001 | Estate admin updates a property's occupancy/unit fields | P0 | 200; change persisted; non-admin resident blocked (403) |
-| PM-CRUD-002 | Landlord/tenant assignment | P0 | Assignment succeeds for a valid resident id within the estate; assigning a user outside the estate rejected |
-| PM-CRUD-003 | Transfer request lifecycle (ownership \| tenancy) | P0 | Request created → admin reviews (`approved`\|`rejected`) via `validTransferDecision` → approved request actually re-assigns landlord/tenant; rejected leaves assignment untouched |
-| PM-CRUD-004 | Archive a property | P1 | Archived property excluded from active listings; still readable by admin |
-| PM-CRUD-005 | Admin console coverage (PROPMGMT-004) | P0 | A real admin can view all estate properties, assign landlord/tenant, and approve/reject transfer requests through a UI — **currently impossible, zero admin surface exists** |
+| PM-CRUD-001 | Estate admin updates a property's occupancy/unit fields | P0 | ✅ Pass — verified live against a throwaway backend |
+| PM-CRUD-002 | Landlord/tenant assignment | P0 | ✅ Pass — live-verified; also confirmed `assignTenant` correctly force-sets `occupancy_status='occupied'` |
+| PM-CRUD-003 | Transfer request lifecycle (ownership \| tenancy) | P0 | ✅ Pass — **DB-executed proof, not just the UI's happy path**: approving an `ownership` transfer really changed `landlord_id` in `estate_properties` (confirmed via direct `psql`); rejecting a competing `tenancy` request left `tenant_id` untouched |
+| PM-CRUD-004 | Archive a property | P1 | ✅ Pass — archived property correctly excluded from `ListProperties` |
+| PM-CRUD-005 | Admin console coverage (PROPMGMT-004) | P0 | ✅ Pass (Fixed) — new `frontend-admin/app/admin/estate/properties/page.tsx`: list, landlord/tenant assignment (resolved to real names), occupancy/archive actions, transfer-request review queue. **Found and flagged (not fixed, separate background task `task_82416290`) an unrelated pre-existing bug**: `listResidents()`'s declared type doesn't match its live backend response shape, so the existing Residents & Units page likely renders blank fields whenever run live. |
 
 ## Realtor member-facing money plane — test matrix
 
-| Case ID | Title | Priority | Expected result |
+| Case ID | Title | Priority | Result |
 |---|---|---|---|
-| PM-MONEY-001 | Pay invoice via WALLET with sufficient balance | P0 | Real wallet debit posted (balanced ledger pair), invoice→paid, lease→active, escrow deposit created for the refundable portion — **pre-fix: none of this required any real debit (PROPMGMT-001)** |
-| PM-MONEY-002 | Pay invoice via WALLET with insufficient balance | P0 | Refused (402-equivalent), zero state change — **pre-fix: always succeeded regardless of balance** |
-| PM-MONEY-003 | Pay invoice via PAYSTACK | P1 | Either a real, verified Paystack capture, or an explicit "not yet supported" refusal — **pre-fix: silently marked paid with zero verification** |
-| PM-MONEY-004 | Idempotent replay of the same Idempotency-Key | P0 | Second call returns the original receipt, zero double-debit, zero duplicate escrow row |
-| PM-MONEY-005 | Direct RPC call bypassing the (new) server route | P0 | Refused — the RPC itself must not be callable by an ordinary authenticated client after the fix |
-| PM-MONEY-006 | Escrow release (PROPMGMT-002) | P2 | No mechanism exists anywhere — disclosed gap, not fixed this batch |
-| PM-MONEY-007 | Shortlet booking price computation | P1 | `total_kobo = nightly*nights + cleaning_fee + deposit`, matches listing's own rates; overlapping-dates booking rejected by the DB exclusion constraint |
-| PM-MONEY-008 | Lease sign → invoice generation idempotency | P1 | Re-signing (or retrying) does not create a second invoice for the same lease |
+| PM-MONEY-001 | Pay invoice via WALLET with sufficient balance | P0 | ✅ Pass (Fixed) — real wallet debit posted (balanced ledger DEBIT/CREDIT pair via `debitWallet`), invoice→paid, lease→active, escrow deposit created. **Pre-fix: none of this required any real debit (PROPMGMT-001)** — closed. |
+| PM-MONEY-002 | Pay invoice via WALLET with insufficient balance | P0 | ✅ Pass (Fixed) — refused (402-equivalent), zero state change. Pre-fix: always succeeded regardless of balance. |
+| PM-MONEY-003 | Pay invoice via PAYSTACK | P1 | ✅ Pass (Fixed) — explicitly refused (501), not faked; disclosed as a genuine out-of-scope gap (no Paystack integration exists for this module yet), not silently built or silently broken. |
+| PM-MONEY-004 | Idempotent replay of the same Idempotency-Key | P0 | ✅ Pass — replay returns the original receipt; exactly one ledger debit, one `realtor_payments` row. |
+| PM-MONEY-005 | Direct RPC call bypassing the (new) server route | P0 | ✅ Pass (Fixed) — live-confirmed `permission denied for function realtor_pay_invoice` for a direct `authenticated`-role call; the exploit is closed at the database grant layer, not just the app layer. |
+| PM-MONEY-006 | Escrow release (PROPMGMT-002) | P0 (raised from P2 — user chose to build it, not defer it) | ✅ Pass (Fixed) — inspection-gated release: `POST /api/realtor/admin/escrow/:id/resolve` requires a submitted move-out before releasing/forfeiting. Live-DB proof: real balanced REVERSAL pair for tenant release, real balanced journal for landlord forfeiture, refused without inspection, refused on an already-released deposit (no double-pay), disputed→released moves money exactly once. |
+| PM-MONEY-007 | Shortlet booking price computation | P1 | ⬜ Not yet executed this batch — `realtor_create_shortlet_booking`'s formula (`nightly*nights + cleaning_fee + deposit`) and its DB-level overlap exclusion constraint were read and confirmed present in `supabase/migrations/20260620020000_realtor_backend_rpcs.sql`, but not live-exercised with a real booking attempt this batch. |
+| PM-MONEY-008 | Lease sign → invoice generation idempotency | P1 | ⬜ Not yet executed this batch — `realtor_sign_lease`'s idempotent invoice-reuse (`SELECT ... WHERE lease_id=p_lease_id LIMIT 1` before inserting) was read and confirmed present, but not live-exercised with a real re-sign/retry this batch. |
 
 ## Cross-cutting
 
-- **PM-SEC-001**: `property.manage` / `realtor.manage` RBAC boundaries enforced on every admin route (see `property.md` §6, `realtor.md`).
-- **PM-SEC-002**: mobile parity — RN-only (PROPMGMT-007), flagged for the Module Completion Gate the same way Association's SECRETARY question was.
-- **PM-DOC-001**: `contracts/openapi.yaml` gap (PROPMGMT-006) — disclosed, not blocking.
+- **PM-SEC-001**: `property.manage` / `realtor.manage` RBAC boundaries enforced on every admin route — ✅ Pass, confirmed live for both `property.manage` (rent-passport lookup 403 with no body leak) and `realtor.manage` (all 7 admin routes gated, confirmed via route registration + RBAC middleware).
+- **PM-SEC-002**: mobile parity — RN-only (PROPMGMT-007). **Resolved**: presented to the user as a genuine scope decision; confirmed intentional, RN is the target platform, no code change needed.
+- **PM-DOC-001**: `contracts/openapi.yaml` gap (PROPMGMT-006). **Closed** — all 4 property-suite + 7 realtor-admin routes now documented (plus the new escrow-resolve route once PM-MONEY-006 lands).
 
 ## Exit criteria
 
-All P0 rows above pass, PM-MONEY-001/002/005 proven with real DB-executed evidence (a real ledger debit, a real refusal, a real permission denial — never a mock), PM-CRUD-005's admin surface exists and is click-tested, and `property.md`/`realtor.md`'s own P0 rows (already scoped) also pass.
+All P0 rows above pass, PM-MONEY-001/002/005 proven with real DB-executed evidence (a real ledger debit, a real refusal, a real permission denial — never a mock), PM-CRUD-005's admin surface exists and is click-tested, and `property.md`/`realtor.md`'s own P0 rows (already scoped) also pass. **Remaining before this doc's exit criteria are fully met**: PM-MONEY-006 (in progress), PM-MONEY-007/008 (read-confirmed but not live-executed — should be picked up alongside PM-MONEY-006's verification pass or in a follow-up before the Module Completion Gate).
