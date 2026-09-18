@@ -72,7 +72,7 @@ export default function FinanceDashboard() {
 }
 
 function maxOf(lines: RevenueLine[]): number {
-  return Math.max(1, ...lines.map((l) => l.amountKobo));
+  return Math.max(1, ...lines.map((l) => l.collectedKobo));
 }
 
 /** Renders a breakdown, or an empty state when the payload carries none. */
@@ -93,12 +93,12 @@ function RevenueCard({ lines }: { lines: RevenueLine[] }) {
 }
 
 function RevRow({ line, max, divider }: { line: RevenueLine; max: number; divider: boolean }) {
-  const pct = Math.round((line.amountKobo / max) * 100);
+  const pct = Math.round((line.collectedKobo / max) * 100);
   return (
     <View style={[styles.revRow, divider && styles.revDivider]}>
       <View style={styles.revHead}>
         <Text style={styles.revLabel}>{line.label}</Text>
-        <Text style={styles.revValue}>{formatNairaCompact(line.amountKobo)}</Text>
+        <Text style={styles.revValue}>{formatNairaCompact(line.collectedKobo)}</Text>
       </View>
       <View style={styles.barTrack}><View style={[styles.barFill, { width: `${pct}%` }]} /></View>
     </View>

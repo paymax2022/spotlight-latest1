@@ -63,15 +63,15 @@ export const MOCK_FINANCE: FinanceSummary = {
   paidMembers: 5380,
   unpaidMembers: 740,
   byChapter: [
-    { label: 'Lagos State', amountKobo: 1_820_000_00 },
-    { label: 'FCT Abuja', amountKobo: 1_140_000_00 },
-    { label: 'Rivers State', amountKobo: 760_000_00 },
-    { label: 'Kano State', amountKobo: 495_000_00 },
+    { label: 'Lagos State', collectedKobo: 1_820_000_00, outstandingKobo: 410_000_00, memberCount: 2_260 },
+    { label: 'FCT Abuja', collectedKobo: 1_140_000_00, outstandingKobo: 298_000_00, memberCount: 1_480 },
+    { label: 'Rivers State', collectedKobo: 760_000_00, outstandingKobo: 250_000_00, memberCount: 940 },
+    { label: 'Kano State', collectedKobo: 495_000_00, outstandingKobo: 150_000_00, memberCount: 700 },
   ],
   byCategory: [
-    { label: 'Full member', amountKobo: 3_200_000_00 },
-    { label: 'Provisional', amountKobo: 715_000_00 },
-    { label: 'Life member', amountKobo: 300_000_00 },
+    { label: 'Full member', collectedKobo: 3_200_000_00, outstandingKobo: 820_000_00, memberCount: 3_900 },
+    { label: 'Provisional', collectedKobo: 715_000_00, outstandingKobo: 218_000_00, memberCount: 1_020 },
+    { label: 'Life member', collectedKobo: 300_000_00, outstandingKobo: 70_000_00, memberCount: 460 },
   ],
   offlinePending: 3,
 };
