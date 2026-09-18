@@ -394,6 +394,7 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 	ledgerAdmin := r.Group("/api/finance/admin/transactions")
 	ledgerAdmin.Use(mapsAuth()) // RequireAuthContext + mirror user_id
 	ledgerAdmin.GET("", middleware.RequirePermission(rbac, "finance.admin.transactions.view"), ledgerAdminHandler.ListTransactions)
+	ledgerAdmin.GET("/:id", middleware.RequirePermission(rbac, "finance.admin.transactions.view"), ledgerAdminHandler.GetTransaction)
 
 	// --- KYC routes ---
 	if cfg.FeatureKYCEnabled {

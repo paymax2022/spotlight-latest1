@@ -146,13 +146,29 @@ func setupAdminTxFixture(t *testing.T) *adminTxFixture {
 		}
 		return id
 	}
+	// insertWithMetadata is identical but sets metadata at INSERT time —
+	// ledger_entries is append-only (a real DB trigger rejects any later
+	// UPDATE), so metadata can only ever be seeded on the original insert.
+	insertWithMetadata := func(accountID, entryType string, amountKobo int64, reference string, createdAt time.Time, metadata string) string {
+		var id string
+		err := pool.QueryRow(ctx, `
+			INSERT INTO ledger_entries (account_id, type, amount_kobo, reference, idempotency_key, created_at, metadata)
+			VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id`,
+			accountID, entryType, amountKobo, reference, "idem-"+uuid.NewString(), createdAt, metadata).Scan(&id)
+		if err != nil {
+			t.Fatalf("insert fixture ledger_entries row (ref=%s): %v", reference, err)
+		}
+		return id
+	}
 
 	f := &adminTxFixture{pool: pool, svc: svc, tag: tag, fullName: fullName, userID: userID, walletAcct: walletAcc.ID, commAcct: commAcc.ID}
 
 	// rowA: 10 days ago, CREDIT 150000 kobo, colon-namespaced reference "fx:convert:...".
 	f.rowA = insert(walletAcc.ID, "CREDIT", 150000, fmt.Sprintf("fx:convert:%s-A", tag), now.Add(-10*24*time.Hour))
-	// rowB: 1 day ago, DEBIT 50000 kobo, "arena:support:..." — paired with rowC below.
-	f.rowB = insert(walletAcc.ID, "DEBIT", 50000, fmt.Sprintf("arena:support:%s-B", tag), now.Add(-24*time.Hour))
+	// rowB: 1 day ago, DEBIT 50000 kobo, "arena:support:..." — paired with rowC
+	// below, seeded with real metadata (proves the detail endpoint's JSON
+	// round-trip; ledger_entries is append-only, so this must be set at insert).
+	f.rowB = insertWithMetadata(walletAcc.ID, "DEBIT", 50000, fmt.Sprintf("arena:support:%s-B", tag), now.Add(-24*time.Hour), `{"note":"admtx detail test"}`)
 	// rowC: same reference as rowB (its ledger counterpart), posted to the STANDING
 	// commission account (user_id IS NULL) — proves standing-account rows are
 	// returned, not dropped, and are distinguishable via account_type.
@@ -408,4 +424,162 @@ func TestAdminListTransactions_RBAC(t *testing.T) {
 				body.Success, body.Total, len(body.Rows), w.Body.String())
 		}
 	})
+}
+
+// (h) Comprehensive single-transaction detail: fetching rowB returns rowC as
+// its related entry (the matching leg posted under the same reference, to the
+// standing commission account) — and vice versa — plus every extra column the
+// list view also carries (idempotency_key, metadata, currency).
+func TestAdminGetTransaction_ReturnsRelatedLegAndFullDetail(t *testing.T) {
+	f := setupAdminTxFixture(t)
+	ctx := context.Background()
+
+	detail, err := f.svc.AdminGetTransaction(ctx, f.rowB)
+	if err != nil {
+		t.Fatalf("AdminGetTransaction(rowB): %v", err)
+	}
+	if detail.ID != f.rowB {
+		t.Fatalf("expected detail.ID=%s, got %s", f.rowB, detail.ID)
+	}
+	if detail.Currency == "" {
+		t.Errorf("expected a non-empty currency on the detail row")
+	}
+	if detail.IdempotencyKey == nil || *detail.IdempotencyKey == "" {
+		t.Errorf("expected a non-empty idempotency_key on the detail row")
+	}
+	if detail.Metadata == nil || string(detail.Metadata) == "null" {
+		t.Fatalf("expected real metadata JSON on rowB, got %s", string(detail.Metadata))
+	}
+	var meta map[string]string
+	if err := json.Unmarshal(detail.Metadata, &meta); err != nil {
+		t.Fatalf("decode metadata: %v (raw: %s)", err, string(detail.Metadata))
+	}
+	if meta["note"] != "admtx detail test" {
+		t.Fatalf("metadata round-trip mismatch: got %v", meta)
+	}
+	if len(detail.RelatedEntries) != 1 || detail.RelatedEntries[0].ID != f.rowC {
+		t.Fatalf("expected exactly rowC as the related leg of rowB, got %v", rowIDs(detail.RelatedEntries))
+	}
+	if detail.RelatedEntriesTotal != 1 {
+		t.Fatalf("expected RelatedEntriesTotal=1 for rowB, got %d", detail.RelatedEntriesTotal)
+	}
+	if detail.RelatedEntries[0].AccountType != "commission" || detail.RelatedEntries[0].UserID != nil {
+		t.Fatalf("expected the related leg to be the standing commission-account row, got account_type=%s user_id=%v",
+			detail.RelatedEntries[0].AccountType, detail.RelatedEntries[0].UserID)
+	}
+
+	// And the reverse direction: fetching rowC returns rowB as ITS related leg.
+	detailC, err := f.svc.AdminGetTransaction(ctx, f.rowC)
+	if err != nil {
+		t.Fatalf("AdminGetTransaction(rowC): %v", err)
+	}
+	if len(detailC.RelatedEntries) != 1 || detailC.RelatedEntries[0].ID != f.rowB {
+		t.Fatalf("expected exactly rowB as the related leg of rowC, got %v", rowIDs(detailC.RelatedEntries))
+	}
+
+	// A row with no other leg sharing its reference (rowA) has an empty, not
+	// nil-panicking, RelatedEntries slice.
+	detailA, err := f.svc.AdminGetTransaction(ctx, f.rowA)
+	if err != nil {
+		t.Fatalf("AdminGetTransaction(rowA): %v", err)
+	}
+	if len(detailA.RelatedEntries) != 0 {
+		t.Fatalf("expected rowA to have no related legs, got %v", rowIDs(detailA.RelatedEntries))
+	}
+	if detailA.RelatedEntriesTotal != 0 {
+		t.Fatalf("expected rowA RelatedEntriesTotal=0, got %d", detailA.RelatedEntriesTotal)
+	}
+}
+
+// (i) Non-unique reference: found LIVE while building this feature — some
+// code paths in this codebase reuse one literal constant reference string
+// across many unrelated postings, breaking the "reference uniquely identifies
+// one transaction" assumption. AdminGetTransaction must not silently return an
+// unbounded, misleading list of "related" rows for that case: it caps the
+// returned slice at adminRelatedEntriesLimit while still reporting the REAL
+// total via RelatedEntriesTotal, so the caller can render a caveat.
+func TestAdminGetTransaction_NonUniqueReferenceCapsButReportsRealTotal(t *testing.T) {
+	f := setupAdminTxFixture(t)
+	ctx := context.Background()
+
+	sharedRef := "admtx-shared-ref-" + f.tag
+	const extraRows = 25 // > adminRelatedEntriesLimit (20), so the cap actually bites
+	var ids []string
+	for i := 0; i < extraRows; i++ {
+		var id string
+		if err := f.pool.QueryRow(ctx, `
+			INSERT INTO ledger_entries (account_id, type, amount_kobo, reference, idempotency_key, created_at)
+			VALUES ($1,$2,$3,$4,$5,$6) RETURNING id`,
+			f.walletAcct, "CREDIT", 1, sharedRef, "idem-"+uuid.NewString(), time.Now().UTC()).Scan(&id); err != nil {
+			t.Fatalf("insert shared-reference row %d: %v", i, err)
+		}
+		ids = append(ids, id)
+	}
+	t.Cleanup(func() {
+		_, _ = f.pool.Exec(context.Background(), `DELETE FROM ledger_entries WHERE id = ANY($1)`, ids)
+	})
+
+	detail, err := f.svc.AdminGetTransaction(ctx, ids[0])
+	if err != nil {
+		t.Fatalf("AdminGetTransaction: %v", err)
+	}
+	if detail.RelatedEntriesTotal != int64(extraRows-1) {
+		t.Fatalf("expected RelatedEntriesTotal=%d (the other %d rows sharing this reference), got %d",
+			extraRows-1, extraRows-1, detail.RelatedEntriesTotal)
+	}
+	if len(detail.RelatedEntries) != 20 {
+		t.Fatalf("expected the returned related list capped at 20, got %d", len(detail.RelatedEntries))
+	}
+	if detail.RelatedEntriesTotal <= int64(len(detail.RelatedEntries)) {
+		t.Fatalf("expected RelatedEntriesTotal (%d) > len(RelatedEntries) (%d) — this is exactly the signal the UI caveat depends on",
+			detail.RelatedEntriesTotal, len(detail.RelatedEntries))
+	}
+}
+
+// (j) Unknown id returns the sentinel error, mapped to a real 404 by the
+// handler — not a 500 or a silently-empty 200.
+func TestAdminGetTransaction_NotFound(t *testing.T) {
+	f := setupAdminTxFixture(t)
+	ctx := context.Background()
+
+	if _, err := f.svc.AdminGetTransaction(ctx, uuid.NewString()); err != ledger.ErrTransactionNotFound {
+		t.Fatalf("expected ErrTransactionNotFound for an unknown id, got %v", err)
+	}
+
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	r.Use(func(c *gin.Context) {
+		c.Set(middleware.AuthUserContextKey, domain.AuthenticatedUser{ID: "caller-" + uuid.NewString()})
+		c.Next()
+	})
+	h := ledger.NewAdminHandler(f.svc)
+	r.GET("/api/finance/admin/transactions/:id",
+		middleware.RequirePermission(&fakeAdminTxRBAC{allow: true}, "finance.admin.transactions.view"),
+		h.GetTransaction)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/finance/admin/transactions/"+uuid.NewString(), nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 for unknown id, got %d (body: %s)", w.Code, w.Body.String())
+	}
+
+	// And the happy path through the real HTTP handler, to prove the route
+	// wiring + JSON envelope (not just the service method).
+	req2 := httptest.NewRequest(http.MethodGet, "/api/finance/admin/transactions/"+f.rowB, nil)
+	w2 := httptest.NewRecorder()
+	r.ServeHTTP(w2, req2)
+	if w2.Code != http.StatusOK {
+		t.Fatalf("expected 200 for a real id, got %d (body: %s)", w2.Code, w2.Body.String())
+	}
+	var body struct {
+		Success     bool                          `json:"success"`
+		Transaction ledger.AdminTransactionDetail `json:"transaction"`
+	}
+	if err := json.Unmarshal(w2.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode response: %v (body: %s)", err, w2.Body.String())
+	}
+	if !body.Success || body.Transaction.ID != f.rowB || len(body.Transaction.RelatedEntries) != 1 {
+		t.Fatalf("expected success with rowB + 1 related entry via HTTP, got %+v", body)
+	}
 }

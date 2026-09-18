@@ -77,3 +77,25 @@ func (h *AdminHandler) ListTransactions(c *gin.Context) {
 		"note_source": "source_inferred is a best-effort guess parsed from the reference string (SPLIT_PART on ':'); it is NOT an authoritative module field.",
 	})
 }
+
+// GetTransaction handles GET /api/finance/admin/transactions/:id — the
+// comprehensive single-transaction detail view: every column on the row
+// (including idempotency_key, raw metadata, currency) plus every OTHER
+// ledger_entries row sharing the same reference (the other leg(s) of the same
+// balanced double-entry movement), so an operator sees the whole transaction.
+func (h *AdminHandler) GetTransaction(c *gin.Context) {
+	detail, err := h.svc.AdminGetTransaction(c.Request.Context(), c.Param("id"))
+	if err != nil {
+		if err == ErrTransactionNotFound {
+			c.JSON(http.StatusNotFound, gin.H{"success": false, "error": "transaction not found"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"success":     true,
+		"transaction": detail,
+		"note_source": "source_inferred is a best-effort guess parsed from the reference string (SPLIT_PART on ':'); it is NOT an authoritative module field.",
+	})
+}

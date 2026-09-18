@@ -11,6 +11,7 @@
 // accounts, etc.) are shown as "System: <account type>", never dropped.
 
 import { useCallback, useEffect, useState, type CSSProperties } from 'react';
+import Link from 'next/link';
 import {
   listAdminTransactions,
   formatKobo,
@@ -155,6 +156,7 @@ export default function AdminTransactionsPage() {
                   <th style={thCell} title="Best-effort guess parsed from the reference string (SPLIT_PART on ':'). NOT an authoritative module field.">
                     Source (inferred) *
                   </th>
+                  <th style={thCell}></th>
                 </tr>
               </thead>
               <tbody>
@@ -168,6 +170,7 @@ export default function AdminTransactionsPage() {
                     <td style={tdCell} title="Best-effort guess parsed from the reference string — not a real schema field.">
                       {r.source_inferred || '—'}
                     </td>
+                    <td style={tdCell}><Link href={`/admin/finance/transactions/${r.id}`} style={{ color: colors.info }}>Details →</Link></td>
                   </tr>
                 ))}
               </tbody>

@@ -28,12 +28,32 @@ export interface AdminTransactionRow {
   reference: string;
   source_inferred: string;
   description: string | null;
+  idempotency_key: string | null;
+  metadata: Record<string, unknown> | null;
   created_at: string;
   account_id: string;
   account_type: string;
+  currency: string;
   user_id: string | null;
   user_name: string | null;
   user_email: string | null;
+  user_phone: string | null;
+}
+
+export interface AdminTransactionDetail extends AdminTransactionRow {
+  // Every OTHER ledger_entries row sharing this transaction's reference — the
+  // other leg(s) of the same balanced double-entry movement (a debit always
+  // has a matching credit somewhere, often on a different account/user).
+  //
+  // CAVEAT: reference is not guaranteed unique per transaction across this
+  // codebase (some code paths reuse one literal constant reference string
+  // across many unrelated postings) — related_entries_total is the REAL count
+  // sharing this reference; related_entries itself is capped server-side.
+  // When related_entries_total is implausibly large for a normal 2-3-leg
+  // post, render a caveat rather than presenting every row as definitely part
+  // of this one transaction.
+  related_entries: AdminTransactionRow[];
+  related_entries_total: number;
 }
 
 export interface AdminTransactionFilters {
@@ -93,4 +113,13 @@ export async function listAdminTransactions(filters: AdminTransactionFilters = {
     limit: typeof body?.limit === 'number' ? body.limit : (filters.limit ?? 50),
     offset: typeof body?.offset === 'number' ? body.offset : (filters.offset ?? 0),
   };
+}
+
+/** Comprehensive single-transaction detail, incl. every other ledger_entries
+ * row sharing the same reference (the transaction's other leg(s)). */
+export async function getAdminTransaction(id: string): Promise<AdminTransactionDetail> {
+  const res = await fetch(`${adminBase()}/${encodeURIComponent(id)}`, { cache: 'no-store', headers: authHeaders() });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body?.error || body?.message || `Request failed (${res.status})`);
+  return body.transaction as AdminTransactionDetail;
 }
