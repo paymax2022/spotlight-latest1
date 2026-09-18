@@ -160,6 +160,84 @@ func TestLiveDB_AttributeOrDefault_LockedInPermanently(t *testing.T) {
 	}
 }
 
+// seedHouseFallbackPlaceholder simulates exactly what the pre-existing §7A
+// attribution engine (referral/attribution, wired into every real signup ahead
+// of Module 8 via NewSignupAttributor) leaves behind for a no-code/unresolved
+// signup: a referral_attributions row with referrer_id NULL and
+// attribution_type='global_house'. Module 8's AttributeOrDefault must be able
+// to run AFTER this row already exists (which it always will, once wired into
+// the signup flow) and still actually attribute to Admin.
+func seedHouseFallbackPlaceholder(t *testing.T, ctx context.Context, pool *pgxpool.Pool, referredUserID string) {
+	t.Helper()
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO referral_attributions (referred_user_id, referrer_id, attribution_type, is_house)
+		 VALUES ($1, NULL, 'global_house', true)`, referredUserID); err != nil {
+		t.Fatalf("seed §7A house placeholder: %v", err)
+	}
+}
+
+func TestLiveDB_AttributeOrDefault_ClaimsExistingHousePlaceholderRow(t *testing.T) {
+	pool := poolOrSkip(t)
+	ctx := context.Background()
+	s := svc(pool)
+	adminID := withAdmin(t, ctx, pool)
+	user := newUser(t, ctx, pool)
+
+	// Simulate §7A having already run first (as it does on every real signup).
+	seedHouseFallbackPlaceholder(t, ctx, pool, user)
+
+	referrerID, usedDefault, _, err := s.AttributeOrDefault(ctx, user, "")
+	if err != nil {
+		t.Fatalf("AttributeOrDefault: %v", err)
+	}
+	if referrerID != adminID {
+		t.Fatalf("referrer = %q, want Admin %q — a plain INSERT...DO NOTHING would silently no-op against the §7A placeholder and leave this empty, defeating the whole point of the modification", referrerID, adminID)
+	}
+	if !usedDefault {
+		t.Error("usedAdminDefault = false, want true")
+	}
+
+	// And it must actually be usable for commission — OnPurchaseSettled reads
+	// attributedReferrer the same way, so this proves the claim isn't just
+	// visible to AttributeOrDefault's own return value but to the real read path.
+	var storedReferrer *string
+	if err := pool.QueryRow(ctx, `SELECT referrer_id FROM referral_attributions WHERE referred_user_id=$1`, user).Scan(&storedReferrer); err != nil {
+		t.Fatalf("read back attribution row: %v", err)
+	}
+	if storedReferrer == nil || *storedReferrer != adminID {
+		t.Errorf("stored referrer_id = %v, want Admin %q persisted in the row itself", storedReferrer, adminID)
+	}
+}
+
+func TestLiveDB_AttributeOrDefault_NeverOverwritesARealPreExistingReferrer(t *testing.T) {
+	pool := poolOrSkip(t)
+	ctx := context.Background()
+	s := svc(pool)
+	withAdmin(t, ctx, pool)
+	realReferrer, user := newUser(t, ctx, pool), newUser(t, ctx, pool)
+
+	// Simulate §7A having already resolved a REAL referrer (e.g. via its own
+	// code/deeplink/context chain) — this row already has a non-null referrer_id.
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO referral_attributions (referred_user_id, referrer_id, attribution_type)
+		 VALUES ($1, $2, 'code')`, user, realReferrer); err != nil {
+		t.Fatalf("seed real pre-existing attribution: %v", err)
+	}
+
+	// A later call — even with a DIFFERENT code, or none at all — must not
+	// disturb it ("locked in permanently").
+	referrerID, usedDefault, _, err := s.AttributeOrDefault(ctx, user, "")
+	if err != nil {
+		t.Fatalf("AttributeOrDefault: %v", err)
+	}
+	if referrerID != realReferrer {
+		t.Errorf("referrer = %q, want the pre-existing real referrer %q untouched", referrerID, realReferrer)
+	}
+	if usedDefault {
+		t.Error("usedAdminDefault = true, want false — a real referrer already existed")
+	}
+}
+
 func TestLiveDB_SignupPoints_AwardedOncePerUser(t *testing.T) {
 	pool := poolOrSkip(t)
 	ctx := context.Background()

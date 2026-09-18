@@ -16,7 +16,6 @@ import { Typography } from '@/constants/typography';
 import { Spacing } from '@/constants/spacing';
 import { useAuthStore } from '@/store/authStore';
 import { getErrorMessage } from '@/utils/errorMapper';
-import { attribute as attributeReferral } from '@/features/referral/rewards/api';
 
 const schema = z.object({
   fullName: z.string().min(2, 'Enter your full name'),
@@ -42,13 +41,16 @@ export default function SignupScreen() {
   const onSubmit = async (values: Form) => {
     setApiError('');
     try {
-      const { referralCode, ...creds } = values;
-      const result = await register(creds);
-      // Attribute the referral code silently (PRD §5.2): fire-and-forget, never
-      // blocks or fails the signup, no reward shown to the referred user. The
-      // engine is idempotent per user and 400s on self/unknown codes — swallowed.
-      const code = referralCode?.trim();
-      if (code) { attributeReferral(code).catch(() => { /* attribution is invisible */ }); }
+      // The referral code now travels WITH the registration call itself
+      // (POST /api/auth/register), which attributes server-side — both the
+      // §7A engine and the Module 8 Direct Referral Rewards engine run there
+      // unconditionally on every signup, so a blank code still resolves to
+      // the platform Admin as the default referrer, and a real code is
+      // attributed atomically before any client ever gets a chance to race
+      // it. No separate follow-up call is needed (or safe to add back): a
+      // second call here would run AFTER the code is already locked in
+      // permanently and could never change it, only add a wasted request.
+      const result = await register(values);
       if (result.needsOtp) {
         router.push({ pathname: '/(auth)/verify-otp', params: { email: result.email } });
       }

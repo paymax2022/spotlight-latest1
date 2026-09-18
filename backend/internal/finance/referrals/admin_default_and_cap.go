@@ -93,11 +93,15 @@ func (s *RewardService) AttributeOrDefault(ctx context.Context, referredUserID, 
 		return "", false, invalidCode, fmt.Errorf("referrals: admin account cannot be attributed to itself")
 	}
 
-	const ins = `
-		INSERT INTO referral_attributions (referred_user_id, referrer_id, attribution_type, code_used)
-		VALUES ($1,$2,'admin_default',NULLIF($3,''))
-		ON CONFLICT (referred_user_id) DO NOTHING`
-	if _, err := s.db.Exec(ctx, ins, referredUserID, adminID, code); err != nil {
+	// claimOrRespectAttribution (not a plain INSERT ... DO NOTHING): the §7A
+	// attribution engine (referral/attribution, wired into every signup ahead of
+	// this one via NewSignupAttributor) already writes a placeholder row with
+	// referrer_id NULL for exactly this case — no code / an unresolvable code —
+	// its own house/global fallback. A DO-NOTHING insert would silently no-op
+	// against that placeholder forever, so "Admin as default referrer" would
+	// never actually take effect for any real signup. This claims that
+	// placeholder instead, without ever overwriting an already-real referrer_id.
+	if err := s.claimOrRespectAttribution(ctx, referredUserID, adminID, "admin_default", code); err != nil {
 		return "", false, false, fmt.Errorf("referrals: insert admin-default attribution: %w", err)
 	}
 	final, err := s.attributedReferrer(ctx, referredUserID)

@@ -31,10 +31,22 @@ import (
 // these routes inherit the same gate. Money path reuses the finance ledger: real
 // payouts post balanced double-entries with idempotency keys; house accruals are
 // notional (non-withdrawable), excluded from override chains and K-factor.
-// NewSignupAttributor builds the §7A attribution service and returns it as the
-// narrow function the auth handler needs. Registration is where attribution has
-// to happen — the web route did it and the Go route did not, which is one of the
-// reasons the two implementations could not simply be merged.
+// NewSignupAttributor builds the §7A attribution service AND the Module 8
+// Direct Referral Rewards engine's own attribution step, composed into the one
+// function the auth handler calls on every registration (Go-backed signups —
+// today, every frontend-web and mobile-app signup — funnel through here; this
+// is the single point where "every user has a referrer" actually becomes true
+// for all of them, rather than depending on each client separately remembering
+// to call POST /v1/referrals/attribute after signup).
+//
+// §7A runs FIRST exactly as before (unchanged behavior: its own house/global
+// fallback chain, config, events, K-factor accounting). Module 8's
+// AttributeOrDefault runs SECOND and CLAIMS §7A's placeholder row when §7A
+// left referrer_id NULL (its house-fallback shape) — seeing referrer_id NULL,
+// Module 8 sets it to a real referrer or to Admin (see
+// RewardService.claimOrRespectAttribution) — and awards the one-time signup
+// point. Neither step's failure blocks the other or the registration itself;
+// each is logged independently with its own tag so a failure is attributable.
 //
 // Returns nil on a nil pool, and the handler then skips attribution rather than
 // failing signup.
@@ -42,10 +54,19 @@ func NewSignupAttributor(pool *pgxpool.Pool) handlers.ReferralAttributor {
 	if pool == nil {
 		return nil
 	}
-	svc := newAttributionService(pool)
+	legacySvc := newAttributionService(pool)
+	ledgerSvc := financeledger.NewService(financeledger.NewRepository(pool), nil)
+	rewardSvc := referrals.NewRewardService(pool, ledgerSvc)
 	return func(ctx context.Context, userID, referralCode string) error {
-		_, err := svc.ResolveReferrer(ctx, userID, attribution.ResolveOpts{CodeEntered: referralCode})
-		return err
+		if _, err := legacySvc.ResolveReferrer(ctx, userID, attribution.ResolveOpts{CodeEntered: referralCode}); err != nil {
+			log.Printf("[referral] §7A attribution failed for %s: %v", userID, err)
+		}
+		if _, _, _, err := rewardSvc.AttributeOrDefault(ctx, userID, referralCode); err != nil {
+			log.Printf("[referral] Module 8 attribution failed for %s: %v", userID, err)
+		} else if err := rewardSvc.AwardSignupPoints(ctx, userID); err != nil {
+			log.Printf("[referral] Module 8 signup points failed for %s: %v", userID, err)
+		}
+		return nil
 	}
 }
 

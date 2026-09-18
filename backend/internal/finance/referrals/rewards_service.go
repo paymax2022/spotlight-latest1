@@ -384,14 +384,12 @@ func (s *RewardService) Attribute(ctx context.Context, referredUserID, code stri
 		return "", fmt.Errorf("referrals: self-referral rejected")
 	}
 
-	const ins = `
-		INSERT INTO referral_attributions (referred_user_id, referrer_id, attribution_type, code_used)
-		VALUES ($1,$2,'code',$3)
-		ON CONFLICT (referred_user_id) DO NOTHING`
-	if _, err := s.db.Exec(ctx, ins, referredUserID, referrerID, code); err != nil {
+	if err := s.claimOrRespectAttribution(ctx, referredUserID, referrerID, "code", code); err != nil {
 		return "", fmt.Errorf("referrals: insert attribution: %w", err)
 	}
-	// Re-read to return the authoritative referrer (covers a concurrent insert).
+	// Re-read to return the authoritative referrer (covers a concurrent insert,
+	// or a pre-existing REAL attribution from the §7A engine that our claim
+	// correctly declined to overwrite).
 	final, err := s.attributedReferrer(ctx, referredUserID)
 	if err != nil {
 		return "", err
@@ -400,6 +398,33 @@ func (s *RewardService) Attribute(ctx context.Context, referredUserID, code stri
 		"referred_user_id": referredUserID, "referrer_id": final, "code": code,
 	})
 	return final, nil
+}
+
+// claimOrRespectAttribution inserts a referral_attributions row for a user who
+// has none, OR "claims" a placeholder row that already exists with
+// referrer_id IS NULL — the shape the §7A attribution engine (which runs
+// unconditionally on every signup via NewSignupAttributor, ahead of this
+// engine) leaves behind for its own house/global fallback. A plain
+// `ON CONFLICT DO NOTHING` would silently no-op forever against that
+// placeholder, meaning "every user has a referrer" (Module 8's whole point)
+// would never actually take effect for any signup that already went through
+// §7A — which today is every signup. This upsert claims the placeholder
+// instead, but NEVER overwrites an already-real (non-null) referrer_id set by
+// either engine, preserving the "locked in permanently" guarantee.
+func (s *RewardService) claimOrRespectAttribution(ctx context.Context, referredUserID, referrerID, attributionType, codeUsed string) error {
+	const ins = `
+		INSERT INTO referral_attributions (referred_user_id, referrer_id, attribution_type, code_used)
+		VALUES ($1,$2,$3,NULLIF($4,''))
+		ON CONFLICT (referred_user_id) DO UPDATE
+		  SET referrer_id = EXCLUDED.referrer_id,
+		      attribution_type = EXCLUDED.attribution_type,
+		      code_used = EXCLUDED.code_used,
+		      updated_at = now()
+		  WHERE referral_attributions.referrer_id IS NULL`
+	if _, err := s.db.Exec(ctx, ins, referredUserID, referrerID, attributionType, codeUsed); err != nil {
+		return err
+	}
+	return nil
 }
 
 // resolveCode maps a code to a referrer, checking the engine's referral_links
