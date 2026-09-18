@@ -184,6 +184,20 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 	ledgerRepo := ledger.NewRepository(pool)
 	ledgerSvc := ledger.NewService(ledgerRepo, redisClient)
 
+	// Wires REAL per-module detail (Service, Category, Service bought, Payment
+	// method, Status, Provider) into the centralized admin Transactions detail
+	// endpoint for the modules that currently have a resolvable reference
+	// convention. pool is non-nil here (checked above). See
+	// admin_transaction_resolvers.go for what each resolver covers and why
+	// marketplace P2P order escrow deliberately has none (ADR-023 retired that
+	// posting path — it produces zero ledger_entries rows today).
+	ledgerSvc.SetResolvers([]ledger.TransactionDetailResolver{
+		NewMarketplaceBoostResolver(pool),
+		NewInsurancePremiumResolver(pool),
+		NewFXConversionResolver(pool),
+		NewUtilityBillResolver(pool),
+	})
+
 	// --- Internal service-authenticated ledger API (Stage 1.5c) ---
 	// Exposes the authoritative double-entry ledger to the separate trading service
 	// so it can post trade CASH legs here. Flag-gated (default OFF) + service-token

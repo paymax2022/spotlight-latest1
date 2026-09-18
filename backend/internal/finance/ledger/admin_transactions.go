@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -95,6 +96,15 @@ type AdminTransactionDetail struct {
 	// real commission leg fell outside the returned page; callers must not
 	// read a nil CommissionKobo as "no commission was ever charged."
 	CommissionKobo *int64 `json:"commission_kobo"`
+	// ModuleDetail is the REAL per-module detail (service, category, what was
+	// bought, payment method, real status, provider) resolved from this
+	// transaction's reference by whichever TransactionDetailResolver (see
+	// admin_transaction_resolver.go) recognizes its naming pattern first, or
+	// nil when no wired resolver's pattern matches this reference (most
+	// module/reference combinations — resolvers exist for a growing subset
+	// only). A resolver query failure is logged, not fatal: the rest of this
+	// response still returns successfully.
+	ModuleDetail *ModuleTransactionDetail `json:"module_detail"`
 }
 
 // revenueAccountTypes are the standing account types this codebase's
@@ -126,7 +136,24 @@ var ErrTransactionNotFound = fmt.Errorf("ledger: transaction not found")
 // ledger_entries row by id, including every other row sharing its reference
 // (the other leg(s) of the same balanced movement).
 func (s *Service) AdminGetTransaction(ctx context.Context, id string) (*AdminTransactionDetail, error) {
-	return s.repo.AdminGetTransaction(ctx, id)
+	detail, err := s.repo.AdminGetTransaction(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	for _, r := range s.resolvers {
+		md, found, rerr := r.Resolve(ctx, detail.Reference)
+		if rerr != nil {
+			// Non-fatal: a resolver's own query failure must not break the
+			// generic transaction detail response.
+			log.Printf("ledger: admin transaction module-detail resolver error (reference=%s): %v", detail.Reference, rerr)
+			continue
+		}
+		if found {
+			detail.ModuleDetail = md
+			break
+		}
+	}
+	return detail, nil
 }
 
 const adminTransactionSelectCols = `

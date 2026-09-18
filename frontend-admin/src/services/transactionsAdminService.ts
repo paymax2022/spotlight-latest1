@@ -61,6 +61,25 @@ export interface AdminTransactionDetail extends AdminTransactionRow {
   // such leg was present among related_entries (which itself may be
   // truncated — see related_entries_total).
   commission_kobo: number | null;
+  // REAL per-module detail (Service, Category, Service bought, Payment
+  // method, Status, Provider) resolved server-side from this transaction's
+  // reference by a module-specific resolver — see
+  // backend/internal/app/admin_transaction_resolvers.go. Null whenever no
+  // wired resolver's reference pattern matches this transaction (most
+  // module/reference combinations today — resolvers exist for a growing
+  // subset: marketplace boosts, insurance premiums, FX conversions, utility
+  // bills). A null here is not an error — render an honest "no resolver yet"
+  // note rather than hiding the absence.
+  module_detail: {
+    module: string;
+    service_label: string;
+    category: string | null;
+    service_bought: string;
+    payment_method: string;
+    status: string;
+    provider: string | null;
+    merchant: string | null;
+  } | null;
 }
 
 export interface AdminTransactionFilters {

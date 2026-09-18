@@ -35,6 +35,40 @@ const fieldRow: CSSProperties = { display: 'flex', justifyContent: 'space-betwee
 const fieldLabel: CSSProperties = { fontSize: '0.78rem', color: colors.muted, minWidth: 160 };
 const fieldValue: CSSProperties = { fontSize: '0.85rem', color: colors.text, textAlign: 'right', wordBreak: 'break-all' };
 
+// Real per-module statuses use each module's own vocabulary (e.g. insurance's
+// ACTIVE/CANCELLED/PAYMENT_FAILED, an fx_conversions status, a boost_status,
+// a utility_transactions status) — never the generic ledger Posted/Reversed
+// styling. This is a best-effort semantic grouping across all of them so the
+// badge color is still meaningful without hard-coding every module's exact
+// value set.
+function statusBadgeColor(status: string): string {
+  const s = status.toUpperCase();
+  if (['ACTIVE', 'COMPLETED', 'SUCCESSFUL', 'POSTED', 'PURCHASED'].includes(s)) return colors.success;
+  if (['FAILED', 'CANCELLED', 'CANCELLED_BY_SELLER', 'REJECTED_WITH_REASON', 'VOID', 'BIND_FAILED', 'PAYMENT_FAILED', 'REVERSED', 'DISPUTED', 'EXPIRED'].includes(s)) return colors.danger;
+  if (['PENDING', 'PENDING_PAYMENT', 'BINDING', 'QUOTED', 'INITIATED', 'WALLET_DEBITED', 'PROVIDER_PENDING', 'RENEWAL_DUE', 'AUTO_REFUNDED'].includes(s)) return colors.warning;
+  return colors.muted;
+}
+
+function StatusBadge({ status }: { status: string }) {
+  const color = statusBadgeColor(status);
+  return (
+    <span
+      style={{
+        display: 'inline-block',
+        padding: '2px 10px',
+        borderRadius: 999,
+        fontSize: '0.75rem',
+        fontWeight: 600,
+        color,
+        background: `${color}22`,
+        border: `1px solid ${color}55`,
+      }}
+    >
+      {status}
+    </span>
+  );
+}
+
 export default function AdminTransactionDetailPage() {
   const params = useParams<{ id: string }>();
   const id = params?.id;
@@ -89,6 +123,26 @@ export default function AdminTransactionDetailPage() {
                 {detail.metadata ? JSON.stringify(detail.metadata, null, 2) : '—'}
               </pre>
             </div>
+          </Card>
+
+          <Card title="Service details" style={{ marginBottom: 16 }}>
+            {detail.module_detail ? (
+              <>
+                <div style={fieldRow}><span style={fieldLabel}>Service</span><span style={fieldValue}>{detail.module_detail.service_label}</span></div>
+                <div style={fieldRow}><span style={fieldLabel}>Category</span><span style={fieldValue}>{detail.module_detail.category || '—'}</span></div>
+                <div style={fieldRow}><span style={fieldLabel}>Service bought</span><span style={fieldValue}>{detail.module_detail.service_bought}</span></div>
+                <div style={fieldRow}><span style={fieldLabel}>Payment method</span><span style={fieldValue}>{detail.module_detail.payment_method}</span></div>
+                <div style={fieldRow}><span style={fieldLabel}>Status</span><span style={fieldValue}><StatusBadge status={detail.module_detail.status} /></span></div>
+                <div style={fieldRow}><span style={fieldLabel}>Provider</span><span style={fieldValue}>{detail.module_detail.provider || '—'}</span></div>
+                {detail.module_detail.merchant && (
+                  <div style={fieldRow}><span style={fieldLabel}>Merchant</span><span style={fieldValue}>{detail.module_detail.merchant}</span></div>
+                )}
+              </>
+            ) : (
+              <p style={{ color: colors.muted, margin: 0 }}>
+                No per-module detail resolver exists yet for this transaction&rsquo;s reference format — see the generic fields above.
+              </p>
+            )}
           </Card>
 
           <Card title="Account & user" style={{ marginBottom: 16 }}>
