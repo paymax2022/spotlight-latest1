@@ -25,16 +25,18 @@ import (
 
 // UpsertBankAccount inserts a bank account row idempotently (UNIQUE idempotency_key).
 // account_number is stored as supplied; the service masks it to last-4 in responses.
-func (r *Repository) UpsertBankAccount(ctx context.Context, userID, idemKey string, req BankAccountRequest) (*BankAccount, error) {
+// verified is decided by the SERVICE (real Paystack resolution or none configured),
+// never trusted from the client request.
+func (r *Repository) UpsertBankAccount(ctx context.Context, userID, idemKey string, req BankAccountRequest, verified bool) (*BankAccount, error) {
 	id := uuid.New().String()
 	const q = `
 		INSERT INTO doctor_bank_accounts
 			(id, user_id, bank_name, bank_code, account_number, account_name, is_verified, is_default, tax_info, idempotency_key)
-		VALUES ($1,$2,$3,$4,$5,$6,false,$7,$8,$9)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
 		ON CONFLICT (idempotency_key) DO NOTHING`
 	isDefault := boolOrDefault(req.IsDefault, false)
 	tag, err := r.db.Exec(ctx, q, id, userID, req.BankName, req.BankCode, req.AccountNumber,
-		req.AccountName, isDefault, jsonOrEmptyObject(req.TaxInfo), idemKey)
+		req.AccountName, verified, isDefault, jsonOrEmptyObject(req.TaxInfo), idemKey)
 	if err != nil {
 		return nil, err
 	}
@@ -55,7 +57,14 @@ func (r *Repository) UpsertBankAccount(ctx context.Context, userID, idemKey stri
 // SetDefaultBankAccount marks one account default (is_default=true) and demotes the
 // rest. When accountID is empty it updates the existing default's bank details from
 // the request. Returns the resulting default account. Used by PUT /payout-account.
-func (r *Repository) SetDefaultBankAccount(ctx context.Context, userID string, req PayoutAccountRequest) (*BankAccount, error) {
+//
+// verified is decided by the SERVICE, exactly like UpsertBankAccount — never trusted
+// from the client request. nil means "leave is_verified as it is" (no bank_code/
+// account_number in this request, so nothing about the account's identity changed);
+// a non-nil value overwrites it. This closes the bypass where changing bank_code/
+// account_number on an already-verified row silently kept is_verified=true pointing
+// at a now-different, unverified account.
+func (r *Repository) SetDefaultBankAccount(ctx context.Context, userID string, req PayoutAccountRequest, verified *bool) (*BankAccount, error) {
 	// Optionally patch bank details on the targeted (or current-default) account.
 	if req.AccountID != nil && *req.AccountID != "" {
 		const upd = `
@@ -64,11 +73,12 @@ func (r *Repository) SetDefaultBankAccount(ctx context.Context, userID string, r
 				bank_code      = COALESCE($4, bank_code),
 				account_number = COALESCE($5, account_number),
 				account_name   = COALESCE($6, account_name),
+				is_verified    = COALESCE($7, is_verified),
 				is_default     = true,
 				updated_at     = now()
 			WHERE id = $1 AND user_id = $2`
 		tag, err := r.db.Exec(ctx, upd, *req.AccountID, userID,
-			req.BankName, req.BankCode, req.AccountNumber, req.AccountName)
+			req.BankName, req.BankCode, req.AccountNumber, req.AccountName, verified)
 		if err != nil {
 			return nil, err
 		}
@@ -90,14 +100,27 @@ func (r *Repository) SetDefaultBankAccount(ctx context.Context, userID string, r
 			bank_code      = COALESCE($3, bank_code),
 			account_number = COALESCE($4, account_number),
 			account_name   = COALESCE($5, account_name),
+			is_verified    = COALESCE($6, is_verified),
 			updated_at     = now()
 		WHERE user_id = $1 AND is_default = true`
-	tag, err := r.db.Exec(ctx, upd, userID, req.BankName, req.BankCode, req.AccountNumber, req.AccountName)
+	tag, err := r.db.Exec(ctx, upd, userID, req.BankName, req.BankCode, req.AccountNumber, req.AccountName, verified)
 	if err != nil {
 		return nil, err
 	}
 	if tag.RowsAffected() == 0 {
 		return nil, ErrNotFound
+	}
+	return r.getDefaultBankAccount(ctx, userID)
+}
+
+// GetPayoutBankAccount resolves the bank account a payout is actually headed
+// toward: the caller-specified accountID when given, otherwise the doctor's
+// current default. Used by RequestPayout's fail-closed verification gate — the
+// account this returns is the one whose is_verified flag decides whether the
+// payout may proceed.
+func (r *Repository) GetPayoutBankAccount(ctx context.Context, userID string, accountID *string) (*BankAccount, error) {
+	if accountID != nil && *accountID != "" {
+		return r.getBankAccountByID(ctx, userID, *accountID)
 	}
 	return r.getDefaultBankAccount(ctx, userID)
 }

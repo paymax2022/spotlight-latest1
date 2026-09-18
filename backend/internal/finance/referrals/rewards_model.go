@@ -89,6 +89,11 @@ type Reward struct {
 	CreatedAt           time.Time  `json:"created_at"`
 	CreditedAt          *time.Time `json:"credited_at,omitempty"`
 	ReversedAt          *time.Time `json:"reversed_at,omitempty"`
+	// PayeeID is who actually received the credit: ReferrerID, unless the
+	// referrer's code had already hit its 100-commission-event cap, in which
+	// case it's the platform Admin (see referral_commission_caps / ADR).
+	PayeeID *string `json:"payee_id,omitempty"`
+	Capped  bool    `json:"capped"`
 }
 
 // TierStatus is a referrer's rolling tier snapshot (referral_tier_status).

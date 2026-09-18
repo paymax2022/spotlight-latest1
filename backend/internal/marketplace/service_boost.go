@@ -226,6 +226,14 @@ func (s *Service) RejectBoost(ctx context.Context, adminID, boostID, reasonCode 
 	if err != nil {
 		return nil, err
 	}
+	// Re-reject on an already-terminal boost (auto_refunded or completed) is an
+	// idempotent no-op, not an illegal-transition error (docs/qa/modules/marketplace.md
+	// §5b/§4 MKT-FSM-015) — a retried admin action (double-click, retried webhook-style
+	// call) must not 409 once the refund has already posted. Return the row unchanged
+	// without touching the money path.
+	if b.Status == BoostAutoRefunded || b.Status == BoostCompleted {
+		return b, nil
+	}
 	if err := guardBoostTransition(b.Status, BoostRejectedWithReason); err != nil {
 		return nil, err
 	}

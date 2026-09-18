@@ -240,3 +240,58 @@ func TestPayoutStructHasNoBalanceColumn(t *testing.T) {
 	// so the guarantee is documented and re-verified in the QA report's field/
 	// column cross-check against the migration (doctor_payouts has no balance col).
 }
+
+// ── CreateBankAccount / BankAccountResolver (real Paystack NUBAN verification) ──
+//
+// Same testability constraint as above: s.repo is a concrete *Repository, so the
+// success path (repo actually persisting a verified row) needs a live DB — see
+// the doctor_integration-tagged counterpart in service_integration_test.go. What
+// IS deterministically unit-testable with nil repo/ledger/tiers is the guard that
+// must run BEFORE the repo is ever touched: a configured resolver that fails to
+// verify the account must reject the request outright, never falling through to
+// persist an unverifiable bank account (nil repo not panicking is the proof it
+// never reached the repo call).
+
+type fakeBankResolver struct {
+	name string
+	err  error
+}
+
+func (f fakeBankResolver) ResolveAccount(_ context.Context, _, _ string) (string, error) {
+	return f.name, f.err
+}
+
+// TestCreateBankAccount_MissingIdempotencyKey mirrors the payout guard: no
+// Idempotency-Key means the request never reaches the resolver or the repo.
+func TestCreateBankAccount_MissingIdempotencyKey(t *testing.T) {
+	s := newServiceNoDeps()
+	acct, err := s.CreateBankAccount(context.Background(), "user-1", "", BankAccountRequest{})
+	if !errors.Is(err, ErrIdempotencyRequired) {
+		t.Fatalf("err = %v, want ErrIdempotencyRequired", err)
+	}
+	if acct != nil {
+		t.Errorf("result must be nil when idempotency key missing, got %+v", acct)
+	}
+}
+
+// TestCreateBankAccount_ResolverFailure_RejectsBeforeTouchingRepo is the fail-
+// closed guarantee this fix exists for: once a real verification adapter is
+// wired, a bank/account pair that doesn't resolve must be rejected with
+// ErrBankAccountUnresolvable and must NEVER reach s.repo.UpsertBankAccount — a
+// nil repo would panic if it were called, so the absence of a panic here IS the
+// proof the guard short-circuits before any persistence.
+func TestCreateBankAccount_ResolverFailure_RejectsBeforeTouchingRepo(t *testing.T) {
+	s := newServiceNoDeps()
+	s.SetBankAccountResolver(fakeBankResolver{err: errors.New("paystack: resolve account: Could not resolve account")})
+
+	bankCode, accountNumber := "058", "0123456789"
+	acct, err := s.CreateBankAccount(context.Background(), "user-1", "idem-1", BankAccountRequest{
+		BankCode: &bankCode, AccountNumber: &accountNumber,
+	})
+	if !errors.Is(err, ErrBankAccountUnresolvable) {
+		t.Fatalf("err = %v, want ErrBankAccountUnresolvable", err)
+	}
+	if acct != nil {
+		t.Errorf("result must be nil when the bank account cannot be verified, got %+v", acct)
+	}
+}

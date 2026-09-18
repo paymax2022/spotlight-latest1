@@ -168,6 +168,28 @@ export default function ReferralRewardsCasePage() {
             </div>
           </Card>
 
+          {data.commission_cap && (
+            <Card style={{ marginBottom: 16 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12, gap: 8, flexWrap: 'wrap' }}>
+                <h2 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: colors.text }}>Commission cap</h2>
+                <Badge
+                  text={data.commission_cap.capped ? 'Capped — Admin now earns' : 'Active'}
+                  color={data.commission_cap.capped ? colors.danger : colors.success}
+                />
+              </div>
+              <p style={{ fontSize: 13, color: colors.muted, marginTop: 0 }}>
+                This code&apos;s commission applies for a lifetime maximum of 100 purchase events,
+                counted across every user it has ever referred (not per referred user). Past the
+                cap, the commission goes to Admin instead of this referrer, permanently, for this code.
+              </p>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px,1fr))', gap: 12 }}>
+                <Field label="Events used" value={`${data.commission_cap.commission_events_used} / 100`} />
+                <Field label="Status" value={data.commission_cap.capped ? 'Capped (retired)' : 'Active'} />
+                <Field label="Capped at" value={data.commission_cap.capped_at ? timeAgo(data.commission_cap.capped_at) : '—'} />
+              </div>
+            </Card>
+          )}
+
           <Card title={`Reward history (${data.rewards.length})`} style={{ marginBottom: 16 }}>
             {data.rewards.length === 0 ? (
               <p style={{ color: colors.muted, marginTop: 12 }}>No rewards yet for this referrer.</p>

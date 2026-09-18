@@ -45,6 +45,7 @@ package association_test
 
 import (
 	"context"
+	"errors"
 	"os"
 	"testing"
 	"time"
@@ -523,6 +524,104 @@ func TestLiveDB_DecideOfflinePayment_ApprovePostsBalancedJournal(t *testing.T) {
 	}
 	if ledgerCountAfterRetry != 2 {
 		t.Errorf("ledger entries after retry = %d, want still 2 (idempotent retry must not double-post)", ledgerCountAfterRetry)
+	}
+}
+
+// TestLiveDB_DecideOfflinePayment_DifferentKeyOnAlreadyDecidedPaymentDoesNotDoublePost
+// closes the gap the SAME-key retry test above cannot catch: PostJournal only
+// dedupes an EXACT idempotency-key replay, so nothing previously stopped a
+// SECOND approval of the same payment under a FRESH key (a double-click, or a
+// client retry with a newly generated key after a slow/timed-out first
+// response) from posting a second balanced journal and double-crediting
+// settlement for money received once. DecideOfflinePayment now locks the
+// payment row and treats "already decided, decision matches" as an idempotent
+// no-op regardless of the key used.
+func TestLiveDB_DecideOfflinePayment_DifferentKeyOnAlreadyDecidedPaymentDoesNotDoublePost(t *testing.T) {
+	pool := liveDBPool(t)
+	t.Cleanup(pool.Close)
+	svc := newLiveAssociationService(pool)
+	ctx := context.Background()
+
+	orgID := seedOrganisation(t, ctx, pool, "OfflineDoubleApprove Guild "+uuid.New().String())
+	_, membershipID := seedActiveMembership(t, ctx, pool, orgID)
+	const amount = int64(50_00)
+	invoiceID := seedDuesInvoice(t, ctx, pool, membershipID, amount)
+	paymentID := uuid.New().String()
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO assoc_payments (id, invoice_id, membership_id, amount_kobo, method, status, offline)
+		VALUES ($1, $2, $3, $4, 'CASH', 'PENDING', true)`,
+		paymentID, invoiceID, membershipID, amount); err != nil {
+		t.Fatalf("seed offline payment: %v", err)
+	}
+	adminID := seedAdminRole(t, ctx, pool, orgID, "FINANCE_ADMIN")
+
+	firstKey := newIdemKey(t, "offline-approve-first")
+	if err := svc.DecideOfflinePayment(ctx, adminID, paymentID, firstKey, true); err != nil {
+		t.Fatalf("first DecideOfflinePayment (approve): %v", err)
+	}
+
+	// A SECOND approval of the SAME payment with a DIFFERENT key — the exact
+	// shape of a double-click or a client-side retry that generates a fresh
+	// Idempotency-Key per attempt — must be a no-op, not a second posting.
+	secondKey := newIdemKey(t, "offline-approve-second")
+	if err := svc.DecideOfflinePayment(ctx, adminID, paymentID, secondKey, true); err != nil {
+		t.Fatalf("second DecideOfflinePayment (approve, different key): %v", err)
+	}
+
+	var ledgerCount int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM ledger_entries WHERE reference=$1`, "assoc_offline_approval:"+paymentID).Scan(&ledgerCount); err != nil {
+		t.Fatalf("count ledger entries: %v", err)
+	}
+	if ledgerCount != 2 {
+		t.Errorf("ledger entries after a second approval with a DIFFERENT key = %d, want still 2 (one balanced pair) — a fresh key must not bypass the already-decided guard", ledgerCount)
+	}
+
+	var splitCount int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM assoc_revenue_splits WHERE payment_id=$1`, paymentID).Scan(&splitCount); err != nil {
+		t.Fatalf("count revenue splits: %v", err)
+	}
+	if splitCount == 0 {
+		t.Fatal("expected revenue split rows from the first approval")
+	}
+}
+
+// TestLiveDB_DecideOfflinePayment_RejectAfterApproveIsRefused proves a
+// contradicting decision (reject on an already-approved payment) is refused
+// with ErrPaymentAlreadyDecided rather than silently flipping settled money
+// back to FAILED.
+func TestLiveDB_DecideOfflinePayment_RejectAfterApproveIsRefused(t *testing.T) {
+	pool := liveDBPool(t)
+	t.Cleanup(pool.Close)
+	svc := newLiveAssociationService(pool)
+	ctx := context.Background()
+
+	orgID := seedOrganisation(t, ctx, pool, "OfflineFlip Guild "+uuid.New().String())
+	_, membershipID := seedActiveMembership(t, ctx, pool, orgID)
+	invoiceID := seedDuesInvoice(t, ctx, pool, membershipID, 30_00)
+	paymentID := uuid.New().String()
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO assoc_payments (id, invoice_id, membership_id, amount_kobo, method, status, offline)
+		VALUES ($1, $2, $3, $4, 'CASH', 'PENDING', true)`,
+		paymentID, invoiceID, membershipID, 30_00); err != nil {
+		t.Fatalf("seed offline payment: %v", err)
+	}
+	adminID := seedAdminRole(t, ctx, pool, orgID, "FINANCE_ADMIN")
+
+	if err := svc.DecideOfflinePayment(ctx, adminID, paymentID, newIdemKey(t, "flip-approve"), true); err != nil {
+		t.Fatalf("approve: %v", err)
+	}
+
+	err := svc.DecideOfflinePayment(ctx, adminID, paymentID, "", false)
+	if !errors.Is(err, association.ErrPaymentAlreadyDecided) {
+		t.Fatalf("reject-after-approve err = %v, want ErrPaymentAlreadyDecided", err)
+	}
+
+	var status string
+	if err := pool.QueryRow(ctx, `SELECT status FROM assoc_payments WHERE id=$1`, paymentID).Scan(&status); err != nil {
+		t.Fatalf("read status: %v", err)
+	}
+	if status != "SUCCESS" {
+		t.Errorf("payment status = %s after a refused reject-after-approve, want unchanged SUCCESS", status)
 	}
 }
 

@@ -312,7 +312,13 @@ export async function saveBankAccount(input: SaveBankAccountInput): Promise<Save
     };
     return wait({ account }, 600);
   }
-  return doctorPost<SaveBankAccountResult>('/profile/bank-account', input, input.idempotencyKey);
+  // The live endpoint (POST /profile/bank-account) returns the bank-account row
+  // itself, not wrapped in {account}. SaveBankAccountResult's shape mirrors the
+  // mock branch above, so wrap it here rather than changing the wire contract:
+  // unwrapped, `resolved.account` was always undefined on the live path and the
+  // "Verify account" screen could never show a resolved account or continue.
+  const account = await doctorPost<BankAccount>('/profile/bank-account', input, input.idempotencyKey);
+  return { account };
 }
 
 export async function saveTaxInfo(input: SaveTaxInfoInput): Promise<SaveTaxInfoResult> {
