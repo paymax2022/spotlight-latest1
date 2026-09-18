@@ -281,6 +281,11 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 	// Upgrading a user to Tier 1+ auto-provisions their NGN virtual account with
 	// the provider (idempotent; also self-heals via GET /finance/va/me).
 	kycSvc.WithVAProvisioner(vaSvc)
+	// Refer & Earn KYC-update point (Module 8, 2026-09-18): Approve() is the one
+	// funnel every KYC-verification path (webhook auto-elevation, manual admin
+	// approval) resolves through, so wiring the award here — not in any one
+	// caller — is what makes it fire regardless of which path verified the user.
+	kycSvc.WithKYCPointsAwarder(referrals.NewRewardService(pool, ledgerSvc))
 
 	var fxHandler *fx.Handler
 	var fxMarkupHandler *fx.MarkupHandler

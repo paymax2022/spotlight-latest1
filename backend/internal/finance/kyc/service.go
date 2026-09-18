@@ -18,10 +18,19 @@ type VAProvisioner interface {
 	ProvisionForUser(ctx context.Context, userID string) error
 }
 
+// KYCPointsAwarder credits the Refer & Earn signup/KYC point when a user's KYC
+// completes — kept as a narrow interface, mirroring VAProvisioner, so the kyc
+// package stays decoupled from finance/referrals (satisfied by
+// *referrals.RewardService.AwardKYCPoints). Optional; a nil awarder is a no-op.
+type KYCPointsAwarder interface {
+	AwardKYCPoints(ctx context.Context, userID string) error
+}
+
 // Service manages KYC tier transitions.
 type Service struct {
-	db *pgxpool.Pool
-	va VAProvisioner // optional; set via WithVAProvisioner
+	db          *pgxpool.Pool
+	va          VAProvisioner    // optional; set via WithVAProvisioner
+	kycPointsFn KYCPointsAwarder // optional; set via WithKYCPointsAwarder
 }
 
 func NewService(db *pgxpool.Pool) *Service {
@@ -32,6 +41,17 @@ func NewService(db *pgxpool.Pool) *Service {
 // to Tier 1+ automatically creates their NGN virtual account with the provider.
 func (s *Service) WithVAProvisioner(p VAProvisioner) *Service {
 	s.va = p
+	return s
+}
+
+// WithKYCPointsAwarder wires the Refer & Earn KYC-update point (spec: 5 points,
+// Module 8, 2026-09-18). Approve is the single funnel every KYC-verification
+// path resolves through — the webhook/orchestrator auto-elevation path and the
+// manual admin-approval path both call it — so wiring the award here, rather
+// than in any one caller, is what makes it fire regardless of which path
+// actually verified the user.
+func (s *Service) WithKYCPointsAwarder(a KYCPointsAwarder) *Service {
+	s.kycPointsFn = a
 	return s
 }
 
@@ -167,6 +187,14 @@ func (s *Service) Approve(ctx context.Context, userID string, newTier int, actor
 	if newTier >= 1 && s.va != nil {
 		if err := s.va.ProvisionForUser(ctx, userID); err != nil {
 			log.Printf("kyc: VA provisioning after tier-%d approval for user=%s failed (will self-heal on next /va/me): %v", newTier, userID, err)
+		}
+	}
+
+	// Refer & Earn KYC-update point (idempotent per user; non-fatal — the KYC
+	// approval stands regardless of whether the points award succeeds).
+	if s.kycPointsFn != nil {
+		if err := s.kycPointsFn.AwardKYCPoints(ctx, userID); err != nil {
+			log.Printf("kyc: referral KYC-points award for user=%s failed: %v", userID, err)
 		}
 	}
 

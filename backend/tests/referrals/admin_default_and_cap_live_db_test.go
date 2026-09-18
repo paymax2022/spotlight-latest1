@@ -570,6 +570,46 @@ func TestLiveDB_CommissionCap_RetryOfSameTransactionNeverBurnsASecondSlot(t *tes
 	}
 }
 
+// TestLiveDB_GetCase_SurfacesCommissionCapStatus is the admin-portal-facing
+// regression: the A5 case view (already wired into frontend-admin's referral
+// case page) must show a referrer's cap progress, so an admin can actually see
+// "capped/retired" status rather than the commission silently vanishing to
+// Admin with no visible explanation.
+func TestLiveDB_GetCase_SurfacesCommissionCapStatus(t *testing.T) {
+	pool := poolOrSkip(t)
+	ctx := context.Background()
+	s := svc(pool)
+	referrer := newUser(t, ctx, pool)
+
+	before, err := s.GetCase(ctx, referrer)
+	if err != nil {
+		t.Fatalf("GetCase (before any commission events): %v", err)
+	}
+	if before.CommissionCap == nil {
+		t.Fatal("CommissionCap is nil, want a zero-value status (0 used, not capped) even before any commission event")
+	}
+	if before.CommissionCap.CommissionEventsUsed != 0 || before.CommissionCap.Capped {
+		t.Errorf("CommissionCap = %+v, want zero-value before any commission event", before.CommissionCap)
+	}
+
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO referral_commission_caps (referrer_id, commission_events_used, capped_at) VALUES ($1, 100, now())`,
+		referrer); err != nil {
+		t.Fatalf("seed capped code: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(), `DELETE FROM referral_commission_caps WHERE referrer_id=$1`, referrer)
+	})
+
+	after, err := s.GetCase(ctx, referrer)
+	if err != nil {
+		t.Fatalf("GetCase (after capping): %v", err)
+	}
+	if after.CommissionCap == nil || !after.CommissionCap.Capped || after.CommissionCap.CommissionEventsUsed != 100 {
+		t.Errorf("CommissionCap = %+v, want {CommissionEventsUsed:100 Capped:true}", after.CommissionCap)
+	}
+}
+
 // mustLinkCode is a small helper so the cap tests read as "attribute under this
 // referrer's code" without repeating the GetOrCreateLink boilerplate.
 func mustLinkCode(t *testing.T, ctx context.Context, s *referrals.RewardService, referrer string) string {

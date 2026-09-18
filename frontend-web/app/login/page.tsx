@@ -47,6 +47,7 @@ export default function LoginPage() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [name, setName] = useState('');
+  const [referralCode, setReferralCode] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [info, setInfo] = useState('');
@@ -136,6 +137,7 @@ export default function LoginPage() {
         fullName: name.trim() || normalized,
         email: normalized,
         password,
+        referralCode: referralCode.trim(),
       });
 
       if (outcome.kind === 'session') {
@@ -434,6 +436,22 @@ export default function LoginPage() {
                 </button>
               </div>
             </div>
+
+            {tab === 'signup' && (
+              <div>
+                <label style={{ display: 'block', color: '#cbd5e1', fontSize: '0.8rem', fontWeight: 600, marginBottom: '0.4rem', letterSpacing: '0.04em', textTransform: 'uppercase' }}>
+                  Referral Code <span style={{ textTransform: 'none', fontWeight: 400, color: '#64748b' }}>(optional)</span>
+                </label>
+                <input
+                  type="text"
+                  placeholder="Got a code? Enter it here"
+                  value={referralCode}
+                  onChange={(e) => setReferralCode(e.target.value)}
+                  autoCapitalize="characters"
+                  style={inputStyle}
+                />
+              </div>
+            )}
 
             {error && (
               <div style={{

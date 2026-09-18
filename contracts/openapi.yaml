@@ -4075,6 +4075,20 @@ components:
         tier:        { $ref: '#/components/schemas/ReferralTierStatus' }
         rewards:     { type: array, items: { $ref: '#/components/schemas/ReferralReward' } }
         milestones:  { type: array, items: { $ref: '#/components/schemas/ReferralMilestone' } }
+        commission_cap: { $ref: '#/components/schemas/ReferralCommissionCapStatus' }
+    ReferralCommissionCapStatus:
+      type: object
+      description: >-
+        Refer & Earn modification (Module 8, 2026-09-18): lifetime cap of 100
+        commission-earning purchase events per referral code, counted across
+        every user that code has ever referred. Once capped, the commission
+        goes to Admin instead of the referrer, permanently, for that code.
+      required: [referrer_id, commission_events_used, capped]
+      properties:
+        referrer_id:            { type: string, format: uuid }
+        commission_events_used: { type: integer, maximum: 100 }
+        capped:                 { type: boolean }
+        capped_at:              { type: string, format: date-time, nullable: true }
     ReferralUserDashboard:
       type: object
       required: [tier, active_referral_count, this_month_earnings_kobo, lifetime_earnings_kobo]
@@ -4092,7 +4106,11 @@ components:
         url:  { type: string }
     ReferralAttributeRequest:
       type: object
-      required: [code]
+      description: >-
+        code is optional (Module 8, 2026-09-18): an empty, unknown, or self-
+        referral code all fall back to the platform Admin as the caller's
+        referrer rather than rejecting the request — see the Admin-default
+        description on POST /api/v1/referrals/attribute.
       properties:
         code: { type: string }
     ReferralReferredUser:

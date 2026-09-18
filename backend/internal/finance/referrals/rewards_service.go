@@ -957,15 +957,22 @@ func (s *RewardService) ActionFraudFlag(ctx context.Context, flagID, action, not
 
 // CaseView is the A5 support payload for a single referrer.
 type CaseView struct {
-	ReferrerID string      `json:"referrer_id"`
-	Tier       *TierStatus `json:"tier,omitempty"`
-	Rewards    []Reward    `json:"rewards"`
-	Milestones []Milestone `json:"milestones"`
+	ReferrerID    string               `json:"referrer_id"`
+	Tier          *TierStatus          `json:"tier,omitempty"`
+	Rewards       []Reward             `json:"rewards"`
+	Milestones    []Milestone          `json:"milestones"`
+	CommissionCap *CommissionCapStatus `json:"commission_cap,omitempty"`
 }
 
 // GetCase assembles a referrer's full picture (A5).
 func (s *RewardService) GetCase(ctx context.Context, referrerID string) (*CaseView, error) {
 	cv := &CaseView{ReferrerID: referrerID, Rewards: []Reward{}, Milestones: []Milestone{}}
+
+	if capStatus, err := s.GetCommissionCapStatus(ctx, referrerID); err == nil {
+		cv.CommissionCap = capStatus
+	} else {
+		return nil, err
+	}
 
 	const tq = `SELECT referrer_id, active_referral_count, current_tier, current_rate, last_recalculated_at
 	            FROM referral_tier_status WHERE referrer_id=$1`

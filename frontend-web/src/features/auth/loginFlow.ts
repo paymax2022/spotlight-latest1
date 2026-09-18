@@ -93,7 +93,7 @@ export type SignUpOutcome =
 
 export async function requestSignUp(
   fetchImpl: FetchLike,
-  params: { fullName: string; email: string; password: string },
+  params: { fullName: string; email: string; password: string; referralCode?: string },
 ): Promise<SignUpOutcome> {
   const res = await fetchImpl('/api/auth/register', {
     method: 'POST',
@@ -102,6 +102,7 @@ export async function requestSignUp(
       fullName: params.fullName,
       email: params.email,
       password: params.password,
+      referralCode: params.referralCode ?? '',
     }),
   });
   const body = await res.json().catch(() => null);
