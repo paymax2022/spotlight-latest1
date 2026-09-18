@@ -14564,7 +14564,18 @@ paths:
     post:
       operationId: applyReferralCode
       summary: Apply a referral code (once, at signup — idempotent per user)
-      description: Creates a permanent referral_attributions row for the caller. Invisible to the referred user by design. No reward is created here.
+      description: >
+        Creates a permanent referral_attributions row for the caller. Invisible
+        to the referred user by design. No reward is created here — only the
+        one-time signup point (Refer & Earn modification, 2026-09-18).
+        ALWAYS resolves a referrer and never fails the request over a bad code:
+        an empty code, an unknown code, or a self-referral attempt all fall
+        back to the platform Admin ("spotlight owner") as the caller's
+        referrer, exactly like a valid code would attribute to its real owner.
+        The response's `used_admin_default`/`invalid_code` flags tell the
+        client whether to surface a notice, without blocking signup. Locked in
+        permanently — a later call with a different code never changes an
+        existing attribution, it only returns the original referrer.
       tags: [Referral]
       security: [{ bearerAuth: [] }]
       parameters:
@@ -14576,12 +14587,19 @@ paths:
             schema: { $ref: '#/components/schemas/ReferralAttributeRequest' }
       responses:
         '200':
-          description: Attribution recorded (or idempotent replay)
+          description: Attribution recorded (or idempotent replay) — always succeeds.
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/SuccessResponse' }
+              schema:
+                type: object
+                required: [referrer_id, referred_user_id, used_admin_default, invalid_code]
+                properties:
+                  referrer_id: { type: string, format: uuid, description: "The resolved referrer — a real code's owner, or the platform Admin." }
+                  referred_user_id: { type: string, format: uuid }
+                  used_admin_default: { type: boolean, description: "True if no code, an unknown code, or a self-referral attempt caused the fallback to Admin." }
+                  invalid_code: { type: boolean, description: "True only when a non-empty code was supplied but did not resolve to any user (self-referral sets used_admin_default without this)." }
         '401': { $ref: '#/components/responses/Unauthorized' }
-        '409': { description: "Caller already has an attribution (permanent, one per user for life)" }
+        '503': { description: "Admin fallback is not configured (SUPER_ADMIN_USER_ID unset) — a deploy-time misconfiguration, not a client error." }
   /api/finance/referral/withdraw:
     post:
       operationId: withdrawReferralEarnings

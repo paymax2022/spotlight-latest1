@@ -94,17 +94,34 @@ func (s *RewardService) OnPurchaseSettled(ctx context.Context, in PurchaseSettle
 		return nil
 	}
 
-	// 2) Resolve the referrer's current tier rate + active config version.
+	// 2) Resolve the referrer's current tier rate + active config version. Rate
+	//    computation is UNCHANGED by the Refer & Earn modification (Module 8,
+	//    2026-09-18) — product explicitly kept the existing tiered 5/8/12/15%
+	//    schedule rather than a new flat rate; the modification is the 100-event
+	//    lifetime cap + Admin handoff below, not the rate itself.
 	rate, cfgVersion, err := s.currentRate(ctx, referrerID)
 	if err != nil {
 		return err
 	}
 	rewardKobo := ComputeReward(in.MarginKobo, rate)
 
-	// 3) Insert the reward row idempotently (source_transaction_id UNIQUE). If a row
-	//    already exists we fetch it and continue toward crediting (covers a crash
-	//    between insert and credit).
-	rewardID, status, err := s.insertOrGetReward(ctx, referrerID, in, rate, rewardKobo, cfgVersion)
+	// 3) Insert the reward row AND resolve/consume the commission cap slot in ONE
+	//    database transaction, so a crash between "row inserted" and "cap
+	//    decided" is IMPOSSIBLE — either both happen or neither does.
+	//
+	//    This matters because a purchase-settled event can be redelivered (a
+	//    crash mid-processing, an at-least-once queue retry, a manual retry
+	//    after a transient error). source_transaction_id UNIQUE is what makes
+	//    every other step in this function safe to replay — but the cap counter
+	//    has no idempotency key of its own, so if the insert and the cap
+	//    consumption were two separate statements, a replay that found the row
+	//    already inserted (from a prior attempt that crashed before finishing)
+	//    would either skip the cap decision forever (stuck on a placeholder) or
+	//    re-consume a second slot for one purchase — both wrong. Wrapping both
+	//    in a single tx makes "insert the row" and "decide + record the payee"
+	//    a single atomic unit: a replay either sees nothing (retries the whole
+	//    unit fresh) or sees the FINISHED result (idempotent no-op below).
+	rewardID, status, payeeID, capped, err := s.insertRewardAndResolveCap(ctx, referrerID, in, rate, rewardKobo, cfgVersion)
 	if err != nil {
 		return err
 	}
@@ -115,16 +132,16 @@ func (s *RewardService) OnPurchaseSettled(ctx context.Context, in PurchaseSettle
 		return nil // already fully processed — idempotent no-op
 	}
 
-	// 4) Credit the referrer wallet (balanced double-entry), idempotency-keyed on the
-	//    reward id. Zero-value rewards skip the ledger but still resolve to CREDITED so
-	//    the row isn't stuck PENDING.
+	// 4) Credit the PAYEE's wallet (balanced double-entry), idempotency-keyed on
+	//    the reward id. Zero-value rewards skip the ledger but still resolve to
+	//    CREDITED so the row isn't stuck PENDING.
 	if rewardKobo > 0 {
 		expenseAcc, err := s.ledger.GetOrCreateStandingAccount(ctx, ledger.AccountReferralReward)
 		if err != nil {
 			return err
 		}
 		idemKey := "referral:reward:" + rewardID
-		if err := s.ledger.Credit(ctx, referrerID, "referral:reward:"+in.TransactionID, idemKey, expenseAcc.ID, rewardKobo); err != nil {
+		if err := s.ledger.Credit(ctx, payeeID, "referral:reward:"+in.TransactionID, idemKey, expenseAcc.ID, rewardKobo); err != nil {
 			if !errors.Is(err, ledger.ErrDuplicate) {
 				return fmt.Errorf("referrals: credit reward: %w", err)
 			}
@@ -139,8 +156,9 @@ func (s *RewardService) OnPurchaseSettled(ctx context.Context, in PurchaseSettle
 	}
 
 	s.emit(ctx, "referral.reward.credited", map[string]any{
-		"reward_id": rewardID, "referrer_id": referrerID, "referred_user_id": in.PayerUserID,
-		"transaction_id": in.TransactionID, "module": in.Module, "reward_kobo": rewardKobo,
+		"reward_id": rewardID, "referrer_id": referrerID, "payee_id": payeeID, "capped": capped,
+		"referred_user_id": in.PayerUserID,
+		"transaction_id":   in.TransactionID, "module": in.Module, "reward_kobo": rewardKobo,
 		"applied_rate": rate, "config_version": cfgVersion,
 	})
 	return nil
@@ -156,11 +174,11 @@ func (s *RewardService) OnPurchaseRefunded(ctx context.Context, in PurchaseRefun
 		return fmt.Errorf("referrals: OnPurchaseRefunded requires transaction_id")
 	}
 
-	const q = `SELECT id, referrer_id, reward_kobo, status FROM referral_rewards
+	const q = `SELECT id, referrer_id, COALESCE(payee_id, referrer_id), reward_kobo, status FROM referral_rewards
 	           WHERE source_transaction_id=$1`
-	var rewardID, referrerID, status string
+	var rewardID, referrerID, payeeID, status string
 	var rewardKobo int64
-	err := s.db.QueryRow(ctx, q, in.TransactionID).Scan(&rewardID, &referrerID, &rewardKobo, &status)
+	err := s.db.QueryRow(ctx, q, in.TransactionID).Scan(&rewardID, &referrerID, &payeeID, &rewardKobo, &status)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil // no reward for this txn — nothing to reverse (fail-closed no-op)
 	}
@@ -171,21 +189,26 @@ func (s *RewardService) OnPurchaseRefunded(ctx context.Context, in PurchaseRefun
 		return nil // PENDING never credited, or already REVERSED — idempotent no-op
 	}
 
-	// Post the ledger reversal (drain the credited reward from the referrer wallet
-	// back to the expense account) and flip the reward row REVERSED. The ledger
-	// reversal is its own atomic tx (balanced pair + unique idempotency key); the
-	// reward row flip is guarded WHERE status='CREDITED' so a replay is a no-op.
+	// Post the ledger reversal (drain the credited reward from the actual PAYEE's
+	// wallet — the referrer, or Admin if the code was already capped when this
+	// event was credited — back to the expense account) and flip the reward row
+	// REVERSED. The ledger reversal is its own atomic tx (balanced pair + unique
+	// idempotency key); the reward row flip is guarded WHERE status='CREDITED' so
+	// a replay is a no-op. Note: this does NOT give back the referrer's
+	// commission-cap slot — a refunded event still counts toward the lifetime 100
+	// (see ADR: the slot was consumed when the event happened, not when it stays
+	// paid forever).
 	if rewardKobo > 0 {
 		expenseAcc, err := s.ledger.GetOrCreateStandingAccount(ctx, ledger.AccountReferralReward)
 		if err != nil {
 			return err
 		}
-		walletAcc, err := s.ledger.GetOrCreateUserWallet(ctx, referrerID)
+		walletAcc, err := s.ledger.GetOrCreateUserWallet(ctx, payeeID)
 		if err != nil {
 			return err
 		}
-		// PostReversal(restore=expense, release=referrer wallet): REVERSAL_DEBIT
-		// restores the expense account, REVERSAL_CREDIT drains the referrer wallet.
+		// PostReversal(restore=expense, release=payee wallet): REVERSAL_DEBIT
+		// restores the expense account, REVERSAL_CREDIT drains the payee wallet.
 		idemKey := "referral:reward-reversal:" + rewardID
 		if err := s.ledger.PostReversal(ctx, expenseAcc.ID, walletAcc.ID, rewardKobo,
 			"referral:reward-reversal:"+in.TransactionID, idemKey); err != nil {
@@ -285,34 +308,6 @@ func (s *RewardService) currentRate(ctx context.Context, referrerID string) (flo
 		return 0, 0, fmt.Errorf("referrals: load tier rate: %w", err)
 	}
 	return rate, cfg.Version, nil
-}
-
-// insertOrGetReward inserts the reward row idempotently and returns (id, status).
-// On a source_transaction_id conflict it fetches the existing row.
-func (s *RewardService) insertOrGetReward(ctx context.Context, referrerID string, in PurchaseSettled, rate float64, rewardKobo int64, cfgVersion int) (string, string, error) {
-	const ins = `
-		INSERT INTO referral_rewards
-		  (referrer_id, referred_user_id, source_transaction_id, module,
-		   margin_kobo, applied_rate, reward_kobo, status, config_version)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,'PENDING',$8)
-		ON CONFLICT (source_transaction_id) DO NOTHING
-		RETURNING id, status`
-	var id, status string
-	err := s.db.QueryRow(ctx, ins,
-		referrerID, in.PayerUserID, in.TransactionID, in.Module,
-		in.MarginKobo, rate, rewardKobo, cfgVersion).Scan(&id, &status)
-	if err == nil {
-		return id, status, nil
-	}
-	if !errors.Is(err, pgx.ErrNoRows) {
-		return "", "", fmt.Errorf("referrals: insert reward: %w", err)
-	}
-	// Conflict — row already exists; fetch it.
-	const sel = `SELECT id, status FROM referral_rewards WHERE source_transaction_id=$1`
-	if err := s.db.QueryRow(ctx, sel, in.TransactionID).Scan(&id, &status); err != nil {
-		return "", "", fmt.Errorf("referrals: fetch existing reward: %w", err)
-	}
-	return id, status, nil
 }
 
 // ============================================================================
@@ -535,7 +530,7 @@ func (s *RewardService) ListEarnings(ctx context.Context, referrerID string, lim
 	const q = `
 		SELECT id, referrer_id, referred_user_id, source_transaction_id, module,
 		       margin_kobo, applied_rate, reward_kobo, status, config_version,
-		       created_at, credited_at, reversed_at
+		       created_at, credited_at, reversed_at, payee_id, capped
 		FROM referral_rewards
 		WHERE referrer_id=$1
 		ORDER BY created_at DESC
@@ -589,7 +584,7 @@ func (s *RewardService) scanRewards(ctx context.Context, q string, args ...any) 
 		var r Reward
 		if err := rows.Scan(&r.ID, &r.ReferrerID, &r.ReferredUserID, &r.SourceTransactionID, &r.Module,
 			&r.MarginKobo, &r.AppliedRate, &r.RewardKobo, &r.Status, &r.ConfigVersion,
-			&r.CreatedAt, &r.CreditedAt, &r.ReversedAt); err != nil {
+			&r.CreatedAt, &r.CreditedAt, &r.ReversedAt, &r.PayeeID, &r.Capped); err != nil {
 			return nil, err
 		}
 		out = append(out, r)
@@ -862,7 +857,7 @@ func (s *RewardService) AdminListLedger(ctx context.Context, status, module stri
 	const q = `
 		SELECT id, referrer_id, referred_user_id, source_transaction_id, module,
 		       margin_kobo, applied_rate, reward_kobo, status, config_version,
-		       created_at, credited_at, reversed_at
+		       created_at, credited_at, reversed_at, payee_id, capped
 		FROM referral_rewards
 		WHERE ($1='' OR status=$1) AND ($2='' OR module=$2)
 		ORDER BY created_at DESC
