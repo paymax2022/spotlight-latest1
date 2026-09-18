@@ -467,6 +467,11 @@ func TestAdminGetTransaction_ReturnsRelatedLegAndFullDetail(t *testing.T) {
 		t.Fatalf("expected the related leg to be the standing commission-account row, got account_type=%s user_id=%v",
 			detail.RelatedEntries[0].AccountType, detail.RelatedEntries[0].UserID)
 	}
+	// rowB's related leg (rowC) landed in the standing "commission" account —
+	// CommissionKobo must be derived from it, not left nil.
+	if detail.CommissionKobo == nil || *detail.CommissionKobo != 50000 {
+		t.Fatalf("expected CommissionKobo=50000 (rowC's amount) on rowB's detail, got %v", detail.CommissionKobo)
+	}
 
 	// And the reverse direction: fetching rowC returns rowB as ITS related leg.
 	detailC, err := f.svc.AdminGetTransaction(ctx, f.rowC)
@@ -476,9 +481,16 @@ func TestAdminGetTransaction_ReturnsRelatedLegAndFullDetail(t *testing.T) {
 	if len(detailC.RelatedEntries) != 1 || detailC.RelatedEntries[0].ID != f.rowB {
 		t.Fatalf("expected exactly rowB as the related leg of rowC, got %v", rowIDs(detailC.RelatedEntries))
 	}
+	// Fetching the commission leg ITSELF must also report its own amount as
+	// CommissionKobo (not just when looking at it from the wallet-debit side).
+	if detailC.CommissionKobo == nil || *detailC.CommissionKobo != 50000 {
+		t.Fatalf("expected CommissionKobo=50000 on rowC's OWN detail (it IS the commission leg), got %v", detailC.CommissionKobo)
+	}
 
 	// A row with no other leg sharing its reference (rowA) has an empty, not
-	// nil-panicking, RelatedEntries slice.
+	// nil-panicking, RelatedEntries slice, and a nil CommissionKobo (no
+	// revenue leg present — never fabricate a zero here, since nil correctly
+	// means "no commission leg found," not "confirmed zero commission").
 	detailA, err := f.svc.AdminGetTransaction(ctx, f.rowA)
 	if err != nil {
 		t.Fatalf("AdminGetTransaction(rowA): %v", err)
@@ -488,6 +500,9 @@ func TestAdminGetTransaction_ReturnsRelatedLegAndFullDetail(t *testing.T) {
 	}
 	if detailA.RelatedEntriesTotal != 0 {
 		t.Fatalf("expected rowA RelatedEntriesTotal=0, got %d", detailA.RelatedEntriesTotal)
+	}
+	if detailA.CommissionKobo != nil {
+		t.Fatalf("expected rowA CommissionKobo=nil (no revenue leg present), got %v", *detailA.CommissionKobo)
 	}
 }
 

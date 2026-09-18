@@ -86,6 +86,31 @@ type AdminTransactionDetail struct {
 	AdminTransactionRow
 	RelatedEntries      []AdminTransactionRow `json:"related_entries"`
 	RelatedEntriesTotal int64                 `json:"related_entries_total"`
+	// CommissionKobo is the total amount, among RelatedEntries, that landed in
+	// a KNOWN platform-revenue standing account (see revenueAccountTypes) —
+	// this IS a real, derivable figure (not a guess) when the commission leg
+	// is among the returned related entries. It is nil when no such leg is
+	// present in RelatedEntries — including the case where RelatedEntries was
+	// truncated by adminRelatedEntriesLimit (see RelatedEntriesTotal) and the
+	// real commission leg fell outside the returned page; callers must not
+	// read a nil CommissionKobo as "no commission was ever charged."
+	CommissionKobo *int64 `json:"commission_kobo"`
+}
+
+// revenueAccountTypes are the standing account types this codebase's
+// commission-adjacent flows post platform revenue into — confirmed by reading
+// backend/internal/finance/ledger/model.go's AccountType constants across
+// every module. There is no single generic "is this a commission account?"
+// flag on ledger_accounts; this list is a best-effort but CONCRETE (not
+// inferred from free text) classification of the accounts that ARE revenue,
+// used only to compute CommissionKobo above.
+var revenueAccountTypes = map[string]bool{
+	string(AccountCommission):       true,
+	string(AccountPaymaxRevenue):    true,
+	string(AccountFXSpreadIncome):   true,
+	string(AccountPlacementRevenue): true,
+	string(AccountEdtechFeesVault):  true,
+	string(AccountTradingFeeIncome): true,
 }
 
 // adminRelatedEntriesLimit caps how many same-reference rows AdminGetTransaction
@@ -171,7 +196,27 @@ func (r *Repository) AdminGetTransaction(ctx context.Context, id string) (*Admin
 		return nil, fmt.Errorf("ledger: admin get transaction related rows: %w", err)
 	}
 
-	return &AdminTransactionDetail{AdminTransactionRow: row, RelatedEntries: related, RelatedEntriesTotal: relatedTotal}, nil
+	var commissionKobo *int64
+	// Also count the row itself: a transaction fetched BY its own commission
+	// leg (e.g. clicking the commission credit row directly) must report its
+	// own amount, not just look at its related entries.
+	if revenueAccountTypes[row.AccountType] {
+		v := row.AmountKobo
+		commissionKobo = &v
+	}
+	for _, rel := range related {
+		if revenueAccountTypes[rel.AccountType] {
+			v := rel.AmountKobo
+			if commissionKobo != nil {
+				sum := *commissionKobo + v
+				commissionKobo = &sum
+			} else {
+				commissionKobo = &v
+			}
+		}
+	}
+
+	return &AdminTransactionDetail{AdminTransactionRow: row, RelatedEntries: related, RelatedEntriesTotal: relatedTotal, CommissionKobo: commissionKobo}, nil
 }
 
 // AdminListTransactions lists ledger_entries joined to ledger_accounts and

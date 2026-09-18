@@ -54,6 +54,13 @@ export interface AdminTransactionDetail extends AdminTransactionRow {
   // of this one transaction.
   related_entries: AdminTransactionRow[];
   related_entries_total: number;
+  // Sum of related_entries that landed in a KNOWN platform-revenue standing
+  // account (commission, paymax_revenue, fx_spread_income, placement_revenue,
+  // edtech_fees_vault, trading_fee_income). A REAL derived figure, not a
+  // guess — but null does not mean "zero commission was charged"; it means no
+  // such leg was present among related_entries (which itself may be
+  // truncated — see related_entries_total).
+  commission_kobo: number | null;
 }
 
 export interface AdminTransactionFilters {

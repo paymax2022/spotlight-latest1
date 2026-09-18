@@ -78,6 +78,10 @@ export default function AdminTransactionDetailPage() {
               <span style={fieldLabel}>Source (inferred) *</span><span style={fieldValue}>{detail.source_inferred || '—'}</span>
             </div>
             <div style={fieldRow}><span style={fieldLabel}>Idempotency key</span><span style={{ ...fieldValue, fontFamily: 'monospace' }}>{detail.idempotency_key || '—'}</span></div>
+            <div style={fieldRow} title="Sum of related entries landing in a known platform-revenue account (commission, paymax_revenue, fx_spread_income, placement_revenue, edtech_fees_vault, trading_fee_income). Not shown does not mean zero — see the caveat above if related entries were truncated.">
+              <span style={fieldLabel}>Commission to Spotlight</span>
+              <span style={fieldValue}>{detail.commission_kobo != null ? formatKobo(detail.commission_kobo) : 'No revenue leg found among related entries'}</span>
+            </div>
             <div style={fieldRow}><span style={fieldLabel}>Description</span><span style={fieldValue}>{detail.description || '—'}</span></div>
             <div style={{ padding: '0.4rem 0' }}>
               <span style={{ ...fieldLabel, display: 'block', marginBottom: 4 }}>Metadata (raw)</span>
