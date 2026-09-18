@@ -415,6 +415,28 @@ type UpdateRestaurantRequest struct {
 	// indistinguishable from "field omitted"; COALESCE below leaves it unchanged
 	// only when nil.
 	PackagingFeeKobo *int64 `json:"packaging_fee_kobo,omitempty"`
+
+	// GeoLat/GeoLng/PlusCode, when both coordinates are present, come from a
+	// pin the owner confirmed on the map alongside a new Address — see
+	// CreateRestaurantRequest for why that wins over the re-geocode below.
+	GeoLat   *float64 `json:"geo_lat,omitempty"`
+	GeoLng   *float64 `json:"geo_lng,omitempty"`
+	PlusCode string   `json:"plus_code,omitempty"`
+}
+
+// validGeoPointPair reports whether a client-supplied coordinate pair is
+// usable: both present and in-range, or both absent (no pin offered — fall
+// back to server geocoding). One-sided (only lat or only lng) is rejected as
+// malformed rather than silently dropped, since a partial pair from a client
+// bug would otherwise write a bogus half-coordinate.
+func validGeoPointPair(lat, lng *float64) bool {
+	if lat == nil && lng == nil {
+		return true
+	}
+	if lat == nil || lng == nil {
+		return false
+	}
+	return *lat >= -90 && *lat <= 90 && *lng >= -180 && *lng <= 180
 }
 
 // UpdateRestaurant lets the owner edit their store's name/description/address/logo.
@@ -439,6 +461,9 @@ func (s *Service) UpdateRestaurant(ctx context.Context, restaurantID, userID str
 			return nil, fmt.Errorf("restaurant: packaging fee per pack may not exceed %d kobo", maxPackagingFeePerPackKobo)
 		}
 	}
+	if !validGeoPointPair(req.GeoLat, req.GeoLng) {
+		return nil, fmt.Errorf("restaurant: invalid coordinates")
+	}
 	const q = `UPDATE restaurants
 	              SET name               = COALESCE($2, name),
 	                  description        = COALESCE($3, description),
@@ -450,9 +475,16 @@ func (s *Service) UpdateRestaurant(ctx context.Context, restaurantID, userID str
 	if _, err := s.db.Exec(ctx, q, restaurantID, req.Name, req.Description, req.Address, req.LogoURL, req.PackagingFeeKobo); err != nil {
 		return nil, err
 	}
-	// Re-geocode when the address changed so "near me" stays correct. A geocode
-	// failure never fails the update — the pin can be refreshed later.
-	if req.Address != nil && *req.Address != "" && s.geocoder != nil {
+	// A pin the owner confirmed on the map wins over a re-geocode of the address
+	// text — it is the exact spot they picked, not a guess. Only fall back to
+	// re-geocoding from the address string when no pin was supplied.
+	if req.GeoLat != nil && req.GeoLng != nil {
+		_, _ = s.db.Exec(ctx,
+			`UPDATE restaurants SET geo_lat=$2, geo_lng=$3, plus_code=$4, updated_at=NOW() WHERE id=$1`,
+			restaurantID, *req.GeoLat, *req.GeoLng, req.PlusCode)
+	} else if req.Address != nil && *req.Address != "" && s.geocoder != nil {
+		// Re-geocode when the address changed so "near me" stays correct. A geocode
+		// failure never fails the update — the pin can be refreshed later.
 		if lat, lng, plus, gerr := s.geocoder.Geocode(ctx, *req.Address); gerr == nil {
 			_, _ = s.db.Exec(ctx,
 				`UPDATE restaurants SET geo_lat=$2, geo_lng=$3, plus_code=$4, updated_at=NOW() WHERE id=$1`,

@@ -12,11 +12,12 @@ import { Radius } from '@/constants/radius';
 import ScreenHeader from '@/components/ScreenHeader';
 import PrimaryButton from '@/components/PrimaryButton';
 import StateView from '@/components/StateView';
+import AddressAutocompleteInput, { type SelectedAddress } from '@/components/AddressAutocompleteInput';
 import {
   useMyStores, useStoreDetail, useCreateStore, useUpdateStore, useSetAvailability,
   useCreateCategory, useDeleteCategory, useCreateItem, useDeleteItem, usePayoutReadiness,
 } from '@/features/restaurantmerchant/hooks';
-import type { MerchantMenuCategory, MerchantStore } from '@/features/restaurantmerchant/types';
+import type { MerchantMenuCategory, MerchantStore, StoreGeoPoint } from '@/features/restaurantmerchant/types';
 import { parsePackagingPrice, packagingPriceInput } from '@/features/restaurantmerchant/packagingPrice';
 import { resolveActiveOutlet } from '@/features/restaurantmerchant/activeOutlet';
 
@@ -70,10 +71,14 @@ function Shell({ children }: { children: React.ReactNode }) {
 function CreateStore({ onDone }: { onDone: () => void }) {
   const [name, setName] = useState('');
   const [address, setAddress] = useState('');
+  const [geo, setGeo] = useState<StoreGeoPoint | null>(null);
   const create = useCreateStore();
   const submit = () => {
     if (!name.trim() || !address.trim()) return;
-    create.mutate({ name: name.trim(), address: address.trim() }, { onSuccess: onDone });
+    create.mutate(
+      { name: name.trim(), address: address.trim(), geo: geo ?? undefined },
+      { onSuccess: onDone },
+    );
   };
   return (
     <Shell>
@@ -81,7 +86,20 @@ function CreateStore({ onDone }: { onDone: () => void }) {
         <Text style={styles.lead}>Set up your restaurant to start receiving orders.</Text>
         <Card>
           <Field label="Restaurant name" value={name} onChangeText={setName} placeholder="Blue Yam Kitchen" />
-          <Field label="Address" value={address} onChangeText={setAddress} placeholder="12 Marina, Lagos" />
+          <View style={{ gap: 6 }}>
+            <Text style={styles.label}>Address</Text>
+            <AddressAutocompleteInput
+              value={address}
+              onChangeText={(t) => { setAddress(t); setGeo(null); }}
+              onSelect={(a: SelectedAddress) => {
+                setAddress(a.label);
+                setGeo({ lat: a.lat, lng: a.lng, plusCode: a.plusCode });
+              }}
+              resolved={Boolean(geo)}
+              surface="checkout"
+              placeholder="Search your restaurant's address…"
+            />
+          </View>
         </Card>
         <PrimaryButton label="Create store" onPress={submit}
           loading={create.isPending} disabled={!name.trim() || !address.trim()} />
@@ -107,27 +125,46 @@ function ManageStore({
   const [adding, setAdding] = useState(false);
   const [newName, setNewName] = useState('');
   const [newAddress, setNewAddress] = useState('');
+  const [newGeo, setNewGeo] = useState<StoreGeoPoint | null>(null);
   const availability = useSetAvailability(storeId);
 
   const server = detail.data?.store;
   const [name, setName] = useState<string | null>(null);
   const [description, setDescription] = useState<string | null>(null);
   const [address, setAddress] = useState<string | null>(null);
+  // Untouched until the owner picks a place or types over the address — see
+  // geoVal below for why this needs its own "touched" flag rather than
+  // reusing `address == null` the way the other fields do.
+  const [geoTouched, setGeoTouched] = useState(false);
+  const [geo, setGeo] = useState<StoreGeoPoint | null>(null);
 
   // Fall back to server values until the field is edited.
   const nameVal = name ?? server?.name ?? '';
   const descVal = description ?? server?.description ?? '';
   const addrVal = address ?? server?.address ?? '';
+  // Same fallback, but a plain `?? server pin` would be wrong once the owner
+  // retypes the address by hand: that clears any confirmed pin (geo becomes
+  // null on purpose), and `null ?? serverPin` would silently resurrect the
+  // stale one. geoTouched distinguishes "never touched" from "touched, and
+  // now has no pin".
+  const serverGeo = server?.geoLat != null && server?.geoLng != null
+    ? { lat: server.geoLat, lng: server.geoLng } : null;
+  const geoVal = geoTouched ? geo : serverGeo;
   const dirty = useMemo(
-    () => server != null && (nameVal !== server.name || descVal !== (server.description ?? '') || addrVal !== server.address),
-    [server, nameVal, descVal, addrVal],
+    () => server != null && (
+      nameVal !== server.name
+      || descVal !== (server.description ?? '')
+      || addrVal !== server.address
+      || (geoTouched && (geoVal?.lat !== serverGeo?.lat || geoVal?.lng !== serverGeo?.lng))
+    ),
+    [server, nameVal, descVal, addrVal, geoTouched, geoVal, serverGeo],
   );
 
   const saveProfile = () => {
     if (!nameVal.trim()) return;
     update.mutate(
-      { name: nameVal.trim(), description: descVal, address: addrVal.trim() },
-      { onSuccess: () => { setName(null); setDescription(null); setAddress(null); } },
+      { name: nameVal.trim(), description: descVal, address: addrVal.trim(), geo: geoTouched ? (geoVal ?? undefined) : undefined },
+      { onSuccess: () => { setName(null); setDescription(null); setAddress(null); setGeoTouched(false); setGeo(null); } },
     );
   };
 
@@ -186,16 +223,29 @@ function ManageStore({
               outlet arrive in the same queue.
             </Text>
             <Field label="Outlet name" value={newName} onChangeText={setNewName} placeholder="Blue Yam — Lekki" />
-            <Field label="Address" value={newAddress} onChangeText={setNewAddress} placeholder="12 Admiralty Way, Lekki" />
+            <View style={{ gap: 6 }}>
+              <Text style={styles.label}>Address</Text>
+              <AddressAutocompleteInput
+                value={newAddress}
+                onChangeText={(t) => { setNewAddress(t); setNewGeo(null); }}
+                onSelect={(a: SelectedAddress) => {
+                  setNewAddress(a.label);
+                  setNewGeo({ lat: a.lat, lng: a.lng, plusCode: a.plusCode });
+                }}
+                resolved={Boolean(newGeo)}
+                surface="checkout"
+                placeholder="Search this outlet's address…"
+              />
+            </View>
             <PrimaryButton
               label="Create outlet"
               onPress={() => {
                 if (!newName.trim() || !newAddress.trim()) return;
                 createOutlet.mutate(
-                  { name: newName.trim(), address: newAddress.trim() },
+                  { name: newName.trim(), address: newAddress.trim(), geo: newGeo ?? undefined },
                   {
                     onSuccess: (created) => {
-                      setAdding(false); setNewName(''); setNewAddress('');
+                      setAdding(false); setNewName(''); setNewAddress(''); setNewGeo(null);
                       // Switch straight to the new outlet: the owner created it to
                       // work on it, and leaving them on the old one reads as failure.
                       if (created?.id) onSwitchOutlet(created.id);
@@ -256,7 +306,22 @@ function ManageStore({
         <Card>
           <Field label="Restaurant name" value={nameVal} onChangeText={setName} placeholder="Blue Yam Kitchen" />
           <Field label="Description" value={descVal} onChangeText={setDescription} placeholder="What you're known for" multiline />
-          <Field label="Address" value={addrVal} onChangeText={setAddress} placeholder="12 Marina, Lagos" />
+          <View style={{ gap: 6 }}>
+            <Text style={styles.label}>Address</Text>
+            <AddressAutocompleteInput
+              value={addrVal}
+              onChangeText={(t) => { setAddress(t); setGeoTouched(true); setGeo(null); }}
+              onSelect={(a: SelectedAddress) => {
+                setAddress(a.label);
+                setGeoTouched(true);
+                setGeo({ lat: a.lat, lng: a.lng, plusCode: a.plusCode });
+              }}
+              near={serverGeo ?? undefined}
+              resolved={Boolean(geoVal)}
+              surface="checkout"
+              placeholder="12 Marina, Lagos"
+            />
+          </View>
           <PrimaryButton label="Save changes" onPress={saveProfile}
             loading={update.isPending} disabled={!dirty || !nameVal.trim()} />
         </Card>
