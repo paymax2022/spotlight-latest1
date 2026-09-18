@@ -51,6 +51,8 @@ function mapStore(r: any): MerchantStore {
     logoUrl: r.logo_url ?? null,
     isOpen: !!r.is_open,
     createdAt: r.created_at,
+    geoLat: typeof r.geo_lat === 'number' ? r.geo_lat : null,
+    geoLng: typeof r.geo_lng === 'number' ? r.geo_lng : null,
     // Left undefined when the server omits it, so the UI can tell "not loaded"
     // from a genuine ₦0 and never shows a price the owner did not set.
     packagingFeeKobo: typeof r.packaging_fee_kobo === 'number' ? r.packaging_fee_kobo : undefined,
@@ -94,7 +96,15 @@ export async function createStore(input: CreateStoreInput): Promise<MerchantStor
     mockStore = { ...mockStore, name: input.name, description: input.description ?? '', address: input.address };
     return mockStore;
   }
-  const body = { name: input.name, description: input.description, address: input.address, logo_url: input.logoUrl };
+  const body = {
+    name: input.name,
+    description: input.description,
+    address: input.address,
+    logo_url: input.logoUrl,
+    geo_lat: input.geo?.lat,
+    geo_lng: input.geo?.lng,
+    plus_code: input.geo?.plusCode,
+  };
   return mapStore(unwrap<any>(await api.post(`${BASE}`, body)));
 }
 

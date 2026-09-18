@@ -15,6 +15,10 @@ export interface MerchantStore {
   logoUrl?: string | null;
   isOpen: boolean;
   createdAt?: string;
+  /** Server-held pin, when one has been geocoded or confirmed — seeds the
+   *  address picker's map when editing rather than starting pin-less. */
+  geoLat?: number | null;
+  geoLng?: number | null;
   /**
    * Price of ONE takeaway pack, integer kobo. The platform seeds ₦200; the owner
    * sets their own, and 0 is a legitimate choice meaning "I don't charge for
@@ -46,11 +50,25 @@ export interface MerchantStoreDetail {
   categories: MerchantMenuCategory[];
 }
 
+/**
+ * A pin the owner confirmed with the map-assisted address picker
+ * (AddressAutocompleteInput), alongside the free-text address. Optional — the
+ * server falls back to geocoding the text itself when this is absent — but
+ * when present it is more precise than a best-effort server geocode, since
+ * it's the exact spot the owner picked rather than a rooftop-centroid guess.
+ */
+export interface StoreGeoPoint {
+  lat: number;
+  lng: number;
+  plusCode?: string;
+}
+
 export interface CreateStoreInput {
   name: string;
   description?: string;
   address: string;
   logoUrl?: string;
+  geo?: StoreGeoPoint;
 }
 
 export interface UpdateStoreInput {
@@ -61,6 +79,7 @@ export interface UpdateStoreInput {
   /** Integer kobo per takeaway pack. 0 is a real value, so this is only omitted
    *  when the owner is not changing the price. */
   packagingFeeKobo?: Kobo;
+  geo?: StoreGeoPoint;
 }
 
 export interface EarningsRun {

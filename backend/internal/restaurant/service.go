@@ -185,6 +185,9 @@ func (s *Service) computeDeliveryFee(ctx context.Context, rLat, rLng, dLat, dLng
 
 // CreateRestaurant registers a new restaurant.
 func (s *Service) CreateRestaurant(ctx context.Context, ownerID string, req CreateRestaurantRequest) (*Restaurant, error) {
+	if !validGeoPointPair(req.GeoLat, req.GeoLng) {
+		return nil, fmt.Errorf("restaurant: invalid coordinates")
+	}
 	r := &Restaurant{
 		ID:          uuid.New().String(),
 		OwnerID:     ownerID,
@@ -197,18 +200,33 @@ func (s *Service) CreateRestaurant(ctx context.Context, ownerID string, req Crea
 	}
 	const q = `INSERT INTO restaurants (id, owner_id, name, description, address, logo_url, is_open) VALUES ($1,$2,$3,$4,$5,$6,false)`
 	_, err := s.db.Exec(ctx, q, r.ID, r.OwnerID, r.Name, r.Description, r.Address, r.LogoURL)
+	if err != nil {
+		return r, err
+	}
+
+	// A pin the owner confirmed on the map (mobile's AddressAutocompleteInput)
+	// beats the best-effort geocode of the free-text address below — it is the
+	// exact spot the owner picked, not a rooftop-centroid guess. Skip the
+	// auto-geocode entirely when one was supplied.
+	if req.GeoLat != nil && req.GeoLng != nil {
+		r.GeoLat, r.GeoLng = req.GeoLat, req.GeoLng
+		_, _ = s.db.Exec(ctx,
+			`UPDATE restaurants SET geo_lat=$2, geo_lng=$3, plus_code=$4, updated_at=NOW() WHERE id=$1`,
+			r.ID, *req.GeoLat, *req.GeoLng, req.PlusCode)
+		return r, nil
+	}
 
 	// Best-effort: geocode the address to a pin so "near me" works. The UPDATE
 	// fires the merchant_locations sync trigger. A geocode failure never fails
 	// restaurant creation (the pin can be set later via /maps/locations).
-	if err == nil && s.geocoder != nil && r.Address != "" {
+	if s.geocoder != nil && r.Address != "" {
 		if lat, lng, plus, gerr := s.geocoder.Geocode(ctx, r.Address); gerr == nil {
 			_, _ = s.db.Exec(ctx,
 				`UPDATE restaurants SET geo_lat=$2, geo_lng=$3, plus_code=$4, updated_at=NOW() WHERE id=$1`,
 				r.ID, lat, lng, plus)
 		}
 	}
-	return r, err
+	return r, nil
 }
 
 // DeliveryQuote is the previewed fee for a prospective order. FlatFallback is true
