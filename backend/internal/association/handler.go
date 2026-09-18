@@ -383,7 +383,7 @@ func statusFor(err error) int {
 		return http.StatusBadRequest
 	case errors.Is(err, ErrForbidden), errors.Is(err, ErrIneligible), errors.Is(err, ErrVotingClosed):
 		return http.StatusForbidden
-	case errors.Is(err, ErrElectionState):
+	case errors.Is(err, ErrElectionState), errors.Is(err, ErrPaymentAlreadyDecided):
 		return http.StatusConflict
 	case errors.Is(err, ErrNoMembership), errors.Is(err, pgx.ErrNoRows):
 		return http.StatusNotFound

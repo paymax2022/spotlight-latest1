@@ -375,12 +375,35 @@ func (s *Service) DecideOfflinePayment(ctx context.Context, adminID, paymentID, 
 	}
 	defer tx.Rollback(ctx)
 
-	var invoiceID string
+	var invoiceID, currentStatus string
 	var amountKobo int64
+	// FOR UPDATE: locks the row for the rest of this transaction, so two
+	// concurrent decisions on the SAME payment (a double-click, or a client
+	// retry with a fresh Idempotency-Key after a slow/timed-out response)
+	// serialize on this SELECT — the second one sees the FIRST one's committed
+	// status, never a stale PENDING read.
 	if err := tx.QueryRow(ctx,
-		`SELECT invoice_id, amount_kobo FROM assoc_payments WHERE id=$1`, paymentID,
-	).Scan(&invoiceID, &amountKobo); err != nil {
+		`SELECT invoice_id, amount_kobo, status FROM assoc_payments WHERE id=$1 FOR UPDATE`, paymentID,
+	).Scan(&invoiceID, &amountKobo, &currentStatus); err != nil {
 		return fmt.Errorf("association: payment not found: %w", err)
+	}
+
+	// Fail-closed against re-deciding an already-decided payment: PostJournal
+	// only dedupes an EXACT idempotency-key replay, so without this guard a
+	// second decision on the same payment (fresh key each time) would post a
+	// SECOND ledger journal and double-credit settlement for money received
+	// once. A decision matching what's already recorded is a safe idempotent
+	// no-op; a decision that CONTRADICTS it (e.g. reject after approve) is
+	// refused outright rather than silently flipping settled money.
+	if currentStatus != "PENDING" {
+		wantStatus := "FAILED"
+		if approve {
+			wantStatus = "SUCCESS"
+		}
+		if currentStatus == wantStatus {
+			return nil
+		}
+		return ErrPaymentAlreadyDecided
 	}
 
 	if approve {
