@@ -36,6 +36,21 @@ function userCell(row: AdminTransactionRow): string {
   return `System: ${row.account_type}`;
 }
 
+// ledger_entries only records money movement that ALREADY happened — a
+// genuinely failed attempt never posts a row at all (this codebase's rails
+// are fail-closed), and a still-pending one hasn't posted yet either. So this
+// is the only status the shared ledger itself can honestly report: whether
+// this row is a normal forward movement, or a REVERSAL undoing an earlier
+// one. It is NOT "Pending"/"Failed" — those require the specific module's own
+// order/transaction table, built module-by-module (see the per-module detail
+// work on the transaction detail page).
+function statusCell(type: LedgerEntryType): { label: string; color: string } {
+  if (type === 'REVERSAL_CREDIT' || type === 'REVERSAL_DEBIT') {
+    return { label: 'Reversed', color: colors.warning };
+  }
+  return { label: 'Posted', color: colors.success };
+}
+
 const selectStyle: CSSProperties = {
   padding: '0.45rem 0.6rem',
   borderRadius: '0.4rem',
@@ -150,6 +165,9 @@ export default function AdminTransactionsPage() {
                 <tr>
                   <th style={thCell}>Date</th>
                   <th style={thCell}>Type</th>
+                  <th style={thCell} title="Derived from ledger entry type only: Posted = a normal forward movement, Reversed = a REVERSAL_* undoing an earlier one. This is NOT Pending/Failed — the ledger only records money movement that already happened.">
+                    Status *
+                  </th>
                   <th style={thCell}>Amount</th>
                   <th style={thCell}>User</th>
                   <th style={thCell}>Reference</th>
@@ -160,10 +178,13 @@ export default function AdminTransactionsPage() {
                 </tr>
               </thead>
               <tbody>
-                {rows.map((r) => (
+                {rows.map((r) => {
+                  const status = statusCell(r.type);
+                  return (
                   <tr key={r.id}>
                     <td style={tdCell}>{fmtDate(r.created_at)}</td>
                     <td style={tdCell}>{r.type}</td>
+                    <td style={tdCell}><span style={{ color: status.color, fontWeight: 600 }}>{status.label}</span></td>
                     <td style={tdCell}>{formatKobo(r.amount_kobo)}</td>
                     <td style={tdCell}>{userCell(r)}</td>
                     <td style={{ ...tdCell, fontFamily: 'monospace', fontSize: '0.78rem' }}>{r.reference}</td>
@@ -172,14 +193,18 @@ export default function AdminTransactionsPage() {
                     </td>
                     <td style={tdCell}><Link href={`/admin/finance/transactions/${r.id}`} style={{ color: colors.info }}>Details →</Link></td>
                   </tr>
-                ))}
+                  );
+                })}
               </tbody>
             </table>
           </div>
         )}
 
         <p style={{ fontSize: '0.72rem', color: colors.muted, marginTop: '0.75rem' }}>
-          * &ldquo;Source (inferred)&rdquo; is parsed from the reference string server-side and is a best-effort guess only —
+          * &ldquo;Status&rdquo; reflects only what the shared ledger can know: Posted (a normal movement) or Reversed
+          (undone by a REVERSAL_*). It is never Pending or Failed — those require the specific module&rsquo;s own order
+          table, which is only wired up for modules with a per-module detail view (see the transaction detail page).
+          &ldquo;Source (inferred)&rdquo; is parsed from the reference string server-side and is a best-effort guess only —
           reference-naming conventions differ across modules (colon-namespaced, dash-prefixed, or opaque UUIDs with no
           separator). It is never a guaranteed-accurate module identifier.
         </p>
