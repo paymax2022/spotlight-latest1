@@ -151,6 +151,20 @@
       "cwd": "mobile-app/reactnative",
       "port": 8086,
       "description": "Expo web on :8086 for this worktree, cache-cleared so EXPO_PUBLIC_API_BASE_URL=:3010 / EXPO_PUBLIC_MARKETPLACE_USE_MOCK=false actually take effect."
+    },
+    {
+      "name": "mobile-nifty-jackson",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": [
+        "expo",
+        "start",
+        "--web",
+        "--port",
+        "8123"
+      ],
+      "cwd": "mobile-app/reactnative",
+      "port": 8123,
+      "description": "Expo web on :8123, unique to this worktree (nifty-jackson-0dd0f0) — :8083/:8085/:8086 were all found occupied by other worktrees' dev servers sharing the same launch.json port numbers. No -c: keep the Metro cache warm across restarts (cold rebuild is ~2min)."
     }
   ]
 }

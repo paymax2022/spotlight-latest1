@@ -56,6 +56,13 @@ regexes = [
     '''^front_desk_24h$''',               # stayshotelier amenity catalog key (types.ts) — an
                                            # identifier, not a secret; entropy heuristic false positive
     '''^sb_secret_[A-Za-z0-9_-]+$''',     # local-dev Supabase service key (URL 127.0.0.1:54321 only; useless off-machine)
+    '''^eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9\.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InduaWNzdWJpem5taXNoa211bnN2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ5OTc1OTYsImV4cCI6MjA5MDU3MzU5Nn0\.Mjyylv7IA_8PQ2gLo-hmxRNl2Csbm5wOmo5lStf1g5g$''',
+    # spotlight-staging (wnicsubiznmishkmunsv) Supabase anon key — legacy JWT-format
+    # publishable key, role:anon, public by design (mobile-app/reactnative/eas.json
+    # staging build profile). Gitleaks' generic "jwt" rule doesn't know about
+    # Supabase's anon-key exemption the way it knows the newer sb_publishable_
+    # prefix does, so it flags this exact value; matched narrowly by its literal
+    # string rather than a role:anon regex, which would blanket-allow any JWT.
 ]
 
 commits = [
