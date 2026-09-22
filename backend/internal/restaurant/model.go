@@ -183,6 +183,15 @@ type CreateRestaurantRequest struct {
 	Address     string  `json:"address" binding:"required"`
 	LogoURL     *string `json:"logo_url,omitempty"`
 	Cuisine     string  `json:"cuisine,omitempty"`
+
+	// GeoLat/GeoLng/PlusCode come from the mobile map-assisted address picker,
+	// when the owner confirmed a pin rather than only typing free text. Both
+	// optional and both required together (see CreateRestaurant): a pin the
+	// owner placed is more precise than the best-effort server geocode of the
+	// address string, so when present it wins instead of being overwritten.
+	GeoLat   *float64 `json:"geo_lat,omitempty"`
+	GeoLng   *float64 `json:"geo_lng,omitempty"`
+	PlusCode string   `json:"plus_code,omitempty"`
 }
 
 // PlaceOrderRequest is the body for POST /restaurant/:id/orders.
