@@ -86,20 +86,14 @@ function CreateStore({ onDone }: { onDone: () => void }) {
         <Text style={styles.lead}>Set up your restaurant to start receiving orders.</Text>
         <Card>
           <Field label="Restaurant name" value={name} onChangeText={setName} placeholder="Blue Yam Kitchen" />
-          <View style={{ gap: 6 }}>
-            <Text style={styles.label}>Address</Text>
-            <AddressAutocompleteInput
-              value={address}
-              onChangeText={(t) => { setAddress(t); setGeo(null); }}
-              onSelect={(a: SelectedAddress) => {
-                setAddress(a.label);
-                setGeo({ lat: a.lat, lng: a.lng, plusCode: a.plusCode });
-              }}
-              resolved={Boolean(geo)}
-              surface="checkout"
-              placeholder="Search your restaurant's address…"
-            />
-          </View>
+          <AddressField
+            label="Address"
+            value={address}
+            onChangeText={(t) => { setAddress(t); setGeo(null); }}
+            geo={geo}
+            onGeoChange={setGeo}
+            placeholder="12 Marina, Lagos"
+          />
         </Card>
         <PrimaryButton label="Create store" onPress={submit}
           loading={create.isPending} disabled={!name.trim() || !address.trim()} />
@@ -223,20 +217,14 @@ function ManageStore({
               outlet arrive in the same queue.
             </Text>
             <Field label="Outlet name" value={newName} onChangeText={setNewName} placeholder="Blue Yam — Lekki" />
-            <View style={{ gap: 6 }}>
-              <Text style={styles.label}>Address</Text>
-              <AddressAutocompleteInput
-                value={newAddress}
-                onChangeText={(t) => { setNewAddress(t); setNewGeo(null); }}
-                onSelect={(a: SelectedAddress) => {
-                  setNewAddress(a.label);
-                  setNewGeo({ lat: a.lat, lng: a.lng, plusCode: a.plusCode });
-                }}
-                resolved={Boolean(newGeo)}
-                surface="checkout"
-                placeholder="Search this outlet's address…"
-              />
-            </View>
+            <AddressField
+              label="Address"
+              value={newAddress}
+              onChangeText={(t) => { setNewAddress(t); setNewGeo(null); }}
+              geo={newGeo}
+              onGeoChange={setNewGeo}
+              placeholder="12 Admiralty Way, Lekki"
+            />
             <PrimaryButton
               label="Create outlet"
               onPress={() => {
@@ -306,22 +294,15 @@ function ManageStore({
         <Card>
           <Field label="Restaurant name" value={nameVal} onChangeText={setName} placeholder="Blue Yam Kitchen" />
           <Field label="Description" value={descVal} onChangeText={setDescription} placeholder="What you're known for" multiline />
-          <View style={{ gap: 6 }}>
-            <Text style={styles.label}>Address</Text>
-            <AddressAutocompleteInput
-              value={addrVal}
-              onChangeText={(t) => { setAddress(t); setGeoTouched(true); setGeo(null); }}
-              onSelect={(a: SelectedAddress) => {
-                setAddress(a.label);
-                setGeoTouched(true);
-                setGeo({ lat: a.lat, lng: a.lng, plusCode: a.plusCode });
-              }}
-              near={serverGeo ?? undefined}
-              resolved={Boolean(geoVal)}
-              surface="checkout"
-              placeholder="12 Marina, Lagos"
-            />
-          </View>
+          <AddressField
+            label="Address"
+            value={addrVal}
+            onChangeText={(t) => { setAddress(t); setGeoTouched(true); setGeo(null); }}
+            geo={geoVal}
+            onGeoChange={(g) => { setGeoTouched(true); setGeo(g); }}
+            near={serverGeo ?? undefined}
+            placeholder="12 Marina, Lagos"
+          />
           <PrimaryButton label="Save changes" onPress={saveProfile}
             loading={update.isPending} disabled={!dirty || !nameVal.trim()} />
         </Card>
@@ -560,6 +541,54 @@ function Field({
         value={value} onChangeText={onChangeText} placeholder={placeholder}
         placeholderTextColor={Colors.outline} multiline={multiline} keyboardType={keyboardType}
         style={[styles.input, multiline && { height: 76, textAlignVertical: 'top' }]}
+      />
+    </View>
+  );
+}
+
+/**
+ * Address field for a store's own location (create / new outlet / edit profile).
+ * Wraps the shared map-backed AddressAutocompleteInput so the owner gets live
+ * suggestions + confirm-on-map instead of a plain text box.
+ *
+ * `geo` is lifted to the caller (not local state) because the resolved pin is
+ * more than UI state here: CreateRestaurant/UpdateRestaurant both accept an
+ * optional geo_lat/geo_lng/plus_code and, when present, write it directly
+ * instead of re-geocoding the address text — a pin the owner confirmed on the
+ * map beats a rooftop-centroid guess from the string alone. `onChangeText`
+ * must itself clear the caller's geo when the owner types over a resolved
+ * address (see each call site), same as any other invalidated-on-edit field.
+ *
+ * Recent-address chips are switched off: those are a customer's past DELIVERY
+ * spots, not relevant when an owner is entering their own restaurant's fixed
+ * address.
+ */
+function AddressField({
+  label, value, onChangeText, geo, onGeoChange, near, placeholder,
+}: {
+  label: string;
+  value: string;
+  onChangeText: (t: string) => void;
+  geo: StoreGeoPoint | null;
+  onGeoChange: (geo: StoreGeoPoint | null) => void;
+  near?: { lat: number; lng: number };
+  placeholder?: string;
+}) {
+  return (
+    <View style={{ gap: 6 }}>
+      <Text style={styles.label}>{label}</Text>
+      <AddressAutocompleteInput
+        value={value}
+        onChangeText={onChangeText}
+        onSelect={(a: SelectedAddress) => {
+          onChangeText(a.label);
+          onGeoChange({ lat: a.lat, lng: a.lng, plusCode: a.plusCode });
+        }}
+        near={near}
+        resolved={Boolean(geo)}
+        surface="checkout"
+        placeholder={placeholder}
+        enableRecents={false}
       />
     </View>
   );
