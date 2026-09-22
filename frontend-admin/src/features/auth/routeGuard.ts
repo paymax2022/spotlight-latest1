@@ -68,6 +68,11 @@ const routePermissions: Array<{ prefix: string; permissions: string[] }> = [
   // in frontend-web (requireUtilitySupport/requireUtilityManager), listed
   // here with its colon-notation permission strings so utility:support /
   // utility:manage roles pass this client-side gate too.
+  // Catalogue sub-route is manager-only server-side (requireUtilityManager on
+  // every providers/billers/categories/products/provider-products route) —
+  // must precede the broader /admin/utility-payments entry below, which also
+  // allows utility:support for the (support-reachable) transaction page.
+  { prefix: '/admin/utility-payments/catalogue', permissions: ['utility:manage'] },
   { prefix: '/admin/utility-payments', permissions: ['utility:support', 'utility:manage'] },
   { prefix: '/admin/finance/transfers', permissions: ['finance.admin.transfers'] },
   { prefix: '/admin/finance/kyc-verify', permissions: ['finance.admin.kyc'] },

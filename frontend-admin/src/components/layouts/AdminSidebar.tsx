@@ -95,6 +95,11 @@ const navItemsBase: NavItem[] = [
   // /api/web-proxy. utility:support is frontend-web's own permission name
   // (checked server-side there via requireUtilitySupport/requireUtilityManager).
   { label: 'Utility Payments', href: '/admin/utility-payments', section: 'Finance', permissions: ['utility:support'] },
+  // Same Path A console, catalogue side: providers/billers/categories/products/
+  // discounts. Every route behind it is requireUtilityManager-only server-side
+  // (see frontend-web/app/api/admin/utility/_utils.ts) — unlike the transaction
+  // page above, utility:support alone cannot reach it.
+  { label: 'Utility Catalogue', href: '/admin/utility-payments/catalogue', section: 'Finance', permissions: ['utility:manage'] },
   { label: 'KYC Queue', href: '/admin/finance/kyc', section: 'Finance', permissions: ['audit.logs.view'] },
   { label: 'KYC Verification', href: '/admin/finance/kyc-verify', section: 'Finance', permissions: ['finance.admin.kyc'] },
   { label: 'Wallet Lookup', href: '/admin/finance/wallets', section: 'Finance', permissions: ['audit.logs.view'] },

@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
+import Link from 'next/link';
 import {
   listUtilityTransactions, reverseUtilityTransaction, formatNaira,
   type UtilityTransactionRow,
@@ -64,7 +65,12 @@ export default function UtilityPaymentsAdminPage() {
       <PageHeader
         title="Utility Payments"
         subtitle="Failed / disputed utility bill payments (airtime, data, electricity, cable TV…). A Paystack-funded failure here was already charged to the customer — closing it out records the decision, it does not itself refund Paystack (that's issued out-of-band)."
-        actions={<Button variant="outline" onClick={() => void load()}>Refresh</Button>}
+        actions={(
+          <>
+            <Link href="/admin/utility-payments/catalogue"><Button variant="outline">Catalogue</Button></Link>
+            <Button variant="outline" onClick={() => void load()}>Refresh</Button>
+          </>
+        )}
       />
 
       <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1.25rem' }}>
