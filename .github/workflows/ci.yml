@@ -74,6 +74,25 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # TEMP diagnostic (chore/deploy-cond-debug): deploy-staging's `if:` never
+  # fires despite matching dispatch inputs and a green run - print every value
+  # that condition reads, unconditionally, to see which one actually differs
+  # from what the dispatch call sent. No secrets involved, every value here is
+  # already public in the workflow file itself.
+  debug-deploy-condition:
+    name: debug deploy condition inputs
+    runs-on: ubuntu-latest
+    steps:
+      - name: print
+        run: |
+          echo "event_name=${{ github.event_name }}"
+          echo "ref=${{ github.ref }}"
+          echo "deploy_environment=[${{ inputs.deploy_environment }}]"
+          echo "confirm_deploy=[${{ inputs.confirm_deploy }}]"
+          echo "RAILWAY_DEPLOY_ENABLED=[${{ vars.RAILWAY_DEPLOY_ENABLED }}]"
+          echo "eq-staging=${{ inputs.deploy_environment == 'staging' }}"
+          echo "eq-DEPLOY=${{ inputs.confirm_deploy == 'DEPLOY' }}"
+
   # The three whole-app gates below run ONCE, here, unconditionally. Module lanes
   # must not repeat them: a whole-app check cannot say anything module-specific,
   # so N copies just report the same failure N times (eight lanes once died on
