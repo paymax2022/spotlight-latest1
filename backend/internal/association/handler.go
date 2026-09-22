@@ -10,6 +10,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"spotlight/backend/internal/platform/r2"
+	platformWS "spotlight/backend/internal/platform/ws"
 )
 
 type Handler struct {
@@ -18,9 +19,19 @@ type Handler struct {
 	// WithPresigner is called, which makes the upload endpoint fail closed.
 	presigner     *r2.Presigner
 	presignBucket string
+	// Realtime chat delivery over the open-source WS hub (platform/ws). Nil until
+	// WithHub is called; a nil hub makes ServeWS answer 503 and every push a
+	// no-op, so chat degrades to fetch-on-open rather than failing the write.
+	hub *platformWS.Hub
 }
 
 func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
+
+// WithHub attaches the WebSocket Hub for live chat delivery. Additive.
+func (h *Handler) WithHub(hub *platformWS.Hub) *Handler {
+	h.hub = hub
+	return h
+}
 
 // GET /associations/me/dues
 func (h *Handler) GetDues(c *gin.Context) {
