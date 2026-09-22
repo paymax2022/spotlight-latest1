@@ -120,7 +120,13 @@ export default function VoteModal({
         {/* Header */}
         <div className="flex items-center justify-between mb-5">
           <h2 className="text-lg font-bold text-white">Vote for {contestantName}</h2>
-          <button onClick={onClose} className="text-gray-400 hover:text-white text-2xl leading-none">×</button>
+          <button
+            onClick={onClose}
+            aria-label="Close"
+            className="text-gray-400 hover:text-white text-2xl leading-none"
+          >
+            ×
+          </button>
         </div>
 
         {step === 'choose' && (
@@ -180,9 +186,10 @@ export default function VoteModal({
 
                 {settings.allowCustomVoteQuantity && (
                   <div className="mt-3">
-                    <label className="text-sm text-gray-400 block mb-1">Custom amount</label>
+                    <label htmlFor="vote-modal-custom-qty" className="text-sm text-gray-400 block mb-1">Custom amount</label>
                     <div className="flex gap-2">
                       <input
+                        id="vote-modal-custom-qty"
                         type="number"
                         min={settings.minPaidVotes}
                         max={settings.maxPaidVotesPerTxn}
@@ -221,8 +228,9 @@ export default function VoteModal({
             </div>
 
             <div>
-              <label className="text-sm text-gray-400 block mb-1">Your Email *</label>
+              <label htmlFor="vote-modal-email" className="text-sm text-gray-400 block mb-1">Your Email *</label>
               <input
+                id="vote-modal-email"
                 type="email"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
@@ -231,8 +239,9 @@ export default function VoteModal({
               />
             </div>
             <div>
-              <label className="text-sm text-gray-400 block mb-1">Your Name *</label>
+              <label htmlFor="vote-modal-name" className="text-sm text-gray-400 block mb-1">Your Name *</label>
               <input
+                id="vote-modal-name"
                 type="text"
                 value={name}
                 onChange={(e) => setName(e.target.value)}
@@ -241,8 +250,9 @@ export default function VoteModal({
               />
             </div>
             <div>
-              <label className="text-sm text-gray-400 block mb-1">Phone (optional)</label>
+              <label htmlFor="vote-modal-phone" className="text-sm text-gray-400 block mb-1">Phone (optional)</label>
               <input
+                id="vote-modal-phone"
                 type="tel"
                 value={phone}
                 onChange={(e) => setPhone(e.target.value)}

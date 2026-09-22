@@ -925,11 +925,22 @@ export async function getReconciliation(): Promise<ReconciliationReport> {
 
 // ── Endpoints that are NOT in the internal contract ───────────────────────────
 //
-// premiums / refunds / routing / schema / sweeps / reports / consent-audit /
-// provider events / webhook deliveries all have console pages but no agreed
-// endpoint. They call through here so that the day the backend adds one, the
-// page lights up on its own — and until then the page renders the real 404
-// instead of a fixture. `probe` deliberately has no fallback.
+// premiums / refunds / schema / sweeps / reports / consent-audit / provider
+// events / webhook deliveries all have console pages but no agreed endpoint.
+// They call through here so that the day the backend adds one, the page
+// lights up on its own — and until then the page renders the real 404 instead
+// of a fixture. `probe` deliberately has no fallback.
+//
+// `routing` is NOT actually in this bucket — verified live 2026-09-17: the
+// backend DOES have a routing endpoint, `PATCH /api/insurance/admin/routing/:code`
+// (catalogHandler.AdminSetRouting, permission insurance.routing.manage). It sets
+// one product's aggregator + provider_product_code and returns 200. What is
+// genuinely missing is a GET/list endpoint to read the whole current mapping —
+// the routing page below still probes a GET at this path and will still 404,
+// correctly, because that read endpoint does not exist. So `routing` stays
+// wired through `probe` (there is nothing to switch it to yet), but do not
+// re-describe it as "no backend endpoint at all" — the write half is real and
+// live; only the list/read half is unbuilt.
 export async function probe<T>(path: string): Promise<T> {
   return request<T>('GET', path);
 }

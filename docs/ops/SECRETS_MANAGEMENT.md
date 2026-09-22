@@ -32,7 +32,7 @@
 | `PAYSTACK_SECRET_KEY` | Server-side webhook verify + provider calls only. Separate test vs live keys per environment. | Put in any `NEXT_PUBLIC_*`; share across envs |
 | `R2_SECRET_ACCESS_KEY` / `R2_ACCESS_KEY_ID` | An R2 token scoped to the single bucket (`spotlight-open-mic`) with only the operations used (put/get/sign). | Account-wide R2 credentials |
 | `ANTHROPIC_API_KEY` | Server-side only; a key with spend limits/budget. | Expose to client; share with non-AI surfaces |
-| `AGORA_APP_CERTIFICATE` / `VIDEOSDK_SECRET` | Backend RTC token signing only. | Embed in mobile/web bundle |
+| `VIDEOSDK_SECRET` | Backend RTC token signing only. | Embed in mobile/web bundle |
 | `MAPLERAD_*` / `EVERSEND_*` webhook secrets | Verify inbound provider webhooks; one per provider. | Reuse the provider API key as the webhook secret |
 | `CONNECT_VERIFICATION_PEPPER` | Backend hashing only; treat as long-lived (rotating invalidates existing hashes — plan a migration). | Log; expose |
 | `ADMIN_API_KEY` / `SPOTLIGHT_ADMIN_API_KEY` | Strong random; per-environment. Migrate admin to per-user JWT+RBAC (risk RBAC-3) so the shared key isn't the only gate. | Leave empty in prod (empty = open admin) |
@@ -43,9 +43,8 @@
   `PAYSTACK_WEBHOOK_SECRET`. Persist the raw event before processing and dedup on
   `(provider, provider_event_id)` (risk VA-2) so a leaked-and-replayed webhook
   cannot double-credit. Keep test and live keys strictly separate per env.
-- **Agora / VideoSDK:** tokens are minted server-side from the app
-  certificate/secret and handed to clients short-lived. The certificate/secret
-  never leaves the backend.
+- **VideoSDK:** tokens are minted server-side from the API key/secret and handed
+  to clients short-lived. The secret never leaves the backend.
 - **Anthropic:** key is server-side only (realtor AI, aicare). Set a budget cap.
 - **R2:** use presigned URLs minted server-side; the bucket token is scoped to
   the one bucket. Public read (if any) goes via `R2_PUBLIC_BASE_URL`, not the

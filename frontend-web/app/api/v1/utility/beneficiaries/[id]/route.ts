@@ -1,5 +1,5 @@
 import { successResponse, handleApiError } from '@/src/lib/api/responses';
-import { deleteUtilityBeneficiary } from '@/src/server/utility/service';
+import { proxyToGoBackend } from '@/src/lib/go-backend';
 import { requireUtilityUser, utilityRateLimit, utilityUnavailableResponse } from '../../_utils';
 
 export async function DELETE(request: Request, ctx: { params: Promise<{ id: string }> }) {
@@ -11,7 +11,17 @@ export async function DELETE(request: Request, ctx: { params: Promise<{ id: stri
     const user = await requireUtilityUser(request);
     const limited = utilityRateLimit(request, 'beneficiary-delete', user.id, 20, 60_000);
     if (limited) return limited;
-    await deleteUtilityBeneficiary(user.id, params.id);
+
+    // Proxy to Go backend (DELETE method)
+    const upstream = await proxyToGoBackend(request, `/api/finance/utilitybills/beneficiaries/${params.id}`, {
+      method: 'DELETE',
+    });
+
+    if (upstream.status >= 400) {
+      return upstream;
+    }
+
+    // Go returns 204 No Content, but Next.js wrapper returns success: true
     return successResponse({ success: true });
   } catch (err) {
     return handleApiError(err);

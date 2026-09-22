@@ -48,3 +48,16 @@ func (h *Handler) AdminDeactivateService(c *gin.Context) {
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true})
 }
+
+// AdminDashboard — GET /admin/dashboard  platform-wide KPI aggregate. See
+// Service.AdminDashboard / AdminDashboard (service.go, admin_model.go) for
+// exactly what is computed and why fields this batch cannot honestly compute
+// are left off the shape entirely rather than fabricated.
+func (h *Handler) AdminDashboard(c *gin.Context) {
+	d, err := h.svc.AdminDashboard(c.Request.Context())
+	if err != nil {
+		fail(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": d})
+}

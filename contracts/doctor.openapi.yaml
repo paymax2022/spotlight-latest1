@@ -267,7 +267,7 @@ components:
         startedAt:     { type: string, format: date-time }
         durationSecs:  { type: integer }
         roomToken:     { type: string, description: Short-lived signed RTC token; empty when rtcConfigured is false }
-        provider:      { type: string, enum: [agora, videosdk] }
+        provider:      { type: string, enum: [videosdk] }
         tokenUid:      { type: string, description: Deterministic uid the RTC token is bound to }
         tokenExpiresAt: { type: string, format: date-time }
         rtcConfigured: { type: boolean, description: "false when the provider has no server-side creds (roomToken empty, do not join)" }
@@ -1485,7 +1485,7 @@ paths:
   /doctor/calls/{appointmentId}/token:
     post:
       tags: [doctor-batch2]
-      summary: Issue a fresh RTC join token (Agora/VideoSDK) for the call
+      summary: Issue a fresh RTC join token (VideoSDK) for the call
       description: >
         Returns a short-lived, server-signed RTC token bound to the channel
         (= appointmentId) and a deterministic uid for the authed doctor. No

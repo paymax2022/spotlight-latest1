@@ -23,7 +23,6 @@ type AuthService interface {
 	RegisterUser(in domain.RegisterRequest) (*RegisterResult, error)
 	LoginUser(in domain.LoginRequest) (map[string]any, error)
 	RequestPasswordReset(email string) error
-	ResetPassword(token, password string) error
 	ChangePassword(accessToken, currentPassword, newPassword string) error
 	CompleteProfile(userID string, profileType string, metadata map[string]any) error
 }
@@ -298,11 +297,28 @@ func (s *authService) LoginUser(in domain.LoginRequest) (map[string]any, error) 
 		return nil, fmt.Errorf("invalid credentials")
 	}
 	user, err := s.findPlatformUserByEmail(email)
-	if err == nil && user != nil {
+	if err == nil {
+		if user == nil {
+			// Zero platform_users rows for an email that is attempting to log in
+			// (AUTH-014). The RBAC identity-bridge trigger
+			// (20260904000000_rbac_identity_bridge.sql) mirrors auth.users into
+			// platform_users SYNCHRONOUSLY, inside the same transaction as account
+			// creation — so a normal account always has a row by the time it can
+			// log in at all. A missing row here is not a race to tolerate, it's
+			// anomalous, and silently skipping the suspension/lock gate for it was
+			// the bug: refuse instead, with the same generic message every other
+			// refusal on this path uses so this can't be told apart from a wrong
+			// password.
+			return nil, fmt.Errorf("invalid credentials")
+		}
 		if err := s.validateLoginStatus(user); err != nil {
 			return nil, err
 		}
 	}
+	// err != nil here means the platform_users lookup itself failed (REST/network),
+	// not that it returned zero rows — that case is handled above. Left
+	// unchanged: falling through to GoTrue on a lookup error is existing
+	// behaviour, not part of AUTH-014.
 
 	payload := map[string]any{"email": email, "password": in.Password}
 	b, _ := json.Marshal(payload)
@@ -400,14 +416,6 @@ func (s *authService) RequestPasswordReset(email string) error {
 	return nil
 }
 
-func (s *authService) ResetPassword(token, password string) error {
-	if strings.TrimSpace(token) == "" || len(password) < 8 {
-		return fmt.Errorf("invalid reset payload")
-	}
-	// Supabase reset completion is client-token based; backend keeps this endpoint for contract compatibility.
-	return nil
-}
-
 func (s *authService) ChangePassword(accessToken, currentPassword, newPassword string) error {
 	if strings.TrimSpace(accessToken) == "" || len(currentPassword) < 8 || len(newPassword) < 8 {
 		return fmt.Errorf("invalid password change payload")
@@ -479,7 +487,12 @@ func (s *authService) validateLoginStatus(u *platformUser) error {
 	if u.Status == "suspended" || u.Status == "deleted" {
 		return fmt.Errorf("account unavailable")
 	}
-	if u.Status == "locked" && u.LockedUntil != nil && u.LockedUntil.After(now) {
+	// A nil LockedUntil means "no expiry" (see UnlockUser, which clears it to nil
+	// as part of unlocking), not "not locked" — an indefinite manual lock (e.g.
+	// the admin console's "Lock User" action, which sets status=locked without
+	// ever setting LockedUntil) must still refuse. Only a LockedUntil that has
+	// actually passed lets an auto-lockout (which always sets it) self-expire.
+	if u.Status == "locked" && (u.LockedUntil == nil || u.LockedUntil.After(now)) {
 		return fmt.Errorf("account locked")
 	}
 	return nil

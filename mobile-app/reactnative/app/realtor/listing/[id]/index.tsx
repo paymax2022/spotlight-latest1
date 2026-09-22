@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text, Image, ScrollView, StyleSheet, Pressable, FlatList } from 'react-native';
+import { View, Text, Image, ScrollView, StyleSheet, Pressable, FlatList, Linking } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import { goBack } from '@/lib/navigation';
@@ -20,16 +20,47 @@ import VerificationBadge from '@/features/realtor/components/VerificationBadge';
 import StatusBadge from '@/features/realtor/components/StatusBadge';
 import AmenityChip from '@/features/realtor/components/AmenityChip';
 import DetailRow from '@/features/realtor/components/DetailRow';
-import { useListing, useSimilarListings } from '@/features/realtor/hooks/useRealtor';
+import {
+  useListing, useSimilarListings, useIsListingSaved, useSaveListing, useUnsaveListing,
+} from '@/features/realtor/hooks/useRealtor';
 import { priceLabelFull, formatNaira, bedBathLabel, timeAgo } from '@/features/realtor/utils/realtorFormatters';
 import { PROPERTY_TYPE_LABEL, FURNISHING_LABEL, MODE_LABEL } from '@/features/realtor/constants/realtor.constants';
 import { HomeMenuButton } from '@/components/HomeMenu';
+import { alertAsync } from '@/lib/confirm';
 
 export default function ListingDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const listing = useListing(String(id));
   const similar = useSimilarListings(String(id));
+  const savedQuery = useIsListingSaved(String(id));
+  const saveMutation = useSaveListing();
+  const unsaveMutation = useUnsaveListing();
+  // Optimistic local mirror of the server state so the heart responds instantly;
+  // reset from the query whenever the server value changes (screen load, refocus).
   const [saved, setSaved] = React.useState(false);
+  React.useEffect(() => {
+    if (savedQuery.data !== undefined) setSaved(savedQuery.data);
+  }, [savedQuery.data]);
+
+  const toggleSaved = async () => {
+    const next = !saved;
+    setSaved(next);
+    try {
+      if (next) await saveMutation.mutateAsync(String(id));
+      else await unsaveMutation.mutateAsync(String(id));
+    } catch {
+      setSaved(!next); // revert on failure — never let the heart lie about server state
+    }
+  };
+
+  const onContactAgent = async () => {
+    const phone = listing.data?.agent.phone;
+    if (!phone) {
+      await alertAsync({ title: 'No contact number available', message: 'This agent has not added a phone number yet.' });
+      return;
+    }
+    Linking.openURL(`tel:${phone.replace(/[^0-9+]/g, '')}`).catch(() => {});
+  };
 
   if (listing.isLoading) {
     return (
@@ -79,7 +110,7 @@ export default function ListingDetailScreen() {
             <Pressable style={styles.circleBtn} hitSlop={8} accessibilityLabel="Share listing">
               <Share2 size={18} color={Colors.onSurface} strokeWidth={2} />
             </Pressable>
-            <Pressable style={styles.circleBtn} hitSlop={8} onPress={() => setSaved((s) => !s)} accessibilityLabel={saved ? 'Remove from saved' : 'Save listing'}>
+            <Pressable style={styles.circleBtn} hitSlop={8} onPress={toggleSaved} accessibilityLabel={saved ? 'Remove from saved' : 'Save listing'}>
               <Heart size={18} color={saved ? Colors.gold : Colors.onSurface} fill={saved ? Colors.gold : 'transparent'} strokeWidth={2} />
             </Pressable>
             <HomeMenuButton />
@@ -118,8 +149,14 @@ export default function ListingDetailScreen() {
             <StatusBadge label={`${PROPERTY_TYPE_LABEL[l.propertyType]} · ${FURNISHING_LABEL[l.furnishing]}`} tone="neutral" />
           </View>
 
-          {/* Agent card */}
-          <Pressable style={styles.agentCard} accessibilityRole="button" accessibilityLabel={`Agent ${l.agent.name}`}>
+          {/* Agent card — tap reveals/dials the agent's phone number directly
+              (in-app messaging was explicitly out of scope for PROPMGMT-011). */}
+          <Pressable
+            style={styles.agentCard}
+            onPress={onContactAgent}
+            accessibilityRole="button"
+            accessibilityLabel={l.agent.phone ? `Call agent ${l.agent.name}` : `Agent ${l.agent.name}, no contact number available`}
+          >
             <Image source={{ uri: l.agent.avatarUrl }} style={styles.agentAvatar} />
             <View style={styles.agentInfo}>
               <View style={styles.agentNameRow}>
@@ -130,9 +167,12 @@ export default function ListingDetailScreen() {
                 <Star size={13} color={Colors.gold} fill={Colors.gold} strokeWidth={0} />
                 <Text style={styles.agentMetaText}>{l.agent.rating.toFixed(1)} · {l.agent.reviewCount} reviews</Text>
               </View>
+              {!l.agent.phone ? (
+                <Text style={styles.agentNoPhone}>No contact number available</Text>
+              ) : null}
             </View>
-            <View style={styles.contactBtn}>
-              <MessageCircle size={18} color={Colors.secondary} strokeWidth={2} />
+            <View style={[styles.contactBtn, !l.agent.phone && styles.contactBtnDisabled]}>
+              <MessageCircle size={18} color={l.agent.phone ? Colors.secondary : Colors.onSurfaceVariant} strokeWidth={2} />
             </View>
           </Pressable>
 
@@ -306,10 +346,14 @@ const styles = StyleSheet.create({
   agentName: { ...Typography.titleMd, color: Colors.onSurface },
   agentMeta: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   agentMetaText: { ...Typography.bodySm, color: Colors.onSurfaceVariant },
+  agentNoPhone: { ...Typography.labelSm, color: Colors.onSurfaceVariant, marginTop: 2 },
   contactBtn: {
     width: 44, height: 44, borderRadius: Radius.md,
     backgroundColor: Colors.iconBgBlue,
     alignItems: 'center', justifyContent: 'center',
+  },
+  contactBtnDisabled: {
+    backgroundColor: Colors.surfaceContainerHigh,
   },
   sectionFlush: { paddingHorizontal: 0, marginTop: Spacing.xl, marginBottom: Spacing.sm },
   description: { ...Typography.bodyMd, color: Colors.onSurfaceVariant, lineHeight: 24 },

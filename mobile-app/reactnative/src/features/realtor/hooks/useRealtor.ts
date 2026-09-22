@@ -106,3 +106,30 @@ export function useApplication(id: string) {
     enabled: !!id,
   });
 }
+
+// ─── Saved listings ───────────────────────────────────────────────────────────
+
+export function useIsListingSaved(listingId: string) {
+  return useQuery({
+    queryKey: [KEY, 'saved', listingId],
+    queryFn: () => realtor.isListingSaved(listingId),
+    enabled: !!listingId,
+    staleTime: 0,
+  });
+}
+
+export function useSaveListing() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (listingId: string) => realtor.saveListing(listingId),
+    onSuccess: (_r, listingId) => qc.invalidateQueries({ queryKey: [KEY, 'saved', listingId] }),
+  });
+}
+
+export function useUnsaveListing() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (listingId: string) => realtor.unsaveListing(listingId),
+    onSuccess: (_r, listingId) => qc.invalidateQueries({ queryKey: [KEY, 'saved', listingId] }),
+  });
+}

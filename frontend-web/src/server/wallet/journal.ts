@@ -226,7 +226,8 @@ export async function postJournal(
 
   if (error) {
     if (error.code === '23505') return { duplicate: true };
-    throw new ApiError(`${errorContext}: ${error.message}`, 500);
+    console.error(`[wallet] ${errorContext} failed:`, error.message);
+    throw new ApiError("We couldn't complete this transaction. Please try again.", 500);
   }
 
   return { duplicate: false };

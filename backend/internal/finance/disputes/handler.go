@@ -1,6 +1,7 @@
 package disputes
 
 import (
+	"errors"
 	"net/http"
 	"strconv"
 
@@ -44,19 +45,32 @@ func (h *Handler) List(c *gin.Context) {
 }
 
 // AdminResolve handles POST /api/finance/admin/disputes/:id/resolve
+//
+// refund_kobo is REQUIRED reading for module_type=="food" (see Service.Resolve /
+// FOOD-004) — it used to be silently dropped here, which is exactly how the refund
+// path went dead: the frontend's request body was correct, but nothing ever
+// unmarshalled it.
 func (h *Handler) AdminResolve(c *gin.Context) {
 	adminID := c.GetString("user_id")
 	disputeID := c.Param("id")
 	var body struct {
 		Resolution string `json:"resolution" binding:"required"`
 		AdminNote  string `json:"admin_note"`
+		RefundKobo int64  `json:"refund_kobo"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	if err := h.svc.Resolve(c.Request.Context(), disputeID, Resolution(body.Resolution), body.AdminNote, adminID); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+	if err := h.svc.Resolve(c.Request.Context(), disputeID, Resolution(body.Resolution), body.AdminNote, body.RefundKobo, adminID); err != nil {
+		switch {
+		case errors.Is(err, ErrDisputeForbidden):
+			c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
+		case errors.Is(err, ErrDisputeNotResolvable):
+			c.JSON(http.StatusUnprocessableEntity, gin.H{"error": err.Error()})
+		default:
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		}
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"resolved": true, "dispute_id": disputeID})

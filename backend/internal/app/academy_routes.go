@@ -14,6 +14,7 @@ import (
 	"spotlight/backend/internal/academy/credentials"
 	"spotlight/backend/internal/academy/curriculum"
 	"spotlight/backend/internal/academy/edupay"
+	"spotlight/backend/internal/academy/tuition"
 	"spotlight/backend/internal/academy/exam"
 	feesadminapi "spotlight/backend/internal/academy/fees/adminapi"
 	feescompetition "spotlight/backend/internal/academy/fees/competition"
@@ -109,7 +110,7 @@ func (g academyApprovalGate) Authorize(ctx context.Context, userID, orderID stri
 // Admin base (RBAC per-route via guard):
 //   - identity/curriculum/commerce embed "/academy" → base = /api.
 //   - gamification/rewards/assessment/exam → base = /api/academy/admin.
-func RegisterAcademy(r *gin.Engine, finance *gin.RouterGroup, pool *pgxpool.Pool, rbac services.RBACService, ledgerSvc *ledger.Service, rtcIssuer *rtc.Issuer, bnplRail commerce.BNPLRail, disburseRail edupay.DisburseRail, billingRail schools.BillingRail, payoutRail tutor.PayoutRail, paymentProvider providerInterfaces.PaymentProvider, examEnabled, spineEnabled, eduPayEnabled, credentialsEnabled, liveEnabled, schoolsEnabled, tutorEnabled, feesEnabled bool, webhookHandler *webhooks.PaystackHandler) {
+func RegisterAcademy(r *gin.Engine, finance *gin.RouterGroup, pool *pgxpool.Pool, rbac services.RBACService, ledgerSvc *ledger.Service, rtcIssuer *rtc.Issuer, bnplRail commerce.BNPLRail, disburseRail edupay.DisburseRail, billingRail schools.BillingRail, payoutRail tutor.PayoutRail, paymentProvider providerInterfaces.PaymentProvider, examEnabled, spineEnabled, eduPayEnabled, credentialsEnabled, liveEnabled, schoolsEnabled, tutorEnabled, feesEnabled, tuitionEnabled bool, webhookHandler *webhooks.PaystackHandler) {
 	if pool == nil {
 		return
 	}
@@ -145,7 +146,7 @@ func RegisterAcademy(r *gin.Engine, finance *gin.RouterGroup, pool *pgxpool.Pool
 		payRail, collectRail = lr, lr
 	}
 	var liveRooms academylive.LiveRoomProvider // live RTC token → integrations/rtc
-	if rtcIssuer != nil && rtcIssuer.Enabled(rtc.ProviderAgora) {
+	if rtcIssuer != nil && rtcIssuer.Enabled(rtc.ProviderVideoSDK) {
 		liveRooms = academyLiveRail{issuer: rtcIssuer}
 	}
 	memberFin := finance                                 // → /api/finance/academy/...
@@ -252,6 +253,38 @@ func RegisterAcademy(r *gin.Engine, finance *gin.RouterGroup, pool *pgxpool.Pool
 		// Onboarding placement quiz — curriculum-grounded diagnostic that reads the
 		// assessment question bank; mounted alongside assessment so it shares its data.
 		placement.RegisterAcademyPlacement(memberAcad, pool)
+	}
+
+	// Film Academy Tuition payment: installment plans + Paystack-verified money path.
+	// Gated by FeatureAcademyTuitionEnabled. Tuition amounts are whole NAIRA, never kobo,
+	// converted to kobo only at the ledger/provider seam. Paystack is the payment rail
+	// (matches the pre-existing product behavior this replaces) — no user wallet is
+	// debited; a confirmed charge posts a balanced provider_clearing -> settlement
+	// ledger journal. Wire only when the ledger is available (nil ledger would silently
+	// drop money legs) and a payment provider is configured (nil provider can never
+	// verify a charge).
+	if tuitionEnabled && ledgerSvc != nil && paymentProvider != nil {
+		// Redis client and Auditor are both nil-safe (see service.go) — nil here means
+		// idempotency relies on the DB-level Layer 2 guard alone and mutations go
+		// unaudited. Wire a real redis.Client + Auditor once one is threaded into
+		// RegisterAcademy's parameters.
+		tuitionRepo := tuition.NewRepository(pool)
+		tuitionSvc := tuition.NewService(tuitionRepo, ledgerSvc, paymentProvider, nil, nil)
+		tuitionHandler := tuition.NewHandler(tuitionSvc)
+
+		// Member-facing routes.
+		tuitionGroup := memberAcad.Group("/tuition")
+		tuitionGroup.POST("/confirm", tuitionHandler.ConfirmPayment)
+		tuitionGroup.POST("/validate", tuitionHandler.ValidatePayment)
+		tuitionGroup.GET("/status/:application_id", tuitionHandler.GetTuitionStatus)
+
+		// Admin routes: waive an installment, force-complete a plan, or create a plan
+		// ahead of first payment. Every mutation is RBAC-gated on academy.tuition.admin.
+		tuitionAdminGuard := middleware.RequirePermission(rbac, "academy.tuition.admin")
+		tuitionAdmin := adminAcad.Group("/tuition")
+		tuitionAdmin.POST("/plans", tuitionAdminGuard, tuitionHandler.CreatePlan)
+		tuitionAdmin.PATCH("/plans/:id/mark-complete", tuitionAdminGuard, tuitionHandler.MarkPlanCompleted)
+		tuitionAdmin.PATCH("/payments/:id/waive", tuitionAdminGuard, tuitionHandler.WaiveTuition)
 	}
 
 	// EdTech School Fees (invoices, vault, promotion, competition, scholarship,
@@ -367,6 +400,7 @@ func registerAcademyFees(member, admin *gin.RouterGroup, pool *pgxpool.Pool, rba
 			webhookHandler.SetFeesConfirmer(feesPaymentConfirmer{svc: paySvc})
 		}
 	}
+
 }
 
 // ── Fees payment (T3.x) money/invoice adapters ────────────────────────────────────

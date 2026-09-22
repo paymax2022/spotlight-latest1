@@ -15,6 +15,19 @@ func (s *Service) audit(ctx context.Context, userID, action, entityID, detail st
 	log.Printf("[audit][transfers] action=%s user=%s entity=%s detail=%s", action, userID, entityID, detail)
 }
 
+// maskAccountNumber returns the trailing 4 digits of a bank account number,
+// matching the account_number_last4 convention already used for the persisted
+// bank_transfers row (see the last4 truncation in service.go's ExecuteBankTransfer
+// paths). Callers must NEVER pass a full account number into audit()'s detail
+// field — the audit log is stdout/server logs, not the ledger, and has no
+// redaction of its own.
+func maskAccountNumber(acct string) string {
+	if len(acct) <= 4 {
+		return acct
+	}
+	return acct[len(acct)-4:]
+}
+
 // defaultStr returns v when non-empty, else fallback.
 func defaultStr(v, fallback string) string {
 	if v == "" {
@@ -179,7 +192,7 @@ func (s *Service) SaveBeneficiary(ctx context.Context, userID string, req SaveBe
 		Scan(&b.ID, &b.CreatedAt); err != nil {
 		return nil, err
 	}
-	s.audit(ctx, userID, "transfer.beneficiary.save", b.ID, req.AccountNumber)
+	s.audit(ctx, userID, "transfer.beneficiary.save", b.ID, maskAccountNumber(req.AccountNumber))
 	return b, nil
 }
 

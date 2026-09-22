@@ -454,3 +454,60 @@ export async function getApplication(id: string): Promise<RentalApplication> {
   if (!data) throw new Error('Application not found');
   return mapApplication(data);
 }
+
+// ─── Saved listings (PROPMGMT-012) ─────────────────────────────────────────────
+// Non-monetary per-user bookmark, direct Supabase reads/writes against
+// realtor_saved_listings (RLS scoped to auth.uid(), mirrors realtor_move_outs).
+// Mock mode keeps an in-memory Set so the heart toggle still works without a
+// backend, matching how other mock-mode calls in this file behave.
+const mockSavedListingIds = new Set<string>();
+
+export async function isListingSaved(listingId: string): Promise<boolean> {
+  if (USE_MOCK) {
+    await delay(80);
+    return mockSavedListingIds.has(listingId);
+  }
+  const supabase = createSupabaseClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return false;
+  const { data, error } = await supabase
+    .from('realtor_saved_listings')
+    .select('listing_id')
+    .eq('user_id', user.id)
+    .eq('listing_id', listingId)
+    .maybeSingle();
+  if (error) throw error;
+  return !!data;
+}
+
+export async function saveListing(listingId: string): Promise<void> {
+  if (USE_MOCK) {
+    await delay(120);
+    mockSavedListingIds.add(listingId);
+    return;
+  }
+  const supabase = createSupabaseClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) throw new Error('Not authenticated');
+  const { error } = await supabase
+    .from('realtor_saved_listings')
+    .upsert({ user_id: user.id, listing_id: listingId }, { onConflict: 'user_id,listing_id' });
+  if (error) throw error;
+}
+
+export async function unsaveListing(listingId: string): Promise<void> {
+  if (USE_MOCK) {
+    await delay(120);
+    mockSavedListingIds.delete(listingId);
+    return;
+  }
+  const supabase = createSupabaseClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) throw new Error('Not authenticated');
+  const { error } = await supabase
+    .from('realtor_saved_listings')
+    .delete()
+    .eq('user_id', user.id)
+    .eq('listing_id', listingId);
+  if (error) throw error;
+}

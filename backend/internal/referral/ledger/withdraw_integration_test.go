@@ -1,11 +1,14 @@
 package ledger
 
 // Live-DB integration test for the referral earnings WITHDRAW money-path.
-// Verifies the four money-path invariants end-to-end against a real Postgres:
+// Verifies the five money-path invariants end-to-end against a real Postgres:
 //   (1) Idempotency-Key required — replay credits nothing twice.
 //   (2) Balanced double-entry posted (wallet credited == withdrawn).
 //   (3) State machine — eligible rows move to paid; remaining eligible = 0.
 //   (4) Fail-closed KYC gate — tier below MinWithdrawTier is rejected.
+//   (5) Account-status gate (REF-009) — a suspended/locked platform_users
+//       account is refused at the withdrawal request, even once its reward
+//       has already accrued to 'eligible'.
 //
 // SKIPPED whenever TEST_DATABASE_URL is unset, and it does NOT fall back to
 // DATABASE_URL: the root .env points DATABASE_URL at the PRODUCTION Supabase
@@ -20,6 +23,7 @@ import (
 	"context"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -152,5 +156,70 @@ func TestWithdrawEligible_KYCGate_Integration(t *testing.T) {
 	_, err := svc.WithdrawEligible(ctx, uid, "wd-"+uid)
 	if err != ErrKYCRequired {
 		t.Fatalf("expected ErrKYCRequired, got %v", err)
+	}
+}
+
+// TestWithdrawEligible_AccountStatusGate_Integration covers REF-009: a
+// referrer whose platform_users.status is suspended/locked must not be able
+// to withdraw, even though the underlying referral_reward_ledger row may
+// already have accrued to 'eligible' (or been transitioned to 'paid' by a
+// prior Transition call — that accrual-side gap is a separately tracked,
+// out-of-scope issue; this test only proves the withdrawal REQUEST is now
+// blocked). A non-suspended (active) referrer's withdrawal must still
+// succeed normally.
+func TestWithdrawEligible_AccountStatusGate_Integration(t *testing.T) {
+	ctx := context.Background()
+	pool := liveDBPool(t)
+	t.Cleanup(pool.Close)
+	svc := newSvc(pool)
+
+	// (a) Suspended account: withdrawal must be rejected with ErrAccountNotEligible.
+	suspended := seedVerifiedUser(t, pool, 1, "verified")
+	seedEligibleReward(t, pool, suspended, 75_000)
+	// platform_users is auto-mirrored (status='active') by the RBAC identity
+	// bridge trigger on auth.users insert (see seedVerifiedUser) — flip it to
+	// suspended, mirroring the admin console's "suspend" action.
+	mustExec(t, pool, `UPDATE platform_users SET status='suspended' WHERE id=$1`, suspended)
+
+	if _, err := svc.WithdrawEligible(ctx, suspended, "wd-suspended-"+suspended); err != ErrAccountNotEligible {
+		t.Fatalf("suspended account: expected ErrAccountNotEligible, got %v", err)
+	}
+
+	// (b) Indefinitely locked account (locked_until IS NULL, e.g. admin "Lock
+	// User" action): withdrawal must also be rejected.
+	lockedIndefinite := seedVerifiedUser(t, pool, 1, "verified")
+	seedEligibleReward(t, pool, lockedIndefinite, 10_000)
+	mustExec(t, pool, `UPDATE platform_users SET status='locked', locked_until=NULL WHERE id=$1`, lockedIndefinite)
+
+	if _, err := svc.WithdrawEligible(ctx, lockedIndefinite, "wd-locked-"+lockedIndefinite); err != ErrAccountNotEligible {
+		t.Fatalf("indefinitely-locked account: expected ErrAccountNotEligible, got %v", err)
+	}
+
+	// (c) A lock that has already expired must NOT block — self-expiring
+	// auto-lockouts always set locked_until (see auth_service.go).
+	lockedExpired := seedVerifiedUser(t, pool, 1, "verified")
+	seedEligibleReward(t, pool, lockedExpired, 5_000)
+	past := time.Now().UTC().Add(-time.Hour)
+	mustExec(t, pool, `UPDATE platform_users SET status='locked', locked_until=$2 WHERE id=$1`, lockedExpired, past)
+
+	res, err := svc.WithdrawEligible(ctx, lockedExpired, "wd-expiredlock-"+lockedExpired)
+	if err != nil {
+		t.Fatalf("expired-lock account: withdrawal should succeed, got err=%v", err)
+	}
+	if res.WithdrawnKobo != 5_000 {
+		t.Fatalf("expired-lock account: withdrawn=%d want 5000", res.WithdrawnKobo)
+	}
+
+	// (d) Legitimate path unaffected: an active referrer withdraws normally.
+	active := seedVerifiedUser(t, pool, 1, "verified")
+	seedEligibleReward(t, pool, active, 20_000)
+	// platform_users row is 'active' by default from the RBAC mirror trigger.
+
+	res2, err := svc.WithdrawEligible(ctx, active, "wd-active-"+active)
+	if err != nil {
+		t.Fatalf("active account: withdrawal should succeed, got err=%v", err)
+	}
+	if res2.WithdrawnKobo != 20_000 {
+		t.Fatalf("active account: withdrawn=%d want 20000", res2.WithdrawnKobo)
 	}
 }

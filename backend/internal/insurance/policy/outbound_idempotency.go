@@ -44,6 +44,12 @@ type BindClaim struct {
 	ProviderPolicyRef string
 	State             string
 	Attempts          int
+	// PolicyID is the ORIGINAL policy row this key was first claimed against.
+	// A replay must return THIS policy — never persist the provider ref onto
+	// the fresh row the caller creates before checking the claim, since two
+	// policy rows can never share one provider_policy_ref
+	// (uq_insurance_policy_provider_ref).
+	PolicyID string
 }
 
 // Sentinel errors for the ambiguous states a caller must not paper over.
@@ -113,13 +119,14 @@ func (r *BindRegistry) Claim(ctx context.Context, key, provider, productCode, po
 
 	// The key already exists — read what happened to it.
 	var (
-		state string
-		ref   *string
-		att   int
+		state   string
+		ref     *string
+		att     int
+		origPID *string
 	)
 	if err := r.db.QueryRow(ctx, `
-		SELECT state, provider_policy_ref, attempts
-		FROM public.insurance_provider_bind WHERE idempotency_key = $1`, key).Scan(&state, &ref, &att); err != nil {
+		SELECT state, provider_policy_ref, attempts, policy_id
+		FROM public.insurance_provider_bind WHERE idempotency_key = $1`, key).Scan(&state, &ref, &att, &origPID); err != nil {
 		return BindClaim{}, fmt.Errorf("policy: read idempotency key: %w", err)
 	}
 
@@ -128,6 +135,9 @@ func (r *BindRegistry) Claim(ctx context.Context, key, provider, productCode, po
 		out := BindClaim{Fresh: false, State: state, Attempts: att}
 		if ref != nil {
 			out.ProviderPolicyRef = *ref
+		}
+		if origPID != nil {
+			out.PolicyID = *origPID
 		}
 		return out, nil
 

@@ -392,8 +392,7 @@ export type EdgeStateKind =
   | 'patient_unavailable'
   | 'patient_cancelled'
   | 'call_connection_failed'
-  | 'agora_unavailable'
-  | 'videosdk_fallback_failed'
+  | 'videosdk_unavailable'
   // clinical edge cases
   | 'prescription_blocked'
   | 'drug_interaction_detected'

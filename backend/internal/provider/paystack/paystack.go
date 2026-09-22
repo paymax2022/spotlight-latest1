@@ -71,6 +71,7 @@ func (c *Client) VerifyPayment(ctx context.Context, reference string) (*provider
 			Status    string `json:"status"`
 			Reference string `json:"reference"`
 			Amount    int64  `json:"amount"`
+			Currency  string `json:"currency"`
 			Channel   string `json:"channel"`
 			PaidAt    string `json:"paid_at"`
 		} `json:"data"`
@@ -90,6 +91,7 @@ func (c *Client) VerifyPayment(ctx context.Context, reference string) (*provider
 		Reference:  resp.Data.Reference,
 		Status:     resp.Data.Status,
 		AmountKobo: resp.Data.Amount,
+		Currency:   resp.Data.Currency,
 		Channel:    resp.Data.Channel,
 		PaidAt:     paidAt,
 	}, nil

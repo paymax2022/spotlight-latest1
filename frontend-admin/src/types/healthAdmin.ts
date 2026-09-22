@@ -41,6 +41,15 @@ export type PharmacyDashboard = {
   order_mix: { label: string; orders: number; gmv_kobo: number; share_pct: number }[];
   gmv_trend: { date: string; gmv_kobo: number; net_kobo: number }[];
   activity: PharmacyActivity[];
+
+  // ── PHARMACY-001: fields actually computed by the real backend
+  // (GET /admin/dashboard → healthpharmacy.AdminDashboard). Additive/optional
+  // so the mock fixture above (which doesn't set them) still type-checks.
+  // See healthPharmacyAdminService.ts getPharmacyDashboard for the mapping
+  // and why they are distinct from the (still-mocked) fields above.
+  orders_total?: number;
+  orders_by_state?: Record<string, number>;
+  platform_revenue_kobo_week?: number;
 };
 
 // ── B · PCN / premises verification audit queue (HL-2) ─────────────────────────

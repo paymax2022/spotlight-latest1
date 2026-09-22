@@ -168,11 +168,15 @@ export default function TransferScreen() {
   });
 
   const walletTransferMut = useMutation({
-    mutationFn: (_pin: string) =>
+    mutationFn: (pin: string) =>
       initiateWalletTransfer({
         recipientIdentifier: recipient.trim(),
         amountKobo,
         narration: narration.trim() || undefined,
+        // WAL-001: this parameter used to be named `_pin` and was never
+        // forwarded — the PinSheet above collected and "verified" a PIN that
+        // the actual transfer request then silently discarded.
+        pin,
       }),
     onSuccess: (data: WalletTransfer) => {
       setPinSheet(null);

@@ -129,9 +129,59 @@ const DASHBOARD: VetDashboard = {
     { id: 'va6', kind: 'payout_held', label: 'Vet payout held — KYC tier insufficient (HL-10)', ref: 'vpay_9910', created_at: iso(8.2) },
   ],
 };
+/** Raw shape of GET /api/health/vet/admin/dashboard's `data`
+ *  (healthvet.AdminDashboard, backend/internal/health/vet/admin_model.go). */
+interface RawAdminDashboard {
+  total_appointments: number;
+  appointments_by_state: Record<string, number>;
+  platform_revenue_kobo_week: number;
+  total_vets: number;
+}
+
 export async function getVetDashboard(): Promise<VetDashboard> {
   if (USE_MOCK) { await delay(); return { ...DASHBOARD, appointment_mix: [...DASHBOARD.appointment_mix], appointments_trend: [...DASHBOARD.appointments_trend], activity: [...DASHBOARD.activity] }; }
-  return getJson<VetDashboard>('/dashboard');
+  const raw = await getJson<RawAdminDashboard>('/dashboard');
+  return {
+    generated_at: new Date().toISOString(),
+    // Real, this-pass-scoped fields — see admin_model.go's AdminDashboard doc
+    // comment for exactly what each one is and, for platform revenue, why it
+    // is a direct read of commission_earnings rather than a recomputed %.
+    appointments_total: raw.total_appointments,
+    appointments_by_state: raw.appointments_by_state,
+    platform_revenue_kobo_week: raw.platform_revenue_kobo_week,
+    vets_active: raw.total_vets,
+    // Everything below this line is NOT computed by the real backend yet —
+    // this pass scoped only the appointment-state aggregate, trailing-7-day
+    // platform revenue, and APPROVED-vet count (mirrors Lab's own dashboard
+    // fix and Pharmacy's PHARMACY-001 honesty precedent). Left at 0/empty
+    // rather than fabricated.
+    appointments_today: 0,
+    appointments_30d: 0,
+    consults_completed_30d: 0,
+    appointment_completion_rate: 0,
+    no_show_rate: 0,
+    gmv_today_kobo: 0,
+    gmv_30d_kobo: 0,
+    net_revenue_30d_kobo: 0,
+    take_rate: 0,
+    avg_appointment_value_kobo: 0,
+    held_balance_kobo: 0,
+    released_30d_kobo: 0,
+    refunded_30d_kobo: 0,
+    vcn_pending_review: 0,
+    vets_suspended: 0,
+    vcn_expiring_30d: 0,
+    eprescriptions_30d: 0,
+    eprescriptions_pom_30d: 0,
+    eprescription_flags_open: 0,
+    services_pending_governance: 0,
+    moderation_open: 0,
+    payouts_kyc_hold: 0,
+    sos_routed_30d: 0,
+    appointment_mix: [],
+    appointments_trend: [],
+    activity: [],
+  };
 }
 
 // ════════════════════════════════════════════════════════════════════════════

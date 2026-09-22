@@ -26,7 +26,7 @@ export default function ContestListScreen() {
   const [statusFilter, setStatusFilter] = useState<ContestStatus | 'ALL'>('ALL');
   const [search, setSearch] = useState('');
 
-  const { data, isLoading, refetch, isRefetching } = useContests(
+  const { data, isLoading, isError, refetch, isRefetching } = useContests(
     statusFilter !== 'ALL' ? { status: statusFilter } : undefined,
   );
 
@@ -79,6 +79,17 @@ export default function ContestListScreen() {
 
       {isLoading ? (
         <View style={styles.loader}><ActivityIndicator size="large" color={Colors.primary} /></View>
+      ) : isError ? (
+        // A fetch failure used to fall straight into ListEmptyComponent, which
+        // reads as "no contests exist yet" rather than "we couldn't reach the
+        // server" — the two need different messages and only one is retriable.
+        <View style={styles.empty}>
+          <Text style={styles.emptyTitle}>Could not load contests</Text>
+          <Text style={styles.emptySub}>Check your connection and try again.</Text>
+          <Pressable onPress={() => refetch()} style={styles.filterChip}>
+            <Text style={styles.filterLabel}>Retry</Text>
+          </Pressable>
+        </View>
       ) : (
         <FlatList
           data={filtered}

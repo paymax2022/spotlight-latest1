@@ -1,6 +1,9 @@
 package search
 
-import "fmt"
+import (
+	"fmt"
+	"strconv"
+)
 
 // defaultMarket is used when SearchRequest.Market is empty — house doctrine
 // (SWARM_INTEGRATION_CONTRACT.md, CLAUDE.md) is `market_id TEXT` default 'NG'
@@ -132,6 +135,11 @@ func BuildQuery(req SearchRequest) map[string]any {
 			},
 		},
 		"size": clampLimit(req.Limit),
+		// from applies req.Cursor as an ES offset. Without this, paging past page 1
+		// always re-requested the first `size` hits from offset 0 regardless of the
+		// cursor the caller sent, because Cursor was defined on SearchRequest but
+		// never read anywhere in the query builder — same page every time.
+		"from": parseCursor(req.Cursor),
 	}
 
 	if sortClause := buildSort(req.Sort); sortClause != nil {
@@ -139,6 +147,21 @@ func BuildQuery(req SearchRequest) map[string]any {
 	}
 
 	return query
+}
+
+// parseCursor decodes the opaque pagination cursor (a plain base-10 offset,
+// see Client.Search) back into an ES `from` value. An empty, malformed, or
+// negative cursor is treated as page 1 (offset 0) rather than erroring —
+// a bad/stale cursor should degrade to the first page, not fail the request.
+func parseCursor(cursor string) int {
+	if cursor == "" {
+		return 0
+	}
+	n, err := strconv.Atoi(cursor)
+	if err != nil || n < 0 {
+		return 0
+	}
+	return n
 }
 
 // buildSort maps the frozen `sort` enum (relevance|price_asc|price_desc|

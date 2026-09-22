@@ -225,7 +225,7 @@ func (s *Service) OpenVirtualAccount(ctx context.Context, userID string) (*va.Vi
 		}
 		return nil, err
 	}
-	s.audit(ctx, "maplerad.va.opened", userID, acct.AccountNumber, 0)
+	s.audit(ctx, "maplerad.va.opened", userID, last4(acct.AccountNumber), 0)
 	return acct, nil
 }
 

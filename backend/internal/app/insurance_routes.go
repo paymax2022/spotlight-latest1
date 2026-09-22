@@ -16,6 +16,7 @@ import (
 	"spotlight/backend/internal/insurance/consent"
 	"spotlight/backend/internal/insurance/gateway"
 	"spotlight/backend/internal/insurance/policy"
+	"spotlight/backend/internal/insurance/reconciliation"
 	"spotlight/backend/internal/middleware"
 	"spotlight/backend/internal/platform/r2"
 	"spotlight/backend/internal/provider/mycover"
@@ -112,6 +113,11 @@ func RegisterInsurance(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pg
 		// Outbound purchase idempotency. MyCover has none of its own, so this is
 		// what stops a retried bind buying a second policy with real money.
 		Binds: policy.NewBindRegistry(pool),
+		// Records the domain-level commission-entry row the admin reconciliation
+		// workbench (GET /commission, confirm/reverse) reads. Without this the
+		// ledger money still moves correctly, but the workbench has no row to
+		// confirm/reverse against — see commissionRecorder below.
+		Commission: commissionRecorder{repo: reconciliation.NewRepository(pool)},
 		// Notifier / Auditor are optional (nil-safe); IB1/orchestrator may inject
 		// the real notifications + audit sinks.
 	})
@@ -223,4 +229,23 @@ func (m mycoverOptions) FetchUtilityOptions(ctx context.Context, optionsURL, que
 		out = append(out, catalog.FieldOption{Value: o.Value, Label: o.Label})
 	}
 	return out, nil
+}
+
+// commissionRecorder adapts reconciliation.Repository to policy.CommissionRecorder
+// so the bind saga can write the domain-level commission-entry row the admin
+// reconciliation workbench (GET /commission, confirm/reverse) reads, without
+// policy importing reconciliation (this file already imports both — it is the
+// one place allowed to know about the seam). UpsertCommission is idempotent on
+// idempotency_key, so a bind replay is a safe no-op here too.
+type commissionRecorder struct{ repo *reconciliation.Repository }
+
+func (c commissionRecorder) RecordCommission(ctx context.Context, policyID, provider string, amountKobo int64, ledgerRef, idempotencyKey string) error {
+	return c.repo.UpsertCommission(ctx, &reconciliation.CommissionEntry{
+		PolicyID:       policyID,
+		Provider:       provider,
+		AmountKobo:     amountKobo,
+		LedgerRef:      ledgerRef,
+		IdempotencyKey: idempotencyKey,
+		Status:         reconciliation.CommissionPending,
+	})
 }

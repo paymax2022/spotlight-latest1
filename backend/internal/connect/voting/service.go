@@ -202,13 +202,8 @@ func (s *Service) FreeVote(ctx context.Context, contestID, voterID string, req F
 	if allowance <= 0 {
 		allowance = 1 // default one free vote per user per contest
 	}
-	used, err := s.repo.CountFreeVotes(ctx, contestID, voterID)
-	if err != nil {
-		return nil, ErrFreeVoteUsed // fail closed
-	}
-	if used >= allowance {
-		return nil, ErrFreeVoteUsed
-	}
+	// Velocity and roster checks are independent of the cap and cheap to fail
+	// fast on — do them before ever taking the claim lock below.
 	if err := s.enforceVelocity(ctx, c, voterID, now); err != nil {
 		return nil, err
 	}
@@ -216,16 +211,26 @@ func (s *Service) FreeVote(ctx context.Context, contestID, voterID string, req F
 		return nil, err
 	}
 
-	v, err := s.repo.InsertVote(ctx, &Vote{
+	// D-010: the cap check and the insert used to be two separate statements
+	// (CountFreeVotes then InsertVote) — two concurrent requests from the same
+	// voter could both read a count below the cap before either had inserted,
+	// so both got voted and the cap was bypassed. ClaimFreeVote does both
+	// inside one transaction, serialized per (contest, voter) by an advisory
+	// lock, so the count the second caller reads always reflects the first
+	// caller's insert.
+	v, granted, err := s.repo.ClaimFreeVote(ctx, &Vote{
 		ContestID:  contestID,
 		VoterID:    voterID,
 		OptionRef:  req.OptionRef,
 		Paid:       false,
 		Quantity:   1,
 		AmountKobo: 0,
-	})
+	}, allowance)
 	if err != nil {
-		return nil, err
+		return nil, ErrFreeVoteUsed // fail closed
+	}
+	if !granted {
+		return nil, ErrFreeVoteUsed
 	}
 	_ = s.audit.WriteAudit(ctx, "connect.vote.free", voterID, "connect_vote", v.ID, map[string]any{
 		"contest_id": contestID, "option_ref": req.OptionRef,

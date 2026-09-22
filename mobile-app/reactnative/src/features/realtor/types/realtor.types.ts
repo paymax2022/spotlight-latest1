@@ -132,6 +132,8 @@ export interface AgentRef {
   rating: number;            // 0–5
   reviewCount: number;
   responseTime?: string;     // "~30 min"
+  /** Direct contact number, when the agent has one on file (PROPMGMT-011). */
+  phone?: string;
 }
 
 export interface Listing {

@@ -13,13 +13,23 @@ import type {
 /**
  * Mock-vs-live data source. Env-driven so the build can switch to the real
  * /associations endpoints without code changes — set
- *   EXPO_PUBLIC_ASSOCIATION_USE_MOCK=false
- * to go live (default is mock). Mirrors the FX / Doctor module switches.
+ *   EXPO_PUBLIC_ASSOCIATION_USE_MOCK=true
+ * to force fixtures locally (default is LIVE).
+ *
+ * Migrated to defaultWhenUnset=false (mockPolicy.ts's own documented contract
+ * for "modules whose live endpoints exist") now that the Go backend is
+ * confirmed live and correct: a full green run of backend/tests/association
+ * (96 live-DB tests covering money paths, IDOR scoping, elections, offline
+ * payments, dues) plus every route in routes.go independently verified
+ * against this module's API surface. A forgotten flag now fails visibly
+ * against the real backend instead of silently serving fabricated data —
+ * mirrors the same migration already done for insurance/merchant/registration/
+ * voting once each of those was similarly confirmed live.
  *
  * Live endpoints are served under the API client's baseURL (see src/api/client.ts)
  * at the paths documented in contracts/associations.openapi.yaml.
  */
-export const USE_MOCK = mockAllowed(process.env.EXPO_PUBLIC_ASSOCIATION_USE_MOCK, true);
+export const USE_MOCK = mockAllowed(process.env.EXPO_PUBLIC_ASSOCIATION_USE_MOCK, false);
 
 /**
  * Live API base path for the association module.

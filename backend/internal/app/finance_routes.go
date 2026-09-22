@@ -2,6 +2,8 @@ package app
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"log"
 	"net/http"
 	"strings"
@@ -181,6 +183,20 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 	// --- Finance services ---
 	ledgerRepo := ledger.NewRepository(pool)
 	ledgerSvc := ledger.NewService(ledgerRepo, redisClient)
+
+	// Wires REAL per-module detail (Service, Category, Service bought, Payment
+	// method, Status, Provider) into the centralized admin Transactions detail
+	// endpoint for the modules that currently have a resolvable reference
+	// convention. pool is non-nil here (checked above). See
+	// admin_transaction_resolvers.go for what each resolver covers and why
+	// marketplace P2P order escrow deliberately has none (ADR-023 retired that
+	// posting path — it produces zero ledger_entries rows today).
+	ledgerSvc.SetResolvers([]ledger.TransactionDetailResolver{
+		NewMarketplaceBoostResolver(pool),
+		NewInsurancePremiumResolver(pool),
+		NewFXConversionResolver(pool),
+		NewUtilityBillResolver(pool),
+	})
 
 	// --- Internal service-authenticated ledger API (Stage 1.5c) ---
 	// Exposes the authoritative double-entry ledger to the separate trading service
@@ -382,6 +398,17 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 	transfersAdmin.GET("/:id", middleware.RequirePermission(rbac, "finance.admin.transfers"), transfersAdminHandler.Get)
 	transfersAdmin.POST("/:id/retry", middleware.RequirePermission(rbac, "finance.admin.transfers"), transfersAdminHandler.Retry)
 	transfersAdmin.POST("/:id/reverse", middleware.RequirePermission(rbac, "finance.admin.transfers"), transfersAdminHandler.Reverse)
+
+	// --- Centralized admin transactions console (RBAC finance.admin.transactions.view) ---
+	// READ-ONLY reporting over ledger_entries — the only source of truth for money
+	// movement across every module (there is no per-module transactions table).
+	// Deliberately a NEW permission slug, not a reuse of finance.admin.transfers
+	// (that slug is scoped to the bank-transfer console, not all ledger activity).
+	ledgerAdminHandler := ledger.NewAdminHandler(ledgerSvc)
+	ledgerAdmin := r.Group("/api/finance/admin/transactions")
+	ledgerAdmin.Use(mapsAuth()) // RequireAuthContext + mirror user_id
+	ledgerAdmin.GET("", middleware.RequirePermission(rbac, "finance.admin.transactions.view"), ledgerAdminHandler.ListTransactions)
+	ledgerAdmin.GET("/:id", middleware.RequirePermission(rbac, "finance.admin.transactions.view"), ledgerAdminHandler.GetTransaction)
 
 	// --- KYC routes ---
 	if cfg.FeatureKYCEnabled {
@@ -624,7 +651,16 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 	if cfg.FeatureHealthEnabled && pool != nil {
 		RegisterHealth(finance, adminGroupTop5(r, "/api/health/admin"), pool, rbac, cfg, auditSink) // shared platform
 		if cfg.FeatureHealthPharmacyEnabled {
-			pharmacySvc := RegisterHealthPharmacy(finance, adminGroupTop5(r, "/api/health/pharmacy/admin"), pool, rbac, cfg)
+			// PHARMACY-001: NOT adminGroupTop5 — that helper applies requireUserID()
+			// on the group, which would run BEFORE RegisterHealthPharmacy's own
+			// ag.Use(RequireAuthContext(...)) and abort every request with
+			// "authentication required" before auth ever ran (Gin group
+			// middleware executes in registration order; a group inherits its
+			// parent's chain ahead of anything added later). RequireAuthContext
+			// already rejects a missing/invalid token itself, so requireUserID()
+			// adds nothing here besides that ordering hazard — see
+			// health_pharmacy_routes.go's own comment at ag.Use(...).
+			pharmacySvc := RegisterHealthPharmacy(finance, r.Group("/api/health/pharmacy/admin"), pool, rbac, cfg, supabase)
 			// Symptom-based medication search addon — its own flag AND'd with
 			// the pharmacy flag (FEATURE_PHARMACY_SYMPTOM_SEARCH_ENABLED).
 			if cfg.FeaturePharmacySymptomSearchEnabled {
@@ -637,15 +673,25 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 			}
 		}
 		if cfg.FeatureHealthLabEnabled {
-			RegisterHealthLab(finance, adminGroupTop5(r, "/api/health/lab/admin"), pool, rbac, auditSink, cfg)
+			// PHARMACY-006-shaped bug: NOT adminGroupTop5 — see the comment on
+			// RegisterHealthLab's own ag.Use(RequireAuthContext(...)) call for
+			// why (identical ordering hazard to pharmacy's admin group, fixed
+			// the same way).
+			RegisterHealthLab(finance, r.Group("/api/health/lab/admin"), pool, rbac, auditSink, cfg, supabase)
 		}
 		if cfg.FeatureHealthVetEnabled {
-			RegisterHealthVet(finance, adminGroupTop5(r, "/api/health/vet/admin"), pool, rbac, cfg)
+			// PHARMACY-006/LAB-003-shaped bug: NOT adminGroupTop5 — see the
+			// comment on RegisterHealthVet's own ag.Use(RequireAuthContext(...))
+			// call for why (identical ordering hazard, fixed the same way).
+			RegisterHealthVet(finance, r.Group("/api/health/vet/admin"), pool, rbac, cfg, supabase)
 			// Mode-B (assisted) VCN verification: vet gets verified without ever
 			// seeing the VCN portal; ops confirms out-of-band; capability granted
 			// only on approval. Member /api/finance/health/vet/verification/*,
 			// admin /api/health/vet/admin/verification/* (health.vet.review).
-			RegisterHealthVCNVerification(finance, adminGroupTop5(r, "/api/health/vet/admin"), pool, rbac)
+			// Same adminGroupTop5 fix applies — this is a second, independent
+			// admin group instance sharing the path prefix, not the same
+			// middleware chain as RegisterHealthVet's own group above.
+			RegisterHealthVCNVerification(finance, r.Group("/api/health/vet/admin"), pool, rbac, supabase)
 		}
 		// AI Symptom Checker (triage & navigation, NOT diagnosis) — reuses the care
 		// loop + wallet + clinician-governed red-flag layer. SC-1..SC-12 enforced.
@@ -662,16 +708,14 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 	// admin /api/academy/admin/* (+ /api/academy for identity/curriculum/commerce).
 	if cfg.FeatureAcademyEnabled && pool != nil {
 		academyRTC := rtc.NewIssuer(rtc.Config{
-			AgoraAppID:          cfg.AgoraAppID,
-			AgoraAppCertificate: cfg.AgoraAppCertificate,
-			VideoSDKAPIKey:      cfg.VideoSDKAPIKey,
-			VideoSDKSecret:      cfg.VideoSDKSecret,
+			VideoSDKAPIKey: cfg.VideoSDKAPIKey,
+			VideoSDKSecret: cfg.VideoSDKSecret,
 		})
 		// RAILS_MODE seam: select the HTTP fake/sandbox/live adapters for the four
 		// unbacked academy rails (BNPL/payout/disburse/billing). nil per-rail ⇒ that
 		// package keeps its in-process dev stub (academy_rails_external.go).
 		academyBNPL, academyDisburse, academyBilling, academyPayout := academyRails(cfg)
-		RegisterAcademy(r, finance, pool, rbac, ledgerSvc, academyRTC, academyBNPL, academyDisburse, academyBilling, academyPayout, paymentProvider, cfg.FeatureAcademyExamEnabled, cfg.FeatureAcademySpineEnabled, cfg.FeatureAcademyEduPayEnabled, cfg.FeatureAcademyCredentialsEnabled, cfg.FeatureAcademyLiveEnabled, cfg.FeatureAcademySchoolsEnabled, cfg.FeatureAcademyTutorEnabled, cfg.FeatureAcademyFeesEnabled, webhookHandler)
+		RegisterAcademy(r, finance, pool, rbac, ledgerSvc, academyRTC, academyBNPL, academyDisburse, academyBilling, academyPayout, paymentProvider, cfg.FeatureAcademyExamEnabled, cfg.FeatureAcademySpineEnabled, cfg.FeatureAcademyEduPayEnabled, cfg.FeatureAcademyCredentialsEnabled, cfg.FeatureAcademyLiveEnabled, cfg.FeatureAcademySchoolsEnabled, cfg.FeatureAcademyTutorEnabled, cfg.FeatureAcademyFeesEnabled, cfg.FeatureAcademyTuitionEnabled, webhookHandler)
 
 		// EdTech PLATFORM super-admin oversight (SU-01..SU-12): read-only cross-tenant
 		// console backend at /api/academy/admin/platform/*, gated purely by the seeded
@@ -962,6 +1006,16 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		log.Println("[finance] Maplerad WaaS domain routes + webhook + jobs registered")
 	}
 
+	// --- Utility Bills DOMAIN money path (Next.js → Go migration, Phase 1-3) ---
+	// Gated by FEATURE_UTILITY_BILLS_ENABLED inside RegisterUtilityBills (no flag,
+	// no money path). Member routes at /api/finance/utilitybills/*; the
+	// money-affecting admin actions at /api/finance/admin/utilitybills/* behind
+	// RBAC finance.admin.utilitybills. Reuses wallet/ledger/commission — the debit
+	// goes through walletSvc, so the tier/daily-limit check fires exactly as it
+	// does for every other module rather than being reimplemented here. The
+	// hourly requery-sweep job (Phase 3) runs on the same ctx as Maplerad's jobs.
+	RegisterUtilityBills(ctx, r, finance, cfg, pool, rbac, mapsAuth(), ledgerSvc, walletSvc, auditSink)
+
 	// --- Multi-provider KYC verification gateway (ADR-013) ---
 	// Gated by FEATURE_KYC_VERIFY_ENABLED (default off). Builds the adapter
 	// registry from config (only providers with non-empty creds are registered;
@@ -1089,7 +1143,11 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 			Region:          cfg.R2Region,
 		})
 		assocSvc.WithPresigner(assocPresigner)
+		// Live group chat: message fan-out to a thread's audience over the WS hub,
+		// the same open-source stack the food/mobility/doctor streams use.
+		associationHub := platformWS.New(wsOriginAllowed)
 		assocHandler := association.NewHandler(assocSvc).
+			WithHub(associationHub).
 			WithPresigner(assocPresigner, cfg.R2Bucket)
 		association.RegisterRoutes(finance.Group("/associations"), assocHandler)
 	}
@@ -1491,15 +1549,33 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 	}
 
 	// --- Restaurant & Delivery routes ---
+	// restaurantSvc is hoisted to this outer scope (rather than := inside the block
+	// below) so the Disputes routes block further down can wire it into
+	// finance/disputes.Service as the food-dispute delegate (FOOD-004) — it stays nil
+	// when the module is flag-off, and that block checks for nil before using it.
+	var restaurantSvc *restaurant.Service
 	if cfg.FeatureRestaurantEnabled {
 		settlementSvcR := settlement.NewService(pool, ledgerSvc)
 		// WithTiers is NOT optional here: both restaurant money paths (the customer
 		// order escrow in PlaceOrder and the merchant withdrawal reserve) refuse with
 		// ErrTierGateUnwired when no gate is attached, so an unwired deployment serves
 		// 503 on every order rather than escrowing past the KYC daily cap (ADR-033).
-		restaurantSvc := restaurant.NewService(pool, settlementSvcR).
+		restaurantSvc = restaurant.NewService(pool, settlementSvcR).
 			WithLedger(ledgerSvc).
-			WithTiers(tiersSvc)
+			WithTiers(tiersSvc).
+			// FOOD-005: the merchant/rider withdrawal money path (withdrawal.go) had a
+			// complete service (RequestWithdrawal/MarkWithdrawalPaid/MarkWithdrawalFailed)
+			// but was never wired — no flag, no routes, so it was completely unreachable.
+			// The flag gates the MONEY MOVE only (RequestWithdrawal refuses with
+			// ErrWithdrawalsDisabled while off); the read/admin routes mount unconditionally
+			// below alongside the rest of the restaurant module. Disburser is left at the
+			// NoopDisburser default (nil) — RegistryDisburser does not yet populate the
+			// recipient's bank fields on WithdrawalDisburseRequest (see
+			// disbursement_adapter.go), so wiring a live provider here would send a real
+			// payout call with an empty account number/name. Withdrawals stay reserved in
+			// suspense (funds move out of the merchant wallet, but no bank transfer fires)
+			// until that gap is closed.
+			WithWithdrawals(cfg.FeatureRestaurantWithdrawalsEnabled)
 
 		// ── Central Commission & Profit recording (§ profit registry) ──
 		// When the commission feature is on, inject a nil-safe recorder so realized
@@ -1570,6 +1646,26 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		restGroup.POST("/:id/staff", restaurantHandler.InviteStaff)
 		restGroup.PATCH("/:id/staff/:userId", restaurantHandler.SetStaffStatus)
 		restGroup.GET("/earnings", restaurantHandler.Earnings) // caller's food-delivery earnings
+
+		// FOOD-005: merchant/rider WITHDRAWAL money path (wallet → saved bank
+		// account). Both "bank-accounts" and "withdrawals" are static siblings of
+		// :id, like /mine and /earnings above. Bank-account capture (AddBankAccount
+		// etc.) is NOT money-path — no ledger post — but a merchant needs a saved
+		// account before RequestWithdrawal will accept a bank_account_id, and there
+		// was previously no route to create one at all.
+		restGroup.POST("/bank-accounts", restaurantHandler.AddBankAccount)
+		restGroup.GET("/bank-accounts", restaurantHandler.ListBankAccounts)
+		restGroup.PATCH("/bank-accounts/:accountId/default", restaurantHandler.SetDefaultBankAccount)
+		restGroup.DELETE("/bank-accounts/:accountId", restaurantHandler.DeleteBankAccount)
+		// The withdrawal money path itself (withdrawal.go). RequestWithdrawal
+		// requires an Idempotency-Key and refuses with 403 ErrWithdrawalsDisabled
+		// unless FEATURE_RESTAURANT_WITHDRAWALS_ENABLED is on (see WithWithdrawals
+		// above) — the route is always mounted so the flag alone controls the
+		// money path, not route (un)availability.
+		restGroup.POST("/withdrawals", restaurantHandler.RequestWithdrawal)
+		restGroup.GET("/withdrawals", restaurantHandler.ListWithdrawals)
+		restGroup.GET("/withdrawals/:withdrawalId", restaurantHandler.GetWithdrawal)
+
 		restGroup.GET("/:id", restaurantHandler.GetRestaurant)
 		restGroup.POST("/:id/like", restaurantHandler.LikeRestaurant)
 		restGroup.DELETE("/:id/like", restaurantHandler.UnlikeRestaurant)
@@ -1577,6 +1673,17 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		// Store management (owner only): edit profile + operational open/close.
 		restGroup.PATCH("/:id", restaurantHandler.UpdateRestaurant)
 		restGroup.PATCH("/:id/availability", restaurantHandler.SetAvailability)
+
+		// Merchant KYB (Know-Your-Business) onboarding (owner only, PermManageBanking —
+		// enforced inside the service, matching every sibling owner route in this
+		// group). FOOD-003: these existed in kyb_handler.go/kyb_service.go but were
+		// never mounted, so a restaurant owner had no way to ever create a
+		// restaurant_kyb row through the live product. Fill business/settlement
+		// details, attach documents, then submit for admin review.
+		restGroup.GET("/:id/kyb", restaurantHandler.GetKYB)
+		restGroup.PUT("/:id/kyb", restaurantHandler.SaveKYB)
+		restGroup.POST("/:id/kyb/documents", restaurantHandler.AddKYBDocument)
+		restGroup.POST("/:id/kyb/submit", restaurantHandler.SubmitKYB)
 
 		// Menu management (owner only).
 		restGroup.POST("/:id/menu/categories", restaurantHandler.CreateCategory)
@@ -1717,6 +1824,25 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		restAdmin.GET("/payouts/:id", middleware.RequirePermission(rbac, "restaurant.admin.payouts"), restaurantHandler.AdminGetPayoutRun)
 		restAdmin.POST("/payouts/:id/process", middleware.RequirePermission(rbac, "restaurant.admin.payouts"), restaurantHandler.AdminProcessPayoutRun)
 
+		// FOOD-005: merchant/rider withdrawal ops queue (wallet → bank; distinct
+		// from the payout runs above, which pay a provider FROM the platform's
+		// settlement account INTO their wallet — a withdrawal is the subsequent,
+		// separate step of the provider moving money OUT of that wallet to their
+		// bank). List/detail are reads over ALL merchants/riders (not owner-scoped,
+		// see AdminListWithdrawals); paid/failed drive withdrawal.go's
+		// MarkWithdrawalPaid/MarkWithdrawalFailed, which post the balanced settle or
+		// reversal ledger leg under a row lock (mutually exclusive, idempotent on
+		// retry) — so, unlike the member-facing RequestWithdrawal, these two do NOT
+		// require a caller-supplied Idempotency-Key; the row-lock + per-transition
+		// idempotency key derived from the withdrawal already makes a duplicate
+		// admin action a safe no-op. Fail-closed behind restaurant.admin.withdrawals
+		// (dedicated slug — an ops agent reviewing withdrawals should not need the
+		// broader restaurant.manage grant).
+		restAdmin.GET("/withdrawals", middleware.RequirePermission(rbac, "restaurant.admin.withdrawals"), restaurantHandler.AdminListWithdrawals)
+		restAdmin.GET("/withdrawals/:withdrawalId", middleware.RequirePermission(rbac, "restaurant.admin.withdrawals"), restaurantHandler.AdminGetWithdrawal)
+		restAdmin.POST("/withdrawals/:withdrawalId/paid", middleware.RequirePermission(rbac, "restaurant.admin.withdrawals"), restaurantHandler.AdminSettleWithdrawal)
+		restAdmin.POST("/withdrawals/:withdrawalId/failed", middleware.RequirePermission(rbac, "restaurant.admin.withdrawals"), restaurantHandler.AdminReverseWithdrawal)
+
 		// Crash-recovery settlement reconciliation (money-path durability): an order
 		// marked delivered whose escrow never released (process died / Settle errored
 		// after the status flip) is re-driven through the SAME idempotent settleOrder
@@ -1772,8 +1898,12 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		}
 		log.Printf("[telemedicine] platform booking fee: %d bp (FEATURE_TELEMEDICINE_PLATFORM_FEE_ENABLED=%t)",
 			platformFeeBp, cfg.FeatureTelemedicinePlatformFeeEnabled)
+		// WithAudit reuses the SAME audit sink the doctor module's own MDCN review
+		// console writes to (doctor_compliance_audit via doctor.Repository), so an
+		// approve/reject recorded from EITHER admin console lands in one trail.
 		telemedSvc := telemedicine.NewService(pool, settlementSvcT).
-			WithPlatformFeeBp(platformFeeBp)
+			WithPlatformFeeBp(platformFeeBp).
+			WithAudit(doctor.NewRepository(pool))
 		telemedHandler := telemedicine.NewHandler(telemedSvc)
 
 		// Legacy /api/finance/telemedicine/... (kept for backward compat)
@@ -1817,6 +1947,20 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		v1Tele.PATCH("/doctor/availability", telemedHandler.ToggleAvailability)
 		v1Tele.POST("/doctor/notes", telemedHandler.SubmitSOAPNote)
 		v1Tele.POST("/doctor/licence", telemedHandler.UploadLicenceDoc)
+
+		// Admin console (TELEMEDICINE-004) — platform-wide oversight, distinct
+		// from the member/doctor-scoped routes above. GETs read-gated on
+		// telemedicine.admin.view; the verify POST (a real decision, mirroring
+		// doctor_verifications) on telemedicine.admin.manage — same view/action
+		// split marketplace's admin console uses (see
+		// 20261028000300_marketplace_users_ts_rbac_perms.sql). Seeded by
+		// 20270227000000_telemedicine_admin_rbac.sql.
+		teleAdmin := r.Group("/api/v1/telemedicine/admin")
+		teleAdmin.Use(middleware.RequireAuthContext(supabase, rbac))
+		teleAdmin.GET("/dashboard", middleware.RequirePermission(rbac, "telemedicine.admin.view"), telemedHandler.AdminGetDashboard)
+		teleAdmin.GET("/doctors", middleware.RequirePermission(rbac, "telemedicine.admin.view"), telemedHandler.AdminListDoctors)
+		teleAdmin.GET("/appointments", middleware.RequirePermission(rbac, "telemedicine.admin.view"), telemedHandler.AdminListAppointments)
+		teleAdmin.POST("/doctors/:userId/verify", middleware.RequirePermission(rbac, "telemedicine.admin.manage"), telemedHandler.AdminVerifyDoctor)
 	}
 
 	// --- Pharmacy routes ---
@@ -2258,6 +2402,14 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 	// --- Disputes routes ---
 	if cfg.FeatureDisputesEnabled {
 		disputesSvc := disputes.NewService(pool)
+		// FOOD-004: dispatch module_type=="food" disputes to the restaurant module's
+		// real refund-cap + tip-clawback logic instead of the bare status-flip every
+		// other module_type still gets (see disputes.Service.Resolve). Only wired when
+		// the restaurant module itself is on — if it's off, a food dispute resolve
+		// fails closed with "not wired" rather than a fake 200.
+		if restaurantSvc != nil {
+			disputesSvc = disputesSvc.WithFoodResolver(foodDisputeResolverAdapter{svc: restaurantSvc})
+		}
 		disputesHandler := disputes.NewHandler(disputesSvc)
 		dpGroup := finance.Group("/disputes")
 		dpGroup.POST("", disputesHandler.Open)
@@ -2269,7 +2421,16 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		// 401 signs the user out, so the screen appears to log them out on open.
 		adminFinanceDisputes.Use(mapsAuth())
 		adminFinanceDisputes.Use(requireUserID())
-		adminFinanceDisputes.POST("/:id/resolve", disputesHandler.AdminResolve)
+		// FOOD-008 (P0, found executing FC-002): this route had NO permission check
+		// at all — any authenticated user, not just an admin, could call
+		// AdminResolve. That became a live money-movement bug the moment FOOD-004
+		// wired module_type=="food" disputes to a real refund/clawback delegate: a
+		// plain customer token could resolve their own dispute with a refund and
+		// have it actually post. "food" is the only module_type any dispute in this
+		// table currently has, and restaurant.admin.disputes already exists (seeded,
+		// granted to Super Admin/System Admin/Restaurant Ops) — reuse it rather than
+		// adding a new permission or a generic-but-unseeded slug.
+		adminFinanceDisputes.POST("/:id/resolve", middleware.RequirePermission(rbac, "restaurant.admin.disputes"), disputesHandler.AdminResolve)
 	}
 
 	// --- Ratings routes ---
@@ -2410,15 +2571,13 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 	// auth middleware. Money path (POST /payouts) posts a balanced double-entry
 	// via the shared ledger, enforces tier limits fail-closed, and is idempotent.
 	if cfg.FeatureDoctorEnabled {
-		// Wave 6: realtime layer. The RTC Issuer signs short-lived Agora/VideoSDK
+		// Wave 6: realtime layer. The RTC Issuer signs short-lived VideoSDK
 		// join tokens server-side (creds never leave the process); an unconfigured
 		// provider yields an empty token + a "not configured" flag, never a fake one.
 		// One shared WS Hub fans push events to a doctor's connected devices.
 		rtcIssuer := rtc.NewIssuer(rtc.Config{
-			AgoraAppID:          cfg.AgoraAppID,
-			AgoraAppCertificate: cfg.AgoraAppCertificate,
-			VideoSDKAPIKey:      cfg.VideoSDKAPIKey,
-			VideoSDKSecret:      cfg.VideoSDKSecret,
+			VideoSDKAPIKey: cfg.VideoSDKAPIKey,
+			VideoSDKSecret: cfg.VideoSDKSecret,
 		})
 		doctorHub := platformWS.New(wsOriginAllowed)
 
@@ -2697,7 +2856,7 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		docGroup.GET("/chat/:threadId/messages", doctorHandler.ListChatMessages)
 		docGroup.POST("/chat/:threadId/messages", doctorHandler.SendChatMessage)
 
-		// ── Wave 4/6: CALL SESSIONS (Wave 6 issues real Agora/VideoSDK RTC tokens) ──
+		// ── Wave 4/6: CALL SESSIONS (Wave 6 issues real VideoSDK RTC tokens) ──
 		docGroup.GET("/calls/:appointmentId", doctorHandler.GetCallSession)
 		docGroup.POST("/calls/:appointmentId/join", doctorHandler.StartCallSession)
 		docGroup.POST("/calls/:appointmentId/leave", doctorHandler.EndCallSession)
@@ -3011,6 +3170,7 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		DB:       pool,
 		Supabase: supabase,
 		RBAC:     rbac,
+		Ledger:   ledgerSvc,
 		Enabled:  cfg.FeatureRealtorEnabled,
 	})
 
@@ -3092,6 +3252,33 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 	// threaded into revenue modules wired outside this function (Marketplace). Nil
 	// when the engine is flag-off / pool-less — the receiving setter is nil-safe.
 	return rewardSvc
+}
+
+// foodDisputeResolverAdapter bridges finance/disputes.Service's decoupled
+// FoodDisputeResolver interface to the real *restaurant.Service (FOOD-004): the
+// generic admin dispute-resolve endpoint dispatches module_type=="food" disputes here
+// instead of bare-flipping the disputes.status column, so a refund resolution now
+// actually posts the platform-funded ledger reversal and (on a full refund of an
+// order whose rider was already paid) the tip clawback that
+// AdminResolveFoodDispute/ResolveGenericDispute already implement.
+//
+// It also translates restaurant's typed errors (ErrForbidden, ErrDisputeInvalid) into
+// disputes' own sentinels so the shared handler can still answer 403/422 instead of a
+// blanket 500 without the disputes package importing internal/restaurant.
+type foodDisputeResolverAdapter struct{ svc *restaurant.Service }
+
+func (a foodDisputeResolverAdapter) ResolveGenericDispute(ctx context.Context, disputeID, adminID, resolution string, refundKobo int64, note string) error {
+	_, err := a.svc.ResolveGenericDispute(ctx, disputeID, adminID, resolution, refundKobo, note)
+	switch {
+	case err == nil:
+		return nil
+	case errors.Is(err, restaurant.ErrForbidden):
+		return fmt.Errorf("%w: %s", disputes.ErrDisputeForbidden, err)
+	case errors.Is(err, restaurant.ErrDisputeInvalid):
+		return fmt.Errorf("%w: %s", disputes.ErrDisputeNotResolvable, err)
+	default:
+		return err
+	}
 }
 
 // Mobility (transport) admin RBAC permission slugs. These gate the admin-facing

@@ -463,11 +463,31 @@ func (s *Service) UpdateRestaurant(ctx context.Context, restaurantID, userID str
 }
 
 // SetAvailability is the merchant's operational open/closed switch (business
-// hours / pausing new orders). Eligibility/KYC gating is handled upstream by the
-// merchant-onboarding engine — reaching this endpoint requires owning the store.
+// hours / pausing new orders).
+//
+// FOOD-010: the comment this replaced claimed "eligibility/KYC gating is
+// handled upstream by the merchant-onboarding engine" — that gate did not
+// exist anywhere. PlaceOrder only ever checked `is_open`, never `kyb_status`,
+// and this function let ANY owner flip `is_open=true` regardless of KYB
+// state — so admin review (FOOD-003's onboarding/approve flow) was entirely
+// optional: an owner could open their own store and take real paying
+// customers without ever being reviewed. Closing is always allowed (a
+// restaurant must always be able to stop taking orders); OPENING now
+// requires `kyb_status='approved'`, fail-closed, matching this module's
+// ADR-033 tier-gate pattern of refusing at the point of the risky action
+// rather than downstream at money-movement time.
 func (s *Service) SetAvailability(ctx context.Context, restaurantID, userID string, isOpen bool) (*Restaurant, error) {
 	if err := s.AssertStaffPermission(ctx, restaurantID, userID, PermManageStore); err != nil {
 		return nil, err
+	}
+	if isOpen {
+		var kybStatus *string
+		if err := s.db.QueryRow(ctx, `SELECT kyb_status FROM restaurants WHERE id=$1`, restaurantID).Scan(&kybStatus); err != nil {
+			return nil, fmt.Errorf("restaurant: load kyb status: %w", err)
+		}
+		if kybStatus == nil || *kybStatus != string(KYBApproved) {
+			return nil, ErrKYBNotApproved
+		}
 	}
 	if _, err := s.db.Exec(ctx, `UPDATE restaurants SET is_open=$2, updated_at=NOW() WHERE id=$1`,
 		restaurantID, isOpen); err != nil {

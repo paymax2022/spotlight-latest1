@@ -4,7 +4,17 @@ import { PageHeader, InsuranceTabs, UnbuiltSurface } from '../_ui';
 import { probe } from '@/services/insuranceAdminService';
 
 /**
- * Product routing — no backend endpoint exists for this surface yet.
+ * Product routing.
+ *
+ * The WRITE half of this exists and is live: PATCH
+ * /api/insurance/admin/routing/:code (catalogHandler.AdminSetRouting, perm
+ * insurance.routing.manage) sets one product's aggregator + provider_product_
+ * code and returns 200 — verified with a real call 2026-09-17. What is
+ * genuinely missing is a GET/list endpoint to read the CURRENT mapping across
+ * products, which is what this page needs to render a table. The probe below
+ * still calls GET on the same path and will still 404 for that reason, not
+ * because "no backend endpoint exists" — see insuranceAdminService.ts's
+ * `probe` comment for the same note.
  *
  * See UnbuiltSurface in _ui.tsx for why the page probes live instead of
  * rendering fixtures.

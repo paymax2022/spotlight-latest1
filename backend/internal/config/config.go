@@ -65,6 +65,13 @@ type Config struct {
 	// member /api/finance/maplerad/* routes, the /api/webhooks/maplerad/go webhook,
 	// and the reconcile + orphan-sweep jobs. DEFAULT OFF — no flag, no money path.
 	FeatureMapleradEnabled bool
+	// FeatureUtilityBillsEnabled gates the Utility Bills DOMAIN money path
+	// (Next.js → Go migration, Phase 1+): member /api/finance/utilitybills/*
+	// routes, admin routes, and background jobs (pending-transaction requery
+	// sweep). DEFAULT OFF — no flag, no money path. Phase 0 (this package's
+	// pure domain types/logic) has nothing gated by it; the flag exists now
+	// so Phase 1 can wire behind it without a second config PR.
+	FeatureUtilityBillsEnabled bool
 
 	// Eversend credentials (FX provider 2).
 	EversendClientID      string
@@ -164,6 +171,13 @@ type Config struct {
 	FeatureEstateEnabled       bool
 	FeatureCrowdfundingEnabled bool
 	FeatureRestaurantEnabled   bool
+	// FeatureRestaurantWithdrawalsEnabled gates the merchant/rider withdrawal
+	// money path (wallet → saved bank account; restaurant/withdrawal.go
+	// RequestWithdrawal). Default OFF: the routes are always mounted once
+	// FeatureRestaurantEnabled is on (list/admin views are read-only-safe), but
+	// RequestWithdrawal itself refuses with ErrWithdrawalsDisabled until this is
+	// explicitly turned on (see Service.WithWithdrawals).
+	FeatureRestaurantWithdrawalsEnabled bool
 	// FeatureModuleGateEnforce turns the server-side module gate from observe-only
 	// (logs what it would refuse) into enforcing (503s unpublished modules). Default
 	// false: the gate's route map is hand-built and must be validated against real
@@ -233,6 +247,7 @@ type Config struct {
 	FeatureAcademySchoolsEnabled          bool // Academy Phase 4: B2B2C institutions + licences + enrolment
 	FeatureAcademyTutorEnabled            bool // Academy Phase 4: tutor marketplace + payouts
 	FeatureAcademyFeesEnabled             bool // Academy EdTech Fees: invoices, vault, promotion, competition, scholarship, trust-score, compliance export
+	FeatureAcademyTuitionEnabled          bool // Academy tuition payment path (Phases 1–5 Go migration)
 	FeatureConnectEnabled                 bool // Paymax Connect (dating/networking) module
 	FeatureContestStageEvictionEnabled    bool // Voting contest stage eviction system (multi-stage, grace period, judge save)
 	// Property Management suite (unification umbrella over estate + realtor):
@@ -428,14 +443,12 @@ type Config struct {
 	DoctorAIRatePerDay int
 
 	// ── Doctor RTC (real-time call) credentials ──────────────────────────────
-	// SERVER-SIDE ONLY. The App Certificate / VideoSDK secret are used to SIGN
-	// short-lived join tokens and are NEVER shipped to a client. Empty creds
-	// disable the provider: the call session returns an empty token + a
-	// "not configured" flag (never a fabricated token).
-	AgoraAppID          string
-	AgoraAppCertificate string
-	VideoSDKAPIKey      string
-	VideoSDKSecret      string
+	// SERVER-SIDE ONLY. The VideoSDK secret is used to SIGN short-lived join
+	// tokens and is NEVER shipped to a client. Empty creds disable the provider:
+	// the call session returns an empty token + a "not configured" flag (never a
+	// fabricated token).
+	VideoSDKAPIKey string
+	VideoSDKSecret string
 
 	// ── Paymax Connect ───────────────────────────────────────────────────────
 	// Server-side pepper for hashing verification identifiers (HMAC-SHA256).
@@ -608,11 +621,12 @@ func Load() Config {
 		CryptoQuidaxLiveKey:     getEnv("QUIDAX_LIVE_API_KEY", ""),
 		CryptoQuidaxLiveBaseURL: getEnv("QUIDAX_LIVE_BASE_URL", "https://app.quidax.io/api/v1"),
 
-		MapleradSecretKey:      getEnv("MAPLERAD_SECRET_KEY", ""),
-		MapleradPublicKey:      getEnv("MAPLERAD_PUBLIC_KEY", ""),
-		MapleradProd:           getEnvBool("MAPLERAD_PROD", false),
-		MapleradWebhookSecret:  getEnv("MAPLERAD_WEBHOOK_SECRET", ""),
-		FeatureMapleradEnabled: getEnvBool("FEATURE_MAPLERAD_ENABLED", false),
+		MapleradSecretKey:          getEnv("MAPLERAD_SECRET_KEY", ""),
+		MapleradPublicKey:          getEnv("MAPLERAD_PUBLIC_KEY", ""),
+		MapleradProd:               getEnvBool("MAPLERAD_PROD", false),
+		MapleradWebhookSecret:      getEnv("MAPLERAD_WEBHOOK_SECRET", ""),
+		FeatureMapleradEnabled:     getEnvBool("FEATURE_MAPLERAD_ENABLED", false),
+		FeatureUtilityBillsEnabled: getEnvBool("FEATURE_UTILITY_BILLS_ENABLED", false),
 
 		EversendClientID:      getEnv("EVERSEND_CLIENT_ID", ""),
 		EversendClientSecret:  getEnv("EVERSEND_CLIENT_SECRET", ""),
@@ -681,6 +695,7 @@ func Load() Config {
 		FeatureEstateEnabled:                  getEnvBool("FEATURE_ESTATE_ENABLED", false),
 		FeatureCrowdfundingEnabled:            getEnvBool("FEATURE_CROWDFUNDING_ENABLED", false),
 		FeatureRestaurantEnabled:              getEnvBool("FEATURE_RESTAURANT_ENABLED", false),
+		FeatureRestaurantWithdrawalsEnabled:   getEnvBool("FEATURE_RESTAURANT_WITHDRAWALS_ENABLED", false),
 		FeatureModuleGateEnforce:              getEnvBool("FEATURE_MODULE_GATE_ENFORCE", false),
 		FeatureNutritionEnabled:               getEnvBool("FEATURE_NUTRITION_ENABLED", false),
 		FeatureTelemedicineEnabled:            getEnvBool("FEATURE_TELEMEDICINE_ENABLED", false),
@@ -715,6 +730,7 @@ func Load() Config {
 		FeatureAcademySchoolsEnabled:          getEnvBool("FEATURE_ACADEMY_SCHOOLS_ENABLED", false),
 		FeatureAcademyTutorEnabled:            getEnvBool("FEATURE_ACADEMY_TUTOR_ENABLED", false),
 		FeatureAcademyFeesEnabled:             getEnvBool("FEATURE_ACADEMY_FEES_ENABLED", false),
+		FeatureAcademyTuitionEnabled:          getEnvBool("FEATURE_ACADEMY_TUITION_ENABLED", false),
 		FeatureConnectEnabled:                 getEnvBool("FEATURE_CONNECT_ENABLED", false),
 		FeatureContestStageEvictionEnabled:    getEnvBool("FEATURE_CONTEST_STAGE_EVICTION_ENABLED", false),
 		FeaturePropertySuiteEnabled:           getEnvBool("FEATURE_PROPERTY_SUITE_ENABLED", false),
@@ -783,10 +799,8 @@ func Load() Config {
 		DoctorAIRatePerMin: getEnvInt("DOCTOR_AI_RATE_PER_MIN", 20),
 		DoctorAIRatePerDay: getEnvInt("DOCTOR_AI_RATE_PER_DAY", 200),
 
-		AgoraAppID:          getEnv("AGORA_APP_ID", ""),
-		AgoraAppCertificate: getEnv("AGORA_APP_CERTIFICATE", ""),
-		VideoSDKAPIKey:      getEnv("VIDEOSDK_API_KEY", ""),
-		VideoSDKSecret:      getEnv("VIDEOSDK_SECRET", ""),
+		VideoSDKAPIKey: getEnv("VIDEOSDK_API_KEY", ""),
+		VideoSDKSecret: getEnv("VIDEOSDK_SECRET", ""),
 
 		ConnectVerificationPepper: getEnv("CONNECT_VERIFICATION_PEPPER", ""),
 

@@ -429,13 +429,59 @@ func parseOptionalFloat(s string) *float64 {
 // ─── Admin handlers (RBAC health.pharmacy.* applied at route registration) ───
 
 // AdminListOrders — GET /admin/orders  order/delivery oversight.
+//
+// PHARMACY-001: the admin frontend (healthPharmacyAdminService.ts listOrders)
+// sends `status` + `fulfilment` query params; this used to read only `state` +
+// `pharmacy_provider_id`, so both filters silently no-op'd. Backend now accepts
+// the frontend's actual param names (preferred: it's the frontend's documented
+// contract — see the PR description for why this side was picked over renaming
+// the frontend), aliasing the older `state`/`fulfilment_method` names for
+// back-compat with any other caller. Values are upper-cased before the query
+// since pharmacy_orders.state/fulfilment_method store upper-case enum values
+// (OrderState/FulfilmentMethod, model.go) while the frontend's own status
+// vocabulary (types/healthAdmin.ts PharmacyOrderStatus) is lower-case.
 func (h *Handler) AdminListOrders(c *gin.Context) {
-	rows, err := h.svc.AdminListOrders(c.Request.Context(), c.Query("state"), c.Query("pharmacy_provider_id"))
+	state := strings.ToUpper(strings.TrimSpace(firstNonEmpty(c.Query("status"), c.Query("state"))))
+	fulfilment := strings.ToUpper(strings.TrimSpace(firstNonEmpty(c.Query("fulfilment"), c.Query("fulfilment_method"))))
+	rows, err := h.svc.AdminListOrders(c.Request.Context(), state, fulfilment, c.Query("pharmacy_provider_id"))
 	if err != nil {
 		fail(c, http.StatusInternalServerError, err.Error())
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"success": true, "orders": rows})
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": rows, "orders": rows})
+}
+
+// AdminGetOrder — GET /admin/orders/:id  single admin-scoped order detail read
+// (PHARMACY-001). Only a list existed before; the admin console's order-detail
+// drawer (healthPharmacyAdminService.ts getOrder) had nothing to call and 404'd.
+func (h *Handler) AdminGetOrder(c *gin.Context) {
+	o, err := h.svc.AdminGetOrder(c.Request.Context(), c.Param("id"))
+	if err != nil {
+		fail(c, http.StatusNotFound, err.Error())
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": o, "order": o})
+}
+
+// AdminDashboard — GET /admin/dashboard  platform-wide KPI aggregate
+// (PHARMACY-001). See Service.AdminDashboard / AdminDashboard (admin.go,
+// admin_model.go) for exactly what is computed and why fields this batch
+// cannot honestly compute are left off the shape entirely rather than
+// fabricated.
+func (h *Handler) AdminDashboard(c *gin.Context) {
+	d, err := h.svc.AdminDashboard(c.Request.Context())
+	if err != nil {
+		fail(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": d})
+}
+
+func firstNonEmpty(a, b string) string {
+	if a != "" {
+		return a
+	}
+	return b
 }
 
 // AdminDispenseAudit — GET /admin/dispense-audit  Rx/controlled dispense audit (HL-12).

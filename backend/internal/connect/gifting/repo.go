@@ -3,6 +3,7 @@ package connectgifting
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -80,6 +81,54 @@ func (r *Repository) ListSent(ctx context.Context, userID string, limit int) ([]
 // ListReceived returns gifts received by a user, newest first.
 func (r *Repository) ListReceived(ctx context.Context, userID string, limit int) ([]Gift, error) {
 	return r.listByColumn(ctx, "recipient_id", userID, limit)
+}
+
+// AdminGiftRow is the raw row shape for the admin ledger view — connect_gifts
+// joined with connect_gift_catalog for a human-readable name. Read-only.
+type AdminGiftRow struct {
+	ID          string
+	SenderID    string
+	RecipientID string
+	GiftCode    *string
+	GiftName    *string
+	AmountKobo  int64
+	Status      string
+	LedgerRef   string
+	CreatedAt   time.Time
+}
+
+// ListAdminGifts returns gifts for the admin ledger view, newest first,
+// optionally filtered by the real connect_gifts.status value ("" = all).
+// Never mutates data.
+func (r *Repository) ListAdminGifts(ctx context.Context, status string, limit int) ([]AdminGiftRow, error) {
+	if limit <= 0 || limit > 500 {
+		limit = 100
+	}
+	const q = `
+		SELECT g.id, g.sender_id, g.recipient_id, g.gift_code, c.name,
+		       g.amount_kobo, g.status, g.ledger_ref, g.created_at
+		FROM connect_gifts g
+		LEFT JOIN connect_gift_catalog c ON c.code = g.gift_code
+		WHERE ($1 = '' OR g.status = $1)
+		ORDER BY g.created_at DESC
+		LIMIT $2`
+	rows, err := r.db.Query(ctx, q, status, limit)
+	if err != nil {
+		return nil, fmt.Errorf("gifting: list admin gifts: %w", err)
+	}
+	defer rows.Close()
+	var out []AdminGiftRow
+	for rows.Next() {
+		var row AdminGiftRow
+		if err := rows.Scan(
+			&row.ID, &row.SenderID, &row.RecipientID, &row.GiftCode, &row.GiftName,
+			&row.AmountKobo, &row.Status, &row.LedgerRef, &row.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		out = append(out, row)
+	}
+	return out, rows.Err()
 }
 
 // listByColumn is the shared list query. The column name is a fixed internal

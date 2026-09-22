@@ -97,8 +97,13 @@ export interface PaymentsFinanceConsole {
     totalBalanceKobo: number;
     creditVolumeKobo: number;
     debitVolumeKobo: number;
+    /** WAL-013: distinct wallets with >=1 ledger movement within statsWindowDays. */
+    activeWalletsCount: number;
+    /** WAL-013: rolling window (days) the volume + active-wallet figures are computed over. */
+    statsWindowDays: number;
     pendingKyc: number;
     verifiedKyc: number;
+    error?: string | null;
   };
 }
 
@@ -146,17 +151,65 @@ export async function kycAction(action: KycAction, userId: string, opts?: { tier
 
 export type WalletDirection = 'credit' | 'debit';
 
-export async function adjustWallet(userId: string, direction: WalletDirection, amountNaira: number, reason: string): Promise<{ reference: string; alreadyProcessed: boolean }> {
+/** Server requires a reason of at least 10 characters — see ADR-005 maker-checker. */
+export const ADJUST_WALLET_MIN_REASON_LENGTH = 10;
+
+export interface AdjustWalletResult {
+  adjustmentId: string;
+  /** 'executed' = money already moved. 'pending_approval' = queued for a second admin — nothing has moved yet. */
+  status: 'executed' | 'pending_approval';
+  requiresApproval: boolean;
+  alreadyProcessed: boolean;
+}
+
+/**
+ * Routes through the REAL ADR-005 maker-checker endpoint
+ * (POST /api/v1/admin/adjustments — see frontend-web/src/server/admin/fintech/service.ts).
+ *
+ * WAL-004: this used to POST to /api/admin/payments-finance/wallet/adjust,
+ * a second, unguarded wallet-mutation route that executed any amount
+ * immediately with no maker-checker threshold, no approval queue, and a
+ * single actor — a live-verified ₦500,000 credit went through it instantly
+ * while admin_adjustments stayed at 0 rows. That route is now unused; see
+ * frontend-web/app/api/admin/payments-finance/wallet/adjust/route.ts's own
+ * header comment for disposition.
+ *
+ * Field translation for the real endpoint's contract:
+ *   userId        -> target_user_id
+ *   direction      -> type ('credit'->'CREDIT', 'debit'->'DEBIT')
+ *   amountKobo     -> amount_kobo
+ *   reason         -> reason (>= 10 chars, enforced server-side too)
+ */
+export async function adjustWallet(userId: string, direction: WalletDirection, amountNaira: number, reason: string): Promise<AdjustWalletResult> {
+  const trimmedReason = reason.trim();
+  if (trimmedReason.length < ADJUST_WALLET_MIN_REASON_LENGTH) {
+    throw new Error(`Reason must be at least ${ADJUST_WALLET_MIN_REASON_LENGTH} characters.`);
+  }
   const amountKobo = Math.round(amountNaira * 100);
   const idempotencyKey = crypto.randomUUID();
-  const res = await fetch(`${webBase()}/api/admin/payments-finance/wallet/adjust`, {
+  const res = await fetch(`${webBase()}/api/v1/admin/adjustments`, {
     method: 'POST',
     headers: authHeaders(true, { 'Idempotency-Key': idempotencyKey }),
-    body: JSON.stringify({ userId, direction, amountKobo, reason }),
+    body: JSON.stringify({
+      target_user_id: userId,
+      type: direction === 'credit' ? 'CREDIT' : 'DEBIT',
+      amount_kobo: amountKobo,
+      reason: trimmedReason,
+    }),
   });
   const json = await readJsonOrThrow(res, 'Adjusting wallet');
-  const result = json.result as { alreadyProcessed: boolean };
-  return { reference: json.reference as string, alreadyProcessed: result.alreadyProcessed };
+  const adjustment = json.adjustment as {
+    adjustmentId: string;
+    status: 'executed' | 'pending_approval';
+    requiresApproval: boolean;
+    alreadyProcessed: boolean;
+  };
+  return {
+    adjustmentId: adjustment.adjustmentId,
+    status: adjustment.status,
+    requiresApproval: adjustment.requiresApproval,
+    alreadyProcessed: adjustment.alreadyProcessed,
+  };
 }
 
 export async function backfillWallets(): Promise<number> {
