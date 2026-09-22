@@ -105,12 +105,15 @@ type VetService struct {
 // Appointment is the vet-vertical projection of a health_appointments row plus the
 // HL-9 escrow money leg. State mirrors the scheduling engine; PayState tracks the
 // escrow hold. EscrowID is the funds-hold reference (no balance column — HL-9).
+// ServiceID is a pointer: vet_appointment_payments.service_id is nullable with
+// ON DELETE SET NULL on its FK to vet_services, so a historical appointment can
+// end up referencing a since-deleted service.
 type Appointment struct {
 	ID          string    `json:"id"`
 	ProviderID  string    `json:"provider_id"`
 	OwnerID     string    `json:"owner_id"` // patient/owner (auth.users)
 	PetID       string    `json:"pet_id"`   // subject (PET)
-	ServiceID   string    `json:"service_id"`
+	ServiceID   *string   `json:"service_id,omitempty"`
 	VisitType   VisitType `json:"visit_type"`
 	State       ApptState `json:"state"`
 	PayState    PayState  `json:"pay_state"`

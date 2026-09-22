@@ -247,6 +247,7 @@ type Config struct {
 	FeatureAcademySchoolsEnabled          bool // Academy Phase 4: B2B2C institutions + licences + enrolment
 	FeatureAcademyTutorEnabled            bool // Academy Phase 4: tutor marketplace + payouts
 	FeatureAcademyFeesEnabled             bool // Academy EdTech Fees: invoices, vault, promotion, competition, scholarship, trust-score, compliance export
+	FeatureAcademyTuitionEnabled          bool // Academy tuition payment path (Phases 1–5 Go migration)
 	FeatureConnectEnabled                 bool // Paymax Connect (dating/networking) module
 	FeatureContestStageEvictionEnabled    bool // Voting contest stage eviction system (multi-stage, grace period, judge save)
 	// Property Management suite (unification umbrella over estate + realtor):
@@ -729,6 +730,7 @@ func Load() Config {
 		FeatureAcademySchoolsEnabled:          getEnvBool("FEATURE_ACADEMY_SCHOOLS_ENABLED", false),
 		FeatureAcademyTutorEnabled:            getEnvBool("FEATURE_ACADEMY_TUTOR_ENABLED", false),
 		FeatureAcademyFeesEnabled:             getEnvBool("FEATURE_ACADEMY_FEES_ENABLED", false),
+		FeatureAcademyTuitionEnabled:          getEnvBool("FEATURE_ACADEMY_TUITION_ENABLED", false),
 		FeatureConnectEnabled:                 getEnvBool("FEATURE_CONNECT_ENABLED", false),
 		FeatureContestStageEvictionEnabled:    getEnvBool("FEATURE_CONTEST_STAGE_EVICTION_ENABLED", false),
 		FeaturePropertySuiteEnabled:           getEnvBool("FEATURE_PROPERTY_SUITE_ENABLED", false),

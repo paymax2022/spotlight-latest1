@@ -63,6 +63,7 @@ const navItemsBase: NavItem[] = [
   { label: 'Voting Visibility', href: '/admin/voting/visibility', section: 'Voting', permissions: ['votes:manage'] },
   { label: 'Contest Prizes', href: '/admin/voting/prizes', section: 'Voting', permissions: ['votes:manage'] },
   { label: 'Contest Results', href: '/admin/voting/results', section: 'Voting', permissions: ['votes:manage'] },
+  { label: 'Voting Audit Log', href: '/admin/voting/audit-log', section: 'Voting', permissions: ['votes:manage'] },
   { label: 'Chat Sessions', href: '/admin/chatbot', section: 'Support' },
   { label: 'Leads Queue', href: '/admin/leads', section: 'Support' },
   { label: 'Handoff Queue', href: '/admin/handoffs', section: 'Support' },
