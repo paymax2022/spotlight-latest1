@@ -43,9 +43,9 @@ function statusPresentation(status: string | null): { label: string; color: stri
     case 'rejected':
       return { label: 'Not successful', color: Colors.error, bg: Colors.surfaceVariant };
     case 'under_review':
-      return { label: 'Under review', color: Colors.gold, bg: Colors.iconBgGold };
+      return { label: 'Under review', color: Colors.onWarning, bg: Colors.iconBgGold };
     case 'waitlisted':
-      return { label: 'Waitlisted', color: Colors.gold, bg: Colors.iconBgGold };
+      return { label: 'Waitlisted', color: Colors.onWarning, bg: Colors.iconBgGold };
     default:
       return { label: 'Submitted', color: Colors.onSurfaceVariant, bg: Colors.surfaceVariant };
   }
@@ -288,7 +288,7 @@ const styles = StyleSheet.create({
   actionBody:  { flex: 1, gap: 2 },
   actionLabel: { ...Typography.labelLg, color: Colors.onSurface },
   actionDetail:{ ...Typography.bodySm, color: Colors.onSurfaceVariant },
-  actionAmount:{ ...Typography.labelLg, color: Colors.gold, marginTop: 2 },
+  actionAmount:{ ...Typography.labelLg, color: Colors.onWarning, marginTop: 2 },
 
   feeRow:      { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   feeLabel:    { ...Typography.bodyMd, color: Colors.onSurfaceVariant },

@@ -135,7 +135,7 @@ const styles = StyleSheet.create({
   rankWrap: { width: 30, alignItems: 'center' },
   rankPodium: { },
   rank: { ...Typography.titleMd, color: Colors.onSurfaceVariant },
-  rankPodiumText: { color: Colors.gold, fontWeight: '700' },
+  rankPodiumText: { color: Colors.onWarning, fontWeight: '700' },
   avatar: { width: 38, height: 38, borderRadius: Radius.full, alignItems: 'center', justifyContent: 'center' },
   avatarText: { ...Typography.labelLg, color: Colors.primary, fontWeight: '700' },
   name: { ...Typography.labelLg, color: Colors.onSurface },

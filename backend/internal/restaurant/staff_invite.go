@@ -28,12 +28,12 @@ import (
 
 // StaffMember is one row of the roster. The token hash is deliberately absent.
 type StaffMember struct {
-	UserID     string     `json:"user_id"`
-	Email      string     `json:"email,omitempty"`
-	Role       StaffRole  `json:"role"`
+	UserID     string      `json:"user_id"`
+	Email      string      `json:"email,omitempty"`
+	Role       StaffRole   `json:"role"`
 	Status     StaffStatus `json:"status"`
-	AcceptedAt *time.Time `json:"accepted_at,omitempty"`
-	CreatedAt  time.Time  `json:"created_at"`
+	AcceptedAt *time.Time  `json:"accepted_at,omitempty"`
+	CreatedAt  time.Time   `json:"created_at"`
 	// InviteTokenHash is never populated by ListStaff. It exists only so a test
 	// can assert that fact.
 	InviteTokenHash string `json:"-"`

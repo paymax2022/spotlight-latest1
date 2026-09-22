@@ -121,5 +121,5 @@ const styles = StyleSheet.create({
   title: { ...Typography.labelLg, color: Colors.onSurface },
   meta: { ...Typography.labelSm, color: Colors.onSurfaceVariant, marginTop: 1 },
   ackRow: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 3 },
-  ackText: { ...Typography.caption, color: Colors.gold, fontWeight: '700' as const },
+  ackText: { ...Typography.caption, color: Colors.onWarning, fontWeight: '700' as const },
 });

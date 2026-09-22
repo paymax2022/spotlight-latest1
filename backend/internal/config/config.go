@@ -161,7 +161,6 @@ type Config struct {
 	PaymaxWebhookSecret           string
 	FeatureGroupsEnabled          bool
 	FeatureAssociationsEnabled    bool
-
 	// AssocCardSigningSecret is the HMAC secret for digital membership cards.
 	// Empty outside development is a hard startup failure: the fallback is a
 	// constant compiled into this (public) repo, so anyone could forge a
@@ -171,6 +170,13 @@ type Config struct {
 	FeatureEstateEnabled       bool
 	FeatureCrowdfundingEnabled bool
 	FeatureRestaurantEnabled   bool
+	// FeatureRestaurantWithdrawalsEnabled gates the merchant WITHDRAWAL money path
+	// (bank-account capture + payout requests + admin settle/reverse). Default OFF:
+	// RequestWithdrawal reserves a balanced ledger post (DR merchant wallet → CR
+	// failed_transfer_suspense) under a per-wallet advisory lock, and the admin
+	// settle/reverse pair moves real money, so the module must never become
+	// reachable implicitly. See backend/internal/restaurant/withdrawal.go.
+	FeatureRestaurantWithdrawalsEnabled bool
 	// FeatureModuleGateEnforce turns the server-side module gate from observe-only
 	// (logs what it would refuse) into enforcing (503s unpublished modules). Default
 	// false: the gate's route map is hand-built and must be validated against real
@@ -690,6 +696,7 @@ func Load() Config {
 		FeatureEstateEnabled:                  getEnvBool("FEATURE_ESTATE_ENABLED", false),
 		FeatureCrowdfundingEnabled:            getEnvBool("FEATURE_CROWDFUNDING_ENABLED", false),
 		FeatureRestaurantEnabled:              getEnvBool("FEATURE_RESTAURANT_ENABLED", false),
+		FeatureRestaurantWithdrawalsEnabled:   getEnvBool("FEATURE_RESTAURANT_WITHDRAWALS_ENABLED", false),
 		FeatureModuleGateEnforce:              getEnvBool("FEATURE_MODULE_GATE_ENFORCE", false),
 		FeatureNutritionEnabled:               getEnvBool("FEATURE_NUTRITION_ENABLED", false),
 		FeatureTelemedicineEnabled:            getEnvBool("FEATURE_TELEMEDICINE_ENABLED", false),

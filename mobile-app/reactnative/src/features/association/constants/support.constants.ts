@@ -4,7 +4,7 @@ import { Colors } from '@/constants/colors';
 import type { TicketStatus, TicketCategory } from '../types/settings.types';
 
 export const TICKET_STATUS_STYLE: Record<TicketStatus, { label: string; color: string; bg: string }> = {
-  OPEN:        { label: 'Open',        color: Colors.gold,      bg: Colors.iconBgGold },
+  OPEN:        { label: 'Open',        color: Colors.onWarning, bg: Colors.iconBgGold },
   IN_PROGRESS: { label: 'In progress', color: Colors.secondary, bg: Colors.iconBgBlue },
   RESOLVED:    { label: 'Resolved',    color: Colors.teal,      bg: Colors.iconBgTeal },
 };

@@ -1,6 +1,6 @@
 // ── Restaurant & Delivery — API wrapper ──────────────────────────────────────
 // Typed data layer the food screens code against. Mirrors parcel.api.ts:
-// mock-flagged, shared axios `api` client, BASE = '/api/v1/restaurant',
+// mock-flagged, shared axios `api` client, BASE = '/api/finance/restaurant',
 // Idempotency-Key on money mutations. Flip EXPO_PUBLIC_FOOD_USE_MOCK=false (or
 // EXPO_PUBLIC_RESTAURANT_USE_MOCK) once the Go endpoints are reachable.
 //
@@ -48,7 +48,13 @@ export type { DeliveryQuote, DeliveryFeeBreakdown } from './deliveryFee';
 export const USE_MOCK =
   mockAllowed(process.env.EXPO_PUBLIC_FOOD_USE_MOCK ?? process.env.EXPO_PUBLIC_RESTAURANT_USE_MOCK, true);
 
-const BASE = '/api/v1/restaurant';
+// Was '/api/v1/restaurant' — no such route exists on the Go backend, only
+// '/api/finance/restaurant' (see finance_routes.go's restGroup, which is also
+// what restaurantmerchant/api.ts already targets). Every live call here 404'd;
+// masked in local dev because USE_MOCK defaults to true, so a new restaurant
+// (created through the merchant flow, which IS wired to the real backend)
+// never showed up in customer discovery even after the is_open fix below.
+const BASE = '/api/finance/restaurant';
 const delay = (ms = 320) => new Promise((r) => setTimeout(r, ms));
 const unwrap = <T>(res: { data: { data?: T } & T }): T => (res.data?.data ?? res.data) as T;
 const idemHeader = (key: string) => ({ headers: { 'Idempotency-Key': key } });

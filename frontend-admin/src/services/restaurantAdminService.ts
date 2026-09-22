@@ -362,76 +362,6 @@ function storeBase(): string {
   return `${adminBase()}/restaurants`;
 }
 
-export async function getRestaurantDetail(id: string): Promise<RestaurantDetail> {
-  if (USE_MOCK) {
-    await delay();
-    const r = MOCK_RESTAURANTS.find((x) => x.id === id) ?? MOCK_RESTAURANTS[0];
-    return { restaurant: r, categories: MOCK_MENU };
-  }
-  return reqAt<RestaurantDetail>(`${storeBase()}/${encodeURIComponent(id)}`);
-}
-
-export async function updateRestaurant(id: string, patch: UpdateRestaurantRequest): Promise<Restaurant> {
-  if (USE_MOCK) throw new Error(`Updating a restaurant ${NOT_IN_FIXTURE_MODE}`);
-  return reqAt<Restaurant>(`${storeBase()}/${encodeURIComponent(id)}`, {
-    method: 'PATCH',
-    body: JSON.stringify(patch),
-  });
-}
-
-/** Operator force-open / force-close. */
-export async function setRestaurantAvailability(id: string, isOpen: boolean): Promise<Restaurant> {
-  if (USE_MOCK) throw new Error(`Changing restaurant availability ${NOT_IN_FIXTURE_MODE}`);
-  return reqAt<Restaurant>(`${storeBase()}/${encodeURIComponent(id)}/availability`, {
-    method: 'PATCH',
-    body: JSON.stringify({ is_open: isOpen }),
-  });
-}
-
-export async function createMenuCategory(restaurantId: string, name: string): Promise<MenuCategory> {
-  if (USE_MOCK) throw new Error(`Creating a menu category ${NOT_IN_FIXTURE_MODE}`);
-  return reqAt<MenuCategory>(`${storeBase()}/${encodeURIComponent(restaurantId)}/menu/categories`, {
-    method: 'POST',
-    body: JSON.stringify({ name }),
-  });
-}
-
-export async function deleteMenuCategory(restaurantId: string, categoryId: string): Promise<void> {
-  if (USE_MOCK) throw new Error(`Deleting a menu category ${NOT_IN_FIXTURE_MODE}`);
-  await reqAt<{ deleted: boolean }>(
-    `${storeBase()}/${encodeURIComponent(restaurantId)}/menu/categories/${encodeURIComponent(categoryId)}`,
-    { method: 'DELETE' },
-  );
-}
-
-export async function createMenuItem(restaurantId: string, req: CreateMenuItemRequest): Promise<MenuItem> {
-  if (USE_MOCK) throw new Error(`Creating a menu item ${NOT_IN_FIXTURE_MODE}`);
-  return reqAt<MenuItem>(`${storeBase()}/${encodeURIComponent(restaurantId)}/menu/items`, {
-    method: 'POST',
-    body: JSON.stringify(req),
-  });
-}
-
-export async function updateMenuItem(
-  restaurantId: string,
-  itemId: string,
-  patch: UpdateMenuItemRequest,
-): Promise<MenuItem> {
-  if (USE_MOCK) throw new Error(`Updating a menu item ${NOT_IN_FIXTURE_MODE}`);
-  return reqAt<MenuItem>(
-    `${storeBase()}/${encodeURIComponent(restaurantId)}/menu/items/${encodeURIComponent(itemId)}`,
-    { method: 'PATCH', body: JSON.stringify(patch) },
-  );
-}
-
-export async function deleteMenuItem(restaurantId: string, itemId: string): Promise<void> {
-  if (USE_MOCK) throw new Error(`Deleting a menu item ${NOT_IN_FIXTURE_MODE}`);
-  await reqAt<{ deleted: boolean }>(
-    `${storeBase()}/${encodeURIComponent(restaurantId)}/menu/items/${encodeURIComponent(itemId)}`,
-    { method: 'DELETE' },
-  );
-}
-
 const MOCK_MENU: MenuCategory[] = [
   {
     id: 'c-1', restaurant_id: 'r1', name: 'Soups',
@@ -447,6 +377,109 @@ const MOCK_MENU: MenuCategory[] = [
     ],
   },
 ];
+
+export async function getRestaurantDetail(id: string): Promise<RestaurantDetail> {
+  if (USE_MOCK) {
+    await delay();
+    const r = MOCK_RESTAURANTS.find((x) => x.id === id) ?? MOCK_RESTAURANTS[0];
+    return { restaurant: r, categories: MOCK_MENU };
+  }
+  return reqAt<RestaurantDetail>(`${storeBase()}/${encodeURIComponent(id)}`);
+}
+
+export async function updateRestaurant(id: string, patch: UpdateRestaurantRequest): Promise<Restaurant> {
+  if (USE_MOCK) {
+    await delay();
+    const r = MOCK_RESTAURANTS.find((x) => x.id === id)!;
+    Object.assign(r, patch);
+    return r;
+  }
+  return reqAt<Restaurant>(`${storeBase()}/${encodeURIComponent(id)}`, {
+    method: 'PATCH', body: JSON.stringify(patch),
+  });
+}
+
+/** Operator force-open / force-close. */
+export async function setRestaurantAvailability(id: string, isOpen: boolean): Promise<Restaurant> {
+  if (USE_MOCK) {
+    await delay();
+    const r = MOCK_RESTAURANTS.find((x) => x.id === id)!;
+    r.is_open = isOpen;
+    return r;
+  }
+  return reqAt<Restaurant>(`${storeBase()}/${encodeURIComponent(id)}/availability`, {
+    method: 'PATCH', body: JSON.stringify({ is_open: isOpen }),
+  });
+}
+
+export async function createMenuCategory(restaurantId: string, name: string): Promise<MenuCategory> {
+  if (USE_MOCK) {
+    await delay();
+    const c: MenuCategory = { id: `c-${MOCK_MENU.length + 1}`, restaurant_id: restaurantId, name, items: [] };
+    MOCK_MENU.push(c);
+    return c;
+  }
+  return reqAt<MenuCategory>(`${storeBase()}/${encodeURIComponent(restaurantId)}/menu/categories`, {
+    method: 'POST', body: JSON.stringify({ name }),
+  });
+}
+
+export async function deleteMenuCategory(restaurantId: string, categoryId: string): Promise<void> {
+  if (USE_MOCK) {
+    await delay();
+    const i = MOCK_MENU.findIndex((c) => c.id === categoryId);
+    if (i >= 0) MOCK_MENU.splice(i, 1);
+    return;
+  }
+  await reqAt<{ deleted: boolean }>(
+    `${storeBase()}/${encodeURIComponent(restaurantId)}/menu/categories/${encodeURIComponent(categoryId)}`,
+    { method: 'DELETE' },
+  );
+}
+
+export async function createMenuItem(restaurantId: string, req: CreateMenuItemRequest): Promise<MenuItem> {
+  if (USE_MOCK) {
+    await delay();
+    const it: MenuItem = { id: `i-mock-${req.name}`, restaurant_id: restaurantId, is_available: true, ...req };
+    MOCK_MENU.find((c) => c.id === req.category_id)?.items?.push(it);
+    return it;
+  }
+  return reqAt<MenuItem>(`${storeBase()}/${encodeURIComponent(restaurantId)}/menu/items`, {
+    method: 'POST', body: JSON.stringify(req),
+  });
+}
+
+export async function updateMenuItem(
+  restaurantId: string, itemId: string, patch: UpdateMenuItemRequest,
+): Promise<MenuItem> {
+  if (USE_MOCK) {
+    await delay();
+    for (const c of MOCK_MENU) {
+      const it = c.items?.find((x) => x.id === itemId);
+      if (it) { Object.assign(it, patch); return it; }
+    }
+    throw new Error('item not found');
+  }
+  return reqAt<MenuItem>(
+    `${storeBase()}/${encodeURIComponent(restaurantId)}/menu/items/${encodeURIComponent(itemId)}`,
+    { method: 'PATCH', body: JSON.stringify(patch) },
+  );
+}
+
+export async function deleteMenuItem(restaurantId: string, itemId: string): Promise<void> {
+  if (USE_MOCK) {
+    await delay();
+    for (const c of MOCK_MENU) {
+      const i = c.items?.findIndex((x) => x.id === itemId) ?? -1;
+      if (i >= 0) { c.items!.splice(i, 1); return; }
+    }
+    return;
+  }
+  await reqAt<{ deleted: boolean }>(
+    `${storeBase()}/${encodeURIComponent(restaurantId)}/menu/items/${encodeURIComponent(itemId)}`,
+    { method: 'DELETE' },
+  );
+}
 
 // ── Rider dispatch board ─────────────────────────────────────────────────────
 
@@ -800,7 +833,6 @@ export async function listPayoutRuns(payeeType?: PayeeType | ''): Promise<Payout
 
 export async function getPayoutLines(runId: string): Promise<PayoutLine[]> {
   if (USE_MOCK) { await delay(); return MOCK_PAYOUT_LINES[runId] ?? []; }
-  // There is no /payouts/:id/lines route — that path 404'd. Lines come embedded
   // in the run detail (PayoutRunDetail = PayoutRun + lines).
   const detail = await reqAt<ApiPayoutRunDetail>(`${adminBase()}/payouts/${encodeURIComponent(runId)}`);
   const lines = detail?.lines ?? [];
@@ -867,9 +899,53 @@ export async function listDisputes(status?: DisputeStatus | ''): Promise<OrderDi
     await delay();
     return status ? MOCK_DISPUTES.filter((d) => d.status === status) : MOCK_DISPUTES;
   }
-  // CONSUMES live GET /api/finance/disputes then narrows to module_type=food.
-  const all = await reqAt<OrderDispute[]>(`${financeBase()}/disputes?module_type=food`);
-  return status ? all.filter((d) => d.status === status) : all;
+  // Food-specific admin queue: GET /api/restaurant/admin/disputes (restaurant.admin.disputes).
+  // Previously this narrowed the GENERIC finance dispute feed by module_type=food,
+  // which carries none of the food context (order parties, refundable ceiling).
+  // That route now exists — disputes_handler.go shipped unregistered until this
+  // change. Envelope is {"disputes": [...]}; reqAt only peels a `data` key.
+  const qs = status ? `?status=${encodeURIComponent(status)}` : '';
+  const raw = await reqAt<OrderDispute[] | { disputes?: FoodDisputeDTO[] }>(`${adminBase()}/disputes${qs}`);
+  const rows = Array.isArray(raw) ? (raw as unknown as FoodDisputeDTO[]) : raw?.disputes ?? [];
+  return rows.map(toOrderDispute);
+}
+
+// Backend FoodDispute (disputes_service.go). Narrower than the console's
+// OrderDispute: it has no restaurant/customer denormalisation and no order total,
+// so the fields the UI wants but the server does not send are left empty rather
+// than invented. refundable_kobo falls back to refund_kobo (already-refunded) —
+// the server enforces the real ceiling on resolve regardless.
+type FoodDisputeDTO = {
+  id: string;
+  order_id: string;
+  reporter_id: string;
+  type: string;
+  description: string;
+  status: string;
+  resolution?: string | null;
+  refund_kobo: number;
+  admin_note?: string | null;
+  created_at: string;
+  resolved_at?: string | null;
+};
+
+function toOrderDispute(d: FoodDisputeDTO): OrderDispute {
+  return {
+    id: d.id,
+    order_id: d.order_id,
+    customer_id: d.reporter_id,
+    reference: d.order_id,
+    module_type: 'food',
+    type: d.type as OrderDispute['type'],
+    description: d.description,
+    order_total_kobo: 0,
+    refundable_kobo: d.refund_kobo,
+    status: d.status as DisputeStatus,
+    resolution: (d.resolution ?? null) as OrderDispute['resolution'],
+    admin_note: d.admin_note ?? null,
+    created_at: d.created_at,
+    updated_at: d.resolved_at ?? undefined,
+  };
 }
 
 // Resolve a dispute. Money path: reviewer note is REQUIRED (audit); a refund
@@ -887,15 +963,102 @@ export async function resolveDispute(id: string, req: ResolveDisputeRequest): Pr
       }
     }
   }
-  if (USE_MOCK) throw new Error(`Resolving a dispute ${NOT_IN_FIXTURE_MODE}`);
-  // CONSUMES live POST /api/finance/admin/disputes/:id/resolve
-  // (body { resolution, admin_note }; server binds adminID from JWT, posts the
-  // reversing ledger entry on refund).
-  return reqAt<{ ok: true }>(`${financeBase()}/admin/disputes/${id}/resolve`, {
+  if (USE_MOCK) {
+    await delay();
+    const d = MOCK_DISPUTES.find((x) => x.id === id);
+    if (d) { d.status = 'resolved'; d.resolution = req.resolution; d.admin_note = req.admin_note.trim(); d.updated_at = new Date().toISOString(); }
+    return { ok: true };
+  }
+  // POST /api/restaurant/admin/disputes/:id/resolve (restaurant.admin.disputes).
+  // NOTE the body field is `note`, NOT `admin_note` — the food handler binds
+  // {resolution, refund_kobo?, note?} and takes adminID from the JWT. A refund
+  // resolution issues a PLATFORM-FUNDED credit (no provider clawback), so the
+  // Idempotency-Key is sent even though this handler does not currently read it:
+  // it costs nothing and protects the retry path if the service starts honouring it.
+  await reqAt<{ dispute: unknown }>(`${adminBase()}/disputes/${encodeURIComponent(id)}/resolve`, {
     method: 'POST',
     headers: { ...authHeaders(), 'Idempotency-Key': `dispute-resolve-${id}` },
-    body: JSON.stringify({ resolution: req.resolution, admin_note: req.admin_note, refund_kobo: req.refund_kobo }),
+    body: JSON.stringify({ resolution: req.resolution, note: req.admin_note, refund_kobo: req.refund_kobo }),
   });
+  // The handler answers {"dispute": {...}}; callers only need success/failure —
+  // reqAt already throws on a non-2xx.
+  return { ok: true };
+}
+
+// ── Scheduled orders (restaurant.admin.dispatch) ─────────────────────────────
+
+/**
+ * Releases scheduled orders whose window has arrived into the normal pipeline.
+ * POST /api/restaurant/admin/activate-scheduled. Idempotent by nature — an order
+ * already activated is skipped — so it is safe to press repeatedly.
+ * group_handler.go shipped this unregistered; it now has a route.
+ */
+export async function activateScheduledOrders(): Promise<{ activated: number }> {
+  if (USE_MOCK) { await delay(); return { activated: 0 }; }
+  const res = await reqAt<{ activated?: number; count?: number }>(
+    `${adminBase()}/activate-scheduled`, { method: 'POST' },
+  );
+  return { activated: res?.activated ?? res?.count ?? 0 };
+}
+
+// ── Merchant withdrawals (restaurant.admin.payouts — MONEY PATH) ─────────────
+//
+// Gated server-side by FEATURE_RESTAURANT_WITHDRAWALS_ENABLED (default OFF): with
+// the flag off these routes are not registered and calls 404.
+//
+// IMPORTANT LIMIT: the backend exposes NO admin list of withdrawals. It has a
+// merchant-scoped list (GET /restaurant/withdrawals, the caller's own) and the two
+// admin actions below, keyed by id. So the console can act on a withdrawal but
+// cannot discover one — an operator needs the id from support or the DB. Building
+// a fake list here would be worse than saying so.
+
+export type WithdrawalRow = {
+  id: string;
+  user_id: string;
+  bank_account_id: string;
+  amount_kobo: number;
+  currency: string;
+  status: 'pending' | 'processing' | 'paid' | 'failed' | 'reversed';
+  ledger_ref?: string | null;
+  provider_reference?: string | null;
+  failure_reason?: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+/**
+ * Mark a withdrawal PAID (the provider-webhook outcome, driven manually).
+ * Posts DR failed_transfer_suspense → CR provider_clearing under a row lock, so
+ * paid and reversed are mutually exclusive. Requires an Idempotency-Key.
+ */
+export async function settleWithdrawal(id: string, providerReference: string): Promise<WithdrawalRow> {
+  if (USE_MOCK) { await delay(); throw new Error('Withdrawals have no mock fixture — enable the feature flag and use a real id.'); }
+  const res = await reqAt<{ data: WithdrawalRow }>(
+    `${adminBase()}/withdrawals/${encodeURIComponent(id)}/settle`,
+    {
+      method: 'POST',
+      headers: { ...authHeaders(), 'Idempotency-Key': `withdrawal-settle-${id}` },
+      body: JSON.stringify({ provider_reference: providerReference }),
+    },
+  );
+  return (res as unknown as { data?: WithdrawalRow })?.data ?? (res as unknown as WithdrawalRow);
+}
+
+/**
+ * Reverse a failed withdrawal — posts a compensating reversal back to the
+ * merchant wallet. Mutually exclusive with settle under the same row lock.
+ */
+export async function reverseWithdrawal(id: string, reason: string): Promise<WithdrawalRow> {
+  if (USE_MOCK) { await delay(); throw new Error('Withdrawals have no mock fixture — enable the feature flag and use a real id.'); }
+  const res = await reqAt<{ data: WithdrawalRow }>(
+    `${adminBase()}/withdrawals/${encodeURIComponent(id)}/reverse`,
+    {
+      method: 'POST',
+      headers: { ...authHeaders(), 'Idempotency-Key': `withdrawal-reverse-${id}` },
+      body: JSON.stringify({ reason }),
+    },
+  );
+  return (res as unknown as { data?: WithdrawalRow })?.data ?? (res as unknown as WithdrawalRow);
 }
 
 // Naira from integer kobo (shared with pages that don't import _ui.naira).

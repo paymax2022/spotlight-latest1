@@ -86,11 +86,11 @@ const ACTIVITY: EstateActivity[] = [
 ];
 
 let RESIDENTS: AdminResident[] = [
-  { id: 'r1', name: 'Ngozi Umeh', unit: 'Block B · Flat 4', role: 'owner', phone: '0803 111 2222', status: 'active', arrearsKobo: 0, joinedAt: days(420) },
-  { id: 'r2', name: 'Tunde Bakare', unit: 'Block A · Flat 9', role: 'tenant', phone: '0805 333 4444', status: 'active', arrearsKobo: 1_800_000_00, joinedAt: days(180) },
-  { id: 'r3', name: 'Aisha Bello', unit: 'Block C · Flat 11', role: 'tenant', phone: '0807 555 6666', status: 'active', arrearsKobo: 0, joinedAt: days(30) },
-  { id: 'r4', name: 'Chidi Eze', unit: 'Block A · Flat 2', role: 'owner', phone: '0809 777 8888', status: 'banned', arrearsKobo: 4_200_000_00, joinedAt: days(700) },
-  { id: 'r5', name: 'Funmi Adeyemi', unit: 'Block D · Flat 7', role: 'tenant', phone: '0802 999 0000', status: 'active', arrearsKobo: 600_000_00, joinedAt: days(95) },
+  { id: 'r1', userId: 'u1', name: 'Ngozi Umeh', unit: 'Block B · Flat 4', role: 'owner', phone: '0803 111 2222', status: 'active', arrearsKobo: 0, createdAt: days(420) },
+  { id: 'r2', userId: 'u2', name: 'Tunde Bakare', unit: 'Block A · Flat 9', role: 'tenant', phone: '0805 333 4444', status: 'active', arrearsKobo: 1_800_000_00, createdAt: days(180) },
+  { id: 'r3', userId: 'u3', name: 'Aisha Bello', unit: 'Block C · Flat 11', role: 'tenant', phone: '0807 555 6666', status: 'active', arrearsKobo: 0, createdAt: days(30) },
+  { id: 'r4', userId: 'u4', name: 'Chidi Eze', unit: 'Block A · Flat 2', role: 'owner', phone: '0809 777 8888', status: 'banned', arrearsKobo: 4_200_000_00, createdAt: days(700) },
+  { id: 'r5', userId: 'u5', name: 'Funmi Adeyemi', unit: 'Block D · Flat 7', role: 'tenant', phone: '0802 999 0000', status: 'active', arrearsKobo: 600_000_00, createdAt: days(95) },
 ];
 
 const INVOICES: AdminDuesInvoice[] = [
@@ -154,7 +154,7 @@ export async function getEstateActivity(): Promise<EstateActivity[]> {
 
 export async function listResidents(): Promise<AdminResident[]> {
   if (USE_MOCK) { await delay(); return [...RESIDENTS]; }
-  return getJson<AdminResident[]>(`/estate/${estateId()}/admin/residents`);
+  return getRows<AdminResident>(`/estate/${estateId()}/admin/residents`);
 }
 
 export async function banResident(id: string): Promise<{ id: string; status: ResidentStatus }> {
