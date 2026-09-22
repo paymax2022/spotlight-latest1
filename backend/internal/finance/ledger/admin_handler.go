@@ -55,6 +55,7 @@ func (h *AdminHandler) ListTransactions(c *gin.Context) {
 		AccountType:   c.Query("account_type"),
 		UserID:        c.Query("user_id"),
 		Search:        c.Query("search"),
+		Module:        c.Query("module"),
 		From:          parseDateParam(c.Query("from")),
 		To:            parseDateParam(c.Query("to")),
 		MinAmountKobo: minAmt,
@@ -76,6 +77,29 @@ func (h *AdminHandler) ListTransactions(c *gin.Context) {
 		"offset":      f.Offset,
 		"note_source": "source_inferred is a best-effort guess parsed from the reference string (SPLIT_PART on ':'); it is NOT an authoritative module field.",
 	})
+}
+
+// ListModules handles GET /api/finance/admin/transactions/modules — the
+// fixed list of module tabs the dashboard renders (see AdminTransactionModules).
+func (h *AdminHandler) ListModules(c *gin.Context) {
+	c.JSON(http.StatusOK, gin.H{"success": true, "modules": AdminTransactionModules})
+}
+
+// GetSummary handles GET /api/finance/admin/transactions/summary — the daily
+// volume series backing each module tab's dashboard chart. Query params:
+// module (optional — empty means every transaction), from, to (date or RFC3339).
+func (h *AdminHandler) GetSummary(c *gin.Context) {
+	summary, err := h.svc.AdminGetTransactionsSummary(
+		c.Request.Context(),
+		c.Query("module"),
+		parseDateParam(c.Query("from")),
+		parseDateParam(c.Query("to")),
+	)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "summary": summary})
 }
 
 // GetTransaction handles GET /api/finance/admin/transactions/:id — the
