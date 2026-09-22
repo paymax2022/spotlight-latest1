@@ -194,11 +194,17 @@ func setupAdminTxFixture(t *testing.T) *adminTxFixture {
 	// rowE: now, CREDIT 1234 kobo, reference is an unrelated random UUID (no tag,
 	// no colon) — isolates the "search matches by joined user field" assertion,
 	// since this row can ONLY be found via the user's name/email, not the tag.
-	f.rowE = insert(walletAcc.ID, "CREDIT", 1234, uuid.NewString(), now)
+	rowERef := uuid.NewString()
+	f.rowE = insert(walletAcc.ID, "CREDIT", 1234, rowERef, now)
+	// Balances rowE the same way rowDBalance balances rowD (see that comment).
+	// rowE's reference is a random UUID unrelated to tag/fullName, so this
+	// counter-leg can never be picked up by any Search-based assertion in this
+	// file regardless of which account it's posted to.
+	rowEBalance := insert(commAcc.ID, "REVERSAL_CREDIT", 1234, rowERef, now.Add(time.Second))
 
 	t.Cleanup(func() {
 		_, _ = pool.Exec(context.Background(), `DELETE FROM ledger_entries WHERE id = ANY($1)`,
-			[]string{f.rowA, f.rowB, f.rowC, f.rowD, f.rowDBalance, f.rowE})
+			[]string{f.rowA, f.rowB, f.rowC, f.rowD, f.rowDBalance, f.rowE, rowEBalance})
 		_, _ = pool.Exec(context.Background(), `DELETE FROM ledger_accounts WHERE id = $1`, f.walletAcct)
 		_, _ = pool.Exec(context.Background(), `DELETE FROM user_profiles WHERE id = $1`, f.userID)
 		_, _ = pool.Exec(context.Background(), `DELETE FROM auth.users WHERE id = $1`, f.userID)
@@ -652,6 +658,14 @@ func TestAdminListTransactions_ModuleFilter(t *testing.T) {
 
 	utlRef := "UTL-" + f.tag
 	utlRow := insertTaggedLedgerRow(t, f.pool, f.walletAcct, "DEBIT", 42000, utlRef, time.Now().UTC())
+	// utlRow deliberately has no natural counterpart in this test's own domain
+	// tables, but an unbalanced entry permanently pollutes the shared
+	// ledger_entries table the same way rowD did (see setupAdminTxFixture's
+	// comment) — ledger_entries is append-only, so cleanup can't undo it.
+	// Balance it with a REVERSAL_DEBIT on the SAME reference; it necessarily
+	// also matches Module=utility_bill (the filter is a reference-prefix
+	// match), so it's expected in page.Rows alongside utlRow.
+	utlBalance := insertTaggedLedgerRow(t, f.pool, f.commAcct, "REVERSAL_DEBIT", 42000, utlRef, time.Now().UTC())
 
 	page, err := f.svc.AdminListTransactions(ctx, ledger.AdminTransactionFilter{Module: "utility_bill", Search: f.tag, Limit: 50})
 	if err != nil {
@@ -661,8 +675,8 @@ func TestAdminListTransactions_ModuleFilter(t *testing.T) {
 		t.Fatalf("expected the UTL- row to match module=utility_bill, rows=%+v", rowIDs(page.Rows))
 	}
 	for _, r := range page.Rows {
-		if r.ID != utlRow {
-			t.Errorf("module=utility_bill matched a non-UTL- row: id=%s reference=%s", r.ID, r.Reference)
+		if r.ID != utlRow && r.ID != utlBalance {
+			t.Errorf("module=utility_bill matched an unexpected row: id=%s reference=%s", r.ID, r.Reference)
 		}
 	}
 	// The list is expected to carry ModuleDetail too — nil here is fine (this
