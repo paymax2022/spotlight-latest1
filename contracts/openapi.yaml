@@ -72,6 +72,7 @@ components:
       required: [activeContext, contexts]
       properties:
         activeContext:
+          type: object
           allOf: [{ $ref: '#/components/schemas/PropertyContextRef' }]
           nullable: true
         contexts:
@@ -101,7 +102,7 @@ components:
             (due-dated) payments — fail-closed; absence is never treated as
             good credit.
         onTimeRate: { type: number, format: double, minimum: 0, maximum: 1, description: On-time payments / comparable (due-dated) payments }
-        totalPaidKobo: { type: integer, format: int64, description: Lifetime successful payments, minor units (kobo), exact integer sum }
+        totalPaidKobo: { type: integer, format: int64, description: "Lifetime successful payments, minor units (kobo), exact integer sum" }
         paymentsCount: { type: integer, description: Uncapped count; recentPayments below is capped at 20 }
         oldestTenancy: { type: string, format: date-time, nullable: true }
         recentPayments:
@@ -123,7 +124,7 @@ components:
         activeLeases: { type: integer }
         escrowHeldKobo: { type: integer, format: int64 }
         payoutsDueKobo: { type: integer, format: int64 }
-        gmvKobo: { type: integer, format: int64, description: 30-day paid GMV, minor units (kobo) }
+        gmvKobo: { type: integer, format: int64, description: "30-day paid GMV, minor units (kobo)" }
         openDisputes: { type: integer }
         fraudFlags: { type: integer }
     RealtorAdminListing:
