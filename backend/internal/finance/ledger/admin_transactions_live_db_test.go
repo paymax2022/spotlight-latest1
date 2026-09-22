@@ -8,9 +8,21 @@ package ledger_test
 // table exists — this console is the only cross-module read of money
 // movement, built entirely on real rows. Every assertion here is scoped to a
 // unique, randomly-tagged fixture (a brand-new fixture user + wallet account,
-// and references carrying a unique test tag) so it is safe to run against the
-// shared local Supabase instance, which already carries ~3,226 unrelated
-// ledger_entries rows — assertions never depend on an absolute table count.
+// and references carrying a unique test tag), so no assertion depends on an
+// absolute table count and the suite is safe to re-run against the shared
+// local Supabase instance, which already carries thousands of unrelated
+// ledger_entries rows.
+//
+// Two database-enforced invariants constrain HOW the fixture writes:
+//   • ledger_entries is APPEND-ONLY (the immutability trigger rejects every
+//     DELETE/UPDATE), so nothing this suite writes can ever be cleaned up — the
+//     fixture deliberately leaves its rows behind, accumulating one user +
+//     wallet + entries per run.
+//   • ADR-040 requires SUM(signed amount_kobo) over the WHOLE table to stay 0,
+//     so every synthetic single-sided row is offset by a contra leg
+//     (postContra). An unbalanced fixture row poisons
+//     TestLiveDB_LedgerGlobalConservation permanently, because nothing can
+//     remove it afterwards.
 //
 // What it proves:
 //  1. Join shape: a NULL-user (standing account) row is returned, not dropped,
@@ -75,8 +87,18 @@ type adminTxFixture struct {
 	userID                       string
 	walletAcct                   string
 	commAcct                     string
+	contraAcct                   string
 	rowA, rowB, rowC, rowD, rowE string // ledger_entries.id
 }
+
+// contraAccountType is the ADR-040 quarantine account (20261207000100 admits
+// `legacy_wallet_contra`) so reconstructed legs stay out of observed money
+// movement — finance reporting excludes it. It is also the one standing account
+// no other suite delta-asserts: `settlement` is asserted exactly by estate's
+// live-DB tests, and packages run concurrently under `go test ./...`, so a
+// contra there would make them intermittently fail. Only the backfill migration
+// writes this type today, so no Go constant exists for it.
+var contraAccountType = ledger.AccountType("legacy_wallet_contra")
 
 func mustLiveTxPool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
@@ -133,6 +155,10 @@ func setupAdminTxFixture(t *testing.T) *adminTxFixture {
 	if err != nil {
 		t.Fatalf("get/create standing commission account: %v", err)
 	}
+	contraAcc, err := svc.GetOrCreateStandingAccount(ctx, contraAccountType)
+	if err != nil {
+		t.Fatalf("get/create standing %s account: %v", contraAccountType, err)
+	}
 
 	now := time.Now().UTC()
 	insert := func(accountID, entryType string, amountKobo int64, reference string, createdAt time.Time) string {
@@ -161,35 +187,91 @@ func setupAdminTxFixture(t *testing.T) *adminTxFixture {
 		return id
 	}
 
-	f := &adminTxFixture{pool: pool, svc: svc, tag: tag, fullName: fullName, userID: userID, walletAcct: walletAcc.ID, commAcct: commAcc.ID}
+	f := &adminTxFixture{pool: pool, svc: svc, tag: tag, fullName: fullName, userID: userID,
+		walletAcct: walletAcc.ID, commAcct: commAcc.ID, contraAcct: contraAcc.ID}
+
+	// Per-run references: the tag keeps every assertion scoped to this run's rows
+	// (never an absolute table count), except refE — a bare random UUID so the
+	// "search matches the joined user" assertion has a row findable ONLY by
+	// name/email.
+	refA := fmt.Sprintf("fx:convert:%s-A", tag)
+	refB := fmt.Sprintf("arena:support:%s-B", tag)
+	refD := fmt.Sprintf("%sopaqueNoColon", tag)
+	refE := uuid.NewString()
 
 	// rowA: 10 days ago, CREDIT 150000 kobo, colon-namespaced reference "fx:convert:...".
-	f.rowA = insert(walletAcc.ID, "CREDIT", 150000, fmt.Sprintf("fx:convert:%s-A", tag), now.Add(-10*24*time.Hour))
+	f.rowA = insert(walletAcc.ID, "CREDIT", 150000, refA, now.Add(-10*24*time.Hour))
+	f.postContra(t, "CREDIT", 150000, refA, now.Add(-10*24*time.Hour))
 	// rowB: 1 day ago, DEBIT 50000 kobo, "arena:support:..." — paired with rowC
 	// below, seeded with real metadata (proves the detail endpoint's JSON
 	// round-trip; ledger_entries is append-only, so this must be set at insert).
-	f.rowB = insertWithMetadata(walletAcc.ID, "DEBIT", 50000, fmt.Sprintf("arena:support:%s-B", tag), now.Add(-24*time.Hour), `{"note":"admtx detail test"}`)
+	f.rowB = insertWithMetadata(walletAcc.ID, "DEBIT", 50000, refB, now.Add(-24*time.Hour), `{"note":"admtx detail test"}`)
 	// rowC: same reference as rowB (its ledger counterpart), posted to the STANDING
 	// commission account (user_id IS NULL) — proves standing-account rows are
-	// returned, not dropped, and are distinguishable via account_type.
-	f.rowC = insert(commAcc.ID, "CREDIT", 50000, fmt.Sprintf("arena:support:%s-B", tag), now.Add(-24*time.Hour+time.Second))
+	// returned, not dropped, and are distinguishable via account_type. No contra
+	// here: B/C are already a balanced pair, which is exactly what the console is
+	// meant to show as one transaction with two legs.
+	f.rowC = insert(commAcc.ID, "CREDIT", 50000, refB, now.Add(-24*time.Hour+time.Second))
 	// rowD: 100 days ago, DEBIT 999999 kobo, NO colon in the reference at all —
 	// proves the SPLIT_PART fallback for non-colon references (whole string).
-	f.rowD = insert(walletAcc.ID, "DEBIT", 999999, fmt.Sprintf("%sopaqueNoColon", tag), now.Add(-100*24*time.Hour))
+	f.rowD = insert(walletAcc.ID, "DEBIT", 999999, refD, now.Add(-100*24*time.Hour))
+	f.postContra(t, "DEBIT", 999999, refD, now.Add(-100*24*time.Hour))
 	// rowE: now, CREDIT 1234 kobo, reference is an unrelated random UUID (no tag,
 	// no colon) — isolates the "search matches by joined user field" assertion,
 	// since this row can ONLY be found via the user's name/email, not the tag.
-	f.rowE = insert(walletAcc.ID, "CREDIT", 1234, uuid.NewString(), now)
+	f.rowE = insert(walletAcc.ID, "CREDIT", 1234, refE, now)
+	f.postContra(t, "CREDIT", 1234, refE, now)
 
-	t.Cleanup(func() {
-		_, _ = pool.Exec(context.Background(), `DELETE FROM ledger_entries WHERE id = ANY($1)`,
-			[]string{f.rowA, f.rowB, f.rowC, f.rowD, f.rowE})
-		_, _ = pool.Exec(context.Background(), `DELETE FROM ledger_accounts WHERE id = $1`, f.walletAcct)
-		_, _ = pool.Exec(context.Background(), `DELETE FROM user_profiles WHERE id = $1`, f.userID)
-		_, _ = pool.Exec(context.Background(), `DELETE FROM auth.users WHERE id = $1`, f.userID)
-	})
-
+	// No cleanup: it cannot work, and attempting it would only hide a real
+	// failure behind a discarded error. DELETE on ledger_entries is rejected by
+	// ledger_entries_immutable(), which leaves ledger_accounts pinned by
+	// ledger_entries_account_id_fkey and auth.users pinned by the accounts'
+	// ON DELETE CASCADE — verified against a live database: repeated runs leave
+	// the users, accounts and entries behind (only user_profiles deletes, and
+	// that is the one row nobody needs).
 	return f
+}
+
+// postContra writes the offsetting leg for a synthetic single-sided fixture row,
+// keeping this suite inside ADR-040's global conservation invariant
+// (SUM(signed amount_kobo) == 0 over the whole table, asserted by the live-DB
+// conservation tests in backend/tests/ledger).
+//
+// It is invisible to every assertion in this file by construction:
+//   - a STANDING account (user_id IS NULL) can never match the search-by-user
+//     assertions (AdminListTransactions searches le.reference plus the joined
+//     user's full_name/display_name/email);
+//   - its reference is tag-free and unique, so it never matches Search=<tag>,
+//     never appears in another row's RelatedEntries (reference-scoped), and
+//     never contributes to CommissionKobo (which sums only revenue-account
+//     entries sharing a reference — legacy_wallet_contra is not revenue);
+//   - created_at mirrors the row it offsets, and every date-range filter here is
+//     combined with Search=<tag>, so those counts stay exact.
+//
+// metadata records what it offsets: the row is permanent, and a human looking at
+// this table later deserves the pointer.
+func (f *adminTxFixture) postContra(t *testing.T, originalType string, amountKobo int64, forReference string, createdAt time.Time) string {
+	t.Helper()
+	offsetType := "DEBIT"
+	if originalType == "DEBIT" {
+		offsetType = "CREDIT"
+	}
+	meta, err := json.Marshal(map[string]string{
+		"fixture":    "admin_transactions_live_db_test",
+		"contra_for": forReference,
+	})
+	if err != nil {
+		t.Fatalf("marshal contra metadata: %v", err)
+	}
+	var id string
+	if err := f.pool.QueryRow(context.Background(), `
+		INSERT INTO ledger_entries (account_id, type, amount_kobo, reference, idempotency_key, created_at, metadata)
+		VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id`,
+		f.contraAcct, offsetType, amountKobo, "admtxcontra-"+uuid.NewString(),
+		"idem-"+uuid.NewString(), createdAt, string(meta)).Scan(&id); err != nil {
+		t.Fatalf("insert contra leg offsetting %s: %v", forReference, err)
+	}
+	return id
 }
 
 func rowIDs(rows []ledger.AdminTransactionRow) []string {
@@ -530,9 +612,11 @@ func TestAdminGetTransaction_NonUniqueReferenceCapsButReportsRealTotal(t *testin
 		}
 		ids = append(ids, id)
 	}
-	t.Cleanup(func() {
-		_, _ = f.pool.Exec(context.Background(), `DELETE FROM ledger_entries WHERE id = ANY($1)`, ids)
-	})
+	// One contra leg offsets the group. It must carry its OWN reference, not
+	// sharedRef: sharing it would make RelatedEntriesTotal 25 instead of 24 (the
+	// cap assertion below). And it must not carry the tag, or Search=<tag> would
+	// see a 5th row.
+	f.postContra(t, "CREDIT", int64(extraRows), sharedRef, time.Now().UTC())
 
 	detail, err := f.svc.AdminGetTransaction(ctx, ids[0])
 	if err != nil {
