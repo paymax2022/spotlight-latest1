@@ -114,11 +114,22 @@ export interface Milestone {
   paid_at: string | null;
   voided_at: string | null;
 }
+// Refer & Earn modification (Module 8, 2026-09-18): lifetime cap of 100
+// commission-earning purchase events per referral code, across every user
+// that code has ever referred. Once capped, the commission goes to Admin
+// instead of the referrer, permanently, for that code.
+export interface CommissionCapStatus {
+  referrer_id: string;
+  commission_events_used: number;
+  capped: boolean;
+  capped_at?: string | null;
+}
 export interface ReferrerCase {
   referrer_id: string;
   tier: TierStatus;
   rewards: Reward[];
   milestones: Milestone[];
+  commission_cap?: CommissionCapStatus;
 }
 export interface CaseAdjustmentInput {
   adjust_kobo: number; // signed; positive = credit, negative = debit

@@ -38,6 +38,16 @@ var ErrNoMembership = errors.New("association: no membership")
 // user's typo looked like a server fault.
 var ErrInvalidInput = errors.New("association: invalid input")
 
+// ErrPaymentAlreadyDecided is returned when DecideOfflinePayment is called
+// against a payment that is no longer PENDING with a decision that CONTRADICTS
+// its recorded outcome (approve on an already-rejected payment, or reject on an
+// already-approved one). A decision that MATCHES the recorded outcome is an
+// idempotent no-op instead (a double-click or client retry with a fresh
+// Idempotency-Key must never re-post the ledger journal for a payment already
+// settled — PostJournal only dedupes an EXACT idempotency-key replay, not a
+// second decision on the same payment with a different key).
+var ErrPaymentAlreadyDecided = errors.New("association: payment already decided")
+
 // Service manages association dues payments, receipts, and admin approvals.
 type Service struct {
 	db         *pgxpool.Pool

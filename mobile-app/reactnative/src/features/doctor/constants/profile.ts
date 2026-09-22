@@ -162,6 +162,12 @@ export const REJECTION_REASONS: { code: string; label: string }[] = [
 // ─── Bank list (screen 20) — sample of Nigerian banks + CBN codes ────────────
 
 export const BANK_LIST: { name: string; code: string }[] = [
+  // Paystack's own sandbox-only bank, code 001 — resolves ANY 10-digit account
+  // number deterministically (to "TEST ACCOUNT <number>") with no daily quota.
+  // Real bank codes below are capped at 3 NUBAN resolves/day in Paystack test
+  // mode ("Test mode daily limit of 3 live bank resolves exceeded"), so this is
+  // the one to use for repeated manual/QA verification of this screen.
+  { name: 'Paystack Test Bank',   code: '001' },
   { name: 'Access Bank',          code: '044' },
   { name: 'Citibank Nigeria',     code: '023' },
   { name: 'Ecobank Nigeria',      code: '050' },

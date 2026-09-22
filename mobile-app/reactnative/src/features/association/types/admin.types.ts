@@ -49,7 +49,12 @@ export interface AdminApplication extends AdminApplicationSummary {
 
 // ─── Finance / treasurer (S) ──────────────────────────────────────────────────
 
-export interface RevenueLine { label: string; amountKobo: number }
+// Field names match the Go DTO exactly (backend/internal/association/model.go
+// FinanceBreakdownLine) — a prior version of this type used `amountKobo`, which
+// the live backend never sends (it sends `collectedKobo`), so every real
+// admin's revenue breakdown rendered "₦NaN" for every row; only mock mode
+// (whose fixture matched the wrong field name) ever exercised this screen.
+export interface RevenueLine { label: string; collectedKobo: number; outstandingKobo: number; memberCount: number }
 
 export interface FinanceSummary {
   collectedKobo:   number;

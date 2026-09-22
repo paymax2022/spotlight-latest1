@@ -134,6 +134,7 @@ const MOCK_CASE: ReferrerCase = {
     { id: 'ms_1', referrer_id: 'usr_a12', threshold: 10, bonus_kobo: 5_000_00, status: 'PAID', achieved_at: iso(24 * 20), paid_at: iso(24 * 20), voided_at: null },
     { id: 'ms_2', referrer_id: 'usr_a12', threshold: 50, bonus_kobo: 20_000_00, status: 'PAID', achieved_at: iso(24 * 6), paid_at: iso(24 * 6), voided_at: null },
   ],
+  commission_cap: { referrer_id: 'usr_a12', commission_events_used: 62, capped: false, capped_at: null },
 };
 
 const MOCK_MILESTONES: MilestonePayout[] = [

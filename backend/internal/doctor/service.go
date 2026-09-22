@@ -20,19 +20,22 @@ import (
 //
 // Money path (RequestPayout) honours every iron rule:
 //  1. requires + dedupes on an Idempotency-Key (Redis lock + DB UNIQUE replay),
-//  2. tier-limit check (fail-closed: any error/denial rejects),
-//  3. balanced double-entry post via ledger.Service.Debit (doctor wallet → settlement),
-//  4. persists a doctor_payouts request row referencing the ledger (no balance column),
-//  5. emits an immutable audit row,
-//  6. returns the payout result.
+//  2. bank-account verification gate (fail-closed: the destination account must
+//     be is_verified, whether caller-specified or the doctor's current default),
+//  3. tier-limit check (fail-closed: any error/denial rejects),
+//  4. balanced double-entry post via ledger.Service.Debit (doctor wallet → settlement),
+//  5. persists a doctor_payouts request row referencing the ledger (no balance column),
+//  6. emits an immutable audit row,
+//  7. returns the payout result.
 type Service struct {
-	repo       *Repository
-	ledger     *ledger.Service
-	tiers      *tiers.Service
-	redis      *goredis.Client    // optional; nil disables the fast idempotency lock
-	rtc        *rtc.Issuer        // optional; nil/disabled → empty token + "not configured"
-	hub        *platformWS.Hub    // optional; nil disables realtime WS push (best-effort)
-	commission CommissionRecorder // optional; nil ⇒ realized-profit recording is a no-op
+	repo         *Repository
+	ledger       *ledger.Service
+	tiers        *tiers.Service
+	redis        *goredis.Client     // optional; nil disables the fast idempotency lock
+	rtc          *rtc.Issuer         // optional; nil/disabled → empty token + "not configured"
+	hub          *platformWS.Hub     // optional; nil disables realtime WS push (best-effort)
+	commission   CommissionRecorder  // optional; nil ⇒ realized-profit recording is a no-op
+	bankResolver BankAccountResolver // optional; nil ⇒ CreateBankAccount stores unverified
 }
 
 // NewService wires the doctor service. redis may be nil (lock falls back to the
@@ -73,6 +76,26 @@ type CommissionRecorder interface {
 // post-construction). Nil is accepted and disables recording.
 func (s *Service) SetCommissionRecorder(cr CommissionRecorder) { s.commission = cr }
 
+// BankAccountResolver is the nil-safe seam into real bank-account name
+// verification (Paystack NUBAN resolve, https://paystack.com/docs/identity-verification/verify-account-number/).
+// See ADR-PR184 for the full design rationale (interface seam, gating, fail-open
+// vs fail-closed split, and the RequestPayout/UpdatePayoutAccount enforcement).
+// Modeled as a LOCAL interface, mirroring CommissionRecorder, so doctor never
+// imports the provider/paystack package at compile time — app-wiring injects a
+// thin adapter over the shared Paystack client. A nil resolver (no
+// PAYSTACK_SECRET_KEY configured, e.g. local dev) makes CreateBankAccount fall
+// back to its old behaviour of storing the account unverified rather than
+// blocking onboarding; a non-nil resolver that fails to resolve the account
+// (wrong number, wrong bank, account not found) fails the request closed —
+// "Verify account" must mean something once a real adapter is wired.
+type BankAccountResolver interface {
+	ResolveAccount(ctx context.Context, bankCode, accountNumber string) (accountName string, err error)
+}
+
+// SetBankAccountResolver injects the real-verification seam (app-wiring,
+// post-construction). Nil is accepted and disables real verification.
+func (s *Service) SetBankAccountResolver(r BankAccountResolver) { s.bankResolver = r }
+
 // recordCommissionSafe records realized Spotlight profit for a completed
 // consultation. It is best-effort and MUST NEVER affect the caller's outcome: a nil
 // recorder is a no-op, and any error is logged and swallowed so a profit-registry
@@ -93,9 +116,11 @@ func (s *Service) recordCommissionSafe(ctx context.Context, category, service, s
 
 // Sentinel errors mapped to HTTP statuses by the handler.
 var (
-	ErrIdempotencyRequired = errors.New("doctor: Idempotency-Key header required")
-	ErrInvalidAmount       = errors.New("doctor: amount must be a positive integer (kobo)")
-	ErrDuplicateRequest    = errors.New("doctor: duplicate request (idempotency replay)")
+	ErrIdempotencyRequired     = errors.New("doctor: Idempotency-Key header required")
+	ErrInvalidAmount           = errors.New("doctor: amount must be a positive integer (kobo)")
+	ErrDuplicateRequest        = errors.New("doctor: duplicate request (idempotency replay)")
+	ErrBankAccountUnresolvable = errors.New("doctor: could not verify bank account — check the bank and account number")
+	ErrBankAccountUnverified   = errors.New("doctor: payout bank account is not verified")
 )
 
 // ── Reads ───────────────────────────────────────────────────────────────────
@@ -246,7 +271,21 @@ func (s *Service) RequestPayout(ctx context.Context, userID, idemKey string, req
 		}
 	}
 
-	// (2) Tier-limit check — fail-closed: any error or denial rejects the payout.
+	// (2) Bank-account verification gate — fail-closed: money must never leave the
+	//     wallet toward an account that hasn't actually been confirmed by a real
+	//     verification adapter (Paystack NUBAN resolve). Resolves to the caller-
+	//     specified BankAccountID when given, otherwise the doctor's current
+	//     default — either way, this is the account the payout is headed toward.
+	//     No account on file (ErrNotFound) or an unverified one both reject.
+	bankAcct, err := s.repo.GetPayoutBankAccount(ctx, userID, req.BankAccountID)
+	if err != nil {
+		return nil, fmt.Errorf("doctor: resolve payout bank account (fail closed): %w", err)
+	}
+	if !bankAcct.IsVerified {
+		return nil, ErrBankAccountUnverified
+	}
+
+	// (3) Tier-limit check — fail-closed: any error or denial rejects the payout.
 	//     STRICT gate, deliberately: this is a payout to a bank account, not a
 	//     purchase. The Tier-0 checkout allowance (ADR-043) must never reach it —
 	//     ADR-042 permits an unverified account to move money only because it
@@ -255,7 +294,7 @@ func (s *Service) RequestPayout(ctx context.Context, userID, idemKey string, req
 		return nil, fmt.Errorf("doctor: payout tier check (fail closed): %w", err)
 	}
 
-	// (3) Balanced double-entry: debit the doctor's wallet, credit the settlement
+	// (4) Balanced double-entry: debit the doctor's wallet, credit the settlement
 	//     clearing account. ledger.Debit posts both legs atomically (kobo int64),
 	//     enforces positive amount, checks funds, and is itself idempotency-keyed.
 	settlementAcc, err := s.ledger.GetOrCreateStandingAccount(ctx, ledger.AccountSettlement)
@@ -268,7 +307,7 @@ func (s *Service) RequestPayout(ctx context.Context, userID, idemKey string, req
 		return nil, err
 	}
 
-	// (4)+(5) Persist the payout REQUEST row AND its immutable audit row in ONE
+	// (5)+(6) Persist the payout REQUEST row AND its immutable audit row in ONE
 	//     transaction. The audit is now DURABLE on the money path: if the audit
 	//     insert fails it rolls back the payout row and returns an error, instead
 	//     of the previous best-effort `_ = InsertAudit(...)` which silently
@@ -278,7 +317,7 @@ func (s *Service) RequestPayout(ctx context.Context, userID, idemKey string, req
 		return nil, fmt.Errorf("doctor: persist payout request + audit: %w", err)
 	}
 
-	// (6) Return the result.
+	// (7) Return the result.
 	return &RequestPayoutResult{PayoutID: payout.ID, Ref: derefStr(payout.Ref), Status: payout.Status}, nil
 }
 

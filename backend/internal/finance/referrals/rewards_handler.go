@@ -49,7 +49,12 @@ func (h *RewardHandler) PostLink(c *gin.Context) {
 }
 
 // PostAttribute handles POST /v1/referrals/attribute — apply a code at signup.
-// Idempotent per user; rejects self-referral and unknown codes.
+// Idempotent per user, and (per the Refer & Earn modification, Module 8,
+// 2026-09-18) ALWAYS resolves a referrer: an empty code, an unknown code, or a
+// self-referral attempt all fall back to the platform Admin rather than
+// rejecting the request — every user has a referrer, Admin by default. Also
+// awards the one-time signup point (no money moves here; the spec is explicit
+// that attribution alone is points-only).
 func (h *RewardHandler) PostAttribute(c *gin.Context) {
 	uid := callerID(c)
 	if uid == "" {
@@ -63,12 +68,23 @@ func (h *RewardHandler) PostAttribute(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid body"})
 		return
 	}
-	referrerID, err := h.svc.Attribute(c.Request.Context(), uid, req.Code)
+	referrerID, usedAdminDefault, invalidCode, err := h.svc.AttributeOrDefault(c.Request.Context(), uid, req.Code)
 	if err != nil {
+		if errors.Is(err, ErrAdminUserNotConfigured) {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "referral attribution is not configured"})
+			return
+		}
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"referrer_id": referrerID, "referred_user_id": uid})
+	if err := h.svc.AwardSignupPoints(c.Request.Context(), uid); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"referrer_id": referrerID, "referred_user_id": uid,
+		"used_admin_default": usedAdminDefault, "invalid_code": invalidCode,
+	})
 }
 
 // GetDashboard handles GET /v1/referrals/me/dashboard.
