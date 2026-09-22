@@ -58,7 +58,7 @@ export default function AssociationDiscovery() {
         <StateView
           kind="error"
           title="Couldn't load organisations"
-          message="Check your connection and try again."
+          message={(orgs.error as Error)?.message ?? 'Check your connection and try again.'}
           actionLabel="Retry"
           onAction={() => orgs.refetch()}
         />

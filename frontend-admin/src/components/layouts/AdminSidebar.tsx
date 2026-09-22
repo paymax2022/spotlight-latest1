@@ -90,6 +90,16 @@ const navItemsBase: NavItem[] = [
   // here only for sidebar visibility consistency with the other Path A
   // entries above.
   { label: 'Payments & Finance', href: '/admin/payments-finance', section: 'Finance', permissions: ['finance:adjust:initiate'] },
+  // Path A console: data + actions live in frontend-web's utility module
+  // (frontend-web/app/api/admin/utility/transactions/...), reached through
+  // /api/web-proxy. utility:support is frontend-web's own permission name
+  // (checked server-side there via requireUtilitySupport/requireUtilityManager).
+  { label: 'Utility Payments', href: '/admin/utility-payments', section: 'Finance', permissions: ['utility:support'] },
+  // Same Path A console, catalogue side: providers/billers/categories/products/
+  // discounts. Every route behind it is requireUtilityManager-only server-side
+  // (see frontend-web/app/api/admin/utility/_utils.ts) — unlike the transaction
+  // page above, utility:support alone cannot reach it.
+  { label: 'Utility Catalogue', href: '/admin/utility-payments/catalogue', section: 'Finance', permissions: ['utility:manage'] },
   { label: 'KYC Queue', href: '/admin/finance/kyc', section: 'Finance', permissions: ['audit.logs.view'] },
   { label: 'KYC Verification', href: '/admin/finance/kyc-verify', section: 'Finance', permissions: ['finance.admin.kyc'] },
   { label: 'Wallet Lookup', href: '/admin/finance/wallets', section: 'Finance', permissions: ['audit.logs.view'] },
