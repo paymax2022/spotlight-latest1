@@ -77,6 +77,7 @@ type adminTxFixture struct {
 	commAcct                     string
 	rowA, rowB, rowC, rowD, rowE string // ledger_entries.id
 	rowDBalance                  string // ledger_entries.id — balances rowD, see setup comment
+	rowABalance                  string // ledger_entries.id — balances rowA, see setup comment
 }
 
 func mustLiveTxPool(t *testing.T) *pgxpool.Pool {
@@ -166,6 +167,15 @@ func setupAdminTxFixture(t *testing.T) *adminTxFixture {
 
 	// rowA: 10 days ago, CREDIT 150000 kobo, colon-namespaced reference "fx:convert:...".
 	f.rowA = insert(walletAcc.ID, "CREDIT", 150000, fmt.Sprintf("fx:convert:%s-A", tag), now.Add(-10*24*time.Hour))
+	// rowA must stay genuinely alone — TestAdminGetTransaction_ReturnsRelatedLegAndFullDetail
+	// asserts it has ZERO related legs, which is incompatible with giving it a
+	// same-reference balancing leg (unlike rowD/rowE below). Global conservation
+	// only requires the WHOLE table's signed sum to be zero, not that every
+	// individual reference group balances — so rowA's +150000 contribution is
+	// offset here by an UNRELATED reference (a random UUID, not derived from
+	// tag), which therefore never matches any Search=tag/amount-range/date-range
+	// assertion in this file and never becomes a "related entry" of anything.
+	f.rowABalance = insert(commAcc.ID, "REVERSAL_CREDIT", 150000, uuid.NewString(), now.Add(-101*24*time.Hour))
 	// rowB: 1 day ago, DEBIT 50000 kobo, "arena:support:..." — paired with rowC
 	// below, seeded with real metadata (proves the detail endpoint's JSON
 	// round-trip; ledger_entries is append-only, so this must be set at insert).
@@ -204,7 +214,7 @@ func setupAdminTxFixture(t *testing.T) *adminTxFixture {
 
 	t.Cleanup(func() {
 		_, _ = pool.Exec(context.Background(), `DELETE FROM ledger_entries WHERE id = ANY($1)`,
-			[]string{f.rowA, f.rowB, f.rowC, f.rowD, f.rowDBalance, f.rowE, rowEBalance})
+			[]string{f.rowA, f.rowABalance, f.rowB, f.rowC, f.rowD, f.rowDBalance, f.rowE, rowEBalance})
 		_, _ = pool.Exec(context.Background(), `DELETE FROM ledger_accounts WHERE id = $1`, f.walletAcct)
 		_, _ = pool.Exec(context.Background(), `DELETE FROM user_profiles WHERE id = $1`, f.userID)
 		_, _ = pool.Exec(context.Background(), `DELETE FROM auth.users WHERE id = $1`, f.userID)
@@ -578,6 +588,19 @@ func TestAdminGetTransaction_NonUniqueReferenceCapsButReportsRealTotal(t *testin
 		}
 		ids = append(ids, id)
 	}
+	// The 25 rows above are all CREDIT 1 kobo — unbalanced by 25 kobo, and the
+	// type/amount here are irrelevant to what this test actually checks
+	// (related-entries pagination cap, not money conservation). Add one more
+	// row on the same reference that nets it to zero — it's itself a 26th
+	// "related" row, so the assertions below count off len(ids), not extraRows.
+	var balanceID string
+	if err := f.pool.QueryRow(ctx, `
+		INSERT INTO ledger_entries (account_id, type, amount_kobo, reference, idempotency_key, created_at)
+		VALUES ($1,$2,$3,$4,$5,$6) RETURNING id`,
+		f.commAcct, "REVERSAL_CREDIT", extraRows, sharedRef, "idem-"+uuid.NewString(), time.Now().UTC()).Scan(&balanceID); err != nil {
+		t.Fatalf("insert shared-reference balancing row: %v", err)
+	}
+	ids = append(ids, balanceID)
 	t.Cleanup(func() {
 		_, _ = f.pool.Exec(context.Background(), `DELETE FROM ledger_entries WHERE id = ANY($1)`, ids)
 	})
@@ -586,9 +609,9 @@ func TestAdminGetTransaction_NonUniqueReferenceCapsButReportsRealTotal(t *testin
 	if err != nil {
 		t.Fatalf("AdminGetTransaction: %v", err)
 	}
-	if detail.RelatedEntriesTotal != int64(extraRows-1) {
-		t.Fatalf("expected RelatedEntriesTotal=%d (the other %d rows sharing this reference), got %d",
-			extraRows-1, extraRows-1, detail.RelatedEntriesTotal)
+	if detail.RelatedEntriesTotal != int64(len(ids)-1) {
+		t.Fatalf("expected RelatedEntriesTotal=%d (the other %d rows sharing this reference, including the balancing leg), got %d",
+			len(ids)-1, len(ids)-1, detail.RelatedEntriesTotal)
 	}
 	if len(detail.RelatedEntries) != 20 {
 		t.Fatalf("expected the returned related list capped at 20, got %d", len(detail.RelatedEntries))
