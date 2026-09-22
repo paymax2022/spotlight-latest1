@@ -435,7 +435,7 @@ func (s *Service) Book(ctx context.Context, ownerID string, in BookInput) (*Appo
 
 	out := &Appointment{
 		ID: appt.ID, ProviderID: in.ProviderID, OwnerID: ownerID, PetID: in.PetID,
-		ServiceID: in.ServiceID, VisitType: in.VisitType, State: StateRequested,
+		ServiceID: &in.ServiceID, VisitType: in.VisitType, State: StateRequested,
 		PayState: PayHeld, TotalKobo: total, EscrowID: &escrowID,
 		SlotStart: in.SlotStart, SlotEnd: in.SlotEnd, CreatedAt: time.Now(),
 	}

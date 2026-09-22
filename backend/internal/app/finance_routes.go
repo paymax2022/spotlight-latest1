@@ -1093,7 +1093,7 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 
 	// --- Groups routes ---
 	if cfg.FeatureGroupsEnabled {
-		groupsSvc := groups.NewService(pool, ledgerSvc)
+		groupsSvc := groups.NewService(pool, ledgerSvc).WithTiers(tiersSvc)
 		groupsHandler := groups.NewHandler(groupsSvc)
 		grp := finance.Group("/groups")
 		grp.POST("", groupsHandler.Create)
