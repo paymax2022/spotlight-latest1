@@ -64,16 +64,17 @@ FROM node:20-alpine AS runtime
 WORKDIR /app
 
 ENV NODE_ENV=production
+ENV NEXT_TELEMETRY_DISABLED=1
+# Keep V8 below the Railway service allocation while allowing more than its
+# conservative default heap, which caused the Next server to restart.
+ENV NODE_OPTIONS=--max-old-space-size=768
 # Local default only -- Railway injects PORT at runtime and overrides this.
 ENV PORT=3001
+ENV HOSTNAME=0.0.0.0
 
 COPY --from=builder --chown=node:node /app/public ./public
-COPY --from=builder --chown=node:node /app/.next ./.next
-COPY --from=builder --chown=node:node /app/node_modules ./node_modules
-COPY --from=builder --chown=node:node /app/package*.json ./
-# `next start` reads next.config.mjs at runtime; without it the server silently
-# falls back to Next defaults.
-COPY --from=builder --chown=node:node /app/next.config.mjs ./
+COPY --from=builder --chown=node:node /app/.next/standalone ./
+COPY --from=builder --chown=node:node /app/.next/static ./.next/static
 
 # Run as the built-in non-root `node` user (trivy DS-0002). The COPYs above use
 # --chown because Next writes to .next/cache at runtime; root-owned files would
@@ -82,6 +83,4 @@ COPY --from=builder --chown=node:node /app/next.config.mjs ./
 USER node
 EXPOSE 8080
 
-# Bind whatever port Railway assigns. The package.json `start` script hardcodes
-# `-p 3001`, which would ignore $PORT and leave the service unreachable.
-CMD ["sh", "-c", "node_modules/.bin/next start -p ${PORT:-3001} -H 0.0.0.0"]
+CMD ["node", "server.js"]

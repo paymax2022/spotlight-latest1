@@ -1,5 +1,6 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  output: 'standalone',
   experimental: {
     externalDir: true,
     // This app prerenders 488 static pages. Next forks one static-generation
