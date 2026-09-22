@@ -442,14 +442,12 @@ type Config struct {
 	DoctorAIRatePerDay int
 
 	// ── Doctor RTC (real-time call) credentials ──────────────────────────────
-	// SERVER-SIDE ONLY. The App Certificate / VideoSDK secret are used to SIGN
-	// short-lived join tokens and are NEVER shipped to a client. Empty creds
-	// disable the provider: the call session returns an empty token + a
-	// "not configured" flag (never a fabricated token).
-	AgoraAppID          string
-	AgoraAppCertificate string
-	VideoSDKAPIKey      string
-	VideoSDKSecret      string
+	// SERVER-SIDE ONLY. The VideoSDK secret is used to SIGN short-lived join
+	// tokens and is NEVER shipped to a client. Empty creds disable the provider:
+	// the call session returns an empty token + a "not configured" flag (never a
+	// fabricated token).
+	VideoSDKAPIKey string
+	VideoSDKSecret string
 
 	// ── Paymax Connect ───────────────────────────────────────────────────────
 	// Server-side pepper for hashing verification identifiers (HMAC-SHA256).
@@ -799,10 +797,8 @@ func Load() Config {
 		DoctorAIRatePerMin: getEnvInt("DOCTOR_AI_RATE_PER_MIN", 20),
 		DoctorAIRatePerDay: getEnvInt("DOCTOR_AI_RATE_PER_DAY", 200),
 
-		AgoraAppID:          getEnv("AGORA_APP_ID", ""),
-		AgoraAppCertificate: getEnv("AGORA_APP_CERTIFICATE", ""),
-		VideoSDKAPIKey:      getEnv("VIDEOSDK_API_KEY", ""),
-		VideoSDKSecret:      getEnv("VIDEOSDK_SECRET", ""),
+		VideoSDKAPIKey: getEnv("VIDEOSDK_API_KEY", ""),
+		VideoSDKSecret: getEnv("VIDEOSDK_SECRET", ""),
 
 		ConnectVerificationPepper: getEnv("CONNECT_VERIFICATION_PEPPER", ""),
 

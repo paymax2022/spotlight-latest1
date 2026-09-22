@@ -91,7 +91,7 @@ Legend: **R** = required for the Core+Payments launch · ✦ = has test/live var
 - SMS: **Termii** (`TERMII_API_KEY`,`TERMII_SENDER_ID`). Push: `EXPO_PUSH_TOKEN`.
 
 ### AI / RTC / Maps (optional)
-- **Anthropic** `ANTHROPIC_API_KEY`. RTC: **Agora** (`AGORA_APP_ID`,`AGORA_APP_CERTIFICATE`) or **VideoSDK** (`VIDEOSDK_API_KEY`,`VIDEOSDK_SECRET`).
+- **Anthropic** `ANTHROPIC_API_KEY`. RTC: **VideoSDK** (`VIDEOSDK_API_KEY`,`VIDEOSDK_SECRET`).
 - Maps: `MAPS_PROVIDER` (`mock`/`http`) + `MAPS_GEOAPIFY_KEY`, `MAPS_MAPTILER_KEY`, `MAPS_OSRM_BASE_URL`, `MAPS_GOOGLE_KEY`, `MAPS_MAPBOX_TOKEN`.
 
 ### Invest providers (optional — keep flag OFF until compliance)

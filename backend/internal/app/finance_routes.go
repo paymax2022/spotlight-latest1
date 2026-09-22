@@ -708,10 +708,8 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 	// admin /api/academy/admin/* (+ /api/academy for identity/curriculum/commerce).
 	if cfg.FeatureAcademyEnabled && pool != nil {
 		academyRTC := rtc.NewIssuer(rtc.Config{
-			AgoraAppID:          cfg.AgoraAppID,
-			AgoraAppCertificate: cfg.AgoraAppCertificate,
-			VideoSDKAPIKey:      cfg.VideoSDKAPIKey,
-			VideoSDKSecret:      cfg.VideoSDKSecret,
+			VideoSDKAPIKey: cfg.VideoSDKAPIKey,
+			VideoSDKSecret: cfg.VideoSDKSecret,
 		})
 		// RAILS_MODE seam: select the HTTP fake/sandbox/live adapters for the four
 		// unbacked academy rails (BNPL/payout/disburse/billing). nil per-rail ⇒ that
@@ -1145,7 +1143,11 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 			Region:          cfg.R2Region,
 		})
 		assocSvc.WithPresigner(assocPresigner)
+		// Live group chat: message fan-out to a thread's audience over the WS hub,
+		// the same open-source stack the food/mobility/doctor streams use.
+		associationHub := platformWS.New(wsOriginAllowed)
 		assocHandler := association.NewHandler(assocSvc).
+			WithHub(associationHub).
 			WithPresigner(assocPresigner, cfg.R2Bucket)
 		association.RegisterRoutes(finance.Group("/associations"), assocHandler)
 	}
@@ -2569,15 +2571,13 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 	// auth middleware. Money path (POST /payouts) posts a balanced double-entry
 	// via the shared ledger, enforces tier limits fail-closed, and is idempotent.
 	if cfg.FeatureDoctorEnabled {
-		// Wave 6: realtime layer. The RTC Issuer signs short-lived Agora/VideoSDK
+		// Wave 6: realtime layer. The RTC Issuer signs short-lived VideoSDK
 		// join tokens server-side (creds never leave the process); an unconfigured
 		// provider yields an empty token + a "not configured" flag, never a fake one.
 		// One shared WS Hub fans push events to a doctor's connected devices.
 		rtcIssuer := rtc.NewIssuer(rtc.Config{
-			AgoraAppID:          cfg.AgoraAppID,
-			AgoraAppCertificate: cfg.AgoraAppCertificate,
-			VideoSDKAPIKey:      cfg.VideoSDKAPIKey,
-			VideoSDKSecret:      cfg.VideoSDKSecret,
+			VideoSDKAPIKey: cfg.VideoSDKAPIKey,
+			VideoSDKSecret: cfg.VideoSDKSecret,
 		})
 		doctorHub := platformWS.New(wsOriginAllowed)
 
@@ -2856,7 +2856,7 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		docGroup.GET("/chat/:threadId/messages", doctorHandler.ListChatMessages)
 		docGroup.POST("/chat/:threadId/messages", doctorHandler.SendChatMessage)
 
-		// ── Wave 4/6: CALL SESSIONS (Wave 6 issues real Agora/VideoSDK RTC tokens) ──
+		// ── Wave 4/6: CALL SESSIONS (Wave 6 issues real VideoSDK RTC tokens) ──
 		docGroup.GET("/calls/:appointmentId", doctorHandler.GetCallSession)
 		docGroup.POST("/calls/:appointmentId/join", doctorHandler.StartCallSession)
 		docGroup.POST("/calls/:appointmentId/leave", doctorHandler.EndCallSession)

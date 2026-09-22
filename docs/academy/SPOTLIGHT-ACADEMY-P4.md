@@ -73,7 +73,7 @@ sponsor-funded rewards; full audit + RLS.
 - Rail wiring (`app/academy_rails.go`): ✅ DONE for the rails with backing services —
   commerce **PaymentRail** + EduPay **CollectRail** now charge/collect on the real
   wallet ledger (`ledger.Debit` → escrow standing account, idempotent), live
-  **LiveRoomProvider** mints real RTC join tokens via `integrations/rtc` (when Agora
+  **LiveRoomProvider** mints real RTC join tokens via `integrations/rtc` (when VideoSDK
   creds are configured; nil ⇒ stub). Rewards already used the real ledger. STILL
   stubbed (no clean backing service/account model): commerce **BNPL**, EduPay
   **DisburseRail** (needs a school-account/payout rail), schools **BillingRail**
