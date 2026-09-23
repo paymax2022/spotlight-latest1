@@ -97,6 +97,46 @@ export function isSignupModeOpen(mode: SignupMode): boolean {
   return mode !== 'disabled';
 }
 
+export type SignupCodeState = 'absent' | 'too-short' | 'usable';
+
+/**
+ * Classifies the CONFIGURED ADMIN_SIGNUP_CODE (the server's own value, not a
+ * caller-supplied one). 'too-short' is tracked separately from 'absent'
+ * because the operator who set a four-character code needs to be told it was
+ * rejected for length — a bare "set ADMIN_SIGNUP_CODE" reads as a lie to
+ * someone who just did exactly that and sends them hunting for a variable that
+ * is present.
+ */
+export function classifySignupCode(raw: string): SignupCodeState {
+  const code = raw.trim();
+  if (!code) return 'absent';
+  return code.length >= MIN_SIGNUP_CODE_LENGTH ? 'usable' : 'too-short';
+}
+
+/**
+ * The configured code when it is usable, else ''.
+ *
+ * Both the mode decision and the POST comparison must read the code through
+ * this: a one-character ADMIN_SIGNUP_CODE would otherwise switch the public
+ * `code` path ON while being guessable in a handful of requests, so the
+ * endpoint would look gated and not be. Emptying it makes the mode fall through
+ * to bootstrap (zero admins, self-closing) or disabled (fail closed) instead.
+ */
+export function sanitizeSignupCode(raw: string): string {
+  return classifySignupCode(raw) === 'usable' ? raw.trim() : '';
+}
+
+/**
+ * The disabled-mode explanation, refined by WHY signup is closed. A rejected
+ * code is named as such rather than reported as missing.
+ */
+export function describeDisabledSignup(codeState: SignupCodeState): string {
+  if (codeState === 'too-short') {
+    return `ADMIN_SIGNUP_CODE is set but shorter than ${MIN_SIGNUP_CODE_LENGTH} characters, so this server refuses it. Use a longer code, or sign in as an existing admin.`;
+  }
+  return describeSignupMode('disabled');
+}
+
 /**
  * Length-independent, branch-free-ish comparison, so a wrong code cannot be
  * narrowed down by timing how long the rejection took. Plain !== would return

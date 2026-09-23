@@ -68,6 +68,13 @@ const navItemsBase: NavItem[] = [
   { label: 'Leads Queue', href: '/admin/leads', section: 'Support' },
   { label: 'Handoff Queue', href: '/admin/handoffs', section: 'Support' },
   { label: 'Users', href: '/admin/users', section: 'Support', permissions: ['users.view'] },
+  // Adds a colleague: creates the credentials, the 'admin' profile role, an
+  // active platform_users row and the RBAC grant in one go. Indexed next to
+  // Users/Roles because it grants what those two screens inspect, and gated on
+  // users.roles.assign so it agrees with routeGuard.ts's /admin/admins entry —
+  // a mismatch either hides the link from an operator the guard would admit or
+  // bounces them to /admin/unauthorized after they click it.
+  { label: 'Create Admin', href: '/admin/admins/new', section: 'Support', permissions: ['users.roles.assign'] },
   { label: 'Roles', href: '/admin/roles', section: 'Support', permissions: ['roles.view'] },
   { label: 'RBAC Settings', href: '/admin/rbac-settings', section: 'Support', permissions: ['roles.view'] },
   { label: 'Permission Matrix', href: '/admin/permissions-matrix', section: 'Support', permissions: ['permissions.view'] },
