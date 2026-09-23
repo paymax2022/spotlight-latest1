@@ -146,7 +146,7 @@ func RegisterAcademy(r *gin.Engine, finance *gin.RouterGroup, pool *pgxpool.Pool
 		payRail, collectRail = lr, lr
 	}
 	var liveRooms academylive.LiveRoomProvider // live RTC token → integrations/rtc
-	if rtcIssuer != nil && rtcIssuer.Enabled(rtc.ProviderAgora) {
+	if rtcIssuer != nil && rtcIssuer.Enabled(rtc.ProviderVideoSDK) {
 		liveRooms = academyLiveRail{issuer: rtcIssuer}
 	}
 	memberFin := finance                                 // → /api/finance/academy/...

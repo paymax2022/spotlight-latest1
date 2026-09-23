@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"spotlight/backend/internal/arena"
+	"spotlight/backend/internal/finance/ledger"
 	"spotlight/backend/internal/platform/crypto"
 )
 
@@ -189,6 +190,64 @@ func TestSupport_Idempotent(t *testing.T) {
 	}
 	if led.debits != 1 {
 		t.Fatalf("idempotent support must debit exactly once, got %d", led.debits)
+	}
+}
+
+// realReplayLedger is a fakeLedger that returns the REAL ledger.ErrDuplicate
+// on a replayed idempotency key, instead of the plain fakeLedger's silent
+// no-op — the plain fake is why TestSupport_Idempotent never caught the live
+// UAT defect: it tests the fake's own behavior, not what the real
+// finance/ledger.Service actually returns on a redis-lock-detected replay
+// (see internal/finance/ledger/service.go Debit/Credit). This double
+// reproduces the real contract so Contribute's isLedgerReplay branch is
+// actually exercised.
+type realReplayLedger struct {
+	debits, credits int
+	seen            map[string]bool
+}
+
+func newRealReplayLedger() *realReplayLedger { return &realReplayLedger{seen: map[string]bool{}} }
+func (f *realReplayLedger) Debit(_ context.Context, _, _, idem, _ string, _ int64) error {
+	if f.seen[idem] {
+		return ledger.ErrDuplicate
+	}
+	f.seen[idem] = true
+	f.debits++
+	return nil
+}
+func (f *realReplayLedger) Credit(_ context.Context, _, _, idem, _ string, _ int64) error {
+	if f.seen[idem] {
+		return ledger.ErrDuplicate
+	}
+	f.seen[idem] = true
+	f.credits++
+	return nil
+}
+func (f *realReplayLedger) StandingAccountID(context.Context, string) (string, error) {
+	return "acct-pot", nil
+}
+
+// TestSupport_ReplayReturnsSuccessNotRawLedgerError locks the fix: a
+// Contribute call replayed with the same idempotency key against a ledger
+// that returns the REAL ledger.ErrDuplicate signal must succeed (nil), not
+// bubble the raw internal error — found live via UAT, where this surfaced as
+// an unmapped 500 on a genuine client retry.
+func TestSupport_ReplayReturnsSuccessNotRawLedgerError(t *testing.T) {
+	led := newRealReplayLedger()
+	repo := &fakeSupportRepo{}
+	svc := NewSupportService(repo, led, fakeTier{3}, fakeCfg{Config{RequiredKYCTier: 1}}, &fakeAudit{})
+
+	if err := svc.Contribute(context.Background(), "u1", "same-idem", "c1", "k1", 1000); err != nil {
+		t.Fatalf("first Contribute: %v", err)
+	}
+	if err := svc.Contribute(context.Background(), "u1", "same-idem", "c1", "k1", 1000); err != nil {
+		t.Fatalf("replayed Contribute must succeed (idempotent no-op), got: %v", err)
+	}
+	if led.debits != 1 {
+		t.Fatalf("expected exactly 1 real debit, got %d", led.debits)
+	}
+	if len(repo.rows) != 1 {
+		t.Fatalf("expected exactly 1 tagged support row (no re-tag on replay), got %d", len(repo.rows))
 	}
 }
 

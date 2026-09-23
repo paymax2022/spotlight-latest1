@@ -25,6 +25,7 @@ import { useCartStore, cartItemCount } from '@/features/food/cartStore';
 import { formatNairaWhole } from '@/features/food/utils';
 import type { Restaurant } from '@/features/food/types';
 import { HomeMenuButton } from '@/components/HomeMenu';
+import StateView from '@/components/StateView';
 
 // ── Landing-screen config ───────────────────────────────────────────────────
 //
@@ -380,18 +381,28 @@ export default function FoodScreen() {
 
         <View style={s.list}>
           {isLoading ? (
-            <Text style={s.empty}>Loading restaurants…</Text>
+            <StateView kind="loading" message="Loading restaurants…" />
           ) : isError ? (
-            <View style={s.errorBox}>
-              <Text style={s.empty}>Couldn't load restaurants.</Text>
-              <Pressable onPress={() => void refetch()} accessibilityRole="button">
-                <Text style={s.retry}>Tap to retry</Text>
-              </Pressable>
-            </View>
+            <StateView
+              kind="error"
+              title="Couldn't load restaurants"
+              message="Check your connection and try again."
+              actionLabel="Retry"
+              onAction={() => refetch()}
+            />
           ) : filtered.length === 0 ? (
-            <Text style={s.empty}>
-              {debouncedQuery ? `No restaurants match "${debouncedQuery}"` : 'No restaurants available yet.'}
-            </Text>
+            <StateView
+              kind="empty"
+              icon="UtensilsCrossed"
+              title="No restaurants found"
+              message={
+                debouncedQuery
+                  ? `Nothing matches "${debouncedQuery}".`
+                  : 'No restaurants are open here yet — check back soon.'
+              }
+              actionLabel={debouncedQuery ? 'Clear search' : undefined}
+              onAction={debouncedQuery ? () => setSearch('') : undefined}
+            />
           ) : (
             <>
               {filtered.map((item) => (
@@ -557,7 +568,4 @@ const s = StyleSheet.create({
   },
   merchantTitle: { ...Typography.labelLg, color: Colors.onSurface },
   merchantSubtitle: { ...Typography.labelSm, color: Colors.onSurfaceVariant, marginTop: 2 },
-  empty: { ...Typography.bodyMd, color: Colors.outline, textAlign: 'center', marginTop: Spacing.xxl },
-  errorBox: { alignItems: 'center', gap: Spacing.sm },
-  retry: { ...Typography.labelLg, color: Colors.primary },
 });

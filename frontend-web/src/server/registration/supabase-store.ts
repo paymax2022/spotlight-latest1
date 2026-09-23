@@ -56,10 +56,22 @@ function nowIso() {
   return new Date().toISOString();
 }
 
-function makeReference(contestSlug: string) {
+// Exported for RG-005 (contestant/reference number uniqueness) test coverage.
+//
+// The random suffix used to be 4 base36 chars (~1.68M combinations). Under a
+// registration burst (many applicants submitting in the same millisecond —
+// the `stamp` component only changes once per ms), the birthday bound puts a
+// collision at ~99.9% likely by ~5000 same-millisecond calls — confirmed by
+// tests/unit/registration/dedup-and-reference-uniqueness.spec.ts, which
+// reproduced a real collision at that volume before this fix. Reference is a
+// human-facing/support-lookup value (the DB row identity is the UUID `id`,
+// unaffected), but a collided reference is still a real support/traceability
+// defect, so the suffix is widened to 6 chars (~2.18B combinations) — the same
+// per-slug format, just far lower collision odds at realistic burst sizes.
+export function makeReference(contestSlug: string) {
   const prefix = contestSlug.replace(/[^a-z0-9]/gi, '').slice(0, 6).toUpperCase() || 'SPOT';
   const stamp = Date.now().toString().slice(-6);
-  const rand = Math.random().toString(36).slice(2, 6).toUpperCase();
+  const rand = Math.random().toString(36).slice(2, 8).toUpperCase();
   return `${prefix}-${stamp}-${rand}`;
 }
 
@@ -308,6 +320,27 @@ async function resolveAnyContest(slugOrId: string): Promise<ContestRegistrationD
   return null;
 }
 
+/**
+ * Look up a connect_contests.id by slug. Used by reviewRegistrationApplication
+ * (AD-003/CS-004) to resolve which contest a registration's photo template
+ * (contest_templates.connect_contest_id) should come from. There was no
+ * existing slug -> connect_contests.id lookup in this file to reuse —
+ * resolveAnyContest above resolves against public.contests / the in-memory
+ * catalog, not connect_contests. Returns null (never throws) on any miss or
+ * error — an unresolvable contest just means the template resolver is
+ * skipped and the caller falls back to the no-template pipeline.
+ */
+async function resolveConnectContestId(slug: string | undefined): Promise<string | null> {
+  if (!slug) return null;
+  const { data, error } = await getSupabase()
+    .from('connect_contests')
+    .select('id')
+    .eq('slug', slug)
+    .maybeSingle();
+  if (error || !data) return null;
+  return (data as { id: string }).id;
+}
+
 export async function startRegistrationDraft(params: {
   contestSlug: string;
   userId?: string;
@@ -413,6 +446,13 @@ export async function startRegistrationDraft(params: {
   return draft;
 }
 
+// SEC-010/RG-003/EC-006 (UAT Batch 9): the two photo/likeness-adjacent
+// consent checkboxes audited into registration_consent_records at submission
+// time. Kept as one constant so submitRegistrationApplication's audit-row
+// insert and reviewRegistrationApplication's promotion-time gate (further
+// below) can never drift onto different key lists.
+const CONSENT_RECORD_KEYS = ['media.rightsConfirmed', 'publicProfile.publicVotingConsent'] as const;
+
 export async function submitRegistrationApplication(applicationId: string) {
   const draft = await getRegistrationDraft(applicationId);
   if (!draft) throw new Error('Application not found.');
@@ -466,6 +506,40 @@ export async function submitRegistrationApplication(applicationId: string) {
     actor_role: draft.role,
     created_at: now,
   });
+
+  // SEC-010/RG-003/EC-006 (UAT Batch 9): record an immutable audit row for
+  // each of the two photo/likeness-adjacent consent checkboxes, captured
+  // AFTER validation succeeded above — a submission validateStepData just
+  // rejected can never produce a false "consent accepted" event here. Records
+  // whatever the field actually resolved to (should be `true`, since
+  // validateStepData now requires it — see field-catalog.ts's defaultRequired
+  // on both keys — but this reads form_data directly rather than assuming).
+  //
+  // ip_address/device_fingerprint are left null: this function has no access
+  // to the request's IP or a device fingerprint. The only caller is
+  // app/api/registration/applications/[id]/submit/route.ts, which is on the
+  // brownfield-protected legacy list (.claude/hooks/protect-legacy.sh) and
+  // cannot be edited to thread that data through without violating the
+  // brownfield-safety rule — so those columns stay null here rather than
+  // working around the protection.
+  const consentRows = CONSENT_RECORD_KEYS.map((key) => ({
+    registration_id: applicationId,
+    consent_key: key,
+    accepted: draft.formData[key] === true,
+    accepted_at: now,
+    version: 'v1',
+    ip_address: null,
+    device_fingerprint: null,
+    created_at: now,
+  }));
+  const { error: consentError } = await getSupabase().from('registration_consent_records').insert(consentRows);
+  if (consentError) {
+    // Do not block a successful submission on the audit log failing to write —
+    // the applicant's submission already succeeded and was recorded above;
+    // losing the audit trail for one submission is a lesser failure than
+    // silently rejecting an otherwise-valid submission because of it.
+    console.error(`Failed to record registration consent audit rows for ${applicationId}: ${consentError.message}`);
+  }
 
   return { success: true, draft, message: `Your application has been submitted. Reference: ${draft.reference}.` };
 }
@@ -777,6 +851,15 @@ export async function withdrawRegistrationApplication(
  * shape immediately above: update the row, then append a
  * registration_status_events row for the audit timeline.
  */
+// Statuses that promote_registration_to_contestant() (via review_registration_application,
+// migration 20270125000000) actually fires for. Kept in sync manually with that SQL —
+// there's no shared source of truth to import from across the SQL/TS boundary.
+const PROMOTING_STATUSES: ReadonlyArray<ApplicationStatus> = [
+  'approved',
+  'selected_for_public_voting',
+  'selected_for_bootcamp',
+];
+
 export async function reviewRegistrationApplication(
   applicationId: string,
   input: RegistrationReviewInput,
@@ -786,12 +869,134 @@ export async function reviewRegistrationApplication(
 
   const now = nowIso();
   const nextFraudFlags = input.fraudFlags || current.fraudFlags;
-  const nextFormData = {
+  const nextFormData: Record<string, any> = {
     ...current.formData,
     'admin.reviewNote': input.note || '',
     'admin.reviewScore': typeof input.score === 'number' ? input.score : current.formData['admin.reviewScore'],
     'admin.requestedFields': input.requestedFields || current.formData['admin.requestedFields'],
   };
+
+  // SEC-010/RG-003/EC-006 (UAT Batch 9): hard consent gate BEFORE the photo
+  // moderation pipeline below — cheap synchronous checks first, so a missing
+  // consent never pays for an (external-service-calling) moderation/
+  // compositing pass it's about to reject anyway. Exactly matches the
+  // moderation gate's own contract: throw and return before any DB write, so
+  // a blocked review leaves the application entirely untouched and the admin
+  // sees a failed action they can retry after resolving it (re-request
+  // consent from the applicant).
+  //
+  // NEITHER key is universal across the 5 hand-tailored live contest forms
+  // (forms/*.ts) — this was verified by running buildRegistrationSteps for
+  // every slug, not assumed:
+  //   - media.rightsConfirmed literally exists only on reality-tv-show and
+  //     film-academy. stem-contest, sme-pitch-contest and open-mic-competition
+  //     capture the equivalent "I have rights to what I submitted" consent
+  //     under a DIFFERENT, category-appropriate key instead
+  //     (compliance.ownWork / category.ownsRights) — this batch is scoped to
+  //     reusing exactly the two named catalog fields, not chasing every
+  //     synonym, so those categories are intentionally left alone here.
+  //   - publicProfile.publicVotingConsent exists on all 4 voting-capable
+  //     forms (reality-tv-show, stem-contest, sme-pitch-contest,
+  //     open-mic-competition) but NOT on film-academy, whose header
+  //     documents it "does NOT support public voting" and so never renders
+  //     that field at all.
+  // Checking either key unconditionally would therefore permanently block
+  // approval for whichever live contests don't happen to collect it under
+  // that exact name — a functional regression, not SEC-010 compliance. So
+  // each key is enforced only when this registration's OWN built form
+  // actually collects it (checked dynamically below via
+  // buildRegistrationSteps, not a hardcoded per-slug list, so a future new
+  // contest template is covered automatically); publicProfile.publicVotingConsent
+  // is additionally scoped to contests with derived.supportsVoting true,
+  // matching the flag every form already gates its own public-voting step on.
+  if (PROMOTING_STATUSES.includes(input.status)) {
+    const collectedKeys = new Set(buildRegistrationSteps(current).flatMap((step) => step.fields.map((field) => field.key)));
+
+    if (collectedKeys.has('media.rightsConfirmed') && nextFormData['media.rightsConfirmed'] !== true) {
+      throw new Error('Cannot approve: applicant has not confirmed rights to the uploaded materials (media.rightsConfirmed consent missing).');
+    }
+    const supportsVoting = current.formData['derived.supportsVoting'] === true;
+    if (
+      supportsVoting &&
+      collectedKeys.has('publicProfile.publicVotingConsent') &&
+      nextFormData['publicProfile.publicVotingConsent'] !== true
+    ) {
+      throw new Error('Cannot approve: applicant has not consented to public voting visibility (publicProfile.publicVotingConsent consent missing).');
+    }
+  }
+
+  // G-IMG / TS-3 (IMG-001/SEC-010): when this decision is one that promotes
+  // the applicant to a public contestant, run their photo through moderation
+  // + background-removal BEFORE any DB write, so a failed/rejected photo
+  // leaves the application entirely untouched (admin can retry the action).
+  //
+  // promote_registration_to_contestant() reads
+  // form_data->>'media.photoUrl' (falling back to 'media.headshotUrl')
+  // verbatim into contestants.photo_url — see
+  // supabase/migrations/20260812010000_registration_contestant_seam.sql
+  // line ~104. By rewriting that same key here before the RPC fires, the
+  // RPC's existing COALESCE picks up the processed image with zero SQL
+  // changes.
+  //
+  // AD-003/CS-004: contest_templates now has a connect_contest_id bridge
+  // column (supabase/migrations/20270212000000_contest_templates_connect_bridge.sql)
+  // linking it to connect_contests — the table registrations actually
+  // resolve via contest_slug. We resolve the registration's connect_contests
+  // id, then look up an active template for it via
+  // resolveActiveTemplateForContest(). If one is configured (with a
+  // 'contestant' slot), we run the full compositing pipeline
+  // (processContestantPhoto); otherwise (the common case, until an admin
+  // sets one up in the template manager) we fall back to
+  // processContestantPhotoNoTemplate exactly as before. See
+  // src/server/registration/photo-pipeline.ts module doc.
+  if (PROMOTING_STATUSES.includes(input.status)) {
+    const rawPhotoUrl =
+      (nextFormData['media.photoUrl'] as string | undefined) ||
+      (nextFormData['media.headshotUrl'] as string | undefined);
+
+    if (rawPhotoUrl) {
+      const { processContestantPhoto, processContestantPhotoNoTemplate } = await import(
+        '@/src/server/registration/photo-pipeline'
+      );
+      const { resolveActiveTemplateForContest } = await import(
+        '@/src/server/registration/template-resolver'
+      );
+
+      let pipelineResult;
+
+      const connectContestId = await resolveConnectContestId(current.contestSlug);
+      const resolvedTemplate = connectContestId
+        ? await resolveActiveTemplateForContest(connectContestId)
+        : null;
+
+      if (resolvedTemplate) {
+        pipelineResult = await processContestantPhoto({
+          rawPhotoUrl,
+          templateUrl: resolvedTemplate.templateUrl,
+          templateWidth: resolvedTemplate.templateWidth,
+          templateHeight: resolvedTemplate.templateHeight,
+          slot: resolvedTemplate.slot,
+        });
+      } else {
+        pipelineResult = await processContestantPhotoNoTemplate(rawPhotoUrl);
+      }
+
+      if (pipelineResult.status === 'rejected') {
+        // IMG-001/SEC-010 content-safety gate: refuse the approval outright
+        // rather than silently promoting with no/unsafe photo. The admin
+        // sees this as a failed review action and must resolve the photo
+        // (e.g. request a new one) before retrying.
+        throw new Error(`Cannot approve: contestant photo failed content moderation (${pipelineResult.reason})`);
+      }
+
+      // 'ready' or 'fallback' — either way we have a usable URL to promote.
+      if (nextFormData['media.photoUrl'] !== undefined) {
+        nextFormData['media.photoUrl'] = pipelineResult.photoUrl;
+      } else {
+        nextFormData['media.headshotUrl'] = pipelineResult.photoUrl;
+      }
+    }
+  }
 
   // Review notes first. These are cosmetic, and writing them before the status
   // transition means a failed transition leaves notes without a false decision —

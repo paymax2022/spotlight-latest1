@@ -170,12 +170,12 @@ type Config struct {
 	FeatureEstateEnabled       bool
 	FeatureCrowdfundingEnabled bool
 	FeatureRestaurantEnabled   bool
-	// FeatureRestaurantWithdrawalsEnabled gates the merchant WITHDRAWAL money path
-	// (bank-account capture + payout requests + admin settle/reverse). Default OFF:
-	// RequestWithdrawal reserves a balanced ledger post (DR merchant wallet → CR
-	// failed_transfer_suspense) under a per-wallet advisory lock, and the admin
-	// settle/reverse pair moves real money, so the module must never become
-	// reachable implicitly. See backend/internal/restaurant/withdrawal.go.
+	// FeatureRestaurantWithdrawalsEnabled gates the merchant/rider withdrawal
+	// money path (wallet → saved bank account; restaurant/withdrawal.go
+	// RequestWithdrawal). Default OFF: the routes are always mounted once
+	// FeatureRestaurantEnabled is on (list/admin views are read-only-safe), but
+	// RequestWithdrawal itself refuses with ErrWithdrawalsDisabled until this is
+	// explicitly turned on (see Service.WithWithdrawals).
 	FeatureRestaurantWithdrawalsEnabled bool
 	// FeatureModuleGateEnforce turns the server-side module gate from observe-only
 	// (logs what it would refuse) into enforcing (503s unpublished modules). Default
@@ -442,14 +442,12 @@ type Config struct {
 	DoctorAIRatePerDay int
 
 	// ── Doctor RTC (real-time call) credentials ──────────────────────────────
-	// SERVER-SIDE ONLY. The App Certificate / VideoSDK secret are used to SIGN
-	// short-lived join tokens and are NEVER shipped to a client. Empty creds
-	// disable the provider: the call session returns an empty token + a
-	// "not configured" flag (never a fabricated token).
-	AgoraAppID          string
-	AgoraAppCertificate string
-	VideoSDKAPIKey      string
-	VideoSDKSecret      string
+	// SERVER-SIDE ONLY. The VideoSDK secret is used to SIGN short-lived join
+	// tokens and is NEVER shipped to a client. Empty creds disable the provider:
+	// the call session returns an empty token + a "not configured" flag (never a
+	// fabricated token).
+	VideoSDKAPIKey string
+	VideoSDKSecret string
 
 	// ── Paymax Connect ───────────────────────────────────────────────────────
 	// Server-side pepper for hashing verification identifiers (HMAC-SHA256).
@@ -800,10 +798,8 @@ func Load() Config {
 		DoctorAIRatePerMin: getEnvInt("DOCTOR_AI_RATE_PER_MIN", 20),
 		DoctorAIRatePerDay: getEnvInt("DOCTOR_AI_RATE_PER_DAY", 200),
 
-		AgoraAppID:          getEnv("AGORA_APP_ID", ""),
-		AgoraAppCertificate: getEnv("AGORA_APP_CERTIFICATE", ""),
-		VideoSDKAPIKey:      getEnv("VIDEOSDK_API_KEY", ""),
-		VideoSDKSecret:      getEnv("VIDEOSDK_SECRET", ""),
+		VideoSDKAPIKey: getEnv("VIDEOSDK_API_KEY", ""),
+		VideoSDKSecret: getEnv("VIDEOSDK_SECRET", ""),
 
 		ConnectVerificationPepper: getEnv("CONNECT_VERIFICATION_PEPPER", ""),
 

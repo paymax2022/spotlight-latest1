@@ -69,7 +69,7 @@ func (h *Handler) MyWithdraw(c *gin.Context) {
 	}
 	res, err := h.svc.WithdrawEligible(c.Request.Context(), userID, idem)
 	if err != nil {
-		if errors.Is(err, ErrKYCRequired) {
+		if errors.Is(err, ErrKYCRequired) || errors.Is(err, ErrAccountNotEligible) {
 			c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
 			return
 		}

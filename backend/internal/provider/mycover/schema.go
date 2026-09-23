@@ -451,12 +451,23 @@ func parseDataSource(raw json.RawMessage) ([]Option, string) {
 		if strings.HasPrefix(s, "http://") || strings.HasPrefix(s, "https://") || strings.HasPrefix(s, "/") {
 			return nil, s
 		}
+		// MyCover sometimes ships this literal list bracketed, e.g.
+		// "[Surgery, Out Patient]" or "[true, false]" (a stringified list
+		// rather than real JSON). Strip one matching outer [...] pair BEFORE
+		// splitting on comma — splitting first left the brackets glued onto
+		// the first/last option ("[Surgery", "Out Patient]"), which is not a
+		// value the provider's own validation ever accepts, so every quote/bind
+		// on an affected field failed with a provider_validation 422 regardless
+		// of what the member picked.
+		if strings.HasPrefix(s, "[") && strings.HasSuffix(s, "]") {
+			s = strings.TrimSpace(s[1 : len(s)-1])
+		}
 		// A comma-separated literal list, e.g. "Male, Female".
 		if strings.Contains(s, ",") {
 			parts := strings.Split(s, ",")
 			out := make([]Option, 0, len(parts))
 			for _, p := range parts {
-				p = strings.TrimSpace(p)
+				p = strings.Trim(strings.TrimSpace(p), `'"`)
 				if p != "" {
 					out = append(out, Option{Value: p, Label: p})
 				}
@@ -464,6 +475,9 @@ func parseDataSource(raw json.RawMessage) ([]Option, string) {
 			if len(out) > 1 {
 				return out, ""
 			}
+		} else if s != "" {
+			// A single bracketed value, e.g. "[true]" -> "true".
+			return []Option{{Value: s, Label: s}}, ""
 		}
 		return nil, ""
 	}

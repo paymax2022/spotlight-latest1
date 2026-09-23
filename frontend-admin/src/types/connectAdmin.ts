@@ -174,7 +174,10 @@ export interface AmlAlert {
   id: string;
   subject_id: string;
   reason_codes: string[];       // AML reason codes ONLY — no raw PII
-  rule: 'velocity' | 'structuring' | 'smurfing' | 'gifting_ring' | 'sanctions_hit' | 'pep_match';
+  // 'threshold_exceeded' added for the real backend's THRESHOLD_EXCEEDED
+  // reason code (connect_aml_alerts.reason_code) — the mock fixtures never
+  // exercised it, but the live rules engine raises it (service.go score()).
+  rule: 'velocity' | 'structuring' | 'smurfing' | 'gifting_ring' | 'sanctions_hit' | 'pep_match' | 'threshold_exceeded';
   amount_kobo: number;          // money in kobo
   severity: string;
   status: AmlAlertStatus;
@@ -203,7 +206,9 @@ export interface ConnectPayout {
   amount_kobo: number;          // money in kobo
   fee_kobo: number;
   tier: number;
-  status: 'pending' | 'approved' | 'paid' | 'rejected' | 'review';
+  // Real connect_payouts.status values (backend CHECK constraint) — see
+  // GET /api/connect/admin/payouts (backend/internal/connect/payouts/handlers.go).
+  status: 'requested' | 'processing' | 'settled' | 'failed';
   requested_at: string;
 }
 

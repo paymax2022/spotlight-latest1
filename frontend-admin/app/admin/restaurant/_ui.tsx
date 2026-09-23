@@ -18,6 +18,7 @@ export const RESTAURANT_PERMS = {
   onboarding: ['restaurant.admin.onboarding', 'restaurant.manage'],
   payouts: ['restaurant.admin.payouts'],
   disputes: ['restaurant.admin.disputes', 'restaurant.manage'],
+  withdrawals: ['restaurant.admin.withdrawals'],
 };
 
 // Reads the cached admin user (same source as AdminSidebar / route guard) and

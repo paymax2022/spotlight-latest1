@@ -7,7 +7,10 @@ import type { ConnectPayout } from '@/types/connectAdmin';
 import { PageHeader, ConnectTabs, Card, Badge, btn, th, td, timeAgo } from '../_ui';
 import { Page, colors } from '@/components/ui/vuexy';
 
-const STATUSES = ['all', 'pending', 'review', 'approved', 'paid', 'rejected'];
+// Real connect_payouts.status values (backend CHECK constraint) — the admin
+// UI previously used a fictitious pending/review/approved/paid/rejected
+// vocabulary that the live route (GET /api/connect/admin/payouts) 400s on.
+const STATUSES = ['all', 'requested', 'processing', 'settled', 'failed'];
 
 export default function ConnectPayoutsPage() {
   const [rows, setRows] = useState<ConnectPayout[]>([]);
@@ -53,7 +56,7 @@ export default function ConnectPayoutsPage() {
                   <td style={td()}>{formatNaira(p.amount_kobo)}</td>
                   <td style={td()}>{formatNaira(p.fee_kobo)}</td>
                   <td style={td()}>T{p.tier}</td>
-                  <td style={td()}><Badge status={p.status === 'paid' || p.status === 'approved' ? 'resolved' : p.status === 'rejected' ? 'critical' : p.status === 'review' ? 'investigating' : 'open'} label={p.status} /></td>
+                  <td style={td()}><Badge status={p.status === 'settled' ? 'resolved' : p.status === 'failed' ? 'critical' : p.status === 'processing' ? 'investigating' : 'open'} label={p.status} /></td>
                   <td style={td()}>{timeAgo(p.requested_at)}</td>
                 </tr>
               ))}

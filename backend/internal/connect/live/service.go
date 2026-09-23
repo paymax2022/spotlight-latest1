@@ -39,7 +39,7 @@ type RTCConfig struct {
 
 // RTCTokenIssuer mints a join credential for a session/user. The default
 // implementation (hmacIssuer) signs a deterministic claim with the configured
-// secret; a real deployment can swap in an Agora/LiveKit adapter behind this
+// secret; a real deployment can swap in a VideoSDK adapter behind this
 // interface without touching the service.
 type RTCTokenIssuer interface {
 	Issue(ctx context.Context, sessionID, userID, role string) (*RTCToken, error)
@@ -290,7 +290,7 @@ func (s *Service) requireHost(ctx context.Context, actorID, sessionID string) er
 // --- Default RTC issuer (config-driven HMAC stub) ---------------------------
 
 // hmacIssuer is a provider-agnostic default that signs a deterministic claim with
-// the configured secret. It is a STUB: real provider SDKs (Agora/LiveKit) plug in
+// the configured secret. It is a STUB: a real provider SDK (VideoSDK) plugs in
 // behind RTCTokenIssuer. The secret is supplied via RTCConfig (read from env/
 // config at wiring time) and never hard-coded.
 type hmacIssuer struct{ cfg RTCConfig }

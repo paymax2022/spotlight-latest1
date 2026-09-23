@@ -1,0 +1,31 @@
+-- REF-004 / REF-008: finance_referral_codes case-insensitive uniqueness.
+--
+-- REF-004 unified the two generators that write into finance_referral_codes
+-- (backend/internal/finance/referrals/service.go GetOrCreateCode, and
+-- frontend-web/src/server/referrals/service.ts getOrCreateCode) onto the same
+-- 5-character uppercase alphabet already used for referral_links.code (see
+-- internal/finance/referrals/code.go codeAlphabet). REF-008 made every lookup
+-- against this column case-INSENSITIVE (UPPER(code) = UPPER($1) on the Go
+-- side, ILIKE on the Supabase-JS side) so codes issued before that fix — in
+-- whatever case they happened to land in — keep resolving.
+--
+-- A case-insensitive lookup and a case-SENSITIVE unique constraint can
+-- disagree: without this index, "abcde" and "ABCDE" could both be inserted
+-- (the existing UNIQUE(code) permits it, since they are different byte
+-- strings) and a case-insensitive resolver would then have two candidate
+-- rows for what every caller now treats as the same code, silently returning
+-- whichever one the query planner picks. This index makes that scenario
+-- impossible going forward, matching the case-insensitive read path.
+--
+-- ADDITIVE-ONLY: adds a new index. Does not drop, rename, or narrow anything;
+-- the existing case-sensitive UNIQUE(code) constraint (20260616140000) is
+-- left in place — it is still correct on its own terms (no two byte-identical
+-- codes) and untouched additive migrations must not be edited.
+--
+-- Checked for local Postgres (54322): finance_referral_codes is currently
+-- empty, so this index has nothing to conflict with. On an environment with
+-- existing rows, any pre-existing same-case-folded duplicate would need
+-- resolving before this migration can apply — none exist locally as of
+-- writing.
+CREATE UNIQUE INDEX IF NOT EXISTS finance_referral_codes_code_ci_unique_idx
+  ON finance_referral_codes (UPPER(code));

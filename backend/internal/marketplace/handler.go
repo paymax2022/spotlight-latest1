@@ -367,7 +367,17 @@ func (h *Handler) PurgeListing(c *gin.Context) {
 func (h *Handler) Search(c *gin.Context) {
 	// Build a provider-agnostic request map from the query (§3.2 params). Agent B's
 	// injected client adapts this to its own search.SearchRequest.
-	limit, offset := pageParams(c)
+	//
+	// limit only — offset used to be read here via pageParams and stuffed into
+	// this map under "offset", but NOTHING downstream ever reads that key: both
+	// consumers (app-wiring's toSearchRequest for the ES path, and
+	// parseSearchFallback for the Postgres degraded path) read "cursor", a
+	// STRING, not "offset", an int. c.Query("cursor") itself was never read at
+	// all. Net effect: the ?cursor= a paging client sent was silently dropped
+	// at the HTTP boundary and every page request executed as if it were page
+	// 1, no matter what the query builder/repo below did with Cursor — the
+	// same bug shape as the query builder never reading SearchRequest.Cursor.
+	limit, _ := pageParams(c)
 	req := map[string]any{
 		"q":           c.Query("q"),
 		"category_id": c.Query("category_id"),
@@ -381,7 +391,7 @@ func (h *Handler) Search(c *gin.Context) {
 		"radius_km":   c.Query("radius_km"),
 		"sort":        c.DefaultQuery("sort", "relevance"),
 		"limit":       limit,
-		"offset":      offset,
+		"cursor":      c.Query("cursor"),
 		// Same shape as Categories on the line below: one screen, one market, and the
 		// same way of asking for a different one.
 		"market_id": c.DefaultQuery("market_id", DefaultMarketID),

@@ -273,7 +273,7 @@ func (s *Service) SubmitCallFeedback(ctx context.Context, userID, appointmentID 
 // SwitchCallProvider updates the call session's RTC provider for an appointment.
 func (s *Service) SwitchCallProvider(ctx context.Context, userID, appointmentID string, raw json.RawMessage) (*CallSession, error) {
 	p := parseOpsPatch(raw)
-	return s.repo.SwitchCallProvider(ctx, userID, appointmentID, strOrDefault(p.Provider, "agora"), raw)
+	return s.repo.SwitchCallProvider(ctx, userID, appointmentID, strOrDefault(p.Provider, "videosdk"), raw)
 }
 
 // ══ CHAT ════════════════════════════════════════════════════════════════════

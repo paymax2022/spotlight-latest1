@@ -54,7 +54,7 @@ noted):** ✅ supplied · 🟡 sandbox/test · 🔵 live-shaped · ⛔ placehold
 | **CAC** | business-name registration | business registry | **MOCK-DEFAULT** (offline stub unless base+key) | ⛔ empty → sandbox stub | n/a (stub) |
 | **Supabase** (Auth/REST) | identity + module data | platform-wide | REAL only | ✅ local CLI key | ✅ (used live this session) |
 | **Anthropic** | doctor/nutrition/aicare LLM | health AI | REAL only, no-op if empty | 🔵 **live** `sk-ant-…` (root `.env`) | — (billable) |
-| **Agora / VideoSDK** | RTC video-call tokens | telemedicine, academy live | REAL (local token signer, no network) | 🔵 live (root `.env`) | n/a (local signer) |
+| **VideoSDK** | RTC video-call tokens | telemedicine, academy live | REAL (local token signer, no network) | 🔵 live (root `.env`) | n/a (local signer) |
 | **Resend** | transactional email | notifications | REAL, no-op if empty | 🔵 **live** `re_…` (root `.env`) | — (avoid live send) |
 | **Termii** | SMS | notifications | REAL, no-op if empty | 🔵 **live** `tlv_…` (root `.env`) | — (billable) |
 | **Cloudflare R2** | object storage (presign) | uploads (open-mic, docs, KYC) | REAL (SigV4) | 🔵 live (root `.env` / frontend) | — |
@@ -123,7 +123,7 @@ when unconfigured, so an unconfigured KYC provider cannot silently approve a use
 
 **Not validated at all** (silent if missing/wrong): all Monnify fields except secret; every webhook
 secret (Maplerad/Eversend/Dojah/etc.); Eversend creds; all insurance (MyCover/Octamile); CAC; R2;
-Resend; Agora; Anthropic; the RAILS adapters; `PAYMAX_WEBHOOK_SECRET`; `ADMIN_API_KEY`; Alpaca;
+Resend; VideoSDK; Anthropic; the RAILS adapters; `PAYMAX_WEBHOOK_SECRET`; `ADMIN_API_KEY`; Alpaca;
 Elasticsearch. **Note:** `APP_ENV=staging` is treated as **non-prod** by `IsProd()` (only
 `production`/`prod` match), so on the current dev config none of these fail-fast — they only warn.
 
@@ -133,10 +133,10 @@ Elasticsearch. **Note:** `APP_ENV=staging` is treated as **non-prod** by `IsProd
 
 - **Supplied & connectivity-verified:** Paystack (sandbox), Maplerad (sandbox), Supabase/Postgres/Redis (local).
 - **Supplied (sandbox/test, real adapter) — not connectivity-tested (billable):** Dojah, MyCover.
-- **Supplied (live, in root `.env`) — not tested (billable/side-effect):** Anthropic, Resend, Termii, R2, Agora, Google Maps.
+- **Supplied (live, in root `.env`) — not tested (billable/side-effect):** Anthropic, Resend, Termii, R2, VideoSDK, Google Maps.
 - **Placeholder ⇒ validator treats as unset (NOT working):** Smile ID, Youverify, Octamile (backend/.env).
 - **Empty:** most webhook secrets (Maplerad/Eversend/MyCover/Dojah), CAC (all three).
-- **Absent from backend/.env** (values live in root `.env`/frontend instead): Monnify, Paystack webhook, R2, Resend, Agora, Anthropic, RAILS/BILLING/BNPL/DISBURSE/PAYOUT/PAYMAX secrets, `ADMIN_API_KEY` (⇒ admin console open in dev — confirmed live earlier).
+- **Absent from backend/.env** (values live in root `.env`/frontend instead): Monnify, Paystack webhook, R2, Resend, VideoSDK, Anthropic, RAILS/BILLING/BNPL/DISBURSE/PAYOUT/PAYMAX secrets, `ADMIN_API_KEY` (⇒ admin console open in dev — confirmed live earlier).
 - **Consistency issues:** (1) **two different Alpaca sandbox secrets** across `backend/.env` vs the trading backend .env → the trading Alpaca creds returned **401**; (2) Eversend `client_id == client_secret`; (3) Quidax pointed at the **live** host with opaque keys while everything else is sandbox; (4) Maplerad `/institutions` returned 401 while `/countries` returned 200 (endpoint scope, not a bad key).
 
 ---

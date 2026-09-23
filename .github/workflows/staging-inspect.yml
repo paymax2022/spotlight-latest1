@@ -152,10 +152,15 @@ jobs:
       #
       # It also explains an empty log fetch: `railway logs` targets the most
       # recent deployment, which may be a failed build with almost no output.
+      # frontend-admin is in this loop because it is the service that is DOWN:
+      # a SUCCESS here with a 502 on the domain means the deployment Railway kept
+      # is not the one being routed to, or the container died after the status was
+      # written. URL-ish fields are printed so the deployment can be probed
+      # directly, bypassing the domain. Keys named like credentials are skipped.
       - name: Deployment status per service
         run: |
           set -uo pipefail
-          for svc in frontend-web backend; do
+          for svc in frontend-web backend frontend-admin; do
             echo "--- $svc ---"
             railway deployment list --service "$svc" --environment "$ENVIRONMENT" \
               --project "$PROJECT" --limit 5 --json 2>/dev/null \
@@ -165,12 +170,117 @@ jobs:
                 process.stdin.on("end", () => {
                   let rows;
                   try { rows = JSON.parse(d); } catch { console.log("    (unreadable)"); return; }
+                  if (!rows.length) { console.log("    (no deployments returned)"); return; }
+                  console.log("    row keys: " + Object.keys(rows[0]).join(", "));
                   for (const r of rows.slice(0, 5)) {
-                    console.log(`    ${r.status ?? "?"}  ${r.createdAt ?? ""}  ${(r.meta && r.meta.cliMessage) ? String(r.meta.cliMessage).slice(0, 20) : ""}`);
+                    console.log(`    ${r.status ?? "?"}  created=${r.createdAt ?? "?"}  updated=${r.updatedAt ?? "?"}  msg=${(r.meta && r.meta.cliMessage) ? String(r.meta.cliMessage).slice(0, 12) : "-"}`);
+                    for (const [k, val] of Object.entries(r)) {
+                      if (/token|secret|key|password/i.test(k)) continue;
+                      if (typeof val === "string" && /^https?:\/\//.test(val)) console.log(`        ${k}: ${val}`);
+                    }
                   }
                 });
               ' || echo "    (could not list)"
           done
+
+      # The admin service is the one returning 502 with x-railway-fallback, and the
+      # two candidate causes are separated by its own variables:
+      #   PORT set here  -> the image default (3001) survives into the container and
+      #                     the process listens where the edge target does not point.
+      #                     A port is not a credential, so PORT is printed by value.
+      #   PORT not set   -> Railway injects its own, and the cause is elsewhere.
+      # Everything else is NAMES ONLY, plus presence/shape checks.
+      - name: frontend-admin variables (names, plus PORT by value)
+        run: |
+          set -uo pipefail
+          railway variable list --service frontend-admin --environment "$ENVIRONMENT" \
+            --project "$PROJECT" --json > fa.json || true
+          node -e '
+            let v;
+            try { v = JSON.parse(require("fs").readFileSync("fa.json","utf8")); }
+            catch { console.error("Unparseable output - refusing to print it (it would contain values)."); process.exit(1); }
+            console.log("  PORT      = " + (v.PORT === undefined ? "NOT SET (Railway injects its own)" : v.PORT));
+            console.log("  APP_PORT  = " + (v.APP_PORT ?? "NOT SET"));
+            console.log("\n  variable NAMES set on frontend-admin:");
+            for (const k of Object.keys(v).sort()) console.log("    " + k);
+            const shape = (k, test) => {
+              const raw = v[k];
+              if (raw === undefined) return `${k}: NOT SET`;
+              return `${k}: set, ${test(String(raw)) ? "looks right" : "SET BUT LOOKS WRONG"}`;
+            };
+            console.log("\n  shape checks (values not printed):");
+            console.log("    " + shape("NEXT_PUBLIC_SUPABASE_URL", (s) => /^https:\/\/[a-z0-9]{20}\.supabase\.co/.test(s)));
+            console.log("    " + shape("SUPABASE_SERVICE_ROLE_KEY", (s) => s.length > 20));
+            console.log("    " + shape("NEXT_PUBLIC_WEB_APP_BASE_URL", (s) => /^https?:\/\//.test(s) && !/localhost|127\.0\.0\.1/.test(s)));
+            for (const k of ["NEXT_PUBLIC_SUPABASE_ANON_KEY","ADMIN_API_KEY","NEXT_PUBLIC_FX_ADMIN_USE_MOCK","NEXT_PUBLIC_GROUPS_ADMIN_USE_MOCK"]) {
+              console.log(`    ${k}: ${v[k] === undefined ? "NOT SET" : "set"}`);
+            }
+          '
+
+      # A 502 with x-railway-fallback is an edge answer, so it says nothing about
+      # whether the container is up. These probes separate container health from
+      # routing: frontend-web is the control (same edge, same project, known good),
+      # and the admin deployment URL is fetched from Railway because it answers even
+      # when the public domain has no upstream.
+      - name: frontend-admin reachability probes
+        run: |
+          set -uo pipefail
+          ADMIN_URL="$(railway deployment list --service frontend-admin --environment "$ENVIRONMENT" \
+            --project "$PROJECT" --limit 3 --json 2>/dev/null \
+            | node -e '
+                let d = "";
+                process.stdin.on("data", (c) => (d += c));
+                process.stdin.on("end", () => {
+                  let rows; try { rows = JSON.parse(d); } catch { return; }
+                  const hit = rows.find((r) => Object.entries(r).some(([k, val]) => /url/i.test(k) && typeof val === "string" && /^https?:\/\//.test(val)));
+                  if (!hit) return;
+                  const [, val] = Object.entries(hit).find(([k, v]) => /url/i.test(k) && typeof v === "string" && /^https?:\/\//.test(v));
+                  process.stdout.write(val);
+                });
+              ' || true)"
+          echo "  admin deployment URL: ${ADMIN_URL:-<none reported by the API>}"
+          ADMIN_DEPLOY_URL="$ADMIN_URL" node -e '
+            const https = require("https");
+            const probe = (label, url) => new Promise((resolve) => {
+              const req = https.get(url, { timeout: 20000 }, (res) => {
+                const h = res.headers;
+                console.log(`  ${label}: HTTP ${res.statusCode}  x-railway-fallback: ${h["x-railway-fallback"] ?? "absent"}  location: ${h.location ?? "-"}  server: ${h.server ?? "-"}`);
+                res.resume(); resolve();
+              });
+              req.on("timeout", () => { console.log(`  ${label}: TIMEOUT (nothing answered)`); req.destroy(); resolve(); });
+              req.on("error", (e) => { console.log(`  ${label}: error ${e.code ?? e.message}`); resolve(); });
+            });
+            (async () => {
+              await probe("frontend-web  (control)", "https://frontend-web-staging.up.railway.app/");
+              await probe("frontend-admin (domain) ", "https://frontend-admin-staging.up.railway.app/");
+              if (process.env.ADMIN_DEPLOY_URL) await probe("frontend-admin (deploy) ", process.env.ADMIN_DEPLOY_URL);
+            })();
+          '
+
+      # Admin logs, filtered and redacted. The filter is not cosmetic: a container
+      # that dies on boot prints the reason once, and runtime logs can echo
+      # environment values. JWT-shaped strings are masked as a second line of
+      # defence behind the filter, the same doctrine as the frontend-web step below.
+      - name: frontend-admin logs - boot, listen and build failures
+        run: |
+          set -uo pipefail
+          adm="admin.log"
+          railway logs --deployment --service frontend-admin --environment "$ENVIRONMENT" \
+            --project "$PROJECT" --lines "${{ inputs.log_lines }}" > "$adm" 2>&1 || true
+          railway logs --build --service frontend-admin --environment "$ENVIRONMENT" \
+            --project "$PROJECT" --lines 200 >> "$adm" 2>&1 || true
+          echo "  scanned $(wc -l < "$adm") log lines"
+          echo "  --- boot / listen / crash / build-failure lines ---"
+          grep -aiE "listening|Ready in|started server|HOSTNAME|EADDRINUSE|EACCES|MODULE_NOT_FOUND|Cannot find module|out of memory|out-of-memory|heap|Killed|SIGABRT|SIGKILL|unhandled|npm ERR|exit code|Failed to compile|Type error|no space|port" "$adm" \
+            | tail -60 \
+            | sed -E 's#eyJ[A-Za-z0-9._-]{20,}#<jwt-redacted>#g' \
+            | sed 's/^/    /' || echo "    (none found)"
+          echo "  --- counts by signature ---"
+          for sig in EADDRINUSE "Cannot find module" "out of memory" Killed "npm ERR" "Type error" "port"; do
+            printf "    %-20s %s\n" "$sig" "$(grep -aic -- "$sig" "$adm" || true)"
+          done
+          echo "  --- redaction check (must be 0) ---"
+          echo "    JWT-shaped strings left in the fetched log: $(grep -acE 'eyJ[A-Za-z0-9._-]{20,}' "$adm" || true)"
 
       # frontend-web runtime logs, filtered to the signatures that identify WHY the
       # proxy to Go hangs. The distinction matters and each error names a different

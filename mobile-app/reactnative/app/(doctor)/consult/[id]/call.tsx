@@ -158,9 +158,9 @@ export default function ConsultCallScreen() {
       )}
       {/* Reconnecting (I16) */}
       {phase === 'reconnecting' && <Banner Icon={RefreshCw} text="Reconnecting…" />}
-      {/* Agora failure → VideoSDK fallback (I18/I19) */}
-      {session.providerFailed && session.provider === 'agora' && (
-        <Banner Icon={AlertTriangle} text="Agora connection failed." onAction={doFallback} actionLabel="Use VideoSDK" loading={switchProvider.isPending} />
+      {/* Provider failure → rejoin on VideoSDK (I18/I19) */}
+      {session.providerFailed && (
+        <Banner Icon={AlertTriangle} text="Video connection failed." onAction={doFallback} actionLabel="Reconnect" loading={switchProvider.isPending} />
       )}
       {/* Participant disconnected (I22/I23) */}
       {!session.patientState.connected && <Banner Icon={AlertTriangle} text={`${session.base.patient.name} disconnected.`} />}

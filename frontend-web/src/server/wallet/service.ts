@@ -299,7 +299,8 @@ export async function debitWallet(
         403,
       );
     }
-    throw new ApiError(`Failed to debit wallet: ${error.message}`, 500);
+    console.error('[wallet] debitWallet RPC failed unexpectedly:', error.message);
+    throw new ApiError("We couldn't complete this transaction. Please try again.", 500);
   }
 
   return { alreadyProcessed: false, amountKobo: input.amountKobo };
@@ -582,7 +583,14 @@ async function initializeTopupWithPaystack(input: {
 
     return authorizationUrl;
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
+    // Prefer the internal-only detail (the raw provider reason) over the
+    // generic public ApiError message for this DB column — error_message is
+    // never returned to a client (grepped every route/response that reads
+    // wallet_topup_intents; none surface this column), so it stays useful for
+    // ops/debugging without reintroducing the WC-007/WAL-012 leak.
+    const message =
+      (err as { internalDetail?: string })?.internalDetail ??
+      (err instanceof Error ? err.message : String(err));
 
     await supabase
       .from('wallet_topup_intents')
@@ -625,7 +633,14 @@ async function initializePaystackPayment(input: {
     // Paystack puts the actionable reason in the body ("Invalid Email Address
     // Passed", "Amount too low"…); res.statusText is always a bare "Bad Request".
     const reason = await readPaystackError(res);
-    throw new ApiError(`Paystack initialization failed: ${reason}`, 502);
+    console.error('[wallet] Paystack topup initialization failed:', reason);
+    const apiError = new ApiError("We couldn't start this top-up right now. Please try again in a moment.", 502);
+    // Internal-only: the raw provider reason, for the intent row's error_message
+    // column (ops/debugging, never returned to a client) — see the catch block
+    // in createTopupIntent below. Deliberately NOT part of ApiError's public
+    // message so it never reaches the API response.
+    (apiError as ApiError & { internalDetail?: string }).internalDetail = reason;
+    throw apiError;
   }
 
   const json = await res.json() as { status: boolean; data?: { authorization_url?: string } };

@@ -1,5 +1,6 @@
 import { apiRoot } from '@/config/env';
 import { resolveUseMock } from '@/config/useMock';
+import { operationKey } from './idempotency';
 import type {
   Competition,
   CompetitionConfig,
@@ -383,14 +384,44 @@ export async function finalizeAwards(competitionId: string): Promise<void> {
 }
 
 // Multi-approve disbursement. The backend requires N distinct approvers before
-// executing; amounts reconcile against the derived pot; every movement ledgered
-// + audited (NDC-4). This one call registers the caller's approval + executes if
-// the threshold is met server-side.
-export async function disbursePot(competitionId: string, splits: PotSplit[]): Promise<void> {
+// executing; every movement is ledgered + audited (NDC-4).
+//
+// Found live via UAT: this call was completely non-functional. The real
+// backend endpoint (arena/handler.PotDisburse) pays the ENTIRE derived pot to
+// ONE `winner_user_id` in a single credit — it has no concept of the
+// multi-beneficiary `splits[]` this page's UI is built around (that concept
+// — "NAIJA_DRIVER_CROWN prize" + "PEOPLES_CHAMPION" + "scholarships" as
+// separate payouts — does not exist in the backend at all; it's a genuine
+// product-scope gap, not something this fix invents a workaround for). It
+// also never sent the `Idempotency-Key` header the backend requires before
+// even reading the body, and never sent `winner_user_id`, so every call 400'd
+// regardless.
+//
+// This fix makes the one case the backend actually supports work correctly —
+// a single split (the whole pot to one beneficiary) — and fails closed with a
+// clear, honest error for more than one split, rather than silently picking
+// one split and discarding money the UI told the operator would go to the
+// others. `approve` records this call's own approval first (NDC-4).
+export async function disbursePot(competitionId: string, splits: PotSplit[], approve = false): Promise<void> {
   if (USE_FIXTURES) throw new Error(`Disbursing the pot ${NOT_IN_FIXTURE_MODE}`);
+  const payable = splits.filter((s) => s.amount_kobo > 0);
+  if (payable.length !== 1) {
+    throw new Error(
+      'The live backend can only disburse the full pot to a single beneficiary — it has no multi-split payout capability yet. ' +
+        'Reduce this to exactly one non-zero split before executing, or raise a product decision on adding multi-split payout support.',
+    );
+  }
+  const winnerUserId = payable[0]?.beneficiary;
+  if (!winnerUserId) {
+    throw new Error('The disbursement split has no beneficiary user id set.');
+  }
   const res = await fetch(
     `${arenaAdminBase()}/competitions/${encodeURIComponent(competitionId)}/pot/disburse`,
-    { method: 'POST', headers: authHeaders(), body: JSON.stringify({ splits }) },
+    {
+      method: 'POST',
+      headers: { ...authHeaders(), 'Idempotency-Key': operationKey('arena:pot-disburse', competitionId, winnerUserId) },
+      body: JSON.stringify({ winner_user_id: winnerUserId, approve }),
+    },
   );
   if (!res.ok) throw new Error(`Pot disburse failed: ${res.status}`);
 }

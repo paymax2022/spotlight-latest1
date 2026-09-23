@@ -95,8 +95,8 @@ func (s *Service) OnboardVendor(ctx context.Context, estateID, userID string, re
 	}
 	id := uuid.New().String()
 	const q = `INSERT INTO estate_vendors (id, estate_id, user_id, name, business_name, category, phone, specialties, bank_account, status, verified)
-		VALUES ($1,$2,$3,$4,$4,$5,$6,$7,$8,'pending',FALSE)`
-	if _, err := s.db.Exec(ctx, q, id, estateID, userID, req.BusinessName, cat, req.Phone, spec, bank); err != nil {
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'pending',FALSE)`
+	if _, err := s.db.Exec(ctx, q, id, estateID, userID, req.BusinessName, req.BusinessName, cat, req.Phone, spec, bank); err != nil {
 		return nil, fmt.Errorf("estate: onboard vendor: %w", err)
 	}
 	_ = s.audit(ctx, estateID, userID, "VENDOR_ONBOARD", "vendor", id, nil)

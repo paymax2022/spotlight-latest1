@@ -51,7 +51,7 @@ func (a academyLedgerRail) Collect(ctx context.Context, userID, reference, idemK
 
 // academyLiveRail mints real-time-media join tokens for live classes via the shared
 // RTC issuer. The room is the session (deterministic channel name); the token is a
-// short-lived Agora credential scoped to that channel + user. Satisfies
+// short-lived VideoSDK credential for that user. Satisfies
 // academy/live.LiveRoomProvider structurally.
 type academyLiveRail struct{ issuer *rtc.Issuer }
 
@@ -60,7 +60,7 @@ func (a academyLiveRail) CreateRoom(ctx context.Context, sessionID string) (stri
 }
 
 func (a academyLiveRail) Token(ctx context.Context, roomRef, userID, role string) (string, error) {
-	tok, _, err := a.issuer.Token(rtc.ProviderAgora, roomRef, userID, time.Hour)
+	tok, _, err := a.issuer.Token(rtc.ProviderVideoSDK, roomRef, userID, time.Hour)
 	if err != nil {
 		return "", err
 	}

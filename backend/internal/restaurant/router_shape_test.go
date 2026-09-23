@@ -33,7 +33,21 @@ func TestRestaurantRouteShapeRegistersWithoutConflict(t *testing.T) {
 	g.GET("/earnings", noop)
 	g.GET("/payout-readiness", noop)
 	g.POST("/staff/accept", noop)
+	// FOOD-005: withdrawal money path — static siblings of :id, like /mine above.
+	g.POST("/bank-accounts", noop)
+	g.GET("/bank-accounts", noop)
+	g.PATCH("/bank-accounts/:accountId/default", noop)
+	g.DELETE("/bank-accounts/:accountId", noop)
+	g.POST("/withdrawals", noop)
+	g.GET("/withdrawals", noop)
+	g.GET("/withdrawals/:withdrawalId", noop)
 	g.GET("/:id", noop)
+	// FOOD-003: merchant KYB onboarding — static "kyb"/"kyb/documents"/"kyb/submit"
+	// siblings beside ":id" params, like staff above.
+	g.GET("/:id/kyb", noop)
+	g.PUT("/:id/kyb", noop)
+	g.POST("/:id/kyb/documents", noop)
+	g.POST("/:id/kyb/submit", noop)
 	g.GET("/:id/staff", noop)
 	g.POST("/:id/staff", noop)
 	g.PATCH("/:id/staff/:userId", noop)
@@ -50,6 +64,10 @@ func TestRestaurantRouteShapeRegistersWithoutConflict(t *testing.T) {
 	a.POST("/onboarding/:id/:decision", noop)
 	a.GET("/payouts", noop)
 	a.GET("/payouts/:id", noop)
+	a.GET("/withdrawals", noop)
+	a.GET("/withdrawals/:withdrawalId", noop)
+	a.POST("/withdrawals/:withdrawalId/paid", noop)
+	a.POST("/withdrawals/:withdrawalId/failed", noop)
 
 	if len(r.Routes()) == 0 {
 		t.Fatal("no routes registered")

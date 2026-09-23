@@ -656,7 +656,9 @@ func (s *Service) GetActivity(ctx context.Context, userID string) ([]ActivityEnt
 		var e ActivityEntry
 		var action, subjectType string
 		if err := rows.Scan(&e.ID, &action, &subjectType, &e.At); err != nil {
-			continue
+			// A scan failure here used to be swallowed, which silently dropped the
+			// row from the caller's list; surface it instead (matches GetEvents).
+			return nil, fmt.Errorf("association: activity: scan: %w", err)
 		}
 		e.Type = action
 		e.Text = action + " " + subjectType
@@ -959,7 +961,9 @@ func (s *Service) GetDirectory(ctx context.Context, userID string, q MemberDirec
 		if err := rows.Scan(&m.ID, &m.FullName, &m.MemberID, &m.PhotoURL,
 			&m.CategoryLabel, &m.ChapterName, &m.Status, &m.Profession,
 			&m.OrganisationID); err != nil {
-			continue
+			// A scan failure here used to be swallowed, which silently dropped the
+			// row from the caller's list; surface it instead (matches GetEvents).
+			return nil, fmt.Errorf("association: directory: scan: %w", err)
 		}
 		out = append(out, m)
 	}
@@ -1054,7 +1058,9 @@ func (s *Service) GetAnnouncements(ctx context.Context, userID string) ([]Announ
 		var a AnnouncementSummary
 		if err := rows.Scan(&a.ID, &a.Title, &a.Preview, &a.Audience, &a.PostedAt,
 			&a.Author, &a.Urgent, &a.RequiresAck, &a.Read, &a.Acknowledged); err != nil {
-			continue
+			// A scan failure here used to be swallowed, which silently dropped the
+			// row from the caller's list; surface it instead (matches GetEvents).
+			return nil, fmt.Errorf("association: announcements: scan: %w", err)
 		}
 		out = append(out, a)
 	}
@@ -1080,7 +1086,9 @@ func (s *Service) GetNotifications(ctx context.Context, userID string) ([]AppNot
 	for rows.Next() {
 		var n AppNotification
 		if err := rows.Scan(&n.ID, &n.Kind, &n.Title, &n.Body, &n.CreatedAt, &n.Read, &n.Route); err != nil {
-			continue
+			// A scan failure here used to be swallowed, which silently dropped the
+			// row from the caller's list; surface it instead (matches GetEvents).
+			return nil, fmt.Errorf("association: notifications: scan: %w", err)
 		}
 		out = append(out, n)
 	}
@@ -1120,7 +1128,9 @@ func (s *Service) GetMeetings(ctx context.Context, userID string) ([]MeetingSumm
 		var mt MeetingSummary
 		if err := rows.Scan(&mt.ID, &mt.Title, &mt.Mode, &mt.StartsAt, &mt.EndsAt,
 			&mt.Location, &mt.State, &mt.AttendeeCount, &mt.ApprovalStatus); err != nil {
-			continue
+			// A scan failure here used to be swallowed, which silently dropped the
+			// row from the caller's list; surface it instead (matches GetEvents).
+			return nil, fmt.Errorf("association: meetings: scan: %w", err)
 		}
 		out = append(out, mt)
 	}
@@ -1192,7 +1202,9 @@ func (s *Service) GetTasks(ctx context.Context, userID, scope string) ([]TaskSum
 		var t TaskSummary
 		if err := rows.Scan(&t.ID, &t.Title, &t.Status, &t.Priority, &t.DueDate,
 			&t.AssigneeName, &t.Committee, &t.Overdue); err != nil {
-			continue
+			// A scan failure here used to be swallowed, which silently dropped the
+			// row from the caller's list; surface it instead (matches GetEvents).
+			return nil, fmt.Errorf("association: tasks: scan: %w", err)
 		}
 		out = append(out, t)
 	}
@@ -1224,7 +1236,9 @@ func (s *Service) GetDocuments(ctx context.Context, userID string) ([]DocumentSu
 		var doc DocumentSummary
 		if err := rows.Scan(&doc.ID, &doc.Title, &doc.Category, &doc.Kind, &doc.SizeLabel,
 			&doc.UpdatedAt, &doc.Restricted, &doc.RequiresAck, &doc.Acknowledged); err != nil {
-			continue
+			// A scan failure here used to be swallowed, which silently dropped the
+			// row from the caller's list; surface it instead (matches GetEvents).
+			return nil, fmt.Errorf("association: documents: scan: %w", err)
 		}
 		out = append(out, doc)
 	}
@@ -1261,7 +1275,9 @@ func (s *Service) GetCommittees(ctx context.Context, userID string) ([]Committee
 		var c CommitteeSummary
 		if err := rows.Scan(&c.ID, &c.Name, &c.Purpose, &c.MemberCount,
 			&c.JoinStatus, &c.MyRole); err != nil {
-			continue
+			// A scan failure here used to be swallowed, which silently dropped the
+			// row from the caller's list; surface it instead (matches GetEvents).
+			return nil, fmt.Errorf("association: committees: scan: %w", err)
 		}
 		out = append(out, c)
 	}
@@ -1416,7 +1432,9 @@ func (s *Service) ListAdminOrganisations(ctx context.Context, adminID string, f 
 		var o AdminOrgOption
 		if err := rows.Scan(&o.ID, &o.Name, &o.Acronym, &o.Category, &o.Status,
 			&o.Published, &o.Verified, &o.MemberCount, &o.CreatedAt); err != nil {
-			continue
+			// A scan failure here used to be swallowed, which silently dropped the
+			// row from the caller's list; surface it instead (matches GetEvents).
+			return nil, fmt.Errorf("association: admin organisations: scan: %w", err)
 		}
 		out = append(out, o)
 	}
@@ -1478,7 +1496,9 @@ func (s *Service) GetApprovalQueue(ctx context.Context, adminID, jurisdiction, o
 		var a AdminApplicationSummary
 		if err := rows.Scan(&a.ID, &a.ApplicantName, &a.Category, &a.Chapter,
 			&a.SubmittedAt, &a.Status, &a.Jurisdiction, &a.Paid); err != nil {
-			continue
+			// A scan failure here used to be swallowed, which silently dropped the
+			// row from the caller's list; surface it instead (matches GetEvents).
+			return nil, fmt.Errorf("association: approval queue: scan: %w", err)
 		}
 		out = append(out, a)
 	}
@@ -1646,7 +1666,9 @@ func (s *Service) GetOfflinePayments(ctx context.Context, adminID, orgIDOverride
 		if err := rows.Scan(&op.ID, &op.MemberName, &op.MemberID,
 			&op.AmountKobo, &op.Method, &op.Reference,
 			&op.ForItem, &op.SubmittedAt, &op.Status); err != nil {
-			continue
+			// A scan failure here used to be swallowed, which silently dropped the
+			// row from the caller's list; surface it instead (matches GetEvents).
+			return nil, fmt.Errorf("association: offline payments: scan: %w", err)
 		}
 		out = append(out, op)
 	}

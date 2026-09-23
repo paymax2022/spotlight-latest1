@@ -2,11 +2,26 @@ package telemedicine
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
 	"github.com/google/uuid"
 )
+
+// sqlStater matches a pgx-wrapped *pgconn.PgError without importing pgconn —
+// mirrors marketplace's/restaurant's identical helper (neither is exported,
+// so it isn't shared across packages).
+type sqlStater interface{ SQLState() string }
+
+// isUniqueViolation reports whether err is a Postgres 23505 unique_violation.
+func isUniqueViolation(err error) bool {
+	var pgErr sqlStater
+	if errors.As(err, &pgErr) {
+		return pgErr.SQLState() == "23505"
+	}
+	return false
+}
 
 // ─── Block 13: Availability ──────────────────────────────────────────────────
 
@@ -158,6 +173,9 @@ func (s *Service) AddReview(ctx context.Context, appointmentID, patientID string
 		INSERT INTO telemedicine_reviews (id, appointment_id, doctor_id, patient_id, rating, comment)
 		VALUES ($1,$2,$3,$4,$5,$6)`
 	if _, err := s.db.Exec(ctx, ins, r.ID, r.AppointmentID, r.DoctorID, r.PatientID, r.Rating, r.Comment); err != nil {
+		if isUniqueViolation(err) {
+			return nil, fmt.Errorf("telemedicine: this appointment has already been reviewed")
+		}
 		return nil, fmt.Errorf("telemedicine: save review: %w", err)
 	}
 

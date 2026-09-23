@@ -20,6 +20,7 @@ import { ApiError } from '@/src/lib/api/responses';
 import { getOrCreateAccount } from '@/src/server/wallet/service';
 import { enforceWalletLimit } from '@/src/server/tiers/service';
 import { autoSaveBeneficiary, touchLastUsed } from '@/src/server/transfers/beneficiaries';
+import { requireTransactionPin } from '@/src/server/transfers/pin-guard';
 
 const PAYSTACK_API = 'https://api.paystack.co';
 const MIN_BANK_TRANSFER_KOBO = 100_000; // ₦1,000 minimum
@@ -56,7 +57,11 @@ async function paystackRequest<T>(
 
   if (!res.ok) {
     const body = await res.text().catch(() => '');
-    throw new ApiError(`Paystack error ${res.status}: ${body}`, res.status >= 500 ? 502 : res.status);
+    console.error(`[bank-transfer] Paystack request failed (${path}) [${res.status}]:`, body);
+    throw new ApiError(
+      "We couldn't reach our banking partner right now. Please try again in a moment.",
+      res.status >= 500 ? 502 : res.status,
+    );
   }
 
   return res.json() as Promise<T>;
@@ -206,6 +211,10 @@ export interface WalletToBankInput {
   idempotencyKey: string;
   narration?: string;
   saveBeneficiary?: boolean;
+  /** Raw transaction PIN, verified via requireTransactionPin() before any debit. */
+  pin: string;
+  /** Original request's Authorization header, forwarded to the Go PIN-verify endpoint. */
+  authHeader: string | null;
 }
 
 export interface BankTransferResult {
@@ -261,6 +270,11 @@ export async function initiateWalletToBank(
       createdAt: row.created_at,
     };
   }
+
+  // Transaction PIN — fail-closed, before any money movement (WAL-001 fix).
+  // See wallet-to-wallet.ts for why this calls the Go backend rather than
+  // re-implementing the bcrypt/lockout check here.
+  await requireTransactionPin(input.authHeader, input.pin);
 
   const narration = (input.narration ?? '').slice(0, 100) || `Transfer to ${input.accountName}`;
 

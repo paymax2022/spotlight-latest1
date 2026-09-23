@@ -109,6 +109,16 @@ jobs:
           # also gates gifting/payouts/AML under the same switch (there is no
           # narrower flag), so this turns those on for staging too, not just
           # voting.
+          #
+          # FEATURE_MARKETPLACE_ENABLED gates the whole /v1/marketplace group
+          # (internal/app/marketplace_routes.go), default false in config.go.
+          # The "union of both maps" rule in the header did NOT catch it: the
+          # marketplace surface is in NEITHER map — no entry in modulegate/routes.go
+          # and none in the mobile serviceModuleKeys.ts — because the Sell tab is
+          # not module-gated. So the flag was missing while every check stayed
+          # green, and the mobile Sell tab rendered "Couldn't load your listings"
+          # off a gin 404. A new module reachable from the app needs its flag here
+          # even when it appears in no gate map.
           railway variable set \
             APP_ENV=staging \
             FEATURE_WALLET_ENABLED=true \
@@ -118,6 +128,7 @@ jobs:
             FEATURE_SAVINGS_ENABLED=true \
             FEATURE_KYC_ENABLED=true \
             FEATURE_REFERRALS_ENABLED=true \
+            FEATURE_REFERRAL_REWARDS_ENABLED=true \
             FEATURE_INSURANCE_ENABLED=true \
             FEATURE_SOCIAL_PAY_ENABLED=true \
             FEATURE_LOYALTY_ENABLED=true \
@@ -142,6 +153,7 @@ jobs:
             FEATURE_BANK_TRANSFERS_ENABLED=true \
             FEATURE_CONTEST_STAGE_EVICTION_ENABLED=true \
             FEATURE_CONNECT_ENABLED=true \
+            FEATURE_MARKETPLACE_ENABLED=true \
             --service "$SERVICE" --environment "$ENVIRONMENT" --project "$PROJECT" \
             --skip-deploys
 
@@ -175,12 +187,12 @@ jobs:
             --project "$PROJECT" --json > vars.json
           node -e '
             const want = [
-              "WALLET","WALLET_TRANSFERS","VIRTUAL_ACCOUNTS","FX","SAVINGS","KYC","REFERRALS",
+              "WALLET","WALLET_TRANSFERS","VIRTUAL_ACCOUNTS","FX","SAVINGS","KYC","REFERRALS","REFERRAL_REWARDS",
               "INSURANCE","SOCIAL_PAY","LOYALTY","RESTAURANT","TRANSPORT","TELEMEDICINE",
               "HEALTH_PHARMACY","STAYS","ESTATE","REALTOR","CROWDFUNDING","ASSOCIATION",
               "GROUPS","EVENTS","CREATORS","DISPUTES","RATINGS",
               "UTILITY_PAYMENTS","HEALTH_LAB","HEALTH_VET","AICARE","BANK_TRANSFERS",
-              "CONTEST_STAGE_EVICTION","CONNECT",
+              "CONTEST_STAGE_EVICTION","CONNECT","MARKETPLACE",
             ].map((s) => `FEATURE_${s}_ENABLED`);
             let vars;
             try {
@@ -212,6 +224,62 @@ jobs:
       # A single redeploy picks up every variable at once. Without this the flags
       # sit in Railway's config unread — the process only sees them on restart.
       - name: Redeploy so the new variables take effect
+        run: |
+          set -euo pipefail
+          railway redeploy --service "$SERVICE" --environment "$ENVIRONMENT" \
+            --project "$PROJECT" --yes
+
+  # frontend-web's Next.js API routes re-check their OWN copy of a module's
+  # feature flag (src/lib/feature-flags.ts, e.g. featureFlags.referrals())
+  # before ever proxying to the Go backend — set-flags above only ever wrote
+  # to the backend service. Referrals' Next.js route was therefore refusing
+  # every request with 503 "This service is not available" regardless of
+  # whether the Go backend had the flag, which is why /api/v1/referrals/*
+  # never worked on staging even after set-flags ran. featureFlags reads
+  # process.env at request time (not baked in at build, unlike GO_BACKEND_URL
+  # in next.config.mjs — see fix-proxy below), so a plain restart is enough;
+  # no rebuild/upload needed here.
+  set-frontend-web-flags:
+    name: set staging frontend-web FEATURE_* flags
+    if: ${{ inputs.confirm == 'SET' }}
+    runs-on: ubuntu-latest
+    environment: staging
+    env:
+      RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN_STAGING }}
+      PROJECT: e7dca861-3667-4d9a-8090-6d2f4d179ec2
+      SERVICE: frontend-web
+      ENVIRONMENT: staging
+    steps:
+      - name: Check the Railway token is present
+        run: ': "${RAILWAY_TOKEN:?missing secret RAILWAY_TOKEN_STAGING}"'
+
+      - name: Install Railway CLI
+        run: npm install --global @railway/cli@5.40.1
+
+      - name: Set the gateway-side module flags
+        run: |
+          set -euo pipefail
+          railway variable set \
+            FEATURE_REFERRALS_ENABLED=true \
+            --service "$SERVICE" --environment "$ENVIRONMENT" --project "$PROJECT" \
+            --skip-deploys
+
+      - name: Verify it reads back as exactly "true"
+        run: |
+          set -euo pipefail
+          railway variable list --service "$SERVICE" --environment "$ENVIRONMENT" \
+            --project "$PROJECT" --json > fw-flags.json
+          node -e '
+            let v; try { v = JSON.parse(require("fs").readFileSync("fw-flags.json","utf8")); }
+            catch { console.error("Unparseable - refusing to print."); process.exit(1); }
+            if (v.FEATURE_REFERRALS_ENABLED !== "true") {
+              console.error("FEATURE_REFERRALS_ENABLED did not take.");
+              process.exit(1);
+            }
+            console.log("  OK   FEATURE_REFERRALS_ENABLED = true");
+          '
+
+      - name: Restart so the new variable takes effect
         run: |
           set -euo pipefail
           railway redeploy --service "$SERVICE" --environment "$ENVIRONMENT" \

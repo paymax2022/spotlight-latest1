@@ -30,6 +30,7 @@ type Service struct {
 	commission CommissionRecorder // optional; nil ⇒ realized-profit recording is a no-op
 	realtime   RealtimePublisher  // optional; nil ⇒ no live push (clients poll instead)
 	thumbs     ThumbPresigner     // optional; nil ⇒ listings serve without images
+	tiers      TierEnforcer       // REQUIRED for PurchaseBoost; nil ⇒ fail-closed refusal (ErrTierGateUnwired)
 	// referralEmitter was removed in the listings-and-connect pivot (ADR-023): the
 	// marketplace no longer settles purchases (no escrow release), so there is nothing
 	// to emit to the Direct Referral Rewards engine. See marketplace_routes.go, where
@@ -94,6 +95,31 @@ type boostLedger interface {
 	GetOrCreateUserWallet(ctx context.Context, userID string) (*ledger.Account, error)
 	Debit(ctx context.Context, userID, reference, idempotencyKey, creditAccountID string, amountKobo int64) error
 	PostReversal(ctx context.Context, restoreAccountID, releaseAccountID string, amountKobo int64, reference, idempotencyKey string) error
+}
+
+// TierEnforcer is the fail-closed KYC-tier / daily-spend gate on the boost
+// purchase money path (§6 FINDING: the boost charge used to call s.ledger.Debit
+// directly with no tier-limit/KYC gate at all, unlike every sibling wallet-debit
+// money path — estate dues, restaurant escrow/withdrawal, transport, doctor,
+// fractionalre). Modeled as a LOCAL interface (mirrors boostLedger/Notifier/
+// Searcher/CommissionRecorder) so marketplace depends on the behaviour, not on
+// finance/tiers directly. Satisfied by *tiers.Service.
+//
+// A boost purchase is a direct wallet debit (not a checkout/escrow allowance
+// case), so it uses EnforceWalletDebitLimit — the same choice restaurant
+// withdrawals and doctor/fractionalre wallet debits make, never the relaxed
+// Tier-0 EnforceCheckoutDebitLimit path.
+type TierEnforcer interface {
+	EnforceWalletDebitLimit(ctx context.Context, userID string, amountKobo int64) error
+}
+
+// WithTiers attaches the fail-closed tier-limit gate used by boost purchases.
+// REQUIRED for the money path: without it PurchaseBoost refuses with
+// ErrTierGateUnwired rather than silently skipping the check (CLAUDE.md iron
+// rule: every money mutation must pass a fail-closed tier-limit check).
+func (s *Service) WithTiers(t TierEnforcer) *Service {
+	s.tiers = t
+	return s
 }
 
 // NewService constructs the marketplace service. redis may be nil (dev/CI): the
@@ -333,11 +359,22 @@ func (s *Service) Search(ctx context.Context, req any) (any, error) {
 	}
 	s.attachThumbs(ctx, ptrs)
 	// Shape a search-response-like envelope the mobile client already understands
-	// (results + empty facets + no cursor). `degraded` flags the reduced mode.
+	// (results + empty facets + cursor). `degraded` flags the reduced mode.
+	//
+	// next_cursor used to be hardcoded nil, so the degraded path could only ever
+	// serve page 1 no matter how many active listings existed beyond the first
+	// LIMIT-bounded page (the repo query had no OFFSET at all — see
+	// SearchListingsFallback). A full page implies there may be more; emit the
+	// real next offset (current offset + page size) the same way the ES client
+	// does, so the two search backends share one cursor format.
+	var nextCursor any
+	if len(listings) == clampLimit(f.Limit) {
+		nextCursor = strconv.Itoa(f.Offset + clampLimit(f.Limit))
+	}
 	return map[string]any{
 		"results":     listings,
 		"facets":      map[string]any{"categories": []any{}, "conditions": []any{}, "price_ranges": []any{}},
-		"next_cursor": nil,
+		"next_cursor": nextCursor,
 		"took_ms":     0,
 		"degraded":    true,
 	}, nil
@@ -395,6 +432,14 @@ func parseSearchFallback(req any) SearchFallbackFilter {
 			f.Limit = int(n)
 		case float64:
 			f.Limit = int(n)
+		}
+	}
+	// Cursor mirrors the ES client's opaque cursor: a plain base-10 offset.
+	// A missing/malformed/negative cursor degrades to page 1 (offset 0)
+	// rather than erroring.
+	if cur := getStr("cursor"); cur != "" {
+		if n, err := strconv.Atoi(cur); err == nil && n > 0 {
+			f.Offset = n
 		}
 	}
 	return f

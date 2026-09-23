@@ -1,0 +1,51 @@
+-- Events Tickets (Module 19) — fix schema drift blocking EVERY new event and
+-- ticket insert.
+--
+-- 20260902000001_events_schema_drift_fix.sql documented the root cause: two
+-- independent migrations both `CREATE TABLE IF NOT EXISTS` the same table
+-- names (events, event_tickets) — the legacy (June) EPIC events CMS shape won
+-- in any environment that replays migrations in order, and that migration
+-- additively backfilled the NEW columns onto the legacy tables. It did NOT
+-- (and could not, being a data-only backfill) make the canonical top5events
+-- Go service's own INSERTs populate the legacy NOT-NULL-no-default columns
+-- going forward, because for two of them there is no value to populate:
+--
+--   - events.organizer_id (legacy, NOT NULL, no default): CreateEvent's
+--     INSERT never wrote it, only the new organiser_id column — every
+--     CreateEvent call has been failing SQLSTATE 23502 since this schema
+--     was created. Found live via UAT (2026-09-17): 100% of event creation
+--     was broken end to end.
+--
+--   - event_tickets.ticket_type_id (legacy, NOT NULL, no default, FK to the
+--     legacy event_ticket_types table): the new tier-based Purchase flow
+--     issues tickets against event_ticket_tiers via tier_id, a DIFFERENT
+--     table with a different id space — there is no safe value to backfill
+--     or populate here, exactly as 20260902000001's own comment already
+--     concluded for existing rows ("there is no safe backfill source for
+--     legacy rows"). Found live via UAT: every ticket purchase debited the
+--     buyer's wallet successfully, then failed to issue the ticket on this
+--     same constraint, landing the order PAID with zero tickets and no
+--     self-healing retry path (the reconciler hits the identical error).
+--
+--   - event_tickets.idempotency_key (legacy, NOT NULL, no default): dead
+--     column from the same June schema. The new flow's real idempotency
+--     guard is event_orders.idempotency_key (its own UNIQUE constraint) plus
+--     event_tickets' own uq_event_tickets_order unique constraint on
+--     order_id — nothing in the current codebase reads or writes this
+--     column.
+--
+-- events.organizer_id is fixed differently (below): unlike the ticket
+-- columns, a real value IS available (the same organiser creating the
+-- event), and the one existing production-shape row in this DB already has
+-- both columns populated identically — CreateEvent now populates both.
+--
+-- The two event_tickets columns have no safe value to populate (per
+-- 20260902000001's own documented reasoning) and are relaxed to nullable
+-- instead. This is additive in spirit even though it is a constraint
+-- relaxation, not a new column/table: it does not DROP, rename, or narrow
+-- anything, and it does not affect the legacy CMS write path, which is
+-- unaffected by a column becoming nullable (it continues to supply the
+-- value it always did).
+
+ALTER TABLE event_tickets ALTER COLUMN ticket_type_id DROP NOT NULL;
+ALTER TABLE event_tickets ALTER COLUMN idempotency_key DROP NOT NULL;

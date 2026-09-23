@@ -34,7 +34,20 @@
         }
       ],
       "@maplibre/maplibre-react-native",
-      "@sentry/react-native"
+      "@sentry/react-native",
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "enableMinifyInReleaseBuilds": true,
+            "enableShrinkResourcesInReleaseBuilds": true,
+            "enableBundleCompression": true,
+            "enablePngCrunchInReleaseBuilds": true
+          }
+        }
+      ],
+      "./plugins/withAndroidReleaseSigning",
+      "./plugins/withAndroidSizeOptimizations"
     ],
     "experiments": {
       "typedRoutes": false

@@ -475,6 +475,26 @@ func (s *Service) Confirm(ctx context.Context, actorID, apptID string) (*Appoint
 	if err != nil {
 		return nil, err
 	}
+	// HL-2: unlike Accept/StartConsult, Confirm can legitimately be called by
+	// EITHER party (the owner or the vet) per the shared scheduling engine's
+	// ownership check — but if the CALLER is the vet, their VCN approval must
+	// still be re-verified here, not just at Accept time. A vet accepted while
+	// APPROVED and suspended before confirming must not be able to advance
+	// the appointment toward a money release. Found live via UAT: neither
+	// Confirm nor CompleteConsult re-checked VCN status, letting a suspended
+	// vet confirm and complete an appointment and receive the escrow release.
+	if s.prov != nil {
+		vetOwner, operr := s.providerOwner(ctx, a.ProviderID)
+		if operr == nil && actorID == vetOwner {
+			ok, perr := s.prov.VerifiedVetOwner(ctx, actorID, a.ProviderID)
+			if perr != nil {
+				return nil, perr
+			}
+			if !ok {
+				return nil, fmt.Errorf("vet: only the verified vet may confirm (HL-2)")
+			}
+		}
+	}
 	if _, err := s.sched.Transition(ctx, actorID, apptID, healthscheduling.StateConfirmed); err != nil {
 		return nil, err
 	}
@@ -652,6 +672,19 @@ func (s *Service) CompleteConsult(ctx context.Context, vetOwnerID, apptID string
 	}
 	if vetOwnerID != vetOwner {
 		return nil, fmt.Errorf("vet: only the verified vet may complete the consult (HL-2)")
+	}
+	// HL-2: ownership alone is not the same as current VCN approval — a vet
+	// accepted while APPROVED and suspended before completing must not be
+	// able to trigger the escrow release. Found live via UAT (see Confirm's
+	// identical fix above for the full defect description).
+	if s.prov != nil {
+		ok, perr := s.prov.VerifiedVetOwner(ctx, vetOwnerID, a.ProviderID)
+		if perr != nil {
+			return nil, perr
+		}
+		if !ok {
+			return nil, fmt.Errorf("vet: only the verified vet may complete the consult (HL-2)")
+		}
 	}
 
 	res := &CompleteResult{}
@@ -1044,4 +1077,69 @@ func (s *Service) AdminDeactivateService(ctx context.Context, adminID, serviceID
 	}
 	s.audited(adminID, "", "health.vet.service.deactivate", serviceID, nil, map[string]any{"active": false})
 	return nil
+}
+
+// AdminDashboard aggregates platform-wide KPIs. RBAC health.vet.appointments
+// gates the route — the same admin-oversight permission AdminListAppointments
+// already uses; this is an extension of that existing surface, not a new
+// admin capability, so no new permission slug is introduced. Mirrors
+// healthlab.Service.AdminDashboard (Lab's own dashboard fix) and
+// healthpharmacy.Service.AdminDashboard (PHARMACY-001) exactly in shape and
+// discipline.
+//
+// Appointment counts are scoped through vet_appointment_payments (the same
+// join AdminListAppointments above uses) rather than reading
+// health_appointments directly — health_appointments is the SHARED cross-
+// vertical table (telemedicine/lab/vet all book onto it), so a bare COUNT(*)
+// there would silently include non-vet appointments. vet_appointment_payments
+// is vet's own 1:1 payment-leg row, so joining through it is the only way to
+// scope to "vet appointments" correctly.
+func (s *Service) AdminDashboard(ctx context.Context) (*AdminDashboard, error) {
+	out := &AdminDashboard{AppointmentsByState: make(map[string]int64, len(allApptStates))}
+	for _, st := range allApptStates {
+		out.AppointmentsByState[string(st)] = 0
+	}
+
+	rows, err := s.db.Query(ctx, `
+		SELECT ap.state, COUNT(*)
+		FROM vet_appointment_payments vp
+		JOIN health_appointments ap ON ap.id = vp.appointment_id
+		GROUP BY ap.state`)
+	if err != nil {
+		return nil, fmt.Errorf("vet: admin dashboard appointments-by-state: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var st string
+		var n int64
+		if err := rows.Scan(&st, &n); err != nil {
+			return nil, err
+		}
+		out.AppointmentsByState[st] = n
+		out.TotalAppointments += n
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	// See AdminDashboard.PlatformRevenueKoboWeek's doc comment (admin_model.go)
+	// for why this is a direct read of the commission module's own recorded
+	// earning rows, in pure integer kobo, rather than a recomputed percentage.
+	if err := s.db.QueryRow(ctx,
+		`SELECT COALESCE(SUM(spotlight_revenue_kobo), 0) FROM commission_earnings
+		 WHERE source_module = 'health.vet' AND created_at >= now() - interval '7 days'`,
+	).Scan(&out.PlatformRevenueKoboWeek); err != nil {
+		return nil, fmt.Errorf("vet: admin dashboard platform revenue: %w", err)
+	}
+
+	// APPROVED vets — the exact predicate vetProviderGateAdapter.IsApprovedVet
+	// (backend/internal/app/health_vet_routes.go) uses for "is a real, live vet".
+	if err := s.db.QueryRow(ctx,
+		`SELECT COUNT(*) FROM health_providers
+		 WHERE domain = 'VET' AND provider_type = 'vet' AND status = 'APPROVED'`,
+	).Scan(&out.TotalVets); err != nil {
+		return nil, fmt.Errorf("vet: admin dashboard vet count: %w", err)
+	}
+
+	return out, nil
 }

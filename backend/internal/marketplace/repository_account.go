@@ -317,7 +317,26 @@ func (r *Repository) SearchListingsFallback(ctx context.Context, f SearchFallbac
 		add(" AND price_kobo <= ", *f.PriceMax)
 	}
 	args = append(args, limit)
-	q += " ORDER BY created_at DESC LIMIT $" + itoa(len(args))
+	// ORDER BY created_at DESC, id DESC — the id tiebreaker is required for
+	// stable OFFSET paging, not cosmetic. created_at has no uniqueness
+	// guarantee (e.g. several listings inserted in the same batch/test-seed
+	// can share a timestamp to the microsecond); without a deterministic
+	// second sort key, Postgres is free to order tied rows differently
+	// between two separate queries, so paging by OFFSET can both skip a row
+	// and repeat a row across adjacent pages even though the offsets never
+	// overlap. Proven live: before this, id 6dc32e34... and fa061aab...
+	// (tied created_at) appeared on both page 2 (offset 5) and page 4
+	// (offset 15) of the same result set.
+	q += " ORDER BY created_at DESC, id DESC LIMIT $" + itoa(len(args))
+	// Offset-based paging. Previously absent entirely — the fallback had no
+	// OFFSET clause and service.go always returned next_cursor: nil, so the
+	// degraded (no-ES) search path could serve page 1 only; there was no way
+	// to page through fallback results at all, same defect shape as the ES
+	// client's cursor being defined but never read.
+	if f.Offset > 0 {
+		args = append(args, f.Offset)
+		q += " OFFSET $" + itoa(len(args))
+	}
 
 	rows, err := r.db.Query(ctx, q, args...)
 	if err != nil {
@@ -340,6 +359,9 @@ type SearchFallbackFilter struct {
 	PriceMin   *int64
 	PriceMax   *int64
 	Limit      int
+	// Offset is the SQL OFFSET for page 2+, parsed from the same opaque
+	// (plain base-10 integer) cursor the ES client uses.
+	Offset int
 }
 
 // ─── join helpers ────────────────────────────────────────────────────────────

@@ -280,6 +280,48 @@ describe('debitWallet', () => {
     expect(insertFn).not.toHaveBeenCalled();
   });
 
+  // WAL-012: the catch-all fallback (any RPC error that isn't INSUFFICIENT_BALANCE
+  // or TIER_LIMIT_EXCEEDED) used to embed the raw Postgres/RPC error message
+  // verbatim into the ApiError shown to the user. It must now log the raw
+  // error server-side and throw a clean, generic message instead.
+  it('does not leak the raw RPC error message on an unclassified debit failure', async () => {
+    const { mock, maybySingle } = setupMock();
+    maybySingle
+      .mockResolvedValueOnce({ data: null, error: null })              // idempotency miss
+      .mockResolvedValueOnce({ data: existingAccount(), error: null }) // account
+      .mockResolvedValueOnce({ data: null, error: null });             // mobile_fintech (migrate)
+
+    const rawRpcError = 'relation "ledger_accounts" deadlock detected on row lock, pid=48213';
+    vi.mocked(mock.rpc).mockResolvedValueOnce({
+      data: null,
+      error: { message: rawRpcError, code: '40P01' },
+    });
+
+    const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const { ApiError } = await import('@/src/lib/api/responses');
+
+    const err = await debitWallet(USER_ID, {
+      amountKobo: 200_000,
+      reference: 'VOTE_ref_002',
+      idempotencyKey: 'vote:ref-002:DEBIT',
+    }).catch(e => e);
+
+    expect(err).toBeInstanceOf(ApiError);
+    const apiErr = err as InstanceType<typeof ApiError>;
+    expect(apiErr.status).toBe(500);
+    expect(apiErr.message).not.toContain(rawRpcError);
+    expect(apiErr.message).not.toContain('deadlock');
+    expect(apiErr.message).not.toContain('40P01');
+    expect(apiErr.message.length).toBeGreaterThan(0);
+    expect(apiErr.message).toMatch(/try again/i);
+
+    // Raw error still logged server-side for debugging.
+    expect(consoleErrorSpy).toHaveBeenCalled();
+    expect(consoleErrorSpy.mock.calls.flat().join(' ')).toContain('deadlock');
+
+    consoleErrorSpy.mockRestore();
+  });
+
   // ADR-040: debit_wallet_atomic resolves its own counter-account ('settlement').
   // A caller-supplied override would type-check, read correctly, and post
   // somewhere else entirely — so it must be refused, not ignored.
@@ -458,7 +500,7 @@ describe('createTopupIntent', () => {
     ).rejects.toThrow(ApiError);
   });
 
-  it('throws when Paystack API returns non-OK response', async () => {
+  it('throws a clean, generic error when Paystack API returns non-OK response', async () => {
     const { maybySingle, insertFn } = setupMock();
     maybySingle.mockResolvedValueOnce({ data: null, error: null }); // idempotency miss
     insertFn.mockResolvedValueOnce({ error: null });
@@ -473,7 +515,7 @@ describe('createTopupIntent', () => {
         amountKobo: 50_000,
         idempotencyKey: 'topup-req-paystack-fail',
       }),
-    ).rejects.toThrow(/Paystack initialization failed/i);
+    ).rejects.toThrow(/couldn't start this top-up/i);
   });
 
   // Paystack answers a bad email with a bare 400, so an unusable address used to
@@ -516,10 +558,18 @@ describe('createTopupIntent', () => {
     expect(body.email).toBe('profile@example.com');
   });
 
-  it("surfaces Paystack's reason instead of the bare status line", async () => {
+  // WAL-012: Paystack's raw reason ("Invalid Email Address Passed", "Amount too
+  // low"...) must never reach the end user (it's exactly the class of internal
+  // provider diagnostic WC-007 flagged) — but it's still worth keeping for
+  // ops/debugging, so it's captured server-side via console.error and in the
+  // intent row's error_message column (never returned to any client — grepped
+  // every route that reads wallet_topup_intents), while the thrown ApiError
+  // carries only a clean, generic, user-facing message.
+  it("logs Paystack's reason server-side but throws a clean, generic message to the caller", async () => {
     const { maybySingle, insertFn } = setupMock();
     maybySingle.mockResolvedValueOnce({ data: null, error: null });
     insertFn.mockResolvedValueOnce({ error: null });
+    const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 
     global.fetch = vi.fn().mockResolvedValueOnce({
       ok: false,
@@ -532,13 +582,17 @@ describe('createTopupIntent', () => {
         amountKobo: 50_000,
         idempotencyKey: 'topup-req-reason',
       }),
-    ).rejects.toThrow(/Invalid Email Address Passed/);
+    ).rejects.toThrow(/couldn't start this top-up/i);
+
+    expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('Paystack'), expect.stringContaining('Invalid Email Address Passed'));
+    consoleErrorSpy.mockRestore();
   });
 
-  it('marks the intent failed when Paystack initialization errors', async () => {
+  it('marks the intent failed with the raw provider reason internally, while the thrown error stays generic', async () => {
     const { maybySingle, insertFn, updateFn } = setupMock();
     maybySingle.mockResolvedValueOnce({ data: null, error: null });
     insertFn.mockResolvedValueOnce({ error: null });
+    const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 
     global.fetch = vi.fn().mockResolvedValueOnce({
       ok: false,
@@ -551,11 +605,14 @@ describe('createTopupIntent', () => {
         amountKobo: 50_000,
         idempotencyKey: 'topup-req-mark-failed',
       }),
-    ).rejects.toThrow(/Amount too low/);
+    ).rejects.toThrow(/couldn't start this top-up/i);
 
+    // The DB column (internal-only) keeps the specific reason for ops; the
+    // thrown error the caller/API response sees does not.
     expect(updateFn).toHaveBeenCalledWith(
       expect.objectContaining({ status: 'failed', error_message: expect.stringContaining('Amount too low') }),
     );
+    consoleErrorSpy.mockRestore();
   });
 
   // An intent whose Paystack init failed has no authorization_url. Replaying it

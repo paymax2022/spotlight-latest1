@@ -1,9 +1,12 @@
 package association
 
 import (
+	"context"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+
+	platformWS "spotlight/backend/internal/platform/ws"
 )
 
 // Handlers for the remaining endpoint groups. Error→HTTP via statusFor.
@@ -157,6 +160,59 @@ func (h *Handler) ReplyTicket(c *gin.Context) {
 
 // ─── Chat ─────────────────────────────────────────────────────────────────────
 
+// ServeWS upgrades the connection to the caller's own realtime stream. The
+// member is resolved from RequireAuthContext (Bearer JWT already validated);
+// hub.ServeHTTP registers the connection keyed by user id, so a message posted
+// by any member of a thread fans out to every other member allowed to read it.
+//
+// Replaces Supabase Realtime for group chat: the same open-source WebSocket
+// stack (platform/ws) the food, mobility and doctor streams already use, so chat
+// delivery no longer depends on a hosted realtime service.
+func (h *Handler) ServeWS(c *gin.Context) {
+	uid := c.GetString("user_id")
+	if uid == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
+		return
+	}
+	if h.hub == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "realtime not configured"})
+		return
+	}
+	// On success the connection is hijacked; an error here means the upgrade
+	// failed before writing, so there is nothing to send a second response for.
+	_ = h.hub.ServeHTTP(c.Writer, c.Request, uid)
+}
+
+// pushChatMessage fans a committed message out to the thread's audience, minus
+// the sender (who already has it from the POST response). Best-effort: the write
+// is durable by the time this runs, so a push failure must never change the
+// response.
+//
+// The audience comes from ChatThreadAudience — the SAME scope gate the read
+// paths apply — so an ordinary member is never pushed the body of an executive
+// or committee message they could not fetch.
+func (h *Handler) pushChatMessage(ctx context.Context, threadID, senderID string, m *ChatMessage) {
+	if h.hub == nil {
+		return
+	}
+	audience, err := h.svc.ChatThreadAudience(ctx, threadID)
+	if err != nil {
+		return
+	}
+	// SendChatMessage stamps `mine: true`, which is correct for the POST response
+	// but wrong for every recipient of this push. Copy rather than mutate — the
+	// response holds the same pointer. (The client treats the frame as a signal
+	// and re-reads through the API, which filters `mine` per caller anyway.)
+	payload := *m
+	payload.Mine = false
+	for _, uid := range audience {
+		if uid == senderID {
+			continue
+		}
+		h.hub.SendToUser(uid, platformWS.Message{Type: "chat.message", Payload: payload})
+	}
+}
+
 func (h *Handler) ListChatThreads(c *gin.Context) {
 	v, err := h.svc.GetChatThreads(c.Request.Context(), c.GetString("user_id"))
 	if err != nil {
@@ -188,6 +244,9 @@ func (h *Handler) SendChatMessage(c *gin.Context) {
 		c.JSON(statusFor(err), gin.H{"error": err.Error()})
 		return
 	}
+	// The row is committed; tell the thread's other members now rather than
+	// leaving them to discover it on their next fetch.
+	h.pushChatMessage(c.Request.Context(), c.Param("id"), c.GetString("user_id"), m)
 	c.JSON(http.StatusCreated, m)
 }
 

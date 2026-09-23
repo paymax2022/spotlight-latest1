@@ -31,10 +31,25 @@ export default function PricingPage() {
 
   const load = useCallback(async () => {
     setLoading(true); setError(null);
-    try {
-      const [pk, dr, cm, dc, sl] = await Promise.all([listBoostPackages(), getBoostDailyRate(), getCommissionConfig(), listDiscountCodes(), listFeaturedSlots()]);
-      setPackages(pk); setDailyRateState(dr); setCommission(cm); setDiscounts(dc); setSlots(sl);
-    } catch (e) { setError(String(e)); } finally { setLoading(false); }
+    // allSettled, not all: boost packages + daily rate are backed by REAL routes
+    // (/admin/pricing/boosts, /admin/pricing/boosts/daily-rate) while commission,
+    // discounts, and featured-slots have no backend route yet (404 — see
+    // marketplace_routes.go, only pricing/boosts* is registered). Promise.all made
+    // one unimplemented sub-feature's rejection wipe out the other four results,
+    // so the whole page (including the two LIVE sections) rendered nothing but a
+    // red error banner. Each section now loads independently and only the
+    // sections still lacking a backend route show as unavailable.
+    const [pk, dr, cm, dc, sl] = await Promise.allSettled([
+      listBoostPackages(), getBoostDailyRate(), getCommissionConfig(), listDiscountCodes(), listFeaturedSlots(),
+    ]);
+    const errors: string[] = [];
+    if (pk.status === 'fulfilled') setPackages(pk.value); else errors.push(`Boost packages: ${pk.reason}`);
+    if (dr.status === 'fulfilled') setDailyRateState(dr.value); else errors.push(`Daily rate: ${dr.reason}`);
+    if (cm.status === 'fulfilled') setCommission(cm.value); else errors.push(`Commission: ${cm.reason}`);
+    if (dc.status === 'fulfilled') setDiscounts(dc.value); else errors.push(`Discount codes: ${dc.reason}`);
+    if (sl.status === 'fulfilled') setSlots(sl.value); else errors.push(`Featured slots: ${sl.reason}`);
+    setError(errors.length ? errors.join(' · ') : null);
+    setLoading(false);
   }, []);
   useEffect(() => { void load(); }, [load]);
 

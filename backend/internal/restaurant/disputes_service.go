@@ -360,6 +360,85 @@ func (s *Service) loadFoodDispute(ctx context.Context, disputeID string) (*FoodD
 	return &d, nil
 }
 
+// ResolveGenericDispute resolves a food dispute reached through the SHARED
+// finance/disputes admin-resolve endpoint (FOOD-004) rather than through this
+// module's own AdminResolveFoodDispute call directly. The admin console only ever
+// calls the generic POST /api/finance/admin/disputes/:id/resolve, whose request body
+// speaks the shared, coarser vocabulary — resolution ∈ {refunded, settled, dismissed}
+// plus a flat refund_kobo — not this module's full/partial/replacement split. This is
+// the translation layer, wired into finance/disputes.Service as a FoodDisputeResolver
+// so the frontend needs no changes and the "the console reuses the generic disputes
+// endpoints" consolidation the routing comment describes actually holds for food too.
+//
+//   - dismissed, settled → FoodDismissed. Zero money movement either way, which matches
+//     the status quo for "settled" (e.g. a restaurant-issued store credit) — that
+//     resolution never moved platform money even before this fix, so mapping it to a
+//     no-op resolution is not a behavior change for it.
+//   - refunded, refund_kobo<=0 → FoodRefundFull: refund whatever remains of the
+//     order's platform-funded budget.
+//   - refunded, refund_kobo>0  → classified against a READ-ONLY snapshot of the
+//     remaining budget (refundBudgetKobo): at-or-above it is treated as FoodRefundFull
+//     (a full-value amount submitted as a plain number must still get the full-refund
+//     tip-clawback trigger — see AdminResolveFoodDispute), below it is
+//     FoodRefundPartial for that exact amount. The snapshot is advisory only — it
+//     decides which enum to pass, nothing more. AdminResolveFoodDispute re-derives and
+//     re-checks the same budget itself, under its own advisory lock, before any money
+//     moves, so a stale snapshot can at worst pick the "wrong" of two paths that were
+//     both going to be capped correctly anyway; it can never let a refund exceed its
+//     cap.
+func (s *Service) ResolveGenericDispute(ctx context.Context, disputeID, adminID, resolution string, refundKobo int64, note string) (*FoodDispute, error) {
+	switch resolution {
+	case "dismissed", "settled":
+		return s.AdminResolveFoodDispute(ctx, disputeID, adminID, FoodDismissed, 0, note)
+	case "refunded":
+		if refundKobo < 0 {
+			return nil, fmt.Errorf("%w: refund_kobo must not be negative", ErrDisputeInvalid)
+		}
+		res := FoodRefundPartial
+		if refundKobo <= 0 {
+			res = FoodRefundFull
+		} else if remaining, berr := s.refundBudgetKobo(ctx, disputeID); berr == nil && refundKobo >= remaining {
+			res = FoodRefundFull
+		}
+		return s.AdminResolveFoodDispute(ctx, disputeID, adminID, res, refundKobo, note)
+	default:
+		return nil, fmt.Errorf("%w: unknown resolution %q for a food dispute", ErrDisputeInvalid, resolution)
+	}
+}
+
+// refundBudgetKobo is a READ-ONLY snapshot of what remains of an order's
+// platform-funded refund budget (ADR-031) — total_kobo less tip_kobo, less whatever
+// this order's other disputes have already drawn. It exists only so
+// ResolveGenericDispute can classify a plain refund_kobo amount as full or partial;
+// see the note on staleness there.
+func (s *Service) refundBudgetKobo(ctx context.Context, disputeID string) (int64, error) {
+	var orderID, moduleType string
+	if err := s.db.QueryRow(ctx,
+		`SELECT reference, module_type FROM disputes WHERE id=$1`, disputeID).
+		Scan(&orderID, &moduleType); err != nil {
+		return 0, fmt.Errorf("%w: dispute not found", ErrDisputeInvalid)
+	}
+	if moduleType != "food" {
+		return 0, fmt.Errorf("%w: not a food dispute", ErrDisputeInvalid)
+	}
+	var totalKobo, tipKobo int64
+	if err := s.db.QueryRow(ctx,
+		`SELECT total_kobo, COALESCE(tip_kobo,0) FROM orders WHERE id=$1`, orderID).
+		Scan(&totalKobo, &tipKobo); err != nil {
+		return 0, fmt.Errorf("restaurant: dispute order not found")
+	}
+	if tipKobo > totalKobo {
+		tipKobo = totalKobo
+	}
+	var alreadyRefundedKobo int64
+	if err := s.db.QueryRow(ctx,
+		`SELECT COALESCE(SUM(refund_kobo),0) FROM restaurant_dispute_refunds
+		  WHERE order_id=$1 AND dispute_id <> $2`, orderID, disputeID).Scan(&alreadyRefundedKobo); err != nil {
+		return 0, err
+	}
+	return remainingRefundableKobo(platformRefundableKobo(totalKobo, tipKobo), alreadyRefundedKobo), nil
+}
+
 // AdminListFoodDisputes lists food disputes for the ops queue, newest first, optionally
 // filtered by status.
 func (s *Service) AdminListFoodDisputes(ctx context.Context, status string, limit, offset int) ([]FoodDispute, error) {

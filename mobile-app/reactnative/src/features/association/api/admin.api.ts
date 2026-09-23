@@ -14,6 +14,14 @@ import type { PickedFile } from '../utils/docPicker';
 
 const delay = (ms = 320) => new Promise((r) => setTimeout(r, ms));
 
+// Every write below has a real live endpoint (verified against
+// backend/internal/association/routes.go and a full green run of
+// backend/tests/association), so fixture mode has nothing to add and refuses
+// loudly instead of reporting a write it did not perform — mirrors
+// frontend-admin's crowdfundingAdminService.ts NOT_IN_FIXTURE_MODE pattern.
+const notInFixtureMode = (action: string) =>
+  new Error(`${action} is unavailable in fixture mode: this app will not report a write it did not perform. Set EXPO_PUBLIC_ASSOCIATION_USE_MOCK=false to send this against the live backend.`);
+
 const toAppSummary = (a: AdminApplication): AdminApplicationSummary => {
   const { id, applicantName, category, chapter, submittedAt, status, jurisdiction, paid } = a;
   return { id, applicantName, category, chapter, submittedAt, status, jurisdiction, paid };
@@ -47,7 +55,7 @@ export async function getApplication(id: string): Promise<AdminApplication> {
 }
 
 export async function decideApplication(id: string, decision: ApprovalDecision, note?: string): Promise<{ ok: true }> {
-  if (USE_MOCK) { await delay(400); return { ok: true }; }
+  if (USE_MOCK) throw notInFixtureMode('Deciding an application');
   const { data } = await api.post(
     `${BASE}/admin/approvals/${id}/decision`,
     { decision, note },
@@ -71,7 +79,7 @@ export async function getOfflinePayments(): Promise<OfflinePayment[]> {
 }
 
 export async function decideOfflinePayment(id: string, approve: boolean): Promise<{ ok: true }> {
-  if (USE_MOCK) { await delay(350); return { ok: true }; }
+  if (USE_MOCK) throw notInFixtureMode('Deciding an offline payment');
   const { data } = await api.post(
     `${BASE}/admin/finance/offline/${id}/decision`,
     { approve },
@@ -126,11 +134,7 @@ export async function getImportPreview(file: PickedFile, orgId?: string): Promis
 }
 
 export async function confirmImport(sendInvites: boolean): Promise<ImportResult> {
-  if (USE_MOCK) {
-    await delay(600);
-    const p = MOCK_IMPORT_PREVIEW;
-    return { imported: p.valid, skipped: p.duplicates + p.invalid, invited: sendInvites ? p.valid : 0, batchId: `batch_${Date.now()}` };
-  }
+  if (USE_MOCK) throw notInFixtureMode('Confirming a member import');
   const { data } = await api.post(
     `${BASE}/admin/import/confirm`,
     { sendInvites },

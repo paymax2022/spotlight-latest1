@@ -472,10 +472,14 @@ export async function verifyPaidVote(args: {
   if (USE_MOCK) {
     return { status: 'SUCCESSFUL', votes: 50 };
   }
-  // Backend: POST /api/votes/paid/verify expects { transactionId, paymentReference }.
+  // Backend: POST /api/v2/votes/paid/verify expects { transactionId, paymentReference }.
+  // Cut over from /api/votes/paid/verify (PV-005): that route has no defense
+  // against a webhook and this redirect racing to credit the same
+  // transaction twice. The v2 route locks the transaction row for the full
+  // check-and-write via an atomic RPC, closing that race.
   // The connect tally is projected by a database trigger on vote_transactions,
   // so it no longer matters which verify route credits the purchase.
-  const res = await api.post('/api/votes/paid/verify', {
+  const res = await api.post('/api/v2/votes/paid/verify', {
     transactionId:    args.transactionId,
     paymentReference: args.reference,
   });

@@ -48,35 +48,60 @@ export default function LabDashboardPage() {
         defined human escalation — never silent (HL-7). Health data is sensitive under NDPA — results release only
         with consent + scientist sign-off (HL-8). Patient payment is held in escrow and released on result
         release/fulfilment (HL-9). All money is in ₦ (kobo internally).
+        <br />
+        <strong>Admin-portal gap closure:</strong> reads the real admin console at{' '}
+        <code>/api/health/lab/admin/*</code>. The <em>Orders (total)</em>, <em>Orders by state</em> card,{' '}
+        <em>Platform revenue (7d)</em> and <em>Labs active</em> cards below are real. Everything else on this
+        page (TAT, MLSCN review queue, catalog governance, critical-result escalation counts, results release,
+        payouts, held/released/refunded balances, order mix, TAT trend, activity feed) has no backing table or
+        service concept anywhere in the backend yet and reads as 0/empty rather than fabricated — see{' '}
+        <code>healthLabAdminService.ts</code> for the exact mapping.
       </DisclosureNote>
 
       <StateBlock loading={loading} error={error} empty={!data} emptyText="No dashboard data available.">
         {data && (
           <>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: '0.75rem', marginBottom: '1.25rem' }}>
-              <Kpi label="Orders today" value={data.orders_today.toLocaleString('en-NG')} sub={`${data.orders_30d.toLocaleString('en-NG')} orders (30d)`} accent={colors.primary} />
-              <Kpi label="GMV today" value={formatNaira(data.gmv_today_kobo)} sub={`${formatNaira(data.gmv_30d_kobo)} (30d)`} />
-              <Kpi label="Net revenue (30d)" value={formatNaira(data.net_revenue_30d_kobo)} accent={colors.success} />
-              <Kpi label="Take rate" value={pct(data.take_rate)} sub="Net ÷ GMV" />
-              <Kpi label="Avg order value" value={formatNaira(data.avg_order_value_kobo)} />
-              <Kpi label="Median TAT" value={`${data.tat_median_hours}h`} sub={`target ${data.tat_target_hours}h · ${data.tat_breaches} breaches`} accent={data.tat_median_hours > data.tat_target_hours ? colors.danger : colors.success} />
-              <Kpi label="Critical results open" value={data.critical_results_open.toLocaleString('en-NG')} sub={`${data.critical_results_30d} (30d) · HL-7 human path`} accent={data.critical_results_open > 0 ? colors.danger : undefined} />
-              <Kpi label="Escalation SLA" value={`${data.escalation_sla_minutes}m`} sub={`ack target ${data.escalation_sla_target_minutes}m (HL-7)`} accent={data.escalation_sla_minutes > data.escalation_sla_target_minutes ? colors.danger : colors.success} />
-              <Kpi label="Custody breaks open" value={data.custody_breaks_open.toLocaleString('en-NG')} sub={`${data.custody_breaks_30d} (30d) · HL-6 break→recollect`} accent={data.custody_breaks_open > 0 ? colors.danger : undefined} />
-              <Kpi label="Recollections required" value={data.recollections_required.toLocaleString('en-NG')} sub="HL-6 no result on broken chain" accent={data.recollections_required > 0 ? colors.warning : undefined} />
-              <Kpi label="Samples in transit" value={data.samples_in_transit.toLocaleString('en-NG')} sub="last-mile custody" />
-              <Kpi label="MLSCN pending" value={data.mlscn_pending_review.toLocaleString('en-NG')} sub="HL-2 credential gate" accent={data.mlscn_pending_review > 0 ? colors.warning : undefined} />
-              <Kpi label="Catalog pending" value={data.catalog_pending_governance.toLocaleString('en-NG')} sub="test-definition governance" />
-              <Kpi label="Results pending release" value={data.results_pending_release.toLocaleString('en-NG')} sub="HL-8 sign-off + consent" accent={data.results_pending_release > 0 ? colors.warning : undefined} />
-              <Kpi label="Released (30d)" value={data.results_released_30d.toLocaleString('en-NG')} sub="results to patient vault" />
-              <Kpi label="Payouts KYC hold" value={data.payouts_kyc_hold.toLocaleString('en-NG')} sub="HL-10 payout gate" accent={data.payouts_kyc_hold > 0 ? colors.warning : undefined} />
-              <Kpi label="Held balance" value={formatNaira(data.held_balance_kobo)} sub="HL-9 escrow held" accent={colors.primary} />
-              <Kpi label="Released (30d) ₦" value={formatNaira(data.released_30d_kobo)} accent={colors.success} />
-              <Kpi label="Refunded (30d) ₦" value={formatNaira(data.refunded_30d_kobo)} accent={colors.primary} />
-              <Kpi label="Labs active" value={data.labs_active.toLocaleString('en-NG')} sub={`${data.labs_suspended} suspended · ${data.phlebotomists_active} phlebotomists`} />
+              <Kpi label="Orders (total)" value={(data.orders_total ?? 0).toLocaleString('en-NG')} accent={colors.primary} />
+              <Kpi label="Platform revenue (7d)" value={formatNaira(data.platform_revenue_kobo_week ?? 0)} accent={colors.success} />
+              <Kpi label="Labs active" value={data.labs_active.toLocaleString('en-NG')} sub="APPROVED (HL-2)" />
+              <Kpi label="Orders today" value={data.orders_today.toLocaleString('en-NG')} sub={`${data.orders_30d.toLocaleString('en-NG')} orders (30d) — not computed`} accent={colors.primary} />
+              <Kpi label="GMV today" value={formatNaira(data.gmv_today_kobo)} sub={`${formatNaira(data.gmv_30d_kobo)} (30d) — not computed`} />
+              <Kpi label="Net revenue (30d)" value={formatNaira(data.net_revenue_30d_kobo)} accent={colors.success} sub="not computed" />
+              <Kpi label="Take rate" value={pct(data.take_rate)} sub="Net ÷ GMV — not computed" />
+              <Kpi label="Avg order value" value={formatNaira(data.avg_order_value_kobo)} sub="not computed" />
+              <Kpi label="Median TAT" value={`${data.tat_median_hours}h`} sub="not computed" />
+              <Kpi label="Critical results open" value={data.critical_results_open.toLocaleString('en-NG')} sub="HL-7 human path — not computed" />
+              <Kpi label="Escalation SLA" value={`${data.escalation_sla_minutes}m`} sub="not computed" />
+              <Kpi label="Custody breaks open" value={data.custody_breaks_open.toLocaleString('en-NG')} sub="HL-6 break→recollect — not computed" />
+              <Kpi label="Recollections required" value={data.recollections_required.toLocaleString('en-NG')} sub="not computed" />
+              <Kpi label="Samples in transit" value={data.samples_in_transit.toLocaleString('en-NG')} sub="not computed" />
+              <Kpi label="MLSCN pending" value={data.mlscn_pending_review.toLocaleString('en-NG')} sub="HL-2 credential gate — not computed" />
+              <Kpi label="Catalog pending" value={data.catalog_pending_governance.toLocaleString('en-NG')} sub="not computed" />
+              <Kpi label="Results pending release" value={data.results_pending_release.toLocaleString('en-NG')} sub="not computed" />
+              <Kpi label="Released (30d)" value={data.results_released_30d.toLocaleString('en-NG')} sub="not computed" />
+              <Kpi label="Payouts KYC hold" value={data.payouts_kyc_hold.toLocaleString('en-NG')} sub="not computed" />
+              <Kpi label="Held balance" value={formatNaira(data.held_balance_kobo)} sub="not computed" />
+              <Kpi label="Released (30d) ₦" value={formatNaira(data.released_30d_kobo)} sub="not computed" />
+              <Kpi label="Refunded (30d) ₦" value={formatNaira(data.refunded_30d_kobo)} sub="not computed" />
+              <Kpi label="Labs suspended" value={data.labs_suspended.toLocaleString('en-NG')} sub={`${data.phlebotomists_active} phlebotomists — not computed`} />
             </div>
 
-            <Card title="Order mix (30d)">
+            <Card title="Orders by state (live)">
+              <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                <thead><tr><th style={thCell}>State</th><th style={thCell}>Orders</th></tr></thead>
+                <tbody>
+                  {Object.entries(data.orders_by_state ?? {}).map(([state, count]) => (
+                    <tr key={state}>
+                      <td style={tdCell}><Badge text={state.replace(/_/g, ' ')} color={statusColor(state)} /></td>
+                      <td style={tdCell}>{count.toLocaleString('en-NG')}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </Card>
+
+            <Card title="Order mix (30d) — not computed">
               <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                 <thead><tr><th style={thCell}>Type</th><th style={thCell}>Orders</th><th style={thCell}>GMV</th><th style={thCell}>Share</th></tr></thead>
                 <tbody>
@@ -92,7 +117,7 @@ export default function LabDashboardPage() {
               </table>
             </Card>
 
-            <Card title="Turnaround time trend (14d)">
+            <Card title="Turnaround time trend (14d) — not computed">
               <p style={{ fontSize: '0.75rem', color: colors.muted, margin: '0 0 0.75rem' }}>collection → result release · target {data.tat_target_hours}h</p>
               <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
                 {data.tat_trend.map((p) => {
@@ -111,7 +136,7 @@ export default function LabDashboardPage() {
               </div>
             </Card>
 
-            <Card title="Recent activity">
+            <Card title="Recent activity — not computed">
               <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                 <thead><tr><th style={thCell}>Event</th><th style={thCell}>Type</th><th style={thCell}>Ref</th><th style={thCell}>When</th></tr></thead>
                 <tbody>

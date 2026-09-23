@@ -81,19 +81,49 @@ func (s *Service) RequestRide(ctx context.Context, riderID string, req RequestRi
 		settlementID = &sett.ID
 	}
 
+	// refundOnFailure undoes the escrow above if the trip can't be durably
+	// created at all. e.g. an offer inside the app's own [floor,ceiling]
+	// range can still trip the DB's separate, absolute
+	// trips_fare_kobo_check constraint, which the app-level
+	// validateFareInRange call above does not know about. Found live via
+	// UAT: without this, such an offer escrowed the rider's wallet and then
+	// failed the trip INSERT, leaving a real settlements row in 'escrowed'
+	// state with no owning trip — no FSM state, no cancel path (cancel needs
+	// a trip id), and outside the reconciler's reach (it only re-drives
+	// completed trips). Mirrors this same package's own established pattern
+	// for the identical shape (see BookEventTransport's
+	// event_booking_insert_failed refund).
+	refundOnFailure := func(reason string, err error) error {
+		if settlementID != nil {
+			s.settlement.Refund(ctx, *settlementID, reason)
+		}
+		return err
+	}
+
+	// The trip row and its fare-offer negotiation ledger are created
+	// atomically: a fare_offers failure must not leave a "real" trip row
+	// committed with no negotiation record, and — the reverse — must not
+	// refund an escrow that a trip row DOES durably own. Only if NEITHER
+	// insert survives does the escrow get refunded.
 	pin := generatePin()
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return nil, refundOnFailure("trip_tx_begin_failed", err)
+	}
+	defer tx.Rollback(ctx)
+
 	const q = `
 		INSERT INTO trips
 			(id, rider_id, pickup_address, dest_address, fare_kobo, status, phase,
 			 service_type, pricing_mode, payment_method, pickup_lat, pickup_lng, dest_lat, dest_lng,
 			 distance_m, duration_s, fare_estimate_kobo, route_polyline, trip_pin, idempotency_key, settlement_id)
 		VALUES ($1,$2,$3,$4,$5,'requested',$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)`
-	if _, err := s.db.Exec(ctx, q,
+	if _, err := tx.Exec(ctx, q,
 		tripID, riderID, req.Pickup.Address, req.Dest.Address, escrowKobo, string(phase),
 		serviceType, req.PricingMode, paymentMethod, req.Pickup.Lat, req.Pickup.Lng, req.Dest.Lat, req.Dest.Lng,
 		route.DistanceM, route.DurationS, systemFare, route.Polyline, pin, idempotencyKey, settlementID,
 	); err != nil {
-		return nil, fmt.Errorf("transport: insert trip: %w", err)
+		return nil, refundOnFailure("trip_insert_failed", fmt.Errorf("transport: insert trip: %w", err))
 	}
 
 	// Open a fare offer record (negotiation ledger for this trip).
@@ -101,12 +131,15 @@ func (s *Service) RequestRide(ctx context.Context, riderID string, req RequestRi
 	if req.PricingMode == "offer" {
 		riderOffer = &req.OfferKobo
 	}
-	if _, err := s.db.Exec(ctx,
+	if _, err := tx.Exec(ctx,
 		`INSERT INTO fare_offers (trip_id, system_fare_kobo, rider_offer_kobo, status, expires_at)
 		 VALUES ($1,$2,$3,$4,$5)`,
 		tripID, systemFare, riderOffer, offerStatus, time.Now().Add(5*time.Minute),
 	); err != nil {
-		return nil, fmt.Errorf("transport: insert fare offer: %w", err)
+		return nil, refundOnFailure("fare_offer_insert_failed", fmt.Errorf("transport: insert fare offer: %w", err))
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, refundOnFailure("trip_tx_commit_failed", fmt.Errorf("transport: commit trip: %w", err))
 	}
 
 	s.recordEvent(ctx, tripID, "requested", riderID, "", phase, map[string]any{"escrow_kobo": escrowKobo, "mode": req.PricingMode})

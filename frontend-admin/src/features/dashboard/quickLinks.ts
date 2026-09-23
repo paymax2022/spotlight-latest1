@@ -6,6 +6,7 @@ export type QuickLink = {
 };
 
 export const quickLinks: QuickLink[] = [
+  { label: 'Transactions', href: '/admin/finance/transactions', desc: 'Every ledger_entries row across every module — the single source of truth for money movement' },
   { label: 'Analytics', href: '/admin/analytics', desc: 'Performance and trends overview' },
   { label: 'Competitions', href: '/admin/competitions', desc: 'Active contests and entry metrics' },
   { label: 'Chat Sessions', href: '/admin/chatbot', desc: 'Review assistant conversations' },

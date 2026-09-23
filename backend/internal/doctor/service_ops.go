@@ -16,12 +16,15 @@ import (
 // short-lived; clients refresh via POST /calls/:appointmentId/token.
 const callTokenTTL = time.Hour
 
-// deterministicAgoraUID derives a stable, positive 32-bit uid from the doctor's
-// user id. Agora RTC uids are uint32; we hash the (opaque, UUID-string) user id
-// with SHA-256 and take the low 31 bits (>0, fits int32) so the same doctor always
-// joins with the same uid across reconnects/refreshes. The stringified form is
-// what AccessToken2 binds the token to.
-func deterministicAgoraUID(userID string) string {
+// deterministicRTCUID derives a stable, positive 32-bit uid from the doctor's
+// user id. We hash the (opaque, UUID-string) user id with SHA-256 and take the low
+// 31 bits (>0, fits int32) so the same doctor always joins with the same uid across
+// reconnects/refreshes. The stringified form is what the client binds the room
+// participant to.
+//
+// The derivation is unchanged from its original provider — a stored uid must keep
+// resolving to the same participant across an upgrade.
+func deterministicRTCUID(userID string) string {
 	sum := sha256.Sum256([]byte(userID))
 	u := binary.BigEndian.Uint32(sum[:4]) & 0x7fffffff // 31 bits → non-zero, int32-safe
 	if u == 0 {
@@ -34,9 +37,9 @@ func deterministicAgoraUID(userID string) string {
 // appointment (channel = appointmentId). When the Issuer is nil or the provider
 // is not configured it returns an EMPTY token (never a fabricated one) plus
 // rtcConfigured=false so the caller can flag "not configured" to the client.
-// Secrets (App Certificate / VideoSDK secret) never leave the Issuer.
+// Secrets (the VideoSDK secret) never leave the Issuer.
 func (s *Service) issueCallToken(provider, appointmentID, userID string) (token, uid string, expiresAt *time.Time, rtcConfigured bool) {
-	uid = deterministicAgoraUID(userID)
+	uid = deterministicRTCUID(userID)
 	if s.rtc == nil || !s.rtc.Enabled(provider) {
 		return "", uid, nil, false
 	}
@@ -103,7 +106,7 @@ func annotateCallToken(sess *CallSession, token, provider string, expiresAt *tim
 	if sess == nil {
 		return
 	}
-	uid := deterministicAgoraUID(sess.UserID)
+	uid := deterministicRTCUID(sess.UserID)
 	if token != "" {
 		t := token
 		sess.RoomToken = &t
@@ -233,7 +236,7 @@ func (s *Service) StartCallSession(ctx context.Context, userID, appointmentID, i
 	}
 	p := parseOpsPatch(raw)
 	mode := strOrDefault(p.Mode, "video")
-	provider := strOrDefault(p.Provider, rtc.ProviderAgora)
+	provider := strOrDefault(p.Provider, rtc.ProviderVideoSDK)
 
 	token, uid, expiresAt, configured := s.issueCallToken(provider, appointmentID, userID)
 
@@ -260,7 +263,7 @@ func (s *Service) IssueCallToken(ctx context.Context, userID, appointmentID stri
 	if err != nil {
 		return nil, err
 	}
-	provider := strOrDefault(sess.Provider, rtc.ProviderAgora)
+	provider := strOrDefault(sess.Provider, rtc.ProviderVideoSDK)
 	token, _, expiresAt, configured := s.issueCallToken(provider, appointmentID, userID)
 	annotateCallToken(sess, token, provider, expiresAt, configured)
 	return sess, nil

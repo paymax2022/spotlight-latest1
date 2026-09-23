@@ -23,12 +23,22 @@ package association_test
 // against the API for the same users and threads, so the two cannot drift apart
 // silently: a change to one that is not made in the other fails here.
 //
+// UPDATE (chat delivery moved off Realtime): live group chat now fans out over
+// the backend's own WebSocket hub (platform/ws) instead of Supabase Realtime, so
+// the delivering gate is Service.ChatThreadAudience. That list — who a committed
+// message is pushed to — is a THIRD expression of the same rule and is pinned
+// here too: it must equal the API's answer for every (user, thread) pair, since a
+// superset pushes executive/committee bodies to members who cannot fetch them.
+// The policy remains published and is still checked, so nothing that ever
+// subscribes again can over-deliver.
+//
 // Live-DB, same harness as founder_and_scoping_test.go: skipped without
 // TEST_DATABASE_URL.
 // ---------------------------------------------------------------------------
 
 import (
 	"context"
+	"slices"
 	"testing"
 
 	"github.com/google/uuid"
@@ -184,6 +194,21 @@ func TestChatRealtimeGate_MatchesTheAPI(t *testing.T) {
 		{"outsider reads no committee", outsiderID, committee, false},
 	}
 
+	// The WS push list is a per-thread answer, while the table below is per
+	// (user, thread) — resolve each thread's audience once.
+	audiences := map[string][]string{}
+	audienceOf := func(threadID string) []string {
+		if a, ok := audiences[threadID]; ok {
+			return a
+		}
+		a, err := svc.ChatThreadAudience(ctx, threadID)
+		if err != nil {
+			t.Fatalf("ChatThreadAudience(%s): %v", threadID, err)
+		}
+		audiences[threadID] = a
+		return a
+	}
+
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			viaRLS := canReadViaRLS(t, ctx, pool, tc.threadID, tc.userID)
@@ -199,6 +224,15 @@ func TestChatRealtimeGate_MatchesTheAPI(t *testing.T) {
 			if viaAPI != viaRLS {
 				t.Errorf("API says %v but the realtime policy says %v — the two gates have drifted, "+
 					"and realtime is not mediated by the API", viaAPI, viaRLS)
+			}
+
+			// Third leg: the WS fan-out list must be exactly the visibility set.
+			// A superset pushes a body to a member the API hides it from; a subset
+			// drops messages silently.
+			inAudience := slices.Contains(audienceOf(tc.threadID), tc.userID)
+			if inAudience != tc.want {
+				t.Errorf("WS push audience contains=%v, want %v — the fan-out list has drifted from "+
+					"the API gate", inAudience, tc.want)
 			}
 		})
 	}

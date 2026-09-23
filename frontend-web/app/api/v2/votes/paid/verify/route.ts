@@ -57,6 +57,20 @@ export async function POST(request: NextRequest) {
       success: true,
       voteId: result.voteId,
       totalVotes: result.totalVotes,
+      // alreadyProcessed/votesCredited match the shape the legacy
+      // /api/votes/paid/verify response carried, so the two client call
+      // sites (frontend-web/app/vote-callback/page.tsx, mobile's
+      // verifyPaidVote()) work unchanged after cutting over to this route.
+      // receiptNumber is a known parity gap: issueReceipt()/getReceiptNumber()
+      // are private to the protected paid-vote.service.ts and not
+      // separately importable — always null here until receipt generation
+      // is added to the bridge itself.
+      alreadyProcessed: result.alreadyProcessed ?? false,
+      votesCredited: result.votesCredited,
+      // Mobile's verifyPaidVote() reads newTotalVotes (not totalVotes) —
+      // same value under both names so either client reads it correctly.
+      newTotalVotes: result.totalVotes,
+      receiptNumber: null,
       timestamp: new Date().toISOString(),
     });
   } catch (error) {

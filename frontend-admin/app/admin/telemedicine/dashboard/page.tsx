@@ -30,9 +30,10 @@ export default function TelemedDashboardPage() {
       <TelemedTabs active="overview" />
 
       <DisclosureNote>
-        Read-only oversight — the telemedicine backend currently exposes <strong>no admin route group</strong>;
-        these surfaces read the member/clinician projections at <code>/api/v1/telemedicine/*</code>. Verification
-        and moderation actions are mocked until a dedicated admin surface is added.
+        Reads the real admin console at <code>/api/v1/telemedicine/admin/*</code> (TELEMEDICINE-004). Some KPI
+        cards below (consultations today, 30d completed/cancelled, average rating, e-prescriptions, specialty
+        and activity breakdowns) are not yet computed by the backend and read as empty/zero rather than fabricated
+        — see <code>telemedicineAdminService.ts</code> for the exact mapping.
       </DisclosureNote>
 
       <StateBlock loading={loading} error={error} empty={!data} emptyText="No dashboard data available.">
@@ -42,7 +43,10 @@ export default function TelemedDashboardPage() {
               <Kpi label="Clinicians" value={data.clinicians_total.toLocaleString('en-NG')} sub={`${data.clinicians_verified} verified / ${data.clinicians_pending} pending`} accent="#340075" />
               <Kpi label="Consultations today" value={data.consultations_today.toLocaleString('en-NG')} sub={`${data.consultations_open} open`} />
               <Kpi label="Completed (30d)" value={data.consultations_completed_30d.toLocaleString('en-NG')} />
-              <Kpi label="Consult revenue (30d)" value={formatNaira(data.consultation_revenue_30d_kobo)} />
+              {/* Real backend aggregate is a trailing 7-day window (see
+                  telemedicineAdminService.ts getTelemedDashboard mapping notes),
+                  not 30d — label reflects that honestly. */}
+              <Kpi label="Platform revenue (7d)" value={formatNaira(data.consultation_revenue_30d_kobo)} />
               <Kpi label="Average rating" value={`${data.avg_rating.toFixed(1)} / 5`} />
               <Kpi label="Cancellations (30d)" value={data.cancellations_30d.toLocaleString('en-NG')} accent={data.cancellations_30d > 0 ? '#9a3412' : undefined} />
               <Kpi label="e-Prescriptions (30d)" value={data.prescriptions_issued_30d.toLocaleString('en-NG')} />
