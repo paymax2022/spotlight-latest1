@@ -151,6 +151,21 @@
       "cwd": "mobile-app/reactnative",
       "port": 8086,
       "description": "Expo web on :8086 for this worktree, cache-cleared so EXPO_PUBLIC_API_BASE_URL=:3010 / EXPO_PUBLIC_MARKETPLACE_USE_MOCK=false actually take effect."
+    },
+    {
+      "name": "mobile-staging-worktree",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": [
+        "expo",
+        "start",
+        "--web",
+        "--port",
+        "8089",
+        "-c"
+      ],
+      "cwd": "mobile-app/reactnative",
+      "port": 8089,
+      "description": "Expo web on :8089 for this worktree against STAGING (.env copied from .env.staging) — :8083 is held by another worktree's server, so this uses a side port instead. -c clears the cache since EXPO_PUBLIC_* is baked into the bundle."
     }
   ]
 }
