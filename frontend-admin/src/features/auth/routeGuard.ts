@@ -29,6 +29,13 @@ const routePermissions: Array<{ prefix: string; permissions: string[] }> = [
   { prefix: '/admin/roles', permissions: ['roles.view'] },
   { prefix: '/admin/rbac-settings', permissions: ['roles.view'] },
   { prefix: '/admin/users', permissions: ['users.view'] },
+  // Create-an-admin page (the panel that used to live only inside
+  // /admin/login). Gated on the permission the action actually performs —
+  // granting roles — rather than the baseline, so the sidebar entry and this
+  // guard agree on who sees it. Without an entry it would fall through to the
+  // default-deny baseline (`admin.access`), a slug no seeded role holds, and
+  // only wildcard operators would ever match.
+  { prefix: '/admin/admins', permissions: ['users.roles.assign'] },
 
   // ── Path A consoles (admin consolidation, see ADR-047) ─────────────────────
   // Data for all of these lives in frontend-web, reached through

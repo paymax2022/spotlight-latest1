@@ -8,8 +8,10 @@ import {
   MIN_PASSWORD_LENGTH,
   PERMISSION_CATALOG_LIMIT,
   PROFILE_ROLE_FOR_ADMIN,
+  classifySignupCode,
   constantTimeEqual,
   decodeJwtSubject,
+  describeDisabledSignup,
   describeSignupMode,
   isAdminTierRoleSlug,
   isDuplicateEmailError,
@@ -17,8 +19,10 @@ import {
   normalizeFullName,
   normalizePermissionSlugs,
   resolveSignupMode,
+  sanitizeSignupCode,
   splitFullName,
   validateSignupInput,
+  type SignupCodeState,
   type SignupPermissionOption,
   type SignupRoleOption,
 } from '@/features/auth/adminSignupShared';
@@ -66,8 +70,9 @@ function serviceClient(): SupabaseClient | null {
   return _supabase;
 }
 
+/** The configured ADMIN_SIGNUP_CODE, or '' when it is unusable (too short). */
 function configuredSignupCode(): string {
-  return (process.env[SIGNUP_CODE_ENV] ?? '').trim();
+  return sanitizeSignupCode(process.env[SIGNUP_CODE_ENV] ?? '');
 }
 
 function extractSessionToken(cookieHeader: string | null): string | undefined {
@@ -115,19 +120,23 @@ async function resolveMode(request: Request): Promise<{
   mode: ReturnType<typeof resolveSignupMode>;
   actorUserId: string | null;
   serviceReady: boolean;
+  codeState: SignupCodeState;
 }> {
   const sb = serviceClient();
   const session = await sessionState(request);
   // No service client means the count cannot be read; null (not 0) keeps the
   // bootstrap door shut rather than opening it on an outage.
   const count = sb ? await consoleAdminCount(sb) : null;
+  // Read through the sanitizer, so a code below MIN_SIGNUP_CODE_LENGTH counts
+  // as NOT configured — it must not switch the public code path on.
+  const codeState = classifySignupCode(process.env[SIGNUP_CODE_ENV] ?? '');
   const mode = resolveSignupMode({
     hasValidSession: session.present,
     // An unenforceable session (middleware off) must not count as a vouch.
-    signupCodeConfigured: configuredSignupCode().length > 0,
+    signupCodeConfigured: codeState === 'usable',
     consoleAdminCount: count,
   });
-  return { mode, actorUserId: session.present ? session.userId : null, serviceReady: sb !== null };
+  return { mode, actorUserId: session.present ? session.userId : null, serviceReady: sb !== null, codeState };
 }
 
 function roleOptions(rows: { slug: string; name: string; description: string | null }[] | null): SignupRoleOption[] {
@@ -143,12 +152,12 @@ function roleOptions(rows: { slug: string; name: string; description: string | n
 }
 
 export async function GET(request: Request): Promise<NextResponse> {
-  const { mode, serviceReady } = await resolveMode(request);
+  const { mode, serviceReady, codeState } = await resolveMode(request);
 
   if (mode === 'disabled') {
     const reason = !serviceReady
       ? 'This server has no SUPABASE_SERVICE_ROLE_KEY configured, so it cannot create accounts.'
-      : describeSignupMode('disabled');
+      : describeDisabledSignup(codeState);
     return NextResponse.json({
       ok: true,
       enabled: false,
@@ -214,9 +223,9 @@ export async function POST(request: Request): Promise<NextResponse> {
     );
   }
 
-  const { mode, actorUserId } = await resolveMode(request);
+  const { mode, actorUserId, codeState } = await resolveMode(request);
   if (mode === 'disabled') {
-    return NextResponse.json({ ok: false, error: describeSignupMode('disabled') }, { status: 403 });
+    return NextResponse.json({ ok: false, error: describeDisabledSignup(codeState) }, { status: 403 });
   }
 
   let rawBody: unknown;

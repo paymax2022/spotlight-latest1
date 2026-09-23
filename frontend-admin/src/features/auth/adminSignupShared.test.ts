@@ -12,9 +12,12 @@ import {
   ADMIN_TIER_ROLE_SLUGS,
   MAX_PERMISSION_GRANTS,
   MIN_PASSWORD_LENGTH,
+  MIN_SIGNUP_CODE_LENGTH,
   PROFILE_ROLE_FOR_ADMIN,
+  classifySignupCode,
   constantTimeEqual,
   decodeJwtSubject,
+  describeDisabledSignup,
   describeSignupMode,
   isAdminTierRoleSlug,
   isDuplicateEmailError,
@@ -23,6 +26,7 @@ import {
   normalizeEmail,
   normalizePermissionSlugs,
   resolveSignupMode,
+  sanitizeSignupCode,
   splitFullName,
   validateSignupInput,
 } from './adminSignupShared';
@@ -70,6 +74,54 @@ describe('resolveSignupMode', () => {
     for (const mode of ['session', 'code', 'bootstrap', 'disabled'] as const) {
       expect(describeSignupMode(mode).length).toBeGreaterThan(0);
     }
+  });
+});
+
+describe('signup code strength', () => {
+  it('rejects a code shorter than the minimum', () => {
+    // The hole this closes: a 1-character ADMIN_SIGNUP_CODE used to switch the
+    // public code path ON while being guessable in a handful of requests, so the
+    // endpoint looked gated and was not.
+    expect(classifySignupCode('hunter')).toBe('too-short');
+    expect(sanitizeSignupCode('hunter')).toBe('');
+  });
+
+  it('treats a blank code as absent', () => {
+    expect(classifySignupCode('')).toBe('absent');
+    expect(classifySignupCode('   ')).toBe('absent');
+    expect(sanitizeSignupCode('   ')).toBe('');
+  });
+
+  it('accepts a code at exactly the minimum and above', () => {
+    const exact = 'a'.repeat(MIN_SIGNUP_CODE_LENGTH);
+    expect(classifySignupCode(exact)).toBe('usable');
+    expect(sanitizeSignupCode(exact)).toBe(exact);
+  });
+
+  it('measures the trimmed value and returns it trimmed', () => {
+    const exact = 'a'.repeat(MIN_SIGNUP_CODE_LENGTH);
+    expect(sanitizeSignupCode(`  ${exact}  `)).toBe(exact);
+    expect(sanitizeSignupCode(`  ${'a'.repeat(MIN_SIGNUP_CODE_LENGTH - 1)}  `)).toBe('');
+  });
+
+  it('keeps an unusable code from opening code mode', () => {
+    // route.ts feeds resolveSignupMode(signupCodeConfigured: codeState === 'usable'),
+    // so asserted here is the consequence the endpoint depends on.
+    expect(resolveSignupMode({ ...base, signupCodeConfigured: classifySignupCode('abc') === 'usable' })).toBe('disabled');
+    expect(
+      resolveSignupMode({ ...base, signupCodeConfigured: classifySignupCode('long-enough') === 'usable' }),
+    ).toBe('code');
+  });
+
+  it('names a rejected code as too short rather than as missing', () => {
+    const message = describeDisabledSignup('too-short');
+    expect(message).toContain(String(MIN_SIGNUP_CODE_LENGTH));
+    expect(message).not.toBe(describeSignupMode('disabled'));
+  });
+
+  it('falls back to the generic message when no code was rejected', () => {
+    expect(describeDisabledSignup('absent')).toBe(describeSignupMode('disabled'));
+    expect(describeDisabledSignup('usable')).toBe(describeSignupMode('disabled'));
   });
 });
 
