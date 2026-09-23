@@ -32,6 +32,7 @@ import type {
   CreateStoreInput,
   UpdateStoreInput,
   MerchantEarnings,
+  RestaurantKYB,
 } from './types';
 
 export const USE_MOCK =
@@ -73,6 +74,23 @@ function mapItem(i: any): MerchantMenuItem {
 function mapCategory(c: any): MerchantMenuCategory {
   return { id: c.id, restaurantId: c.restaurant_id, name: c.name, items: (c.items ?? []).map(mapItem) };
 }
+function mapKYB(r: any, documents: string[] = []): RestaurantKYB {
+  return {
+    restaurantId: r?.restaurant_id ?? '',
+    legalName: r?.legal_name ?? '',
+    businessType: (r?.business_type ?? '') as RestaurantKYB['businessType'],
+    rcNumber: r?.rc_number ?? '',
+    tin: r?.tin ?? '',
+    contactEmail: r?.contact_email ?? '',
+    contactPhone: r?.contact_phone ?? '',
+    bankCode: r?.bank_code ?? '',
+    accountNumber: r?.account_number ?? '',
+    accountName: r?.account_name ?? '',
+    status: r?.status ?? 'draft',
+    decisionReason: r?.decision_reason ?? undefined,
+    documents,
+  };
+}
 
 // ── Offline stub (only when USE_MOCK) ─────────────────────────────────────────
 let mockStore: MerchantStore = {
@@ -81,6 +99,14 @@ let mockStore: MerchantStore = {
 };
 let mockCats: MerchantMenuCategory[] = [];
 let seq = 0;
+// Offline demo reports an already-approved KYB (mirrors getPayoutReadiness's mock,
+// which reports every outlet payable — an unexplained "verification required" wall
+// in the offline demo would be noise, not a warning).
+let mockKYB: RestaurantKYB = {
+  restaurantId: mockStore.id, legalName: '', businessType: '', rcNumber: '', tin: '',
+  contactEmail: '', contactPhone: '', bankCode: '', accountNumber: '', accountName: '',
+  status: 'approved', documents: [],
+};
 const nextId = (p: string) => `${p}-${(seq += 1)}`;
 const delay = (ms = 220) => new Promise<void>((r) => setTimeout(r, ms));
 
@@ -304,4 +330,60 @@ export async function getEarnings(): Promise<MerchantEarnings> {
       processedAt: r.processed_at ?? null,
     })),
   };
+}
+
+// ── KYB (Know-Your-Business) onboarding (owner only) ──────────────────────────
+// Opening for orders requires status='approved' (ADR-033, fail-closed — see
+// manage.tsx's availabilityKybNotice). draft/needs_more_info/rejected are editable;
+// submitted/under_review/approved are locked until a reviewer acts.
+
+export type SaveKYBInput = Pick<
+  RestaurantKYB,
+  'legalName' | 'businessType' | 'rcNumber' | 'tin' | 'contactEmail' | 'contactPhone'
+  | 'bankCode' | 'accountNumber' | 'accountName'
+>;
+
+export async function getKYB(id: string): Promise<RestaurantKYB> {
+  if (USE_MOCK) { await delay(); return { ...mockKYB, restaurantId: id }; }
+  const raw = unwrap<any>(await api.get(`${BASE}/${enc(id)}/kyb`));
+  return mapKYB(raw?.kyb, raw?.documents ?? []);
+}
+
+export async function saveKYB(id: string, input: SaveKYBInput): Promise<RestaurantKYB> {
+  if (USE_MOCK) { await delay(); mockKYB = { ...mockKYB, ...input, restaurantId: id }; return mockKYB; }
+  const body = {
+    legal_name: input.legalName,
+    business_type: input.businessType,
+    rc_number: input.rcNumber,
+    tin: input.tin,
+    contact_email: input.contactEmail,
+    contact_phone: input.contactPhone,
+    bank_code: input.bankCode,
+    account_number: input.accountNumber,
+    account_name: input.accountName,
+  };
+  const raw = unwrap<any>(await api.put(`${BASE}/${enc(id)}/kyb`, body));
+  return mapKYB(raw?.kyb ?? raw);
+}
+
+/**
+ * Registers a document the owner has already hosted elsewhere (e.g. a Drive/Dropbox
+ * link) against the KYB record. There is no presigned-upload flow for KYB documents
+ * yet (see logoUpload.api.ts for the equivalent pattern once one exists) — this
+ * mirrors the same "paste a URL" fallback the branding screen already uses when
+ * direct uploads aren't wired.
+ */
+export async function addKYBDocument(id: string, docType: string, fileUrl: string, fileName?: string): Promise<void> {
+  if (USE_MOCK) {
+    await delay();
+    mockKYB = { ...mockKYB, documents: Array.from(new Set([...mockKYB.documents, docType])) };
+    return;
+  }
+  await api.post(`${BASE}/${enc(id)}/kyb/documents`, { doc_type: docType, file_url: fileUrl, file_name: fileName });
+}
+
+export async function submitKYB(id: string): Promise<RestaurantKYB> {
+  if (USE_MOCK) { await delay(); mockKYB = { ...mockKYB, status: 'submitted' }; return mockKYB; }
+  const raw = unwrap<any>(await api.post(`${BASE}/${enc(id)}/kyb/submit`, {}));
+  return mapKYB(raw?.kyb ?? raw);
 }
