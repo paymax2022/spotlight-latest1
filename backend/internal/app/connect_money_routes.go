@@ -116,6 +116,10 @@ func RegisterConnectMoney(member *gin.RouterGroup, admin *gin.RouterGroup, cfg c
 	}
 	// Voting admin routes (eviction management, stage progression)
 	connectvoting.RegisterAdmin(admin, voteSvc, guard, cfg)
+	// Contest promotion admin routes (partner CRUD, child-contest listing,
+	// promote-top-N maker-checker request/approve/reject). Independent
+	// feature flag from eviction — see RegisterPromotionAdmin.
+	connectvoting.RegisterPromotionAdmin(admin, voteSvc, guard, cfg)
 	// AML admin routes
 	connectaml.Register(admin, amlSvc, guard)
 	// Gifting admin routes (CONNECT-001: gift-transactions ledger, read-only)
