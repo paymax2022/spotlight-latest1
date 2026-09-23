@@ -200,12 +200,35 @@ func (s *Service) PayDues(ctx context.Context, estateID, payerID string, req Pay
 		PayerID: payerID, AmountKobo: amount, Method: method, Status: "successful",
 		Reference: ref, CreatedAt: time.Now(),
 	}
+	// ON CONFLICT's inference target must match uidx_estate_payments_idem
+	// EXACTLY, including its WHERE predicate — it is a PARTIAL unique index
+	// (idempotency_key IS NOT NULL), so a plain "ON CONFLICT (idempotency_key)"
+	// cannot be resolved to it and Postgres raises 42P10 on every insert, not
+	// just duplicates (caught live: even the very first, non-replayed PayDues
+	// call errored). req.IdempotencyKey is always non-empty here (guarded by
+	// ErrIdempotencyRequired above), so the predicate is trivially satisfied.
 	const insPay = `
 		INSERT INTO estate_payments (id, estate_id, invoice_id, payer_id, amount_kobo, method, status, reference, idempotency_key)
 		VALUES ($1,$2,$3,$4,$5,$6,'successful',$7,$8)
-		ON CONFLICT (idempotency_key) DO NOTHING`
-	if _, err := tx.Exec(ctx, insPay, pay.ID, estateID, req.InvoiceID, payerID, amount, method, ref, req.IdempotencyKey); err != nil {
+		ON CONFLICT (idempotency_key) WHERE idempotency_key IS NOT NULL DO NOTHING`
+	res, err := tx.Exec(ctx, insPay, pay.ID, estateID, req.InvoiceID, payerID, amount, method, ref, req.IdempotencyKey)
+	if err != nil {
 		return nil, fmt.Errorf("estate: insert payment: %w", err)
+	}
+	if res.RowsAffected() == 0 {
+		// Lost a race: a concurrent call with the SAME Idempotency-Key already
+		// inserted the canonical row. Because idempotency_key carries a unique
+		// index, that insert either already committed (this insert's conflict
+		// is only detectable after it did) or is impossible to interleave any
+		// other way — so the winner's row, invoice update, restriction lift,
+		// and audit entry are already durably committed. Do not repeat them
+		// (in particular, do not write a second DUES_PAY audit row) and do not
+		// return this LOCALLY-CONSTRUCTED pay struct: pay.ID is a freshly
+		// generated UUID that was never persisted, so returning it here would
+		// hand the caller a phantom receipt id with no backing estate_payments
+		// row. Return the real, persisted receipt instead — mirrors vendor.go
+		// RequestPayout's identical "lost a race" handling.
+		return s.existingReceipt(ctx, estateID, req.InvoiceID)
 	}
 	if _, err := tx.Exec(ctx, `UPDATE estate_dues_invoices SET status='paid' WHERE id=$1 AND estate_id=$2`, req.InvoiceID, estateID); err != nil {
 		return nil, fmt.Errorf("estate: mark invoice paid: %w", err)

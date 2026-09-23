@@ -234,10 +234,10 @@ type Boost struct {
 	// posted. Not always PriceKobo: RejectBoost (admin) refunds in full, but
 	// CancelBoost (seller) prorates for the unused days — the client must read
 	// this, not assume PriceKobo, once Status is BoostAutoRefunded.
-	RefundedKobo *int64 `json:"refunded_kobo,omitempty"`
-	StartsAt            *time.Time  `json:"starts_at,omitempty"`
-	EndsAt              *time.Time  `json:"ends_at,omitempty"`
-	CreatedAt           time.Time   `json:"created_at"`
+	RefundedKobo *int64     `json:"refunded_kobo,omitempty"`
+	StartsAt     *time.Time `json:"starts_at,omitempty"`
+	EndsAt       *time.Time `json:"ends_at,omitempty"`
+	CreatedAt    time.Time  `json:"created_at"`
 }
 
 // BoostPackage mirrors mkt_boost_packages — the admin-editable catalog of
@@ -336,6 +336,13 @@ type Category struct {
 	RiskTier        int             `json:"risk_tier"`
 	CommissionBps   int             `json:"commission_bps"`
 	IsActive        bool            `json:"is_active"`
+	// ListingCount/CreatedAt/UpdatedAt are populated by the admin taxonomy
+	// routes (repository_admin_taxonomy.go) — the EC-007 delete-guard count and
+	// audit timestamps the admin console's taxonomy page needs. Not populated
+	// by the member-facing ListCategories query.
+	ListingCount int        `json:"listing_count,omitempty"`
+	CreatedAt    *time.Time `json:"created_at,omitempty"`
+	UpdatedAt    *time.Time `json:"updated_at,omitempty"`
 }
 
 // Flag mirrors mkt_flags (admin moderation).

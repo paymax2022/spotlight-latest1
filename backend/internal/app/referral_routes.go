@@ -53,7 +53,16 @@ func NewSignupAttributor(pool *pgxpool.Pool) handlers.ReferralAttributor {
 // and the referral routes build it the same way instead of drifting.
 func newAttributionService(pool *pgxpool.Pool) *attribution.Service {
 	financeLedgerSvc := financeledger.NewService(financeledger.NewRepository(pool), nil)
-	codeSvc := referrals.NewService(pool, financeLedgerSvc)
+	// REF-002: resolve codes through the Direct Referral Rewards Engine
+	// (finance/referrals.RewardService), which checks referral_links (the
+	// engine's canonical code table) THEN falls back to the legacy
+	// finance_referral_codes seed. The older referrals.Service only ever
+	// checked the legacy table, so codes minted via the newer engine were
+	// invisible to signup attribution and got routed to the house with
+	// RiskInvalidCode. RewardService.ResolveCodeToReferrer adapts its
+	// resolveCode() to the same CodeResolver interface, so this is a
+	// drop-in swap — no duplicate lookup logic.
+	codeSvc := referrals.NewRewardService(pool, financeLedgerSvc)
 	cfgSvc := referralconfig.NewService(pool)
 	eventsSvc := referralevents.NewService(pool)
 	houseSvc := referralhouse.NewService(pool)
@@ -71,8 +80,10 @@ func RegisterReferral(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pgx
 	// constraint still enforces idempotency).
 	financeLedgerSvc := financeledger.NewService(financeledger.NewRepository(pool), nil)
 
-	// Reuse the existing referral-code seed as the CodeResolver (do not break it).
-	codeSvc := referrals.NewService(pool, financeLedgerSvc)
+	// REF-002: resolve codes via RewardService (referral_links THEN the legacy
+	// finance_referral_codes seed) — see newAttributionService for the full
+	// rationale. Kept identical between both wiring sites so they don't drift.
+	codeSvc := referrals.NewRewardService(pool, financeLedgerSvc)
 
 	// §7A core services.
 	cfgSvc := referralconfig.NewService(pool)

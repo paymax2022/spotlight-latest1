@@ -15,6 +15,11 @@ import { castFreeVoteAtomic } from './free-vote-atomic';
 import { castFreeVote } from '@/src/server/voting/free-vote.service';
 import { verifyAndCreditPaidVote } from '@/src/server/voting/paid-vote.service';
 import type { FraudStatus } from '@/src/features/voting/types';
+// Shared cross-engine helpers (NOT protected — voting/core/* is Paymax-era
+// shared infrastructure, distinct from the top-level *.service.ts files).
+// Safe to import and call directly; only the *.service.ts files themselves
+// (and the legacy SQL/routes) may never be edited.
+import { verifyVotePayment, recordVoteFraudSignals, recordVoteAudit } from '@/src/server/voting/core';
 
 export interface CastFreeVoteRequest {
   contestantId: string;
@@ -56,6 +61,12 @@ export interface VoteResponse {
    * thrower's intent intact. Absent means "no opinion"; the route decides.
    */
   statusCode?: number;
+  /** Paid-vote verify only: true when this call observed a credit that had
+   *  already happened (won by a concurrent caller, or a genuine client
+   *  retry) rather than performing one itself. */
+  alreadyProcessed?: boolean;
+  /** Paid-vote verify only: votes_purchased + bonus_votes for this transaction. */
+  votesCredited?: number;
 }
 
 /**
@@ -245,7 +256,12 @@ export async function bridgedVerifyPaidVote(
         context.ipAddress,
         context.userAgent,
       );
-      return { success: true, totalVotes: legacy.newTotalVotes };
+      return {
+        success: true,
+        totalVotes: legacy.newTotalVotes,
+        alreadyProcessed: legacy.alreadyProcessed,
+        votesCredited: legacy.votesCredited,
+      };
     } catch (error) {
       console.error('[VoteBridge] legacy verifyAndCreditPaidVote error:', error);
       return {
@@ -259,88 +275,152 @@ export async function bridgedVerifyPaidVote(
   const supabase = createAdminClient();
 
   try {
-    // Step 1: Acquire SELECT FOR UPDATE lock on transaction
-    // This prevents webhook + redirect double-credit race
-    const { error: lockErr } = await supabase.rpc('lock_vote_transaction', {
-      tx_id: req.transactionId,
-    });
-
-    if (lockErr) {
-      console.error('[VoteBridge] Lock error:', lockErr);
-      return {
-        success: false,
-        error: 'Could not acquire transaction lock',
-      };
-    }
-
-    // Step 2: Fetch the transaction and verify it hasn't been credited
+    // Step 1: Fetch the transaction. Read-only — safe to repeat, and needed
+    // before we can call Paystack (we need the reference + expected amount).
     const { data: tx, error: fetchErr } = await supabase
       .from('vote_transactions')
       .select('*')
       .eq('id', req.transactionId)
-      .single();
+      .maybeSingle();
 
     if (fetchErr || !tx) {
-      return {
-        success: false,
-        error: 'Transaction not found',
-      };
+      return { success: false, error: 'Transaction not found', statusCode: 404 };
     }
 
+    // Fast idempotent path: already credited, no need to touch Paystack again.
     if (tx.vote_credit_status === 'credited') {
       return {
-        success: false,
-        error: 'Vote already credited for this transaction',
+        // vote_transactions carries no vote_id column — the associated votes
+        // row (if the caller needs it) is looked up via votes.transaction_id.
+        success: true,
+        alreadyProcessed: true,
+        votesCredited: tx.total_votes_to_credit ?? undefined,
       };
     }
 
     if (tx.payment_reference !== req.paymentReference) {
+      return { success: false, error: 'Payment reference mismatch', statusCode: 400 };
+    }
+
+    if (tx.payment_status === 'failed' || tx.payment_status === 'abandoned') {
+      return { success: false, error: 'This payment was not successful. No votes were added.', statusCode: 400 };
+    }
+
+    // Step 2: Verify with the gateway. A read-only round-trip to Paystack — safe
+    // to repeat if a concurrent caller races us here; only the DB write below
+    // (Step 4) is the part that must not run twice.
+    const verification = await verifyVotePayment(tx.payment_reference);
+
+    if (!verification.success) {
+      await supabase
+        .from('vote_transactions')
+        .update({ payment_status: 'failed', updated_at: new Date().toISOString() })
+        .eq('id', tx.id);
+      return { success: false, error: 'Payment verification failed. No votes were added.', statusCode: 400 };
+    }
+
+    const amountPaidKobo = verification.amountKobo;
+    const amountPaidNgn = amountPaidKobo / 100;
+    const amountExpectedKobo = Math.round(Number(tx.amount_expected) * 100);
+
+    if (Math.abs(amountPaidNgn - Number(tx.amount_expected)) > 1) {
+      await supabase
+        .from('vote_transactions')
+        .update({ payment_status: 'failed', amount_paid: amountPaidNgn })
+        .eq('id', tx.id);
+      await recordVoteFraudSignals({
+        domain: 'general',
+        contestId: tx.contest_id,
+        contestantId: tx.contestant_id,
+        votes: tx.total_votes_to_credit,
+        paymentReference: tx.payment_reference,
+        ipAddress: context.ipAddress,
+        userId: tx.voter_user_id ?? null,
+        amountExpectedKobo,
+        amountPaidKobo,
+      });
+      return { success: false, error: 'Payment amount mismatch. Please contact support.', statusCode: 400 };
+    }
+
+    // Step 3: Atomic credit. This is the ONE call in the whole flow that must
+    // not run twice concurrently — see the migration comment on
+    // credit_paid_vote_transaction for why the naive "lock RPC then several
+    // more separate calls" approach this replaced never actually serialized
+    // anything (each Supabase-js call is its own PostgREST transaction).
+    const { data: creditRows, error: creditErr } = await supabase.rpc('credit_paid_vote_transaction', {
+      p_transaction_id: req.transactionId,
+      p_payment_reference: req.paymentReference,
+      p_amount_paid: amountPaidNgn,
+      p_provider_reference: verification.providerReference ?? null,
+      p_paid_at: verification.paidAt ?? null,
+      p_ip: context.ipAddress ?? null,
+      p_user_agent: context.userAgent ?? null,
+    });
+
+    if (creditErr) {
+      throw creditErr;
+    }
+
+    const credit = Array.isArray(creditRows) ? creditRows[0] : creditRows;
+    if (!credit) {
+      throw new Error('credit_paid_vote_transaction returned no row');
+    }
+
+    if (credit.reference_mismatch) {
+      return { success: false, error: 'Payment reference mismatch', statusCode: 400 };
+    }
+
+    if (credit.already_credited) {
+      // Lost the race to a concurrent caller (or this is a genuine retry) —
+      // the OTHER caller already recorded fraud signals/audit/outbox for the
+      // real credit event. Returning success here (not a second credit) is
+      // exactly what closes PV-005.
       return {
-        success: false,
-        error: 'Payment reference mismatch',
+        success: true,
+        alreadyProcessed: true,
+        votesCredited: credit.total_votes_to_credit ?? undefined,
       };
     }
 
-    // Step 3: Insert the vote
-    const { data: vote, error: voteErr } = await supabase
-      .from('votes')
-      .insert({
-        contestant_id: tx.contestant_id,
-        competition_id: tx.competition_id,
-        voter_id: tx.voter_id,
-        vote_type: 'paid',
-        ip_address: context.ipAddress,
-        user_agent: context.userAgent,
-        transaction_id: req.transactionId,
-      })
-      .select('id, total_votes')
-      .single();
-
-    if (voteErr) {
-      throw voteErr;
-    }
-
-    // Step 4: Mark transaction as credited
-    const { error: updateErr } = await supabase
-      .from('vote_transactions')
-      .update({ vote_credit_status: 'credited', vote_id: vote.id })
-      .eq('id', req.transactionId);
-
-    if (updateErr) {
-      throw updateErr;
-    }
+    // Step 4: Side effects for the caller that WON the race — safe to do only
+    // once, which `already_credited` above guarantees.
+    await recordVoteFraudSignals({
+      domain: 'general',
+      contestId: credit.contest_id,
+      contestantId: credit.contestant_id,
+      votes: credit.total_votes_to_credit,
+      paymentReference: req.paymentReference,
+      ipAddress: context.ipAddress,
+      userId: credit.voter_user_id ?? null,
+      amountExpectedKobo,
+      amountPaidKobo,
+    });
+    await recordVoteAudit({
+      domain: 'general',
+      action: 'vote_credited',
+      actorId: userId,
+      entityId: req.transactionId,
+      contestId: credit.contest_id,
+      contestantId: credit.contestant_id,
+      paymentReference: req.paymentReference,
+      votes: credit.total_votes_to_credit,
+      amountPaidKobo,
+      amountExpectedKobo,
+      ipAddress: context.ipAddress,
+      userAgent: context.userAgent,
+    });
 
     const result: VoteResponse = {
       success: true,
-      voteId: vote.id,
-      totalVotes: vote.total_votes,
+      voteId: credit.vote_id ?? undefined,
+      alreadyProcessed: false,
+      votesCredited: credit.total_votes_to_credit ?? undefined,
     };
 
-    // Step 5: Enqueue analytics event
     await enqueueOutboxEvent('votes.paid.credited', {
       transactionId: req.transactionId,
-      contestantId: tx.contestant_id,
-      voterId: tx.voter_id,
+      contestantId: credit.contestant_id,
+      voterId: credit.voter_user_id,
       timestamp: new Date().toISOString(),
     });
 

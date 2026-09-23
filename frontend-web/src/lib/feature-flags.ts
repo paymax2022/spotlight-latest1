@@ -87,6 +87,17 @@ export const featureFlags = {
   /** Utility bills engine — provider routing, wallet debit, receipts */
   utilityPayments: () => envFlag('FEATURE_UTILITY_PAYMENTS_ENABLED'),
 
+  /**
+   * Utility bills pay/validate cutover (migration Phase 2): proxy these two
+   * routes to the Go-native money path (backend FEATURE_UTILITY_BILLS_ENABLED)
+   * instead of this app's own src/server/utility/service.ts. Independent of
+   * utilityPayments — this picks WHICH implementation answers the request, not
+   * whether the module is available at all. Off by default; every request
+   * falls back to the local implementation whenever this is off, so an unset
+   * flag is strictly safe and the cutover stays reversible per-request.
+   */
+  utilityBillsGoProxy: () => envFlag('FEATURE_UTILITY_BILLS_GO_PROXY_ENABLED'),
+
   /** Block 10 — Paymax-to-Paymax instant wallet transfer */
   walletTransfers: () => envFlag('FEATURE_WALLET_TRANSFERS_ENABLED'),
 

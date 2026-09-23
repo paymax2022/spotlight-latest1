@@ -65,6 +65,13 @@ type Config struct {
 	// member /api/finance/maplerad/* routes, the /api/webhooks/maplerad/go webhook,
 	// and the reconcile + orphan-sweep jobs. DEFAULT OFF — no flag, no money path.
 	FeatureMapleradEnabled bool
+	// FeatureUtilityBillsEnabled gates the Utility Bills DOMAIN money path
+	// (Next.js → Go migration, Phase 1+): member /api/finance/utilitybills/*
+	// routes, admin routes, and background jobs (pending-transaction requery
+	// sweep). DEFAULT OFF — no flag, no money path. Phase 0 (this package's
+	// pure domain types/logic) has nothing gated by it; the flag exists now
+	// so Phase 1 can wire behind it without a second config PR.
+	FeatureUtilityBillsEnabled bool
 
 	// Eversend credentials (FX provider 2).
 	EversendClientID      string
@@ -163,12 +170,12 @@ type Config struct {
 	FeatureEstateEnabled       bool
 	FeatureCrowdfundingEnabled bool
 	FeatureRestaurantEnabled   bool
-	// FeatureRestaurantWithdrawalsEnabled gates the merchant WITHDRAWAL money path
-	// (bank-account capture + payout requests + admin settle/reverse). Default OFF:
-	// RequestWithdrawal reserves a balanced ledger post (DR merchant wallet → CR
-	// failed_transfer_suspense) under a per-wallet advisory lock, and the admin
-	// settle/reverse pair moves real money, so the module must never become
-	// reachable implicitly. See backend/internal/restaurant/withdrawal.go.
+	// FeatureRestaurantWithdrawalsEnabled gates the merchant/rider withdrawal
+	// money path (wallet → saved bank account; restaurant/withdrawal.go
+	// RequestWithdrawal). Default OFF: the routes are always mounted once
+	// FeatureRestaurantEnabled is on (list/admin views are read-only-safe), but
+	// RequestWithdrawal itself refuses with ErrWithdrawalsDisabled until this is
+	// explicitly turned on (see Service.WithWithdrawals).
 	FeatureRestaurantWithdrawalsEnabled bool
 	// FeatureModuleGateEnforce turns the server-side module gate from observe-only
 	// (logs what it would refuse) into enforcing (503s unpublished modules). Default
@@ -614,11 +621,12 @@ func Load() Config {
 		CryptoQuidaxLiveKey:     getEnv("QUIDAX_LIVE_API_KEY", ""),
 		CryptoQuidaxLiveBaseURL: getEnv("QUIDAX_LIVE_BASE_URL", "https://app.quidax.io/api/v1"),
 
-		MapleradSecretKey:      getEnv("MAPLERAD_SECRET_KEY", ""),
-		MapleradPublicKey:      getEnv("MAPLERAD_PUBLIC_KEY", ""),
-		MapleradProd:           getEnvBool("MAPLERAD_PROD", false),
-		MapleradWebhookSecret:  getEnv("MAPLERAD_WEBHOOK_SECRET", ""),
-		FeatureMapleradEnabled: getEnvBool("FEATURE_MAPLERAD_ENABLED", false),
+		MapleradSecretKey:          getEnv("MAPLERAD_SECRET_KEY", ""),
+		MapleradPublicKey:          getEnv("MAPLERAD_PUBLIC_KEY", ""),
+		MapleradProd:               getEnvBool("MAPLERAD_PROD", false),
+		MapleradWebhookSecret:      getEnv("MAPLERAD_WEBHOOK_SECRET", ""),
+		FeatureMapleradEnabled:     getEnvBool("FEATURE_MAPLERAD_ENABLED", false),
+		FeatureUtilityBillsEnabled: getEnvBool("FEATURE_UTILITY_BILLS_ENABLED", false),
 
 		EversendClientID:      getEnv("EVERSEND_CLIENT_ID", ""),
 		EversendClientSecret:  getEnv("EVERSEND_CLIENT_SECRET", ""),

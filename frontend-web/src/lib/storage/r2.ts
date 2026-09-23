@@ -106,6 +106,33 @@ export async function createR2DownloadUrl(input: {
   });
 }
 
+/**
+ * Direct server-side upload of an in-memory buffer to R2.
+ *
+ * Existing callers (e.g. app/api/registration/uploads/route.ts) proxy through
+ * a presigned PUT + fetch() because that route already has a `contentType`
+ * decided from a client-supplied file. The photo pipeline (G-IMG,
+ * src/server/registration/photo-pipeline.ts) produces its composited PNG
+ * buffer server-side with no client request in the loop, so a direct
+ * PutObjectCommand is simpler and avoids an extra network hop through fetch.
+ * Both approaches hit the same bucket/credentials via getR2Config().
+ */
+export async function uploadR2Object(input: {
+  key: string;
+  body: Buffer;
+  contentType: string;
+}): Promise<void> {
+  const { bucket, client } = getR2Config();
+  await client.send(
+    new PutObjectCommand({
+      Bucket: bucket,
+      Key: input.key,
+      Body: input.body,
+      ContentType: input.contentType,
+    })
+  );
+}
+
 export function getR2PublicUrl(key: string) {
   const { publicBaseUrl } = getR2Config();
   if (!publicBaseUrl) return undefined;

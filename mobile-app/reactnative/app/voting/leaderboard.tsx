@@ -43,7 +43,12 @@ export default function LeaderboardScreen() {
     <SafeAreaView style={styles.safe} edges={['top']}>
       {/* Header */}
       <View style={styles.header}>
-        <Pressable onPress={() => goBack('/voting')} style={styles.backBtn}>
+        <Pressable
+          onPress={() => goBack('/voting')}
+          style={styles.backBtn}
+          accessibilityRole="button"
+          accessibilityLabel="Go back"
+        >
           <ArrowLeft size={22} color={Colors.onSurface} strokeWidth={2} />
         </Pressable>
         <View style={styles.titleBlock}>

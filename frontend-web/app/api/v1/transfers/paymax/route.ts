@@ -35,6 +35,7 @@ export async function POST(request: Request) {
       recipient_identifier?: unknown;
       amount_kobo?: unknown;
       narration?: unknown;
+      pin?: unknown;
     };
 
     const recipientIdentifier = String(body.recipient_identifier ?? '').trim();
@@ -56,6 +57,8 @@ export async function POST(request: Request) {
       amountKobo,
       idempotencyKey,
       narration,
+      pin: typeof body.pin === 'string' ? body.pin : '',
+      authHeader: request.headers.get('Authorization') || request.headers.get('authorization'),
     });
 
     return NextResponse.json({

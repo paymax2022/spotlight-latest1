@@ -338,13 +338,30 @@ func (h *Handler) AdminListOrders(c *gin.Context) {
 }
 
 // AdminCustodyAudit — GET /admin/custody-audit  chain-of-custody oversight (HL-6/12).
+// AdminCustodyAudit — GET /custody-audit?lab_provider_id=&sample_id=
+// sample_id is a thin additive filter (see Service.AdminCustodyAudit's doc
+// comment) so the admin console's per-sample custody-chain drawer can reuse
+// this one route instead of a second custody read path.
 func (h *Handler) AdminCustodyAudit(c *gin.Context) {
-	rows, err := h.svc.AdminCustodyAudit(c.Request.Context(), c.Query("lab_provider_id"))
+	rows, err := h.svc.AdminCustodyAudit(c.Request.Context(), c.Query("lab_provider_id"), c.Query("sample_id"))
 	if err != nil {
 		fail(c, http.StatusInternalServerError, err.Error())
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "events": rows})
+}
+
+// AdminDashboard — GET /admin/dashboard  platform-wide KPI aggregate. See
+// Service.AdminDashboard / AdminDashboard (admin.go, admin_model.go) for
+// exactly what is computed and why fields this batch cannot honestly compute
+// are left off the shape entirely rather than fabricated.
+func (h *Handler) AdminDashboard(c *gin.Context) {
+	d, err := h.svc.AdminDashboard(c.Request.Context())
+	if err != nil {
+		fail(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": d})
 }
 
 // AdminEscalations — GET /admin/escalations  critical-result escalation oversight (HL-7).

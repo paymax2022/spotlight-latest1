@@ -191,7 +191,8 @@ export async function initiateAdjustment(
         return { adjustmentId: row.id, status: row.status as InitiateAdjustmentResult['status'], requiresApproval: false, alreadyProcessed: true };
       }
     }
-    throw new ApiError(`Failed to create adjustment: ${insertError.message}`, 500);
+    console.error('[admin-fintech] Failed to create adjustment:', insertError.message);
+    throw new ApiError("We couldn't create this adjustment. Please try again.", 500);
   }
 
   const adjustmentId = (inserted as { id: string }).id;

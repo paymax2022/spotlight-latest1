@@ -485,7 +485,16 @@ export async function listBlocklist(list?: string): Promise<BlocklistEntry[]> {
 }
 export async function listClawbacks(status?: string): Promise<ClawbackRecord[]> {
   if (USE_MOCK) { await delay(); return status && status !== 'all' ? CLAWBACKS.filter((c) => c.status === status) : [...CLAWBACKS]; }
-  return getJson<ClawbackRecord[]>(`/risk/clawbacks${status && status !== 'all' ? `?status=${encodeURIComponent(status)}` : ''}`);
+  // risk.Handler.ClawbackHistory (backend/internal/referral/risk/handlers.go:345)
+  // returns {"clawbacks": [...]}, NOT {"data": [...]} — getJson()'s generic
+  // `j?.data ?? j` fallback returns the whole {clawbacks: [...]} envelope in
+  // that case, which crashes callers doing rows.map(...). Unwrap this
+  // endpoint's actual field explicitly instead (REF-012).
+  const path = `/risk/clawbacks${status && status !== 'all' ? `?status=${encodeURIComponent(status)}` : ''}`;
+  const res = await fetch(`${adminBase()}${path}`, { headers: authHeaders() });
+  if (!res.ok) throw new Error(`Request failed (${res.status})`);
+  const body = await res.json();
+  return (body?.clawbacks ?? []) as ClawbackRecord[];
 }
 export async function executeClawbackOps(rewardId: string, reason: string): Promise<{ ok: true }> {
   if (USE_MOCK) throw new Error(`Executing a clawback ${NOT_IN_FIXTURE_MODE}`);
@@ -496,7 +505,13 @@ export async function executeClawbackOps(rewardId: string, reason: string): Prom
 }
 export async function listReviewQueue(): Promise<ReviewItem[]> {
   if (USE_MOCK) { await delay(); return [...REVIEW_QUEUE]; }
-  return getJson<ReviewItem[]>('/risk/review-queue');
+  // risk.Handler.ListReviewQueue (backend/internal/referral/risk/handlers.go:301)
+  // returns {"items": [...]}, NOT {"data": [...]} — same getJson() envelope
+  // mismatch as listClawbacks above (REF-012). Unwrap explicitly.
+  const res = await fetch(`${adminBase()}/risk/review-queue`, { headers: authHeaders() });
+  if (!res.ok) throw new Error(`Request failed (${res.status})`);
+  const body = await res.json();
+  return (body?.items ?? []) as ReviewItem[];
 }
 export async function decideReview(id: string, decision: 'approved' | 'rejected', note: string): Promise<{ ok: true }> {
   if (USE_MOCK) throw new Error(`Deciding a review ${NOT_IN_FIXTURE_MODE}`);

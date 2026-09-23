@@ -59,7 +59,11 @@ export default function CrowdfundingSupportPage() {
                       <span style={{ fontSize: '0.72rem', color: d.slaHoursLeft <= 6 ? colors.danger : colors.muted }}>SLA {d.slaHoursLeft}h</span>
                     )}
                   </div>
-                  <Link href={`/admin/crowdfunding/review/${d.campaignId}`} style={{ fontWeight: 600, fontSize: '0.92rem', color: colors.text, textDecoration: 'none' }}>{d.campaignTitle}</Link>
+                  {d.campaignId ? (
+                    <Link href={`/admin/crowdfunding/review/${d.campaignId}`} style={{ fontWeight: 600, fontSize: '0.92rem', color: colors.text, textDecoration: 'none' }}>{d.campaignTitle}</Link>
+                  ) : (
+                    <span style={{ fontWeight: 600, fontSize: '0.92rem', color: colors.text }} title="No linked campaign — sample data">{d.campaignTitle}</span>
+                  )}
                   <div style={{ fontSize: '0.8rem', color: colors.muted, marginTop: 2 }}>Raised by {d.raisedBy} · {new Date(d.createdAt).toLocaleString()}</div>
                   <p style={{ fontSize: '0.85rem', color: colors.text, margin: '0.4rem 0 0' }}>{d.description}</p>
                   {d.resolution && <p style={{ fontSize: '0.8rem', color: colors.success, margin: '0.4rem 0 0' }}>Resolved: <strong>{d.resolution.replace('_', ' ')}</strong>{d.adminNote ? ` — ${d.adminNote}` : ''}</p>}

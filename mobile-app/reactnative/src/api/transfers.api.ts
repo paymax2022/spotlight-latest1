@@ -52,6 +52,8 @@ export interface InitiateTransferPayload {
   recipientIdentifier: string;
   amountKobo: number;
   narration?: string;
+  /** Required — verified server-side before any debit (WAL-001). */
+  pin: string;
 }
 
 export async function initiateWalletTransfer(
@@ -64,6 +66,7 @@ export async function initiateWalletTransfer(
       recipient_identifier: payload.recipientIdentifier,
       amount_kobo:          payload.amountKobo,
       narration:            payload.narration?.slice(0, 100),
+      pin:                  payload.pin,
     },
     { headers: { 'Idempotency-Key': idempotencyKey } },
   );

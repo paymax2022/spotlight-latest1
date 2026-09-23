@@ -10,12 +10,13 @@ import { hasAnyPermission, type AuthUser } from '@/features/auth/rbac';
 import { clearAdminSession } from '@/features/auth/adminAuth';
 import { colors, tint } from '@/components/ui/vuexy';
 
-type SectionIcon = '📊' | '🏆' | '👥' | '💰' | '🏥' | '🎓' | '🏨' | '🚗' | '🍽️' | '🏠' | '⚙️';
+type SectionIcon = '📊' | '🏆' | '👥' | '💰' | '💳' | '🏥' | '🎓' | '🏨' | '🚗' | '🍽️' | '🏠' | '⚙️';
 
 const sectionIcons: Record<string, SectionIcon> = {
   'Overview': '📊',
   'Contests': '🏆',
   'Support': '👥',
+  'Transactions': '💳',
   'Finance': '💰',
   'Health': '🏥',
   'Academy': '🎓',
@@ -38,6 +39,11 @@ type NavItem = {
 const navItemsBase: NavItem[] = [
   { label: 'Dashboard', href: '/admin', section: 'Overview' },
   { label: 'Analytics', href: '/admin/analytics', section: 'Overview' },
+  // Centralized, read-only view of ALL ledger_entries across every module (no
+  // per-module transactions table exists). Kept as its OWN top-level section
+  // (not nested under 'Finance') so it is a first-class, always-visible entry
+  // point rather than buried in that section's existing 7-item collapsed list.
+  { label: 'Transactions', href: '/admin/finance/transactions', section: 'Transactions', permissions: ['finance.admin.transactions.view'] },
   { label: 'Contests Dashboard', href: '/admin/competitions', section: 'Contests', countKey: 'open_mic', permissions: ['contest.create', 'contest.update', 'contest.publish'] },
   { label: 'Competitions', href: '/admin/competitions/list', section: 'Contests', permissions: ['contest.create', 'contest.update'] },
   { label: 'Participants', href: '/admin/competitions/participants', section: 'Contests', permissions: ['contest.create', 'contest.update'] },
@@ -53,7 +59,10 @@ const navItemsBase: NavItem[] = [
   { label: 'Stages & Evictions', href: '/admin/stages-evictions', section: 'Contests', permissions: ['programs:manage'] },
   { label: 'SME Pitch', href: '/admin/sme-pitch', section: 'Contests', permissions: ['programs:manage'] },
   { label: 'Voting Packages', href: '/admin/voting/packages', section: 'Voting', permissions: ['votes:manage'] },
+  { label: 'Contest Templates', href: '/admin/voting/templates', section: 'Voting', permissions: ['votes:manage'] },
   { label: 'Voting Visibility', href: '/admin/voting/visibility', section: 'Voting', permissions: ['votes:manage'] },
+  { label: 'Contest Prizes', href: '/admin/voting/prizes', section: 'Voting', permissions: ['votes:manage'] },
+  { label: 'Contest Results', href: '/admin/voting/results', section: 'Voting', permissions: ['votes:manage'] },
   { label: 'Voting Audit Log', href: '/admin/voting/audit-log', section: 'Voting', permissions: ['votes:manage'] },
   { label: 'Chat Sessions', href: '/admin/chatbot', section: 'Support' },
   { label: 'Leads Queue', href: '/admin/leads', section: 'Support' },
@@ -90,6 +99,10 @@ const navItemsBase: NavItem[] = [
   // here only for sidebar visibility consistency with the other Path A
   // entries above.
   { label: 'Payments & Finance', href: '/admin/payments-finance', section: 'Finance', permissions: ['finance:adjust:initiate'] },
+  // ADR-005 maker-checker checker-side queue (WAL-004) — finance:adjust:approve
+  // is a distinct permission from finance:adjust:initiate above; an initiator
+  // cannot approve their own proposal (enforced server-side).
+  { label: 'Adjustment Approvals', href: '/admin/payments-finance/adjustments', section: 'Finance', permissions: ['finance:adjust:approve'] },
   { label: 'KYC Queue', href: '/admin/finance/kyc', section: 'Finance', permissions: ['audit.logs.view'] },
   { label: 'KYC Verification', href: '/admin/finance/kyc-verify', section: 'Finance', permissions: ['finance.admin.kyc'] },
   { label: 'Wallet Lookup', href: '/admin/finance/wallets', section: 'Finance', permissions: ['audit.logs.view'] },
@@ -150,6 +163,12 @@ const navItemsBase: NavItem[] = [
   { label: 'Reassignments', href: '/admin/referral/attribution/reassignments', section: 'Referral', permissions: ['referral.attribution.reassign'] },
   { label: 'Campaigns', href: '/admin/referral/campaigns', section: 'Referral', permissions: ['referral.campaign.view'] },
   { label: 'Rewards & Ledger', href: '/admin/referral/rewards', section: 'Referral', permissions: ['referral.ledger.view'] },
+  // REF-007: System C (flat ₦500 vote-triggered reward, data lives in
+  // frontend-web's referral_events, reached via /api/web-proxy — same Path A
+  // pattern as the Payments & Finance entry below). finance:view is
+  // frontend-web's own permission name (checked server-side there), listed
+  // here only for sidebar visibility consistency with the other Path A entries.
+  { label: 'Vote Rewards (₦500 flat)', href: '/admin/referral/vote-rewards', section: 'Referral', permissions: ['finance:view'] },
   { label: 'Payouts', href: '/admin/referral/finance', section: 'Referral', permissions: ['referral.payout.view'] },
   { label: 'Risk & Fraud', href: '/admin/referral/risk', section: 'Referral', permissions: ['referral.risk.view'] },
   { label: 'Compliance', href: '/admin/referral/compliance', section: 'Referral', permissions: ['referral.compliance.view'] },
@@ -338,6 +357,7 @@ const navItemsBase: NavItem[] = [
   // Estate workspace (gated on estate.manage; dashboard also visible to estate.admin)
   { label: 'Estate Dashboard', href: '/admin/estate', section: 'Property Management', permissions: ['estate.manage', 'estate.admin'] },
   { label: 'Residents & Units', href: '/admin/estate/residents', section: 'Property Management', permissions: ['estate.manage'] },
+  { label: 'Properties', href: '/admin/estate/properties', section: 'Property Management', permissions: ['estate.manage'] },
   { label: 'Dues & Collections', href: '/admin/estate/dues', section: 'Property Management', permissions: ['estate.manage'] },
   { label: 'Gates & Security', href: '/admin/estate/gates', section: 'Property Management', permissions: ['estate.manage'] },
   { label: 'Vendors', href: '/admin/estate/vendors', section: 'Property Management', permissions: ['estate.manage'] },
@@ -350,6 +370,10 @@ const navItemsBase: NavItem[] = [
   { label: 'Vendor Directory', href: '/admin/vendors', section: 'Property Management', permissions: ['estate.manage', 'estate.admin'] },
   { label: 'Vendor Onboarding', href: '/admin/vendors/onboarding', section: 'Property Management', permissions: ['estate.manage'] },
   { label: 'Vendor Payouts', href: '/admin/vendors/payouts', section: 'Property Management', permissions: ['estate.manage', 'estate.admin'] },
+  // Property Management Suite (unification umbrella over estate + realtor;
+  // rent-passport screening lookup is RBAC-gated on property.manage — see
+  // backend/internal/property and docs/qa/modules/property.md)
+  { label: 'Property Suite', href: '/admin/property', section: 'Property Management', permissions: ['property.manage'] },
   // Realtor marketplace (existing hrefs unchanged)
   { label: 'Realtor Overview', href: '/admin/realtor', section: 'Property Management' },
   { label: 'Listing Moderation', href: '/admin/realtor/moderation', section: 'Property Management' },
@@ -375,10 +399,7 @@ const navItemsBase: NavItem[] = [
   { label: 'Rider Dispatch', href: '/admin/restaurant/dispatch', section: 'Restaurant', permissions: ['restaurant.manage', 'restaurant.admin.dispatch'] },
   { label: 'Onboarding / KYC', href: '/admin/restaurant/onboarding', section: 'Restaurant', permissions: ['restaurant.manage', 'restaurant.admin.onboarding'] },
   { label: 'Payouts', href: '/admin/restaurant/payouts', section: 'Restaurant', permissions: ['restaurant.admin.payouts'] },
-  // Merchant withdrawal settle/reverse. Server routes are gated by
-  // FEATURE_RESTAURANT_WITHDRAWALS_ENABLED (default OFF) — the page explains that
-  // when a call 404s, so the entry is safe to show regardless of the flag.
-  { label: 'Withdrawals', href: '/admin/restaurant/withdrawals', section: 'Restaurant', permissions: ['restaurant.admin.payouts'] },
+  { label: 'Withdrawals', href: '/admin/restaurant/withdrawals', section: 'Restaurant', permissions: ['restaurant.admin.withdrawals'] },
   { label: 'Refunds & Disputes', href: '/admin/restaurant/disputes', section: 'Restaurant', permissions: ['restaurant.manage', 'restaurant.admin.disputes'] },
   // ── Maps (MapService v2 cost/coverage + OSM contribution review) ─────────────
   // Controls which service modules the mobile app shows, per environment
@@ -549,7 +570,7 @@ const navItemsBase: NavItem[] = [
   { label: 'Compliance (SU-12)', href: '/admin/platform/edtech/compliance', section: 'Platform · EdTech', permissions: ['platform_edtech_admin'] },
 ];
 
-const sections = ['Overview', 'Contests', 'Voting', 'Support', 'Programs', 'Finance', 'Commission', 'Crowdfunding', 'Connect', 'Connect · Network', 'Referral', 'Referral Rewards', 'Insurance', 'Stays', 'Stays Extranet', 'Savings', 'Social Pay', 'Events', 'Loyalty', 'Health', 'Community', 'Academy', 'Creators', 'Social Escrow', 'Paymax Black', 'FX Orchestration', 'Property Management', 'Mobility', 'Restaurant', 'Fractional RE', 'Platform', 'Arena', 'Marketplace', 'Crypto', 'Business Registry', 'Platform · EdTech'];
+const sections = ['Overview', 'Transactions', 'Contests', 'Voting', 'Support', 'Programs', 'Finance', 'Commission', 'Crowdfunding', 'Connect', 'Connect · Network', 'Referral', 'Referral Rewards', 'Insurance', 'Stays', 'Stays Extranet', 'Savings', 'Social Pay', 'Events', 'Loyalty', 'Health', 'Community', 'Academy', 'Creators', 'Social Escrow', 'Paymax Black', 'FX Orchestration', 'Property Management', 'Mobility', 'Restaurant', 'Fractional RE', 'Platform', 'Arena', 'Marketplace', 'Crypto', 'Business Registry', 'Platform · EdTech'];
 
 export function AdminSidebar() {
   const pathname = usePathname() ?? '';

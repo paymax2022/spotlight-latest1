@@ -54,6 +54,8 @@ type Service struct {
 	tiers        TierGuard
 	audit        Auditor
 	solicitation SolicitationFlagger
+	// tierReader is optional, admin-reporting-only (see admin.go). Nil-safe.
+	tierReader TierReader
 }
 
 // NewService builds the gifting service. solicitation may be nil (the
@@ -68,6 +70,10 @@ func NewService(repo *Repository, transfer WalletTransfer, tiers TierGuard, audi
 		solicitation: solicitation,
 	}
 }
+
+// SetTierReader wires the optional admin-reporting tier lookup (see admin.go
+// TierReader). Read-only; never touches money movement. Safe to leave unset.
+func (s *Service) SetTierReader(t TierReader) { s.tierReader = t }
 
 // Catalog returns the active backend-owned gift catalogue.
 func (s *Service) Catalog(ctx context.Context) ([]CatalogItem, error) {

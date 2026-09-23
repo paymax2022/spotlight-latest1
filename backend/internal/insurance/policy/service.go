@@ -45,6 +45,30 @@ type Service struct {
 	// binds is the OUTBOUND idempotency register. MyCover offers no idempotency
 	// of its own, so this is what stops a retry buying a second policy.
 	binds *BindRegistry
+	// commission records the domain-level commission entry the admin
+	// reconciliation workbench (confirm/reverse/list) reads. Optional
+	// (nil-safe): when nil the ledger posting still happens (that is the
+	// money-safe part), only the workbench row is skipped.
+	commission CommissionRecorder
+}
+
+// CommissionRecorder records the domain-level commission entry for a bound
+// policy, alongside the ledger posting. Defined here (not imported from
+// reconciliation) so policy does not depend on reconciliation; the app wiring
+// layer (insurance_routes.go) adapts reconciliation's repository to this.
+//
+// WHY THIS EXISTS: the bind saga posts the REAL commission money (DR
+// provider_clearing -> CR AccountCommission) directly via the ledger, but
+// nothing ever wrote a row to insurance_commission_entry — the table the
+// admin commission workbench (GET /commission, POST /commission/:id/confirm,
+// POST /commission/:id/reverse) actually reads. Every one of those endpoints
+// called reconciliation.Repository.GetCommissionByPolicy, which 404'd for
+// EVERY real policy ever bound, so confirm/reverse were permanently dead and
+// the commission list showed a false zero while real commission ledger money
+// had moved. RecordCommission closes that gap; UpsertCommission is idempotent
+// on idempotency_key, so a bind replay never double-records.
+type CommissionRecorder interface {
+	RecordCommission(ctx context.Context, policyID, provider string, amountKobo int64, ledgerRef, idempotencyKey string) error
 }
 
 // Deps bundles the service dependencies.
@@ -65,6 +89,9 @@ type Deps struct {
 	// NOT optional in effect: without it a retried bind can double-purchase, so
 	// the saga refuses to call the provider when it is absent.
 	Binds *BindRegistry
+	// Commission records the domain-level commission-entry row the admin
+	// reconciliation workbench reads (confirm/reverse/list). Optional (nil-safe).
+	Commission CommissionRecorder
 }
 
 // NewService constructs the policy service.
@@ -74,17 +101,18 @@ func NewService(d Deps) *Service {
 		ttl = 15 * time.Minute
 	}
 	return &Service{
-		repo:     d.Repo,
-		router:   d.Router,
-		catalog:  d.Catalog,
-		consent:  d.Consent,
-		wallet:   d.Wallet,
-		ledger:   d.Ledger,
-		notify:   d.Notifier,
-		audit:    d.Auditor,
-		quoteTTL: ttl,
-		float:    d.Float,
-		binds:    d.Binds,
+		repo:       d.Repo,
+		router:     d.Router,
+		catalog:    d.Catalog,
+		consent:    d.Consent,
+		wallet:     d.Wallet,
+		ledger:     d.Ledger,
+		notify:     d.Notifier,
+		audit:      d.Auditor,
+		quoteTTL:   ttl,
+		float:      d.Float,
+		binds:      d.Binds,
+		commission: d.Commission,
 	}
 }
 
@@ -316,10 +344,32 @@ func (s *Service) BindFromQuote(ctx context.Context, userID, quoteID, idempotenc
 		return s.autoReverse(ctx, p, idempotencyKey, premiumRef, clearing.ID, claimErr)
 	}
 	if !claim.Fresh {
-		// This exact purchase already went through. Return the SAME policy rather
-		// than buying a second one — that is what idempotency means here.
+		// This exact purchase already went through. Return the ORIGINAL policy
+		// (the one the FIRST attempt bound) rather than buying — or persisting —
+		// a second one. p above is a FRESH row this replay created before the
+		// claim check could run; it must never be stamped with the same
+		// provider_policy_ref as the original (uq_insurance_policy_provider_ref
+		// would reject it — two rows can never share one provider policy) and it
+		// must not be left dangling in BINDING, an interior state the FSM never
+		// resolves on its own.
 		log.Printf("[insurance] bind replay for key %s — returning the existing provider policy %s",
 			idempotencyKey, claim.ProviderPolicyRef)
+		if claim.PolicyID != "" && claim.PolicyID != p.ID {
+			// Retire the throwaway row with a plain state transition — no wallet
+			// reversal. The premium debit above was itself deduped by the SAME
+			// idempotency key (":premium"), so nothing was ever actually taken
+			// against this row; reversing it would wrongly credit the user extra
+			// money for a charge that never happened.
+			if vErr := s.transition(ctx, p, StateBindFailed); vErr == nil {
+				_ = s.transition(ctx, p, StateVoid)
+			}
+			s.auditSafe(ctx, userID, "insurance.bind_replay_discarded", map[string]any{
+				"discarded_policy_id": p.ID, "original_policy_id": claim.PolicyID,
+			})
+			return s.repo.Get(ctx, claim.PolicyID)
+		}
+		// No original policy_id on record (older row predating this field) —
+		// fall back to the previous best-effort behaviour.
 		if err := s.repo.SetBound(ctx, p.ID, claim.ProviderPolicyRef, qr.Underwriter, qr.CommissionKobo, nil, nil, nil, p.Version); err != nil {
 			return nil, fmt.Errorf("policy: bind replay persist: %w", err)
 		}
@@ -411,6 +461,18 @@ func (s *Service) BindFromQuote(ctx context.Context, userID, quoteID, idempotenc
 			})
 			if postErr != nil && !errors.Is(postErr, ledger.ErrDuplicate) {
 				log.Printf("[insurance] WARN: commission post failed for policy %s: %v", p.ID, postErr)
+			}
+			// Record the domain-level entry the admin reconciliation workbench
+			// (confirm/reverse/list) reads. Idempotent on idempotency_key, so a
+			// bind replay never double-records; a failure here never blocks the
+			// bind — the ledger money already moved, which is the part that
+			// matters — it only means the workbench row is missing until a
+			// reconciliation sweep or manual backfill catches it up.
+			if s.commission != nil {
+				if recErr := s.commission.RecordCommission(ctx, p.ID, p.Provider, commission,
+					"insurance:commission:"+p.ID, idempotencyKey+":commission"); recErr != nil {
+					log.Printf("[insurance] WARN: commission entry record failed for policy %s: %v", p.ID, recErr)
+				}
 			}
 		}
 	}

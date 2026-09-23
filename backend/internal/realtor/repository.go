@@ -7,18 +7,32 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"spotlight/backend/internal/finance/ledger"
 )
 
 // Repository is all pgx data access for the realtor admin control plane.
 // All monetary amounts are BIGINT minor units (kobo) — never floats.
 type Repository struct {
-	db *pgxpool.Pool
+	db  *pgxpool.Pool
+	led *ledger.Service // nil-safe: only required by money-moving methods (ResolveEscrow)
 }
 
-func NewRepository(db *pgxpool.Pool) *Repository { return &Repository{db: db} }
+func NewRepository(db *pgxpool.Pool, led *ledger.Service) *Repository {
+	return &Repository{db: db, led: led}
+}
 
 var ErrNotFound = errors.New("realtor: not found")
+
+// PROPMGMT-002 sentinel errors for the inspection-gated escrow resolve flow.
+var (
+	ErrInvalidEscrowDecision = errors.New("realtor: decision must be one of released_to_tenant, forfeited_to_landlord, disputed")
+	ErrEscrowAlreadyResolved = errors.New("realtor: escrow deposit already released")
+	ErrMoveOutRequired       = errors.New("realtor: move-out inspection has not been submitted for this lease")
+	ErrLedgerNotConfigured   = errors.New("realtor: ledger service not configured")
+)
 
 // ── Overview ──────────────────────────────────────────────────────────────────
 
@@ -348,6 +362,168 @@ func (r *Repository) Escrow(ctx context.Context, limit, offset int) ([]EscrowAcc
 		out = append(out, e)
 	}
 	return out, rows.Err()
+}
+
+// ── Escrow resolution (PROPMGMT-002: inspection-gated release) ─────────────────
+
+// EscrowResolution mirrors the admin client's response shape for a resolved
+// (or disputed) escrow deposit.
+type EscrowResolution struct {
+	ID             string `json:"id"`
+	LeaseID        string `json:"leaseId"`
+	AmountKobo     int64  `json:"amountKobo"`
+	Status         string `json:"status"`
+	ResolvedTo     string `json:"resolvedTo,omitempty"`
+	ResolutionNote string `json:"resolutionNote,omitempty"`
+}
+
+func isValidEscrowDecision(d string) bool {
+	switch d {
+	case "released_to_tenant", "forfeited_to_landlord", "disputed":
+		return true
+	}
+	return false
+}
+
+// ResolveEscrow applies an admin decision to a refundable lease deposit held in
+// the shared 'settlement' standing account (ADR-040 pattern — deposits are NOT
+// held in a dedicated per-deposit account; realtor_escrow_deposits is the
+// bookkeeping record of what is earmarked). Money mutation Iron Rules:
+//   - idempotency: PostReversal/PostJournal are called with a deterministic key
+//     derived from the deposit id, so a retried admin call is a safe no-op
+//     (ledger.ErrDuplicate).
+//   - balanced double-entry: PostReversal / PostJournal always post a balanced
+//     pair; no balance column is ever written directly.
+//   - fail-closed inspection gate: released_to_tenant / forfeited_to_landlord
+//     REQUIRE a realtor_move_outs row with submitted_at set — this is the whole
+//     point of "inspection-gated release" (PROPMGMT-002). 'disputed' does not
+//     require a move-out submission (an admin may flag a dispute proactively)
+//     and leaves the deposit resolvable again later (only status='released' is
+//     a terminal state — see the guard below).
+//   - audit: every branch writes an immutable realtor_admin_audit_log row.
+func (r *Repository) ResolveEscrow(ctx context.Context, id, decision, note, adminID string) (*EscrowResolution, error) {
+	if !isValidEscrowDecision(decision) {
+		return nil, ErrInvalidEscrowDecision
+	}
+	if r.led == nil {
+		return nil, ErrLedgerNotConfigured
+	}
+
+	// Load current state + trace lease -> listing -> unit -> property -> portfolio
+	// to resolve the landlord/owner id, mirroring the exact join chain used by
+	// the realtor_owner_dashboard RPC (20260620020000_realtor_backend_rpcs.sql).
+	var leaseID, tenantID, ownerID, status string
+	var amountKobo int64
+	err := r.db.QueryRow(ctx, `
+		SELECT e.lease_id, e.amount_kobo, e.status, l.tenant_id, pf.owner_id
+		FROM realtor_escrow_deposits e
+		JOIN realtor_leases l      ON l.id = e.lease_id
+		JOIN realtor_listings li   ON li.id = l.listing_id
+		JOIN realtor_units u       ON u.id = li.unit_id
+		JOIN realtor_properties p  ON p.id = u.property_id
+		JOIN realtor_portfolios pf ON pf.id = p.portfolio_id
+		WHERE e.id = $1`, id).
+		Scan(&leaseID, &amountKobo, &status, &tenantID, &ownerID)
+	if err == pgx.ErrNoRows {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	// A released deposit is terminal — never resolve it a second time (the
+	// double-payout guard). A disputed deposit is NOT terminal: it can still be
+	// resolved to a final released_to_tenant/forfeited_to_landlord decision.
+	if status == "released" {
+		return nil, ErrEscrowAlreadyResolved
+	}
+
+	beforeState := map[string]any{"status": status}
+
+	if decision == "released_to_tenant" || decision == "forfeited_to_landlord" {
+		var submittedAt *time.Time
+		moveErr := r.db.QueryRow(ctx, `SELECT submitted_at FROM realtor_move_outs WHERE lease_id = $1`, leaseID).Scan(&submittedAt)
+		if moveErr != nil && moveErr != pgx.ErrNoRows {
+			return nil, moveErr
+		}
+		if moveErr == pgx.ErrNoRows || submittedAt == nil {
+			return nil, ErrMoveOutRequired
+		}
+	}
+
+	var resolvedTo string
+	switch decision {
+	case "released_to_tenant":
+		tenantAcc, err := r.led.GetOrCreateUserWallet(ctx, tenantID)
+		if err != nil {
+			return nil, err
+		}
+		settlementAcc, err := r.led.GetOrCreateStandingAccount(ctx, ledger.AccountSettlement)
+		if err != nil {
+			return nil, err
+		}
+		err = r.led.PostReversal(ctx, tenantAcc.ID, settlementAcc.ID, amountKobo,
+			"realtor:escrow:release:"+id, "realtor-escrow-release-"+id)
+		if err != nil && !errors.Is(err, ledger.ErrDuplicate) {
+			return nil, err
+		}
+		resolvedTo = "tenant"
+
+	case "forfeited_to_landlord":
+		landlordAcc, err := r.led.GetOrCreateUserWallet(ctx, ownerID)
+		if err != nil {
+			return nil, err
+		}
+		settlementAcc, err := r.led.GetOrCreateStandingAccount(ctx, ledger.AccountSettlement)
+		if err != nil {
+			return nil, err
+		}
+		err = r.led.PostJournal(ctx, ledger.JournalEntry{
+			Reference:       "realtor:escrow:forfeit:" + id,
+			IdempotencyKey:  "realtor-escrow-forfeit-" + id,
+			AmountKobo:      amountKobo,
+			DebitAccountID:  settlementAcc.ID,
+			CreditAccountID: landlordAcc.ID,
+			Description:     "Realtor escrow deposit forfeited to landlord",
+		})
+		if err != nil && !errors.Is(err, ledger.ErrDuplicate) {
+			return nil, err
+		}
+		resolvedTo = "landlord"
+
+	case "disputed":
+		// No ledger call — recording a dispute does not move money.
+	}
+
+	newStatus := "disputed"
+	var ct pgconn.CommandTag
+	if decision == "disputed" {
+		res, err := r.db.Exec(ctx,
+			`UPDATE realtor_escrow_deposits SET status='disputed', resolution_note=$2, resolved_by=$3 WHERE id=$1`,
+			id, nullStr(note), adminID)
+		if err != nil {
+			return nil, err
+		}
+		ct = res
+	} else {
+		newStatus = "released"
+		res, err := r.db.Exec(ctx,
+			`UPDATE realtor_escrow_deposits SET status='released', released_at=NOW(), resolved_to=$2, resolution_note=$3, resolved_by=$4 WHERE id=$1`,
+			id, resolvedTo, nullStr(note), adminID)
+		if err != nil {
+			return nil, err
+		}
+		ct = res
+	}
+	if ct.RowsAffected() == 0 {
+		return nil, ErrNotFound
+	}
+
+	out := &EscrowResolution{ID: id, LeaseID: leaseID, AmountKobo: amountKobo, Status: newStatus, ResolvedTo: resolvedTo, ResolutionNote: note}
+	_ = r.InsertAudit(ctx, adminID, "escrow.resolve", "escrow_deposit", id, note,
+		beforeState,
+		map[string]any{"decision": decision, "status": newStatus, "resolvedTo": resolvedTo})
+	return out, nil
 }
 
 // ── Audit log ─────────────────────────────────────────────────────────────────

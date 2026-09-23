@@ -6,6 +6,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"spotlight/backend/internal/finance/ledger"
 	"spotlight/backend/internal/integrations"
 	"spotlight/backend/internal/middleware"
 	"spotlight/backend/internal/services"
@@ -22,7 +23,8 @@ type Deps struct {
 	DB       *pgxpool.Pool
 	Supabase *integrations.SupabaseRestClient
 	RBAC     services.RBACService
-	Enabled  bool // FEATURE_REALTOR_ENABLED
+	Ledger   *ledger.Service // required for the escrow resolve (release/forfeit) money path
+	Enabled  bool            // FEATURE_REALTOR_ENABLED
 }
 
 // Register mounts the realtor admin control-plane routes under /api/realtor/admin.
@@ -39,7 +41,7 @@ func Register(r *gin.Engine, d Deps) {
 		return
 	}
 
-	repo := NewRepository(d.DB)
+	repo := NewRepository(d.DB, d.Ledger)
 	ah := NewAdminHandler(repo)
 
 	// authn maps the authenticated user's id into the gin context key handlers
@@ -64,6 +66,7 @@ func Register(r *gin.Engine, d Deps) {
 		admin.POST("/verifications/:id/decision", ah.DecideVerification)
 		admin.GET("/payments", ah.Payments)
 		admin.GET("/escrow", ah.Escrow)
+		admin.POST("/escrow/:id/resolve", ah.ResolveEscrow)
 	}
 
 	log.Println("[realtor] admin control plane registered at /api/realtor/admin")
