@@ -283,7 +283,15 @@ function ManageStore({
             <Switch
               value={server.isOpen}
               disabled={availability.isPending}
-              onValueChange={(v) => availability.mutate(v)}
+              onValueChange={(v) =>
+                availability.mutate(v, {
+                  onError: (e) =>
+                    alertAsync({
+                      title: "Couldn't update store status",
+                      message: (e as Error)?.message ?? 'Please try again.',
+                    }),
+                })
+              }
               trackColor={{ true: Colors.primary, false: Colors.outlineVariant }}
             />
           </View>
