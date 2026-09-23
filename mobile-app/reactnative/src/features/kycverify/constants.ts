@@ -8,11 +8,14 @@ import type { CheckType, IdType, DocType, KycTier } from './types';
 
 export const CONSENT_VERSION = '2026-07-ndpa-cbn-v1';
 
-// Dev/offline mode: when true (the default), the KYC api returns deterministic
-// results without a backend so the flow is walkable in dev. Set
-// EXPO_PUBLIC_KYC_VERIFY_USE_MOCK=false once the Go /api/finance/kyc backend is
-// live to hit the real multi-provider gateway.
-export const USE_MOCK = mockAllowed(process.env.EXPO_PUBLIC_KYC_VERIFY_USE_MOCK, true);
+// Dev/offline mode: when true, the KYC api returns deterministic results
+// without a backend so the flow is walkable offline. Defaults FALSE — the Go
+// /api/finance/kyc backend (the real multi-provider Dojah/Smile ID/Youverify
+// gateway) is live, so per this repo's own mockPolicy.ts rule ("pass false for
+// modules whose live endpoints exist"), a forgotten flag should fail visibly
+// against the real backend rather than silently invent identity-check results.
+// Set EXPO_PUBLIC_KYC_VERIFY_USE_MOCK=true only for deliberate offline/demo use.
+export const USE_MOCK = mockAllowed(process.env.EXPO_PUBLIC_KYC_VERIFY_USE_MOCK, false);
 
 /** Ordered checks required to reach each tier. Data-only first, biometrics/doc after. */
 export const TIER_REQUIREMENTS: Record<Exclude<KycTier, 0>, CheckType[]> = {
