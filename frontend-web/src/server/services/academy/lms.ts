@@ -60,7 +60,8 @@ function slugify(value: string) {
     .toLowerCase()
     .replace(/[^a-z0-9\s]/g, '')
     .replace(/\s+/g, '-')
-    .replace(/^-+|-+$/g, '');
+    .replace(/^-+/, '')
+    .replace(/-+$/, '');
 }
 
 function normalizeAnswerList(value: string[]) {

@@ -33,7 +33,7 @@ function parseFee(v: unknown): number | null {
 }
 
 function slugify(v: string): string {
-  return v.trim().toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+  return v.trim().toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+/, '').replace(/_+$/, '');
 }
 
 
