@@ -54,6 +54,16 @@ func TestRestaurantRouteShapeRegistersWithoutConflict(t *testing.T) {
 	g.POST("/:id/orders", noop)
 	g.GET("/:id/orders/:orderId", noop)
 	g.POST("/orders/:orderId/accept", noop)
+	// Paystack-funded checkout (paystackcheckout.RegisterRestaurantPaystackCheckout):
+	// POST is one level deeper than the existing "/:id/orders" (no wildcard sibling
+	// at that position). GET adds a static "orders/paystack/..." branch alongside
+	// the plain "/orders" + "/orders/:orderId" GETs (real siblings, added here too
+	// so the static-vs-wildcard shape is actually exercised) — same shape already
+	// proven safe by /staff/accept and /kyb above.
+	g.POST("/:id/orders/paystack/initiate", noop)
+	g.GET("/orders", noop)
+	g.GET("/orders/:orderId", noop)
+	g.GET("/orders/paystack/:reference/status", noop)
 
 	// Admin group: static "listings"/"restaurants" siblings beside ":id" params.
 	a := r.Group("/api/restaurant/admin")

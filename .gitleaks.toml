@@ -42,6 +42,7 @@ paths = [
     '''^backend/internal/utilitybills/credentials_test\.go$''',        # fake api_key/public_key values asserting a credentials-derivation function
     '''^backend/tests/utilitybills/admin_live_db_test\.go$''',         # testCredentialsKey (explicitly commented "obviously not a secret") + fake rotate-credentials api_key/secret_key
     '''^backend/internal/utilitybills/admin_test\.go$''',              # fake secret_key/api_key ("…SUPERSECRET"/"…ALSOSECRET") asserting an audit log names keys, never values
+    '''^backend/internal/estate/paystackfunded_live_db_test\.go$''',   # IdempotencyKey: "duespf-tier0-wallet-" + invID — a fixture key, not a secret
 
     # -- Docs / templates with placeholder tokens --------------------------
     '''^MARKETPLACE_QUICK_START\.md$''',

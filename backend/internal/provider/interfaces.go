@@ -129,6 +129,19 @@ type PaymentStatus struct {
 	PaidAt     *string
 }
 
+// RefundResult is the outcome of reversing a previously-collected charge.
+// Deliberately NOT part of the PaymentProvider interface (most callers never
+// need it) — a caller that does wants a small local interface naming this
+// method directly, the same interface-segregation shape as
+// academy/fees/payment.Gateway. AmountKobo echoes the amount the provider
+// actually refunded, which a caller MUST cross-check against what it asked
+// for rather than assume.
+type RefundResult struct {
+	Reference  string
+	Status     string // processed | pending | failed
+	AmountKobo int64
+}
+
 type PayoutRequest struct {
 	RecipientCode  string
 	AmountKobo     int64
