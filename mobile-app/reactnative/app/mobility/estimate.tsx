@@ -14,6 +14,7 @@ import TripRouteCard from '@/features/mobility/components/TripRouteCard';
 import ServiceTypeCard from '@/features/mobility/components/ServiceTypeCard';
 import FareOfferSheet from '@/features/mobility/components/FareOfferSheet';
 import MobilityEdgeState from '@/features/mobility/components/MobilityEdgeState';
+import { errKind } from '@/features/mobility/utils/errKind';
 import AddressEntry, { type ConfirmedAddress } from '@/features/mobility/components/AddressEntry';
 import { useRideEstimate, useRideRequest, useRideSettings } from '@/features/mobility/hooks/useMobility';
 import * as mobAPI from '@/features/mobility/api/mobility.api';
@@ -251,7 +252,7 @@ export default function EstimateScreen() {
       <ScreenHeader title="Confirm your ride" />
 
       {fareError ? (
-        <MobilityEdgeState kind="offline" actionLabel="Retry" onAction={() => estimate.mutate({ pickup, dest, serviceType })} />
+        <MobilityEdgeState kind={errKind(estimate.error)} actionLabel="Retry" onAction={() => estimate.mutate({ pickup, dest, serviceType })} />
       ) : (
         <>
           <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scroll}>

@@ -9,6 +9,7 @@ import ScreenHeader from '@/components/ScreenHeader';
 import StateView from '@/components/StateView';
 import TripPinDisplay from '@/features/mobility/components/TripPinDisplay';
 import MobilityEdgeState from '@/features/mobility/components/MobilityEdgeState';
+import { errKind } from '@/features/mobility/utils/errKind';
 import { useTrip } from '@/features/mobility/hooks/useMobility';
 
 export default function TripPinScreen() {
@@ -22,7 +23,7 @@ export default function TripPinScreen() {
       {trip.isLoading ? (
         <StateView kind="loading" message="Loading PIN…" />
       ) : trip.isError || !t ? (
-        <MobilityEdgeState kind="offline" actionLabel="Retry" onAction={() => trip.refetch()} />
+        <MobilityEdgeState kind={errKind(trip.error)} actionLabel="Retry" onAction={() => trip.refetch()} />
       ) : !t.tripPin ? (
         <MobilityEdgeState kind="empty" title="No PIN needed" message="This trip has already started or completed." />
       ) : (

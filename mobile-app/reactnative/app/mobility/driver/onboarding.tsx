@@ -15,6 +15,7 @@ import PrimaryButton from '@/components/PrimaryButton';
 import TextInputField from '@/components/TextInputField';
 import StatusBadge from '@/features/mobility/components/StatusBadge';
 import MobilityEdgeState from '@/features/mobility/components/MobilityEdgeState';
+import { errKind } from '@/features/mobility/utils/errKind';
 import { useDriverMe, useDriverOnboarding } from '@/features/mobility/hooks/useMobility';
 import { pickFileForField } from '@/features/registration/utils/filePicker';
 import { SERVICE_TYPES, REQUIRED_DOCUMENTS } from '@/features/mobility/constants/mobility.constants';
@@ -108,7 +109,7 @@ export default function DriverOnboardingScreen() {
     return (
       <SafeAreaView style={styles.safe} edges={['top']}>
         <ScreenHeader title={flowTitle} />
-        <MobilityEdgeState kind="offline" actionLabel="Retry" onAction={() => me.refetch()} />
+        <MobilityEdgeState kind={errKind(me.error)} actionLabel="Retry" onAction={() => me.refetch()} />
       </SafeAreaView>
     );
   }
