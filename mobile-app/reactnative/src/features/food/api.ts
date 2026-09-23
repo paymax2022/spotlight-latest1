@@ -312,6 +312,73 @@ export async function placeOrder(req: PlaceOrderRequest): Promise<Order> {
   );
 }
 
+// ─── Paystack-funded checkout (no wallet, no KYC-tier gate) ────────────────
+// backend/internal/restaurant/paystackcheckout — a genuinely separate,
+// server-initiated Paystack rail (mirrors utility bills' airtime.tsx +
+// useGatewayCheckout pattern), NOT the wallet-top-up-then-spend trick
+// usePurchasePayment's built-in card rail uses. The server quotes the exact
+// price, freezes it against the Idempotency-Key, and only places the order
+// after independently verifying the charge — see PlaceOrderPaystackFunded's
+// doc comment on the Go side for the full guarantee.
+
+export interface PaystackCheckoutIntent {
+  restaurantId: string;
+  reference: string;
+  authorizationUrl: string;
+  accessCode?: string;
+  amountKobo: number;
+}
+
+export interface PaystackCheckoutStatus {
+  reference: string;
+  status: 'pending' | 'processing' | 'confirmed' | 'amount_mismatch' | 'order_failed' | 'refunded';
+  orderId?: string;
+  amountKobo?: number;
+}
+
+export async function initiateFoodOrderPaystack(
+  req: PlaceOrderRequest & { email?: string; callbackUrl?: string },
+): Promise<PaystackCheckoutIntent> {
+  if (USE_MOCK) {
+    await delay(600);
+    return {
+      restaurantId: req.restaurantId,
+      reference: `foodorder:${req.idempotencyKey}`,
+      authorizationUrl: `https://paystack.test/mock/${req.idempotencyKey}`,
+      amountKobo: 0,
+    };
+  }
+  return unwrap<PaystackCheckoutIntent>(
+    await api.post(
+      `${BASE}/${encodeURIComponent(req.restaurantId)}/orders/paystack/initiate`,
+      {
+        items: req.items.map((i) => ({
+          item_id: i.itemId,
+          qty: i.qty,
+          restaurant_id: i.restaurantId, // multi-restaurant support
+        })),
+        package_count: req.packageCount,
+        packages: req.packages?.map((p) => ({ items: p.items.map((i) => ({ item_id: i.itemId, qty: i.qty })) })),
+        delivery_address: req.deliveryAddress,
+        delivery_location: req.deliveryLocation,
+        email: req.email,
+        callback_url: req.callbackUrl,
+      },
+      idemHeader(req.idempotencyKey),
+    ),
+  );
+}
+
+export async function getFoodOrderPaystackStatus(reference: string): Promise<PaystackCheckoutStatus> {
+  if (USE_MOCK) {
+    await delay(400);
+    return { reference, status: 'confirmed', orderId: 'mock-order-1', amountKobo: 0 };
+  }
+  return unwrap<PaystackCheckoutStatus>(
+    await api.get(`${BASE}/orders/paystack/${encodeURIComponent(reference)}/status`),
+  );
+}
+
 export async function setOrderStatus(
   restaurantId: string,
   orderId: string,
