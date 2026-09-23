@@ -23,6 +23,53 @@ import { resolveActiveOutlet } from '@/features/restaurantmerchant/activeOutlet'
 
 const naira = (kobo: number) => `₦${(kobo / 100).toLocaleString('en-NG')}`;
 
+// ── Availability ↔ KYB messaging ─────────────────────────────────────────────
+//
+// Opening for orders requires an APPROVED business verification (KYB) — see
+// backend SetAvailability (ADR-033, fail-closed): closing is always allowed,
+// but the backend rejects turning the switch ON with
+// "business verification must be approved before opening for orders" until
+// `restaurants.kyb_status = 'approved'`. Until this notice existed the owner
+// had zero signal anywhere on this screen for WHY the switch wouldn't turn on
+// — the PayoutReadinessBanner below covers payouts, not opening, and reports
+// on a separate concern. This turns the same kybStatus (already fetched via
+// usePayoutReadiness for that banner) into a status-specific, actionable
+// message so the owner knows whether to wait or to act.
+function availabilityKybNotice(
+  kybStatus: string | undefined,
+): { title: string; message: string; actionLabel?: string } | null {
+  if (!kybStatus || kybStatus === 'approved') return null;
+  switch (kybStatus) {
+    case 'submitted':
+    case 'under_review':
+      return {
+        title: 'Verification in review',
+        message: "Your business verification is being reviewed. This usually takes a few days — no action needed. We'll let you know the moment it's approved so you can open for orders.",
+        actionLabel: 'View status',
+      };
+    case 'needs_more_info':
+      return {
+        title: 'More information needed',
+        message: 'Your business verification needs more details before it can be approved.',
+        actionLabel: 'Update verification',
+      };
+    case 'rejected':
+      return {
+        title: 'Verification declined',
+        message: 'Your business verification was declined, so orders stay off until it is resolved.',
+        actionLabel: 'Reapply',
+      };
+    case 'none':
+    case 'draft':
+    default:
+      return {
+        title: 'Business verification required',
+        message: "You haven't completed business verification yet, so you can't open for orders.",
+        actionLabel: 'Complete verification',
+      };
+  }
+}
+
 export default function ManageStoreScreen() {
   const stores = useMyStores();
   // Which outlet the console acts on. This used to be `stores.data?.[0]`, so an
@@ -121,6 +168,9 @@ function ManageStore({
   const [newAddress, setNewAddress] = useState('');
   const [newGeo, setNewGeo] = useState<StoreGeoPoint | null>(null);
   const availability = useSetAvailability(storeId);
+  const readiness = usePayoutReadiness();
+  const kybStatus = readiness.data?.find((o) => o.restaurantId === storeId)?.kybStatus;
+  const kybNotice = availabilityKybNotice(kybStatus);
 
   const server = detail.data?.store;
   const [name, setName] = useState<string | null>(null);
@@ -285,16 +335,40 @@ function ManageStore({
               disabled={availability.isPending}
               onValueChange={(v) =>
                 availability.mutate(v, {
-                  onError: (e) =>
+                  onError: async (e) => {
+                    if (kybNotice) {
+                      const go = await confirmAsync({
+                        title: kybNotice.title,
+                        message: kybNotice.message,
+                        confirmLabel: kybNotice.actionLabel ?? 'OK',
+                        cancelLabel: 'Not now',
+                      });
+                      if (go) router.push(`/food/restaurant/kyb?outlet=${storeId}`);
+                      return;
+                    }
                     alertAsync({
                       title: "Couldn't update store status",
                       message: (e as Error)?.message ?? 'Please try again.',
-                    }),
+                    });
+                  },
                 })
               }
               trackColor={{ true: Colors.primary, false: Colors.outlineVariant }}
             />
           </View>
+          {/* Why the switch won't turn on, when it's KYB and not something transient —
+              shown proactively so the owner never has to tap it just to find out. */}
+          {!server.isOpen && kybNotice && (
+            <View style={[styles.payoutWarn, { marginTop: Spacing.sm }]} accessibilityRole="alert">
+              <Text style={styles.payoutWarnTitle}>{kybNotice.title}</Text>
+              <Text style={styles.muted}>{kybNotice.message}</Text>
+              {kybNotice.actionLabel && (
+                <Pressable onPress={() => router.push(`/food/restaurant/kyb?outlet=${storeId}`)} hitSlop={8}>
+                  <Text style={styles.kybLink}>{kybNotice.actionLabel} →</Text>
+                </Pressable>
+              )}
+            </View>
+          )}
         </Card>
 
         {/* Profile */}
@@ -627,6 +701,7 @@ const styles = StyleSheet.create({
   },
   payoutWarnTitle: { color: Colors.error, fontSize: 14, fontWeight: '700' },
   payoutWarnAmount: { color: Colors.onSurface, fontSize: 13, fontWeight: '600' },
+  kybLink: { color: Colors.primary, fontSize: 13, fontWeight: '700', marginTop: 2 },
   outletChipText: { color: Colors.onSurfaceVariant, fontSize: 13, fontWeight: '600' },
   outletChipTextOn: { color: Colors.primary },
   outletChipClosed: { color: Colors.onSurfaceVariant, fontSize: 11 },
