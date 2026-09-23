@@ -94,14 +94,20 @@ import (
 // emitter into Phase-1 revenue modules wired OUTSIDE this function — currently the
 // Marketplace (RegisterMarketplace). Modules built INSIDE this function (the Maplerad
 // bills domain) are wired with it directly here.
-func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrations.SupabaseRestClient, rbac services.RBACService, pool *pgxpool.Pool, rtHub *realtime.Hub) *referrals.RewardService {
+//
+// Also returns the KYC verification gateway (*kycverify.Service, nil when
+// FEATURE_KYC_VERIFY_ENABLED is off or pool is nil) so router.go can thread it
+// into registerConnectWalletRoutes — the /api/v1/kyc/tier1 handler needs it to
+// run a real Dojah/Smile ID/Youverify check instead of writing an unverified
+// pending status.
+func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrations.SupabaseRestClient, rbac services.RBACService, pool *pgxpool.Pool, rtHub *realtime.Hub) (*referrals.RewardService, *kycverify.Service) {
 	if cfg.DatabaseURL == "" {
 		log.Println("[finance] DATABASE_URL not set — skipping financial routes")
-		return nil
+		return nil, nil
 	}
 	if pool == nil {
 		log.Println("[finance] no database pool — skipping financial routes")
-		return nil
+		return nil, nil
 	}
 
 	// Shared by every browser-facing WebSocket hub built below (restaurant,
@@ -1038,6 +1044,11 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 	// finance group's requireUserID; the webhook group is mounted UNAUTHENTICATED
 	// (signature verified inside the handler); admin routes are RBAC-gated
 	// (finance.admin.kyc). Tier elevation reuses the KYC core (kyc.Service.Approve).
+	//
+	// kvSvc (function-scoped, nil unless this block runs) is also returned to
+	// router.go so registerConnectWalletRoutes can run a real check for
+	// POST /api/v1/kyc/tier1 instead of writing an unverified pending status.
+	var kvSvc *kycverify.Service
 	if cfg.FeatureKYCVerifyEnabled && pool != nil {
 		kvReg := kycverify.BuildRegistry(cfg)
 
@@ -1054,7 +1065,7 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		// keeps kycverify decoupled from the kyc package's concrete Profile type.
 		var kvElevator kycverify.TierElevator = kycTierElevator{svc: kycSvc}
 
-		kvSvc := kycverify.NewService(kycverify.Deps{
+		kvSvc = kycverify.NewService(kycverify.Deps{
 			Pool:     pool,
 			Registry: kvReg,
 			Cipher:   kvCipher,
@@ -3354,7 +3365,7 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 	// Hand the Direct Referral Rewards engine service back to router.go so it can be
 	// threaded into revenue modules wired outside this function (Marketplace). Nil
 	// when the engine is flag-off / pool-less — the receiving setter is nil-safe.
-	return rewardSvc
+	return rewardSvc, kvSvc
 }
 
 // foodDisputeResolverAdapter bridges finance/disputes.Service's decoupled
