@@ -62,8 +62,8 @@ import (
 	"spotlight/backend/internal/platform/realtime"
 	platformRedis "spotlight/backend/internal/platform/redis"
 	platformWS "spotlight/backend/internal/platform/ws"
-	"spotlight/backend/internal/property"
 	"spotlight/backend/internal/promotions"
+	"spotlight/backend/internal/property"
 	providerInterfaces "spotlight/backend/internal/provider"
 	"spotlight/backend/internal/provider/cac"
 	"spotlight/backend/internal/provider/disbursement"
@@ -1732,6 +1732,34 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		// exposes nothing new.
 		restPublicWS.GET("/ws", restaurantHandler.ServeUserWS)
 
+		// ── Food disputes (party-scoped) ──────────────────────────────────────
+		// Purpose-built food dispute rails. disputes_handler.go, its service and its
+		// migration (20261019000000_restaurant_disputes.sql) all shipped without any
+		// route registration, so the admin console fell back to the GENERIC finance
+		// dispute endpoints — which don't carry food-specific context (order parties,
+		// refundable ceiling from the escrowed total).
+		restGroup.POST("/orders/:orderId/dispute", restaurantHandler.RaiseFoodDispute)
+		restGroup.GET("/disputes/:id", restaurantHandler.GetFoodDispute)
+
+		// ── KYB (owner) ───────────────────────────────────────────────────────
+		// Merchant business verification. Distinct from the onboarding QUEUE the ops
+		// console reviews: this is where the merchant actually supplies the records.
+		// kyb_handler.go + kyb_service.go + 20261018000000_restaurant_kyb.sql existed
+		// with no HTTP surface, so the review queue had nothing real to read.
+		restGroup.GET("/:id/kyb", restaurantHandler.GetKYB)
+		restGroup.PUT("/:id/kyb", restaurantHandler.SaveKYB)
+		restGroup.POST("/:id/kyb/documents", restaurantHandler.AddKYBDocument)
+		restGroup.POST("/:id/kyb/submit", restaurantHandler.SubmitKYB)
+
+		// ── Group & scheduled orders ──────────────────────────────────────────
+		// A host opens a group order, contributors add items, the host finalizes it
+		// into a normal order (money path reuses PlaceOrder's escrow + idempotency).
+		// Static "group" segment is a sibling of the ":id" param, same as "orders".
+		restGroup.POST("/:id/group", restaurantHandler.CreateGroupOrder)
+		restGroup.GET("/group/:groupId", restaurantHandler.GetGroupOrder)
+		restGroup.POST("/group/:groupId/items", restaurantHandler.AddGroupItem)
+		restGroup.POST("/group/:groupId/finalize", restaurantHandler.FinalizeGroupOrder)
+
 		// Ratings.
 		restGroup.POST("/orders/:orderId/rate", restaurantHandler.RateOrder)
 
@@ -1781,6 +1809,16 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		restStore.POST("/:id/menu/items", restaurantHandler.AdminCreateItem)
 		restStore.PATCH("/:id/menu/items/:itemId", restaurantHandler.AdminUpdateItem)
 		restStore.DELETE("/:id/menu/items/:itemId", restaurantHandler.AdminDeleteItem)
+
+		// Food-specific dispute queue. Previously unregistered, so the console used
+		// the generic /api/finance/{disputes,admin/disputes} rails instead.
+		restAdmin.GET("/disputes", middleware.RequirePermission(rbac, "restaurant.admin.disputes"), restaurantHandler.AdminListFoodDisputes)
+		restAdmin.POST("/disputes/:id/resolve", middleware.RequirePermission(rbac, "restaurant.admin.disputes"), restaurantHandler.AdminResolveFoodDispute)
+
+		// Releases scheduled orders whose window has arrived into the normal pipeline.
+		// Ops-triggered (a cron/worker can call it too); gated with the dispatch slug
+		// because what it actually does is push orders into rider sourcing.
+		restAdmin.POST("/activate-scheduled", middleware.RequirePermission(rbac, "restaurant.admin.dispatch"), restaurantHandler.AdminActivateScheduled)
 
 		// Listing moderation (foodhub A6). "listings/pending" is a static sibling of
 		// the ":id" params registered elsewhere in this group, which Gin allows.
@@ -1836,6 +1874,17 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		// admin action a safe no-op. Fail-closed behind restaurant.admin.withdrawals
 		// (dedicated slug — an ops agent reviewing withdrawals should not need the
 		// broader restaurant.manage grant).
+		//
+		// main independently re-discovered this exact gap (handler_withdrawal.go/
+		// withdrawal.go/bankaccount.go shipping with no route registration) and
+		// proposed a FeatureRestaurantWithdrawalsEnabled-gated fix that re-registers
+		// the SAME member-facing bank-account/withdrawal routes this branch already
+		// registers unconditionally a few lines above (restGroup.{POST,GET,PATCH,
+		// DELETE} "/bank-accounts"*, restGroup.{POST,GET} "/withdrawals"* at
+		// ~line 1654) — taking both would panic Gin at startup on the duplicate
+		// registration. Kept this branch's unconditional version (already proven in
+		// this PR's own CI) and dropped main's flag-gated duplicate rather than
+		// reconciling two working implementations of the same fix.
 		restAdmin.GET("/withdrawals", middleware.RequirePermission(rbac, "restaurant.admin.withdrawals"), restaurantHandler.AdminListWithdrawals)
 		restAdmin.GET("/withdrawals/:withdrawalId", middleware.RequirePermission(rbac, "restaurant.admin.withdrawals"), restaurantHandler.AdminGetWithdrawal)
 		restAdmin.POST("/withdrawals/:withdrawalId/paid", middleware.RequirePermission(rbac, "restaurant.admin.withdrawals"), restaurantHandler.AdminSettleWithdrawal)

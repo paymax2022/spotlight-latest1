@@ -9,6 +9,7 @@ import StateView from '@/components/StateView';
 import ScreenHeader from '@/components/ScreenHeader';
 import StatusBadge from '@/features/mobility/components/StatusBadge';
 import MobilityEdgeState from '@/features/mobility/components/MobilityEdgeState';
+import { errKind } from '@/features/mobility/utils/errKind';
 import { useInvoices } from '@/features/mobility/hooks/useLogistics';
 import { LOGISTICS_ENABLED, INVOICE_STATUS_LABEL } from '@/features/mobility/constants/modes.constants';
 import { formatNaira } from '@/features/mobility/utils/mobilityFormatters';
@@ -41,7 +42,7 @@ export default function InvoicesScreen() {
       {invoices.isLoading ? (
         <StateView kind="loading" message="Loading invoices…" />
       ) : invoices.isError ? (
-        <MobilityEdgeState kind="offline" actionLabel="Retry" onAction={() => invoices.refetch()} />
+        <MobilityEdgeState kind={errKind(invoices.error)} actionLabel="Retry" onAction={() => invoices.refetch()} />
       ) : (invoices.data ?? []).length === 0 ? (
         <MobilityEdgeState kind="empty" title="No invoices yet" message="Monthly invoices appear here once your billing period closes." />
       ) : (

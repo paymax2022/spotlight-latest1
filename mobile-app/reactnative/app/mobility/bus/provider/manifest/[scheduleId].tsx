@@ -11,12 +11,11 @@ import StateView from '@/components/StateView';
 import ScreenHeader from '@/components/ScreenHeader';
 import StatusBadge from '@/features/mobility/components/StatusBadge';
 import MobilityEdgeState from '@/features/mobility/components/MobilityEdgeState';
+import { errKind } from '@/features/mobility/utils/errKind';
 import { useProviderManifest } from '@/features/mobility/hooks/useBusMarketplace';
 import { formatNairaWhole } from '@/features/mobility/utils/mobilityFormatters';
 import type { BusManifestEntry } from '@/features/mobility/types/busProvider.types';
 
-const errKind = (e: unknown): 'offline' | 'genericError' =>
-  (e as { response?: unknown })?.response ? 'genericError' : 'offline';
 
 export default function BusProviderManifestScreen() {
   const { scheduleId } = useLocalSearchParams<{ scheduleId: string }>();

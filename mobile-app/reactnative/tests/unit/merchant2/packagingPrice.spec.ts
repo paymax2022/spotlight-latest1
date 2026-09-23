@@ -128,4 +128,17 @@ describe('buildUpdateStoreBody', () => {
   it('keeps an empty description, which is a real edit', () => {
     assert.deepEqual(buildUpdateStoreBody({ description: '' }), { description: '' });
   });
+
+  it('maps a confirmed map pin to snake_case geo fields', () => {
+    const body = buildUpdateStoreBody({ geo: { lat: 6.4541, lng: 3.3947, plusCode: 'X7HQ+PM' } });
+    assert.deepEqual(body, { geo_lat: 6.4541, geo_lng: 3.3947, plus_code: 'X7HQ+PM' });
+  });
+
+  it('omits geo entirely when the owner only edited the text address', () => {
+    // No `geo` key on the patch at all (typed text invalidates the prior pin,
+    // see manage.tsx) must not send stale/zeroed coordinates.
+    const body = buildUpdateStoreBody({ address: '12 Marina, Lagos' });
+    assert.ok(!('geo_lat' in body));
+    assert.ok(!('geo_lng' in body));
+  });
 });

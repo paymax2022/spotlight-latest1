@@ -161,7 +161,6 @@ type Config struct {
 	PaymaxWebhookSecret           string
 	FeatureGroupsEnabled          bool
 	FeatureAssociationsEnabled    bool
-
 	// AssocCardSigningSecret is the HMAC secret for digital membership cards.
 	// Empty outside development is a hard startup failure: the fallback is a
 	// constant compiled into this (public) repo, so anyone could forge a
