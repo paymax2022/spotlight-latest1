@@ -282,7 +282,7 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 	// the central Finance/Money Transfer config RECORDS 10% of the transfer principal —
 	// so the recorded figure materially OVER-states the real fee (see docs/commission).
 	if cfg.FeatureCommissionEnabled {
-		xferSvc.SetCommissionRecorder(commissionRecorderAdapter{svc: commission.NewService(commission.NewRepository(pool), nil)})
+		xferSvc.SetCommissionRecorder(commissionRecorderAdapter{svc: withReferralSplit(commission.NewService(commission.NewRepository(pool), nil), pool, cfg)})
 		log.Println("[transfers] commission recording wired → Finance/Money Transfer (earning-row only; no ledger re-post)")
 	}
 
@@ -311,7 +311,7 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		// passthrough fee), so the central 10% of the source principal is an attributed
 		// figure that likely OVER-states the true margin (see docs/commission).
 		if cfg.FeatureCommissionEnabled {
-			fxSvc.SetCommissionRecorder(commissionRecorderAdapter{svc: commission.NewService(commission.NewRepository(pool), nil)})
+			fxSvc.SetCommissionRecorder(commissionRecorderAdapter{svc: withReferralSplit(commission.NewService(commission.NewRepository(pool), nil), pool, cfg)})
 			log.Println("[fx] commission recording wired → Finance/Currency Exchange (earning-row only; no ledger re-post)")
 		}
 		fxHandler = fx.NewHandler(fxSvc)
@@ -1138,7 +1138,7 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		// second ledger post would double-count — RecordFor appends the earning ROW
 		// only. Flag off ⇒ no recorder ⇒ silent no-op.
 		if cfg.FeatureCommissionEnabled {
-			assocSvc.SetCommissionRecorder(commissionRecorderAdapter{svc: commission.NewService(commission.NewRepository(pool), nil)})
+			assocSvc.SetCommissionRecorder(commissionRecorderAdapter{svc: withReferralSplit(commission.NewService(commission.NewRepository(pool), nil), pool, cfg)})
 			log.Println("[association] commission recording wired → Community/Group Membership (earning-row only; no ledger re-post)")
 		}
 		// Backend-owned presigned R2 uploads for organisation logos. The wizard
@@ -1522,7 +1522,7 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		// stays nil ⇒ silent no-op. Reuses the shared commissionRecorderAdapter
 		// (marketplace_routes.go).
 		if cfg.FeatureCommissionEnabled {
-			cfSvc.SetCommissionRecorder(commissionRecorderAdapter{svc: commission.NewService(commission.NewRepository(pool), nil)})
+			cfSvc.SetCommissionRecorder(commissionRecorderAdapter{svc: withReferralSplit(commission.NewService(commission.NewRepository(pool), nil), pool, cfg)})
 			log.Println("[crowdfunding] commission recording wired → Community/Crowdfunding (earning-row only; no ledger re-post)")
 		}
 
@@ -1611,7 +1611,7 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		// fail or reverse an order (see restaurant.recordCommissionSafe). Flag off ⇒ no
 		// recorder is set ⇒ the seam stays nil ⇒ silent no-op.
 		if cfg.FeatureCommissionEnabled {
-			restaurantSvc.SetCommissionRecorder(commissionRecorderAdapter{svc: commission.NewService(commission.NewRepository(pool), nil)})
+			restaurantSvc.SetCommissionRecorder(commissionRecorderAdapter{svc: withReferralSplit(commission.NewService(commission.NewRepository(pool), nil), pool, cfg)})
 			log.Println("[restaurant] commission recording wired → Lifestyle/Restaurant (earning-row only; no ledger re-post)")
 		}
 
@@ -2146,7 +2146,7 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		// reverse a fare split (see transport.recordCommissionSafe). Flag off ⇒ no
 		// recorder is set ⇒ the seam stays nil ⇒ silent no-op ⇒ transport unchanged.
 		if cfg.FeatureCommissionEnabled {
-			transportCommission := commission.NewService(commission.NewRepository(pool), nil)
+			transportCommission := withReferralSplit(commission.NewService(commission.NewRepository(pool), nil), pool, cfg)
 			transportSvc.SetCommissionRecorder(commissionRecorderAdapter{svc: transportCommission})
 			log.Println("[transport] commission recording wired → Lifestyle/{Taxi - Ride Hailing, Delivery - Rider, Bus Booking, Car Hire} (earning-row only; no ledger re-post)")
 		}
@@ -2691,7 +2691,7 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		// Reuses the shared commissionRecorderAdapter (marketplace_routes.go). Gated on the
 		// feature flag — when off the recorder stays nil and recording is a no-op.
 		if cfg.FeatureCommissionEnabled {
-			doctorSvc.SetCommissionRecorder(commissionRecorderAdapter{svc: commission.NewService(commission.NewRepository(pool), nil)})
+			doctorSvc.SetCommissionRecorder(commissionRecorderAdapter{svc: withReferralSplit(commission.NewService(commission.NewRepository(pool), nil), pool, cfg)})
 		}
 		// Backend-owned presigned R2 uploads (profile photo / documents / licence /
 		// chat attachments / dispute evidence). Unconfigured creds → the presign

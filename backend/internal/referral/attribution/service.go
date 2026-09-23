@@ -28,9 +28,14 @@ import (
 	rewardledger "spotlight/backend/internal/referral/ledger"
 )
 
-// HouseReferrerRewardKobo is the notional referrer-side accrual captured to the
-// house for an organic / no-code signup. Mirrors the seed reward (₦500). When
-// config.budget_neutral is true the house accrual is purely notional (no payout).
+// HouseReferrerRewardKobo — HISTORICAL, unused as of 2026-09-18. Used to be
+// the notional referrer-side accrual captured on every signup (organic or
+// code-attributed). Removed per an explicit product decision that signup must
+// never be profitable, for a real referrer or the house — see the removed
+// accrual calls in attributeToReferrer/attributeToHouseAccount (this file)
+// and ClaimCode/Reassign (reassign.go). Left declared (not deleted) only
+// because it's exported public API a caller outside this package could
+// reference; nothing in this package still reads it.
 const HouseReferrerRewardKobo = 50_000
 
 // Attribution types (mirror the DB CHECK + §7A.1 chain).
@@ -92,9 +97,16 @@ type Attribution struct {
 
 // Service is the §7A resolver.
 type Service struct {
-	db     *pgxpool.Pool
-	codes  CodeResolver
-	house  *house.Service
+	db    *pgxpool.Pool
+	codes CodeResolver
+	house *house.Service
+	// reward is kept wired (constructor signature unchanged) but is NO LONGER
+	// called from anywhere in this file as of 2026-09-18 — see the removed
+	// accrual calls in attributeToReferrer/attributeToHouseAccount. Left in
+	// place rather than ripped out of the constructor across its callers for a
+	// purely cosmetic removal with no behavior change; a future signup-time
+	// (not purchase-time) reward policy, if one is ever reintroduced, would use
+	// this same seam.
 	reward *rewardledger.Service
 	cfg    *cfgpkg.Service
 	events *events.Service
@@ -215,16 +227,11 @@ func (s *Service) attributeToReferrer(ctx context.Context, referredUserID, refer
 	if err != nil {
 		return nil, err
 	}
-	if _, err := s.reward.Accrue(ctx, rewardledger.AccrueInput{
-		BeneficiaryID:  referrerID,
-		ReferredUserID: referredUserID,
-		Kind:           rewardledger.KindReferrer,
-		AmountKobo:     HouseReferrerRewardKobo,
-		IsHouse:        false,
-		IdempotencyKey: "ref:accrue:" + referredUserID,
-	}); err != nil {
-		return nil, err
-	}
+	// No monetary accrual on signup, by design — a referrer earns only when the
+	// REFERRED user purchases a service (see referral/commissionsplit, hooked into
+	// commission.Service.RecordEarning/RecordExact). This used to accrue a notional
+	// HouseReferrerRewardKobo (₦500) here purely for signing up; removed 2026-09-18
+	// per an explicit product decision that signup itself must never be profitable.
 	_ = s.events.Record(ctx, events.Input{
 		EventType:      events.TypeSignupAttributed,
 		UserID:         referredUserID,
@@ -260,16 +267,7 @@ func (s *Service) attributeToHouseAccount(ctx context.Context, referredUserID, h
 	if err != nil {
 		return nil, err
 	}
-	if _, err := s.reward.Accrue(ctx, rewardledger.AccrueInput{
-		HouseAccountID: houseAccountID,
-		ReferredUserID: referredUserID,
-		Kind:           rewardledger.KindReferrer,
-		AmountKobo:     HouseReferrerRewardKobo,
-		IsHouse:        true,
-		IdempotencyKey: "ref:accrue:" + referredUserID,
-	}); err != nil {
-		return nil, err
-	}
+	// No monetary accrual on signup — see the comment in attributeToReferrer above.
 	_ = s.events.Record(ctx, events.Input{
 		EventType:      events.TypeAttributionToHouse,
 		UserID:         referredUserID,
