@@ -85,7 +85,7 @@ func RegisterHealthPharmacy(member *gin.RouterGroup, admin *gin.RouterGroup, poo
 	// shared commissionRecorderAdapter (marketplace_routes.go). Gated on the flag ⇒
 	// off leaves the recorder nil ⇒ silent no-op.
 	if cfg.FeatureCommissionEnabled {
-		svc.SetCommissionRecorder(commissionRecorderAdapter{svc: commission.NewService(commission.NewRepository(pool), nil)})
+		svc.SetCommissionRecorder(commissionRecorderAdapter{svc: withReferralSplit(commission.NewService(commission.NewRepository(pool), nil), pool, cfg)})
 	}
 
 	isAdmin := func(c *gin.Context) bool { return isHealthPharmacyAdmin(c, rbac) }

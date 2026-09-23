@@ -58,8 +58,12 @@ func (s *Service) ClaimCode(ctx context.Context, referredUserID, code string) (*
 		return nil, ErrSelfClaim
 	}
 
-	// Reverse the house accrual and re-accrue to the real referrer.
-	if err := s.reverseAndReaccrue(ctx, referredUserID, referrerID); err != nil {
+	// Reverse any (pre-2026-09-18) house accrual still on the books — a no-op
+	// for any attribution made after that date, since nothing accrues on
+	// signup anymore. Nothing is re-accrued to the real referrer either: a
+	// late code claim is still a signup-time event, not a purchase, and must
+	// stay just as profit-free as the original signup was.
+	if err := s.reverseAccrual(ctx, referredUserID); err != nil {
 		return nil, err
 	}
 
@@ -141,16 +145,7 @@ func (s *Service) Reassign(ctx context.Context, in ReassignInput) (*Attribution,
 		if herr != nil {
 			return nil, herr
 		}
-		if _, aerr := s.reward.Accrue(ctx, rewardledger.AccrueInput{
-			HouseAccountID: acc.ID,
-			ReferredUserID: att.ReferredUserID,
-			Kind:           rewardledger.KindReferrer,
-			AmountKobo:     HouseReferrerRewardKobo,
-			IsHouse:        true,
-			IdempotencyKey: "ref:reaccrue:" + att.ReferredUserID + ":" + in.AttributionID,
-		}); aerr != nil {
-			return nil, aerr
-		}
+		// No re-accrual — see the comment on ClaimCode above.
 		const upd = `
 			UPDATE referral_attributions
 			SET referrer_id = NULL, house_account_id = $2, attribution_type = 'global_house',
@@ -161,16 +156,7 @@ func (s *Service) Reassign(ctx context.Context, in ReassignInput) (*Attribution,
 			return nil, fmt.Errorf("referral/attribution: reassign to house: %w", err)
 		}
 	} else {
-		if _, aerr := s.reward.Accrue(ctx, rewardledger.AccrueInput{
-			BeneficiaryID:  in.ToParty,
-			ReferredUserID: att.ReferredUserID,
-			Kind:           rewardledger.KindReferrer,
-			AmountKobo:     HouseReferrerRewardKobo,
-			IsHouse:        false,
-			IdempotencyKey: "ref:reaccrue:" + att.ReferredUserID + ":" + in.AttributionID,
-		}); aerr != nil {
-			return nil, aerr
-		}
+		// No re-accrual — see the comment on ClaimCode above.
 		const upd = `
 			UPDATE referral_attributions
 			SET referrer_id = $2, house_account_id = NULL, attribution_type = 'code',
@@ -206,22 +192,6 @@ func (s *Service) Reassign(ctx context.Context, in ReassignInput) (*Attribution,
 	})
 
 	return s.GetByID(ctx, in.AttributionID)
-}
-
-// reverseAndReaccrue claws back the house accrual and credits the real referrer.
-func (s *Service) reverseAndReaccrue(ctx context.Context, referredUserID, referrerID string) error {
-	if err := s.reverseAccrual(ctx, referredUserID); err != nil {
-		return err
-	}
-	_, err := s.reward.Accrue(ctx, rewardledger.AccrueInput{
-		BeneficiaryID:  referrerID,
-		ReferredUserID: referredUserID,
-		Kind:           rewardledger.KindReferrer,
-		AmountKobo:     HouseReferrerRewardKobo,
-		IsHouse:        false,
-		IdempotencyKey: "ref:reaccrue:" + referredUserID + ":claim",
-	})
-	return err
 }
 
 // reverseAccrual claws back the original referrer-side accrual for a referred

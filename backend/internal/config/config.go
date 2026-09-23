@@ -153,14 +153,23 @@ type Config struct {
 	// Shared secret guarding /internal/referrals/* (service-to-service purchase
 	// hooks). Empty ⇒ those endpoints fail closed (503).
 	ReferralRewardsInternalSecret string
-	FeatureTierLimitsEnabled      bool
-	FeatureFXEnabled              bool
-	FeatureFXOrchestrationEnabled bool // normalized /v1 FX orchestration API
-	FeatureRealtimeEnabled        bool // SSE server-push (marketplace chat etc.)
-	PaymaxWebhookOutURL           string
-	PaymaxWebhookSecret           string
-	FeatureGroupsEnabled          bool
-	FeatureAssociationsEnabled    bool
+	// Referral purchase-commission-split: a flat 20% of Spotlight's realized
+	// commission on a purchase, paid to the referred payer's referrer, capped at
+	// referral_links.reward_cap rewarded purchases per CODE (not per referred
+	// user). Hooked into commission.Service (see referral/commissionsplit) —
+	// distinct from, and off by default same as, FeatureReferralRewardsEnabled's
+	// OLDER tiered engine above. Off by default: a brand-new money-path feature
+	// ships dark until explicitly verified in an environment, same posture as
+	// every other feature flag here.
+	FeatureReferralCommissionSplitEnabled bool
+	FeatureTierLimitsEnabled              bool
+	FeatureFXEnabled                      bool
+	FeatureFXOrchestrationEnabled         bool // normalized /v1 FX orchestration API
+	FeatureRealtimeEnabled                bool // SSE server-push (marketplace chat etc.)
+	PaymaxWebhookOutURL                   string
+	PaymaxWebhookSecret                   string
+	FeatureGroupsEnabled                  bool
+	FeatureAssociationsEnabled            bool
 	// AssocCardSigningSecret is the HMAC secret for digital membership cards.
 	// Empty outside development is a hard startup failure: the fallback is a
 	// constant compiled into this (public) repo, so anyone could forge a
@@ -700,15 +709,16 @@ func Load() Config {
 		KYCRouteDocument:          getEnv("KYC_ROUTE_DOCUMENT", "dojah,smileid"),
 		KYCRouteAML:               getEnv("KYC_ROUTE_AML", "dojah,youverify"),
 
-		FeatureWalletEnabled:          getEnvBool("FEATURE_WALLET_ENABLED", false),
-		FeatureKYCEnabled:             getEnvBool("FEATURE_KYC_ENABLED", false),
-		FeatureVirtualAccountsEnabled: getEnvBool("FEATURE_VIRTUAL_ACCOUNTS_ENABLED", false),
-		FeatureTransfersEnabled:       getEnvBool("FEATURE_TRANSFERS_ENABLED", false),
-		FeatureWalletTransfersEnabled: getEnvBool("FEATURE_WALLET_TRANSFERS_ENABLED", false),
-		FeatureBankTransfersEnabled:   getEnvBool("FEATURE_BANK_TRANSFERS_ENABLED", false),
-		FeatureReferralsEnabled:       getEnvBool("FEATURE_REFERRALS_ENABLED", false),
-		FeatureReferralRewardsEnabled: getEnvBool("FEATURE_REFERRAL_REWARDS_ENABLED", false),
-		ReferralRewardsInternalSecret: getEnv("REFERRAL_REWARDS_INTERNAL_SECRET", ""),
+		FeatureWalletEnabled:                  getEnvBool("FEATURE_WALLET_ENABLED", false),
+		FeatureKYCEnabled:                     getEnvBool("FEATURE_KYC_ENABLED", false),
+		FeatureVirtualAccountsEnabled:         getEnvBool("FEATURE_VIRTUAL_ACCOUNTS_ENABLED", false),
+		FeatureTransfersEnabled:               getEnvBool("FEATURE_TRANSFERS_ENABLED", false),
+		FeatureWalletTransfersEnabled:         getEnvBool("FEATURE_WALLET_TRANSFERS_ENABLED", false),
+		FeatureBankTransfersEnabled:           getEnvBool("FEATURE_BANK_TRANSFERS_ENABLED", false),
+		FeatureReferralsEnabled:               getEnvBool("FEATURE_REFERRALS_ENABLED", false),
+		FeatureReferralRewardsEnabled:         getEnvBool("FEATURE_REFERRAL_REWARDS_ENABLED", false),
+		ReferralRewardsInternalSecret:         getEnv("REFERRAL_REWARDS_INTERNAL_SECRET", ""),
+		FeatureReferralCommissionSplitEnabled: getEnvBool("FEATURE_REFERRAL_COMMISSION_SPLIT_ENABLED", false),
 		// Iron Rule: every money mutation must pass tier-limit checks fail-closed.
 		// Defaults TRUE so limits are enforced by default; set FEATURE_TIER_LIMITS_ENABLED=false
 		// only for explicit local/dev opt-out. (docs/go-live-readiness.md blocker #1)
