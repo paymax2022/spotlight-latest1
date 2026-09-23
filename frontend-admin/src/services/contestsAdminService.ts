@@ -96,6 +96,16 @@ export interface FullContest {
    * render it and fall back to a placeholder tile when it is empty.
    */
   bannerImageUrl?: string;
+  // Contest Promotion Phase 1/2 (parent/child hierarchy) — mirrors
+  // public.contests.parent_contest_id/partner_id/state/lga/default_promote_top_n.
+  // Optional/additive; see backend/internal/connect/voting/promotion_*.go and
+  // frontend-admin/src/services/contestPromotionService.ts for the Go-backed
+  // partner/promotion CRUD this pairs with.
+  parentContestId?: string;
+  partnerId?: string;
+  state?: string;
+  lga?: string;
+  defaultPromoteTopN?: number;
 }
 
 async function readJsonOrThrow(res: Response, label: string): Promise<Record<string, unknown>> {

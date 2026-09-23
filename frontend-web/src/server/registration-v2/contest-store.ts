@@ -131,6 +131,13 @@ export async function persistContestDefinition(
       vote_price: 0,
       rules_text: def.rulesText?.trim() || '',
       banner_image_url: def.bannerImageUrl?.trim() || '',
+      // Contest Promotion Phase 1/2 (20270304110000_contest_hierarchy_columns.sql)
+      // — additive, all nullable. Empty/zero from the form means "not set".
+      parent_contest_id: def.parentContestId?.trim() || null,
+      partner_id: def.partnerId?.trim() || null,
+      state: def.state?.trim() || null,
+      lga: def.lga?.trim() || null,
+      default_promote_top_n: def.defaultPromoteTopN && def.defaultPromoteTopN > 0 ? def.defaultPromoteTopN : null,
       contest_config: def as unknown as Record<string, unknown>,
     })
     .select('id')
@@ -168,6 +175,11 @@ export async function updateContestDefinition(
       age_min: def.legalAdultAge,
       rules_text: def.rulesText?.trim() || '',
       banner_image_url: def.bannerImageUrl?.trim() || '',
+      parent_contest_id: def.parentContestId?.trim() || null,
+      partner_id: def.partnerId?.trim() || null,
+      state: def.state?.trim() || null,
+      lga: def.lga?.trim() || null,
+      default_promote_top_n: def.defaultPromoteTopN && def.defaultPromoteTopN > 0 ? def.defaultPromoteTopN : null,
       contest_config: def as unknown as Record<string, unknown>,
     }, { count: 'exact' })
     .eq('slug', currentSlug);
@@ -240,7 +252,7 @@ export function isContestStatus(value: unknown): value is ContestStatus {
 export async function listPersistedContests(): Promise<PersistedContest[]> {
   const { data, error } = await getSupabase()
     .from('contests')
-    .select('id, slug, name, status, category, contest_type, location_scope, entry_fee_ngn, season_name, voting_enabled, rules_text, banner_image_url, contest_config, created_at')
+    .select('id, slug, name, status, category, contest_type, location_scope, entry_fee_ngn, season_name, voting_enabled, rules_text, banner_image_url, contest_config, created_at, parent_contest_id, partner_id, state, lga, default_promote_top_n')
     .order('created_at', { ascending: false });
   if (error) throw new Error(`Failed to list contests: ${error.message}`);
 
@@ -248,9 +260,19 @@ export async function listPersistedContests(): Promise<PersistedContest[]> {
     const id = row.id as string | undefined;
     const status = (isContestStatus(row.status) ? row.status : undefined) as ContestStatus | undefined;
     const cfg = (row.contest_config ?? null) as ContestRegistrationDefinition | null;
+    // The raw columns are authoritative for the hierarchy fields — contest_config
+    // is a JSON snapshot taken at last save and can go stale relative to these
+    // columns (e.g. if ever written by a path other than this file).
+    const hierarchy = {
+      parentContestId: (row.parent_contest_id as string | null) ?? undefined,
+      partnerId: (row.partner_id as string | null) ?? undefined,
+      state: (row.state as string | null) ?? undefined,
+      lga: (row.lga as string | null) ?? undefined,
+      defaultPromoteTopN: (row.default_promote_top_n as number | null) ?? undefined,
+    };
     // The id lives on the row, never in contest_config — carry it onto the
     // definition so the admin table can link to per-contest routes.
-    if (cfg && typeof cfg === 'object' && cfg.slug) return { ...cfg, id, status };
+    if (cfg && typeof cfg === 'object' && cfg.slug) return { ...cfg, ...hierarchy, id, status };
     return {
       id,
       status,
@@ -273,6 +295,7 @@ export async function listPersistedContests(): Promise<PersistedContest[]> {
       categoryQuestionSet: 'other',
       rulesText: String(row.rules_text ?? ''),
       bannerImageUrl: String(row.banner_image_url ?? ''),
+      ...hierarchy,
     } as PersistedContest;
   }).filter((c) => c.slug);
 }

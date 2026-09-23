@@ -140,6 +140,8 @@ const navItemsBase: NavItem[] = [
   { label: 'AML / NFIU', href: '/admin/connect/aml', section: 'Connect', permissions: ['connect.aml.view'] },
   { label: 'Payouts', href: '/admin/connect/payouts', section: 'Connect', permissions: ['connect.finance.view'] },
   { label: 'Voting Integrity', href: '/admin/connect/voting', section: 'Connect', permissions: ['connect.voting.view'] },
+  { label: 'Partner Organisations', href: '/admin/connect/contests/partners', section: 'Connect', permissions: ['connect.contests.partners.manage'] },
+  { label: 'Pending Promotions', href: '/admin/connect/contests/promotions', section: 'Connect', permissions: ['connect.contests.view'] },
   { label: 'RBAC', href: '/admin/connect/rbac', section: 'Connect', permissions: ['connect.rbac.view'] },
   { label: 'Gamification', href: '/admin/connect/gamification', section: 'Connect', permissions: ['connect.gamification.view'] },
   { label: 'Gift Catalog', href: '/admin/connect/catalog', section: 'Connect', permissions: ['connect.catalog.view'] },

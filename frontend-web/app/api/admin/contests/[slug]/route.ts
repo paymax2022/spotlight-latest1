@@ -88,6 +88,15 @@ function normalizeContestPayload(
     categoryQuestionSet: contestCategory,
     rulesText: String(body.rulesText || '').trim(),
     bannerImageUrl: String(body.bannerImageUrl || '').trim(),
+    // Contest Promotion Phase 1/2 — always resend the current value (same
+    // convention as every other field in this normalizer, e.g.
+    // supportsGroupEntry above) rather than undefined-preserving: this route
+    // always receives a full form resubmission, not a sparse patch.
+    parentContestId: body.parentContestId ? String(body.parentContestId).trim() : '',
+    partnerId: body.partnerId ? String(body.partnerId).trim() : '',
+    state: body.state ? String(body.state).trim() : '',
+    lga: body.lga ? String(body.lga).trim() : '',
+    defaultPromoteTopN: Number(body.defaultPromoteTopN) > 0 ? Number(body.defaultPromoteTopN) : 0,
   };
 
   // Only touch the form schema when the caller actually sends one, so a partial

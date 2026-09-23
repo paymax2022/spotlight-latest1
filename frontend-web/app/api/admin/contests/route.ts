@@ -128,6 +128,22 @@ export async function POST(request: Request) {
       bannerImageUrl: String(body?.bannerImageUrl || '').trim(),
     });
 
+    // Contest Promotion Phase 1/2 — parent/child hierarchy + geography + partner.
+    // Not part of createRegistrationContest's params (that function lives in the
+    // brownfield-protected registration/store.ts and is additive-only by
+    // convention, not by enforcement); set directly on the returned definition
+    // instead, same pattern already used a few lines below for `id`.
+    const parentContestId = body?.parentContestId ? String(body.parentContestId).trim() : undefined;
+    const partnerId = body?.partnerId ? String(body.partnerId).trim() : undefined;
+    const contestState = body?.state ? String(body.state).trim() : undefined;
+    const lga = body?.lga ? String(body.lga).trim() : undefined;
+    const defaultPromoteTopN = Number(body?.defaultPromoteTopN);
+    if (parentContestId) contest.parentContestId = parentContestId;
+    if (partnerId) contest.partnerId = partnerId;
+    if (contestState) contest.state = contestState;
+    if (lga) contest.lga = lga;
+    if (Number.isFinite(defaultPromoteTopN) && defaultPromoteTopN > 0) contest.defaultPromoteTopN = defaultPromoteTopN;
+
     // Write through to Postgres so the contest exists outside this process: the
     // web contest list, the Go voting API, and the mobile app all read the DB.
     // The in-memory write above is kept because the registration flow resolves a

@@ -18,6 +18,11 @@ import {
 } from '@/services/votePackagesService';
 import type { StageEvictionInfo } from '@/types/competitions';
 import { listContestCategories, type ContestCategoryRow } from '@/services/contestCategoriesService';
+import {
+  listPartners, createPartner, listChildContests, requestPromotion,
+  ContestPromotionError,
+  type ContestPartner, type ChildContest, type ContestPromotion,
+} from '@/services/contestPromotionService';
 
 // Real contest create/edit — POST/PATCH /api/admin/contests[/[slug]], the
 // same route SME Pitch's console already uses. Previously this page was a
@@ -98,6 +103,7 @@ function initialForm(): FormState {
     supportsGroupEntry: false, supportsSchoolEntry: false, requiresGuardianConsentForMinors: false,
     requiresMedical: false, requiresBootcampReadiness: false, auditionStates: [], applicantCategories: [],
     rulesText: '', bannerImageUrl: '',
+    parentContestId: '', partnerId: '', state: '', lga: '', defaultPromoteTopN: 0,
   };
 }
 
@@ -184,6 +190,24 @@ function CreateCompetitionContent() {
   const [savingEvictionId, setSavingEvictionId] = useState<string | null>(null);
   const [extendingEvictionId, setExtendingEvictionId] = useState<string | null>(null);
 
+  // Contest Promotion Phase 2 — partner org select (Go-backed, behind
+  // FEATURE_CONTEST_PROMOTION_ENABLED) + child-contest list + "promote top N"
+  // action. Loaded lazily and failures here never block the main contest
+  // form: with the flag off, every call below 404s and is surfaced only in
+  // its own small panel, not as a page-blocking error.
+  const [partners, setPartners] = useState<ContestPartner[]>([]);
+  const [partnersLoading, setPartnersLoading] = useState(false);
+  const [partnersError, setPartnersError] = useState<string | null>(null);
+  const [newPartnerName, setNewPartnerName] = useState('');
+  const [creatingPartner, setCreatingPartner] = useState(false);
+  const [children, setChildren] = useState<ChildContest[]>([]);
+  const [childrenLoading, setChildrenLoading] = useState(false);
+  const [childrenError, setChildrenError] = useState<string | null>(null);
+  const [promoteTopN, setPromoteTopN] = useState('2');
+  const [promoting, setPromoting] = useState(false);
+  const [promoteError, setPromoteError] = useState<string | null>(null);
+  const [promoteResult, setPromoteResult] = useState<ContestPromotion[] | null>(null);
+
   const loadRecent = useCallback(async () => {
     setRecentLoading(true);
     setRecentError(null);
@@ -217,6 +241,8 @@ function CreateCompetitionContent() {
         auditionStates: c.auditionStates ?? [], applicantCategories: c.applicantCategories ?? [],
         rulesText: c.rulesText ?? '',
         bannerImageUrl: c.bannerImageUrl ?? '',
+        parentContestId: c.parentContestId ?? '', partnerId: c.partnerId ?? '',
+        state: c.state ?? '', lga: c.lga ?? '', defaultPromoteTopN: c.defaultPromoteTopN ?? 0,
       });
       if (c.status) setStatusState(c.status as ContestPublishStatus);
       if (c.id) setContestId(c.id);
@@ -243,6 +269,83 @@ function CreateCompetitionContent() {
   }, [isEdit, editSlug]);
 
   useEffect(() => { void loadStages(); }, [loadStages]);
+
+  const loadPartners = useCallback(async () => {
+    setPartnersLoading(true);
+    setPartnersError(null);
+    try {
+      setPartners(await listPartners());
+    } catch (e) {
+      setPartnersError(e instanceof ContestPromotionError && e.status === 404
+        ? 'Contest promotion feature is not enabled on this backend (FEATURE_CONTEST_PROMOTION_ENABLED is off).'
+        : e instanceof Error ? e.message : 'Failed to load partner organisations');
+    } finally {
+      setPartnersLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { void loadPartners(); }, [loadPartners]);
+
+  const addPartner = useCallback(async () => {
+    if (!newPartnerName.trim()) return;
+    setCreatingPartner(true);
+    setPartnersError(null);
+    try {
+      const p = await createPartner({ name: newPartnerName.trim() });
+      setPartners((prev) => [p, ...prev]);
+      setForm((f) => ({ ...f, partnerId: p.id }));
+      setNewPartnerName('');
+    } catch (e) {
+      setPartnersError(e instanceof Error ? e.message : 'Failed to create partner');
+    } finally {
+      setCreatingPartner(false);
+    }
+  }, [newPartnerName]);
+
+  // Child contests of THIS contest (this contest as the parent) — only
+  // meaningful once the contest has a real id, i.e. it has been saved.
+  const loadChildren = useCallback(async () => {
+    if (!contestId) { setChildren([]); return; }
+    setChildrenLoading(true);
+    setChildrenError(null);
+    try {
+      setChildren(await listChildContests(contestId));
+    } catch (e) {
+      setChildrenError(e instanceof ContestPromotionError && e.status === 404
+        ? 'Contest promotion feature is not enabled on this backend.'
+        : e instanceof Error ? e.message : 'Failed to load child contests');
+    } finally {
+      setChildrenLoading(false);
+    }
+  }, [contestId]);
+
+  useEffect(() => { void loadChildren(); }, [loadChildren]);
+
+  useEffect(() => {
+    if (form.defaultPromoteTopN && form.defaultPromoteTopN > 0) setPromoteTopN(String(form.defaultPromoteTopN));
+  }, [form.defaultPromoteTopN]);
+
+  // "Promote top N to parent" — only valid when THIS contest is itself a
+  // child (has a parentContestId) and has its own real id. Backend enforces
+  // that the child's results are published/locked (ErrPromotionResultsNotPublished)
+  // and rejects an invalid/too-large topN (ErrPromotionTopNInvalid) — both
+  // surfaced here as-is rather than re-validated client-side, so the error
+  // text always matches what the server actually checked.
+  const doPromote = useCallback(async () => {
+    if (!contestId || !form.parentContestId) return;
+    setPromoting(true);
+    setPromoteError(null);
+    setPromoteResult(null);
+    try {
+      const n = Number(promoteTopN) || 0;
+      const result = await requestPromotion(contestId, form.parentContestId, n);
+      setPromoteResult(result);
+    } catch (e) {
+      setPromoteError(e instanceof Error ? e.message : 'Failed to request promotion');
+    } finally {
+      setPromoting(false);
+    }
+  }, [contestId, form.parentContestId, promoteTopN]);
 
   const loadPackages = useCallback(async () => {
     setPkgLoading(true);
@@ -657,6 +760,62 @@ function CreateCompetitionContent() {
           </div>
         </div>
 
+        <div style={{ padding: 12, borderRadius: 8, marginBottom: 12, background: colors.bg, border: `1px solid ${colors.border}` }}>
+          <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>Contest hierarchy (parent/child promotion)</div>
+          <p style={{ margin: '0 0 10px', fontSize: 11, color: colors.muted }}>
+            Optional. Set a parent contest to make this a &quot;child&quot; whose top contestants can later be promoted up —
+            see the &quot;Promote to parent&quot; panel below once this contest has been saved. Feature-flagged
+            (FEATURE_CONTEST_PROMOTION_ENABLED); these fields save regardless, they just have no effect while the flag is off.
+          </p>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 10 }}>
+            <div>
+              <label style={labelStyle}>Parent contest (optional)</label>
+              <select style={selectStyle} value={form.parentContestId || ''} disabled={recentLoading}
+                onChange={(e) => setForm((f) => ({ ...f, parentContestId: e.target.value }))}>
+                <option value="">— none —</option>
+                {recent.filter((r) => r.id !== contestId).map((r) => (
+                  <option key={r.id} value={r.id}>{r.name} ({r.slug})</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label style={labelStyle}>Partner organisation (optional)</label>
+              <select style={selectStyle} value={form.partnerId || ''} disabled={partnersLoading}
+                onChange={(e) => setForm((f) => ({ ...f, partnerId: e.target.value }))}>
+                <option value="">— none —</option>
+                {partners.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+              </select>
+              <div style={{ display: 'flex', gap: 6, marginTop: 6 }}>
+                <Input style={{ flex: 1 }} placeholder="New partner name…" value={newPartnerName}
+                  onChange={(e) => setNewPartnerName(e.target.value)} />
+                <Button sm disabled={creatingPartner || !newPartnerName.trim()} onClick={() => void addPartner()}>
+                  {creatingPartner ? 'Adding…' : '+ Add'}
+                </Button>
+              </div>
+              {partnersError && <div style={{ fontSize: 11, color: colors.danger, marginTop: 4 }}>{partnersError}</div>}
+            </div>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12 }}>
+            <div>
+              <label style={labelStyle}>State</label>
+              <select style={selectStyle} value={form.state || ''} onChange={(e) => setForm((f) => ({ ...f, state: e.target.value }))}>
+                <option value="">— none —</option>
+                {NIGERIA_STATES.map((s) => <option key={s} value={s}>{s}</option>)}
+              </select>
+            </div>
+            <div>
+              <label style={labelStyle}>LGA</label>
+              <Input style={{ width: '100%' }} value={form.lga || ''} placeholder="e.g. Ikeja"
+                onChange={(e) => setForm((f) => ({ ...f, lga: e.target.value }))} />
+            </div>
+            <div>
+              <label style={labelStyle}>Default promote top N</label>
+              <Input style={{ width: '100%' }} type="number" min={0} value={form.defaultPromoteTopN || 0}
+                onChange={(e) => setForm((f) => ({ ...f, defaultPromoteTopN: Number(e.target.value || 0) }))} />
+            </div>
+          </div>
+        </div>
+
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 12 }}>
           <div>
             <label style={labelStyle}>Registration fee (NGN, 0 = free)</label>
@@ -1006,6 +1165,81 @@ function CreateCompetitionContent() {
           {savingStage ? 'Adding…' : isEdit ? 'Add stage' : 'Queue stage'}
         </Button>
       </Card>
+
+      {isEdit && contestId && (
+        <Card title="Child contests & promotion" style={{ marginBottom: 16 }}>
+          {form.parentContestId && (
+            <p style={{ margin: '0 0 10px', fontSize: 12, color: colors.muted }}>
+              This contest is a child of{' '}
+              <Link href={`/admin/competitions/create?id=${encodeURIComponent(recent.find((r) => r.id === form.parentContestId)?.slug || '')}`} style={{ color: colors.primary }}>
+                {recent.find((r) => r.id === form.parentContestId)?.name || form.parentContestId}
+              </Link>.
+            </p>
+          )}
+
+          <div style={{ marginBottom: 14 }}>
+            <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6 }}>Child contests of this contest</div>
+            {childrenLoading && <p style={{ color: colors.muted, fontSize: 12 }}>Loading…</p>}
+            {childrenError && <p style={{ color: colors.danger, fontSize: 12 }}>{childrenError}</p>}
+            {!childrenLoading && !childrenError && children.length === 0 && (
+              <p style={{ color: colors.muted, fontSize: 12 }}>No child contests linked to this one yet.</p>
+            )}
+            {children.length > 0 && (
+              <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                <thead>
+                  <tr>{['Name', 'Status', 'State', 'LGA', ''].map((h) => <th key={h} style={thCell}>{h}</th>)}</tr>
+                </thead>
+                <tbody>
+                  {children.map((c) => (
+                    <tr key={c.id}>
+                      <td style={tdCell}>{c.name}</td>
+                      <td style={tdCell}><Badge text={c.status} color={colors.muted} /></td>
+                      <td style={tdCell}>{c.state || '—'}</td>
+                      <td style={tdCell}>{c.lga || '—'}</td>
+                      <td style={{ ...tdCell, textAlign: 'right' }}>
+                        <Link href={`/admin/connect/contests/promotions?childId=${encodeURIComponent(c.id)}`} style={{ color: colors.info, fontSize: 12 }}>
+                          Promotions →
+                        </Link>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+
+          {form.parentContestId ? (
+            <div style={{ padding: 12, borderRadius: 8, background: colors.bg, border: `1px solid ${colors.primary}` }}>
+              <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 8 }}>Promote top N to parent</div>
+              <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end', flexWrap: 'wrap' }}>
+                <div>
+                  <label style={labelStyle}>Top N (0 = use this contest&apos;s default)</label>
+                  <Input style={{ width: 140 }} type="number" min={0} value={promoteTopN}
+                    onChange={(e) => setPromoteTopN(e.target.value)} />
+                </div>
+                <Button variant="primary" sm disabled={promoting} onClick={() => void doPromote()}>
+                  {promoting ? 'Requesting…' : 'Request promotion'}
+                </Button>
+              </div>
+              <p style={{ margin: '8px 0 0', fontSize: 11, color: colors.muted }}>
+                Requires this contest&apos;s results to be published/locked. A SECOND, different admin must approve
+                each request before contestants actually move — see{' '}
+                <Link href="/admin/connect/contests/promotions" style={{ color: colors.primary }}>Pending Promotions</Link>.
+              </p>
+              {promoteError && <p style={{ margin: '8px 0 0', fontSize: 12, color: colors.danger }}>{promoteError}</p>}
+              {promoteResult && (
+                <div style={{ marginTop: 8, fontSize: 12, color: colors.success }}>
+                  Requested {promoteResult.length} promotion{promoteResult.length === 1 ? '' : 's'} — now pending a second admin&apos;s approval.
+                </div>
+              )}
+            </div>
+          ) : (
+            <p style={{ color: colors.muted, fontSize: 12 }}>
+              Set a parent contest above to enable promoting this contest&apos;s top contestants into it.
+            </p>
+          )}
+        </Card>
+      )}
 
       <Card title="Recently Created Contests" style={{ padding: 0, overflow: 'hidden' }}>
         {recentError && (

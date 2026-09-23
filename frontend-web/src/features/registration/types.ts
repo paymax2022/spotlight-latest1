@@ -175,6 +175,23 @@ export interface ContestRegistrationDefinition {
   // built from this schema; when absent the contest falls back to its tailored
   // code template (forms/<slug>.ts) or the capability-driven default.
   formSchema?: ContestFormSchema;
+  // ── Contest Promotion Phase 1/2 (parent/child hierarchy) ──────────────────
+  // Mirrors public.contests.parent_contest_id/partner_id/state/lga/
+  // default_promote_top_n (20270304110000_contest_hierarchy_columns.sql),
+  // which the connect_contests mirror trigger copies for the Go promotion
+  // module (backend/internal/connect/voting/promotion_*.go) to read/write.
+  // Optional and additive — a contest with none of these set behaves exactly
+  // as before this feature existed.
+  /** This contest's parent ("mother") contest id, if any — public.contests.id. */
+  parentContestId?: string;
+  /** The contest_partners.id of the org running this contest, if any. */
+  partnerId?: string;
+  /** Free-text Nigerian state (no reference table exists repo-wide for this). */
+  state?: string;
+  /** Free-text LGA within `state`. */
+  lga?: string;
+  /** Default topN used by a promotion request that omits an explicit topN. */
+  defaultPromoteTopN?: number;
 }
 
 export interface RegistrationDraft {
