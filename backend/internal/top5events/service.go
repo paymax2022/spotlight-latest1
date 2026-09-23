@@ -108,9 +108,15 @@ func (s *Service) CreateEvent(ctx context.Context, organiserID string, e Event) 
 	e.OrganiserID = organiserID
 	e.State = EventDraft
 	e.CreatedAt = time.Now()
+	// organizer_id (legacy spelling) is also written here: it predates
+	// organiser_id (20260616240000_events.sql, NOT NULL, no default) and is
+	// still live in every real environment — migrations are additive-only, so
+	// it was never dropped, and the legacy RLS policies on this table still
+	// check organizer_id = auth.uid(). Writing only organiser_id violates that
+	// NOT NULL constraint and fails every CreateEvent call outright.
 	const ins = `
-		INSERT INTO events (id, organiser_id, title, description, venue, state, category, starts_at, ends_at, fee_bps)
-		VALUES ($1,$2,$3,$4,$5,'DRAFT',$6,$7,$8,$9)`
+		INSERT INTO events (id, organiser_id, organizer_id, title, description, venue, state, category, starts_at, ends_at, fee_bps)
+		VALUES ($1,$2,$2,$3,$4,$5,'DRAFT',$6,$7,$8,$9)`
 	if _, err := s.db.Exec(ctx, ins, e.ID, e.OrganiserID, e.Title, e.Description, e.Venue, e.Category, e.StartsAt, e.EndsAt, e.FeeBps); err != nil {
 		return nil, fmt.Errorf("events: insert: %w", err)
 	}
