@@ -109,6 +109,16 @@ jobs:
           # also gates gifting/payouts/AML under the same switch (there is no
           # narrower flag), so this turns those on for staging too, not just
           # voting.
+          #
+          # FEATURE_MARKETPLACE_ENABLED gates the whole /v1/marketplace group
+          # (internal/app/marketplace_routes.go), default false in config.go.
+          # The "union of both maps" rule in the header did NOT catch it: the
+          # marketplace surface is in NEITHER map — no entry in modulegate/routes.go
+          # and none in the mobile serviceModuleKeys.ts — because the Sell tab is
+          # not module-gated. So the flag was missing while every check stayed
+          # green, and the mobile Sell tab rendered "Couldn't load your listings"
+          # off a gin 404. A new module reachable from the app needs its flag here
+          # even when it appears in no gate map.
           railway variable set \
             APP_ENV=staging \
             FEATURE_WALLET_ENABLED=true \
@@ -143,6 +153,7 @@ jobs:
             FEATURE_BANK_TRANSFERS_ENABLED=true \
             FEATURE_CONTEST_STAGE_EVICTION_ENABLED=true \
             FEATURE_CONNECT_ENABLED=true \
+            FEATURE_MARKETPLACE_ENABLED=true \
             --service "$SERVICE" --environment "$ENVIRONMENT" --project "$PROJECT" \
             --skip-deploys
 
@@ -181,7 +192,7 @@ jobs:
               "HEALTH_PHARMACY","STAYS","ESTATE","REALTOR","CROWDFUNDING","ASSOCIATION",
               "GROUPS","EVENTS","CREATORS","DISPUTES","RATINGS",
               "UTILITY_PAYMENTS","HEALTH_LAB","HEALTH_VET","AICARE","BANK_TRANSFERS",
-              "CONTEST_STAGE_EVICTION","CONNECT",
+              "CONTEST_STAGE_EVICTION","CONNECT","MARKETPLACE",
             ].map((s) => `FEATURE_${s}_ENABLED`);
             let vars;
             try {
