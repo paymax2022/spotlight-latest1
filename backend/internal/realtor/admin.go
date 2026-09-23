@@ -152,6 +152,42 @@ func (h *AdminHandler) Escrow(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": escrow})
 }
 
+// ResolveEscrow is the money-moving admin endpoint that closes PROPMGMT-002:
+// until this existed, money paid into realtor_escrow_deposits had no way to
+// ever come back out. Release/forfeiture is inspection-gated — it requires a
+// submitted realtor_move_outs record for the lease — and every branch is
+// audited to realtor_admin_audit_log by the repository method.
+func (h *AdminHandler) ResolveEscrow(c *gin.Context) {
+	id := c.Param("id")
+	var body struct {
+		Decision string `json:"decision"`
+		Note     string `json:"note"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	result, err := h.repo.ResolveEscrow(c.Request.Context(), id, body.Decision, body.Note, adminID(c))
+	if err != nil {
+		switch {
+		case errors.Is(err, ErrNotFound):
+			c.JSON(http.StatusNotFound, gin.H{"error": "escrow deposit not found"})
+		case errors.Is(err, ErrInvalidEscrowDecision):
+			c.JSON(http.StatusBadRequest, gin.H{"error": ErrInvalidEscrowDecision.Error()})
+		case errors.Is(err, ErrEscrowAlreadyResolved):
+			c.JSON(http.StatusConflict, gin.H{"error": ErrEscrowAlreadyResolved.Error()})
+		case errors.Is(err, ErrMoveOutRequired):
+			c.JSON(http.StatusUnprocessableEntity, gin.H{"error": ErrMoveOutRequired.Error()})
+		case errors.Is(err, ErrLedgerNotConfigured):
+			c.JSON(http.StatusInternalServerError, gin.H{"error": ErrLedgerNotConfigured.Error()})
+		default:
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		}
+		return
+	}
+	c.JSON(http.StatusOK, result)
+}
+
 // ── helpers ───────────────────────────────────────────────────────────────────
 
 func adminPage(c *gin.Context, def int) (int, int) {

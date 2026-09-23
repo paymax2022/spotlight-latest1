@@ -463,11 +463,32 @@ export async function updateProfile(input: ProfileUpdate): Promise<AcademyProfil
   // PUT /academy/profile expects UpsertProfileRequest {role, class_id, display_name,
   // trade_track, stream, ...}. Map the mobile field names → backend; role is REQUIRED so
   // default to the caller's current role. Response is a snake_case Profile row → mapProfile.
-  // TODO(shape): class_id is a UUID server-side but the screen holds a class CODE, and
-  // curriculumVersion/onboardingComplete have no server field.
+  // class_id is a UUID server-side (academy_profiles.class_id uuid) but every caller
+  // (e.g. the onboarding class-select screen) holds a class CODE like "SSS2" — sending
+  // that straight through used to fail the PUT with an invalid-uuid error server-side,
+  // silently breaking "Start learning" on the class-select step. Resolve code → id via
+  // getClasses() first. onboardingComplete/curriculumVersion still have no server field
+  // (TODO(product): add one) — dropped here rather than sent to a field that ignores them.
   const body: Record<string, unknown> = { role: profile.role };
   if (input.displayName !== undefined) body.display_name = input.displayName;
-  if (input.classCode !== undefined) body.class_id = input.classCode;
+  if (input.dob !== undefined) {
+    // The age/KYC onboarding step (age.tsx) mutates {dob} on its own — this branch
+    // used to have no dob/is_minor handling at all, so the live path silently
+    // dropped the whole step: the mutation "succeeded" and navigation proceeded,
+    // but nothing was ever persisted server-side. Mirrors the mock branch's age math.
+    body.dob = input.dob;
+    const age = Math.floor((Date.now() - new Date(input.dob).getTime()) / (365.25 * 86_400_000));
+    body.is_minor = age < 18;
+  }
+  if (input.classCode !== undefined) {
+    const classes = await getClasses();
+    const match = classes.find((c) => c.code === input.classCode);
+    if (match) {
+      body.class_id = match.id;
+    } else {
+      console.warn(`[academy] updateProfile: no class found for code "${input.classCode}" — omitting class_id`);
+    }
+  }
   if (input.stream !== undefined) body.stream = input.stream;
   const res = await api.put(`${B}/profile`, body);
   return mapProfile(unwrap<any>(res));

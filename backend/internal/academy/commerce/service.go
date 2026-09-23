@@ -400,6 +400,13 @@ func (s *Service) GenerateBatch(ctx context.Context, adminID string, req Generat
 	if req.Count <= 0 || req.Count > 5000 {
 		return nil, ErrInvalidAmount
 	}
+	// PinDigits reaches randomPIN's make([]byte, n) unvalidated otherwise — an
+	// unbounded value from the request body would let a caller force a huge
+	// allocation (x req.Count, since this runs once per card). 0 keeps
+	// randomPIN's own "default 6" fallback; anything else must be a real PIN length.
+	if req.PinDigits != 0 && (req.PinDigits < 4 || req.PinDigits > 10) {
+		return nil, ErrInvalidAmount
+	}
 	if req.GrantKind != "plan" && req.GrantKind != "bundle" {
 		return nil, ErrInvalidAmount
 	}

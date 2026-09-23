@@ -295,7 +295,9 @@ func (s *Service) GetAuditLog(ctx context.Context, adminID, action, orgIDOverrid
 		var e AuditLogEntry
 		var meta []byte
 		if err := rows.Scan(&e.ID, &e.ActorID, &e.Action, &e.SubjectType, &e.SubjectID, &meta, &e.CreatedAt, &e.ActorName); err != nil {
-			continue
+			// A scan failure here used to be swallowed, which silently dropped the
+			// row from the caller's list; surface it instead (matches GetEvents).
+			return nil, fmt.Errorf("association: audit log: scan: %w", err)
 		}
 		e.At = e.CreatedAt
 		e.Summary = auditActionLabel(e.Action)

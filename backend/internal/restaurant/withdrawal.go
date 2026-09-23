@@ -537,6 +537,74 @@ func (s *Service) GetWithdrawal(ctx context.Context, ownerID, id string) (*Withd
 	return w, nil
 }
 
+// ── Admin reads ──────────────────────────────────────────────────────────────
+
+// validWithdrawalStatusFilter mirrors the CHECK constraint on
+// restaurant_withdrawals.status — used to reject a bad admin filter value
+// rather than silently matching zero rows.
+func validWithdrawalStatusFilter(status string) bool {
+	switch status {
+	case "", WithdrawalStatusPending, WithdrawalStatusProcessing, WithdrawalStatusPaid,
+		WithdrawalStatusFailed, WithdrawalStatusReversed:
+		return true
+	default:
+		return false
+	}
+}
+
+// AdminListWithdrawals returns withdrawal requests across ALL merchants/riders,
+// optionally filtered by status, newest first. Unlike ListWithdrawals this is NOT
+// owner-scoped — it backs the platform ops console (restaurant.admin.withdrawals),
+// which is the security boundary, not ownership.
+func (s *Service) AdminListWithdrawals(ctx context.Context, status string, limit int) ([]Withdrawal, error) {
+	if limit <= 0 || limit > 200 {
+		limit = 50
+	}
+	if !validWithdrawalStatusFilter(status) {
+		return nil, fmt.Errorf("restaurant: invalid status filter %q", status)
+	}
+	const q = `
+		SELECT id, user_id, bank_account_id, amount_kobo, currency, status, ledger_ref,
+		       provider_reference, failure_reason, idempotency_key, created_at, updated_at
+		FROM restaurant_withdrawals
+		WHERE ($1 = '' OR status = $1)
+		ORDER BY created_at DESC LIMIT $2`
+	rows, err := s.db.Query(ctx, q, status, limit)
+	if err != nil {
+		return nil, fmt.Errorf("restaurant: admin list withdrawals: %w", err)
+	}
+	defer rows.Close()
+	out := []Withdrawal{}
+	for rows.Next() {
+		w, err := s.scanWithdrawal(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, *w)
+	}
+	return out, rows.Err()
+}
+
+// AdminGetWithdrawal returns a single withdrawal by id, unscoped by owner (ops
+// console detail view / settle-failure lookup). See AdminListWithdrawals.
+func (s *Service) AdminGetWithdrawal(ctx context.Context, id string) (*Withdrawal, error) {
+	if _, err := uuid.Parse(id); err != nil {
+		return nil, ErrWithdrawNotFound
+	}
+	const q = `
+		SELECT id, user_id, bank_account_id, amount_kobo, currency, status, ledger_ref,
+		       provider_reference, failure_reason, idempotency_key, created_at, updated_at
+		FROM restaurant_withdrawals WHERE id=$1`
+	w, err := s.scanWithdrawal(s.db.QueryRow(ctx, q, id))
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrWithdrawNotFound
+		}
+		return nil, err
+	}
+	return w, nil
+}
+
 // getWithdrawalByIdem resolves a withdrawal by its idempotency key (idempotent replay).
 // Scoped to the requesting merchant: Idempotency-Keys are client-chosen, so an
 // unscoped lookup would hand a merchant another merchant's withdrawal record (amount,

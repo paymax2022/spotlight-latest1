@@ -11,6 +11,7 @@ import StateView from '@/components/StateView';
 import ScreenHeader from '@/components/ScreenHeader';
 import StatusBadge from '@/features/mobility/components/StatusBadge';
 import MobilityEdgeState from '@/features/mobility/components/MobilityEdgeState';
+import { errKind } from '@/features/mobility/utils/errKind';
 import { useDeliveries } from '@/features/mobility/hooks/useLogistics';
 import { LOGISTICS_ENABLED, DELIVERY_STATUS_LABEL } from '@/features/mobility/constants/modes.constants';
 import { formatNairaWhole } from '@/features/mobility/utils/mobilityFormatters';
@@ -66,7 +67,7 @@ export default function TrackingScreen() {
       {deliveries.isLoading ? (
         <StateView kind="loading" message="Loading deliveries…" />
       ) : deliveries.isError ? (
-        <MobilityEdgeState kind="offline" actionLabel="Retry" onAction={() => deliveries.refetch()} />
+        <MobilityEdgeState kind={errKind(deliveries.error)} actionLabel="Retry" onAction={() => deliveries.refetch()} />
       ) : list.length === 0 ? (
         <MobilityEdgeState kind="empty" title="No deliveries here" message="Nothing matches this filter yet." />
       ) : (

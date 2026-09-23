@@ -29,7 +29,7 @@ export async function verifyPaystackTransaction(
 ): Promise<PaystackVerificationResult> {
   const secretKey = getRequiredEnv('PAYSTACK_SECRET_KEY');
 
-  const response = await fetch(`https://api.paystack.co/transaction/verify/${reference}`, {
+  const response = await fetch(`https://api.paystack.co/transaction/verify/${encodeURIComponent(reference)}`, {
     method: 'GET',
     headers: {
       Authorization: `Bearer ${secretKey}`,

@@ -59,10 +59,11 @@ function authHeaders(): Record<string, string> {
 }
 const delay = (ms = 240) => new Promise((r) => setTimeout(r, ms));
 
-// Verified against backend/internal/health/lab/{handler,admin}.go: the entire
-// admin surface is 4 routes — list orders, custody audit, list escalations
-// (all reads), and POST /tests/:id/deactivate. None of the 6 writes below have
-// a matching route; each says so on its own throw. Their old fixture branches
+// Verified against backend/internal/health/lab/{handler,admin}.go: the admin
+// surface is 5 routes — dashboard, list orders, custody audit (+ its
+// sample_id filter), list escalations (all reads), and
+// POST /tests/:id/deactivate. None of the 6 writes below have a matching
+// route; each says so on its own throw. Their old fixture branches
 // were all prefixed "Fixture — nothing was saved" (an honest disclaimer, not a
 // fabricated claim), but several then went on to say things like "KYC + AML
 // gate (HL-10) passed" — wording docs/audit/ADMIN_SIMULATED_WRITES.md's
@@ -147,9 +148,65 @@ const DASHBOARD: LabDashboard = {
     { id: 'la6', kind: 'payout_held', label: 'Lab payout held — KYC tier insufficient (HL-10)', ref: 'lpay_8810', created_at: iso(7.5) },
   ],
 };
+/** Raw shape of GET /api/health/lab/admin/dashboard's `data`
+ *  (healthlab.AdminDashboard, backend/internal/health/lab/admin_model.go). */
+interface RawAdminDashboard {
+  total_orders: number;
+  orders_by_state: Record<string, number>;
+  platform_revenue_kobo_week: number;
+  total_labs: number;
+}
+
 export async function getLabDashboard(): Promise<LabDashboard> {
   if (USE_MOCK) { await delay(); return { ...DASHBOARD, order_mix: [...DASHBOARD.order_mix], tat_trend: [...DASHBOARD.tat_trend], activity: [...DASHBOARD.activity] }; }
-  return getJson<LabDashboard>('/dashboard');
+  const raw = await getJson<RawAdminDashboard>('/dashboard');
+  return {
+    generated_at: new Date().toISOString(),
+    // Real, this-pass-scoped fields — see admin_model.go's AdminDashboard doc
+    // comment for exactly what each one is and, for platform revenue, why it
+    // is a direct read of commission_earnings rather than a recomputed %.
+    orders_total: raw.total_orders,
+    orders_by_state: raw.orders_by_state,
+    platform_revenue_kobo_week: raw.platform_revenue_kobo_week,
+    labs_active: raw.total_labs,
+    // Everything below this line is NOT computed by the real backend yet —
+    // this pass scoped only the order-state aggregate, trailing-7-day
+    // platform revenue, and APPROVED-lab count (see the dashboard page's
+    // DisclosureNote for the same list). Left at 0/empty rather than
+    // fabricated, matching Pharmacy's (PHARMACY-001) and Telemedicine's
+    // analytics-endpoint honesty precedent.
+    orders_today: 0,
+    orders_30d: 0,
+    gmv_today_kobo: 0,
+    gmv_30d_kobo: 0,
+    net_revenue_30d_kobo: 0,
+    take_rate: 0,
+    avg_order_value_kobo: 0,
+    tat_median_hours: 0,
+    tat_target_hours: 0,
+    tat_breaches: 0,
+    critical_results_open: 0,
+    critical_results_30d: 0,
+    escalation_sla_minutes: 0,
+    escalation_sla_target_minutes: 0,
+    custody_breaks_open: 0,
+    custody_breaks_30d: 0,
+    samples_in_transit: 0,
+    recollections_required: 0,
+    mlscn_pending_review: 0,
+    catalog_pending_governance: 0,
+    results_pending_release: 0,
+    results_released_30d: 0,
+    payouts_kyc_hold: 0,
+    held_balance_kobo: 0,
+    released_30d_kobo: 0,
+    refunded_30d_kobo: 0,
+    labs_suspended: 0,
+    phlebotomists_active: 0,
+    order_mix: [],
+    tat_trend: [],
+    activity: [],
+  };
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -234,6 +291,80 @@ const CUSTODY: CustodySample[] = [
   { id: 'smp_6622', order_ref: 'lab_9926', patient_masked: 'pt Bola•••', test_summary: 'Lipid Profile (recollect)', lab_masked: 'Bridge Clinical PH•••', phlebotomist_masked: 'Phleb. D. Eze•••', status: 'recollect_required', chain_intact: false, break_reason: 'Recollection scheduled after upstream custody break on smp_6620 (HL-6).', collected_at: iso(8), updated_at: iso(7) },
   { id: 'smp_6630', order_ref: 'lab_9900', patient_masked: 'pt Ngozi•••', test_summary: 'Malaria Parasite', lab_masked: 'Wellness Path Enugu•••', phlebotomist_masked: 'Phleb. E. Obi•••', status: 'collected', chain_intact: true, break_reason: null, collected_at: iso(1.5), updated_at: iso(1.5) },
 ];
+/** Raw shape of one row in GET /api/health/lab/admin/custody-audit's `data`
+ *  (healthlab.Service.AdminCustodyAudit, backend/internal/health/lab/admin.go).
+ *  One row is one custody EVENT, not one sample — a sample has many. */
+interface RawCustodyEvent {
+  id: string;
+  sample_id: string;
+  order_id: string;
+  lab_provider_id: string;
+  patient_id: string;
+  from_state: string;
+  to_state: string; // COLLECTED | IN_CUSTODY | HANDED_OVER | ACCESSIONED | BREACHED | RECOLLECT_REQUIRED
+  actor_id: string;
+  from_custodian: string | null;
+  to_custodian: string | null;
+  note: string;
+  occurred_at: string;
+}
+
+/** NDPA masking (HL-8) for a raw uuid the backend never resolves to a display
+ * name — mirrors healthPharmacyAdminService.ts's maskPersonId. */
+function maskId(id: string): string {
+  return id ? `${id.slice(0, 8)}…` : 'Unknown';
+}
+
+/** Reconciliation note (custody page, this pass): the admin frontend has
+ * always called GET /custody (list, one row per SAMPLE) and GET /custody/:id
+ * (one sample's full event history) — routes that never existed. The real
+ * backend has exactly one custody read, GET /custody-audit, which is a flat
+ * EVENT stream (many rows per sample), not a per-sample list. Rather than
+ * inventing a second backend subsystem to produce a pre-aggregated
+ * per-sample view, this reduces the real event stream into that shape
+ * client-side: group events by sample_id, and derive each sample's current
+ * status/chain_intact/break_reason from its own real events (latest to_state
+ * wins; chain_intact is false iff any event's to_state is BREACHED or
+ * RECOLLECT_REQUIRED). test_summary and phlebotomist_masked have no honest
+ * source in this query (no lab_tests join, and actor_id is whoever performed
+ * the LATEST event, not necessarily a phlebotomist) — left as an explicit
+ * placeholder rather than fabricated, disclosed inline.
+ */
+function sampleFromEvents(sampleID: string, events: RawCustodyEvent[]): CustodySample {
+  // events are already ordered newest-first (ORDER BY occurred_at DESC in admin.go).
+  const latest = events[0];
+  const oldest = events[events.length - 1];
+  const breachEvent = events.find((e) => e.to_state === 'BREACHED' || e.to_state === 'RECOLLECT_REQUIRED');
+  const chainIntact = !breachEvent;
+  return {
+    id: sampleID,
+    order_ref: latest.order_id,
+    patient_masked: `pt ${maskId(latest.patient_id)}`,
+    // No lab_tests join in AdminCustodyAudit — not fabricated.
+    test_summary: '— (not computed by this read)',
+    lab_masked: maskId(latest.lab_provider_id),
+    // actor_id is the event's actor, not a confirmed phlebotomist-role
+    // credential — labelled as such rather than asserting a role the data
+    // doesn't actually establish.
+    phlebotomist_masked: `actor ${maskId(latest.actor_id)}`,
+    status: latest.to_state.toLowerCase() as CustodySample['status'],
+    chain_intact: chainIntact,
+    break_reason: chainIntact ? null : (breachEvent?.note || null),
+    collected_at: oldest.occurred_at,
+    updated_at: latest.occurred_at,
+  };
+}
+
+function groupBySample(events: RawCustodyEvent[]): Map<string, RawCustodyEvent[]> {
+  const byId = new Map<string, RawCustodyEvent[]>();
+  for (const e of events) {
+    const arr = byId.get(e.sample_id);
+    if (arr) arr.push(e);
+    else byId.set(e.sample_id, [e]);
+  }
+  return byId;
+}
+
 export async function listCustody(opts?: { status?: string; chain?: string; q?: string }): Promise<CustodySample[]> {
   if (USE_MOCK) {
     await delay();
@@ -247,11 +378,19 @@ export async function listCustody(opts?: { status?: string; chain?: string; q?: 
     }
     return rows;
   }
-  const qs = new URLSearchParams();
-  if (opts?.status) qs.set('status', opts.status);
-  if (opts?.chain) qs.set('chain', opts.chain);
-  if (opts?.q) qs.set('q', opts.q);
-  return getJson<CustodySample[]>(`/custody${qs.toString() ? `?${qs}` : ''}`);
+  // See sampleFromEvents' doc comment: /custody never existed on the backend;
+  // this calls the real /custody-audit route (an event stream) and reduces
+  // it to one row per sample, the shape this page has always rendered.
+  const raw = await getJson<RawCustodyEvent[]>('/custody-audit');
+  let rows = Array.from(groupBySample(raw ?? []).entries()).map(([sampleID, events]) => sampleFromEvents(sampleID, events));
+  if (opts?.status) rows = rows.filter((r) => r.status === opts.status);
+  if (opts?.chain === 'broken') rows = rows.filter((r) => !r.chain_intact);
+  if (opts?.chain === 'intact') rows = rows.filter((r) => r.chain_intact);
+  if (opts?.q) {
+    const q = opts.q.toLowerCase();
+    rows = rows.filter((r) => r.patient_masked.toLowerCase().includes(q) || r.lab_masked.toLowerCase().includes(q) || r.order_ref.includes(q) || r.id.includes(q));
+  }
+  return rows;
 }
 export async function getCustodyChain(id: string): Promise<CustodyChain> {
   if (USE_MOCK) {
@@ -271,7 +410,35 @@ export async function getCustodyChain(id: string): Promise<CustodyChain> {
       ],
     };
   }
-  return getJson<CustodyChain>(`/custody/${id}`);
+  // GET /custody/:id never existed either. AdminCustodyAudit's new sample_id
+  // parameter (admin.go) is exactly this read — every event for one sample —
+  // added as a thin filter on the existing query rather than a new custody
+  // subsystem. See handler.go's AdminCustodyAudit doc comment.
+  const raw = await getJson<RawCustodyEvent[]>(`/custody-audit?sample_id=${encodeURIComponent(id)}`);
+  const events = raw ?? [];
+  if (events.length === 0) {
+    throw new Error(`No custody events found for sample ${id}`);
+  }
+  const base = sampleFromEvents(id, events);
+  // events are newest-first from the backend; the chain narrative reads
+  // oldest-first, so reverse for display.
+  const chrono = [...events].reverse();
+  return {
+    ...base,
+    events: chrono.map((e) => ({
+      id: e.id,
+      step: e.to_state,
+      label: e.note || `${e.from_state || '(start)'} → ${e.to_state}`,
+      actor_masked: `actor ${maskId(e.actor_id)}`,
+      // No location/temperature column on lab_custody_events — not computed
+      // by this read, left honest rather than fabricated.
+      location: '— (not computed)',
+      temperature_c: null,
+      seal_intact: e.to_state !== 'BREACHED',
+      audit_id: e.id,
+      at: e.occurred_at,
+    })),
+  };
 }
 export async function flagCustodyBreak(id: string, reason: string): Promise<CustodyBreakResult> {
   // AdminCustodyAudit (GET /custody-audit) is read-only; no break-flagging

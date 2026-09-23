@@ -111,8 +111,15 @@ func (s *PotDisbursementService) Disburse(ctx context.Context, actorID, idemKey,
 
 	// MarkDisbursed flips state + runs the payout atomically, idempotent by idemKey.
 	if err := s.pot.MarkDisbursed(ctx, competitionID, idemKey, func(ctx context.Context) error {
-		// CREDIT the winner's wallet from the pot standing account.
-		return s.ledger.Credit(ctx, winnerUserID, ref, idemKey, potAcct, total)
+		// CREDIT the winner's wallet from the pot standing account. A resumed
+		// disburse (state flip failed/crashed after the credit posted on a
+		// prior attempt) replays with the same idemKey — treat the ledger's
+		// own replay signal as success rather than an error, same fix as
+		// SupportService.Contribute (see isLedgerReplay).
+		if err := s.ledger.Credit(ctx, winnerUserID, ref, idemKey, potAcct, total); err != nil && !isLedgerReplay(err) {
+			return err
+		}
+		return nil
 	}); err != nil {
 		return err
 	}

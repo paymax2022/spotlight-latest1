@@ -90,7 +90,16 @@ export const FIELD_CATALOG: CatalogField[] = [
   { key: 'media.introVideo', label: 'Short intro / audition video', type: 'file', step: 'category_specific', group: 'Media uploads', accept: '.mp4,.mov' },
   { key: 'media.audioFile', label: 'Audio file', type: 'file', step: 'category_specific', group: 'Media uploads', accept: '.mp3,.wav,.m4a' },
   { key: 'media.sampleUpload', label: 'Sample work upload', type: 'file', step: 'category_specific', group: 'Media uploads', accept: '.mp4,.mov,.pdf' },
-  { key: 'media.rightsConfirmed', label: 'I confirm I have rights to uploaded materials', type: 'checkbox', step: 'category_specific', group: 'Media uploads' },
+  // SEC-010: always-required, non-conditional consent (NOT minorOnly — applies
+  // to every applicant regardless of age). `defaultRequired`, not `required`:
+  // this is a CatalogField (admin-catalog entry), and `required` only exists on
+  // the already-built RegistrationField that catalogFieldToRegistrationField()
+  // produces from it. `defaultRequired` is what that mapper reads (falling back
+  // to it whenever the admin hasn't set a requiredOverride for this key) to
+  // decide the built field's `required` flag — the same property guardian
+  // consent fields (e.g. guardian.consentGranted above) use for the identical
+  // "must be checked to submit" behaviour.
+  { key: 'media.rightsConfirmed', label: 'I confirm I have rights to uploaded materials', type: 'checkbox', step: 'category_specific', group: 'Media uploads', defaultRequired: true },
 
   { key: 'category.innovationCategory', label: 'Innovation category', type: 'select', step: 'category_specific', group: 'Project / STEM', options: ['AI', 'Robotics', 'Renewable energy', 'Agritech', 'Healthtech', 'Fintech', 'Edtech', 'Climate innovation', 'Hardware', 'Software', 'Engineering', 'Science research', 'Social innovation', 'Other'] },
   { key: 'category.projectTitle', label: 'Project title', type: 'text', step: 'category_specific', group: 'Project / STEM' },
@@ -177,7 +186,9 @@ export const FIELD_CATALOG: CatalogField[] = [
 
   { key: 'publicProfile.profilePhoto', label: 'Public profile photo', type: 'file', step: 'category_specific', group: 'Public voting profile', accept: '.jpg,.jpeg,.png,.webp' },
   { key: 'publicProfile.talentSummary', label: 'Public talent summary', type: 'textarea', step: 'category_specific', group: 'Public voting profile' },
-  { key: 'publicProfile.publicVotingConsent', label: 'I consent to public voting visibility', type: 'checkbox', step: 'category_specific', group: 'Public voting profile' },
+  // SEC-010: same reasoning as media.rightsConfirmed above — always-required
+  // photo/likeness public-use consent, gated via defaultRequired.
+  { key: 'publicProfile.publicVotingConsent', label: 'I consent to public voting visibility', type: 'checkbox', step: 'category_specific', group: 'Public voting profile', defaultRequired: true },
 ];
 
 const CATALOG_BY_KEY: Record<string, CatalogField> = FIELD_CATALOG.reduce((acc, field) => {
@@ -223,7 +234,7 @@ export const CATEGORY_FIELD_PRESETS: Record<string, string[]> = {
   general_reality_show: [
     'personal.firstName', 'personal.lastName', 'personal.dateOfBirth', 'personal.gender', 'personal.stateOfResidence', 'personal.city', 'personal.primaryPhone',
     'talent.primarySkill', 'talent.strengths', 'talent.uniqueStory',
-    'identity.idType', 'identity.idUpload', 'media.profilePhoto',
+    'identity.idType', 'identity.idUpload', 'media.profilePhoto', 'media.rightsConfirmed',
     'category.housemateReadiness', 'category.dailyFilmingConsent', 'category.uniqueStory',
     'social.instagram', 'social.willingToInviteVoting',
     'bootcamp.availableFullPeriod', 'bootcamp.canTravel',
@@ -240,7 +251,7 @@ export const CATEGORY_FIELD_PRESETS: Record<string, string[]> = {
     'category.innovationCategory', 'category.projectTitle', 'category.problemStatement', 'category.solutionSummary', 'category.currentStage', 'category.pitchDeckUpload', 'category.prototypeVideo', 'category.projectRepoLink', 'category.openToInvestorReview',
     'social.linkedin', 'social.website',
     'compliance.ownWork', 'compliance.codeOfConductAgreement',
-    'publicProfile.publicVotingConsent',
+    'media.rightsConfirmed', 'publicProfile.publicVotingConsent',
   ],
   sme_pitch: [
     'personal.firstName', 'personal.lastName', 'personal.dateOfBirth', 'personal.gender', 'personal.stateOfResidence', 'personal.city', 'personal.primaryPhone',
@@ -249,22 +260,35 @@ export const CATEGORY_FIELD_PRESETS: Record<string, string[]> = {
     'category.businessName', 'category.businessSector', 'category.businessStage', 'category.productDescription', 'category.problemSolved', 'category.revenueModel', 'category.tractionMetrics', 'category.fundingNeeded', 'category.pitchDeck',
     'social.website', 'social.instagram', 'social.linkedin',
     'compliance.registeredBusiness', 'compliance.ownWork', 'compliance.codeOfConductAgreement',
-    'audition.format', 'publicProfile.publicVotingConsent',
+    'audition.format', 'media.rightsConfirmed', 'publicProfile.publicVotingConsent',
   ],
   open_mic: [
     'personal.firstName', 'personal.lastName', 'personal.stageName', 'personal.dateOfBirth', 'personal.gender', 'personal.stateOfResidence', 'personal.city', 'personal.primaryPhone',
     'talent.primarySkill', 'talent.strengths',
-    'identity.idType', 'identity.idUpload', 'media.profilePhoto',
+    'identity.idType', 'identity.idUpload', 'media.profilePhoto', 'media.rightsConfirmed',
     'category.performanceType', 'category.genre', 'category.durationMinutes', 'category.audioUpload', 'category.sampleLink', 'category.ownsRights',
     'social.instagram', 'social.tiktok', 'social.willingToInviteVoting',
     'compliance.codeOfConductAgreement',
     'payment.feeAmount', 'payment.method',
     'audition.format', 'publicProfile.publicVotingConsent',
   ],
+  // SEC-010: publicProfile.publicVotingConsent was missing here (the only
+  // category preset missing it) — fixed. This preset seeds a NEW
+  // schema-driven contest an admin creates with category=film_production via
+  // the admin console (RegistrationContestManager -> from-schema.ts render
+  // path); it is UNRELATED to the hand-tailored slug 'film-academy' template
+  // (forms/film-academy.ts), which deliberately has no public-voting step at
+  // all ("Does NOT support public voting" per that file's own header comment)
+  // and is left untouched by this batch — adding a public-voting consent
+  // checkbox to a bootcamp that never asks for public-voting consent anywhere
+  // else in that form would be confusing UI, not a fix. A film_production
+  // contest created through THIS preset, however, is admin-configurable and
+  // can have voting turned on, so it needs the same consent coverage as every
+  // other preset.
   film_production: [
     'personal.firstName', 'personal.lastName', 'personal.dateOfBirth', 'personal.gender', 'personal.stateOfResidence', 'personal.city', 'personal.primaryPhone',
     'talent.filmExperience', 'talent.careerGoal',
-    'identity.idType', 'identity.idUpload', 'media.profilePhoto', 'media.sampleUpload',
+    'identity.idType', 'identity.idUpload', 'media.profilePhoto', 'media.sampleUpload', 'media.rightsConfirmed',
     'category.filmRole', 'category.productionExperience', 'category.portfolioLink', 'category.longHoursConsent',
     'social.instagram', 'social.website',
     'bootcamp.availableFullPeriod', 'bootcamp.canTravel',
@@ -272,13 +296,13 @@ export const CATEGORY_FIELD_PRESETS: Record<string, string[]> = {
     'emergency.fullName', 'emergency.phone', 'emergency.state', 'emergency.city',
     'compliance.codeOfConductAgreement', 'compliance.backgroundCheckAgreement',
     'payment.feeAmount', 'payment.method',
-    'audition.format',
+    'audition.format', 'publicProfile.publicVotingConsent',
   ],
 };
 
 const GENERAL_PRESET: string[] = [
   'personal.firstName', 'personal.lastName', 'personal.dateOfBirth', 'personal.gender', 'personal.stateOfResidence', 'personal.city', 'personal.primaryPhone',
-  'identity.idType', 'identity.idUpload', 'media.profilePhoto',
+  'identity.idType', 'identity.idUpload', 'media.profilePhoto', 'media.rightsConfirmed',
   'social.instagram',
   'compliance.codeOfConductAgreement',
   'publicProfile.publicVotingConsent',

@@ -25,6 +25,16 @@ type DbRow = Record<string, unknown>;
  */
 const CUSTOMER_ACCOUNT_TYPES = ['wallet', 'user_wallet', 'group_wallet'] as const;
 
+// WAL-013: rolling window for the "volume" and "active wallets" stats.
+// 30 days is a conventional default for a recent-activity figure on an
+// admin dashboard — the route owns this choice; the aggregate RPC just
+// takes a window_start it's given. "Active wallet" = at least one ledger
+// movement inside this same window, reusing the volume window rather than
+// inventing a second, differently-scoped definition of "active" — there is
+// no pre-existing notion of an active wallet anywhere else in the codebase
+// (backend/internal/finance included) to align with instead.
+const STATS_WINDOW_DAYS = 30;
+
 // `any` here mirrors the original page's own `filter: (query: any) => any`
 // signature — the Supabase query builder's fluent type is not worth chaining
 // through a helper.
@@ -54,7 +64,25 @@ export async function GET(request: Request) {
     });
     const platformAccountIds = platformAccounts.rows.map((row) => row.id);
 
-    const [wallets, ledgerEntriesRaw, kycProfiles, userProfiles, virtualAccounts, auditEventsFromAudit] = await Promise.all([
+    // WAL-013: the four `stats` figures below (total balance, credit/debit
+    // volume, active wallets) MUST NOT be derived from the capped row lists
+    // fetched below — those stay `limit: 50` for the admin table views, but
+    // summing only a size-50 page (as this route used to) silently
+    // understates every figure once the platform has more than 50 active
+    // wallets or ledger entries. Instead they come from a real, unbounded
+    // SQL aggregate — see admin_payments_finance_stats() in
+    // supabase/migrations/20270216000000_admin_payments_finance_stats.sql —
+    // computed server-side in Postgres, reusing the exact same
+    // CUSTOMER_ACCOUNT_TYPES / platformAccountIds exclusion as the rest of
+    // this route.
+    const windowStart = new Date(Date.now() - STATS_WINDOW_DAYS * 24 * 60 * 60 * 1000).toISOString();
+    const statsRpc = createAdminClient().rpc('admin_payments_finance_stats', {
+      p_customer_account_types: [...CUSTOMER_ACCOUNT_TYPES],
+      p_excluded_account_ids: platformAccountIds,
+      p_window_start: windowStart,
+    });
+
+    const [wallets, ledgerEntriesRaw, kycProfiles, userProfiles, virtualAccounts, auditEventsFromAudit, statsAgg] = await Promise.all([
       queryRows<DbRow>('wallet_balance', 'account_id,user_id,account_type,currency,available_kobo,last_transaction_at', {
         order: 'last_transaction_at', limit: 50,
         filter: (q) => q.in('account_type', CUSTOMER_ACCOUNT_TYPES),
@@ -69,6 +97,7 @@ export async function GET(request: Request) {
       queryRows<DbRow>('user_profiles', 'id,email,full_name', { order: 'full_name', ascending: true, limit: 500 }),
       queryRows<DbRow>('virtual_accounts', 'id,user_id,provider,account_number,account_name,bank_name,currency,provisioned_at', { order: 'provisioned_at', limit: 50 }),
       Promise.resolve({ rows: listAuditEvents(50).filter((e) => e.module === 'payments_finance'), error: null as string | null }),
+      statsRpc,
     ]);
 
     // Fail LOUD, not open: if the platform-account lookup errored we could not
@@ -76,9 +105,20 @@ export async function GET(request: Request) {
     // the volume figures would silently double-count. Surface it.
     const ledgerEntries = { error: ledgerEntriesRaw.error ?? platformAccounts.error, rows: ledgerEntriesRaw.rows };
 
-    const totalBalance = wallets.rows.reduce((sum, row) => sum + Number(row.available_kobo || 0), 0);
-    const debitVolume = ledgerEntries.rows.filter((r) => r.type === 'DEBIT').reduce((sum, r) => sum + Number(r.amount_kobo || 0), 0);
-    const creditVolume = ledgerEntries.rows.filter((r) => r.type === 'CREDIT').reduce((sum, r) => sum + Number(r.amount_kobo || 0), 0);
+    // Same fail-loud posture for the aggregate RPC: if it errored, fall back
+    // to 0s rather than silently reusing the capped client-side sums (which
+    // would just reintroduce the WAL-013 undercount under a different name).
+    const statsAggError = statsAgg.error?.message ?? platformAccounts.error ?? null;
+    const statsRow = (statsAgg.data?.[0] ?? null) as {
+      total_balance_kobo: number | string | null;
+      credit_volume_kobo: number | string | null;
+      debit_volume_kobo: number | string | null;
+      active_wallets_count: number | string | null;
+    } | null;
+    const totalBalance = Number(statsRow?.total_balance_kobo ?? 0);
+    const creditVolume = Number(statsRow?.credit_volume_kobo ?? 0);
+    const debitVolume = Number(statsRow?.debit_volume_kobo ?? 0);
+    const activeWalletsCount = Number(statsRow?.active_wallets_count ?? 0);
     const pendingKycCount = kycProfiles.rows.filter((r) => r.kyc_status === 'pending').length;
     const verifiedKycCount = kycProfiles.rows.filter((r) => r.kyc_status === 'verified').length;
 
@@ -109,8 +149,11 @@ export async function GET(request: Request) {
         totalBalanceKobo: totalBalance,
         creditVolumeKobo: creditVolume,
         debitVolumeKobo: debitVolume,
+        activeWalletsCount: activeWalletsCount,
+        statsWindowDays: STATS_WINDOW_DAYS,
         pendingKyc: pendingKycCount,
         verifiedKyc: verifiedKycCount,
+        error: statsAggError,
       },
     });
   } catch (error) {

@@ -10,6 +10,14 @@ import { MOCK_COMMITTEES, MOCK_EVENTS } from './community.mock';
 
 const delay = (ms = 300) => new Promise((r) => setTimeout(r, ms));
 
+// Every write below has a real live endpoint (verified against
+// backend/internal/association/routes.go and a full green run of
+// backend/tests/association), so fixture mode has nothing to add and refuses
+// loudly instead of reporting a write it did not perform — mirrors
+// frontend-admin's crowdfundingAdminService.ts NOT_IN_FIXTURE_MODE pattern.
+const notInFixtureMode = (action: string) =>
+  new Error(`${action} is unavailable in fixture mode: this app will not report a write it did not perform. Set EXPO_PUBLIC_ASSOCIATION_USE_MOCK=false to send this against the live backend.`);
+
 // ─── Committees ───────────────────────────────────────────────────────────────
 
 const toCommitteeSummary = (c: Committee): CommitteeSummary => {
@@ -35,7 +43,7 @@ export async function getCommittee(id: string): Promise<Committee> {
 }
 
 export async function requestJoinCommittee(id: string): Promise<{ ok: true }> {
-  if (USE_MOCK) { await delay(); return { ok: true }; }
+  if (USE_MOCK) throw notInFixtureMode('Requesting to join a committee');
   const { data } = await api.post(`${BASE}/committees/${id}/join`, {}, {
     headers: { 'Idempotency-Key': generateIdempotencyKey() },
   });
@@ -79,7 +87,7 @@ export async function getEvent(id: string): Promise<Event> {
 }
 
 export async function rsvpEvent(id: string, rsvp: EventRsvp): Promise<{ ok: true }> {
-  if (USE_MOCK) { await delay(); return { ok: true }; }
+  if (USE_MOCK) throw notInFixtureMode('Submitting an event RSVP');
   const { data } = await api.post(`${BASE}/events/${id}/rsvp`, { rsvp });
   return data;
 }
@@ -97,20 +105,7 @@ export async function rsvpEvent(id: string, rsvp: EventRsvp): Promise<{ ok: true
  * outstanding one for the same (event, membership).
  */
 export async function registerEvent(id: string): Promise<EventRegistrationResult> {
-  if (USE_MOCK) {
-    await delay(400);
-    const mock = MOCK_EVENTS.find((e) => e.id === id);
-    if (mock?.paid && mock.feeKobo > 0) {
-      return {
-        ok: true, registered: false, paymentRequired: true,
-        ticketCode: null, invoiceId: `mock_inv_${id}`, amountKobo: mock.feeKobo,
-      };
-    }
-    return {
-      ok: true, registered: true, paymentRequired: false,
-      ticketCode: `SPOTLIGHT:EVT:${id}:ticket`, invoiceId: null, amountKobo: 0,
-    };
-  }
+  if (USE_MOCK) throw notInFixtureMode('Registering for an event');
   const { data } = await api.post(`${BASE}/events/${id}/register`, {}, {
     headers: { 'Idempotency-Key': generateIdempotencyKey() },
   });
@@ -118,7 +113,7 @@ export async function registerEvent(id: string): Promise<EventRegistrationResult
 }
 
 export async function submitEventFeedback(id: string, rating: number, comment: string): Promise<{ ok: true }> {
-  if (USE_MOCK) { await delay(); return { ok: true }; }
+  if (USE_MOCK) throw notInFixtureMode('Submitting event feedback');
   const { data } = await api.post(`${BASE}/events/${id}/feedback`, { rating, comment });
   return data;
 }

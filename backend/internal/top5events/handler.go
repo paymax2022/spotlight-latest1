@@ -470,7 +470,8 @@ type tapChargeRequest struct {
 }
 
 func (h *Handler) TapCharge(c *gin.Context) {
-	if _, ok := uid(c); !ok {
+	caller, ok := uid(c)
+	if !ok {
 		return
 	}
 	key := idemKey(c)
@@ -483,7 +484,7 @@ func (h *Handler) TapCharge(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	out, err := h.svc.TapCharge(c.Request.Context(), c.Param("vendorId"), req.WalletID, req.AmountKobo, key)
+	out, err := h.svc.TapCharge(c.Request.Context(), caller, c.Param("vendorId"), req.WalletID, req.AmountKobo, key)
 	respond(c, out, err)
 }
 

@@ -14,6 +14,7 @@ import { Spacing } from '@/constants/spacing';
 import { Radius } from '@/constants/radius';
 import SearchBar from '@/components/SearchBar';
 import SectionHeader from '@/components/SectionHeader';
+import StateView from '@/components/StateView';
 import { MarketColors } from '@/features/marketplace';
 import type { Category, ListingSummary } from '@/features/marketplace';
 import { useCategories, useHomeRails } from '@/features/marketplace/hooks';
@@ -101,9 +102,22 @@ export default function MarketplaceHome() {
         contentContainerStyle={styles.scroll}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={MarketColors.brand} />}
       >
-        {/* Category grid */}
+        {/* Category grid — three states: loading (no data yet), a hard first-load
+            failure (no cache to fall back to, so the grid would otherwise render
+            silently empty), and success. A fetch that fails AFTER cached data
+            exists is handled separately by showCacheBanner above; this is only
+            for the cold-start case that banner doesn't cover. */}
         {categories.isLoading && !categories.data ? (
           <CategoryGridSkeleton />
+        ) : categories.isError && !categories.data ? (
+          <StateView
+            kind="error"
+            compact
+            title="Couldn't load categories"
+            message="Check your connection and try again."
+            actionLabel="Retry"
+            onAction={() => categories.refetch()}
+          />
         ) : (
           <View style={styles.catGrid}>
             {/* The 12 MAINS only. Rendering the flat list here put all 84 rows —
@@ -118,12 +132,25 @@ export default function MarketplaceHome() {
           </View>
         )}
 
-        {/* Rails */}
+        {/* Rails — same three-state handling. getHomeRails() swallows each
+            rail's own search failure into an empty array (a broken "Near you"
+            rail shouldn't blank the whole home screen), so rails.isError only
+            fires for a failure outside that per-rail guard; still handled here
+            rather than left to render nothing with no way to retry. */}
         {rails.isLoading && !rails.data ? (
           <View style={styles.railsLoading}>
             <SectionHeader title="Near you" />
             <RailSkeleton />
           </View>
+        ) : rails.isError && !rails.data ? (
+          <StateView
+            kind="error"
+            compact
+            title="Couldn't load listings"
+            message="Check your connection and try again."
+            actionLabel="Retry"
+            onAction={() => rails.refetch()}
+          />
         ) : (
           <>
             <Rail title="Near you" data={rails.data?.nearYou ?? []} />

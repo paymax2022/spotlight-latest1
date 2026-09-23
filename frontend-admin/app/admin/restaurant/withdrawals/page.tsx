@@ -1,177 +1,220 @@
 'use client';
 
-import { useState } from 'react';
-import {
-  settleWithdrawal,
-  reverseWithdrawal,
-  nairaLabel,
-  type WithdrawalRow,
-} from '@/services/restaurantAdminService';
-import { RESTAURANT_PERMS, useRestaurantPermissions, AccessNotice } from '../_ui';
-import { Page, PageHeader, Card, Button, Input, colors } from '@/components/ui/vuexy';
+import { useCallback, useEffect, useState } from 'react';
+import { listWithdrawals, markWithdrawalPaid, markWithdrawalFailed } from '@/services/restaurantAdminService';
+import type { Withdrawal, WithdrawalStatus } from '@/types/restaurantAdmin';
+import { naira, RESTAURANT_PERMS, useRestaurantPermissions, AccessNotice } from '../_ui';
+import { Page, PageHeader, Card, Button, Badge, colors, thCell, tdCell } from '@/components/ui/vuexy';
 
-// Merchant withdrawal settle / reverse — MONEY PATH.
-//
-// Two deliberate limits, both server-side facts rather than UI shortcuts:
-//
-// 1. There is NO admin list endpoint. The backend exposes a merchant-scoped list
-//    (the caller's own withdrawals) and these two id-keyed admin actions. So this
-//    is an "act on a known id" tool: the operator gets the id from support or the
-//    DB. A fabricated list would be worse than saying so plainly.
-//
-// 2. The routes are gated by FEATURE_RESTAURANT_WITHDRAWALS_ENABLED, default OFF.
-//    With the flag off they are not registered and every call 404s — surfaced
-//    below as an explicit hint rather than a bare "not found".
-//
-// Settle and reverse are mutually exclusive under a withdrawal-row lock, so a
-// payout can never be both paid and reversed. Both carry an Idempotency-Key.
+const STATUS_FILTERS: (WithdrawalStatus | '')[] = ['', 'pending', 'processing', 'paid', 'failed', 'reversed'];
 
-type Action = 'settle' | 'reverse';
+const STATUS_COLOR: Record<string, string> = {
+  pending: colors.secondary,
+  processing: colors.warning,
+  paid: colors.success,
+  failed: colors.danger,
+  reversed: colors.danger,
+};
+
+function StatusBadge({ status }: { status: string }) {
+  return <Badge text={status} color={STATUS_COLOR[status] ?? colors.secondary} />;
+}
 
 export default function WithdrawalsPage() {
   const { can } = useRestaurantPermissions();
-  const canPayouts = can(RESTAURANT_PERMS.payouts);
+  const canView = can(RESTAURANT_PERMS.withdrawals);
+  const canAct = can(RESTAURANT_PERMS.withdrawals);
 
-  const [id, setId] = useState('');
-  const [providerRef, setProviderRef] = useState('');
-  const [reason, setReason] = useState('');
-  const [busy, setBusy] = useState<Action | null>(null);
-  const [result, setResult] = useState<WithdrawalRow | null>(null);
+  const [withdrawals, setWithdrawals] = useState<Withdrawal[]>([]);
+  const [status, setStatus] = useState<WithdrawalStatus | ''>('');
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [message, setMessage] = useState<string | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [reasonFor, setReasonFor] = useState<string | null>(null);
+  const [reason, setReason] = useState('');
 
-  async function run(action: Action) {
-    setBusy(action);
+  const load = useCallback(async (s: WithdrawalStatus | '') => {
+    setLoading(true);
     setError(null);
-    setResult(null);
     try {
-      const w = action === 'settle'
-        ? await settleWithdrawal(id.trim(), providerRef.trim())
-        : await reverseWithdrawal(id.trim(), reason.trim());
-      setResult(w);
+      setWithdrawals(await listWithdrawals(s));
     } catch (e) {
-      const msg = e instanceof Error ? e.message : 'Action failed';
-      setError(
-        /404|not found/i.test(msg)
-          ? `${msg} — if this is a valid withdrawal id, the module is probably disabled: FEATURE_RESTAURANT_WITHDRAWALS_ENABLED defaults to false.`
-          : msg,
-      );
+      setError(String(e));
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void load(status);
+  }, [status, load]);
+
+  async function onMarkPaid(id: string) {
+    setBusy(id);
+    setError(null);
+    setMessage(null);
+    try {
+      await markWithdrawalPaid(id);
+      setMessage(`Withdrawal ${id} marked paid.`);
+      await load(status);
+    } catch (e) {
+      setError(String(e));
     } finally {
       setBusy(null);
     }
   }
 
-  if (!canPayouts) {
+  async function onMarkFailed(id: string) {
+    setError(null);
+    setMessage(null);
+    if (!reason.trim()) {
+      setError('A failure reason is required to reverse a withdrawal.');
+      return;
+    }
+    setBusy(id);
+    try {
+      await markWithdrawalFailed(id, reason.trim());
+      setMessage(`Withdrawal ${id} marked failed and reversed to the merchant's wallet.`);
+      setReasonFor(null);
+      setReason('');
+      await load(status);
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  const pendingTotal = withdrawals
+    .filter((w) => w.status === 'pending' || w.status === 'processing')
+    .reduce((s, w) => s + w.amount_kobo, 0);
+
+  if (!canView) {
     return (
       <Page>
-        <PageHeader title="Merchant withdrawals" subtitle="Settle or reverse a merchant payout." />
-        <AccessNotice perm="restaurant.admin.payouts" />
+        <PageHeader title="Withdrawals" />
+        <AccessNotice perm="restaurant.admin.withdrawals" />
       </Page>
     );
   }
 
-  const idValid = id.trim().length > 0;
-
   return (
     <Page>
       <PageHeader
-        title="Merchant withdrawals"
-        subtitle="Settle or reverse a merchant payout by id. Money path — every action posts to the ledger."
+        title="Restaurant & Rider Withdrawals"
+        subtitle="Merchant/rider requests to move their wallet balance out to a saved bank account (distinct from payout runs, which fund the wallet)."
+        actions={<Button variant="outline" onClick={() => void load(status)}>Refresh</Button>}
       />
 
-      <Card style={{ marginBottom: 16, borderColor: colors.warning }}>
-        <strong style={{ color: colors.warning }}>Act-on-id only.</strong>{' '}
-        <span style={{ fontSize: '0.85rem', color: colors.muted }}>
-          The backend exposes no admin list of withdrawals — only the two id-keyed actions
-          below. Get the withdrawal id from the merchant, support, or the
-          <code style={{ margin: '0 4px' }}>restaurant_withdrawals</code> table.
-        </span>
-      </Card>
+      {error && <p style={{ color: colors.danger }}>{error}</p>}
+      {message && <p style={{ color: colors.success }}>{message}</p>}
 
-      <Card title="Withdrawal" style={{ marginBottom: 16 }}>
-        <label style={{ fontSize: '0.8rem', color: colors.muted, display: 'block', marginTop: 10 }}>
-          Withdrawal ID
-          <Input value={id} onChange={(e) => setId(e.target.value)} placeholder="uuid" />
-        </label>
-      </Card>
-
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: 16 }}>
-        <Card title="Mark paid">
-          <p style={{ fontSize: '0.8rem', color: colors.muted, marginTop: 8 }}>
-            Records the provider&apos;s successful disbursement. Posts
-            DR&nbsp;suspense → CR&nbsp;provider&nbsp;clearing.
-          </p>
-          <label style={{ fontSize: '0.8rem', color: colors.muted, display: 'block', marginTop: 10 }}>
-            Provider reference
-            <Input
-              value={providerRef}
-              onChange={(e) => setProviderRef(e.target.value)}
-              placeholder="e.g. bank transfer ref"
-            />
-          </label>
-          <Button
-            style={{ marginTop: 12 }}
-            disabled={!idValid || !providerRef.trim() || busy !== null}
-            onClick={() => void run('settle')}
-          >
-            {busy === 'settle' ? 'Settling…' : 'Mark paid'}
-          </Button>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(190px, 1fr))', gap: '0.75rem', marginBottom: '1.25rem' }}>
+        <Card style={{ padding: 14 }}>
+          <div style={{ fontSize: 12, color: colors.muted }}>Requests</div>
+          <div style={{ fontSize: 22, fontWeight: 800, marginTop: 4 }}>{withdrawals.length}</div>
         </Card>
-
-        <Card title="Reverse">
-          <p style={{ fontSize: '0.8rem', color: colors.muted, marginTop: 8 }}>
-            The disbursement failed. Posts a compensating reversal back to the merchant
-            wallet. Mutually exclusive with &ldquo;Mark paid&rdquo;.
-          </p>
-          <label style={{ fontSize: '0.8rem', color: colors.muted, display: 'block', marginTop: 10 }}>
-            Reason <span style={{ color: colors.danger }}>*</span>
-            <Input
-              value={reason}
-              onChange={(e) => setReason(e.target.value)}
-              placeholder="why the payout failed (audit trail)"
-            />
-          </label>
-          <Button
-            variant="outline"
-            style={{ marginTop: 12 }}
-            disabled={!idValid || !reason.trim() || busy !== null}
-            onClick={() => void run('reverse')}
-          >
-            {busy === 'reverse' ? 'Reversing…' : 'Reverse'}
-          </Button>
+        <Card style={{ padding: 14 }}>
+          <div style={{ fontSize: 12, color: colors.muted }}>Reserved (pending/processing)</div>
+          <div style={{ fontSize: 22, fontWeight: 800, color: colors.warning, marginTop: 4 }}>{naira(pendingTotal)}</div>
         </Card>
       </div>
 
-      {error && (
-        <Card style={{ marginTop: 16, borderColor: colors.danger, color: colors.danger }}>{error}</Card>
-      )}
+      <div style={{ display: 'flex', gap: 6, margin: '0 0 1rem', flexWrap: 'wrap' }}>
+        {STATUS_FILTERS.map((s) => (
+          <Button key={s || 'all'} sm variant={status === s ? 'primary' : 'outline'} onClick={() => setStatus(s)}>
+            {s || 'All statuses'}
+          </Button>
+        ))}
+      </div>
 
-      {result && (
-        <Card title="Result" style={{ marginTop: 16 }}>
-          <div style={{ display: 'grid', gap: 6, fontSize: '0.85rem' }}>
-            <div><span style={{ color: colors.muted }}>Status:</span>{' '}
-              <strong style={{ color: result.status === 'paid' ? colors.success : result.status === 'reversed' ? colors.warning : colors.text }}>
-                {result.status}
-              </strong>
-            </div>
-            <div><span style={{ color: colors.muted }}>Amount:</span> <strong>{nairaLabel(result.amount_kobo)}</strong></div>
-            <div><span style={{ color: colors.muted }}>Merchant:</span> {result.user_id}</div>
-            {result.provider_reference && (
-              <div><span style={{ color: colors.muted }}>Provider ref:</span> {result.provider_reference}</div>
-            )}
-            {result.ledger_ref && (
-              <div><span style={{ color: colors.muted }}>Ledger ref:</span> <code>{result.ledger_ref}</code></div>
-            )}
-            {result.failure_reason && (
-              <div><span style={{ color: colors.muted }}>Failure:</span> {result.failure_reason}</div>
-            )}
+      <Card title="Withdrawal requests">
+        {loading ? (
+          <p style={{ color: colors.muted }}>Loading…</p>
+        ) : withdrawals.length === 0 ? (
+          <p style={{ color: colors.muted }}>No withdrawal requests for this filter.</p>
+        ) : (
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
+              <thead>
+                <tr>
+                  <th style={thCell}>Withdrawal</th>
+                  <th style={thCell}>Merchant/rider</th>
+                  <th style={thCell}>Amount</th>
+                  <th style={thCell}>Status</th>
+                  <th style={thCell}>Provider ref</th>
+                  <th style={thCell}>Requested</th>
+                  <th style={thCell}></th>
+                </tr>
+              </thead>
+              <tbody>
+                {withdrawals.map((w) => (
+                  <tr key={w.id}>
+                    <td style={tdCell} title={w.id}>{w.id.slice(0, 8)}…</td>
+                    <td style={tdCell} title={w.user_id}>{w.user_id.slice(0, 8)}…</td>
+                    <td style={tdCell}><strong>{naira(w.amount_kobo)}</strong></td>
+                    <td style={tdCell}><StatusBadge status={w.status} /></td>
+                    <td style={tdCell}>{w.provider_reference ?? '—'}</td>
+                    <td style={tdCell}>{new Date(w.created_at).toLocaleString()}</td>
+                    <td style={tdCell}>
+                      {(w.status === 'pending' || w.status === 'processing') && (
+                        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                          <Button
+                            sm
+                            variant="primary"
+                            disabled={!canAct || busy === w.id}
+                            title={!canAct ? 'Requires restaurant.admin.withdrawals' : 'Mark this withdrawal paid'}
+                            onClick={() => void onMarkPaid(w.id)}
+                          >
+                            {busy === w.id ? '…' : 'Mark paid'}
+                          </Button>
+                          {reasonFor === w.id ? (
+                            <>
+                              <input
+                                value={reason}
+                                onChange={(e) => setReason(e.target.value)}
+                                placeholder="Failure reason"
+                                style={{ fontSize: '0.8rem', padding: '0.2rem 0.4rem', border: `1px solid ${colors.border}`, borderRadius: 4 }}
+                              />
+                              <Button sm variant="secondary" disabled={!canAct || busy === w.id} onClick={() => void onMarkFailed(w.id)}>
+                                Confirm reverse
+                              </Button>
+                              <Button sm variant="outline" onClick={() => { setReasonFor(null); setReason(''); }}>Cancel</Button>
+                            </>
+                          ) : (
+                            <Button
+                              sm
+                              variant="outline"
+                              disabled={!canAct || busy === w.id}
+                              title={!canAct ? 'Requires restaurant.admin.withdrawals' : 'Mark this withdrawal failed and return funds to the wallet'}
+                              onClick={() => setReasonFor(w.id)}
+                            >
+                              Mark failed
+                            </Button>
+                          )}
+                        </div>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
-        </Card>
-      )}
+        )}
+      </Card>
 
-      <p style={{ fontSize: '0.78rem', color: colors.muted, marginTop: 16 }}>
-        Amounts are integer kobo. The disburser seam defaults to a no-op, so enabling the
-        feature flag alone does not send money to a bank — a real disburser must be wired
-        over <code>provider/disbursement</code> first.
+      <p style={{ marginTop: '1.5rem', fontSize: '0.8rem', color: colors.muted }}>
+        All amounts are integer kobo. Marking a withdrawal paid or failed is a money mutation — the
+        server posts a balanced ledger leg (settle or reversal) under a row lock, so a retry is a safe
+        no-op. Target routes <code>GET /api/restaurant/admin/withdrawals</code>,{' '}
+        <code>POST /api/restaurant/admin/withdrawals/:id/paid</code> and{' '}
+        <code>POST /api/restaurant/admin/withdrawals/:id/failed</code> (RBAC{' '}
+        <code>restaurant.admin.withdrawals</code>). Bank-account capture and the withdrawal request
+        itself are member-facing (<code>/api/finance/restaurant/bank-accounts</code>,{' '}
+        <code>/api/finance/restaurant/withdrawals</code>) — there is no owner/rider-facing mobile or
+        web UI for requesting a withdrawal yet; that is a separate, larger gap this console does not
+        cover.
       </p>
     </Page>
   );

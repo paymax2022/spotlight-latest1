@@ -10,6 +10,7 @@ import (
 	"spotlight/backend/internal/finance/kyc"
 	"spotlight/backend/internal/health/credential"
 	healthproviders "spotlight/backend/internal/health/providers"
+	"spotlight/backend/internal/integrations"
 	"spotlight/backend/internal/middleware"
 	"spotlight/backend/internal/scheduler"
 	"spotlight/backend/internal/services"
@@ -22,7 +23,7 @@ import (
 // approval. Reuses: providers SM + credential vault + idempotent capability
 // grant, the scheduler (HL-2 licence-expiry auto-suspend), and KYC for the
 // identity cross-check. Feature-flagged via the caller (health.vet).
-func RegisterHealthVCNVerification(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pgxpool.Pool, rbac services.RBACService) {
+func RegisterHealthVCNVerification(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pgxpool.Pool, rbac services.RBACService, supabase *integrations.SupabaseRestClient) {
 	if pool == nil {
 		return
 	}
@@ -58,6 +59,12 @@ func RegisterHealthVCNVerification(member *gin.RouterGroup, admin *gin.RouterGro
 
 	// Admin (ops reviewer) — RBAC-gated; a vet can NEVER review/decide.
 	ag := admin.Group("/verification")
+	// Same PHARMACY-006/LAB-003-shaped bug as RegisterHealthVet's own admin
+	// group (this is a SEPARATE Gin group instance sharing the same path
+	// prefix, not the same underlying middleware chain — it needs its own
+	// RequireAuthContext, the caller can no longer pass adminGroupTop5 here
+	// either). Without this every VCN review route 401'd unconditionally.
+	ag.Use(middleware.RequireAuthContext(supabase, rbac))
 	ag.GET("/queue", middleware.RequirePermission(rbac, "health.vet.review"), h.Queue)
 	ag.GET("/:recordId", middleware.RequirePermission(rbac, "health.vet.review"), h.GetRecord)
 	ag.GET("/documents/:docId/url", middleware.RequirePermission(rbac, "health.vet.review"), h.ReviewerDocURL)

@@ -12,9 +12,10 @@
  *
  * The paid-vote cases are NOT carried over. They asserted idempotency-keyed
  * caching around verifyAndCreditPaidVote, while bridgedVerifyPaidVote actually
- * serialises on a lock_vote_transaction RPC and calls neither. That path is
- * covered by tests/unit/voting/paid-vote-concurrency.spec.ts, which tests the
- * lock it really takes.
+ * serialises on the atomic credit_paid_vote_transaction RPC (PV-005) and calls
+ * neither. That path is covered by
+ * tests/unit/voting/paid-vote-concurrency.spec.ts, which tests the RPC it
+ * really calls.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 

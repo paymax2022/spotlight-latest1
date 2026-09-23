@@ -473,6 +473,29 @@ export interface PayoutRun {
   reconciled?: boolean;
 }
 
+// ── Merchant/rider WITHDRAWALS (money path; FOOD-005) ─────────────────────────
+// Mirrors backend/internal/restaurant/withdrawal.go's Withdrawal struct and the
+// CHECK constraint on restaurant_withdrawals.status. Distinct from PayoutRun
+// above: a payout run pays a provider FROM the platform's settlement account
+// INTO their wallet; a withdrawal is the separate, subsequent step of the
+// provider moving money OUT of that wallet to their bank account.
+export type WithdrawalStatus = 'pending' | 'processing' | 'paid' | 'failed' | 'reversed';
+
+export interface Withdrawal {
+  id: string;
+  user_id: string;
+  bank_account_id: string;
+  amount_kobo: number;
+  currency: string;
+  status: WithdrawalStatus;
+  ledger_ref?: string | null;
+  provider_reference?: string | null;
+  failure_reason?: string | null;
+  idempotency_key: string;
+  created_at: string;
+  updated_at: string;
+}
+
 // ── Refunds & disputes queue (money path) ────────────────────────────────────
 export type DisputeStatus = 'open' | 'in_review' | 'resolved' | 'closed';
 export type DisputeResolution = 'refunded' | 'settled' | 'dismissed';

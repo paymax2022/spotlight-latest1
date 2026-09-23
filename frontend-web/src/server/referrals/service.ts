@@ -24,14 +24,38 @@ const REFERRAL_REWARD_KOBO = 50_000; // ₦500
 // ---------------------------------------------------------------------------
 // Code generation
 // ---------------------------------------------------------------------------
+//
+// REF-004: this used to generate `SPOT-XXXXXX` (6 chars from a curated
+// alphabet, "SPOT-" prefix) while the Go generator writing into the SAME
+// finance_referral_codes.code column generated 8 lowercase hex characters —
+// two incompatible formats sharing one column, with no shared contract.
+//
+// Both generators now use the exact alphabet/length/case already established
+// for System B's own referral_links.code by
+// backend/internal/finance/referrals/code.go (codeAlphabet, CodeMaxLen=5):
+// uppercase A-Z + digits, omitting every confusable character (O/0, I/1, L,
+// S/5, Z/2) because a random code is read aloud and typed back in by hand.
+// No prefix — the whole point is one consistent shape regardless of which
+// stack issues the code.
+const REFERRAL_CODE_ALPHABET = 'ABCDEFGHJKMNPQRTUVWXY346789';
+const REFERRAL_CODE_LENGTH = 5;
 
-function generateCode(): string {
-  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // no ambiguous I/O/0/1
-  let suffix = '';
-  for (let i = 0; i < 6; i++) {
-    suffix += chars[Math.floor(Math.random() * chars.length)];
+export function generateCode(): string {
+  let code = '';
+  for (let i = 0; i < REFERRAL_CODE_LENGTH; i++) {
+    code += REFERRAL_CODE_ALPHABET[Math.floor(Math.random() * REFERRAL_CODE_ALPHABET.length)];
   }
-  return `SPOT-${suffix}`;
+  return code;
+}
+
+// escapeLikePattern neutralizes Postgres LIKE/ILIKE wildcards (`%`, `_`) and
+// the escape character itself (`\`) in a value that is about to be used as an
+// ILIKE pattern for what must behave as an exact, case-insensitive match —
+// never a substring/wildcard search. Without this, a referral code containing
+// `_` (matches any single character) or `%` (matches any run) could match
+// rows it has no business matching.
+function escapeLikePattern(value: string): string {
+  return value.replace(/[\\%_]/g, (ch) => `\\${ch}`);
 }
 
 // ---------------------------------------------------------------------------
@@ -110,10 +134,17 @@ export async function getReferralSummary(userId: string): Promise<ReferralSummar
 
 export async function resolveCodeToReferrer(code: string): Promise<string | null> {
   const supabase = createAdminClient();
+  // REF-008: match case-INSENSITIVELY. Rows in finance_referral_codes may be
+  // stored in whatever case they were generated in before generateCode()
+  // above and its Go counterpart were unified onto one uppercase-only
+  // format — an exact-case `.eq()` match would leave already-issued codes
+  // (and any typed in a different case than stored) permanently
+  // unresolvable. Mirrors the Go side's `WHERE UPPER(code) = UPPER($1)`.
+  const normalized = code.trim();
   const { data } = await supabase
     .from('finance_referral_codes')
     .select('user_id')
-    .eq('code', code.toUpperCase().trim())
+    .ilike('code', escapeLikePattern(normalized))
     .maybeSingle();
   return (data as { user_id: string } | null)?.user_id ?? null;
 }

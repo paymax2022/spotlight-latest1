@@ -298,9 +298,14 @@ jobs:
         run: psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -q -f scripts/ci/supabase-compat-prelude.sql
       - name: Migrations apply cleanly (real Postgres)
         run: make migrate-up
+      # -p 1: serialize package-level test execution — several live-DB suites
+      # read a shared standing account's absolute balance before/after their
+      # own action, which races against a DIFFERENT package's test binary
+      # touching the same account concurrently against this one shared
+      # Postgres container. See _reusable-go-verify.yml's identical comment.
       - name: go test ./... (live-DB suites now execute)
         working-directory: backend
-        run: go test ./... -count=1
+        run: go test ./... -p 1 -count=1
       # Without this the job could go green while every live-DB test skipped —
       # the exact failure being fixed, just relocated. Assert at least one really
       # ran and that nothing skipped for want of the variable.

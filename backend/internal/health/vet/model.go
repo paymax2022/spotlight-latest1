@@ -106,11 +106,17 @@ type VetService struct {
 // HL-9 escrow money leg. State mirrors the scheduling engine; PayState tracks the
 // escrow hold. EscrowID is the funds-hold reference (no balance column — HL-9).
 type Appointment struct {
-	ID          string    `json:"id"`
-	ProviderID  string    `json:"provider_id"`
-	OwnerID     string    `json:"owner_id"` // patient/owner (auth.users)
-	PetID       string    `json:"pet_id"`   // subject (PET)
-	ServiceID   string    `json:"service_id"`
+	ID         string `json:"id"`
+	ProviderID string `json:"provider_id"`
+	OwnerID    string `json:"owner_id"` // patient/owner (auth.users)
+	PetID      string `json:"pet_id"`   // subject (PET)
+	// ServiceID is a pointer because vet_appointment_payments.service_id is
+	// ON DELETE SET NULL against vet_services — an appointment whose service
+	// was later deleted has a NULL here, and pgx fails "cannot scan NULL into
+	// *string" if this is a plain string. Can't happen via Book() (always
+	// pins a valid service first) but can happen later on a hard-deleted
+	// vet_services row.
+	ServiceID   *string   `json:"service_id,omitempty"`
 	VisitType   VisitType `json:"visit_type"`
 	State       ApptState `json:"state"`
 	PayState    PayState  `json:"pay_state"`

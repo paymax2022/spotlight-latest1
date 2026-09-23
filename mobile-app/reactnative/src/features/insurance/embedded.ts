@@ -21,6 +21,7 @@
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/api/client';
+import { secureRandomId } from '@/lib/secureRandom';
 import {
   INSURANCE_API_BASE,
   USE_MOCK,
@@ -30,7 +31,7 @@ import type { Disclosure, Policy, Provider } from './types';
 
 const delay = (ms = MOCK_DELAY_MS) => new Promise((r) => setTimeout(r, ms));
 function uid(prefix: string): string {
-  return `${prefix}-${Math.random().toString(36).slice(2, 9)}`;
+  return `${prefix}-${secureRandomId()}`;
 }
 
 // ── Embedded-cover surface (a trip / parcel / wallet / device context) ─────────

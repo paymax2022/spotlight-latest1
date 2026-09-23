@@ -13,6 +13,7 @@ import StateView from '@/components/StateView';
 import PrimaryButton from '@/components/PrimaryButton';
 import StatusBadge from '@/features/mobility/components/StatusBadge';
 import MobilityEdgeState from '@/features/mobility/components/MobilityEdgeState';
+import { errKind } from '@/features/mobility/utils/errKind';
 import { useDriverHome, useDriverEarnings } from '@/features/mobility/hooks/useMobility';
 import { toMobilityError, formatNairaWhole } from '@/features/mobility/utils/mobilityFormatters';
 import { COMMISSION_TIER_LABEL } from '@/features/mobility/constants/mobility.constants';
@@ -46,7 +47,7 @@ export default function DriverHomeScreen() {
     return (
       <SafeAreaView style={styles.safe} edges={['top']}>
         <ScreenHeader title="Driver" />
-        <MobilityEdgeState kind="offline" actionLabel="Retry" onAction={() => me.refetch()} />
+        <MobilityEdgeState kind={errKind(me.error)} actionLabel="Retry" onAction={() => me.refetch()} />
       </SafeAreaView>
     );
   }
@@ -129,7 +130,7 @@ export default function DriverHomeScreen() {
           {earnings.isLoading ? (
             <StateView kind="loading" compact />
           ) : earnings.isError ? (
-            <MobilityEdgeState kind="offline" compact actionLabel="Retry" onAction={() => earnings.refetch()} />
+            <MobilityEdgeState kind={errKind(earnings.error)} compact actionLabel="Retry" onAction={() => earnings.refetch()} />
           ) : earnings.data ? (
             <>
               <View style={styles.earnRow}>

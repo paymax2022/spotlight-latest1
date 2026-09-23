@@ -1,90 +1,65 @@
 /**
  * POST /api/v2/votes/paid/initiate - Initiate a paid vote
- * Creates a transaction record and returns payment details
  * Does not use the bridge — direct call to protected initiatePaidVote()
+ * (mirrors the sibling /api/v2/votes/paid/verify route's "direct call, no
+ * bridge needed" design, per the vote-bridge skill's documented layout).
+ *
+ * CONTEST-002 fix: the previous version of this file did its own raw
+ * `INSERT INTO vote_transactions` using columns that don't exist on the real
+ * table (voter_id, competition_id, amount_kobo — the real columns are
+ * voter_user_id, contest_id, amount_expected/votes_purchased/bonus_votes/
+ * total_votes_to_credit), skipped initiatePaidVote()'s validation
+ * (voting-open check, package pricing), and returned a paymentUrl pointing
+ * at a route that doesn't exist. It was never cut over to by any client —
+ * the live client call sites still use the older, safe
+ * /api/votes/paid/initiate route below — and calling this one as written
+ * would have failed outright. This rewrite makes it a real, working
+ * equivalent of that route at the /v2 path, matching InitiatePaidVoteRequest
+ * exactly (voterEmail/voterName required — not an authenticated-user-only
+ * flow), so it's actually safe to cut a client over to in the future.
  */
 
-import { NextRequest, NextResponse } from 'next/server';
-import { validateRequest } from '@/lib/auth/request';
-import { createAdminClient } from '@/lib/supabase/admin';
-import { randomUUID as uuidv4 } from 'crypto';
+import { NextRequest } from 'next/server';
+import { errorResponse, handleApiError, successResponse } from '@/src/lib/api/responses';
+import { initiatePaidVote } from '@/src/server/voting/paid-vote.service';
+import type { InitiatePaidVoteRequest } from '@/src/features/voting/types';
+
+async function tryGetUserId(request: Request): Promise<string | undefined> {
+  try {
+    const authHeader = request.headers.get('authorization') || '';
+    const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7).trim() : '';
+    if (!token) return undefined;
+    const { createClient } = await import('@/lib/supabase/server');
+    const supabase = await createClient();
+    const { data } = await supabase.auth.getUser(token);
+    return data.user?.id;
+  } catch {
+    return undefined;
+  }
+}
 
 export async function POST(request: NextRequest) {
   try {
-    // Validate authentication
-    const { user, error: authError } = await validateRequest(request);
-    if (authError) {
-      return NextResponse.json(
-        { error: 'Unauthorized' },
-        { status: 401 }
-      );
+    const body = (await request.json()) as InitiatePaidVoteRequest;
+
+    if (!body.contestId) return errorResponse('contestId is required', 400);
+    if (!body.contestantId) return errorResponse('contestantId is required', 400);
+    if (!body.voterEmail) return errorResponse('voterEmail is required', 400);
+    if (!body.voterName) return errorResponse('voterName is required', 400);
+    if (!body.packageId && !body.customVoteQuantity) {
+      return errorResponse('Either packageId or customVoteQuantity is required', 400);
     }
 
-    if (!user) {
-      return NextResponse.json(
-        { error: 'User not found' },
-        { status: 404 }
-      );
-    }
+    const ip =
+      request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ||
+      request.headers.get('x-real-ip') ||
+      '0.0.0.0';
+    const ua = request.headers.get('user-agent') || '';
+    const userId = await tryGetUserId(request);
 
-    // Parse request body
-    const body = await request.json();
-    const { contestantId, contestId, amount } = body;
-
-    if (!contestantId || !contestId || !amount) {
-      return NextResponse.json(
-        { error: 'Missing required fields: contestantId, contestId, amount' },
-        { status: 400 }
-      );
-    }
-
-    // Create admin client
-    const supabase = createAdminClient();
-
-    // Generate a payment reference
-    const paymentReference = `vote-${uuidv4()}`;
-    const transactionId = uuidv4();
-
-    // Step 1: Create vote transaction record
-    const { data: transaction, error: txError } = await supabase
-      .from('vote_transactions')
-      .insert({
-        id: transactionId,
-        voter_id: user.id,
-        contestant_id: contestantId,
-        competition_id: contestId,
-        amount_kobo: Math.round(amount * 100), // Convert to kobo (minor units)
-        payment_reference: paymentReference,
-        vote_credit_status: 'pending',
-      })
-      .select('*')
-      .single();
-
-    if (txError || !transaction) {
-      console.error('[API] Failed to create transaction:', txError);
-      return NextResponse.json(
-        { error: 'Failed to create transaction' },
-        { status: 500 }
-      );
-    }
-
-    // Step 2: Return transaction details for payment initiation
-    return NextResponse.json({
-      success: true,
-      transactionId,
-      paymentReference,
-      amount,
-      amountKobo: Math.round(amount * 100),
-      timestamp: new Date().toISOString(),
-      // Include payment provider details (Paystack, etc.)
-      // This would typically be returned by a payment service integration
-      paymentUrl: `/api/v2/votes/paid/pay?transactionId=${transactionId}`,
-    });
+    const result = await initiatePaidVote(body, ip, ua, userId);
+    return successResponse({ ...result });
   } catch (error) {
-    console.error('[API] /api/v2/votes/paid/initiate POST error:', error);
-    return NextResponse.json(
-      { error: 'Internal server error' },
-      { status: 500 }
-    );
+    return handleApiError(error, 'Failed to initiate payment');
   }
 }

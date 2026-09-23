@@ -77,6 +77,18 @@ var ErrLedgerUnavailable = errors.New("adminext: finance ledger not configured �
 // happens on this path.
 var ErrInsufficientBalance = errors.New("adminext: creator's wallet balance is insufficient for this withdrawal")
 
+// ErrCampaignFrozen is returned when the withdrawal's campaign is currently
+// frozen. wallet.SubmitWithdrawal already refuses a frozen campaign at
+// request time ("campaign is frozen — withdrawals are disabled") — this path
+// is the payout leg for a PENDING row approved separately (currently dead in
+// the live creator flow, since SubmitWithdrawal never leaves anything
+// PENDING, but still a real, reachable admin action) and had no equivalent
+// check at all: nothing here ever queried campaigns. A freeze issued AFTER a
+// withdrawal was filed but BEFORE an admin approved it must still block the
+// payout — freezing a campaign is meaningless if money can keep leaving it
+// through this door.
+var ErrCampaignFrozen = errors.New("adminext: campaign is frozen — withdrawal payout is disabled")
+
 // ApproveWithdrawalResult summarises the outcome of an approval.
 type ApproveWithdrawalResult struct {
 	ID         string `json:"id"`
@@ -120,13 +132,14 @@ func (s *Service) ApproveWithdrawal(ctx context.Context, withdrawalID, approverI
 
 	// ── (1) Load the withdrawal + validate its state ─────────────────────────
 	var (
-		reference string
-		creatorID string
-		amount    int64
-		status    string
+		reference  string
+		creatorID  string
+		campaignID string
+		amount     int64
+		status     string
 	)
-	const sel = `SELECT reference, creator_id, amount_kobo, status FROM cf_withdrawals WHERE id = $1`
-	if err := s.db.QueryRow(ctx, sel, withdrawalID).Scan(&reference, &creatorID, &amount, &status); err != nil {
+	const sel = `SELECT reference, creator_id, campaign_id, amount_kobo, status FROM cf_withdrawals WHERE id = $1`
+	if err := s.db.QueryRow(ctx, sel, withdrawalID).Scan(&reference, &creatorID, &campaignID, &amount, &status); err != nil {
 		return nil, ErrWithdrawalNotFound
 	}
 
@@ -143,6 +156,16 @@ func (s *Service) ApproveWithdrawal(ctx context.Context, withdrawalID, approverI
 	}
 	if amount <= 0 {
 		return nil, fmt.Errorf("adminext: withdrawal amount must be positive, got %d", amount)
+	}
+
+	// A freeze issued after this request was filed must still block payout —
+	// re-check at approval time, not just at request time (see ErrCampaignFrozen).
+	var frozen bool
+	if err := s.db.QueryRow(ctx, `SELECT review_status = 'FROZEN' FROM campaigns WHERE id = $1`, campaignID).Scan(&frozen); err != nil {
+		return nil, fmt.Errorf("adminext: resolve campaign freeze state: %w", err)
+	}
+	if frozen {
+		return nil, ErrCampaignFrozen
 	}
 
 	// ── (2) Post the BALANCED, balance-checked double-entry (money leaves the

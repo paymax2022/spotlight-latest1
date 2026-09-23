@@ -46,31 +46,55 @@ export default function PharmacyDashboardPage() {
         (HL-2), POM needs a pharmacist-verified e-prescription with server-side dispense-once (HL-3),
         controlled substances are excluded at MVP (HL-4), and only NAFDAC-registered products are listed (HL-5).
         Patient payment is held in escrow and released on delivery/pickup (HL-9). All money is in ₦ (kobo internally).
+        <br />
+        <strong>PHARMACY-001:</strong> reads the real admin console at <code>/api/health/pharmacy/admin/*</code>.
+        The <em>Orders (total)</em>, <em>Orders by state</em> card, <em>Platform revenue (7d)</em> and{' '}
+        <em>Pharmacies active</em> cards below are real. Everything else on this page (GMV, Rx-verify SLA, PCN
+        review queue, catalog governance, recalls, payouts, held/released/refunded balances, order mix, GMV
+        trend, activity feed) is not yet computed by the backend and reads as 0/empty rather than fabricated —
+        see <code>healthPharmacyAdminService.ts</code> for the exact mapping.
       </DisclosureNote>
 
       <StateBlock loading={loading} error={error} empty={!data} emptyText="No dashboard data available.">
         {data && (
           <>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: '0.75rem', marginBottom: '1.25rem' }}>
-              <Kpi label="Orders today" value={data.orders_today.toLocaleString('en-NG')} sub={`${data.orders_30d.toLocaleString('en-NG')} orders (30d)`} accent={colors.primary} />
-              <Kpi label="GMV today" value={formatNaira(data.gmv_today_kobo)} sub={`${formatNaira(data.gmv_30d_kobo)} (30d)`} />
-              <Kpi label="Net revenue (30d)" value={formatNaira(data.net_revenue_30d_kobo)} accent={colors.success} />
-              <Kpi label="Take rate" value={pct(data.take_rate)} sub="Net ÷ GMV" />
-              <Kpi label="Avg order value" value={formatNaira(data.avg_order_value_kobo)} />
-              <Kpi label="Rx pending verify" value={data.rx_pending_verification.toLocaleString('en-NG')} sub="HL-3 pharmacist gate" accent={data.rx_pending_verification > 0 ? colors.warning : undefined} />
-              <Kpi label="Rx verify SLA" value={`${data.rx_verify_sla_minutes}m`} sub={`target ${data.rx_verify_sla_target_minutes}m · ${data.rx_verify_breaches} breaches`} accent={data.rx_verify_sla_minutes > data.rx_verify_sla_target_minutes ? colors.danger : colors.success} />
-              <Kpi label="PCN pending review" value={data.pcn_pending_review.toLocaleString('en-NG')} sub="HL-2 credential gate" accent={data.pcn_pending_review > 0 ? colors.warning : undefined} />
-              <Kpi label="Catalog pending" value={data.catalog_pending_governance.toLocaleString('en-NG')} sub={`${data.catalog_unregistered_blocked} NAFDAC-blocked (HL-5)`} />
-              <Kpi label="Controlled blocked" value={data.controlled_attempts_blocked.toLocaleString('en-NG')} sub="HL-4 excluded at MVP" accent={data.controlled_attempts_blocked > 0 ? colors.danger : undefined} />
-              <Kpi label="Recalls open" value={data.recalls_open.toLocaleString('en-NG')} accent={data.recalls_open > 0 ? colors.warning : undefined} />
-              <Kpi label="Payouts KYC hold" value={data.payouts_kyc_hold.toLocaleString('en-NG')} sub="HL-10 payout gate" accent={data.payouts_kyc_hold > 0 ? colors.warning : undefined} />
-              <Kpi label="Held balance" value={formatNaira(data.held_balance_kobo)} sub="HL-9 escrow held" accent={colors.primary} />
-              <Kpi label="Released (30d)" value={formatNaira(data.released_30d_kobo)} accent={colors.success} />
-              <Kpi label="Refunded (30d)" value={formatNaira(data.refunded_30d_kobo)} accent={colors.primary} />
-              <Kpi label="Pharmacies active" value={data.pharmacies_active.toLocaleString('en-NG')} sub={`${data.pharmacies_suspended} suspended`} />
+              <Kpi label="Orders (total)" value={(data.orders_total ?? 0).toLocaleString('en-NG')} accent={colors.primary} />
+              <Kpi label="Platform revenue (7d)" value={formatNaira(data.platform_revenue_kobo_week ?? 0)} accent={colors.success} />
+              <Kpi label="Pharmacies active" value={data.pharmacies_active.toLocaleString('en-NG')} sub="APPROVED (HL-2)" />
+              <Kpi label="Orders today" value={data.orders_today.toLocaleString('en-NG')} sub={`${data.orders_30d.toLocaleString('en-NG')} orders (30d) — not computed`} accent={colors.primary} />
+              <Kpi label="GMV today" value={formatNaira(data.gmv_today_kobo)} sub={`${formatNaira(data.gmv_30d_kobo)} (30d) — not computed`} />
+              <Kpi label="Net revenue (30d)" value={formatNaira(data.net_revenue_30d_kobo)} accent={colors.success} sub="not computed" />
+              <Kpi label="Take rate" value={pct(data.take_rate)} sub="Net ÷ GMV — not computed" />
+              <Kpi label="Avg order value" value={formatNaira(data.avg_order_value_kobo)} sub="not computed" />
+              <Kpi label="Rx pending verify" value={data.rx_pending_verification.toLocaleString('en-NG')} sub="HL-3 pharmacist gate — not computed" accent={data.rx_pending_verification > 0 ? colors.warning : undefined} />
+              <Kpi label="Rx verify SLA" value={`${data.rx_verify_sla_minutes}m`} sub="not computed" accent={undefined} />
+              <Kpi label="PCN pending review" value={data.pcn_pending_review.toLocaleString('en-NG')} sub="HL-2 credential gate — not computed" />
+              <Kpi label="Catalog pending" value={data.catalog_pending_governance.toLocaleString('en-NG')} sub="not computed" />
+              <Kpi label="Controlled blocked" value={data.controlled_attempts_blocked.toLocaleString('en-NG')} sub="HL-4 excluded at MVP — not computed" />
+              <Kpi label="Recalls open" value={data.recalls_open.toLocaleString('en-NG')} sub="not computed" />
+              <Kpi label="Payouts KYC hold" value={data.payouts_kyc_hold.toLocaleString('en-NG')} sub="HL-10 payout gate — not computed" />
+              <Kpi label="Held balance" value={formatNaira(data.held_balance_kobo)} sub="HL-9 escrow held — not computed" accent={colors.primary} />
+              <Kpi label="Released (30d)" value={formatNaira(data.released_30d_kobo)} sub="not computed" />
+              <Kpi label="Refunded (30d)" value={formatNaira(data.refunded_30d_kobo)} sub="not computed" />
+              <Kpi label="Pharmacies suspended" value={data.pharmacies_suspended.toLocaleString('en-NG')} sub="not computed" />
             </div>
 
-            <Card title="Order mix (30d)">
+            <Card title="Orders by state (live)">
+              <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                <thead><tr><th style={thCell}>State</th><th style={thCell}>Orders</th></tr></thead>
+                <tbody>
+                  {Object.entries(data.orders_by_state ?? {}).map(([state, count]) => (
+                    <tr key={state}>
+                      <td style={tdCell}><Badge text={state.replace(/_/g, ' ')} color={statusColor(state)} /></td>
+                      <td style={tdCell}>{count.toLocaleString('en-NG')}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </Card>
+
+            <Card title="Order mix (30d) — not computed">
               <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                 <thead><tr><th style={thCell}>Type</th><th style={thCell}>Orders</th><th style={thCell}>GMV</th><th style={thCell}>Share</th></tr></thead>
                 <tbody>
@@ -86,7 +110,7 @@ export default function PharmacyDashboardPage() {
               </table>
             </Card>
 
-            <Card title="GMV vs net revenue (14d)">
+            <Card title="GMV vs net revenue (14d) — not computed">
               <p style={{ fontSize: '0.75rem', color: colors.muted, margin: '0 0 0.75rem' }}>GMV (purple) vs net (green)</p>
               <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
                 {data.gmv_trend.map((p) => {
@@ -111,7 +135,7 @@ export default function PharmacyDashboardPage() {
               </div>
             </Card>
 
-            <Card title="Recent activity">
+            <Card title="Recent activity — not computed">
               <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                 <thead><tr><th style={thCell}>Event</th><th style={thCell}>Type</th><th style={thCell}>Ref</th><th style={thCell}>When</th></tr></thead>
                 <tbody>

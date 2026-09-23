@@ -34,6 +34,7 @@ export async function POST(request: Request) {
       amount_kobo?: unknown;
       narration?: unknown;
       save_beneficiary?: unknown;
+      pin?: unknown;
     };
 
     const bankCode         = String(body.bank_code ?? '').trim();
@@ -67,6 +68,8 @@ export async function POST(request: Request) {
       idempotencyKey,
       narration,
       saveBeneficiary,
+      pin: typeof body.pin === 'string' ? body.pin : '',
+      authHeader: request.headers.get('Authorization') || request.headers.get('authorization'),
     });
 
     const feeKobo = calculateBankTransferFee(amountKobo);

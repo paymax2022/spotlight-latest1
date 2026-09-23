@@ -27,7 +27,7 @@ export default function VoteCallbackPage() {
 
     (async () => {
       try {
-        const res = await fetch('/api/votes/paid/verify', {
+        const res = await fetch('/api/v2/votes/paid/verify', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({

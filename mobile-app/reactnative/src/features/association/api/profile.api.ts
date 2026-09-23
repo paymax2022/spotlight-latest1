@@ -9,6 +9,14 @@ import { MOCK_MY_PROFILE, MOCK_PRIVACY, MOCK_ACTIVITY } from './profile.mock';
 
 const delay = (ms = 300) => new Promise((r) => setTimeout(r, ms));
 
+// Every write below has a real live endpoint (verified against
+// backend/internal/association/routes.go and a full green run of
+// backend/tests/association), so fixture mode has nothing to add and refuses
+// loudly instead of reporting a write it did not perform — mirrors
+// frontend-admin's crowdfundingAdminService.ts NOT_IN_FIXTURE_MODE pattern.
+const notInFixtureMode = (action: string) =>
+  new Error(`${action} is unavailable in fixture mode: this app will not report a write it did not perform. Set EXPO_PUBLIC_ASSOCIATION_USE_MOCK=false to send this against the live backend.`);
+
 // In mock mode we keep edits in-memory for the session so the UI reflects saves.
 let current: MyProfile = { ...MOCK_MY_PROFILE };
 let privacy: PrivacySettings = { ...MOCK_PRIVACY };
@@ -20,11 +28,7 @@ export async function getMyProfile(): Promise<MyProfile> {
 }
 
 export async function updateMyProfile(edit: ProfileEdit): Promise<MyProfile> {
-  if (USE_MOCK) {
-    await delay(400);
-    current = { ...current, ...edit };
-    return current;
-  }
+  if (USE_MOCK) throw notInFixtureMode('Updating your profile');
   const { data } = await api.put(`${BASE}/me/profile`, edit);
   return data;
 }
@@ -50,7 +54,7 @@ export async function getPrivacy(): Promise<PrivacySettings> {
 }
 
 export async function updatePrivacy(next: PrivacySettings): Promise<PrivacySettings> {
-  if (USE_MOCK) { await delay(200); privacy = { ...next }; return privacy; }
+  if (USE_MOCK) throw notInFixtureMode('Updating your privacy settings');
   const { data } = await api.put(`${BASE}/me/privacy`, next);
   return data;
 }

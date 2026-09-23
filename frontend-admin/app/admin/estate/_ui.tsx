@@ -67,6 +67,7 @@ export function EstateTabs({ active }: { active: string }) {
   const tabs = [
     { href: '/admin/estate', label: 'Dashboard', key: 'dashboard' },
     { href: '/admin/estate/residents', label: 'Residents & units', key: 'residents' },
+    { href: '/admin/estate/properties', label: 'Properties', key: 'properties' },
     { href: '/admin/estate/dues', label: 'Dues & collections', key: 'dues' },
     { href: '/admin/estate/gates', label: 'Gates & security', key: 'gates' },
     { href: '/admin/estate/facilities', label: 'Facilities', key: 'facilities' },

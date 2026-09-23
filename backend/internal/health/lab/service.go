@@ -520,6 +520,27 @@ func (s *Service) Handover(ctx context.Context, actorID, sampleID, toCustodianID
 	if err != nil {
 		return nil, err
 	}
+	// HL-2/HL-6: unlike every other custody-mutating action in this file
+	// (Collect, Accession), Handover had NO actor gate at all — any
+	// authenticated caller, including the order's own patient, could
+	// reassign chain-of-custody with an arbitrary to_custodian_id. Found
+	// live via UAT. A verified phlebotomist of this lab initiates the
+	// handover (phlebotomist → courier → lab, per this file's own doc
+	// comment on Handover below), mirroring Collect/Accession's identical
+	// IsVerifiedPhlebotomist/IsVerifiedScientist gate pattern.
+	o, err := s.load(ctx, sm.OrderID)
+	if err != nil {
+		return nil, err
+	}
+	if s.prov != nil {
+		ok, perr := s.prov.IsVerifiedPhlebotomist(ctx, actorID, o.LabProviderID)
+		if perr != nil {
+			return nil, perr
+		}
+		if !ok {
+			return nil, fmt.Errorf("lab: only a verified phlebotomist may hand over custody (HL-2)")
+		}
+	}
 	to := SampleHandedOver
 	target := sm.State
 	switch target {

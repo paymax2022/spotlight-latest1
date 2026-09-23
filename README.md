@@ -1,5 +1,9 @@
 # Spotlight Claude Code Setup Kit
 
+> **Looking for what this application *is* and how it works — not how this repo's Claude Code
+> tooling is configured?** See **[`docs/PLATFORM_OVERVIEW.md`](docs/PLATFORM_OVERVIEW.md)** —
+> the platform architecture, module-by-module build status, and go-live readiness summary.
+
 Drop-in `.claude/` configuration for the Spotlight fintech transformation.
 
 ## What's inside

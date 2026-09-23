@@ -138,6 +138,10 @@ export function makeSupabaseMock() {
     select: vi.fn().mockReturnThis(),
     eq: vi.fn().mockReturnThis(),
     neq: vi.fn().mockReturnThis(),
+    gt: vi.fn().mockReturnThis(),
+    gte: vi.fn().mockReturnThis(),
+    lt: vi.fn().mockReturnThis(),
+    lte: vi.fn().mockReturnThis(),
     ilike: vi.fn().mockReturnThis(),
     or: vi.fn().mockReturnThis(),
     not: vi.fn().mockReturnThis(),
@@ -161,4 +165,24 @@ export function makeSupabaseMock() {
   };
 
   return { mock, maybySingle, single, insertFn, updateFn, updateEq, listData, rangeFn };
+}
+
+/**
+ * Builds a mock for an `insert(...).select(...).single()` chain — used by
+ * routes/services that need the inserted row's id back (e.g. maker-checker
+ * `proposeApproval`, `initiateAdjustment`). The default `makeSupabaseMock()`
+ * `insertFn` resolves directly to `{ error }`, which isn't chainable with a
+ * further `.select().single()` call.
+ *
+ * Usage:
+ *   const { insertFn } = makeSupabaseMock();
+ *   insertFn.mockReturnValue(chainableInsert({ id: 'row-1', status: 'pending_approval' }));
+ */
+export function chainableInsert(row: Record<string, unknown> | null, error: unknown = null) {
+  return {
+    select: () => ({
+      single: () => Promise.resolve({ data: row, error }),
+      maybeSingle: () => Promise.resolve({ data: row, error }),
+    }),
+  };
 }

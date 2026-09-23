@@ -108,14 +108,13 @@ func (s *Service) CreateEvent(ctx context.Context, organiserID string, e Event) 
 	e.OrganiserID = organiserID
 	e.State = EventDraft
 	e.CreatedAt = time.Now()
-	// organizer_id (legacy spelling) is also written here: it predates
-	// organiser_id (20260616240000_events.sql, NOT NULL, no default) and is
-	// still live in every real environment — migrations are additive-only, so
-	// it was never dropped, and the legacy RLS policies on this table still
-	// check organizer_id = auth.uid(). Writing only organiser_id violates that
-	// NOT NULL constraint and fails every CreateEvent call outright.
+	// organizer_id (legacy, NOT NULL, no default) is populated alongside the
+	// new organiser_id with the SAME value — see
+	// 20270228000000_events_ticket_legacy_columns_nullable.sql for the full
+	// schema-drift history. Every CreateEvent call failed SQLSTATE 23502
+	// before this, since the INSERT only ever wrote organiser_id.
 	const ins = `
-		INSERT INTO events (id, organiser_id, organizer_id, title, description, venue, state, category, starts_at, ends_at, fee_bps)
+		INSERT INTO events (id, organizer_id, organiser_id, title, description, venue, state, category, starts_at, ends_at, fee_bps)
 		VALUES ($1,$2,$2,$3,$4,$5,'DRAFT',$6,$7,$8,$9)`
 	if _, err := s.db.Exec(ctx, ins, e.ID, e.OrganiserID, e.Title, e.Description, e.Venue, e.Category, e.StartsAt, e.EndsAt, e.FeeBps); err != nil {
 		return nil, fmt.Errorf("events: insert: %w", err)
@@ -930,9 +929,28 @@ func (s *Service) TopUp(ctx context.Context, ownerID, walletID string, amountKob
 // (POS-lite tap-charge). It is a pure sub-balance move (CHARGE on the attendee
 // wallet, credit on the vendor float) — no money leaves the closed loop here; the
 // vendor is paid out net of fees at settlement. Idempotent on idemKey (NL-9).
-func (s *Service) TapCharge(ctx context.Context, vendorID, walletID string, amountKobo int64, idemKey string) (*VendorCharge, error) {
+func (s *Service) TapCharge(ctx context.Context, callerID, vendorID, walletID string, amountKobo int64, idemKey string) (*VendorCharge, error) {
 	if amountKobo <= 0 {
 		return nil, fmt.Errorf("events: charge must be positive kobo")
+	}
+	// Vendor-ownership authZ: TapCharge moves an attendee's float onto a
+	// vendor's own accrued takings — unlike AddTier/AddPromo/AddVendor
+	// (which all already call assertOwner), this had NO caller check at all.
+	// GET /:id/vendors returns event_vendors.id in plaintext to any
+	// attendee, so any authenticated user who could read or enumerate a
+	// vendor id could charge an attendee's wallet and have the float
+	// credited to a vendor they don't control. Found live via UAT.
+	var vendorUserID string
+	var vendorActive bool
+	if err := s.db.QueryRow(ctx, `SELECT user_id, active FROM event_vendors WHERE id=$1`, vendorID).
+		Scan(&vendorUserID, &vendorActive); err != nil {
+		if err == pgx.ErrNoRows {
+			return nil, fmt.Errorf("events: vendor not found")
+		}
+		return nil, err
+	}
+	if !vendorActive || callerID != vendorUserID {
+		return nil, fmt.Errorf("events: only the vendor's own operator may tap-charge")
 	}
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
@@ -1141,8 +1159,17 @@ func (s *Service) SettleVendor(ctx context.Context, eventID, vendorID, idemKey s
 	// Sum unsettled vendor float under a row lock. The lock is held across the
 	// ledger posts below, so a concurrent SettleVendor for the same vendor blocks
 	// until we commit (or roll back) and can never double-count the same float.
+	// Postgres rejects `FOR UPDATE` combined directly with an aggregate
+	// (SUM) in the same SELECT ("FOR UPDATE is not allowed with aggregate
+	// functions") — every SettleVendor call failed on this before it ever
+	// reached a real payout. Found live via UAT. The lock has to happen in
+	// an inner, non-aggregating SELECT; the outer query then aggregates the
+	// already-locked rows.
 	var gross int64
-	if err := tx.QueryRow(ctx, `SELECT COALESCE(SUM(amount_kobo),0) FROM vendor_float WHERE vendor_id=$1 AND settled=false FOR UPDATE`, vendorID).Scan(&gross); err != nil {
+	if err := tx.QueryRow(ctx, `
+		SELECT COALESCE(SUM(amount_kobo),0) FROM (
+			SELECT amount_kobo FROM vendor_float WHERE vendor_id=$1 AND settled=false FOR UPDATE
+		) locked`, vendorID).Scan(&gross); err != nil {
 		return 0, fmt.Errorf("events: sum float: %w", err)
 	}
 	if gross <= 0 {

@@ -1,6 +1,6 @@
 import { ApiError } from '@/src/lib/api/responses';
 import { hasPermission, parseAdminRole, type AdminPermission } from '@/src/server/admin/rbac';
-import { createClient } from '@/lib/supabase/server';
+import { createClient, createAdminClient } from '@/lib/supabase/server';
 
 export interface AdminIdentity {
   role: ReturnType<typeof parseAdminRole>;
@@ -39,7 +39,18 @@ export async function assertAdminPermission(
   if (error || !data.user) throw new ApiError('Unauthorized', 401);
 
   // Role from DB is the source of truth; user_metadata is only a fallback.
-  const { data: profile } = await supabase
+  //
+  // MUST use the service-role client here, not the cookie/RLS-scoped one above.
+  // This route is called with `Authorization: Bearer <token>` from a
+  // cross-origin admin console (frontend-admin, a different port), never with
+  // this app's own session cookies — so `createClient()`'s RLS-scoped query
+  // runs unauthenticated (auth.uid() is null) and user_profiles' own-row-only
+  // SELECT policy silently returns zero rows. The role check then fell through
+  // to the JWT's user_metadata.role — whatever was set at signup and never
+  // updated after — making every user_profiles.role change (grant OR revoke)
+  // a no-op for every Bearer-token admin caller, i.e. every real caller.
+  const adminSupabase = createAdminClient();
+  const { data: profile } = await adminSupabase
     .from('user_profiles')
     .select('role')
     .eq('id', data.user.id)

@@ -12,9 +12,16 @@ import {
 } from '../../_ui';
 import { Page, Card, Button, Input, Badge, colors, tdCell } from '@/components/ui/vuexy';
 
+// Member status (assoc_memberships.status: DRAFT/PENDING/ACTIVE/INACTIVE/
+// SUSPENDED/EXPIRED/RESTRICTED/REJECTED/REMOVED) and payment standing
+// (assoc_memberships.payment_standing: PAID/DUE/OVERDUE) are both stored and
+// returned upper-case — this used to compare against lower-case literals that
+// never matched anything real, so every badge silently fell through to the
+// warning color and (worse) the Suspend/Restore button toggle below never
+// flipped for an actually-suspended member.
 function statusColor(status: string) {
-  if (status === 'active' || status === 'current') return colors.success;
-  if (status === 'suspended' || status === 'in_default') return colors.danger;
+  if (status === 'ACTIVE' || status === 'PAID') return colors.success;
+  if (status === 'SUSPENDED' || status === 'REMOVED' || status === 'REJECTED' || status === 'OVERDUE') return colors.danger;
   return colors.warning;
 }
 
@@ -122,8 +129,8 @@ export default function AssociationMemberDetailPage({ params }: { params: Promis
             <PermissionBanner text="You have read-only access — your role cannot suspend, restore, transfer or assign roles for members." />
           ) : !action ? (
             <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', marginTop: 12 }}>
-              {member.status !== 'suspended' && <Button variant="danger" onClick={() => openAction('suspend')}>Suspend</Button>}
-              {member.status === 'suspended' && <Button variant="primary" onClick={() => openAction('restore')}>Restore</Button>}
+              {member.status !== 'SUSPENDED' && <Button variant="danger" onClick={() => openAction('suspend')}>Suspend</Button>}
+              {member.status === 'SUSPENDED' && <Button variant="primary" onClick={() => openAction('restore')}>Restore</Button>}
               <Button variant="outline" onClick={() => openAction('transfer')}>Transfer chapter</Button>
               <Button variant="outline" onClick={() => openAction('role')}>Assign role</Button>
             </div>

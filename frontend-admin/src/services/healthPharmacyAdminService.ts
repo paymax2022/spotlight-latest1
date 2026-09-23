@@ -126,9 +126,58 @@ const DASHBOARD: PharmacyDashboard = {
     { id: 'h7', kind: 'controlled_blocked', label: 'Controlled-substance listing attempt blocked — excluded at MVP (HL-4)', ref: 'cat_5560', created_at: iso(9.0) },
   ],
 };
+/** Raw shape of GET /api/health/pharmacy/admin/dashboard's `data`
+ *  (healthpharmacy.AdminDashboard, backend/internal/health/pharmacy/admin_model.go). */
+interface RawAdminDashboard {
+  total_orders: number;
+  orders_by_state: Record<string, number>;
+  platform_revenue_kobo_week: number;
+  total_pharmacies: number;
+}
+
 export async function getPharmacyDashboard(): Promise<PharmacyDashboard> {
   if (USE_MOCK) { await delay(); return { ...DASHBOARD, order_mix: [...DASHBOARD.order_mix], gmv_trend: [...DASHBOARD.gmv_trend], activity: [...DASHBOARD.activity] }; }
-  return getJson<PharmacyDashboard>('/dashboard');
+  const raw = await getJson<RawAdminDashboard>('/dashboard');
+  return {
+    generated_at: new Date().toISOString(),
+    // Real, PHARMACY-001-scoped fields — see admin_model.go's AdminDashboard
+    // doc comment for exactly what each one is and, for platform revenue, why
+    // it is a direct read of commission_earnings rather than a recomputed %.
+    orders_total: raw.total_orders,
+    orders_by_state: raw.orders_by_state,
+    platform_revenue_kobo_week: raw.platform_revenue_kobo_week,
+    pharmacies_active: raw.total_pharmacies,
+    // Everything below this line is NOT computed by the real backend yet —
+    // PHARMACY-001 scoped only the order-state aggregate, trailing-7-day
+    // platform revenue, and APPROVED-pharmacy count (see the dashboard page's
+    // DisclosureNote for the same list). Left at 0/empty rather than
+    // fabricated, matching Telemedicine's (TELEMEDICINE-004) and
+    // Marketplace's analytics-endpoint honesty precedent.
+    orders_today: 0,
+    orders_30d: 0,
+    gmv_today_kobo: 0,
+    gmv_30d_kobo: 0,
+    net_revenue_30d_kobo: 0,
+    take_rate: 0,
+    avg_order_value_kobo: 0,
+    rx_pending_verification: 0,
+    rx_verify_sla_minutes: 0,
+    rx_verify_sla_target_minutes: 0,
+    rx_verify_breaches: 0,
+    pcn_pending_review: 0,
+    catalog_pending_governance: 0,
+    catalog_unregistered_blocked: 0,
+    controlled_attempts_blocked: 0,
+    recalls_open: 0,
+    payouts_kyc_hold: 0,
+    held_balance_kobo: 0,
+    released_30d_kobo: 0,
+    refunded_30d_kobo: 0,
+    pharmacies_suspended: 0,
+    order_mix: [],
+    gmv_trend: [],
+    activity: [],
+  };
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -260,6 +309,102 @@ const ORDERS: PharmacyOrderSummary[] = [
   { id: 'ord_8818', patient_masked: 'pt Tunde•••', pharmacy_masked: 'HealthPlus Ikeja•••', status: 'collected', fulfilment: 'pickup', has_pom: false, amount_kobo: 2_100_00, payment_status: 'released', delivery_ref: null, created_at: iso(50) },
   { id: 'ord_8800', patient_masked: 'pt Ngozi•••', pharmacy_masked: 'HealthPlus Ikeja•••', status: 'closed', fulfilment: 'delivery', has_pom: true, amount_kobo: 9_900_00, payment_status: 'released', delivery_ref: 'dsp_76980', created_at: iso(120) },
 ];
+/** Raw shape of one row in GET /api/health/pharmacy/admin/orders's `data`
+ *  (healthpharmacy.Service.AdminListOrders, backend/internal/health/pharmacy/admin.go). */
+interface RawAdminOrder {
+  id: string;
+  patient_id: string;
+  pharmacy_provider_id: string;
+  pharmacy_name: string | null; // health_providers.display_name, LEFT JOINed
+  prescription_id: string | null;
+  state: string; // upper-case OrderState, e.g. "RX_PENDING_VERIFICATION"
+  fulfilment_method: string; // "DELIVERY" | "PICKUP"
+  total_kobo: number;
+  escrow_id: string | null;
+  delivery_ref: string | null;
+  created_at: string;
+}
+
+/** Raw shape of one line in an admin order-detail read (healthpharmacy.OrderLine). */
+interface RawOrderLine {
+  id: string;
+  order_id: string;
+  product_id: string;
+  product_name: string;
+  rx_required: boolean;
+  quantity: number;
+  unit_price_kobo: number;
+  line_total_kobo: number;
+}
+
+/** Raw shape of GET /api/health/pharmacy/admin/orders/:id's `data`
+ *  (healthpharmacy.Order, backend/internal/health/pharmacy/model.go). */
+interface RawAdminOrderDetail {
+  id: string;
+  patient_id: string;
+  pharmacy_provider_id: string;
+  prescription_id: string | null;
+  state: string;
+  fulfilment_method: string;
+  total_kobo: number;
+  escrow_id: string | null;
+  delivery_ref: string | null;
+  pickup_code: string | null; // always null here — Get() redacts it for every non-patient reader (HL-9 counter credential)
+  lines?: RawOrderLine[];
+  created_at: string;
+}
+
+/** NDPA masking (HL-8) for a raw patient uuid the backend never resolves to a
+ * display name — mirrors telemedicineAdminService.ts's maskPatientId. */
+function maskPersonId(id: string): string {
+  return id ? `pt ${id.slice(0, 8)}…` : 'Unknown';
+}
+
+/** Direct case transform: OrderState values (model.go) are exactly the
+ * PharmacyOrderStatus union's values upper-cased — no fabrication involved. */
+function mapOrderStatus(state: string): PharmacyOrderSummary['status'] {
+  return state.toLowerCase() as PharmacyOrderSummary['status'];
+}
+function mapFulfilment(method: string): PharmacyOrderSummary['fulfilment'] {
+  return method.toLowerCase() as PharmacyOrderSummary['fulfilment'];
+}
+
+/**
+ * The pharmacy admin read has no payment_status column to select — HL-9 only
+ * ever writes the order's `state`, never a separate hold/release/refund flag.
+ * This derives the display value from the documented state machine
+ * (model.go's OrderState header comment / Complete+Cancel's own comments):
+ * escrow is HELD from CREATED, RELEASED at the DELIVERED/COLLECTED/CLOSED
+ * transition (Complete releases BEFORE closing), REFUNDED at REFUNDED. The one
+ * inaccuracy this can produce: if escrow.Release/Refund itself errors AFTER
+ * the state transition already landed (Complete/Cancel call transition()
+ * first, release/refund second — see service.go), the row would read
+ * "released"/"refunded" a moment before the escrow call actually lands. A
+ * byte-accurate value would need a live escrow lookup this endpoint doesn't
+ * do; this derivation is disclosed, not silently guessed.
+ */
+function derivePaymentStatus(state: string): PharmacyOrderSummary['payment_status'] {
+  const s = state.toUpperCase();
+  if (s === 'REFUNDED') return 'refunded';
+  if (s === 'DELIVERED' || s === 'COLLECTED' || s === 'CLOSED') return 'released';
+  return 'held';
+}
+
+function mapRawOrder(r: RawAdminOrder): PharmacyOrderSummary {
+  return {
+    id: r.id,
+    patient_masked: maskPersonId(r.patient_id),
+    pharmacy_masked: r.pharmacy_name ?? maskPersonId(r.pharmacy_provider_id),
+    status: mapOrderStatus(r.state),
+    fulfilment: mapFulfilment(r.fulfilment_method),
+    has_pom: r.prescription_id != null,
+    amount_kobo: r.total_kobo,
+    payment_status: derivePaymentStatus(r.state),
+    delivery_ref: r.delivery_ref,
+    created_at: r.created_at,
+  };
+}
+
 export async function listOrders(opts?: { status?: string; fulfilment?: string; q?: string }): Promise<PharmacyOrderSummary[]> {
   if (USE_MOCK) {
     await delay();
@@ -272,11 +417,22 @@ export async function listOrders(opts?: { status?: string; fulfilment?: string; 
     }
     return rows;
   }
+  // PHARMACY-001: `status`/`fulfilment` are exactly what the backend now reads
+  // (AdminListOrders, admin.go) — it used to only read `state`/
+  // `pharmacy_provider_id`, so these silently no-op'd. Backend was changed to
+  // match this frontend's contract (see the PR description for why that side
+  // was picked); no param renaming needed here. `q` (free-text search) still
+  // has no backend support — filtered client-side below, same as before.
   const qs = new URLSearchParams();
   if (opts?.status) qs.set('status', opts.status);
   if (opts?.fulfilment) qs.set('fulfilment', opts.fulfilment);
-  if (opts?.q) qs.set('q', opts.q);
-  return getJson<PharmacyOrderSummary[]>(`/orders${qs.toString() ? `?${qs}` : ''}`);
+  const raw = await getJson<RawAdminOrder[]>(`/orders${qs.toString() ? `?${qs}` : ''}`);
+  let rows = (raw ?? []).map(mapRawOrder);
+  if (opts?.q) {
+    const q = opts.q.toLowerCase();
+    rows = rows.filter((r) => r.patient_masked.toLowerCase().includes(q) || r.pharmacy_masked.toLowerCase().includes(q) || r.id.includes(q));
+  }
+  return rows;
 }
 export async function getOrder(id: string): Promise<PharmacyOrderDetail> {
   if (USE_MOCK) {
@@ -308,7 +464,47 @@ export async function getOrder(id: string): Promise<PharmacyOrderDetail> {
       ],
     };
   }
-  return getJson<PharmacyOrderDetail>(`/orders/${id}`);
+  // PHARMACY-001: GET /orders/:id is a new route — this call used to 404.
+  const raw = await getJson<RawAdminOrderDetail>(`/orders/${id}`);
+  const lines: PharmacyOrderDetail['lines'] = (raw.lines ?? []).map((l) => ({
+    product_name: l.product_name,
+    // The admin order-detail read doesn't join pharmacy_products for a NAFDAC
+    // ref (only owner/patient product reads do) — null, not fabricated.
+    nafdac_reg_no: null,
+    pom: l.rx_required,
+    qty: l.quantity,
+    unit_price_kobo: l.unit_price_kobo,
+    line_total_kobo: l.line_total_kobo,
+  }));
+  const subtotal = lines.reduce((s, l) => s + l.line_total_kobo, 0);
+  // delivery_fee_kobo is a REAL arithmetic derivation (order total minus the
+  // sum of its real line totals), not an estimate — pharmacy_orders has no
+  // separate delivery-fee column to read directly.
+  const deliveryFee = Math.max(0, raw.total_kobo - subtotal);
+  return {
+    id: raw.id,
+    patient_masked: maskPersonId(raw.patient_id),
+    pharmacy_masked: maskPersonId(raw.pharmacy_provider_id),
+    status: mapOrderStatus(raw.state),
+    fulfilment: mapFulfilment(raw.fulfilment_method),
+    has_pom: raw.prescription_id != null,
+    amount_kobo: raw.total_kobo,
+    payment_status: derivePaymentStatus(raw.state),
+    delivery_ref: raw.delivery_ref,
+    created_at: raw.created_at,
+    lines,
+    subtotal_kobo: subtotal,
+    delivery_fee_kobo: deliveryFee,
+    total_kobo: raw.total_kobo,
+    rx_ref: raw.prescription_id,
+    // Always null from this endpoint — Get()'s admin-bypass path (service.go)
+    // redacts the pickup code for every non-patient reader; admin oversight
+    // never needs the counter credential.
+    pickup_code: raw.pickup_code,
+    // No per-order audit timeline read exists yet on the backend — empty, not
+    // fabricated (matching Telemedicine/Marketplace precedent).
+    timeline: [],
+  };
 }
 
 // ════════════════════════════════════════════════════════════════════════════

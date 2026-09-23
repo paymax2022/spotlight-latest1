@@ -11,13 +11,22 @@ import (
 
 // Service is the high-level ledger API consumed by other finance modules.
 type Service struct {
-	repo  *Repository
-	redis *goredis.Client // optional; nil means no idempotency cache
+	repo      *Repository
+	redis     *goredis.Client // optional; nil means no idempotency cache
+	resolvers []TransactionDetailResolver // optional; nil/empty means no per-module admin detail
 }
 
 func NewService(repo *Repository, redis *goredis.Client) *Service {
 	return &Service{repo: repo, redis: redis}
 }
+
+// SetResolvers wires the optional per-module admin transaction-detail
+// resolvers (see admin_transaction_resolver.go), mirroring the
+// SetTierReader-style late-binding pattern used elsewhere in this codebase
+// (e.g. connect/gifting/service.go's SetTierReader) so callers that
+// construct ledgerSvc before the resolvers exist can still wire them in
+// afterward. Nil-safe: zero resolvers is a valid, pre-existing state.
+func (s *Service) SetResolvers(rs []TransactionDetailResolver) { s.resolvers = rs }
 
 // GetOrCreateUserWallet returns (or creates) the user_wallet ledger account.
 func (s *Service) GetOrCreateUserWallet(ctx context.Context, userID string) (*Account, error) {
