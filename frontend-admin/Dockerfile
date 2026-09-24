@@ -83,4 +83,12 @@ COPY --from=builder --chown=node:node /app/.next/static ./.next/static
 USER node
 EXPOSE 8080
 
+# Container-level liveness only (the process accepts connections) — no
+# dedicated /healthz route exists, so this hits the root. node:20-alpine
+# ships wget via busybox; no extra install needed.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
+  CMD wget --no-verbose --tries=1 --spider "http://127.0.0.1:${PORT:-3001}/" || exit 1
+
+# The standalone build's own server.js (not `next start`/node_modules, which
+# this image never copies) — it already reads $PORT itself.
 CMD ["node", "server.js"]

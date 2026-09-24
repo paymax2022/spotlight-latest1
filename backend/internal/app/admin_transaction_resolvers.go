@@ -66,15 +66,18 @@ func (r *MarketplaceBoostResolver) Resolve(ctx context.Context, reference string
 		return nil, false, fmt.Errorf("marketplace boost resolver: %w", err)
 	}
 	category := tier
+	subCategory := fmt.Sprintf("%d days", durationDays)
 	return &ledger.ModuleTransactionDetail{
-		Module:        "marketplace_boost",
-		ServiceLabel:  "Marketplace — Listing Boost",
-		Category:      &category,
-		ServiceBought: fmt.Sprintf("Listing boost — %s tier (%d days)", tier, durationDays),
-		PaymentMethod: "wallet", // mkt_boosts has no payment_method column — wallet is the only rail
-		Status:        status,
-		Provider:      nil, // no aggregator/provider concept for a wallet-native boost charge
-		Merchant:      nil, // the seller is paying the platform for promotion, not a third party — no merchant here
+		Module:           "marketplace_boost",
+		ServicePurchased: "Marketplace",
+		SubService:       "Listing Boost",
+		Category:         &category,    // the boost tier, e.g. "vip_gold" — closest thing to a "brand" this module has
+		SubCategory:      &subCategory, // the specific duration variant purchased
+		ServiceBought:    fmt.Sprintf("Listing boost — %s tier (%d days)", tier, durationDays),
+		PaymentMethod:    "wallet", // mkt_boosts has no payment_method column — wallet is the only rail
+		Status:           status,
+		Provider:         nil, // no aggregator/provider concept for a wallet-native boost charge
+		Merchant:         nil, // the seller is paying the platform for promotion, not a third party — no merchant here
 	}, true, nil
 }
 
@@ -119,16 +122,19 @@ func (r *InsurancePremiumResolver) Resolve(ctx context.Context, reference string
 	if underwriter != "" {
 		providerStr = fmt.Sprintf("%s (underwriter: %s)", provider, underwriter)
 	}
-	category := productCode
+	category := provider         // the brand the customer transacted with, e.g. "mycover"
+	subCategory := serviceBought // the specific product bought
 	return &ledger.ModuleTransactionDetail{
-		Module:        "insurance_premium",
-		ServiceLabel:  "Insurance — Premium",
-		Category:      &category,
-		ServiceBought: serviceBought,
-		PaymentMethod: "wallet", // no payment_method column on insurance tables — wallet-only
-		Status:        state,   // real lifecycle state, not the generic ledger Posted/Reversed
-		Provider:      strPtr(providerStr),
-		Merchant:      nil, // no merchant concept — Provider/Underwriter cover this module
+		Module:           "insurance_premium",
+		ServicePurchased: "Insurance",
+		SubService:       "Premium Payment",
+		Category:         &category,
+		SubCategory:      &subCategory,
+		ServiceBought:    serviceBought,
+		PaymentMethod:    "wallet", // no payment_method column on insurance tables — wallet-only
+		Status:           state,    // real lifecycle state, not the generic ledger Posted/Reversed
+		Provider:         strPtr(providerStr),
+		Merchant:         nil, // no merchant concept — Provider/Underwriter cover this module
 	}, true, nil
 }
 
@@ -163,14 +169,16 @@ func (r *FXConversionResolver) Resolve(ctx context.Context, reference string) (*
 	}
 	category := fmt.Sprintf("%s→%s", sourceCurrency, targetCurrency)
 	return &ledger.ModuleTransactionDetail{
-		Module:        "fx_conversion",
-		ServiceLabel:  "FX — Currency Conversion",
-		Category:      &category,
-		ServiceBought: "Currency conversion",
-		PaymentMethod: "wallet", // fx_conversions has no payment_method column — wallet source-currency debit
-		Status:        status,
-		Provider:      nil, // fx_conversions carries no adapter/provider name column — omit rather than guess
-		Merchant:      nil,
+		Module:           "fx_conversion",
+		ServicePurchased: "FX",
+		SubService:       "Currency Conversion",
+		Category:         &category, // the pair — fx_conversions has no biller/provider concept for a finer split
+		SubCategory:      nil,       // no finer real breakdown exists for a currency conversion
+		ServiceBought:    "Currency conversion",
+		PaymentMethod:    "wallet", // fx_conversions has no payment_method column — wallet source-currency debit
+		Status:           status,
+		Provider:         nil, // fx_conversions carries no adapter/provider name column — omit rather than guess
+		Merchant:         nil,
 	}, true, nil
 }
 
@@ -193,16 +201,17 @@ func (r *UtilityBillResolver) Resolve(ctx context.Context, reference string) (*l
 		return nil, false, nil
 	}
 	var category, customerReference, paymentSource, status string
-	var customerName, billerName, providerName *string
+	var customerName, billerName, providerName, productName *string
 	err := r.pool.QueryRow(ctx, `
 		SELECT ut.category, ut.customer_reference, ut.customer_name,
 		       ut.payment_source, ut.status,
-		       b.name AS biller_name, p.name AS provider_name
+		       b.name AS biller_name, p.name AS provider_name, prod.name AS product_name
 		FROM utility_transactions ut
 		LEFT JOIN utility_billers b ON b.id = ut.biller_id
 		LEFT JOIN utility_providers p ON p.id = ut.provider_id
+		LEFT JOIN utility_products prod ON prod.id = ut.product_id
 		WHERE ut.receipt_number = $1
-		LIMIT 1`, reference).Scan(&category, &customerReference, &customerName, &paymentSource, &status, &billerName, &providerName)
+		LIMIT 1`, reference).Scan(&category, &customerReference, &customerName, &paymentSource, &status, &billerName, &providerName, &productName)
 	if err != nil {
 		if err == pgx.ErrNoRows {
 			return nil, false, nil
@@ -210,21 +219,20 @@ func (r *UtilityBillResolver) Resolve(ctx context.Context, reference string) (*l
 		return nil, false, fmt.Errorf("utility bill resolver: %w", err)
 	}
 	serviceBought := customerReference
-	if billerName != nil && *billerName != "" {
-		serviceBought = fmt.Sprintf("%s — %s", *billerName, customerReference)
-	}
 	if customerName != nil && *customerName != "" {
 		serviceBought = fmt.Sprintf("%s (%s)", serviceBought, *customerName)
 	}
 	category2 := category
 	return &ledger.ModuleTransactionDetail{
-		Module:        "utility_bill",
-		ServiceLabel:  "Utility Bills",
-		Category:      &category2,
-		ServiceBought: serviceBought,
-		PaymentMethod: paymentSource, // the ONE module with a real, non-wallet-only payment_source column
-		Status:        status,
-		Provider:      providerName,
-		Merchant:      nil,
+		Module:           "utility_bill",
+		ServicePurchased: "Utility Bills",
+		SubService:       category2,   // the utility category, e.g. "airtime"
+		Category:         billerName,  // the biller/brand, e.g. "MTN" — nil if the biller was deleted after the fact
+		SubCategory:      productName, // the specific product bought — nil for variable-amount products with no product_id
+		ServiceBought:    serviceBought,
+		PaymentMethod:    paymentSource, // the ONE module with a real, non-wallet-only payment_source column
+		Status:           status,
+		Provider:         providerName,
+		Merchant:         nil,
 	}, true, nil
 }

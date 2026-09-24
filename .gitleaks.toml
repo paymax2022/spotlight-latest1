@@ -37,6 +37,11 @@ paths = [
     '''^backend/internal/config/validate_test\.go$''',            # fake Paystack/Maplerad/Monnify keys for config validation
     '''^backend/internal/credential/credential_test\.go$''',      # "s3cr…" style dummy secrets
     '''^mobile-app/reactnative/backend/internal/auth/auth_test\.go$''', # "test…1234" dummy secret
+    '''^backend/tests/voting/forced_failure_atomicity_live_db_test\.go$''', # const dupKey = "zzgo-nf004-dup-idem-key" — an idempotency key fixture, not a secret
+    '''^backend/internal/utilitybills/credentials_test\.go$''',        # fake api_key/public_key values asserting a credentials-derivation function
+    '''^backend/tests/utilitybills/admin_live_db_test\.go$''',         # testCredentialsKey (explicitly commented "obviously not a secret") + fake rotate-credentials api_key/secret_key
+    '''^backend/internal/utilitybills/admin_test\.go$''',              # fake secret_key/api_key ("…SUPERSECRET"/"…ALSOSECRET") asserting an audit log names keys, never values
+    '''^backend/internal/estate/paystackfunded_live_db_test\.go$''',   # IdempotencyKey: "duespf-tier0-wallet-" + invID — a fixture key, not a secret
 
     # -- Docs / templates with placeholder tokens --------------------------
     '''^MARKETPLACE_QUICK_START\.md$''',
@@ -55,6 +60,13 @@ regexes = [
     '''^front_desk_24h$''',               # stayshotelier amenity catalog key (types.ts) — an
                                            # identifier, not a secret; entropy heuristic false positive
     '''^sb_secret_[A-Za-z0-9_-]+$''',     # local-dev Supabase service key (URL 127.0.0.1:54321 only; useless off-machine)
+    '''^eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9\.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InduaWNzdWJpem5taXNoa211bnN2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ5OTc1OTYsImV4cCI6MjA5MDU3MzU5Nn0\.Mjyylv7IA_8PQ2gLo-hmxRNl2Csbm5wOmo5lStf1g5g$''',
+    # spotlight-staging (wnicsubiznmishkmunsv) Supabase anon key — legacy JWT-format
+    # publishable key, role:anon, public by design (mobile-app/reactnative/eas.json
+    # staging build profile). Gitleaks' generic "jwt" rule doesn't know about
+    # Supabase's anon-key exemption the way it knows the newer sb_publishable_
+    # prefix does, so it flags this exact value; matched narrowly by its literal
+    # string rather than a role:anon regex, which would blanket-allow any JWT.
 ]
 
 commits = [

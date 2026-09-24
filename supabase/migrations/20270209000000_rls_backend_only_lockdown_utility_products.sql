@@ -9,11 +9,9 @@
 -- from querying this table directly if RLS policy logic is ever written.
 -- Service role ALWAYS bypasses RLS, so the Go backend is unaffected.
 
--- ENABLE ROW LEVEL SECURITY is itself idempotent (a no-op if already enabled),
--- so no existence guard is needed — see 20261215000100_module_registry_rls.sql
--- and 20261222000000_academy_interest_areas_rls.sql for the same pattern.
---
--- (This migration originally guarded on `information_schema.tables.row_security`,
--- which is not a real Postgres column and made every fresh-replay fail outright —
--- fixed here rather than via a correction migration since it never applied.)
+-- See 20270208000000_rls_backend_only_lockdown_utility_billers.sql for why
+-- this is a direct, unguarded call: ENABLE ROW LEVEL SECURITY is already
+-- idempotent, and the previous guard's `information_schema.tables.row_security`
+-- reference does not exist in Postgres, which broke fresh replay
+-- unconditionally rather than only when RLS was already enabled.
 ALTER TABLE public.utility_products ENABLE ROW LEVEL SECURITY;

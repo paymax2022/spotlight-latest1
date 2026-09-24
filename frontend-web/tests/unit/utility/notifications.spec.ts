@@ -39,6 +39,7 @@ function transaction(overrides: Partial<UtilityTransactionRow> = {}): UtilityTra
     token: null,
     receipt_number: 'UTL-001',
     idempotency_key: 'UTILITY-key-001',
+    payment_source: 'wallet',
     failure_reason: null,
     provider_response: null,
     metadata: {},

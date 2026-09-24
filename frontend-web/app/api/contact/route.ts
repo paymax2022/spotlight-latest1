@@ -15,7 +15,7 @@ function isNonEmptyString(value: unknown) {
 }
 
 function hasBasicEmail(value: unknown) {
-  return typeof value === 'string' && /.+@.+\..+/.test(value);
+  return typeof value === 'string' && /^[^\s@]+@[^\s@.]+(?:\.[^\s@.]+)+$/.test(value);
 }
 
 function safe(value: string) {

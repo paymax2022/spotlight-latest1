@@ -27,6 +27,7 @@ import (
 	"spotlight/backend/internal/crypto"
 	"spotlight/backend/internal/doctor"
 	"spotlight/backend/internal/estate"
+	estatepaystackcheckout "spotlight/backend/internal/estate/paystackcheckout"
 	"spotlight/backend/internal/finance/commission"
 	"spotlight/backend/internal/finance/disputes"
 	"spotlight/backend/internal/finance/fx"
@@ -62,8 +63,8 @@ import (
 	"spotlight/backend/internal/platform/realtime"
 	platformRedis "spotlight/backend/internal/platform/redis"
 	platformWS "spotlight/backend/internal/platform/ws"
-	"spotlight/backend/internal/property"
 	"spotlight/backend/internal/promotions"
+	"spotlight/backend/internal/property"
 	providerInterfaces "spotlight/backend/internal/provider"
 	"spotlight/backend/internal/provider/cac"
 	"spotlight/backend/internal/provider/disbursement"
@@ -74,10 +75,12 @@ import (
 	"spotlight/backend/internal/realtor"
 	"spotlight/backend/internal/repositories"
 	"spotlight/backend/internal/restaurant"
+	"spotlight/backend/internal/restaurant/paystackcheckout"
 	"spotlight/backend/internal/services"
 	"spotlight/backend/internal/telemedicine"
 	"spotlight/backend/internal/trading"
 	"spotlight/backend/internal/transport"
+	transportpaystackcheckout "spotlight/backend/internal/transport/paystackcheckout"
 	"spotlight/backend/internal/votebridge"
 	"spotlight/backend/internal/webhooks"
 )
@@ -91,14 +94,20 @@ import (
 // emitter into Phase-1 revenue modules wired OUTSIDE this function — currently the
 // Marketplace (RegisterMarketplace). Modules built INSIDE this function (the Maplerad
 // bills domain) are wired with it directly here.
-func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrations.SupabaseRestClient, rbac services.RBACService, pool *pgxpool.Pool, rtHub *realtime.Hub) *referrals.RewardService {
+//
+// Also returns the KYC verification gateway (*kycverify.Service, nil when
+// FEATURE_KYC_VERIFY_ENABLED is off or pool is nil) so router.go can thread it
+// into registerConnectWalletRoutes — the /api/v1/kyc/tier1 handler needs it to
+// run a real Dojah/Smile ID/Youverify check instead of writing an unverified
+// pending status.
+func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrations.SupabaseRestClient, rbac services.RBACService, pool *pgxpool.Pool, rtHub *realtime.Hub) (*referrals.RewardService, *kycverify.Service) {
 	if cfg.DatabaseURL == "" {
 		log.Println("[finance] DATABASE_URL not set — skipping financial routes")
-		return nil
+		return nil, nil
 	}
 	if pool == nil {
 		log.Println("[finance] no database pool — skipping financial routes")
-		return nil
+		return nil, nil
 	}
 
 	// Shared by every browser-facing WebSocket hub built below (restaurant,
@@ -219,11 +228,20 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 	// --- Providers ---
 	var paymentProvider providerInterfaces.PaymentProvider
 	var vaProvider providerInterfaces.VirtualAccountProvider
+	// paystackClient is the CONCRETE Paystack client, kept alongside the
+	// paymentProvider interface var above for callers that need a
+	// Paystack-specific capability not on provider.PaymentProvider (namely
+	// RefundPayment — see restaurant/paystackcheckout.Gateway). paymentProvider
+	// may later be overridden to Maplerad below; paystackClient never is, so a
+	// feature that specifically needs Paystack (not "whichever provider is
+	// configured") reads this instead of paymentProvider.
+	var paystackClient *paystack.Client
 
 	if cfg.PaystackSecretKey != "" {
 		ps := paystack.New(cfg.PaystackSecretKey)
 		paymentProvider = ps
 		vaProvider = ps
+		paystackClient = ps
 	}
 
 	// Maplerad overrides VA provider when its key is set (preferred for NGN DVAs + FX).
@@ -270,7 +288,7 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 	// the central Finance/Money Transfer config RECORDS 10% of the transfer principal —
 	// so the recorded figure materially OVER-states the real fee (see docs/commission).
 	if cfg.FeatureCommissionEnabled {
-		xferSvc.SetCommissionRecorder(commissionRecorderAdapter{svc: commission.NewService(commission.NewRepository(pool), nil)})
+		xferSvc.SetCommissionRecorder(commissionRecorderAdapter{svc: withReferralSplit(commission.NewService(commission.NewRepository(pool), nil), pool, cfg)})
 		log.Println("[transfers] commission recording wired → Finance/Money Transfer (earning-row only; no ledger re-post)")
 	}
 
@@ -299,7 +317,7 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		// passthrough fee), so the central 10% of the source principal is an attributed
 		// figure that likely OVER-states the true margin (see docs/commission).
 		if cfg.FeatureCommissionEnabled {
-			fxSvc.SetCommissionRecorder(commissionRecorderAdapter{svc: commission.NewService(commission.NewRepository(pool), nil)})
+			fxSvc.SetCommissionRecorder(commissionRecorderAdapter{svc: withReferralSplit(commission.NewService(commission.NewRepository(pool), nil), pool, cfg)})
 			log.Println("[fx] commission recording wired → Finance/Currency Exchange (earning-row only; no ledger re-post)")
 		}
 		fxHandler = fx.NewHandler(fxSvc)
@@ -1024,6 +1042,11 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 	// finance group's requireUserID; the webhook group is mounted UNAUTHENTICATED
 	// (signature verified inside the handler); admin routes are RBAC-gated
 	// (finance.admin.kyc). Tier elevation reuses the KYC core (kyc.Service.Approve).
+	//
+	// kvSvc (function-scoped, nil unless this block runs) is also returned to
+	// router.go so registerConnectWalletRoutes can run a real check for
+	// POST /api/v1/kyc/tier1 instead of writing an unverified pending status.
+	var kvSvc *kycverify.Service
 	if cfg.FeatureKYCVerifyEnabled && pool != nil {
 		kvReg := kycverify.BuildRegistry(cfg)
 
@@ -1040,7 +1063,7 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		// keeps kycverify decoupled from the kyc package's concrete Profile type.
 		var kvElevator kycverify.TierElevator = kycTierElevator{svc: kycSvc}
 
-		kvSvc := kycverify.NewService(kycverify.Deps{
+		kvSvc = kycverify.NewService(kycverify.Deps{
 			Pool:     pool,
 			Registry: kvReg,
 			Cipher:   kvCipher,
@@ -1091,7 +1114,7 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 
 	// --- Groups routes ---
 	if cfg.FeatureGroupsEnabled {
-		groupsSvc := groups.NewService(pool, ledgerSvc)
+		groupsSvc := groups.NewService(pool, ledgerSvc).WithTiers(tiersSvc)
 		groupsHandler := groups.NewHandler(groupsSvc)
 		grp := finance.Group("/groups")
 		grp.POST("", groupsHandler.Create)
@@ -1124,7 +1147,7 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		// second ledger post would double-count — RecordFor appends the earning ROW
 		// only. Flag off ⇒ no recorder ⇒ silent no-op.
 		if cfg.FeatureCommissionEnabled {
-			assocSvc.SetCommissionRecorder(commissionRecorderAdapter{svc: commission.NewService(commission.NewRepository(pool), nil)})
+			assocSvc.SetCommissionRecorder(commissionRecorderAdapter{svc: withReferralSplit(commission.NewService(commission.NewRepository(pool), nil), pool, cfg)})
 			log.Println("[association] commission recording wired → Community/Group Membership (earning-row only; no ledger re-post)")
 		}
 		// Backend-owned presigned R2 uploads for organisation logos. The wizard
@@ -1374,6 +1397,19 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		estGroup.POST("/:id/dues/restrictions", estateHandler.ApplyRestriction)
 		estGroup.POST("/:id/dues/restrictions/:residentId/lift", estateHandler.LiftRestriction)
 
+		// Paystack-funded dues payment (card / bank-transfer, no wallet, no
+		// KYC-tier gate — see estate/paystackcheckout package doc comment).
+		// Only mounted when both a Paystack client is configured AND the flag
+		// is on — no route exists to reach PayDuesPaystackFunded otherwise.
+		if paystackClient != nil && cfg.FeatureEstateDuesPaystackCheckoutEnabled {
+			duesCheckoutSvc := estatepaystackcheckout.NewService(paystackClient, estateSvc, estatepaystackcheckout.NewIntentStore(pool))
+			estatepaystackcheckout.RegisterEstateDuesPaystackCheckout(estGroup, duesCheckoutSvc)
+			if webhookHandler != nil {
+				webhookHandler.SetDuesOrderConfirmer(duesOrderConfirmer{svc: duesCheckoutSvc})
+			}
+			log.Println("[estate] Paystack-funded dues checkout wired (FEATURE_ESTATE_DUES_PAYSTACK_CHECKOUT_ENABLED)")
+		}
+
 		// Block 31: Tasks
 		estGroup.GET("/:id/tasks", estateHandler.ListTasks)
 		estGroup.POST("/:id/tasks", estateHandler.CreateTask)
@@ -1499,7 +1535,7 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		// stays nil ⇒ silent no-op. Reuses the shared commissionRecorderAdapter
 		// (marketplace_routes.go).
 		if cfg.FeatureCommissionEnabled {
-			cfSvc.SetCommissionRecorder(commissionRecorderAdapter{svc: commission.NewService(commission.NewRepository(pool), nil)})
+			cfSvc.SetCommissionRecorder(commissionRecorderAdapter{svc: withReferralSplit(commission.NewService(commission.NewRepository(pool), nil), pool, cfg)})
 			log.Println("[crowdfunding] commission recording wired → Community/Crowdfunding (earning-row only; no ledger re-post)")
 		}
 
@@ -1588,7 +1624,7 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		// fail or reverse an order (see restaurant.recordCommissionSafe). Flag off ⇒ no
 		// recorder is set ⇒ the seam stays nil ⇒ silent no-op.
 		if cfg.FeatureCommissionEnabled {
-			restaurantSvc.SetCommissionRecorder(commissionRecorderAdapter{svc: commission.NewService(commission.NewRepository(pool), nil)})
+			restaurantSvc.SetCommissionRecorder(commissionRecorderAdapter{svc: withReferralSplit(commission.NewService(commission.NewRepository(pool), nil), pool, cfg)})
 			log.Println("[restaurant] commission recording wired → Lifestyle/Restaurant (earning-row only; no ledger re-post)")
 		}
 
@@ -1702,6 +1738,21 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		restGroup.PATCH("/:id/orders/:orderId/status", restaurantHandler.UpdateStatus)
 		restGroup.DELETE("/:id/orders/:orderId", restaurantHandler.CancelOrder)
 
+		// Paystack-funded checkout (card / bank-transfer, no wallet, no KYC-tier
+		// gate — see paystackcheckout package doc comment for why this is a
+		// different, audited design from the rejected FEATURE_CHECKOUT_TOPUP_TIER0).
+		// Only mounted when both a Paystack client is configured AND the flag is
+		// on — no route exists to reach PlaceOrderPaystackFunded at all otherwise.
+		if paystackClient != nil && cfg.FeatureRestaurantPaystackCheckoutEnabled {
+			checkoutSvc := paystackcheckout.NewService(paystackClient, restaurantSvc, paystackcheckout.NewIntentStore(pool), settlementSvcR)
+			restaurantSvc.SetExternalRefunder(checkoutSvc)
+			paystackcheckout.RegisterRestaurantPaystackCheckout(restGroup, checkoutSvc)
+			if webhookHandler != nil {
+				webhookHandler.SetRestaurantOrderConfirmer(restaurantOrderConfirmer{svc: checkoutSvc})
+			}
+			log.Println("[restaurant] Paystack-funded checkout wired (FEATURE_RESTAURANT_PAYSTACK_CHECKOUT_ENABLED)")
+		}
+
 		// Order reads (static "orders" sibling of the ":id" param — allowed in Gin v1.10).
 		restGroup.GET("/orders", restaurantHandler.ListOrders)
 		restGroup.GET("/orders/:orderId", restaurantHandler.GetOrder)
@@ -1733,6 +1784,34 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		// order it has not been told about yet. See ServeUserWS for why this
 		// exposes nothing new.
 		restPublicWS.GET("/ws", restaurantHandler.ServeUserWS)
+
+		// ── Food disputes (party-scoped) ──────────────────────────────────────
+		// Purpose-built food dispute rails. disputes_handler.go, its service and its
+		// migration (20261019000000_restaurant_disputes.sql) all shipped without any
+		// route registration, so the admin console fell back to the GENERIC finance
+		// dispute endpoints — which don't carry food-specific context (order parties,
+		// refundable ceiling from the escrowed total).
+		restGroup.POST("/orders/:orderId/dispute", restaurantHandler.RaiseFoodDispute)
+		restGroup.GET("/disputes/:id", restaurantHandler.GetFoodDispute)
+
+		// ── KYB (owner) ───────────────────────────────────────────────────────
+		// Merchant business verification. Distinct from the onboarding QUEUE the ops
+		// console reviews: this is where the merchant actually supplies the records.
+		// kyb_handler.go + kyb_service.go + 20261018000000_restaurant_kyb.sql existed
+		// with no HTTP surface, so the review queue had nothing real to read.
+		restGroup.GET("/:id/kyb", restaurantHandler.GetKYB)
+		restGroup.PUT("/:id/kyb", restaurantHandler.SaveKYB)
+		restGroup.POST("/:id/kyb/documents", restaurantHandler.AddKYBDocument)
+		restGroup.POST("/:id/kyb/submit", restaurantHandler.SubmitKYB)
+
+		// ── Group & scheduled orders ──────────────────────────────────────────
+		// A host opens a group order, contributors add items, the host finalizes it
+		// into a normal order (money path reuses PlaceOrder's escrow + idempotency).
+		// Static "group" segment is a sibling of the ":id" param, same as "orders".
+		restGroup.POST("/:id/group", restaurantHandler.CreateGroupOrder)
+		restGroup.GET("/group/:groupId", restaurantHandler.GetGroupOrder)
+		restGroup.POST("/group/:groupId/items", restaurantHandler.AddGroupItem)
+		restGroup.POST("/group/:groupId/finalize", restaurantHandler.FinalizeGroupOrder)
 
 		// Ratings.
 		restGroup.POST("/orders/:orderId/rate", restaurantHandler.RateOrder)
@@ -1783,6 +1862,16 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		restStore.POST("/:id/menu/items", restaurantHandler.AdminCreateItem)
 		restStore.PATCH("/:id/menu/items/:itemId", restaurantHandler.AdminUpdateItem)
 		restStore.DELETE("/:id/menu/items/:itemId", restaurantHandler.AdminDeleteItem)
+
+		// Food-specific dispute queue. Previously unregistered, so the console used
+		// the generic /api/finance/{disputes,admin/disputes} rails instead.
+		restAdmin.GET("/disputes", middleware.RequirePermission(rbac, "restaurant.admin.disputes"), restaurantHandler.AdminListFoodDisputes)
+		restAdmin.POST("/disputes/:id/resolve", middleware.RequirePermission(rbac, "restaurant.admin.disputes"), restaurantHandler.AdminResolveFoodDispute)
+
+		// Releases scheduled orders whose window has arrived into the normal pipeline.
+		// Ops-triggered (a cron/worker can call it too); gated with the dispatch slug
+		// because what it actually does is push orders into rider sourcing.
+		restAdmin.POST("/activate-scheduled", middleware.RequirePermission(rbac, "restaurant.admin.dispatch"), restaurantHandler.AdminActivateScheduled)
 
 		// Listing moderation (foodhub A6). "listings/pending" is a static sibling of
 		// the ":id" params registered elsewhere in this group, which Gin allows.
@@ -1838,6 +1927,16 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		// admin action a safe no-op. Fail-closed behind restaurant.admin.withdrawals
 		// (dedicated slug — an ops agent reviewing withdrawals should not need the
 		// broader restaurant.manage grant).
+		//
+		// A prior reconciliation between this branch and main found main had
+		// independently re-discovered this exact gap (handler_withdrawal.go/
+		// withdrawal.go/bankaccount.go shipping with no route registration) and
+		// proposed a FeatureRestaurantWithdrawalsEnabled-gated fix that re-registers
+		// the SAME member-facing bank-account/withdrawal routes already registered
+		// unconditionally a few lines above (restGroup.{POST,GET,PATCH,DELETE}
+		// "/bank-accounts"*, restGroup.{POST,GET} "/withdrawals"*) — taking both
+		// would panic Gin at startup on the duplicate registration. The
+		// unconditional version won; do not re-add a flag-gated duplicate.
 		restAdmin.GET("/withdrawals", middleware.RequirePermission(rbac, "restaurant.admin.withdrawals"), restaurantHandler.AdminListWithdrawals)
 		restAdmin.GET("/withdrawals/:withdrawalId", middleware.RequirePermission(rbac, "restaurant.admin.withdrawals"), restaurantHandler.AdminGetWithdrawal)
 		restAdmin.POST("/withdrawals/:withdrawalId/paid", middleware.RequirePermission(rbac, "restaurant.admin.withdrawals"), restaurantHandler.AdminSettleWithdrawal)
@@ -2059,7 +2158,7 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		// reverse a fare split (see transport.recordCommissionSafe). Flag off ⇒ no
 		// recorder is set ⇒ the seam stays nil ⇒ silent no-op ⇒ transport unchanged.
 		if cfg.FeatureCommissionEnabled {
-			transportCommission := commission.NewService(commission.NewRepository(pool), nil)
+			transportCommission := withReferralSplit(commission.NewService(commission.NewRepository(pool), nil), pool, cfg)
 			transportSvc.SetCommissionRecorder(commissionRecorderAdapter{svc: transportCommission})
 			log.Println("[transport] commission recording wired → Lifestyle/{Taxi - Ride Hailing, Delivery - Rider, Bus Booking, Car Hire} (earning-row only; no ledger re-post)")
 		}
@@ -2125,6 +2224,20 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		mob.POST("/rides/:id/cancel", transportHandler.CancelRide)
 		mob.GET("/rides/:id", transportHandler.GetRide)
 		mob.POST("/rides/:id/share", transportHandler.ShareRide)
+
+		// Paystack-funded checkout (card / bank-transfer, no wallet, no
+		// KYC-tier gate — see transport/paystackcheckout package doc comment).
+		// Only mounted when both a Paystack client is configured AND the flag
+		// is on — no route exists to reach RequestRidePaystackFunded otherwise.
+		if paystackClient != nil && cfg.FeatureTransportPaystackCheckoutEnabled {
+			rideCheckoutSvc := transportpaystackcheckout.NewService(paystackClient, transportSvc, transportpaystackcheckout.NewIntentStore(pool), settlementSvcTr)
+			transportSvc.SetExternalRefunder(rideCheckoutSvc)
+			transportpaystackcheckout.RegisterTransportPaystackCheckout(mob, rideCheckoutSvc)
+			if webhookHandler != nil {
+				webhookHandler.SetRideOrderConfirmer(rideOrderConfirmer{svc: rideCheckoutSvc})
+			}
+			log.Println("[transport] Paystack-funded ride checkout wired (FEATURE_TRANSPORT_PAYSTACK_CHECKOUT_ENABLED)")
+		}
 		// Public (unauthenticated) resolve path for a live-share link. A share link
 		// must be openable by someone without an account; the handler returns only
 		// non-sensitive tracking fields (never the trip PIN) and enforces the token
@@ -2588,7 +2701,7 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		// Reuses the shared commissionRecorderAdapter (marketplace_routes.go). Gated on the
 		// feature flag — when off the recorder stays nil and recording is a no-op.
 		if cfg.FeatureCommissionEnabled {
-			doctorSvc.SetCommissionRecorder(commissionRecorderAdapter{svc: commission.NewService(commission.NewRepository(pool), nil)})
+			doctorSvc.SetCommissionRecorder(commissionRecorderAdapter{svc: withReferralSplit(commission.NewService(commission.NewRepository(pool), nil), pool, cfg)})
 		}
 		// Backend-owned presigned R2 uploads (profile photo / documents / licence /
 		// chat attachments / dispute evidence). Unconfigured creds → the presign
@@ -3251,7 +3364,7 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 	// Hand the Direct Referral Rewards engine service back to router.go so it can be
 	// threaded into revenue modules wired outside this function (Marketplace). Nil
 	// when the engine is flag-off / pool-less — the receiving setter is nil-safe.
-	return rewardSvc
+	return rewardSvc, kvSvc
 }
 
 // foodDisputeResolverAdapter bridges finance/disputes.Service's decoupled
@@ -3317,6 +3430,37 @@ func (e kycTierElevator) ElevateTier(ctx context.Context, userID string, newTier
 	}
 	_, err := e.svc.Approve(ctx, userID, newTier, actorID)
 	return err
+}
+
+// restaurantOrderConfirmer adapts *paystackcheckout.Service to
+// webhooks.RestaurantOrderConfirmer. checkoutSvc.OnChargeSuccess returns
+// (*paystackcheckout.ConfirmResult, error); the webhook seam expects
+// (any, error), so this thin wrapper widens the return type — same shape as
+// academy_routes.go's feesPaymentConfirmer.
+type restaurantOrderConfirmer struct{ svc *paystackcheckout.Service }
+
+func (c restaurantOrderConfirmer) OnChargeSuccess(ctx context.Context, reference, gatewayRef string) (any, error) {
+	return c.svc.OnChargeSuccess(ctx, reference, gatewayRef)
+}
+
+// rideOrderConfirmer adapts *transport/paystackcheckout.Service to
+// webhooks.RideOrderConfirmer — same shape as restaurantOrderConfirmer.
+type rideOrderConfirmer struct {
+	svc *transportpaystackcheckout.Service
+}
+
+func (c rideOrderConfirmer) OnChargeSuccess(ctx context.Context, reference, gatewayRef string) (any, error) {
+	return c.svc.OnChargeSuccess(ctx, reference, gatewayRef)
+}
+
+// duesOrderConfirmer adapts *estate/paystackcheckout.Service to
+// webhooks.DuesOrderConfirmer — same shape as restaurantOrderConfirmer.
+type duesOrderConfirmer struct {
+	svc *estatepaystackcheckout.Service
+}
+
+func (c duesOrderConfirmer) OnChargeSuccess(ctx context.Context, reference, gatewayRef string) (any, error) {
+	return c.svc.OnChargeSuccess(ctx, reference, gatewayRef)
 }
 
 // requireUserID is a middleware that rejects requests without a user_id in context.

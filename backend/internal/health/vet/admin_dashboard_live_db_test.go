@@ -40,9 +40,9 @@ func vetAdminDashboardPool(t *testing.T) *pgxpool.Pool {
 }
 
 type vetAdminFixture struct {
-	owner, patient, other string
-	provider               string
-	serviceID              string
+	owner, patient, other                 string
+	provider                              string
+	serviceID                             string
 	requestedID, completedID, cancelledID string
 }
 

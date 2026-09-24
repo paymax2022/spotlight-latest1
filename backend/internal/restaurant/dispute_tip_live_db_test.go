@@ -59,30 +59,29 @@ type disputeTipFixture struct {
 	basis     int64 // total − tip: the platform-funded refund basis
 }
 
-// platformRefundLegKobo returns the kobo the standing paymax_revenue account has actually
-// paid out for ONE food dispute's platform-funded refund: the DEBIT leg of the balanced pair
-// posted under "dispute-refund:<id>" (disputes_service.go keys both legs on that
-// idempotency_key; PostJournal suffixes ":debit"/":credit"). 0 means nothing was posted.
+// disputeRefundDebitKobo returns the platform-funded DEBIT this dispute's own
+// refund posted against the standing revenue account (see disputes_service.go's
+// `refundKey := "dispute-refund:" + disputeID`, credited via
+// s.ledger.Credit(ctx, customerID, refundKey, refundKey, revAcc.ID, refundKobo) —
+// PostJournal suffixes the idempotency key with ":debit" on the debit side), or 0
+// if this dispute never posted one.
 //
-// Deliberately NOT a before/after read of the account's BALANCE. paymax_revenue is a single
-// global standing account, and `go test ./...` runs packages concurrently against one
-// database (make test / CI), with ~40 other suites moving it — a balance delta both flakes
-// and misattributes their commission to this dispute. Scoping to the dispute's own leg
-// reads exactly what this test caused, and its absence just as exactly.
-func platformRefundLegKobo(t *testing.T, ctx context.Context, pool *pgxpool.Pool, led *ledger.Service, disputeID string) int64 {
+// AccountPaymaxRevenue is a global standing account (singleton, keyed by type —
+// see ledger.Service.GetOrCreateStandingAccount) shared by every live-DB suite
+// across the backend, and `go test ./...` runs packages concurrently against the
+// same TEST_DATABASE_URL. A before/after GetAccountBalance diff on that account
+// races against unrelated concurrent postings from other packages' own live-DB
+// tests, so assert on THIS dispute's own ledger entry by its idempotency key
+// instead of a snapshot diff of shared state.
+func disputeRefundDebitKobo(t *testing.T, ctx context.Context, pool *pgxpool.Pool, revAccID, disputeID string) int64 {
 	t.Helper()
-	acc, err := led.GetOrCreateStandingAccount(ctx, ledger.AccountPaymaxRevenue)
-	if err != nil {
-		t.Fatalf("revenue account: %v", err)
-	}
-	var paid int64
+	var amt int64
 	if err := pool.QueryRow(ctx,
-		`SELECT COALESCE(SUM(amount_kobo),0) FROM ledger_entries
-		  WHERE idempotency_key=$1 AND type='DEBIT' AND account_id=$2`,
-		"dispute-refund:"+disputeID+":debit", acc.ID).Scan(&paid); err != nil {
-		t.Fatalf("read platform refund leg: %v", err)
+		`SELECT COALESCE(SUM(amount_kobo),0) FROM ledger_entries WHERE idempotency_key=$1 AND account_id=$2 AND type='DEBIT'`,
+		"dispute-refund:"+disputeID+":debit", revAccID).Scan(&amt); err != nil {
+		t.Fatalf("read dispute refund debit for %s: %v", disputeID, err)
 	}
-	return paid
+	return amt
 }
 
 // newDisputeTipFixture places a tipped order, delivers it (which settles it and pays the
@@ -187,6 +186,10 @@ func TestLiveDB_DisputeFullRefundCapsPlatformAtNonTipBasis(t *testing.T) {
 	if err != nil {
 		t.Fatalf("rider balance before: %v", err)
 	}
+	revAcc, err := led.GetOrCreateStandingAccount(ctx, ledger.AccountPaymaxRevenue)
+	if err != nil {
+		t.Fatalf("revenue account: %v", err)
+	}
 
 	admin := uuid.New().String()
 	if _, err := pool.Exec(ctx, `INSERT INTO auth.users (id,email) VALUES ($1,$2) ON CONFLICT DO NOTHING`, admin, admin+"@seed.test"); err != nil {
@@ -212,11 +215,11 @@ func TestLiveDB_DisputeFullRefundCapsPlatformAtNonTipBasis(t *testing.T) {
 		t.Errorf("persisted refund_kobo = %d, want %d", storedRefund, f.basis)
 	}
 
-	// --- Platform revenue paid EXACTLY the non-tip basis, not the tipped total. ---
-	refunded := platformRefundLegKobo(t, ctx, pool, led, f.disputeID)
-	if refunded != f.basis {
-		t.Errorf("platform revenue paid %d for this dispute, want %d — paying %d would mean the "+
-			"platform funded the %d kobo tip", refunded, f.basis, f.total, f.tip)
+	// --- Platform revenue moved by EXACTLY the non-tip basis, not the tipped total. ---
+	revDelta := disputeRefundDebitKobo(t, ctx, pool, revAcc.ID, f.disputeID)
+	if revDelta != f.basis {
+		t.Errorf("platform revenue fell by %d, want %d — a delta of %d would mean the platform "+
+			"funded the %d kobo tip", revDelta, f.basis, f.total, f.tip)
 	}
 
 	// --- The rider funded the tip: their wallet is down by exactly the tip. ---
@@ -257,16 +260,15 @@ func TestLiveDB_DisputeFullRefundCapsPlatformAtNonTipBasis(t *testing.T) {
 	}
 
 	// --- Idempotency: re-resolving must move no further money (the ticket is closed). ---
-	custSettled, riderSettled, refundSettled := custAfter, riderAfter, refunded
+	custSettled, riderSettled, revSettled := custAfter, riderAfter, disputeRefundDebitKobo(t, ctx, pool, revAcc.ID, f.disputeID)
 	if _, err := f.svc.AdminResolveFoodDispute(ctx, f.disputeID, admin, FoodRefundFull, 0, "retry"); err == nil {
 		t.Error("re-resolving a closed dispute should be rejected")
 	}
 	custNow, _ := led.GetBalance(ctx, f.customer)
 	riderNow, _ := led.GetBalance(ctx, f.rider)
-	refundNow := platformRefundLegKobo(t, ctx, pool, led, f.disputeID)
-	if custNow != custSettled || riderNow != riderSettled || refundNow != refundSettled {
-		t.Errorf("a repeat resolve moved money: customer %d→%d, rider %d→%d, platform refund %d→%d",
-			custSettled, custNow, riderSettled, riderNow, refundSettled, refundNow)
+	if custNow != custSettled || riderNow != riderSettled || disputeRefundDebitKobo(t, ctx, pool, revAcc.ID, f.disputeID) != revSettled {
+		t.Errorf("a repeat resolve moved money: customer %d→%d, rider %d→%d",
+			custSettled, custNow, riderSettled, riderNow)
 	}
 }
 
@@ -288,6 +290,11 @@ func TestLiveDB_DisputePartialRefundInheritsTipCap(t *testing.T) {
 	}
 	testsupport.CleanupUser(t, pool, admin)
 
+	revAcc, err := led.GetOrCreateStandingAccount(ctx, ledger.AccountPaymaxRevenue)
+	if err != nil {
+		t.Fatalf("revenue account: %v", err)
+	}
+
 	// --- A partial ABOVE the non-tip basis is rejected, and moves nothing. ---
 	custBefore, _ := led.GetBalance(ctx, f.customer)
 	for _, requested := range []int64{f.basis, f.basis + 1, f.total - 1} {
@@ -297,7 +304,7 @@ func TestLiveDB_DisputePartialRefundInheritsTipCap(t *testing.T) {
 		}
 	}
 	custAfterRejects, _ := led.GetBalance(ctx, f.customer)
-	if custAfterRejects != custBefore || platformRefundLegKobo(t, ctx, pool, led, f.disputeID) != 0 {
+	if custAfterRejects != custBefore || disputeRefundDebitKobo(t, ctx, pool, revAcc.ID, f.disputeID) != 0 {
 		t.Error("a rejected partial refund moved money")
 	}
 
@@ -310,8 +317,8 @@ func TestLiveDB_DisputePartialRefundInheritsTipCap(t *testing.T) {
 	if got.RefundKobo != want {
 		t.Errorf("partial refund = %d, want %d", got.RefundKobo, want)
 	}
-	if paid := platformRefundLegKobo(t, ctx, pool, led, f.disputeID); paid != want {
-		t.Errorf("platform revenue paid %d, want %d", paid, want)
+	if delta := disputeRefundDebitKobo(t, ctx, pool, revAcc.ID, f.disputeID); delta != want {
+		t.Errorf("platform revenue fell by %d, want %d", delta, want)
 	}
 	custAfter, _ := led.GetBalance(ctx, f.customer)
 	if delta := custAfter - custBefore; delta != want {
@@ -526,6 +533,10 @@ func TestLiveDB_DisputeRefundBudgetIsCumulativePerOrder(t *testing.T) {
 	}
 	testsupport.CleanupUser(t, pool, admin)
 	custBefore, _ := led.GetBalance(ctx, f.customer)
+	revAcc, err := led.GetOrCreateStandingAccount(ctx, ledger.AccountPaymaxRevenue)
+	if err != nil {
+		t.Fatalf("revenue account: %v", err)
+	}
 
 	// --- Dispute 1: a partial for a missing item. ---
 	const first int64 = 400_000
@@ -559,13 +570,11 @@ func TestLiveDB_DisputeRefundBudgetIsCumulativePerOrder(t *testing.T) {
 			got.RefundKobo, remaining, f.basis)
 	}
 
-	// --- Across BOTH disputes the platform paid exactly the basis, once. Each refund is
-	// keyed per dispute, so sum the two legs: the shared paymax_revenue account's balance is
-	// moved by every other live-DB suite running concurrently. ---
-	paid := platformRefundLegKobo(t, ctx, pool, led, f.disputeID) + platformRefundLegKobo(t, ctx, pool, led, d2.ID)
-	if paid != f.basis {
-		t.Errorf("platform revenue paid %d across two disputes, want exactly the basis %d "+
-			"(a total of %d would be the order refunded twice)", paid, f.basis, 2*f.basis)
+	// --- Across BOTH disputes the platform paid exactly the basis, once. ---
+	delta := disputeRefundDebitKobo(t, ctx, pool, revAcc.ID, f.disputeID) + disputeRefundDebitKobo(t, ctx, pool, revAcc.ID, d2.ID)
+	if delta != f.basis {
+		t.Errorf("platform revenue fell by %d across two disputes, want exactly the basis %d "+
+			"(a delta of %d would be the order refunded twice)", delta, f.basis, 2*f.basis)
 	}
 	custAfter, _ := led.GetBalance(ctx, f.customer)
 	if delta := custAfter - custBefore; delta != f.basis+tip {
@@ -754,9 +763,9 @@ func TestLiveDB_DisputeTipClawbackDeferredToNextSettlement(t *testing.T) {
 	if got.RefundKobo != f.basis {
 		t.Errorf("platform-funded refund = %d, want %d", got.RefundKobo, f.basis)
 	}
-	if paid := platformRefundLegKobo(t, ctx, pool, led, f.disputeID); paid != f.basis {
-		t.Errorf("platform revenue paid %d, want %d — the platform must not backstop an "+
-			"unrecoverable tip", paid, f.basis)
+	if delta := disputeRefundDebitKobo(t, ctx, pool, revAcc.ID, f.disputeID); delta != f.basis {
+		t.Errorf("platform revenue fell by %d, want %d — the platform must not backstop an "+
+			"unrecoverable tip", delta, f.basis)
 	}
 	// The customer has the basis but NOT yet the tip.
 	custAfter, _ := led.GetBalance(ctx, f.customer)

@@ -4,6 +4,7 @@
 // IRON RULES: money is minor units; every money mutation carries an Idempotency-Key.
 
 import { mockAllowed } from '@/config/mockPolicy';
+import { secureRandomInt } from '@/lib/secureRandom';
 import { api } from '@/api/client';
 import type {
   Card,
@@ -61,7 +62,7 @@ export async function createCard(draft: CreateCardDraft, idempotencyKey: string)
       provider: 'maplerad', createdAt: new Date().toISOString(),
     };
     MOCK_CARDS.unshift(created);
-    MOCK_CARD_SENSITIVE[created.id] = { pan: `${last4} •••• •••• ${last4}`, cvv: String(Math.floor(100 + Math.random() * 899)), expiry: `${String(created.expMonth).padStart(2, '0')}/${created.expYear}` };
+    MOCK_CARD_SENSITIVE[created.id] = { pan: `${last4} •••• •••• ${last4}`, cvv: String(secureRandomInt(100, 999)), expiry: `${String(created.expMonth).padStart(2, '0')}/${created.expYear}` };
     return created;
   }
   return unwrap<Card>(await api.post('/api/v1/fx/cards', draft, { headers: { 'Idempotency-Key': idempotencyKey } }));

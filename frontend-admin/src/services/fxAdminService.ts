@@ -14,7 +14,6 @@
 // only change needed — but until then every mutation below refuses honestly
 // rather than reporting a success it did not perform. All money is integer
 // minor units.
-
 import { apiRoot } from '@/config/env';
 import { operationKey } from './idempotency';
 import { resolveUseMock } from '@/config/useMock';
@@ -52,8 +51,7 @@ const delay = (ms = 300) => new Promise((r) => setTimeout(r, ms));
 // /api/finance/admin/fx/markup, a different, narrower surface — see adminBase()
 // above). So there is no "set NEXT_PUBLIC_FX_ADMIN_USE_MOCK=false to reach the
 // real endpoint" escape hatch here — flipping that flag was ALSO dishonest:
-// every "live" branch below called fetch(...) and then returned
-// `{ ok: true }` unconditionally, discarding the response and its status code,
+// every "live" branch below called fetch(...) and then returned// `{ ok: true }` unconditionally, discarding the response and its status code,
 // so a 404 (the only possible outcome today) was reported as success too.
 // Both paths now fail honestly instead of fabricating a result. See
 // docs/audit/ADMIN_SIMULATED_WRITES.md.
@@ -61,7 +59,6 @@ const NO_BACKEND_YET =
   'has no backend yet: this surface does not exist on the Go service (only ' +
   '/api/finance/admin/fx/markup is real). This console cannot perform this ' +
   'action until that surface is built.';
-
 async function reqLive<T>(url: string, init: RequestInit): Promise<T> {
   const res = await fetch(url, init);
   const body = await res.json().catch(() => ({}));

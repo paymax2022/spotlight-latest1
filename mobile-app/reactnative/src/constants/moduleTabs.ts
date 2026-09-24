@@ -51,10 +51,32 @@ export const FOOD_TABS: readonly ModuleTab[] = [
   { href: '/food/orders', label: 'Orders',   icon: ReceiptText },
 ] as const;
 
-/** Contest / voting. */
+/**
+ * Contest / voting. The bar previously showed on only these 4 landing paths,
+ * which meant the actual browsing journey — pick a contest, look at
+ * contestants, open a profile — never showed any bottom nav at all, since
+ * none of those screens matched a tab's own href. matchPaths extends each
+ * tab to the pushed screens that are still "browsing" (no fixed bottom CTA of
+ * their own to collide with). Money-path / terminal screens (buy-votes,
+ * payment-method, payment-processing, vote-success, vote-failed,
+ * vote-receipt) and the two bottom-sheet screens (rules, support) are
+ * deliberately left off — they have their own fixed footer CTA, or are a
+ * one-off action a persistent tab bar would undercut.
+ */
 export const VOTING_TABS: readonly ModuleTab[] = [
-  { href: '/voting',             label: 'Home',        icon: Trophy },
-  { href: '/voting/contests',    label: 'Contests',    icon: Compass },
+  {
+    href: '/voting', label: 'Home', icon: Trophy,
+    matchPaths: ['/voting/notifications'],
+  },
+  {
+    href: '/voting/contests', label: 'Contests', icon: Compass,
+    matchPaths: [
+      '/voting/contest-details',
+      '/voting/contestants',
+      '/voting/contestant-profile',
+      '/voting/contestant-dashboard',
+    ],
+  },
   { href: '/voting/leaderboard', label: 'Leaderboard', icon: BarChart3 },
   { href: '/voting/my-votes',    label: 'My votes',    icon: Vote },
 ] as const;

@@ -107,7 +107,7 @@ func RegisterStays(member *gin.RouterGroup, adminGroup *gin.RouterGroup, pool *p
 	// Flag off ⇒ no recorder is set ⇒ the seam stays nil ⇒ silent no-op ⇒ stays
 	// unchanged. Reuses the shared commissionRecorderAdapter (marketplace_routes.go).
 	if cfg.FeatureCommissionEnabled {
-		staysCommission := commission.NewService(commission.NewRepository(pool), nil)
+		staysCommission := withReferralSplit(commission.NewService(commission.NewRepository(pool), nil), pool, cfg)
 		reservationSvc.SetCommissionRecorder(commissionRecorderAdapter{svc: staysCommission})
 		log.Println("[stays] commission recording wired → Property/Hotel (earning-row only; no ledger re-post)")
 	}
