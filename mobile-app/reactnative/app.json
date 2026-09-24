@@ -3,9 +3,19 @@
     "name": "Paymax React Native",
     "slug": "paymax-react-native-app",
     "scheme": "paymaxrn",
+    "icon": "./assets/images/icon.png",
     "plugins": [
       "expo-router",
       "expo-secure-store",
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/images/splash-icon.png",
+          "imageWidth": 200,
+          "resizeMode": "contain",
+          "backgroundColor": "#ffffff"
+        }
+      ],
       [
         "expo-image-picker",
         {
@@ -55,6 +65,10 @@
     "android": {
       "package": "com.anonymous.paymaxreactnativeapp",
       "usesCleartextTraffic": true,
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/images/adaptive-icon.png",
+        "backgroundColor": "#ffffff"
+      },
       "permissions": [
         "android.permission.RECORD_AUDIO",
         "android.permission.CAMERA",
@@ -81,6 +95,9 @@
         "ITSAppUsesNonExemptEncryption": false
       },
       "bundleIdentifier": "com.anonymous.paymaxreactnativeapp"
+    },
+    "web": {
+      "favicon": "./assets/images/favicon.png"
     },
     "extra": {
       "router": {},
