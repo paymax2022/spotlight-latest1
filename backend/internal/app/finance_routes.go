@@ -1794,16 +1794,6 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		restGroup.POST("/orders/:orderId/dispute", restaurantHandler.RaiseFoodDispute)
 		restGroup.GET("/disputes/:id", restaurantHandler.GetFoodDispute)
 
-		// ── KYB (owner) ───────────────────────────────────────────────────────
-		// Merchant business verification. Distinct from the onboarding QUEUE the ops
-		// console reviews: this is where the merchant actually supplies the records.
-		// kyb_handler.go + kyb_service.go + 20261018000000_restaurant_kyb.sql existed
-		// with no HTTP surface, so the review queue had nothing real to read.
-		restGroup.GET("/:id/kyb", restaurantHandler.GetKYB)
-		restGroup.PUT("/:id/kyb", restaurantHandler.SaveKYB)
-		restGroup.POST("/:id/kyb/documents", restaurantHandler.AddKYBDocument)
-		restGroup.POST("/:id/kyb/submit", restaurantHandler.SubmitKYB)
-
 		// ── Group & scheduled orders ──────────────────────────────────────────
 		// A host opens a group order, contributors add items, the host finalizes it
 		// into a normal order (money path reuses PlaceOrder's escrow + idempotency).
