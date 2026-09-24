@@ -428,12 +428,14 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 	ledgerAdmin.GET("", middleware.RequirePermission(rbac, "finance.admin.transactions.view"), ledgerAdminHandler.ListTransactions)
 	ledgerAdmin.GET("/:id", middleware.RequirePermission(rbac, "finance.admin.transactions.view"), ledgerAdminHandler.GetTransaction)
 
-	// --- KYC routes ---
-	if cfg.FeatureKYCEnabled {
-		kycGroup := finance.Group("/kyc")
-		kycGroup.GET("/me", kycHandler.GetMe)
-		kycGroup.POST("/initiate", kycHandler.Initiate)
-	}
+	// --- Legacy KYC intake removed ---
+	// POST /api/finance/kyc/initiate used to write kyc_status='pending' straight
+	// to user_profiles with NO automated identity check — a hash of whatever
+	// BVN/NIN the client sent, and nothing else. That is superseded by the KYC
+	// verification gateway below (kvGroup, FeatureKYCVerifyEnabled): POST
+	// /api/finance/kyc/session starts a real Dojah/Smile ID/Youverify-backed
+	// check. GET /me is kept (see kvGroup registration) since it is a read of
+	// user_profiles.kyc_tier/status that both the old and new systems share.
 
 	// --- Wallet routes ---
 	if cfg.FeatureWalletEnabled {
@@ -1084,6 +1086,10 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 
 		// Member routes (auth via the finance group's requireUserID).
 		kvGroup := finance.Group("/kyc")
+		// GET /me reads user_profiles.kyc_tier/status directly (kyc.Handler.GetMe,
+		// unchanged) — a plain read, not a verification path, so it stays even
+		// though the legacy intake it used to sit alongside was removed.
+		kvGroup.GET("/me", kycHandler.GetMe)
 		kvGroup.POST("/session", kvHandler.StartSession)
 		kvGroup.GET("/session/:id", kvHandler.GetSession)
 		kvGroup.POST("/consent", kvHandler.RecordConsent)
@@ -2610,11 +2616,18 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 	// 401 signs the user out, so the screen appears to log them out on open.
 	adminFinance.Use(mapsAuth())
 	adminFinance.Use(requireUserID())
-	if cfg.FeatureKYCEnabled {
-		adminFinance.GET("/kyc/pending", middleware.RequirePermission(rbac, "finance.admin.kyc"), kycHandler.ListPending)
-		adminFinance.POST("/kyc/users/:user_id/approve", middleware.RequirePermission(rbac, "finance.admin.kyc"), kycHandler.Approve)
-		adminFinance.POST("/kyc/users/:user_id/reject", middleware.RequirePermission(rbac, "finance.admin.kyc"), kycHandler.Reject)
-	}
+	// GET /kyc/pending, POST /kyc/users/:id/{approve,reject} were removed here —
+	// they let an admin set kyc_tier/status with NO automated check behind them
+	// (kyc.Handler.{ListPending,Approve,Reject} called kyc.Service directly, no
+	// provider call). They were already unreachable (this whole group 401s, see
+	// the comment above), but "unreachable today" is not "can never come back":
+	// the obvious fix for that 401 is wiring auth onto this group, and doing that
+	// alone would have resurrected a manual approval bypass alongside whatever
+	// wallet-lookup work motivated the fix. Removing the routes (not just leaving
+	// them flagged off) closes that off permanently. Identity verification is
+	// /api/finance/admin/kyc/{review-queue,cases/:id/approve,...} below
+	// (finance.admin.kyc RBAC), which reviews REAL provider check results
+	// (Dojah/Smile ID/Youverify via kycverify), not a bare tier number.
 	if cfg.FeatureWalletEnabled {
 		// Reuses finance.admin.transfers rather than a dedicated finance.admin.wallets
 		// permission — both would be granted to exactly the same two roles
@@ -3356,8 +3369,8 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		maps.Mount(r, mapSvc, mapsAuth(), maps.PerUserRateLimit(redisClient, cfg.MapsRateLimitPerMin))
 	}
 
-	log.Printf("[finance] routes registered — wallet=%v kyc=%v va=%v referrals=%v fx=%v transfers=%v walletXfer=%v bankXfer=%v groups=%v events=%v estate=%v",
-		cfg.FeatureWalletEnabled, cfg.FeatureKYCEnabled, cfg.FeatureVirtualAccountsEnabled,
+	log.Printf("[finance] routes registered — wallet=%v kycVerify=%v va=%v referrals=%v fx=%v transfers=%v walletXfer=%v bankXfer=%v groups=%v events=%v estate=%v",
+		cfg.FeatureWalletEnabled, cfg.FeatureKYCVerifyEnabled, cfg.FeatureVirtualAccountsEnabled,
 		cfg.FeatureReferralsEnabled, cfg.FeatureFXEnabled, cfg.FeatureTransfersEnabled,
 		cfg.FeatureWalletTransfersEnabled, cfg.FeatureBankTransfersEnabled,
 		cfg.FeatureGroupsEnabled, cfg.FeatureEventsEnabled, cfg.FeatureEstateEnabled)
