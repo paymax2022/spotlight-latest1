@@ -300,13 +300,25 @@ function Flag({ on, label }: { on: boolean | null | undefined; label: string }) 
   return <Badge status={on ? 'active' : 'inactive'} label={on ? label : `No ${label.toLowerCase()}`} />;
 }
 
+/** Strips ALL tag-like runs, repeatedly — a single pass can leave a tag that a
+ *  nested/malformed one was hiding behind (e.g. "<scr<script>ipt>"). Bounded
+ *  so a pathological input can't loop forever. */
+function stripTags(input: string): string {
+  let out = input;
+  for (let i = 0; i < 10 && /<[^>]*>/.test(out); i += 1) {
+    out = out.replace(/<[^>]*>/g, '');
+  }
+  return out;
+}
+
 /** Strips provider HTML to text. Never dangerouslySetInnerHTML — third-party content. */
 function Prose({ label, html }: { label: string; html: string | null | undefined }) {
   if (!html) return null;
-  const text = html
-    .replace(/<br\s*\/?>/gi, '\n')
-    .replace(/<\/(p|li|div|h\d)>/gi, '\n')
-    .replace(/<[^>]+>/g, '')
+  const text = stripTags(
+    html
+      .replace(/<br\s*\/?>/gi, '\n')
+      .replace(/<\/(p|li|div|h\d)>/gi, '\n'),
+  )
     .replace(/&nbsp;/g, ' ')
     .replace(/&amp;/g, '&')
     .replace(/\n{3,}/g, '\n\n')

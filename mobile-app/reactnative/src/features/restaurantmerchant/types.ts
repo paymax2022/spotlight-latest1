@@ -115,6 +115,34 @@ export interface OutletPayoutReadiness {
   unpaidKobo: Kobo;
 }
 
+/** Business types the KYB submit gate accepts (mirrors the backend's kybBusinessTypes). */
+export type KYBBusinessType = 'sole_proprietor' | 'limited_company' | 'partnership' | 'ngo';
+
+/**
+ * A restaurant's Know-Your-Business verification record (backend/internal/restaurant/kyb.go).
+ * Closing the store is always allowed; OPENING requires `status === 'approved'` — see
+ * ADR-033's fail-closed gate in SetAvailability. `documents` is the set of uploaded doc
+ * types (e.g. 'cac_certificate'), required for any business_type other than
+ * 'sole_proprietor' before submit.
+ */
+export interface RestaurantKYB {
+  restaurantId: string;
+  legalName: string;
+  businessType: KYBBusinessType | '';
+  /** CAC RC/BN number — required for every business_type except sole_proprietor. */
+  rcNumber: string;
+  tin: string;
+  contactEmail: string;
+  contactPhone: string;
+  /** Settlement (payout) account — the merchant's OWN bank account, not a credential. */
+  bankCode: string;
+  accountNumber: string;
+  accountName: string;
+  status: string; // 'draft' | 'submitted' | 'under_review' | 'needs_more_info' | 'approved' | 'rejected'
+  decisionReason?: string;
+  documents: string[];
+}
+
 /** A member of one outlet's staff. */
 export interface StaffMember {
   userId: string;

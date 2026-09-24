@@ -103,11 +103,17 @@ func (s *Service) Escalate(ctx context.Context, sessionID, userID string, req Es
 	return nil
 }
 
-// Resolve closes a session.
+// Resolve closes a session owned by actorID.
 func (s *Service) Resolve(ctx context.Context, sessionID, actorID string) error {
-	const q = `UPDATE support_sessions SET status='resolved', updated_at=NOW() WHERE id=$1 AND status != 'resolved'`
-	_, err := s.db.Exec(ctx, q, sessionID)
-	return err
+	const q = `UPDATE support_sessions SET status='resolved', updated_at=NOW() WHERE id=$1 AND user_id=$2 AND status != 'resolved'`
+	tag, err := s.db.Exec(ctx, q, sessionID, actorID)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("aicare: session not found or already resolved")
+	}
+	return nil
 }
 
 // GetHistory returns messages for a session.

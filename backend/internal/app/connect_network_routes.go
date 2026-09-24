@@ -81,7 +81,7 @@ func registerConnectNetworkRoutes(member, admin *gin.RouterGroup, cfg config.Con
 	// is a true nil interface (avoids the typed-nil trap).
 	var jobsCommission connectjobs.CommissionRecorder
 	if cfg.FeatureCommissionEnabled {
-		jobsCommission = commissionRecorderAdapter{svc: commission.NewService(commission.NewRepository(pool), nil)}
+		jobsCommission = commissionRecorderAdapter{svc: withReferralSplit(commission.NewService(commission.NewRepository(pool), nil), pool, cfg)}
 		log.Println("[connect-network] commission recording wired → Community/Job (earning-row only; no ledger re-post)")
 	}
 

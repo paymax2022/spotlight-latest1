@@ -208,9 +208,10 @@ export async function listResidents(): Promise<AdminResident[]> {
     // service admin.go). Using the row's own `id` here (as the previous
     // getJson<AdminResident[]> pass-through effectively did once compiled)
     // would 400 every ban/restore with "resident not found in this estate".
+    const userId = String(r.userId ?? r.id);
     return {
-      id: String(r.userId ?? r.id),
-      userId: String(r.userId ?? r.id),
+      id: userId,
+      userId,
       name: String(r.userId ?? '—'), // no display-name field on this endpoint (backend gap)
       unit: String(r.unit ?? ''),
       role: r.role as AdminResident['role'],

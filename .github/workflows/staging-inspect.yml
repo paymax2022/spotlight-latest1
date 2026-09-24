@@ -141,6 +141,16 @@ jobs:
             for (const n of ["INSURANCE_MYCOVER_API_KEY","INSURANCE_MYCOVER_WEBHOOK_SECRET","INSURANCE_MYCOVER_BASE_URL","FEATURE_INSURANCE_ENABLED"]) {
               console.log("  " + shape(n));
             }
+            // MapService (address autocomplete/geocode). FEATURE_MAPS_ENABLED gates
+            // whether /api/finance/maps/* is mounted at all (401 vs 404 from outside
+            // — see staging-environment-topology memory). MAPS_GOOGLE_KEY gates
+            // whether the "google" autocomplete adapter is the REAL Google Places API
+            // or a deterministic MockProvider standing in under the same name
+            // (internal/maps/routes.go buildRegistry) — the route still answers 200
+            // either way, so this is the only way to tell them apart without a live
+            // user token.
+            console.log("\n  FEATURE_MAPS_ENABLED = " + (v.FEATURE_MAPS_ENABLED ?? "NOT SET (defaults false)"));
+            console.log("  " + shape("MAPS_GOOGLE_KEY"));
           '
 
       # Deployment STATE first. `railway redeploy` returns once a build is
