@@ -38,6 +38,10 @@ export interface Contest {
    * counts for this contest/phase (`showVoteCount === false`).
    */
   totalVotes: number | null;
+  /** Sum of likeCount across the contest's roster. Derived client-side, same as contestantCount/totalVotes. */
+  totalLikes?: number;
+  /** Sum of shareCount across the contest's roster. */
+  totalShares?: number;
   startsAt?: string;
   endsAt?: string;
   freeVotesPerDay: number;
@@ -81,8 +85,9 @@ export interface Contestant {
   status: ContestantStatus;
   votesNeededToNextRank?: number;
   movement?: 'UP' | 'DOWN' | 'SAME';
-  profileViews?: number;
-  shareClicks?: number;
+  likeCount?: number;
+  likedByMe?: boolean;
+  shareCount?: number;
 }
 
 export interface VotePackage {

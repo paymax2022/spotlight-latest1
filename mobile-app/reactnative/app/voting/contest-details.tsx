@@ -5,14 +5,14 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import { goBack } from '@/lib/navigation';
-import { ArrowLeft, Users, Trophy, Share2, ShieldCheck, Calendar } from 'lucide-react-native';
+import { ArrowLeft, Users, Trophy, Share2, ShieldCheck, Calendar, Vote, Heart } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
 import { Spacing } from '@/constants/spacing';
 import { Radius } from '@/constants/radius';
 import { shadow1 } from '@/constants/shadows';
 import PrimaryButton from '@/components/PrimaryButton';
-import { formatDate } from '@/features/voting/utils/voteFormatters';
+import { formatDate, formatVoteCount } from '@/features/voting/utils/voteFormatters';
 import { useContestDetails } from '@/features/voting/hooks/useContestDetails';
 import { useContestants } from '@/features/voting/hooks/useContestants';
 import { useMyRegistrationForContest } from '@/features/registration/hooks/useRegistration';
@@ -106,6 +106,32 @@ export default function ContestDetailsScreen() {
               <Text style={styles.statLabel}>Paid Voting</Text>
             </View>
           </View>
+
+          {/* Engagement stats: total votes across the roster, likes, and profile
+              shares. A separate card from the settings row above (contestant
+              count / free-vote cap / paid-voting toggle are contest SETTINGS;
+              these are contest ACTIVITY, worth its own visual grouping). */}
+          {contest.showVoteCount !== false && (
+            <View style={[styles.statsCard, shadow1]}>
+              <View style={styles.stat}>
+                <Vote size={20} color={Colors.primary} strokeWidth={1.5} />
+                <Text style={styles.statValue}>{formatVoteCount(contest.totalVotes ?? 0)}</Text>
+                <Text style={styles.statLabel}>Total Votes</Text>
+              </View>
+              <View style={styles.statDivider} />
+              <View style={styles.stat}>
+                <Heart size={20} color={Colors.error} strokeWidth={1.5} />
+                <Text style={styles.statValue}>{formatVoteCount(contest.totalLikes ?? 0)}</Text>
+                <Text style={styles.statLabel}>Likes</Text>
+              </View>
+              <View style={styles.statDivider} />
+              <View style={styles.stat}>
+                <Share2 size={20} color={Colors.teal} strokeWidth={1.5} />
+                <Text style={styles.statValue}>{formatVoteCount(contest.totalShares ?? 0)}</Text>
+                <Text style={styles.statLabel}>Shares</Text>
+              </View>
+            </View>
+          )}
 
           {/* Voting window */}
           <View style={[styles.section, styles.windowRow, shadow1]}>
