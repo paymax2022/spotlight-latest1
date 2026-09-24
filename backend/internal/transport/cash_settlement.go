@@ -18,6 +18,24 @@ func isCashPayment(paymentMethod string) bool {
 	return paymentMethod == "cash"
 }
 
+// paymentMethodPaystackExternal marks a trip as funded by the Paystack-checkout
+// rail (RequestRidePaystackFunded / settlement.EscrowExternal) — never client-
+// settable (see RequestRideRequest's binding tag, which does not include it;
+// this value is only ever set internally by transport/paystackcheckout).
+// Distinct from the legacy "card" value, which today behaves identically to
+// "wallet" (a real wallet escrow) — repurposing it here would have silently
+// changed behavior for any existing "card" trip.
+//
+// isPaystackFunded gates adjustEscrow: a trip funded this way has no wallet
+// debit and no open card session to charge more from, so a later fare RAISE
+// (RiderOffer/AcceptCounter) cannot be honoured by escrowing more — see
+// adjustEscrow.
+const paymentMethodPaystackExternal = "paystack"
+
+func isPaystackFunded(paymentMethod string) bool {
+	return paymentMethod == paymentMethodPaystackExternal
+}
+
 // platformFeeKobo computes the platform's commission on a cash trip's fare
 // using the SAME commission split (commissionForTier) instant/wallet trips
 // settle with, so a cash rider and a wallet rider on the same driver tier

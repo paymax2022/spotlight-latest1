@@ -32,8 +32,21 @@ function parseFee(v: unknown): number | null {
   return Math.round(n * 100) / 100;
 }
 
+/** Trims leading/trailing `ch` runs by index scan — NOT `.replace(/^_+|_+$/g, '')`,
+ *  which is quadratic on adversarial input: an end-anchored alternative under
+ *  a global search still tries every start position, and greedily consuming a
+ *  long run before backtracking to check the anchor is O(run length) at each
+ *  of those positions. This is unconditionally O(n). */
+function trimChar(s: string, ch: string): string {
+  let start = 0;
+  let end = s.length;
+  while (start < end && s[start] === ch) start += 1;
+  while (end > start && s[end - 1] === ch) end -= 1;
+  return s.slice(start, end);
+}
+
 function slugify(v: string): string {
-  return v.trim().toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+  return trimChar(v.trim().toLowerCase().replace(/[^a-z0-9]+/g, '_'), '_');
 }
 
 

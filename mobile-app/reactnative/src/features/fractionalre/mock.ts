@@ -4,6 +4,7 @@
 // payouts, market listings, statements, documents, goals.
 
 import { getSecureItem, setSecureItem } from '@/lib/secureStorage';
+import { secureRandomInt } from '@/lib/secureRandom';
 import type {
   OfferingDetail, OfferingSummary, InvestorProfile, PortfolioOverview, Holding,
   HoldingDetail, Payout, Statement, MarketListing, MarketOrder, AutoInvestPlan,
@@ -295,7 +296,7 @@ export function buildMockCertificate(offeringId: string, units: number, amountKo
   const off = MOCK_OFFERINGS.find((o) => o.id === offeringId) ?? MOCK_OFFERINGS[0];
   return {
     investmentId: `inv-${Date.now()}`,
-    certificateNo: `FRE-${new Date().getFullYear()}-${Math.floor(Math.random() * 90000 + 10000)}`,
+    certificateNo: `FRE-${new Date().getFullYear()}-${secureRandomInt(10000, 99999)}`,
     offeringTitle: off.title,
     units,
     amountKobo,

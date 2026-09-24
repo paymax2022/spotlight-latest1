@@ -432,8 +432,10 @@ func NewRouter(cfg config.Config) *gin.Engine {
 
 	// Finance modules — wired only when the shared pool is present. Returns the
 	// Direct Referral Rewards engine service (nil when flag-off) so Phase-1 revenue
-	// modules wired below (Marketplace) can emit purchase events (PRD §2.5/§7.1).
-	referralRewardsSvc := registerFinanceRoutes(r, cfg, supabase, rbacService, sharedPool, rtHub)
+	// modules wired below (Marketplace) can emit purchase events (PRD §2.5/§7.1),
+	// and the KYC verification gateway (nil unless FEATURE_KYC_VERIFY_ENABLED) so
+	// registerConnectWalletRoutes below can run a real check for tier1 submissions.
+	referralRewardsSvc, kycVerifySvc := registerFinanceRoutes(r, cfg, supabase, rbacService, sharedPool, rtHub)
 
 	// Paymax Connect module — wired only when FEATURE_CONNECT_ENABLED + shared pool.
 	registerConnectRoutes(r, cfg, supabase, rbacService, sharedPool)
@@ -443,7 +445,7 @@ func NewRouter(cfg config.Config) *gin.Engine {
 	// All endpoints require authentication (Bearer token). Requires shared pool.
 	if sharedPool != nil {
 		authMiddleware := middleware.RequireAuthContext(supabase, rbacService)
-		registerConnectWalletRoutes(r, supabase, rbacService, authMiddleware, sharedPool, auditService)
+		registerConnectWalletRoutes(r, supabase, rbacService, authMiddleware, sharedPool, auditService, kycVerifySvc)
 	}
 
 	// Admin console — unified /api/v1/admin/* endpoints for mobile admin UI

@@ -7,15 +7,27 @@ import "context"
 // ledger fields (amount, reference, account type) cannot give on their own.
 // It is produced by a TransactionDetailResolver (see below) that knows how
 // to look up ONE module's domain tables from the entry's reference string.
+//
+// Field taxonomy (module hierarchy, agreed 2026-09-18): ServicePurchased is
+// the MODULE ("Utility Bills", "Insurance", "FX", "Marketplace").
+// SubService is the category WITHIN that module ("Airtime", "Premium
+// Payment", "Currency Conversion", "Listing Boost"). Category is the
+// biller/provider/brand the customer transacted with ("MTN", "AXA
+// Mansard") — nil when the module has no such concept. SubCategory is the
+// specific product/variant bought ("MTN Airtime ₦500", a specific insurance
+// product) — nil when no finer-grained real column backs it. Never fabricate
+// any of these four beyond what the module's own tables actually record.
 type ModuleTransactionDetail struct {
-	Module        string  `json:"module"`         // e.g. "marketplace_boost", "insurance_premium", "fx_conversion", "utility_bill"
-	ServiceLabel  string  `json:"service_label"`  // human label, e.g. "Marketplace — Listing Boost"
-	Category      *string `json:"category"`
-	ServiceBought string  `json:"service_bought"` // specific description of what was bought
-	PaymentMethod string  `json:"payment_method"` // real value if the module tracks it, else honestly "wallet" (never invent "card" etc. without a real column backing it)
-	Status        string  `json:"status"`         // the REAL per-module status, not the generic ledger Posted/Reversed
-	Provider      *string `json:"provider"`       // aggregator/underwriter/provider name, when applicable
-	Merchant      *string `json:"merchant"`       // a real peer merchant/seller, ONLY when the module genuinely has one
+	Module           string  `json:"module"`            // e.g. "marketplace_boost", "insurance_premium", "fx_conversion", "utility_bill"
+	ServicePurchased string  `json:"service_purchased"` // human label for the MODULE, e.g. "Utility Bills"
+	SubService       string  `json:"sub_service"`       // the category within the module, e.g. "Airtime"
+	Category         *string `json:"category"`          // biller/provider/brand, e.g. "MTN" — nil if the module has none
+	SubCategory      *string `json:"sub_category"`      // the specific product/variant, e.g. "MTN Airtime ₦500" — nil if not resolvable
+	ServiceBought    string  `json:"service_bought"`    // full description of what was bought (customer reference, name, etc.)
+	PaymentMethod    string  `json:"payment_method"`    // real value if the module tracks it, else honestly "wallet" (never invent "card" etc. without a real column backing it)
+	Status           string  `json:"status"`            // the REAL per-module status, not the generic ledger Posted/Reversed
+	Provider         *string `json:"provider"`          // aggregator/underwriter/provider name, when applicable
+	Merchant         *string `json:"merchant"`          // a real peer merchant/seller, ONLY when the module genuinely has one
 }
 
 // TransactionDetailResolver knows how to resolve ONE module's real

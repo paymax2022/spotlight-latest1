@@ -109,10 +109,16 @@ type VetService struct {
 // ON DELETE SET NULL on its FK to vet_services, so a historical appointment can
 // end up referencing a since-deleted service.
 type Appointment struct {
-	ID          string    `json:"id"`
-	ProviderID  string    `json:"provider_id"`
-	OwnerID     string    `json:"owner_id"` // patient/owner (auth.users)
-	PetID       string    `json:"pet_id"`   // subject (PET)
+	ID         string `json:"id"`
+	ProviderID string `json:"provider_id"`
+	OwnerID    string `json:"owner_id"` // patient/owner (auth.users)
+	PetID      string `json:"pet_id"`   // subject (PET)
+	// ServiceID is a pointer because vet_appointment_payments.service_id is
+	// ON DELETE SET NULL against vet_services — an appointment whose service
+	// was later deleted has a NULL here, and pgx fails "cannot scan NULL into
+	// *string" if this is a plain string. Can't happen via Book() (always
+	// pins a valid service first) but can happen later on a hard-deleted
+	// vet_services row.
 	ServiceID   *string   `json:"service_id,omitempty"`
 	VisitType   VisitType `json:"visit_type"`
 	State       ApptState `json:"state"`

@@ -47,12 +47,12 @@ type StaffPermission string
 
 const (
 	// Money and identity — the owner alone.
-	PermManageBanking StaffPermission = "banking"    // payout account, KYB submission
-	PermManageStaff   StaffPermission = "staff"      // invite/suspend/remove staff
-	PermManageStore   StaffPermission = "store"      // name, address, packaging price, hours
-	PermManageMenu    StaffPermission = "menu"       // categories, items, availability
+	PermManageBanking StaffPermission = "banking" // payout account, KYB submission
+	PermManageStaff   StaffPermission = "staff"   // invite/suspend/remove staff
+	PermManageStore   StaffPermission = "store"   // name, address, packaging price, hours
+	PermManageMenu    StaffPermission = "menu"    // categories, items, availability
 	PermViewOrders    StaffPermission = "orders.view"
-	PermAcceptOrders  StaffPermission = "orders.accept"  // accept/reject an incoming order
+	PermAcceptOrders  StaffPermission = "orders.accept"   // accept/reject an incoming order
 	PermProgressOrder StaffPermission = "orders.progress" // preparing → ready
 	PermDeliverOrder  StaffPermission = "orders.deliver"  // pickup → handoff
 	PermViewEarnings  StaffPermission = "earnings.view"

@@ -59,12 +59,12 @@ const (
 
 // Sentinel errors.
 var (
-	ErrWithdrawalsDisabled  = errors.New("restaurant: merchant withdrawals are disabled (FEATURE_RESTAURANT_WITHDRAWALS_ENABLED off)")
-	ErrWithdrawMissingIdem  = errors.New("restaurant: Idempotency-Key required to request a withdrawal")
-	ErrWithdrawBadAmount    = errors.New("restaurant: withdrawal amount must be a positive integer (kobo)")
+	ErrWithdrawalsDisabled   = errors.New("restaurant: merchant withdrawals are disabled (FEATURE_RESTAURANT_WITHDRAWALS_ENABLED off)")
+	ErrWithdrawMissingIdem   = errors.New("restaurant: Idempotency-Key required to request a withdrawal")
+	ErrWithdrawBadAmount     = errors.New("restaurant: withdrawal amount must be a positive integer (kobo)")
 	ErrWithdrawNoBankAccount = errors.New("restaurant: bank account not found for this merchant")
-	ErrWithdrawNotFound     = errors.New("restaurant: withdrawal not found")
-	ErrWithdrawNotReady     = errors.New("restaurant: withdrawal is not in a settleable state")
+	ErrWithdrawNotFound      = errors.New("restaurant: withdrawal not found")
+	ErrWithdrawNotReady      = errors.New("restaurant: withdrawal is not in a settleable state")
 )
 
 // Withdrawal mirrors a row of public.restaurant_withdrawals.

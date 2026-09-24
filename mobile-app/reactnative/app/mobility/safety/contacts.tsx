@@ -12,6 +12,7 @@ import StateView from '@/components/StateView';
 import PrimaryButton from '@/components/PrimaryButton';
 import TextInputField from '@/components/TextInputField';
 import MobilityEdgeState from '@/features/mobility/components/MobilityEdgeState';
+import { errKind } from '@/features/mobility/utils/errKind';
 import { useSafety } from '@/features/mobility/hooks/useMobility';
 import type { TrustedContact } from '@/features/mobility/types/mobility.types';
 
@@ -38,7 +39,7 @@ export default function TrustedContactsScreen() {
       {contacts.isLoading ? (
         <StateView kind="loading" message="Loading contacts…" />
       ) : contacts.isError ? (
-        <MobilityEdgeState kind="offline" actionLabel="Retry" onAction={() => contacts.refetch()} />
+        <MobilityEdgeState kind={errKind(contacts.error)} actionLabel="Retry" onAction={() => contacts.refetch()} />
       ) : (
         <FlatList
           data={contacts.data}
