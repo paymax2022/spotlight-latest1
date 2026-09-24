@@ -82,6 +82,14 @@ var ErrTierGateUnwired = errors.New("restaurant: money path requires a tier gate
 // service-layer backstop for direct callers. Mirrors ErrWithdrawMissingIdem.
 var ErrOrderMissingIdem = errors.New("restaurant: Idempotency-Key required to place an order")
 
+// ErrExternalAmountMismatch is returned by PlaceOrderPaystackFunded when the
+// freshly-recomputed order total no longer matches the amount the caller
+// already verified as paid via Paystack (a price, promo, or availability
+// change between the payment intent and this call). Returned BEFORE any
+// escrow or order-row write, so the caller's only remaining duty is to
+// reverse the external charge — see PlaceOrderPaystackFunded's doc comment.
+var ErrExternalAmountMismatch = errors.New("restaurant: verified payment amount no longer matches the order total")
+
 // Service manages restaurants, menus, and orders.
 type Service struct {
 	db            *pgxpool.Pool
@@ -100,7 +108,38 @@ type Service struct {
 	// exactly what it served before listing review existed (PRD §1.4).
 	moderationOn bool
 	disburser    WithdrawalDisburser // optional; nil ⇒ NoopDisburser (default sandbox)
+	// externalRefunder reverses a Paystack-funded (EscrowExternal) order's
+	// escrow correctly — see ExternalRefunder's doc comment. nil ⇒ such a
+	// refund logs for manual reconciliation instead of running incorrectly.
+	externalRefunder ExternalRefunder
 }
+
+// ExternalRefunder is the nil-safe seam restaurant.Service uses to correctly
+// unwind a Paystack-funded (EscrowExternal) order's escrow — the ACTUAL
+// external refund plus the matching ledger-side reversal — wherever
+// refundEscrowOnce would otherwise call settlement.Refund. Refund itself now
+// refuses (settlement.ErrWrongRefundMethod) on an externally-funded
+// settlement rather than wrongly wallet-crediting it (a real defect found
+// while porting this same Paystack-checkout pattern to ride-hailing — see
+// that error's doc comment for the full account); this seam is what makes
+// the refund actually succeed instead of merely failing safely.
+//
+// Modeled as a local interface (mirrors CommissionRecorder / TierLimiter) so
+// restaurant never imports paystackcheckout or any provider package.
+type ExternalRefunder interface {
+	// RefundExternalSettlement reverses settlementID, which MUST be an
+	// EscrowExternal-funded row. orderID lets the adapter resolve the
+	// Paystack reference it needs for the real gateway refund (the intents
+	// table is keyed by order, not by settlement id). reason is a short
+	// machine tag for logging/audit.
+	RefundExternalSettlement(ctx context.Context, orderID, settlementID, reason string) error
+}
+
+// SetExternalRefunder injects the Paystack-refund seam (app-wiring,
+// post-construction). Nil is accepted: a nil seam means an externally-funded
+// refund is logged loudly for manual reconciliation rather than run
+// incorrectly — fail closed, not fail wrong.
+func (s *Service) SetExternalRefunder(r ExternalRefunder) { s.externalRefunder = r }
 
 func NewService(db *pgxpool.Pool, settlement *settlement.Service) *Service {
 	return &Service{db: db, settlement: settlement, notifier: LogNotifier{}, feeRepo: NewDeliveryConfigRepo(db)}
@@ -185,6 +224,9 @@ func (s *Service) computeDeliveryFee(ctx context.Context, rLat, rLng, dLat, dLng
 
 // CreateRestaurant registers a new restaurant.
 func (s *Service) CreateRestaurant(ctx context.Context, ownerID string, req CreateRestaurantRequest) (*Restaurant, error) {
+	if !validGeoPointPair(req.GeoLat, req.GeoLng) {
+		return nil, fmt.Errorf("restaurant: invalid coordinates")
+	}
 	r := &Restaurant{
 		ID:          uuid.New().String(),
 		OwnerID:     ownerID,
@@ -197,18 +239,33 @@ func (s *Service) CreateRestaurant(ctx context.Context, ownerID string, req Crea
 	}
 	const q = `INSERT INTO restaurants (id, owner_id, name, description, address, logo_url, is_open) VALUES ($1,$2,$3,$4,$5,$6,false)`
 	_, err := s.db.Exec(ctx, q, r.ID, r.OwnerID, r.Name, r.Description, r.Address, r.LogoURL)
+	if err != nil {
+		return r, err
+	}
+
+	// A pin the owner confirmed on the map (mobile's AddressAutocompleteInput)
+	// beats the best-effort geocode of the free-text address below — it is the
+	// exact spot the owner picked, not a rooftop-centroid guess. Skip the
+	// auto-geocode entirely when one was supplied.
+	if req.GeoLat != nil && req.GeoLng != nil {
+		r.GeoLat, r.GeoLng = req.GeoLat, req.GeoLng
+		_, _ = s.db.Exec(ctx,
+			`UPDATE restaurants SET geo_lat=$2, geo_lng=$3, plus_code=$4, updated_at=NOW() WHERE id=$1`,
+			r.ID, *req.GeoLat, *req.GeoLng, req.PlusCode)
+		return r, nil
+	}
 
 	// Best-effort: geocode the address to a pin so "near me" works. The UPDATE
 	// fires the merchant_locations sync trigger. A geocode failure never fails
 	// restaurant creation (the pin can be set later via /maps/locations).
-	if err == nil && s.geocoder != nil && r.Address != "" {
+	if s.geocoder != nil && r.Address != "" {
 		if lat, lng, plus, gerr := s.geocoder.Geocode(ctx, r.Address); gerr == nil {
 			_, _ = s.db.Exec(ctx,
 				`UPDATE restaurants SET geo_lat=$2, geo_lng=$3, plus_code=$4, updated_at=NOW() WHERE id=$1`,
 				r.ID, lat, lng, plus)
 		}
 	}
-	return r, err
+	return r, nil
 }
 
 // DeliveryQuote is the previewed fee for a prospective order. FlatFallback is true
@@ -259,43 +316,53 @@ func (s *Service) SetDeliveryConfig(ctx context.Context, restaurantID *string, c
 // PlaceOrder validates items, computes totals, escrows payment, and creates the order.
 // Supports multi-restaurant orders when items include restaurant_id; falls back to
 // single-restaurant mode when all items use the route's restaurantID.
-func (s *Service) PlaceOrder(ctx context.Context, restaurantID, customerID string, req PlaceOrderRequest) (*Order, error) {
-	// ── Fast idempotent-replay path ───────────────────────────────────────────
-	// A retry of an order this customer already placed under the same
-	// Idempotency-Key returns the canonical order and moves no money.
-	//
-	// This MUST run before the tier gate below. The gate measures today's spend by
-	// summing the customer's wallet DEBIT entries, which on a replay already include
-	// THIS order's own escrow debit — so re-gating a replay counts the request
-	// against itself and refuses it with "daily limit exceeded" even though the
-	// money already moved and the order exists. The caller would see a hard
-	// rejection for an order that succeeded, and might re-order under a fresh key
-	// and pay twice. Same ordering as RequestWithdrawal, which resolves its
-	// idempotency key before calling EnforceWalletDebitLimit.
-	//
-	// It must equally run before PROMO resolution, for the same shape of reason: the
-	// promo checks are stateful and time-dependent, so replaying an order whose
-	// redemption already committed fails its OWN usage_limit/per_user_limit (the counts
-	// now include the first attempt) and 422s an order that exists and is escrowed. A
-	// promo whose window closed between the two attempts does the same.
-	//
-	// The post-INSERT ON CONFLICT branch below stays as the concurrent-race
-	// backstop for two requests that pass this check simultaneously.
-	if req.IdempotencyKey == "" {
-		// Defence in depth: both HTTP handlers already reject an empty key. Without
-		// this, a direct service caller would hit the lookup below with '' — a legal,
-		// globally UNIQUE value in orders.idempotency_key — and silently receive their
-		// previous ''-keyed order instead of placing a new one.
-		return nil, ErrOrderMissingIdem
-	}
-	existing, err := s.findOrderByIdempotencyKey(ctx, req.IdempotencyKey, customerID)
-	if err != nil {
-		return nil, err
-	}
-	if existing != nil {
-		return existing, nil
-	}
+// itemWithRest pairs a validated, priced order line with the restaurant it
+// belongs to (multi-restaurant cart support). Package-level so orderPricing
+// can carry it out of priceOrder.
+type itemWithRest struct {
+	item   OrderItem
+	restID string
+}
 
+// orderPricing is the complete, read-only price quote for a cart: every
+// value placeOrder needs to actually persist and settle the order, plus
+// Total — the exact amount that will be escrowed, wallet-funded or
+// externally-funded either way. Computing it touches no money and reserves
+// nothing (the promo check it runs is a pure eligibility read; the promo
+// SLOT is only reserved later, in placeOrder itself, right before escrow).
+// See QuoteOrder for the one caller outside placeOrder that needs this.
+type orderPricing struct {
+	primaryRestaurantID string
+	ownerID             string
+	scheduledFor        *time.Time
+	itemsWithRest       []itemWithRest
+	subtotal            int64
+	deliveryKobo        int64
+	breakdown           *DeliveryFeeBreakdown
+	distanceMeters      *float64
+	etaMinutes          *float64
+	surgeKobo           int64
+	serviceFeeKobo      int64
+	tipKobo             int64
+	discountKobo        int64
+	promoID             *string
+	promoFunder         *string
+	packageCount        int
+	packagingKobo       int64
+	total               int64
+}
+
+// priceOrder computes orderPricing for a cart against CURRENT DB state
+// (menu prices, restaurant hours/pricing config, promo eligibility, delivery
+// config). Extracted out of placeOrder so QuoteOrder (a pre-payment price
+// check) and placeOrder (the actual placement) always run the EXACT same
+// pricing logic — two independently-maintained copies of this arithmetic
+// would drift, which is exactly the kind of gap a money-safety review would
+// (rightly) flag. See placeOrder for the phases that follow pricing: tier
+// gate, promo slot reservation, escrow, persistence — none of which belong
+// here, because a caller that only wants a quote (QuoteOrder) must trigger
+// NONE of them.
+func (s *Service) priceOrder(ctx context.Context, restaurantID, customerID string, req PlaceOrderRequest) (*orderPricing, error) {
 	// Collect unique restaurants from items (or use the route's restaurantID as fallback).
 	// This enables multi-restaurant orders while maintaining backward compatibility.
 	restaurantMap := make(map[string]bool)
@@ -366,10 +433,6 @@ func (s *Service) PlaceOrder(ctx context.Context, restaurantID, customerID strin
 	}
 
 	// Fetch and validate menu items; group by restaurant for downstream processing.
-	type itemWithRest struct {
-		item   OrderItem
-		restID string
-	}
 	var itemsWithRest []itemWithRest
 	var subtotal int64
 	for _, input := range req.Items {
@@ -555,6 +618,142 @@ func (s *Service) PlaceOrder(ctx context.Context, restaurantID, customerID strin
 	// exactly this at release (base = total − tip − serviceFee − providerFee;
 	// gross = base + discount).
 	total := grossKobo - discountKobo + serviceFeeKobo + tipKobo + packagingKobo
+
+	return &orderPricing{
+		primaryRestaurantID: primaryRestaurantID,
+		ownerID:             ownerID,
+		scheduledFor:        scheduledFor,
+		itemsWithRest:       itemsWithRest,
+		subtotal:            subtotal,
+		deliveryKobo:        deliveryKobo,
+		breakdown:           breakdown,
+		distanceMeters:      distanceMeters,
+		etaMinutes:          etaMinutes,
+		surgeKobo:           surgeKobo,
+		serviceFeeKobo:      serviceFeeKobo,
+		tipKobo:             tipKobo,
+		discountKobo:        discountKobo,
+		promoID:             promoID,
+		promoFunder:         promoFunder,
+		packageCount:        packageCount,
+		packagingKobo:       packagingKobo,
+		total:               total,
+	}, nil
+}
+
+// QuoteOrder computes the exact price of a cart from CURRENT menu/promo/
+// delivery-config state — the SAME computation placeOrder itself uses to
+// price the order it actually places (see priceOrder) — without moving any
+// money, reserving any promo slot, or writing anything.
+//
+// This exists for a caller that must know the exact amount to charge BEFORE
+// it can collect payment (a Paystack-checkout initiate step: Paystack needs
+// an amount up front). It is advisory to that caller only: placeOrder (run
+// AFTER payment is verified, via PlaceOrderPaystackFunded) independently
+// recomputes this same total from whatever DB state exists AT THAT LATER
+// MOMENT and cross-checks it against what was actually verified as paid
+// (ErrExternalAmountMismatch) — so a price/availability/promo change between
+// this quote and the eventual placement is caught there, not trusted here.
+func (s *Service) QuoteOrder(ctx context.Context, restaurantID, customerID string, req PlaceOrderRequest) (int64, error) {
+	pricing, err := s.priceOrder(ctx, restaurantID, customerID, req)
+	if err != nil {
+		return 0, err
+	}
+	return pricing.total, nil
+}
+
+// placeOrder is the shared implementation behind PlaceOrder (wallet-funded,
+// KYC-tier-gated) and PlaceOrderPaystackFunded (funded by an
+// ALREADY-VERIFIED external Paystack charge, never wallet-gated — see that
+// function's doc comment for why, and settlement.EscrowExternal for the
+// ledger side). `external` is NEVER settable by client input on any
+// HTTP-facing request DTO — see the two exported wrappers below.
+//
+// verifiedAmountKobo is ignored when external is false. When external is
+// true it is the amount the caller already verified Paystack collected for
+// this order, and is cross-checked against the total this function computes
+// itself from current DB state (menu prices, promo, availability) — see the
+// check right after `total` is computed. This function trusts NO caller
+// claim about the total; it only trusts a caller's claim about what was
+// actually collected, and then requires that to match its own math.
+func (s *Service) placeOrder(ctx context.Context, restaurantID, customerID string, req PlaceOrderRequest, external bool, verifiedAmountKobo int64) (*Order, error) {
+	// ── Fast idempotent-replay path ───────────────────────────────────────────
+	// A retry of an order this customer already placed under the same
+	// Idempotency-Key returns the canonical order and moves no money.
+	//
+	// This MUST run before the tier gate below. The gate measures today's spend by
+	// summing the customer's wallet DEBIT entries, which on a replay already include
+	// THIS order's own escrow debit — so re-gating a replay counts the request
+	// against itself and refuses it with "daily limit exceeded" even though the
+	// money already moved and the order exists. The caller would see a hard
+	// rejection for an order that succeeded, and might re-order under a fresh key
+	// and pay twice. Same ordering as RequestWithdrawal, which resolves its
+	// idempotency key before calling EnforceWalletDebitLimit.
+	//
+	// It must equally run before PROMO resolution, for the same shape of reason: the
+	// promo checks are stateful and time-dependent, so replaying an order whose
+	// redemption already committed fails its OWN usage_limit/per_user_limit (the counts
+	// now include the first attempt) and 422s an order that exists and is escrowed. A
+	// promo whose window closed between the two attempts does the same.
+	//
+	// The post-INSERT ON CONFLICT branch below stays as the concurrent-race
+	// backstop for two requests that pass this check simultaneously.
+	if req.IdempotencyKey == "" {
+		// Defence in depth: both HTTP handlers already reject an empty key. Without
+		// this, a direct service caller would hit the lookup below with '' — a legal,
+		// globally UNIQUE value in orders.idempotency_key — and silently receive their
+		// previous ''-keyed order instead of placing a new one.
+		return nil, ErrOrderMissingIdem
+	}
+	existing, err := s.findOrderByIdempotencyKey(ctx, req.IdempotencyKey, customerID)
+	if err != nil {
+		return nil, err
+	}
+	if existing != nil {
+		return existing, nil
+	}
+
+	// Price the cart against current DB state — menu prices, restaurant hours/pricing
+	// config, promo eligibility, delivery config. See priceOrder: this is the SAME
+	// computation QuoteOrder runs for a pre-payment price check, so the two can never
+	// drift apart.
+	pricing, err := s.priceOrder(ctx, restaurantID, customerID, req)
+	if err != nil {
+		return nil, err
+	}
+	primaryRestaurantID := pricing.primaryRestaurantID
+	ownerID := pricing.ownerID
+	scheduledFor := pricing.scheduledFor
+	itemsWithRest := pricing.itemsWithRest
+	subtotal := pricing.subtotal
+	deliveryKobo := pricing.deliveryKobo
+	breakdown := pricing.breakdown
+	distanceMeters := pricing.distanceMeters
+	etaMinutes := pricing.etaMinutes
+	surgeKobo := pricing.surgeKobo
+	serviceFeeKobo := pricing.serviceFeeKobo
+	tipKobo := pricing.tipKobo
+	discountKobo := pricing.discountKobo
+	promoID := pricing.promoID
+	promoFunder := pricing.promoFunder
+	packageCount := pricing.packageCount
+	packagingKobo := pricing.packagingKobo
+	total := pricing.total
+
+	// External-funding amount cross-check — BEFORE anything writes (same placement
+	// principle as the tier gate below): the caller already verified Paystack collected
+	// verifiedAmountKobo for this order at intent-creation time, from a price quoted
+	// against the DB state at THAT moment. Menu prices, promo eligibility, and item
+	// availability can all change between quoting and this call, so this function never
+	// trusts that quote — it recomputes `total` itself from current state (above) and
+	// requires it to match exactly what was actually collected. A mismatch aborts with
+	// no escrow and no order row; the caller's only remaining duty is to reverse the
+	// external charge (see PlaceOrderPaystackFunded's doc comment) since there is no
+	// wallet leg here to unwind.
+	if external && total != verifiedAmountKobo {
+		return nil, ErrExternalAmountMismatch
+	}
+
 	orderID := uuid.New().String()
 	ref := "order:" + orderID
 
@@ -602,31 +801,41 @@ func (s *Service) PlaceOrder(ctx context.Context, restaurantID, customerID strin
 	//
 	// A nil gate is refused rather than treated as "unlimited" — see ErrTierGateUnwired.
 	// This stays unconditional: a deployment with no gate must not place orders at all.
-	if s.tiers == nil {
-		return nil, ErrTierGateUnwired
-	}
-
-	// The limit itself is skipped when this key's escrow ALREADY committed. That
-	// happens when a prior attempt posted the escrow and then died before the order
-	// row landed — an item deleted mid-flight, a commit timeout, a pod restart. The
-	// fast path at the top of this function cannot see that case (there is no order
-	// row), but the wallet debit is already posted, so re-authorising it here would
-	// count it against the customer a second time and refuse the very retry that
-	// heals the stranded escrow. settlement.Escrow is idempotent on this key and will
-	// post no second debit, so there is nothing left for the gate to authorise.
 	//
-	// Without this, gating the escrow would have broken settlement.Escrow's documented
-	// crash-recovery property: the money would sit in escrow with no order attached,
-	// invisible to the reconciler (which joins orders) and with no path to a refund.
-	escrowed, err := s.escrowCommittedFor(ctx, req.IdempotencyKey, customerID)
-	if err != nil {
-		return nil, err
-	}
-	if !escrowed {
-		if err := s.tiers.EnforceCheckoutDebitLimit(ctx, customerID, total); err != nil {
-			// Wrapped, not replaced: handlers match tiers.ErrWalletDisabled /
-			// tiers.ErrDailyLimitExceeded with errors.Is to pick the HTTP status.
-			return nil, fmt.Errorf("restaurant: order escrow tier gate: %w", err)
+	// Skipped entirely when external is true: an externally-funded order is paid for
+	// by an ALREADY-VERIFIED Paystack charge that never touches the customer's wallet
+	// (see settlement.EscrowExternal), so there is no wallet debit for this gate to
+	// price against — the KYC-tier daily-wallet-debit limit has nothing to say about
+	// money that never entered the wallet. See PlaceOrderPaystackFunded's doc comment
+	// for why this is safe: the caller must have already verified the Paystack charge
+	// covers the exact computed total before reaching here.
+	if !external {
+		if s.tiers == nil {
+			return nil, ErrTierGateUnwired
+		}
+
+		// The limit itself is skipped when this key's escrow ALREADY committed. That
+		// happens when a prior attempt posted the escrow and then died before the order
+		// row landed — an item deleted mid-flight, a commit timeout, a pod restart. The
+		// fast path at the top of this function cannot see that case (there is no order
+		// row), but the wallet debit is already posted, so re-authorising it here would
+		// count it against the customer a second time and refuse the very retry that
+		// heals the stranded escrow. settlement.Escrow is idempotent on this key and will
+		// post no second debit, so there is nothing left for the gate to authorise.
+		//
+		// Without this, gating the escrow would have broken settlement.Escrow's documented
+		// crash-recovery property: the money would sit in escrow with no order attached,
+		// invisible to the reconciler (which joins orders) and with no path to a refund.
+		escrowed, err := s.escrowCommittedFor(ctx, req.IdempotencyKey, customerID)
+		if err != nil {
+			return nil, err
+		}
+		if !escrowed {
+			if err := s.tiers.EnforceCheckoutDebitLimit(ctx, customerID, total); err != nil {
+				// Wrapped, not replaced: handlers match tiers.ErrWalletDisabled /
+				// tiers.ErrDailyLimitExceeded with errors.Is to pick the HTTP status.
+				return nil, fmt.Errorf("restaurant: order escrow tier gate: %w", err)
+			}
 		}
 	}
 
@@ -644,7 +853,18 @@ func (s *Service) PlaceOrder(ctx context.Context, restaurantID, customerID strin
 	// rides on top of that split — the percentages price total − tip). If this fails the
 	// reservation above is released, so a declined card does not burn the customer's
 	// promo allowance.
-	sett, err := s.settlement.Escrow(ctx, customerID, ref, req.IdempotencyKey, "food_delivery", total)
+	//
+	// external routes this to EscrowExternal, which posts DR provider-clearing / CR
+	// escrow instead of debiting the customer's wallet — the money already left the
+	// customer via an already-verified Paystack charge, so there is no wallet leg to
+	// post here. Everything downstream (order/items insert, Settle, disputes,
+	// reconciliation) reads the same settlements row shape either way.
+	var sett *settlement.Settlement
+	if external {
+		sett, err = s.settlement.EscrowExternal(ctx, customerID, ref, req.IdempotencyKey, "food_delivery", total)
+	} else {
+		sett, err = s.settlement.Escrow(ctx, customerID, ref, req.IdempotencyKey, "food_delivery", total)
+	}
 	if err != nil {
 		s.releasePromoReservationSafe(ctx, promoID, orderID)
 		return nil, fmt.Errorf("restaurant: escrow payment: %w", err)
@@ -782,6 +1002,37 @@ func (s *Service) PlaceOrder(ctx context.Context, restaurantID, customerID strin
 	})
 	s.broadcastStatus(order.ID, OrderPending)
 	return order, nil
+}
+
+// PlaceOrder places a wallet-funded order, gated by the customer's KYC tier
+// (see placeOrder's tier-gate block). This is the only path reachable from
+// client-controlled input — no HTTP request DTO has a field that can select
+// the external path below.
+func (s *Service) PlaceOrder(ctx context.Context, restaurantID, customerID string, req PlaceOrderRequest) (*Order, error) {
+	return s.placeOrder(ctx, restaurantID, customerID, req, false, 0)
+}
+
+// PlaceOrderPaystackFunded places an order funded by an external payment rail
+// (Paystack card/bank-transfer) instead of the customer's wallet — no
+// KYC-tier gate applies, because no wallet debit occurs (see
+// settlement.EscrowExternal and placeOrder's tier-gate skip).
+//
+// The caller MUST have already verified, server-side, that a completed
+// Paystack charge exists for reference and that it collected exactly
+// verifiedAmountKobo — this function trusts that verification unconditionally
+// and performs none of its own against the gateway. It DOES, however,
+// independently recompute the order total from current DB state and requires
+// it to equal verifiedAmountKobo (see placeOrder's cross-check) — it never
+// trusts a caller's claim about what the order should cost, only about what
+// was actually collected. On ErrExternalAmountMismatch, no escrow and no
+// order row were written; the caller must reverse the external charge.
+//
+// Must only ever be invoked from a server-initiated flow (a Paystack
+// initiate/verify/webhook handler) that itself carries no client-settable
+// "skip KYC" switch — never from a handler that lets request input choose
+// between this and PlaceOrder.
+func (s *Service) PlaceOrderPaystackFunded(ctx context.Context, restaurantID, customerID string, req PlaceOrderRequest, verifiedAmountKobo int64) (*Order, error) {
+	return s.placeOrder(ctx, restaurantID, customerID, req, true, verifiedAmountKobo)
 }
 
 // OrderParties is the exported form of orderParties, used to wire the Realtime
@@ -1255,7 +1506,7 @@ func (s *Service) cancelAndRefund(ctx context.Context, orderID, actorID string) 
 	// cancelling the order rather than wedging on it forever. A settlement-less order
 	// (no escrow attached) has nothing to refund — real orders always carry a settlement
 	// from CreateOrder, so that case only guards non-standard rows.
-	if err := s.refundEscrowOnce(ctx, settlementID, "order_cancelled"); err != nil {
+	if err := s.refundEscrowOnce(ctx, orderID, settlementID, "order_cancelled"); err != nil {
 		return fmt.Errorf("restaurant: refund order: %w", err)
 	}
 	if _, err := tx.Exec(ctx, `UPDATE orders SET status='cancelled' WHERE id=$1`, orderID); err != nil {
@@ -1293,7 +1544,14 @@ func (s *Service) cancelAndRefund(ctx context.Context, orderID, actorID string) 
 // "idempotent" comments assumed. Making the already-refunded case a success is what
 // actually lets the retry converge. A settlement in any other non-refundable state
 // (notably `settled`) still fails loudly — that is a genuine conflict, not a replay.
-func (s *Service) refundEscrowOnce(ctx context.Context, settlementID, reason string) error {
+//
+// orderID is needed only for the external-funding branch: a Paystack-funded
+// order's settlement.Refund call now returns settlement.ErrWrongRefundMethod
+// (that function refuses to wallet-credit money that never came from the
+// wallet — see its doc comment for the incident this fixed), and reversing
+// it correctly means calling the injected ExternalRefunder, which resolves
+// the Paystack reference by ORDER id, not settlement id.
+func (s *Service) refundEscrowOnce(ctx context.Context, orderID, settlementID, reason string) error {
 	if settlementID == "" {
 		return nil // no escrow attached (non-standard row) — nothing to return
 	}
@@ -1304,7 +1562,15 @@ func (s *Service) refundEscrowOnce(ctx context.Context, settlementID, reason str
 	if status == string(settlement.StatusRefunded) {
 		return nil // a previous attempt already returned the money; finish closing the order
 	}
-	return s.settlement.Refund(ctx, settlementID, reason)
+	err := s.settlement.Refund(ctx, settlementID, reason)
+	if errors.Is(err, settlement.ErrWrongRefundMethod) {
+		if s.externalRefunder == nil {
+			log.Printf("[restaurant] cannot refund Paystack-funded settlement=%s order=%s (reason=%s): no ExternalRefunder wired — needs manual reconciliation", settlementID, orderID, reason)
+			return fmt.Errorf("restaurant: externally-funded order refund not available: %w", err)
+		}
+		return s.externalRefunder.RefundExternalSettlement(ctx, orderID, settlementID, reason)
+	}
+	return err
 }
 
 // recordOrderEvent records an order's status transition in the audit log (best-effort).
@@ -1345,7 +1611,7 @@ func (s *Service) refundAndClose(ctx context.Context, orderID, actorID string, t
 	// closed without the money returned (mirrors cancelAndRefund). An escrow a previous
 	// attempt already refunded counts as success, so a retry after a mid-flight crash
 	// can finish closing the order instead of wedging on it forever.
-	if err := s.refundEscrowOnce(ctx, settlementID, string(toStatus)+":"+reason); err != nil {
+	if err := s.refundEscrowOnce(ctx, orderID, settlementID, string(toStatus)+":"+reason); err != nil {
 		return fmt.Errorf("restaurant: refund order: %w", err)
 	}
 	if _, err := tx.Exec(ctx,

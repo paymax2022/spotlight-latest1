@@ -17,6 +17,7 @@ import { createAdminClient } from '@/lib/supabase/server';
 import { ApiError } from '@/src/lib/api/responses';
 import { getOrCreateAccount } from '@/src/server/wallet/service';
 import { enforceWalletLimit } from '@/src/server/tiers/service';
+import { requireTransactionPin } from '@/src/server/transfers/pin-guard';
 
 // ---------------------------------------------------------------------------
 // Fee schedule (PRD §18.2)
@@ -174,6 +175,10 @@ export interface WalletToWalletInput {
   amountKobo: number;
   idempotencyKey: string;
   narration?: string;
+  /** Raw transaction PIN, verified via requireTransactionPin() before any debit. */
+  pin: string;
+  /** Original request's Authorization header, forwarded to the Go PIN-verify endpoint. */
+  authHeader: string | null;
 }
 
 export interface WalletTransferResult {
@@ -236,6 +241,12 @@ export async function initiateWalletToWallet(
     };
   }
 
+  // Transaction PIN — fail-closed, before any money movement (WAL-001 fix).
+  // Not checked above the idempotency-replay branch: a replay returns the
+  // already-completed transfer rather than executing a new debit, so it does
+  // not need a fresh PIN, matching the Go-native transfer paths' behavior.
+  await requireTransactionPin(input.authHeader, input.pin);
+
   // Resolve recipient
   const recipient = await resolvePaymaxUser(input.recipientIdentifier, input.senderId);
 
@@ -287,7 +298,8 @@ export async function initiateWalletToWallet(
     if (rpcError.message?.includes('SELF_TRANSFER')) {
       throw new ApiError('You cannot transfer to yourself', 422);
     }
-    throw new ApiError(`Transfer failed: ${rpcError.message}`, 500);
+    console.error('[transfers] wallet-to-wallet RPC failed unexpectedly:', rpcError.message);
+    throw new ApiError("We couldn't complete this transfer. Please try again.", 500);
   }
 
   const row = (rpcRows as Array<{

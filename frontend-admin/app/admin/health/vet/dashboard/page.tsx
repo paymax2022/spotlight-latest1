@@ -41,34 +41,59 @@ export default function VetDashboardPage() {
         released on consult completion (HL-9). Payouts are KYC + AML gated (HL-10). Tele-consult is not a
         substitute for emergency care — SOS routes to the nearest in-person option (HL-11). All money is in ₦
         (kobo internally).
+        <br />
+        <strong>Admin-portal gap closure:</strong> reads the real admin console at{' '}
+        <code>/api/health/vet/admin/*</code>. The <em>Appointments (total)</em>, <em>Appointments by state</em>{' '}
+        card, <em>Platform revenue (7d)</em> and <em>Vets active</em> cards below are real. Everything else on
+        this page (completion/no-show rate, GMV, VCN review queue, e-Rx audit counts, service governance,
+        moderation, payouts, held/released/refunded balances, appointment mix, trend, activity feed) has no
+        backing table or service concept anywhere in the backend yet and reads as 0/empty rather than
+        fabricated — see <code>healthVetAdminService.ts</code> for the exact mapping.
       </DisclosureNote>
 
       <StateBlock loading={loading} error={error} empty={!data} emptyText="No dashboard data available.">
         {data && (
           <>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: '0.75rem', marginBottom: '1.25rem' }}>
-              <Kpi label="Appointments today" value={data.appointments_today.toLocaleString('en-NG')} sub={`${data.appointments_30d.toLocaleString('en-NG')} (30d)`} accent={colors.primary} />
-              <Kpi label="Consults completed (30d)" value={data.consults_completed_30d.toLocaleString('en-NG')} sub={`completion ${pct(data.appointment_completion_rate)}`} />
-              <Kpi label="No-show rate" value={pct(data.no_show_rate)} accent={data.no_show_rate > 0.06 ? colors.danger : undefined} />
-              <Kpi label="GMV today" value={formatNaira(data.gmv_today_kobo)} sub={`${formatNaira(data.gmv_30d_kobo)} (30d)`} />
-              <Kpi label="Net revenue (30d)" value={formatNaira(data.net_revenue_30d_kobo)} accent={colors.success} />
-              <Kpi label="Take rate" value={pct(data.take_rate)} sub="Net ÷ GMV" />
-              <Kpi label="Avg appointment value" value={formatNaira(data.avg_appointment_value_kobo)} />
-              <Kpi label="Held balance" value={formatNaira(data.held_balance_kobo)} sub="HL-9 escrow held" accent={colors.primary} />
-              <Kpi label="Released (30d) ₦" value={formatNaira(data.released_30d_kobo)} accent={colors.success} />
-              <Kpi label="Refunded (30d) ₦" value={formatNaira(data.refunded_30d_kobo)} accent={colors.primary} />
-              <Kpi label="VCN pending" value={data.vcn_pending_review.toLocaleString('en-NG')} sub="HL-2 credential gate" accent={data.vcn_pending_review > 0 ? colors.warning : undefined} />
-              <Kpi label="VCN expiring (30d)" value={data.vcn_expiring_30d.toLocaleString('en-NG')} sub="HL-2 auto-suspend risk" accent={data.vcn_expiring_30d > 0 ? colors.warning : undefined} />
-              <Kpi label="Vets active" value={data.vets_active.toLocaleString('en-NG')} sub={`${data.vets_suspended} suspended`} />
-              <Kpi label="e-Prescriptions (30d)" value={data.eprescriptions_30d.toLocaleString('en-NG')} sub={`${data.eprescriptions_pom_30d.toLocaleString('en-NG')} POM · HL-3`} />
-              <Kpi label="e-Rx flags open" value={data.eprescription_flags_open.toLocaleString('en-NG')} sub="HL-3 audit anomalies" accent={data.eprescription_flags_open > 0 ? colors.danger : undefined} />
-              <Kpi label="Services pending" value={data.services_pending_governance.toLocaleString('en-NG')} sub="fee/service governance" />
-              <Kpi label="Moderation open" value={data.moderation_open.toLocaleString('en-NG')} sub="content/credential" accent={data.moderation_open > 0 ? colors.warning : undefined} />
-              <Kpi label="Payouts KYC hold" value={data.payouts_kyc_hold.toLocaleString('en-NG')} sub="HL-10 payout gate" accent={data.payouts_kyc_hold > 0 ? colors.warning : undefined} />
-              <Kpi label="SOS routed (30d)" value={data.sos_routed_30d.toLocaleString('en-NG')} sub="HL-11 to in-person care" accent={data.sos_routed_30d > 0 ? colors.danger : undefined} />
+              <Kpi label="Appointments (total)" value={(data.appointments_total ?? 0).toLocaleString('en-NG')} accent={colors.primary} />
+              <Kpi label="Platform revenue (7d)" value={formatNaira(data.platform_revenue_kobo_week ?? 0)} accent={colors.success} />
+              <Kpi label="Vets active" value={data.vets_active.toLocaleString('en-NG')} sub="APPROVED (HL-2)" />
+              <Kpi label="Appointments today" value={data.appointments_today.toLocaleString('en-NG')} sub={`${data.appointments_30d.toLocaleString('en-NG')} (30d) — not computed`} accent={colors.primary} />
+              <Kpi label="Consults completed (30d)" value={data.consults_completed_30d.toLocaleString('en-NG')} sub="not computed" />
+              <Kpi label="No-show rate" value={pct(data.no_show_rate)} sub="not computed" />
+              <Kpi label="GMV today" value={formatNaira(data.gmv_today_kobo)} sub={`${formatNaira(data.gmv_30d_kobo)} (30d) — not computed`} />
+              <Kpi label="Net revenue (30d)" value={formatNaira(data.net_revenue_30d_kobo)} accent={colors.success} sub="not computed" />
+              <Kpi label="Take rate" value={pct(data.take_rate)} sub="Net ÷ GMV — not computed" />
+              <Kpi label="Avg appointment value" value={formatNaira(data.avg_appointment_value_kobo)} sub="not computed" />
+              <Kpi label="Held balance" value={formatNaira(data.held_balance_kobo)} sub="not computed" />
+              <Kpi label="Released (30d) ₦" value={formatNaira(data.released_30d_kobo)} sub="not computed" />
+              <Kpi label="Refunded (30d) ₦" value={formatNaira(data.refunded_30d_kobo)} sub="not computed" />
+              <Kpi label="VCN pending" value={data.vcn_pending_review.toLocaleString('en-NG')} sub="HL-2 credential gate — not computed" />
+              <Kpi label="VCN expiring (30d)" value={data.vcn_expiring_30d.toLocaleString('en-NG')} sub="not computed" />
+              <Kpi label="Vets suspended" value={data.vets_suspended.toLocaleString('en-NG')} sub="not computed" />
+              <Kpi label="e-Prescriptions (30d)" value={data.eprescriptions_30d.toLocaleString('en-NG')} sub="not computed" />
+              <Kpi label="e-Rx flags open" value={data.eprescription_flags_open.toLocaleString('en-NG')} sub="not computed" />
+              <Kpi label="Services pending" value={data.services_pending_governance.toLocaleString('en-NG')} sub="not computed" />
+              <Kpi label="Moderation open" value={data.moderation_open.toLocaleString('en-NG')} sub="not computed" />
+              <Kpi label="Payouts KYC hold" value={data.payouts_kyc_hold.toLocaleString('en-NG')} sub="not computed" />
+              <Kpi label="SOS routed (30d)" value={data.sos_routed_30d.toLocaleString('en-NG')} sub="not computed" />
             </div>
 
-            <Card title="Appointment mix (30d)">
+            <Card title="Appointments by state (live)">
+              <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                <thead><tr><th style={th()}>State</th><th style={th()}>Appointments</th></tr></thead>
+                <tbody>
+                  {Object.entries(data.appointments_by_state ?? {}).map(([state, count]) => (
+                    <tr key={state}>
+                      <td style={td()}><Badge status={state} label={state.replace(/_/g, ' ')} /></td>
+                      <td style={td()}>{count.toLocaleString('en-NG')}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </Card>
+
+            <Card title="Appointment mix (30d) — not computed">
               <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                 <thead><tr><th style={th()}>Mode</th><th style={th()}>Appointments</th><th style={th()}>GMV</th><th style={th()}>Share</th></tr></thead>
                 <tbody>
@@ -84,7 +109,7 @@ export default function VetDashboardPage() {
               </table>
             </Card>
 
-            <Card title="Appointments trend (14d)">
+            <Card title="Appointments trend (14d) — not computed">
               <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
                 {data.appointments_trend.map((p) => {
                   const w = (p.appointments / maxApt) * 100;
@@ -101,7 +126,7 @@ export default function VetDashboardPage() {
               </div>
             </Card>
 
-            <Card title="Recent activity">
+            <Card title="Recent activity — not computed">
               <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                 <thead><tr><th style={th()}>Event</th><th style={th()}>Type</th><th style={th()}>Ref</th><th style={th()}>When</th></tr></thead>
                 <tbody>

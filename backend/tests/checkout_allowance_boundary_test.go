@@ -40,6 +40,7 @@ var checkoutPaths = map[string]string{
 	"internal/restaurant/service.go":  "customer order escrow",
 	"internal/transport/service.go":   "rider fare escrow",
 	"internal/estate/service_dues.go": "resident dues payment",
+	"internal/groups/service.go":      "group dues payment — same category as estate dues, not a cash-out or investment path",
 }
 
 func readSource(t *testing.T, rel string) string {

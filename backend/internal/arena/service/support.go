@@ -2,10 +2,12 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
 	"spotlight/backend/internal/arena"
+	"spotlight/backend/internal/finance/ledger"
 )
 
 // SupportService is the SUPPORT rail (ADR-014 §11, NDC-1): real-Naira gifting
@@ -30,6 +32,17 @@ type ConfigReader interface {
 // SupportContributor is the standing account debited to fund the pot. Support
 // moves money from the backer's wallet into this competition-pot standing account.
 const supportPotAccountType = "arena_support_pot"
+
+// isLedgerReplay reports whether err is the ledger's own idempotent-replay
+// signal (ledger.ErrDuplicate, surfaced via the redis idempotency lock — see
+// finance/ledger.Service.Debit/Credit). Found live via UAT: none of the money
+// rails checked for this, so a genuine client retry with the same
+// Idempotency-Key (the normal, expected case after a timeout) bubbled the raw
+// internal ledger error all the way to an unmapped 500, instead of the
+// idempotent no-op every other money path in this codebase gives a replay.
+func isLedgerReplay(err error) bool {
+	return errors.Is(err, ledger.ErrDuplicate)
+}
 
 // NewSupportService builds the Support rail. It receives NO signer/gateway.
 func NewSupportService(repo SupportRepo, ledger LedgerPort, tiers TierPort, cfg ConfigReader, audit AuditRepo) *SupportService {
@@ -67,6 +80,11 @@ func (s *SupportService) Contribute(ctx context.Context, userID, idemKey, compet
 	}
 	ref := fmt.Sprintf("arena:support:%s:%s", competitionID, contestantID)
 	if err := s.ledger.Debit(ctx, userID, ref, idemKey, potAcct, amountKobo); err != nil {
+		if isLedgerReplay(err) {
+			// Same key already moved this money on a prior attempt — the tag
+			// row and audit log were written then too, so this call is done.
+			return nil
+		}
 		return err
 	}
 
@@ -110,6 +128,9 @@ func (s *SupportService) ContributeWithState(ctx context.Context, userID, idemKe
 	}
 	ref := fmt.Sprintf("arena:support:%s:%s", competitionID, contestantID)
 	if err := s.ledger.Debit(ctx, userID, ref, idemKey, potAcct, amountKobo); err != nil {
+		if isLedgerReplay(err) {
+			return nil
+		}
 		return err
 	}
 	if err := s.repo.TagAfterLedger(ctx, competitionID, contestantID, homeState, userID, ref, idemKey, amountKobo); err != nil {

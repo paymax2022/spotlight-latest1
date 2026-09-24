@@ -13,8 +13,10 @@ import (
 	"spotlight/backend/internal/finance/commission"
 	"spotlight/backend/internal/finance/kyc"
 	"spotlight/backend/internal/finance/ledger"
+	"spotlight/backend/internal/finance/settlement"
 	healthpharmacy "spotlight/backend/internal/health/pharmacy"
 	healthrx "spotlight/backend/internal/health/rx"
+	"spotlight/backend/internal/integrations"
 	"spotlight/backend/internal/middleware"
 	"spotlight/backend/internal/services"
 	"spotlight/backend/internal/transport"
@@ -41,7 +43,7 @@ import (
 // Returns the pharmacy service so the orchestrator can hand it optional
 // collaborators (e.g. the symptom-search ReviewCaseOpener seam — PRD §10);
 // nil when the pool is absent.
-func RegisterHealthPharmacy(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pgxpool.Pool, rbac services.RBACService, cfg config.Config) *healthpharmacy.Service {
+func RegisterHealthPharmacy(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pgxpool.Pool, rbac services.RBACService, cfg config.Config, supabase *integrations.SupabaseRestClient) *healthpharmacy.Service {
 	if pool == nil {
 		log.Println("[health.pharmacy] nil pool — skipping pharmacy routes")
 		return nil
@@ -51,7 +53,14 @@ func RegisterHealthPharmacy(member *gin.RouterGroup, admin *gin.RouterGroup, poo
 	ledgerSvc := ledger.NewService(ledger.NewRepository(pool), nil)
 	escrowSvc := escrow.NewService(pool, ledgerSvc, nil)
 	rxSvc := healthrx.NewService(pool, nil)
-	transportSvc := transport.NewService(pool, nil)
+	// transport.Service needs a real settlement instance for its own escrow
+	// (last-mile courier payout) — a nil settlement service isn't a no-op,
+	// it's a nil pointer BookParcel dereferences unconditionally. Found live
+	// via UAT: dispatching any DELIVERY-fulfilment pharmacy order panicked
+	// (500) inside settlement.Service.Escrow, so the entire DELIVERY
+	// lifecycle for this vertical could never progress past DISPENSED.
+	// Mirrors finance_routes.go's own transport.NewService wiring.
+	transportSvc := transport.NewService(pool, settlement.NewService(pool, ledgerSvc))
 	kycSvc := kyc.NewService(pool)
 
 	svc := healthpharmacy.NewService(
@@ -76,7 +85,7 @@ func RegisterHealthPharmacy(member *gin.RouterGroup, admin *gin.RouterGroup, poo
 	// shared commissionRecorderAdapter (marketplace_routes.go). Gated on the flag ⇒
 	// off leaves the recorder nil ⇒ silent no-op.
 	if cfg.FeatureCommissionEnabled {
-		svc.SetCommissionRecorder(commissionRecorderAdapter{svc: commission.NewService(commission.NewRepository(pool), nil)})
+		svc.SetCommissionRecorder(commissionRecorderAdapter{svc: withReferralSplit(commission.NewService(commission.NewRepository(pool), nil), pool, cfg)})
 	}
 
 	isAdmin := func(c *gin.Context) bool { return isHealthPharmacyAdmin(c, rbac) }
@@ -117,7 +126,29 @@ func RegisterHealthPharmacy(member *gin.RouterGroup, admin *gin.RouterGroup, poo
 
 	// --- Admin routes (/api/health/pharmacy/admin, RBAC health.pharmacy.*) ---
 	ag := admin.Group("")
+	// PHARMACY-001: `admin` (adminGroupTop5, top5_admin_group.go) applies ONLY
+	// requireUserID() — it checks c.GetString("user_id"), which nothing had
+	// ever set on this group, so EVERY admin.* route here (including the
+	// pre-existing AdminListOrders/AdminDispenseAudit/AdminRecallProduct, not
+	// only the routes this pass adds) 401'd "authentication required" for
+	// every caller regardless of token validity — RequirePermission's
+	// GetAuthenticatedUser(c) read the same never-set context key one guard
+	// later. This is the identical shape to the staysAdmin/staysExtranet bug
+	// already fixed at 13c3e691 (see finance_routes.go's comment there) and to
+	// the pattern several sibling admin groups avoid by calling
+	// RequireAuthContext themselves (health_doctor_mdcn_routes.go,
+	// learn_routes.go, spotlightwealth_routes.go, telemedicine's teleAdmin).
+	// Without this, none of PHARMACY-001's new routes — or the ones that
+	// already existed — were ever actually reachable with a real token.
+	ag.Use(middleware.RequireAuthContext(supabase, rbac))
+	// PHARMACY-001: dashboard + order-detail are extensions of the SAME
+	// admin-oversight surface /orders already sits behind — reusing
+	// health.pharmacy.orders rather than minting a new permission slug (unlike
+	// Telemedicine's TELEMEDICINE-004, which needed brand-new slugs because no
+	// admin permission existed at all for that module).
+	ag.GET("/dashboard", guard("health.pharmacy.orders"), h.AdminDashboard)
 	ag.GET("/orders", guard("health.pharmacy.orders"), h.AdminListOrders)
+	ag.GET("/orders/:id", guard("health.pharmacy.orders"), h.AdminGetOrder)
 	ag.GET("/dispense-audit", guard("health.pharmacy.audit"), h.AdminDispenseAudit)
 	ag.POST("/products/:id/recall", guard("health.pharmacy.recall"), h.AdminRecallProduct)
 

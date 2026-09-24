@@ -9,6 +9,7 @@
  */
 import { createHmac } from 'node:crypto';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { SignJWT, exportJWK, generateKeyPair } from 'jose';
 import { isPublicAdminPath, isSessionValid, resolveEnforce } from './middleware';
 
 function base64Url(input: Buffer | string): string {
@@ -109,5 +110,113 @@ describe('isSessionValid (AUTH-002)', () => {
     vi.stubEnv('SUPABASE_JWT_SECRET', REAL_SECRET);
     const token = makeToken(notExpired, REAL_SECRET);
     await expect(isSessionValid(token)).resolves.toBe(true);
+  });
+});
+
+// ── AUTH-017 regression: real Supabase JWT-signing-keys tokens are ES256 ────
+// (asymmetric), not HS256. isSessionValid() must verify those against the
+// project's JWKS instead of (uselessly) trying SUPABASE_JWT_SECRET against
+// them. These build REAL ES256 tokens with a real, freshly generated key
+// pair via jose's own key-generation helpers — deterministic and offline —
+// and mock `fetch` to serve the matching public JWKS, so the test exercises
+// the exact `jwtVerify(token, JWKS)` path the fix uses without depending on
+// the live local Supabase instance. This is the class of test AUTH-002's own
+// suite lacked (it only ever hand-crafted HS256 tokens), which is why the
+// original regression shipped undetected.
+describe('isSessionValid — ES256 via JWKS (AUTH-017)', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
+  });
+
+  /** Builds a real ES256 JWT plus a fetch mock serving its matching JWKS. */
+  async function setupEs256(opts: { badKid?: boolean; wrongKey?: boolean; jwksReachable?: boolean } = {}) {
+    const { jwksReachable = true } = opts;
+    const { publicKey, privateKey } = await generateKeyPair('ES256', { extractable: true });
+    const kid = `test-kid-${Math.random().toString(36).slice(2)}`;
+    const jwk = { ...(await exportJWK(publicKey)), kid, alg: 'ES256', use: 'sig' };
+
+    const supabaseUrl = `https://jwks-test-${Math.random().toString(36).slice(2)}.example`;
+    vi.stubEnv('NEXT_PUBLIC_SUPABASE_URL', supabaseUrl);
+
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: unknown) => {
+        if (!jwksReachable) throw new Error('simulated network failure: JWKS unreachable');
+        const url = typeof input === 'string' ? input : String(input);
+        if (url === `${supabaseUrl}/auth/v1/.well-known/jwks.json`) {
+          return new Response(JSON.stringify({ keys: [jwk] }), {
+            status: 200,
+            headers: { 'content-type': 'application/json' },
+          });
+        }
+        return new Response('not found', { status: 404 });
+      }),
+    );
+
+    const signingKey = opts.wrongKey ? (await generateKeyPair('ES256', { extractable: true })).privateKey : privateKey;
+    const token = await new SignJWT({ sub: 'admin-1' })
+      .setProtectedHeader({ alg: 'ES256', kid: opts.badKid ? 'not-the-real-kid' : kid })
+      .setIssuedAt()
+      .setExpirationTime('1h')
+      .sign(signingKey);
+
+    return { token, supabaseUrl };
+  }
+
+  it('accepts a real ES256 token verified against the project JWKS — the exact case that was broken', async () => {
+    const { token } = await setupEs256();
+    await expect(isSessionValid(token)).resolves.toBe(true);
+  });
+
+  it('still fails closed for ES256 when SUPABASE_JWT_SECRET is configured but unrelated — proves the fix does not depend on it for this path', async () => {
+    vi.stubEnv('SUPABASE_JWT_SECRET', REAL_SECRET);
+    const { token } = await setupEs256();
+    await expect(isSessionValid(token)).resolves.toBe(true);
+  });
+
+  it('rejects an ES256 token whose kid is not present in the JWKS', async () => {
+    const { token } = await setupEs256({ badKid: true });
+    await expect(isSessionValid(token)).resolves.toBe(false);
+  });
+
+  it('rejects an ES256 token signed with a different (forged) private key', async () => {
+    const { token } = await setupEs256({ wrongKey: true });
+    await expect(isSessionValid(token)).resolves.toBe(false);
+  });
+
+  it('rejects a tampered ES256 token (payload flipped after signing)', async () => {
+    const { token } = await setupEs256();
+    const parts = token.split('.');
+    const flipped = parts[1].slice(0, -1) + (parts[1].slice(-1) === 'A' ? 'B' : 'A');
+    await expect(isSessionValid(`${parts[0]}.${flipped}.${parts[2]}`)).resolves.toBe(false);
+  });
+
+  it('rejects an ES256 token when the JWKS endpoint is unreachable — fails closed, no weaker fallback', async () => {
+    const { token } = await setupEs256({ jwksReachable: false });
+    await expect(isSessionValid(token)).resolves.toBe(false);
+  });
+
+  it('rejects an ES256 token when NEXT_PUBLIC_SUPABASE_URL is unset — this is the exact broken-production scenario (secret configured, token is actually ES256)', async () => {
+    vi.stubEnv('SUPABASE_JWT_SECRET', REAL_SECRET);
+    const { privateKey } = await generateKeyPair('ES256', { extractable: true });
+    const token = await new SignJWT({ sub: 'admin-1' })
+      .setProtectedHeader({ alg: 'ES256', kid: 'whatever' })
+      .setIssuedAt()
+      .setExpirationTime('1h')
+      .sign(privateKey);
+    vi.stubEnv('NEXT_PUBLIC_SUPABASE_URL', '');
+    await expect(isSessionValid(token)).resolves.toBe(false);
+  });
+
+  it('an alg-confusion attempt (claiming HS256, "signed" with public JWKS key material) is still rejected', async () => {
+    // The HS256 path only ever trusts SUPABASE_JWT_SECRET, never key material
+    // from the JWKS — so relabeling a token's alg to HS256 and "signing" it
+    // with the ES256 public key as an HMAC secret must not validate.
+    vi.stubEnv('SUPABASE_JWT_SECRET', REAL_SECRET);
+    const { publicKey } = await generateKeyPair('ES256', { extractable: true });
+    const attackerGuessSecret = JSON.stringify(await exportJWK(publicKey));
+    const forged = makeToken(notExpired, attackerGuessSecret);
+    await expect(isSessionValid(forged)).resolves.toBe(false);
   });
 });

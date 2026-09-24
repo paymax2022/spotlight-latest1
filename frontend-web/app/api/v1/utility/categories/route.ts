@@ -1,5 +1,5 @@
 import { successResponse, handleApiError } from '@/src/lib/api/responses';
-import { listUtilityCategories } from '@/src/server/utility/service';
+import { proxyToGoBackend } from '@/src/lib/go-backend';
 import { requireUtilityUser, utilityUnavailableResponse } from '../_utils';
 
 export async function GET(request: Request) {
@@ -8,7 +8,15 @@ export async function GET(request: Request) {
 
   try {
     await requireUtilityUser(request);
-    return successResponse({ success: true, categories: await listUtilityCategories() });
+    // Proxy to Go backend
+    const upstream = await proxyToGoBackend(request, '/api/finance/utilitybills/categories');
+
+    if (upstream.status >= 400) {
+      return upstream;
+    }
+
+    const data = await upstream.json() as Record<string, unknown>;
+    return successResponse({ success: true, categories: data.categories });
   } catch (err) {
     return handleApiError(err);
   }

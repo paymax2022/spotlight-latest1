@@ -1,7 +1,7 @@
 import { createAdminClient } from '@/lib/supabase/server';
 import { ApiError } from '@/src/lib/api/responses';
 import { resolveUtilityCommission, type ResolvedCommission } from '@/src/server/commission/config';
-import { debitWallet, reverseWalletDebit } from '@/src/server/wallet/service';
+import { creditWallet, debitWallet, reverseWalletDebit } from '@/src/server/wallet/service';
 import { calculateUtilityPricing } from './pricing';
 import { getViableUtilityRoutes, selectUtilityProvider, type UtilityRouteCandidate } from './routing';
 import { canRequeryUtilityStatus, canReverseUtilityTransaction, nextStatusFromProvider } from './status';
@@ -725,16 +725,39 @@ export async function payUtility(userId: string, input: UtilityPayInput & { idem
     raw: providerResult.raw ?? {},
   });
 
-  if (providerResult.status === 'failed' && paymentSource === 'wallet') {
-    await reverseWalletDebit(userId, {
-      amountKobo: pricing.retailAmountKobo,
-      reference: receipt,
-      idempotencyKey: `utility:${transactionId}:REVERSAL_DEBIT`,
-      description: `Utility payment reversal ${receipt}`,
-      metadata: { utility_transaction_id: transactionId, category, biller: biller.code },
-    });
+  if (providerResult.status === 'failed') {
+    if (paymentSource === 'wallet') {
+      await reverseWalletDebit(userId, {
+        amountKobo: pricing.retailAmountKobo,
+        reference: receipt,
+        idempotencyKey: `utility:${transactionId}:REVERSAL_DEBIT`,
+        description: `Utility payment reversal ${receipt}`,
+        metadata: { utility_transaction_id: transactionId, category, biller: biller.code },
+      });
+      await addEvent(transactionId, 'wallet_reversed', 'Wallet debit reversed after provider failure.');
+    } else {
+      // The money for a 'paystack' source already left the customer's card/bank —
+      // there is no wallet debit to reverse. It was captured by Paystack, so the
+      // only place it can land back is the wallet (see settleTopupIntent for the
+      // same "external payment -> wallet credit" shape). Without this, a provider
+      // failure after a successful Paystack charge left the charge captured with
+      // NOTHING refunded (found 2026-09-17 via a real stuck transaction).
+      await creditWallet(userId, {
+        amountKobo: pricing.retailAmountKobo,
+        reference: receipt,
+        idempotencyKey: `utility:${transactionId}:PAYSTACK_REFUND`,
+        description: `Refund: utility payment ${receipt} (provider could not complete)`,
+        metadata: {
+          utility_transaction_id: transactionId,
+          category,
+          biller: biller.code,
+          refund_reason: 'provider_failed',
+          original_payment_source: 'paystack',
+        },
+      });
+      await addEvent(transactionId, 'paystack_refunded', 'Paystack payment refunded to wallet after provider failure.');
+    }
     await supabase.from('utility_transactions').update({ status: 'reversed', updated_at: new Date().toISOString() }).eq('id', transactionId);
-    await addEvent(transactionId, 'wallet_reversed', 'Wallet debit reversed after provider failure.');
   }
 
   const { data: finalRow } = await supabase.from('utility_transactions').select('*').eq('id', transactionId).maybeSingle();
@@ -838,13 +861,27 @@ export async function requeryUtilityTransaction(transaction: UtilityTransactionR
 
 export async function reverseUtilityTransaction(transaction: UtilityTransactionRow, reason: string) {
   if (!canReverseUtilityTransaction(transaction.status)) throw new ApiError('Transaction is not eligible for reversal.', 400);
-  await reverseWalletDebit(transaction.user_id, {
-    amountKobo: transaction.retail_amount_kobo,
-    reference: transaction.receipt_number ?? transaction.id,
-    idempotencyKey: `utility:${transaction.id}:ADMIN_REVERSAL_DEBIT`,
-    description: `Admin utility reversal: ${reason}`,
-    metadata: { utility_transaction_id: transaction.id, reason },
-  });
+  // Only a 'wallet' source ever debited the wallet ledger — reversing that
+  // is a real REVERSAL_DEBIT. A 'paystack' source never touched the wallet,
+  // so the equivalent action is a CREDIT (same helper payUtility's own
+  // failure branch uses), not a reversal of something that never happened.
+  if (transaction.payment_source === 'wallet') {
+    await reverseWalletDebit(transaction.user_id, {
+      amountKobo: transaction.retail_amount_kobo,
+      reference: transaction.receipt_number ?? transaction.id,
+      idempotencyKey: `utility:${transaction.id}:ADMIN_REVERSAL_DEBIT`,
+      description: `Admin utility reversal: ${reason}`,
+      metadata: { utility_transaction_id: transaction.id, reason },
+    });
+  } else {
+    await creditWallet(transaction.user_id, {
+      amountKobo: transaction.retail_amount_kobo,
+      reference: transaction.receipt_number ?? transaction.id,
+      idempotencyKey: `utility:${transaction.id}:ADMIN_REVERSAL_PAYSTACK_REFUND`,
+      description: `Admin utility reversal (Paystack refund to wallet): ${reason}`,
+      metadata: { utility_transaction_id: transaction.id, reason, original_payment_source: 'paystack' },
+    });
+  }
   const supabase = createAdminClient();
   await supabase.from('utility_transactions').update({
     status: 'reversed',

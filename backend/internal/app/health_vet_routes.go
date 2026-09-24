@@ -13,11 +13,13 @@ import (
 	"spotlight/backend/internal/finance/commission"
 	"spotlight/backend/internal/finance/kyc"
 	"spotlight/backend/internal/finance/ledger"
+	"spotlight/backend/internal/finance/settlement"
 	healthconsult "spotlight/backend/internal/health/consult"
 	healthrecords "spotlight/backend/internal/health/records"
 	healthrx "spotlight/backend/internal/health/rx"
 	healthscheduling "spotlight/backend/internal/health/scheduling"
 	healthvet "spotlight/backend/internal/health/vet"
+	"spotlight/backend/internal/integrations"
 	"spotlight/backend/internal/middleware"
 	"spotlight/backend/internal/scheduler"
 	"spotlight/backend/internal/services"
@@ -49,7 +51,7 @@ import (
 //   - admin : /api/health/vet/admin/*    (per-route RBAC health.vet.*)
 //
 // Gated by FeatureHealthVetEnabled at the orchestrator. Auditing is nil-safe.
-func RegisterHealthVet(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pgxpool.Pool, rbac services.RBACService, cfg config.Config) {
+func RegisterHealthVet(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pgxpool.Pool, rbac services.RBACService, cfg config.Config, supabase *integrations.SupabaseRestClient) {
 	if pool == nil {
 		log.Println("[health.vet] nil pool — skipping vet routes")
 		return
@@ -58,7 +60,15 @@ func RegisterHealthVet(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pg
 	// Reuse rails (by import, never copy).
 	ledgerSvc := ledger.NewService(ledger.NewRepository(pool), nil)
 	escrowSvc := escrow.NewService(pool, ledgerSvc, nil)
-	transportSvc := transport.NewService(pool, nil)
+	// transport.Service needs a real settlement instance for its own escrow
+	// (home-visit dispatch payout) — a nil settlement service isn't a no-op,
+	// it's a nil pointer BookParcel dereferences unconditionally. Identical
+	// bug to PHARMACY-004/LAB-002, but reachable here via a normal owner/vet
+	// action (booking then dispatching a HOME-visit appointment), not just an
+	// admin path: any home-visit dispatch would panic (500) inside
+	// settlement.Service.Escrow. Mirrors both sibling fixes and
+	// finance_routes.go's own transport.NewService wiring.
+	transportSvc := transport.NewService(pool, settlement.NewService(pool, ledgerSvc))
 	kycSvc := kyc.NewService(pool)
 
 	// Reuse the shared health engines (same construction as RegisterHealth).
@@ -89,7 +99,7 @@ func RegisterHealthVet(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pg
 	// the shared commissionRecorderAdapter (marketplace_routes.go). Gated on the flag
 	// ⇒ off leaves the recorder nil ⇒ silent no-op.
 	if cfg.FeatureCommissionEnabled {
-		svc.SetCommissionRecorder(commissionRecorderAdapter{svc: commission.NewService(commission.NewRepository(pool), nil)})
+		svc.SetCommissionRecorder(commissionRecorderAdapter{svc: withReferralSplit(commission.NewService(commission.NewRepository(pool), nil), pool, cfg)})
 	}
 
 	isAdmin := func(c *gin.Context) bool { return isHealthVetAdmin(c, rbac) }
@@ -107,6 +117,7 @@ func RegisterHealthVet(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pg
 	vg.GET("/vets", h.DiscoverVets)                          // map/list discovery (HL-2, PostGIS)
 	vg.POST("/services", h.UpsertService)                    // verified vet owner; fee governance
 	vg.POST("/appointments", h.Book)                         // tele/home/clinic; payment HELD (HL-9)
+	vg.GET("/appointments", h.ListMyAppointments)            // owner's own appointment history
 	vg.GET("/appointments/:id", h.Get)                       // object-level authZ
 	vg.POST("/appointments/:id/accept", h.Accept)            // verified vet (HL-2)
 	vg.POST("/appointments/:id/confirm", h.Confirm)          // ACCEPTED → CONFIRMED
@@ -118,6 +129,20 @@ func RegisterHealthVet(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pg
 
 	// --- Admin routes (/api/health/vet/admin, RBAC health.vet.*) ---
 	ag := admin.Group("")
+	// Identical bug to PHARMACY-006/LAB-003: `admin` here is adminGroupTop5
+	// (top5_admin_group.go), which applies ONLY requireUserID() — a guard
+	// that checks c.GetString("user_id") with nothing upstream of it ever
+	// setting that context key. Every vet admin route (old and new) 401'd
+	// "authentication required" regardless of token validity. Fixed the same
+	// way pharmacy/lab were: the caller (finance_routes.go) now passes a
+	// plain r.Group(...) instead of adminGroupTop5, and RequireAuthContext
+	// runs here as this group's own first middleware.
+	ag.Use(middleware.RequireAuthContext(supabase, rbac))
+	// Dashboard is an extension of the SAME admin-oversight surface
+	// /appointments already sits behind — reusing health.vet.appointments
+	// rather than minting a new permission slug (mirrors lab's and
+	// pharmacy's own dashboard routes).
+	ag.GET("/dashboard", guard("health.vet.appointments"), h.AdminDashboard)                    // platform-wide KPI aggregate
 	ag.GET("/appointments", guard("health.vet.appointments"), h.AdminListAppointments)          // appointment oversight
 	ag.GET("/vcn-audit", guard("health.vet.vcn"), h.AdminVCNAudit)                              // VCN credential audit (HL-2)
 	ag.GET("/erx-audit", guard("health.vet.erx"), h.AdminERxAudit)                              // e-prescription audit (HL-3)

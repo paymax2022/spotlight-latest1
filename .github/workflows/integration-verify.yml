@@ -153,7 +153,7 @@ jobs:
           # exact failure this step was built to catch. Add a name only after the
           # test does.
           go test ./internal/savings/... ./internal/handlers/... ./internal/trading/wallet/... ./tests/voting/... \
-            -race -v -run 'TestLiveDB_|TestAdminConsole_|TestTally_|TestRegistration_|TestMirror_' 2>&1 | tee /tmp/livedb-test.log
+            -race -p 1 -v -run 'TestLiveDB_|TestAdminConsole_|TestTally_|TestRegistration_|TestMirror_' 2>&1 | tee /tmp/livedb-test.log
           for t in TestLiveDB_BalanceForOwner_RejectsNonOwner \
                    TestLiveDB_TargetBalanceForMember_RejectsNonMember \
                    TestLiveDB_PenaltyRate_IsServerSideNotCallerSupplied \

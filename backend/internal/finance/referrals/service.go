@@ -2,8 +2,6 @@ package referrals
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"fmt"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -29,8 +27,13 @@ func (s *Service) GetOrCreateCode(ctx context.Context, userID string) (*Code, er
 	if err == nil {
 		return &c, nil
 	}
-	// Generate a new code.
-	code, err := generateCode()
+	// Generate a new code. GenerateCode() (code.go) is the SAME generator System
+	// B's referral_links uses — REF-004: this used to be a locally-defined
+	// 8-char lowercase hex generator, incompatible with both referral_links'
+	// format and the frontend's SPOT-XXXXXX format, even though all three wrote
+	// into/read from finance_referral_codes-shaped data. One alphabet, one
+	// length, one case, regardless of which stack issues the code.
+	code, err := GenerateCode()
 	if err != nil {
 		return nil, fmt.Errorf("referrals: generate code: %w", err)
 	}
@@ -69,10 +72,20 @@ func (s *Service) GetSummary(ctx context.Context, userID string) (*Summary, erro
 }
 
 // ResolveCodeToReferrer returns the user ID that owns a referral code.
+//
+// REF-008: the comparison is case-INSENSITIVE. Codes generated before this fix
+// may be stored in any case (the old generator here emitted lowercase hex; the
+// frontend generator emitted uppercase), and normalizeCode() in
+// internal/referral/attribution upper-cases whatever the caller typed before
+// resolving — a case-sensitive comparison would make every lowercase legacy
+// code permanently unresolvable. Matching on UPPER(code) keeps every
+// already-issued code (whatever case it happens to be stored in) resolvable,
+// while new codes (see GenerateCode) are uppercase-only going forward.
 func (s *Service) ResolveCodeToReferrer(ctx context.Context, code string) (string, error) {
-	const q = `SELECT user_id FROM finance_referral_codes WHERE code = $1`
+	const q = `SELECT user_id FROM finance_referral_codes WHERE UPPER(code) = UPPER($1)`
+	normalized := NormalizeCode(code)
 	var referrerID string
-	if err := s.db.QueryRow(ctx, q, code).Scan(&referrerID); err != nil {
+	if err := s.db.QueryRow(ctx, q, normalized).Scan(&referrerID); err != nil {
 		return "", fmt.Errorf("referrals: resolve code %q: %w", code, err)
 	}
 	return referrerID, nil
@@ -114,12 +127,4 @@ func (s *Service) ProcessReward(ctx context.Context, referrerID, referredID stri
 		ON CONFLICT (referrer_id, referred_id) DO NOTHING`
 	_, err = s.db.Exec(ctx, insert, referrerID, referredID, RewardAmountKobo)
 	return err
-}
-
-func generateCode() (string, error) {
-	b := make([]byte, 4)
-	if _, err := rand.Read(b); err != nil {
-		return "", err
-	}
-	return hex.EncodeToString(b), nil
 }

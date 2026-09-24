@@ -82,6 +82,12 @@ COPY --from=builder --chown=node:node /app/next.config.mjs ./
 USER node
 EXPOSE 8080
 
+# Container-level liveness only (the process accepts connections) — no
+# dedicated /healthz route exists, so this hits the root. node:20-alpine
+# ships wget via busybox; no extra install needed.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
+  CMD wget --no-verbose --tries=1 --spider "http://127.0.0.1:${PORT:-3001}/" || exit 1
+
 # Bind whatever port Railway assigns. The package.json `start` script hardcodes
 # `-p 3001`, which would ignore $PORT and leave the service unreachable.
 CMD ["sh", "-c", "node_modules/.bin/next start -p ${PORT:-3001} -H 0.0.0.0"]

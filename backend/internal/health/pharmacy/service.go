@@ -3,6 +3,7 @@ package healthpharmacy
 import (
 	"context"
 	"crypto/rand"
+	"errors"
 	"fmt"
 	"log"
 	"math/big"
@@ -13,6 +14,12 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
+
+// ErrInsufficientStock is returned when a tracked product (stock_qty > 0) no
+// longer has enough units to cover an order line at the moment of purchase —
+// either the requested quantity exceeds what was ever in stock, or a
+// concurrent order already consumed the remainder.
+var ErrInsufficientStock = errors.New("pharmacy: insufficient stock for one or more items")
 
 // Auditor — minimal immutable-audit slice (HL-12). nil is safe.
 type Auditor interface {
@@ -503,10 +510,10 @@ func (s *Service) CreateOrder(ctx context.Context, patientID string, in CreateOr
 		}
 		var name, status string
 		var price int64
-		var lineRx, controlled, active bool
-		const pq = `SELECT name, nafdac_status, rx_required, is_controlled, price_kobo, active
+		var lineRx, controlled, active, inStock bool
+		const pq = `SELECT name, nafdac_status, rx_required, is_controlled, price_kobo, active, in_stock
 		            FROM pharmacy_products WHERE id=$1 AND pharmacy_provider_id=$2`
-		if err := s.db.QueryRow(ctx, pq, li.ProductID, in.PharmacyProviderID).Scan(&name, &status, &lineRx, &controlled, &price, &active); err != nil {
+		if err := s.db.QueryRow(ctx, pq, li.ProductID, in.PharmacyProviderID).Scan(&name, &status, &lineRx, &controlled, &price, &active, &inStock); err != nil {
 			if err == pgx.ErrNoRows {
 				return nil, fmt.Errorf("pharmacy: product not found in this pharmacy catalog")
 			}
@@ -521,6 +528,16 @@ func (s *Service) CreateOrder(ctx context.Context, patientID string, in CreateOr
 		}
 		if !active {
 			return nil, fmt.Errorf("pharmacy: product is not active")
+		}
+		// in_stock is the durable "still available" signal for a TRACKED
+		// product (stock_qty > 0 at some point) once it has been sold out —
+		// see the stock-decrement step below, which flips it false the
+		// moment stock_qty reaches 0. It defaults true for every product
+		// (including untracked ones, stock_qty==0 from creation), so this
+		// only ever refuses a product this pharmacy explicitly tracked and
+		// has genuinely run out of.
+		if !inStock {
+			return nil, ErrInsufficientStock
 		}
 		lineTotal := price * int64(li.Quantity)
 		total += lineTotal
@@ -563,9 +580,24 @@ func (s *Service) CreateOrder(ctx context.Context, patientID string, in CreateOr
 	}
 	escrowID := hold.HoldID()
 
+	// failAfterHold refunds the just-placed hold before returning an error.
+	// Everything below this point can fail (a stock race is the expected,
+	// common case now that stock is enforced) — without a compensating
+	// refund, a failure here would strand the patient's money in escrow with
+	// no order row to ever resolve it, the exact "money moves but the record
+	// doesn't" shape this engagement has fixed repeatedly in other modules.
+	// Best-effort: if the refund itself fails, that failure is folded into
+	// the returned error so it surfaces rather than being silently dropped.
+	failAfterHold := func(err error) (*Order, error) {
+		if rerr := s.escrow.Refund(ctx, escrowID); rerr != nil {
+			return nil, fmt.Errorf("%w (refund also failed: %v)", err, rerr)
+		}
+		return nil, err
+	}
+
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("pharmacy: begin: %w", err)
+		return failAfterHold(fmt.Errorf("pharmacy: begin: %w", err))
 	}
 	defer tx.Rollback(ctx)
 
@@ -580,7 +612,7 @@ func (s *Service) CreateOrder(ctx context.Context, patientID string, in CreateOr
 	if _, err := tx.Exec(ctx, insOrder, orderID, patientID, in.PharmacyProviderID, in.PrescriptionID,
 		string(initial), string(in.FulfilmentMethod), total, escrowID, in.IdempotencyKey, in.SearchEventID,
 		deliveryAddr, in.DeliveryLat, in.DeliveryLng); err != nil {
-		return nil, fmt.Errorf("pharmacy: insert order: %w", err)
+		return failAfterHold(fmt.Errorf("pharmacy: insert order: %w", err))
 	}
 	const insLine = `
 		INSERT INTO pharmacy_order_lines
@@ -590,11 +622,52 @@ func (s *Service) CreateOrder(ctx context.Context, patientID string, in CreateOr
 		lines[i].OrderID = orderID
 		if _, err := tx.Exec(ctx, insLine, lines[i].ID, orderID, lines[i].ProductID, lines[i].ProductName,
 			lines[i].RxRequired, lines[i].Quantity, lines[i].UnitPriceKobo, lines[i].LineTotalKobo); err != nil {
-			return nil, fmt.Errorf("pharmacy: insert line: %w", err)
+			return failAfterHold(fmt.Errorf("pharmacy: insert line: %w", err))
+		}
+	}
+	// Decrement stock atomically for TRACKED products, conditioned on enough
+	// stock still being available — closes an unlimited-oversell hole found
+	// live via UAT (no stock write existed anywhere in this file; two
+	// concurrent orders could both succeed against a single unit of stock).
+	// stock_qty=0 means "not inventory-tracked" (the DB default, and the
+	// current value for most of the live catalog — owners are not required
+	// to set a count), NOT "zero available": treating 0 as a hard floor would
+	// block checkout on the majority of today's products, a bigger
+	// regression than the bug being fixed. Only products an owner has opted
+	// into tracking by setting stock_qty > 0 are gated and decremented.
+	// WHERE stock_qty >= quantity makes this a compare-and-swap: if a
+	// concurrent order already consumed the remaining stock, RowsAffected is
+	// 0 and the order is refused — fail closed, never oversell a tracked item.
+	//
+	// The moment a tracked product's stock_qty reaches exactly 0, in_stock
+	// flips false (checked earlier, in the pricing loop, before any money
+	// moves). Without that second signal, a depleted tracked product's
+	// stock_qty==0 would be indistinguishable from an untracked product's
+	// stock_qty==0 default — the fix's own first version had exactly this
+	// bug: once sold out, the "untracked = unlimited" branch let further
+	// orders straight through again.
+	const decStock = `
+		UPDATE pharmacy_products
+		SET stock_qty = stock_qty - $2, in_stock = ((stock_qty - $2) > 0)
+		WHERE id = $1 AND stock_qty >= $2 AND stock_qty > 0`
+	for _, li := range in.Lines {
+		var currentStock int
+		if err := tx.QueryRow(ctx, `SELECT stock_qty FROM pharmacy_products WHERE id=$1`, li.ProductID).Scan(&currentStock); err != nil {
+			return failAfterHold(fmt.Errorf("pharmacy: read stock: %w", err))
+		}
+		if currentStock == 0 {
+			continue // untracked — unlimited, nothing to decrement
+		}
+		tag, err := tx.Exec(ctx, decStock, li.ProductID, li.Quantity)
+		if err != nil {
+			return failAfterHold(fmt.Errorf("pharmacy: decrement stock: %w", err))
+		}
+		if tag.RowsAffected() == 0 {
+			return failAfterHold(ErrInsufficientStock)
 		}
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return nil, fmt.Errorf("pharmacy: commit order: %w", err)
+		return failAfterHold(fmt.Errorf("pharmacy: commit order: %w", err))
 	}
 
 	o := &Order{

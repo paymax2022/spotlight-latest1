@@ -87,6 +87,17 @@ export const featureFlags = {
   /** Utility bills engine — provider routing, wallet debit, receipts */
   utilityPayments: () => envFlag('FEATURE_UTILITY_PAYMENTS_ENABLED'),
 
+  /**
+   * Utility bills pay/validate cutover (migration Phase 2): proxy these two
+   * routes to the Go-native money path (backend FEATURE_UTILITY_BILLS_ENABLED)
+   * instead of this app's own src/server/utility/service.ts. Independent of
+   * utilityPayments — this picks WHICH implementation answers the request, not
+   * whether the module is available at all. Off by default; every request
+   * falls back to the local implementation whenever this is off, so an unset
+   * flag is strictly safe and the cutover stays reversible per-request.
+   */
+  utilityBillsGoProxy: () => envFlag('FEATURE_UTILITY_BILLS_GO_PROXY_ENABLED'),
+
   /** Block 10 — Paymax-to-Paymax instant wallet transfer */
   walletTransfers: () => envFlag('FEATURE_WALLET_TRANSFERS_ENABLED'),
 
@@ -107,6 +118,12 @@ export const featureFlags = {
 
   /** P3 Lane F — Restaurant and food delivery with rider dispatch */
   restaurant: () => envFlag('FEATURE_RESTAURANT_ENABLED'),
+
+  /** Paystack-funded (card/bank-transfer) food checkout — no wallet, no KYC-tier gate.
+   * Mirrors the Go backend's FEATURE_RESTAURANT_PAYSTACK_CHECKOUT_ENABLED; the Go route
+   * itself is ALSO gated (404s when its own flag is off), so this only controls whether
+   * the mobile client is offered the option at all. */
+  restaurantPaystackCheckout: () => envFlag('FEATURE_RESTAURANT_PAYSTACK_CHECKOUT_ENABLED'),
 
   /** P3 Lane G — Telemedicine: doctors, appointments, prescriptions */
   telemedicine: () => envFlag('FEATURE_TELEMEDICINE_ENABLED'),

@@ -21,6 +21,11 @@ type Service struct {
 	// means the flag is off and consultations price exactly as they did before
 	// ADR-044 — the patient pays the consultation fee alone.
 	platformFeeBp int
+	// audit is the admin-console audit sink (TELEMEDICINE-004), wired via
+	// WithAudit (admin_service.go). Nil is valid — unwired, VerifyDoctor still
+	// applies the decision but skips the audit row rather than failing the
+	// request over a logging concern.
+	audit AuditWriter
 }
 
 // NewService builds the service with the platform booking fee OFF. The fee is a
@@ -246,24 +251,38 @@ func (s *Service) GetDoctorDashboard(ctx context.Context, userID string) (*Docto
 		return nil, fmt.Errorf("telemedicine: doctor not found")
 	}
 
-	// Weekly revenue from completed appointments.
+	// Weekly revenue from completed appointments. Computed with the SAME integer
+	// floor arithmetic CompleteAppointment's settlement.Split uses for the doctor's
+	// actual provider leg (consult − floor(0.15·consult)) — NOT `fee_kobo * 0.85`,
+	// which Postgres evaluates as a fractional numeric whenever fee_kobo isn't a
+	// multiple of 20. pgx cannot scan a fractional numeric into int64, and the
+	// error was previously discarded (`_ = ...Scan(...)`), so weeklyRevenue
+	// silently stayed at its Go zero value for any doctor with an odd consult fee
+	// — found live via UAT (a doctor who was genuinely credited 85003 kobo saw a
+	// dashboard reading exactly 0). Integer division avoids the numeric type
+	// entirely, so the scan can never fail this way again, and the figure now
+	// matches what the doctor was actually paid to the kobo.
 	var weeklyRevenue int64
-	_ = s.db.QueryRow(ctx, `
-		SELECT COALESCE(SUM(fee_kobo * 0.85), 0)
+	if err := s.db.QueryRow(ctx, `
+		SELECT COALESCE(SUM(fee_kobo - (fee_kobo * 15 / 100)), 0)
 		FROM appointments
 		WHERE doctor_id = $1
 		  AND status = 'completed'
-		  AND created_at >= NOW() - INTERVAL '7 days'`, doctorID).Scan(&weeklyRevenue)
+		  AND created_at >= NOW() - INTERVAL '7 days'`, doctorID).Scan(&weeklyRevenue); err != nil {
+		return nil, fmt.Errorf("telemedicine: compute weekly revenue: %w", err)
+	}
 
 	// Prior-week revenue for growth %.
 	var priorRevenue int64
-	_ = s.db.QueryRow(ctx, `
-		SELECT COALESCE(SUM(fee_kobo * 0.85), 0)
+	if err := s.db.QueryRow(ctx, `
+		SELECT COALESCE(SUM(fee_kobo - (fee_kobo * 15 / 100)), 0)
 		FROM appointments
 		WHERE doctor_id = $1
 		  AND status = 'completed'
 		  AND created_at >= NOW() - INTERVAL '14 days'
-		  AND created_at < NOW() - INTERVAL '7 days'`, doctorID).Scan(&priorRevenue)
+		  AND created_at < NOW() - INTERVAL '7 days'`, doctorID).Scan(&priorRevenue); err != nil {
+		return nil, fmt.Errorf("telemedicine: compute prior-week revenue: %w", err)
+	}
 
 	var growthPct float64
 	if priorRevenue > 0 {
@@ -390,6 +409,21 @@ func (s *Service) assertSlotFree(ctx context.Context, doctorID string, scheduled
 
 // BookAppointment escrows the consultation fee and creates an appointment.
 func (s *Service) BookAppointment(ctx context.Context, patientID string, req BookAppointmentRequest) (*Appointment, error) {
+	// Idempotent replay short-circuit: a retry with the same Idempotency-Key must
+	// return the original appointment, not fail. Without this check first, a
+	// retry that reuses the doctor's now-occupied slot would be rejected by
+	// assertSlotFree below before ever reaching settlement.Escrow's own
+	// idempotency handling — money-safe (no double charge), but the caller sees
+	// a spurious "slot no longer available" error instead of the expected
+	// idempotent success (found live via UAT).
+	if req.IdempotencyKey != "" {
+		if existing, err := s.appointmentByIdempotencyKey(ctx, patientID, req.IdempotencyKey); err != nil {
+			return nil, fmt.Errorf("telemedicine: check idempotency key: %w", err)
+		} else if existing != nil {
+			return existing, nil
+		}
+	}
+
 	var doctor Doctor
 	const qD = `SELECT id, user_id, consult_fee_kobo, is_available, name, specialty FROM doctors WHERE id=$1`
 	if err := s.db.QueryRow(ctx, qD, req.DoctorID).
@@ -488,6 +522,33 @@ func (s *Service) BookAppointment(ctx context.Context, patientID string, req Boo
 		return nil, fmt.Errorf("telemedicine: insert appointment: %w", err)
 	}
 	return appt, nil
+}
+
+// appointmentByIdempotencyKey returns the patient's existing appointment for
+// this Idempotency-Key, if one was already created by a prior attempt.
+func (s *Service) appointmentByIdempotencyKey(ctx context.Context, patientID, idempotencyKey string) (*Appointment, error) {
+	const q = `
+		SELECT a.id, a.patient_id, a.doctor_id,
+		       COALESCE(a.doctor_name,''), COALESCE(a.doctor_specialty,''),
+		       COALESCE(a.consultation_type,'video'),
+		       a.scheduled_at, a.status, COALESCE(a.notes,''),
+		       a.fee_kobo, COALESCE(a.platform_fee_kobo,0), COALESCE(NULLIF(a.total_kobo, 0), a.fee_kobo),
+		       a.idempotency_key, COALESCE(a.settlement_id::text,''), a.created_at
+		FROM appointments a
+		WHERE a.patient_id = $1 AND a.idempotency_key = $2`
+	rows, err := s.db.Query(ctx, q, patientID, idempotencyKey)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	appts, err := scanAppointments(rows)
+	if err != nil {
+		return nil, err
+	}
+	if len(appts) == 0 {
+		return nil, nil
+	}
+	return &appts[0], nil
 }
 
 // ListMyAppointments returns the authenticated patient's appointments.

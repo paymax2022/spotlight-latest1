@@ -50,6 +50,148 @@ components:
       properties:
         success: { type: boolean }
 
+    # ── Property Management Suite ─────────────────────────────────────────────
+    PropertyContextRef:
+      type: object
+      required: [type, id]
+      properties:
+        type: { type: string, enum: [estate, property, agency, org] }
+        id: { type: string }
+    PropertyContextEntity:
+      type: object
+      required: [type, id, name, roles]
+      properties:
+        type: { type: string, enum: [estate, property, agency, org] }
+        id: { type: string }
+        name: { type: string }
+        roles:
+          type: array
+          items: { type: string, enum: [resident, estate_admin, landlord, tenant, agency_owner] }
+    PropertyContextResponse:
+      type: object
+      required: [activeContext, contexts]
+      properties:
+        activeContext:
+          type: object
+          allOf: [{ $ref: '#/components/schemas/PropertyContextRef' }]
+          nullable: true
+        contexts:
+          type: array
+          items: { $ref: '#/components/schemas/PropertyContextEntity' }
+    RentRecentPayment:
+      type: object
+      required: [source, amountKobo, category, onTime, paidAt]
+      properties:
+        source: { type: string, enum: [estate, realtor] }
+        amountKobo: { type: integer, format: int64, description: Minor units (kobo) }
+        category: { type: string, enum: [rent, service_charge, lease, other] }
+        onTime: { type: boolean }
+        paidAt: { type: string, format: date-time }
+    RentPassport:
+      type: object
+      required: [userId, score, onTimeRate, totalPaidKobo, paymentsCount, recentPayments]
+      properties:
+        userId: { type: string, format: uuid }
+        score:
+          type: integer
+          minimum: 0
+          maximum: 100
+          description: >
+            round(onTimeRate*90) + tenure bonus (up to 10, +2 per 6 months
+            tenure), clamped 0-100. 0 when there are zero comparable
+            (due-dated) payments — fail-closed; absence is never treated as
+            good credit.
+        onTimeRate: { type: number, format: double, minimum: 0, maximum: 1, description: On-time payments / comparable (due-dated) payments }
+        totalPaidKobo: { type: integer, format: int64, description: "Lifetime successful payments, minor units (kobo), exact integer sum" }
+        paymentsCount: { type: integer, description: Uncapped count; recentPayments below is capped at 20 }
+        oldestTenancy: { type: string, format: date-time, nullable: true }
+        recentPayments:
+          type: array
+          maxItems: 20
+          description: Most-recent-first, capped at 20.
+          items: { $ref: '#/components/schemas/RentRecentPayment' }
+
+    # ── Realtor admin control plane (backend/internal/realtor) ────────────────
+    # Mounted under /api/realtor/admin, RBAC-gated on realtor.manage, behind
+    # FEATURE_REALTOR_ENABLED. Read + moderation-status-write only — the module
+    # posts no ledger entries itself. See docs/qa/modules/realtor.md.
+    RealtorOverview:
+      type: object
+      properties:
+        listingsLive: { type: integer }
+        pendingModeration: { type: integer }
+        pendingVerification: { type: integer }
+        activeLeases: { type: integer }
+        escrowHeldKobo: { type: integer, format: int64 }
+        payoutsDueKobo: { type: integer, format: int64 }
+        gmvKobo: { type: integer, format: int64, description: "30-day paid GMV, minor units (kobo)" }
+        openDisputes: { type: integer }
+        fraudFlags: { type: integer }
+    RealtorAdminListing:
+      type: object
+      required: [id, title, area, city, mode, priceKobo, verification, ownerName, ownerVerified, riskFlags, submittedAt]
+      properties:
+        id: { type: string, format: uuid }
+        title: { type: string }
+        area: { type: string }
+        city: { type: string }
+        mode: { type: string }
+        priceKobo: { type: integer, format: int64 }
+        verification: { type: string }
+        ownerName: { type: string }
+        ownerVerified: { type: boolean }
+        riskFlags: { type: array, items: { type: string } }
+        submittedAt: { type: string, format: date-time }
+    RealtorVerificationRequest:
+      type: object
+      required: [id, kind, subjectName, documents, status, submittedAt]
+      properties:
+        id: { type: string, format: uuid }
+        kind: { type: string }
+        subjectName: { type: string }
+        documents:
+          type: array
+          items:
+            type: object
+            properties:
+              label: { type: string }
+              uploaded: { type: boolean }
+        status: { type: string }
+        submittedAt: { type: string, format: date-time }
+        riskNote: { type: string }
+    RealtorAdminPayment:
+      type: object
+      required: [id, reference, amountKobo, escrowHeldKobo, status, createdAt]
+      properties:
+        id: { type: string, format: uuid }
+        reference: { type: string }
+        kind: { type: string }
+        amountKobo: { type: integer, format: int64 }
+        escrowHeldKobo: { type: integer, format: int64 }
+        status: { type: string }
+        payer: { type: string }
+        createdAt: { type: string, format: date-time }
+    RealtorEscrowAccount:
+      type: object
+      required: [id, amountKobo, status, heldSince]
+      properties:
+        id: { type: string, format: uuid }
+        leaseOrBooking: { type: string }
+        amountKobo: { type: integer, format: int64 }
+        status: { type: string, enum: [held, release_requested, released, disputed] }
+        heldSince: { type: string, format: date-time }
+
+    RealtorEscrowResolution:
+      type: object
+      required: [id, leaseId, amountKobo, status]
+      properties:
+        id: { type: string, format: uuid }
+        leaseId: { type: string, format: uuid }
+        amountKobo: { type: integer, format: int64 }
+        status: { type: string, enum: [held, release_requested, released, disputed] }
+        resolvedTo: { type: string, enum: [tenant, landlord] }
+        resolutionNote: { type: string }
+
     # ── MapService (provider-agnostic maps abstraction) ───────────────────────
     # Every result carries `provider` + `source`. `source` is the licensing
     # stack ('openstack' | 'google' | 'mapbox' | 'own'); the client may only
@@ -5061,6 +5203,308 @@ paths:
         - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
       responses: { '200': { description: Report snapshot } }
   # ── END ESTATE SUPER-APP block ────────────────────────────────────────────
+  # ── Property Management Suite (unification umbrella; behind
+  #    FEATURE_PROPERTY_SUITE_ENABLED) ──────────────────────────────────────
+  # Read-mostly aggregation over the estate + realtor money paths. Owns no
+  # ledger mutation itself. See backend/internal/property/{context,handler,
+  # rentpassport}.go and docs/qa/modules/property.md for the full contract
+  # this was derived from.
+  /api/finance/property/context:
+    get:
+      operationId: propertyGetContext
+      summary: Aggregate the caller's role assignments across estates/properties/agencies (self)
+      description: >
+        Reads existing tables only (estate_residents, estates.admin_id,
+        estate_properties, realtor_portfolios) — no writes. Roles are merged
+        per entity. Returns the caller's persisted active context alongside.
+      tags: [Property]
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: Role-context aggregation
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PropertyContextResponse' }
+        '401': { description: Authentication required }
+  /api/finance/property/context/switch:
+    post:
+      operationId: propertySwitchContext
+      summary: Switch the caller's active property context (fail-closed membership check)
+      description: >
+        Metadata-only upsert into property_active_context. Membership is
+        re-derived from GetContext on every call, so a contextType/contextId
+        the caller holds no role in is rejected — a forged value can never
+        be persisted.
+      tags: [Property]
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [contextType, contextId]
+              properties:
+                contextType: { type: string, enum: [estate, property, agency, org] }
+                contextId: { type: string }
+      responses:
+        '200':
+          description: Active context switched
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  activeContext: { $ref: '#/components/schemas/PropertyContextRef' }
+        '400': { description: Missing/invalid contextType or contextId }
+        '401': { description: Authentication required }
+        '403': { description: Caller has no role in the requested context (fail-closed) }
+  /api/finance/property/rent-passport/me:
+    get:
+      operationId: propertyGetMyRentPassport
+      summary: Get the caller's own portable rent/dues trust profile
+      description: >
+        Computed read-only over successful estate + realtor payments (never
+        mutated). Score 0-100; see RentPassport schema for the formula.
+        Realtor-schema-absent is tolerated (estate-only deployments still get
+        a passport from estate history alone).
+      tags: [Property]
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: Rent passport
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RentPassport' }
+        '401': { description: Authentication required }
+  /api/finance/property/rent-passport/lookup/{userId}:
+    get:
+      operationId: propertyLookupRentPassport
+      summary: Landlord/agency screening lookup of ANY user's rent passport (RBAC-gated)
+      description: >
+        Object-level authz is the top risk on this endpoint: it returns
+        another user's payment history and trust score. Gated on
+        RequirePermission(rbac, "property.manage") — there is no per-target
+        ownership relationship checked, so the permission alone is the
+        boundary. No passport body is returned on the 403 path.
+      tags: [Property]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: userId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: Rent passport of the target user
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RentPassport' }
+        '401': { description: Authentication required }
+        '403': { description: Caller lacks property.manage (IDOR guard; no body leaked) }
+  # ── END Property Management Suite block ───────────────────────────────────
+  # ── Realtor admin control plane (backend/internal/realtor, gated on
+  #    FEATURE_REALTOR_ENABLED) ──────────────────────────────────────────────
+  # Mounted at /api/realtor/admin, RBAC-gated on realtor.manage. Read +
+  # moderation-status-write only. See backend/internal/realtor/{admin,
+  # repository,routes}.go and docs/qa/modules/realtor.md.
+  /api/realtor/admin/overview:
+    get:
+      operationId: realtorAdminOverview
+      summary: Headline dashboard counts/aggregates for the realtor admin console
+      tags: [RealtorAdmin]
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: Overview aggregates
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RealtorOverview' }
+        '401': { description: Authentication required }
+        '403': { description: Caller lacks realtor.manage }
+  /api/realtor/admin/listings/pending:
+    get:
+      operationId: realtorAdminPendingListings
+      summary: Listings moderation queue (status=pending_verification)
+      tags: [RealtorAdmin]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: limit, in: query, schema: { type: integer, default: 50, maximum: 200 } }
+        - { name: offset, in: query, schema: { type: integer, default: 0 } }
+      responses:
+        '200':
+          description: Pending listings
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { type: array, items: { $ref: '#/components/schemas/RealtorAdminListing' } }
+        '401': { description: Authentication required }
+        '403': { description: Caller lacks realtor.manage }
+  /api/realtor/admin/listings/{id}/decision:
+    post:
+      operationId: realtorAdminDecideListing
+      summary: Apply an approve/reject/changes_requested moderation decision
+      description: Audited to realtor_admin_audit_log. No money moves here — moderation only.
+      tags: [RealtorAdmin]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [decision]
+              properties:
+                decision: { type: string, enum: [approved, rejected, changes_requested] }
+                reason: { type: string }
+      responses:
+        '200':
+          description: Decision applied
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id: { type: string, format: uuid }
+                  status: { type: string }
+        '400': { description: Invalid decision value }
+        '401': { description: Authentication required }
+        '403': { description: Caller lacks realtor.manage }
+        '404': { description: Listing not found }
+  /api/realtor/admin/verifications:
+    get:
+      operationId: realtorAdminPendingVerifications
+      summary: Property-verification queue (derived from listings.verification)
+      tags: [RealtorAdmin]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: limit, in: query, schema: { type: integer, default: 50, maximum: 200 } }
+        - { name: offset, in: query, schema: { type: integer, default: 0 } }
+      responses:
+        '200':
+          description: Pending verifications
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { type: array, items: { $ref: '#/components/schemas/RealtorVerificationRequest' } }
+        '401': { description: Authentication required }
+        '403': { description: Caller lacks realtor.manage }
+  /api/realtor/admin/verifications/{id}/decision:
+    post:
+      operationId: realtorAdminDecideVerification
+      summary: Apply an approve/reject/more_info verification decision
+      description: Audited. No money moves here — trust-and-safety verification only.
+      tags: [RealtorAdmin]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status: { type: string, enum: [approved, rejected, more_info] }
+                reason: { type: string }
+      responses:
+        '200':
+          description: Decision applied
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id: { type: string, format: uuid }
+                  status: { type: string }
+        '400': { description: Invalid status value }
+        '401': { description: Authentication required }
+        '403': { description: Caller lacks realtor.manage }
+        '404': { description: Verification subject not found }
+  /api/realtor/admin/payments:
+    get:
+      operationId: realtorAdminPayments
+      summary: List realtor payments (read-only)
+      tags: [RealtorAdmin]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: limit, in: query, schema: { type: integer, default: 50, maximum: 200 } }
+        - { name: offset, in: query, schema: { type: integer, default: 0 } }
+      responses:
+        '200':
+          description: Payments
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { type: array, items: { $ref: '#/components/schemas/RealtorAdminPayment' } }
+        '401': { description: Authentication required }
+        '403': { description: Caller lacks realtor.manage }
+  /api/realtor/admin/escrow:
+    get:
+      operationId: realtorAdminEscrow
+      summary: List escrow deposits (read-only)
+      tags: [RealtorAdmin]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: limit, in: query, schema: { type: integer, default: 50, maximum: 200 } }
+        - { name: offset, in: query, schema: { type: integer, default: 0 } }
+      responses:
+        '200':
+          description: Escrow deposits
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { type: array, items: { $ref: '#/components/schemas/RealtorEscrowAccount' } }
+        '401': { description: Authentication required }
+        '403': { description: Caller lacks realtor.manage }
+  /api/realtor/admin/escrow/{id}/resolve:
+    post:
+      operationId: realtorAdminResolveEscrow
+      summary: Inspection-gated release/forfeiture/dispute of a refundable lease deposit (PROPMGMT-002)
+      description: >-
+        released_to_tenant and forfeited_to_landlord REQUIRE a submitted
+        realtor_move_outs move-out inspection for the lease (422 otherwise).
+        disputed does not require a move-out submission and does not move
+        money. Money moves via the shared finance ledger (PostReversal /
+        PostJournal against the 'settlement' standing account) — idempotent
+        per deposit id, so a retried call is a safe no-op. Re-resolving an
+        already-released deposit is refused with 409. Audited to
+        realtor_admin_audit_log.
+      tags: [RealtorAdmin]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [decision]
+              properties:
+                decision: { type: string, enum: [released_to_tenant, forfeited_to_landlord, disputed] }
+                note: { type: string }
+      responses:
+        '200':
+          description: Escrow deposit resolved
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RealtorEscrowResolution' }
+        '400': { description: Invalid decision value }
+        '401': { description: Authentication required }
+        '403': { description: Caller lacks realtor.manage }
+        '404': { description: Escrow deposit not found }
+        '409': { description: Escrow deposit already released }
+        '422': { description: Move-out inspection has not been submitted for this lease }
+  # ── END Realtor admin control plane block ──────────────────────────────────
   # ── MapService (provider-agnostic maps abstraction) ───────────────────────
   # All provider keys are server-side; the client calls ONLY these endpoints.
   # findNearbyOwn (/nearby) and isInZone (/in-zone) run on PostGIS, not a maps API.
@@ -8174,6 +8618,41 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Contribution' }
+
+  /crowdfunding/campaigns/{id}/broadcast:
+    post:
+      operationId: broadcastToContributors
+      summary: Message every backer of a campaign (creator only)
+      tags: [Crowdfunding]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [subject, body]
+              properties:
+                subject: { type: string, minLength: 4, maxLength: 200 }
+                body: { type: string, minLength: 11, maxLength: 5000 }
+                channelPush: { type: boolean, default: true }
+                channelEmail: { type: boolean, default: true }
+      responses:
+        '200':
+          description: Message delivered in-app to every opted-in backer
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      recipients: { type: integer, description: Distinct backers notified in-app }
+        '403':
+          description: Caller is not the campaign's creator
 
   # ── Telemedicine ──────────────────────────────────────────────────────────────
   /telemedicine/doctors:
@@ -14949,3 +15428,392 @@ paths:
         '404': { description: Unknown banner slug }
         '502': { description: Presigning failed }
         '503': { description: R2 is not configured in this environment }
+
+  # ── Utility Bills (Next.js → Go migration) ─────────────────────────────────
+  # Phase 1 (IMPLEMENTED): backend/internal/utilitybills + the route wiring in
+  # backend/internal/app/utilitybills_routes.go. The whole surface is gated by
+  # FeatureUtilityBillsEnabled (FEATURE_UTILITY_BILLS_ENABLED, DEFAULT false) —
+  # with the flag off every path below 404s.
+  #
+  # Phase 0 stubbed these paths ahead of the implementation per this repo's
+  # spec-first workflow and said schemas would be "fleshed out against the real
+  # handler.go once written". That is what this block now is. Three changes from
+  # the stub, each because the implementation settled the question:
+  #   • the catalogue reads (categories / billers / products), the attempt trail
+  #     and the dispute endpoint were missing from the stub and are real;
+  #   • GET and PUT on /beneficiaries/{id} were stubbed but NOT built: saving is
+  #     an UPSERT on the natural key (user, biller, customer_reference), so
+  #     "update" is POST /beneficiaries and a by-id read has no caller;
+  #   • the money-affecting admin actions are added, RBAC-gated. The remaining
+  #     ~20 admin routes are Phase 4.
+  /api/finance/utilitybills/categories:
+    get:
+      operationId: utilityBillsListCategories
+      summary: List enabled utility categories with their limits
+      tags: [Utility Bills]
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: Category list (falls back to the six built-ins when no settings rows are enabled)
+  /api/finance/utilitybills/billers:
+    get:
+      operationId: utilityBillsListBillers
+      summary: List active billers, optionally filtered by category
+      tags: [Utility Bills]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: category, in: query, required: false, schema: { type: string, enum: [airtime, data, electricity, cable_tv, internet, education] } }
+      responses:
+        '200':
+          description: Biller list
+  /api/finance/utilitybills/products:
+    get:
+      operationId: utilityBillsListProducts
+      summary: List active products, optionally filtered by category and/or biller
+      tags: [Utility Bills]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: category, in: query, required: false, schema: { type: string } }
+        - { name: biller_id, in: query, required: false, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: Product list
+  /api/finance/utilitybills/validate:
+    post:
+      operationId: utilityBillsValidateCustomer
+      summary: Validate a customer reference against the provider before purchase
+      description: >-
+        No side effects and no money movement. A provider with no verification
+        capability reports valid=true with an explanatory message rather than
+        blocking the purchase.
+      tags: [Utility Bills]
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [category, biller_id, customer_reference]
+              properties:
+                category: { type: string, enum: [airtime, data, electricity, cable_tv, internet, education] }
+                biller_id: { type: string, format: uuid }
+                product_id: { type: string, format: uuid, description: Optional; falls back to the biller's first active product. }
+                customer_reference: { type: string, description: Meter / smartcard / phone number being verified. }
+                metadata: { type: object, additionalProperties: { type: string } }
+      responses:
+        '200':
+          description: Validation result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  valid: { type: boolean }
+                  customer_name: { type: string }
+                  message: { type: string }
+        '400': { description: 'Invalid category, missing field, or biller/category mismatch' }
+        '404': { description: Unknown biller or product }
+  /api/finance/utilitybills/quote:
+    post:
+      operationId: utilityBillsQuote
+      summary: Price a product before purchase, no side effects
+      description: >-
+        Returns only what the CUSTOMER pays. Provider cost, gross profit and
+        margin are internal and are deliberately not disclosed here.
+      tags: [Utility Bills]
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [category, biller_id, product_id]
+              properties:
+                category: { type: string }
+                biller_id: { type: string, format: uuid }
+                product_id: { type: string, format: uuid }
+                amount_kobo:
+                  type: integer
+                  format: int64
+                  description: Integer minor units. Required for a variable-amount product; ignored for a fixed one.
+      responses:
+        '200':
+          description: Pricing breakdown
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  quote:
+                    type: object
+                    properties:
+                      category: { type: string }
+                      biller_id: { type: string, format: uuid }
+                      product_id: { type: string, format: uuid }
+                      provider_id: { type: string, format: uuid }
+                      amount_kobo: { type: integer, format: int64 }
+                      markup_kobo: { type: integer, format: int64 }
+                      convenience_fee_kobo: { type: integer, format: int64 }
+                      retail_amount_kobo:
+                        type: integer
+                        format: int64
+                        description: amount + markup + convenience fee. This is the sum the wallet is debited for.
+        '400': { description: 'Invalid category, missing field, or amount outside the product bounds' }
+        '503': { description: No viable provider route for this product }
+  /api/finance/utilitybills/pay:
+    post:
+      operationId: utilityBillsPay
+      summary: Pay a utility bill
+      description: >-
+        Debits the wallet into the provider-clearing pass-through account and
+        purchases from the routed provider, failing over across providers in
+        priority order. A money mutation — Idempotency-Key is REQUIRED (rejected
+        in the service layer, not middleware).
+
+
+        Replay of the same key returns the ORIGINAL transaction with
+        already_processed=true; it never debits twice and never re-hits the
+        provider. A DEFINITE provider failure on a wallet-sourced payment
+        auto-reverses the debit (status `reversed`); an AMBIGUOUS outcome
+        (timeout, transport error) lands in `provider_pending` and is NOT
+        reversed, because the purchase may still complete upstream.
+      tags: [Utility Bills]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [category, biller_id, product_id, customer_reference]
+              properties:
+                category: { type: string }
+                biller_id: { type: string, format: uuid }
+                product_id: { type: string, format: uuid }
+                customer_reference: { type: string }
+                amount_kobo: { type: integer, format: int64, description: Integer minor units; required for a variable-amount product. }
+                payment_source:
+                  type: string
+                  enum: [wallet, paystack]
+                  default: wallet
+                  description: >-
+                    'paystack' records an already-collected payment; no wallet
+                    debit is posted and no auto-reversal fires on provider
+                    failure (the funds are at Paystack, not in the ledger).
+                metadata: { type: object }
+      responses:
+        '200':
+          description: >-
+            Purchase settled. `status` is successful, provider_pending, failed or
+            reversed — check it; a 200 does not mean the bill was delivered.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  already_processed: { type: boolean, description: True when this Idempotency-Key was already used; the original transaction is returned unchanged. }
+                  transaction:
+                    type: object
+                    properties:
+                      id: { type: string, format: uuid }
+                      status: { type: string, enum: [initiated, wallet_debited, provider_pending, successful, failed, reversed, disputed] }
+                      retail_amount_kobo: { type: integer, format: int64 }
+                      token: { type: string, nullable: true, description: The vended prepaid-electricity token — the customer-facing deliverable. }
+                      receipt_number: { type: string, nullable: true }
+                      provider_reference: { type: string, nullable: true }
+        '400': { description: 'Missing Idempotency-Key, invalid field, or failed customer validation' }
+        '403': { description: Wallet disabled for this KYC tier }
+        '409': { description: 'A purchase with this key is in flight, or its outcome is unknown and awaiting reconciliation' }
+        '422': { description: Insufficient wallet funds }
+        '429': { description: Wallet tier daily limit or category daily limit exceeded }
+        '503': { description: 'No viable provider route, or the category is switched off' }
+  /api/finance/utilitybills/transactions:
+    get:
+      operationId: utilityBillsListTransactions
+      summary: List the caller's utility bill transactions
+      tags: [Utility Bills]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: limit, in: query, required: false, schema: { type: integer, default: 20, maximum: 100 } }
+        - { name: offset, in: query, required: false, schema: { type: integer, default: 0 } }
+      responses:
+        '200':
+          description: Transaction list, newest first
+  /api/finance/utilitybills/transactions/{id}:
+    get:
+      operationId: utilityBillsGetTransaction
+      summary: Get a single utility bill transaction by id
+      description: Scoped to the caller — another member's transaction reports 404, never the row.
+      tags: [Utility Bills]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: Transaction detail }
+        '404': { description: 'Not found, or not the caller''s' }
+  /api/finance/utilitybills/transactions/{id}/attempts:
+    get:
+      operationId: utilityBillsListTransactionAttempts
+      summary: List the provider attempt trail for one transaction
+      tags: [Utility Bills]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: 'Attempt list, in attempt order' }
+        '404': { description: 'Not found, or not the caller''s' }
+  /api/finance/utilitybills/transactions/{id}/requery:
+    post:
+      operationId: utilityBillsRequeryTransaction
+      summary: Re-query a pending transaction's status against the provider
+      description: >-
+        A transaction in a non-requeryable state is returned unchanged rather
+        than erroring. A requery that the provider cannot answer leaves the
+        status alone — it can never move a transaction to failed on silence.
+      tags: [Utility Bills]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: 'Transaction, status refreshed from the provider' }
+        '404': { description: 'Not found, or not the caller''s' }
+  /api/finance/utilitybills/transactions/{id}/dispute:
+    post:
+      operationId: utilityBillsCreateDispute
+      summary: Open a dispute against one of the caller's transactions
+      tags: [Utility Bills]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reason]
+              properties:
+                reason: { type: string }
+      responses:
+        '201': { description: Dispute opened; the transaction moves to `disputed` }
+        '400': { description: Missing reason }
+        '404': { description: 'Not found, or not the caller''s' }
+  /api/finance/utilitybills/beneficiaries:
+    get:
+      operationId: utilityBillsListBeneficiaries
+      summary: List the caller's saved utility beneficiaries
+      tags: [Utility Bills]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: category, in: query, required: false, schema: { type: string } }
+      responses:
+        '200': { description: 'Saved beneficiary list, newest first' }
+    post:
+      operationId: utilityBillsSaveBeneficiary
+      summary: Save (or rename) a utility beneficiary
+      description: >-
+        UPSERT on the natural key (user, biller, customer_reference). Re-saving
+        the same meter under a new label renames it rather than duplicating it —
+        which is why there is no separate PUT.
+      tags: [Utility Bills]
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [category, biller_id, label, customer_reference]
+              properties:
+                category: { type: string }
+                biller_id: { type: string, format: uuid }
+                label: { type: string }
+                customer_reference: { type: string }
+                customer_name: { type: string }
+      responses:
+        '200': { description: Beneficiary saved }
+        '400': { description: 'Invalid category, missing field, or biller/category mismatch' }
+  /api/finance/utilitybills/beneficiaries/{id}:
+    delete:
+      operationId: utilityBillsDeleteBeneficiary
+      summary: Remove a saved utility beneficiary
+      tags: [Utility Bills]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '204': { description: Beneficiary removed }
+        '404': { description: 'Not found, or not the caller''s' }
+
+  # ── Utility Bills admin (Phase 1: money-affecting actions only) ────────────
+  # RBAC: finance.admin.utilitybills, enforced per route with
+  # middleware.RequirePermission. The full admin surface is Phase 4; these exist
+  # now so the Next.js admin can PROXY to Go in Phase 2 rather than run a second
+  # independent writer against the same rows.
+  /api/finance/admin/utilitybills/transactions/{id}:
+    get:
+      operationId: utilityBillsAdminGetTransaction
+      summary: Get any utility transaction with its provider attempt trail (admin)
+      tags: [Utility Bills]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: Transaction plus attempts }
+        '403': { description: Missing finance.admin.utilitybills }
+        '404': { description: Unknown transaction }
+  /api/finance/admin/utilitybills/transactions/{id}/requery:
+    post:
+      operationId: utilityBillsAdminRequeryTransaction
+      summary: Re-query any transaction's status against the provider (admin)
+      tags: [Utility Bills]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: 'Transaction, status refreshed' }
+        '403': { description: Missing finance.admin.utilitybills }
+  /api/finance/admin/utilitybills/transactions/{id}/reverse:
+    post:
+      operationId: utilityBillsAdminReverseTransaction
+      summary: Reverse a wallet-sourced transaction, refunding the member (admin)
+      description: >-
+        Idempotent on the TRANSACTION, not on a caller-supplied header — two
+        admins clicking refund cannot pay the member twice. Refuses a
+        transaction whose status is not reversible, and refuses a
+        Paystack-sourced one (those funds are not in the ledger).
+      tags: [Utility Bills]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reason]
+              properties:
+                reason: { type: string }
+      responses:
+        '200': { description: Transaction reversed; the member's wallet is restored }
+        '400': { description: Missing reason }
+        '403': { description: Missing finance.admin.utilitybills }
+        '409': { description: Transaction is not eligible for reversal }
+  /api/finance/admin/utilitybills/unresolved:
+    get:
+      operationId: utilityBillsAdminUnresolvedBinds
+      summary: Count outbound purchases whose provider outcome was never learned (admin)
+      description: >-
+        The reconciliation backlog. Each one is a member who may have been
+        debited for a bill nobody can confirm. Phase 3's scheduled requery job
+        drains this; until then it is drained by hand.
+      tags: [Utility Bills]
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200': { description: Unresolved bind count }
+        '403': { description: Missing finance.admin.utilitybills }

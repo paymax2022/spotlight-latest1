@@ -67,7 +67,13 @@ export default function BalanceCard({
           <Text style={styles.balanceLabel}>{label ?? 'Total Balance'}</Text>
           <View style={styles.amountRow}>
             <Text style={styles.amount}>{hidden ? '••••••' : fmt(balance, currency)}</Text>
-            <Pressable onPress={() => setHidden((h) => !h)} style={styles.eyeBtn} hitSlop={8}>
+            <Pressable
+              onPress={() => setHidden((h) => !h)}
+              style={styles.eyeBtn}
+              hitSlop={8}
+              accessibilityRole="button"
+              accessibilityLabel={hidden ? 'Show balance' : 'Hide balance'}
+            >
               {hidden
                 ? <Eye    size={18} color="rgba(255,255,255,0.7)" />
                 : <EyeOff size={18} color="rgba(255,255,255,0.7)" />
@@ -102,7 +108,7 @@ export default function BalanceCard({
               <Text style={[styles.currencyText, styles.currencyAlt]}>USD</Text>
             </View>
           )}
-          <Pressable style={styles.qr}>
+          <Pressable style={styles.qr} accessibilityRole="button" accessibilityLabel="Show QR code">
             <QrCode size={20} color="rgba(255,255,255,0.6)" strokeWidth={1.5} />
           </Pressable>
         </View>

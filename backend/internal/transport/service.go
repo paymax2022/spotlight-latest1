@@ -31,14 +31,47 @@ type tierLimiter interface {
 
 // Service manages driver registration, trip lifecycle, fare negotiation, and settlement.
 type Service struct {
-	db         *pgxpool.Pool
-	settlement *settlement.Service
-	tiers      tierLimiter // fail-closed KYC-tier / daily-spend gate on rider money moves
-	maps       MapsAdapter
-	commission CommissionRecorder // optional; nil ⇒ realized-profit recording is a no-op
-	insurance  InsuranceBinder    // optional; nil ⇒ parcels book/deliver with no real cover
-	ledger     *ledger.Service    // required for cash-ride driver-wallet fee debits (WithLedger)
+	db               *pgxpool.Pool
+	settlement       *settlement.Service
+	tiers            tierLimiter // fail-closed KYC-tier / daily-spend gate on rider money moves
+	maps             MapsAdapter
+	commission       CommissionRecorder // optional; nil ⇒ realized-profit recording is a no-op
+	insurance        InsuranceBinder    // optional; nil ⇒ parcels book/deliver with no real cover
+	ledger           *ledger.Service    // required for cash-ride driver-wallet fee debits (WithLedger)
+	externalRefunder ExternalRefunder   // optional; nil ⇒ an externally-funded refund logs for manual reconciliation instead of running
 }
+
+// ExternalRefunder is the nil-safe seam transport.Service uses to correctly
+// unwind a Paystack-funded (EscrowExternal) settlement — the ACTUAL external
+// refund plus the matching ledger-side reversal — wherever transport would
+// otherwise call settlement.Refund. Refund's only mechanism is a ledger
+// CREDIT to the payer's WALLET, which is correct for a wallet-funded escrow
+// but WRONG here: money that never left the rider's wallet must never be
+// credited INTO it, or a Tier-0 rider ends up with real spendable balance
+// funded by an external charge — exactly the hazard EscrowExternal exists to
+// avoid. The concrete adapter (transport/paystackcheckout, wired at the
+// composition root only when its feature flag is on) resolves the Paystack
+// reference for the settlement, calls the gateway's real refund, and then
+// settlement.Service.RefundExternal to reverse the internal ledger entry.
+//
+// Modeled as a local interface (mirrors CommissionRecorder / InsuranceBinder)
+// so transport never imports paystackcheckout or any provider package.
+type ExternalRefunder interface {
+	// RefundExternalSettlement reverses settlementID, which MUST be an
+	// EscrowExternal-funded row (the caller — refundTrip/UpdateTripStatus —
+	// checks the trip's payment method before calling this). tripID lets the
+	// adapter resolve the Paystack reference it needs for the real gateway
+	// refund (the intents table is keyed by trip, not by settlement id).
+	// reason is a short machine tag for logging/audit, mirroring
+	// settlement.Refund's own reason parameter.
+	RefundExternalSettlement(ctx context.Context, tripID, settlementID, reason string) error
+}
+
+// SetExternalRefunder injects the Paystack-refund seam (app-wiring,
+// post-construction). Nil is accepted: a nil seam means an externally-funded
+// refund is logged loudly for manual reconciliation rather than silently
+// wallet-crediting the rider (see refundTrip).
+func (s *Service) SetExternalRefunder(r ExternalRefunder) { s.externalRefunder = r }
 
 // NewService wires the transport service. A MockMaps adapter is used when none
 // is supplied, so business logic always has a deterministic geo backend.
@@ -289,7 +322,15 @@ func (s *Service) UpdateTripStatus(ctx context.Context, tripID, actorUserID stri
 		s.db.Exec(ctx, `UPDATE drivers SET status='online', completed_trips=completed_trips+1, updated_at=NOW() WHERE id=$1`, *trip.DriverID)
 	}
 	if newStatus == TripCancelled {
-		if err := s.settlement.Refund(ctx, trip.SettlementID, "trip_cancelled"); err != nil {
+		// Defense-in-depth, matching refundTrip: never wallet-credit a refund for
+		// a Paystack-funded trip (see ExternalRefunder's doc comment).
+		if isPaystackFunded(trip.PaymentMethod) {
+			if s.externalRefunder == nil {
+				log.Printf("[transport] cannot refund Paystack-funded settlement=%s trip=%s: no ExternalRefunder wired — needs manual reconciliation", trip.SettlementID, trip.ID)
+			} else if err := s.externalRefunder.RefundExternalSettlement(ctx, trip.ID, trip.SettlementID, "trip_cancelled"); err != nil {
+				return fmt.Errorf("transport: external refund fare: %w", err)
+			}
+		} else if err := s.settlement.Refund(ctx, trip.SettlementID, "trip_cancelled"); err != nil {
 			return fmt.Errorf("transport: refund fare: %w", err)
 		}
 		if trip.DriverID != nil {

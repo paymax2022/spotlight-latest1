@@ -5,7 +5,7 @@ import type {
   StemStartApplicationInput,
 } from './types';
 
-const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const emailRegex = /^[^\s@]+@[^\s@.]+(?:\.[^\s@.]+)+$/;
 
 export function validateStemContestConfig(contest: Partial<StemContest>) {
   const errors: Record<string, string> = {};

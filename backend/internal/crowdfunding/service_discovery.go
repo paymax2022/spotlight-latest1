@@ -472,13 +472,24 @@ func (s *Service) SubmitForReview(ctx context.Context, creatorID string, req Sub
 	if req.SubmitForReview {
 		reviewStatus = "PENDING_REVIEW"
 	}
+	// UAT CON-005: this is the only live campaign-creation path (Handler.Create /
+	// Service.Create's own deadline check is unwired dead code — no route calls
+	// it). A malformed or past deadline used to be silently dropped: a parse
+	// failure fell through to the 60-day default with no error, and a genuinely
+	// past deadline (e.g. "2020-01-01") was accepted outright, producing a
+	// campaign that could never receive a contribution (Contribute() itself
+	// already rejects on a past deadline) with nothing telling the creator why.
 	var deadline time.Time
-	if req.Deadline != nil {
-		if t, err := time.Parse(time.RFC3339, *req.Deadline); err == nil {
-			deadline = t
+	if req.Deadline != nil && strings.TrimSpace(*req.Deadline) != "" {
+		t, err := time.Parse(time.RFC3339, *req.Deadline)
+		if err != nil {
+			return nil, fmt.Errorf("%w: deadline must be RFC3339", ErrInvalidSubmission)
 		}
-	}
-	if deadline.IsZero() {
+		if t.Before(time.Now()) {
+			return nil, fmt.Errorf("%w: deadline must be in the future", ErrInvalidSubmission)
+		}
+		deadline = t
+	} else {
 		deadline = time.Now().AddDate(0, 2, 0) // default 60-day window
 	}
 	const ins = `

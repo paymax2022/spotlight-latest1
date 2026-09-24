@@ -12,8 +12,10 @@ import (
 	"spotlight/backend/internal/finance/commission"
 	"spotlight/backend/internal/finance/kyc"
 	"spotlight/backend/internal/finance/ledger"
+	"spotlight/backend/internal/finance/settlement"
 	healthlab "spotlight/backend/internal/health/lab"
 	healthrecords "spotlight/backend/internal/health/records"
+	"spotlight/backend/internal/integrations"
 	"spotlight/backend/internal/middleware"
 	"spotlight/backend/internal/services"
 	"spotlight/backend/internal/transport"
@@ -36,7 +38,7 @@ import (
 //   - admin : /api/health/lab/admin/*    (per-route RBAC health.lab.*)
 //
 // Gated by FeatureHealthLabEnabled at the orchestrator. Auditing is nil-safe.
-func RegisterHealthLab(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pgxpool.Pool, rbac services.RBACService, audit services.AuditService, cfg config.Config) {
+func RegisterHealthLab(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pgxpool.Pool, rbac services.RBACService, audit services.AuditService, cfg config.Config, supabase *integrations.SupabaseRestClient) {
 	if pool == nil {
 		log.Println("[health.lab] nil pool — skipping lab routes")
 		return
@@ -45,7 +47,13 @@ func RegisterHealthLab(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pg
 	// Reuse rails (by import, never copy).
 	ledgerSvc := ledger.NewService(ledger.NewRepository(pool), nil)
 	escrowSvc := escrow.NewService(pool, ledgerSvc, nil)
-	transportSvc := transport.NewService(pool, nil)
+	// transport.Service needs a real settlement instance for its own escrow
+	// (phlebotomist dispatch payout) — a nil settlement service isn't a
+	// no-op, it's a nil pointer BookParcel dereferences unconditionally.
+	// Identical bug to PHARMACY-004: any home-collection Schedule call would
+	// panic (500) inside settlement.Service.Escrow. Mirrors the pharmacy fix
+	// and finance_routes.go's own transport.NewService wiring.
+	transportSvc := transport.NewService(pool, settlement.NewService(pool, ledgerSvc))
 	kycSvc := kyc.NewService(pool)
 	recordsSvc := healthrecords.NewService(pool, nil, nil, nil)
 
@@ -67,7 +75,7 @@ func RegisterHealthLab(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pg
 	// shared commissionRecorderAdapter (marketplace_routes.go). Gated on the flag ⇒
 	// off leaves the recorder nil ⇒ silent no-op.
 	if cfg.FeatureCommissionEnabled {
-		svc.SetCommissionRecorder(commissionRecorderAdapter{svc: commission.NewService(commission.NewRepository(pool), nil)})
+		svc.SetCommissionRecorder(commissionRecorderAdapter{svc: withReferralSplit(commission.NewService(commission.NewRepository(pool), nil), pool, cfg)})
 	}
 
 	isAdmin := func(c *gin.Context) bool { return isHealthLabAdmin(c, rbac) }
@@ -99,6 +107,19 @@ func RegisterHealthLab(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pg
 
 	// --- Admin routes (/api/health/lab/admin, RBAC health.lab.*) ---
 	ag := admin.Group("")
+	// Identical bug to PHARMACY-006: `admin` here is adminGroupTop5
+	// (top5_admin_group.go), which applies ONLY requireUserID() — a guard
+	// that checks c.GetString("user_id") with nothing upstream of it ever
+	// setting that context key. Every lab admin route (old and new) 401'd
+	// "authentication required" regardless of token validity. Fixed the same
+	// way pharmacy was: the caller (finance_routes.go) now passes a plain
+	// r.Group(...) instead of adminGroupTop5, and RequireAuthContext runs
+	// here as this group's own first middleware.
+	ag.Use(middleware.RequireAuthContext(supabase, rbac))
+	// Dashboard is an extension of the SAME admin-oversight surface /orders
+	// already sits behind — reusing health.lab.orders rather than minting a
+	// new permission slug (mirrors pharmacy's PHARMACY-001 dashboard route).
+	ag.GET("/dashboard", guard("health.lab.orders"), h.AdminDashboard)                   // platform-wide KPI aggregate
 	ag.GET("/orders", guard("health.lab.orders"), h.AdminListOrders)                     // order/results oversight
 	ag.GET("/custody-audit", guard("health.lab.custody"), h.AdminCustodyAudit)           // chain-of-custody oversight (HL-6)
 	ag.GET("/escalations", guard("health.lab.escalation"), h.AdminEscalations)           // critical-result escalation (HL-7)

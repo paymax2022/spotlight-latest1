@@ -66,6 +66,16 @@ export interface PurchaseRequest<T = unknown> {
    * card payment is a server-initiated redirect (e.g. bill payments:
    * initiate*Paystack → authorizationUrl → Linking.openURL). The module owns
    * the redirect + return; `charge` is then only invoked for the wallet rail.
+   *
+   * The KYC spend pre-check (checkSpendAllowed) is SKIPPED for this rail — see
+   * runPay. It exists only to protect the built-in card rail's wallet-top-up-
+   * then-spend trick from parking a Tier-0 customer's money in a wallet they
+   * cannot spend from; an onCard flow that collects payment directly (and never
+   * credits the wallet at all) has nothing for that check to protect. Only wire
+   * onCard to a flow that is ACTUALLY wallet-free end to end (verified
+   * server-side, e.g. restaurant.PlaceOrderPaystackFunded) — never to something
+   * that still ends in a wallet credit, which would reopen the exact hazard the
+   * pre-check exists to close.
    */
   onCard?: () => Promise<void>;
 }
@@ -191,7 +201,29 @@ export function usePurchasePayment<T = unknown>(): PurchaseController<T> {
       setError(null);
       setSpendBlock(null);
 
-      // ── KYC spend pre-check — MUST stay ahead of both rails ──────────────────
+      // Module-specific card flow (e.g. a server-initiated Paystack redirect that
+      // collects payment directly and never touches the wallet — see onCard's doc
+      // comment) takes precedence over the built-in gateway and runs BEFORE the
+      // KYC pre-check below. That pre-check exists because the built-in card rail
+      // tops the wallet up first and then spends it, so a Tier-0 customer's money
+      // would land in a wallet the tier gate forbids them from spending. An onCard
+      // flow has no such step — no wallet debit ever occurs — so there is nothing
+      // for the pre-check to protect, and running it would block exactly the
+      // customers this rail exists for.
+      if (method === 'card' && req.onCard) {
+        setPhase('awaiting');
+        setVisible(false);
+        try {
+          await req.onCard();
+        } catch (e) {
+          setVisible(true);
+          setPhase('error');
+          setError(e instanceof Error ? e.message : 'Could not start the card payment.');
+        }
+        return;
+      }
+
+      // ── KYC spend pre-check — MUST stay ahead of both remaining rails ────────
       // The card rail tops the wallet up first and only then runs the module's
       // wallet charge, so without this a Tier 0 customer would pay real money into
       // a wallet the tier gate forbids them from spending: the funds are recorded
@@ -210,20 +242,6 @@ export function usePurchasePayment<T = unknown>(): PurchaseController<T> {
       setPhase('idle');
 
       if (method === 'card') {
-        // Module-specific card flow (e.g. a server-initiated Paystack redirect)
-        // takes precedence over the built-in gateway. It owns redirect + return.
-        if (req.onCard) {
-          setPhase('awaiting');
-          setVisible(false);
-          try {
-            await req.onCard();
-          } catch (e) {
-            setVisible(true);
-            setPhase('error');
-            setError(e instanceof Error ? e.message : 'Could not start the card payment.');
-          }
-          return;
-        }
         // Card = top up the wallet for the exact amount, wait for the webhook to
         // credit it, then run the module's ordinary wallet charge. Net wallet
         // change is zero and the money moves on ONE ledger.

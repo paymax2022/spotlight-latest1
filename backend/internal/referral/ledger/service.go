@@ -12,6 +12,8 @@ package ledger
 import (
 	"context"
 	"fmt"
+	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -58,6 +60,21 @@ const MinWithdrawTier = 1
 // ErrKYCRequired is returned when the caller's verified KYC tier is below
 // MinWithdrawTier.
 var ErrKYCRequired = fmt.Errorf("referral/ledger: verified KYC required to withdraw")
+
+// ErrAccountNotEligible is returned when the beneficiary's platform_users
+// account status blocks referral money movement (REF-009) — both the actual
+// payout (Transition to 'paid') and a withdrawal request.
+//
+// SCOPE NOTE: this gates Refer & Earn's OWN money-path entry points
+// (Transition, WithdrawEligible) — it does NOT touch
+// finance/ledger.Service.Credit itself, which is the shared primitive used
+// across many other modules (wallet top-up, transfers, other reward paths).
+// Changing that function's semantics would have app-wide blast radius outside
+// this module's authority. Gating both of Refer & Earn's own callers achieves
+// the same practical outcome for this module — a suspended/locked/deleted
+// account can no longer accrue a real wallet credit through EITHER path this
+// module exposes — without touching shared infrastructure.
+var ErrAccountNotEligible = fmt.Errorf("referral/ledger: account status blocks this action")
 
 // AuditSink records a durable audit event for a money mutation. Optional; wired
 // by the route registrar to the referral events sink. Must be idempotent on key.
@@ -167,8 +184,11 @@ func (s *Service) Accrue(ctx context.Context, in AccrueInput) (string, error) {
 
 // Transition advances a reward to nextState (forward-only or clawback). When the
 // target is 'paid' and the row belongs to a HUMAN beneficiary, a balanced
-// double-entry is posted to the finance ledger (real payout). House rows are
-// notional and never post to a wallet. Idempotent via idempotency_key suffix.
+// double-entry is posted to the finance ledger (real payout). When the target
+// is 'clawed_back' and the row's CURRENT state is 'paid' (human beneficiary), a
+// balanced reversal is posted, undoing that payout. House rows are notional and
+// never post to a wallet in either direction. Idempotent via idempotency_key
+// suffix (payout) / a rewardID-derived key (clawback reversal).
 func (s *Service) Transition(ctx context.Context, rewardID, nextState, idempotencyKey string) error {
 	var (
 		current       string
@@ -193,7 +213,25 @@ func (s *Service) Transition(ctx context.Context, rewardID, nextState, idempoten
 
 	// Real payout: post a balanced credit to the human beneficiary's wallet.
 	// House rows are notional and skip the wallet entirely.
+	//
+	// REF-009 (closing the accrual/payout-side half): a suspended/locked/
+	// deleted beneficiary is refused HERE too, not just at WithdrawEligible.
+	// This closes the remaining gap deliberately left open when REF-009 was
+	// first scoped to the withdrawal path alone — on reflection, gating only
+	// withdrawal while still letting the payout itself land would just move
+	// the same "money reaches a suspended account" outcome one step earlier,
+	// and would risk the exact class of bug REF-011 just fixed elsewhere in
+	// this file: a state transition succeeding while the money movement it
+	// describes silently doesn't happen (or, here, happens somewhere it
+	// shouldn't). Failing the WHOLE transition (no state change, no credit)
+	// when the gate rejects means the reward simply stays at its current
+	// state — safe to retry once the account is reinstated, matching this
+	// function's existing "state and money move together, or neither does"
+	// contract.
 	if nextState == StatePaid && !isHouse && beneficiaryID != nil && *beneficiaryID != "" && amountKobo > 0 {
+		if err := s.checkAccountEligibleForMoneyMovement(ctx, *beneficiaryID); err != nil {
+			return err
+		}
 		acc, err := s.finance.GetOrCreateStandingAccount(ctx, financeledger.AccountReferralReward)
 		if err != nil {
 			return err
@@ -202,6 +240,35 @@ func (s *Service) Transition(ctx context.Context, rewardID, nextState, idempoten
 		if err := s.finance.Credit(ctx, *beneficiaryID, ref, idempotencyKey, acc.ID, amountKobo); err != nil {
 			if err != financeledger.ErrDuplicate {
 				return fmt.Errorf("referral/ledger: post payout: %w", err)
+			}
+		}
+	}
+
+	// Clawback of a REAL prior payout: post a balanced reversing entry that
+	// drains the beneficiary's wallet and restores the standing referral
+	// reward account. A clawback of a not-yet-paid (or house) row never
+	// credited a wallet in the first place, so it stays state-only (REF-011).
+	//
+	// The idempotency key is derived from rewardID alone — NOT the caller's
+	// idempotencyKey — so a replayed clawback (with any key, or none at all
+	// beyond ClawBack's own arg) is always a safe no-op, and it can never
+	// collide with the distinct "referral:payout:"+rewardID key/reference used
+	// above for the original credit.
+	if nextState == StateClawedBack && current == StatePaid && !isHouse && beneficiaryID != nil && *beneficiaryID != "" && amountKobo > 0 {
+		acc, err := s.finance.GetOrCreateStandingAccount(ctx, financeledger.AccountReferralReward)
+		if err != nil {
+			return err
+		}
+		wallet, err := s.finance.GetOrCreateUserWallet(ctx, *beneficiaryID)
+		if err != nil {
+			return err
+		}
+		refAndKey := "referral:clawback:" + rewardID
+		// restoreAccountID=acc.ID (standing account gets its balance back),
+		// releaseAccountID=wallet.ID (beneficiary's wallet is drained).
+		if err := s.finance.PostReversal(ctx, acc.ID, wallet.ID, amountKobo, refAndKey, refAndKey); err != nil {
+			if err != financeledger.ErrDuplicate {
+				return fmt.Errorf("referral/ledger: post clawback reversal: %w", err)
 			}
 		}
 	}
@@ -225,9 +292,13 @@ func (s *Service) Transition(ctx context.Context, rewardID, nextState, idempoten
 	return nil
 }
 
-// ClawBack reverses an accrual. For a real prior payout it posts a reversing
-// entry to the finance ledger; for not-yet-paid or house rows it only flips
-// state. Idempotent.
+// ClawBack reverses an accrual. For a real prior payout (current state 'paid',
+// non-house) it posts a balanced REVERSAL entry to the finance ledger — the
+// beneficiary's wallet is drained and the standing referral reward account is
+// restored — before flipping state to 'clawed_back'. For not-yet-paid or house
+// rows (which never touched a wallet) it only flips state. Idempotent: the
+// reversal's idempotency key is derived from rewardID alone, so a replay never
+// double-reverses.
 func (s *Service) ClawBack(ctx context.Context, rewardID, idempotencyKey string) error {
 	return s.Transition(ctx, rewardID, StateClawedBack, idempotencyKey)
 }
@@ -287,7 +358,10 @@ type WithdrawResult struct {
 //   - serialized  — a per-user advisory lock prevents a concurrent second withdraw
 //     (with a different key) from double-crediting the same row, since the pay
 //     primitive posts the wallet credit *before* the guarded state flip;
-//   - fail-closed — requires a verified KYC tier ≥ MinWithdrawTier.
+//   - fail-closed — requires a verified KYC tier ≥ MinWithdrawTier;
+//   - account-gated — a suspended/locked/deleted platform_users account is
+//     refused (REF-009), even though the underlying reward rows may already
+//     be 'paid'.
 //
 // Money is integer kobo throughout. Returns the amount moved and remaining eligible.
 func (s *Service) WithdrawEligible(ctx context.Context, beneficiaryID, idempotencyKey string) (*WithdrawResult, error) {
@@ -305,6 +379,13 @@ func (s *Service) WithdrawEligible(ctx context.Context, beneficiaryID, idempoten
 	}
 	if tier < MinWithdrawTier {
 		return nil, ErrKYCRequired
+	}
+
+	// (5) Account-status gate — a suspended/locked/deleted platform_users
+	// account may not withdraw (REF-009). The payout side (Transition to
+	// 'paid') enforces the same gate — see checkAccountEligibleForMoneyMovement.
+	if err := s.checkAccountEligibleForMoneyMovement(ctx, beneficiaryID); err != nil {
+		return nil, err
 	}
 
 	// Serialize concurrent withdrawals for this user (see doc comment).
@@ -403,6 +484,50 @@ func (s *Service) verifiedKYCTier(ctx context.Context, userID string) (int, erro
 		return 0, fmt.Errorf("referral/ledger: kyc tier: %w", err)
 	}
 	return tier, nil
+}
+
+// checkAccountEligibleForMoneyMovement enforces the platform_users
+// account-status gate on referral money movement (REF-009) — both an actual
+// payout (Transition to 'paid') and a withdrawal request. It mirrors the
+// exact statuses and locked_until semantics services/auth_service.go
+// validateLoginStatus uses for login, against the same column:
+// platform_users.status, CHECK'd to one of
+// 'active','pending','suspended','locked','deleted' (see
+// supabase/migrations/20260527100000_enterprise_auth_rbac.sql).
+//
+// Fail-open ONLY when no platform_users row exists for this id: a missing row
+// is not itself evidence of suspension (some beneficiaries may predate or sit
+// outside platform_users sync), so this narrow, additive gate does not block
+// on absence — it blocks on an affirmatively bad status.
+func (s *Service) checkAccountEligibleForMoneyMovement(ctx context.Context, userID string) error {
+	const q = `SELECT status, locked_until, deleted_at FROM platform_users WHERE id = $1`
+	var (
+		status      string
+		lockedUntil *time.Time
+		deletedAt   *time.Time
+	)
+	err := s.db.QueryRow(ctx, q, userID).Scan(&status, &lockedUntil, &deletedAt)
+	if err == pgx.ErrNoRows {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("referral/ledger: account status: %w", err)
+	}
+	if deletedAt != nil {
+		return ErrAccountNotEligible
+	}
+	switch strings.ToLower(status) {
+	case "suspended", "deleted":
+		return ErrAccountNotEligible
+	case "locked":
+		// A nil LockedUntil means "no expiry" (indefinite manual lock), not
+		// "not locked" — matches validateLoginStatus's handling of the admin
+		// console's "Lock User" action.
+		if lockedUntil == nil || lockedUntil.After(time.Now().UTC()) {
+			return ErrAccountNotEligible
+		}
+	}
+	return nil
 }
 
 // ListByBeneficiary returns a beneficiary's reward rows (admin reward-ledger view

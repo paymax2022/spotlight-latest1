@@ -5,7 +5,7 @@ import { useCallback, useEffect, useMemo, useState, type CSSProperties } from 'r
 import type { AdminMenuCounts } from '@/types/admin';
 import type { AdminOverview, OverviewModule } from '@/types/adminOverview';
 import { getAdminMenuCounts, getAdminOverview } from '@/services/adminApiClient';
-import { canManageStem, canReadStem, getCurrentStemRole } from '@/config/stemAccess';
+import { canManageStem, canReadStem, useStemRoles } from '@/config/stemAccess';
 import { quickLinks } from './quickLinks';
 
 /**
@@ -80,10 +80,10 @@ export function AdminDashboard() {
   const [loaded, setLoaded] = useState(false);
   const [failed, setFailed] = useState(false);
 
-  const role = getCurrentStemRole();
+  const stemRoles = useStemRoles();
   const visibleQuickLinks = quickLinks.filter((item) => {
-    if (item.stemAccess === 'read') return canReadStem(role);
-    if (item.stemAccess === 'manage') return canManageStem(role);
+    if (item.stemAccess === 'read') return canReadStem(stemRoles);
+    if (item.stemAccess === 'manage') return canManageStem(stemRoles);
     return true;
   });
 
@@ -296,7 +296,13 @@ export function AdminDashboard() {
                 ', all answered.'
               )}
             </li>
-            <li>Signed in as <strong style={{ color: C.text }}>{role}</strong>.</li>
+            <li>
+              Signed in as{' '}
+              <strong style={{ color: C.text }}>
+                {stemRoles.length > 0 ? stemRoles.join(', ') : 'no STEM role'}
+              </strong>
+              .
+            </li>
           </ul>
         </div>
       </div>

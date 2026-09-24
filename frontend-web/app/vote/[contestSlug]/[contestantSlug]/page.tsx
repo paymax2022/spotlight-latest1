@@ -102,21 +102,52 @@ export default function PublicVotingPage() {
     load();
   }, [load]);
 
-  // SSE — real-time vote count updates
+  // SSE — real-time vote count updates.
+  //
+  // D-008 fix: this used to point at /api/votes/stream, which streamed vote
+  // counts/rank with no admin-configured visibility gating at all (a hidden
+  // contest still leaked live numbers). That route is protected-legacy and
+  // unfixable in place, so /api/v2/votes/stream is a new, gated replacement
+  // (see that route for the visibility-redaction logic) — this is the only
+  // real client of the old route, migrated here.
+  //
+  // Also fixes a genuine pre-existing bug in this handler, found while
+  // migrating it: it read `update.totalConfirmedVotes`/`update.rank`
+  // directly off the parsed event, but the server has only ever sent
+  // `{ type: 'snapshot', data: [...rows], ts }` — an ARRAY of (snake_case)
+  // rows, never a bare object with those exact camelCase keys at the top
+  // level. Every poll tick therefore set totalConfirmedVotes/rank to
+  // `undefined`, silently blanking out the displayed totals every 5 seconds
+  // — the "real-time" update never actually worked. Fixed to read the first
+  // (only, since contestantId scopes the query server-side) row out of
+  // `data`, and to only overwrite a field when the server actually sent it —
+  // a gated/hidden field is legitimately absent from the row, and must leave
+  // the last-known displayed value alone rather than blank it to `undefined`.
   useEffect(() => {
     if (!data?.contestant.id || !data?.settings.contestId) return;
-    const url = `/api/votes/stream?contestId=${data.settings.contestId}&contestantId=${data.contestant.id}`;
+    const url = `/api/v2/votes/stream?contestId=${data.settings.contestId}&contestantId=${data.contestant.id}`;
     const es = new EventSource(url);
     es.onmessage = (e) => {
       try {
-        const update = JSON.parse(e.data) as { totalConfirmedVotes: number; rank: number };
+        const update = JSON.parse(e.data) as {
+          type: string;
+          data: Array<{ contestantId: string; totalConfirmedVotes?: number; rank?: number | null }>;
+        };
+        const row = update.data?.[0];
+        if (!row) return;
         setData((prev) =>
-          prev
+          prev && prev.totals
             ? {
                 ...prev,
-                totals: prev.totals
-                  ? { ...prev.totals, totalConfirmedVotes: update.totalConfirmedVotes, rank: update.rank }
-                  : prev.totals,
+                totals: {
+                  ...prev.totals,
+                  ...(row.totalConfirmedVotes !== undefined ? { totalConfirmedVotes: row.totalConfirmedVotes } : {}),
+                  // rank can be genuinely null (not yet computed) as well as
+                  // absent (gated) — LeaderboardEntry.rank is a plain number,
+                  // so only apply the update when it's an actual number,
+                  // leaving the last-known displayed rank alone otherwise.
+                  ...(typeof row.rank === 'number' ? { rank: row.rank } : {}),
+                },
               }
             : prev,
         );

@@ -80,6 +80,10 @@ export function ReferralTabs({ active }: { active: string }) {
     { href: '/admin/referral/dashboard', label: 'Overview', key: 'dashboard' },
     { href: '/admin/referral/campaigns', label: 'Campaigns', key: 'campaigns' },
     { href: '/admin/referral/rewards', label: 'Rewards & Ledger', key: 'rewards' },
+    // REF-007: System C (flat ₦500 vote-triggered reward) has no console of
+    // its own — hosted here for discoverability, clearly labeled as separate
+    // from this tab list's System A rewards above.
+    { href: '/admin/referral/vote-rewards', label: 'Vote Rewards (₦500 flat)', key: 'vote-rewards' },
     { href: '/admin/referral/attribution', label: 'Attribution', key: 'attribution' },
     { href: '/admin/referral/house', label: 'House ledger', key: 'house' },
     { href: '/admin/referral/config', label: 'Config', key: 'config' },

@@ -853,12 +853,24 @@ SELECT
 // ── Block 25: Resident profiles ───────────────────────────────────────────────
 
 // getResidentID resolves the estate_residents.id for a given (estateID, userID) pair.
+// Fails closed on banned/deleted membership, mirroring assertRoles — this was
+// previously missing here, which let a banned or deleted member keep reading/
+// writing their own dashboard, profile, household, vehicles, and settings data
+// via any of the ~17 call sites that resolve membership through this helper
+// instead of assertResident/assertEstateAdmin. ESTATE-AUTHZ-003 (UAT).
 func (s *Service) getResidentID(ctx context.Context, estateID, userID string) (string, error) {
 	var id string
+	var banned, deleted bool
 	if err := s.db.QueryRow(ctx,
-		`SELECT id FROM estate_residents WHERE estate_id=$1 AND user_id=$2`, estateID, userID,
-	).Scan(&id); err != nil {
+		`SELECT id, banned_at IS NOT NULL, deleted_at IS NOT NULL FROM estate_residents WHERE estate_id=$1 AND user_id=$2`, estateID, userID,
+	).Scan(&id, &banned, &deleted); err != nil {
 		return "", fmt.Errorf("estate: not a member of this estate")
+	}
+	if deleted {
+		return "", fmt.Errorf("estate: this account has been deleted")
+	}
+	if banned {
+		return "", fmt.Errorf("estate: this account is banned from the estate")
 	}
 	return id, nil
 }

@@ -80,7 +80,7 @@ func RegisterCreators(member *gin.RouterGroup, admin *gin.RouterGroup, pool *pgx
 	// creator earnings credit / payout (see creators.recordCommissionSafe). Flag off ⇒
 	// no recorder is set ⇒ the seam stays nil ⇒ silent no-op ⇒ creators unchanged.
 	if cfg.FeatureCommissionEnabled {
-		creatorsCommission := commission.NewService(commission.NewRepository(pool), nil)
+		creatorsCommission := withReferralSplit(commission.NewService(commission.NewRepository(pool), nil), pool, cfg)
 		svc.SetCommissionRecorder(commissionRecorderAdapter{svc: creatorsCommission})
 		log.Println("[creators] commission recording wired → Lifestyle/Creators (earning-row only; no ledger re-post)")
 	}

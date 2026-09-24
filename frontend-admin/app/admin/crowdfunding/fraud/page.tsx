@@ -49,6 +49,14 @@ export default function FraudAdminPage() {
 
       {error && <p style={{ color: colors.danger, marginBottom: '1rem' }}>{error}</p>}
 
+      {items.some((i) => !i.campaignId) && (
+        <p style={{ fontSize: '0.8rem', color: colors.muted, marginBottom: '1rem' }}>
+          Alerts marked <SampleTag /> are seed data with no linked campaign (migration 20260622050000 — no code
+          path creates rows in this table yet). Their campaign link and freeze/unfreeze action are disabled because
+          the backend has nothing to act on.
+        </p>
+      )}
+
       {loading ? <p style={{ color: colors.muted }}>Loading alerts…</p> : items.length === 0 ? <p style={{ color: colors.muted }}>No fraud alerts.</p> : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
           {items.map((a) => (
@@ -58,6 +66,7 @@ export default function FraudAdminPage() {
                   <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', marginBottom: 4, flexWrap: 'wrap' }}>
                     <Badge text={a.status} color={STATUS_BADGE[a.status]} />
                     <span style={{ fontSize: '0.68rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.3, padding: '0.1rem 0.5rem', borderRadius: '9999px', color: RISK_COLOR[a.riskLevel], border: `1px solid ${RISK_COLOR[a.riskLevel]}` }}>RISK {a.riskLevel}</span>
+                    {!a.campaignId && <SampleTag />}
                   </div>
                   <div style={{ fontWeight: 600, fontSize: '0.95rem' }}>{a.campaignTitle}</div>
                   <div style={{ fontSize: '0.8rem', color: colors.muted, marginTop: 2 }}>{a.creatorName} · raised {naira(a.raisedKobo)} · {new Date(a.createdAt).toLocaleString()}</div>
@@ -66,13 +75,17 @@ export default function FraudAdminPage() {
                   </ul>
                 </div>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem', alignItems: 'flex-end' }}>
-                  <Link href={`/admin/crowdfunding/review/${a.campaignId}`}>
-                    <Button variant="outline" sm style={{ textAlign: 'center' }}>Open campaign</Button>
-                  </Link>
-                  {a.status !== 'FROZEN' ? (
-                    <Button variant="danger" sm disabled={busy === a.campaignId} onClick={() => { setModal({ campaignId: a.campaignId, freeze: true, title: a.campaignTitle, note: '' }); setError(null); }}>Freeze funds</Button>
+                  {a.campaignId ? (
+                    <Link href={`/admin/crowdfunding/review/${a.campaignId}`}>
+                      <Button variant="outline" sm style={{ textAlign: 'center' }}>Open campaign</Button>
+                    </Link>
                   ) : (
-                    <Button variant="outline" sm disabled={busy === a.campaignId} style={{ color: colors.success, borderColor: tint(colors.success, 0.4) }} onClick={() => { setModal({ campaignId: a.campaignId, freeze: false, title: a.campaignTitle, note: '' }); setError(null); }}>Unfreeze</Button>
+                    <Button variant="outline" sm disabled title="No linked campaign — sample data">Open campaign</Button>
+                  )}
+                  {a.status !== 'FROZEN' ? (
+                    <Button variant="danger" sm disabled={!a.campaignId || busy === a.campaignId} title={a.campaignId ? undefined : 'No linked campaign — sample data'} onClick={() => { setModal({ campaignId: a.campaignId, freeze: true, title: a.campaignTitle, note: '' }); setError(null); }}>Freeze funds</Button>
+                  ) : (
+                    <Button variant="outline" sm disabled={!a.campaignId || busy === a.campaignId} title={a.campaignId ? undefined : 'No linked campaign — sample data'} style={{ color: colors.success, borderColor: tint(colors.success, 0.4) }} onClick={() => { setModal({ campaignId: a.campaignId, freeze: false, title: a.campaignTitle, note: '' }); setError(null); }}>Unfreeze</Button>
                   )}
                 </div>
               </div>
@@ -101,6 +114,24 @@ export default function FraudAdminPage() {
         </div>
       )}
     </Page>
+  );
+}
+
+// An alert read out of cf_fraud_alerts that the seed migration created — no
+// code path inserts rows here, and the seed INSERT never set campaign_id, so
+// these rows can never resolve to a real campaign (see finance/page.tsx's
+// identical tag for the sibling cf_refunds/cf_settlements tables).
+function SampleTag() {
+  return (
+    <span
+      title="Seed data from migration 20260622050000. No code path creates rows in this table."
+      style={{
+        fontSize: '0.6rem', fontWeight: 700, letterSpacing: 0.5, textTransform: 'uppercase',
+        color: colors.danger, border: `1px solid ${colors.danger}`, borderRadius: 4, padding: '1px 5px',
+      }}
+    >
+      Sample
+    </span>
   );
 }
 

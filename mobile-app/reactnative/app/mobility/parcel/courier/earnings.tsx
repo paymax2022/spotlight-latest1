@@ -10,6 +10,7 @@ import { shadow1 } from '@/constants/shadows';
 import StateView from '@/components/StateView';
 import ScreenHeader from '@/components/ScreenHeader';
 import MobilityEdgeState from '@/features/mobility/components/MobilityEdgeState';
+import { errKind } from '@/features/mobility/utils/errKind';
 import { useParcels } from '@/features/mobility/hooks/useModes';
 import { formatNaira, formatNairaWhole } from '@/features/mobility/utils/mobilityFormatters';
 
@@ -26,7 +27,7 @@ export default function CourierEarningsScreen() {
       {parcels.isLoading ? (
         <StateView kind="loading" message="Loading earnings…" />
       ) : parcels.isError ? (
-        <MobilityEdgeState kind="offline" actionLabel="Retry" onAction={() => parcels.refetch()} />
+        <MobilityEdgeState kind={errKind(parcels.error)} actionLabel="Retry" onAction={() => parcels.refetch()} />
       ) : (
         <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scroll}>
           <View style={[styles.summary, shadow1]}>

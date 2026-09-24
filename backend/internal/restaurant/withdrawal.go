@@ -59,12 +59,12 @@ const (
 
 // Sentinel errors.
 var (
-	ErrWithdrawalsDisabled  = errors.New("restaurant: merchant withdrawals are disabled (FEATURE_RESTAURANT_WITHDRAWALS_ENABLED off)")
-	ErrWithdrawMissingIdem  = errors.New("restaurant: Idempotency-Key required to request a withdrawal")
-	ErrWithdrawBadAmount    = errors.New("restaurant: withdrawal amount must be a positive integer (kobo)")
+	ErrWithdrawalsDisabled   = errors.New("restaurant: merchant withdrawals are disabled (FEATURE_RESTAURANT_WITHDRAWALS_ENABLED off)")
+	ErrWithdrawMissingIdem   = errors.New("restaurant: Idempotency-Key required to request a withdrawal")
+	ErrWithdrawBadAmount     = errors.New("restaurant: withdrawal amount must be a positive integer (kobo)")
 	ErrWithdrawNoBankAccount = errors.New("restaurant: bank account not found for this merchant")
-	ErrWithdrawNotFound     = errors.New("restaurant: withdrawal not found")
-	ErrWithdrawNotReady     = errors.New("restaurant: withdrawal is not in a settleable state")
+	ErrWithdrawNotFound      = errors.New("restaurant: withdrawal not found")
+	ErrWithdrawNotReady      = errors.New("restaurant: withdrawal is not in a settleable state")
 )
 
 // Withdrawal mirrors a row of public.restaurant_withdrawals.
@@ -528,6 +528,74 @@ func (s *Service) GetWithdrawal(ctx context.Context, ownerID, id string) (*Withd
 		       provider_reference, failure_reason, idempotency_key, created_at, updated_at
 		FROM restaurant_withdrawals WHERE id=$1 AND user_id=$2`
 	w, err := s.scanWithdrawal(s.db.QueryRow(ctx, q, id, ownerID))
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrWithdrawNotFound
+		}
+		return nil, err
+	}
+	return w, nil
+}
+
+// ── Admin reads ──────────────────────────────────────────────────────────────
+
+// validWithdrawalStatusFilter mirrors the CHECK constraint on
+// restaurant_withdrawals.status — used to reject a bad admin filter value
+// rather than silently matching zero rows.
+func validWithdrawalStatusFilter(status string) bool {
+	switch status {
+	case "", WithdrawalStatusPending, WithdrawalStatusProcessing, WithdrawalStatusPaid,
+		WithdrawalStatusFailed, WithdrawalStatusReversed:
+		return true
+	default:
+		return false
+	}
+}
+
+// AdminListWithdrawals returns withdrawal requests across ALL merchants/riders,
+// optionally filtered by status, newest first. Unlike ListWithdrawals this is NOT
+// owner-scoped — it backs the platform ops console (restaurant.admin.withdrawals),
+// which is the security boundary, not ownership.
+func (s *Service) AdminListWithdrawals(ctx context.Context, status string, limit int) ([]Withdrawal, error) {
+	if limit <= 0 || limit > 200 {
+		limit = 50
+	}
+	if !validWithdrawalStatusFilter(status) {
+		return nil, fmt.Errorf("restaurant: invalid status filter %q", status)
+	}
+	const q = `
+		SELECT id, user_id, bank_account_id, amount_kobo, currency, status, ledger_ref,
+		       provider_reference, failure_reason, idempotency_key, created_at, updated_at
+		FROM restaurant_withdrawals
+		WHERE ($1 = '' OR status = $1)
+		ORDER BY created_at DESC LIMIT $2`
+	rows, err := s.db.Query(ctx, q, status, limit)
+	if err != nil {
+		return nil, fmt.Errorf("restaurant: admin list withdrawals: %w", err)
+	}
+	defer rows.Close()
+	out := []Withdrawal{}
+	for rows.Next() {
+		w, err := s.scanWithdrawal(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, *w)
+	}
+	return out, rows.Err()
+}
+
+// AdminGetWithdrawal returns a single withdrawal by id, unscoped by owner (ops
+// console detail view / settle-failure lookup). See AdminListWithdrawals.
+func (s *Service) AdminGetWithdrawal(ctx context.Context, id string) (*Withdrawal, error) {
+	if _, err := uuid.Parse(id); err != nil {
+		return nil, ErrWithdrawNotFound
+	}
+	const q = `
+		SELECT id, user_id, bank_account_id, amount_kobo, currency, status, ledger_ref,
+		       provider_reference, failure_reason, idempotency_key, created_at, updated_at
+		FROM restaurant_withdrawals WHERE id=$1`
+	w, err := s.scanWithdrawal(s.db.QueryRow(ctx, q, id))
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrWithdrawNotFound

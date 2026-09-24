@@ -80,5 +80,10 @@ export function buildUpdateStoreBody(patch: UpdateStoreInput): Record<string, un
   if (patch.address !== undefined) body.address = patch.address;
   if (patch.logoUrl !== undefined) body.logo_url = patch.logoUrl;
   if (patch.packagingFeeKobo !== undefined) body.packaging_fee_kobo = patch.packagingFeeKobo;
+  if (patch.geo !== undefined) {
+    body.geo_lat = patch.geo?.lat;
+    body.geo_lng = patch.geo?.lng;
+    body.plus_code = patch.geo?.plusCode;
+  }
   return body;
 }

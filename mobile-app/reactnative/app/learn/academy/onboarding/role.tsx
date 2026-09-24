@@ -25,13 +25,13 @@ export default function RoleSelectScreen() {
 
   const next = () => {
     setRoleMut.mutate(role, {
-      onSettled: () => router.push('/learn/academy/onboarding/age'),
+      onSettled: () => router.push('/learn/academy/onboarding/class'),
     });
   };
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
-      <ScreenHeader title="Welcome to Spotlight Academy" subtitle="Step 1 of 4 · Who are you?" />
+      <ScreenHeader title="Welcome to Spotlight Academy" subtitle="Step 1 of 2 · Who are you?" />
       <ScrollView contentContainerStyle={styles.scroll}>
         <Text style={styles.lead}>Spotlight Academy is one app for the whole family. Pick how you’ll use it — you can add the other role later.</Text>
         {ROLES.map((r) => {

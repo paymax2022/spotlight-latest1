@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"log"
 
 	"github.com/gin-gonic/gin"
@@ -58,6 +59,7 @@ func RegisterConnectMoney(member *gin.RouterGroup, admin *gin.RouterGroup, cfg c
 	settlement := &connectSettlementAdapter{ledger: ledgerSvc}
 	transfer := &connectWalletTransferAdapter{ledger: ledgerSvc}
 	tierGate := &connectTierGateAdapter{tiers: tiersSvc}
+	payoutReverser := &connectPayoutReverseAdapter{ledger: ledgerSvc}
 
 	// --- AML monitoring + NFIU case scaffold (hooks shared by all money flows) ---
 	amlSvc := connectaml.NewService(
@@ -70,6 +72,8 @@ func RegisterConnectMoney(member *gin.RouterGroup, admin *gin.RouterGroup, cfg c
 	// --- Gifting (wallet→wallet real-Naira gift) ---
 	giftSvc := connectgifting.NewService(
 		connectgifting.NewRepository(pool), transfer, tiersSvc, audit, amlSvc)
+	// Admin-reporting-only tier lookup (read-only; see gifting/admin.go).
+	giftSvc.SetTierReader(&connectTierGateAdapter{tiers: tiersSvc})
 	connectgifting.Register(member, giftSvc)
 
 	// --- Voting (free polls + paid voting) ---
@@ -84,7 +88,7 @@ func RegisterConnectMoney(member *gin.RouterGroup, admin *gin.RouterGroup, cfg c
 	// best-effort and can never fail or reverse a vote (see recordCommissionSafe). Flag
 	// off ⇒ no recorder is set ⇒ the seam stays nil ⇒ silent no-op.
 	if cfg.FeatureCommissionEnabled {
-		voteSvc.SetCommissionRecorder(commissionRecorderAdapter{svc: commission.NewService(commission.NewRepository(pool), nil)})
+		voteSvc.SetCommissionRecorder(commissionRecorderAdapter{svc: withReferralSplit(commission.NewService(commission.NewRepository(pool), nil), pool, cfg)})
 		log.Println("[connect-money] commission recording wired → Contest/Voting (earning-row only; no ledger re-post)")
 	}
 	connectvoting.Register(member, voteSvc, cfg)
@@ -103,7 +107,7 @@ func RegisterConnectMoney(member *gin.RouterGroup, admin *gin.RouterGroup, cfg c
 	payoutSvc := connectpayouts.NewService(
 		connectpayouts.NewRepository(pool), walletSvc, settlement, tierGate,
 		nil, // settlement provider hook wired in production (stub: no auto-settle)
-		audit, amlSvc)
+		audit, amlSvc, payoutReverser)
 	connectpayouts.Register(member, payoutSvc)
 
 	// --- Admin routes with RBAC (per-route permission checks) ---
@@ -114,8 +118,16 @@ func RegisterConnectMoney(member *gin.RouterGroup, admin *gin.RouterGroup, cfg c
 	connectvoting.RegisterAdmin(admin, voteSvc, guard, cfg)
 	// AML admin routes
 	connectaml.Register(admin, amlSvc, guard)
+	// Gifting admin routes (CONNECT-001: gift-transactions ledger, read-only)
+	connectgifting.RegisterAdmin(admin, giftSvc, guard)
+	// Payouts admin routes (CONNECT-001: the member group only ever exposed
+	// creator-facing POST/GET /payouts — there was no admin list/detail/
+	// settle/reject surface at all, so the admin payout queue 404'd in
+	// production). List/detail read-only; settle/reject are money-adjacent
+	// (settle stamps the row only, reject reverses the parked ledger debit).
+	connectpayouts.RegisterAdmin(admin, payoutSvc, guard)
 
-	log.Println("[connect-money] routes registered — gifting/voting (+ eviction/stages)/aml/payouts live")
+	log.Println("[connect-money] routes registered — gifting/voting (+ eviction/stages)/aml/payouts (+ admin) live")
 }
 
 // connectMoneyAuditAdapter bridges the per-package Auditor interface to the
@@ -202,4 +214,39 @@ func (g *connectTierGateAdapter) GetUserTier(ctx context.Context, userID string)
 		return 0, err
 	}
 	return int(t), nil
+}
+
+// connectPayoutReverseAdapter implements connectpayouts.PayoutReverser for the
+// admin reject action. It reverses the parked settlement debit a payout
+// Request() posted: a balanced REVERSAL_DEBIT/REVERSAL_CREDIT pair via
+// ledger.PostReversal — money moves BACK from the standing settlement account
+// to the creator's user_wallet. This is the mirror of connectSettlementAdapter
+// (which resolves the same settlement account for the forward debit) and reuses
+// the same ledger.Service — no new money-movement code, per CLAUDE.md.
+//
+// The idempotency key is deterministic (not a client-supplied header) so a
+// retried admin request — or a double-click in the console — can never reverse
+// the same payout twice; the ledger's own unique-constraint dedup makes the
+// second call a safe no-op (see ledger.ErrDuplicate handling below).
+type connectPayoutReverseAdapter struct{ ledger *ledger.Service }
+
+func (r *connectPayoutReverseAdapter) ReversePayout(ctx context.Context, creatorID, payoutID string, amountKobo int64) error {
+	if amountKobo <= 0 {
+		return ledger.ErrInsufficientFunds
+	}
+	settleAcc, err := r.ledger.GetOrCreateStandingAccount(ctx, ledger.AccountSettlement)
+	if err != nil {
+		return err
+	}
+	creatorWallet, err := r.ledger.GetOrCreateUserWallet(ctx, creatorID)
+	if err != nil {
+		return err
+	}
+	ref := "connect:payout:reject:" + payoutID
+	idem := "connect:payout:reject:" + payoutID
+	err = r.ledger.PostReversal(ctx, creatorWallet.ID, settleAcc.ID, amountKobo, ref, idem)
+	if errors.Is(err, ledger.ErrDuplicate) {
+		return nil // already reversed — idempotent success, mirrors connectRefundAdapter
+	}
+	return err
 }

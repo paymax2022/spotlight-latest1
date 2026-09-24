@@ -1,4 +1,4 @@
-import { apiV1 } from '@/config/env';
+import { apiV1, adminAuthHeaders } from '@/config/env';
 import type {
   ModuleAuditEntry,
   ModuleEnvironment,
@@ -33,7 +33,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     res = await fetch(`${apiV1()}/admin/modules${path}`, {
       credentials: 'include',
       cache: 'no-store',
-      headers: { 'Content-Type': 'application/json' },
+      headers: adminAuthHeaders({ 'Content-Type': 'application/json' }),
       ...init,
     });
   } catch {

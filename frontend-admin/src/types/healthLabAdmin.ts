@@ -65,6 +65,16 @@ export type LabDashboard = {
   order_mix: { label: string; orders: number; gmv_kobo: number; share_pct: number }[];
   tat_trend: { date: string; tat_hours: number }[];
   activity: LabActivity[];
+
+  // ── Lab admin-portal gap closure: fields actually computed by the real
+  // backend (GET /admin/dashboard → healthlab.AdminDashboard). Additive/
+  // optional so the mock fixture above (which doesn't set them) still
+  // type-checks. See healthLabAdminService.ts getLabDashboard for the
+  // mapping and why they are distinct from the (still-mocked) fields above.
+  // Mirrors healthAdmin.ts's identical PHARMACY-001 addition exactly.
+  orders_total?: number;
+  orders_by_state?: Record<string, number>;
+  platform_revenue_kobo_week?: number;
 };
 
 // ── B · MLSCN credential audit queue (HL-2) ────────────────────────────────────

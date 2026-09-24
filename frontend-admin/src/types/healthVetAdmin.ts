@@ -64,6 +64,16 @@ export type VetDashboard = {
   appointment_mix: { label: string; appointments: number; gmv_kobo: number; share_pct: number }[]; // tele / home / clinic
   appointments_trend: { date: string; appointments: number }[];
   activity: VetActivity[];
+
+  // ── Vet admin-portal gap closure: fields actually computed by the real
+  // backend (GET /admin/dashboard → healthvet.AdminDashboard). Additive/
+  // optional so the mock fixture above (which doesn't set them) still
+  // type-checks. See healthVetAdminService.ts getVetDashboard for the
+  // mapping and why they are distinct from the (still-mocked) fields above.
+  // Mirrors healthLabAdmin.ts's identical dashboard-fix addition exactly.
+  appointments_total?: number;
+  appointments_by_state?: Record<string, number>;
+  platform_revenue_kobo_week?: number;
 };
 
 // ── B · VCN credential audit queue (HL-2) ──────────────────────────────────────

@@ -413,7 +413,7 @@ const styles = StyleSheet.create({
   noticeBox:   { backgroundColor: Colors.iconBgGold, borderRadius: Radius.lg, padding: Spacing.lg, gap: 4 },
   noticeTitle: { ...Typography.labelLg, color: Colors.onSurface },
   noticeText:  { ...Typography.bodyMd, color: Colors.onSurfaceVariant },
-  limitReached: { color: Colors.gold },
+  limitReached: { color: Colors.onWarning },
   submit:      { backgroundColor: Colors.primary, borderRadius: Radius.md, paddingVertical: 14,
                  alignItems: 'center', marginTop: Spacing.sm },
   submitBusy:  { opacity: 0.7 },

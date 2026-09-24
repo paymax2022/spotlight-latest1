@@ -58,7 +58,7 @@ func NewRouter(cfg config.Config) *gin.Engine {
 	realityTV := handlers.NewRealityTVHandler(services.NewRealityTVService(realityTVRepo))
 	// #23 audit coverage: STEM sensitive mutations emit structured audit events
 	// via the shared audit_service. Additive — read endpoints are unaffected.
-	stem := handlers.NewStemHandler(services.NewStemService(stemRepo)).WithAudit(auditService)
+	stem := handlers.NewStemHandler(services.NewStemService(stemRepo)).WithAudit(auditService).WithRBAC(rbacService)
 
 	v1 := r.Group("/api/v1")
 	{
@@ -209,17 +209,25 @@ func NewRouter(cfg config.Config) *gin.Engine {
 		adminGroup := v1.Group("/admin")
 		adminGroup.Use(middleware.RequireAdmin(cfg.AdminAPIKey, cfg.AppEnv))
 		// AUTH-010: this group (menu-counts, leads, chatbot sessions, handoffs,
-		// analytics, competitions, reality-tv dashboard — and, since stemRead/
-		// stemManage are sub-groups of adminGroup created below, the whole STEM
-		// admin tree too) was gated ONLY by RequireAdmin, which is satisfied by
-		// the shared x-admin-api-key. That key is attached unconditionally by
-		// frontend-admin's admin-proxy route to every request it forwards,
-		// authenticated or not — so any anonymous caller through the proxy (or
-		// anyone who obtains the key) reached real PII (lead names/emails/phones,
-		// chatbot transcripts) with no identity check at all. overviewGroup and
-		// adminConsole below already require a real, RBAC-verified admin identity
-		// on top of RequireAdmin (see RequireAdminConsoleRole); this group gets
-		// the same layering now, for the same reason.
+		// analytics, competitions, reality-tv dashboard) was gated ONLY by
+		// RequireAdmin, which is satisfied by the shared x-admin-api-key. That
+		// key is attached unconditionally by frontend-admin's admin-proxy route
+		// to every request it forwards, authenticated or not — so any anonymous
+		// caller through the proxy (or anyone who obtains the key) reached real
+		// PII (lead names/emails/phones, chatbot transcripts) with no identity
+		// check at all. overviewGroup and adminConsole below already require a
+		// real, RBAC-verified admin identity on top of RequireAdmin (see
+		// RequireAdminConsoleRole); this group gets the same layering now, for
+		// the same reason.
+		//
+		// STEM routes (stemRead/stemManage) are deliberately NOT sub-groups of
+		// this one — see ADR-057. consoleAdminRoleSlugs (super-admin/
+		// system-admin only) is the right gate for this group's PII-bearing
+		// routes, but it would make every STEM-specific role (JUDGE,
+		// SCHOOL_ADMIN, ...) unreachable by anyone who isn't also a platform
+		// admin, no matter what RequireStemRoles decided. STEM gets its own
+		// sibling group below, gated by RequireVerifiedIdentity (real identity,
+		// no role floor) + RequireStemRoles (the actual per-route role check).
 		adminGroup.Use(middleware.RequireAdminConsoleRole(supabase, rbacService))
 		adminGroup.GET("/menu-counts", admin.MenuCounts)
 		adminGroup.GET("/leads", leads.List)
@@ -234,19 +242,24 @@ func NewRouter(cfg config.Config) *gin.Engine {
 		adminGroup.POST("/competitions/open-mic", competitions.CreateOpenMic)
 		adminGroup.GET("/reality-tv/dashboard", realityTV.Dashboard)
 
-		stemRead := adminGroup.Group("")
+		// Sibling of adminGroup, NOT a child — same "/admin" URL prefix (routes
+		// registered below don't collide with adminGroup's own paths above) but
+		// its own middleware chain, so RequireAdminConsoleRole's narrow
+		// consoleAdminRoleSlugs floor never applies here. See ADR-057.
+		stemGroup := v1.Group("/admin")
+		stemGroup.Use(middleware.RequireAdmin(cfg.AdminAPIKey, cfg.AppEnv))
+		stemGroup.Use(middleware.RequireVerifiedIdentity(supabase, rbacService))
+		// Deliberately NOT behind RequireStemRoles — see StemHandler.MyRole's
+		// doc comment. Any verified caller can ask "what STEM role do I have",
+		// including one whose answer is "none".
+		stemGroup.GET("/stem/my-role", stem.MyRole)
+
+		stemRead := stemGroup.Group("")
 		stemRead.Use(middleware.StemRateLimit(120, time.Minute))
-		stemRead.Use(middleware.RequireStemRoles(
-			"SUPER_ADMIN",
-			"ADMIN",
-			"OPERATIONS_MANAGER",
-			"CONTEST_MANAGER",
-			"SCHOOL_ADMIN",
-			"TEACHER_COACH",
-			"JUDGE",
-			"MENTOR",
-			"SPONSOR",
-		))
+		// The full set — every STEM role can read. middleware.AllStemRoleNames
+		// is the single source of truth for "every STEM role name that exists";
+		// StemHandler.MyRole filters against the same list.
+		stemRead.Use(middleware.RequireStemRoles(rbacService, middleware.AllStemRoleNames...))
 		stemRead.GET("/stem/overview", stem.Overview)
 		stemRead.GET("/schools", stem.Schools)
 		stemRead.GET("/schools/:id/dashboard", stem.SchoolDashboard)
@@ -276,9 +289,9 @@ func NewRouter(cfg config.Config) *gin.Engine {
 		stemRead.GET("/stem-reports/summary", stem.ReportSummary)
 		stemRead.GET("/stem-reports/buckets", stem.ReportBuckets)
 
-		stemManage := adminGroup.Group("")
+		stemManage := stemGroup.Group("")
 		stemManage.Use(middleware.StemRateLimit(40, time.Minute))
-		stemManage.Use(middleware.RequireStemRoles("SUPER_ADMIN", "ADMIN", "OPERATIONS_MANAGER", "CONTEST_MANAGER"))
+		stemManage.Use(middleware.RequireStemRoles(rbacService, "SUPER_ADMIN", "ADMIN", "OPERATIONS_MANAGER", "CONTEST_MANAGER"))
 		stemManage.PATCH("/schools/:id/verification", stem.UpdateSchoolVerification)
 		stemManage.POST("/stem-contests", stem.CreateContest)
 		stemManage.POST("/stem-eligibility/check", stem.CheckEligibility)
@@ -419,8 +432,10 @@ func NewRouter(cfg config.Config) *gin.Engine {
 
 	// Finance modules — wired only when the shared pool is present. Returns the
 	// Direct Referral Rewards engine service (nil when flag-off) so Phase-1 revenue
-	// modules wired below (Marketplace) can emit purchase events (PRD §2.5/§7.1).
-	referralRewardsSvc := registerFinanceRoutes(r, cfg, supabase, rbacService, sharedPool, rtHub)
+	// modules wired below (Marketplace) can emit purchase events (PRD §2.5/§7.1),
+	// and the KYC verification gateway (nil unless FEATURE_KYC_VERIFY_ENABLED) so
+	// registerConnectWalletRoutes below can run a real check for tier1 submissions.
+	referralRewardsSvc, kycVerifySvc := registerFinanceRoutes(r, cfg, supabase, rbacService, sharedPool, rtHub)
 
 	// Paymax Connect module — wired only when FEATURE_CONNECT_ENABLED + shared pool.
 	registerConnectRoutes(r, cfg, supabase, rbacService, sharedPool)
@@ -430,7 +445,7 @@ func NewRouter(cfg config.Config) *gin.Engine {
 	// All endpoints require authentication (Bearer token). Requires shared pool.
 	if sharedPool != nil {
 		authMiddleware := middleware.RequireAuthContext(supabase, rbacService)
-		registerConnectWalletRoutes(r, supabase, rbacService, authMiddleware, sharedPool, auditService)
+		registerConnectWalletRoutes(r, supabase, rbacService, authMiddleware, sharedPool, auditService, kycVerifySvc)
 	}
 
 	// Admin console — unified /api/v1/admin/* endpoints for mobile admin UI

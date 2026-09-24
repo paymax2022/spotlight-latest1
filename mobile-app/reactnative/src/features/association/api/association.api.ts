@@ -40,6 +40,14 @@ import { getCreatedOrganisation, listCreatedOrganisations } from './association.
 /** Simulated network latency so loading states render in mock mode. */
 const delay = (ms = 320) => new Promise((r) => setTimeout(r, ms));
 
+// Every write below has a real live endpoint (verified against
+// backend/internal/association/routes.go and a full green run of
+// backend/tests/association), so fixture mode has nothing to add and refuses
+// loudly instead of reporting a write it did not perform — mirrors
+// frontend-admin's crowdfundingAdminService.ts NOT_IN_FIXTURE_MODE pattern.
+const notInFixtureMode = (action: string) =>
+  new Error(`${action} is unavailable in fixture mode: this app will not report a write it did not perform. Set EXPO_PUBLIC_ASSOCIATION_USE_MOCK=false to send this against the live backend.`);
+
 // ─── Organisation discovery ───────────────────────────────────────────────────
 
 export async function getOrganisations(search?: string): Promise<OrganisationSummary[]> {
@@ -74,31 +82,7 @@ export async function getOrganisation(id: string): Promise<Organisation> {
 // ─── Join / application flow ──────────────────────────────────────────────────
 
 export async function submitApplication(draft: JoinDraft): Promise<ApplicationResult> {
-  if (USE_MOCK) {
-    await delay(500);
-    const org = MOCK_ORGANISATIONS.find((o) => o.id === draft.organisationId);
-    const type = org?.groupType ?? 'CLOSED';
-    const status =
-      type === 'OPEN' ? 'APPROVED'
-      : type === 'PAID' ? 'PENDING_PAYMENT'
-      : 'PENDING_CHAPTER';
-    return {
-      applicationId: `app_${Date.now()}`,
-      status,
-      organisationName: org?.name ?? 'the organisation',
-      submittedAt: new Date().toISOString(),
-      message:
-        status === 'APPROVED'
-          ? 'You are now a member. Welcome aboard!'
-          : status === 'PENDING_PAYMENT'
-          ? 'Almost there — complete your registration payment to activate membership.'
-          : 'Your application has been sent to your state chapter admin for review.',
-      nextStep:
-        status === 'APPROVED' ? null
-        : status === 'PENDING_PAYMENT' ? 'Pay registration fee'
-        : 'Awaiting chapter approval',
-    };
-  }
+  if (USE_MOCK) throw notInFixtureMode('Submitting a membership application');
   // Served at /apply (not /members/apply) — /members is a static collection
   // route with a /:id param sibling, which conflicts with /members/apply in gin.
   const { data } = await api.post(`${BASE}/apply`, draft, {
@@ -205,10 +189,7 @@ export async function payInvoice(
   invoiceId: string,
   method: 'WALLET' | 'PAYSTACK',
 ): Promise<PayInvoiceResult> {
-  if (USE_MOCK) {
-    await delay(600);
-    return { receiptId: `rcpt_${invoiceId}`, status: 'SUCCESS' };
-  }
+  if (USE_MOCK) throw notInFixtureMode('Paying a dues invoice');
   // Money mutation → idempotency key required (IRON RULE).
   const { data } = await api.post(
     `${BASE}/dues/${invoiceId}/pay`,
@@ -278,16 +259,10 @@ export async function getElection(id: string): Promise<ElectionDetail> {
 }
 
 export async function castVote(electionId: string, positionId: string, candidateId: string): Promise<VoteReceipt> {
-  if (USE_MOCK) {
-    await delay(420);
-    const already = mockBallots[positionId];
-    if (already) {
-      return { receipt: already.receipt, positionId, confirmedAt: new Date().toISOString(), alreadyCast: true };
-    }
-    const receipt = 'VR-' + Math.abs(hashString(positionId + candidateId)).toString(16);
-    mockBallots[positionId] = { receipt };
-    return { receipt, positionId, confirmedAt: new Date().toISOString(), alreadyCast: false };
-  }
+  // Election integrity: a vote must never be faked as cast — mock mode must
+  // refuse loudly rather than fabricate a receipt for a ballot that was never
+  // recorded server-side.
+  if (USE_MOCK) throw notInFixtureMode('Casting a vote');
   const { data } = await api.post(
     `${BASE}/elections/${electionId}/vote`,
     { positionId, candidateId },
@@ -296,9 +271,3 @@ export async function castVote(electionId: string, positionId: string, candidate
   return data;
 }
 
-// Small deterministic hash for a stable mock receipt (no crypto in the app path).
-function hashString(s: string): number {
-  let h = 0;
-  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0;
-  return h;
-}

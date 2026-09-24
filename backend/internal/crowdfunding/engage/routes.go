@@ -28,6 +28,7 @@ import (
 //	POST /updates/:updateId/like     → like an update (idempotent)
 //	GET  /campaigns/:id/documents    → supporting documents
 //	POST /campaigns/:id/documents    → attach an uploaded document (creator only)
+//	POST /campaigns/:id/broadcast    → message every backer (creator only)
 //	GET  /settings/notifications     → notification preferences
 //	PUT  /settings/notifications     → upsert notification preferences
 func Register(rg *gin.RouterGroup, db *pgxpool.Pool) {
@@ -68,6 +69,8 @@ func Register(rg *gin.RouterGroup, db *pgxpool.Pool) {
 
 	rg.GET("/campaigns/:id/documents", h.ListDocuments)
 	rg.POST("/campaigns/:id/documents", h.AttachDocument)
+
+	rg.POST("/campaigns/:id/broadcast", h.Broadcast)
 
 	rg.GET("/settings/notifications", h.GetNotificationPrefs)
 	rg.PUT("/settings/notifications", h.UpdateNotificationPrefs)

@@ -4,6 +4,7 @@
  */
 
 import { createAdminClient } from '@/lib/supabase/admin';
+import { processReferralReward } from '@/src/server/referrals/service';
 
 export type OutboxEventType =
   | 'votes.free.cast'
@@ -181,21 +182,51 @@ async function handleOutboxEvent(event: OutboxEvent): Promise<boolean> {
 
 /**
  * Handle referral reward logic
+ *
+ * REF-001: this used to be a stub that logged and returned `true`, which marked
+ * the outbox row `done` WITHOUT crediting the referrer — a silent, permanent,
+ * unrecoverable loss of the reward if this generic drain worker ever ran against
+ * a `referral.triggered` row instead of (or racing with) the dedicated
+ * `processReferralOutbox()` path in `@/src/server/referrals/service`.
+ *
+ * Both drain paths now converge on the same `processReferralReward()` — the one
+ * real crediting implementation — so it is safe regardless of which path (or
+ * both, racing) processes a given row: `creditWallet()` is keyed on
+ * `referral-reward:<referrerId>:<referredUserId>` and checks that idempotency
+ * key (plus a UNIQUE constraint on the ledger insert) before posting, so a
+ * duplicate attempt is a no-op, never a double-credit.
  */
 async function handleReferralTriggered(payload: Record<string, any>): Promise<boolean> {
   try {
-    const { shareCode, voterId, contestantId } = payload;
+    const { shareCode, voterId, contestantId } = payload as {
+      shareCode?: string;
+      voterId?: string;
+      contestantId?: string;
+    };
 
-    // TODO: Implement referral reward logic
-    // This would typically:
-    // 1. Validate the share code
-    // 2. Credit the referrer's wallet
-    // 3. Log the referral event
+    if (!shareCode || !voterId) {
+      // Malformed payload — nothing to credit. Treat as terminal (done), not a
+      // retryable failure: retrying won't make a missing field appear.
+      console.warn('[Outbox] Referral triggered with missing shareCode/voterId:', {
+        shareCode,
+        voterId,
+        contestantId,
+      });
+      return true;
+    }
 
-    console.log('[Outbox] Referral triggered:', { shareCode, voterId, contestantId });
+    const result = await processReferralReward({ shareCode, referredUserId: voterId });
+    console.log('[Outbox] Referral triggered — processed via processReferralReward:', {
+      shareCode,
+      voterId,
+      contestantId,
+      result,
+    });
     return true;
   } catch (error) {
     console.error('[Outbox] handleReferralTriggered error:', error);
+    // Transient failure (e.g. DB hiccup) — return false so the caller retries
+    // (up to 3 attempts) instead of silently marking this row done.
     return false;
   }
 }

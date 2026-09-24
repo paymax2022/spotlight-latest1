@@ -18,7 +18,7 @@ export default function DisputesAdminPage() {
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [filterStatus, setFilterStatus] = useState('open');
-  const [resolving, setResolving] = useState<{ id: string; note: string; resolution: DisputeResolution } | null>(null);
+  const [resolving, setResolving] = useState<{ id: string; note: string; resolution: DisputeResolution; moduleType: string } | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -111,7 +111,7 @@ export default function DisputesAdminPage() {
                   variant="primary"
                   sm
                   disabled={busy === d.id}
-                  onClick={() => setResolving({ id: d.id, note: '', resolution: 'no_action' })}
+                  onClick={() => setResolving({ id: d.id, note: '', resolution: 'no_action', moduleType: d.module_type })}
                   style={{ marginTop: '0.5rem' }}
                 >
                   {busy === d.id ? 'Processing…' : 'Resolve'}
@@ -139,6 +139,22 @@ export default function DisputesAdminPage() {
                 <option value="partial_refund">Partial refund</option>
               </select>
             </label>
+            {resolving.moduleType !== 'food' && resolving.resolution !== 'no_action' && (
+              // DIS-2: the backend's generic Resolve() only moves real money for
+              // module_type=="food" (internal/finance/disputes/service.go) — every
+              // other module_type is a bare status update today, by deliberate,
+              // documented design (no refund engine exists yet for stays/mobility/
+              // etc). Warn here rather than let the admin believe a refund posted
+              // when only the ticket's status changed.
+              <p style={{
+                fontSize: '0.8rem', color: colors.warning, background: tint(colors.warning, 0.12),
+                padding: '0.5rem 0.75rem', borderRadius: '0.375rem', marginBottom: '1rem',
+              }}>
+                ⚠️ No refund engine exists yet for module &quot;{resolving.moduleType}&quot;. Choosing
+                a refund resolution here only marks this ticket resolved — it does not move any
+                money. Process the refund manually if one is owed.
+              </p>
+            )}
             <label style={{ display: 'block', marginBottom: '1rem', fontSize: '0.85rem', fontWeight: 600 }}>
               Admin note (required)
               <textarea

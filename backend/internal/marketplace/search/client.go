@@ -194,10 +194,15 @@ func (c *Client) Search(ctx context.Context, req SearchRequest) (SearchResults, 
 
 	nextCursor := ""
 	limit := clampLimit(req.Limit)
+	offset := parseCursor(req.Cursor)
 	if len(results) == limit {
 		// Simple offset-style opaque cursor; the indexer/search API can evolve
-		// to search_after without changing this exported shape.
-		nextCursor = fmt.Sprintf("%d", limit)
+		// to search_after without changing this exported shape. Must be the
+		// REAL next offset (current offset + page size) — it used to always
+		// emit the bare limit constant, so every page after the first pointed
+		// back at "offset=limit" and the query builder never even read cursor
+		// input, making all paging past page 1 repeat page 1 forever.
+		nextCursor = fmt.Sprintf("%d", offset+limit)
 	}
 
 	return SearchResults{

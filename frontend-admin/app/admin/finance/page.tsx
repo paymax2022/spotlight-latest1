@@ -5,9 +5,9 @@ export const metadata = { title: 'Finance Admin — Spotlight' };
 
 const cards = [
   {
-    href: '/admin/finance/kyc',
-    title: 'KYC Queue',
-    description: 'Review and approve or reject pending KYC submissions.',
+    href: '/admin/finance/kyc-verify',
+    title: 'KYC Verification',
+    description: 'Review identity checks (Dojah/Smile ID/Youverify) and approve or reject cases.',
     icon: '🪪',
     accent: colors.warning,
   },

@@ -3,6 +3,7 @@ import { createAdminClient } from '@/lib/supabase/server';
 import { ApiError } from '@/src/lib/api/responses';
 import { initializePaystackPayment, verifyPaystackPayment } from '@/src/server/voting/payment/paystack';
 import { payUtility, quoteUtilityPayment } from '@/src/server/utility/service';
+import { creditWallet } from '@/src/server/wallet/service';
 import type { UtilityCategory } from '@/src/server/utility/types';
 import { isReturnableOrigin, resolveReturnOrigin } from '@/src/server/registration/return-origin';
 
@@ -153,21 +154,51 @@ export async function verifyUtilityPaystackPayment(reference: string, userId?: s
   }
 
   const metadata = (typeof intent.metadata === 'object' && intent.metadata !== null ? intent.metadata : {}) as Record<string, unknown>;
-  const result = await payUtility(String(intent.user_id), {
-    category: intent.category as UtilityCategory,
-    billerId: String(intent.biller_id),
-    productId: String(intent.product_id),
-    customerReference: String(intent.customer_reference),
-    amountKobo: Number(intent.amount_kobo),
-    paymentSource: 'paystack',
-    idempotencyKey: `utility:paystack:${reference}`,
-    metadata: {
-      ...metadata,
-      payment_reference: reference,
-      paystack_provider_reference: verification.providerReference,
-      payment_source: 'paystack',
-    },
-  });
+  let result: Awaited<ReturnType<typeof payUtility>>;
+  try {
+    result = await payUtility(String(intent.user_id), {
+      category: intent.category as UtilityCategory,
+      billerId: String(intent.biller_id),
+      productId: String(intent.product_id),
+      customerReference: String(intent.customer_reference),
+      amountKobo: Number(intent.amount_kobo),
+      paymentSource: 'paystack',
+      idempotencyKey: `utility:paystack:${reference}`,
+      metadata: {
+        ...metadata,
+        payment_reference: reference,
+        paystack_provider_reference: verification.providerReference,
+        payment_source: 'paystack',
+      },
+    });
+  } catch (err) {
+    // The Paystack charge was just verified above — the money is already
+    // captured. payUtility can throw BEFORE it ever creates a
+    // utility_transactions row (e.g. customer/meter validation failure), so
+    // there is no transaction for payUtility's own reversal branch to act
+    // on. Without this, that charge was captured with no transaction record
+    // AND no refund — found 2026-09-18 via a cable_tv purchase whose
+    // validation failed on every attempt (see the sandbox fix in
+    // adapters/vtpass.ts) and left money stuck with zero trace of it.
+    const message = err instanceof ApiError ? err.message : 'Utility payment could not be completed.';
+    await creditWallet(String(intent.user_id), {
+      amountKobo: Number(intent.retail_amount_kobo),
+      reference,
+      idempotencyKey: `utility:paystack-intent:${intent.id}:VALIDATION_REFUND`,
+      description: `Refund: utility payment ${reference} (${message})`,
+      metadata: {
+        utility_paystack_intent_id: intent.id,
+        category: intent.category,
+        refund_reason: 'validation_failed',
+        original_payment_source: 'paystack',
+      },
+    });
+    await supabase
+      .from('utility_paystack_intents')
+      .update({ status: 'failed', failure_reason: message, updated_at: new Date().toISOString() })
+      .eq('id', intent.id);
+    throw new ApiError(message, 400);
+  }
 
   await supabase
     .from('utility_paystack_intents')
