@@ -1,4 +1,4 @@
-# ADR-PR180: Paystack-funded utility payment failures are never refunded via a fabricated wallet credit
+# ADR-PR189: Paystack-funded utility payment failures are never refunded via a fabricated wallet credit
 
 ## Status
 Accepted
