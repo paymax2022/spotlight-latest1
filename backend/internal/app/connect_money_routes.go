@@ -30,6 +30,8 @@ import (
 //
 //   - member: /api/v1/connect      (member-authenticated)
 //   - admin : /api/connect/admin   (member-authenticated; per-route RBAC added here)
+//   - public: /api/v1/connect      (NO auth — same path prefix as member, but
+//     the parent group itself, before connectAuth() was applied to member)
 //
 // Money path reuses the finance ledger/wallet: every mutation posts a balanced
 // double-entry, requires an Idempotency-Key, is tier-checked fail-closed, emits
@@ -38,7 +40,7 @@ import (
 //
 // The orchestrator (connect_routes.go) calls this; this file is the only one the
 // orchestrator wires in. It edits no existing file.
-func RegisterConnectMoney(member *gin.RouterGroup, admin *gin.RouterGroup, cfg config.Config, pool *pgxpool.Pool, rbac services.RBACService) {
+func RegisterConnectMoney(member *gin.RouterGroup, admin *gin.RouterGroup, public *gin.RouterGroup, cfg config.Config, pool *pgxpool.Pool, rbac services.RBACService) {
 	if pool == nil {
 		log.Println("[connect-money] nil pool — skipping Connect money routes")
 		return
@@ -92,6 +94,7 @@ func RegisterConnectMoney(member *gin.RouterGroup, admin *gin.RouterGroup, cfg c
 		log.Println("[connect-money] commission recording wired → Contest/Voting (earning-row only; no ledger re-post)")
 	}
 	connectvoting.Register(member, voteSvc, cfg)
+	connectvoting.RegisterPublic(public, voteSvc, cfg)
 	// Contest expiry loop — closes contests past their voting deadline so a
 	// finished contest stops advertising itself as LIVE on the phone and in the
 	// web list. Votes were already refused correctly by the closes_at window; this

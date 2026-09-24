@@ -250,6 +250,7 @@ type Config struct {
 	FeatureAcademyTuitionEnabled          bool // Academy tuition payment path (Phases 1–5 Go migration)
 	FeatureConnectEnabled                 bool // Paymax Connect (dating/networking) module
 	FeatureContestStageEvictionEnabled    bool // Voting contest stage eviction system (multi-stage, grace period, judge save)
+	FeatureContestantSocialEnabled        bool // Contestant likes + profile-share links (contestant_likes/contestant_shares)
 	// Property Management suite (unification umbrella over estate + realtor):
 	// role context, rent passport, stay→gate-pass bridge. DEFAULT OFF. The estate
 	// and realtor modules keep their own flags; this gates only the /property/*
@@ -733,6 +734,7 @@ func Load() Config {
 		FeatureAcademyTuitionEnabled:          getEnvBool("FEATURE_ACADEMY_TUITION_ENABLED", false),
 		FeatureConnectEnabled:                 getEnvBool("FEATURE_CONNECT_ENABLED", false),
 		FeatureContestStageEvictionEnabled:    getEnvBool("FEATURE_CONTEST_STAGE_EVICTION_ENABLED", false),
+		FeatureContestantSocialEnabled:        getEnvBool("FEATURE_CONTESTANT_SOCIAL_ENABLED", false),
 		FeaturePropertySuiteEnabled:           getEnvBool("FEATURE_PROPERTY_SUITE_ENABLED", false),
 		FeatureFractionalREEnabled:            getEnvBool("FEATURE_FRACTIONAL_RE_ENABLED", false),
 		FeatureCryptoEnabled:                  getEnvBool("FEATURE_CRYPTO_ENABLED", false),

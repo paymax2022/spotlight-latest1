@@ -139,7 +139,7 @@ func (h *Handler) Results(c *gin.Context) {
 // mobile app renders as the contestant list and the leaderboard: both views
 // are the same ranked roster, so a vote cast moves both consistently.
 func (h *Handler) ListRoster(c *gin.Context) {
-	roster, err := h.svc.ListRoster(c.Request.Context(), c.Param("id"), false)
+	roster, err := h.svc.ListRoster(c.Request.Context(), c.Param("id"), false, userID(c))
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "contest not found"})
@@ -172,13 +172,88 @@ func (h *Handler) FreeVoteAllowance(c *gin.Context) {
 // GetContestant — GET /api/v1/connect/contestants/:id (member).
 // One contestant with its live tally and rank, keyed on the contestant id alone.
 func (h *Handler) GetContestant(c *gin.Context) {
-	e, err := h.svc.GetContestant(c.Request.Context(), c.Param("id"))
+	e, err := h.svc.GetContestant(c.Request.Context(), c.Param("id"), userID(c))
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "contestant not found"})
 			return
 		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load contestant"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": e})
+}
+
+// LikeContestant — POST /api/v1/connect/contestants/:id/like (member).
+func (h *Handler) LikeContestant(c *gin.Context) {
+	uid := userID(c)
+	if uid == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
+		return
+	}
+	e, err := h.svc.LikeContestant(c.Request.Context(), c.Param("id"), uid)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "contestant not found"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to like contestant"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": e})
+}
+
+// UnlikeContestant — DELETE /api/v1/connect/contestants/:id/like (member).
+func (h *Handler) UnlikeContestant(c *gin.Context) {
+	uid := userID(c)
+	if uid == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
+		return
+	}
+	e, err := h.svc.UnlikeContestant(c.Request.Context(), c.Param("id"), uid)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to unlike contestant"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": e})
+}
+
+// ShareContestant — POST /api/v1/connect/contestants/:id/share (member).
+// Records a share and returns a token the client turns into a link
+// (webBaseURL + result.path). No Idempotency-Key: unlike a vote or a
+// payment, recording one extra share row from a double-tap has no
+// money/vote-count consequence worth the client-side complexity of an
+// idempotency key, and the count is display-only.
+func (h *Handler) ShareContestant(c *gin.Context) {
+	uid := userID(c)
+	if uid == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
+		return
+	}
+	res, err := h.svc.ShareContestant(c.Request.Context(), c.Param("id"), uid)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "contestant not found"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to record share"})
+		return
+	}
+	c.JSON(http.StatusCreated, gin.H{"data": res})
+}
+
+// ResolveShare — GET /api/v1/connect/share/:token. PUBLIC, no auth: this is
+// what a stranger's browser calls when they follow a shared link before
+// ever signing in, so the web landing page can show who they're being asked
+// to vote for and where to deep-link/redirect once they have the app.
+func (h *Handler) ResolveShare(c *gin.Context) {
+	e, err := h.svc.ResolveShare(c.Request.Context(), c.Param("token"))
+	if err != nil {
+		if errors.Is(err, ErrShareNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "share link not found"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to resolve share link"})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": e})
@@ -192,6 +267,23 @@ func (h *Handler) GetStages(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": stages})
+}
+
+// RegisterPublic wires the one unauthenticated voting route: resolving a
+// share token. It must live outside the member group (which requires a
+// bearer token) because the person following a shared link has no session
+// yet — that is the entire point of the link.
+//
+// Gated behind FEATURE_CONTESTANT_SOCIAL_ENABLED, same as the like/share
+// mutation routes in Register — a token could otherwise resolve before the
+// feature that issues tokens is even live anywhere else.
+func RegisterPublic(public gin.IRouter, svc *Service, cfg config.Config) {
+	if !cfg.FeatureContestantSocialEnabled {
+		log.Println("[connect-voting] FEATURE_CONTESTANT_SOCIAL_ENABLED is off — skipping public share-resolve route")
+		return
+	}
+	h := NewHandler(svc)
+	public.GET("/share/:token", h.ResolveShare)
 }
 
 // PermissionGuard mirrors middleware.RequirePermission: route file supplies
@@ -209,6 +301,13 @@ func Register(member gin.IRouter, svc *Service, cfg config.Config) {
 	member.GET("/contests/:id/contestants", h.ListRoster)
 	member.GET("/contests/:id/free-vote-allowance", h.FreeVoteAllowance)
 	member.GET("/contestants/:id", h.GetContestant)
+	if cfg.FeatureContestantSocialEnabled {
+		member.POST("/contestants/:id/like", h.LikeContestant)
+		member.DELETE("/contestants/:id/like", h.UnlikeContestant)
+		member.POST("/contestants/:id/share", h.ShareContestant)
+	} else {
+		log.Println("[connect-voting] FEATURE_CONTESTANT_SOCIAL_ENABLED is off — skipping like/share routes")
+	}
 	// The caller's own voting history, and — for a contestant — who voted for
 	// them. Both are member-group routes: authorisation is per-row inside the
 	// service (own votes; own contestant), not per-route.

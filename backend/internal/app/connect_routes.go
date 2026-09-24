@@ -99,7 +99,7 @@ func registerConnectRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 	registerConnectNetworkRoutes(member, adminCg, cfg, pool, rbac) // Phase 6 networking: jobs/feed/profile/assessments/mentorship under /networking
 
 	// --- Super-app money + engagement (Connect PRD v2) ---
-	RegisterConnectMoney(member, adminCg, cfg, pool, rbac) // gifting (wallet→wallet), paid voting, AML/NFIU, payouts
+	RegisterConnectMoney(member, adminCg, cg, cfg, pool, rbac) // gifting (wallet→wallet), paid voting, AML/NFIU, payouts
 	RegisterConnectLiveGame(member, adminCg, pool, rbac)   // live streaming sessions/co-host/PK + gamification (non-cash)
 
 	log.Println("[connect] routes registered — config + safety + phases 1–6 + money + live/game live")

@@ -171,7 +171,7 @@ var ErrNotOnRoster = errors.New("voting: option is not an active contestant in t
 // for — a phantom candidate accumulating real votes. Fail-closed: a lookup
 // error rejects the vote rather than admitting an unverifiable target.
 func (s *Service) checkRosterTarget(ctx context.Context, contestID, optionRef string) error {
-	roster, err := s.repo.ListRoster(ctx, contestID, true)
+	roster, err := s.repo.ListRoster(ctx, contestID, true, "")
 	if err != nil {
 		return err
 	}
@@ -334,11 +334,13 @@ func (s *Service) PaidVote(ctx context.Context, contestID, voterID, idemKey stri
 }
 
 // ListRoster returns a contest's active contestants ranked by total votes.
-func (s *Service) ListRoster(ctx context.Context, contestID string, includeInactive bool) ([]RosterEntry, error) {
+// viewerID sets each entry's LikedByMe; pass "" when the caller has no
+// authenticated viewer.
+func (s *Service) ListRoster(ctx context.Context, contestID string, includeInactive bool, viewerID string) ([]RosterEntry, error) {
 	if _, err := s.repo.GetContest(ctx, contestID); err != nil {
 		return nil, ErrNotFound
 	}
-	return s.repo.ListRoster(ctx, contestID, includeInactive)
+	return s.repo.ListRoster(ctx, contestID, includeInactive, viewerID)
 }
 
 // FreeVoteAllowance reports how many free votes a user has left in a contest.
@@ -372,14 +374,101 @@ func (s *Service) FreeVoteAllowanceFor(ctx context.Context, contestID, voterID s
 }
 
 // GetContestant returns one contestant with its live tally and rank, or
-// ErrNotFound when no such contestant exists.
-func (s *Service) GetContestant(ctx context.Context, contestantID string) (*RosterEntry, error) {
-	e, err := s.repo.GetRosterEntry(ctx, contestantID)
+// ErrNotFound when no such contestant exists. viewerID sets LikedByMe; pass
+// "" when the caller has no authenticated viewer (e.g. the public share
+// resolve path).
+func (s *Service) GetContestant(ctx context.Context, contestantID, viewerID string) (*RosterEntry, error) {
+	e, err := s.repo.GetRosterEntry(ctx, contestantID, viewerID)
 	if err != nil {
 		return nil, err
 	}
 	if e == nil {
 		return nil, ErrNotFound
+	}
+	return e, nil
+}
+
+// ─── Likes + profile shares ──────────────────────────────────────────────────
+
+// LikeContestant records the caller's like. Idempotent — liking twice is not
+// an error. Returns the fresh entry (with the new LikeCount and
+// LikedByMe=true) so the client can render the result of its own action
+// without a second round trip.
+func (s *Service) LikeContestant(ctx context.Context, contestantID, userID string) (*RosterEntry, error) {
+	if _, err := s.repo.GetRosterEntry(ctx, contestantID, ""); err != nil {
+		return nil, err
+	}
+	if err := s.repo.LikeContestant(ctx, contestantID, userID); err != nil {
+		return nil, err
+	}
+	return s.GetContestant(ctx, contestantID, userID)
+}
+
+// UnlikeContestant removes the caller's like, if any. Idempotent.
+func (s *Service) UnlikeContestant(ctx context.Context, contestantID, userID string) (*RosterEntry, error) {
+	if err := s.repo.UnlikeContestant(ctx, contestantID, userID); err != nil {
+		return nil, err
+	}
+	return s.GetContestant(ctx, contestantID, userID)
+}
+
+// ShareResult is what the client needs to build and send the shareable link.
+// Path is relative (e.g. "/vote-link/abcd1234"); the client's own configured
+// web base URL supplies the scheme+host, the same pattern the referral
+// module uses for its invite links. "/vote/..." was NOT used here — the web
+// app already owns that path for its own contestSlug/contestantSlug voting
+// pages (a separate, pre-existing voting surface — see vote-bridge skill),
+// and Next.js refuses two different dynamic segment names at the same route
+// position, so this needed its own non-colliding prefix.
+type ShareResult struct {
+	Token      string `json:"token"`
+	Path       string `json:"path"`
+	ShareCount int64  `json:"share_count"`
+}
+
+// ShareContestant records a share action and returns the token to build a
+// link from, plus the contestant's fresh share count.
+func (s *Service) ShareContestant(ctx context.Context, contestantID, sharerID string) (*ShareResult, error) {
+	if _, err := s.repo.GetRosterEntry(ctx, contestantID, ""); err != nil {
+		return nil, err
+	}
+	token, err := s.repo.CreateShare(ctx, contestantID, sharerID)
+	if err != nil {
+		return nil, err
+	}
+	e, err := s.repo.GetRosterEntry(ctx, contestantID, "")
+	if err != nil {
+		return nil, err
+	}
+	shareCount := int64(0)
+	if e != nil {
+		shareCount = e.ShareCount
+	}
+	return &ShareResult{Token: token, Path: "/vote-link/" + token, ShareCount: shareCount}, nil
+}
+
+// ErrShareNotFound is returned when a share token does not resolve to any
+// contestant — a bad/expired link, not a server error.
+var ErrShareNotFound = errors.New("voting: share link not found")
+
+// ResolveShare is the PUBLIC, unauthenticated lookup a share link's landing
+// page uses to find out which contestant to show and deep-link to. No
+// viewer, so LikedByMe is always false here — the landing page is for
+// someone who has not signed in yet.
+func (s *Service) ResolveShare(ctx context.Context, token string) (*RosterEntry, error) {
+	contestantID, err := s.repo.ResolveShareToken(ctx, token)
+	if err != nil {
+		return nil, err
+	}
+	if contestantID == "" {
+		return nil, ErrShareNotFound
+	}
+	e, err := s.repo.GetRosterEntry(ctx, contestantID, "")
+	if err != nil {
+		return nil, err
+	}
+	if e == nil {
+		return nil, ErrShareNotFound
 	}
 	return e, nil
 }
