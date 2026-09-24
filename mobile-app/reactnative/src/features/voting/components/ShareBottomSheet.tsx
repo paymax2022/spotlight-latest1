@@ -1,6 +1,7 @@
 import React from 'react';
 import { View, Text, Modal, Pressable, StyleSheet, Platform, Share, Linking } from 'react-native';
-import { X, Copy, MessageCircle, Instagram, Facebook, Link2 } from 'lucide-react-native';
+import { X, Copy, MessageCircle, Link2 } from 'lucide-react-native';
+import { Instagram, Facebook } from '@/components/icons/socialBrandIcons';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
 import { Radius } from '@/constants/radius';
