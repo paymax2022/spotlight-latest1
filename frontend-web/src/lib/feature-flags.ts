@@ -119,6 +119,12 @@ export const featureFlags = {
   /** P3 Lane F — Restaurant and food delivery with rider dispatch */
   restaurant: () => envFlag('FEATURE_RESTAURANT_ENABLED'),
 
+  /** Paystack-funded (card/bank-transfer) food checkout — no wallet, no KYC-tier gate.
+   * Mirrors the Go backend's FEATURE_RESTAURANT_PAYSTACK_CHECKOUT_ENABLED; the Go route
+   * itself is ALSO gated (404s when its own flag is off), so this only controls whether
+   * the mobile client is offered the option at all. */
+  restaurantPaystackCheckout: () => envFlag('FEATURE_RESTAURANT_PAYSTACK_CHECKOUT_ENABLED'),
+
   /** P3 Lane G — Telemedicine: doctors, appointments, prescriptions */
   telemedicine: () => envFlag('FEATURE_TELEMEDICINE_ENABLED'),
 

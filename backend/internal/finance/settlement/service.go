@@ -65,8 +65,8 @@ func (s *Service) Escrow(ctx context.Context, payerID, reference, idempotencyKey
 	// so DO NOTHING keeps this a safe no-op. We then re-load the canonical row so
 	// callers always get the real settlement id (not the fresh uuid we just minted).
 	const insert = `
-		INSERT INTO settlements (id, reference, module_type, payer_id, total_kobo, status, escrowed_at, idempotency_key)
-		VALUES ($1,$2,$3,$4,$5,'escrowed',$6,$7)
+		INSERT INTO settlements (id, reference, module_type, payer_id, total_kobo, status, escrowed_at, idempotency_key, funding_source)
+		VALUES ($1,$2,$3,$4,$5,'escrowed',$6,$7,'wallet')
 		ON CONFLICT (idempotency_key) DO NOTHING`
 	if _, err = s.db.Exec(ctx, insert, sett.ID, sett.Reference, sett.ModuleType, sett.PayerID, sett.TotalKobo, sett.EscrowedAt, sett.IdempotencyKey); err != nil {
 		return nil, fmt.Errorf("settlement: insert escrow row: %w", err)
@@ -85,6 +85,68 @@ func (s *Service) Escrow(ctx context.Context, payerID, reference, idempotencyKey
 		`SELECT id, status, total_kobo FROM settlements WHERE idempotency_key=$1`, idempotencyKey,
 	).Scan(&sett.ID, &sett.Status, &sett.TotalKobo); err != nil {
 		return nil, fmt.Errorf("settlement: resolve escrow row: %w", err)
+	}
+	return sett, nil
+}
+
+// EscrowExternal holds funds ALREADY COLLECTED by an external payment rail
+// (a verified Paystack card/bank-transfer charge) — the money never touches
+// the payer's internal wallet at all, so this deliberately does NOT run
+// through any KYC-tier / daily-wallet-debit gate (see
+// restaurant.PlaceOrderExternal). Everything downstream of this call
+// (Settle, disputes, reconciliation) is payment-source-agnostic: it reads the
+// same `settlements` row shape Escrow produces, keyed the same way.
+//
+// Posts DR AccountProviderClearing → CR AccountEscrow — the same "money an
+// external processor already collected on our behalf, not yet allocated
+// internally" pattern commission.postRevenue uses, rather than a debit off
+// any user account (there is no wallet leg for this order at all).
+//
+// Idempotent exactly like Escrow: a duplicate journal post is treated as
+// "already escrowed" and this falls through to (re)ensure the tracking row,
+// so a retry converges to exactly one journal post and one settlements row.
+func (s *Service) EscrowExternal(ctx context.Context, payerID, reference, idempotencyKey, moduleType string, totalKobo int64) (*Settlement, error) {
+	escrowAcc, err := s.ledger.GetOrCreateStandingAccount(ctx, ledger.AccountEscrow)
+	if err != nil {
+		return nil, err
+	}
+	clearingAcc, err := s.ledger.GetOrCreateStandingAccount(ctx, ledger.AccountProviderClearing)
+	if err != nil {
+		return nil, err
+	}
+	err = s.ledger.PostJournal(ctx, ledger.JournalEntry{
+		Reference:       "escrow:" + reference,
+		IdempotencyKey:  idempotencyKey + ":escrow",
+		AmountKobo:      totalKobo,
+		DebitAccountID:  clearingAcc.ID,
+		CreditAccountID: escrowAcc.ID,
+		Description:     "Paystack-funded order escrow (external payment, no wallet debit)",
+	})
+	if err != nil && err != ledger.ErrDuplicate {
+		return nil, fmt.Errorf("settlement: external escrow post: %w", err)
+	}
+	now := time.Now()
+	sett := &Settlement{
+		ID:             uuid.New().String(),
+		Reference:      reference,
+		ModuleType:     moduleType,
+		PayerID:        payerID,
+		TotalKobo:      totalKobo,
+		Status:         StatusEscrowed,
+		EscrowedAt:     now,
+		IdempotencyKey: idempotencyKey,
+	}
+	const insert = `
+		INSERT INTO settlements (id, reference, module_type, payer_id, total_kobo, status, escrowed_at, idempotency_key, funding_source)
+		VALUES ($1,$2,$3,$4,$5,'escrowed',$6,$7,'external')
+		ON CONFLICT (idempotency_key) DO NOTHING`
+	if _, err = s.db.Exec(ctx, insert, sett.ID, sett.Reference, sett.ModuleType, sett.PayerID, sett.TotalKobo, sett.EscrowedAt, sett.IdempotencyKey); err != nil {
+		return nil, fmt.Errorf("settlement: insert external escrow row: %w", err)
+	}
+	if err = s.db.QueryRow(ctx,
+		`SELECT id, status, total_kobo FROM settlements WHERE idempotency_key=$1`, idempotencyKey,
+	).Scan(&sett.ID, &sett.Status, &sett.TotalKobo); err != nil {
+		return nil, fmt.Errorf("settlement: resolve external escrow row: %w", err)
 	}
 	return sett, nil
 }
@@ -210,14 +272,36 @@ func postPairTx(ctx context.Context, tx pgx.Tx, debitAccountID, creditAccountID 
 	return nil
 }
 
-// Refund releases escrowed funds back to the payer.
+// ErrWrongRefundMethod guards the Refund/RefundExternal split: calling Refund
+// (a WALLET CREDIT) on an externally-funded settlement, or RefundExternal (a
+// clearing-account reversal, no wallet touched) on a wallet-funded one, is
+// refused rather than silently moving money the wrong way. This is the fix
+// for a real defect found while porting the Paystack-checkout pattern to a
+// second module: every existing settlement.Refund call site (across several
+// modules, including restaurant's own pre-existing order-cancellation path)
+// unconditionally wallet-credited the payer, which for an EscrowExternal
+// settlement would hand a Tier-0 customer real spendable wallet balance
+// funded by an external charge — exactly the hazard EscrowExternal exists to
+// avoid. Enforcing the correct method HERE protects every caller, including
+// ones written before this check existed and any written after without
+// knowing about the gotcha.
+var ErrWrongRefundMethod = fmt.Errorf("settlement: wrong refund method for this settlement's funding source")
+
+// Refund releases a WALLET-funded escrow back to the payer's wallet. Refuses
+// (ErrWrongRefundMethod) on an externally-funded (EscrowExternal) settlement
+// — see RefundExternal for that case, and ErrWrongRefundMethod's doc comment
+// for why this check exists.
 func (s *Service) Refund(ctx context.Context, settlementID, reason string) error {
 	var sett Settlement
-	const q = `SELECT id, reference, payer_id, total_kobo, status FROM settlements WHERE id=$1`
+	var fundingSource string
+	const q = `SELECT id, reference, payer_id, total_kobo, status, funding_source FROM settlements WHERE id=$1`
 	if err := s.db.QueryRow(ctx, q, settlementID).Scan(
-		&sett.ID, &sett.Reference, &sett.PayerID, &sett.TotalKobo, &sett.Status,
+		&sett.ID, &sett.Reference, &sett.PayerID, &sett.TotalKobo, &sett.Status, &fundingSource,
 	); err != nil {
 		return fmt.Errorf("settlement: fetch for refund: %w", err)
+	}
+	if fundingSource == "external" {
+		return ErrWrongRefundMethod
 	}
 	if sett.Status != StatusEscrowed && sett.Status != StatusDisputed {
 		return fmt.Errorf("settlement: cannot refund — current status is %s", sett.Status)
@@ -231,6 +315,67 @@ func (s *Service) Refund(ctx context.Context, settlementID, reason string) error
 		"refund:"+sett.Reference, "refund:"+settlementID, escrowAcc.ID, sett.TotalKobo,
 	); err != nil {
 		return fmt.Errorf("settlement: credit refund: %w", err)
+	}
+	const update = `UPDATE settlements SET status='refunded' WHERE id=$1`
+	_, err = s.db.Exec(ctx, update, settlementID)
+	return err
+}
+
+// RefundExternal reverses a previously-collected EscrowExternal escrow — the
+// INTERNAL-LEDGER counterpart of a real external refund (e.g. a Paystack
+// reversal). It knows nothing about Paystack and issues no gateway call: the
+// caller (a module's *paystackcheckout package, which holds the gateway
+// reference) is responsible for ALSO reversing the actual charge; this only
+// keeps Spotlight's own books balanced.
+//
+// Posts the EXACT REVERSE of EscrowExternal (DR escrow / CR provider-clearing)
+// rather than crediting any user wallet — crediting the payer's wallet, which
+// is what Refund does for a wallet-funded escrow, would hand a Tier-0
+// customer real spendable wallet balance funded by an external charge. That
+// is precisely the hazard EscrowExternal exists to avoid, so this function
+// must NEVER be used on a wallet-funded (Escrow) settlement, and Refund must
+// NEVER be used on an EscrowExternal one — a caller mixing them up reopens
+// the bypass this whole design closes.
+//
+// Idempotent like Refund: a settlement already outside {escrowed, disputed}
+// is treated as already resolved and this is a safe no-op (unlike Refund,
+// which errors — callers here are refund-loop cleanups over a batch of rows
+// that occasionally race a concurrent resolution, and a mixed-status batch
+// must not abort partway through).
+func (s *Service) RefundExternal(ctx context.Context, settlementID, reason string) error {
+	var sett Settlement
+	var fundingSource string
+	const q = `SELECT id, reference, payer_id, total_kobo, status, funding_source FROM settlements WHERE id=$1`
+	if err := s.db.QueryRow(ctx, q, settlementID).Scan(
+		&sett.ID, &sett.Reference, &sett.PayerID, &sett.TotalKobo, &sett.Status, &fundingSource,
+	); err != nil {
+		return fmt.Errorf("settlement: fetch for external refund: %w", err)
+	}
+	if fundingSource != "external" {
+		return ErrWrongRefundMethod
+	}
+	if sett.Status != StatusEscrowed && sett.Status != StatusDisputed {
+		return nil
+	}
+
+	escrowAcc, err := s.ledger.GetOrCreateStandingAccount(ctx, ledger.AccountEscrow)
+	if err != nil {
+		return err
+	}
+	clearingAcc, err := s.ledger.GetOrCreateStandingAccount(ctx, ledger.AccountProviderClearing)
+	if err != nil {
+		return err
+	}
+	err = s.ledger.PostJournal(ctx, ledger.JournalEntry{
+		Reference:       "refund:" + sett.Reference,
+		IdempotencyKey:  "refund:" + settlementID,
+		AmountKobo:      sett.TotalKobo,
+		DebitAccountID:  escrowAcc.ID,
+		CreditAccountID: clearingAcc.ID,
+		Description:     "External refund reversal (Paystack-funded escrow): " + reason,
+	})
+	if err != nil && err != ledger.ErrDuplicate {
+		return fmt.Errorf("settlement: post external refund: %w", err)
 	}
 	const update = `UPDATE settlements SET status='refunded' WHERE id=$1`
 	_, err = s.db.Exec(ctx, update, settlementID)

@@ -64,7 +64,7 @@ func RegisterSavings(member *gin.RouterGroup, adminGroup *gin.RouterGroup, cfg c
 	// default 1000 = 10%), and recordCommissionSafe records the EXACT penalty charged
 	// via RecordExact — so the registry no longer depends on the rate being 10%.
 	if cfg.FeatureCommissionEnabled {
-		vaultSvc.SetCommissionRecorder(commissionRecorderAdapter{svc: commission.NewService(commission.NewRepository(pool), nil)})
+		vaultSvc.SetCommissionRecorder(commissionRecorderAdapter{svc: withReferralSplit(commission.NewService(commission.NewRepository(pool), nil), pool, cfg)})
 		log.Println("[savings] commission recording wired → Finance/Savings (early-break penalty; earning-row only; no ledger re-post)")
 	}
 	ajoSvc := savings.NewAjoService(pool, ledgerSvc, sched, auditor)
