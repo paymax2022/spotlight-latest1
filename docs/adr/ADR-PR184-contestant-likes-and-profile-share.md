@@ -5,7 +5,7 @@
 **Deciders:** User (screen scope + share-flow scope, via direct Q&A)
 **Scope:** `backend/internal/connect/voting/{models.go,repo.go,service.go,handlers.go}`,
 `backend/internal/app/{connect_routes.go,connect_money_routes.go}`, `backend/internal/config/config.go`,
-`supabase/migrations/20270207000000_contestant_likes_and_shares.sql`,
+`supabase/migrations/20270311000000_contestant_likes_and_shares.sql`,
 `backend/tests/voting/contestant_likes_and_shares_live_db_test.go`,
 `contracts/voting.openapi.yaml`,
 `mobile-app/reactnative/src/features/voting/{types/voting.types.ts,api/voting.api.ts,api/connectVoting.mapper.ts,hooks/useContestantProfile.ts,components/ContestantStatsCard.tsx}`,

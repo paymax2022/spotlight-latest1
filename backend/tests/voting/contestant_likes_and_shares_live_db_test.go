@@ -1,6 +1,6 @@
 package voting_test
 
-// Contestant likes + profile-share links — guards migration 20270207000000
+// Contestant likes + profile-share links — guards migration 20270311000000
 // (contestant_likes, contestant_shares).
 //
 // Both tables ON DELETE CASCADE from contestants, so newContestant's own
