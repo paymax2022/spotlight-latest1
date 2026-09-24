@@ -141,7 +141,6 @@ type Config struct {
 
 	// Feature flags for financial modules.
 	FeatureWalletEnabled          bool
-	FeatureKYCEnabled             bool
 	FeatureVirtualAccountsEnabled bool
 	FeatureTransfersEnabled       bool
 	FeatureWalletTransfersEnabled bool // wallet-to-wallet (P2P) go-live flag
@@ -709,7 +708,6 @@ func Load() Config {
 		KYCRouteAML:               getEnv("KYC_ROUTE_AML", "dojah,youverify"),
 
 		FeatureWalletEnabled:                  getEnvBool("FEATURE_WALLET_ENABLED", false),
-		FeatureKYCEnabled:                     getEnvBool("FEATURE_KYC_ENABLED", false),
 		FeatureVirtualAccountsEnabled:         getEnvBool("FEATURE_VIRTUAL_ACCOUNTS_ENABLED", false),
 		FeatureTransfersEnabled:               getEnvBool("FEATURE_TRANSFERS_ENABLED", false),
 		FeatureWalletTransfersEnabled:         getEnvBool("FEATURE_WALLET_TRANSFERS_ENABLED", false),

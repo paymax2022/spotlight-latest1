@@ -1,9 +1,9 @@
 package paystackcheckout
 
 // Live-DB integration tests for IntentRepository over
-// public.restaurant_order_paystack_intents. Skipped unless
-// TEST_DATABASE_URL/DATABASE_URL is set (mirrors every other live-DB test in
-// this codebase — see restaurant/tierlimit_live_db_test.go's tierPool).
+// public.restaurant_order_paystack_intents. Skipped unless TEST_DATABASE_URL
+// is set (mirrors every other live-DB test in this codebase — see
+// restaurant/tierlimit_live_db_test.go's tierPool).
 //
 // What these pin:
 //  1. PutIntent is idempotent on idempotency_key — a replay returns the
@@ -27,9 +27,6 @@ import (
 func repoPool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
 	dsn := os.Getenv("TEST_DATABASE_URL")
-	if dsn == "" {
-		dsn = os.Getenv("DATABASE_URL")
-	}
 	if dsn == "" {
 		t.Skip("TEST_DATABASE_URL not set — skipping live-DB paystackcheckout repository test")
 	}
