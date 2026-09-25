@@ -514,6 +514,33 @@ func TestCheckStatus_PendingWhenNotYetPaid(t *testing.T) {
 	}
 }
 
+// TestCheckStatus_VerifyTransientErrorStaysPending pins the 2026-09-25 fix: a
+// network/timeout failure calling Paystack's OWN verify endpoint must not
+// surface as a hard error from CheckStatus. Before the fix, ANY error from
+// gateway.VerifyPayment (not just an explicit "not successful" response) was
+// returned as-is, which the HTTP handler mapped to a 500 — the mobile
+// resolver screen read that as "unavailable" and oscillated with "pending"
+// on every subsequent poll, even though the card charge had already
+// succeeded (the in-app SDK's own onSuccess had already fired client-side).
+func TestCheckStatus_VerifyTransientErrorStaysPending(t *testing.T) {
+	gw := &fakeGateway{verifyErr: errors.New("dial tcp: i/o timeout")}
+	orders := &fakeOrders{quoteAmount: 150_000}
+	intents := newFakeIntents()
+	svc := NewService(gw, orders, intents, &fakeSettlementReverser{})
+
+	intent, err := svc.InitiateCheckout(context.Background(), "rest-1", "cust-1", sampleReq("idem-transient"), "a@b.com", "")
+	if err != nil {
+		t.Fatalf("initiate: %v", err)
+	}
+	res, err := svc.CheckStatus(context.Background(), intent.Reference)
+	if err != nil {
+		t.Fatalf("CheckStatus must not surface a transient verify error, got: %v", err)
+	}
+	if res.Status != "pending" {
+		t.Errorf("status = %s, want pending (a network hiccup calling Paystack is not a payment failure)", res.Status)
+	}
+}
+
 // TestIntentRecord_DecodeRequestRoundTrips pins that the exact cart survives
 // the JSON freeze/thaw round trip InitiateCheckout/OnChargeSuccess rely on.
 func TestIntentRecord_DecodeRequestRoundTrips(t *testing.T) {

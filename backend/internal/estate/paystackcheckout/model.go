@@ -53,6 +53,17 @@ var (
 	ErrUnauthenticated     = errors.New("unauthenticated")
 	ErrIdempotencyRequired = errors.New("idempotency_key_required")
 	ErrChargeNotSuccessful = errors.New("charge_not_successful")
+	// ErrVerifyUnavailable wraps a failure to REACH Paystack's verify
+	// endpoint (network error, timeout, transient 5xx) — distinct from
+	// ErrChargeNotSuccessful, which means Paystack was reached and explicitly
+	// said the charge did not succeed. CheckStatus treats this the same as
+	// "still pending" (keep polling) rather than a hard failure: the WebView
+	// SDK's own onSuccess already told the client the card charge went
+	// through, so a transient hiccup calling Paystack back MUST NOT surface
+	// as a customer-facing "payment unavailable" — found 2026-09-25, a real
+	// payment stuck oscillating between "processing" and "unavailable" on
+	// every self-heal poll that happened to race a momentary verify failure.
+	ErrVerifyUnavailable = errors.New("verify_unavailable")
 	ErrAmountMismatch      = errors.New("amount_mismatch")
 	ErrUnknownReference    = errors.New("unknown_reference")
 )
