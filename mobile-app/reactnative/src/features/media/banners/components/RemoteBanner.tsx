@@ -1,6 +1,9 @@
 // ── Paymax Media — RemoteBanner ──────────────────────────────────────────────
-// Renders a marketing banner whose artwork lives in Cloudflare R2, fetched via a
-// short-lived presigned URL from the gateway's banner resolver.
+// Resolves a marketing banner by slug (see ../hooks, ../api) and renders it.
+// The resolver hands back either a Cloudinary public ID (preferred — rendered
+// through the reusable SpotlightBanner, which picks a responsive width, shows
+// a blurred placeholder, and caches to disk) or, for older banners not yet
+// migrated, a presigned Cloudflare R2 URL (rendered with a plain Image).
 //
 // Behaviour is deliberately quiet: the banner is decoration, so while it loads
 // the component reserves its exact aspect ratio (no layout shift when the image
@@ -12,6 +15,7 @@ import React, { useState } from 'react';
 import { View, Image, StyleSheet, Pressable, ActivityIndicator } from 'react-native';
 import { Colors } from '@/constants/colors';
 import { Radius } from '@/constants/radius';
+import SpotlightBanner from '@/components/SpotlightBanner';
 import { useBanner } from '../hooks';
 
 type Props = {
@@ -21,10 +25,12 @@ type Props = {
   onPress?: () => void;
   /** Override the alt text the server ships with the artwork. */
   accessibilityLabel?: string;
+  /** True for the banner visible the instant its screen/section opens — see SpotlightBanner. */
+  priority?: boolean;
   style?: object;
 };
 
-export default function RemoteBanner({ slug, onPress, accessibilityLabel, style }: Props) {
+export default function RemoteBanner({ slug, onPress, accessibilityLabel, priority, style }: Props) {
   const { data, isLoading, isError } = useBanner(slug);
   const [imageFailed, setImageFailed] = useState(false);
 
@@ -34,9 +40,22 @@ export default function RemoteBanner({ slug, onPress, accessibilityLabel, style 
   // placeholder occupies exactly the space the image will.
   const aspectRatio = data?.aspectRatio ?? 8 / 3;
 
+  if (data?.cloudinaryPublicId) {
+    return (
+      <SpotlightBanner
+        publicId={data.cloudinaryPublicId}
+        priority={priority}
+        aspectRatio={aspectRatio}
+        alt={accessibilityLabel ?? data.alt}
+        onPress={onPress}
+        style={style}
+      />
+    );
+  }
+
   const body = (
     <View style={[styles.frame, { aspectRatio }, style]}>
-      {data ? (
+      {data?.url ? (
         <Image
           source={{ uri: data.url }}
           style={StyleSheet.absoluteFill}

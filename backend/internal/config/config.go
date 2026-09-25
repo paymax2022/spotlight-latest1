@@ -141,7 +141,6 @@ type Config struct {
 
 	// Feature flags for financial modules.
 	FeatureWalletEnabled          bool
-	FeatureKYCEnabled             bool
 	FeatureVirtualAccountsEnabled bool
 	FeatureTransfersEnabled       bool
 	FeatureWalletTransfersEnabled bool // wallet-to-wallet (P2P) go-live flag
@@ -153,23 +152,40 @@ type Config struct {
 	// Shared secret guarding /internal/referrals/* (service-to-service purchase
 	// hooks). Empty ⇒ those endpoints fail closed (503).
 	ReferralRewardsInternalSecret string
-	FeatureTierLimitsEnabled      bool
-	FeatureFXEnabled              bool
-	FeatureFXOrchestrationEnabled bool // normalized /v1 FX orchestration API
-	FeatureRealtimeEnabled        bool // SSE server-push (marketplace chat etc.)
-	PaymaxWebhookOutURL           string
-	PaymaxWebhookSecret           string
-	FeatureGroupsEnabled          bool
-	FeatureAssociationsEnabled    bool
+	// Referral purchase-commission-split: a flat 20% of Spotlight's realized
+	// commission on a purchase, paid to the referred payer's referrer, capped at
+	// referral_links.reward_cap rewarded purchases per CODE (not per referred
+	// user). Hooked into commission.Service (see referral/commissionsplit) —
+	// distinct from, and off by default same as, FeatureReferralRewardsEnabled's
+	// OLDER tiered engine above. Off by default: a brand-new money-path feature
+	// ships dark until explicitly verified in an environment, same posture as
+	// every other feature flag here.
+	FeatureReferralCommissionSplitEnabled bool
+	FeatureTierLimitsEnabled              bool
+	FeatureFXEnabled                      bool
+	FeatureFXOrchestrationEnabled         bool // normalized /v1 FX orchestration API
+	FeatureRealtimeEnabled                bool // SSE server-push (marketplace chat etc.)
+	PaymaxWebhookOutURL                   string
+	PaymaxWebhookSecret                   string
+	FeatureGroupsEnabled                  bool
+	FeatureAssociationsEnabled            bool
 	// AssocCardSigningSecret is the HMAC secret for digital membership cards.
 	// Empty outside development is a hard startup failure: the fallback is a
 	// constant compiled into this (public) repo, so anyone could forge a
 	// structurally valid card token for a known membership id.
-	AssocCardSigningSecret     string
-	FeatureEventsEnabled       bool
-	FeatureEstateEnabled       bool
-	FeatureCrowdfundingEnabled bool
-	FeatureRestaurantEnabled   bool
+	AssocCardSigningSecret string
+	FeatureEventsEnabled   bool
+	FeatureEstateEnabled   bool
+	// FeatureEstateDuesPaystackCheckoutEnabled gates the Paystack-funded (card /
+	// bank-transfer) estate dues payment path (estate/paystackcheckout) — a
+	// dues invoice paid for directly via Paystack, posted DR provider-clearing
+	// / CR settlement, that never touches the payer's wallet and therefore
+	// never runs the KYC-tier gate. Default OFF. Same audited design as
+	// restaurant's FeatureRestaurantPaystackCheckoutEnabled, adapted to dues'
+	// immediate-settle model (no escrow/hold-release step to mirror).
+	FeatureEstateDuesPaystackCheckoutEnabled bool
+	FeatureCrowdfundingEnabled               bool
+	FeatureRestaurantEnabled                 bool
 	// FeatureRestaurantWithdrawalsEnabled gates the merchant/rider withdrawal
 	// money path (wallet → saved bank account; restaurant/withdrawal.go
 	// RequestWithdrawal). Default OFF: the routes are always mounted once
@@ -177,6 +193,17 @@ type Config struct {
 	// RequestWithdrawal itself refuses with ErrWithdrawalsDisabled until this is
 	// explicitly turned on (see Service.WithWithdrawals).
 	FeatureRestaurantWithdrawalsEnabled bool
+	// FeatureRestaurantPaystackCheckoutEnabled gates the Paystack-funded (card /
+	// bank-transfer) food-order checkout path (restaurant/paystackcheckout) —
+	// an order paid for directly via Paystack, escrowed via
+	// settlement.EscrowExternal, that never touches the customer's wallet and
+	// therefore never runs the KYC-tier gate. Default OFF. This is a DIFFERENT,
+	// audited design from the rejected FEATURE_CHECKOUT_TOPUP_TIER0 (which
+	// topped up the wallet then spent it — see docs/audit/checkout-allowance-audit-findings.md)
+	// and must never be confused with it: this flag adds a new, wallet-free
+	// payment rail; it does not relax the tier gate on the existing
+	// wallet-funded PlaceOrder path, which stays fail-closed regardless.
+	FeatureRestaurantPaystackCheckoutEnabled bool
 	// FeatureModuleGateEnforce turns the server-side module gate from observe-only
 	// (logs what it would refuse) into enforcing (503s unpublished modules). Default
 	// false: the gate's route map is hand-built and must be validated against real
@@ -187,6 +214,17 @@ type Config struct {
 	FeatureVoteBridgeEnabled     bool
 	FeatureTransportEnabled      bool
 	FeatureTransportModesEnabled bool // parcel/bus/towing/movers/car-hire expansion
+	// FeatureTransportPaystackCheckoutEnabled gates the Paystack-funded (card /
+	// bank-transfer) ride-hailing checkout path (transport/paystackcheckout) —
+	// a ride paid for directly via Paystack, escrowed via
+	// settlement.EscrowExternal, that never touches the rider's wallet and
+	// therefore never runs the KYC-tier gate. Default OFF. Mirrors
+	// restaurant's FeatureRestaurantPaystackCheckoutEnabled exactly — same
+	// audited design, ported to ride-hailing's instant-pricing flow only (no
+	// offer-mode negotiation). See restaurant/paystackcheckout's doc comment
+	// for why this is a different, safe design from the rejected
+	// FEATURE_CHECKOUT_TOPUP_TIER0.
+	FeatureTransportPaystackCheckoutEnabled bool
 	// Transport Trip Scheduling: schedule a future logistics movement (ride/parcel/
 	// airport/bus) that the transport-scheduler worker materializes + escrows at a
 	// lead time before pickup. DEFAULT OFF. Gates the member /api/finance/mobility/
@@ -670,111 +708,114 @@ func Load() Config {
 		KYCRouteDocument:          getEnv("KYC_ROUTE_DOCUMENT", "dojah,smileid"),
 		KYCRouteAML:               getEnv("KYC_ROUTE_AML", "dojah,youverify"),
 
-		FeatureWalletEnabled:          getEnvBool("FEATURE_WALLET_ENABLED", false),
-		FeatureKYCEnabled:             getEnvBool("FEATURE_KYC_ENABLED", false),
-		FeatureVirtualAccountsEnabled: getEnvBool("FEATURE_VIRTUAL_ACCOUNTS_ENABLED", false),
-		FeatureTransfersEnabled:       getEnvBool("FEATURE_TRANSFERS_ENABLED", false),
-		FeatureWalletTransfersEnabled: getEnvBool("FEATURE_WALLET_TRANSFERS_ENABLED", false),
-		FeatureBankTransfersEnabled:   getEnvBool("FEATURE_BANK_TRANSFERS_ENABLED", false),
-		FeatureReferralsEnabled:       getEnvBool("FEATURE_REFERRALS_ENABLED", false),
-		FeatureReferralRewardsEnabled: getEnvBool("FEATURE_REFERRAL_REWARDS_ENABLED", false),
-		ReferralRewardsInternalSecret: getEnv("REFERRAL_REWARDS_INTERNAL_SECRET", ""),
+		FeatureWalletEnabled:                  getEnvBool("FEATURE_WALLET_ENABLED", false),
+		FeatureVirtualAccountsEnabled:         getEnvBool("FEATURE_VIRTUAL_ACCOUNTS_ENABLED", false),
+		FeatureTransfersEnabled:               getEnvBool("FEATURE_TRANSFERS_ENABLED", false),
+		FeatureWalletTransfersEnabled:         getEnvBool("FEATURE_WALLET_TRANSFERS_ENABLED", false),
+		FeatureBankTransfersEnabled:           getEnvBool("FEATURE_BANK_TRANSFERS_ENABLED", false),
+		FeatureReferralsEnabled:               getEnvBool("FEATURE_REFERRALS_ENABLED", false),
+		FeatureReferralRewardsEnabled:         getEnvBool("FEATURE_REFERRAL_REWARDS_ENABLED", false),
+		ReferralRewardsInternalSecret:         getEnv("REFERRAL_REWARDS_INTERNAL_SECRET", ""),
+		FeatureReferralCommissionSplitEnabled: getEnvBool("FEATURE_REFERRAL_COMMISSION_SPLIT_ENABLED", false),
 		// Iron Rule: every money mutation must pass tier-limit checks fail-closed.
 		// Defaults TRUE so limits are enforced by default; set FEATURE_TIER_LIMITS_ENABLED=false
 		// only for explicit local/dev opt-out. (docs/go-live-readiness.md blocker #1)
-		FeatureTierLimitsEnabled:              getEnvBool("FEATURE_TIER_LIMITS_ENABLED", true),
-		FeatureFXEnabled:                      getEnvBool("FEATURE_FX_ENABLED", false),
-		FeatureFXOrchestrationEnabled:         getEnvBool("FEATURE_FX_ORCHESTRATION_ENABLED", false),
-		FeatureRealtimeEnabled:                getEnvBool("FEATURE_REALTIME_ENABLED", false),
-		PaymaxWebhookOutURL:                   getEnv("PAYMAX_WEBHOOK_OUT_URL", ""),
-		PaymaxWebhookSecret:                   getEnv("PAYMAX_WEBHOOK_SECRET", ""),
-		FeatureGroupsEnabled:                  getEnvBool("FEATURE_GROUPS_ENABLED", false),
-		FeatureAssociationsEnabled:            getEnvBool("FEATURE_ASSOCIATIONS_ENABLED", false),
-		AssocCardSigningSecret:                getEnv("ASSOC_CARD_SIGNING_SECRET", ""),
-		FeatureEventsEnabled:                  getEnvBool("FEATURE_EVENTS_ENABLED", false),
-		FeatureEstateEnabled:                  getEnvBool("FEATURE_ESTATE_ENABLED", false),
-		FeatureCrowdfundingEnabled:            getEnvBool("FEATURE_CROWDFUNDING_ENABLED", false),
-		FeatureRestaurantEnabled:              getEnvBool("FEATURE_RESTAURANT_ENABLED", false),
-		FeatureRestaurantWithdrawalsEnabled:   getEnvBool("FEATURE_RESTAURANT_WITHDRAWALS_ENABLED", false),
-		FeatureModuleGateEnforce:              getEnvBool("FEATURE_MODULE_GATE_ENFORCE", false),
-		FeatureNutritionEnabled:               getEnvBool("FEATURE_NUTRITION_ENABLED", false),
-		FeatureTelemedicineEnabled:            getEnvBool("FEATURE_TELEMEDICINE_ENABLED", false),
-		FeatureVoteBridgeEnabled:              getEnvBool("FEATURE_VOTE_BRIDGE_ENABLED", false),
-		FeatureTransportEnabled:               getEnvBool("FEATURE_TRANSPORT_ENABLED", false),
-		FeatureTransportModesEnabled:          getEnvBool("FEATURE_TRANSPORT_MODES_ENABLED", false),
-		FeatureTransportSchedulingEnabled:     getEnvBool("FEATURE_TRANSPORT_SCHEDULING_ENABLED", false),
-		FeatureAICareEnabled:                  getEnvBool("FEATURE_AICARE_ENABLED", false),
-		FeatureDisputesEnabled:                getEnvBool("FEATURE_DISPUTES_ENABLED", false),
-		FeatureRatingsEnabled:                 getEnvBool("FEATURE_RATINGS_ENABLED", false),
-		FeaturePharmacyEnabled:                getEnvBool("FEATURE_PHARMACY_ENABLED", false),
-		FeaturePharmacySymptomSearchEnabled:   getEnvBool("FEATURE_PHARMACY_SYMPTOM_SEARCH_ENABLED", false),
-		FeatureOnboardingEnabled:              getEnvBool("FEATURE_ONBOARDING_ENABLED", false),
-		FeatureInvestEnabled:                  getEnvBool("FEATURE_INVEST_ENABLED", false),
-		FeatureInvestPINDevBypass:             getEnvBool("FEATURE_INVEST_PIN_DEV_BYPASS", false),
-		InvestMarketDataBaseURL:               getEnv("INVEST_MARKETDATA_BASE_URL", ""),
-		InvestMarketDataAPIKey:                getEnv("INVEST_MARKETDATA_API_KEY", ""),
-		InvestBrokerBaseURL:                   getEnv("INVEST_BROKER_BASE_URL", ""),
-		InvestBrokerAPIKey:                    getEnv("INVEST_BROKER_API_KEY", ""),
-		InvestBrokerWebhookSecret:             getEnv("INVEST_BROKER_WEBHOOK_SECRET", ""),
-		FeatureRealtorEnabled:                 getEnvBool("FEATURE_REALTOR_ENABLED", false),
-		FeatureDoctorEnabled:                  getEnvBool("FEATURE_DOCTOR_ENABLED", false),
-		FeatureDoctorEmergencyDispatchEnabled: getEnvBool("FEATURE_DOCTOR_EMERGENCY_DISPATCH_ENABLED", false),
-		FeatureMapsEnabled:                    getEnvBool("FEATURE_MAPS_ENABLED", false),
-		FeatureMapsV2Enabled:                  getEnvBool("FEATURE_MAPS_V2_ENABLED", false),
-		FeatureAcademyEnabled:                 getEnvBool("FEATURE_ACADEMY_ENABLED", false),
-		FeatureAcademyExamEnabled:             getEnvBool("FEATURE_ACADEMY_EXAM_ENABLED", false),
-		FeatureAcademySpineEnabled:            getEnvBool("FEATURE_ACADEMY_SPINE_ENABLED", false),
-		FeatureAcademyEduPayEnabled:           getEnvBool("FEATURE_ACADEMY_EDUPAY_ENABLED", false),
-		FeatureAcademyCredentialsEnabled:      getEnvBool("FEATURE_ACADEMY_CREDENTIALS_ENABLED", false),
-		FeatureAcademyLiveEnabled:             getEnvBool("FEATURE_ACADEMY_LIVE_ENABLED", false),
-		FeatureAcademySchoolsEnabled:          getEnvBool("FEATURE_ACADEMY_SCHOOLS_ENABLED", false),
-		FeatureAcademyTutorEnabled:            getEnvBool("FEATURE_ACADEMY_TUTOR_ENABLED", false),
-		FeatureAcademyFeesEnabled:             getEnvBool("FEATURE_ACADEMY_FEES_ENABLED", false),
-		FeatureConnectEnabled:                 getEnvBool("FEATURE_CONNECT_ENABLED", false),
-		FeatureContestStageEvictionEnabled:    getEnvBool("FEATURE_CONTEST_STAGE_EVICTION_ENABLED", false),
-		FeaturePropertySuiteEnabled:           getEnvBool("FEATURE_PROPERTY_SUITE_ENABLED", false),
-		FeatureFractionalREEnabled:            getEnvBool("FEATURE_FRACTIONAL_RE_ENABLED", false),
-		FeatureCryptoEnabled:                  getEnvBool("FEATURE_CRYPTO_ENABLED", false),
-		FeatureTelemedicinePlatformFeeEnabled: getEnvBool("FEATURE_TELEMEDICINE_PLATFORM_FEE_ENABLED", false),
-		FeatureCheckoutTopupTier0:             getEnvBool("FEATURE_CHECKOUT_TOPUP_TIER0", false),
-		FeatureBusinessRegistryEnabled:        getEnvBool("FEATURE_BUSINESS_REGISTRY_ENABLED", false),
-		CACVASBaseURL:                         getEnv("CAC_VAS_BASE_URL", ""),
-		CACVASApiKey:                          getEnv("CAC_VAS_API_KEY", ""),
-		CACVASConsumerSecret:                  getEnv("CAC_VAS_CONSUMER_SECRET", ""),
-		FeatureInternalLedgerAPIEnabled:       getEnvBool("FEATURE_INTERNAL_LEDGER_API_ENABLED", false),
-		LedgerServiceToken:                    getEnv("LEDGER_SERVICE_TOKEN", ""),
-		FeatureLearnEnabled:                   getEnvBool("FEATURE_LEARN_ENABLED", false),
-		FeatureInvestaiEnabled:                getEnvBool("FEATURE_INVESTAI_ENABLED", false),
-		FeatureSpotlightwealthEnabled:         getEnvBool("FEATURE_SPOTLIGHTWEALTH_ENABLED", false),
-		FeatureInsuranceEnabled:               getEnvBool("FEATURE_INSURANCE_ENABLED", false),
-		FeatureStaysEnabled:                   getEnvBool("FEATURE_STAYS_ENABLED", false),
-		FeaturePlacementEnabled:               getEnvBool("FEATURE_PLACEMENT_ENABLED", false),
-		FeatureMarketplaceEnabled:             getEnvBool("FEATURE_MARKETPLACE_ENABLED", false),
-		ElasticsearchURL:                      getEnv("ELASTICSEARCH_URL", ""),
-		RunWorkersInProcess:                   getEnvBool("RUN_WORKERS_INPROCESS", false),
-		FeatureSocialPayEnabled:               getEnvBool("FEATURE_SOCIAL_PAY_ENABLED", false),
-		FeatureP2PMarketEnabled:               getEnvBool("FEATURE_P2P_MARKET_ENABLED", false),
-		FeatureSavingsEnabled:                 getEnvBool("FEATURE_SAVINGS_ENABLED", false),
-		FeatureTradingEnabled:                 getEnvBool("FEATURE_TRADING_ENABLED", false),
-		FeatureAITradingEnabled:               getEnvBool("FEATURE_AI_TRADING_ENABLED", false),
-		TradingFeeBps:                         getEnvInt("TRADING_FEE_BPS", 2000),
-		TradingHurdleBps:                      getEnvInt("TRADING_HURDLE_BPS", 0),
-		SavingsEarlyBreakPenaltyBps:           getEnvInt("SAVINGS_EARLY_BREAK_PENALTY_BPS", 1000),
-		FeatureCreatorsEnabled:                getEnvBool("FEATURE_CREATORS_ENABLED", false),
-		FeatureLoyaltyEnabled:                 getEnvBool("FEATURE_LOYALTY_ENABLED", false),
-		FeatureCommissionEnabled:              getEnvBool("FEATURE_COMMISSION_ENABLED", false),
-		FeatureHealthEnabled:                  getEnvBool("FEATURE_HEALTH_ENABLED", false),
-		FeatureHealthPharmacyEnabled:          getEnvBool("FEATURE_HEALTH_PHARMACY_ENABLED", false),
-		FeatureHealthLabEnabled:               getEnvBool("FEATURE_HEALTH_LAB_ENABLED", false),
-		FeatureHealthVetEnabled:               getEnvBool("FEATURE_HEALTH_VET_ENABLED", false),
-		FeatureHealthIntakeEnabled:            getEnvBool("FEATURE_HEALTH_INTAKE_ENABLED", false),
-		FeatureHealthTriageEnabled:            getEnvBool("FEATURE_HEALTH_TRIAGE_ENABLED", false),
-		FeatureHealthTriageWhatsAppEnabled:    getEnvBool("FEATURE_HEALTH_TRIAGE_WHATSAPP_ENABLED", false),
-		TriageEngine:                          getEnv("TRIAGE_ENGINE", "mock"),
-		InfermedicaAppID:                      getEnv("INFERMEDICA_APP_ID", ""),
-		InfermedicaAppKey:                     getEnv("INFERMEDICA_APP_KEY", ""),
-		InfermedicaBaseURL:                    getEnv("INFERMEDICA_BASE_URL", ""),
-		TriageWhatsAppSecret:                  getEnv("TRIAGE_WHATSAPP_SECRET", ""),
+		FeatureTierLimitsEnabled:                 getEnvBool("FEATURE_TIER_LIMITS_ENABLED", true),
+		FeatureFXEnabled:                         getEnvBool("FEATURE_FX_ENABLED", false),
+		FeatureFXOrchestrationEnabled:            getEnvBool("FEATURE_FX_ORCHESTRATION_ENABLED", false),
+		FeatureRealtimeEnabled:                   getEnvBool("FEATURE_REALTIME_ENABLED", false),
+		PaymaxWebhookOutURL:                      getEnv("PAYMAX_WEBHOOK_OUT_URL", ""),
+		PaymaxWebhookSecret:                      getEnv("PAYMAX_WEBHOOK_SECRET", ""),
+		FeatureGroupsEnabled:                     getEnvBool("FEATURE_GROUPS_ENABLED", false),
+		FeatureAssociationsEnabled:               getEnvBool("FEATURE_ASSOCIATIONS_ENABLED", false),
+		AssocCardSigningSecret:                   getEnv("ASSOC_CARD_SIGNING_SECRET", ""),
+		FeatureEventsEnabled:                     getEnvBool("FEATURE_EVENTS_ENABLED", false),
+		FeatureEstateEnabled:                     getEnvBool("FEATURE_ESTATE_ENABLED", false),
+		FeatureEstateDuesPaystackCheckoutEnabled: getEnvBool("FEATURE_ESTATE_DUES_PAYSTACK_CHECKOUT_ENABLED", false),
+		FeatureCrowdfundingEnabled:               getEnvBool("FEATURE_CROWDFUNDING_ENABLED", false),
+		FeatureRestaurantEnabled:                 getEnvBool("FEATURE_RESTAURANT_ENABLED", false),
+		FeatureRestaurantWithdrawalsEnabled:      getEnvBool("FEATURE_RESTAURANT_WITHDRAWALS_ENABLED", false),
+		FeatureRestaurantPaystackCheckoutEnabled: getEnvBool("FEATURE_RESTAURANT_PAYSTACK_CHECKOUT_ENABLED", false),
+		FeatureModuleGateEnforce:                 getEnvBool("FEATURE_MODULE_GATE_ENFORCE", false),
+		FeatureNutritionEnabled:                  getEnvBool("FEATURE_NUTRITION_ENABLED", false),
+		FeatureTelemedicineEnabled:               getEnvBool("FEATURE_TELEMEDICINE_ENABLED", false),
+		FeatureVoteBridgeEnabled:                 getEnvBool("FEATURE_VOTE_BRIDGE_ENABLED", false),
+		FeatureTransportEnabled:                  getEnvBool("FEATURE_TRANSPORT_ENABLED", false),
+		FeatureTransportModesEnabled:             getEnvBool("FEATURE_TRANSPORT_MODES_ENABLED", false),
+		FeatureTransportPaystackCheckoutEnabled:  getEnvBool("FEATURE_TRANSPORT_PAYSTACK_CHECKOUT_ENABLED", false),
+		FeatureTransportSchedulingEnabled:        getEnvBool("FEATURE_TRANSPORT_SCHEDULING_ENABLED", false),
+		FeatureAICareEnabled:                     getEnvBool("FEATURE_AICARE_ENABLED", false),
+		FeatureDisputesEnabled:                   getEnvBool("FEATURE_DISPUTES_ENABLED", false),
+		FeatureRatingsEnabled:                    getEnvBool("FEATURE_RATINGS_ENABLED", false),
+		FeaturePharmacyEnabled:                   getEnvBool("FEATURE_PHARMACY_ENABLED", false),
+		FeaturePharmacySymptomSearchEnabled:      getEnvBool("FEATURE_PHARMACY_SYMPTOM_SEARCH_ENABLED", false),
+		FeatureOnboardingEnabled:                 getEnvBool("FEATURE_ONBOARDING_ENABLED", false),
+		FeatureInvestEnabled:                     getEnvBool("FEATURE_INVEST_ENABLED", false),
+		FeatureInvestPINDevBypass:                getEnvBool("FEATURE_INVEST_PIN_DEV_BYPASS", false),
+		InvestMarketDataBaseURL:                  getEnv("INVEST_MARKETDATA_BASE_URL", ""),
+		InvestMarketDataAPIKey:                   getEnv("INVEST_MARKETDATA_API_KEY", ""),
+		InvestBrokerBaseURL:                      getEnv("INVEST_BROKER_BASE_URL", ""),
+		InvestBrokerAPIKey:                       getEnv("INVEST_BROKER_API_KEY", ""),
+		InvestBrokerWebhookSecret:                getEnv("INVEST_BROKER_WEBHOOK_SECRET", ""),
+		FeatureRealtorEnabled:                    getEnvBool("FEATURE_REALTOR_ENABLED", false),
+		FeatureDoctorEnabled:                     getEnvBool("FEATURE_DOCTOR_ENABLED", false),
+		FeatureDoctorEmergencyDispatchEnabled:    getEnvBool("FEATURE_DOCTOR_EMERGENCY_DISPATCH_ENABLED", false),
+		FeatureMapsEnabled:                       getEnvBool("FEATURE_MAPS_ENABLED", false),
+		FeatureMapsV2Enabled:                     getEnvBool("FEATURE_MAPS_V2_ENABLED", false),
+		FeatureAcademyEnabled:                    getEnvBool("FEATURE_ACADEMY_ENABLED", false),
+		FeatureAcademyExamEnabled:                getEnvBool("FEATURE_ACADEMY_EXAM_ENABLED", false),
+		FeatureAcademySpineEnabled:               getEnvBool("FEATURE_ACADEMY_SPINE_ENABLED", false),
+		FeatureAcademyEduPayEnabled:              getEnvBool("FEATURE_ACADEMY_EDUPAY_ENABLED", false),
+		FeatureAcademyCredentialsEnabled:         getEnvBool("FEATURE_ACADEMY_CREDENTIALS_ENABLED", false),
+		FeatureAcademyLiveEnabled:                getEnvBool("FEATURE_ACADEMY_LIVE_ENABLED", false),
+		FeatureAcademySchoolsEnabled:             getEnvBool("FEATURE_ACADEMY_SCHOOLS_ENABLED", false),
+		FeatureAcademyTutorEnabled:               getEnvBool("FEATURE_ACADEMY_TUTOR_ENABLED", false),
+		FeatureAcademyFeesEnabled:                getEnvBool("FEATURE_ACADEMY_FEES_ENABLED", false),
+		FeatureConnectEnabled:                    getEnvBool("FEATURE_CONNECT_ENABLED", false),
+		FeatureContestStageEvictionEnabled:       getEnvBool("FEATURE_CONTEST_STAGE_EVICTION_ENABLED", false),
+		FeaturePropertySuiteEnabled:              getEnvBool("FEATURE_PROPERTY_SUITE_ENABLED", false),
+		FeatureFractionalREEnabled:               getEnvBool("FEATURE_FRACTIONAL_RE_ENABLED", false),
+		FeatureCryptoEnabled:                     getEnvBool("FEATURE_CRYPTO_ENABLED", false),
+		FeatureTelemedicinePlatformFeeEnabled:    getEnvBool("FEATURE_TELEMEDICINE_PLATFORM_FEE_ENABLED", false),
+		FeatureCheckoutTopupTier0:                getEnvBool("FEATURE_CHECKOUT_TOPUP_TIER0", false),
+		FeatureBusinessRegistryEnabled:           getEnvBool("FEATURE_BUSINESS_REGISTRY_ENABLED", false),
+		CACVASBaseURL:                            getEnv("CAC_VAS_BASE_URL", ""),
+		CACVASApiKey:                             getEnv("CAC_VAS_API_KEY", ""),
+		CACVASConsumerSecret:                     getEnv("CAC_VAS_CONSUMER_SECRET", ""),
+		FeatureInternalLedgerAPIEnabled:          getEnvBool("FEATURE_INTERNAL_LEDGER_API_ENABLED", false),
+		LedgerServiceToken:                       getEnv("LEDGER_SERVICE_TOKEN", ""),
+		FeatureLearnEnabled:                      getEnvBool("FEATURE_LEARN_ENABLED", false),
+		FeatureInvestaiEnabled:                   getEnvBool("FEATURE_INVESTAI_ENABLED", false),
+		FeatureSpotlightwealthEnabled:            getEnvBool("FEATURE_SPOTLIGHTWEALTH_ENABLED", false),
+		FeatureInsuranceEnabled:                  getEnvBool("FEATURE_INSURANCE_ENABLED", false),
+		FeatureStaysEnabled:                      getEnvBool("FEATURE_STAYS_ENABLED", false),
+		FeaturePlacementEnabled:                  getEnvBool("FEATURE_PLACEMENT_ENABLED", false),
+		FeatureMarketplaceEnabled:                getEnvBool("FEATURE_MARKETPLACE_ENABLED", false),
+		ElasticsearchURL:                         getEnv("ELASTICSEARCH_URL", ""),
+		RunWorkersInProcess:                      getEnvBool("RUN_WORKERS_INPROCESS", false),
+		FeatureSocialPayEnabled:                  getEnvBool("FEATURE_SOCIAL_PAY_ENABLED", false),
+		FeatureP2PMarketEnabled:                  getEnvBool("FEATURE_P2P_MARKET_ENABLED", false),
+		FeatureSavingsEnabled:                    getEnvBool("FEATURE_SAVINGS_ENABLED", false),
+		FeatureTradingEnabled:                    getEnvBool("FEATURE_TRADING_ENABLED", false),
+		FeatureAITradingEnabled:                  getEnvBool("FEATURE_AI_TRADING_ENABLED", false),
+		TradingFeeBps:                            getEnvInt("TRADING_FEE_BPS", 2000),
+		TradingHurdleBps:                         getEnvInt("TRADING_HURDLE_BPS", 0),
+		SavingsEarlyBreakPenaltyBps:              getEnvInt("SAVINGS_EARLY_BREAK_PENALTY_BPS", 1000),
+		FeatureCreatorsEnabled:                   getEnvBool("FEATURE_CREATORS_ENABLED", false),
+		FeatureLoyaltyEnabled:                    getEnvBool("FEATURE_LOYALTY_ENABLED", false),
+		FeatureCommissionEnabled:                 getEnvBool("FEATURE_COMMISSION_ENABLED", false),
+		FeatureHealthEnabled:                     getEnvBool("FEATURE_HEALTH_ENABLED", false),
+		FeatureHealthPharmacyEnabled:             getEnvBool("FEATURE_HEALTH_PHARMACY_ENABLED", false),
+		FeatureHealthLabEnabled:                  getEnvBool("FEATURE_HEALTH_LAB_ENABLED", false),
+		FeatureHealthVetEnabled:                  getEnvBool("FEATURE_HEALTH_VET_ENABLED", false),
+		FeatureHealthIntakeEnabled:               getEnvBool("FEATURE_HEALTH_INTAKE_ENABLED", false),
+		FeatureHealthTriageEnabled:               getEnvBool("FEATURE_HEALTH_TRIAGE_ENABLED", false),
+		FeatureHealthTriageWhatsAppEnabled:       getEnvBool("FEATURE_HEALTH_TRIAGE_WHATSAPP_ENABLED", false),
+		TriageEngine:                             getEnv("TRIAGE_ENGINE", "mock"),
+		InfermedicaAppID:                         getEnv("INFERMEDICA_APP_ID", ""),
+		InfermedicaAppKey:                        getEnv("INFERMEDICA_APP_KEY", ""),
+		InfermedicaBaseURL:                       getEnv("INFERMEDICA_BASE_URL", ""),
+		TriageWhatsAppSecret:                     getEnv("TRIAGE_WHATSAPP_SECRET", ""),
 
 		MapsConfigPath:         getEnv("MAPS_CONFIG_PATH", ""),
 		MapsDefaultSurface:     getEnv("MAPS_DEFAULT_SURFACE", "default"),

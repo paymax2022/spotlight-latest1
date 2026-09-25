@@ -4,6 +4,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"spotlight/backend/internal/finance/kyc"
+	"spotlight/backend/internal/finance/kycverify"
 	"spotlight/backend/internal/finance/ledger"
 	"spotlight/backend/internal/finance/tiers"
 	"spotlight/backend/internal/finance/wallet"
@@ -14,7 +15,16 @@ import (
 // registerConnectWalletRoutes wires up all /api/v1/wallet/* and /api/v1/kyc/* endpoints
 // for the Paymax Connect module (wallet, gifting, KYC tier progression, payouts).
 // All endpoints are protected by RequireAuthContext + requireUserID.
-func registerConnectWalletRoutes(r *gin.Engine, supabase interface{}, rbac services.RBACService, authMiddleware gin.HandlerFunc, db *pgxpool.Pool, auditSvc services.AuditService) {
+//
+// kycVerify is the KYC verification gateway (nil unless FEATURE_KYC_VERIFY_ENABLED
+// — see registerFinanceRoutes), threaded through so SubmitTier1 can run a real
+// Dojah/Smile ID/Youverify check instead of writing an unverified pending status.
+// SubmitTier2/3 stay on the old no-check path (see kyc_connect_handler.go) —
+// their kycverify equivalents (liveness/facial/document checks) require real
+// camera/SDK image capture, which the mobile app does not have yet
+// (src/features/kycverify/components/CaptureStub.tsx is an explicit sandbox
+// stub) — wiring those checks up would submit fake bytes to a REAL provider.
+func registerConnectWalletRoutes(r *gin.Engine, supabase interface{}, rbac services.RBACService, authMiddleware gin.HandlerFunc, db *pgxpool.Pool, auditSvc services.AuditService, kycVerify *kycverify.Service) {
 	// Create stores with pooled connections
 	walletStore := handlers.NewWalletStore(db)
 	giftingStore := handlers.NewGiftingStore(db)
@@ -28,7 +38,7 @@ func registerConnectWalletRoutes(r *gin.Engine, supabase interface{}, rbac servi
 
 	walletHandler := handlers.NewWalletConnectHandler(walletStore, walletSvc, tiersSvc, auditSvc)
 	giftingHandler := handlers.NewGiftingConnectHandler(giftingStore, walletSvc, ledgerSvc, tiersSvc, auditSvc)
-	kycHandler := handlers.NewKYCConnectHandler(kyc.NewService(db), tiersSvc, auditSvc)
+	kycHandler := handlers.NewKYCConnectHandler(kyc.NewService(db), tiersSvc, auditSvc, kycVerify)
 	payoutsHandler := handlers.NewPayoutsConnectHandler(payoutsStore, walletSvc, ledgerSvc, auditSvc)
 
 	// Base v1 group (all routes require auth)

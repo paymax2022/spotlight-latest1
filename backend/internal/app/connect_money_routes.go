@@ -88,7 +88,7 @@ func RegisterConnectMoney(member *gin.RouterGroup, admin *gin.RouterGroup, cfg c
 	// best-effort and can never fail or reverse a vote (see recordCommissionSafe). Flag
 	// off ⇒ no recorder is set ⇒ the seam stays nil ⇒ silent no-op.
 	if cfg.FeatureCommissionEnabled {
-		voteSvc.SetCommissionRecorder(commissionRecorderAdapter{svc: commission.NewService(commission.NewRepository(pool), nil)})
+		voteSvc.SetCommissionRecorder(commissionRecorderAdapter{svc: withReferralSplit(commission.NewService(commission.NewRepository(pool), nil), pool, cfg)})
 		log.Println("[connect-money] commission recording wired → Contest/Voting (earning-row only; no ledger re-post)")
 	}
 	connectvoting.Register(member, voteSvc, cfg)

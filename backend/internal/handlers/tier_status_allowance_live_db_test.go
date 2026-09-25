@@ -50,7 +50,7 @@ type tierStatusBody struct {
 func getTierStatusFor(t *testing.T, pool *pgxpool.Pool, userID string) tierStatusBody {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
-	h := NewKYCConnectHandler(kyc.NewService(pool), tiers.NewService(pool), nil)
+	h := NewKYCConnectHandler(kyc.NewService(pool), tiers.NewService(pool), nil, nil)
 
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
