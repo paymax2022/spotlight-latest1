@@ -147,7 +147,7 @@ func (s *Service) OnChargeSuccess(ctx context.Context, reference, gatewayRef str
 
 	status, err := s.gateway.VerifyPayment(ctx, reference)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%w: %v", ErrVerifyUnavailable, err)
 	}
 	if status == nil || strings.ToLower(status.Status) != "success" {
 		return nil, ErrChargeNotSuccessful
@@ -215,7 +215,7 @@ func (s *Service) CheckStatus(ctx context.Context, reference string) (*ConfirmRe
 		return &ConfirmResult{Reference: reference, Status: rec.Status, TripID: rec.TripID}, nil
 	}
 	res, err := s.OnChargeSuccess(ctx, reference, reference)
-	if errors.Is(err, ErrChargeNotSuccessful) {
+	if errors.Is(err, ErrChargeNotSuccessful) || errors.Is(err, ErrVerifyUnavailable) {
 		return &ConfirmResult{Reference: reference, Status: "pending"}, nil
 	}
 	return res, err
