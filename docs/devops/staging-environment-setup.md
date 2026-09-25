@@ -198,18 +198,20 @@ There have been two known bugs in this area, both fixed 2026-09-25:
   checkout runs inside the in-app Paystack WebView SDK instead — success/cancel
   come back via `postMessage`, so the flow no longer depends on `callback_url`
   or an external browser redirect at all, and no build profile needs to
-  remember to set the flag. **Still needs a manual follow-up**: update the
-  default callback URL in the Paystack dashboard (for both the test and live
-  API key pairs) away from `0.0.0.0:8080`, since one lone remaining call site
-  (`app/profile/business/register/index.tsx`) still uses the legacy
-  `Linking.openURL` path and a stray webhook-config drift could resurface this.
-- `app/profile/business/register/index.tsx`'s registration-fee flow was never
-  migrated to the in-app SDK gateway (`useGatewayCheckout`) — it still opens
-  the external browser and relies on the user manually returning to the app to
-  hit "verify". Functionally it still works (verification is a separate manual
-  step, not dependent on the redirect), but it will show the same stale
-  callback page until the dashboard default above is fixed, or until it's
-  migrated like the other seven screens.
+  remember to set the flag. `EXPO_PUBLIC_SDK_CHECKOUT` itself was later removed
+  entirely (PR #227): the in-app SDK is now the ONLY checkout path, with no
+  opt-out flag and no `onFallback`/`Linking.openURL` escape hatch anywhere in
+  the payments code. **Still needs a manual follow-up**: update the default
+  callback URL in the Paystack dashboard (for both the test and live API key
+  pairs) away from `0.0.0.0:8080` — belt-and-suspenders, since nothing in the
+  app depends on it reaching anywhere real anymore, but a future screen built
+  against the raw `initiateXPaystack` → redirect pattern (bypassing
+  `useGatewayCheckout`) could still hit it.
+- `app/profile/business/register/index.tsx`'s registration-fee flow — the one
+  screen not migrated when PR #224 fixed the other seven — was migrated to
+  `useGatewayCheckout` in PR #227. The old two-step "open browser, come back,
+  tap verify" UI is gone; payment success now completes automatically via
+  `onResolved`, same as every other Paystack-funded flow.
 
 ## Not covered here
 

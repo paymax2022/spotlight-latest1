@@ -16,7 +16,7 @@ export { usePaystackGateway } from './usePaystackGateway';
 export { PAYSTACK_PUBLIC_KEY, extractAccessCode } from './paystackGateway';
 export type { PaystackChargeArgs, PaystackGatewayController, PaystackMetaField } from './paystackGateway';
 // Server-initialized in-app checkout (resume) + auto-return to a status screen.
-export { useGatewayCheckout, SDK_CHECKOUT_ENABLED } from './useGatewayCheckout';
+export { useGatewayCheckout } from './useGatewayCheckout';
 export type {
   GatewayCheckoutController,
   GatewayCheckoutRequest,
