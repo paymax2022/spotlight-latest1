@@ -102,7 +102,7 @@ jobs:
             }
             // PAYSTACK_SECRET_KEY: wallet topup (frontend-web/src/server/wallet/service.ts,
             // POST /api/v1/wallet/topup) and voting/transfers payment code call Paystack
-            // directly FROM frontend-web, using frontend-web's OWN process.env — a
+            // directly FROM frontend-web, using frontend-web own process.env — a
             // separate Railway service from backend, which has its own separate
             // PAYSTACK_SECRET_KEY (checked below). Missing here throws "Paystack is not
             // configured" (500) on every topup even when backend has the key.
