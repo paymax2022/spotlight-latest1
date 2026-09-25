@@ -8,23 +8,18 @@
 // screen. It is deliberately distinct from `usePurchasePayment`, which is a
 // wallet/card chooser that CLIENT-initializes its own charge.
 //
-// On by default: EXPO_PUBLIC_SDK_CHECKOUT=false opts a build OUT (or when an
-// access code can't be derived), in which case the hook does not open the SDK
-// and instead invokes `onFallback`, so callers keep their existing
-// `Linking.openURL(authorizationUrl)` behavior as an escape hatch, not the
-// default path. The in-app SDK is the preferred, no-external-browser checkout
-// (WebView-hosted on native via usePaystackGateway.native.tsx, a same-page
-// popup on web) — the rollout period is over; every APK build was silently
-// falling back to the external browser because this previously defaulted OFF
-// and no build profile ever set it, found 2026-09-25.
+// The in-app SDK is the ONLY checkout path — there is no external-browser
+// fallback. If a valid access code can't be derived from the server's
+// authorization_url (which should never happen for a well-formed Paystack
+// response), this surfaces as a hard error rather than silently degrading to
+// Linking.openURL: a broken access code is a real bug worth seeing, not
+// something to paper over by handing the user to a browser tab.
 
 import { useCallback, useState } from 'react';
 
 import { useAuthStore } from '@/store/authStore';
 import { usePaystackGateway } from './usePaystackGateway';
 import { extractAccessCode, type PaystackGatewayController } from './paystackGateway';
-
-export const SDK_CHECKOUT_ENABLED = process.env.EXPO_PUBLIC_SDK_CHECKOUT !== 'false';
 
 export type GatewayPhase = 'idle' | 'initializing' | 'awaiting' | 'done' | 'error';
 
@@ -41,12 +36,6 @@ export interface GatewayCheckoutRequest {
   initialize: () => Promise<GatewayInitResult>;
   /** Navigate to the transaction status screen after the SDK checkout succeeds. */
   onResolved: (result: GatewayInitResult) => void;
-  /**
-   * Called instead of opening the SDK when the flag is off or no access code can
-   * be derived. Callers pass their legacy `Linking.openURL(authorizationUrl)`
-   * here so behavior degrades safely.
-   */
-  onFallback?: (result: GatewayInitResult) => void;
   /** What is being paid for (Paystack metadata / diagnostics), e.g. 'wallet_topup'. */
   domain: string;
   /** Customer email; falls back to the signed-in user. */
@@ -85,11 +74,12 @@ export function useGatewayCheckout(): GatewayCheckoutController {
 
       const accessCode = extractAccessCode(init.authorizationUrl);
 
-      // Flag off, or no access code to resume → defer to the caller's legacy
-      // hosted-checkout redirect rather than failing.
-      if (!SDK_CHECKOUT_ENABLED || !accessCode) {
-        setPhase('idle');
-        req.onFallback?.(init);
+      // No external-browser fallback: a malformed authorization_url is a
+      // server-side bug, not something to paper over by handing the user to
+      // a browser tab.
+      if (!accessCode) {
+        setPhase('error');
+        setError('Could not start the secure payment. Please try again.');
         return;
       }
 
