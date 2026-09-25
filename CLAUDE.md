@@ -84,9 +84,10 @@ API source of truth: `contracts/openapi.yaml`.
   `spotlight-openmic-songs` — set via `R2_BUCKET`, no default. `spotlight-open-mic`
   was documented here for a long time and **does not exist** in the account; it was
   also the `config.go` default, which made uploads presign a 200 and then fail at the
-  PUT with `NoSuchBucket`. Several modules still pass the old name literally
-  (marketplace `account.api.ts`, mobility, featured-placement fixtures,
-  registration uploads) — those are unverified and likely broken the same way.
+  PUT with `NoSuchBucket`. Audited 2026-09-25: marketplace `account.api.ts`,
+  mobility, featured-placement fixtures, and registration uploads no longer
+  hardcode the old name (each now uses `R2_BUCKET`/`R2_BUCKET_NAME` or an
+  explicit mock/placeholder value).
 - **Email:** Resend API (`RESEND_API_KEY`). No queue — fire-and-forget; failures are silent.
 - **Payments:** Paystack. HMAC-SHA512 webhook verification. Live webhook handler:
   `frontend-web/app/api/webhooks/paystack/route.ts`.

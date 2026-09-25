@@ -2,9 +2,8 @@
   "expo": {
     "name": "Spotlight Super App",
     "slug": "paymax-react-native-app",
-    "scheme": "spotlight",
+    "scheme": "paymaxrn",
     "icon": "./assets/images/icon.png",
-    
     "plugins": [
       "expo-router",
       "expo-secure-store",
@@ -16,7 +15,6 @@
           "resizeMode": "contain",
           "backgroundColor": "#ffffff"
         }
-        
       ],
       [
         "expo-image-picker",

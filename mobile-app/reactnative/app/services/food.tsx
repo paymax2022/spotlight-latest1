@@ -26,6 +26,7 @@ import { formatNairaWhole } from '@/features/food/utils';
 import type { Restaurant } from '@/features/food/types';
 import { HomeMenuButton } from '@/components/HomeMenu';
 import StateView from '@/components/StateView';
+import { RemoteBanner } from '@/features/media/banners';
 
 // ── Landing-screen config ───────────────────────────────────────────────────
 //
@@ -292,6 +293,8 @@ export default function FoodScreen() {
       </View>
 
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={s.content}>
+        <RemoteBanner slug="restaurant" priority style={s.banner} />
+
         {/* Hero — primary entry into the full Food & Delivery experience */}
         <Pressable
           onPress={() => router.push('/food')}
@@ -475,6 +478,7 @@ const s = StyleSheet.create({
     paddingTop: Spacing.lg,
     paddingBottom: Platform.OS === 'ios' ? 120 : 96,
   },
+  banner: { marginHorizontal: Spacing.containerMargin, marginBottom: Spacing.md },
   hero: {
     minHeight: 172,
     borderRadius: Radius.xl,

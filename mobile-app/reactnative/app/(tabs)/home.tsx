@@ -11,6 +11,7 @@ import SectionHeader from '@/components/SectionHeader';
 import ModuleGrid from '@/components/ModuleGrid';
 import FeaturedServiceCard from '@/components/FeaturedServiceCard';
 import PromoBanner from '@/components/PromoBanner';
+import { RemoteBanner } from '@/features/media/banners';
 import RecentActivityCard, { Activity } from '@/components/RecentActivityCard';
 import { FeaturedHomeSection } from '@/features/featured/components';
 import { useMyTickets, useEvents } from '@/features/events/hooks';
@@ -164,6 +165,7 @@ export default function HomeScreen() {
       >
         <AppHeader name={userName} notifCount={0} />
         <SearchBar value={search} onChangeText={setSearch} onSubmit={runSearch} />
+        <RemoteBanner slug="home-hero" priority style={styles.heroBanner} />
 
         {isLoading ? (
           <View style={styles.loader}>
@@ -279,6 +281,7 @@ const styles = StyleSheet.create({
   safe:    { flex: 1, backgroundColor: Colors.background },
   scroll:  { flex: 1 },
   content: { paddingBottom: Spacing.xl },
+  heroBanner: { marginHorizontal: Spacing.containerMargin, marginTop: Spacing.sm },
   loader:  { paddingVertical: Spacing.xl, alignItems: 'center' },
   errorBox:{ marginHorizontal: Spacing.containerMargin, padding: Spacing.md, backgroundColor: 'rgba(220,38,38,0.06)', borderRadius: Radius.lg, marginBottom: Spacing.md },
   errorText:{ ...Typography.labelSm, color: Colors.error, textAlign: 'center' },

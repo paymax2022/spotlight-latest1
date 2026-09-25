@@ -9,7 +9,8 @@
       "distribution": "internal",
       "channel": "development",
       "env": {
-        "EXPO_PUBLIC_SENTRY_ENVIRONMENT": "development"
+        "EXPO_PUBLIC_SENTRY_ENVIRONMENT": "development",
+        "EXPO_PUBLIC_CLOUDINARY_CLOUD_NAME": "paymax"
       }
     },
     "preview": {
@@ -22,7 +23,8 @@
       "autoIncrement": true,
       "env": {
         "EXPO_PUBLIC_SENTRY_ENVIRONMENT": "staging",
-        "SENTRY_SKIP_AUTO_RELEASE": "true"
+        "SENTRY_SKIP_AUTO_RELEASE": "true",
+        "EXPO_PUBLIC_CLOUDINARY_CLOUD_NAME": "paymax"
       }
     },
     "production": {
@@ -33,7 +35,8 @@
       "channel": "production",
       "autoIncrement": true,
       "env": {
-        "EXPO_PUBLIC_SENTRY_ENVIRONMENT": "production"
+        "EXPO_PUBLIC_SENTRY_ENVIRONMENT": "production",
+        "EXPO_PUBLIC_CLOUDINARY_CLOUD_NAME": "paymax"
       }
     },
     "staging": {
@@ -45,7 +48,8 @@
         "EXPO_PUBLIC_SENTRY_ENVIRONMENT": "staging",
         "EXPO_PUBLIC_API_BASE_URL": "https://frontend-web-staging-ec46.up.railway.app",
         "EXPO_PUBLIC_SUPABASE_URL": "https://wnicsubiznmishkmunsv.supabase.co",
-        "EXPO_PUBLIC_SUPABASE_ANON_KEY": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InduaWNzdWJpem5taXNoa211bnN2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ5OTc1OTYsImV4cCI6MjA5MDU3MzU5Nn0.Mjyylv7IA_8PQ2gLo-hmxRNl2Csbm5wOmo5lStf1g5g"
+        "EXPO_PUBLIC_SUPABASE_ANON_KEY": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InduaWNzdWJpem5taXNoa211bnN2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ5OTc1OTYsImV4cCI6MjA5MDU3MzU5Nn0.Mjyylv7IA_8PQ2gLo-hmxRNl2Csbm5wOmo5lStf1g5g",
+        "EXPO_PUBLIC_CLOUDINARY_CLOUD_NAME": "paymax"
       }
     }
   }
