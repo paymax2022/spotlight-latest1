@@ -8,9 +8,15 @@
 // screen. It is deliberately distinct from `usePurchasePayment`, which is a
 // wallet/card chooser that CLIENT-initializes its own charge.
 //
-// Gated by EXPO_PUBLIC_SDK_CHECKOUT: when off (or when an access code can't be
-// derived), the hook does not open the SDK and instead invokes `onFallback`, so
-// callers keep their existing `Linking.openURL(authorizationUrl)` behavior.
+// On by default: EXPO_PUBLIC_SDK_CHECKOUT=false opts a build OUT (or when an
+// access code can't be derived), in which case the hook does not open the SDK
+// and instead invokes `onFallback`, so callers keep their existing
+// `Linking.openURL(authorizationUrl)` behavior as an escape hatch, not the
+// default path. The in-app SDK is the preferred, no-external-browser checkout
+// (WebView-hosted on native via usePaystackGateway.native.tsx, a same-page
+// popup on web) — the rollout period is over; every APK build was silently
+// falling back to the external browser because this previously defaulted OFF
+// and no build profile ever set it, found 2026-09-25.
 
 import { useCallback, useState } from 'react';
 
@@ -18,8 +24,7 @@ import { useAuthStore } from '@/store/authStore';
 import { usePaystackGateway } from './usePaystackGateway';
 import { extractAccessCode, type PaystackGatewayController } from './paystackGateway';
 
-/** In-app SDK checkout is opt-in per environment (matches the *_USE_MOCK convention). */
-export const SDK_CHECKOUT_ENABLED = process.env.EXPO_PUBLIC_SDK_CHECKOUT === 'true';
+export const SDK_CHECKOUT_ENABLED = process.env.EXPO_PUBLIC_SDK_CHECKOUT !== 'false';
 
 export type GatewayPhase = 'idle' | 'initializing' | 'awaiting' | 'done' | 'error';
 
