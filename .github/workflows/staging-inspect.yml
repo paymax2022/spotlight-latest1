@@ -100,6 +100,13 @@ jobs:
             for (const k of ["GO_API_BASE_URL","GO_BACKEND_WS_URL","NEXT_PUBLIC_API_URL"]) {
               console.log(`    ${k}: ${v[k] === undefined ? "NOT SET" : "set"}`);
             }
+            // PAYSTACK_SECRET_KEY: wallet topup (frontend-web/src/server/wallet/service.ts,
+            // POST /api/v1/wallet/topup) and voting/transfers payment code call Paystack
+            // directly FROM frontend-web, using frontend-web's OWN process.env — a
+            // separate Railway service from backend, which has its own separate
+            // PAYSTACK_SECRET_KEY (checked below). Missing here throws "Paystack is not
+            // configured" (500) on every topup even when backend has the key.
+            console.log("    " + shape("PAYSTACK_SECRET_KEY", (s) => s.length > 20));
           '
 
       - name: backend APP_PORT (name + value; a port is not a secret)
@@ -151,6 +158,10 @@ jobs:
             // user token.
             console.log("\n  FEATURE_MAPS_ENABLED = " + (v.FEATURE_MAPS_ENABLED ?? "NOT SET (defaults false)"));
             console.log("  " + shape("MAPS_GOOGLE_KEY"));
+            // Same presence/length/hash-only pattern for the Paystack secret —
+            // confirms a rotation actually landed on this Railway service
+            // without ever printing or comparing the real value here.
+            console.log("  " + shape("PAYSTACK_SECRET_KEY"));
           '
 
       # Deployment STATE first. `railway redeploy` returns once a build is
