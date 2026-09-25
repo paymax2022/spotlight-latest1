@@ -171,6 +171,46 @@ These default to `mock` and must be set in the staging backend environment:
 | `TRIAGE_ENGINE` | `mock` |
 | `MAPS_PROVIDER` | `mock` |
 
+## Paystack: staging MUST use test keys
+
+Staging is meant to mirror production except for money movement — it must
+never be able to move real funds. That means the staging Railway backend
+service's `PAYSTACK_SECRET_KEY` has to be a `sk_test_…` key (not `sk_live_…`),
+and the staging mobile build's `EXPO_PUBLIC_PAYSTACK_PUBLIC_KEY` (`eas.json`
+`staging` profile) has to be the matching `pk_test_…` key from the *same*
+Paystack test-mode dashboard. `internal/config/validate.go` rejects a key in
+the wrong shape (`pk_` where a secret is expected, etc.) but does NOT know
+which environment it is running in, so it cannot catch a live key deployed to
+staging — that check has to happen by reading the Railway staging service's
+actual env vars, which this session did not have access to do.
+
+There have been two known bugs in this area, both fixed 2026-09-25:
+- The mobile app's `Linking.openURL(authorization_url)` fallback flow depended
+  on the backend's Paystack `callback_url` — which every mobile call site sent
+  as an empty string — landing somewhere real after checkout. With no
+  `callback_url`, Paystack falls back to the **default callback URL configured
+  in the Paystack account dashboard**, which was apparently set once during
+  local testing and left pointing at `http://0.0.0.0:8080/api/v1/...` (a
+  server bind address, meaningless off that machine). Users saw that raw URL
+  in the external browser after a successful card payment. Fixed in PR #224 by
+  flipping `useGatewayCheckout.ts`'s `SDK_CHECKOUT_ENABLED` gate to default ON
+  (`EXPO_PUBLIC_SDK_CHECKOUT !== 'false'`, opt-out instead of opt-in) so card
+  checkout runs inside the in-app Paystack WebView SDK instead — success/cancel
+  come back via `postMessage`, so the flow no longer depends on `callback_url`
+  or an external browser redirect at all, and no build profile needs to
+  remember to set the flag. **Still needs a manual follow-up**: update the
+  default callback URL in the Paystack dashboard (for both the test and live
+  API key pairs) away from `0.0.0.0:8080`, since one lone remaining call site
+  (`app/profile/business/register/index.tsx`) still uses the legacy
+  `Linking.openURL` path and a stray webhook-config drift could resurface this.
+- `app/profile/business/register/index.tsx`'s registration-fee flow was never
+  migrated to the in-app SDK gateway (`useGatewayCheckout`) — it still opens
+  the external browser and relies on the user manually returning to the app to
+  hit "verify". Functionally it still works (verification is a separate manual
+  step, not dependent on the redirect), but it will show the same stale
+  callback page until the dashboard default above is fixed, or until it's
+  migrated like the other seven screens.
+
 ## Not covered here
 
 - Cloud Run staging deploys in `deploy.yml` are gated on `vars.GCP_PROJECT_ID`,
