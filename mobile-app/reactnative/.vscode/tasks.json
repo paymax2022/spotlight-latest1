@@ -1,0 +1,54 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Android: Prebuild (clean)",
+      "type": "shell",
+      "command": "npx expo prebuild --clean --platform android",
+      "options": { "cwd": "${workspaceFolder}" },
+      "problemMatcher": [],
+      "presentation": { "reveal": "always", "clear": true, "panel": "dedicated" },
+      "detail": "Regenerates android/ from app.json + plugins. Run after changing app.json, the icon/splash assets, or any plugins/*.js file."
+    },
+    {
+      "label": "Android: Build AAB (staging)",
+      "type": "shell",
+      "command": "NODE_ENV=staging ./build-aab.sh",
+      "options": { "cwd": "${workspaceFolder}" },
+      "group": "build",
+      "problemMatcher": [],
+      "presentation": { "reveal": "always", "clear": true, "panel": "dedicated" },
+      "detail": "Signed .aab for Play Console internal/staging testing tracks, using .env.staging."
+    },
+    {
+      "label": "Android: Build AAB (production)",
+      "type": "shell",
+      "command": "NODE_ENV=production ./build-aab.sh",
+      "options": { "cwd": "${workspaceFolder}" },
+      "group": "build",
+      "problemMatcher": [],
+      "presentation": { "reveal": "always", "clear": true, "panel": "dedicated" },
+      "detail": "Signed .aab for Play Console production track, using .env.production."
+    },
+    {
+      "label": "Android: Build APK (staging)",
+      "type": "shell",
+      "command": "NODE_ENV=staging ./build-apk.sh",
+      "options": { "cwd": "${workspaceFolder}" },
+      "group": "build",
+      "problemMatcher": [],
+      "presentation": { "reveal": "always", "clear": true, "panel": "dedicated" },
+      "detail": "Signed, sideloadable .apk for staging — device/emulator smoke testing, not Play upload."
+    },
+    {
+      "label": "Android: Build APK (production)",
+      "type": "shell",
+      "command": "NODE_ENV=production ./build-apk.sh",
+      "options": { "cwd": "${workspaceFolder}" },
+      "group": "build",
+      "problemMatcher": [],
+      "presentation": { "reveal": "always", "clear": true, "panel": "dedicated" },
+      "detail": "Signed, sideloadable .apk for production — device smoke testing, not Play upload."
+    }
+  ]
+}
