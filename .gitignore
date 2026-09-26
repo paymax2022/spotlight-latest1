@@ -55,6 +55,16 @@ yarn-debug.log*
 yarn-error.log*
 # <<< AUTO-MANAGED: update-gitignore <<<
 
+# Except shared, repo-tracked VS Code tooling (not personal editor state) —
+# one-click Android AAB/APK build tasks. Lives here, not inside the managed
+# block above, so scripts/update-gitignore.sh can't silently drop it: that
+# script preserves everything outside its markers but rewrites the block
+# itself wholesale. An !-rule per file, not the whole .vscode/ dir, so
+# personal .vscode/ additions elsewhere stay ignored by default.
+!mobile-app/reactnative/.vscode/
+!mobile-app/reactnative/.vscode/tasks.json
+!mobile-app/reactnative/.vscode/settings.json
+
 # --- Launch hardening (manual): secret-leak prevention ---
 # Editor "Local History" and agent worktrees committed .env snapshots before.
 # Never track these trees again.
