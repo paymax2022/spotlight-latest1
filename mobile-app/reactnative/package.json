@@ -103,6 +103,7 @@
     "decode-uri-component": "^0.5.0",
     "@xmldom/xmldom": "^0.9.12",
     "uuid": "^11.1.1",
+    "hermes-parser": "0.32.0",
     "@istanbuljs/load-nyc-config": {
       "js-yaml": "^3.15.2"
     },
