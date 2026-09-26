@@ -93,6 +93,24 @@ Verified end to end for both `NODE_ENV=staging` and `NODE_ENV=production`:
 `BUILD SUCCESSFUL`, correct API host baked in, no loopback URLs, correct ABI,
 `Signed with: X.509, CN=Paymax Release Key, OU=Mobile, O=Paymax`.
 
+### Building staging and production back to back clobbers the artifact
+
+Gradle always writes `bundleRelease`'s output to the same path
+(`android/app/build/outputs/bundle/release/app-release.aab`) regardless of
+`NODE_ENV` — building one environment after the other silently overwrites the
+first one's `.aab`. A first fix (an env-suffixed copy still inside
+`android/app/build/outputs/...`) turned out not to be enough: this script
+always runs `gradlew clean` first, and `clean` deletes that entire
+`outputs/bundle/release/` directory up front, so the other environment's
+suffixed copy died on the very next build too. The real fix copies each
+build's `.aab` to `mobile-app/reactnative/release-artifacts/app-release-<env>.aab`
+— a directory `clean` never touches — so `release-artifacts/app-release-staging.aab`
+and `release-artifacts/app-release-production.aab` now both survive building
+the other environment afterward. `release-artifacts/` is gitignored (build
+output, not source). The original, unsuffixed `.aab` still lands at Gradle's
+usual path too, for anything that expects that exact path, but it only
+reflects whichever environment was built most recently.
+
 ## VS Code tasks
 
 `mobile-app/reactnative/.vscode/tasks.json` — open that folder in VS Code,

@@ -65,6 +65,11 @@ yarn-error.log*
 !mobile-app/reactnative/.vscode/tasks.json
 !mobile-app/reactnative/.vscode/settings.json
 
+# build-aab.sh's env-stamped .aab copies (staging + production kept side by
+# side, since gradlew clean wipes android/app/build/outputs on every build).
+# Local build output, never source.
+mobile-app/reactnative/release-artifacts/
+
 # --- Launch hardening (manual): secret-leak prevention ---
 # Editor "Local History" and agent worktrees committed .env snapshots before.
 # Never track these trees again.

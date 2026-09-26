@@ -275,7 +275,23 @@ if [[ "$fail" -ne 0 ]]; then
   exit 1
 fi
 
+# Gradle always writes to the same path regardless of NODE_ENV, so building
+# staging then production (or vice versa) silently overwrites the first
+# one — found 2026-09-26 right after building both back to back. An
+# env-suffixed copy INSIDE android/app/build/outputs isn't enough either:
+# `gradlew clean` (which this script always runs) deletes that whole
+# outputs/bundle/release/ directory up front, so the other environment's
+# stamped copy died on the very next build regardless. Copy out to a
+# directory `clean` never touches; the original stays where Gradle put it
+# for anything that expects that exact path (e.g. an IDE's "locate bundle"
+# action), but only survives until the next build of either environment.
+ARTIFACT_DIR="release-artifacts"
+mkdir -p "$ARTIFACT_DIR"
+STAMPED_AAB="$ARTIFACT_DIR/app-release-${NODE_ENV}.aab"
+cp "$AAB" "$STAMPED_AAB"
+
 echo ""
 echo "✅ Build complete and verified!"
 echo "AAB location:"
-find android/app/build/outputs/bundle/release -name "*.aab" -type f
+echo "  $AAB"
+echo "  $STAMPED_AAB  (env-stamped copy, outside android/ — survives \`gradlew clean\` on the next build)"
