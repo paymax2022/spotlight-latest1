@@ -66,7 +66,7 @@ function AcademyDashboardShell({ children }: { children: ReactNode }) {
                           <i className="fa-solid fa-arrow-right-long" />
                         </li>
                         <li>
-                          <Link href="/apply/film-academy">Apply to Academy</Link>
+                          <Link href="/film-academy/apply">Apply to Academy</Link>
                           <i className="fa-solid fa-arrow-right-long" />
                         </li>
                         <li>
@@ -288,7 +288,7 @@ export default function AcademyDashboardPage() {
           <div style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 16, padding: '40px 24px', textAlign: 'center' }}>
             <p style={{ fontSize: 40, marginBottom: 12 }}>🎬</p>
             <p style={{ color: 'rgba(255,255,255,0.6)', marginBottom: 16 }}>You haven&apos;t applied to the Film Academy yet.</p>
-            <Link href="/apply/film-academy" style={{ background: 'linear-gradient(135deg,#f59e0b,#d97706)', color: '#000', fontWeight: 700, padding: '12px 28px', borderRadius: 10, textDecoration: 'none', display: 'inline-block' }}>
+            <Link href="/film-academy/apply" style={{ background: 'linear-gradient(135deg,#f59e0b,#d97706)', color: '#000', fontWeight: 700, padding: '12px 28px', borderRadius: 10, textDecoration: 'none', display: 'inline-block' }}>
               Apply Now
             </Link>
           </div>
