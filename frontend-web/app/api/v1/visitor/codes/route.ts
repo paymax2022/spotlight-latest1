@@ -35,7 +35,12 @@ export async function POST(request: Request) {
     const user = await requireRequestUser(request);
     const supabase = createAdminClient();
     const ctx = await getResidentContext(supabase, user.id);
-    if (!ctx) throw new ApiError('Not a resident of any estate', 403);
+    if (!ctx) {
+      throw new ApiError(
+        "You're not registered as a resident of any estate yet. Ask your estate manager to add you before you can invite visitors.",
+        403,
+      );
+    }
 
     const body = await request.json();
     const visitorName = String(body?.visitorName ?? '').trim();
