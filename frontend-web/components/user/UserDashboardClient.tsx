@@ -115,6 +115,13 @@ const QUICK_LINKS: QuickLink[] = [
     accent: '#0ea5e9',
   },
   {
+    href: '/restaurant',
+    icon: '🍽️',
+    title: 'Order Food',
+    description: 'Browse restaurants near you and get your order delivered',
+    accent: '#f97316',
+  },
+  {
     href: '/open-mic',
     icon: '🎤',
     title: 'Open Mic Voting',
