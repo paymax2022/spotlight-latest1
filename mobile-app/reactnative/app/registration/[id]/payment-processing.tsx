@@ -48,8 +48,15 @@ export default function RegistrationPaymentProcessingScreen() {
         transactionId: transactionId ?? '',
         reference:     reference ?? '',
       });
-      if (result.status === 'SUCCESSFUL') { goSuccess(); return true; }
-      if (result.status === 'FAILED')     { goFailed(); return true; }
+      // The mock path returns 'SUCCESSFUL' (uppercase); the live backend's
+      // VerifyPayment returns lowercase 'successful' (registration_handler.go)
+      // — a strict-case comparison here only ever matched the mock, so a
+      // real Paystack success from the live API silently fell through every
+      // poll and eventually landed on goFailed() regardless of what Paystack
+      // reported. Normalize case rather than special-casing both strings.
+      const status = result.status?.toUpperCase();
+      if (status === 'SUCCESSFUL') { goSuccess(); return true; }
+      if (status === 'FAILED')     { goFailed(); return true; }
       return false;
     } catch {
       return false; // network hiccup — keep polling

@@ -34,8 +34,8 @@ Never expose these to a client. The Go backend reads them via `internal/config`.
 | `DATABASE_URL`, `REDIS_URL` | Datastore connection strings |
 | `SUPABASE_SERVICE_ROLE_KEY` | Full-access Supabase key (bypasses RLS) |
 | `ADMIN_API_KEY` | Admin API auth |
-| `PAYSTACK_SECRET_KEY` | Paystack `sk_…` — charges/verification |
-| `PAYSTACK_WEBHOOK_SECRET` | Paystack webhook HMAC signing secret |
+| `PAYSTACK_SECRET_KEY` | Paystack `sk_…` — charges/verification, AND webhook HMAC-SHA512 verification (`provider/paystack/paystack.go` `VerifyWebhookSignature` signs with this key — Paystack has no separate webhook secret, unlike Stripe) |
+| `PAYSTACK_WEBHOOK_SECRET` | Unused — read into config (`PaystackWebhookKey`) but never consumed anywhere. Safe to leave unset; do not rely on it for webhook verification |
 | `MONNIFY_API_KEY`, `MONNIFY_SECRET_KEY`, `MONNIFY_WEBHOOK_SECRET` | Monnify transfers |
 | `MAPLERAD_SECRET_KEY`, `MAPLERAD_WEBHOOK_SECRET` | Maplerad `sk_…` + webhook |
 | `MAPLERAD_PUBLIC_KEY` | Maplerad publishable key (kept server-side; app never calls Maplerad directly) |
@@ -105,6 +105,8 @@ Test/sandbox keys were previously present in a client `.env`. They have been mov
 server-side, but because they were bundled/committed at some point you should:
 
 1. **Rotate** the affected keys in each provider dashboard (Paystack, Maplerad, …).
-2. Set `PAYSTACK_WEBHOOK_SECRET` (still a placeholder in `backend/.env`) to the real
-   webhook signing secret so HMAC verification passes.
+2. Confirm `PAYSTACK_SECRET_KEY` in `backend/.env` matches the rotated key — that's
+   the value Paystack webhook HMAC verification actually checks against
+   (`PAYSTACK_WEBHOOK_SECRET` is unused; see the table above). No separate webhook
+   secret exists to configure for Paystack.
 3. Keep real values only in gitignored `.env` files; commit only `*.env.example`.
