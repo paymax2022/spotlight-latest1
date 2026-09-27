@@ -13,8 +13,6 @@ const fmt = (n: number) =>
 type Batch = {
   id: string; batch_name: string; start_date: string; status: string;
   training_schedule: string; duration_weeks: number; description: string;
-  training_fee_ngn: number; one_off_discount_pct: number;
-  installments_count: number; fee_frequency: string;
 };
 /**
  * The applicant's details as the ACCOUNT already holds them, returned by
@@ -23,17 +21,22 @@ type Batch = {
  * An empty string means the profile genuinely has no value, so the form still
  * asks for it (and the server saves the answer back to the profile).
  */
-type Applicant = {
-  full_name: string; email: string; phone: string;
-  gender: string; date_of_birth: string; state: string; city: string; country: string;
-};
+type Applicant = { full_name: string; email: string; phone: string };
 
 type AcademySettings = {
   registration_type: 'free' | 'paid';
   application_fee: number;
   application_fee_refundable: boolean;
-  tuition_fee: number;
 };
+
+/**
+ * Admin-managed area of interest, carrying its own NAIRA tuition fee — the SAME
+ * shape the mobile app consumes from this endpoint. This is the single source of
+ * truth for both clients; nothing here is hardcoded, because inventing a
+ * client-side list is exactly how a client ends up offering an area the
+ * database does not have (or missing one it does).
+ */
+type InterestArea = { slug: string; label: string; description: string | null; fee_ngn: number };
 
 const inp: React.CSSProperties = {
   width: '100%', padding: '11px 14px', borderRadius: 10, boxSizing: 'border-box',
@@ -59,7 +62,6 @@ function KnownRow({ label, value }: { label: string; value: string }) {
   );
 }
 
-const AREAS = ['film_directing','cinematography','script_writing','video_editing','sound_design','production_management','acting'];
 const SCHEDULES: Record<string, string> = { weekdays: 'Mon–Fri', weekends: 'Sat–Sun', accelerated: 'Intensive' };
 
 export default function AcademyApplyPage({ embedded = false }: { embedded?: boolean }) {
@@ -74,21 +76,24 @@ export default function AcademyApplyPage({ embedded = false }: { embedded?: bool
     registration_type: 'free',
     application_fee: 0,
     application_fee_refundable: false,
-    tuition_fee: 0,
   });
+  // Same catalogue + rules the mobile app reads from this endpoint — see
+  // src/features/filmAcademy/api.ts getOverview(). Fees and the per-application
+  // cap are admin-managed and server-enforced; the client only mirrors them.
+  const [interestAreas, setInterestAreas] = useState<InterestArea[]>([]);
+  const [batchAreas, setBatchAreas]       = useState<Record<string, string[]>>({});
+  const [maxInterestAreas, setMaxInterestAreas] = useState(2);
   const [loading, setLoading]   = useState(true);
-  const [step, setStep]         = useState<'select' | 'form' | 'payment' | 'done'>(prefillBatch ? 'form' : 'select');
+  const [step, setStep]         = useState<'select' | 'form' | 'done'>(prefillBatch ? 'form' : 'select');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError]       = useState('');
-  const [applicationId, setApplicationId] = useState('');
   const [applicant, setApplicant] = useState<Applicant | null>(null);
 
   const [form, setForm] = useState({
     batch_id: prefillBatch,
     full_name: '', email: '', phone: '',
-    gender: '', date_of_birth: '', state: '', country: 'Nigeria',
     areas_of_interest: [] as string[],
-    motivation: '', experience: '', portfolio_url: '',
+    motivation: '', experience: '',
     payment_preference: 'installment' as 'one_off' | 'installment',
   });
 
@@ -111,6 +116,12 @@ export default function AcademyApplyPage({ embedded = false }: { embedded?: bool
         const appliedIds = Array.isArray(json.appliedBatchIds) ? json.appliedBatchIds : [];
         setBatches(json.batches ?? []);
         setAppliedBatchIds(appliedIds);
+        // Empty rather than a hardcoded fallback list — see the InterestArea
+        // type comment; the mobile client applies the same rule.
+        setInterestAreas(Array.isArray(json.interestAreas) ? json.interestAreas : []);
+        setBatchAreas(json.batchAreas && typeof json.batchAreas === 'object' ? json.batchAreas : {});
+        // Fall back to 2 only if an older server omits it — the server still enforces.
+        setMaxInterestAreas(Number.isFinite(json.maxInterestAreas) ? json.maxInterestAreas : 2);
 
         if (json.applicant) {
           const known = json.applicant as Applicant;
@@ -119,13 +130,9 @@ export default function AcademyApplyPage({ embedded = false }: { embedded?: bool
           // this resolves after the form is interactive.
           setForm((p) => ({
             ...p,
-            full_name:     p.full_name     || known.full_name || '',
-            email:         p.email         || known.email || '',
-            phone:         p.phone         || known.phone || '',
-            gender:        p.gender        || known.gender || '',
-            date_of_birth: p.date_of_birth || known.date_of_birth || '',
-            state:         p.state         || known.state || '',
-            country:       known.country   || p.country,
+            full_name: p.full_name || known.full_name || '',
+            email:     p.email     || known.email || '',
+            phone:     p.phone     || known.phone || '',
           }));
         }
         if (json.settings) {
@@ -133,7 +140,6 @@ export default function AcademyApplyPage({ embedded = false }: { embedded?: bool
             registration_type: json.settings.registration_type === 'paid' ? 'paid' : 'free',
             application_fee: Number(json.settings.application_fee ?? 0),
             application_fee_refundable: json.settings.application_fee_refundable === true,
-            tuition_fee: Number(json.settings.tuition_fee ?? 0),
           });
         }
 
@@ -157,18 +163,34 @@ export default function AcademyApplyPage({ embedded = false }: { embedded?: bool
   const batch = batches.find((b) => b.id === form.batch_id);
   const selectedBatchApplied = Boolean(form.batch_id && appliedBatchIds.includes(form.batch_id));
   const registrationFeeRequired = settings.registration_type === 'paid' && settings.application_fee > 0;
-  const hasFee = batch && batch.training_fee_ngn > 0;
-  const oneOffAmount = hasFee ? Math.round(batch.training_fee_ngn * (1 - (batch.one_off_discount_pct ?? 0) / 100)) : 0;
-  const installmentAmount = hasFee ? Math.round(batch.training_fee_ngn / (batch.installments_count || 1)) : 0;
   const submitDisabled = submitting || selectedBatchApplied;
 
-  function toggleArea(area: string) {
-    setForm((p) => ({
-      ...p,
-      areas_of_interest: p.areas_of_interest.includes(area)
-        ? p.areas_of_interest.filter((a) => a !== area)
-        : [...p.areas_of_interest, area],
-    }));
+  // Only the areas THIS batch offers. An empty/missing entry means the batch is
+  // unrestricted, so it falls back to the full active list rather than showing
+  // nothing — matches the mobile app exactly (see FilmAcademyApplyScreen).
+  const offeredSlugs = (form.batch_id && batchAreas[form.batch_id]) || [];
+  const availableAreas = offeredSlugs.length > 0
+    ? interestAreas.filter((a) => offeredSlugs.includes(a.slug))
+    : interestAreas;
+  const atLimit = form.areas_of_interest.length >= maxInterestAreas;
+
+  // TUITION for the chosen areas — payable on ACCEPTANCE and refundable. Shown so
+  // the applicant knows the commitment; NOT collected here. The server recomputes
+  // this same total from the same admin-managed rows when the application is
+  // submitted, so this is a display convenience and cannot be used to pay less.
+  const tuitionTotal = availableAreas
+    .filter((a) => form.areas_of_interest.includes(a.slug))
+    .reduce((sum, a) => sum + Number(a.fee_ngn ?? 0), 0);
+
+  function toggleArea(slug: string) {
+    setForm((p) => {
+      const on = p.areas_of_interest.includes(slug);
+      if (on) return { ...p, areas_of_interest: p.areas_of_interest.filter((a) => a !== slug) };
+      // Silently ignoring the tap would look like a broken chip, so callers
+      // disable it instead — see `atLimit` below.
+      if (p.areas_of_interest.length >= maxInterestAreas) return p;
+      return { ...p, areas_of_interest: [...p.areas_of_interest, slug] };
+    });
   }
 
   function selectBatch(batchId: string) {
@@ -190,8 +212,10 @@ export default function AcademyApplyPage({ embedded = false }: { embedded?: bool
     if (!form.full_name.trim()) return 'Full name is required.';
     if (!form.email.trim() || !emailPattern.test(form.email.trim())) return 'A valid email address is required.';
     if (!form.phone.trim()) return 'Phone number is required.';
-    if (!form.state.trim()) return 'State is required.';
-    if (form.areas_of_interest.length === 0) return 'Select at least one area of interest.';
+    if (form.areas_of_interest.length === 0) return 'Choose at least one area of interest.';
+    if (form.areas_of_interest.length > maxInterestAreas) {
+      return `Choose at most ${maxInterestAreas} areas of interest for this batch.`;
+    }
     if (!form.motivation.trim()) return 'Tell us why you want to join.';
 
     return '';
@@ -208,21 +232,14 @@ export default function AcademyApplyPage({ embedded = false }: { embedded?: bool
         }),
       });
       if (res.status === 401) {
-        router.push(`/login?next=${encodeURIComponent(pathname || '/apply/film-academy')}`);
+        router.push(`/login?next=${encodeURIComponent(pathname || '/film-academy/apply')}`);
         return;
       }
       const json = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(json?.error || 'Submission failed');
 
-      setApplicationId(json.applicationId ?? '');
       setAppliedBatchIds((current) => Array.from(new Set([...current, form.batch_id])));
-
-      // If one-off payment, open Paystack immediately
-      if (form.payment_preference === 'one_off' && hasFee) {
-        setStep('payment');
-      } else {
-        setStep('done');
-      }
+      setStep('done');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Submission failed');
       setSubmitting(false);
@@ -232,7 +249,7 @@ export default function AcademyApplyPage({ embedded = false }: { embedded?: bool
   async function payRegistrationFeeAndSubmit() {
     const headers = await authHeaders();
     if (!headers.Authorization) {
-      router.push(`/login?next=${encodeURIComponent(pathname || '/apply/film-academy')}`);
+      router.push(`/login?next=${encodeURIComponent(pathname || '/film-academy/apply')}`);
       return;
     }
 
@@ -295,33 +312,6 @@ export default function AcademyApplyPage({ embedded = false }: { embedded?: bool
     await submitApplication();
   }
 
-  async function payNow() {
-    const publicKey = process.env.NEXT_PUBLIC_PAYSTACK_PUBLIC_KEY || '';
-    if (!publicKey || publicKey.includes('placeholder')) {
-      setError('Payment gateway not configured. Contact support.');
-      return;
-    }
-    try {
-      const PaystackPop = await loadPaystackClient();
-      const handler = new PaystackPop();
-      handler.newTransaction({
-        key: publicKey,
-        email: form.email,
-        amount: oneOffAmount * 100,
-        currency: 'NGN',
-        metadata: { custom_fields: [
-          { display_name: 'Application ID', variable_name: 'application_id', value: applicationId },
-          { display_name: 'Batch', variable_name: 'batch_name', value: batch?.batch_name ?? '' },
-        ]},
-        onSuccess: () => setStep('done'),
-        onCancel:  () => setStep('done'), // still submitted — they can pay later from dashboard
-        onError:   (e) => setError(e.message),
-      });
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Payment failed');
-    }
-  }
-
   if (loading) return (
     <div style={{ minHeight: embedded ? 220 : '60vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: embedded ? '#0d0d1a' : 'linear-gradient(160deg,#0d0d1a 0%,#14102b 100%)', borderRadius: embedded ? 16 : 0 }}>
       <p style={{ color: 'rgba(255,255,255,0.5)' }}>Loading…</p>
@@ -356,7 +346,6 @@ export default function AcademyApplyPage({ embedded = false }: { embedded?: bool
                   const starts = b.start_date
                     ? new Date(b.start_date).toLocaleDateString('en-NG', { day: 'numeric', month: 'short', year: 'numeric' })
                     : 'Date TBA';
-                  const tuition = Number(b.training_fee_ngn || 0);
                   const alreadyApplied = appliedBatchIds.includes(b.id);
 
                   return (
@@ -413,18 +402,7 @@ export default function AcademyApplyPage({ embedded = false }: { embedded?: bool
                         </div>
                       </div>
 
-                      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'center', flexWrap: 'wrap', marginTop: 20, paddingTop: 16, borderTop: '1px solid rgba(255,255,255,0.08)' }}>
-                        <div>
-                          <p style={{ color: 'rgba(255,255,255,0.45)', fontSize: 12, marginBottom: 2 }}>Tuition</p>
-                          <p style={{ color: '#fff', fontWeight: 900, marginBottom: 0 }}>
-                            {tuition > 0 ? fmt(tuition) : 'Free tuition'}
-                          </p>
-                          {tuition > 0 && b.installments_count > 1 && (
-                            <p style={{ color: 'rgba(255,255,255,0.42)', fontSize: 12, marginTop: 2, marginBottom: 0 }}>
-                              {b.installments_count} {b.fee_frequency} installments available
-                            </p>
-                          )}
-                        </div>
+                      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 12, alignItems: 'center', flexWrap: 'wrap', marginTop: 20, paddingTop: 16, borderTop: '1px solid rgba(255,255,255,0.08)' }}>
                         <button
                           type="button"
                           disabled={alreadyApplied}
@@ -458,33 +436,12 @@ export default function AcademyApplyPage({ embedded = false }: { embedded?: bool
             <div style={{ fontSize: 52, marginBottom: 16 }}>🎉</div>
             <h2 style={{ color: '#fff', fontWeight: 800, marginBottom: 8 }}>Application Submitted!</h2>
             <p style={{ color: 'rgba(255,255,255,0.6)', marginBottom: 24 }}>
-              Your application has been received. You will be notified once reviewed.{' '}
-              {form.payment_preference === 'installment' && 'Your installment schedule will be set up when your application is approved.'}
+              Your application has been received. We will be in touch about next steps. Tuition for your chosen
+              areas is payable only if you are offered a place.
             </p>
             <Link href="/film-academy/dashboard" style={{ background: 'linear-gradient(135deg,#f59e0b,#d97706)', color: '#000', fontWeight: 700, padding: '12px 28px', borderRadius: 10, textDecoration: 'none' }}>
               Go to My Dashboard
             </Link>
-          </div>
-        )}
-
-        {/* ── Payment prompt (one-off) ──────────────────────────── */}
-        {step === 'payment' && (
-          <div style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 16, padding: '32px', textAlign: 'center' }}>
-            <div style={{ fontSize: 48, marginBottom: 14 }}>💳</div>
-            <h2 style={{ color: '#fff', fontWeight: 800, marginBottom: 8 }}>Complete Your Payment</h2>
-            <p style={{ color: 'rgba(255,255,255,0.6)', marginBottom: 8 }}>
-              You chose to pay the full tuition fee at once{batch?.one_off_discount_pct ? ` and save ${batch.one_off_discount_pct}%` : ''}.
-            </p>
-            <p style={{ color: '#f59e0b', fontSize: 28, fontWeight: 900, marginBottom: 24 }}>{fmt(oneOffAmount)}</p>
-            <div style={{ display: 'flex', gap: 12, justifyContent: 'center', flexWrap: 'wrap' }}>
-              <button onClick={payNow} style={{ background: 'linear-gradient(135deg,#f59e0b,#d97706)', color: '#000', fontWeight: 800, fontSize: 15, padding: '12px 32px', borderRadius: 10, border: 'none', cursor: 'pointer', boxShadow: '0 4px 20px rgba(245,158,11,0.35)' }}>
-                Pay Now
-              </button>
-              <button onClick={() => setStep('done')} style={{ background: 'transparent', border: '1px solid rgba(255,255,255,0.2)', color: 'rgba(255,255,255,0.5)', padding: '12px 20px', borderRadius: 10, cursor: 'pointer', fontSize: 13 }}>
-                Pay Later from Dashboard
-              </button>
-            </div>
-            {error && <p style={{ color: '#ef4444', marginTop: 14, fontSize: 13 }}>{error}</p>}
           </div>
         )}
 
@@ -504,7 +461,7 @@ export default function AcademyApplyPage({ embedded = false }: { embedded?: bool
                   Change batch
                 </button>
               </div>
-              <select style={inp} required value={form.batch_id} onChange={(e) => setForm((p) => ({ ...p, batch_id: e.target.value }))}>
+              <select style={inp} required value={form.batch_id} onChange={(e) => setForm((p) => ({ ...p, batch_id: e.target.value, areas_of_interest: [] }))}>
                 <option value="">Select a batch…</option>
                 {batches.map((b) => (
                   <option key={b.id} value={b.id} disabled={appliedBatchIds.includes(b.id)}>
@@ -566,41 +523,88 @@ export default function AcademyApplyPage({ embedded = false }: { embedded?: bool
                   <input style={inp} type="tel" required value={form.phone} onChange={(e) => setForm((p) => ({ ...p, phone: e.target.value }))} />
                 </div>
               )}
-              <div>
-                <label style={lbl}>Gender</label>
-                <select style={inp} value={form.gender} onChange={(e) => setForm((p) => ({ ...p, gender: e.target.value }))}>
-                  <option value="">Select…</option>
-                  <option value="male">Male</option>
-                  <option value="female">Female</option>
-                  <option value="prefer_not_to_say">Prefer not to say</option>
-                </select>
-              </div>
-              <div>
-                <label style={lbl}>Date of Birth</label>
-                <input style={inp} type="date" value={form.date_of_birth} onChange={(e) => setForm((p) => ({ ...p, date_of_birth: e.target.value }))} />
-              </div>
-              <div>
-                <label style={lbl}>State *</label>
-                <input style={inp} required value={form.state} onChange={(e) => setForm((p) => ({ ...p, state: e.target.value }))} placeholder="e.g. Lagos" />
-              </div>
             </div>
 
-            {/* Areas of interest */}
+            {/* Areas of interest — admin-managed catalogue, per-batch offered
+                subset, server-enforced cap. Same data and same rules the mobile
+                app renders from this same endpoint. */}
             <div>
               <label style={lbl}>Areas of Interest *</label>
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 4 }}>
-                {AREAS.map((area) => {
-                  const active = form.areas_of_interest.includes(area);
-                  return (
-                    <button key={area} type="button" onClick={() => toggleArea(area)}
-                      style={{ padding: '6px 14px', borderRadius: 20, fontSize: 12, fontWeight: 600, cursor: 'pointer', border: 'none', transition: 'all 0.15s',
-                        background: active ? '#f59e0b' : 'rgba(255,255,255,0.07)',
-                        color: active ? '#000' : 'rgba(255,255,255,0.5)' }}>
-                      {area.replace(/_/g, ' ')}
-                    </button>
-                  );
-                })}
+              <p style={{ fontSize: 12, color: 'rgba(255,255,255,0.4)', marginTop: -2, marginBottom: 8 }}>
+                Amounts shown are tuition, payable only if you are offered a place.
+              </p>
+              <p style={{ fontSize: 12, color: atLimit ? '#f59e0b' : 'rgba(255,255,255,0.45)', marginBottom: 8 }}>
+                {atLimit
+                  ? `You have chosen ${maxInterestAreas} of ${maxInterestAreas}. Deselect one to swap it.`
+                  : `Choose up to ${maxInterestAreas} for this batch — ${form.areas_of_interest.length} of ${maxInterestAreas} selected.`}
+              </p>
+              {availableAreas.length === 0 ? (
+                <p style={{ fontSize: 13, color: 'rgba(255,255,255,0.45)' }}>
+                  No areas are available to choose right now. Please try again later.
+                </p>
+              ) : (
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                  {availableAreas.map((area) => {
+                    const active = form.areas_of_interest.includes(area.slug);
+                    const fee = Number(area.fee_ngn ?? 0);
+                    const blocked = !active && atLimit;
+                    return (
+                      <button
+                        key={area.slug}
+                        type="button"
+                        onClick={() => toggleArea(area.slug)}
+                        disabled={blocked}
+                        style={{
+                          display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 2,
+                          padding: '8px 14px', borderRadius: 12, fontSize: 12, fontWeight: 600,
+                          cursor: blocked ? 'not-allowed' : 'pointer', border: 'none', transition: 'all 0.15s',
+                          opacity: blocked ? 0.4 : 1,
+                          background: active ? '#f59e0b' : 'rgba(255,255,255,0.07)',
+                          color: active ? '#000' : 'rgba(255,255,255,0.7)',
+                        }}
+                      >
+                        <span>{area.label}</span>
+                        <span style={{ fontSize: 11, fontWeight: 500, opacity: 0.75 }}>
+                          {fee > 0 ? fmt(fee) : 'No tuition'}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            {/* Running total — mirrors the mobile app's totalBox exactly: what is
+                charged NOW (application fee, non-refundable) vs. tuition owed
+                only on acceptance. */}
+            <div style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 12, padding: '14px 16px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span style={{ fontSize: 14, fontWeight: 800, color: '#fff' }}>Pay now</span>
+                <span style={{ fontSize: 18, fontWeight: 900, color: '#fff' }}>{fmt(settings.application_fee)}</span>
               </div>
+              <p style={{ fontSize: 11, color: 'rgba(255,255,255,0.45)', marginTop: 4, marginBottom: 0 }}>
+                Application fee. Non-refundable, and charged whether or not you are offered a place.
+              </p>
+
+              {tuitionTotal > 0 && (
+                <>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 12, paddingTop: 10, borderTop: '1px solid rgba(255,255,255,0.08)' }}>
+                    <span style={{ fontSize: 13, color: 'rgba(255,255,255,0.6)' }}>Tuition if accepted</span>
+                    <span style={{ fontSize: 14, color: '#f1f5f9', fontWeight: 700 }}>{fmt(tuitionTotal)}</span>
+                  </div>
+                  {availableAreas
+                    .filter((a) => form.areas_of_interest.includes(a.slug) && Number(a.fee_ngn ?? 0) > 0)
+                    .map((a) => (
+                      <div key={a.slug} style={{ display: 'flex', justifyContent: 'space-between', paddingLeft: 10, marginTop: 4 }}>
+                        <span style={{ fontSize: 12, color: 'rgba(255,255,255,0.45)' }}>{a.label}</span>
+                        <span style={{ fontSize: 12, color: 'rgba(255,255,255,0.45)' }}>{fmt(Number(a.fee_ngn))}</span>
+                      </div>
+                    ))}
+                  <p style={{ fontSize: 11, color: 'rgba(255,255,255,0.45)', marginTop: 8, marginBottom: 0 }}>
+                    Payable only if you are offered a place, and refundable. Nothing for tuition is taken today.
+                  </p>
+                </>
+              )}
             </div>
 
             {/* Motivation */}
@@ -614,60 +618,29 @@ export default function AcademyApplyPage({ embedded = false }: { embedded?: bool
               <textarea style={{ ...inp, minHeight: 70, resize: 'vertical' }} value={form.experience}
                 onChange={(e) => setForm((p) => ({ ...p, experience: e.target.value }))} />
             </div>
+
+            {/* How would you like to pay tuition — informational preference only.
+                Recorded on the application for when tuition is invoiced on
+                acceptance; nothing is charged for this choice today. Matches the
+                mobile app's chip pair exactly (no discount math tied to it —
+                that lived only in this page and was never backed by the
+                server). */}
             <div>
-              <label style={lbl}>Portfolio / Showreel URL (optional)</label>
-              <input style={inp} type="url" value={form.portfolio_url}
-                onChange={(e) => setForm((p) => ({ ...p, portfolio_url: e.target.value }))} placeholder="https://…" />
-            </div>
-
-            {/* ── Payment preference ─────────────────────────────── */}
-            {hasFee && (
-              <div style={{ borderTop: '1px solid rgba(255,255,255,0.08)', paddingTop: 20 }}>
-                <p style={{ color: '#fff', fontWeight: 700, fontSize: 15, marginBottom: 4 }}>Tuition Fee Payment Preference</p>
-                <p style={{ color: 'rgba(255,255,255,0.45)', fontSize: 13, marginBottom: 16 }}>
-                  Choose how you&apos;d like to pay the{' '}
-                  <strong style={{ color: '#f59e0b' }}>{fmt(batch.training_fee_ngn)}</strong> tuition fee.
-                </p>
-
-                <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
-                  {/* One-off option */}
-                  <button type="button" onClick={() => setForm((p) => ({ ...p, payment_preference: 'one_off' }))}
-                    style={{ flex: '1 1 220px', padding: '16px 20px', borderRadius: 14, cursor: 'pointer', textAlign: 'left',
-                      border: `2px solid ${form.payment_preference === 'one_off' ? '#f59e0b' : 'rgba(255,255,255,0.1)'}`,
-                      background: form.payment_preference === 'one_off' ? 'rgba(245,158,11,0.08)' : 'rgba(255,255,255,0.03)' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 6 }}>
-                      <span style={{ fontWeight: 800, fontSize: 14, color: '#fff' }}>💳 Pay in Full</span>
-                      {batch.one_off_discount_pct > 0 && (
-                        <span style={{ fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 20, background: 'rgba(16,185,129,0.2)', color: '#10b981' }}>
-                          Save {batch.one_off_discount_pct}%
-                        </span>
-                      )}
-                    </div>
-                    <p style={{ fontSize: 20, fontWeight: 900, color: '#f59e0b', marginBottom: 2 }}>{fmt(oneOffAmount)}</p>
-                    {batch.one_off_discount_pct > 0 && (
-                      <p style={{ fontSize: 12, color: 'rgba(255,255,255,0.4)', marginBottom: 0 }}>
-                        <span style={{ textDecoration: 'line-through' }}>{fmt(batch.training_fee_ngn)}</span>{' '}one-time payment
-                      </p>
-                    )}
-                    {!batch.one_off_discount_pct && (
-                      <p style={{ fontSize: 12, color: 'rgba(255,255,255,0.4)', marginBottom: 0 }}>Single payment, cleared immediately</p>
-                    )}
-                  </button>
-
-                  {/* Installment option */}
-                  <button type="button" onClick={() => setForm((p) => ({ ...p, payment_preference: 'installment' }))}
-                    style={{ flex: '1 1 220px', padding: '16px 20px', borderRadius: 14, cursor: 'pointer', textAlign: 'left',
-                      border: `2px solid ${form.payment_preference === 'installment' ? '#6366f1' : 'rgba(255,255,255,0.1)'}`,
-                      background: form.payment_preference === 'installment' ? 'rgba(99,102,241,0.08)' : 'rgba(255,255,255,0.03)' }}>
-                    <span style={{ fontWeight: 800, fontSize: 14, color: '#fff', display: 'block', marginBottom: 6 }}>📅 Pay in Installments</span>
-                    <p style={{ fontSize: 20, fontWeight: 900, color: '#a5b4fc', marginBottom: 2 }}>{fmt(installmentAmount)} × {batch.installments_count}</p>
-                    <p style={{ fontSize: 12, color: 'rgba(255,255,255,0.4)', marginBottom: 0 }}>
-                      {batch.installments_count} {batch.fee_frequency} payments · Total: {fmt(batch.training_fee_ngn)}
-                    </p>
-                  </button>
-                </div>
+              <label style={lbl}>How would you like to pay?</label>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 4 }}>
+                {(['installment', 'one_off'] as const).map((p) => {
+                  const active = form.payment_preference === p;
+                  return (
+                    <button key={p} type="button" onClick={() => setForm((prev) => ({ ...prev, payment_preference: p }))}
+                      style={{ padding: '8px 16px', borderRadius: 20, fontSize: 12, fontWeight: 700, cursor: 'pointer', border: 'none',
+                        background: active ? '#f59e0b' : 'rgba(255,255,255,0.07)',
+                        color: active ? '#000' : 'rgba(255,255,255,0.6)' }}>
+                      {p === 'installment' ? 'In instalments' : 'One-off'}
+                    </button>
+                  );
+                })}
               </div>
-            )}
+            </div>
 
             {error && (
               <div style={{ background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)', borderRadius: 10, padding: '10px 16px', color: '#fca5a5', fontSize: 13 }}>
@@ -686,9 +659,7 @@ export default function AcademyApplyPage({ embedded = false }: { embedded?: bool
                   ? registrationFeeRequired ? 'Opening Payment...' : 'Submitting...'
                   : registrationFeeRequired
                     ? `Pay Registration Fee (${fmt(settings.application_fee)})`
-                    : form.payment_preference === 'one_off'
-                      ? 'Submit & Proceed to Payment'
-                      : 'Submit Application'}
+                    : 'Submit Application'}
             </button>
           </form>
         )}
