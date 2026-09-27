@@ -37,7 +37,15 @@ export default function UtilityPaystackStatusClient({ reference }: { reference: 
     async function pollTransaction(id: string) {
       if (cancelled) return;
       try {
-        const response = await authFetch(`/api/v1/utility/transactions/${id}`, { cache: 'no-store' });
+        // Re-check the provider on every poll rather than just re-reading our
+        // own row — VTPass (and other adapters) can leave a transaction in
+        // provider_pending indefinitely with no callback of their own; nothing
+        // else asks them again on the customer's behalf. requeryUtilityTransaction
+        // is a no-op for a transaction that isn't in a requeryable state, so this
+        // is safe to call unconditionally rather than special-casing status here.
+        const response = await authFetch(`/api/v1/utility/transactions/${id}/requery`, {
+          method: 'POST',
+        }, { json: true });
         const payload = await parse(response);
         if (!payload || cancelled) return;
         const status = String(payload.transaction?.status || '');
