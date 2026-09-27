@@ -35,13 +35,21 @@
  * The request step also sends Supabase's own recovery LINK in the same email
  * (unchanged, see app/auth/reset-password/page.tsx for that path) — this page
  * only adds the code path that page's own top comment used to say didn't exist.
+ *
+ * The code step uses the same per-digit segmented-box input as /verify-email
+ * (app/verify-email/page.tsx, src/features/auth/otp.ts) rather than a single
+ * text field, so the two OTP surfaces in this app feel like one design instead
+ * of two. Resend also gets the same 60s client-side cooldown as that page.
  */
 
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
+import { otpLength, distributeOtpInput, nextOtpFocus } from '@/src/features/auth/otp';
 
 type Step = 'request' | 'code' | 'password' | 'success';
+
+const RESEND_COOLDOWN_S = 60;
 
 function readableError(err: unknown): string {
   const message = err instanceof Error ? err.message : '';
@@ -52,21 +60,26 @@ function readableError(err: unknown): string {
   return 'Something went wrong. Please try again.';
 }
 
-const CODE_LENGTH_MIN = 4;
-const CODE_LENGTH_MAX = 8;
-
 export default function ForgotPasswordPage() {
   const router = useRouter();
+  const CODE_LENGTH = otpLength();
 
   const [step, setStep] = useState<Step>('request');
   const [email, setEmail] = useState('');
-  const [code, setCode] = useState('');
+  const [code, setCode] = useState<string[]>(Array(CODE_LENGTH).fill(''));
   const [password, setPassword] = useState('');
   const [confirm, setConfirm] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [resendBusy, setResendBusy] = useState(false);
   const [resendMessage, setResendMessage] = useState('');
+  const [cooldown, setCooldown] = useState(0);
+
+  useEffect(() => {
+    if (cooldown <= 0) return;
+    const t = setTimeout(() => setCooldown((c) => c - 1), 1000);
+    return () => clearTimeout(t);
+  }, [cooldown]);
 
   async function sendCode(targetEmail: string) {
     const res = await fetch('/api/auth/forgot-password', {
@@ -97,9 +110,8 @@ export default function ForgotPasswordPage() {
 
   function handleCodeSubmit(e: React.FormEvent) {
     e.preventDefault();
-    const digits = code.trim();
-    if (digits.length < CODE_LENGTH_MIN || digits.length > CODE_LENGTH_MAX || !/^\d+$/.test(digits)) {
-      setError('Enter the code exactly as it appears in the email.');
+    if (code.join('').length < CODE_LENGTH) {
+      setError(`Enter all ${CODE_LENGTH} digits.`);
       return;
     }
     setError('');
@@ -107,13 +119,17 @@ export default function ForgotPasswordPage() {
   }
 
   async function handleResend() {
-    if (resendBusy) return;
+    if (resendBusy || cooldown > 0) return;
     setResendBusy(true);
     setResendMessage('');
     setError('');
     try {
       await sendCode(email.trim().toLowerCase());
       setResendMessage('A new code is on its way if that address has an account.');
+      // The project allows very few of these per hour (see verify-email's same
+      // constant) — make the wait explicit rather than letting people burn the
+      // quota on retries.
+      setCooldown(RESEND_COOLDOWN_S);
     } catch (err) {
       setError(readableError(err));
     } finally {
@@ -140,7 +156,7 @@ export default function ForgotPasswordPage() {
       const res = await fetch('/api/auth/reset-password', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: email.trim().toLowerCase(), code: code.trim(), password }),
+        body: JSON.stringify({ email: email.trim().toLowerCase(), code: code.join(''), password }),
       });
       const body = await res.json().catch(() => ({}));
 
@@ -159,11 +175,13 @@ export default function ForgotPasswordPage() {
       }
       if (message.toLowerCase().includes('expired') || message.toLowerCase().includes('invalid code')) {
         setError('That code is invalid or expired. Check the email, or request a new one.');
+        setCode(Array(CODE_LENGTH).fill(''));
         setStep('code');
         return;
       }
       if (res.status === 429) {
         setError('Too many attempts. Request a new code and try again.');
+        setCode(Array(CODE_LENGTH).fill(''));
         setStep('code');
         return;
       }
@@ -233,12 +251,14 @@ export default function ForgotPasswordPage() {
               email={email}
               code={code}
               setCode={setCode}
+              codeLength={CODE_LENGTH}
               error={error}
               resendBusy={resendBusy}
               resendMessage={resendMessage}
+              cooldown={cooldown}
               onSubmit={handleCodeSubmit}
               onResend={handleResend}
-              onChangeEmail={() => { setStep('request'); setError(''); setCode(''); }}
+              onChangeEmail={() => { setStep('request'); setError(''); setCode(Array(CODE_LENGTH).fill('')); }}
             />
           )}
 
@@ -429,43 +449,65 @@ function RequestStep({
 }
 
 function CodeStep({
-  email, code, setCode, error, resendBusy, resendMessage, onSubmit, onResend, onChangeEmail,
+  email, code, setCode, codeLength, error, resendBusy, resendMessage, cooldown, onSubmit, onResend, onChangeEmail,
 }: {
   email: string;
-  code: string;
-  setCode: (v: string) => void;
+  code: string[];
+  setCode: (v: string[]) => void;
+  codeLength: number;
   error: string;
   resendBusy: boolean;
   resendMessage: string;
+  cooldown: number;
   onSubmit: (e: React.FormEvent) => void;
   onResend: () => void;
   onChangeEmail: () => void;
 }) {
+  const inputs = useRef<(HTMLInputElement | null)[]>([]);
+
+  useEffect(() => { inputs.current[0]?.focus(); }, []);
+
+  function onChange(value: string, index: number) {
+    const filled = distributeOtpInput(code, index, value);
+    setCode(filled);
+    if (value) inputs.current[nextOtpFocus(filled, index)]?.focus();
+  }
+
+  function onKeyDown(e: React.KeyboardEvent<HTMLInputElement>, index: number) {
+    if (e.key === 'Backspace' && !code[index] && index > 0) inputs.current[index - 1]?.focus();
+    if (e.key === 'ArrowLeft' && index > 0) inputs.current[index - 1]?.focus();
+    if (e.key === 'ArrowRight' && index < codeLength - 1) inputs.current[index + 1]?.focus();
+  }
+
+  const complete = code.join('').length >= codeLength;
+
   return (
     <form onSubmit={onSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
       <p style={{ color: '#cbd5e1', fontSize: '0.85rem', margin: 0, lineHeight: 1.5 }}>
-        If an account exists for <strong style={{ color: '#f1f5f9' }}>{email}</strong>, a code was
-        sent to that address. Enter it below — it can take a few minutes, and check spam if you
-        don&apos;t see it.
+        If an account exists for <strong style={{ color: '#f1f5f9' }}>{email}</strong>, a{' '}
+        {codeLength}-digit code was sent to that address. Enter it below — it can take a few
+        minutes, and check spam if you don&apos;t see it.
       </p>
 
       <div>
-        <label htmlFor="forgot-password-code" style={fieldLabelStyle()}>
-          Verification Code
-        </label>
-        <input
-          id="forgot-password-code"
-          type="text"
-          inputMode="numeric"
-          autoComplete="one-time-code"
-          placeholder="123456"
-          value={code}
-          onChange={(e) => setCode(e.target.value.replace(/[^\d]/g, ''))}
-          autoFocus
-          required
-          maxLength={CODE_LENGTH_MAX}
-          style={{ ...inputStyle, letterSpacing: '0.3em', fontSize: '1.1rem', textAlign: 'center' }}
-        />
+        <label style={fieldLabelStyle()}>Verification Code</label>
+        <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'space-between' }}>
+          {code.map((digit, i) => (
+            <input
+              key={i}
+              ref={(el) => { inputs.current[i] = el; }}
+              value={digit}
+              onChange={(e) => onChange(e.target.value, i)}
+              onKeyDown={(e) => onKeyDown(e, i)}
+              inputMode="numeric"
+              autoComplete={i === 0 ? 'one-time-code' : 'off'}
+              // Not 1: autofill and paste deliver the whole code into one field.
+              maxLength={codeLength}
+              aria-label={`Digit ${i + 1} of ${codeLength}`}
+              style={{ ...inputStyle, flex: 1, minWidth: 0, textAlign: 'center', fontSize: '1.1rem', padding: '0.8rem 0' }}
+            />
+          ))}
+        </div>
       </div>
 
       <ErrorBanner message={error} />
@@ -473,7 +515,7 @@ function CodeStep({
         <p style={{ color: '#86efac', fontSize: '0.8rem', margin: 0 }}>{resendMessage}</p>
       )}
 
-      <button type="submit" disabled={!code.trim()} style={primaryButtonStyle(!code.trim())}>
+      <button type="submit" disabled={!complete} style={primaryButtonStyle(!complete)}>
         Continue
       </button>
 
@@ -488,10 +530,10 @@ function CodeStep({
         <button
           type="button"
           onClick={onResend}
-          disabled={resendBusy}
-          style={{ ...secondaryLinkStyle, cursor: resendBusy ? 'not-allowed' : 'pointer' }}
+          disabled={resendBusy || cooldown > 0}
+          style={{ ...secondaryLinkStyle, cursor: resendBusy || cooldown > 0 ? 'not-allowed' : 'pointer' }}
         >
-          {resendBusy ? 'Resending…' : 'Resend code'}
+          {cooldown > 0 ? `Resend code in ${cooldown}s` : resendBusy ? 'Resending…' : 'Resend code'}
         </button>
       </div>
     </form>
