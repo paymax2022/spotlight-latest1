@@ -205,6 +205,37 @@ export default function UtilityPaymentClient() {
     }
   }
 
+  async function payWithCard() {
+    if (!selectedBiller || !selectedProduct) return;
+    setBusy(true);
+    setMessage('');
+    try {
+      const response = await authFetch('/api/v1/utility/paystack/initiate', {
+        method: 'POST',
+        headers: { 'Idempotency-Key': buildIdempotencyKey(category, customerReference) },
+        body: JSON.stringify({
+          category,
+          biller_id: selectedBiller.id,
+          product_id: selectedProduct.id,
+          customer_reference: customerReference.trim(),
+          amount_kobo: selectedProduct.amount_type === 'variable' ? amountKobo : undefined,
+          metadata: { source: 'web_utility_page' },
+        }),
+      }, { json: true });
+      const payload = await parseResponse(response);
+      if (!payload) return;
+      if (payload.authorization_url) {
+        window.location.href = String(payload.authorization_url);
+        return;
+      }
+      setMessage('Unable to start card payment.');
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'Unable to start card payment.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
     <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_380px] gap-4">
       <form onSubmit={pay} className="glass-card rounded-md p-4 md:p-5">
@@ -313,6 +344,14 @@ export default function UtilityPaymentClient() {
           <button type="submit" className="btn-primary py-2.5 px-4 text-[11px]" disabled={busy || !productId || !customerReference || amountKobo <= 0}>
             {busy ? 'Processing...' : 'Pay From Wallet'}
           </button>
+          <button
+            type="button"
+            className="btn-outline py-2.5 px-4 text-[11px]"
+            disabled={busy || !productId || !customerReference || amountKobo <= 0}
+            onClick={() => void payWithCard()}
+          >
+            {busy ? 'Processing...' : 'Pay With Card'}
+          </button>
         </div>
       </form>
 
@@ -326,6 +365,9 @@ export default function UtilityPaymentClient() {
               {latest.status.replace(/_/g, ' ')}
             </span>
             {latest.token ? <p className="text-foreground mt-3 mb-0">Token: <strong>{latest.token}</strong></p> : null}
+            <Link href={`/utility/receipt/${latest.id}`} className="text-xs text-decoration-none mt-3 inline-flex">
+              View Receipt
+            </Link>
           </div>
         ) : null}
 
@@ -352,7 +394,7 @@ export default function UtilityPaymentClient() {
                       </span>
                     </div>
                   </div>
-                  <Link href={`/api/v1/utility/transactions/${transaction.id}/receipt`} className="text-xs text-decoration-none mt-2 inline-flex">
+                  <Link href={`/utility/receipt/${transaction.id}`} className="text-xs text-decoration-none mt-2 inline-flex">
                     Receipt
                   </Link>
                 </div>
