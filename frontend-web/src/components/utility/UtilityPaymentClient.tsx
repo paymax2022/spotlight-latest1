@@ -147,7 +147,12 @@ export default function UtilityPaymentClient() {
     setCustomerName('');
     setCustomerReference('');
     setAmountNaira('');
-    await loadBillers(nextCategory);
+    setMessage('');
+    try {
+      await loadBillers(nextCategory);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'Unable to load billers.');
+    }
   }
 
   async function validateCustomer() {
