@@ -122,6 +122,13 @@ const QUICK_LINKS: QuickLink[] = [
     accent: '#f97316',
   },
   {
+    href: '/crowdfunding',
+    icon: '🤝',
+    title: 'Fund a Cause',
+    description: 'Discover campaigns to support, or start your own',
+    accent: '#14b8a6',
+  },
+  {
     href: '/open-mic',
     icon: '🎤',
     title: 'Open Mic Voting',
