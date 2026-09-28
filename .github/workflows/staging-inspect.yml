@@ -30,10 +30,6 @@ on:
         description: 'How many recent backend log lines to scan for gate refusals'
         type: string
         default: '500'
-      deployment_id:
-        description: 'TEMP diagnostic: a specific Railway deployment id to scan for crash signatures (leave blank to skip). Remove this input + its step once the investigation is done.'
-        type: string
-        default: ''
 
 permissions:
   contents: read
@@ -329,28 +325,3 @@ jobs:
           echo "  --- counts ---"
           echo "    WOULD refuse (observe-only, refused nothing): $(grep -aic 'WOULD refuse' be.log || true)"
           echo "    startup lines mentioning the gate:            $(grep -aic 'modulegate' be.log || true)"
-
-      # TEMP diagnostic (remove once done): scan a SPECIFIC failed deployment's
-      # logs for crash signatures. Filtered the same way as the step above —
-      # only lines matching a crash pattern are printed, never a full dump.
-      - name: TEMP crash-signature scan of a specific deployment
-        if: ${{ inputs.deployment_id != '' }}
-        run: |
-          set -uo pipefail
-          railway logs "${{ inputs.deployment_id }}" --deployment --service backend --environment "$ENVIRONMENT" \
-            --project "$PROJECT" --lines "${{ inputs.log_lines }}" > crash.log 2>&1 || true
-          echo "  scanned $(wc -l < crash.log) log lines from deployment ${{ inputs.deployment_id }}"
-          echo "  --- crash-signature lines ---"
-          grep -aiE "panic|fatal|runtime error|listen tcp|bind: address|exit status|connection refused|out of memory|OOMKilled|segmentation|cannot find package|undefined:|no such host|permission denied" crash.log \
-            | tail -60 | sed 's/^/    /' || echo "    (none found)"
-          echo "  --- config warning context (5 lines after each) ---"
-          grep -aiA 5 "config warning\|\[config\]" crash.log | tail -80 | sed 's/^/    /' || echo "    (none found)"
-          echo "  --- last 30 lines of the deployment log (whatever they are) ---"
-          tail -30 crash.log | sed 's/^/    /'
-          # Deploy logs this short cannot contain anything sized like a real
-          # secret (those steps stay filtered above) — dump verbatim so a
-          # short-circuit failure with no matching signature is still visible.
-          if [ "$(wc -l < crash.log)" -le 20 ]; then
-            echo "  --- full log (<=20 lines, dumped verbatim) ---"
-            sed 's/^/    /' crash.log
-          fi
