@@ -56,6 +56,10 @@ on:
         description: 'Write INSURANCE_MYCOVER_API_KEY to the backend from the repo secret, then redeploy'
         type: boolean
         default: false
+      set_assoc_card_secret:
+        description: 'Generate + set ASSOC_CARD_SIGNING_SECRET on the backend (required once FEATURE_ASSOCIATIONS_ENABLED is on — its absence log.Fatalf crashes the whole process outside development)'
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -743,3 +747,59 @@ jobs:
           echo "  Verify with the staging-inspect workflow, which reports"
           echo "    INSURANCE_MYCOVER_API_KEY = set (len N, sha256 XXXXXXXXXXXX)"
           echo "  without ever printing the value."
+
+  set-assoc-card-secret:
+    # Generates and writes ASSOC_CARD_SIGNING_SECRET to the staging backend.
+    #
+    # WHY THIS EXISTS
+    # finance_routes.go: with FEATURE_ASSOCIATIONS_ENABLED on and APP_ENV != development,
+    # a missing ASSOC_CARD_SIGNING_SECRET calls log.Fatalf and exits the WHOLE process
+    # immediately (a deliberate fail-closed guard — outside development it refuses to
+    # sign membership cards with the public dev constant baked into the repo). Turning
+    # the association flag on without this secret set doesn't disable the module, it
+    # crash-loops the entire backend: confirmed live, a staging deploy attempt reached
+    # this exact log.Fatalf line seconds after boot and then restarted from scratch.
+    #
+    # The value is generated HERE and piped via --stdin exactly as ADMIN_API_KEY is: it
+    # never appears in a command line, a process list, or `set -x` output, and is never
+    # echoed. There is no external provider to match against (unlike the MyCover key
+    # below) — any random secret is valid, it only needs to be stable across restarts
+    # so previously-issued membership cards keep verifying.
+    if: ${{ inputs.confirm == 'SET' && inputs.set_assoc_card_secret }}
+    runs-on: ubuntu-latest
+    environment: staging
+    env:
+      RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN_STAGING }}
+      PROJECT: e7dca861-3667-4d9a-8090-6d2f4d179ec2
+      ENVIRONMENT: staging
+    steps:
+      - name: Check the Railway token is present
+        run: ': "${RAILWAY_TOKEN:?missing secret RAILWAY_TOKEN_STAGING}"'
+
+      - name: Install Railway CLI
+        run: npm install --global @railway/cli@5.40.1
+
+      # --skip-deploys: a separate deploy (this workflow's set-flags job, or a
+      # fresh `railway up` via ci.yml) already follows and this avoids racing it
+      # with a second, redundant rolling restart.
+      - name: Generate and set the secret
+        run: |
+          set -euo pipefail
+          SECRET="$(openssl rand -hex 32)"
+          printf '%s' "$SECRET" | railway variable set ASSOC_CARD_SIGNING_SECRET --stdin \
+            --service backend --environment "$ENVIRONMENT" --project "$PROJECT" --skip-deploys
+          unset SECRET
+          echo "  ASSOC_CARD_SIGNING_SECRET written to backend (value never printed)"
+
+      - name: Verify it is set (presence + length only, never the value)
+        run: |
+          set -euo pipefail
+          railway variable list --service backend --environment "$ENVIRONMENT" \
+            --project "$PROJECT" --json > assoc.json
+          node -e '
+            let v; try { v = JSON.parse(require("fs").readFileSync("assoc.json","utf8")); }
+            catch { console.error("Unparseable - refusing to print."); process.exit(1); }
+            const raw = v.ASSOC_CARD_SIGNING_SECRET;
+            if (!raw || String(raw).length < 32) { console.error("ASSOC_CARD_SIGNING_SECRET missing or too short."); process.exit(1); }
+            console.log("  OK   ASSOC_CARD_SIGNING_SECRET = set (len " + String(raw).length + ")");
+          '
