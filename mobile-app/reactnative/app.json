@@ -50,7 +50,7 @@
       "typedRoutes": false
     },
     "android": {
-      "package": "com.anonymous.paymaxreactnativeapp",
+      "package": "com.spotlightng.superapp",
       "usesCleartextTraffic": true,
       "adaptiveIcon": {
         "foregroundImage": "./assets/branding/adaptive-icon.png",
@@ -81,7 +81,7 @@
         },
         "ITSAppUsesNonExemptEncryption": false
       },
-      "bundleIdentifier": "com.anonymous.paymaxreactnativeapp"
+      "bundleIdentifier": "com.spotlightng.superapp"
     },
     "web": {
       "favicon": "./assets/branding/favicon.png"
