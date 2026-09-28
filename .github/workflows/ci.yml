@@ -610,10 +610,29 @@ jobs:
             --detach \
             --message "${{ github.sha }}"
           for attempt in {1..40}; do
-            status="$(railway deployment list --service ${{ matrix.service }} --environment staging --project e7dca861-3667-4d9a-8090-6d2f4d179ec2 --limit 10 --json | jq -r --arg message "${{ github.sha }}" '[.[] | select(.meta.cliMessage == $message)] | first | .status // empty')"
+            row="$(railway deployment list --service ${{ matrix.service }} --environment staging --project e7dca861-3667-4d9a-8090-6d2f4d179ec2 --limit 10 --json | jq -c --arg message "${{ github.sha }}" '[.[] | select(.meta.cliMessage == $message)] | first // {}')"
+            status="$(echo "$row" | jq -r '.status // empty')"
+            id="$(echo "$row" | jq -r '.id // empty')"
             case "$status" in
               SUCCESS) exit 0 ;;
-              FAILED|CRASHED|REMOVED) echo "Railway deployment ended with $status"; exit 1 ;;
+              FAILED|CRASHED|REMOVED)
+                echo "Railway deployment ended with $status"
+                # This deployment never became the one serving traffic, so
+                # `railway logs --deployment` (which targets the CURRENT/active
+                # deployment) reports the OLD, still-running deployment's logs
+                # instead — silently pointing at the wrong process. Target this
+                # exact deployment id so a crash-after-build actually surfaces
+                # its own reason instead of unrelated old traffic.
+                #
+                # Filtered, never dumped: application logs can contain anything,
+                # and a raw dump into a job log is how a secret escapes (see the
+                # --kv incident documented in staging-inspect.yml's header).
+                echo "--- crash signatures for deployment $id ---"
+                railway logs --deployment "$id" --lines 300 2>"/dev/null" > dep.log || true
+                grep -aiE "panic:|fatal error|nil pointer|runtime error|goroutine [0-9]+ \[|listen tcp|bind: address already in use|Validate\(\)|refusing to start|exit status|SIGSEGV|SIGABRT" dep.log \
+                  | tail -60 || echo "  (no crash signature matched — see the Staging inspect workflow for a fuller, still-filtered view)"
+                exit 1
+                ;;
               *) echo "Waiting for Railway deployment (attempt $attempt/40; status: ${status:-not-found})"; sleep 15 ;;
             esac
           done
