@@ -1,4 +1,4 @@
-# ADR-PR167 — Admin (modules) type debt: port support files to `src/`, keep alias paths
+# ADR-058 — Admin (modules) type debt: port support files to `src/`, keep alias paths
 
 > Numbering note: this ADR predates ADR-assign automation and had hand-picked
 > `ADR-029`, which is now taken by the orchestration ledger fix

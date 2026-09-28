@@ -17,6 +17,7 @@ import CategoryTile from '@/features/crowdfunding/components/CategoryTile';
 import { useCampaigns, useCategories, useToggleSave } from '@/features/crowdfunding/hooks/useCrowdfunding';
 import { INVESTMENT_ENABLED, CSR_ENABLED } from '@/features/crowdfunding/constants/crowdfunding.constants';
 import { HomeMenuButton } from '@/components/HomeMenu';
+import { RemoteBanner } from '@/features/media/banners';
 import { TrendingUp, Building2 } from 'lucide-react-native';
 
 /** Source artwork is 1200x600. */
@@ -96,6 +97,8 @@ export default function CrowdfundingHome() {
               onPress={() => router.push('/crowdfunding/search')}
             />
           </View>
+
+          <RemoteBanner slug="crowdfunding" priority style={styles.banner} />
 
           {/* Crowdfunding-only menu — everything a user needs to run their
               own campaign(s) and track their giving, scoped strictly to this
@@ -324,6 +327,7 @@ const styles = StyleSheet.create({
   headerTitle: { ...Typography.titleLg, color: Colors.onSurface },
   scroll: { paddingBottom: 120 },
   searchWrap: { marginTop: Spacing.sm },
+  banner: { marginHorizontal: Spacing.containerMargin, marginTop: Spacing.md },
   menuRow: { flexDirection: 'row', gap: Spacing.sm, marginTop: Spacing.md, paddingHorizontal: Spacing.containerMargin },
   menuAction: { flex: 1, alignItems: 'center', gap: 6, backgroundColor: Colors.surfaceContainerLowest, borderRadius: Radius.lg, paddingVertical: Spacing.md, ...shadow1 },
   menuActionIcon: { width: 40, height: 40, borderRadius: Radius.md, backgroundColor: Colors.surfaceContainerLow, alignItems: 'center', justifyContent: 'center' },

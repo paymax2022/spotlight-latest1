@@ -32,8 +32,19 @@ export function getOptionalEnv(name: string, fallback?: string): string | undefi
 }
 
 /**
- * Validates all critical environment variables on application startup.
- * Should be called in a high-level entry point (e.g., layout.tsx or a server initialization script).
+ * Logs (never throws) a loud warning for missing critical environment
+ * variables on application startup. Wired into instrumentation.ts's
+ * register(), which runs once per server boot.
+ *
+ * Deliberately never throws: a missing var here degrades ONE feature
+ * (e.g. Paystack-funded payments fail closed per-request — see
+ * src/server/voting/payment/paystack.ts / src/server/wallet/service.ts's
+ * own getSecretKey() checks), but crashing the whole process on boot over
+ * one missing var would take down every OTHER feature too — a much wider
+ * blast radius than the gap this is meant to surface. Found 2026-09-25:
+ * PAYSTACK_SECRET_KEY was unset on Railway staging and nothing logged it —
+ * this function already listed it as required but was never called from
+ * anywhere, so the gap was silent until a real purchase attempt 500'd.
  */
 export function validateEnv() {
   const requiredVars = [
@@ -51,16 +62,11 @@ export function validateEnv() {
   const missing = requiredVars.filter((v) => !getOptionalEnv(v));
 
   if (missing.length > 0) {
-    const message =
-      `Critical environment variables missing: ${missing.join(', ')}. ` +
-      `Please check your .env file against .env.example`;
-    const isProd = process.env.NODE_ENV === 'production';
-
-    if (isProd) {
-      throw new Error(message);
-    }
-
-    console.warn(`⚠️ ${message}`);
+    console.error(
+      `⚠️ Critical environment variables missing: ${missing.join(', ')}. ` +
+        `The features that depend on them will fail closed at request time. ` +
+        `Check this deployment's environment against .env.example / .env.production.example.`,
+    );
     return;
   }
 

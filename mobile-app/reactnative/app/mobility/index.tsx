@@ -14,6 +14,7 @@ import { shadow1 } from '@/constants/shadows';
 import StateView from '@/components/StateView';
 import SectionHeader from '@/components/SectionHeader';
 import BalanceCard from '@/components/BalanceCard';
+import { RemoteBanner } from '@/features/media/banners';
 import { getWallet } from '@/api/wallet.api';
 import { useMobilityHome } from '@/features/mobility/hooks/useMobility';
 import ActiveTripCard from '@/features/mobility/components/ActiveTripCard';
@@ -115,6 +116,8 @@ export default function MobilityHomeScreen() {
               ]}
             />
           </View>
+
+          <RemoteBanner slug="ride" priority />
 
           {/* Trip planner — Current location + Where to. Both open the same
               AddressEntry autocomplete (Google-powered lookup + confirm-on-map). */}

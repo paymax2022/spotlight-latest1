@@ -1,7 +1,7 @@
 import React, { useRef, useState } from 'react';
 import PhoneNumberInput from '@/components/PhoneNumberInput';
 import {
-  View, Text, ScrollView, StyleSheet, Pressable, Platform, Modal, ActivityIndicator, Linking,
+  View, Text, ScrollView, StyleSheet, Pressable, Platform, Modal, ActivityIndicator,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
@@ -196,7 +196,6 @@ export default function ElectricityScreen() {
           return { authorizationUrl: r.authorizationUrl, reference: r.paymentReference };
         },
         onResolved: (res) => { setShowConfirm(false); router.replace(`/services/paystack/${res.reference}` as never); },
-        onFallback: async (res) => { setShowConfirm(false); await Linking.openURL(res.authorizationUrl); },
       });
     } catch (err: unknown) {
       setPaystackError(getErrorMessage(err));

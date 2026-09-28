@@ -146,8 +146,8 @@ async function persistFraudFlags(
 ): Promise<void> {
   try {
     const supabase = createAdminClient();
-    for (const signal of signals) {
-      await supabase.from('fraud_flags').insert({
+    await supabase.from('fraud_flags').insert(
+      signals.map((signal) => ({
         contest_id: input.contestId,
         contestant_id: input.contestantId ?? null,
         voter_profile_id: null,
@@ -155,8 +155,8 @@ async function persistFraudFlags(
         severity: signal.severity,
         description: `[${input.domain}] ${signal.reason}`,
         status: 'open',
-      });
-    }
+      })),
+    );
   } catch {
     // Silent — flagging must never block a paid/credited vote.
   }

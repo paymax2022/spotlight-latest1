@@ -1,4 +1,4 @@
-# ADR-PR181 — Fix `user_profiles` admin RLS policies: `USING (true)` → `public.is_admin()`
+# ADR-060 — Fix `user_profiles` admin RLS policies: `USING (true)` → `public.is_admin()`
 
 **Date:** 2026-09-17
 **Status:** Accepted
