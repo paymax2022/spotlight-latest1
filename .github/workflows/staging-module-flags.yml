@@ -99,6 +99,45 @@ jobs:
       # utilityPayments, healthLab, healthVet, aiCare, walletBankTransfers. Their
       # flags stayed unset, so those tiles silently vanished from the app while
       # every check reported success. The list must be the UNION of both maps.
+      #
+      # 39, not 29. An association-module bug report ("could not load
+      # organisation") traced to config.go reading FEATURE_ASSOCIATIONS_ENABLED
+      # (PLURAL) to gate association.RegisterRoutes — this workflow had only
+      # ever set FEATURE_ASSOCIATION_ENABLED (singular, the module-registry/
+      # visibility flag). The plural flag was never set, so the routes never
+      # registered on staging and every /api/finance/associations/* call 404'd.
+      # A full audit of every `if cfg.FeatureXEnabled` route gate in
+      # backend/internal/app/*.go against this list found the same shape of gap
+      # on nine more flags — each has a sibling flag already set here (or on
+      # frontend-web) that only makes sense if the module was meant to be
+      # reachable, so the gate being unset was an oversight:
+      #   FEATURE_ASSOCIATIONS_ENABLED   - plural gate; see above
+      #   FEATURE_HEALTH_ENABLED         - shared parent gate for the whole
+      #                                    health vertical; HEALTH_LAB/VET/
+      #                                    PHARMACY were all "true" here
+      #                                    already but NONE of their routes
+      #                                    register without this outer flag
+      #   FEATURE_UTILITY_BILLS_ENABLED  - the actual Go gate for the utility
+      #                                    money path; FEATURE_UTILITY_PAYMENTS_
+      #                                    ENABLED (kept below) is read only by
+      #                                    frontend-web/mobile, not Go
+      #   FEATURE_KYC_VERIFY_ENABLED     - separate from FEATURE_KYC_ENABLED;
+      #                                    gates document verification
+      #   FEATURE_TRANSPORT_SCHEDULING_ENABLED, FEATURE_TRANSPORT_MODES_ENABLED
+      #                                  - already set on frontend-web, never
+      #                                    on backend
+      #   FEATURE_VOTE_BRIDGE_ENABLED    - AND'd with wallet (already true)
+      #   FEATURE_FX_ORCHESTRATION_ENABLED, FEATURE_ARENA_ENABLED,
+      #   FEATURE_TRADING_ENABLED        - same already-on-frontend-web,
+      #                                    never-on-backend pattern
+      # Left OUT: flags with NO sibling evidence anywhere that the module is
+      # meant to be live yet (FEATURE_ACADEMY_ENABLED, FEATURE_CRYPTO_ENABLED,
+      # FEATURE_DOCTOR_ENABLED, FEATURE_PLACEMENT_ENABLED,
+      # FEATURE_P2P_MARKET_ENABLED, FEATURE_MAPLERAD_ENABLED,
+      # FEATURE_LEARN_ENABLED, FEATURE_SPOTLIGHTWEALTH_ENABLED,
+      # FEATURE_INVESTAI_ENABLED, FEATURE_COMMISSION_ENABLED,
+      # FEATURE_BUSINESS_REGISTRY_ENABLED, legacy FEATURE_PHARMACY_ENABLED) -
+      # flipping those on is a product-launch decision, not a bug fix.
       - name: Set APP_ENV and the module flags
         run: |
           set -euo pipefail
@@ -109,6 +148,16 @@ jobs:
           # also gates gifting/payouts/AML under the same switch (there is no
           # narrower flag), so this turns those on for staging too, not just
           # voting.
+          #
+          # FEATURE_MARKETPLACE_ENABLED gates the whole /v1/marketplace group
+          # (internal/app/marketplace_routes.go), default false in config.go.
+          # The "union of both maps" rule in the header did NOT catch it: the
+          # marketplace surface is in NEITHER map — no entry in modulegate/routes.go
+          # and none in the mobile serviceModuleKeys.ts — because the Sell tab is
+          # not module-gated. So the flag was missing while every check stayed
+          # green, and the mobile Sell tab rendered "Couldn't load your listings"
+          # off a gin 404. A new module reachable from the app needs its flag here
+          # even when it appears in no gate map.
           railway variable set \
             APP_ENV=staging \
             FEATURE_WALLET_ENABLED=true \
@@ -118,6 +167,7 @@ jobs:
             FEATURE_SAVINGS_ENABLED=true \
             FEATURE_KYC_ENABLED=true \
             FEATURE_REFERRALS_ENABLED=true \
+            FEATURE_REFERRAL_REWARDS_ENABLED=true \
             FEATURE_INSURANCE_ENABLED=true \
             FEATURE_SOCIAL_PAY_ENABLED=true \
             FEATURE_LOYALTY_ENABLED=true \
@@ -130,6 +180,16 @@ jobs:
             FEATURE_REALTOR_ENABLED=true \
             FEATURE_CROWDFUNDING_ENABLED=true \
             FEATURE_ASSOCIATION_ENABLED=true \
+            FEATURE_ASSOCIATIONS_ENABLED=true \
+            FEATURE_HEALTH_ENABLED=true \
+            FEATURE_UTILITY_BILLS_ENABLED=true \
+            FEATURE_KYC_VERIFY_ENABLED=true \
+            FEATURE_TRANSPORT_SCHEDULING_ENABLED=true \
+            FEATURE_TRANSPORT_MODES_ENABLED=true \
+            FEATURE_VOTE_BRIDGE_ENABLED=true \
+            FEATURE_FX_ORCHESTRATION_ENABLED=true \
+            FEATURE_ARENA_ENABLED=true \
+            FEATURE_TRADING_ENABLED=true \
             FEATURE_GROUPS_ENABLED=true \
             FEATURE_EVENTS_ENABLED=true \
             FEATURE_CREATORS_ENABLED=true \
@@ -142,6 +202,7 @@ jobs:
             FEATURE_BANK_TRANSFERS_ENABLED=true \
             FEATURE_CONTEST_STAGE_EVICTION_ENABLED=true \
             FEATURE_CONNECT_ENABLED=true \
+            FEATURE_MARKETPLACE_ENABLED=true \
             --service "$SERVICE" --environment "$ENVIRONMENT" --project "$PROJECT" \
             --skip-deploys
 
@@ -175,12 +236,15 @@ jobs:
             --project "$PROJECT" --json > vars.json
           node -e '
             const want = [
-              "WALLET","WALLET_TRANSFERS","VIRTUAL_ACCOUNTS","FX","SAVINGS","KYC","REFERRALS",
+              "WALLET","WALLET_TRANSFERS","VIRTUAL_ACCOUNTS","FX","SAVINGS","KYC","REFERRALS","REFERRAL_REWARDS",
               "INSURANCE","SOCIAL_PAY","LOYALTY","RESTAURANT","TRANSPORT","TELEMEDICINE",
               "HEALTH_PHARMACY","STAYS","ESTATE","REALTOR","CROWDFUNDING","ASSOCIATION",
               "GROUPS","EVENTS","CREATORS","DISPUTES","RATINGS",
               "UTILITY_PAYMENTS","HEALTH_LAB","HEALTH_VET","AICARE","BANK_TRANSFERS",
-              "CONTEST_STAGE_EVICTION","CONNECT",
+              "CONTEST_STAGE_EVICTION","CONNECT","MARKETPLACE",
+              "ASSOCIATIONS","HEALTH","UTILITY_BILLS","KYC_VERIFY",
+              "TRANSPORT_SCHEDULING","TRANSPORT_MODES","VOTE_BRIDGE",
+              "FX_ORCHESTRATION","ARENA","TRADING",
             ].map((s) => `FEATURE_${s}_ENABLED`);
             let vars;
             try {
@@ -212,6 +276,69 @@ jobs:
       # A single redeploy picks up every variable at once. Without this the flags
       # sit in Railway's config unread — the process only sees them on restart.
       - name: Redeploy so the new variables take effect
+        run: |
+          set -euo pipefail
+          railway redeploy --service "$SERVICE" --environment "$ENVIRONMENT" \
+            --project "$PROJECT" --yes
+
+  # frontend-web's Next.js API routes re-check their OWN copy of a module's
+  # feature flag (src/lib/feature-flags.ts, e.g. featureFlags.referrals())
+  # before ever proxying to the Go backend — set-flags above only ever wrote
+  # to the backend service. Referrals' Next.js route was therefore refusing
+  # every request with 503 "This service is not available" regardless of
+  # whether the Go backend had the flag, which is why /api/v1/referrals/*
+  # never worked on staging even after set-flags ran. featureFlags reads
+  # process.env at request time (not baked in at build, unlike GO_BACKEND_URL
+  # in next.config.mjs — see fix-proxy below), so a plain restart is enough;
+  # no rebuild/upload needed here.
+  set-frontend-web-flags:
+    name: set staging frontend-web FEATURE_* flags
+    if: ${{ inputs.confirm == 'SET' }}
+    runs-on: ubuntu-latest
+    environment: staging
+    env:
+      RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN_STAGING }}
+      PROJECT: e7dca861-3667-4d9a-8090-6d2f4d179ec2
+      SERVICE: frontend-web
+      ENVIRONMENT: staging
+    steps:
+      - name: Check the Railway token is present
+        run: ': "${RAILWAY_TOKEN:?missing secret RAILWAY_TOKEN_STAGING}"'
+
+      - name: Install Railway CLI
+        run: npm install --global @railway/cli@5.40.1
+
+      - name: Set the gateway-side module flags
+        run: |
+          set -euo pipefail
+          # FEATURE_HEALTH_ENABLED and FEATURE_VOTE_BRIDGE_ENABLED were the two
+          # gaps found on frontend-web's own copy of feature-flags.ts (it
+          # re-checks its own env var before ever proxying to Go): the Next
+          # route for the whole health vertical (app/api/v1/health/[...path]/
+          # route.ts) hard-gates on featureFlags.health() FIRST, so every
+          # health call 503'd here even once the Go-side flag was set.
+          railway variable set \
+            FEATURE_REFERRALS_ENABLED=true \
+            FEATURE_HEALTH_ENABLED=true \
+            FEATURE_VOTE_BRIDGE_ENABLED=true \
+            --service "$SERVICE" --environment "$ENVIRONMENT" --project "$PROJECT" \
+            --skip-deploys
+
+      - name: Verify it reads back as exactly "true"
+        run: |
+          set -euo pipefail
+          railway variable list --service "$SERVICE" --environment "$ENVIRONMENT" \
+            --project "$PROJECT" --json > fw-flags.json
+          node -e '
+            let v; try { v = JSON.parse(require("fs").readFileSync("fw-flags.json","utf8")); }
+            catch { console.error("Unparseable - refusing to print."); process.exit(1); }
+            const want = ["FEATURE_REFERRALS_ENABLED","FEATURE_HEALTH_ENABLED","FEATURE_VOTE_BRIDGE_ENABLED"];
+            const bad = want.filter((k) => v[k] !== "true");
+            for (const k of want) console.log(`  ${v[k] === "true" ? "OK  " : "BAD "} ${k}`);
+            if (bad.length) { console.error(`${bad.length} flag(s) did not take.`); process.exit(1); }
+          '
+
+      - name: Restart so the new variable takes effect
         run: |
           set -euo pipefail
           railway redeploy --service "$SERVICE" --environment "$ENVIRONMENT" \
