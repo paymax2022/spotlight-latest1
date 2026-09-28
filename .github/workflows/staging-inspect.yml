@@ -30,6 +30,10 @@ on:
         description: 'How many recent backend log lines to scan for gate refusals'
         type: string
         default: '500'
+      deployment_id:
+        description: 'TEMP diagnostic: a specific Railway deployment id to scan for crash signatures (leave blank to skip). Remove this input + its step once the investigation is done.'
+        type: string
+        default: ''
 
 permissions:
   contents: read
@@ -325,3 +329,16 @@ jobs:
           echo "  --- counts ---"
           echo "    WOULD refuse (observe-only, refused nothing): $(grep -aic 'WOULD refuse' be.log || true)"
           echo "    startup lines mentioning the gate:            $(grep -aic 'modulegate' be.log || true)"
+
+      # TEMP diagnostic (remove once done): scan a SPECIFIC failed deployment's
+      # logs for crash signatures. Filtered the same way as the step above —
+      # only lines matching a crash pattern are printed, never a full dump.
+      - name: TEMP crash-signature scan of a specific deployment
+        if: ${{ inputs.deployment_id != '' }}
+        run: |
+          set -uo pipefail
+          railway logs "${{ inputs.deployment_id }}" --lines "${{ inputs.log_lines }}" > crash.log 2>&1 || true
+          echo "  scanned $(wc -l < crash.log) log lines from deployment ${{ inputs.deployment_id }}"
+          echo "  --- crash-signature lines ---"
+          grep -aiE "panic|fatal|runtime error|listen tcp|bind: address|exit status|connection refused|out of memory|OOMKilled|segmentation|cannot find package|undefined:|no such host|permission denied" crash.log \
+            | tail -60 | sed 's/^/    /' || echo "    (none found)"
