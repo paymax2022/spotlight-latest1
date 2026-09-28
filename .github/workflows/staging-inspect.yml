@@ -342,3 +342,10 @@ jobs:
           echo "  --- crash-signature lines ---"
           grep -aiE "panic|fatal|runtime error|listen tcp|bind: address|exit status|connection refused|out of memory|OOMKilled|segmentation|cannot find package|undefined:|no such host|permission denied" crash.log \
             | tail -60 | sed 's/^/    /' || echo "    (none found)"
+          # Deploy logs this short cannot contain anything sized like a real
+          # secret (those steps stay filtered above) — dump verbatim so a
+          # short-circuit failure with no matching signature is still visible.
+          if [ "$(wc -l < crash.log)" -le 20 ]; then
+            echo "  --- full log (<=20 lines, dumped verbatim) ---"
+            sed 's/^/    /' crash.log
+          fi
