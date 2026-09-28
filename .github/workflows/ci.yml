@@ -624,8 +624,18 @@ jobs:
                 # --kv incident documented in staging-inspect.yml's header).
                 echo "--- crash signatures for deployment $id ---"
                 railway logs --deployment "$id" --lines 300 2>"/dev/null" > dep.log || true
-                grep -aiE "panic:|fatal error|nil pointer|runtime error|goroutine [0-9]+ \[|listen tcp|bind: address already in use|Validate\(\)|refusing to start|exit status|SIGSEGV|SIGABRT" dep.log \
-                  | tail -60 || echo "  (no crash signature matched — see the Staging inspect workflow for a fuller, still-filtered view)"
+                echo "  fetched $(wc -l < dep.log) log lines for this deployment"
+                if grep -qaiE "panic:|fatal error|nil pointer|runtime error|goroutine [0-9]+ \[|listen tcp|bind: address already in use|Validate\(\)|refusing to start|exit status|SIGSEGV|SIGABRT" dep.log; then
+                  grep -aiE "panic:|fatal error|nil pointer|runtime error|goroutine [0-9]+ \[|listen tcp|bind: address already in use|Validate\(\)|refusing to start|exit status|SIGSEGV|SIGABRT" dep.log | tail -60
+                else
+                  # No known crash signature — most likely a startup HANG that
+                  # never reached "listening" before Railway's healthcheck timed
+                  # it out, which prints no panic at all. Show whatever DID print
+                  # (redacted, same doctrine as staging-inspect.yml) so a stuck
+                  # init step is visible instead of a bare "no match".
+                  echo "  no crash signature matched — last lines emitted before the deployment ended:"
+                  tail -40 dep.log | sed -E 's#eyJ[A-Za-z0-9._-]{20,}#<jwt-redacted>#g; s#(sk_|pk_)[A-Za-z0-9_-]{10,}#<key-redacted>#g'
+                fi
                 exit 1
                 ;;
               *) echo "Waiting for Railway deployment (attempt $attempt/40; status: ${status:-not-found})"; sleep 15 ;;
