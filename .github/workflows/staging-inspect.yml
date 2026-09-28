@@ -337,9 +337,7 @@ jobs:
         if: ${{ inputs.deployment_id != '' }}
         run: |
           set -uo pipefail
-          echo "  --- railway logs --help ---"
-          railway logs --help 2>&1 | sed 's/^/    /'
-          railway logs --deployment "${{ inputs.deployment_id }}" --service backend --environment "$ENVIRONMENT" \
+          railway logs "${{ inputs.deployment_id }}" --deployment --service backend --environment "$ENVIRONMENT" \
             --project "$PROJECT" --lines "${{ inputs.log_lines }}" > crash.log 2>&1 || true
           echo "  scanned $(wc -l < crash.log) log lines from deployment ${{ inputs.deployment_id }}"
           echo "  --- crash-signature lines ---"
