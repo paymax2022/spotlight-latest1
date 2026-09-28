@@ -269,20 +269,29 @@ func (h *Handler) GetStages(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": stages})
 }
 
-// RegisterPublic wires the one unauthenticated voting route: resolving a
-// share token. It must live outside the member group (which requires a
-// bearer token) because the person following a shared link has no session
-// yet — that is the entire point of the link.
+// RegisterPublic wires the unauthenticated voting routes.
 //
-// Gated behind FEATURE_CONTESTANT_SOCIAL_ENABLED, same as the like/share
-// mutation routes in Register — a token could otherwise resolve before the
-// feature that issues tokens is even live anywhere else.
+// GET /contests reuses the same handler as the member group's GET /contests
+// (handlers.go:296) — ListContests reads no auth context, so there is nothing
+// member-specific to strip. It exists here so a logged-out visitor (e.g. the
+// public web marketing pages) can render the same contest list a signed-in
+// mobile user sees, without exposing anything beyond what that handler
+// already returns (no PII, no vote-eligibility data).
+//
+// GET /share/:token must live outside the member group (which requires a
+// bearer token) because the person following a shared link has no session
+// yet — that is the entire point of the link. Gated behind
+// FEATURE_CONTESTANT_SOCIAL_ENABLED, same as the like/share mutation routes
+// in Register — a token could otherwise resolve before the feature that
+// issues tokens is even live anywhere else.
 func RegisterPublic(public gin.IRouter, svc *Service, cfg config.Config) {
+	h := NewHandler(svc)
+	public.GET("/contests", h.ListContests)
+
 	if !cfg.FeatureContestantSocialEnabled {
 		log.Println("[connect-voting] FEATURE_CONTESTANT_SOCIAL_ENABLED is off — skipping public share-resolve route")
 		return
 	}
-	h := NewHandler(svc)
 	public.GET("/share/:token", h.ResolveShare)
 }
 
