@@ -35,6 +35,26 @@ func (h *Handler) CreateBankAccount(c *gin.Context) {
 	c.JSON(http.StatusCreated, res)
 }
 
+// VerifyBankAccount → POST /profile/bank-account/verify
+// Performs real-time account verification without saving the account.
+func (h *Handler) VerifyBankAccount(c *gin.Context) {
+	uid, ok := h.userID(c)
+	if !ok {
+		return
+	}
+	var req BankAccountRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	result, err := h.svc.VerifyBankAccount(c.Request.Context(), uid, req)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, result)
+}
+
 // UploadProfileDocument → POST /profile/documents
 func (h *Handler) UploadProfileDocument(c *gin.Context) {
 	uid, ok := h.userID(c)
