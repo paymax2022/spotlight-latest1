@@ -30,6 +30,10 @@ on:
         description: 'How many recent backend log lines to scan for gate refusals'
         type: string
         default: '500'
+      auth_probe:
+        description: 'Mint a throwaway confirmed user and call the module endpoints THROUGH frontend-web with a real Bearer, exactly as the APK does (status + shape only; user deleted afterwards)'
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -402,3 +406,99 @@ jobs:
       # currently serving (whose lines the step above had just printed), so it
       # cannot be relied on for post-incident forensics. Capture the boot
       # summary above while the deployment is still serving instead.
+
+      # frontend-web's HTTP access log is the one place that shows EVERY inbound
+      # request to a module endpoint, whoever sent it: the APK, a curl, a browser.
+      # @clientUa distinguishes them (okhttp / ReactNative vs curl), @httpStatus
+      # is what the caller actually received (the Go backend's own log only shows
+      # what the PROXY received from Go, which can differ on a proxy timeout).
+      # If the APK's calls never show up here, the failure is before frontend-web:
+      # device connectivity, DNS, or a build with the wrong base URL baked in.
+      - name: frontend-web HTTP access log for the restaurant endpoint (last 6h)
+        run: |
+          set -uo pipefail
+          for p in "/api/finance/restaurant" "/api/v1/marketplace" "/api/finance/associations"; do
+            echo "  --- inbound requests to $p (status, duration, UA, path) ---"
+            railway logs --http --service frontend-web --environment "$ENVIRONMENT" \
+              --project "$PROJECT" --since 6h --lines 40 --path "$p" --json 2>/dev/null \
+              | node -e '
+                  const rl = require("readline").createInterface({ input: process.stdin });
+                  rl.on("line", (l) => {
+                    let o; try { o = JSON.parse(l); } catch { return; }
+                    const a = o.attributes ?? o;
+                    const ua = String(a.clientUa ?? a["@clientUa"] ?? "").slice(0, 40);
+                    console.log(`    ${o.timestamp ?? ""} ${a.httpStatus ?? a["@httpStatus"] ?? "?"} ${a.totalDuration ?? a["@totalDuration"] ?? "?"}ms ua=${ua} ${a.method ?? ""} ${a.path ?? a["@path"] ?? ""}`);
+                  });
+                ' | tail -25 || echo "    (none)"
+          done
+
+  # Calls the module endpoints THROUGH frontend-web with a real Bearer, exactly as
+  # the APK does — the unauthenticated probes above can only prove a route EXISTS
+  # (401 vs 404); they cannot show what a signed-in user actually receives. A
+  # throwaway confirmed user is minted with the backend's service-role key and
+  # deleted at the end. The key and the token live only in this step's process
+  # environment: never on a command line, never echoed; only HTTP status codes
+  # and the first characters of a REDACTED body are printed.
+  auth-probe:
+    name: authenticated module probe (throwaway user, through frontend-web)
+    if: ${{ inputs.auth_probe }}
+    runs-on: ubuntu-latest
+    environment: staging
+    env:
+      RAILWAY_TOKEN: ${{ inputs.environment == 'production' && secrets.RAILWAY_TOKEN_PRODUCTION || secrets.RAILWAY_TOKEN_STAGING }}
+      PROJECT: e7dca861-3667-4d9a-8090-6d2f4d179ec2
+      ENVIRONMENT: ${{ inputs.environment }}
+      WEB_BASE: ${{ inputs.environment == 'production' && 'https://frontend-web-production-9259.up.railway.app' || 'https://frontend-web-staging-ec46.up.railway.app' }}
+    steps:
+      - name: Check the Railway token is present
+        run: ': "${RAILWAY_TOKEN:?missing Railway token secret}"'
+      - name: Install Railway CLI
+        run: npm install --global @railway/cli@5.40.1
+      - name: Probe
+        run: |
+          set -uo pipefail
+          railway variable list --service backend --environment "$ENVIRONMENT" \
+            --project "$PROJECT" --json > be.json
+          export SB_URL="$(node -e 'const v=JSON.parse(require("fs").readFileSync("be.json","utf8")); process.stdout.write(String(v.SUPABASE_URL||""))')"
+          export SB_KEY="$(node -e 'const v=JSON.parse(require("fs").readFileSync("be.json","utf8")); process.stdout.write(String(v.SUPABASE_SERVICE_ROLE_KEY||""))')"
+          rm -f be.json
+          echo "  backend SUPABASE_URL host: $(node -e 'try{console.log(new URL(process.env.SB_URL).host)}catch{console.log("(unparseable)")}')"
+          [ -n "$SB_KEY" ] || { echo "  SUPABASE_SERVICE_ROLE_KEY not set on backend — cannot mint a user"; exit 1; }
+          EMAIL="diag-probe-$(date +%s)@spotlightng.com"
+          PW="$(openssl rand -hex 16)Aa1!"
+          UID_="$(node -e '
+            const [url,key,email,pw]=[process.env.SB_URL,process.env.SB_KEY,process.argv[1],process.argv[2]];
+            fetch(url+"/auth/v1/admin/users",{method:"POST",headers:{apikey:key,Authorization:"Bearer "+key,"Content-Type":"application/json"},
+              body:JSON.stringify({email,password:pw,email_confirm:true,user_metadata:{full_name:"Diag Probe"}})})
+              .then(r=>r.json()).then(j=>process.stdout.write(j.id||"")).catch(()=>process.stdout.write(""));
+          ' "$EMAIL" "$PW")"
+          [ -n "$UID_" ] || { echo "  user creation failed"; exit 1; }
+          echo "  minted throwaway user (id ${UID_:0:8}…)"
+          export TOKEN="$(node -e '
+            const [url,key,email,pw]=[process.env.SB_URL,process.env.SB_KEY,process.argv[1],process.argv[2]];
+            fetch(url+"/auth/v1/token?grant_type=password",{method:"POST",headers:{apikey:key,"Content-Type":"application/json"},
+              body:JSON.stringify({email,password:pw})}).then(r=>r.json()).then(j=>process.stdout.write(j.access_token||"")).catch(()=>process.stdout.write(""));
+          ' "$EMAIL" "$PW")"
+          [ -n "$TOKEN" ] || { echo "  password grant returned no access_token"; }
+          echo "  token issuer: $(node -e 'try{const p=JSON.parse(Buffer.from(process.env.TOKEN.split(".")[1],"base64url"));console.log(p.iss, "aud="+p.aud, "role="+p.role)}catch{console.log("(none)")}')"
+          probe() {
+            local path="$1"
+            local out; out="$(curl -s -o /tmp/body -w "%{http_code} %{time_total}s" -H "Authorization: Bearer $TOKEN" --max-time 45 "$WEB_BASE$path")"
+            local body; body="$(head -c 220 /tmp/body | tr '\n' ' ' | sed -E 's#eyJ[A-Za-z0-9._-]{20,}#<jwt>#g')"
+            printf "  %-62s -> %s  %s\n" "$path" "$out" "$body"
+          }
+          echo "  --- through frontend-web, with Bearer (as the APK) ---"
+          probe "/api/finance/restaurant?limit=20&offset=0"
+          probe "/api/finance/restaurant?featured=1&sort=likes&limit=10&offset=0"
+          probe "/api/finance/restaurant?sort=eta&limit=10&offset=0"
+          probe "/api/finance/restaurant?sort=distance&near_lat=6.5244&near_lng=3.3792&limit=10&offset=0"
+          probe "/api/finance/restaurant/mine"
+          probe "/api/finance/associations"
+          probe "/api/v1/marketplace/my-listings"
+          probe "/api/finance/wallet/balance"
+          echo "  --- cleanup ---"
+          node -e '
+            const [url,key,id]=[process.env.SB_URL,process.env.SB_KEY,process.argv[1]];
+            fetch(url+"/auth/v1/admin/users/"+id,{method:"DELETE",headers:{apikey:key,Authorization:"Bearer "+key}}).then(r=>console.log("  deleted throwaway user: HTTP "+r.status)).catch(e=>console.log("  delete failed: "+e.message));
+          ' "$UID_"
+          unset TOKEN SB_KEY
