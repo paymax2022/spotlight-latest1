@@ -381,10 +381,14 @@ jobs:
       - name: Backend boot summary (server-side filtered)
         run: |
           set -uo pipefail
+          # NOT --latest: on this CLI version --latest resolved to a target with
+          # zero lines while the plain form (serving deployment) returned 500 —
+          # observed in the same run. --since spans the serving deployment's
+          # whole life so a boot from hours ago is still inside the window.
           for f in "[router]" "[finance]" "routes registered" "skipping" "/api/finance/restaurant"; do
             echo "  --- lines matching: $f ---"
-            railway logs --deployment --latest --service backend --environment "$ENVIRONMENT" \
-              --project "$PROJECT" --lines 60 --filter "$f" 2>&1 \
+            railway logs --deployment --service backend --environment "$ENVIRONMENT" \
+              --project "$PROJECT" --since 24h --lines 60 --filter "$f" 2>&1 \
               | sed -E 's#eyJ[A-Za-z0-9._-]{20,}#<jwt-redacted>#g; s#(sk_|pk_)[A-Za-z0-9_-]{10,}#<key-redacted>#g' \
               | tail -40 | sed 's/^/    /' || echo "    (none)"
           done
