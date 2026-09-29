@@ -13,6 +13,7 @@ import { goBack } from '@/lib/navigation';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as Icons from 'lucide-react-native';
 import SearchBar from '@/components/SearchBar';
+import StateView from '@/components/StateView';
 import { Colors } from '@/constants/colors';
 import { Radius } from '@/constants/radius';
 import { Spacing } from '@/constants/spacing';
@@ -383,18 +384,38 @@ export default function FoodScreen() {
 
         <View style={s.list}>
           {isLoading ? (
-            <Text style={s.empty}>Loading restaurants…</Text>
+            <StateView kind="loading" compact message="Loading restaurants…" />
           ) : isError ? (
-            <View style={s.errorBox}>
-              <Text style={s.empty}>Couldn't load restaurants.</Text>
-              <Pressable onPress={() => void refetch()} accessibilityRole="button">
-                <Text style={s.retry}>Tap to retry</Text>
-              </Pressable>
-            </View>
+            <StateView
+              kind="error"
+              compact
+              title="Couldn't load restaurants"
+              message="Something went wrong while fetching nearby restaurants."
+              actionLabel="Tap to retry"
+              onAction={() => void refetch()}
+            />
+          ) : total === 0 ? (
+            <StateView
+              kind="empty"
+              compact
+              icon="UtensilsCrossed"
+              title="No restaurants registered yet"
+              message="We don't have any partner restaurants on Spotlight Food in your area yet. Check back soon — new restaurants join regularly."
+              actionLabel="Refresh"
+              onAction={() => void refetch()}
+            />
           ) : filtered.length === 0 ? (
-            <Text style={s.empty}>
-              {debouncedQuery ? `No restaurants match "${debouncedQuery}"` : 'No restaurants available yet.'}
-            </Text>
+            <StateView
+              kind="empty"
+              compact
+              icon="SearchX"
+              title="No matches found"
+              message={
+                debouncedQuery
+                  ? `No restaurants match "${debouncedQuery}". Try a different search or cuisine.`
+                  : 'No restaurants match the selected cuisine filter.'
+              }
+            />
           ) : (
             <>
               {filtered.map((item) => (
@@ -561,7 +582,4 @@ const s = StyleSheet.create({
   },
   merchantTitle: { ...Typography.labelLg, color: Colors.onSurface },
   merchantSubtitle: { ...Typography.labelSm, color: Colors.onSurfaceVariant, marginTop: 2 },
-  empty: { ...Typography.bodyMd, color: Colors.outline, textAlign: 'center', marginTop: Spacing.xxl },
-  errorBox: { alignItems: 'center', gap: Spacing.sm },
-  retry: { ...Typography.labelLg, color: Colors.primary },
 });
