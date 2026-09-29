@@ -26,7 +26,7 @@
 -- own agent's phone to an interested buyer), it should get its own
 -- purpose-built, column-scoped policy rather than reopening this one.
 --
--- See ADR-PR181 (docs/adr/ADR-PR181-user-profiles-admin-rls-fix.md) for the
+-- See ADR-060 (docs/adr/ADR-060-user-profiles-admin-rls-fix.md) for the
 -- full decision record.
 
 DROP POLICY IF EXISTS "admin_read_all_user_profiles" ON public.user_profiles;

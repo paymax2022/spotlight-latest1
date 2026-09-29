@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { View, Text, ScrollView, StyleSheet, Pressable, ActivityIndicator, Modal, Linking } from 'react-native';
+import { View, Text, ScrollView, StyleSheet, Pressable, ActivityIndicator, Modal } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import { Zap, HandCoins, Wallet, CreditCard, Banknote, Check, MapPin, LocateFixed, Pencil, X } from 'lucide-react-native';
@@ -277,9 +277,6 @@ export default function EstimateScreen() {
                 },
                 onResolved: (res) => {
                   router.replace(`/mobility/paystack/${encodeURIComponent(res.reference)}` as never);
-                },
-                onFallback: async (res) => {
-                  await Linking.openURL(res.authorizationUrl);
                 },
               });
             },

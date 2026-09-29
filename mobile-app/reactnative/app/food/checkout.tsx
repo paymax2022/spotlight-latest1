@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { View, Text, ScrollView, StyleSheet, Pressable, ActivityIndicator, Alert, Linking } from 'react-native';
+import { View, Text, ScrollView, StyleSheet, Pressable, ActivityIndicator, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { goBack } from '@/lib/navigation';
@@ -278,9 +278,6 @@ export default function CheckoutScreen() {
             // utility-bills Paystack flow (app/services/paystack/[reference]).
             clear();
             router.replace(`/food/paystack/${encodeURIComponent(res.reference)}` as never);
-          },
-          onFallback: async (res) => {
-            await Linking.openURL(res.authorizationUrl);
           },
         });
       },

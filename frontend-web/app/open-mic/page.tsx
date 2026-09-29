@@ -1,9 +1,26 @@
 import Link from 'next/link';
 import Layout from '@/components/layout/Layout';
+import { CardGrid, CtaBand, JourneyRoadmap, PageHero, SectionHeader } from '@/src/components/spotlight/site/Sections';
 import { listContests } from '@/src/server/openmic/persistence';
 import { hasUsableSupabaseConfig } from '@/src/lib/supabase/runtime';
 
 export const dynamic = 'force-dynamic';
+
+const journeySteps = [
+  'Apply for the current monthly contest',
+  'Download the official beat after approval',
+  'Record and submit your original song',
+  'Promote your entry and gather votes',
+  'Top artists perform at the live finale',
+];
+
+const winnerPerks = [
+  { title: 'Cash Prize', description: 'Take home the monthly cash prize as the top-voted artist.' },
+  { title: 'Studio Session', description: 'A fully-funded professional studio session for your next record.' },
+  { title: 'Music Video Support', description: 'Production support to bring your winning song to visual life.' },
+  { title: 'Media Promotion', description: 'Featured across Spotlight media channels and partner platforms.' },
+  { title: 'Label Consideration', description: 'A direct introduction to label and industry partners scouting talent.' },
+];
 
 export default async function OpenMicLandingPage() {
   const dbConfigured = hasUsableSupabaseConfig();
@@ -12,184 +29,130 @@ export default async function OpenMicLandingPage() {
   return (
     <Layout
       headerStyle={1}
-      footerStyle={2}
-      onePageNav={null}
-      breadcrumbTitle="Open Mic Competition"
-      breadcrumbClassName=""
+      footerStyle={1}
+      onePageNav={false}
+      breadcrumbTitle={null}
+      breadcrumbClassName={undefined}
       breadcrumbPadding={undefined}
     >
-      <section
-        className="about-section section-padding fix bg-cover"
-        style={{ backgroundImage: 'url("/assets/img/service/service-bg-2.jpg")' }}
-      >
-        <div className="container">
-          <div className="service-details-wrapper">
-            <div className="row g-4">
-              <div className="col-12 col-lg-4 order-2 order-md-1">
-                <div className="main-sidebar">
-                  <div className="single-sidebar-widget">
-                    <div className="wid-title">
-                      <h3>How It Works</h3>
-                    </div>
-                    <div className="opening-category">
-                      <ul>
-                        <li><i className="fa-regular fa-circle-check" />Apply for the current monthly contest.</li>
-                        <li><i className="fa-regular fa-circle-check" />Download the official beat after approval.</li>
-                        <li><i className="fa-regular fa-circle-check" />Record and submit your finished song.</li>
-                        <li><i className="fa-regular fa-circle-check" />Promote your entry and gather votes.</li>
-                        <li><i className="fa-regular fa-circle-check" />Top artists perform at the live finale.</li>
-                      </ul>
-                    </div>
-                  </div>
+      <PageHero
+        label="Spotlight Open Mic"
+        title="One Beat. One Song. One Shot."
+        subtitle="Every month, Spotlight drops an official beat and emerging artists compete with original songs built on it. Apply, submit, gather votes, and qualify for the live monthly finale."
+        ctas={[
+          { label: 'Apply Now', href: '/apply' },
+          { label: 'Open Artist Dashboard', href: '/open-mic/dashboard', style: 'outline' },
+          { label: 'See Past Winners', href: '/open-mic/winners', style: 'outline' },
+        ]}
+      />
 
-                  <div className="single-sidebar-widget">
-                    <div className="wid-title">
-                      <h3>Winner Perks</h3>
-                    </div>
-                    <div className="opening-category">
-                      <ul>
-                        <li><i className="fa-regular fa-circle-check" />Cash Prize</li>
-                        <li><i className="fa-regular fa-circle-check" />Studio Session</li>
-                        <li><i className="fa-regular fa-circle-check" />Music Video Support</li>
-                        <li><i className="fa-regular fa-circle-check" />Media Promotion</li>
-                        <li><i className="fa-regular fa-circle-check" />Label Consideration</li>
-                      </ul>
-                    </div>
-                  </div>
+      <section className="max-w-7xl mx-auto px-4 md:px-8 py-8">
+        <SectionHeader title="How It Works" description="Five steps from application to the live finale stage." />
+        <JourneyRoadmap steps={journeySteps} />
+      </section>
 
-                  <div
-                    className="single-sidebar-image bg-cover"
-                    style={{ backgroundImage: 'url("/assets/img/service/post.jpg")' }}
-                  >
-                    <div className="contact-text">
-                      <div className="icon">
-                        <i className="fa-solid fa-microphone-lines" />
-                      </div>
-                      <h4>Ready To Join?</h4>
-                      <h5>
-                        <Link href="/open-mic/winners">See Past Winners</Link>
-                      </h5>
-                    </div>
-                  </div>
-                </div>
-              </div>
+      <section className="max-w-7xl mx-auto px-4 md:px-8 py-8">
+        <SectionHeader title="Winner Perks" description="What the monthly winner walks away with." />
+        <CardGrid
+          items={winnerPerks.map((perk) => (
+            <div key={perk.title}>
+              <p className="text-xs uppercase tracking-wide text-accent-gold">{perk.title}</p>
+              <p className="mt-2">{perk.description}</p>
+            </div>
+          ))}
+        />
+      </section>
 
-              <div className="col-12 col-lg-8 order-1 order-md-2">
-                <div className="service-details-items">
-                  <div className="details-image">
-                    <img src="/assets/img/shape/banner1.png" alt="Spotlight Open Mic Contest Banner" />
-                  </div>
+      <section className="max-w-7xl mx-auto px-4 md:px-8 py-8">
+        <SectionHeader title="Current & Upcoming Editions" description="Open monthly contests you can apply to right now." />
 
-                  <div className="details-content">
-                    <h3>Spotlight Open Mic: One Beat. One Song. One Shot.</h3>
-                    <p className="mt-3">
-                      Every month, Spotlight drops an official beat and emerging artists compete with original
-                      songs built on that beat. Apply, submit, gather votes, and qualify for the live monthly finale.
-                    </p>
+        {!dbConfigured ? (
+          <p className="mt-3 text-amber-700">
+            Open Mic is database-driven and Supabase config is not active on this server instance.
+          </p>
+        ) : null}
 
-                    <div className="details-video-items">
-                      <div className="content">
-                        <h4>Contest Journey</h4>
-                        <ul className="list">
-                          <li><i className="fa-regular fa-circle-check" />Apply</li>
-                          <li><i className="fa-regular fa-circle-check" />Download Beat</li>
-                          <li><i className="fa-regular fa-circle-check" />Record Song</li>
-                          <li><i className="fa-regular fa-circle-check" />Submit Entry</li>
-                          <li><i className="fa-regular fa-circle-check" />Get Votes</li>
-                          <li><i className="fa-regular fa-circle-check" />Perform Live Finale</li>
-                        </ul>
-                      </div>
-                    </div>
-
-                    <h3 className="mt-4">Current and Upcoming Editions</h3>
-                    {!dbConfigured ? (
-                      <p className="mt-2 text-amber-300">
-                        Open Mic is DB-driven. Supabase config is not active on this server instance.
-                      </p>
-                    ) : null}
-                    {contests.length === 0 ? (
-                      <p className="mt-2">
-                        No open mic editions are currently available.
-                        <Link href="/admin/open-mic/contests/new" className="ms-2">
-                          Create one now
-                        </Link>
-                        .
-                      </p>
-                    ) : (
-                      <div className="row g-4 mt-1">
-                        {contests.map((contest) => (
-                          <div className="col-12" key={contest.id}>
-                            <div className="single-sidebar-widget mb-0">
-                              <div className="wid-title d-flex flex-wrap justify-content-between align-items-center gap-2">
-                                <h3 className="mb-0">
-                                  <Link href={`/open-mic/${contest.slug}/apply`} className="text-decoration-none">
-                                    {contest.title}
-                                  </Link>
-                                </h3>
-                                <span className="badge-approved px-2 py-1 rounded-sm text-[11px]">
-                                  {contest.status.replace(/_/g, ' ')}
-                                </span>
-                              </div>
-                              <p className="mt-3 mb-2">
-                                Edition: {contest.month}/{contest.year}
-                              </p>
-                              <p className="mb-2">
-                                Registration: {contest.entryFeeRequired ? `Paid (NGN ${Number(contest.registrationFeeNgn || 0).toLocaleString('en-NG')})` : 'Free'}
-                              </p>
-                              <p className="mb-2">
-                                Registration Window: {contest.registrationStartAt ? new Date(contest.registrationStartAt).toLocaleString() : 'TBA'} - {contest.registrationEndAt ? new Date(contest.registrationEndAt).toLocaleString() : 'TBA'}
-                              </p>
-                              <p className="mb-2">
-                                Submission Window: {contest.submissionStartAt ? new Date(contest.submissionStartAt).toLocaleString() : 'TBA'} - {contest.submissionEndAt ? new Date(contest.submissionEndAt).toLocaleString() : 'TBA'}
-                              </p>
-                              <p className="mb-3">Finale Venue: {contest.finale.venueName}</p>
-                              <div className="d-flex flex-wrap gap-2">
-                                <Link href={`/open-mic/${contest.slug}/apply`} className="theme-btn">
-                                  Apply Now
-                                  <i className="fa-solid fa-arrow-right-long" />
-                                </Link>
-                                <Link href={`/open-mic/${contest.slug}/enter`} className="theme-btn style-2">
-                                  Submit Song
-                                  <i className="fa-solid fa-arrow-right-long" />
-                                </Link>
-                                {contest.beat?.downloadUrl ? (
-                                  <Link href={`/open-mic/${contest.slug}/enter`} className="theme-btn style-2">
-                                    Download Beat
-                                    <i className="fa-solid fa-arrow-right-long" />
-                                  </Link>
-                                ) : null}
-                                <Link href={`/open-mic/${contest.slug}`} className="theme-btn style-border">
-                                  View Details
-                                  <i className="fa-solid fa-arrow-right-long" />
-                                </Link>
-                              </div>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-
-                    <div className="mt-4 d-flex flex-wrap gap-2">
-                      <Link href="/open-mic/dashboard" className="theme-btn">
-                        Open Artist Dashboard
-                        <i className="fa-solid fa-arrow-right-long" />
-                      </Link>
-                      <Link href="/open-mic/profile" className="theme-btn style-2">
-                        My Open Mic Profile
-                        <i className="fa-solid fa-arrow-right-long" />
-                      </Link>
-                      <Link href="/contact" className="theme-btn">
-                        Partner / Sponsor
-                        <i className="fa-solid fa-arrow-right-long" />
-                      </Link>
-                    </div>
-                  </div>
-                </div>
-              </div>
+        {contests.length === 0 ? (
+          <div className="mt-5 glass-card rounded-md p-8 md:p-12 text-center">
+            <p className="section-label">No Live Edition Right Now</p>
+            <p className="font-display text-2xl text-foreground mt-3">The next beat drops soon</p>
+            <p className="text-foreground/70 mt-3 max-w-xl mx-auto">
+              We open a new monthly contest and release a fresh official beat on a rolling basis. Open your artist
+              dashboard to be first in line the moment applications go live.
+            </p>
+            <div className="mt-6 flex flex-wrap justify-center gap-3">
+              <Link href="/open-mic/dashboard" className="btn-primary text-xs py-3 px-6">
+                Open Artist Dashboard
+              </Link>
+              <Link href="/open-mic/winners" className="btn-outline text-xs py-3 px-6">
+                See Past Winners
+              </Link>
             </div>
           </div>
-        </div>
+        ) : (
+          <div className="mt-5 grid grid-cols-1 gap-4">
+            {contests.map((contest) => (
+              <div key={contest.id} className="glass-card rounded-md p-6 md:p-7">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <h3 className="font-display text-xl text-foreground">
+                    <Link href={`/open-mic/${contest.slug}/apply`}>{contest.title}</Link>
+                  </h3>
+                  <span className="text-[11px] uppercase tracking-wide px-3 py-1 rounded-full border border-accent-gold/30 text-accent-gold">
+                    {contest.status.replace(/_/g, ' ')}
+                  </span>
+                </div>
+
+                <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-1 text-sm text-foreground/70">
+                  <p>Edition: {contest.month}/{contest.year}</p>
+                  <p>
+                    Registration:{' '}
+                    {contest.entryFeeRequired
+                      ? `Paid (NGN ${Number(contest.registrationFeeNgn || 0).toLocaleString('en-NG')})`
+                      : 'Free'}
+                  </p>
+                  <p>
+                    Registration Window:{' '}
+                    {contest.registrationStartAt ? new Date(contest.registrationStartAt).toLocaleString() : 'TBA'} –{' '}
+                    {contest.registrationEndAt ? new Date(contest.registrationEndAt).toLocaleString() : 'TBA'}
+                  </p>
+                  <p>
+                    Submission Window:{' '}
+                    {contest.submissionStartAt ? new Date(contest.submissionStartAt).toLocaleString() : 'TBA'} –{' '}
+                    {contest.submissionEndAt ? new Date(contest.submissionEndAt).toLocaleString() : 'TBA'}
+                  </p>
+                  <p>Finale Venue: {contest.finale?.venueName ?? 'TBA'}</p>
+                </div>
+
+                <div className="mt-5 flex flex-wrap gap-3">
+                  <Link href={`/open-mic/${contest.slug}/apply`} className="btn-primary text-xs py-3 px-6">
+                    Apply Now
+                  </Link>
+                  <Link href={`/open-mic/${contest.slug}/enter`} className="btn-outline text-xs py-3 px-6">
+                    Submit Song
+                  </Link>
+                  {contest.beat?.downloadUrl ? (
+                    <Link href={`/open-mic/${contest.slug}/enter`} className="btn-outline text-xs py-3 px-6">
+                      Download Beat
+                    </Link>
+                  ) : null}
+                  <Link href={`/open-mic/${contest.slug}`} className="btn-outline text-xs py-3 px-6">
+                    View Details
+                  </Link>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </section>
+
+      <CtaBand
+        title="Ready to Join?"
+        text="Apply for this month's Open Mic contest and take your shot at the live finale."
+        ctas={[
+          { label: 'Apply Now', href: '/apply' },
+          { label: 'My Open Mic Profile', href: '/open-mic/profile' },
+        ]}
+      />
     </Layout>
   );
 }

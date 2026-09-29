@@ -468,7 +468,39 @@ export async function getDriverMe(): Promise<DriverProfile> {
     await delay(280);
     return { ...mockDriver.profile };
   }
-  return unwrap<DriverProfile>(await api.get(`${BASE}/driver/me`));
+  try {
+    return normalizeDriverProfile(unwrap<Partial<DriverProfile> & Record<string, any>>(await api.get(`${BASE}/driver/me`)));
+  } catch (e) {
+    // Backend answers 404 "driver not found" for a user who has never started
+    // onboarding. That is the normal first-visit state, not a failure: show the
+    // "Drive with Paymax" onboarding gate instead of the generic error screen.
+    if ((e as { response?: { status?: number } })?.response?.status === 404) {
+      return normalizeDriverProfile({});
+    }
+    throw e;
+  }
+}
+
+// The backend profile omits fields the screens read unconditionally
+// (commission, online, vehicle, serviceCategories); default them so a sparse
+// payload cannot crash the driver home screen.
+function normalizeDriverProfile(raw: Partial<DriverProfile> & Record<string, any>): DriverProfile {
+  const vehicles = Array.isArray(raw.vehicles) ? raw.vehicles : [];
+  return {
+    id: raw.id ?? '',
+    name: raw.name ?? '',
+    phone: raw.phone ?? null,
+    email: raw.email ?? null,
+    photoUrl: raw.photoUrl ?? null,
+    verificationStatus: raw.verificationStatus ?? 'not_started',
+    rejectionReason: raw.rejectionReason ?? null,
+    online: raw.online ?? raw.status === 'online',
+    serviceCategories: raw.serviceCategories ?? [],
+    commission: raw.commission ?? { tier: 'standard', platformPct: 20, driverPct: 80 },
+    documents: raw.documents ?? [],
+    vehicle: raw.vehicle ?? vehicles[0] ?? null,
+    rating: raw.rating ?? 0,
+  };
 }
 
 export async function submitDriverOnboarding(draft: OnboardingSubmitDraft): Promise<DriverProfile> {

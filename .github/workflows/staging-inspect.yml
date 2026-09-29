@@ -100,6 +100,13 @@ jobs:
             for (const k of ["GO_API_BASE_URL","GO_BACKEND_WS_URL","NEXT_PUBLIC_API_URL"]) {
               console.log(`    ${k}: ${v[k] === undefined ? "NOT SET" : "set"}`);
             }
+            // PAYSTACK_SECRET_KEY: wallet topup (frontend-web/src/server/wallet/service.ts,
+            // POST /api/v1/wallet/topup) and voting/transfers payment code call Paystack
+            // directly FROM frontend-web, using frontend-web own process.env — a
+            // separate Railway service from backend, which has its own separate
+            // PAYSTACK_SECRET_KEY (checked below). Missing here throws "Paystack is not
+            // configured" (500) on every topup even when backend has the key.
+            console.log("    " + shape("PAYSTACK_SECRET_KEY", (s) => s.length > 20));
           '
 
       - name: backend APP_PORT (name + value; a port is not a secret)
@@ -151,6 +158,10 @@ jobs:
             // user token.
             console.log("\n  FEATURE_MAPS_ENABLED = " + (v.FEATURE_MAPS_ENABLED ?? "NOT SET (defaults false)"));
             console.log("  " + shape("MAPS_GOOGLE_KEY"));
+            // Same presence/length/hash-only pattern for the Paystack secret —
+            // confirms a rotation actually landed on this Railway service
+            // without ever printing or comparing the real value here.
+            console.log("  " + shape("PAYSTACK_SECRET_KEY"));
           '
 
       # Deployment STATE first. `railway redeploy` returns once a build is
@@ -335,3 +346,22 @@ jobs:
           echo "  --- counts ---"
           echo "    WOULD refuse (observe-only, refused nothing): $(grep -aic 'WOULD refuse' be.log || true)"
           echo "    startup lines mentioning the gate:            $(grep -aic 'modulegate' be.log || true)"
+
+      # A backend deployment can build and start DEPLOYING, then still end FAILED
+      # a couple minutes later -- that is a runtime crash after startup, not a
+      # build failure, and the deploy job's own log only reports the Railway
+      # deployment STATUS, never why. Filtered to crash/panic signatures for the
+      # same reason every other step here filters rather than dumps: application
+      # logs can contain anything, and a raw dump is how a secret escapes (see
+      # the --kv incident in this workflow's header).
+      - name: Backend crash signatures (panic / fatal / listen errors)
+        run: |
+          set -uo pipefail
+          railway logs --deployment --service backend --environment "$ENVIRONMENT" \
+            --project "$PROJECT" --lines "${{ inputs.log_lines }}" > be-crash.log 2>&1 || true
+          echo "  scanned $(wc -l < be-crash.log) log lines"
+          echo "  --- panic / fatal / crash lines ---"
+          grep -aiE "panic:|fatal error|nil pointer|runtime error|goroutine [0-9]+ \[|listen tcp|bind: address already in use|Validate\(\)|refusing to start|exit status|SIGSEGV|SIGABRT" be-crash.log \
+            | tail -60 | sed 's/^/    /' || echo "    (none found)"
+          echo "  --- last 20 lines of the deployment log (context) ---"
+          tail -20 be-crash.log | sed 's/^/    /'

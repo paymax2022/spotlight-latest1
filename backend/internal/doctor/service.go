@@ -12,6 +12,7 @@ import (
 	"spotlight/backend/internal/finance/ledger"
 	"spotlight/backend/internal/finance/tiers"
 	"spotlight/backend/internal/integrations/rtc"
+	"spotlight/backend/internal/provider"
 	platformRedis "spotlight/backend/internal/platform/redis"
 	platformWS "spotlight/backend/internal/platform/ws"
 )
@@ -26,13 +27,14 @@ import (
 //  5. emits an immutable audit row,
 //  6. returns the payout result.
 type Service struct {
-	repo       *Repository
-	ledger     *ledger.Service
-	tiers      *tiers.Service
-	redis      *goredis.Client    // optional; nil disables the fast idempotency lock
-	rtc        *rtc.Issuer        // optional; nil/disabled → empty token + "not configured"
-	hub        *platformWS.Hub    // optional; nil disables realtime WS push (best-effort)
-	commission CommissionRecorder // optional; nil ⇒ realized-profit recording is a no-op
+	repo           *Repository
+	ledger         *ledger.Service
+	tiers          *tiers.Service
+	redis          *goredis.Client    // optional; nil disables the fast idempotency lock
+	rtc            *rtc.Issuer        // optional; nil/disabled → empty token + "not configured"
+	hub            *platformWS.Hub    // optional; nil disables realtime WS push (best-effort)
+	commission     CommissionRecorder // optional; nil ⇒ realized-profit recording is a no-op
+	disbursement   provider.DisbursementProvider // optional; nil ⇒ no account verification on bank-account add
 }
 
 // NewService wires the doctor service. redis may be nil (lock falls back to the
@@ -47,6 +49,14 @@ func NewService(db *pgxpool.Pool, ledgerSvc *ledger.Service, tiersSvc *tiers.Ser
 func (s *Service) WithRealtime(issuer *rtc.Issuer, hub *platformWS.Hub) *Service {
 	s.rtc = issuer
 	s.hub = hub
+	return s
+}
+
+// WithDisbursementProvider attaches a bank-disbursement provider (e.g., Paystack)
+// for real-time account verification when doctors add bank accounts. nil-safe:
+// if no provider is attached, account verification is skipped (is_verified stays false).
+func (s *Service) WithDisbursementProvider(p provider.DisbursementProvider) *Service {
+	s.disbursement = p
 	return s
 }
 
