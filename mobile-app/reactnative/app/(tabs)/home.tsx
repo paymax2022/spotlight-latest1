@@ -207,7 +207,10 @@ export default function HomeScreen() {
         ) : null}
 
         {featured.length > 0 ? (
-          <SectionHeader title="Featured Services" style={{ marginTop: Spacing.lg }} />
+          <>
+            <RemoteBanner slug="home-featured-services" style={styles.featuredBanner} />
+            <SectionHeader title="Featured Services" style={{ marginTop: Spacing.lg }} />
+          </>
         ) : null}
         {featured.map((s) => (
           <FeaturedServiceCard
@@ -282,6 +285,7 @@ const styles = StyleSheet.create({
   scroll:  { flex: 1 },
   content: { paddingBottom: Spacing.xl },
   heroBanner: { marginHorizontal: Spacing.containerMargin, marginTop: Spacing.sm },
+  featuredBanner: { marginHorizontal: Spacing.containerMargin, marginBottom: Spacing.md, marginTop: Spacing.lg },
   loader:  { paddingVertical: Spacing.xl, alignItems: 'center' },
   errorBox:{ marginHorizontal: Spacing.containerMargin, padding: Spacing.md, backgroundColor: 'rgba(220,38,38,0.06)', borderRadius: Radius.lg, marginBottom: Spacing.md },
   errorText:{ ...Typography.labelSm, color: Colors.error, textAlign: 'center' },
