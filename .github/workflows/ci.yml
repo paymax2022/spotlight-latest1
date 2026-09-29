@@ -628,8 +628,24 @@ jobs:
                 # and a raw dump into a job log is how a secret escapes (see the
                 # --kv incident documented in staging-inspect.yml's header).
                 echo "--- crash signatures for deployment $id ---"
-                railway logs --deployment "$id" --lines 300 2>"/dev/null" > dep.log || true
+                # `railway logs --help`: DEPLOYMENT_ID is a bare POSITIONAL
+                # argument, not a value for --deployment (which is a boolean
+                # flag selecting deploy-logs over build-logs) — `--deployment
+                # "$id"` silently failed with "No service linked" because $id
+                # was consumed as if it were --deployment's value, leaving
+                # --service/--environment/--project all unset. `--latest`
+                # ("show logs from the latest deployment, even if it failed or
+                # is still building") is simpler and more robust than passing
+                # the id at all, so use that instead of the positional form.
+                # stderr is KEPT (redacted below, never discarded): a CLI usage
+                # error looks identical to "zero log lines exist" otherwise,
+                # and those are very different problems to chase.
+                railway logs --deployment --latest --service "${{ matrix.service }}" \
+                  --environment staging --project e7dca861-3667-4d9a-8090-6d2f4d179ec2 \
+                  --lines 300 > dep.log 2>&1 || true
                 echo "  fetched $(wc -l < dep.log) log lines for this deployment"
+                echo "  --- raw output (redacted) ---"
+                sed -E 's#eyJ[A-Za-z0-9._-]{20,}#<jwt-redacted>#g; s#(sk_|pk_)[A-Za-z0-9_-]{10,}#<key-redacted>#g' dep.log | head -20
                 if grep -qaiE "panic:|fatal error|nil pointer|runtime error|goroutine [0-9]+ \[|listen tcp|bind: address already in use|Validate\(\)|refusing to start|exit status|SIGSEGV|SIGABRT" dep.log; then
                   grep -aiE "panic:|fatal error|nil pointer|runtime error|goroutine [0-9]+ \[|listen tcp|bind: address already in use|Validate\(\)|refusing to start|exit status|SIGSEGV|SIGABRT" dep.log | tail -60
                 else

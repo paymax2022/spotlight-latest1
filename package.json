@@ -1,0 +1,7 @@
+{
+  "name": "new",
+  "private": true,
+  "devDependencies": {
+    "momentic-mobile": "^1.32.8"
+  }
+}

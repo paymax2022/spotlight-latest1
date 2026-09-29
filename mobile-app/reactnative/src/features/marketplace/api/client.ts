@@ -149,6 +149,41 @@ function toMktError(err: unknown): MktApiError {
   );
 }
 
+// ─── Retry policy ────────────────────────────────────────────────────────────
+//
+// The app-wide default (app/_layout.tsx) retries a failed query exactly ONCE,
+// one second after the first attempt. That absorbs a blip between two healthy
+// requests and not a backend that is still coming up: the staging gateway
+// answers 502/503 from the edge while its container boots, so both attempts land
+// inside the same outage and the query settles into its error state. Nothing
+// re-runs it afterwards — nothing dropped the connection, so there is no
+// reconnect to refetch on — and the screen shows "check your connection" until
+// the user taps Retry by hand.
+//
+// Marketplace reads therefore keep trying while the failure looks transient and
+// give up immediately on everything a retry cannot fix (401, 404, the rest of
+// the 4xx range).
+const RETRYABLE_STATUSES = new Set([408, 425, 429, 500, 502, 503, 504]);
+
+/** HTTP status from either a raw axios rejection or a normalized MktApiError. */
+function statusOf(error: unknown): number | undefined {
+  const e = error as { status?: unknown; response?: { status?: unknown } } | null | undefined;
+  const status = e?.status ?? e?.response?.status;
+  return typeof status === 'number' ? status : undefined;
+}
+
+/** True when the failure is worth another attempt. */
+export function isTransientMktFailure(error: unknown): boolean {
+  const status = statusOf(error);
+  // No status at all is a DNS failure, a reset connection or a client timeout.
+  return status === undefined || RETRYABLE_STATUSES.has(status);
+}
+
+/** `retry` for marketplace queries: 3 retries on top of the first attempt. */
+export function mktRetry(failureCount: number, error: unknown): boolean {
+  return isTransientMktFailure(error) && failureCount < 3;
+}
+
 // ─── Response envelope unwrap ────────────────────────────────────────────────
 // House convention: handlers may reply { data: <payload> } or the bare payload.
 // Unwrap by KEY PRESENCE (not nullishness): if the body carries a `data` key we
