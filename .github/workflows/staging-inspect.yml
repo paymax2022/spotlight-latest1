@@ -211,6 +211,43 @@ jobs:
       #                     A port is not a credential, so PORT is printed by value.
       #   PORT not set   -> Railway injects its own, and the cause is elsewhere.
       # Everything else is NAMES ONLY, plus presence/shape checks.
+      # Every deployment Railway lists, with its trigger metadata, plus the BUILD
+      # log of the latest one. A row stuck in BUILDING/DEPLOYING for an hour
+      # blocks that service's whole queue (new uploads sit in WAITING and the ops
+      # workflows time out), and `meta` says what created it - a `railway up`
+      # (cliMessage = commit sha) or a GitHub-triggered build. Keys named like
+      # credentials are skipped; build logs are redacted like every other log here.
+      - name: Deployment queue per service (all rows + trigger meta + latest build log)
+        run: |
+          set -uo pipefail
+          for svc in backend frontend-admin frontend-web; do
+            echo "--- $svc: deployments (newest first) ---"
+            railway deployment list --service "$svc" --environment "$ENVIRONMENT" \
+              --project "$PROJECT" --limit 10 --json 2>/dev/null \
+              | node -e '
+                let d = "";
+                process.stdin.on("data", (c) => (d += c));
+                process.stdin.on("end", () => {
+                  let rows; try { rows = JSON.parse(d); } catch { console.log("    (unreadable)"); return; }
+                  if (!Array.isArray(rows)) rows = rows.deployments ?? rows.edges ?? [rows];
+                  console.log("    " + rows.length + " row(s) returned");
+                  for (const r of rows) {
+                    const meta = {};
+                    for (const [k, val] of Object.entries(r.meta ?? {})) {
+                      if (/token|secret|key|password/i.test(k)) continue;
+                      meta[k] = typeof val === "string" ? val.slice(0, 60) : val;
+                    }
+                    console.log(`    ${r.status ?? "?"}  created=${r.createdAt ?? "?"}  id=${String(r.id ?? "").slice(0, 8)}  meta=${JSON.stringify(meta)}`);
+                  }
+                });
+              ' || echo "    (could not list)"
+            echo "--- $svc: latest deployment BUILD log (tail, redacted) ---"
+            railway logs --build --latest --service "$svc" --environment "$ENVIRONMENT" \
+              --project "$PROJECT" --lines 80 2>&1 \
+              | sed -E 's#eyJ[A-Za-z0-9._-]{20,}#<jwt-redacted>#g; s#(sk_|pk_)[A-Za-z0-9_-]{10,}#<key-redacted>#g' \
+              | tail -25 | sed 's/^/    /' || echo "    (no build log)"
+          done
+
       - name: frontend-admin variables (names, plus PORT by value)
         run: |
           set -uo pipefail
