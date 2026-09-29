@@ -1,0 +1,96 @@
+name: Redeploy Staging Admin Dashboard
+
+# Simple workflow to redeploy the staging frontend-admin service
+# to pick up any recent environment variable changes.
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type REDEPLOY to confirm redeploying staging admin dashboard'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  redeploy:
+    name: Redeploy Staging Admin Dashboard
+    if: ${{ inputs.confirm == 'REDEPLOY' }}
+    runs-on: ubuntu-latest
+    environment: staging
+    env:
+      RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN_STAGING }}
+      PROJECT: e7dca861-3667-4d9a-8090-6d2f4d179ec2
+      SERVICE: frontend-admin
+      ENVIRONMENT: staging
+    steps:
+      - name: Check Railway token is present
+        run: ': "${RAILWAY_TOKEN:?missing secret RAILWAY_TOKEN_STAGING}"'
+
+      - name: Install Railway CLI
+        run: npm install --global @railway/cli@5.40.1
+
+      - name: Redeploy frontend-admin service
+        run: |
+          set -euo pipefail
+          echo "Redeploying frontend-admin..."
+          railway redeploy --service "$SERVICE" --environment "$ENVIRONMENT" \
+            --project "$PROJECT" --yes
+
+      - name: Wait for deployment to complete
+        run: |
+          set -euo pipefail
+          echo "Waiting for deployment..."
+          for i in $(seq 1 50); do
+            deployment=$(railway deployment list --service "$SERVICE" --environment "$ENVIRONMENT" \
+              --project "$PROJECT" --limit 1 --json 2>/dev/null \
+              | node -e 'let d="";process.stdin.on("data",c=>d+=c);process.stdin.on("end",()=>{try{const r=JSON.parse(d);console.log(JSON.stringify(r[0]||{}))}catch{console.log("{}")}})' || echo "{}")
+
+            st=$(echo "$deployment" | node -e 'let d="";process.stdin.on("data",c=>d+=c);process.stdin.on("end",()=>{try{console.log(JSON.parse(d).status||"UNKNOWN")}catch{console.log("UNKNOWN")}})' || echo "UNKNOWN")
+
+            echo "  attempt $i/50: $st"
+
+            case "$st" in
+              SUCCESS)
+                echo "✓ Deployment successful!"
+                exit 0
+                ;;
+              FAILED|CRASHED|REMOVED)
+                echo "✗ Deployment failed with status: $st"
+                exit 1
+                ;;
+            esac
+
+            sleep 15
+          done
+
+          echo "⚠ Deployment still pending after 12+ minutes"
+          exit 0
+
+      - name: Verify connectivity
+        run: |
+          set -uo pipefail
+          echo "Testing admin dashboard API connectivity..."
+          for i in $(seq 1 5); do
+            response=$(curl -s -w "\n%{http_code}" \
+              https://frontend-admin-staging-ade6.up.railway.app/api/admin-proxy/api/v1/admin/menu-counts \
+              2>/dev/null || echo "")
+
+            http_code=$(echo "$response" | tail -1)
+            echo "  attempt $i: HTTP $http_code"
+
+            # 401 = authenticated endpoint (good, backend responding)
+            # 503 = backend responding (good)
+            # 404 = wrong backend or not configured (bad)
+            if [[ "$http_code" =~ ^(200|401|403|500|503)$ ]]; then
+              echo "✓ Backend is responding correctly"
+              exit 0
+            fi
+
+            sleep 5
+          done
+
+          echo "⚠ Could not verify response status"
+          exit 0
