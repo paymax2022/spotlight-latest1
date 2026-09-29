@@ -357,7 +357,12 @@ jobs:
       - name: Backend crash signatures (panic / fatal / listen errors)
         run: |
           set -uo pipefail
-          railway logs --deployment --service backend --environment "$ENVIRONMENT" \
+          # --latest: without it, `railway logs` defaults to the most recent
+          # SUCCESSFUL deployment — exactly the OLD, still-serving one a failed
+          # deploy attempt never replaces — so a genuine crash-after-build would
+          # silently report unrelated old traffic instead. `--latest` targets
+          # the latest deployment "even if it failed or is still building".
+          railway logs --deployment --latest --service backend --environment "$ENVIRONMENT" \
             --project "$PROJECT" --lines "${{ inputs.log_lines }}" > be-crash.log 2>&1 || true
           echo "  scanned $(wc -l < be-crash.log) log lines"
           echo "  --- panic / fatal / crash lines ---"
@@ -365,3 +370,21 @@ jobs:
             | tail -60 | sed 's/^/    /' || echo "    (none found)"
           echo "  --- last 20 lines of the deployment log (context) ---"
           tail -20 be-crash.log | sed 's/^/    /'
+
+      # A --lines window is useless once the process has served traffic for a
+      # while: request lines push the boot summary out of any window size. The
+      # CLI's --filter does the selection server-side, so these come back even
+      # hours after boot. Each line names WHICH gate refused a module group
+      # ("DATABASE_URL not set" vs "no database pool" vs "routes registered"),
+      # which is the difference between a missing variable and a failed
+      # connection. Filtered by construction; nothing here is a raw dump.
+      - name: Backend boot summary (server-side filtered)
+        run: |
+          set -uo pipefail
+          for f in "[router]" "[finance]" "routes registered" "skipping" "/api/finance/restaurant"; do
+            echo "  --- lines matching: $f ---"
+            railway logs --deployment --latest --service backend --environment "$ENVIRONMENT" \
+              --project "$PROJECT" --lines 60 --filter "$f" 2>&1 \
+              | sed -E 's#eyJ[A-Za-z0-9._-]{20,}#<jwt-redacted>#g; s#(sk_|pk_)[A-Za-z0-9_-]{10,}#<key-redacted>#g' \
+              | tail -40 | sed 's/^/    /' || echo "    (none)"
+          done
