@@ -384,9 +384,15 @@ export async function verifyRegistrationPayment(params: {
     return waitMock({ success: true, status: 'SUCCESSFUL', reference: params.reference }, 1500);
   }
 
-  const qs = `transactionId=${encodeURIComponent(params.transactionId)}&reference=${encodeURIComponent(params.reference)}`;
-  return regGet<VerifyRegistrationPaymentResponse>(
-    `${REG_BASE}/applications/${params.id}/payment/verify?${qs}`,
+  // The backend route is POST with a JSON body ({ reference }) — see
+  // backend/internal/handlers/registration_handler.go VerifyPayment, which
+  // does `c.ShouldBindJSON`. A GET with query params (the previous shape
+  // here) fails ShouldBindJSON on every real call, so verification could
+  // never succeed against the live backend (only the mock path, which
+  // doesn't hit this branch, ever worked).
+  return regPost<VerifyRegistrationPaymentResponse>(
+    `${REG_BASE}/applications/${params.id}/payment/verify`,
+    { reference: params.reference },
   );
 }
 

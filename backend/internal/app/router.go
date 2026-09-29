@@ -20,6 +20,26 @@ import (
 )
 
 func NewRouter(cfg config.Config) *gin.Engine {
+	// gin.SetMode is a package-level global, so this must run before
+	// gin.Default() constructs the engine's default logger. Nothing in this
+	// server ever set it (only the separate voting-test-server binary does),
+	// so it has run in gin's default DEBUG mode in every environment,
+	// including staging and production, printing a "[GIN-debug] <method>
+	// <path> --> <handler>" line for EVERY route on every startup. With a
+	// couple hundred routes that's noise; with the full module set enabled
+	// (see the "why this exists" header on staging-module-flags.yml) it's
+	// thousands of lines in the first second of boot, fast enough to blow
+	// through Railway's 500 logs/sec rate limit — a staging deploy right
+	// after that flag audit landed sat in DEPLOYING for ~2-3 minutes with
+	// "Messages dropped: 3487" in the log and then FAILED with no panic or
+	// fatal line at all, consistent with the burst of synchronous stdout
+	// writes stalling init past the healthcheck window rather than crashing.
+	// Debug route-registration logging is genuinely useful for local
+	// development, so it stays on there; every other environment gets Gin's
+	// quiet release logger.
+	if cfg.AppEnv != "development" {
+		gin.SetMode(gin.ReleaseMode)
+	}
 	r := gin.Default()
 	r.Use(middleware.CORSMiddleware(cfg.CORSAllowOrigins, cfg.AppEnv))
 

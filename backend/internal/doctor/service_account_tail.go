@@ -3,6 +3,8 @@ package doctor
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"log"
 	"time"
 )
 
@@ -174,11 +176,42 @@ func maskAccountNumber(b *BankAccount) {
 
 // CreateBankAccount upserts a bank account (idempotent) and masks the account
 // number in the response.
+//
+// If a DisbursementProvider is wired, CreateBankAccount attempts real-time verification
+// against the banking network (Paystack's /bank/resolve). Verification failures are
+// soft-fail: the account is saved with is_verified=false, allowing offline onboarding
+// if the verification provider is unreachable. Verification success sets is_verified=true
+// and stores the authoritative account name from the provider.
 func (s *Service) CreateBankAccount(ctx context.Context, userID, idemKey string, req BankAccountRequest) (*BankAccount, error) {
 	if idemKey == "" {
 		return nil, ErrIdempotencyRequired
 	}
-	acct, err := s.repo.UpsertBankAccount(ctx, userID, idemKey, req)
+
+	// Attempt verification against the provider (Paystack, etc.). If the provider
+	// is wired and the call succeeds, use the authoritative account name from the
+	// provider and set is_verified=true. If the call fails (network, invalid account,
+	// or provider not wired), log the failure and fall back to client-supplied details
+	// with is_verified=false.
+	isVerified := false
+	verifiedAccountName := req.AccountName
+	if s.disbursement != nil && req.BankCode != nil && req.AccountNumber != nil {
+		if resolution, err := s.disbursement.ResolveAccount(ctx, *req.BankCode, *req.AccountNumber); err == nil {
+			isVerified = true
+			verifiedAccountName = &resolution.AccountName
+		} else {
+			// Soft-fail: log the error but proceed with the add. Customers can still
+			// add accounts when the provider is unreachable (allows offline onboarding).
+			log.Printf("doctor: account verification failed for %s/%s: %v", *req.BankCode, *req.AccountNumber, err)
+		}
+	}
+
+	// Prepare the request with verified account name (if verification succeeded)
+	verifyReq := req
+	if isVerified && verifiedAccountName != nil {
+		verifyReq.AccountName = verifiedAccountName
+	}
+
+	acct, err := s.repo.UpsertBankAccount(ctx, userID, idemKey, verifyReq, isVerified)
 	if err != nil {
 		return nil, err
 	}
@@ -205,6 +238,48 @@ func (s *Service) UpdateTaxInfo(ctx context.Context, userID string, patch json.R
 	}
 	maskAccountNumber(acct)
 	return acct, nil
+}
+
+// VerifyBankAccount performs real-time verification of a bank account against
+// the disbursement provider (Paystack, etc.) without saving it. Used by the
+// frontend verification endpoint so users can verify before adding an account.
+func (s *Service) VerifyBankAccount(ctx context.Context, userID string, req BankAccountRequest) (map[string]interface{}, error) {
+	if req.BankCode == nil || req.AccountNumber == nil {
+		return nil, ErrIdempotencyRequired // reusing for "missing required field" — could be more specific
+	}
+
+	bankCode := *req.BankCode
+	accountNumber := *req.AccountNumber
+
+	// Soft-fail: if no provider is wired or verification fails, return an error
+	// so the frontend can show the failure to the user.
+	if s.disbursement == nil {
+		return nil, fmt.Errorf("doctor: account verification is not available")
+	}
+
+	resolution, err := s.disbursement.ResolveAccount(ctx, bankCode, accountNumber)
+	if err != nil {
+		return nil, fmt.Errorf("doctor: account verification failed: %w", err)
+	}
+
+	// Mask the account number to last 4 digits
+	maskedAcct := accountNumber
+	if len(accountNumber) > 4 {
+		maskedAcct = "****" + accountNumber[len(accountNumber)-4:]
+	}
+
+	accountNameToReturn := &resolution.AccountName
+	if req.AccountName != nil {
+		accountNameToReturn = req.AccountName
+	}
+
+	return map[string]interface{}{
+		"is_verified":          true,
+		"account_name":         accountNameToReturn,
+		"bank_name":            req.BankName,
+		"bank_code":            bankCode,
+		"account_number_masked": maskedAcct,
+	}, nil
 }
 
 // ── Payouts (reads + dispute request) ────────────────────────────────────────

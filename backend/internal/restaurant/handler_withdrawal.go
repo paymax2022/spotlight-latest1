@@ -69,6 +69,23 @@ func (h *Handler) DeleteBankAccount(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"deleted": true})
 }
 
+// VerifyBankAccount performs real-time account verification via the disbursement provider
+// (Paystack, etc.). Returns the verified account details.
+func (h *Handler) VerifyBankAccount(c *gin.Context) {
+	userID := c.GetString("user_id")
+	var req AddBankAccountRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	result, err := h.svc.VerifyBankAccount(c.Request.Context(), userID, req)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, result)
+}
+
 func withdrawalErrStatus(err error) int {
 	switch {
 	case errors.Is(err, ErrWithdrawMissingIdem), errors.Is(err, ErrWithdrawBadAmount):
