@@ -13,7 +13,7 @@ import { Spacing } from '@/constants/spacing';
 import { Radius } from '@/constants/radius';
 import { shadow1 } from '@/constants/shadows';
 import PrimaryButton from '@/components/PrimaryButton';
-import { useContestantProfile } from '@/features/voting/hooks/useContestantProfile';
+import { useContestantProfile, useShareContestant, useToggleContestantLike } from '@/features/voting/hooks/useContestantProfile';
 import { useContestDetails } from '@/features/voting/hooks/useContestDetails';
 import { useFreeVoteAllocation, useCastFreeVotes } from '@/features/voting/hooks/useVote';
 import { useVotePackages } from '@/features/voting/hooks/useVotePackages';
@@ -59,8 +59,11 @@ export default function ContestantProfileScreen() {
   const { contestantId, contestId } = useLocalSearchParams<{ contestantId: string; contestId: string }>();
   const [voteOpen, setVoteOpen]   = useState(false);
   const [shareOpen, setShareOpen] = useState(false);
+  const [shareUrl, setShareUrl]   = useState<string | undefined>(undefined);
 
   const { data: contestant, isLoading } = useContestantProfile(contestantId ?? '');
+  const toggleLike = useToggleContestantLike(contestantId ?? '');
+  const shareMutation = useShareContestant(contestantId ?? '');
   const { data: parentContest } = useContestDetails(contestId ?? '');
   // Deadline-aware, not status-only: nothing flips a contest to 'ended' when its
   // end date passes, so a finished contest still reports LIVE.
@@ -99,6 +102,25 @@ export default function ContestantProfileScreen() {
         e?.response?.data?.error ?? e?.response?.data?.message ?? 'We could not cast your vote. Please try again.';
       Alert.alert('Vote failed', msg);
     }
+  };
+
+  const handleToggleLike = () => {
+    if (!contestant) return;
+    toggleLike.mutate(!!contestant.likedByMe);
+  };
+
+  const handleOpenShare = async () => {
+    if (!contestant) return;
+    try {
+      const result = await shareMutation.mutateAsync();
+      setShareUrl(result.url);
+    } catch {
+      // Recording the share failed (e.g. feature flag off, or offline) — still
+      // let the person share the plain profile; ShareBottomSheet falls back to
+      // its own default link when shareUrl is undefined.
+      setShareUrl(undefined);
+    }
+    setShareOpen(true);
   };
 
   const handlePaidVote = (pkg: VotePackage, votes: number) => {
@@ -147,7 +169,7 @@ export default function ContestantProfileScreen() {
         </Pressable>
         <View style={styles.floatRight}>
           <Pressable
-            onPress={() => setShareOpen(true)}
+            onPress={handleOpenShare}
             style={styles.floatBtn}
             accessibilityRole="button"
             accessibilityLabel={`Share ${contestant.stageName ?? contestant.name}'s profile`}
@@ -155,11 +177,18 @@ export default function ContestantProfileScreen() {
             <Share2 size={20} color={Colors.onSurface} strokeWidth={2} />
           </Pressable>
           <Pressable
+            onPress={handleToggleLike}
             style={styles.floatBtn}
+            hitSlop={8}
             accessibilityRole="button"
-            accessibilityLabel="Favorite"
+            accessibilityLabel={contestant.likedByMe ? 'Unlike' : 'Like'}
           >
-            <Heart size={20} color={Colors.error} strokeWidth={2} />
+            <Heart
+              size={20}
+              color={Colors.error}
+              fill={contestant.likedByMe ? Colors.error : 'transparent'}
+              strokeWidth={2}
+            />
           </Pressable>
           <HomeMenuButton />
         </View>
@@ -313,6 +342,7 @@ export default function ContestantProfileScreen() {
         visible={shareOpen}
         onClose={() => setShareOpen(false)}
         contestantName={contestant.stageName ?? contestant.name}
+        shareUrl={shareUrl}
         shareText={`Vote for ${contestant.stageName ?? contestant.name} in the Spotlight Contest! 🎤`}
       />
     </SafeAreaView>

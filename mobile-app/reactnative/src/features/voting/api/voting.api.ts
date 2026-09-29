@@ -104,15 +104,19 @@ export async function getContest(contestId: string): Promise<Contest> {
   // the roster — the authoritative list of who is actually votable.
   let count = raw.contestant_count ?? 0;
   let votes: number | null = raw.total_votes ?? null;
+  let likes = 0;
+  let shares = 0;
   try {
     const roster = await api.get(`${CONNECT_VOTING_BASE}/contests/${contestId}/contestants`);
     const rows = (roster.data?.data ?? []) as BackendRosterEntry[];
     count = rows.length;
     votes = rows.reduce((sum, r) => sum + (r.total_votes ?? 0), 0);
+    likes = rows.reduce((sum, r) => sum + (r.like_count ?? 0), 0);
+    shares = rows.reduce((sum, r) => sum + (r.share_count ?? 0), 0);
   } catch {
     /* roster unavailable — show the contest without a count rather than failing */
   }
-  return normalizeContest(mapContest(raw, count, votes) as unknown as Record<string, unknown>);
+  return normalizeContest(mapContest(raw, count, votes, likes, shares) as unknown as Record<string, unknown>);
 }
 
 // ─── Contestants ──────────────────────────────────────────────────────────────
@@ -162,6 +166,60 @@ export async function getContestant(contestantId: string): Promise<Contestant> {
   return normalizeContestantTrend(
     mapContestant(raw, raw.contest_id ?? '') as unknown as Record<string, unknown>,
   );
+}
+
+// ─── Likes + profile shares ───────────────────────────────────────────────────
+// Gated server-side behind FEATURE_CONTESTANT_SOCIAL_ENABLED. When the flag is
+// off, these endpoints 404/aren't registered — callers should treat a failure
+// here as "not available yet", not surface a hard error over a like/share tap.
+
+/** Toggle the caller's like. Idempotent both ways — retrying a tap is safe. */
+export async function likeContestant(contestantId: string): Promise<Contestant> {
+  if (USE_MOCK) {
+    const found = MOCK_CONTESTANTS.find((c) => c.id === contestantId);
+    if (!found) throw new Error('Contestant not found');
+    return { ...found, likedByMe: true, likeCount: (found.likeCount ?? 0) + (found.likedByMe ? 0 : 1) };
+  }
+  const res = await api.post(`${CONNECT_VOTING_BASE}/contestants/${contestantId}/like`);
+  const raw = (res.data?.data ?? res.data ?? {}) as BackendRosterEntry & { contest_id?: string };
+  return mapContestant(raw, raw.contest_id ?? '');
+}
+
+export async function unlikeContestant(contestantId: string): Promise<Contestant> {
+  if (USE_MOCK) {
+    const found = MOCK_CONTESTANTS.find((c) => c.id === contestantId);
+    if (!found) throw new Error('Contestant not found');
+    return { ...found, likedByMe: false, likeCount: Math.max(0, (found.likeCount ?? 0) - (found.likedByMe ? 1 : 0)) };
+  }
+  const res = await api.delete(`${CONNECT_VOTING_BASE}/contestants/${contestantId}/like`);
+  const raw = (res.data?.data ?? res.data ?? {}) as BackendRosterEntry & { contest_id?: string };
+  return mapContestant(raw, raw.contest_id ?? '');
+}
+
+export interface ShareLinkResult {
+  /** Absolute, shareable URL — pass straight to the native Share sheet. */
+  url: string;
+  shareCount: number;
+}
+
+// The web app's own base URL, same variable the referral module's invite
+// links are built from — keeps every "share a link to get someone into the
+// app" feature pointed at one configured host instead of each hardcoding it.
+const WEB_BASE_URL = process.env.EXPO_PUBLIC_WEB_BASE_URL || 'https://spotlight.ng';
+
+/** Record a share and return the link to hand to the OS share sheet. */
+export async function shareContestant(contestantId: string): Promise<ShareLinkResult> {
+  if (USE_MOCK) {
+    const found = MOCK_CONTESTANTS.find((c) => c.id === contestantId);
+    const shareCount = (found?.shareCount ?? 0) + 1;
+    return { url: `${WEB_BASE_URL}/vote/mock-${contestantId}`, shareCount };
+  }
+  const res = await api.post(`${CONNECT_VOTING_BASE}/contestants/${contestantId}/share`);
+  const d = (res.data?.data ?? res.data ?? {}) as { path?: string; share_count?: number };
+  return {
+    url: `${WEB_BASE_URL}${d.path ?? ''}`,
+    shareCount: Number(d.share_count ?? 0),
+  };
 }
 
 // ─── Leaderboard ──────────────────────────────────────────────────────────────

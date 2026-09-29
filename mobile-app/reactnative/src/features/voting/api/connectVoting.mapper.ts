@@ -25,6 +25,9 @@ export interface BackendRosterEntry {
   paid_votes: number;
   total_votes: number;
   rank: number;
+  like_count?: number;
+  share_count?: number;
+  liked_by_me?: boolean;
 }
 
 /** One row of GET /api/v1/connect/contests. */
@@ -67,6 +70,8 @@ export function mapContest(
   raw: BackendContest,
   contestantCount = raw.contestant_count ?? 0,
   totalVotes: number | null = raw.total_votes ?? null,
+  totalLikes = 0,
+  totalShares = 0,
 ): Contest {
   return {
     id: raw.id,
@@ -76,6 +81,8 @@ export function mapContest(
     status: mapStatus(raw.status),
     contestantCount,
     totalVotes,
+    totalLikes,
+    totalShares,
     startsAt: raw.opens_at ?? undefined,
     endsAt: raw.closes_at ?? undefined,
     freeVotesPerDay: raw.free_votes_per_user ?? 0,
@@ -98,6 +105,9 @@ export function mapContestant(raw: BackendRosterEntry, contestId: string): Conte
     bio: raw.bio || undefined,
     rank: raw.rank,
     votes: raw.total_votes,
+    likeCount: raw.like_count ?? 0,
+    shareCount: raw.share_count ?? 0,
+    likedByMe: raw.liked_by_me ?? false,
     // The roster only returns active contestants to members, so anything that
     // arrives here is in the running.
     status: 'ACTIVE',

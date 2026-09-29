@@ -1,6 +1,6 @@
 import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
-import { Eye, Share2, Vote, TrendingUp } from 'lucide-react-native';
+import { Heart, Share2, Vote, TrendingUp } from 'lucide-react-native';
 import { Colors } from '@/constants/colors';
 import { Typography } from '@/constants/typography';
 import { Radius } from '@/constants/radius';
@@ -32,8 +32,8 @@ export default function ContestantStatsCard({ contestant }: Props) {
       <View style={styles.grid}>
         <StatItem icon={Vote}     label="Total Votes"   value={formatVoteCount(contestant.votes)}              color={Colors.primary} />
         <StatItem icon={TrendingUp} label="Current Rank" value={`#${contestant.rank}`}                         color={Colors.secondary} />
-        <StatItem icon={Eye}      label="Profile Views" value={formatVoteCount(contestant.profileViews ?? 0)}  color={Colors.teal} />
-        <StatItem icon={Share2}   label="Share Clicks"  value={formatVoteCount(contestant.shareClicks ?? 0)}   color='#F59E0B' />
+        <StatItem icon={Heart}    label="Likes"         value={formatVoteCount(contestant.likeCount ?? 0)}     color={Colors.teal} />
+        <StatItem icon={Share2}   label="Shares"        value={formatVoteCount(contestant.shareCount ?? 0)}    color='#F59E0B' />
       </View>
       {contestant.votesNeededToNextRank != null && contestant.votesNeededToNextRank > 0 && (
         <View style={styles.progressRow}>

@@ -152,6 +152,7 @@ jobs:
             FEATURE_AICARE_ENABLED=true \
             FEATURE_BANK_TRANSFERS_ENABLED=true \
             FEATURE_CONTEST_STAGE_EVICTION_ENABLED=true \
+            FEATURE_CONTESTANT_SOCIAL_ENABLED=true \
             FEATURE_CONNECT_ENABLED=true \
             FEATURE_MARKETPLACE_ENABLED=true \
             --service "$SERVICE" --environment "$ENVIRONMENT" --project "$PROJECT" \
@@ -192,7 +193,7 @@ jobs:
               "HEALTH_PHARMACY","STAYS","ESTATE","REALTOR","CROWDFUNDING","ASSOCIATION",
               "GROUPS","EVENTS","CREATORS","DISPUTES","RATINGS",
               "UTILITY_PAYMENTS","HEALTH_LAB","HEALTH_VET","AICARE","BANK_TRANSFERS",
-              "CONTEST_STAGE_EVICTION","CONNECT","MARKETPLACE",
+              "CONTEST_STAGE_EVICTION","CONTESTANT_SOCIAL","CONNECT","MARKETPLACE",
             ].map((s) => `FEATURE_${s}_ENABLED`);
             let vars;
             try {

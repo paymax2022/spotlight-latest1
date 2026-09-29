@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"log"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -387,13 +388,39 @@ func NewRouter(cfg config.Config) *gin.Engine {
 	// here (was previously opened twice — finance + connect each called
 	// platformDB.New). nil when DATABASE_URL is unset or the connection fails;
 	// each aggregator skips its routes on a nil pool.
+	//
+	// Outside development a nil pool is FATAL, not a warning. A degraded boot
+	// still binds :8080 and answers /api/v1/public/health with 200, so Railway
+	// marks the deployment SUCCESS, replaces the previous (working) one, and
+	// every DB-backed route — all of /api/finance/*, wallet, KYC, restaurant,
+	// association, health — 404s for as long as that deployment lives. That is
+	// exactly what happened on staging on 2026-09-28: an auto-deployed build
+	// ran 13 hours with no finance routes behind a green health check, and the
+	// only symptom was "Couldn't load …" on every module in the app. Refusing
+	// to start turns that into a FAILED deployment that Railway keeps rolled
+	// back (restartPolicyType ON_FAILURE), which is the outcome we want. Same
+	// doctrine as the ASSOC_CARD_SIGNING_SECRET guard in finance_routes.go:
+	// a missing dependency must stop the process, not silently degrade it.
+	// Only the deployed tiers fail closed. Development, "test", and the empty
+	// AppEnv that unit tests construct NewRouter with keep the lenient path, so
+	// the Supabase-only surfaces stay usable without a local Postgres and the
+	// router tests keep running without one. Matches IsProd()'s normalisation.
+	deployedTier := func() bool {
+		e := strings.ToLower(strings.TrimSpace(cfg.AppEnv))
+		return e == "staging" || cfg.IsProd()
+	}()
 	var sharedPool *pgxpool.Pool
 	if cfg.DatabaseURL != "" {
 		if p, err := platformDB.New(context.Background(), cfg.DatabaseURL); err != nil {
+			if deployedTier {
+				log.Fatalf("[router] could not open the database pool (APP_ENV=%q): %v — refusing to start with every DB-backed route disabled", cfg.AppEnv, err)
+			}
 			log.Printf("[router] WARN: could not connect to database: %v — DB-backed routes disabled", err)
 		} else {
 			sharedPool = p
 		}
+	} else if deployedTier {
+		log.Fatalf("[router] DATABASE_URL is not set (APP_ENV=%q) — refusing to start with every DB-backed route disabled", cfg.AppEnv)
 	}
 
 	// Signup referral attribution. Wired HERE rather than where authHandler is
