@@ -113,6 +113,11 @@ const BANNERS: Record<string, Banner> = {
     width: 2048, height: 768,
     alt: 'Crowdfunding — back a cause or raise funds for your own.',
   },
+  'home-featured-services': {
+    cloudinaryPublicId: 'SPOTLIGHT/Banners/ChatGPT_Image_Sep_25_2026_09_27_19_AM_ywlasa',
+    width: 2048, height: 768,
+    alt: 'Featured Services — discover premium opportunities just for you.',
+  },
 };
 
 export async function GET(
