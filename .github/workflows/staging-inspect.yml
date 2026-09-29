@@ -416,7 +416,8 @@ jobs:
             echo "=== deployment $id  $status  created=$created  msg=$msg ==="
             for f in "could not connect" "DATABASE_URL" "skipping" "finance]" "listening on"; do
               echo "  --- $f ---"
-              railway logs "$id" --deployment --lines 20 --filter "$f" 2>&1 \
+              railway logs "$id" --deployment --service backend --environment "$ENVIRONMENT" \
+                --project "$PROJECT" --lines 20 --filter "$f" 2>&1 \
                 | sed -E 's#eyJ[A-Za-z0-9._-]{20,}#<jwt-redacted>#g; s#(sk_|pk_)[A-Za-z0-9_-]{10,}#<key-redacted>#g; s#(postgres(ql)?://)[^@[:space:]]+@#\1<credentials-redacted>@#g' \
                 | tail -8 | sed 's/^/    /' || echo "    (none)"
             done
