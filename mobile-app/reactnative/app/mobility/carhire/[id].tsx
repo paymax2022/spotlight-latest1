@@ -14,6 +14,7 @@ import ScreenHeader from '@/components/ScreenHeader';
 import FareBreakdownCard from '@/features/mobility/components/FareBreakdownCard';
 import StatusBadge from '@/features/mobility/components/StatusBadge';
 import MobilityEdgeState from '@/features/mobility/components/MobilityEdgeState';
+import { errKind } from '@/features/mobility/utils/errKind';
 import { useCarHire, useCarHireActions } from '@/features/mobility/hooks/useModes';
 import { clearMockActiveCarHire } from '@/features/mobility/api/carhire.api';
 import { CARHIRE_PHASE_LABEL, VEHICLE_CLASSES, HIRE_TYPES } from '@/features/mobility/constants/modes.constants';
@@ -35,7 +36,7 @@ export default function CarHireDetailScreen() {
     return <SafeAreaView style={styles.safe} edges={['top']}><ScreenHeader title="Your hire" showBack={false} /><StateView kind="loading" message="Loading…" /></SafeAreaView>;
   }
   if (booking.isError || !b) {
-    return <SafeAreaView style={styles.safe} edges={['top']}><ScreenHeader title="Your hire" /><MobilityEdgeState kind="offline" actionLabel="Retry" onAction={() => booking.refetch()} /></SafeAreaView>;
+    return <SafeAreaView style={styles.safe} edges={['top']}><ScreenHeader title="Your hire" /><MobilityEdgeState kind={errKind(booking.error)} actionLabel="Retry" onAction={() => booking.refetch()} /></SafeAreaView>;
   }
 
   const completed = b.phase === 'completed';

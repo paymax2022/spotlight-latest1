@@ -141,8 +141,8 @@ func TestRegistryDisburser_RecipientCreationFails(t *testing.T) {
 func TestRegistryDisburser_PayoutInitiationFails(t *testing.T) {
 	ctx := context.Background()
 	mock := &mockDisbursementProvider{
-		name:                "test_provider",
-		initiatePayoutErr:   errors.New("insufficient balance"),
+		name:              "test_provider",
+		initiatePayoutErr: errors.New("insufficient balance"),
 	}
 
 	reg := disbursement.NewRegistry(

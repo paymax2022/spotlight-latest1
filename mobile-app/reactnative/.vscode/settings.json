@@ -1,0 +1,13 @@
+{
+  // Redundant safety net for JAVA_HOME/ANDROID_HOME: the real source of truth
+  // is ~/.zshenv (loads for every shell, interactive or not) plus
+  // `launchctl setenv` for GUI-launched apps — see docs/devops/android-sdk-setup.md.
+  // This just makes the workspace self-contained if either of those ever
+  // drifts, or on a machine where they haven't been set up yet.
+  "terminal.integrated.env.osx": {
+    "JAVA_HOME": "/usr/local/opt/openjdk@17/libexec/openjdk.jdk/Contents/Home",
+    "ANDROID_HOME": "${env:HOME}/Library/Android/sdk",
+    "ANDROID_SDK_ROOT": "${env:HOME}/Library/Android/sdk",
+    "PATH": "/usr/local/opt/openjdk@17/libexec/openjdk.jdk/Contents/Home/bin:${env:HOME}/Library/Android/sdk/platform-tools:${env:HOME}/Library/Android/sdk/emulator:${env:HOME}/Library/Android/sdk/cmdline-tools/latest/bin:${env:PATH}"
+  }
+}

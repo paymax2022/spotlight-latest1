@@ -12,7 +12,7 @@ function isNonEmptyString(value: unknown) {
 }
 
 function hasBasicEmail(value: unknown) {
-  return typeof value === 'string' && /.+@.+\..+/.test(value);
+  return typeof value === 'string' && /^[^\s@]+@[^\s@.]+(?:\.[^\s@.]+)+$/.test(value);
 }
 
 export async function POST(request: NextRequest) {

@@ -6,7 +6,7 @@ const quickLinks = [
   {
     section: 'Finance',
     items: [
-      { href: '/admin/finance/kyc', label: 'KYC Queue', description: 'Approve or reject pending identity submissions', color: '#f59e0b' },
+      { href: '/admin/finance/kyc-verify', label: 'KYC Verification', description: 'Review identity checks (Dojah/Smile ID/Youverify) and cases', color: '#f59e0b' },
       { href: '/admin/finance/wallets', label: 'Wallet Lookup', description: 'View any user\'s balance and ledger history', color: '#10b981' },
       { href: '/admin/finance/disputes', label: 'Dispute Tickets', description: 'Review open disputes and issue resolutions', color: '#ef4444' },
       { href: '/admin/payments-finance', label: 'Adjustments', description: 'Maker-checker ledger adjustments', color: '#6366f1' },

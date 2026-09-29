@@ -13,9 +13,16 @@ import type {
   PreConsultIntakeSchema,
 } from './types';
 
-function isEmpty(value: IntakeValue): boolean {
+function isEmpty(value: IntakeValue, fieldType?: IntakeField['type']): boolean {
   if (value == null) return true;
-  if (typeof value === 'string') return value.trim() === '';
+  if (typeof value === 'string') {
+    if (value.trim() === '') return true;
+    // A med_list value can be a non-empty JSON string that is still "blank"
+    // (e.g. one or more rows the user added but never filled in) — formatMedList
+    // already drops rows with no name and no dose.
+    if (fieldType === 'med_list') return formatMedList(value).length === 0;
+    return false;
+  }
   if (Array.isArray(value)) return value.length === 0;
   return false;
 }
@@ -39,10 +46,10 @@ export function formatMedList(value: IntakeValue): string[] {
 }
 
 function validateField(field: IntakeField, value: IntakeValue): string | null {
-  if (field.required && isEmpty(value)) {
+  if (field.required && isEmpty(value, field.type)) {
     return 'This field is required';
   }
-  if (isEmpty(value)) return null;
+  if (isEmpty(value, field.type)) return null;
 
   if (field.type === 'number' && typeof value === 'number') {
     if (Number.isNaN(value)) return 'Enter a valid number';
@@ -115,12 +122,12 @@ function validatePreConsultField(
     conditions_list: 'conditions_none',
   };
   const toggleId = conditionalRequired[field.id];
-  if (toggleId && values[toggleId] === true && isEmpty(value)) {
+  if (toggleId && values[toggleId] === true && isEmpty(value, field.type)) {
     return 'Please add at least one, or change your answer above';
   }
 
-  if (field.required && isEmpty(value)) return 'This field is required';
-  if (isEmpty(value)) return null;
+  if (field.required && isEmpty(value, field.type)) return 'This field is required';
+  if (isEmpty(value, field.type)) return null;
 
   if (field.type === 'scale' && typeof value === 'number') {
     const min = field.min ?? 1;

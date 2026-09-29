@@ -15,6 +15,7 @@ import MobilityMap from '@/features/mobility/components/MobilityMap';
 import TripPinDisplay from '@/features/mobility/components/TripPinDisplay';
 import StatusBadge from '@/features/mobility/components/StatusBadge';
 import MobilityEdgeState from '@/features/mobility/components/MobilityEdgeState';
+import { errKind } from '@/features/mobility/utils/errKind';
 import { useTowingJob, useCancelTowing } from '@/features/mobility/hooks/useModes';
 import { TOWING_PHASE_LABEL } from '@/features/mobility/constants/modes.constants';
 import { formatNairaWhole, formatEta } from '@/features/mobility/utils/mobilityFormatters';
@@ -34,7 +35,7 @@ export default function TowingTrackScreen() {
   }
   if (job.isError || !j) {
     return (
-      <SafeAreaView style={styles.safe} edges={['top']}><ScreenHeader title="Roadside help" /><MobilityEdgeState kind="offline" actionLabel="Retry" onAction={() => job.refetch()} /></SafeAreaView>
+      <SafeAreaView style={styles.safe} edges={['top']}><ScreenHeader title="Roadside help" /><MobilityEdgeState kind={errKind(job.error)} actionLabel="Retry" onAction={() => job.refetch()} /></SafeAreaView>
     );
   }
 

@@ -90,8 +90,17 @@ jobs:
       - name: Vet (static analysis)
         run: cd backend && go vet ./...
 
+      # -p 1: run one package's test binary at a time. Several live-DB suites
+      # (e.g. internal/restaurant's dispute tests) read a SHARED standing
+      # account's absolute balance before/after their own action — safe within
+      # one package (tests there run sequentially unless they opt into
+      # t.Parallel()), but racy the moment a DIFFERENT package's test binary
+      # debits/credits that same account concurrently against the one shared
+      # Postgres container. -p 1 removes the cross-package race entirely, at
+      # the cost of this step running serially instead of across GOMAXPROCS
+      # packages at once.
       - name: Test (whole backend, incl. live-DB suites)
-        run: cd backend && go test ./... -count=1
+        run: cd backend && go test ./... -p 1 -count=1
 
       # A package whose live-DB tests all SKIP still reports "ok", so a green
       # test step above does NOT prove the database is actually wired in. Without
@@ -104,7 +113,7 @@ jobs:
           cd backend
           set -o pipefail
           go test ./tests/fx/... ./tests/marketplace/... ./internal/savings/... \
-            -count=1 -v -run 'TestLiveDB_' 2>&1 | tee /tmp/livedb.log
+            -p 1 -count=1 -v -run 'TestLiveDB_' 2>&1 | tee /tmp/livedb.log
           if ! grep -qE '^(=== RUN|--- PASS)' /tmp/livedb.log; then
             echo "::error::No live-DB test executed — TEST_DATABASE_URL is not reaching the suites."
             exit 1

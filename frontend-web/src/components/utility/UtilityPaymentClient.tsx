@@ -58,6 +58,41 @@ function buildIdempotencyKey(category: string, reference: string) {
   return `UTILITY-${category}-${Date.now()}-${reference.replace(/\W/g, '').slice(-6)}-${random}`;
 }
 
+const NIGERIAN_PHONE = /^(?:\+?234|0)[789][01]\d{8}$/;
+
+// Sanitizes and validates the customer-facing reference field. Airtime/data
+// take a phone number (format-checked); everything else is a provider-issued
+// meter/smartcard/customer ID, so we only guard against obviously-wrong input
+// (empty, too short/long, or characters no provider reference actually uses).
+function validateCustomerReference(category: UtilityCategory, rawValue: string): string | null {
+  const value = rawValue.trim();
+  if (!value) return 'Please enter a reference.';
+  if (category === 'airtime' || category === 'data') {
+    const digitsOnly = value.replace(/[\s-]/g, '');
+    if (!NIGERIAN_PHONE.test(digitsOnly)) {
+      return 'Enter a valid Nigerian phone number, e.g. 08012345678.';
+    }
+    return null;
+  }
+  if (!/^[A-Za-z0-9-]{4,30}$/.test(value)) {
+    return 'Enter a valid reference (letters and numbers, 4-30 characters).';
+  }
+  return null;
+}
+
+function validateAmount(product: Product | null, amountNaira: string): string | null {
+  if (!product || product.amount_type !== 'variable') return null;
+  const trimmed = amountNaira.trim();
+  if (!trimmed) return 'Please enter an amount.';
+  const value = Number(trimmed);
+  if (!Number.isFinite(value) || value <= 0) return 'Enter a valid amount.';
+  const minNaira = (product.min_amount_kobo ?? 100) / 100;
+  const maxNaira = (product.max_amount_kobo ?? 100_000_000) / 100;
+  if (value < minNaira) return `Amount must be at least ${formatNaira(product.min_amount_kobo ?? 100)}.`;
+  if (value > maxNaira) return `Amount must not exceed ${formatNaira(product.max_amount_kobo ?? 100_000_000)}.`;
+  return null;
+}
+
 export default function UtilityPaymentClient() {
   const [categories, setCategories] = useState<Category[]>([]);
   const [billers, setBillers] = useState<Biller[]>([]);
@@ -147,11 +182,21 @@ export default function UtilityPaymentClient() {
     setCustomerName('');
     setCustomerReference('');
     setAmountNaira('');
-    await loadBillers(nextCategory);
+    setMessage('');
+    try {
+      await loadBillers(nextCategory);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'Unable to load billers.');
+    }
   }
 
   async function validateCustomer() {
-    if (!selectedBiller || !customerReference.trim()) return;
+    if (!selectedBiller) return;
+    const referenceError = validateCustomerReference(category, customerReference);
+    if (referenceError) {
+      setMessage(referenceError);
+      return;
+    }
     setBusy(true);
     setMessage('');
     try {
@@ -178,6 +223,16 @@ export default function UtilityPaymentClient() {
   async function pay(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!selectedBiller || !selectedProduct) return;
+    const referenceError = validateCustomerReference(category, customerReference);
+    if (referenceError) {
+      setMessage(referenceError);
+      return;
+    }
+    const amountError = validateAmount(selectedProduct, amountNaira);
+    if (amountError) {
+      setMessage(amountError);
+      return;
+    }
     setBusy(true);
     setMessage('');
     try {
@@ -200,6 +255,47 @@ export default function UtilityPaymentClient() {
       await loadTransactions();
     } catch (error) {
       setMessage(error instanceof Error ? error.message : 'Payment failed.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function payWithCard() {
+    if (!selectedBiller || !selectedProduct) return;
+    const referenceError = validateCustomerReference(category, customerReference);
+    if (referenceError) {
+      setMessage(referenceError);
+      return;
+    }
+    const amountError = validateAmount(selectedProduct, amountNaira);
+    if (amountError) {
+      setMessage(amountError);
+      return;
+    }
+    setBusy(true);
+    setMessage('');
+    try {
+      const response = await authFetch('/api/v1/utility/paystack/initiate', {
+        method: 'POST',
+        headers: { 'Idempotency-Key': buildIdempotencyKey(category, customerReference) },
+        body: JSON.stringify({
+          category,
+          biller_id: selectedBiller.id,
+          product_id: selectedProduct.id,
+          customer_reference: customerReference.trim(),
+          amount_kobo: selectedProduct.amount_type === 'variable' ? amountKobo : undefined,
+          metadata: { source: 'web_utility_page' },
+        }),
+      }, { json: true });
+      const payload = await parseResponse(response);
+      if (!payload) return;
+      if (payload.authorization_url) {
+        window.location.href = String(payload.authorization_url);
+        return;
+      }
+      setMessage('Unable to start card payment.');
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'Unable to start card payment.');
     } finally {
       setBusy(false);
     }
@@ -304,15 +400,43 @@ export default function UtilityPaymentClient() {
           </div>
         ) : null}
 
-        {message ? <p className="text-foreground-muted mt-4 mb-0">{message}</p> : null}
+        {message ? (
+          <p className={`mt-4 mb-0 text-sm ${/(submitted|passed)/i.test(message) ? 'text-emerald-600' : 'form-error'}`}>
+            {message}
+          </p>
+        ) : null}
 
-        <div className="mt-5 flex flex-wrap gap-2">
-          <button type="button" className="btn-outline py-2.5 px-4 text-[11px]" disabled={busy || !customerReference} onClick={() => void validateCustomer()}>
+        <div className="mt-5">
+          <button
+            type="button"
+            className="btn-outline py-2 px-3 text-[11px]"
+            disabled={busy || !customerReference}
+            onClick={() => void validateCustomer()}
+          >
             Validate
           </button>
-          <button type="submit" className="btn-primary py-2.5 px-4 text-[11px]" disabled={busy || !productId || !customerReference || amountKobo <= 0}>
-            {busy ? 'Processing...' : 'Pay From Wallet'}
-          </button>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-3">
+            <button
+              type="submit"
+              disabled={busy || !productId || !customerReference || amountKobo <= 0}
+              className="flex items-center justify-center gap-2 rounded-lg py-3.5 px-5 text-sm font-bold uppercase tracking-wide text-[#0d0d0d] transition-all duration-200 shadow-[0_4px_16px_rgba(212,168,67,0.25)] hover:shadow-[0_8px_24px_rgba(212,168,67,0.4)] hover:-translate-y-0.5 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:translate-y-0 disabled:hover:shadow-none"
+              style={{ background: 'var(--accent-gold)' }}
+            >
+              <span aria-hidden>🏦</span>
+              {busy ? 'Processing…' : 'Pay From Wallet'}
+            </button>
+            <button
+              type="button"
+              disabled={busy || !productId || !customerReference || amountKobo <= 0}
+              onClick={() => void payWithCard()}
+              className="flex items-center justify-center gap-2 rounded-lg py-3.5 px-5 text-sm font-bold uppercase tracking-wide transition-all duration-200 border-2 hover:-translate-y-0.5 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:translate-y-0"
+              style={{ borderColor: 'var(--accent-gold)', color: 'var(--foreground)' }}
+            >
+              <span aria-hidden>💳</span>
+              {busy ? 'Processing…' : 'Pay With Card'}
+            </button>
+          </div>
         </div>
       </form>
 
@@ -326,6 +450,9 @@ export default function UtilityPaymentClient() {
               {latest.status.replace(/_/g, ' ')}
             </span>
             {latest.token ? <p className="text-foreground mt-3 mb-0">Token: <strong>{latest.token}</strong></p> : null}
+            <Link href={`/utility/receipt/${latest.id}`} className="text-xs text-decoration-none mt-3 inline-flex">
+              View Receipt
+            </Link>
           </div>
         ) : null}
 
@@ -352,7 +479,7 @@ export default function UtilityPaymentClient() {
                       </span>
                     </div>
                   </div>
-                  <Link href={`/api/v1/utility/transactions/${transaction.id}/receipt`} className="text-xs text-decoration-none mt-2 inline-flex">
+                  <Link href={`/utility/receipt/${transaction.id}`} className="text-xs text-decoration-none mt-2 inline-flex">
                     Receipt
                   </Link>
                 </div>

@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useMemo, useRef, useState } from 'react';
-import type maplibregl from 'maplibre-gl';
+import type * as maplibregl from 'maplibre-gl';
 import MapView from './MapView';
 import { mapsClient, type MapSuggestion } from '@/services/mapsClient';
 
@@ -159,7 +159,7 @@ export default function AddressEntry({
         onReady={(map, gl) => {
           mapRef.current = map;
           glRef.current = gl;
-          map.on('click', (e) => void placePin(e.lngLat.lat, e.lngLat.lng));
+          map.on('click', (e: maplibregl.MapMouseEvent) => void placePin(e.lngLat.lat, e.lngLat.lng));
         }}
         style={{ height: 320 }}
       />

@@ -14,6 +14,7 @@ import StateView from '@/components/StateView';
 import StarRating from '@/features/mobility/components/StarRating';
 import FareBreakdownCard from '@/features/mobility/components/FareBreakdownCard';
 import MobilityEdgeState from '@/features/mobility/components/MobilityEdgeState';
+import { errKind } from '@/features/mobility/utils/errKind';
 import { useMoverJob, useMoverActions } from '@/features/mobility/hooks/useModes';
 import { clearMockActiveMover } from '@/features/mobility/api/movers.api';
 import { formatNairaWhole } from '@/features/mobility/utils/mobilityFormatters';
@@ -30,7 +31,7 @@ export default function RateMoverScreen() {
   const onSubmit = () => { if (id && stars >= 1) rate.mutate({ id, stars, comment: comment.trim() || undefined }, { onSuccess: finish }); };
 
   if (job.isLoading) return <SafeAreaView style={styles.safe} edges={['top']}><StateView kind="loading" message="Loading…" /></SafeAreaView>;
-  if (job.isError || !j) return <SafeAreaView style={styles.safe} edges={['top']}><MobilityEdgeState kind="offline" actionLabel="Retry" onAction={() => job.refetch()} /></SafeAreaView>;
+  if (job.isError || !j) return <SafeAreaView style={styles.safe} edges={['top']}><MobilityEdgeState kind={errKind(job.error)} actionLabel="Retry" onAction={() => job.refetch()} /></SafeAreaView>;
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>

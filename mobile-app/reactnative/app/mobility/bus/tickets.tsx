@@ -11,6 +11,7 @@ import StateView from '@/components/StateView';
 import ScreenHeader from '@/components/ScreenHeader';
 import StatusBadge from '@/features/mobility/components/StatusBadge';
 import MobilityEdgeState from '@/features/mobility/components/MobilityEdgeState';
+import { errKind } from '@/features/mobility/utils/errKind';
 import { useBusTickets } from '@/features/mobility/hooks/useModes';
 import { BUS_PHASE_LABEL } from '@/features/mobility/constants/modes.constants';
 import { formatNairaWhole } from '@/features/mobility/utils/mobilityFormatters';
@@ -26,7 +27,7 @@ export default function BusTicketsScreen() {
       {tickets.isLoading ? (
         <StateView kind="loading" message="Loading tickets…" />
       ) : tickets.isError ? (
-        <MobilityEdgeState kind="offline" actionLabel="Retry" onAction={() => tickets.refetch()} />
+        <MobilityEdgeState kind={errKind(tickets.error)} actionLabel="Retry" onAction={() => tickets.refetch()} />
       ) : (tickets.data?.length ?? 0) === 0 ? (
         <MobilityEdgeState kind="empty" title="No tickets yet" message="Your bus tickets will appear here." actionLabel="Book a bus" onAction={() => router.replace('/mobility/bus')} />
       ) : (

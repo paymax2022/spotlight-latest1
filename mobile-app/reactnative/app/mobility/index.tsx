@@ -14,10 +14,12 @@ import { shadow1 } from '@/constants/shadows';
 import StateView from '@/components/StateView';
 import SectionHeader from '@/components/SectionHeader';
 import BalanceCard from '@/components/BalanceCard';
+import { RemoteBanner } from '@/features/media/banners';
 import { getWallet } from '@/api/wallet.api';
 import { useMobilityHome } from '@/features/mobility/hooks/useMobility';
 import ActiveTripCard from '@/features/mobility/components/ActiveTripCard';
 import MobilityEdgeState from '@/features/mobility/components/MobilityEdgeState';
+import { errKind } from '@/features/mobility/utils/errKind';
 import { DRIVER_MODE_ENABLED, QUICK_TILE_REGISTRY, type QuickTileMeta } from '@/features/mobility/constants/mobility.constants';
 import { MODE_TILES, type ModeTile } from '@/features/mobility/constants/modes.constants';
 import { formatNaira } from '@/features/mobility/utils/mobilityFormatters';
@@ -93,7 +95,7 @@ export default function MobilityHomeScreen() {
       {home.isLoading ? (
         <StateView kind="loading" message="Loading mobility…" />
       ) : home.isError ? (
-        <MobilityEdgeState kind="offline" actionLabel="Retry" onAction={() => home.refetch()} />
+        <MobilityEdgeState kind={errKind(home.error)} actionLabel="Retry" onAction={() => home.refetch()} />
       ) : (
         <ScrollView
           showsVerticalScrollIndicator={false}
@@ -114,6 +116,8 @@ export default function MobilityHomeScreen() {
               ]}
             />
           </View>
+
+          <RemoteBanner slug="ride" priority />
 
           {/* Trip planner — Current location + Where to. Both open the same
               AddressEntry autocomplete (Google-powered lookup + confirm-on-map). */}

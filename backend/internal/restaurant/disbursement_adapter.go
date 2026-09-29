@@ -22,10 +22,10 @@ func NewRegistryDisburser(reg *disbursement.Registry) *RegistryDisburser {
 
 // Disburse sends merchant withdrawal funds to a saved bank account via the
 // configured provider. It:
-//   1. looks up the provider's default (or preferred, if available)
-//   2. resolves or creates a transfer recipient for the account
-//   3. initiates a payout
-//   4. returns the provider reference for later webhook reconciliation
+//  1. looks up the provider's default (or preferred, if available)
+//  2. resolves or creates a transfer recipient for the account
+//  3. initiates a payout
+//  4. returns the provider reference for later webhook reconciliation
 //
 // On any provider error, Executed=false (the withdrawal stays reserved;
 // a webhook will attempt to settle or reverse it).
@@ -64,10 +64,10 @@ func (d *RegistryDisburser) Disburse(ctx context.Context, req WithdrawalDisburse
 
 	// ── Step 2: Initiate the payout ──
 	payoutReq := provider.PayoutRequest{
-		RecipientCode: recipient.Code,
-		AmountKobo:    req.AmountKobo,
-		Reference:    req.Reference,       // Withdrawal ID or a ledger reference
-		Narration:    "Restaurant Withdrawal", // Short memo on the bank statement
+		RecipientCode:  recipient.Code,
+		AmountKobo:     req.AmountKobo,
+		Reference:      req.Reference,           // Withdrawal ID or a ledger reference
+		Narration:      "Restaurant Withdrawal", // Short memo on the bank statement
 		IdempotencyKey: req.IdempotencyKey,
 	}
 

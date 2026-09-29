@@ -9,6 +9,7 @@
 //  • quote → (lock) → execute against a quote_id (price never assumed stable).
 
 import { mockAllowed } from '@/config/mockPolicy';
+import { secureRandomInt } from '@/lib/secureRandom';
 import { api } from '@/api/client';
 import type {
   WalletBalance,
@@ -348,7 +349,7 @@ export async function createVirtualAccount(
       createdAt: new Date().toISOString(),
       details: type === 'iban'
         ? { accountName: 'Paymax / Spotlight User', iban: 'GB29NWBK60161331926819', bic: 'NWBKGB2L', rails: currency === 'EUR' ? ['SEPA'] : ['ACH'], reference: `PMX-COL-${currency}` }
-        : { accountName: 'Paymax / Spotlight User', accountNumber: '99' + Math.floor(10_000_000 + Math.random() * 80_000_000), bankName: 'Providus Bank', reference: `PMX-COL-${currency}` },
+        : { accountName: 'Paymax / Spotlight User', accountNumber: '99' + secureRandomInt(10_000_000, 89_999_999), bankName: 'Providus Bank', reference: `PMX-COL-${currency}` },
     };
     MOCK_VIRTUAL_ACCOUNTS.push(created);
     return created;

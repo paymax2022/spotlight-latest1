@@ -14,6 +14,7 @@ import ScreenHeader from '@/components/ScreenHeader';
 import TripRouteCard from '@/features/mobility/components/TripRouteCard';
 import StatusBadge from '@/features/mobility/components/StatusBadge';
 import MobilityEdgeState from '@/features/mobility/components/MobilityEdgeState';
+import { errKind } from '@/features/mobility/utils/errKind';
 import { useMoverJob, useMoverActions } from '@/features/mobility/hooks/useModes';
 import { usePurchasePayment, PaymentSheet } from '@/features/payments';
 import { MOVER_PHASE_LABEL, TRUCK_SIZES } from '@/features/mobility/constants/modes.constants';
@@ -36,7 +37,7 @@ export default function MoverJobScreen() {
     return <SafeAreaView style={styles.safe} edges={['top']}><ScreenHeader title="Your move" showBack={false} /><StateView kind="loading" message="Loading your move…" /></SafeAreaView>;
   }
   if (job.isError || !j) {
-    return <SafeAreaView style={styles.safe} edges={['top']}><ScreenHeader title="Your move" /><MobilityEdgeState kind="offline" actionLabel="Retry" onAction={() => job.refetch()} /></SafeAreaView>;
+    return <SafeAreaView style={styles.safe} edges={['top']}><ScreenHeader title="Your move" /><MobilityEdgeState kind={errKind(job.error)} actionLabel="Retry" onAction={() => job.refetch()} /></SafeAreaView>;
   }
 
   const onAccept = (bid: MoverBid) => {

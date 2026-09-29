@@ -109,7 +109,7 @@ func payoutBlockReason(kybStatus string, payable bool) string {
 		return "Business verification not started. Submit your business details to receive payouts."
 	case "submitted", "under_review":
 		return "Business verification is being reviewed. Payouts start once it is approved."
-	case "needs_info":
+	case "needs_more_info":
 		return "Business verification needs more information. Check the details you submitted."
 	case "rejected":
 		return "Business verification was declined. Contact support to resolve it."

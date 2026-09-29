@@ -29,6 +29,14 @@ export interface ModuleTab {
   href: string;
   label: string;
   icon: LucideIcon;
+  /**
+   * Other screens that belong to this tab's section — e.g. a contest's detail
+   * or contestant-list screen, reached by push from the "Contests" landing
+   * tab. The bar still shows on these (with this tab highlighted) rather than
+   * disappearing the moment the user taps into anything, as long as the
+   * destination screen itself has no fixed bottom CTA to collide with.
+   */
+  matchPaths?: readonly string[];
 }
 
 /**
@@ -46,7 +54,9 @@ export default function ModuleTabBar({ tabs }: { tabs: readonly ModuleTab[] }) {
   const current = normalise(pathname ?? '');
 
   const activeHref = useMemo(() => {
-    const exact = tabs.find((t) => normalise(t.href) === current);
+    const exact = tabs.find(
+      (t) => normalise(t.href) === current || (t.matchPaths ?? []).some((p) => normalise(p) === current),
+    );
     return exact?.href ?? null;
   }, [tabs, current]);
 

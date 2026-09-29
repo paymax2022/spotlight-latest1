@@ -97,6 +97,51 @@ func (c *Client) VerifyPayment(ctx context.Context, reference string) (*provider
 	}, nil
 }
 
+// RefundPayment reverses a previously-collected charge via Paystack's
+// /refund endpoint. Used by callers that collected money for something they
+// then could not fulfill and must return it the same way it arrived (an
+// EXTERNAL reversal), rather than crediting an internal wallet — see
+// restaurant.PlaceOrderPaystackFunded's amount-mismatch failure path for why
+// that distinction matters. amountKobo is optional to Paystack (omitting it
+// refunds the full transaction); this adapter always sends it explicitly so
+// a caller can never accidentally trigger a full refund by a zero value —
+// callers must pass the exact amount they intend to reverse.
+func (c *Client) RefundPayment(ctx context.Context, reference string, amountKobo int64) (*provider.RefundResult, error) {
+	if amountKobo <= 0 {
+		return nil, fmt.Errorf("paystack: refund amount must be positive, got %d", amountKobo)
+	}
+	body := map[string]any{
+		"transaction": reference,
+		"amount":      amountKobo,
+	}
+	var resp struct {
+		Status bool `json:"status"`
+		Data   struct {
+			Transaction struct {
+				Reference string `json:"reference"`
+			} `json:"transaction"`
+			Status string `json:"status"`
+			Amount int64  `json:"amount"`
+		} `json:"data"`
+		Message string `json:"message"`
+	}
+	if err := c.post(ctx, "/refund", body, &resp); err != nil {
+		return nil, err
+	}
+	if !resp.Status {
+		return nil, fmt.Errorf("paystack: refund %s: %s", reference, resp.Message)
+	}
+	ref := resp.Data.Transaction.Reference
+	if ref == "" {
+		ref = reference
+	}
+	return &provider.RefundResult{
+		Reference:  ref,
+		Status:     resp.Data.Status,
+		AmountKobo: resp.Data.Amount,
+	}, nil
+}
+
 func (c *Client) InitiatePayout(ctx context.Context, req provider.PayoutRequest) (*provider.PayoutResponse, error) {
 	body := map[string]any{
 		"source":    "balance",

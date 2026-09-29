@@ -91,8 +91,27 @@ function sandboxVerify(billersCode: string): VtpassResponse | null {
 
 // Doc-accurate purchase simulation for the VTPass EKEDC sandbox billersCode table.
 function sandboxPurchase(request: UtilityPurchaseRequest, requestId: string): UtilityPurchaseResult {
-  const meter = request.customerReference;
   const base = { providerReference: requestId };
+
+  // The meter-number simulation table below is documented by VTPass ONLY for
+  // electricity (EKEDC) — see the link above. Airtime/data/cable_tv/internet/
+  // education have no such matrix in VTPass's sandbox; it simply processes
+  // them. Applying the electricity table to a phone number or smart-card
+  // customerReference meant those categories never matched any meter constant
+  // and always fell through to the final "meter not recognised" branch —
+  // every non-electricity sandbox purchase failed, unconditionally, on every
+  // attempt (found 2026-09-18: a real user's airtime and data purchases kept
+  // failing after a successful Paystack charge).
+  if (request.category !== 'electricity') {
+    return {
+      ...base,
+      status: 'successful',
+      message: 'TRANSACTION SUCCESSFUL',
+      raw: { sandbox: true, category: request.category },
+    };
+  }
+
+  const meter = request.customerReference;
 
   if (meter === SANDBOX_METERS.PREPAID) {
     return {
@@ -330,10 +349,17 @@ export const vtpassUtilityAdapter: UtilityProviderAdapter = {
     }
 
     // Sandbox: validate against VTPass's documented test meter numbers locally so
-    // testing works without live credentials. Any other meter fails, exactly as
-    // the sandbox does ("use any number apart from the one provided to simulate a
-    // failed meter number validation").
+    // testing works without live credentials. This matrix is documented ONLY for
+    // electricity (EKEDC) — cable_tv and internet also have requires_validation
+    // but VTPass's sandbox has no equivalent test-number matrix for them, so
+    // applying the electricity check unconditionally meant a real smart-card/
+    // account number could never match and validation failed 100% of the time
+    // (found 2026-09-18: a cable TV purchase failing on every attempt — same
+    // defect class as the sandboxPurchase gap fixed the same day).
     if (isSandboxEnv()) {
+      if (request.category !== 'electricity') {
+        return { valid: true, message: 'Customer verified.', raw: { sandbox: true, category: request.category } };
+      }
       const stub = sandboxVerify(request.customerReference);
       if (stub) {
         return {

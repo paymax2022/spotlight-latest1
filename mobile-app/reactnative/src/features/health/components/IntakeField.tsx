@@ -9,24 +9,7 @@ import TextInputField from '@/components/TextInputField';
 import DatePickerField from '@/components/DatePickerField';
 import type { IntakeField as IntakeFieldType, IntakeValue, IntakeAttachment } from '../types';
 import { HealthColors } from '../constants/health.constants';
-
-// ── Medication list helpers (med_list field, M6) ──────────────────────────────
-// Stored as a JSON string of {name, dose} so it fits IntakeValue (string) and the
-// answers payload without a schema/type change. Tolerates a legacy plain-text
-// value (treated as a single medication name).
-type Med = { name: string; dose: string };
-function parseMeds(v: IntakeValue): Med[] {
-  if (typeof v !== 'string' || !v.trim()) return [];
-  try {
-    const arr = JSON.parse(v);
-    if (Array.isArray(arr)) return arr.map((m) => ({ name: String(m?.name ?? ''), dose: String(m?.dose ?? '') }));
-  } catch { /* legacy free-text → one med */ }
-  return [{ name: v, dose: '' }];
-}
-function serializeMeds(meds: Med[]): IntakeValue {
-  const clean = meds.filter((m) => m.name.trim() || m.dose.trim());
-  return clean.length ? JSON.stringify(clean) : ''; // empty → '' so required/validation treats it as blank
-}
+import { parseMeds, serializeMeds, type Med } from '../medListCodec';
 
 interface Props {
   field: IntakeFieldType;

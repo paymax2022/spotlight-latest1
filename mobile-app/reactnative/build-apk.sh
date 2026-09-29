@@ -126,6 +126,18 @@ for shadow in ".env.${NODE_ENV}.local" ".env.local"; do
   fi
 done
 
+# Every *_USE_MOCK flag referenced anywhere in source must be "false" in
+# $ENV_FILE — a flag left unset defaults to MOCK (see client.ts per module), so
+# a missed one ships fixture data (or, for a module whose screen has no error
+# state for a failed live call, a blank one) in the release build with nothing
+# in the build log to say so. This check was written and had a real, unused gap
+# right here: it existed in the repo but nothing on this build path ever called
+# it, so a misconfigured .env.production could still ship silently.
+if ! node scripts/check-env-mocks.mjs "$ENV_FILE"; then
+  echo "❌ $ENV_FILE fails the mock-data gate above — fix it before building." >&2
+  exit 1
+fi
+
 echo "🔨 Building React Native APK..."
 echo "   JAVA_HOME: $JAVA_HOME"
 echo "   NODE_ENV:  $NODE_ENV  (env file: $ENV_FILE)"

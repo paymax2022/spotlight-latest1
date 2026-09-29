@@ -69,7 +69,7 @@ function ApplicationCard({ app: a }: { app: AdminApplicationSummary }) {
           </View>
           {infoRequested ? (
             <View style={[styles.chip, { backgroundColor: Colors.iconBgGold }]}>
-              <Text style={[styles.chipText, { color: Colors.gold }]}>Info requested</Text>
+              <Text style={[styles.chipText, { color: Colors.onWarning }]}>Info requested</Text>
             </View>
           ) : null}
           <Text style={styles.time}>{relativeTime(a.submittedAt)}</Text>

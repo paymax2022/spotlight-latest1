@@ -47,7 +47,7 @@ export default function ClassSelectScreen() {
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
-      <ScreenHeader title="Your class" subtitle="Step 4 of 4 · Curriculum" />
+      <ScreenHeader title="Your class" subtitle="Step 2 of 2 · Curriculum" />
       {versions.isLoading ? (
         <StateView kind="loading" message="Loading curriculum…" />
       ) : (

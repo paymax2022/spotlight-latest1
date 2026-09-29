@@ -34,13 +34,14 @@ export type ResidentStatus = 'active' | 'banned';
 
 export interface AdminResident {
   id: string;
+  userId: string;
   name: string;
   unit: string;        // e.g. "Block B · Flat 4"
   role: ResidentRole;
   phone: string;
   status: ResidentStatus;
   arrearsKobo: number;
-  joinedAt: string;
+  createdAt: string;
 }
 
 export type DuesStatus = 'paid' | 'pending' | 'overdue' | 'restricted';

@@ -12,6 +12,7 @@ import ScreenHeader from '@/components/ScreenHeader';
 import PrimaryButton from '@/components/PrimaryButton';
 import FareBreakdownCard from '@/features/mobility/components/FareBreakdownCard';
 import MobilityEdgeState from '@/features/mobility/components/MobilityEdgeState';
+import { errKind } from '@/features/mobility/utils/errKind';
 import { useBusSeatMap, useBookBus } from '@/features/mobility/hooks/useModes';
 import { newIdempotencyKey, formatNairaWhole } from '@/features/mobility/utils/mobilityFormatters';
 import { usePurchasePayment, PaymentSheet } from '@/features/payments';
@@ -56,7 +57,7 @@ export default function BusReviewScreen() {
     return (
       <SafeAreaView style={styles.safe} edges={['top']}>
         <ScreenHeader title="Review booking" />
-        <MobilityEdgeState kind="offline" actionLabel="Retry" onAction={() => seatMap.refetch()} />
+        <MobilityEdgeState kind={errKind(seatMap.error)} actionLabel="Retry" onAction={() => seatMap.refetch()} />
       </SafeAreaView>
     );
   }

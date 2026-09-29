@@ -184,7 +184,7 @@ const styles = StyleSheet.create({
   },
   leaderRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.md, paddingVertical: Spacing.sm, paddingHorizontal: Spacing.sm },
   rank: { ...Typography.titleMd, color: Colors.onSurfaceVariant, width: 28, textAlign: 'center' },
-  rankTop: { color: Colors.gold, fontWeight: '800' as const },
+  rankTop: { color: Colors.onWarning, fontWeight: '800' as const },
   driverName: { ...Typography.labelLg, color: Colors.onSurface },
   driverMeta: { ...Typography.labelSm, color: Colors.onSurfaceVariant },
   meritPill: { alignItems: 'flex-end' },

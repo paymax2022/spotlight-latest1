@@ -322,7 +322,17 @@ function FieldRow({
         <TextInputField
           label={label}
           value={value == null ? '' : String(value)}
-          onChangeText={(raw) => onChange(raw.replace(/[^\d]/g, ''))}
+          onChangeText={(raw) => {
+            const digits = raw.replace(/[^\d]/g, '');
+            // The backend's attribute schema declares this a JSON number
+            // (attrs_validation.go's `toFloat` rejects a string outright,
+            // failing with "attribute <key> must be a number") — keep the
+            // input mask string-based for cursor/typing behavior, but the
+            // value handed to the form must be an actual number, not the
+            // digits string, or every numeric attribute (year, mileage, ...)
+            // fails validation on submit.
+            onChange(digits === '' ? '' : Number(digits));
+          }}
           placeholder={field.placeholder ?? ''}
           error={errorText}
           keyboardType="numeric"

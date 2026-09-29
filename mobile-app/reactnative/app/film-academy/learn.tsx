@@ -169,7 +169,7 @@ const styles = StyleSheet.create({
   barFill:     { height: 6, borderRadius: 3, backgroundColor: Colors.gold },
   assignLink:  { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
                  marginTop: Spacing.sm },
-  assignLinkText: { ...Typography.labelLg, color: Colors.gold },
+  assignLinkText: { ...Typography.labelLg, color: Colors.onWarning },
 
   moduleTitle: { ...Typography.titleMd, color: Colors.onSurface },
   moduleMeta:  { ...Typography.labelSm, color: Colors.onSurfaceVariant, marginBottom: Spacing.xs },

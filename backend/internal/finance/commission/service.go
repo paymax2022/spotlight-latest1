@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"time"
 
 	"spotlight/backend/internal/finance/ledger"
@@ -17,17 +18,57 @@ type ledgerService interface {
 	PostJournal(ctx context.Context, j ledger.JournalEntry) error
 }
 
+// ReferralHook is notified once for every NEWLY recorded (never a duplicate
+// idempotent replay) earning — the seam the referral purchase-commission-split
+// engine (backend/internal/referral/commissionsplit) hangs off of, mirroring the
+// ledger.TransactionDetailResolver / Service.SetResolvers late-binding pattern so
+// this package never imports referral/* (referral/commissionsplit imports THIS
+// package for the Earning type instead — a one-way dependency, no cycle).
+//
+// OnEarningRecorded must never be allowed to fail the caller's purchase — see
+// Service.SetReferralHook.
+type ReferralHook interface {
+	OnEarningRecorded(ctx context.Context, e Earning)
+}
+
 // Service holds the commission business logic: rate resolution + fee math,
 // audited config mutation, idempotent earning recognition, and profit reports.
 type Service struct {
-	repo   *Repository
-	ledger ledgerService // optional; nil ⇒ earnings recorded without a ledger post
+	repo         *Repository
+	ledger       ledgerService // optional; nil ⇒ earnings recorded without a ledger post
+	referralHook ReferralHook  // optional; nil ⇒ no referral commission-split
 }
 
 // NewService builds the service. ledgerSvc may be nil (ledger posting becomes a
 // best-effort no-op, the earning row is still recorded).
 func NewService(repo *Repository, ledgerSvc ledgerService) *Service {
 	return &Service{repo: repo, ledger: ledgerSvc}
+}
+
+// SetReferralHook wires the referral purchase-commission-split engine in after
+// construction (main.go builds ledgerSvc/commissionSvc before the referral
+// engine exists — see SetResolvers on ledger.Service for the same reason).
+// Nil-safe: never wiring one is a valid, pre-existing state (referral split
+// simply never fires).
+func (s *Service) SetReferralHook(h ReferralHook) { s.referralHook = h }
+
+// notifyReferralHook is called ONLY when InsertEarning reports a genuinely NEW
+// row (never on an idempotent-replay duplicate — the hook must fire exactly
+// once per real earning, ever). Recovers from a panic in the hook so a bug in
+// the (much newer, less exercised) referral engine can never take down the
+// purchase path that got a customer's money moving in the first place — the
+// exact same defensive posture RecordEarning/RecordExact already take toward
+// their OWN ledger post (best-effort, logged, never fatal to the caller).
+func (s *Service) notifyReferralHook(ctx context.Context, e *Earning) {
+	if s.referralHook == nil || e == nil {
+		return
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("commission: referral hook panicked (earning=%s): %v", e.ID, r)
+		}
+	}()
+	s.referralHook.OnEarningRecorded(ctx, *e)
 }
 
 // ── config reads ─────────────────────────────────────────────────────────────
@@ -213,9 +254,12 @@ func (s *Service) RecordEarning(ctx context.Context, in EarningInput, idempotenc
 		e.LedgerRef = &ref
 	}
 
-	saved, _, err := s.repo.InsertEarning(ctx, e)
+	saved, inserted, err := s.repo.InsertEarning(ctx, e)
 	if err != nil {
 		return nil, err
+	}
+	if inserted {
+		s.notifyReferralHook(ctx, saved)
 	}
 	return saved, nil
 }
@@ -291,9 +335,12 @@ func (s *Service) RecordExact(ctx context.Context, category, service, subtype st
 		e.LedgerRef = &ref
 	}
 
-	saved, _, err := s.repo.InsertEarning(ctx, e)
+	saved, inserted, err := s.repo.InsertEarning(ctx, e)
 	if err != nil {
 		return nil, err
+	}
+	if inserted {
+		s.notifyReferralHook(ctx, saved)
 	}
 	return saved, nil
 }

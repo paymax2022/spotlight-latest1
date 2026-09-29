@@ -9,6 +9,7 @@ import {
   View,
 } from 'react-native';
 import MapView from './MapView';
+import { Colors } from '@/constants/colors';
 
 // Same lazy-require pattern as MapView.tsx — @maplibre throws at module-init
 // time when the native binary is absent (Expo Go / JS-only builds).
@@ -222,7 +223,7 @@ export default function AddressEntry({
 const styles = StyleSheet.create({
   wrap: { gap: 8 },
   searchWrap: { position: 'relative', zIndex: 10 },
-  input: { borderWidth: 1, borderColor: '#d1d5db', borderRadius: 8, padding: 12, backgroundColor: '#fff' },
+  input: { borderWidth: 1, borderColor: '#d1d5db', borderRadius: 8, padding: 12, backgroundColor: '#fff', color: Colors.onSurface },
   dropdown: {
     position: 'absolute',
     top: 52,

@@ -142,6 +142,16 @@ export default function CreateAccessCodeScreen() {
             router.replace('/visitor/restricted');
             return;
           }
+          // The restriction pre-check (isResident) should normally catch this before the
+          // form even renders, but a stale/cached query result can let a non-resident
+          // reach submit — fall back to the same clear, actionable message rather than
+          // a raw server string, so the permission state and required action are obvious
+          // no matter which check caught it.
+          const status = (e as { response?: { status?: number } })?.response?.status;
+          if (status === 403) {
+            setFormError("You're not registered as a resident of any estate yet. Ask your estate manager to add you before you can invite visitors.");
+            return;
+          }
           setFormError(e instanceof Error ? e.message : 'Could not create the code. Please try again.');
         },
       },

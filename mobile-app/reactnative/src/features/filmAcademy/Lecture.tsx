@@ -180,7 +180,7 @@ const styles = StyleSheet.create({
   bold:  { color: Colors.onSurface, fontWeight: '700' },
   list:  { gap: 4, paddingLeft: Spacing.xs },
   li:    { flexDirection: 'row', gap: Spacing.sm, alignItems: 'flex-start' },
-  bullet:{ ...Typography.bodyMd, color: Colors.gold, minWidth: 16 },
+  bullet:{ ...Typography.bodyMd, color: Colors.onWarning, minWidth: 16 },
   liText:{ ...Typography.bodyMd, color: Colors.onSurfaceVariant, flex: 1, lineHeight: 22 },
   quote: { borderLeftWidth: 3, borderLeftColor: Colors.gold, paddingLeft: Spacing.sm,
            paddingVertical: 4 },

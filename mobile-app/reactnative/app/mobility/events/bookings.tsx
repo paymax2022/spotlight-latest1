@@ -13,6 +13,7 @@ import ScreenHeader from '@/components/ScreenHeader';
 import QrCodeView from '@/components/QrCodeView';
 import StatusBadge from '@/features/mobility/components/StatusBadge';
 import MobilityEdgeState from '@/features/mobility/components/MobilityEdgeState';
+import { errKind } from '@/features/mobility/utils/errKind';
 import { useBookings, useCancelBooking } from '@/features/mobility/hooks/useEvent';
 import { EVENT_ENABLED, EVENT_OFFER_TYPES, BOOKING_STATUS_LABEL } from '@/features/mobility/constants/modes.constants';
 import { formatNaira } from '@/features/mobility/utils/mobilityFormatters';
@@ -47,7 +48,7 @@ export default function BookingsScreen() {
       {bookings.isLoading ? (
         <StateView kind="loading" message="Loading bookings…" />
       ) : bookings.isError ? (
-        <MobilityEdgeState kind="offline" actionLabel="Retry" onAction={() => bookings.refetch()} />
+        <MobilityEdgeState kind={errKind(bookings.error)} actionLabel="Retry" onAction={() => bookings.refetch()} />
       ) : (bookings.data ?? []).length === 0 ? (
         <MobilityEdgeState
           kind="empty"

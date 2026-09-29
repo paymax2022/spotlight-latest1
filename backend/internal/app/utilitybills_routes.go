@@ -91,7 +91,7 @@ func RegisterUtilityBills(
 	// (DR provider_clearing → CR commission) and the commission_earnings row
 	// carries its ledger_ref. The Next.js path left ledger_ref null with a
 	// standing TODO. Passing nil here would silently preserve that gap.
-	commissionSvc := commission.NewService(commission.NewRepository(pool), ledgerSvc)
+	commissionSvc := withReferralSplit(commission.NewService(commission.NewRepository(pool), ledgerSvc), pool, cfg)
 
 	svc := utilitybills.NewService(utilitybills.Deps{
 		Repo:             utilitybills.NewRepository(pool),

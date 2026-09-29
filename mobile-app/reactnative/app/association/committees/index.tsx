@@ -123,7 +123,7 @@ function CommitteeCard({ committee: c }: { committee: CommitteeSummary }) {
         </View>
       ) : c.joinStatus === 'PENDING' ? (
         <View style={[styles.statusChip, { backgroundColor: Colors.iconBgGold }]}>
-          <Clock size={11} color={Colors.gold} strokeWidth={2.4} /><Text style={[styles.statusText, { color: Colors.gold }]}>Pending</Text>
+          <Clock size={11} color={Colors.gold} strokeWidth={2.4} /><Text style={[styles.statusText, { color: Colors.onWarning }]}>Pending</Text>
         </View>
       ) : (
         <ChevronRight size={18} color={Colors.outline} strokeWidth={2} />

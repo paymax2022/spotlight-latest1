@@ -248,6 +248,57 @@ describe('VTPass utility adapter', () => {
     expect(result.raw).toEqual(expect.objectContaining({ sandbox: true }));
   });
 
+  // Regression for a real incident (2026-09-18): airtime/data purchases
+  // ALWAYS failed in sandbox mode, on every attempt, regardless of the phone
+  // number used. Root cause: sandboxPurchase only implements VTPass's
+  // documented EKEDC (electricity) meter-number simulation table — a phone
+  // number never matches any of those meter constants, so every non-electricity
+  // sandbox purchase fell through to the "meter not recognised" branch.
+  // VTPass's sandbox has no such test matrix for airtime/data/education/cable_tv;
+  // it just processes them.
+  it.each(['airtime', 'data', 'education', 'cable_tv', 'internet'] as const)(
+    'simulates a successful %s purchase locally in sandbox mode (no meter-number matrix applies)',
+    async (category) => {
+      process.env.VTPASS_ENVIRONMENT = 'sandbox';
+
+      const result = await vtpassUtilityAdapter.purchase({
+        transactionId: `tx-sandbox-${category}`,
+        idempotencyKey: `UTILITY-user-sandbox-${category}`,
+        category,
+        billerCode: 'mtn',
+        providerBillerCode: 'mtn',
+        productCode: `mtn-${category}`,
+        providerProductCode: `mtn-${category}`,
+        customerReference: '+2348011111111', // an ordinary phone number, not a meter number
+        pricing,
+        metadata: {},
+      });
+
+      expect(fetch).not.toHaveBeenCalled();
+      expect(result.status).toBe('successful');
+      expect(result.raw).toEqual(expect.objectContaining({ sandbox: true }));
+    },
+  );
+
+  it('still applies the documented meter-number matrix for electricity in sandbox mode', async () => {
+    process.env.VTPASS_ENVIRONMENT = 'sandbox';
+
+    const unrecognised = await vtpassUtilityAdapter.purchase({
+      transactionId: 'tx-sandbox-electricity-bad',
+      idempotencyKey: 'UTILITY-user-sandbox-electricity-bad',
+      category: 'electricity',
+      billerCode: 'eko-electric',
+      providerBillerCode: 'eko-electric',
+      productCode: 'eko-prepaid',
+      providerProductCode: 'eko-electric',
+      customerReference: '9999999999999', // not a documented sandbox meter
+      pricing,
+      metadata: { paymentType: 'prepaid' },
+    });
+
+    expect(unrecognised.status).toBe('failed');
+  });
+
   it('validates only the documented sandbox meters in sandbox mode', async () => {
     process.env.VTPASS_ENVIRONMENT = 'sandbox';
 
@@ -270,6 +321,35 @@ describe('VTPass utility adapter', () => {
     expect(valid.valid).toBe(true);
     expect(invalid.valid).toBe(false);
   });
+
+  // Regression for a real incident (2026-09-18): cable_tv (and internet)
+  // billers have requires_validation=true, so payUtility calls
+  // validateCustomer for them — unlike airtime/data/education, which skip it
+  // entirely (see the category check at the top of validateCustomer). In
+  // sandbox mode that fell into the SAME electricity-only meter-matrix check
+  // as above: a real smart-card/account number never matches
+  // 1111111111111/1010101010101, so validation failed 100% of the time,
+  // regardless of what was entered. Because this throws INSIDE payUtility
+  // BEFORE the utility_transactions row is even inserted, a paystack-funded
+  // purchase failing here left no transaction record AND no refund — worse
+  // than the purchase-step bug fixed earlier the same day.
+  it.each(['cable_tv', 'internet'] as const)(
+    'validates any %s customer reference in sandbox mode (no electricity meter-matrix applies)',
+    async (category) => {
+      process.env.VTPASS_ENVIRONMENT = 'sandbox';
+
+      const result = await vtpassUtilityAdapter.validateCustomer({
+        category,
+        billerCode: 'dstv',
+        providerBillerCode: 'dstv',
+        customerReference: '1212121212', // an ordinary smart-card/account number
+        metadata: {},
+      });
+
+      expect(fetch).not.toHaveBeenCalled();
+      expect(result.valid).toBe(true);
+    },
+  );
 
   it('uses public-key for balance health checks', async () => {
     vi.mocked(fetch).mockResolvedValueOnce(new Response(JSON.stringify({

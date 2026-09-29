@@ -20,6 +20,7 @@ import { Radius } from '@/constants/radius';
 import { getOverview } from '@/features/filmAcademy/api';
 import type { FilmAcademyBatch } from '@/features/filmAcademy/types';
 import { HomeMenuButton } from '@/components/HomeMenu';
+import { RemoteBanner } from '@/features/media/banners';
 
 export const FILM_ACADEMY_KEY = ['film-academy', 'overview'];
 
@@ -115,6 +116,8 @@ export default function FilmAcademyScreen() {
       </View>
 
       <ScrollView contentContainerStyle={styles.scroll}>
+        <RemoteBanner slug="film-academy" priority />
+
         <View style={styles.hero}>
           <View style={styles.heroIcon}>
             <Clapperboard size={26} color={Colors.gold} />

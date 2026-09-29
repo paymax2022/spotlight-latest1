@@ -27,13 +27,17 @@ type AdminDashboard struct {
 
 // AdminResident is a resident row for the admin list.
 type AdminResident struct {
-	ID        string    `json:"id"`
-	UserID    string    `json:"user_id"`
-	Unit      string    `json:"unit"`
-	Role      string    `json:"role"`
-	Banned    bool      `json:"banned"`
-	Deleted   bool      `json:"deleted"`
-	CreatedAt time.Time `json:"created_at"`
+	ID          string    `json:"id"`
+	UserID      string    `json:"user_id"`
+	Name        string    `json:"name"`
+	Unit        string    `json:"unit"`
+	Role        string    `json:"role"`
+	Phone       string    `json:"phone"`
+	Banned      bool      `json:"banned"`
+	Deleted     bool      `json:"deleted"`
+	Status      string    `json:"status"`
+	ArrearsKobo int64     `json:"arrears_kobo"`
+	CreatedAt   time.Time `json:"created_at"`
 }
 
 // EstateConfig holds estate-wide rules + subscription plan.
@@ -85,14 +89,22 @@ func (s *Service) ListResidents(ctx context.Context, estateID, adminID, role str
 	if err := s.assertEstateAdmin(ctx, estateID, adminID); err != nil {
 		return nil, err
 	}
-	q := `SELECT id, user_id, COALESCE(unit,''), role, banned_at IS NOT NULL, deleted_at IS NOT NULL, created_at
-		FROM estate_residents WHERE estate_id=$1`
+	q := `SELECT r.id, r.user_id,
+			COALESCE(NULLIF(btrim(pu.first_name || ' ' || pu.last_name), ''), pu.email, ''),
+			COALESCE(r.unit,''), r.role, COALESCE(pu.phone,''),
+			r.banned_at IS NOT NULL, r.deleted_at IS NOT NULL,
+			COALESCE((SELECT SUM(amount_kobo) FROM estate_dues_invoices di
+				WHERE di.resident_id=r.id AND di.status IN ('pending','overdue')), 0),
+			r.created_at
+		FROM estate_residents r
+		LEFT JOIN public.platform_users pu ON pu.id = r.user_id
+		WHERE r.estate_id=$1`
 	args := []any{estateID}
 	if role != "" {
-		q += " AND role=$2"
+		q += " AND r.role=$2"
 		args = append(args, role)
 	}
-	q += " ORDER BY created_at DESC LIMIT 500"
+	q += " ORDER BY r.created_at DESC LIMIT 500"
 	rows, err := s.db.Query(ctx, q, args...)
 	if err != nil {
 		return nil, err
@@ -101,8 +113,14 @@ func (s *Service) ListResidents(ctx context.Context, estateID, adminID, role str
 	var out []AdminResident
 	for rows.Next() {
 		var r AdminResident
-		if err := rows.Scan(&r.ID, &r.UserID, &r.Unit, &r.Role, &r.Banned, &r.Deleted, &r.CreatedAt); err != nil {
+		if err := rows.Scan(&r.ID, &r.UserID, &r.Name, &r.Unit, &r.Role, &r.Phone,
+			&r.Banned, &r.Deleted, &r.ArrearsKobo, &r.CreatedAt); err != nil {
 			return nil, err
+		}
+		if r.Banned {
+			r.Status = "banned"
+		} else {
+			r.Status = "active"
 		}
 		out = append(out, r)
 	}

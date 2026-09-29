@@ -81,7 +81,7 @@ const styles = StyleSheet.create({
   wrapMine: { alignSelf: 'flex-end', alignItems: 'flex-end' },
   wrapOther: { alignSelf: 'flex-start', alignItems: 'flex-start' },
   pinRow: { flexDirection: 'row', alignItems: 'center', gap: 3, marginBottom: 2, marginHorizontal: 4 },
-  pinText: { ...Typography.caption, color: Colors.gold, fontWeight: '700' as const },
+  pinText: { ...Typography.caption, color: Colors.onWarning, fontWeight: '700' as const },
   bubble: { borderRadius: Radius.lg, paddingHorizontal: Spacing.md, paddingVertical: Spacing.sm, gap: 2 },
   bubbleMine: { backgroundColor: Colors.primary, borderTopRightRadius: Radius.sm },
   bubbleOther: { backgroundColor: Colors.surfaceContainerHigh, borderTopLeftRadius: Radius.sm },

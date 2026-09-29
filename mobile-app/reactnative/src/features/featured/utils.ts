@@ -3,6 +3,7 @@
 // display matches the rest of the app.
 
 import { formatNaira } from '@/features/food/utils';
+import { secureRandomId } from '@/lib/secureRandom';
 import type { CampaignState, FeaturedError } from './types';
 
 export { formatNaira };
@@ -113,7 +114,7 @@ export function countdownLabel(endIso: string): string {
 // ─── Session id (for de-duping placement events) ──────────────────────────────
 let _sessionId: string | null = null;
 export function sessionId(): string {
-  if (!_sessionId) _sessionId = `sess-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  if (!_sessionId) _sessionId = `sess-${secureRandomId()}`;
   return _sessionId;
 }
 

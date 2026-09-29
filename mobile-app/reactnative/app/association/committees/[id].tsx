@@ -294,7 +294,7 @@ const styles = StyleSheet.create({
   chatText: { ...Typography.labelMd, color: Colors.primary, flex: 1 },
   sectionTitle: { ...Typography.titleMd, color: Colors.onSurface, marginTop: Spacing.xs },
   memberRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm, paddingVertical: Spacing.sm },
-  pendingTag: { ...Typography.labelSm, color: Colors.gold },
+  pendingTag: { ...Typography.labelSm, color: Colors.onWarning },
   adminActions: { flexDirection: 'row', gap: 4 },
   ownerActions: { flexDirection: 'row', alignItems: 'center', gap: 2 },
   headerBtn: { padding: 4 },
@@ -311,5 +311,5 @@ const styles = StyleSheet.create({
   memberRole: { ...Typography.labelSm, color: Colors.onSurfaceVariant },
   footer: { paddingHorizontal: Spacing.containerMargin, paddingTop: Spacing.sm, paddingBottom: Spacing.lg, backgroundColor: Colors.background, borderTopWidth: 1, borderTopColor: Colors.outlineVariant },
   pendingRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: Spacing.sm, paddingVertical: Spacing.sm },
-  pendingText: { ...Typography.labelMd, color: Colors.gold },
+  pendingText: { ...Typography.labelMd, color: Colors.onWarning },
 });

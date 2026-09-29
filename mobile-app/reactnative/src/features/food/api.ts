@@ -1,6 +1,6 @@
 // ── Restaurant & Delivery — API wrapper ──────────────────────────────────────
 // Typed data layer the food screens code against. Mirrors parcel.api.ts:
-// mock-flagged, shared axios `api` client, BASE = '/api/v1/restaurant',
+// mock-flagged, shared axios `api` client, BASE = '/api/finance/restaurant',
 // Idempotency-Key on money mutations. Flip EXPO_PUBLIC_FOOD_USE_MOCK=false (or
 // EXPO_PUBLIC_RESTAURANT_USE_MOCK) once the Go endpoints are reachable.
 //
@@ -48,7 +48,13 @@ export type { DeliveryQuote, DeliveryFeeBreakdown } from './deliveryFee';
 export const USE_MOCK =
   mockAllowed(process.env.EXPO_PUBLIC_FOOD_USE_MOCK ?? process.env.EXPO_PUBLIC_RESTAURANT_USE_MOCK, true);
 
-const BASE = '/api/v1/restaurant';
+// Was '/api/v1/restaurant' — no such route exists on the Go backend, only
+// '/api/finance/restaurant' (see finance_routes.go's restGroup, which is also
+// what restaurantmerchant/api.ts already targets). Every live call here 404'd;
+// masked in local dev because USE_MOCK defaults to true, so a new restaurant
+// (created through the merchant flow, which IS wired to the real backend)
+// never showed up in customer discovery even after the is_open fix below.
+const BASE = '/api/finance/restaurant';
 const delay = (ms = 320) => new Promise((r) => setTimeout(r, ms));
 const unwrap = <T>(res: { data: { data?: T } & T }): T => (res.data?.data ?? res.data) as T;
 const idemHeader = (key: string) => ({ headers: { 'Idempotency-Key': key } });
@@ -303,6 +309,73 @@ export async function placeOrder(req: PlaceOrderRequest): Promise<Order> {
         idemHeader(req.idempotencyKey),
       ),
     ),
+  );
+}
+
+// ─── Paystack-funded checkout (no wallet, no KYC-tier gate) ────────────────
+// backend/internal/restaurant/paystackcheckout — a genuinely separate,
+// server-initiated Paystack rail (mirrors utility bills' airtime.tsx +
+// useGatewayCheckout pattern), NOT the wallet-top-up-then-spend trick
+// usePurchasePayment's built-in card rail uses. The server quotes the exact
+// price, freezes it against the Idempotency-Key, and only places the order
+// after independently verifying the charge — see PlaceOrderPaystackFunded's
+// doc comment on the Go side for the full guarantee.
+
+export interface PaystackCheckoutIntent {
+  restaurantId: string;
+  reference: string;
+  authorizationUrl: string;
+  accessCode?: string;
+  amountKobo: number;
+}
+
+export interface PaystackCheckoutStatus {
+  reference: string;
+  status: 'pending' | 'processing' | 'confirmed' | 'amount_mismatch' | 'order_failed' | 'refunded';
+  orderId?: string;
+  amountKobo?: number;
+}
+
+export async function initiateFoodOrderPaystack(
+  req: PlaceOrderRequest & { email?: string; callbackUrl?: string },
+): Promise<PaystackCheckoutIntent> {
+  if (USE_MOCK) {
+    await delay(600);
+    return {
+      restaurantId: req.restaurantId,
+      reference: `foodorder:${req.idempotencyKey}`,
+      authorizationUrl: `https://paystack.test/mock/${req.idempotencyKey}`,
+      amountKobo: 0,
+    };
+  }
+  return unwrap<PaystackCheckoutIntent>(
+    await api.post(
+      `${BASE}/${encodeURIComponent(req.restaurantId)}/orders/paystack/initiate`,
+      {
+        items: req.items.map((i) => ({
+          item_id: i.itemId,
+          qty: i.qty,
+          restaurant_id: i.restaurantId, // multi-restaurant support
+        })),
+        package_count: req.packageCount,
+        packages: req.packages?.map((p) => ({ items: p.items.map((i) => ({ item_id: i.itemId, qty: i.qty })) })),
+        delivery_address: req.deliveryAddress,
+        delivery_location: req.deliveryLocation,
+        email: req.email,
+        callback_url: req.callbackUrl,
+      },
+      idemHeader(req.idempotencyKey),
+    ),
+  );
+}
+
+export async function getFoodOrderPaystackStatus(reference: string): Promise<PaystackCheckoutStatus> {
+  if (USE_MOCK) {
+    await delay(400);
+    return { reference, status: 'confirmed', orderId: 'mock-order-1', amountKobo: 0 };
+  }
+  return unwrap<PaystackCheckoutStatus>(
+    await api.get(`${BASE}/orders/paystack/${encodeURIComponent(reference)}/status`),
   );
 }
 

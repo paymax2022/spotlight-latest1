@@ -110,7 +110,7 @@ func (s *Service) OpenRequests(ctx context.Context, driverUserID string) ([]map[
 
 // DriverAccept assigns a driver to a request at the current fare, enforcing the
 // driver-profit floor, then moves the trip to driver_assigned.
-func (s *Service) DriverAccept(ctx context.Context, tripID, driverUserID string) (*tripDetail, error) {
+func (s *Service) DriverAccept(ctx context.Context, tripID, driverUserID string) (*TripDetailView, error) {
 	driverID, err := s.driverGate(ctx, driverUserID)
 	if err != nil {
 		return nil, err
