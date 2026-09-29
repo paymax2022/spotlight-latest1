@@ -28,7 +28,7 @@ export default function ServiceDetailBySlug({ params }) {
     <Layout headerStyle={1} footerStyle={2} breadcrumbTitle={null}>
       <section className="overflow-hidden">
         <img
-          src={program.bannerImage || '/assets/img/shape/banner-home.png'}
+          src={program.bannerImage || '/assets/img/shape/banner2.png'}
           alt={`${program.title} banner`}
           style={{ width: '100%', height: 'auto', maxHeight: '500px', objectFit: 'cover', objectPosition: 'center', display: 'block' }}
         />

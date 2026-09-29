@@ -511,8 +511,12 @@ jobs:
             --service frontend-admin --environment "$ENVIRONMENT" --project "$PROJECT" --skip-deploys
           unset KEY
           # The proxy needs to know where Go is. Private network, same address the
-          # frontend-web proxy uses and which is proven to work.
-          railway variable set ADMIN_API_BASE_URL=http://backend.railway.internal:8080/api/v1 \
+          # frontend-web proxy uses and which is proven to work. The backend ROOT,
+          # no /api/v1: app/api/admin-proxy appends the caller's full backend path
+          # (/api/v1/admin/..., /api/finance/..., ...), so a base ending in /api/v1
+          # made every forwarded path /api/v1/api/v1/... and Gin 404d all of them -
+          # the console then reported "the overview API did not answer".
+          railway variable set ADMIN_API_BASE_URL=http://backend.railway.internal:8080 \
             --service frontend-admin --environment "$ENVIRONMENT" --project "$PROJECT" --skip-deploys
           echo "  key written to backend and frontend-admin (value never printed)"
 
