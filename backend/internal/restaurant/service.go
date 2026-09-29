@@ -15,6 +15,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"spotlight/backend/internal/finance/ledger"
 	"spotlight/backend/internal/finance/settlement"
+	"spotlight/backend/internal/provider"
 	"spotlight/backend/internal/provider/disbursement"
 )
 
@@ -112,6 +113,7 @@ type Service struct {
 	// escrow correctly — see ExternalRefunder's doc comment. nil ⇒ such a
 	// refund logs for manual reconciliation instead of running incorrectly.
 	externalRefunder ExternalRefunder
+	disbursement     provider.DisbursementProvider // optional; nil ⇒ no account verification on bank-account add
 }
 
 // ExternalRefunder is the nil-safe seam restaurant.Service uses to correctly
@@ -179,6 +181,14 @@ func (s *Service) WithDistancer(d RouteDistancer) *Service {
 // without it PlaceOrder and RequestWithdrawal both refuse with ErrTierGateUnwired.
 func (s *Service) WithTiers(t TierLimiter) *Service {
 	s.tiers = t
+	return s
+}
+
+// WithDisbursementProvider attaches a bank-disbursement provider (e.g., Paystack)
+// for real-time account verification when merchants add bank accounts. nil-safe:
+// if no provider is attached, account verification is skipped (is_verified stays false).
+func (s *Service) WithDisbursementProvider(p provider.DisbursementProvider) *Service {
+	s.disbursement = p
 	return s
 }
 

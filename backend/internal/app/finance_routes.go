@@ -1617,6 +1617,12 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 			// until that gap is closed.
 			WithWithdrawals(cfg.FeatureRestaurantWithdrawalsEnabled)
 
+		// Wire the Paystack disbursement provider for real-time bank account
+		// verification on AddBankAccount (soft-fail if provider unavailable).
+		if paystackDisb != nil {
+			restaurantSvc = restaurantSvc.WithDisbursementProvider(paystackDisb)
+		}
+
 		// ── Central Commission & Profit recording (§ profit registry) ──
 		// When the commission feature is on, inject a nil-safe recorder so realized
 		// food-delivery profit (recorded at the delivered order's settlement point in
@@ -1694,6 +1700,7 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		// account before RequestWithdrawal will accept a bank_account_id, and there
 		// was previously no route to create one at all.
 		restGroup.POST("/bank-accounts", restaurantHandler.AddBankAccount)
+		restGroup.POST("/bank-accounts/verify", restaurantHandler.VerifyBankAccount)
 		restGroup.GET("/bank-accounts", restaurantHandler.ListBankAccounts)
 		restGroup.PATCH("/bank-accounts/:accountId/default", restaurantHandler.SetDefaultBankAccount)
 		restGroup.DELETE("/bank-accounts/:accountId", restaurantHandler.DeleteBankAccount)
@@ -2709,6 +2716,13 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		doctorHub := platformWS.New(wsOriginAllowed)
 
 		doctorSvc := doctor.NewService(pool, ledgerSvc, tiersSvc, redisClient).WithRealtime(rtcIssuer, doctorHub)
+
+		// Wire the Paystack disbursement provider for real-time bank account
+		// verification on CreateBankAccount (soft-fail if provider unavailable).
+		if paystackDisb != nil {
+			doctorSvc = doctorSvc.WithDisbursementProvider(paystackDisb)
+		}
+
 		// Central Commission & Profit registry: record realized Spotlight profit at the
 		// consult settlement point (EndAppointment). Nil ledger ⇒ earning-row only (no
 		// double-post; the doctor module already withholds its own per-consult commission).
@@ -3113,6 +3127,7 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 
 		// Profile builder extras (doctor_profiles / doctor_bank_accounts / _verification_documents).
 		docGroup.POST("/profile/bank-account", doctorHandler.CreateBankAccount)
+		docGroup.POST("/profile/bank-account/verify", doctorHandler.VerifyBankAccount)
 		docGroup.POST("/profile/documents", doctorHandler.UploadProfileDocument)
 		docGroup.POST("/profile/photo", doctorHandler.SetProfilePhoto)
 		docGroup.PUT("/profile/tax-info", doctorHandler.UpdateTaxInfo)

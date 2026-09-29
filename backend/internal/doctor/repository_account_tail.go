@@ -25,16 +25,18 @@ import (
 
 // UpsertBankAccount inserts a bank account row idempotently (UNIQUE idempotency_key).
 // account_number is stored as supplied; the service masks it to last-4 in responses.
-func (r *Repository) UpsertBankAccount(ctx context.Context, userID, idemKey string, req BankAccountRequest) (*BankAccount, error) {
+// isVerified indicates whether the account was successfully verified against a banking
+// network (e.g., Paystack's /bank/resolve).
+func (r *Repository) UpsertBankAccount(ctx context.Context, userID, idemKey string, req BankAccountRequest, isVerified bool) (*BankAccount, error) {
 	id := uuid.New().String()
 	const q = `
 		INSERT INTO doctor_bank_accounts
 			(id, user_id, bank_name, bank_code, account_number, account_name, is_verified, is_default, tax_info, idempotency_key)
-		VALUES ($1,$2,$3,$4,$5,$6,false,$7,$8,$9)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
 		ON CONFLICT (idempotency_key) DO NOTHING`
 	isDefault := boolOrDefault(req.IsDefault, false)
 	tag, err := r.db.Exec(ctx, q, id, userID, req.BankName, req.BankCode, req.AccountNumber,
-		req.AccountName, isDefault, jsonOrEmptyObject(req.TaxInfo), idemKey)
+		req.AccountName, isVerified, isDefault, jsonOrEmptyObject(req.TaxInfo), idemKey)
 	if err != nil {
 		return nil, err
 	}

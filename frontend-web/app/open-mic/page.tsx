@@ -77,7 +77,7 @@ export default async function OpenMicLandingPage() {
               <div className="col-12 col-lg-8 order-1 order-md-2">
                 <div className="service-details-items">
                   <div className="details-image">
-                    <img src="/assets/img/shape/banner1.png" alt="Spotlight Open Mic Contest Banner" />
+                 
                   </div>
 
                   <div className="details-content">

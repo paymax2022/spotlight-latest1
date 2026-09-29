@@ -96,6 +96,148 @@ function programIcon(type: string) {
   return '🏆';
 }
 
+// ─── Quick Access ────────────────────────────────────────────────────────────
+
+type QuickLink = {
+  href: string;
+  icon: string;
+  title: string;
+  description: string;
+  accent: string;
+};
+
+const QUICK_LINKS: QuickLink[] = [
+  {
+    href: '/utility',
+    icon: '🧾',
+    title: 'Pay Bills',
+    description: 'Airtime, data, electricity & TV — paid straight from your wallet',
+    accent: '#0ea5e9',
+  },
+  {
+    href: '/restaurant',
+    icon: '🍽️',
+    title: 'Order Food',
+    description: 'Browse restaurants near you and get your order delivered',
+    accent: '#f97316',
+  },
+  {
+    href: '/crowdfunding',
+    icon: '🤝',
+    title: 'Fund a Cause',
+    description: 'Discover campaigns to support, or start your own',
+    accent: '#14b8a6',
+  },
+  {
+    href: '/open-mic',
+    icon: '🎤',
+    title: 'Open Mic Voting',
+    description: 'Back your favorite contestants and follow live results',
+    accent: '#f59e0b',
+  },
+  {
+    href: '/film-academy/dashboard',
+    icon: '🎬',
+    title: 'Film Academy',
+    description: 'Track your enrollment, courses and tuition',
+    accent: '#8b5cf6',
+  },
+  {
+    href: '/stem/contests',
+    icon: '🔬',
+    title: 'STEM Contests',
+    description: 'Discover STEM competitions for schools and students',
+    accent: '#10b981',
+  },
+  {
+    href: '/earn',
+    icon: '🎁',
+    title: 'Refer & Earn',
+    description: 'Invite friends to Spotlight and earn rewards',
+    accent: '#ec4899',
+  },
+  {
+    href: '/profile',
+    icon: '👤',
+    title: 'My Profile',
+    description: 'Manage your personal details and verification',
+    accent: '#6366f1',
+  },
+];
+
+function QuickAccessTile({ item }: { item: QuickLink }) {
+  const [hover, setHover] = useState(false);
+
+  return (
+    <Link
+      href={item.href}
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: 14,
+        padding: '16px',
+        borderRadius: 14,
+        textDecoration: 'none',
+        background: '#fff',
+        border: `1px solid ${hover ? item.accent : '#e5e7eb'}`,
+        boxShadow: hover ? `0 8px 20px ${item.accent}26` : '0 1px 2px rgba(0,0,0,0.03)',
+        transform: hover ? 'translateY(-2px)' : 'translateY(0)',
+        transition: 'all .18s ease',
+      }}
+    >
+      <span
+        style={{
+          flexShrink: 0,
+          width: 44,
+          height: 44,
+          borderRadius: 12,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          fontSize: 22,
+          background: `${item.accent}1a`,
+        }}
+      >
+        {item.icon}
+      </span>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <p style={{ margin: 0, fontWeight: 700, fontSize: 14, color: '#111827' }}>{item.title}</p>
+        <p style={{ margin: '2px 0 0', fontSize: 12, color: '#6b7280', lineHeight: 1.4 }}>{item.description}</p>
+      </div>
+      <span
+        style={{
+          flexShrink: 0,
+          fontSize: 16,
+          color: hover ? item.accent : '#d1d5db',
+          transform: hover ? 'translateX(2px)' : 'translateX(0)',
+          transition: 'all .18s ease',
+        }}
+        aria-hidden
+      >
+        →
+      </span>
+    </Link>
+  );
+}
+
+function QuickAccessGrid() {
+  return (
+    <div>
+      <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 12 }}>
+        <h5 style={{ margin: 0, fontWeight: 700, fontSize: 15 }}>Quick Access</h5>
+        <span style={{ fontSize: 12, color: '#9ca3af' }}>Jump straight into any Spotlight service</span>
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(260px,1fr))', gap: 12 }}>
+        {QUICK_LINKS.map((item) => (
+          <QuickAccessTile key={item.href} item={item} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
 // ─── Sub-components ───────────────────────────────────────────────────────────
 
 function ContestCard({
@@ -543,6 +685,9 @@ export default function UserDashboardClient() {
           </div>
         ))}
       </div>
+
+      {/* Quick Access */}
+      <QuickAccessGrid />
 
       {/* Tabs */}
       <div style={{ display: 'flex', gap: 0, borderBottom: '2px solid #e5e7eb' }}>

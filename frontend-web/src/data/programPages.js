@@ -6,7 +6,7 @@ export const programPages = [
     subtitle:
       'Nigeria\'s most structured talent competition — a nationally broadcast reality format where artists compete, grow, and build careers, while sponsors, investors, and government partners activate measurable cultural and commercial impact at scale.',
     icon: '/assets/img/service/icon/s-icon-1.svg',
-    bannerImage: '/assets/img/shape/banner2.png',
+    bannerImage: '/assets/img/shape/banner-home.png',
     bannerKicker: 'Reality TV Show',
     videoThumbImage: '/assets/img/shape/top17-copy.jpg',
     gallery: ['/assets/img/shape/visit.png', '/assets/img/shape/attempt.png'],
