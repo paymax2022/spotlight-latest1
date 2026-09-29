@@ -42,11 +42,11 @@ jobs:
       - name: Update ADMIN_API_BASE_URL to correct backend
         run: |
           set -euo pipefail
-          echo "Setting ADMIN_API_BASE_URL=https://backend-staging-d9bb.up.railway.app"
-          railway variable set ADMIN_API_BASE_URL \
+          BACKEND_URL="https://backend-staging-d9bb.up.railway.app"
+          echo "Setting ADMIN_API_BASE_URL=$BACKEND_URL"
+          printf '%s' "$BACKEND_URL" | railway variable set ADMIN_API_BASE_URL --stdin \
             --service "$SERVICE" --environment "$ENVIRONMENT" --project "$PROJECT" \
-            --skip-deploys \
-            <<< "https://backend-staging-d9bb.up.railway.app"
+            --skip-deploys
           echo "✓ ADMIN_API_BASE_URL updated"
 
       - name: Verify the update was applied
