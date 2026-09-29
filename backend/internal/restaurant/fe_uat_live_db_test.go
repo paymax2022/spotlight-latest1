@@ -217,7 +217,6 @@ func TestLiveDB_FE005_ConcurrentPayoutRunsNeverDoubleDisburseSameSettlement(t *t
 		t.Fatalf("BOTH runs claimed the settlement (net %d and %d) — the unique index did not hold", runs[0].NetMinor, runs[1].NetMinor)
 	}
 
-	settleAcctBefore := prStandingBalance(t, ctx, pool, "settlement")
 	ownerBalBefore := prWalletBalance(t, ctx, pool, owner)
 
 	// Now fire a fresh, live double-disbursement ATTEMPT: ProcessRun BOTH runs
@@ -259,9 +258,11 @@ func TestLiveDB_FE005_ConcurrentPayoutRunsNeverDoubleDisburseSameSettlement(t *t
 		t.Fatalf("paidCount = %d, want exactly 1 (double-disbursement of the same settlement must be refused)", paidCount)
 	}
 
-	// DB-level proof: the settlement standing account moved by EXACTLY the
-	// settlement's net once, and the owner's wallet received it exactly once.
-	settleDelta := settleAcctBefore - prStandingBalance(t, ctx, pool, "settlement")
+	// DB-level proof, scoped to THESE two runs' own deterministic journals: the
+	// settlement standing account was debited by EXACTLY the settlement's net once
+	// (the refused net=0 run posts nothing), and the owner's wallet received it
+	// exactly once.
+	settleDelta := prSettlementDebitKobo(t, ctx, pool, runs[0].IdempotencyKey, runs[1].IdempotencyKey)
 	ownerDelta := prWalletBalance(t, ctx, pool, owner) - ownerBalBefore
 	if settleDelta != 80_000 {
 		t.Fatalf("settlement account net debit = %d, want 80000 (exactly one disbursement)", settleDelta)

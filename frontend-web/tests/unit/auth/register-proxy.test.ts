@@ -85,7 +85,7 @@ describe('POST /api/auth/register', () => {
   it('does not enrich the upstream error', async () => {
     // Go answers generically so a taken address is indistinguishable from a
     // rejected one. Adding detail here would rebuild the enumeration oracle.
-    mockUpstream(400, { error: 'Registration failed. Please check your details and try again.' });
+    mockUpstream(400, { error: "We couldn't create this account. Try signing in if you have one, or use Forgot Password — otherwise, double-check your details and try again." });
     const res = await callRoute({ fullName: 'A B', email: 'a@b.test', password: 'Str0ngPass!23' });
     expect(res.status).toBe(400);
     const body = await res.json();

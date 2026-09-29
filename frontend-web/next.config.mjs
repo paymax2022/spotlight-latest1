@@ -1,11 +1,22 @@
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
 import { withSentryConfig } from '@sentry/nextjs';
 import { imageHosts } from './image-hosts.config.mjs';
+
+// Anchors the standalone trace to this app. Next otherwise infers the workspace
+// root by walking up to the highest directory containing a lockfile — which here
+// is the repository root — and nests the output one level deeper
+// (.next/standalone/frontend-web/server.js). Dockerfile's `node server.js`
+// expects it at .next/standalone/server.js and would fail to boot.
+const appDir = path.dirname(fileURLToPath(import.meta.url));
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   // Produce a traced production server so the deployment image contains only
   // the runtime files Next needs, rather than the complete build toolchain.
   output: 'standalone',
+  outputFileTracingRoot: appDir,
   // Browser source maps roughly double build memory. They only pay for
   // themselves when Sentry can actually upload and symbolicate them, which the
   // wrapper below gates on SENTRY_AUTH_TOKEN — so generate them under the same

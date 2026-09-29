@@ -56,10 +56,6 @@ on:
         description: 'Write INSURANCE_MYCOVER_API_KEY to the backend from the repo secret, then redeploy'
         type: boolean
         default: false
-      set_assoc_card_secret:
-        description: 'Generate + set ASSOC_CARD_SIGNING_SECRET on the backend (required once FEATURE_ASSOCIATIONS_ENABLED is on — its absence log.Fatalf crashes the whole process outside development)'
-        type: boolean
-        default: false
 
 permissions:
   contents: read
@@ -103,45 +99,6 @@ jobs:
       # utilityPayments, healthLab, healthVet, aiCare, walletBankTransfers. Their
       # flags stayed unset, so those tiles silently vanished from the app while
       # every check reported success. The list must be the UNION of both maps.
-      #
-      # 39, not 29. An association-module bug report ("could not load
-      # organisation") traced to config.go reading FEATURE_ASSOCIATIONS_ENABLED
-      # (PLURAL) to gate association.RegisterRoutes — this workflow had only
-      # ever set FEATURE_ASSOCIATION_ENABLED (singular, the module-registry/
-      # visibility flag). The plural flag was never set, so the routes never
-      # registered on staging and every /api/finance/associations/* call 404'd.
-      # A full audit of every `if cfg.FeatureXEnabled` route gate in
-      # backend/internal/app/*.go against this list found the same shape of gap
-      # on nine more flags — each has a sibling flag already set here (or on
-      # frontend-web) that only makes sense if the module was meant to be
-      # reachable, so the gate being unset was an oversight:
-      #   FEATURE_ASSOCIATIONS_ENABLED   - plural gate; see above
-      #   FEATURE_HEALTH_ENABLED         - shared parent gate for the whole
-      #                                    health vertical; HEALTH_LAB/VET/
-      #                                    PHARMACY were all "true" here
-      #                                    already but NONE of their routes
-      #                                    register without this outer flag
-      #   FEATURE_UTILITY_BILLS_ENABLED  - the actual Go gate for the utility
-      #                                    money path; FEATURE_UTILITY_PAYMENTS_
-      #                                    ENABLED (kept below) is read only by
-      #                                    frontend-web/mobile, not Go
-      #   FEATURE_KYC_VERIFY_ENABLED     - separate from FEATURE_KYC_ENABLED;
-      #                                    gates document verification
-      #   FEATURE_TRANSPORT_SCHEDULING_ENABLED, FEATURE_TRANSPORT_MODES_ENABLED
-      #                                  - already set on frontend-web, never
-      #                                    on backend
-      #   FEATURE_VOTE_BRIDGE_ENABLED    - AND'd with wallet (already true)
-      #   FEATURE_FX_ORCHESTRATION_ENABLED, FEATURE_ARENA_ENABLED,
-      #   FEATURE_TRADING_ENABLED        - same already-on-frontend-web,
-      #                                    never-on-backend pattern
-      # Left OUT: flags with NO sibling evidence anywhere that the module is
-      # meant to be live yet (FEATURE_ACADEMY_ENABLED, FEATURE_CRYPTO_ENABLED,
-      # FEATURE_DOCTOR_ENABLED, FEATURE_PLACEMENT_ENABLED,
-      # FEATURE_P2P_MARKET_ENABLED, FEATURE_MAPLERAD_ENABLED,
-      # FEATURE_LEARN_ENABLED, FEATURE_SPOTLIGHTWEALTH_ENABLED,
-      # FEATURE_INVESTAI_ENABLED, FEATURE_COMMISSION_ENABLED,
-      # FEATURE_BUSINESS_REGISTRY_ENABLED, legacy FEATURE_PHARMACY_ENABLED) -
-      # flipping those on is a product-launch decision, not a bug fix.
       - name: Set APP_ENV and the module flags
         run: |
           set -euo pipefail
@@ -184,16 +141,6 @@ jobs:
             FEATURE_REALTOR_ENABLED=true \
             FEATURE_CROWDFUNDING_ENABLED=true \
             FEATURE_ASSOCIATION_ENABLED=true \
-            FEATURE_ASSOCIATIONS_ENABLED=true \
-            FEATURE_HEALTH_ENABLED=true \
-            FEATURE_UTILITY_BILLS_ENABLED=true \
-            FEATURE_KYC_VERIFY_ENABLED=true \
-            FEATURE_TRANSPORT_SCHEDULING_ENABLED=true \
-            FEATURE_TRANSPORT_MODES_ENABLED=true \
-            FEATURE_VOTE_BRIDGE_ENABLED=true \
-            FEATURE_FX_ORCHESTRATION_ENABLED=true \
-            FEATURE_ARENA_ENABLED=true \
-            FEATURE_TRADING_ENABLED=true \
             FEATURE_GROUPS_ENABLED=true \
             FEATURE_EVENTS_ENABLED=true \
             FEATURE_CREATORS_ENABLED=true \
@@ -246,9 +193,6 @@ jobs:
               "GROUPS","EVENTS","CREATORS","DISPUTES","RATINGS",
               "UTILITY_PAYMENTS","HEALTH_LAB","HEALTH_VET","AICARE","BANK_TRANSFERS",
               "CONTEST_STAGE_EVICTION","CONNECT","MARKETPLACE",
-              "ASSOCIATIONS","HEALTH","UTILITY_BILLS","KYC_VERIFY",
-              "TRANSPORT_SCHEDULING","TRANSPORT_MODES","VOTE_BRIDGE",
-              "FX_ORCHESTRATION","ARENA","TRADING",
             ].map((s) => `FEATURE_${s}_ENABLED`);
             let vars;
             try {
@@ -315,16 +259,8 @@ jobs:
       - name: Set the gateway-side module flags
         run: |
           set -euo pipefail
-          # FEATURE_HEALTH_ENABLED and FEATURE_VOTE_BRIDGE_ENABLED were the two
-          # gaps found on frontend-web's own copy of feature-flags.ts (it
-          # re-checks its own env var before ever proxying to Go): the Next
-          # route for the whole health vertical (app/api/v1/health/[...path]/
-          # route.ts) hard-gates on featureFlags.health() FIRST, so every
-          # health call 503'd here even once the Go-side flag was set.
           railway variable set \
             FEATURE_REFERRALS_ENABLED=true \
-            FEATURE_HEALTH_ENABLED=true \
-            FEATURE_VOTE_BRIDGE_ENABLED=true \
             --service "$SERVICE" --environment "$ENVIRONMENT" --project "$PROJECT" \
             --skip-deploys
 
@@ -336,10 +272,11 @@ jobs:
           node -e '
             let v; try { v = JSON.parse(require("fs").readFileSync("fw-flags.json","utf8")); }
             catch { console.error("Unparseable - refusing to print."); process.exit(1); }
-            const want = ["FEATURE_REFERRALS_ENABLED","FEATURE_HEALTH_ENABLED","FEATURE_VOTE_BRIDGE_ENABLED"];
-            const bad = want.filter((k) => v[k] !== "true");
-            for (const k of want) console.log(`  ${v[k] === "true" ? "OK  " : "BAD "} ${k}`);
-            if (bad.length) { console.error(`${bad.length} flag(s) did not take.`); process.exit(1); }
+            if (v.FEATURE_REFERRALS_ENABLED !== "true") {
+              console.error("FEATURE_REFERRALS_ENABLED did not take.");
+              process.exit(1);
+            }
+            console.log("  OK   FEATURE_REFERRALS_ENABLED = true");
           '
 
       - name: Restart so the new variable takes effect
@@ -511,12 +448,8 @@ jobs:
             --service frontend-admin --environment "$ENVIRONMENT" --project "$PROJECT" --skip-deploys
           unset KEY
           # The proxy needs to know where Go is. Private network, same address the
-          # frontend-web proxy uses and which is proven to work. The backend ROOT,
-          # no /api/v1: app/api/admin-proxy appends the caller's full backend path
-          # (/api/v1/admin/..., /api/finance/..., ...), so a base ending in /api/v1
-          # made every forwarded path /api/v1/api/v1/... and Gin 404d all of them -
-          # the console then reported "the overview API did not answer".
-          railway variable set ADMIN_API_BASE_URL=http://backend.railway.internal:8080 \
+          # frontend-web proxy uses and which is proven to work.
+          railway variable set ADMIN_API_BASE_URL=http://backend.railway.internal:8080/api/v1 \
             --service frontend-admin --environment "$ENVIRONMENT" --project "$PROJECT" --skip-deploys
           echo "  key written to backend and frontend-admin (value never printed)"
 
@@ -751,59 +684,3 @@ jobs:
           echo "  Verify with the staging-inspect workflow, which reports"
           echo "    INSURANCE_MYCOVER_API_KEY = set (len N, sha256 XXXXXXXXXXXX)"
           echo "  without ever printing the value."
-
-  set-assoc-card-secret:
-    # Generates and writes ASSOC_CARD_SIGNING_SECRET to the staging backend.
-    #
-    # WHY THIS EXISTS
-    # finance_routes.go: with FEATURE_ASSOCIATIONS_ENABLED on and APP_ENV != development,
-    # a missing ASSOC_CARD_SIGNING_SECRET calls log.Fatalf and exits the WHOLE process
-    # immediately (a deliberate fail-closed guard — outside development it refuses to
-    # sign membership cards with the public dev constant baked into the repo). Turning
-    # the association flag on without this secret set doesn't disable the module, it
-    # crash-loops the entire backend: confirmed live, a staging deploy attempt reached
-    # this exact log.Fatalf line seconds after boot and then restarted from scratch.
-    #
-    # The value is generated HERE and piped via --stdin exactly as ADMIN_API_KEY is: it
-    # never appears in a command line, a process list, or `set -x` output, and is never
-    # echoed. There is no external provider to match against (unlike the MyCover key
-    # below) — any random secret is valid, it only needs to be stable across restarts
-    # so previously-issued membership cards keep verifying.
-    if: ${{ inputs.confirm == 'SET' && inputs.set_assoc_card_secret }}
-    runs-on: ubuntu-latest
-    environment: staging
-    env:
-      RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN_STAGING }}
-      PROJECT: e7dca861-3667-4d9a-8090-6d2f4d179ec2
-      ENVIRONMENT: staging
-    steps:
-      - name: Check the Railway token is present
-        run: ': "${RAILWAY_TOKEN:?missing secret RAILWAY_TOKEN_STAGING}"'
-
-      - name: Install Railway CLI
-        run: npm install --global @railway/cli@5.40.1
-
-      # --skip-deploys: a separate deploy (this workflow's set-flags job, or a
-      # fresh `railway up` via ci.yml) already follows and this avoids racing it
-      # with a second, redundant rolling restart.
-      - name: Generate and set the secret
-        run: |
-          set -euo pipefail
-          SECRET="$(openssl rand -hex 32)"
-          printf '%s' "$SECRET" | railway variable set ASSOC_CARD_SIGNING_SECRET --stdin \
-            --service backend --environment "$ENVIRONMENT" --project "$PROJECT" --skip-deploys
-          unset SECRET
-          echo "  ASSOC_CARD_SIGNING_SECRET written to backend (value never printed)"
-
-      - name: Verify it is set (presence + length only, never the value)
-        run: |
-          set -euo pipefail
-          railway variable list --service backend --environment "$ENVIRONMENT" \
-            --project "$PROJECT" --json > assoc.json
-          node -e '
-            let v; try { v = JSON.parse(require("fs").readFileSync("assoc.json","utf8")); }
-            catch { console.error("Unparseable - refusing to print."); process.exit(1); }
-            const raw = v.ASSOC_CARD_SIGNING_SECRET;
-            if (!raw || String(raw).length < 32) { console.error("ASSOC_CARD_SIGNING_SECRET missing or too short."); process.exit(1); }
-            console.log("  OK   ASSOC_CARD_SIGNING_SECRET = set (len " + String(raw).length + ")");
-          '

@@ -136,16 +136,31 @@ func walletBalance(t *testing.T, ctx context.Context, pool *pgxpool.Pool, userID
 	return bal
 }
 
-func standingBalance(t *testing.T, ctx context.Context, pool *pgxpool.Pool, accountType string) int64 {
+// duesSettlementLegKobo returns the kobo ONE dues payment's ledger key credited to the
+// standing settlement account: the CREDIT side written by ledger.Debit (repository.go
+// suffixes the pair ":debit"/":credit" on the caller's Idempotency-Key). 0 means the
+// payment never posted.
+//
+// Deliberately NOT a before/after read of the account's BALANCE. settlement is a single
+// global standing account also moved by restaurant payouts, academy, connect, realtor
+// and other suites, and `go test ./...` runs packages concurrently against one database
+// (make test / CI) — a balance delta flakes on their postings and misattributes them to
+// this payment. The payment's own deterministic idempotency key scopes the read to
+// exactly what this test caused, and its absence just as exactly.
+func duesSettlementLegKobo(t *testing.T, ctx context.Context, pool *pgxpool.Pool, led *ledger.Service, idemKey string) int64 {
 	t.Helper()
-	var bal int64
-	if err := pool.QueryRow(ctx, `
-		SELECT COALESCE(SUM(CASE WHEN e.type IN ('CREDIT','REVERSAL_CREDIT') THEN e.amount_kobo ELSE -e.amount_kobo END),0)
-		FROM ledger_entries e JOIN ledger_accounts a ON a.id = e.account_id
-		WHERE a.user_id IS NULL AND a.type=$1`, accountType).Scan(&bal); err != nil {
-		t.Fatalf("standing balance for %s: %v", accountType, err)
+	acc, err := led.GetOrCreateStandingAccount(ctx, ledger.AccountSettlement)
+	if err != nil {
+		t.Fatalf("settlement standing acct: %v", err)
 	}
-	return bal
+	var credited int64
+	if err := pool.QueryRow(ctx,
+		`SELECT COALESCE(SUM(amount_kobo),0) FROM ledger_entries
+		  WHERE idempotency_key=$1 AND type='CREDIT' AND account_id=$2`,
+		idemKey+":credit", acc.ID).Scan(&credited); err != nil {
+		t.Fatalf("read dues settlement leg: %v", err)
+	}
+	return credited
 }
 
 // seedInvoice inserts a pending dues invoice directly (CreateInvoice's own
@@ -224,7 +239,6 @@ func TestLiveDB_PayDues_HappyPath_DebitsPayerCreditsSettlement_LiftsRestriction(
 	}
 
 	payerBalBefore := walletBalance(t, ctx, pool, resident)
-	settleBalBefore := standingBalance(t, ctx, pool, string(ledger.AccountSettlement))
 
 	receipt, err := svc.PayDues(ctx, estateID, resident, PayDuesRequest{
 		InvoiceID:      invID,
@@ -247,12 +261,11 @@ func TestLiveDB_PayDues_HappyPath_DebitsPayerCreditsSettlement_LiftsRestriction(
 
 	// Balanced double-entry, kobo-exact.
 	payerBalAfter := walletBalance(t, ctx, pool, resident)
-	settleBalAfter := standingBalance(t, ctx, pool, string(ledger.AccountSettlement))
 	if payerBalBefore-payerBalAfter != amount {
 		t.Errorf("payer debited %d, want %d", payerBalBefore-payerBalAfter, amount)
 	}
-	if settleBalAfter-settleBalBefore != amount {
-		t.Errorf("settlement credited %d, want %d", settleBalAfter-settleBalBefore, amount)
+	if got := duesSettlementLegKobo(t, ctx, pool, led, "int001-"+invID); got != amount {
+		t.Errorf("settlement credited %d for this invoice, want %d", got, amount)
 	}
 
 	// Audit DUES_PAY written.
@@ -482,7 +495,6 @@ func TestLiveDB_PayDues_IdempotentReplayReturnsCanonicalReceipt(t *testing.T) {
 	invID := seedInvoice(t, ctx, pool, estateID, resident, amount, "pending")
 
 	key := "idem001-" + invID
-	settleBefore := standingBalance(t, ctx, pool, string(ledger.AccountSettlement))
 
 	first, err := svc.PayDues(ctx, estateID, resident, PayDuesRequest{InvoiceID: invID, IdempotencyKey: key})
 	if err != nil {
@@ -505,9 +517,8 @@ func TestLiveDB_PayDues_IdempotentReplayReturnsCanonicalReceipt(t *testing.T) {
 		t.Errorf("estate_payments rows for invoice = %d, want exactly 1", n)
 	}
 
-	settleAfter := standingBalance(t, ctx, pool, string(ledger.AccountSettlement))
-	if settleAfter-settleBefore != amount {
-		t.Errorf("settlement credited %d across both calls, want exactly %d once (no second ledger entry)", settleAfter-settleBefore, amount)
+	if got := duesSettlementLegKobo(t, ctx, pool, led, key); got != amount {
+		t.Errorf("settlement credited %d across both calls, want exactly %d once (no second ledger entry)", got, amount)
 	}
 }
 
@@ -544,7 +555,6 @@ func TestLiveDB_PayDues_ConcurrentSameKeySettlesExactlyOnce(t *testing.T) {
 	invID := seedInvoice(t, ctx, pool, estateID, resident, amount, "pending")
 
 	key := "conc001-" + invID
-	settleBefore := standingBalance(t, ctx, pool, string(ledger.AccountSettlement))
 
 	const n = 2
 	var wg sync.WaitGroup
@@ -577,9 +587,8 @@ func TestLiveDB_PayDues_ConcurrentSameKeySettlesExactlyOnce(t *testing.T) {
 	if got := paymentCount(t, ctx, pool, invID); got != 1 {
 		t.Fatalf("estate_payments rows = %d, want exactly 1", got)
 	}
-	settleAfter := standingBalance(t, ctx, pool, string(ledger.AccountSettlement))
-	if settleAfter-settleBefore != amount {
-		t.Fatalf("settlement credited %d across both concurrent calls, want exactly %d once", settleAfter-settleBefore, amount)
+	if got := duesSettlementLegKobo(t, ctx, pool, led, key); got != amount {
+		t.Fatalf("settlement credited %d across both concurrent calls, want exactly %d once", got, amount)
 	}
 
 	// Every successful caller must receive the SAME canonical receipt ID — the

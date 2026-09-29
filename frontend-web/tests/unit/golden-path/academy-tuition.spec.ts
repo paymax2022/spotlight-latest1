@@ -29,7 +29,8 @@ vi.mock('next/server', () => ({
 
 vi.mock('@/src/lib/auth/request', () => ({ requireRequestUser: vi.fn() }));
 vi.mock('@/lib/supabase/server', () => ({ createAdminClient: vi.fn(), createClient: vi.fn() }));
-vi.mock('@/src/server/voting/payment/paystack', () => ({ verifyPaystackPayment: vi.fn() }));
+vi.mock('@/src/lib/go-backend', () => ({ proxyToGoBackend: vi.fn() }));
+vi.mock('@/src/server/services/academy/enrollment', () => ({ ensureEnrollment: vi.fn().mockResolvedValue(undefined) }));
 vi.mock('@/src/lib/email/transactional', () => ({
   sendTransactionalEmail: vi.fn().mockResolvedValue(undefined),
 }));
@@ -39,7 +40,7 @@ import { GET as STATUS } from '../../../app/api/academy/application/route';
 import { autoCreateInstallmentPlan } from '@/src/server/services/academy/installments';
 import { requireRequestUser } from '@/src/lib/auth/request';
 import { createAdminClient } from '@/lib/supabase/server';
-import { verifyPaystackPayment } from '@/src/server/voting/payment/paystack';
+import { proxyToGoBackend } from '@/src/lib/go-backend';
 
 const USER = { id: 'user-001', email: 'student@example.com' };
 
@@ -192,93 +193,94 @@ describe('autoCreateInstallmentPlan — what the applicant is billed', () => {
 });
 
 // ── 2. What is accepted as payment ───────────────────────────────────────────
+//
+// Ownership, amount, currency, and reference-reuse verification all moved to the
+// Go backend (backend/internal/academy/tuition) — see its live-DB test suite
+// (backend/tests/academy/tuition_service_live_db_test.go) for those invariants
+// now. This route is a thin proxy: these tests cover ITS job — forwarding to Go,
+// mapping Go's response/error back out, and the idempotency-collision special
+// case — not the money checks themselves.
 
-describe('POST /api/academy/installments/pay — amount verification', () => {
+describe('POST /api/academy/installments/pay — proxies to the Go money path', () => {
   function payDb(paymentRow: Rows | null) {
     const chain: any = {
       select: () => chain,
       eq: () => chain,
       maybeSingle: async () => ({ data: paymentRow, error: null }),
-      update: () => ({ eq: async () => ({ error: null }) }),
     };
-    // The reference-reuse guard queries the same table a second time; returning
-    // the same row means "the reference belongs to this payment", not a reuse.
     return { from: () => chain } as any;
   }
 
-  const OWNED_PAYMENT = {
-    id: 'pay-1',
-    plan_id: 'plan-1',
+  const EMAIL_ROW = {
     installment_number: 1,
     amount_ngn: 255000,
-    status: 'pending',
     academy_installment_plans: {
-      application_id: 'app-1',
-      academy_applications: { user_id: USER.id, full_name: 'Ada', email: USER.email },
+      academy_applications: { full_name: 'Ada', email: USER.email },
     },
   };
 
   const body = { planId: 'plan-1', paymentId: 'pay-1', reference: 'ref-abc' };
 
-  function verified(amountKobo: number, currency = 'NGN') {
-    vi.mocked(verifyPaystackPayment).mockResolvedValue({
-      success: true,
-      providerReference: 'ref-abc',
-      amountKobo,
-      currency,
-      paidAt: '2026-09-01T00:00:00Z',
-      customerEmail: USER.email,
-      metadata: {},
-    } as any);
+  function goResponds(status: number, json: Record<string, unknown>) {
+    vi.mocked(proxyToGoBackend).mockResolvedValue(
+      new Response(JSON.stringify(json), { status, headers: { 'Content-Type': 'application/json' } }) as any,
+    );
   }
 
-  it('rejects a reference that settled less than the instalment', async () => {
-    vi.mocked(createAdminClient).mockReturnValue(payDb(OWNED_PAYMENT));
-    verified(10_000); // ₦100 against a ₦255,000 instalment
+  beforeEach(() => {
+    vi.mocked(createAdminClient).mockReturnValue(payDb(EMAIL_ROW));
+  });
+
+  it('rejects a reference that settled less than the instalment (Go 400)', async () => {
+    goResponds(400, { error: 'tuition: payment amount does not match plan' });
+
+    const res = await PAY(makeRequest('/api/academy/installments/pay', { body, headers: withAuth() }));
+    expect(res.status).toBe(400);
+  });
+
+  it('propagates Go\'s "payment not confirmed by gateway" as 402', async () => {
+    goResponds(402, { error: 'tuition: payment not confirmed by provider', code: 'payment_not_confirmed' });
 
     const res = await PAY(makeRequest('/api/academy/installments/pay', { body, headers: withAuth() }));
     expect(res.status).toBe(402);
   });
 
-  it('rejects a settlement in the wrong currency', async () => {
-    vi.mocked(createAdminClient).mockReturnValue(payDb(OWNED_PAYMENT));
-    verified(255_000 * 100, 'USD');
-
-    const res = await PAY(makeRequest('/api/academy/installments/pay', { body, headers: withAuth() }));
-    expect(res.status).toBe(402);
-  });
-
-  it('accepts a reference that settled the full instalment', async () => {
-    vi.mocked(createAdminClient).mockReturnValue(payDb(OWNED_PAYMENT));
-    verified(255_000 * 100);
+  it('accepts a reference Go confirms and settles', async () => {
+    goResponds(200, { success: true, data: { paymentId: 'pay-1', planId: 'plan-1', applicationId: 'app-1', amountPaidNgn: 255000 } });
 
     const res = await PAY(makeRequest('/api/academy/installments/pay', { body, headers: withAuth() }));
     expect(res.status).toBe(200);
   });
 
-  it('refuses to settle an instalment belonging to another user', async () => {
-    vi.mocked(createAdminClient).mockReturnValue(
-      payDb({
-        ...OWNED_PAYMENT,
-        academy_installment_plans: {
-          application_id: 'app-9',
-          academy_applications: { user_id: 'someone-else', full_name: 'Bo', email: 'bo@example.com' },
-        },
-      }),
-    );
-    verified(255_000 * 100);
+  it('propagates Go\'s ownership rejection as 403', async () => {
+    goResponds(403, { error: 'tuition: payment does not belong to this user' });
 
     const res = await PAY(makeRequest('/api/academy/installments/pay', { body, headers: withAuth() }));
     expect(res.status).toBe(403);
   });
 
-  it('is idempotent — a second confirmation of a paid instalment is a no-op', async () => {
-    vi.mocked(createAdminClient).mockReturnValue(payDb({ ...OWNED_PAYMENT, status: 'paid' }));
+  it('is idempotent — a same-key replay Go rejects as a collision is surfaced as success, not an error', async () => {
+    goResponds(409, { error: 'tuition: duplicate idempotency key', code: 'idempotency_collision' });
 
     const res = await PAY(makeRequest('/api/academy/installments/pay', { body, headers: withAuth() }));
     expect(res.status).toBe(200);
-    // Crucially it must not have re-verified or re-charged anything.
-    expect(verifyPaystackPayment).not.toHaveBeenCalled();
+  });
+
+  it('propagates a genuine reference-reuse conflict as 409, not success', async () => {
+    // A DIFFERENT 409 (not the idempotency-collision code) must NOT be swallowed.
+    goResponds(409, { error: 'tuition: payment reference already used for a different installment', code: 'reference_reused' });
+
+    const res = await PAY(makeRequest('/api/academy/installments/pay', { body, headers: withAuth() }));
+    expect(res.status).toBe(409);
+  });
+
+  it('always forwards an Idempotency-Key to Go, generating one if the client sent none', async () => {
+    goResponds(200, { success: true, data: { paymentId: 'pay-1', applicationId: 'app-1' } });
+
+    await PAY(makeRequest('/api/academy/installments/pay', { body, headers: withAuth() }));
+
+    const [, , options] = vi.mocked(proxyToGoBackend).mock.calls[0];
+    expect((options as any)?.headers?.['Idempotency-Key']).toBeTruthy();
   });
 });
 

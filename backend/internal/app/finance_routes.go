@@ -728,16 +728,14 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 	// admin /api/academy/admin/* (+ /api/academy for identity/curriculum/commerce).
 	if cfg.FeatureAcademyEnabled && pool != nil {
 		academyRTC := rtc.NewIssuer(rtc.Config{
-			AgoraAppID:          cfg.AgoraAppID,
-			AgoraAppCertificate: cfg.AgoraAppCertificate,
-			VideoSDKAPIKey:      cfg.VideoSDKAPIKey,
-			VideoSDKSecret:      cfg.VideoSDKSecret,
+			VideoSDKAPIKey: cfg.VideoSDKAPIKey,
+			VideoSDKSecret: cfg.VideoSDKSecret,
 		})
 		// RAILS_MODE seam: select the HTTP fake/sandbox/live adapters for the four
 		// unbacked academy rails (BNPL/payout/disburse/billing). nil per-rail ⇒ that
 		// package keeps its in-process dev stub (academy_rails_external.go).
 		academyBNPL, academyDisburse, academyBilling, academyPayout := academyRails(cfg)
-		RegisterAcademy(r, finance, pool, rbac, ledgerSvc, academyRTC, academyBNPL, academyDisburse, academyBilling, academyPayout, paymentProvider, cfg.FeatureAcademyExamEnabled, cfg.FeatureAcademySpineEnabled, cfg.FeatureAcademyEduPayEnabled, cfg.FeatureAcademyCredentialsEnabled, cfg.FeatureAcademyLiveEnabled, cfg.FeatureAcademySchoolsEnabled, cfg.FeatureAcademyTutorEnabled, cfg.FeatureAcademyFeesEnabled, webhookHandler)
+		RegisterAcademy(r, finance, pool, rbac, ledgerSvc, academyRTC, academyBNPL, academyDisburse, academyBilling, academyPayout, paymentProvider, cfg.FeatureAcademyExamEnabled, cfg.FeatureAcademySpineEnabled, cfg.FeatureAcademyEduPayEnabled, cfg.FeatureAcademyCredentialsEnabled, cfg.FeatureAcademyLiveEnabled, cfg.FeatureAcademySchoolsEnabled, cfg.FeatureAcademyTutorEnabled, cfg.FeatureAcademyFeesEnabled, cfg.FeatureAcademyTuitionEnabled, webhookHandler)
 
 		// EdTech PLATFORM super-admin oversight (SU-01..SU-12): read-only cross-tenant
 		// console backend at /api/academy/admin/platform/*, gated purely by the seeded
@@ -1174,7 +1172,11 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 			Region:          cfg.R2Region,
 		})
 		assocSvc.WithPresigner(assocPresigner)
+		// Live group chat: message fan-out to a thread's audience over the WS hub,
+		// the same open-source stack the food/mobility/doctor streams use.
+		associationHub := platformWS.New(wsOriginAllowed)
 		assocHandler := association.NewHandler(assocSvc).
+			WithHub(associationHub).
 			WithPresigner(assocPresigner, cfg.R2Bucket)
 		association.RegisterRoutes(finance.Group("/associations"), assocHandler)
 	}
@@ -1805,16 +1807,6 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		restGroup.POST("/orders/:orderId/dispute", restaurantHandler.RaiseFoodDispute)
 		restGroup.GET("/disputes/:id", restaurantHandler.GetFoodDispute)
 
-		// ── KYB (owner) ───────────────────────────────────────────────────────
-		// Merchant business verification. Distinct from the onboarding QUEUE the ops
-		// console reviews: this is where the merchant actually supplies the records.
-		// kyb_handler.go + kyb_service.go + 20261018000000_restaurant_kyb.sql existed
-		// with no HTTP surface, so the review queue had nothing real to read.
-		restGroup.GET("/:id/kyb", restaurantHandler.GetKYB)
-		restGroup.PUT("/:id/kyb", restaurantHandler.SaveKYB)
-		restGroup.POST("/:id/kyb/documents", restaurantHandler.AddKYBDocument)
-		restGroup.POST("/:id/kyb/submit", restaurantHandler.SubmitKYB)
-
 		// ── Group & scheduled orders ──────────────────────────────────────────
 		// A host opens a group order, contributors add items, the host finalizes it
 		// into a normal order (money path reuses PlaceOrder's escrow + idempotency).
@@ -1945,7 +1937,7 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		// the SAME member-facing bank-account/withdrawal routes this branch already
 		// registers unconditionally a few lines above (restGroup.{POST,GET,PATCH,
 		// DELETE} "/bank-accounts"*, restGroup.{POST,GET} "/withdrawals"* at
-		// ~line 1654) — taking both would panic Gin at startup on the duplicate
+		// ~line 1692) — taking both would panic Gin at startup on the duplicate
 		// registration. Kept this branch's unconditional version (already proven in
 		// this PR's own CI) and dropped main's flag-gated duplicate rather than
 		// reconciling two working implementations of the same fix.
@@ -2703,15 +2695,13 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 	// auth middleware. Money path (POST /payouts) posts a balanced double-entry
 	// via the shared ledger, enforces tier limits fail-closed, and is idempotent.
 	if cfg.FeatureDoctorEnabled {
-		// Wave 6: realtime layer. The RTC Issuer signs short-lived Agora/VideoSDK
+		// Wave 6: realtime layer. The RTC Issuer signs short-lived VideoSDK
 		// join tokens server-side (creds never leave the process); an unconfigured
 		// provider yields an empty token + a "not configured" flag, never a fake one.
 		// One shared WS Hub fans push events to a doctor's connected devices.
 		rtcIssuer := rtc.NewIssuer(rtc.Config{
-			AgoraAppID:          cfg.AgoraAppID,
-			AgoraAppCertificate: cfg.AgoraAppCertificate,
-			VideoSDKAPIKey:      cfg.VideoSDKAPIKey,
-			VideoSDKSecret:      cfg.VideoSDKSecret,
+			VideoSDKAPIKey: cfg.VideoSDKAPIKey,
+			VideoSDKSecret: cfg.VideoSDKSecret,
 		})
 		doctorHub := platformWS.New(wsOriginAllowed)
 
@@ -2997,7 +2987,7 @@ func registerFinanceRoutes(r *gin.Engine, cfg config.Config, supabase *integrati
 		docGroup.GET("/chat/:threadId/messages", doctorHandler.ListChatMessages)
 		docGroup.POST("/chat/:threadId/messages", doctorHandler.SendChatMessage)
 
-		// ── Wave 4/6: CALL SESSIONS (Wave 6 issues real Agora/VideoSDK RTC tokens) ──
+		// ── Wave 4/6: CALL SESSIONS (Wave 6 issues real VideoSDK RTC tokens) ──
 		docGroup.GET("/calls/:appointmentId", doctorHandler.GetCallSession)
 		docGroup.POST("/calls/:appointmentId/join", doctorHandler.StartCallSession)
 		docGroup.POST("/calls/:appointmentId/leave", doctorHandler.EndCallSession)

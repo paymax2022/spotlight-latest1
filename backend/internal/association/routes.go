@@ -212,6 +212,12 @@ func RegisterRoutes(rg *gin.RouterGroup, h *Handler) {
 	rg.POST("/support/tickets/:id/messages", h.ReplyTicket)
 
 	// ── Chat (I) ────────────────────────────────────────────────
+	// Live delivery: the caller's own realtime stream on the open-source WS hub
+	// (platform/ws). Authenticated by the group's RequireAuthContext, like the
+	// doctor stream. A static "/ws" segment — gin's tree would conflict a root
+	// param with the static siblings, the same reason org detail lives at
+	// /orgs/:id (see the note on RegisterRoutes).
+	rg.GET("/ws", h.ServeWS)
 	rg.GET("/chat/threads", h.ListChatThreads)
 	rg.GET("/chat/threads/:id", h.GetChatThread)
 	rg.POST("/chat/threads/:id/messages", h.SendChatMessage)

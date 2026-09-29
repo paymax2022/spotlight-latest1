@@ -364,7 +364,7 @@ export const DEMO_CALL_SESSION_RICH: CallSessionRich = {
     roomToken: 'demo-room-token',
   },
   phase: 'live',
-  provider: 'agora',
+  provider: 'videosdk',
   providerFailed: false,
   networkQuality: 'good',
   device: DEMO_DEVICE_CHECK,
@@ -419,7 +419,7 @@ export async function runDeviceCheck(input: RunDeviceCheckInput): Promise<RunDev
 export async function joinCall(input: JoinCallInput): Promise<JoinCallResult> {
   if (DOCTOR_USE_MOCK) {
     return wait({
-      callId: `call-${Date.now()}`, provider: 'agora' as const, phase: 'live' as const,
+      callId: `call-${Date.now()}`, provider: 'videosdk' as const, phase: 'live' as const,
       roomToken: `room-${input.idempotencyKey.slice(-8)}`,
     }, 600);
   }
@@ -432,7 +432,7 @@ export async function leaveCall(input: LeaveCallInput): Promise<LeaveCallResult>
     const summary: CallDurationSummary = {
       appointmentId: input.appointmentId,
       patient: DEMO_PATIENT_PROFILE.patient,
-      provider: 'agora', mode: 'video', durationSecs: 1320,
+      provider: 'videosdk', mode: 'video', durationSecs: 1320,
       startedAt: iso(-1320 * 1000), endedAt, endedReason: 'completed',
     };
     return wait({ appointmentId: input.appointmentId, phase: 'ended' as const, summary }, 500);
@@ -442,7 +442,7 @@ export async function leaveCall(input: LeaveCallInput): Promise<LeaveCallResult>
 
 export async function switchProvider(input: SwitchProviderInput): Promise<SwitchProviderResult> {
   if (DOCTOR_USE_MOCK) {
-    // Models the Agora → VideoSDK fallback. Phase transitions reconnecting → live.
+    // Re-joins the call on VideoSDK (the only provider). Phase transitions reconnecting → live.
     return wait({ appointmentId: input.appointmentId, provider: input.to, phase: 'live' as const }, 700);
   }
   return doctorPost<SwitchProviderResult>(`/calls/${input.appointmentId}/switch-provider`, input, input.idempotencyKey);

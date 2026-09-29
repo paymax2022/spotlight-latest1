@@ -62,7 +62,7 @@ type SendChatMessageRequest struct {
 // ── Call sessions (doctor_call_sessions) ─────────────────────────────────────
 
 // CallSession mirrors public.doctor_call_sessions (OpenAPI schema CallSession).
-// RoomToken is the provider (Agora/VideoSDK) join token — issuance is an
+// RoomToken is the provider (VideoSDK) join token — issuance is an
 // integration TODO, so it is persisted as the stored placeholder for now.
 type CallSession struct {
 	ID            string          `json:"id"`

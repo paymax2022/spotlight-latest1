@@ -337,11 +337,11 @@ export interface ChatTranscript {
 // ═══════════════════════════════════════════════════════════════════════════
 // Extends Phase 1 `CallSession` ADDITIVELY via `CallSessionRich` (composes the
 // base + provider/device/network/participant/control state). Reconnecting,
-// dropped, disconnected, poor-network, Agora-failure / VideoSDK-fallback are all
+// dropped, disconnected, poor-network and provider-failure are all
 // STATES the UI renders from the call phase + provider + network fields.
 
-// Real-time provider powering the call (with Agora → VideoSDK fallback).
-export type CallProvider = 'agora' | 'videosdk';
+// Real-time provider powering the call. VideoSDK is the ONLY provider.
+export type CallProvider = 'videosdk';
 
 // Network quality bucket (drives the poor-network + reconnecting warnings).
 export type NetworkQuality = 'excellent' | 'good' | 'fair' | 'poor' | 'unknown';
@@ -396,7 +396,7 @@ export interface CallSessionRich {
   base:            CallSession;     // reuse Phase 1 id/appointmentId/patient/mode/status/duration/roomToken
   phase:           CallPhase;       // richer status (waiting_room/reconnecting/dropped)
   provider:        CallProvider;    // active real-time provider
-  providerFailed:  boolean;         // true when Agora failed (drives fallback banner)
+  providerFailed:  boolean;         // true when the RTC provider failed (drives the reconnect banner)
   networkQuality:  NetworkQuality;
   device:          DeviceCheck;     // last device-check result
   controls:        CallControls;
@@ -640,7 +640,7 @@ export interface LeaveCallResult {
 
 export interface SwitchProviderInput {
   appointmentId:    string;
-  to:               CallProvider;  // typically 'videosdk' (Agora → VideoSDK fallback)
+  to:               CallProvider;  // the provider to join with (VideoSDK)
   idempotencyKey:   string;
 }
 

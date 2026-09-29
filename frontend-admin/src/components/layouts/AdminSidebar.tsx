@@ -68,6 +68,13 @@ const navItemsBase: NavItem[] = [
   { label: 'Leads Queue', href: '/admin/leads', section: 'Support' },
   { label: 'Handoff Queue', href: '/admin/handoffs', section: 'Support' },
   { label: 'Users', href: '/admin/users', section: 'Support', permissions: ['users.view'] },
+  // Adds a colleague: creates the credentials, the 'admin' profile role, an
+  // active platform_users row and the RBAC grant in one go. Indexed next to
+  // Users/Roles because it grants what those two screens inspect, and gated on
+  // users.roles.assign so it agrees with routeGuard.ts's /admin/admins entry —
+  // a mismatch either hides the link from an operator the guard would admit or
+  // bounces them to /admin/unauthorized after they click it.
+  { label: 'Create Admin', href: '/admin/admins/new', section: 'Support', permissions: ['users.roles.assign'] },
   { label: 'Roles', href: '/admin/roles', section: 'Support', permissions: ['roles.view'] },
   { label: 'RBAC Settings', href: '/admin/rbac-settings', section: 'Support', permissions: ['roles.view'] },
   { label: 'Permission Matrix', href: '/admin/permissions-matrix', section: 'Support', permissions: ['permissions.view'] },
@@ -398,6 +405,11 @@ const navItemsBase: NavItem[] = [
   { label: 'Rider Dispatch', href: '/admin/restaurant/dispatch', section: 'Restaurant', permissions: ['restaurant.manage', 'restaurant.admin.dispatch'] },
   { label: 'Onboarding / KYC', href: '/admin/restaurant/onboarding', section: 'Restaurant', permissions: ['restaurant.manage', 'restaurant.admin.onboarding'] },
   { label: 'Payouts', href: '/admin/restaurant/payouts', section: 'Restaurant', permissions: ['restaurant.admin.payouts'] },
+  // Merchant withdrawal ops queue (settle/reverse). Mounted with the rest of the
+  // restaurant admin group and RBAC-gated on restaurant.admin.withdrawals — a
+  // dedicated slug, so an ops agent reviewing withdrawals does not need the
+  // broader restaurant.manage grant. The merchant-side REQUEST is what
+  // FEATURE_RESTAURANT_WITHDRAWALS_ENABLED gates (default OFF).
   { label: 'Withdrawals', href: '/admin/restaurant/withdrawals', section: 'Restaurant', permissions: ['restaurant.admin.withdrawals'] },
   { label: 'Refunds & Disputes', href: '/admin/restaurant/disputes', section: 'Restaurant', permissions: ['restaurant.manage', 'restaurant.admin.disputes'] },
   // ── Maps (MapService v2 cost/coverage + OSM contribution review) ─────────────

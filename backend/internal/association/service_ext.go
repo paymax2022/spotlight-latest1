@@ -426,6 +426,52 @@ func (s *Service) MuteThread(ctx context.Context, userID, threadID string, muted
 	return nil
 }
 
+// ChatThreadAudience returns the user ids of every ACTIVE member allowed to open
+// the thread — the exact set a realtime push may fan a message out to.
+//
+// The scope gate is the one GetChatThreads / GetChatThread / SendChatMessage
+// apply (CM-002 / CH-005): organisation membership alone is NOT enough for an
+// EXECUTIVE thread (needs a role) or a COMMITTEE thread (needs committee
+// membership). An audience derived from organisation membership would be a
+// SUPERSET of that and would push executive and committee message bodies to
+// ordinary members. Fail-closed: an unknown thread, or one the caller cannot
+// see, yields an empty list rather than an error.
+func (s *Service) ChatThreadAudience(ctx context.Context, threadID string) ([]string, error) {
+	const q = `
+		SELECT DISTINCT v.user_id::text
+		FROM assoc_chat_threads t
+		JOIN assoc_memberships v ON v.organisation_id = t.organisation_id
+		WHERE t.id = $1
+		  AND v.status = 'ACTIVE'
+		  AND (CASE
+		        WHEN t.scope = 'EXECUTIVE' THEN EXISTS (
+		          SELECT 1 FROM assoc_member_roles ar
+		          JOIN assoc_memberships am ON am.id = ar.membership_id
+		          WHERE am.user_id = v.user_id AND am.organisation_id = t.organisation_id
+		            AND am.status = 'ACTIVE' AND ar.role != 'NONE')
+		        WHEN t.scope = 'COMMITTEE' AND t.committee_id IS NOT NULL THEN EXISTS (
+		          SELECT 1 FROM assoc_committee_members cm
+		          JOIN assoc_memberships am ON am.id = cm.membership_id
+		          WHERE am.user_id = v.user_id AND cm.committee_id = t.committee_id
+		            AND cm.status = 'ACTIVE')
+		        ELSE true
+		      END)`
+	rows, err := s.db.Query(ctx, q, threadID)
+	if err != nil {
+		return nil, fmt.Errorf("association: chat audience: %w", err)
+	}
+	defer rows.Close()
+	out := []string{}
+	for rows.Next() {
+		var uid string
+		if err := rows.Scan(&uid); err != nil {
+			return nil, err
+		}
+		out = append(out, uid)
+	}
+	return out, rows.Err()
+}
+
 func (s *Service) SendChatMessage(ctx context.Context, userID, threadID, body string) (*ChatMessage, error) {
 	m := &ChatMessage{ID: uuid.New().String(), ThreadID: threadID, AuthorID: userID, AuthorName: "You", Body: body, Mine: true}
 	// Cross-group write isolation (CH-005 / §4.9): the INSERT is conditional on the

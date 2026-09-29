@@ -1,10 +1,16 @@
-import { createClient } from '@supabase/supabase-js';
+import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { NextRequest, NextResponse } from 'next/server';
 
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL || '',
-  process.env.SUPABASE_SERVICE_ROLE_KEY || ''
-);
+let _supabase: SupabaseClient | null = null;
+function supabase(): SupabaseClient {
+  if (!_supabase) {
+    _supabase = createClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.SUPABASE_SERVICE_ROLE_KEY!
+    );
+  }
+  return _supabase;
+}
 
 // GET contestant votes
 // Next 15 made route params async: the second argument is a Promise and must
@@ -18,7 +24,7 @@ export async function GET(
     const { id } = await params;
 
     // Fetch contestant votes from database
-    const { data: adminVotes, error: votesError } = await supabase
+    const { data: adminVotes, error: votesError } = await supabase()
       .from('admin_votes')
       .select('*')
       .eq('contestant_id', id)
@@ -29,7 +35,7 @@ export async function GET(
     }
 
     // Fetch audit log
-    const { data: auditLog, error: auditError } = await supabase
+    const { data: auditLog, error: auditError } = await supabase()
       .from('vote_audit_log')
       .select('*')
       .eq('contestant_id', id)
@@ -40,7 +46,7 @@ export async function GET(
     }
 
     // Fetch vote stats
-    const { data: voteStats, error: statsError } = await supabase
+    const { data: voteStats, error: statsError } = await supabase()
       .from('contestant_vote_stats')
       .select('*')
       .eq('contestant_id', id)
@@ -87,7 +93,7 @@ export async function POST(
     }
 
     // Get current vote count
-    const { data: existingVotes } = await supabase
+    const { data: existingVotes } = await supabase()
       .from('admin_votes')
       .select('*')
       .eq('contestant_id', id)
@@ -96,7 +102,7 @@ export async function POST(
     const currentVotes = existingVotes?.vote_count || 0;
 
     // Upsert admin votes
-    const { error: upsertError } = await supabase
+    const { error: upsertError } = await supabase()
       .from('admin_votes')
       .upsert(
         {
@@ -117,7 +123,7 @@ export async function POST(
     }
 
     // Log the vote action
-    const { error: auditError } = await supabase
+    const { error: auditError } = await supabase()
       .from('vote_audit_log')
       .insert({
         contestant_id: id,
@@ -132,7 +138,7 @@ export async function POST(
     }
 
     // Update vote stats
-    const { error: statsError } = await supabase
+    const { error: statsError } = await supabase()
       .from('contestant_vote_stats')
       .upsert({
         contestant_id: id,

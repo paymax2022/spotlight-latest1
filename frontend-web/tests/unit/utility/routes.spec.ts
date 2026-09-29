@@ -4,7 +4,19 @@ import { makeRequest, withAuth } from '../golden-path/_fixtures';
 vi.mock('@/src/lib/feature-flags', () => ({
   featureFlags: {
     utilityPayments: vi.fn(() => true),
+    // Off = the local src/server/utility implementation answers pay/validate.
+    utilityBillsGoProxy: vi.fn(() => false),
   },
+}));
+
+// Read routes (categories, billers, products, transactions, beneficiaries)
+// proxy to the Go backend unconditionally; pay/validate do so only when
+// utilityBillsGoProxy is on. Mocking the proxy keeps both paths off the
+// network — without it these tests only passed while a backend happened to be
+// listening on GO_BACKEND_URL, and silently asserted the wrong implementation.
+vi.mock('@/src/lib/go-backend', () => ({
+  GO_BACKEND_URL: 'http://localhost:8080',
+  proxyToGoBackend: vi.fn(),
 }));
 
 vi.mock('@/src/lib/auth/request', () => ({
@@ -58,13 +70,13 @@ import { requireKycTier } from '@/src/server/kyc/gate';
 import { assertAdminPermission } from '@/src/server/admin/auth';
 import { addAuditEvent } from '@/src/server/admin/audit';
 import { checkRateLimit } from '@/src/lib/voting/rate-limit';
+import { proxyToGoBackend } from '@/src/lib/go-backend';
 import {
   adminCreateUtilityRow,
   adminGetUtilityTransaction,
   adminListUtilityTable,
   adminUpdateUtilityRow,
   adminUtilityReport,
-  listUtilityCategories,
   payUtility,
   requeryPendingUtilityTransactions,
   reverseUtilityTransaction,
@@ -81,10 +93,20 @@ import { PUT as rotateProviderCredentials } from '../../../app/api/admin/utility
 
 const TEST_USER = { id: 'user-utility-001', email: 'utility@example.com' };
 
+// The upstream response proxyToGoBackend resolves to (Go answers JSON).
+function jsonResponse(payload: unknown, status = 200): Response {
+  return new Response(JSON.stringify(payload), {
+    status,
+    headers: { 'content-type': 'application/json' },
+  });
+}
+
 describe('utility customer routes', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(featureFlags.utilityPayments).mockReturnValue(true);
+    // clearAllMocks keeps implementations, so re-pin the cutover flag per test.
+    vi.mocked(featureFlags.utilityBillsGoProxy).mockReturnValue(false);
     vi.mocked(requireRequestUser).mockResolvedValue(TEST_USER);
     vi.mocked(requireKycTier).mockResolvedValue(undefined);
     vi.mocked(checkRateLimit).mockReturnValue({ allowed: true, remaining: 9, resetInMs: 60_000 });
@@ -103,7 +125,7 @@ describe('utility customer routes', () => {
   });
 
   it('returns utility categories for an authenticated user (auth-only, no KYC tier gate)', async () => {
-    vi.mocked(listUtilityCategories).mockResolvedValue([{ id: 'airtime', label: 'Airtime' }]);
+    vi.mocked(proxyToGoBackend).mockResolvedValue(jsonResponse({ categories: [{ id: 'airtime', label: 'Airtime' }] }));
 
     const response = await getCategories(new Request('http://localhost/api/v1/utility/categories', {
       headers: withAuth(),
@@ -112,6 +134,12 @@ describe('utility customer routes', () => {
 
     expect(response.status).toBe(200);
     expect(body.categories).toHaveLength(1);
+    // Reads are repointed to the Go utilitybills engine, shape-mapped back into
+    // this module's own `{ success, categories }` contract.
+    expect(proxyToGoBackend).toHaveBeenCalledWith(
+      expect.anything(),
+      '/api/finance/utilitybills/categories',
+    );
     expect(requireRequestUser).toHaveBeenCalled();
     // KYC Tier-1 is intentionally NOT enforced in the utility module — per the
     // product decision documented in app/api/v1/utility/_utils.ts.
@@ -152,6 +180,55 @@ describe('utility customer routes', () => {
       category: 'airtime',
       idempotencyKey: 'UTILITY-test-key',
     }));
+  });
+
+  it('cuts pay over to the Go engine when the proxy flag is on, keeping the 201/200 contract', async () => {
+    vi.mocked(featureFlags.utilityBillsGoProxy).mockReturnValue(true);
+    vi.mocked(proxyToGoBackend).mockResolvedValue(jsonResponse({
+      already_processed: false,
+      transaction: { id: 'tx-002', status: 'successful', receipt_number: 'UTL-002' },
+    }));
+
+    const fresh = await postPay(makeRequest('/api/v1/utility/pay', {
+      body: {
+        category: 'airtime',
+        biller_id: 'biller-001',
+        product_id: 'product-001',
+        customer_reference: '08030000000',
+        amount_kobo: 100_000,
+      },
+      headers: withAuth({ 'Idempotency-Key': 'UTILITY-go-key' }),
+    }));
+    const freshBody = await fresh.json();
+
+    // Go always answers 200; this route's own contract is 201 fresh / 200 replay.
+    expect(fresh.status).toBe(201);
+    expect(freshBody.transaction.receipt_number).toBe('UTL-002');
+    expect(proxyToGoBackend).toHaveBeenCalledWith(
+      expect.anything(),
+      '/api/finance/utilitybills/pay',
+      expect.objectContaining({ method: 'POST' }),
+    );
+    expect(payUtility).not.toHaveBeenCalled();
+
+    vi.mocked(proxyToGoBackend).mockResolvedValue(jsonResponse({
+      already_processed: true,
+      transaction: { id: 'tx-002', status: 'successful', receipt_number: 'UTL-002' },
+    }));
+
+    const replay = await postPay(makeRequest('/api/v1/utility/pay', {
+      body: {
+        category: 'airtime',
+        biller_id: 'biller-001',
+        product_id: 'product-001',
+        customer_reference: '08030000000',
+        amount_kobo: 100_000,
+      },
+      headers: withAuth({ 'Idempotency-Key': 'UTILITY-go-key' }),
+    }));
+
+    expect(replay.status).toBe(200);
+    expect((await replay.json()).already_processed).toBe(true);
   });
 
   it('rate-limits utility payment attempts', async () => {

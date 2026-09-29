@@ -202,8 +202,12 @@ func (h *AuthHandler) Register(c *gin.Context) {
 		// Signups being closed is a PROJECT-WIDE policy, not a fact about this
 		// address, so saying so leaks nothing and telling the user their "details"
 		// are wrong would send them round a loop they cannot win. Every other
-		// failure stays deliberately generic — echoing "already registered" would
-		// let anyone test which addresses have accounts.
+		// failure stays deliberately generic and UNCONDITIONAL — identical wording
+		// no matter the real cause — because confirming "already registered" would
+		// let anyone test which addresses have accounts. The message below points at
+		// the two real next steps (sign in / reset password) without confirming
+		// either one applies, so a genuinely-taken email isn't a dead end while a
+		// weak password or an upstream failure gets the exact same response.
 		if errors.Is(err, services.ErrSignupDisabled) {
 			c.JSON(http.StatusForbidden, gin.H{
 				"success": false,
@@ -212,7 +216,7 @@ func (h *AuthHandler) Register(c *gin.Context) {
 			})
 			return
 		}
-		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": "Registration failed. Please check your details and try again."})
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": "We couldn't create this account. Try signing in if you have one, or use Forgot Password — otherwise, double-check your details and try again."})
 		return
 	}
 

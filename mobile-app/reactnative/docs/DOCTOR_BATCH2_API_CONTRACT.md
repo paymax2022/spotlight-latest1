@@ -158,7 +158,7 @@ useCallDisputes()                          // → CallDispute[]
 useRunDeviceCheck()                        // mutate(RunDeviceCheckInput w/o key) → PreCallCheck
 useJoinCall()                              // mutate(JoinCallInput w/o key)
 useLeaveCall()                             // mutate(LeaveCallInput w/o key) → includes CallDurationSummary
-useSwitchProvider()                        // mutate(SwitchProviderInput w/o key) — Agora → VideoSDK fallback
+useSwitchProvider()                        // mutate(SwitchProviderInput w/o key) — rejoin on VideoSDK
 useSubmitCallFeedback()                    // mutate(SubmitCallFeedbackInput w/o key)
 useRaiseCallDispute()                      // mutate(RaiseCallDisputeInput w/o key)
 useReportTechnicalIssue()                  // mutate(ReportTechnicalIssueInput w/o key)

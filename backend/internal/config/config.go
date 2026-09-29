@@ -284,6 +284,7 @@ type Config struct {
 	FeatureAcademySchoolsEnabled          bool // Academy Phase 4: B2B2C institutions + licences + enrolment
 	FeatureAcademyTutorEnabled            bool // Academy Phase 4: tutor marketplace + payouts
 	FeatureAcademyFeesEnabled             bool // Academy EdTech Fees: invoices, vault, promotion, competition, scholarship, trust-score, compliance export
+	FeatureAcademyTuitionEnabled          bool // Academy tuition payment path (Phases 1–5 Go migration)
 	FeatureConnectEnabled                 bool // Paymax Connect (dating/networking) module
 	FeatureContestStageEvictionEnabled    bool // Voting contest stage eviction system (multi-stage, grace period, judge save)
 	// Property Management suite (unification umbrella over estate + realtor):
@@ -479,14 +480,12 @@ type Config struct {
 	DoctorAIRatePerDay int
 
 	// ── Doctor RTC (real-time call) credentials ──────────────────────────────
-	// SERVER-SIDE ONLY. The App Certificate / VideoSDK secret are used to SIGN
-	// short-lived join tokens and are NEVER shipped to a client. Empty creds
-	// disable the provider: the call session returns an empty token + a
-	// "not configured" flag (never a fabricated token).
-	AgoraAppID          string
-	AgoraAppCertificate string
-	VideoSDKAPIKey      string
-	VideoSDKSecret      string
+	// SERVER-SIDE ONLY. The VideoSDK secret is used to SIGN short-lived join
+	// tokens and is NEVER shipped to a client. Empty creds disable the provider:
+	// the call session returns an empty token + a "not configured" flag (never a
+	// fabricated token).
+	VideoSDKAPIKey string
+	VideoSDKSecret string
 
 	// ── Paymax Connect ───────────────────────────────────────────────────────
 	// Server-side pepper for hashing verification identifiers (HMAC-SHA256).
@@ -771,6 +770,7 @@ func Load() Config {
 		FeatureAcademySchoolsEnabled:             getEnvBool("FEATURE_ACADEMY_SCHOOLS_ENABLED", false),
 		FeatureAcademyTutorEnabled:               getEnvBool("FEATURE_ACADEMY_TUTOR_ENABLED", false),
 		FeatureAcademyFeesEnabled:                getEnvBool("FEATURE_ACADEMY_FEES_ENABLED", false),
+		FeatureAcademyTuitionEnabled:             getEnvBool("FEATURE_ACADEMY_TUITION_ENABLED", false),
 		FeatureConnectEnabled:                    getEnvBool("FEATURE_CONNECT_ENABLED", false),
 		FeatureContestStageEvictionEnabled:       getEnvBool("FEATURE_CONTEST_STAGE_EVICTION_ENABLED", false),
 		FeaturePropertySuiteEnabled:              getEnvBool("FEATURE_PROPERTY_SUITE_ENABLED", false),
@@ -839,10 +839,8 @@ func Load() Config {
 		DoctorAIRatePerMin: getEnvInt("DOCTOR_AI_RATE_PER_MIN", 20),
 		DoctorAIRatePerDay: getEnvInt("DOCTOR_AI_RATE_PER_DAY", 200),
 
-		AgoraAppID:          getEnv("AGORA_APP_ID", ""),
-		AgoraAppCertificate: getEnv("AGORA_APP_CERTIFICATE", ""),
-		VideoSDKAPIKey:      getEnv("VIDEOSDK_API_KEY", ""),
-		VideoSDKSecret:      getEnv("VIDEOSDK_SECRET", ""),
+		VideoSDKAPIKey: getEnv("VIDEOSDK_API_KEY", ""),
+		VideoSDKSecret: getEnv("VIDEOSDK_SECRET", ""),
 
 		ConnectVerificationPepper: getEnv("CONNECT_VERIFICATION_PEPPER", ""),
 

@@ -135,19 +135,37 @@ func prWalletBalance(t *testing.T, ctx context.Context, pool *pgxpool.Pool, user
 	return bal
 }
 
-// prStandingBalance sums the ledger_entries for a standing (no user_id) account
-// of the given type directly via SQL — used to prove the settlement account is
-// debited by exactly the disbursed net, not just that the wallet was credited.
-func prStandingBalance(t *testing.T, ctx context.Context, pool *pgxpool.Pool, accountType string) int64 {
+// prSettlementDebitKobo returns the total kobo debited FROM the standing settlement
+// account by one or more payout runs' own deterministic journals — the DEBIT leg(s)
+// PostJournal writes under "<run.IdempotencyKey>:debit" (repository.go suffixes the
+// balanced pair ":debit"/":credit"). 0 means nothing was posted.
+//
+// Deliberately NOT a before/after read of the account's BALANCE. settlement is a single
+// global standing account also moved by estate dues, academy, connect, realtor and other
+// suites, and `go test ./...` runs packages concurrently against one database (make test
+// / CI) — a balance delta flakes on their postings and misattributes them to this payout.
+// A run's idempotency key is deterministic (rpayout:<type>:<provider>:<period>) on a
+// provider seeded fresh per test, so the key scopes the read to exactly what this fixture
+// caused, and its absence just as exactly.
+func prSettlementDebitKobo(t *testing.T, ctx context.Context, pool *pgxpool.Pool, runIdemKeys ...string) int64 {
 	t.Helper()
-	var bal int64
-	if err := pool.QueryRow(ctx, `
-		SELECT COALESCE(SUM(CASE WHEN e.type IN ('CREDIT','REVERSAL_CREDIT') THEN e.amount_kobo ELSE -e.amount_kobo END),0)
-		FROM ledger_entries e JOIN ledger_accounts a ON a.id = e.account_id
-		WHERE a.user_id IS NULL AND a.type=$1`, accountType).Scan(&bal); err != nil {
-		t.Fatalf("standing balance for %s: %v", accountType, err)
+	led := ledger.NewService(ledger.NewRepository(pool), (*goredis.Client)(nil))
+	settleAcc, err := led.GetOrCreateStandingAccount(ctx, ledger.AccountSettlement)
+	if err != nil {
+		t.Fatalf("settlement standing account: %v", err)
 	}
-	return bal
+	var total int64
+	for _, k := range runIdemKeys {
+		var paid int64
+		if err := pool.QueryRow(ctx,
+			`SELECT COALESCE(SUM(amount_kobo),0) FROM ledger_entries
+			  WHERE idempotency_key=$1 AND type='DEBIT' AND account_id=$2`,
+			k+":debit", settleAcc.ID).Scan(&paid); err != nil {
+			t.Fatalf("read settlement debit leg %s: %v", k, err)
+		}
+		total += paid
+	}
+	return total
 }
 
 // prPayoutLineCount counts restaurant_payout_lines rows for a settlement — the
@@ -187,7 +205,6 @@ func TestLiveDB_ProcessRunHappyPath(t *testing.T) {
 
 	settID := prSeedRestaurantSettlement(t, ctx, pool, restID, customer, 60000, 5000)
 
-	settleAcctBefore := prStandingBalance(t, ctx, pool, "settlement")
 	ownerBalBefore := prWalletBalance(t, ctx, pool, owner)
 
 	run, err := svc.BuildRun(ctx, "2026-HP1", PayoutProviderRestaurant, owner)
@@ -215,13 +232,12 @@ func TestLiveDB_ProcessRunHappyPath(t *testing.T) {
 		t.Fatal("processed_at not stamped")
 	}
 
-	// Direct SQL proof: the settlement standing account moved DOWN by exactly
-	// net, and the owner's wallet moved UP by exactly net — a real balanced
-	// double-entry, not a status-flip with no money behind it.
-	settleAcctAfter := prStandingBalance(t, ctx, pool, "settlement")
+	// Direct SQL proof: this run's own journal debited the settlement standing
+	// account by exactly net, and the owner's wallet moved UP by exactly net — a
+	// real balanced double-entry, not a status-flip with no money behind it.
 	ownerBalAfter := prWalletBalance(t, ctx, pool, owner)
-	if delta := settleAcctAfter - settleAcctBefore; delta != -60000 {
-		t.Errorf("settlement standing account delta = %d, want -60000", delta)
+	if got := prSettlementDebitKobo(t, ctx, pool, run.IdempotencyKey); got != 60000 {
+		t.Errorf("settlement standing account debited %d kobo for this run, want 60000", got)
 	}
 	if delta := ownerBalAfter - ownerBalBefore; delta != 60000 {
 		t.Errorf("owner wallet delta = %d, want 60000", delta)

@@ -145,9 +145,8 @@ export const SECURE_CHAT_NOTICE =
 // SECTION I — audio & video consultation
 // ═══════════════════════════════════════════════════════════════════════════
 
-// Real-time provider labels (Agora primary, VideoSDK fallback).
+// Real-time provider labels (VideoSDK only).
 export const CALL_PROVIDER_LABELS: Record<CallProvider, string> = {
-  agora:    'Agora',
   videosdk: 'VideoSDK',
 };
 

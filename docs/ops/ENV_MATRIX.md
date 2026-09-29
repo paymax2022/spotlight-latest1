@@ -73,8 +73,6 @@
 
 | Var | Surface | Sensitivity | Module | Notes |
 |---|---|---|---|---|
-| `AGORA_APP_ID` | backend | config | doctor | RTC app id |
-| `AGORA_APP_CERTIFICATE` | backend | **SECRET** | doctor | signs RTC tokens |
 | `VIDEOSDK_API_KEY` | backend | **SECRET** | doctor | RTC provider |
 | `VIDEOSDK_SECRET` | backend | **SECRET** | doctor | RTC provider |
 
@@ -140,8 +138,8 @@ Verticals: `FEATURE_GROUPS_ENABLED`, `FEATURE_ASSOCIATIONS_ENABLED`/`..._ASSOCIA
 
 - `frontend-web/.env.example` does not list `SENTRY_DSN`, `GO_API_BASE_URL`
   duplication aside. Add `SENTRY_DSN` so observability is configurable.
-- `backend/.env.example` does not list `AGORA_APP_ID`, `AGORA_APP_CERTIFICATE`,
-  `VIDEOSDK_*`, `ANTHROPIC_API_KEY`, `CONNECT_VERIFICATION_PEPPER`, `TERMII_*`,
+- `backend/.env.example` does not list `VIDEOSDK_*`, `ANTHROPIC_API_KEY`,
+  `CONNECT_VERIFICATION_PEPPER`, `TERMII_*`,
   `RESEND_API_KEY`, `EXPO_PUSH_TOKEN`, `PAYSTACK_*`, `PAYMAX_WEBHOOK_*` though
   `config.go` reads them. Owners of those modules should add them to the template
   (additive doc change) so the matrix and template agree.

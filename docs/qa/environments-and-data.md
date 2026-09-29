@@ -113,7 +113,7 @@ inaccessible; with it on, it behaves per spec. **Watch for dev-bypass flags** �
 | CAC (business reg) | `CAC_VAS_API_KEY/BASE_URL/CONSUMER_SECRET` | sandbox base URL |
 | R2 storage | `R2_ACCOUNT_ENDPOINT/ACCESS_KEY_ID/SECRET_ACCESS_KEY/BUCKET/REGION` | — |
 | Resend email | `RESEND_API_KEY`, `RESEND_FROM_EMAIL` | fire-and-forget; assert enqueue, not delivery |
-| RTC (live classes/consults) | `AGORA_APP_ID`, `AGORA_APP_CERTIFICATE` | — |
+| RTC (live classes/consults) | `VIDEOSDK_API_KEY`, `VIDEOSDK_SECRET` | — |
 | LLM (nutrition/aicare/investai) | `ANTHROPIC_API_KEY` | — |
 
 **Webhook signature secrets** (`*_WEBHOOK_SECRET`, plus `PAYMAX_WEBHOOK_SECRET`,

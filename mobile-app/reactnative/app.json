@@ -3,15 +3,15 @@
     "name": "Paymax React Native",
     "slug": "paymax-react-native-app",
     "scheme": "paymaxrn",
-    "icon": "./assets/branding/icon.png",
+    "icon": "./assets/images/icon.png",
     "plugins": [
       "expo-router",
       "expo-secure-store",
       [
         "expo-splash-screen",
         {
-          "image": "./assets/branding/icon.png",
-          "imageWidth": 180,
+          "image": "./assets/images/splash-icon.png",
+          "imageWidth": 200,
           "resizeMode": "contain",
           "backgroundColor": "#ffffff"
         }
@@ -44,16 +44,29 @@
         }
       ],
       "@maplibre/maplibre-react-native",
-      "@sentry/react-native"
+      "@sentry/react-native",
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "enableMinifyInReleaseBuilds": true,
+            "enableShrinkResourcesInReleaseBuilds": true,
+            "enableBundleCompression": true,
+            "enablePngCrunchInReleaseBuilds": true
+          }
+        }
+      ],
+      "./plugins/withAndroidReleaseSigning",
+      "./plugins/withAndroidSizeOptimizations"
     ],
     "experiments": {
       "typedRoutes": false
     },
     "android": {
-      "package": "com.spotlightng.superapp",
+      "package": "com.anonymous.paymaxreactnativeapp",
       "usesCleartextTraffic": true,
       "adaptiveIcon": {
-        "foregroundImage": "./assets/branding/adaptive-icon.png",
+        "foregroundImage": "./assets/images/adaptive-icon.png",
         "backgroundColor": "#ffffff"
       },
       "permissions": [
@@ -81,10 +94,10 @@
         },
         "ITSAppUsesNonExemptEncryption": false
       },
-      "bundleIdentifier": "com.spotlightng.superapp"
+      "bundleIdentifier": "com.anonymous.paymaxreactnativeapp"
     },
     "web": {
-      "favicon": "./assets/branding/favicon.png"
+      "favicon": "./assets/images/favicon.png"
     },
     "extra": {
       "router": {},

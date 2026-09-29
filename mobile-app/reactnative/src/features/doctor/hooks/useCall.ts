@@ -1,8 +1,8 @@
 // ── Doctor — Batch 2 · Section I · audio & video consultation hooks ────────────
 // Rich call session (provider, network quality, device check, participant +
 // control state), pre-call checklist, duration summary, feedback, dispute,
-// technical-issue report. Reconnecting/dropped/disconnected/poor-network and the
-// Agora → VideoSDK fallback are STATES read from `CallSessionRich`, not separate
+// technical-issue report. Reconnecting/dropped/disconnected/poor-network and
+// provider failure are STATES read from `CallSessionRich`, not separate
 // hooks. REUSES Phase 1 `useCallSession` from `useConsultation` and
 // `useUpdateAppointmentStatus` from `useAppointments` — not re-declared here.
 

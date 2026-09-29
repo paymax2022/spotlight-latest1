@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { signInAdmin } from '@/features/auth/adminAuth';
 import { syncAdminSession } from '@/features/auth/adminSession';
+import { AdminSignupPanel } from '@/features/auth/AdminSignupPanel';
 
 export default function AdminLoginPage() {
   const router = useRouter();
@@ -11,6 +12,7 @@ export default function AdminLoginPage() {
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [panelOpen, setPanelOpen] = useState(false);
 
   // Drop a dead session's leftovers on arrival.
   //
@@ -54,6 +56,23 @@ export default function AdminLoginPage() {
         {error ? <p style={{ color: 'crimson' }}>{error}</p> : null}
         <button type="submit" disabled={loading}>{loading ? 'Signing in...' : 'Sign in'}</button>
       </form>
+
+      <hr style={{ margin: '24px 0', border: 0, borderTop: '1px solid #ddd' }} />
+
+      {/* The same panel has its own page at /admin/admins/new, linked from the
+          sidebar — signing in is not the only reason to be here, and a signed-in
+          operator never sees this screen. */}
+      {!panelOpen ? (
+        <button type="button" onClick={() => setPanelOpen(true)}>
+          Create admin account
+        </button>
+      ) : (
+        <AdminSignupPanel
+          title="Create admin account"
+          onCancel={() => setPanelOpen(false)}
+          onCreated={setUsername}
+        />
+      )}
     </div>
   );
 }

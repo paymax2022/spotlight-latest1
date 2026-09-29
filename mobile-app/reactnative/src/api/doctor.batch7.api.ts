@@ -139,7 +139,7 @@ export const DEMO_DISPUTES: Dispute[] = [
   },
   {
     id: 'dpt-2', ref: 'DPT-2026-028', kind: 'call_failure', subject: 'Video call dropped at 11 minutes',
-    description: 'The Agora session dropped and the fallback did not reconnect. Patient was charged in full.',
+    description: 'The VideoSDK session dropped and did not reconnect. Patient was charged in full.',
     status: 'awaiting_response', consultRef: 'TM-7C1B88',
     evidence: [
       { id: 'ev-2', kind: 'log', fileName: 'call-session.log', sizeBytes: 20480, uploadedAt: iso(4) },
@@ -314,11 +314,8 @@ export const EDGE_STATES: Record<EdgeStateKind, EdgeStateDescriptor> = {
   call_connection_failed: { kind: 'call_connection_failed', variant: 'error', tone: 'error', icon: 'cellular-outline',
     title: 'Call could not connect', message: 'We could not establish the call. Please retry.',
     cta: { label: 'Retry call', action: 'retry' } },
-  agora_unavailable: { kind: 'agora_unavailable', variant: 'error', tone: 'warning', icon: 'sync-outline',
-    title: 'Switching call provider', message: 'The primary video provider is unavailable; trying a fallback.',
-    cta: { label: 'Retry', action: 'retry' } },
-  videosdk_fallback_failed: { kind: 'videosdk_fallback_failed', variant: 'error', tone: 'error', icon: 'warning-outline',
-    title: 'Call unavailable', message: 'Both video providers failed. Try an audio call or reschedule.',
+  videosdk_unavailable: { kind: 'videosdk_unavailable', variant: 'error', tone: 'error', icon: 'warning-outline',
+    title: 'Call unavailable', message: 'The video provider could not be reached. Try an audio call or reschedule.',
     cta: { label: 'Try again', action: 'retry' }, secondaryCta: { label: 'Contact support', action: 'contact_support', route: '/(doctor)/support' } },
 
   // ── clinical edge cases ──

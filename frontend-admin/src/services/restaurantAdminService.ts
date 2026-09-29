@@ -390,12 +390,7 @@ export async function getRestaurantDetail(id: string): Promise<RestaurantDetail>
 }
 
 export async function updateRestaurant(id: string, patch: UpdateRestaurantRequest): Promise<Restaurant> {
-  if (USE_MOCK) {
-    await delay();
-    const r = MOCK_RESTAURANTS.find((x) => x.id === id)!;
-    Object.assign(r, patch);
-    return r;
-  }
+  if (USE_MOCK) throw new Error(`Updating a restaurant ${NOT_IN_FIXTURE_MODE}`);
   return reqAt<Restaurant>(`${storeBase()}/${encodeURIComponent(id)}`, {
     method: 'PATCH', body: JSON.stringify(patch),
   });
@@ -403,36 +398,21 @@ export async function updateRestaurant(id: string, patch: UpdateRestaurantReques
 
 /** Operator force-open / force-close. */
 export async function setRestaurantAvailability(id: string, isOpen: boolean): Promise<Restaurant> {
-  if (USE_MOCK) {
-    await delay();
-    const r = MOCK_RESTAURANTS.find((x) => x.id === id)!;
-    r.is_open = isOpen;
-    return r;
-  }
+  if (USE_MOCK) throw new Error(`Changing restaurant availability ${NOT_IN_FIXTURE_MODE}`);
   return reqAt<Restaurant>(`${storeBase()}/${encodeURIComponent(id)}/availability`, {
     method: 'PATCH', body: JSON.stringify({ is_open: isOpen }),
   });
 }
 
 export async function createMenuCategory(restaurantId: string, name: string): Promise<MenuCategory> {
-  if (USE_MOCK) {
-    await delay();
-    const c: MenuCategory = { id: `c-${MOCK_MENU.length + 1}`, restaurant_id: restaurantId, name, items: [] };
-    MOCK_MENU.push(c);
-    return c;
-  }
+  if (USE_MOCK) throw new Error(`Creating a menu category ${NOT_IN_FIXTURE_MODE}`);
   return reqAt<MenuCategory>(`${storeBase()}/${encodeURIComponent(restaurantId)}/menu/categories`, {
     method: 'POST', body: JSON.stringify({ name }),
   });
 }
 
 export async function deleteMenuCategory(restaurantId: string, categoryId: string): Promise<void> {
-  if (USE_MOCK) {
-    await delay();
-    const i = MOCK_MENU.findIndex((c) => c.id === categoryId);
-    if (i >= 0) MOCK_MENU.splice(i, 1);
-    return;
-  }
+  if (USE_MOCK) throw new Error(`Deleting a menu category ${NOT_IN_FIXTURE_MODE}`);
   await reqAt<{ deleted: boolean }>(
     `${storeBase()}/${encodeURIComponent(restaurantId)}/menu/categories/${encodeURIComponent(categoryId)}`,
     { method: 'DELETE' },
@@ -440,12 +420,7 @@ export async function deleteMenuCategory(restaurantId: string, categoryId: strin
 }
 
 export async function createMenuItem(restaurantId: string, req: CreateMenuItemRequest): Promise<MenuItem> {
-  if (USE_MOCK) {
-    await delay();
-    const it: MenuItem = { id: `i-mock-${req.name}`, restaurant_id: restaurantId, is_available: true, ...req };
-    MOCK_MENU.find((c) => c.id === req.category_id)?.items?.push(it);
-    return it;
-  }
+  if (USE_MOCK) throw new Error(`Creating a menu item ${NOT_IN_FIXTURE_MODE}`);
   return reqAt<MenuItem>(`${storeBase()}/${encodeURIComponent(restaurantId)}/menu/items`, {
     method: 'POST', body: JSON.stringify(req),
   });
@@ -469,14 +444,7 @@ export async function updateMenuItem(
 }
 
 export async function deleteMenuItem(restaurantId: string, itemId: string): Promise<void> {
-  if (USE_MOCK) {
-    await delay();
-    for (const c of MOCK_MENU) {
-      const i = c.items?.findIndex((x) => x.id === itemId) ?? -1;
-      if (i >= 0) { c.items!.splice(i, 1); return; }
-    }
-    return;
-  }
+  if (USE_MOCK) throw new Error(`Deleting a menu item ${NOT_IN_FIXTURE_MODE}`);
   await reqAt<{ deleted: boolean }>(
     `${storeBase()}/${encodeURIComponent(restaurantId)}/menu/items/${encodeURIComponent(itemId)}`,
     { method: 'DELETE' },
@@ -1038,7 +1006,7 @@ export async function resolveDispute(id: string, req: ResolveDisputeRequest): Pr
  * group_handler.go shipped this unregistered; it now has a route.
  */
 export async function activateScheduledOrders(): Promise<{ activated: number }> {
-  if (USE_MOCK) { await delay(); return { activated: 0 }; }
+  if (USE_MOCK) throw new Error(`Activating scheduled orders ${NOT_IN_FIXTURE_MODE}`);
   const res = await reqAt<{ activated?: number; count?: number }>(
     `${adminBase()}/activate-scheduled`, { method: 'POST' },
   );
