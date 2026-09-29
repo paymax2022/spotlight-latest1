@@ -205,4 +205,3 @@ func (h *Handler) AdminReverseWithdrawal(c *gin.Context) {
 	}
 	c.JSON(http.StatusOK, gin.H{"data": w})
 }
-

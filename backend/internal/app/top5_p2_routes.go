@@ -79,7 +79,7 @@ func RegisterEvents(member *gin.RouterGroup, admin *gin.RouterGroup, cfg config.
 	// best-effort and can never fail or reverse a ticket purchase (see
 	// recordCommissionSafe). Flag off ⇒ no recorder is set ⇒ the seam stays nil ⇒ no-op.
 	if cfg.FeatureCommissionEnabled {
-		svc.SetCommissionRecorder(commissionRecorderAdapter{svc: commission.NewService(commission.NewRepository(pool), nil)})
+		svc.SetCommissionRecorder(commissionRecorderAdapter{svc: withReferralSplit(commission.NewService(commission.NewRepository(pool), nil), pool, cfg)})
 		log.Println("[top5events] commission recording wired → Lifestyle/Event Tickets (earning-row only; no ledger re-post)")
 	}
 

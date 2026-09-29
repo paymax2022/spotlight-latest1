@@ -218,6 +218,64 @@ export async function requestRide(req: RideRequest): Promise<Trip> {
   );
 }
 
+// ─── Paystack-funded checkout (no wallet, no KYC-tier gate) ────────────────
+// backend/internal/transport/paystackcheckout — a genuinely separate,
+// server-initiated Paystack rail (same pattern as food/api.ts's
+// initiateFoodOrderPaystack), NOT the wallet-top-up-then-spend trick
+// usePurchasePayment's built-in card rail uses. Only instant pricing is
+// supported — see RequestRidePaystackFunded's doc comment on the Go side.
+
+export interface PaystackCheckoutIntent {
+  reference: string;
+  authorizationUrl: string;
+  accessCode?: string;
+  amountKobo: number;
+}
+
+export interface PaystackCheckoutStatus {
+  reference: string;
+  status: 'pending' | 'processing' | 'confirmed' | 'amount_mismatch' | 'order_failed' | 'refunded';
+  tripId?: string;
+  amountKobo?: number;
+}
+
+export async function initiateRidePaystack(
+  req: Pick<RideRequest, 'pickup' | 'dest' | 'serviceType' | 'idempotencyKey'> & { email?: string; callbackUrl?: string },
+): Promise<PaystackCheckoutIntent> {
+  if (USE_MOCK) {
+    await delay(600);
+    return {
+      reference: `rideorder:${req.idempotencyKey}`,
+      authorizationUrl: `https://paystack.test/mock/${req.idempotencyKey}`,
+      amountKobo: 0,
+    };
+  }
+  return unwrap<PaystackCheckoutIntent>(
+    await api.post(
+      `${BASE}/mobility/rides/paystack/initiate`,
+      {
+        pickup: req.pickup,
+        dest: req.dest,
+        service_type: req.serviceType,
+        pricing_mode: 'instant',
+        email: req.email,
+        callback_url: req.callbackUrl,
+      },
+      idemHeader(req.idempotencyKey),
+    ),
+  );
+}
+
+export async function getRidePaystackStatus(reference: string): Promise<PaystackCheckoutStatus> {
+  if (USE_MOCK) {
+    await delay(400);
+    return { reference, status: 'confirmed', tripId: 'mock-trip-1', amountKobo: 0 };
+  }
+  return unwrap<PaystackCheckoutStatus>(
+    await api.get(`${BASE}/mobility/rides/paystack/${encodeURIComponent(reference)}/status`),
+  );
+}
+
 // ─── Fare negotiation ───────────────────────────────────────────────────────────
 /** Rider makes (or updates) an offer. Server validates the range → 422 if out of bounds. */
 export async function makeOffer(tripId: string, offerKobo: Kobo): Promise<FareOffer> {
@@ -410,7 +468,39 @@ export async function getDriverMe(): Promise<DriverProfile> {
     await delay(280);
     return { ...mockDriver.profile };
   }
-  return unwrap<DriverProfile>(await api.get(`${BASE}/driver/me`));
+  try {
+    return normalizeDriverProfile(unwrap<Partial<DriverProfile> & Record<string, any>>(await api.get(`${BASE}/driver/me`)));
+  } catch (e) {
+    // Backend answers 404 "driver not found" for a user who has never started
+    // onboarding. That is the normal first-visit state, not a failure: show the
+    // "Drive with Paymax" onboarding gate instead of the generic error screen.
+    if ((e as { response?: { status?: number } })?.response?.status === 404) {
+      return normalizeDriverProfile({});
+    }
+    throw e;
+  }
+}
+
+// The backend profile omits fields the screens read unconditionally
+// (commission, online, vehicle, serviceCategories); default them so a sparse
+// payload cannot crash the driver home screen.
+function normalizeDriverProfile(raw: Partial<DriverProfile> & Record<string, any>): DriverProfile {
+  const vehicles = Array.isArray(raw.vehicles) ? raw.vehicles : [];
+  return {
+    id: raw.id ?? '',
+    name: raw.name ?? '',
+    phone: raw.phone ?? null,
+    email: raw.email ?? null,
+    photoUrl: raw.photoUrl ?? null,
+    verificationStatus: raw.verificationStatus ?? 'not_started',
+    rejectionReason: raw.rejectionReason ?? null,
+    online: raw.online ?? raw.status === 'online',
+    serviceCategories: raw.serviceCategories ?? [],
+    commission: raw.commission ?? { tier: 'standard', platformPct: 20, driverPct: 80 },
+    documents: raw.documents ?? [],
+    vehicle: raw.vehicle ?? vehicles[0] ?? null,
+    rating: raw.rating ?? 0,
+  };
 }
 
 export async function submitDriverOnboarding(draft: OnboardingSubmitDraft): Promise<DriverProfile> {

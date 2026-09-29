@@ -53,7 +53,7 @@ export const EXAM_META: Record<
   wassce: { label: 'WASSCE', full: 'WAEC SSCE',                 icon: 'Award',         color: Colors.teal,      iconBg: Colors.iconBgTeal },
   neco:   { label: 'NECO',   full: 'NECO SSCE',                 icon: 'Medal',         color: Colors.secondary, iconBg: Colors.iconBgBlue },
   cce:    { label: 'CCE',    full: 'Common Entrance',           icon: 'BookOpenCheck', color: Colors.teal,      iconBg: Colors.iconBgGreen },
-  nabteb: { label: 'NABTEB', full: 'NABTEB (Tech/Trade)',       icon: 'Wrench',        color: Colors.gold,      iconBg: Colors.iconBgGold },
+  nabteb: { label: 'NABTEB', full: 'NABTEB (Tech/Trade)',       icon: 'Wrench',        color: Colors.onWarning, iconBg: Colors.iconBgGold },
 };
 
 // ── Mastery state presentation ───────────────────────────────────────────────

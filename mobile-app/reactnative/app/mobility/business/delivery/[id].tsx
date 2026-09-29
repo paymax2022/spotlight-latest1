@@ -14,6 +14,7 @@ import ScreenHeader from '@/components/ScreenHeader';
 import TripPinDisplay from '@/features/mobility/components/TripPinDisplay';
 import StatusBadge from '@/features/mobility/components/StatusBadge';
 import MobilityEdgeState from '@/features/mobility/components/MobilityEdgeState';
+import { errKind } from '@/features/mobility/utils/errKind';
 import { useDelivery, useCancelDelivery } from '@/features/mobility/hooks/useLogistics';
 import { DELIVERY_STATUS_LABEL } from '@/features/mobility/constants/modes.constants';
 import { formatNaira } from '@/features/mobility/utils/mobilityFormatters';
@@ -42,7 +43,7 @@ export default function DeliveryDetailScreen() {
   }
   if (delivery.isError || !d) {
     return (
-      <SafeAreaView style={styles.safe} edges={['top']}><ScreenHeader title="Delivery" /><MobilityEdgeState kind="offline" actionLabel="Retry" onAction={() => delivery.refetch()} /></SafeAreaView>
+      <SafeAreaView style={styles.safe} edges={['top']}><ScreenHeader title="Delivery" /><MobilityEdgeState kind={errKind(delivery.error)} actionLabel="Retry" onAction={() => delivery.refetch()} /></SafeAreaView>
     );
   }
 

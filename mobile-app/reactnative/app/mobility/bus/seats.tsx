@@ -11,6 +11,7 @@ import StateView from '@/components/StateView';
 import ScreenHeader from '@/components/ScreenHeader';
 import PrimaryButton from '@/components/PrimaryButton';
 import MobilityEdgeState from '@/features/mobility/components/MobilityEdgeState';
+import { errKind } from '@/features/mobility/utils/errKind';
 import { useBusSeatMap } from '@/features/mobility/hooks/useModes';
 import { formatNairaWhole } from '@/features/mobility/utils/mobilityFormatters';
 import type { BusSeat } from '@/features/mobility/types/modes.types';
@@ -39,7 +40,7 @@ export default function BusSeatsScreen() {
       {seatMap.isLoading ? (
         <StateView kind="loading" message="Loading seat map…" />
       ) : seatMap.isError || !seatMap.data ? (
-        <MobilityEdgeState kind="offline" actionLabel="Retry" onAction={() => seatMap.refetch()} />
+        <MobilityEdgeState kind={errKind(seatMap.error)} actionLabel="Retry" onAction={() => seatMap.refetch()} />
       ) : (
         <>
           <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scroll}>

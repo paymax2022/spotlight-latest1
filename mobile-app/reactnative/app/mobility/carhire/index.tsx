@@ -14,6 +14,7 @@ import FareBreakdownCard from '@/features/mobility/components/FareBreakdownCard'
 import SelectableCard from '@/features/mobility/components/SelectableCard';
 import VehicleClassCard from '@/features/mobility/components/VehicleClassCard';
 import MobilityEdgeState from '@/features/mobility/components/MobilityEdgeState';
+import { errKind } from '@/features/mobility/utils/errKind';
 import { useCarHireQuote, useBookCarHire } from '@/features/mobility/hooks/useModes';
 import { usePurchasePayment, PaymentSheet } from '@/features/payments';
 import { HIRE_TYPES, VEHICLE_CLASSES, CARHIRE_ENABLED } from '@/features/mobility/constants/modes.constants';
@@ -70,7 +71,7 @@ export default function CarHireHomeScreen() {
     <SafeAreaView style={styles.safe} edges={['top']}>
       <ScreenHeader title="Car hire" />
       {quote.isError && !q ? (
-        <MobilityEdgeState kind="offline" actionLabel="Retry" onAction={() => quote.mutate({ hireType, vehicleClass, startAt: new Date(startDate).toISOString(), durationHours, chauffeur })} />
+        <MobilityEdgeState kind={errKind(quote.error)} actionLabel="Retry" onAction={() => quote.mutate({ hireType, vehicleClass, startAt: new Date(startDate).toISOString(), durationHours, chauffeur })} />
       ) : (
         <>
           <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scroll}>

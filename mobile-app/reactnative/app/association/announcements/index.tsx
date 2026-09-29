@@ -91,6 +91,6 @@ const styles = StyleSheet.create({
   meta: { ...Typography.caption, color: Colors.outline, flexShrink: 1 },
   ackChip: { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: Colors.iconBgGold, borderRadius: Radius.full, paddingHorizontal: Spacing.sm, paddingVertical: 3 },
   ackChipDone: { backgroundColor: Colors.iconBgTeal },
-  ackText: { ...Typography.caption, color: Colors.gold, fontWeight: '700' as const },
+  ackText: { ...Typography.caption, color: Colors.onWarning, fontWeight: '700' as const },
   ackTextDone: { color: Colors.teal },
 });

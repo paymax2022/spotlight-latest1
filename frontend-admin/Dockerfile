@@ -83,4 +83,13 @@ COPY --from=builder --chown=node:node /app/.next/static ./.next/static
 USER node
 EXPOSE 8080
 
+# Container-level liveness only (the process accepts connections) — no
+# dedicated /healthz route exists, so this hits the root. node:20-alpine
+# ships wget via busybox; no extra install needed.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
+  CMD wget --no-verbose --tries=1 --spider "http://127.0.0.1:${PORT:-3001}/" || exit 1
+
+# Standalone output's own server.js (copied in above) respects $PORT/$HOSTNAME
+# directly — `next start` does not (it hardcodes -p 3001 via package.json),
+# which caused a Railway 502 when $PORT diverged from 3001.
 CMD ["node", "server.js"]

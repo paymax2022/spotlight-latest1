@@ -13,6 +13,7 @@ import PrimaryButton from '@/components/PrimaryButton';
 import TextInputField from '@/components/TextInputField';
 import FareBreakdownCard from '@/features/mobility/components/FareBreakdownCard';
 import MobilityEdgeState from '@/features/mobility/components/MobilityEdgeState';
+import { errKind } from '@/features/mobility/utils/errKind';
 import { useOffer, useBookOffer } from '@/features/mobility/hooks/useEvent';
 import { formatNaira } from '@/features/mobility/utils/mobilityFormatters';
 import { usePurchasePayment, PaymentSheet } from '@/features/payments';
@@ -38,7 +39,7 @@ export default function BookOfferScreen() {
   }
   if (offer.isError || !o) {
     return (
-      <SafeAreaView style={styles.safe} edges={['top']}><ScreenHeader title="Book seats" /><MobilityEdgeState kind="offline" actionLabel="Retry" onAction={() => offer.refetch()} /></SafeAreaView>
+      <SafeAreaView style={styles.safe} edges={['top']}><ScreenHeader title="Book seats" /><MobilityEdgeState kind={errKind(offer.error)} actionLabel="Retry" onAction={() => offer.refetch()} /></SafeAreaView>
     );
   }
 

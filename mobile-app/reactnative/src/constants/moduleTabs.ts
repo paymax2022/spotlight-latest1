@@ -51,12 +51,51 @@ export const FOOD_TABS: readonly ModuleTab[] = [
   { href: '/food/orders', label: 'Orders',   icon: ReceiptText },
 ] as const;
 
-/** Contest / voting. */
+/**
+ * Contest / voting. The bar previously showed on only these 4 landing paths,
+ * which meant the actual browsing journey — pick a contest, look at
+ * contestants, open a profile — never showed any bottom nav at all, since
+ * none of those screens matched a tab's own href. matchPaths extends each
+ * tab to the pushed screens that are still "browsing" (no fixed bottom CTA of
+ * their own to collide with). Money-path / terminal screens (buy-votes,
+ * payment-method, payment-processing, vote-success, vote-failed,
+ * vote-receipt) and the two bottom-sheet screens (rules, support) are
+ * deliberately left off — they have their own fixed footer CTA, or are a
+ * one-off action a persistent tab bar would undercut.
+ */
 export const VOTING_TABS: readonly ModuleTab[] = [
-  { href: '/voting',             label: 'Home',        icon: Trophy },
-  { href: '/voting/contests',    label: 'Contests',    icon: Compass },
+  {
+    href: '/voting', label: 'Home', icon: Trophy,
+    matchPaths: ['/voting/notifications'],
+  },
+  {
+    href: '/voting/contests', label: 'Contests', icon: Compass,
+    matchPaths: [
+      '/voting/contest-details',
+      '/voting/contestants',
+      '/voting/contestant-profile',
+      '/voting/contestant-dashboard',
+    ],
+  },
   { href: '/voting/leaderboard', label: 'Leaderboard', icon: BarChart3 },
   { href: '/voting/my-votes',    label: 'My votes',    icon: Vote },
+] as const;
+
+/**
+ * Paymax Connect's own contest/voting sub-feature (app/connect/voting/*) — a
+ * separate module from the main Contest app above, reached from within
+ * Connect rather than from the top-level tab bar. It had NO bottom nav
+ * wiring at all (app/connect/_layout.tsx is still a bare, un-tabbed Stack —
+ * "Phase 0 shell"), same symptom as the main Contest module before its fix.
+ * contest-detail/paid-vote/vote-modal are left off: contest-detail has its
+ * own fixed footer, paid-vote is the money path, vote-modal is a bottom-sheet
+ * action — all three would collide with or be undercut by a persistent bar.
+ */
+export const CONNECT_VOTING_TABS: readonly ModuleTab[] = [
+  { href: '/connect/voting/contests',    label: 'Contests',    icon: Compass },
+  { href: '/connect/voting/leaderboard', label: 'Leaderboard', icon: BarChart3 },
+  { href: '/connect/voting/my-votes',    label: 'My votes',    icon: Vote },
+  { href: '/connect/voting/results',     label: 'Results',     icon: Trophy },
 ] as const;
 
 /**

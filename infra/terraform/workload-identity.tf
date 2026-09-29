@@ -38,12 +38,20 @@ resource "google_project_iam_member" "deployer_roles" {
   for_each = toset([
     "roles/run.admin",                # deploy Cloud Run revisions + traffic
     "roles/artifactregistry.writer",  # push images
-    "roles/iam.serviceAccountUser",   # actAs the runtime SA
     "roles/secretmanager.admin",      # manage secret versions during deploy (scope down if desired)
   ])
   project = var.project_id
   role    = each.key
   member  = "serviceAccount:${google_service_account.deployer.email}"
+}
+
+# actAs the runtime SA (main.tf) — scoped to that ONE service account, not
+# roles/iam.serviceAccountUser at project level, which would let the deployer
+# impersonate every service account in the project.
+resource "google_service_account_iam_member" "deployer_act_as_runtime" {
+  service_account_id = google_service_account.runtime.name
+  role                = "roles/iam.serviceAccountUser"
+  member              = "serviceAccount:${google_service_account.deployer.email}"
 }
 
 # Allow the GitHub repo (via the pool) to impersonate the deployer SA.

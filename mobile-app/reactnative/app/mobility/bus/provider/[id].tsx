@@ -11,14 +11,13 @@ import { shadow1 } from '@/constants/shadows';
 import StateView from '@/components/StateView';
 import ScreenHeader from '@/components/ScreenHeader';
 import MobilityEdgeState from '@/features/mobility/components/MobilityEdgeState';
+import { errKind } from '@/features/mobility/utils/errKind';
 import { useBusProviderDetail } from '@/features/mobility/hooks/useBusMarketplace';
 import { formatNairaWhole } from '@/features/mobility/utils/mobilityFormatters';
 import type { BusProviderRoute } from '@/features/mobility/types/busProvider.types';
 
 const time = (iso: string) => new Date(iso).toLocaleString('en-NG', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
 
-const errKind = (e: unknown): 'offline' | 'genericError' =>
-  (e as { response?: unknown })?.response ? 'genericError' : 'offline';
 
 export default function BusProviderDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();

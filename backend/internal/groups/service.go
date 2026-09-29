@@ -2,6 +2,7 @@ package groups
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -10,14 +11,37 @@ import (
 	"spotlight/backend/internal/finance/ledger"
 )
 
+// ErrTierGateUnwired is returned by PayDues when the Service was constructed
+// without WithTiers — see the comment on that method for why this fails
+// closed instead of treating a nil gate as "unlimited."
+var ErrTierGateUnwired = errors.New("groups: money path requires a tier gate (WithTiers not wired)")
+
+// tierLimiter is the minimal seam the dues money-path depends on for the
+// fail-closed KYC-tier / daily-spend gate. *tiers.Service satisfies it in
+// production; not imported directly here to avoid a package-cycle risk and to
+// keep the surface this package depends on small and testable.
+type tierLimiter interface {
+	EnforceCheckoutDebitLimit(ctx context.Context, userID string, amountKobo int64) error
+}
+
 // Service manages groups, membership, and dues payments.
 type Service struct {
 	db     *pgxpool.Pool
 	ledger *ledger.Service
+	tiers  tierLimiter
 }
 
 func NewService(db *pgxpool.Pool, ledger *ledger.Service) *Service {
 	return &Service{db: db, ledger: ledger}
+}
+
+// WithTiers wires the fail-closed KYC-tier / daily-spend gate into PayDues.
+// A Service with no tier gate refuses every dues payment with
+// ErrTierGateUnwired rather than silently debiting with no limit — see
+// restaurant/transport's identical convention for the same reasoning.
+func (s *Service) WithTiers(t tierLimiter) *Service {
+	s.tiers = t
+	return s
 }
 
 // Create creates a new group and its ledger wallet account.
@@ -48,12 +72,14 @@ func (s *Service) Create(ctx context.Context, creatorID string, req CreateGroupR
 	if _, err := tx.Exec(ctx, insertMember, g.ID, creatorID); err != nil {
 		return nil, fmt.Errorf("groups: insert owner: %w", err)
 	}
-	// Create group ledger account.
+	// Create group ledger account, keyed to this group. Without group_id set,
+	// the account is orphaned — PayDues looks it up by group_id and would never
+	// find it, leaving every group's wallet permanently unreachable.
 	const insertAccount = `
-		INSERT INTO ledger_accounts (user_id, type)
-		VALUES (NULL, 'group_wallet')
+		INSERT INTO ledger_accounts (user_id, group_id, type)
+		VALUES (NULL, $1, 'group_wallet')
 		ON CONFLICT DO NOTHING`
-	if _, err := tx.Exec(ctx, insertAccount); err != nil {
+	if _, err := tx.Exec(ctx, insertAccount, g.ID); err != nil {
 		return nil, fmt.Errorf("groups: create ledger account: %w", err)
 	}
 
@@ -130,6 +156,18 @@ func (s *Service) PayDues(ctx context.Context, groupID, memberID string, req Pay
 	const qWallet = `SELECT id FROM ledger_accounts WHERE group_id=$1 AND type='group_wallet' LIMIT 1`
 	if err := s.db.QueryRow(ctx, qWallet, groupID).Scan(&groupWalletID); err != nil {
 		return nil, fmt.Errorf("groups: group wallet not found: %w", err)
+	}
+
+	// Fail-closed tier / daily-limit gate, matching restaurant/transport: dues are
+	// a wallet debit like any other and owe CLAUDE.md's iron rule #4 a tier check
+	// before the money moves. A nil gate is refused rather than treated as
+	// unlimited (ErrTierGateUnwired) — a deployment with no gate must not accept
+	// dues payments at all.
+	if s.tiers == nil {
+		return nil, ErrTierGateUnwired
+	}
+	if err := s.tiers.EnforceCheckoutDebitLimit(ctx, memberID, plan.AmountKobo); err != nil {
+		return nil, fmt.Errorf("groups: pay dues tier gate: %w", err)
 	}
 
 	ref := "dues:" + groupID + ":" + req.PlanID

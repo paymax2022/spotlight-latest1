@@ -15,6 +15,7 @@ import StarRating from '@/features/mobility/components/StarRating';
 import DriverCard from '@/features/mobility/components/DriverCard';
 import FareBreakdownCard from '@/features/mobility/components/FareBreakdownCard';
 import MobilityEdgeState from '@/features/mobility/components/MobilityEdgeState';
+import { errKind } from '@/features/mobility/utils/errKind';
 import { useTrip, useRateTrip } from '@/features/mobility/hooks/useMobility';
 import { clearMockActiveTrip } from '@/features/mobility/api/mobility.api';
 import { TIP_PRESETS_KOBO } from '@/features/mobility/constants/mobility.constants';
@@ -61,7 +62,7 @@ export default function RateTripScreen() {
   if (trip.isError || !t) {
     return (
       <SafeAreaView style={styles.safe} edges={['top']}>
-        <MobilityEdgeState kind="offline" actionLabel="Retry" onAction={() => trip.refetch()} />
+        <MobilityEdgeState kind={errKind(trip.error)} actionLabel="Retry" onAction={() => trip.refetch()} />
       </SafeAreaView>
     );
   }

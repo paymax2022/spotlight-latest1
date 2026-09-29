@@ -15,6 +15,7 @@ import TripRouteCard from '@/features/mobility/components/TripRouteCard';
 import StatusBadge from '@/features/mobility/components/StatusBadge';
 import FareOfferSheet from '@/features/mobility/components/FareOfferSheet';
 import MobilityEdgeState from '@/features/mobility/components/MobilityEdgeState';
+import { errKind } from '@/features/mobility/utils/errKind';
 import { useDriverRequests, useDriverTrip } from '@/features/mobility/hooks/useMobility';
 import { toMobilityError, isFareBoundError, fareBoundMessage, formatNairaWhole, formatDistance, formatDuration } from '@/features/mobility/utils/mobilityFormatters';
 import { SERVICE_TYPE_LABEL } from '@/features/mobility/constants/mobility.constants';
@@ -62,7 +63,7 @@ export default function DriverRequestsScreen() {
       {requests.isLoading ? (
         <StateView kind="loading" message="Finding nearby riders…" />
       ) : requests.isError ? (
-        <MobilityEdgeState kind="offline" actionLabel="Retry" onAction={() => requests.refetch()} />
+        <MobilityEdgeState kind={errKind(requests.error)} actionLabel="Retry" onAction={() => requests.refetch()} />
       ) : (requests.data?.length ?? 0) === 0 ? (
         <MobilityEdgeState
           kind="empty"

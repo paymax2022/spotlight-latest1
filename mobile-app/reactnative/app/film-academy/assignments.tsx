@@ -479,7 +479,7 @@ const styles = StyleSheet.create({
   gradedText:  { ...Typography.labelSm, color: Colors.teal },
   submittedPill: { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: Colors.iconBgGold,
                    paddingHorizontal: Spacing.sm, paddingVertical: 4, borderRadius: Radius.sm },
-  submittedText: { ...Typography.labelSm, color: Colors.gold },
+  submittedText: { ...Typography.labelSm, color: Colors.onWarning },
 
   feedbackBox: { backgroundColor: Colors.iconBgGreen, borderRadius: Radius.md, padding: Spacing.md,
                  marginTop: Spacing.xs, gap: 2 },
@@ -487,7 +487,7 @@ const styles = StyleSheet.create({
   feedbackText:  { ...Typography.bodyMd, color: Colors.onSurface },
 
   linkRow:     { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: Spacing.xs },
-  linkText:    { ...Typography.bodySm, color: Colors.gold, flex: 1 },
+  linkText:    { ...Typography.bodySm, color: Colors.onWarning, flex: 1 },
 
   form:        { gap: Spacing.xs, marginTop: Spacing.sm },
   fieldLabel:  { ...Typography.labelSm, color: Colors.onSurfaceVariant },
@@ -502,5 +502,5 @@ const styles = StyleSheet.create({
   sendBtnDisabled: { opacity: 0.5 },
   sendBtnText: { ...Typography.labelLg, color: Colors.black },
   editBtn:     { paddingVertical: Spacing.sm, alignItems: 'center' },
-  editBtnText: { ...Typography.labelLg, color: Colors.gold },
+  editBtnText: { ...Typography.labelLg, color: Colors.onWarning },
 });

@@ -15,6 +15,10 @@ export interface MerchantStore {
   logoUrl?: string | null;
   isOpen: boolean;
   createdAt?: string;
+  /** Server-held pin, when one has been geocoded or confirmed — seeds the
+   *  address picker's map when editing rather than starting pin-less. */
+  geoLat?: number | null;
+  geoLng?: number | null;
   /**
    * Price of ONE takeaway pack, integer kobo. The platform seeds ₦200; the owner
    * sets their own, and 0 is a legitimate choice meaning "I don't charge for
@@ -46,11 +50,25 @@ export interface MerchantStoreDetail {
   categories: MerchantMenuCategory[];
 }
 
+/**
+ * A pin the owner confirmed with the map-assisted address picker
+ * (AddressAutocompleteInput), alongside the free-text address. Optional — the
+ * server falls back to geocoding the text itself when this is absent — but
+ * when present it is more precise than a best-effort server geocode, since
+ * it's the exact spot the owner picked rather than a rooftop-centroid guess.
+ */
+export interface StoreGeoPoint {
+  lat: number;
+  lng: number;
+  plusCode?: string;
+}
+
 export interface CreateStoreInput {
   name: string;
   description?: string;
   address: string;
   logoUrl?: string;
+  geo?: StoreGeoPoint;
 }
 
 export interface UpdateStoreInput {
@@ -61,6 +79,7 @@ export interface UpdateStoreInput {
   /** Integer kobo per takeaway pack. 0 is a real value, so this is only omitted
    *  when the owner is not changing the price. */
   packagingFeeKobo?: Kobo;
+  geo?: StoreGeoPoint;
 }
 
 export interface EarningsRun {
@@ -94,6 +113,34 @@ export interface OutletPayoutReadiness {
   reason?: string;
   /** Settled earnings already held behind the gate, integer kobo. */
   unpaidKobo: Kobo;
+}
+
+/** Business types the KYB submit gate accepts (mirrors the backend's kybBusinessTypes). */
+export type KYBBusinessType = 'sole_proprietor' | 'limited_company' | 'partnership' | 'ngo';
+
+/**
+ * A restaurant's Know-Your-Business verification record (backend/internal/restaurant/kyb.go).
+ * Closing the store is always allowed; OPENING requires `status === 'approved'` — see
+ * ADR-033's fail-closed gate in SetAvailability. `documents` is the set of uploaded doc
+ * types (e.g. 'cac_certificate'), required for any business_type other than
+ * 'sole_proprietor' before submit.
+ */
+export interface RestaurantKYB {
+  restaurantId: string;
+  legalName: string;
+  businessType: KYBBusinessType | '';
+  /** CAC RC/BN number — required for every business_type except sole_proprietor. */
+  rcNumber: string;
+  tin: string;
+  contactEmail: string;
+  contactPhone: string;
+  /** Settlement (payout) account — the merchant's OWN bank account, not a credential. */
+  bankCode: string;
+  accountNumber: string;
+  accountName: string;
+  status: string; // 'draft' | 'submitted' | 'under_review' | 'needs_more_info' | 'approved' | 'rejected'
+  decisionReason?: string;
+  documents: string[];
 }
 
 /** A member of one outlet's staff. */

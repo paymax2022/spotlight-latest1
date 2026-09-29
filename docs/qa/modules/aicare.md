@@ -33,7 +33,7 @@ health — the safety expectations mirrored from `../modules/health.md` triage (
 | Get history | `GET /api/finance/support/sessions/:id/messages` | owner (`user_id` filter) | no |
 | Send message + AI reply | `POST /api/finance/support/sessions/:id/messages` | owner (`user_id` filter) | no |
 | Escalate to human | `POST /api/finance/support/sessions/:id/escalate` | owner (`user_id` filter) | no |
-| Resolve/close session | `POST /api/finance/support/sessions/:id/resolve` | **not owner-scoped** (see AICARE-AUTHZ-002) | no |
+| Resolve/close session | `POST /api/finance/support/sessions/:id/resolve` | owner (`user_id` filter) — fixed 2026-09-19, see AICARE-AUTHZ-002 | no |
 
 ## 3. Test matrix by layer
 
@@ -44,7 +44,7 @@ health — the safety expectations mirrored from `../modules/health.md` triage (
 | Lifecycle: open entry, resolved terminal | unit | `internal/aicare/model_test.go` `TestSessionLifecycle` | AUTOMATED |
 | SendMessage body required | unit | `internal/aicare/model_test.go` `TestSendMessageRequestRequired` | PARTIAL (struct only, no binding run) |
 | Owner-scoped read/write (IDOR) | authz | — | TODO |
-| `Resolve` not owner-scoped (defect) | authz | — | TODO |
+| `Resolve` owner-scoped (fix regression guard) | authz | `internal/aicare/resolve_idor_live_db_test.go` `TestLiveDB_Resolve_RejectsNonOwnerThenOwnerSucceeds` | AUTOMATED (fixed 2026-09-19) |
 | AI-provider failure → fallback text, no error | int | — | TODO |
 | Escalated session: AI does not reply | fsm | — | TODO |
 | Resolved session rejects new messages | fsm | — | TODO |
@@ -62,7 +62,7 @@ health — the safety expectations mirrored from `../modules/health.md` triage (
 | `AICARE-VAL-002` | Over-length content rejected | P2 | open session S | `POST .../messages` with 4001-char content | 4001 chars | 400 (`max=4000`) |
 | `AICARE-VAL-003` | Send to unknown session id | P2 | authed U | `POST /support/sessions/does-not-exist/messages {content:"x"}` | — | 400 "session not found" |
 | `AICARE-AUTHZ-001` | IDOR: user B cannot read/post to user A's session | P0 | S owned by A | as B: `GET .../S/messages`; `POST .../S/messages` | — | not found (user_id filter denies) — no A data leaked |
-| `AICARE-AUTHZ-002` | DEFECT: `Resolve` is not owner-scoped | P0 | S owned by A, open | as B: `POST /support/sessions/S/resolve` | — | Current code resolves ANY session by id (actorID unused, `service.go:107`). Expected after fix: 404/forbidden. File as blocker. |
+| `AICARE-AUTHZ-002` | ✅ FIXED 2026-09-19: `Resolve` is owner-scoped | P0 | S owned by A, open | as B: `POST /support/sessions/S/resolve` | — | Previously resolved ANY session by id (actorID unused, `service.go:107`). Fixed: `WHERE ... AND user_id=$2`, fails closed (400 "session not found or already resolved") on a non-owner or already-resolved session instead of silently no-op-succeeding. Live-DB regression: `internal/aicare/resolve_idor_live_db_test.go`. |
 | `AICARE-INT-004` | AI provider error → graceful fallback | P1 | open S; provider returns error/timeout | `POST .../messages {content:"x"}` | force provider 500 | 201; ai reply = "I'm having trouble processing… team will follow up" (no 5xx) |
 | `AICARE-INT-005` | No provider configured → no AI reply, user msg saved | P2 | flag on but `ANTHROPIC_API_KEY` unset (`s.ai==nil`) | `POST .../messages {content:"x"}` | — | 201; `user_message` present, `ai_reply` null; user turn persisted |
 | `AICARE-FSM-001` | Escalate from open → escalated | P1 | open S owned by U | `POST .../S/escalate {reason:"r"}` | — | 200 `{ok:true}`; status=escalated; reason appended as a user-role message |
@@ -86,15 +86,14 @@ health — the safety expectations mirrored from `../modules/health.md` triage (
 | `resolved` | SendMessage | — (rejected) | error "session is resolved" | `AICARE-FSM-003` |
 | `escalated`/`resolved` | Escalate | — (rejected) | guard `status='open'` → error | `AICARE-FSM-004` |
 
-Illegal/idempotency notes: re-resolving an already-`resolved` session is a no-op
-(`WHERE status != 'resolved'` → 0 rows, still returns ok). Escalate is guarded to `open` only.
-Terminal `resolved` never re-opens (new session required).
+Illegal/idempotency notes: re-resolving an already-`resolved` session now fails closed with an
+error (fixed 2026-09-19 — previously `WHERE status != 'resolved'` → 0 rows, silently returned
+ok). Escalate is guarded to `open` only. Terminal `resolved` never re-opens (new session required).
 
 ## 6. Security & abuse cases
 
-- **IDOR / object-level (P0):** `SendMessage`, `GetHistory`, `Escalate` filter by `user_id`;
-  `Resolve` does **not** (`AICARE-AUTHZ-002`) — a confirmed cross-user write. Verify the fix
-  scopes `Resolve` to the owner (or an agent RBAC permission).
+- **IDOR / object-level (P0):** `SendMessage`, `GetHistory`, `Escalate`, and now `Resolve`
+  (`AICARE-AUTHZ-002`, fixed 2026-09-19) all filter by `user_id`.
 - **Safe-completion gaps (P0 for any clinical use):** no diagnosis/prescription refusal, no
   disclaimer, no emergency escalation (`AICARE-SEC-002/003`). These exist in the `health`
   triage engine (SC-1/2/8) but **not** here.
@@ -108,8 +107,9 @@ Terminal `resolved` never re-opens (new session required).
 ## 7. Automated specs to add
 
 - `internal/aicare/service_test.go` — table-driven, in-memory/pgxmock fakes:
-  `Resolve` owner-scoping (fails today), escalated-session AI-mute, resolved-session rejection,
-  provider-error fallback, provider-nil path. Follow the Go table-driven convention.
+  escalated-session AI-mute, resolved-session rejection, provider-error fallback, provider-nil
+  path. Follow the Go table-driven convention. (`Resolve` owner-scoping now has a live-DB
+  regression test — `internal/aicare/resolve_idor_live_db_test.go`.)
 - `internal/aicare/handler_test.go` — gin `TestMode` + `httptest` boundary (mirror
   `doctor/handler_test.go`): 401 without `user_id`, 400 on empty/over-length content, IDOR
   denial, 404 for flag-off (wired conditionally).

@@ -13,6 +13,7 @@ import AddressEntry, { type ConfirmedAddress } from '@/features/mobility/compone
 import FareBreakdownCard from '@/features/mobility/components/FareBreakdownCard';
 import SelectableCard from '@/features/mobility/components/SelectableCard';
 import MobilityEdgeState from '@/features/mobility/components/MobilityEdgeState';
+import { errKind } from '@/features/mobility/utils/errKind';
 import { useTowingEstimate, useBookTowing } from '@/features/mobility/hooks/useModes';
 import { usePurchasePayment, PaymentSheet } from '@/features/payments';
 import {
@@ -99,7 +100,7 @@ export default function TowingHomeScreen() {
         }
       />
       {estimate.isError && !est ? (
-        <MobilityEdgeState kind="offline" actionLabel="Retry" onAction={() => estimate.mutate({ serviceType, issue, pickup: pickupPlace, dest: destPlace, vehicleType })} />
+        <MobilityEdgeState kind={errKind(estimate.error)} actionLabel="Retry" onAction={() => estimate.mutate({ serviceType, issue, pickup: pickupPlace, dest: destPlace, vehicleType })} />
       ) : (
         <>
           <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scroll}>

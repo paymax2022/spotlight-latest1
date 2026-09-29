@@ -12,6 +12,7 @@ import SearchBar from '@/components/SearchBar';
 import SectionHeader from '@/components/SectionHeader';
 import StateView from '@/components/StateView';
 import PromoBanner from '@/components/PromoBanner';
+import { RemoteBanner } from '@/features/media/banners';
 import OrganisationCard from '@/features/association/components/OrganisationCard';
 import QuickNav from '@/features/association/components/QuickNav';
 import { useOrganisations } from '@/features/association/hooks/useAssociation';
@@ -51,6 +52,8 @@ export default function AssociationDiscovery() {
           onChangeText={setSearch}
         />
       </View>
+
+      <RemoteBanner slug="association" priority style={styles.banner} />
 
       {orgs.isLoading ? (
         <StateView kind="loading" message="Finding organisations…" />
@@ -136,6 +139,7 @@ function CodeChip({ icon, label, onPress }: { icon: React.ReactNode; label: stri
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: Colors.background },
   bannerBleed: { marginHorizontal: -Spacing.containerMargin },
+  banner: { marginHorizontal: Spacing.containerMargin, marginBottom: Spacing.sm },
   codeRow: { flexDirection: 'row', gap: Spacing.sm, marginBottom: Spacing.md },
   codeChip: { flex: 1, alignItems: 'center', gap: 6, backgroundColor: Colors.surfaceContainerLowest, borderRadius: Radius.lg, borderWidth: 1, borderColor: Colors.outlineVariant, paddingVertical: Spacing.md },
   codeIcon: { width: 40, height: 40, borderRadius: Radius.md, backgroundColor: Colors.iconBgPurple, alignItems: 'center', justifyContent: 'center' },

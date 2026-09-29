@@ -123,6 +123,17 @@ func pickItems(items []QuestionItemRef, objectiveIDs []string, limit int) []stri
 	if limit <= 0 {
 		limit = 10
 	}
+	// limit reaches AdaptivePracticeRequest.Limit from the request body
+	// unbounded on the high end — clamp before make([]string, 0, limit) below,
+	// which would otherwise let a caller force an oversized allocation. A
+	// practice session realistically never needs more than a page of items;
+	// len(items) is also a natural ceiling (can't pick more than exist).
+	if limit > 200 {
+		limit = 200
+	}
+	if limit > len(items) {
+		limit = len(items)
+	}
 	// Bucket items by objective, preserving only the requested objectives.
 	want := make(map[string]bool, len(objectiveIDs))
 	order := make([]string, 0, len(objectiveIDs))

@@ -11,6 +11,7 @@ import ScreenHeader from '@/components/ScreenHeader';
 import StateView from '@/components/StateView';
 import StatusBadge from '@/features/mobility/components/StatusBadge';
 import MobilityEdgeState from '@/features/mobility/components/MobilityEdgeState';
+import { errKind } from '@/features/mobility/utils/errKind';
 import { useHistory } from '@/features/mobility/hooks/useMobility';
 import { formatNairaWhole } from '@/features/mobility/utils/mobilityFormatters';
 import { SERVICE_TYPE_LABEL } from '@/features/mobility/constants/mobility.constants';
@@ -26,7 +27,7 @@ export default function HistoryScreen() {
       {history.isLoading ? (
         <StateView kind="loading" message="Loading your trips…" />
       ) : history.isError ? (
-        <MobilityEdgeState kind="offline" actionLabel="Retry" onAction={() => history.refetch()} />
+        <MobilityEdgeState kind={errKind(history.error)} actionLabel="Retry" onAction={() => history.refetch()} />
       ) : (history.data?.length ?? 0) === 0 ? (
         <MobilityEdgeState
           kind="empty"

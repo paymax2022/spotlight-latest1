@@ -15,6 +15,7 @@ import MobilityMap from '@/features/mobility/components/MobilityMap';
 import TripRouteCard from '@/features/mobility/components/TripRouteCard';
 import StatusBadge from '@/features/mobility/components/StatusBadge';
 import MobilityEdgeState from '@/features/mobility/components/MobilityEdgeState';
+import { errKind } from '@/features/mobility/utils/errKind';
 import { useParcel, useCancelParcel } from '@/features/mobility/hooks/useModes';
 import { PARCEL_PHASE_LABEL } from '@/features/mobility/constants/modes.constants';
 import { formatNairaWhole } from '@/features/mobility/utils/mobilityFormatters';
@@ -39,7 +40,7 @@ export default function ParcelTrackScreen() {
     return (
       <SafeAreaView style={styles.safe} edges={['top']}>
         <ScreenHeader title="Your delivery" />
-        <MobilityEdgeState kind="offline" actionLabel="Retry" onAction={() => parcel.refetch()} />
+        <MobilityEdgeState kind={errKind(parcel.error)} actionLabel="Retry" onAction={() => parcel.refetch()} />
       </SafeAreaView>
     );
   }

@@ -17,6 +17,7 @@ import TripPinInput from '@/features/mobility/components/TripPinInput';
 import StatusBadge from '@/features/mobility/components/StatusBadge';
 import SafetyButton from '@/features/mobility/components/SafetyButton';
 import MobilityEdgeState from '@/features/mobility/components/MobilityEdgeState';
+import { errKind } from '@/features/mobility/utils/errKind';
 import { useTrip, useDriverTrip } from '@/features/mobility/hooks/useMobility';
 import { useTripRealtime } from '@/features/mobility/hooks/useTripRealtime';
 import { driverSos } from '@/features/mobility/api/mobility.api';
@@ -79,7 +80,7 @@ export default function DriverTripScreen() {
     return (
       <SafeAreaView style={styles.safe} edges={['top']}>
         <ScreenHeader title="Trip" />
-        <MobilityEdgeState kind="offline" actionLabel="Retry" onAction={() => trip.refetch()} />
+        <MobilityEdgeState kind={errKind(trip.error)} actionLabel="Retry" onAction={() => trip.refetch()} />
       </SafeAreaView>
     );
   }

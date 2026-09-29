@@ -15,12 +15,11 @@ import TextInputField from '@/components/TextInputField';
 import TripRouteCard from '@/features/mobility/components/TripRouteCard';
 import FareBreakdownCard from '@/features/mobility/components/FareBreakdownCard';
 import MobilityEdgeState from '@/features/mobility/components/MobilityEdgeState';
+import { errKind } from '@/features/mobility/utils/errKind';
 import ScheduledStatusChip from '@/features/mobility/components/ScheduledStatusChip';
 import { useScheduledDetail, useRescheduleScheduled, useCancelScheduled } from '@/features/mobility/hooks/useScheduled';
 import { SCHEDULED_MODE_META } from '@/features/mobility/constants/modes.constants';
 
-const errKind = (e: unknown): 'offline' | 'genericError' =>
-  (e as { response?: unknown })?.response ? 'genericError' : 'offline';
 
 function modeLabel(mode: string): string {
   return SCHEDULED_MODE_META.find((m) => m.value === mode)?.label ?? mode;

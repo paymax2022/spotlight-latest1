@@ -10,7 +10,7 @@ export const TASK_STATUS_STYLE: Record<TaskStatus, { label: string; color: strin
   ACCEPTED:        { label: 'Accepted',       color: Colors.secondary, bg: Colors.iconBgBlue },
   IN_PROGRESS:     { label: 'In progress',    color: Colors.primary,   bg: Colors.iconBgPurple },
   BLOCKED:         { label: 'Blocked',        color: Colors.error,     bg: Colors.errorContainer },
-  AWAITING_REVIEW: { label: 'Awaiting review',color: Colors.gold,      bg: Colors.iconBgGold },
+  AWAITING_REVIEW: { label: 'Awaiting review',color: Colors.onWarning, bg: Colors.iconBgGold },
   COMPLETED:       { label: 'Completed',      color: Colors.teal,      bg: Colors.iconBgTeal },
   OVERDUE:         { label: 'Overdue',        color: Colors.error,     bg: Colors.errorContainer },
 };

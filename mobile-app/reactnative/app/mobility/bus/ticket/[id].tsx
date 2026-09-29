@@ -14,6 +14,7 @@ import PrimaryButton from '@/components/PrimaryButton';
 import QrCodeView from '@/components/QrCodeView';
 import StatusBadge from '@/features/mobility/components/StatusBadge';
 import MobilityEdgeState from '@/features/mobility/components/MobilityEdgeState';
+import { errKind } from '@/features/mobility/utils/errKind';
 import { useBusTicket, useCancelTicket, useRateBusTrip } from '@/features/mobility/hooks/useModes';
 import { BUS_PHASE_LABEL } from '@/features/mobility/constants/modes.constants';
 import { formatNairaWhole } from '@/features/mobility/utils/mobilityFormatters';
@@ -35,7 +36,7 @@ export default function BusTicketScreen() {
   }
   if (ticket.isError || !t) {
     return (
-      <SafeAreaView style={styles.safe} edges={['top']}><ScreenHeader title="Your ticket" /><MobilityEdgeState kind="offline" actionLabel="Retry" onAction={() => ticket.refetch()} /></SafeAreaView>
+      <SafeAreaView style={styles.safe} edges={['top']}><ScreenHeader title="Your ticket" /><MobilityEdgeState kind={errKind(ticket.error)} actionLabel="Retry" onAction={() => ticket.refetch()} /></SafeAreaView>
     );
   }
 

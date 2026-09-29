@@ -61,7 +61,7 @@ func (h *Handler) Escalate(c *gin.Context) {
 func (h *Handler) Resolve(c *gin.Context) {
 	userID := c.GetString("user_id")
 	if err := h.svc.Resolve(c.Request.Context(), c.Param("id"), userID); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"ok": true})

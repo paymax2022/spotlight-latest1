@@ -1,7 +1,7 @@
 import type { RegistrationDraft, RegistrationField, RegistrationStep } from './types';
 import { NIGERIA_CITIES_BY_STATE } from './config';
 
-const EMAIL_RE = /.+@.+\..+/;
+const EMAIL_RE = /^[^\s@]+@[^\s@.]+(?:\.[^\s@.]+)+$/;
 const E164ish_RE = /^\+?[0-9][0-9\-\s]{6,}$/;
 
 function getString(value: unknown) {

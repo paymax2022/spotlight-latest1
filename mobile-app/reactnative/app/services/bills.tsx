@@ -14,6 +14,7 @@ import { Spacing } from '@/constants/spacing';
 import { Typography } from '@/constants/typography';
 import { shadow1, shadow2 } from '@/constants/shadows';
 import { HomeMenuButton } from '@/components/HomeMenu';
+import { RemoteBanner } from '@/features/media/banners';
 
 function DynamicIcon({ name, size = 24, color }: { name: string; size?: number; color: string }) {
   const IconComponent = (Icons as unknown as Record<string, Icons.LucideIcon>)[name] ?? Icons.Circle;
@@ -38,6 +39,8 @@ export default function BillsScreen() {
       </View>
 
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.content}>
+        <RemoteBanner slug="utility-bills" priority style={styles.banner} />
+
         <LinearGradient
           colors={[Colors.primary, Colors.secondaryContainer]}
           start={{ x: 0, y: 0 }}
@@ -140,6 +143,7 @@ const styles = StyleSheet.create({
     paddingTop: Spacing.lg,
     paddingBottom: Platform.OS === 'ios' ? 120 : 96,
   },
+  banner: { marginHorizontal: Spacing.containerMargin, marginBottom: Spacing.md },
   hero: {
     minHeight: 172,
     borderRadius: Radius.xl,

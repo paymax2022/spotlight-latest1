@@ -14,6 +14,7 @@ import StateView from '@/components/StateView';
 import StarRating from '@/features/mobility/components/StarRating';
 import FareBreakdownCard from '@/features/mobility/components/FareBreakdownCard';
 import MobilityEdgeState from '@/features/mobility/components/MobilityEdgeState';
+import { errKind } from '@/features/mobility/utils/errKind';
 import { useParcel, useRateParcel } from '@/features/mobility/hooks/useModes';
 import { clearMockActiveParcel } from '@/features/mobility/api/parcel.api';
 import { formatNairaWhole } from '@/features/mobility/utils/mobilityFormatters';
@@ -46,7 +47,7 @@ export default function RateParcelScreen() {
   if (parcel.isError || !p) {
     return (
       <SafeAreaView style={styles.safe} edges={['top']}>
-        <MobilityEdgeState kind="offline" actionLabel="Retry" onAction={() => parcel.refetch()} />
+        <MobilityEdgeState kind={errKind(parcel.error)} actionLabel="Retry" onAction={() => parcel.refetch()} />
       </SafeAreaView>
     );
   }

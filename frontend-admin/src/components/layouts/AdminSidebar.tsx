@@ -110,7 +110,6 @@ const navItemsBase: NavItem[] = [
   // is a distinct permission from finance:adjust:initiate above; an initiator
   // cannot approve their own proposal (enforced server-side).
   { label: 'Adjustment Approvals', href: '/admin/payments-finance/adjustments', section: 'Finance', permissions: ['finance:adjust:approve'] },
-  { label: 'KYC Queue', href: '/admin/finance/kyc', section: 'Finance', permissions: ['audit.logs.view'] },
   { label: 'KYC Verification', href: '/admin/finance/kyc-verify', section: 'Finance', permissions: ['finance.admin.kyc'] },
   { label: 'Wallet Lookup', href: '/admin/finance/wallets', section: 'Finance', permissions: ['audit.logs.view'] },
   { label: 'Disputes', href: '/admin/finance/disputes', section: 'Finance', permissions: ['audit.logs.view'] },
@@ -406,6 +405,11 @@ const navItemsBase: NavItem[] = [
   { label: 'Rider Dispatch', href: '/admin/restaurant/dispatch', section: 'Restaurant', permissions: ['restaurant.manage', 'restaurant.admin.dispatch'] },
   { label: 'Onboarding / KYC', href: '/admin/restaurant/onboarding', section: 'Restaurant', permissions: ['restaurant.manage', 'restaurant.admin.onboarding'] },
   { label: 'Payouts', href: '/admin/restaurant/payouts', section: 'Restaurant', permissions: ['restaurant.admin.payouts'] },
+  // Merchant withdrawal ops queue (settle/reverse). Mounted with the rest of the
+  // restaurant admin group and RBAC-gated on restaurant.admin.withdrawals — a
+  // dedicated slug, so an ops agent reviewing withdrawals does not need the
+  // broader restaurant.manage grant. The merchant-side REQUEST is what
+  // FEATURE_RESTAURANT_WITHDRAWALS_ENABLED gates (default OFF).
   { label: 'Withdrawals', href: '/admin/restaurant/withdrawals', section: 'Restaurant', permissions: ['restaurant.admin.withdrawals'] },
   { label: 'Refunds & Disputes', href: '/admin/restaurant/disputes', section: 'Restaurant', permissions: ['restaurant.manage', 'restaurant.admin.disputes'] },
   // ── Maps (MapService v2 cost/coverage + OSM contribution review) ─────────────

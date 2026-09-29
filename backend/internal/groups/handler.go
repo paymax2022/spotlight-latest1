@@ -1,10 +1,13 @@
 package groups
 
 import (
+	"errors"
 	"net/http"
 	"strconv"
 
 	"github.com/gin-gonic/gin"
+
+	"spotlight/backend/internal/finance/tiers"
 )
 
 type Handler struct{ svc *Service }
@@ -75,8 +78,20 @@ func (h *Handler) PayDues(c *gin.Context) {
 	}
 	payment, err := h.svc.PayDues(c.Request.Context(), c.Param("id"), memberID, req)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(payDuesErrStatus(err), gin.H{"error": err.Error()})
 		return
 	}
 	c.JSON(http.StatusCreated, payment)
+}
+
+// payDuesErrStatus maps PayDues' fail-closed tier-gate refusals to their HTTP
+// status, mirroring restaurant's escrowErrStatus for the same errors.
+func payDuesErrStatus(err error) int {
+	switch {
+	case errors.Is(err, tiers.ErrWalletDisabled), errors.Is(err, tiers.ErrDailyLimitExceeded):
+		return http.StatusForbidden
+	case errors.Is(err, ErrTierGateUnwired):
+		return http.StatusServiceUnavailable
+	}
+	return http.StatusInternalServerError
 }

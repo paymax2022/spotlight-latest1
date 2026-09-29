@@ -5,6 +5,7 @@
 // IRON RULE: all monetary amounts are integers in minor units (kobo).
 
 import { api } from '@/api/client';
+import { secureRandomId } from '@/lib/secureRandom';
 import {
   INSURANCE_API_BASE,
   USE_MOCK,
@@ -38,7 +39,7 @@ let mockPolicies: Policy[] = [...MOCK_POLICIES];
 const mockQuotes = new Map<string, Quote>();
 
 function uid(prefix: string): string {
-  return `${prefix}-${Math.random().toString(36).slice(2, 9)}`;
+  return `${prefix}-${secureRandomId()}`;
 }
 
 // ── Catalog ──────────────────────────────────────────────────────────────────

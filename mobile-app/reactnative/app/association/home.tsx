@@ -157,7 +157,7 @@ const styles = StyleSheet.create({
   },
   duesLabel: { ...Typography.labelSm, color: Colors.onSurfaceVariant },
   duesAmount: { ...Typography.headlineMd, color: Colors.onSurface },
-  duesDue: { ...Typography.labelSm, color: Colors.gold, marginTop: 2 },
+  duesDue: { ...Typography.labelSm, color: Colors.onWarning, marginTop: 2 },
   payChip: { backgroundColor: Colors.primary, borderRadius: Radius.full, paddingHorizontal: Spacing.lg, paddingVertical: Spacing.sm },
   payChipText: { ...Typography.labelMd, color: Colors.onPrimary, fontWeight: '700' as const },
   sectionGap: { marginTop: Spacing.sm, marginBottom: 0, paddingHorizontal: 0 },

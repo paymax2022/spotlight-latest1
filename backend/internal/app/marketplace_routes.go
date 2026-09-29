@@ -212,7 +212,7 @@ func RegisterMarketplace(
 	// fail or reverse a boost (see marketplace.recordCommissionSafe). Flag off ⇒ no
 	// recorder is set ⇒ the seam stays nil ⇒ silent no-op.
 	if cfg.FeatureCommissionEnabled {
-		commissionSvc := commission.NewService(commission.NewRepository(pool), nil)
+		commissionSvc := withReferralSplit(commission.NewService(commission.NewRepository(pool), nil), pool, cfg)
 		svc.SetCommissionRecorder(commissionRecorderAdapter{svc: commissionSvc})
 		log.Println("[marketplace] commission recording wired → Lifestyle/Marketplace (earning-row only; no ledger re-post)")
 	}

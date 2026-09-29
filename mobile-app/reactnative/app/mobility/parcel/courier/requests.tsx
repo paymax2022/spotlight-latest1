@@ -13,6 +13,7 @@ import ScreenHeader from '@/components/ScreenHeader';
 import PrimaryButton from '@/components/PrimaryButton';
 import TripRouteCard from '@/features/mobility/components/TripRouteCard';
 import MobilityEdgeState from '@/features/mobility/components/MobilityEdgeState';
+import { errKind } from '@/features/mobility/utils/errKind';
 import { useCourierRequests, useCourierActions } from '@/features/mobility/hooks/useModes';
 import { formatNairaWhole, formatDistance } from '@/features/mobility/utils/mobilityFormatters';
 import { PARCEL_CATEGORIES, PARCEL_SPEEDS } from '@/features/mobility/constants/modes.constants';
@@ -42,7 +43,7 @@ export default function CourierRequestsScreen() {
       {requests.isLoading ? (
         <StateView kind="loading" message="Looking for jobs near you…" />
       ) : requests.isError ? (
-        <MobilityEdgeState kind="offline" actionLabel="Retry" onAction={() => requests.refetch()} />
+        <MobilityEdgeState kind={errKind(requests.error)} actionLabel="Retry" onAction={() => requests.refetch()} />
       ) : (requests.data?.length ?? 0) === 0 ? (
         <MobilityEdgeState kind="empty" title="No requests yet" message="New delivery requests near you will appear here." actionLabel="Refresh" onAction={() => requests.refetch()} />
       ) : (

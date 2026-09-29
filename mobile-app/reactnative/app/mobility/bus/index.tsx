@@ -15,6 +15,7 @@ import SegmentedControl from '@/components/SegmentedControl';
 import StateView from '@/components/StateView';
 import StatusBadge from '@/features/mobility/components/StatusBadge';
 import MobilityEdgeState from '@/features/mobility/components/MobilityEdgeState';
+import { errKind } from '@/features/mobility/utils/errKind';
 import { STATE_NAMES, getLGAsForState } from '@/data/nigeria';
 import { BUS_ENABLED, BUS_PHASE_LABEL } from '@/features/mobility/constants/modes.constants';
 import { useBusSearch, useBusProviders, useProviderMe } from '@/features/mobility/hooks/useBusMarketplace';
@@ -26,10 +27,6 @@ type Tab = 'book' | 'providers' | 'tickets';
 
 const time = (iso: string) => new Date(iso).toLocaleString('en-NG', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
 
-// A real connectivity drop (no HTTP response) is "offline"; a server answer
-// (404/5xx/parse) is a backend failure, not the user's network.
-const errKind = (e: unknown): 'offline' | 'genericError' =>
-  (e as { response?: unknown })?.response ? 'genericError' : 'offline';
 
 export default function BusMarketplaceScreen() {
   // Deep-link params from a provider route "Book" action preselect the Book tab.

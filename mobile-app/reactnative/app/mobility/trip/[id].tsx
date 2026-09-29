@@ -19,6 +19,7 @@ import StatusBadge from '@/features/mobility/components/StatusBadge';
 import SafetyButton from '@/features/mobility/components/SafetyButton';
 import FareBreakdownCard from '@/features/mobility/components/FareBreakdownCard';
 import MobilityEdgeState from '@/features/mobility/components/MobilityEdgeState';
+import { errKind } from '@/features/mobility/utils/errKind';
 import { useTrip, useFareNegotiation, useCancelRide, useSafety } from '@/features/mobility/hooks/useMobility';
 import { useTripRealtime } from '@/features/mobility/hooks/useTripRealtime';
 import { formatNairaWhole, formatEta } from '@/features/mobility/utils/mobilityFormatters';
@@ -112,7 +113,7 @@ export default function TripScreen() {
     return (
       <SafeAreaView style={styles.safe} edges={['top']}>
         <ScreenHeader title="Your trip" />
-        <MobilityEdgeState kind="offline" actionLabel="Retry" onAction={() => trip.refetch()} />
+        <MobilityEdgeState kind={errKind(trip.error)} actionLabel="Retry" onAction={() => trip.refetch()} />
       </SafeAreaView>
     );
   }

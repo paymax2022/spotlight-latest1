@@ -62,11 +62,11 @@ export const MEMBER_STATUS_STYLE: Record<
   { label: string; color: string; bg: string }
 > = {
   ACTIVE:     { label: 'Active',     color: Colors.teal,      bg: Colors.iconBgTeal },
-  PENDING:    { label: 'Pending',    color: Colors.gold,      bg: Colors.iconBgGold },
+  PENDING:    { label: 'Pending',    color: Colors.onWarning, bg: Colors.iconBgGold },
   INACTIVE:   { label: 'Inactive',   color: Colors.outline,   bg: Colors.surfaceContainerHigh },
   SUSPENDED:  { label: 'Suspended',  color: Colors.error,     bg: Colors.errorContainer },
   EXPIRED:    { label: 'Expired',    color: Colors.error,     bg: Colors.errorContainer },
-  RESTRICTED: { label: 'Restricted', color: Colors.gold,      bg: Colors.iconBgGold },
+  RESTRICTED: { label: 'Restricted', color: Colors.onWarning, bg: Colors.iconBgGold },
 };
 
 export const PAYMENT_STANDING_STYLE: Record<
@@ -74,7 +74,7 @@ export const PAYMENT_STANDING_STYLE: Record<
   { label: string; color: string; bg: string }
 > = {
   PAID:    { label: 'Paid up',  color: Colors.teal,  bg: Colors.iconBgTeal },
-  DUE:     { label: 'Due',      color: Colors.gold,  bg: Colors.iconBgGold },
+  DUE:     { label: 'Due',      color: Colors.onWarning,  bg: Colors.iconBgGold },
   OVERDUE: { label: 'Overdue',  color: Colors.error, bg: Colors.errorContainer },
 };
 
@@ -83,7 +83,7 @@ export const INVOICE_STATUS_STYLE: Record<
   { label: string; color: string; bg: string }
 > = {
   PAID:       { label: 'Paid',       color: Colors.teal,      bg: Colors.iconBgTeal },
-  DUE:        { label: 'Due',        color: Colors.gold,      bg: Colors.iconBgGold },
+  DUE:        { label: 'Due',        color: Colors.onWarning, bg: Colors.iconBgGold },
   OVERDUE:    { label: 'Overdue',    color: Colors.error,     bg: Colors.errorContainer },
   PROCESSING: { label: 'Processing', color: Colors.secondary, bg: Colors.iconBgBlue },
 };

@@ -18,9 +18,17 @@ func (h *Handler) Create(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	r, err := h.svc.Create(c.Request.Context(), raterID, req)
+	r, created, err := h.svc.Create(c.Request.Context(), raterID, req)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	if !created {
+		// Already rated this transaction — 200, not 201, and the body is the
+		// rating that actually exists in the table (never a fabricated echo of
+		// this request's own score/comment), so a client that only checks the
+		// status code still never sees invented data.
+		c.JSON(http.StatusOK, r)
 		return
 	}
 	c.JSON(http.StatusCreated, r)

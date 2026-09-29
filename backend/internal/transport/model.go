@@ -74,6 +74,10 @@ const (
 	CodeNotApproved               = "DRIVER_NOT_APPROVED"
 	CodePinMismatch               = "PIN_MISMATCH"
 	CodeInsufficientDriverBalance = "INSUFFICIENT_DRIVER_BALANCE"
+	// CodeAmountMismatch guards the Paystack-funded ride path: the verified
+	// charge amount must equal the fare this service independently recomputes
+	// at booking time. See Service.requestRide's external-funding cross-check.
+	CodeAmountMismatch = "AMOUNT_MISMATCH"
 )
 
 // CodedError carries an HTTP status + machine-readable code alongside a message.
