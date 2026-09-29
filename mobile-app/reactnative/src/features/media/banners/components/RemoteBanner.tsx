@@ -22,6 +22,12 @@ type Props = {
   /** Override the alt text the server ships with the artwork. */
   accessibilityLabel?: string;
   style?: object;
+  /**
+   * Hint that this banner is above the fold (e.g. the home hero). Accepted so
+   * callers can mark it without a type error; RN's core `Image` has no native
+   * priority-loading hook to wire it to, so it is currently a no-op.
+   */
+  priority?: boolean;
 };
 
 export default function RemoteBanner({ slug, onPress, accessibilityLabel, style }: Props) {
