@@ -385,10 +385,39 @@ jobs:
           # zero lines while the plain form (serving deployment) returned 500 —
           # observed in the same run. --since spans the serving deployment's
           # whole life so a boot from hours ago is still inside the window.
-          for f in "[router]" "[finance]" "routes registered" "skipping" "/api/finance/restaurant"; do
+          # "router]" not "[router]": Railway's filter syntax treats [...] as a
+          # character class, so the bracketed form matched nothing even on a
+          # healthy boot. The trailing-bracket form is a plain substring.
+          for f in "router]" "finance]" "routes registered" "skipping" "/api/finance/restaurant"; do
             echo "  --- lines matching: $f ---"
             railway logs --deployment --service backend --environment "$ENVIRONMENT" \
               --project "$PROJECT" --since 24h --lines 60 --filter "$f" 2>&1 \
               | sed -E 's#eyJ[A-Za-z0-9._-]{20,}#<jwt-redacted>#g; s#(sk_|pk_)[A-Za-z0-9_-]{10,}#<key-redacted>#g' \
               | tail -40 | sed 's/^/    /' || echo "    (none)"
           done
+
+      # The deployment that is SERVING is not always the one that explains an
+      # incident: a deployment can run degraded for hours and then be replaced,
+      # and its log goes with it. `railway logs <DEPLOYMENT_ID>` (positional; see
+      # `railway logs --help`) still reads a REMOVED deployment's log, so this
+      # walks the last three backend deployments and asks each one the same
+      # boot questions. Filtered by construction, values never printed.
+      - name: Backend boot lines for the last 3 deployments (by id, incl. removed)
+        run: |
+          set -uo pipefail
+          railway deployment list --service backend --environment "$ENVIRONMENT" \
+            --project "$PROJECT" --limit 3 --json 2>/dev/null > deps.json || echo "[]" > deps.json
+          node -e '
+            const rows = JSON.parse(require("fs").readFileSync("deps.json","utf8"));
+            for (const r of rows) console.log(`${r.id} ${r.status} ${r.createdAt ?? ""} ${(r.meta&&r.meta.cliMessage)?String(r.meta.cliMessage).slice(0,12):"-"}`);
+          ' > deps.txt
+          while read -r id status created msg; do
+            [ -n "$id" ] || continue
+            echo "=== deployment $id  $status  created=$created  msg=$msg ==="
+            for f in "could not connect" "DATABASE_URL" "skipping" "finance]" "listening on"; do
+              echo "  --- $f ---"
+              railway logs "$id" --deployment --lines 20 --filter "$f" 2>&1 \
+                | sed -E 's#eyJ[A-Za-z0-9._-]{20,}#<jwt-redacted>#g; s#(sk_|pk_)[A-Za-z0-9_-]{10,}#<key-redacted>#g; s#(postgres(ql)?://)[^@[:space:]]+@#\1<credentials-redacted>@#g' \
+                | tail -8 | sed 's/^/    /' || echo "    (none)"
+            done
+          done < deps.txt
