@@ -63,12 +63,21 @@ func RequireAdminConsoleRole(supabase *integrations.SupabaseRestClient, rbac ser
 			return
 		}
 
-		roles, err := rbac.GetUserRoles(userID)
-		if err != nil {
-			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{
-				"error": "could not resolve admin role",
-			})
-			return
+		// AUD-PERF-001: reuse the roles the auth middleware already fetched for
+		// this request when it's the same identity; nil means that fetch failed
+		// upstream, so fall through to the repository call.
+		var roles []string
+		if au, ok := GetAuthenticatedUser(c); ok && au.ID == userID && au.Roles != nil {
+			roles = au.Roles
+		} else {
+			var err error
+			roles, err = rbac.GetUserRoles(userID)
+			if err != nil {
+				c.AbortWithStatusJSON(http.StatusForbidden, gin.H{
+					"error": "could not resolve admin role",
+				})
+				return
+			}
 		}
 
 		resolvedRole := ""

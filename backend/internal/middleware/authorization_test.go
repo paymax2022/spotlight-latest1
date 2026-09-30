@@ -99,6 +99,16 @@ func (e errRBAC) BulkAssignPermissionsToRole(string, string, []string) []service
 	return nil
 }
 
+type countingRBAC struct {
+	mockRBAC
+	checkCalls int
+}
+
+func (m *countingRBAC) CheckPermission(userID, permission, scopeType, scopeID string) (bool, error) {
+	m.checkCalls++
+	return m.allow, nil
+}
+
 func TestRequirePermissionDeniedByDefault(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
@@ -132,5 +142,78 @@ func TestRequirePermissionAllowsWhenGranted(t *testing.T) {
 	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/x", nil))
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", w.Code)
+	}
+}
+
+func TestRequirePermissionReusesRequestPermissions(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	rbac := &countingRBAC{mockRBAC: mockRBAC{allow: false}}
+	r := gin.New()
+	r.Use(func(c *gin.Context) {
+		c.Set(AuthUserContextKey, domain.AuthenticatedUser{
+			ID:          "u1",
+			Roles:       []string{"contest-manager"},
+			Permissions: []string{"contest.create"},
+		})
+		c.Next()
+	})
+	r.GET("/x", RequirePermission(rbac, "contest.create"), func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{"ok": true})
+	})
+
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/x", nil))
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	if rbac.checkCalls != 0 {
+		t.Fatalf("expected no CheckPermission RPC on cache hit, got %d", rbac.checkCalls)
+	}
+}
+
+func TestRequirePermissionSuperAdminSkipsRPC(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	rbac := &countingRBAC{mockRBAC: mockRBAC{allow: false}}
+	r := gin.New()
+	r.Use(func(c *gin.Context) {
+		c.Set(AuthUserContextKey, domain.AuthenticatedUser{
+			ID:    "u1",
+			Roles: []string{"super-admin"},
+		})
+		c.Next()
+	})
+	r.GET("/x", RequirePermission(rbac, "any.permission"), func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{"ok": true})
+	})
+
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/x", nil))
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 for super-admin, got %d", w.Code)
+	}
+	if rbac.checkCalls != 0 {
+		t.Fatalf("expected no CheckPermission RPC for super-admin, got %d", rbac.checkCalls)
+	}
+}
+
+func TestRequirePermissionFallsBackToRPCOnMiss(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	rbac := &countingRBAC{mockRBAC: mockRBAC{allow: true}}
+	r := gin.New()
+	r.Use(func(c *gin.Context) {
+		c.Set(AuthUserContextKey, domain.AuthenticatedUser{ID: "u1"})
+		c.Next()
+	})
+	r.GET("/x", RequirePermission(rbac, "contest.create"), func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{"ok": true})
+	})
+
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/x", nil))
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 via RPC fallback, got %d", w.Code)
+	}
+	if rbac.checkCalls != 1 {
+		t.Fatalf("expected 1 CheckPermission RPC on cache miss, got %d", rbac.checkCalls)
 	}
 }
