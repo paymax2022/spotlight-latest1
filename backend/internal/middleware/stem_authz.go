@@ -72,13 +72,22 @@ func RequireStemRoles(rbac services.RBACService, allowedRoles ...string) gin.Han
 			return
 		}
 
-		roles, err := rbac.GetUserRoles(adminUserID)
-		if err != nil {
-			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{
-				"success": false,
-				"error":   "could not resolve stem role",
-			})
-			return
+		// AUD-PERF-001: reuse roles already resolved by the auth middleware for
+		// the same identity; nil means the upstream fetch failed → fall back to
+		// the repository call.
+		var roles []string
+		if au, ok := GetAuthenticatedUser(c); ok && au.ID == adminUserID && au.Roles != nil {
+			roles = au.Roles
+		} else {
+			var err error
+			roles, err = rbac.GetUserRoles(adminUserID)
+			if err != nil {
+				c.AbortWithStatusJSON(http.StatusForbidden, gin.H{
+					"success": false,
+					"error":   "could not resolve stem role",
+				})
+				return
+			}
 		}
 		if !hasAllowedStemRole(roles, allowed) {
 			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"success": false, "error": "insufficient stem role"})

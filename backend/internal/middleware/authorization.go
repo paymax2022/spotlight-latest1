@@ -2,10 +2,20 @@ package middleware
 
 import (
 	"net/http"
+	"slices"
 
 	"github.com/gin-gonic/gin"
+	"spotlight/backend/internal/domain"
 	"spotlight/backend/internal/services"
 )
+
+// hasEffectivePermission mirrors user_has_permission()'s semantics using the
+// roles/permissions the auth middleware already resolved for THIS request —
+// super-admin passes unconditionally, otherwise the permission must be in the
+// effective set (AUD-PERF-001: saves a Supabase RTT on the allow path).
+func hasEffectivePermission(u domain.AuthenticatedUser, permission string) bool {
+	return slices.Contains(u.Roles, "super-admin") || slices.Contains(u.Permissions, permission)
+}
 
 func RequirePermission(rbac services.RBACService, permission string) gin.HandlerFunc {
 	return func(c *gin.Context) {
@@ -14,10 +24,15 @@ func RequirePermission(rbac services.RBACService, permission string) gin.Handler
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"success": false, "error": "unauthenticated"})
 			return
 		}
-		allowed, err := rbac.CheckPermission(u.ID, permission, "global", "")
-		if err != nil || !allowed {
-			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"success": false, "error": "forbidden"})
-			return
+		// Local hit avoids the extra RTT; a miss falls back to the RPC so a
+		// silently-failed permissions fetch upstream can never widen a denial
+		// into an outage of every permission-gated route.
+		if !hasEffectivePermission(u, permission) {
+			allowed, err := rbac.CheckPermission(u.ID, permission, "global", "")
+			if err != nil || !allowed {
+				c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"success": false, "error": "forbidden"})
+				return
+			}
 		}
 		c.Next()
 	}
