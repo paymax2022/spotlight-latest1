@@ -170,7 +170,8 @@ test.describe('Payment routes - FX Exchange (services/fx)', () => {
 
     await expect(page.getByText('FX Exchange').first()).toBeVisible();
     await expect(page.getByText('Multi-currency wallet')).toBeVisible();
-    await expect(page.getByText('Total Balance')).toBeVisible();
+    // The FX module shows per-currency wallet balances, not a single total.
+    await expect(page.getByText('NGN Wallet').first()).toBeVisible();
   });
 
   test('FX module offers the convert / send / receive actions', async ({ page }) => {

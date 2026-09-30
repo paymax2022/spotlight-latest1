@@ -33,7 +33,7 @@ test.describe('Bills E2E - Data and internet bundle purchase', () => {
       category: 'data',
       biller_id: 'net-mtn',
       product_id: 'mtn-3gb-weekly',
-      customer_reference: '08031234567',
+      customer_reference: '+2348031234567',
     });
   });
 

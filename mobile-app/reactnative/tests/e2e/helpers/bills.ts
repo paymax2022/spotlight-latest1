@@ -499,7 +499,7 @@ export async function completeEducationPayment(page: Page) {
   await page.getByText('WAEC Result Checker').first().click();
   await page.getByText('WAEC Result Checker PIN').first().click();
   await page.getByPlaceholder('Candidate ID or phone reference').fill(validIdentifiers.educationReference);
-  await page.getByPlaceholder('0801 234 5678').fill(validIdentifiers.phone);
+  await page.getByPlaceholder('801 234 5678').fill(validIdentifiers.phone);
   await page.getByText('Review Payment').click();
   await expect(page.getByText('Confirm Education Payment')).toBeVisible();
   await page.getByPlaceholder('Enter 4-digit PIN').fill('1234');
@@ -515,7 +515,7 @@ export async function openBillsHome(page: Page) {
 export async function completeAirtimePurchase(page: Page) {
   await page.goto('/services/airtime');
   await page.getByText('MTN').first().click();
-  await page.getByPlaceholder('0801 234 5678').fill(validIdentifiers.phone);
+  await page.getByPlaceholder('801 234 5678').fill(validIdentifiers.phone);
   await page.getByText('₦500').first().click();
   await page.getByText('Review Purchase').click();
   await expect(page.getByText('Confirm Purchase')).toBeVisible();
@@ -527,7 +527,7 @@ export async function completeAirtimePurchase(page: Page) {
 export async function completeDataPurchase(page: Page) {
   await page.goto('/services/data');
   await page.getByText('MTN').first().click();
-  await page.getByPlaceholder('0801 234 5678').fill(validIdentifiers.phone);
+  await page.getByPlaceholder('801 234 5678').fill(validIdentifiers.phone);
   // Plans live behind a SelectField ("Choose Plan"), not an inline list — open it
   // first, then pick the option. Its label is "<name> · <allowance> · <validity> — ₦<price>",
   // so match on the plan name rather than the whole string.
@@ -551,7 +551,7 @@ export async function validateElectricityMeter(page: Page, type: 'Prepaid' | 'Po
 
 export async function completeElectricityPayment(page: Page, type: 'Prepaid' | 'Postpaid' = 'Prepaid') {
   await validateElectricityMeter(page, type);
-  await page.getByPlaceholder('0801 234 5678').fill(validIdentifiers.phone);
+  await page.getByPlaceholder('801 234 5678').fill(validIdentifiers.phone);
   await page.getByText(type === 'Postpaid' ? '₦10,000' : '₦5,000').click();
   await page.getByText('Review Payment').click();
   await expect(page.getByText('Confirm Payment')).toBeVisible();
@@ -567,7 +567,7 @@ export async function completeCablePayment(page: Page) {
   await page.getByText('Validate Card').click();
   await expect(page.getByText('QA Cable Customer').first()).toBeVisible();
   await page.getByText('Compact').last().click();
-  await page.getByPlaceholder('0801 234 5678').fill(validIdentifiers.phone);
+  await page.getByPlaceholder('801 234 5678').fill(validIdentifiers.phone);
   await page.getByText('Review Subscription').click();
   await expect(page.getByText('Confirm Subscription')).toBeVisible();
   await page.getByPlaceholder('Enter 4-digit PIN').fill('1234');
