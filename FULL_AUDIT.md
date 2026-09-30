@@ -527,7 +527,7 @@ Groups: `(auth)`, `(doctor)`, `(merchant)`, `(tabs)`, `admin`, `ai-notes`, `ai-t
 * Actual: schema application to prod is manual `supabase db push` on an engineer's machine — the same process that previously drifted prod 60+ migrations behind.
 * Production impact: schema/code skew is a recurring, demonstrated failure mode; no automation currently prevents recurrence (568 migrations at HEAD).
 * Confidence: HIGH (workflow header text).
-* Status: RISK — dormant control; previously materialized as an incident. Enabling `db-migrate.yml` requires repo secrets (`SUPABASE_ACCESS_TOKEN`, `SUPABASE_PROJECT_ID`, `SUPABASE_DB_PASSWORD`, `DB_MIGRATE_ENABLED`) — an operator decision, not a code change. Local chain integrity IS gated (integration-verify runs migrate-up + migrate-reset on push:main).
+* Status: RISK — dormant control; previously materialized as an incident. The Supabase secrets now exist on the repo (provisioned 2026-09-29); remaining gates are the `DB_MIGRATE_ENABLED`/`DB_MIGRATE_STAGING_ENABLED` repo variables plus the runbook's `pending: 0` reconciliation check. A read-only `workflow_dispatch` dry-run (staging) was dispatched to verify credentials + measure drift. Local chain integrity IS gated (integration-verify runs migrate-up + migrate-reset on push:main).
 
 ### AUD-INFRA-006 — Worker/cron binaries are not deployed by any production path
 
@@ -615,7 +615,7 @@ Groups: `(auth)`, `(doctor)`, `(merchant)`, `(tabs)`, `admin`, `ai-notes`, `ai-t
 * Actual: `main` accepts merges/pushes with failing builds; demonstrated empirically by AUD-BE-001 shipping.
 * Production impact: production branch can silently carry build breaks, test failures, and contract violations even though the checks exist and are running red.
 * Confidence: HIGH — workflow files, required-checks.txt, and the broken merge are direct evidence.
-* Status: MISSING CONTROL — gate-set fix in review: **PR #331**. ⚠️ Apply order matters: `scripts/ci/apply-branch-protection.sh main` must run only AFTER #331 merges, else the required check names never report on main and every PR hangs on "Expected".
+* Status: MISSING CONTROL — partial: **PR #331** (merged) — the full gate set now runs on `main` so required check names report correctly. Remaining step: an **admin** must run `scripts/ci/apply-branch-protection.sh main` (the campaign token has `maintain`, not `admin`; the protection API 404s below admin).
 
 ### AUD-TEST-004 — `ci-optimized.yml` lanes on `main` are weakened, phantom, or dead (re-verified, stronger)
 
@@ -733,7 +733,7 @@ Groups: `(auth)`, `(doctor)`, `(merchant)`, `(tabs)`, `admin`, `ai-notes`, `ai-t
 * Evidence: root `task-tracker.json` tracks the Health verticals (pharmacy/lab/vet) with `pending_tasks` including "Run health-ci.yml", "Add state-machine + authZ + chain-of-custody test suites", "Wire real tele-consult A/V provider", "Flip FEATURE_HEALTH_* + supabase db push + seed RBAC" — i.e., module code merged to `main` before its own CI/tests completed. ~70 mobile feature groups and ~300 admin pages exist for modules whose flags are presumably OFF.
 * Production impact: shipping latent unexecuted code behind flags is safe-ish, but the merge-before-test pattern is the same mechanism that produced AUD-BE-001.
 * Confidence: HIGH (file content).
-* Status: OBSERVATION / RISK — unchanged; statuses in `task-tracker.json` cannot be corrected without the feature owners' verification.
+* Status: **RESOLVED by deletion — PR #319 (merged, `02a303a5`).** The root `task-tracker.json` was removed with the scratch-artifact cleanup; the merge-before-test pattern it evidenced remains a process risk worth watching on the health verticals.
 
 ### AUD-DOC-003 — Contract enforcement covers only `estate.openapi.yaml`
 
@@ -943,6 +943,7 @@ Running ledger of finding → fix → PR → verification → merge. Statuses ar
 | AUD-SEC-002 | #342 | Dependabot covers all 16 manifest directories | OPEN |
 | AUD-SEC-001 (residual) | #346 | Per-client rate limit at the `proxyToGoBackend` choke point | OPEN |
 | AUD-REL-007 | #347 | ADR proposing PostHog product-analytics pipeline | OPEN — decision record, not implementation |
+| AUD-DB-003 | #362 | ADR pinning kobo-at-the-seam convention for voting money | OPEN — decision record |
 
 ### Closed unmerged (superseded / no unique change)
 
