@@ -3,7 +3,6 @@ package notifications
 import (
 	"context"
 	"fmt"
-
 	"spotlight/backend/internal/platform/queue"
 
 	"github.com/hibiken/asynq"
@@ -68,6 +67,9 @@ func (s *Service) Send(ctx context.Context, n Notification) error {
 	}
 	for _, ch := range n.Channels {
 		taskType := taskTypeForChannel(ch)
+		if taskType == "" {
+			continue
+		}
 		task, err := queue.NewTask(taskType, n, asynq.MaxRetry(3))
 		if err != nil {
 			return fmt.Errorf("notifications: create task %s: %w", taskType, err)
@@ -130,6 +132,6 @@ func taskTypeForChannel(ch Channel) string {
 	case ChannelSMS:
 		return queue.TypeNotificationSMS
 	default:
-		return queue.TypeNotificationPush
+		return ""
 	}
 }
