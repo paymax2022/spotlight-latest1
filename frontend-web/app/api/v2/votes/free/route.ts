@@ -7,6 +7,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { bridgedCastFreeVote } from '@/server/voting-bridge/bridge';
 import { validateRequest } from '@/lib/auth/request';
 import { checkRateLimit } from '@/src/lib/voting/rate-limit';
+import { getRequestIp } from '@/src/lib/rate-limit/client-ip';
 
 export async function POST(request: NextRequest) {
   try {
@@ -14,9 +15,7 @@ export async function POST(request: NextRequest) {
     // v1 (app/api/votes/free) has always had this; v2 shipped without it, so the
     // route the vote modal actually calls was unthrottled. Same key, limit and
     // window as v1 so the two cannot drift apart again.
-    const rlIp = request.headers.get('x-forwarded-for') ||
-                 request.headers.get('x-real-ip') ||
-                 'unknown';
+    const rlIp = getRequestIp(request);
     const rl = checkRateLimit(`vote:free:${rlIp}`, 30, 60_000);
     if (!rl.allowed) {
       return NextResponse.json(
@@ -55,9 +54,9 @@ export async function POST(request: NextRequest) {
     }
 
     // Get request context
-    const ipAddress = request.headers.get('x-forwarded-for') ||
-                     request.headers.get('x-real-ip') ||
-                     'unknown';
+    // Same derivation as the rate-limit key — the fraud scorer's duplicate_ip
+    // signal must see the same (unspoofed) address the limiter saw.
+    const ipAddress = rlIp;
     const userAgent = request.headers.get('user-agent') || 'unknown';
     const deviceFingerprint = request.headers.get('X-Device-Fingerprint') || undefined;
 
