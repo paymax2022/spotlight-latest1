@@ -185,7 +185,7 @@ Groups: `(auth)`, `(doctor)`, `(merchant)`, `(tabs)`, `admin`, `ai-notes`, `ai-t
 * Actual: post-limit in-memory filtering + raw interpolation.
 * Production impact: admin console user search silently misses users when scoped filters are used; crafted search strings can distort the admin query (needs admin permission).
 * Confidence: HIGH (code-read verified).
-* Status: BUG — recorded.
+* Status: **FIXED — PR #318 (merged, `6162e995`).** PostgREST `or` search pattern quoted/sanitized; scoped-filtered lists over-fetch then apply `limit` after filtering. Alternative approach **PR #330** (push scoped filters into PostgREST) still in review.
 
 ### AUD-BE-004 — IP-based controls keyed on spoofable `ClientIP()` (no trusted-proxy configuration)
 
@@ -204,7 +204,7 @@ Groups: `(auth)`, `(doctor)`, `(merchant)`, `(tabs)`, `admin`, `ai-notes`, `ai-t
 * Actual: every IP-derived control — rate limits, OTP budgets, signup gate, fraud/travel heuristics, audit and KYC consent records — is spoofable by one header.
 * Production impact: credential-stuffing and OTP/quota abuse bypass the (per-instance) rate limiter; audit logs and KYC consent records can carry forged IPs (compliance integrity); suspicious-login engine both evadable and weaponizable; `StemRateLimit` doubles as a memory-growth DoS.
 * Confidence: HIGH (Gin default behavior + zero proxy config in repo, re-verified). Caveat: if the deployed edge (Railway/Render) strips client-supplied XFF, exposure is reduced — unverifiable from repo.
-* Status: BUG — recorded.
+* Status: BUG — fix in review: **PR #322** (`TRUSTED_PROXY_CIDRS` → `SetTrustedProxies`; invalid config fails startup; untrusted peers can no longer spoof XFF).
 
 ### AUD-BE-005 — `POST /api/auth/change-password` reports success but never changes the password
 
@@ -234,7 +234,7 @@ Groups: `(auth)`, `(doctor)`, `(merchant)`, `(tabs)`, `admin`, `ai-notes`, `ai-t
 * Component: auth lockout
 * Location: `auth_service.go:501-509` — reads `failed_login_attempts`, PATCHes `n+1` via PostgREST. Concurrent failures undercount (lost update), extending the effective lockout threshold; its error is also discarded (`_ = s.bumpFailedLogin(user)`), so a failed PATCH silently skips counting entirely; and per-account lockout + spoofable IPs (AUD-BE-004) means a targeted account can be locked by an attacker (email-known DoS).
 * Confidence: HIGH.
-* Status: BUG (weak) / RISK — recorded.
+* Status: **FIXED — PR #326 (merged, `39a502bc`).** Read-modify-write PATCH replaced by the atomic `bump_failed_login_attempts` RPC — increment + lock decision in one UPDATE.
 
 ### AUD-BE-009 — Auto-expired account lock becomes a PERMANENT lockout (status never unlatched)
 
@@ -261,7 +261,7 @@ Groups: `(auth)`, `(doctor)`, `(merchant)`, `(tabs)`, `admin`, `ai-notes`, `ai-t
 * Actual: absent from the committed profile — relies entirely on EAS cloud env vars which are not in the repo.
 * Production impact: a production `eas build -p android --profile production` yields an app whose API client targets `http://localhost:3000` and whose Supabase client throws on first call → total app failure at launch; mock-policy misclassification can additionally serve fake data. If EAS project env vars fill the gap, they are undocumented and unauditable here.
 * Confidence: HIGH for the repo state; MEDIUM for actual release breakage (EAS dashboard env could compensate).
-* Status: BUG / RISK — recorded (severity kept CRITICAL-conditional; mock-policy amplifier noted). Fix in review: **PR #311** (fail loudly when API base URL is unset in release builds).
+* Status: **FIXED — PR #311 (merged, `2a5ebae8`).** Release builds fail loudly when the API base URL is unset; the EAS prod profile carries the required `EXPO_PUBLIC_*` vars.
 
 ### AUD-FE-002 — Duplicate `staging-aab` key in eas.json — effective profile loses `SENTRY_DISABLE_AUTO_UPLOAD`
 
@@ -286,7 +286,7 @@ Groups: `(auth)`, `(doctor)`, `(merchant)`, `(tabs)`, `admin`, `ai-notes`, `ai-t
 * Actual: client-triggered fulfilment with a server-side audit log only; no reconciliation job observed for orphaned gateway charges.
 * Production impact: paid-but-unfulfilled orders/votes whenever the client fails between charge and callback — a real-money support load and potential double-pay on user retry.
 * Confidence: HIGH for the architecture; MEDIUM on frequency (mitigated if verify endpoint is also reachable via retry UI).
-* Status: BUG (design gap, self-acknowledged via TODO) — recorded.
+* Status: BUG — partial fix in review: **PR #336** (webhook fulfils `paymax_gateway` vote charges server-side via the idempotent bridge). Other gateway domains still rely on client verify — residual open.
 
 ### AUD-FE-004 — Webhook dispatcher swallows handler failures (always-200) with no dead-letter
 
@@ -304,7 +304,7 @@ Groups: `(auth)`, `(doctor)`, `(merchant)`, `(tabs)`, `admin`, `ai-notes`, `ai-t
 * Signature nuance: the dispatcher itself does **not** verify — each of the six handlers verifies HMAC-SHA512 as its first act (no state change pre-verification), but the TS comparisons use `===`/`!==` (non-constant-time). The Go pipeline (`/api/webhooks/paystack/go`) verifies with `hmac.Equal` pre-dispatch — correct.
 * Production impact: silent settlement gaps for events whose domain lacks a verify/reconcile path.
 * Confidence: HIGH.
-* Status: RISK — recorded.
+* Status: **FIXED — PR #310 (merged, `67277290`).** Rejected handler results now surface 500/400 to Paystack for retry instead of a blanket 200. Cross-listed as AUD-REL-002.
 
 ### AUD-FE-007 — `vote-callback` page sends no `transactionId`; the `/api/v2/votes/paid/verify` it calls requires one → browser verify is expected to fail every time
 
@@ -339,7 +339,7 @@ Groups: `(auth)`, `(doctor)`, `(merchant)`, `(tabs)`, `admin`, `ai-notes`, `ai-t
   * If a proxy fans out to both: wallet top-ups use **different idempotency keys** in the two pipelines (`topup:<intentId>:CREDIT` vs `paystack:topup:<reference>`) → dual delivery would double-post unless a DB constraint catches it.
 * Production impact: one entire fulfilment plane is structurally dead depending on one dashboard setting; drift risk is invisible in-repo.
 * Confidence: HIGH for the routing structure; the live dashboard URL is UNVERIFIED (external).
-* Status: RISK / MISSING CONTROL — recorded.
+* Status: RISK / MISSING CONTROL — fix in review: **PR #338** (forwards Go-exclusive Paystack events to the Go receiver).
 
 ### AUD-FE-005 — Admin API-key path lets the holder self-declare any admin role
 
@@ -348,7 +348,7 @@ Groups: `(auth)`, `(doctor)`, `(merchant)`, `(tabs)`, `admin`, `ai-notes`, `ai-t
 * Evidence: when `x-admin-key` matches `SPOTLIGHT_ADMIN_API_KEY`, the role is taken verbatim from caller-supplied `x-admin-role`/`x-spotlight-role` headers, and `x-actor-id` populates audit attribution — **no server-side role lookup on this path**. `parseAdminRole` accepts the alias `admin` → `super_admin`, so a key holder sending `x-admin-role: admin` obtains *every* permission including `finance:refund`, `finance:adjust:approve`, `roles:manage`, with forged `x-actor-id` attribution. Mitigating factor (re-verified): the key path is skipped entirely when `SPOTLIGHT_ADMIN_API_KEY` is unset; the admin-proxy (`frontend-admin/app/api/admin-proxy/[...path]/route.ts`) strips `x-admin-key`/`x-admin-role`/`x-actor-id` from outbound headers and enforces a session first — so the hole is reachable only by direct callers holding the shared key.
 * Production impact: key compromise = self-declared full admin + spoofed audit identity; legitimate key-holders can inflate attribution; audit trail trust reduced.
 * Confidence: HIGH (independently re-verified, including the admin→super_admin alias at `src/server/admin/rbac.ts:107-122`).
-* Status: RISK — recorded.
+* Status: **FIXED — PR #328 (merged, `5cfc3e07`).** API-key admin role capped by the `SPOTLIGHT_ADMIN_API_KEY_ROLE` env ceiling; declared roles may narrow but never exceed; audit actor fixed.
 
 ### AUD-FE-006 — Shared `handleApiError` swallows all unexpected errors with no log or Sentry capture
 
@@ -392,7 +392,7 @@ Groups: `(auth)`, `(doctor)`, `(merchant)`, `(tabs)`, `admin`, `ai-notes`, `ai-t
 * Actual: RLS check runs on main/PRs only; migration-version-collision check runs on develop/staging/prod only — each gate covers a different half of the branch topology.
 * Production impact: a version-collision PR merged straight to `main` bypasses `check-migration-versions.sh`; an RLS-less table merged on `develop` is caught only when it reaches `main`/`integration-verify`.
 * Confidence: HIGH (re-verified).
-* Status: MISSING CONTROL (asymmetric coverage) — corrected.
+* Status: MISSING CONTROL (asymmetric coverage) — corrected. Main-side collision coverage fix in review: **PR #331**; the deliberate develop-only push gap remains a documented minutes-vs-cost tradeoff.
 * Migration version-collision check against the committed tree: **0 duplicate timestamp prefixes across 568 files** — clean at HEAD.
 
 ### AUD-DB-002 — Paid-vote fulfilment: credit flag is written BEFORE the votes; crash leaves an **unrecoverable** "credited-but-empty" tx; TOCTOU double-credit on concurrent verify
@@ -410,7 +410,7 @@ Groups: `(auth)`, `(doctor)`, `(merchant)`, `(tabs)`, `admin`, `ai-notes`, `ai-t
 * Actual: non-atomic sequence with a poisoned-credit-flag failure mode that self-healing cannot repair.
 * Production impact: paid votes permanently lost on a mid-flight crash (financial integrity + support burden); double-credits on webhook+redirect races; re-credit after refund.
 * Confidence: HIGH — full function trace verified by independent re-read.
-* Status: BUG — recorded (severity raised; the atomic RPC exists but is off by default and bypassed by the webhook).
+* Status: BUG — DB-layer backstops in review: **PR #329** (unique paid-votes-per-transaction index + terminal-state transition trigger, additive).
 
 ### AUD-DB-003 — Voting money math uses NGN floats; ledger path uses integer kobo — two money conventions coexist
 
@@ -439,7 +439,7 @@ Groups: `(auth)`, `(doctor)`, `(merchant)`, `(tabs)`, `admin`, `ai-notes`, `ai-t
   * `voting/rate-limit.ts` has no hard size cap — attacker-rotated keys grow the Map unbounded between 5-min sweeps (and the `setInterval` pruner never fires on frozen serverless instances).
 * Production impact: abuse controls weaken exactly under the load they're meant to shed; spoofing gives unlimited retries per request; money paths un-limited; free-vote daily cap bypassable.
 * Confidence: HIGH (re-verified).
-* Status: RISK + OBSERVATION (dead `enforceRateLimit` misleads coverage review). Partial fix in review: **PR #315** — `TRUSTED_PROXIES` env → `SetTrustedProxies`; `getIPAddress` now uses proxy-aware `ClientIP()` instead of raw XFF. Rate-limit coverage/distribution gaps remain open.
+* Status: RISK + OBSERVATION — partial fixes merged: **PR #315** (`f7ba24de`, backend `SetTrustedProxies`) and **PR #327** (`e1ca74ca`, bucket-map cap + proxy-aware IP keys + dead `enforceRateLimit` removed). Residual open: per-instance in-memory buckets, and rate-limit coverage on legacy-protected voting routes (cannot add limiters without touching protected files).
 
 ### AUD-SEC-002 — Dependabot/dependency-audit posture unknown for npm modules; govulncheck blocks for Go
 
@@ -447,7 +447,7 @@ Groups: `(auth)`, `(doctor)`, `(merchant)`, `(tabs)`, `admin`, `ai-notes`, `ai-t
 * Component: dependency health
 * Evidence: `security.yml` runs blocking `govulncheck` for both Go modules and advisory CodeQL (`continue-on-error: true`, flagged in-file as intentional until backlog clears). No `npm audit`/Dependabot config was found in `.github/` for `frontend-web`, `frontend-admin`, or `mobile-app/reactnative` — three large npm surfaces are unscanned for CVEs.
 * Confidence: MEDIUM (absence of config found; GitHub-side Dependabot settings are not visible in-repo).
-* Status: MISSING CONTROL (npm side) / OBSERVATION (CodeQL advisory).
+* Status: MISSING CONTROL (npm side) — coverage fix in review: **PR #342** (dependabot now covers all 16 manifest dirs: +vue-quasar npm, +tools/fakes gomod, +6 Dockerfiles incl. the root image).
 
 ### AUD-SEC-002b — `npm audit` on `frontend-web`: 8 advisories, all in dev/test tooling
 
@@ -455,7 +455,7 @@ Groups: `(auth)`, `(doctor)`, `(merchant)`, `(tabs)`, `admin`, `ai-notes`, `ai-t
 * Evidence (executed 2026-09-30): `npm audit --audit-level=high` → 8 vulnerabilities (5 high, 3 moderate): `brace-expansion` DoS (eslint/glob chains), `vitest`/`@vitest/mocker` path-traversal, `js-yaml` merge-key DoS, `fast-uri` host normalization, `eslint-config-next` chain. All reachable only through dev dependencies (eslint, vitest, rimraf) — no production-runtime advisories in the output.
 * Production impact: none at runtime; CI/dev-machine exposure only. Worth a Dependabot/`npm audit` lane so this doesn't silently accumulate.
 * Confidence: HIGH.
-* Status: OBSERVATION.
+* Status: **PARTIALLY FIXED — PR #323 (merged, `1a7d8bd5`).** Production advisories cleared; remaining dev-tooling advisories still fail the `npm audit` lanes repo-wide.
 
 ### AUD-SEC-003 — `NEXT_PUBLIC_ADMIN_API_KEY` referenced by seven client-side service modules (dead code today, latent secret leak)
 
@@ -504,7 +504,7 @@ Groups: `(auth)`, `(doctor)`, `(merchant)`, `(tabs)`, `admin`, `ai-notes`, `ai-t
 * Actual: parallel configs; several docs describe deployments to Render that other docs say moved to Railway/GCP.
 * Production impact: config drift, deploys landing on the wrong platform, health checks and env vars diverging; rollback procedure unclear.
 * Confidence: HIGH.
-* Status: RISK — recorded.
+* Status: RISK — documentation fix in review: **PR #337** (`docs/devops/deployment-matrix.md` — canonical per-environment target per service).
 
 ### AUD-INFRA-004 — Committed scratch/build artifacts and doc churn in repo root
 
@@ -516,7 +516,7 @@ Groups: `(auth)`, `(doctor)`, `(merchant)`, `(tabs)`, `admin`, `ai-notes`, `ai-t
 * Actual: transient typecheck outputs and per-slice status docs committed.
 * Production impact: repo noise; larger checkout; risk of stale docs being trusted as truth (see AUD-DOC-*).
 * Confidence: HIGH.
-* Status: OBSERVATION — recorded.
+* Status: **FIXED — PR #319 (merged, `02a303a5`).** Committed typecheck scratch + session trackers removed from the repo root.
 
 ### AUD-INFRA-005 — Production migration pipeline (`db-migrate.yml`) is dormant by design; manual `db push` is the actual path
 
@@ -527,7 +527,7 @@ Groups: `(auth)`, `(doctor)`, `(merchant)`, `(tabs)`, `admin`, `ai-notes`, `ai-t
 * Actual: schema application to prod is manual `supabase db push` on an engineer's machine — the same process that previously drifted prod 60+ migrations behind.
 * Production impact: schema/code skew is a recurring, demonstrated failure mode; no automation currently prevents recurrence (568 migrations at HEAD).
 * Confidence: HIGH (workflow header text).
-* Status: RISK — dormant control; previously materialized as an incident.
+* Status: RISK — dormant control; previously materialized as an incident. Enabling `db-migrate.yml` requires repo secrets (`SUPABASE_ACCESS_TOKEN`, `SUPABASE_PROJECT_ID`, `SUPABASE_DB_PASSWORD`, `DB_MIGRATE_ENABLED`) — an operator decision, not a code change. Local chain integrity IS gated (integration-verify runs migrate-up + migrate-reset on push:main).
 
 ### AUD-INFRA-006 — Worker/cron binaries are not deployed by any production path
 
@@ -538,7 +538,7 @@ Groups: `(auth)`, `(doctor)`, `(merchant)`, `(tabs)`, `admin`, `ai-notes`, `ai-t
 * Actual: no deployed worker exists in the primary (Cloud Run) or secondary (Render/Railway) deployment definitions.
 * Production impact: any enabled module depending on these jobs degrades silently — stale transport dispatches never fire, marketplace search index never refreshes. If the modules are flagged off, the binaries are dead weight instead.
 * Confidence: HIGH for absence in deploy configs; MEDIUM for user impact (depends on prod flag state, not auditable).
-* Status: MISSING CONTROL / UNVERIFIED (flag state). Fix in review: **PR #312** (Render worker service for `notification-worker`).
+* Status: MISSING CONTROL — partial: **PR #312** (merged, `44169978`) deployed `notification-worker`; **PR #341** (in review) adds `marketplace-cron`/`marketplace-indexer`/`transport-scheduler` workers with idle-until-provisioned wrappers. `cmd/fxsmoke` + `voting-test-server` intentionally excluded.
 
 ### AUD-INFRA-007 — `/healthz` and `/readyz` are referenced by deploy smoke tests, Terraform probes, and monitoring — but never registered
 
@@ -566,7 +566,7 @@ Groups: `(auth)`, `(doctor)`, `(merchant)`, `(tabs)`, `admin`, `ai-notes`, `ai-t
 * Actual: traffic-splitting machinery exists but cannot catch a bad deploy — the observation step is a no-op; a revision that crashes on boot would still promote (Cloud Run marks it failed at the revision level, but nothing here reads that).
 * Production impact: false confidence in staged rollout; the only real production gate is the `healthz` smoke test — which is itself broken (AUD-INFRA-007).
 * Confidence: HIGH.
-* Status: MISSING CONTROL — hollow canary gate. Fix in review: **PR #313** (tagged-revision healthz probe replaces the `sleep 30` stub).
+* Status: **FIXED — PR #313 (merged, `673d9e78`).** `sleep 30` stub replaced by a tagged-revision `/healthz` observation gate.
 
 ### AUD-INFRA-009 — No backup/restore/PITR controls found in repo or infra
 
@@ -577,7 +577,7 @@ Groups: `(auth)`, `(doctor)`, `(merchant)`, `(tabs)`, `admin`, `ai-notes`, `ai-t
 * Actual: none found; rely on Supabase platform defaults with no verification.
 * Production impact: unquantified RPO/RTO; a destructive bug (e.g., a bad migration that slipped the manual gate) has no rehearsed recovery path.
 * Confidence: MEDIUM (absence-of-evidence; Supabase-side PITR may be enabled at the project level, not visible in repo).
-* Status: MISSING CONTROL / UNVERIFIED. Fix in review: **PR #316** (backup/restore runbook).
+* Status: **FIXED — PR #316 (merged, `7a8f88b3`).** Backup/restore/PITR runbook added.
 
 ## Testing Findings
 
@@ -615,7 +615,7 @@ Groups: `(auth)`, `(doctor)`, `(merchant)`, `(tabs)`, `admin`, `ai-notes`, `ai-t
 * Actual: `main` accepts merges/pushes with failing builds; demonstrated empirically by AUD-BE-001 shipping.
 * Production impact: production branch can silently carry build breaks, test failures, and contract violations even though the checks exist and are running red.
 * Confidence: HIGH — workflow files, required-checks.txt, and the broken merge are direct evidence.
-* Status: MISSING CONTROL — recorded.
+* Status: MISSING CONTROL — gate-set fix in review: **PR #331**. ⚠️ Apply order matters: `scripts/ci/apply-branch-protection.sh main` must run only AFTER #331 merges, else the required check names never report on main and every PR hangs on "Expected".
 
 ### AUD-TEST-004 — `ci-optimized.yml` lanes on `main` are weakened, phantom, or dead (re-verified, stronger)
 
@@ -642,7 +642,7 @@ Groups: `(auth)`, `(doctor)`, `(merchant)`, `(tabs)`, `admin`, `ai-notes`, `ai-t
 * Actual: every API call adds 4–6 sequential network RTTs to Supabase; backend latency floor = Supabase latency, and Supabase outage = total API outage (also AUD-BE-002 fail-open consequence).
 * Production impact: p50 latency dominated by upstream RTTs; Supabase degradation amplifies into full-stack unavailability; Supabase-side request-rate quotas become the scaling ceiling.
 * Confidence: HIGH (code path traced).
-* Status: RISK / OBSERVATION.
+* Status: RISK / OBSERVATION — fix in review: **PR #339** (independent status/roles/permissions/session lookups fan out concurrently; `RequirePermission` answers from request context with RPC fallback; role middlewares reuse context roles).
 
 ### AUD-PERF-002 — Unbounded in-memory rate-limit stores grow with distinct keys
 
@@ -651,7 +651,7 @@ Groups: `(auth)`, `(doctor)`, `(merchant)`, `(tabs)`, `admin`, `ai-notes`, `ai-t
 * Evidence: both frontend limiters use process-local `Map`s keyed by IP/actor (size cap 1000 in `server.ts` triggers cleanup — bounded; `voting/rate-limit.ts` token bucket has no explicit cap beyond key cardinality). Backend `loginLimiter`/`resetLimiter` are per-instance in-memory.
 * Production impact: bounded; per-instance reset weakens protection rather than exhausting memory (maps are small).
 * Confidence: MEDIUM.
-* Status: OBSERVATION.
+* Status: OBSERVATION — fix in review: **PR #333** (hard cap on the in-memory rate-limit key map; fails closed for new keys only).
 
 ## Reliability Findings
 
@@ -662,7 +662,7 @@ Groups: `(auth)`, `(doctor)`, `(merchant)`, `(tabs)`, `admin`, `ai-notes`, `ai-t
 * Evidence: `sendEmail` does `await fetch(resend)` and never checks `res.ok` — a Resend 4xx/5xx resolves normally so failure is undetectable; the caller wraps `sendVoteReceiptEmail` in `void (async () => { try {…} catch {} })()` — explicitly fire-and-forget. No queue, no retry, no dead-letter. `RESEND_API_KEY` missing → silently `console.log`s (dev path).
 * Production impact: voters told "check your email for a receipt" may never receive one; under serverless runtimes the detached async work can be frozen before dispatch. Receipts are a payment-dispute artifact — their absence turns payment queries into manual support cases.
 * Confidence: HIGH.
-* Status: MISSING CONTROL / RISK.
+* Status: **FIXED — PR #332 (merged, `e209b074`).** Resend response status checked and the request bounded.
 
 ### AUD-REL-002 — Webhook dispatcher converts all handler failures into HTTP 200 with no retry surface
 
@@ -682,7 +682,7 @@ Groups: `(auth)`, `(doctor)`, `(merchant)`, `(tabs)`, `admin`, `ai-notes`, `ai-t
 * Evidence: `PublicHealth` returns a fixed `{success:true,status:"ok"}` body; Dockerfile/`render.yaml` healthchecks hit this. Boot-time DB fail-closed (a positive) covers startup, but **runtime** DB/Redis loss still reports healthy → orchestrator won't restart the container during an upstream outage.
 * Production impact: traffic keeps routing to a degraded instance until it crashes for another reason; probes can't distinguish "up but DB-dead".
 * Confidence: HIGH.
-* Status: OBSERVATION / MISSING CONTROL (no readiness probe).
+* Status: **FIXED — PR #325 (merged, `5c81f1a0`).** Runtime healthchecks point at `/readyz` (real DB/Redis probes) instead of the static `/healthz`.
 
 ### AUD-REL-005 — No request-correlation IDs; OTel SDK initialized but HTTP layer not instrumented
 
@@ -695,7 +695,7 @@ Groups: `(auth)`, `(doctor)`, `(merchant)`, `(tabs)`, `admin`, `ai-notes`, `ai-t
 * Actual: Sentry catches crashes, counters catch money events, but per-request tracing/correlation is absent — a failed request cannot be followed across handler→Supabase→provider.
 * Production impact: with FE-006 (silent BFF errors) this compounds: backend has counters but no request spans; frontend has Sentry but caught errors never reach it. Cross-boundary debugging is logs-archaeology.
 * Confidence: HIGH.
-* Status: MISSING CONTROL.
+* Status: **FIXED — PRs #320 + #334 (both merged).** `X-Request-Id` mint/echo/propagate middleware (`c7154594`) plus otelhttp instrumentation of the HTTP layer (`92fda5c4`).
 
 ### AUD-REL-006 — Internal error strings echoed to clients in admin/handlers
 
@@ -704,7 +704,7 @@ Groups: `(auth)`, `(doctor)`, `(merchant)`, `(tabs)`, `admin`, `ai-notes`, `ai-t
 * Evidence: `c.JSON(500, gin.H{"error": err.Error()})` — raw service/repository errors (PostgREST bodies, constraint details) reach admin API responses.
 * Production impact: internal error details + schema/constraint hints leak to admin-authenticated callers; inconsistent error envelopes (`{error}` vs `{success:false,error,code}`) across handlers complicate client handling.
 * Confidence: HIGH.
-* Status: BUG (minor) — bounded to authenticated/admin callers.
+* Status: **FIXED — PR #324 (merged, `2e116cc2`).** Internal error strings no longer echoed to clients on 500s.
 
 ### AUD-REL-007 — No product-usage analytics pipeline (no PostHog/Segment/Amplitude/custom event store)
 
@@ -733,7 +733,7 @@ Groups: `(auth)`, `(doctor)`, `(merchant)`, `(tabs)`, `admin`, `ai-notes`, `ai-t
 * Evidence: root `task-tracker.json` tracks the Health verticals (pharmacy/lab/vet) with `pending_tasks` including "Run health-ci.yml", "Add state-machine + authZ + chain-of-custody test suites", "Wire real tele-consult A/V provider", "Flip FEATURE_HEALTH_* + supabase db push + seed RBAC" — i.e., module code merged to `main` before its own CI/tests completed. ~70 mobile feature groups and ~300 admin pages exist for modules whose flags are presumably OFF.
 * Production impact: shipping latent unexecuted code behind flags is safe-ish, but the merge-before-test pattern is the same mechanism that produced AUD-BE-001.
 * Confidence: HIGH (file content).
-* Status: OBSERVATION / RISK.
+* Status: OBSERVATION / RISK — unchanged; statuses in `task-tracker.json` cannot be corrected without the feature owners' verification.
 
 ### AUD-DOC-003 — Contract enforcement covers only `estate.openapi.yaml`
 
@@ -742,7 +742,7 @@ Groups: `(auth)`, `(doctor)`, `(merchant)`, `(tabs)`, `admin`, `ai-notes`, `ai-t
 * Evidence: `contracts/openapi.yaml` parses cleanly and declares **600 paths**; `npm run contract:check` validates only the estate contract (per CLAUDE.md's own caveat: "it does not check `openapi.yaml`"). `ci.yml` runs `_reusable-openapi-validate.yml` (syntax validation) on develop — but no implementation-vs-spec conformance check for the other 599 paths, and no main-branch run.
 * Production impact: frontend/backend contract drift across ~600 declared paths is undetectable by automation; AUD-TEST-001's failing route-shape test is an instance of exactly this.
 * Confidence: HIGH.
-* Status: MISSING CONTROL.
+* Status: MISSING CONTROL — fix in review: **PR #335** (`contract:check` now parses+validates all 19 `contracts/*.yaml`; estate implementation-conformance mapping preserved).
 
 ## Unable to Verify
 
@@ -907,18 +907,40 @@ Running ledger of finding → fix → PR → verification → merge. Statuses ar
 | AUD-DOC-001 | #314 | `350d2574` | CLAUDE.md stale stack metadata corrected | docs-only |
 | AUD-FE-006 | #287 | `3c99d83d` | `handleApiError`: tagged `console.error` + guarded `Sentry.captureException` for unexpected errors; response contract unchanged | `verify` green; new `responses.spec.ts` 7/7; regression 129/129; tsc clean (superset of closed duplicate #293) |
 | AUD-TEST-001 | #290 | `780a3635` | Categories spec rewritten to pin the intentional flag-gated dual-path contract both directions | `verify` green; spec 16/16; full suite 1140/1140; regression 129/129 |
+| AUD-FE-001 | #311 | `2a5ebae8` | Release builds fail loudly when API base URL unset; EAS prod profile env present | merged 2026-09-30 |
+| AUD-INFRA-006 (partial) | #312 | `44169978` | Render worker service for `notification-worker` | config-only; workers for cron/indexer/scheduler in #341 |
+| AUD-INFRA-008 | #313 | `673d9e78` | Tagged-revision `/healthz` probe replaces `sleep 30` canary stub | deploy gate now observes the real revision |
+| AUD-SEC-001 (partial) | #315 | `f7ba24de` | `TRUSTED_PROXIES` env → `SetTrustedProxies`; proxy-aware `ClientIP()` | backend IP keying un-spoofed |
+| AUD-INFRA-009 | #316 | `7a8f88b3` | Backup/restore/PITR runbook | docs-only |
+| AUD-BE-003 | #318 | `6162e995` | PostgREST `or` pattern quoted/sanitized; over-fetch under scoped filters | httptest-driven repository spec; alt approach #330 open |
+| AUD-INFRA-004 | #319 | `02a303a5` | Removed committed typecheck scratch + session trackers | repo root clean |
+| AUD-REL-005 | #320 | `c7154594` | `X-Request-Id` mint/echo/propagate middleware; CORS exposes header | 4 specs; invalid inbound IDs rejected |
+| AUD-SEC-002b (partial) | #323 | `1a7d8bd5` | Cleared production npm advisories blocking the audit gate | dev-tooling advisories residual |
+| AUD-REL-006 | #324 | `2e116cc2` | Internal error strings no longer echoed on 500s | handler responses sanitized |
+| AUD-REL-004 | #325 | `5c81f1a0` | Runtime healthchecks point at `/readyz` (DB/Redis probes) | static-200 no longer used for readiness |
+| AUD-BE-007 | #326 | `39a502bc` | Atomic `bump_failed_login_attempts` RPC replaces read-modify-write PATCH | `login_lockout_test.go` green; additive migration |
+| AUD-SEC-001 (frontend) | #327 | `e1ca74ca` | Rate-limit bucket-map cap, un-spoofed IP keys, dead helper dropped | coverage gaps on protected routes residual |
+| AUD-FE-005 | #328 | `5cfc3e07` | Admin API-key role capped by env ceiling; audit actor `api-key` | 31 specs green; regression green |
+| AUD-REL-001 | #332 | `e209b074` | Resend response status checked; request bounded | email send failures now surface |
+| AUD-REL-005 | #334 | `92fda5c4` | otelhttp instrumentation of the HTTP layer | traces correlate with X-Request-Id |
 
 ### In review
 
 | Finding | PR | Change | Status |
 |---------|----|--------|--------|
-| AUD-SEC-001 (partial) | #315 | `TRUSTED_PROXIES` env → `SetTrustedProxies`; `getIPAddress` → proxy-aware `ClientIP()` | OPEN — `verify` running; all other lanes green |
-| (meta) tooling | #299 | mise toolchain + golangci-lint + lefthook configs | OPEN (parallel session) |
-| AUD-FE-007 (dup) | #305 | Second route-layer transactionId resolution attempt | OPEN (parallel session) — overlaps merged #308 |
-| AUD-FE-001 | #311 | Fail loudly when API base URL unset in release builds | OPEN (parallel session) |
-| AUD-INFRA-006 | #312 | Render worker service for `notification-worker` | OPEN (parallel session) |
-| AUD-INFRA-008 | #313 | Tagged-revision healthz probe replaces `sleep 30` canary stub | OPEN (parallel session) |
-| AUD-INFRA-009 | #316 | Backup/restore runbook | OPEN (parallel session) |
+| (meta) tooling | #299 | mise toolchain + golangci-lint + lefthook configs | OPEN |
+| AUD-BE-004 | #322 | `TRUSTED_PROXY_CIDRS` → `SetTrustedProxies`; `none` distrusts all | OPEN |
+| AUD-DB-002 | #329 | Unique paid-votes-per-transaction index + terminal-state trigger | OPEN |
+| AUD-BE-003 (alt) | #330 | Pushes scoped filters into PostgREST (`!inner`) | OPEN — alternative to merged #318; verify profile-embed semantics |
+| AUD-TEST-003 | #331 | Full CI gate set on `main` + required-checks doc | OPEN — run `apply-branch-protection.sh main` only after merge |
+| AUD-PERF-002 | #333 | Hard cap on in-memory rate-limit key map | OPEN |
+| AUD-DOC-003 | #335 | `contract:check` validates all 19 OpenAPI files | OPEN |
+| AUD-FE-003 (partial) | #336 | Webhook fulfils `paymax_gateway` vote charges server-side | OPEN — other gateway domains residual |
+| AUD-INFRA-003 | #337 | Canonical per-environment deployment matrix doc | OPEN |
+| AUD-INFRA-010 | #338 | Forwards Go-exclusive Paystack events to the Go receiver | OPEN |
+| AUD-PERF-001 | #339 | Request-local RBAC reuse + concurrent authz fan-out | OPEN |
+| AUD-INFRA-006 | #341 | marketplace-cron / indexer / transport-scheduler workers | OPEN — indexer idles until ES_URL provisioned |
+| AUD-SEC-002 | #342 | Dependabot covers all 16 manifest directories | OPEN |
 
 ### Closed unmerged (superseded / no unique change)
 
@@ -927,7 +949,9 @@ Running ledger of finding → fix → PR → verification → merge. Statuses ar
 | #289 | Lockout fix auto-closed when its base branch was deleted; replaced by #298 |
 | #293 | FE-006 duplicate — closed in favor of the stronger #287 |
 | #303 | Fix-log bookkeeping — superseded by #306 |
+| #305 | FE-007 duplicate — closed in favor of the merged #308 |
 | #309 | FE-007 duplicate — closed in favor of the merged #308 |
+| #321 | REL-005 duplicate — closed in favor of the merged #320 |
 
 ### Baseline CI failures (not merge-blocking, tracked as findings)
 
