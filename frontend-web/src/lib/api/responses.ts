@@ -1,3 +1,4 @@
+import * as Sentry from '@sentry/nextjs';
 import { NextResponse } from 'next/server';
 import type { AdminListMeta } from '@/src/server/admin/query';
 
@@ -49,6 +50,12 @@ export function handleApiError(error: unknown, fallbackMessage = 'Internal serve
   if (error instanceof Error && error.message === 'FORBIDDEN') {
     return errorResponse('Forbidden', 403);
   }
+
+  // Everything reaching this branch is an UNEXPECTED error — it must not
+  // vanish. ApiError/401/403 above are control flow; this path is a defect
+  // or dependency failure and needs a trace in both planes.
+  console.error('[api] unhandled error:', error);
+  Sentry.captureException(error);
 
   return errorResponse(fallbackMessage, 500);
 }
