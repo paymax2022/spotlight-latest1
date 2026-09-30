@@ -33,5 +33,5 @@ RUN addgroup -S app && adduser -S -G app app
 USER app
 EXPOSE 8080
 HEALTHCHECK --interval=15s --timeout=5s --retries=5 --start-period=10s \
-  CMD curl -f http://localhost:8080/api/v1/public/health || exit 1
+  CMD curl -f http://localhost:8080/readyz || exit 1
 CMD ["/app/server"]
