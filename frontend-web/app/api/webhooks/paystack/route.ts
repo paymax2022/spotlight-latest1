@@ -30,7 +30,27 @@ export async function POST(request: Request) {
   const bank    = bankResult.status    === 'fulfilled' ? bankResult.value    : { processed: false, duplicate: false };
   const gateway = gatewayResult.status === 'fulfilled' ? gatewayResult.value : { processed: false, duplicate: false };
 
-  // Always return 200 to Paystack — a non-200 causes retries.
+  // AUD-REL-002: the old "always 200" meant a handler that THREW (bug, DB
+  // down, provider timeout) was acked to Paystack and dropped forever — no
+  // retry, no dead-letter. Handlers return {processed:false} for irrelevant
+  // events and only reject on real failure, so a rejection is retryable:
+  //   - SOME rejected → 500 (Paystack retries; each handler is idempotent, so
+  //     redelivery is safe for the ones that already ran)
+  //   - ALL rejected  → 400 (every handler threw on the same payload —
+  //     malformed body; retrying garbage is pointless)
+  const rejected = [voteResult, walletResult, dvaResult, utilityResult, bankResult, gatewayResult]
+    .filter((r): r is PromiseRejectedResult => r.status === 'rejected');
+  if (rejected.length > 0) {
+    for (const r of rejected) {
+      console.error('[webhook] paystack handler rejected:', r.reason);
+    }
+    const status = rejected.length === 6 ? 400 : 500;
+    return Response.json(
+      { received: true, processed: false, error: 'handler failure' },
+      { status },
+    );
+  }
+
   return Response.json(
     {
       received:  true,
