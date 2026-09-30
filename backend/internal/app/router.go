@@ -42,6 +42,7 @@ func NewRouter(cfg config.Config) *gin.Engine {
 		gin.SetMode(gin.ReleaseMode)
 	}
 	r := gin.Default()
+	r.Use(middleware.RequestID())
 	r.Use(middleware.CORSMiddleware(cfg.CORSAllowOrigins, cfg.AppEnv))
 
 	health := handlers.NewHealthHandler()
