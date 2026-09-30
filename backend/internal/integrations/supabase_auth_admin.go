@@ -60,6 +60,30 @@ func (c *SupabaseRestClient) AdminConfirmEmail(ctx context.Context, userID strin
 	return nil
 }
 
+// VerifyPasswordGrant checks a credential pair against GoTrue's own password
+// grant — the only server-side way to confirm a user knows their current
+// password (the hash is never exposed). A >=400 response means the
+// credentials are wrong; GoTrue mints a session for a correct pair which we
+// discard — it expires unused. Uses the client's bounded http client, not
+// http.DefaultClient.
+func (c *SupabaseRestClient) VerifyPasswordGrant(email, password string) error {
+	req, err := c.buildRequest(http.MethodPost, "/auth/v1/token",
+		map[string]string{"grant_type": "password"},
+		map[string]any{"email": email, "password": password})
+	if err != nil {
+		return err
+	}
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		return fmt.Errorf("password verification failed: %d", resp.StatusCode)
+	}
+	return nil
+}
+
 // AdminSetPassword replaces a user's password.
 //
 // Through the admin API for the same reason AdminConfirmEmail is: GoTrue owns
