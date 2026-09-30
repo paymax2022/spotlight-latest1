@@ -8,6 +8,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"time"
 
 	"github.com/hibiken/asynq"
 	"spotlight/backend/internal/platform/queue"
@@ -24,7 +25,9 @@ type ProviderConfig struct {
 
 // Workers registers all notification task handlers on an asynq ServeMux.
 func Workers(mux *asynq.ServeMux, cfg ProviderConfig) {
-	h := &workerHandler{cfg: cfg, http: &http.Client{}}
+	// Bounded client: an unbounded one lets a stuck provider hold a worker slot
+	// until asynq's own task timeout kills it.
+	h := &workerHandler{cfg: cfg, http: &http.Client{Timeout: 15 * time.Second}}
 	mux.HandleFunc(queue.TypeNotificationPush, h.handlePush)
 	mux.HandleFunc(queue.TypeNotificationEmail, h.handleEmail)
 	mux.HandleFunc(queue.TypeNotificationSMS, h.handleSMS)
