@@ -118,10 +118,36 @@ jobs:
             --project "${{ vars.GCP_PROJECT_ID }}" --region "${{ vars.GCP_REGION }}" \
             --to-tags "sha-${{ needs.build.outputs.sha }}=10" --quiet
       - name: Watch canary golden signals
+        # AUD-INFRA-008: was `sleep 30` + TODO — a hollow gate that promoted
+        # anything. Tagged revisions get their own URL (<tag>---<service>),
+        # so we can probe the canary's /healthz directly regardless of its
+        # 10% traffic share. A revision that crashes on boot never serves →
+        # this step fails → promotion halts with traffic still on stable.
+        # Still missing vs a real golden-signal gate: error-rate/latency under
+        # live traffic (needs Cloud Monitoring wiring) — tracked in the audit.
         run: |
-          echo "TODO(you): query Cloud Monitoring for error-rate/latency on the canary revision"
-          echo "for ~5-10 min; fail this step to auto-halt promotion (traffic stays 90% on stable)."
-          sleep 30
+          TAG="sha-${{ needs.build.outputs.sha }}"
+          BASE=$(gcloud run services describe "$SERVICE" \
+            --project "${{ vars.GCP_PROJECT_ID }}" --region "${{ vars.GCP_REGION }}" \
+            --format='value(status.url)')
+          # Cloud Run tag-URL convention: https://<tag>---<service-host>
+          URL="https://${TAG}---${BASE#https://}"
+          echo "Probing canary tag URL: $URL/healthz"
+          ok=0
+          for i in $(seq 1 12); do
+            if curl -fsS --max-time 10 "$URL/healthz" >/dev/null; then
+              ok=$((ok + 1))
+              echo "canary /healthz OK ($ok/3 required)"
+              [ "$ok" -ge 3 ] && break
+            else
+              echo "canary /healthz failed (attempt $i)"
+            fi
+            sleep 15
+          done
+          if [ "$ok" -lt 3 ]; then
+            echo "::error::canary revision never served /healthz — halting promotion (traffic stays on stable revision)"
+            exit 1
+          fi
       - name: Promote to 100%
         run: |
           gcloud run services update-traffic "$SERVICE" \
