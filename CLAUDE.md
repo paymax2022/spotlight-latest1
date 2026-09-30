@@ -115,8 +115,10 @@ module directory.
   (must always pass): `tests/unit/golden-path`, 10 specs, 129 tests
 - `cd frontend-web && npm run test:money` — money invariants (`tests/unit/estate`,
   `tests/unit/wallet`, `tests/unit/tiers`)
-- `cd frontend-web && npm run contract:check` — estate implementation vs
-  `contracts/estate.openapi.yaml` (estate only — it does not check `openapi.yaml`)
+- `cd frontend-web && npm run contract:check` — validates every
+  `contracts/*.openapi.yaml` parses + carries openapi/paths, then checks
+  estate implementation vs `contracts/estate.openapi.yaml`
+  (impl-conformance is estate-only — other contracts are syntax-gated only)
 - `cd frontend-web && npm run lint` — ESLint via Next.js lint config
 - `cd frontend-admin && npm run type-check` — TypeScript strict check (`tsc --noEmit`)
 - `cd frontend-web && npx tsc --noEmit` — TypeScript check for the web app
