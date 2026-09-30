@@ -158,7 +158,7 @@ Groups: `(auth)`, `(doctor)`, `(merchant)`, `(tabs)`, `admin`, `ai-notes`, `ai-t
 * Actual: HEAD is unbuildable; any deploy or `go vet`/`go test` run from `main` fails.
 * Production impact: production deploys from `main` will fail at build; any rollback to this SHA fails too. Also signals the promotion flow can merge untested code to the production branch.
 * Confidence: HIGH — reproduced locally.
-* Status: BUG — verified broken, not fixed.
+* Status: **FIXED — PR #286 (merged).** Config field restored; `backend` CI lane green on merge.
 * Re-verification (agent sweep of all 69 `config.Config` consumers): `FeatureContestantSocialEnabled` is the **only** missing config field — every other `cfg.*` access across handlers/services/tests/`validate.go` resolves. Confirmatory detail: `.github/workflows/staging-module-flags.yml:155` still sets `FEATURE_CONTESTANT_SOCIAL_ENABLED=true` — dead env wiring consistent with the merge-regression theory.
 
 ### AUD-BE-002 — Auth middleware fails OPEN on account-status check; every request fans out to Supabase
@@ -172,7 +172,7 @@ Groups: `(auth)`, `(doctor)`, `(merchant)`, `(tabs)`, `admin`, `ai-notes`, `ai-t
 * Actual: fail-open status gate; uncached 4-call fan-out per request.
 * Production impact: suspended/locked accounts retain access during Supabase incidents; p50 latency of every authed call includes up to 4 sequential network hops; GoTrue outage takes down the entire API.
 * Confidence: HIGH for the code path; MEDIUM on real-world likelihood (Supabase availability).
-* Status: BUG (fail-open) + RISK (fan-out) — recorded.
+* Status: BUG (fail-open) + RISK (fan-out) — recorded. Fix in review: **PR #294**.
 * Re-verification amplifier: `auth_context.go:62-63` also swallows `GetUserRoles`/`GetUserPermissions` errors → empty role/perm slices (fail-closed for `RequirePermission` but silently degraded). The fail-closed fix pattern already exists — `admin_console_rbac.go:132-138` (AUTH-012) checks `serr` — it was never applied to `requireAuth`. Existing test `auth_context_test.go:158-191` pins the current fail-open behavior.
 
 ### AUD-BE-003 — Admin user-list filtering applied AFTER limit (under-fetching) + PostgREST `or` filter built by raw string interpolation
@@ -216,7 +216,7 @@ Groups: `(auth)`, `(doctor)`, `(merchant)`, `(tabs)`, `admin`, `ai-notes`, `ai-t
 * Actual: the endpoint is a session-revocation side-effect that lies to the user — the old password keeps working, and (with session-hardening OFF, the default) even the session revocation is cosmetic since GoTrue tokens are unaffected by `auth_sessions` rows.
 * Production impact: users believe they rotated a compromised password when nothing changed — a security-relevant UX lie; a stolen bearer token can also invoke it to wipe the `auth_sessions` table for the victim (denial of the session-tracking feature). **Re-verification amplifier:** the handler also writes a `"high"`-severity `password.change` audit-log entry for an event that never happened — the audit trail actively records a falsehood. `AdminSetPassword` exists in the codebase (`integrations/supabase_auth_admin.go:72`) but its only caller is the OTP reset flow — unreachable from `ChangePassword`.
 * Confidence: HIGH — direct code read + independent re-verification (no outbound password update exists; `PUT /auth/v1/user` appears nowhere in the backend).
-* Status: BUG — recorded.
+* Status: BUG — recorded. Fix in review: **PR #292**.
 
 ### AUD-BE-006 — Login/reset use `http.DefaultClient` with no timeout
 
@@ -246,7 +246,7 @@ Groups: `(auth)`, `(doctor)`, `(merchant)`, `(tabs)`, `admin`, `ai-notes`, `ai-t
 * Actual: first login after expiry succeeds, every subsequent login permanently fails — users get locked out for good after a temporary lockout.
 * Production impact: any account that survives the 30-min lockout window is permanently bricked on the next login — support-visible, recurring, and silent (the login just reports "account locked" as if still under the temporary penalty).
 * Confidence: HIGH — code trace verified by independent re-read.
-* Status: BUG — recorded.
+* Status: BUG — recorded. Fix attempted in PR #289 (closed unmerged, conflicts); rework in progress.
 
 ## Frontend Findings
 
@@ -273,7 +273,7 @@ Groups: `(auth)`, `(doctor)`, `(merchant)`, `(tabs)`, `admin`, `ai-notes`, `ai-t
 * Actual: duplicate key — the first definition is dead JSON; effective profile runs Sentry sourcemap auto-upload during staging AAB builds (build-time noise/failure risk if SENTRY_AUTH_TOKEN/org vars are absent — not a runtime config loss).
 * Production impact: minor — heavier/noisier staging builds, possible Sentry upload failures; NOT an auth break.
 * Confidence: HIGH — independently re-verified.
-* Status: BUG (minor) — recorded.
+* Status: **FIXED — PR #295 (merged).** Duplicate `staging-aab` block removed; single profile retains `SENTRY_DISABLE_AUTO_UPLOAD`.
 
 ### AUD-FE-003 — Client-initiated Paystack charges ("paymax_gateway") fulfil orders on the client callback; webhook only logs
 
@@ -317,6 +317,17 @@ Groups: `(auth)`, `(doctor)`, `(merchant)`, `(tabs)`, `admin`, `ai-notes`, `ai-t
 * Confidence: HIGH on the code path (static); MEDIUM on live behavior — if the deployed Paystack appends extra params or an untraced path injects `transactionId`, the symptom may differ; a live check is recommended.
 * Status: BUG — recorded.
 
+### AUD-FE-008 — Utility beneficiary routes proxy to Go unconditionally (missed by the fd91af5d dual-path fix)
+
+* Severity: MEDIUM (found during AUD-TEST-001 investigation — new finding)
+* Component: `frontend-web/app/api/v1/utility/beneficiaries/route.ts` (GET/POST) and `beneficiaries/[id]/route.ts` (DELETE)
+* Evidence: every other utility read route (`categories`, `billers`, `operators`, …) follows the `utilityBillsGoProxyEnabled()` dual-path contract established by `fd91af5d` — local `src/server/utility/service.ts` when the flag is off, Go proxy when on. The three beneficiary operations were missed: they called `proxyToGoBackend` unconditionally, so they 404/5xx in every deployment where the Go utility-bills flag is off (the default).
+* Expected: beneficiaries GET/POST/DELETE follow the same flag-gated dual path as sibling routes.
+* Actual: unconditional proxy; dead endpoints wherever the Go flag is off.
+* Production impact: beneficiary management broken in any environment without the Go flag; invisible because these routes had no spec coverage.
+* Confidence: HIGH — direct code read; sibling routes compared side-by-side.
+* Status: **FIXED — PR #291 (merged).** All three ops restored to dual-path (local service functions `listUtilityBeneficiaries`/`saveUtilityBeneficiary`/`deleteUtilityBeneficiary` from pre-proxy `c9c5baa7` when flag off; Go proxy when on). Covered by new `tests/unit/utility/beneficiaries.spec.ts` (7 tests).
+
 ### AUD-INFRA-010 — Two Paystack webhook receivers exist at different paths; whichever URL the Paystack dashboard points at leaves the other pipeline's fulfilments dead
 
 * Severity: MEDIUM
@@ -350,7 +361,7 @@ Groups: `(auth)`, `(doctor)`, `(merchant)`, `(tabs)`, `admin`, `ai-notes`, `ai-t
 * Actual: every upstream failure (Supabase down, R2 timeout, Paystack error, unhandled throw) in 500+ routes is invisible server-side; only the client sees a bare 500.
 * Production impact: at 3 AM a payment/KYC/vote failure has **no diagnostic trail** — no error fingerprint, no stack, no correlation. Support tickets become un-debuggable.
 * Confidence: HIGH.
-* Status: MISSING CONTROL — systemic, confirmed by source.
+* Status: **FIXED — PR #287 (merged).** `handleApiError` now logs unexpected errors (`[api] Unhandled route error:`) and calls `Sentry.captureException` behind a try/guard; response contract unchanged. Covered by `tests/unit/api/responses.spec.ts` (7 tests).
 
 ## Backend Findings (continued)
 
@@ -363,7 +374,7 @@ Groups: `(auth)`, `(doctor)`, `(merchant)`, `(tabs)`, `admin`, `ai-notes`, `ai-t
 * Actual: tasks land in Redis and are never processed — every enqueued push notification, email, and SMS is silently undelivered; Redis accumulates dead tasks.
 * Production impact: estate/finance/health notifications that rely on the queue path never reach users; Redis memory grows unboundedly with orphaned tasks; combined with INFRA-006 (no worker deployed anywhere) the entire async notification plane is inert.
 * Confidence: HIGH — producers and the worker-registration function exist; the only missing piece is that nothing ever calls them.
-* Status: BUG / MISSING CONTROL — dead pipeline.
+* Status: BUG / MISSING CONTROL — dead pipeline. Fix in progress (branch `fix/aud-be-008-notification-worker`).
 
 **Amplifier (independent re-verification):** `notifications.Service.Send` defaults `Channels` to `{push, in_app}` and `taskTypeForChannel` maps `in_app` → `TypeNotificationPush` via the `default` branch (`service.go:67,133`) — even once a consumer exists, every default notification produces **two duplicate push tasks**, and no task carries an `asynq.TaskID` dedup key. Also: `ProviderConfig` (Resend/Termii/Expo creds) has no config plumbing — nothing maps env vars to it, so even a started worker would run unconfigured. Producer sites verified live: estate pushes, restaurant order/chat events, invest price alerts, fractionalre notifier, health triage escalations — all gated on `RedisURL != ""`, and `RedisURL` defaults to `redis://localhost:6379` so enqueue attempts happen whenever Redis is reachable.
 
@@ -455,7 +466,7 @@ Groups: `(auth)`, `(doctor)`, `(merchant)`, `(tabs)`, `admin`, `ai-notes`, `ai-t
 * Expected: a shared admin secret must never carry the `NEXT_PUBLIC_` prefix; client-side code must never know it.
 * Actual: naming makes accidental publication one import away.
 * Confidence: HIGH (references verified); exposure severity depends on future imports — currently UNVERIFIED as shipped-to-bundle.
-* Status: RISK.
+* Status: RISK. Fix in review: **PR #300** — all seven dead modules deleted; zero remaining `NEXT_PUBLIC_ADMIN_API_KEY` references; tsc + regression suite green.
 
 ## Infrastructure / DevOps Findings
 
@@ -469,7 +480,7 @@ Groups: `(auth)`, `(doctor)`, `(merchant)`, `(tabs)`, `admin`, `ai-notes`, `ai-t
 * Actual: blueprint defaults to open allowlists with only a comment "restrict in production".
 * Production impact: if applied, an unauthenticated (Render Redis has no ACL auth by default) Redis reachable from the internet exposes the idempotency/asynq/SSE data plane; the Postgres is reachable with a single `postgres` password. Also creates ambiguity about which DATABASE_URL the deployed service actually uses.
 * Confidence: HIGH that the config is as written; MEDIUM on exploitability (depends whether blueprint was ever applied and whether Render Redis enforces any auth).
-* Status: RISK / MISSING CONTROL — recorded, not fixed.
+* Status: **FIXED — PR #296 (merged).** `spotlight-redis` and `spotlight-db` `ipAllowList` set to `[]` (private-only); `0.0.0.0/0` entries removed.
 
 ### AUD-INFRA-002 — Expo dev server used as production start command
 
@@ -481,7 +492,7 @@ Groups: `(auth)`, `(doctor)`, `(merchant)`, `(tabs)`, `admin`, `ai-notes`, `ai-t
 * Actual: production service runs the dev bundler.
 * Production impact: poor performance, larger payload, potential memory instability, dev-only endpoints exposed, no CDN caching semantics.
 * Confidence: HIGH (config as written); MEDIUM on whether this service is actually deployed.
-* Status: BUG (configuration defect) — recorded, not fixed.
+* Status: **FIXED — PR #296 (merged).** `spotlight-mobile` is now `runtime: static` serving `npx expo export --platform web` output (`dist/`); nonexistent `build:web` script removed; `REACT_APP_*` env vars corrected to `EXPO_PUBLIC_*`.
 
 ### AUD-INFRA-003 — Fragmented, conflicting deployment targets
 
@@ -544,7 +555,7 @@ Groups: `(auth)`, `(doctor)`, `(merchant)`, `(tabs)`, `admin`, `ai-notes`, `ai-t
 * Actual: `curl -f` on 404 fails staging → `production` (`needs: [build, staging]`) never runs; terraform probes would flap the service; uptime monitor reads permanently down.
 * Production impact: **the documented production deploy pipeline is non-functional** even if AUD-BE-001 were fixed; rollback (`workflow_dispatch` SHA) hits the same dead check; applied Terraform = self-DOS on the Cloud Run service.
 * Confidence: HIGH (grep-verified; `curl -f` on 404 deterministic).
-* Status: BUG — pipeline/IaC reference endpoints never added.
+* Status: **FIXED — PR #288 (merged).** `/healthz` and `/readyz` registered on the Gin router.
 
 ### AUD-INFRA-008 — Canary promotion is structurally present but the observation gate is a `sleep 30` stub
 
@@ -580,7 +591,7 @@ Groups: `(auth)`, `(doctor)`, `(merchant)`, `(tabs)`, `admin`, `ai-notes`, `ai-t
 * Actual: 1 failing test — and CI does not run the full vitest suite (CLAUDE.md documents only `test:regression` + `test:money` as gates), so the failure is invisible to the pipeline.
 * Production impact: low-moderate — indicates test/maintenance drift and that the categories endpoint's non-proxy response shape may regress undetected.
 * Confidence: HIGH — reproduced.
-* Status: BUG — recorded.
+* Status: **FIXED — PR #290 (merged).** Spec updated to pin the intentional flag-gated dual-path contract (fd91af5d); suite now 1140/1140 green on `main`.
 
 ### AUD-TEST-002 — Repo-wide `go test ./...` cannot run on main (build break blocks it)
 
@@ -590,7 +601,7 @@ Groups: `(auth)`, `(doctor)`, `(merchant)`, `(tabs)`, `admin`, `ai-notes`, `ai-t
 * Evidence: `go test ./...` fails to compile `internal/connect/voting` (same missing field). The 464-file Go test suite is unverifiable on `main` as committed.
 * Production impact: the entire backend test gate is dark on the production branch; any regression introduced alongside is unmeasurable.
 * Confidence: HIGH.
-* Status: BUG — consequence of AUD-BE-001.
+* Status: **RESOLVED — consequence of AUD-BE-001, fixed by PR #286.** `go test ./...` runs again on `main`.
 
 ### AUD-TEST-003 — Branch protection/required checks exist only on `develop`; `main` merges land on red pipelines
 
@@ -879,21 +890,25 @@ Running ledger of finding → fix → PR → verification → merge. Statuses ar
 | (meta) audit document | #285 | `bd431bae` | This file landed on `main` | merged 2026-09-30 |
 | AUD-BE-001 | #286 | `0433100f` | Restored `FeatureContestantSocialEnabled` field + env loader per `2b24b802` | `go build`/`go vet` green; `backend` CI lane green; full `verify` lane (migrate-reset + RLS + tsc + go test -race) green |
 | AUD-INFRA-007 | #288 | `d24d3db7` | Registered `GET /healthz` (liveness) + `GET /readyz` (DB-pool ping, 2s bound, 503 when unconfigured/unhealthy) matching deploy.yml/Terraform/uptime-monitor/loadtest callers; `/api/v1/public/health` unchanged | Runtime-verified on :8080; `verify` lane green |
-| AUD-FE-008 | #291 | `66608372` | Dual-path utility beneficiaries routes for flag-off mode | CI green; merged by parallel session |
-| AUD-FE-002 | #295 | `fac712fa` | Removed duplicate `staging-aab` profile in eas.json (restores `SENTRY_DISABLE_AUTO_UPLOAD`) | CI green; merged by parallel session |
-| AUD-INFRA-001/002 | #296 | `bb585cd4` | Restricted Render datastore allowlists; serve mobile web statically | CI green; merged by parallel session |
+| AUD-FE-008 | #291 | `66608372` | Dual-path utility beneficiaries routes for flag-off mode | CI green; `verify` lane green; new `beneficiaries.spec.ts` 7/7 |
+| AUD-FE-002 | #295 | `fac712fa` | Removed duplicate `staging-aab` profile in eas.json (restores `SENTRY_DISABLE_AUTO_UPLOAD`) | JSON parse-validated; no CI lane exercises EAS config |
+| AUD-INFRA-001/002 | #296 | `bb585cd4` | Restricted Render datastore allowlists (`ipAllowList: []`); mobile → `runtime: static` + `expo export` (`dist/`); `EXPO_PUBLIC_*` env names; dropped nonexistent `build:web` script | Config parse-validated; no CI lane exercises render.yaml |
+| AUD-FE-006 | #287 | `3c99d83d` | `handleApiError`: tagged `console.error` + guarded `Sentry.captureException` for unexpected errors; response contract unchanged | `verify` green; new `responses.spec.ts` 7/7; regression 129/129; tsc clean (superset of closed duplicate #293) |
+| AUD-TEST-001 | #290 | `780a3635` | Categories spec rewritten to pin the intentional flag-gated dual-path contract both directions | `verify` green; spec 16/16; full suite 1140/1140; regression 129/129 |
 
 ### In review
 
 | Finding | PR | Change | Status |
 |---------|----|--------|--------|
 | AUD-BE-005 | #292 | `ChangePassword` now verifies current password via GoTrue password grant (`VerifyPasswordGrant`), writes via `AdminSetPassword`, revokes sessions; false success-audit eliminated; lint-clean | OPEN — CI running |
-| AUD-FE-006 | #287 | `handleApiError` logs + `Sentry.captureException`s unexpected errors before the generic 500; guarded capture; unit test pinning | OPEN (parallel session; supersedes closed #293 — same fix, better tested) |
 | AUD-BE-002 | #294 | `RequireAuthContext` fails closed (503) when `GetUserStatus` errors; missing-row `pending` still allowed; table test extended | OPEN — CI running |
 | AUD-BE-008 | #297 | New `cmd/notification-worker` binary (asynq consumer + provider env plumbing + SIGTERM drain); `in_app`→push double-delivery removed; worker `http.Client` gets 15s timeout | OPEN — CI running |
 | AUD-BE-009 | #298 | Successful login after an *expired* `LockedUntil` clears `status='locked'` (was permanent until admin unlock); typed `platformUserLoginPatch` | OPEN — replaces #289 (auto-closed on base-branch deletion) |
-| AUD-TEST-001 | #290 | Pin utility categories spec to dual-path contract | OPEN (parallel session) |
+| AUD-SEC-003 | #300 | Deleted 7 dead service modules referencing `NEXT_PUBLIC_ADMIN_API_KEY` (0 importers verified) | OPEN — tsc + regression 129/129 green; zero remaining refs |
+| AUD-TEST-004 | #302 | Fixes dead/masked CI lanes; aligns Go pins with go.mod | OPEN — CI running |
 | (meta) tooling | #299 | mise toolchain + golangci-lint + lefthook configs | OPEN (parallel session) |
+| AUD-REL-003 | #304 | Bounded `http.Client` timeouts on GoTrue auth calls + R2 upload PUT | OPEN — CI running |
+| (meta) audit bookkeeping | #303 | This section + inline `Status:` annotations + new AUD-FE-008 finding entry | OPEN |
 
 ### Baseline CI failures (not merge-blocking, tracked as findings)
 
