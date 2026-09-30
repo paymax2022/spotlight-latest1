@@ -45,6 +45,20 @@ vi.mock('@/lib/supabase/server', () => ({
   }),
 }));
 
+// The paid-verify route resolves a missing transactionId by looking the
+// transaction up by payment_reference through the admin client (AUD-FE-007 —
+// the browser /vote-callback redirect only carries trxref/reference).
+const supabaseAdmin = vi.hoisted(() => ({ maybeSingle: vi.fn() }));
+vi.mock('@/lib/supabase/admin', () => ({
+  createAdminClient: vi.fn(() => ({
+    from: vi.fn(() => ({
+      select: vi.fn(() => ({
+        eq: vi.fn(() => ({ maybeSingle: supabaseAdmin.maybeSingle })),
+      })),
+    })),
+  })),
+}));
+
 import { POST as postFreeVote } from '../../../app/api/v2/votes/free/route';
 import { POST as postPaidVerify } from '../../../app/api/v2/votes/paid/verify/route';
 import { bridgedCastFreeVote, bridgedVerifyPaidVote } from '@/src/server/voting-bridge/bridge';
@@ -145,12 +159,47 @@ describe('POST /api/v2/votes/paid/verify', () => {
     expect(body.totalVotes).toBe(20);
   });
 
-  it('returns 400 when transactionId is missing', async () => {
+  it('returns 400 when paymentReference is missing', async () => {
+    const req = makeNextRequest('/api/v2/votes/paid/verify', {
+      body: { transactionId: 'tx-001' },
+    });
+    const res = await postPaidVerify(req);
+    expect(res.status).toBe(400);
+  });
+
+  // The browser /vote-callback redirect only carries trxref/reference — the
+  // transactionId never reaches the client (AUD-FE-007).
+  it('resolves transactionId by paymentReference when omitted', async () => {
+    supabaseAdmin.maybeSingle.mockResolvedValue({ data: { id: 'tx-resolved' }, error: null });
+    vi.mocked(bridgedVerifyPaidVote).mockResolvedValue({
+      success: true,
+      voteId: 'vote-001',
+      totalVotes: 20,
+    } as any);
+
     const req = makeNextRequest('/api/v2/votes/paid/verify', {
       body: { paymentReference: 'PAY_ref_001' },
     });
     const res = await postPaidVerify(req);
-    expect(res.status).toBe(400);
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.success).toBe(true);
+    expect(bridgedVerifyPaidVote).toHaveBeenCalledWith(
+      { transactionId: 'tx-resolved', paymentReference: 'PAY_ref_001' },
+      expect.anything(),
+      expect.anything(),
+    );
+  });
+
+  it('returns 404 when the payment reference matches no transaction', async () => {
+    supabaseAdmin.maybeSingle.mockResolvedValue({ data: null, error: null });
+    const req = makeNextRequest('/api/v2/votes/paid/verify', {
+      body: { paymentReference: 'PAY_unknown' },
+    });
+    const res = await postPaidVerify(req);
+    expect(res.status).toBe(404);
+    expect(bridgedVerifyPaidVote).not.toHaveBeenCalled();
   });
 
   // The route reads validateRequest's error and then deliberately continues, so
