@@ -364,11 +364,17 @@ func (s *authService) LoginUser(in domain.LoginRequest) (map[string]any, error) 
 	// learn it. Internal hint, stripped before the response leaves the handler.
 	out["__email"] = email
 	if user != nil {
-		_ = s.supabase.REST(http.MethodPatch, "platform_users", map[string]string{"id": "eq." + user.ID}, map[string]any{
-			"failed_login_attempts": 0,
-			"locked_until":          nil,
-			"last_login_at":         time.Now().UTC().Format(time.RFC3339),
-		}, nil)
+		patch := platformUserLoginSuccessPatch{
+			LastLoginAt: time.Now().UTC().Format(time.RFC3339),
+		}
+		// status=locked is only reachable here via an expired auto-lockout
+		// (validateLoginStatus refuses every other locked state first); reset
+		// to the same "active" UnlockUser writes, else the row stays
+		// locked+nil locked_until → an indefinite lock on the next login.
+		if user.Status == "locked" {
+			patch.Status = "active"
+		}
+		_ = s.supabase.REST(http.MethodPatch, "platform_users", map[string]string{"id": "eq." + user.ID}, patch, nil)
 		// Surface the platform user id to the handler (internal hint, stripped
 		// before the response is returned to the client). Lets the session layer
 		// issue a tracked session + run suspicious-login detection.
@@ -456,6 +462,17 @@ type platformUser struct {
 	FailedLoginAttempts int
 	LockedUntil         *time.Time
 	DeletedAt           *time.Time
+}
+
+// platformUserLoginSuccessPatch is the PostgREST PATCH body written after a
+// successful password login. locked_until must serialize as JSON null to
+// clear it, so it has no omitempty; status is only sent when clearing an
+// expired auto-lockout latch.
+type platformUserLoginSuccessPatch struct {
+	FailedLoginAttempts int        `json:"failed_login_attempts"`
+	LockedUntil         *time.Time `json:"locked_until"`
+	LastLoginAt         string     `json:"last_login_at"`
+	Status              string     `json:"status,omitempty"`
 }
 
 func (s *authService) findPlatformUserByEmail(email string) (*platformUser, error) {
