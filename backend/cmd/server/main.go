@@ -10,6 +10,8 @@ import (
 	"syscall"
 	"time"
 
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
+
 	"spotlight/backend/internal/app"
 	"spotlight/backend/internal/config"
 	"spotlight/backend/internal/platform/buildinfo"
@@ -38,8 +40,14 @@ func main() {
 
 	r := app.NewRouter(cfg)
 	srv := &http.Server{
-		Addr:              ":" + cfg.Port,
-		Handler:           r,
+		Addr: ":" + cfg.Port,
+		// otelhttp wraps the whole engine: one span per request, exported to
+		// Cloud Trace when observability.Init installed a real provider —
+		// otherwise the global noop provider makes this free (incl. tests).
+		// The W3C propagator joins incoming `traceparent` headers. Wrapping at
+		// the Handler boundary (not otelgin) keeps the OTel version decoupled
+		// from the pinned gin version — otelhttp is already an indirect dep.
+		Handler:           otelhttp.NewHandler(r, "paymax-backend"),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
