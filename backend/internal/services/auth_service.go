@@ -355,7 +355,11 @@ func (s *authService) LoginUser(in domain.LoginRequest) (map[string]any, error) 
 		}
 
 		if user != nil {
-			_ = s.bumpFailedLogin(user)
+			// A failed bump must not go silent — an uncounted failure is one
+			// free retry against the lockout budget (AUD-BE-007).
+			if err := s.bumpFailedLogin(user); err != nil {
+				log.Printf("bumpFailedLogin(%s): %v", user.ID, err)
+			}
 		}
 		return nil, fmt.Errorf("invalid credentials")
 	}
@@ -533,14 +537,22 @@ func (s *authService) validateLoginStatus(u *platformUser) error {
 	return nil
 }
 
+// bumpFailedLogin atomically increments the counter in Postgres via
+// bump_failed_login_attempts (20270314000000_atomic_failed_login_bump.sql).
+// The previous read-then-PATCH undercounted concurrent failures — two
+// requests both read n and both wrote n+1 (AUD-BE-007). The lockout decision
+// moved into the function so increment+lock is one statement.
 func (s *authService) bumpFailedLogin(u *platformUser) error {
-	next := u.FailedLoginAttempts + 1
-	body := map[string]any{"failed_login_attempts": next}
-	if next >= s.cfg.MaxFailedLoginAttempts {
-		body["status"] = "locked"
-		body["locked_until"] = time.Now().UTC().Add(time.Duration(s.cfg.AccountLockMinutes) * time.Minute).Format(time.RFC3339)
+	var attempts int
+	if err := s.supabase.RPC("bump_failed_login_attempts", map[string]any{
+		"p_user_id":      u.ID,
+		"p_max_attempts": s.cfg.MaxFailedLoginAttempts,
+		"p_lock_minutes": s.cfg.AccountLockMinutes,
+	}, &attempts); err != nil {
+		return err
 	}
-	return s.supabase.REST(http.MethodPatch, "platform_users", map[string]string{"id": "eq." + u.ID}, body, nil)
+	u.FailedLoginAttempts = attempts
+	return nil
 }
 
 func (s *authService) createSession(u *platformUser, out map[string]any) error {
