@@ -958,3 +958,31 @@ Running ledger of finding → fix → PR → verification → merge. Statuses ar
 ### Baseline CI failures (not merge-blocking, tracked as findings)
 
 `npm audit (frontend-web)`, `npm audit (mobile-app/reactnative)`, `trivy (filesystem)` are red on every PR including docs-only #285 — pre-existing dependency/IaC advisories, see AUD-SEC-002 and infra findings. Everything else (backend, frontend-*, CodeQL, govulncheck, secrets-scan, gitleaks, verify) is expected green before merge.
+
+## Local Integration Stack Verification (live run, 2026-09-30)
+
+Full local stack exercised end-to-end: mobile web (Metro :8083) → Next.js gateway (:3002, all `FEATURE_*` on) → Go API (:8090, all 36 modules published + all env flags on) → local Supabase (:54321/:54322) + Redis (:6380) + fake rails (:9100). Fixture `qa-claude-test@spotlight.internal` driven through **real GoTrue login** (no seeded session) with KYC tier 3 and a transaction PIN set via the live `POST /api/v1/transfers/pin`.
+
+### Verified working under the live stack
+
+| Area | Evidence |
+|------|----------|
+| Auth | UI login → GoTrue JWT via `POST /api/auth/login` (Next → Go); bad-password 401 renders inline error without a session-reset loop |
+| Module gating | `GET /api/v1/modules/visibility` → 36 published modules; deep-link guard + module catalog agree |
+| Transaction-PIN gate | Money routes (`/wallet`, `/services/*` money paths, `/fx`, `/savings`, `/invest`, `/crypto`, `/dues`, `/ai-trading`, `/spotlight-wealth`) hold a PIN-less user on `/security/set-pin`; live `pin/status` honored once set |
+| Wallet read path | `GET /api/v1/wallet/balance` → real ledger projection (`available_kobo`, integer minor units) |
+| Money mutation + provider failure | `POST /api/v1/utility/pay` (₦100 airtime, `Idempotency-Key` set): wallet DEBIT 10,000 + clearing CREDIT 10,000 posted; VTPass creds absent upstream → txn auto-`reversed` with REVERSAL_DEBIT/REVERSAL_CREDIT pair; balance restored. Replay with the same key → `already_processed:true`, no re-debit |
+| Ledger integrity | `ledger_entries` shows balanced pairs only; `idempotency_key` UNIQUE enforced (replay rejected before write) |
+| Failure tolerance | Redis stopped → `GET /api/finance/wallet/balance` still 200 in ~240ms (DB path, not cache-dependent); Elasticsearch absent → `GET /v1/marketplace/search` returns 200 `{"degraded":true}` rather than 5xx |
+| Concurrency | k6 `marketplace/search_load.js` ramped to ~200 VUs: **15,574 requests, 0% failed, p95 = 10.04ms** (budget 250ms) |
+| Playwright | mobile-chrome suite green against the live stack (incl. transaction-PIN, auth, bills, insurance, wallet specs) |
+
+### New findings from the live run
+
+| ID | Severity | Finding | Evidence |
+|----|----------|---------|----------|
+| AUD-OPS-001 | MED | **Module env-flag drift**: `platform_modules.env_flag` is resolved by free-form `os.Getenv` at runtime, but six registry values don't match any `getEnvBool` name in `config.go`. `association` is the sharpest: registry gate reads `FEATURE_ASSOCIATION_ENABLED` (singular) while the route mount gate reads `FEATURE_ASSOCIATIONS_ENABLED` (plural) — ops enabling either alone gets a module that is "visible" but 503s, or mounted but hidden. Same class: `beneficiaries`, `fintechAdmin`, `kyc` (vs `FEATURE_KYC_VERIFY_ENABLED`), `utilityPayments` (vs `FEATURE_UTILITY_BILLS_ENABLED`), `votesBridge` (`VOTES_BRIDGE_ENABLED`) | Reproduced locally: registry `visible` + `FEATURE_ASSOCIATIONS_ENABLED=true` → `GET /api/finance/associations` → 503 `{"module":"association"}`; adding `FEATURE_ASSOCIATION_ENABLED=true` cleared it. Fix direction: assert every `env_flag` in `platform_modules` resolves to a declared config flag (unit test or `hygiene` CI lane) |
+| AUD-TEST-006 | LOW | k6 `marketplace/search_load.js` was never runnable — `URLSearchParams` doesn't exist in goja; every iteration threw `ReferenceError` | `ReferenceError: URLSearchParams is not defined` on first VU; fixed (manual query builder) → PR #370 |
+| AUD-TEST-007 | LOW | e2e helpers left `**/auth/v1/logout` and `**/api/v1/insurance/consent**` unmocked — against a live backend the 401s trip the global axios interceptor and sign the fake session out mid-test | insurance `protection.spec.ts` 106/116 landed on /login; fixed on PR #365 (logout → 204, consent GET → `{granted:false}`) |
+| AUD-QA-001 | INFO | Virtual-account provisioning (`GET /api/v1/virtual-accounts/me`) requires a live Paystack key; with the local placeholder it returns a clean 502 "couldn't reach our banking partner" — graceful, but the VA flow is UNVERIFIED end-to-end | `502` with friendly message; needs `PAYSTACK_SECRET_KEY` test value or a Paystack fake rail |
+| AUD-QA-002 | INFO | `insurance_products` is empty in local seed data — insurance catalog renders `{"data":null}`; purchase path exercised only through mocks | `GET /api/v1/insurance/products` → 200 `data:null` |
