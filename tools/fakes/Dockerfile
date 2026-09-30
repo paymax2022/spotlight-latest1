@@ -15,7 +15,7 @@ ENV CGO_ENABLED=0 GOOS=linux
 RUN go build -trimpath -ldflags="-s -w" -o /out/fakes .
 
 # ── runtime ───────────────────────────────────────────────────────────────────
-FROM alpine:3.20
+FROM alpine:3.24
 # Non-root user (defense-in-depth; this service never needs privileges).
 RUN addgroup -S fakes && adduser -S -G fakes fakes
 COPY --from=build /out/fakes /usr/local/bin/fakes
