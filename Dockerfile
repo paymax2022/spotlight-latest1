@@ -18,7 +18,7 @@ RUN go mod download \
  && go build -o notification-worker ./cmd/notification-worker
 
 # Runtime: minimal Alpine image with compiled binaries
-FROM alpine:3.20
+FROM alpine:3.24
 WORKDIR /app
 RUN apk add --no-cache curl ca-certificates
 COPY --from=build /app/server /app/server
