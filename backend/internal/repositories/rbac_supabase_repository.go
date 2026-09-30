@@ -3,6 +3,7 @@ package repositories
 import (
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -326,6 +327,8 @@ func readMetadataString(m map[string]any, key string) string {
 // the two never drift on which fields/embeds a domain.AdminUser is built from.
 const adminUserSelect = "id,first_name,last_name,email,phone,user_type,status,profile_completed,created_at,profiles!left(state,country)"
 
+const adminUserOrder = "created_at.desc"
+
 type adminUserRow struct {
 	ID               string `json:"id"`
 	FirstName        string `json:"first_name"`
@@ -362,14 +365,35 @@ func adminUserFromRow(row adminUserRow) (user domain.AdminUser, state, country, 
 	return
 }
 
+// postgrestLikePattern sanitises a user-supplied search term before it is
+// interpolated into a PostgREST or(...) clause. The pattern is wrapped in
+// double quotes — inside them, reserved filter-DSL characters ( ) , . are
+// literal — so only the quote escapes " and \ must be stripped from input.
+// AUD-BE-003: an unquoted term could break out of the or-group and alter the
+// predicate set entirely.
+func postgrestLikePattern(s string) string {
+	return strings.NewReplacer(`"`, "", `\`, "").Replace(s)
+}
+
 func (r *RBACSupabaseRepository) ListAdminUsers(filter domain.AdminUserFilter) ([]domain.AdminUser, error) {
 	if filter.Limit <= 0 || filter.Limit > 500 {
 		filter.Limit = 100
 	}
+	// Scoped filters (state/program/contest/school/country) can only be
+	// applied in memory: they live on the embedded profiles row and its JSON
+	// metadata, and pushing them into the query would need profiles!inner,
+	// which drops platform_users rows that have no profile at all. To stop a
+	// filtered page silently under-fetching (limit applied by PostgREST before
+	// the in-memory predicates ran), fetch the max window when any scoped
+	// filter is active and apply the caller's limit after filtering. AUD-BE-003.
+	fetchLimit := filter.Limit
+	if filter.State != "" || filter.Program != "" || filter.Contest != "" || filter.School != "" || filter.Country != "" {
+		fetchLimit = 500
+	}
 	q := map[string]string{
 		"select": adminUserSelect,
-		"order":  "created_at.desc",
-		"limit":  fmt.Sprintf("%d", filter.Limit),
+		"order":  adminUserOrder,
+		"limit":  strconv.Itoa(fetchLimit),
 	}
 	if v := strings.TrimSpace(filter.Status); v != "" {
 		q["status"] = "eq." + v
@@ -378,7 +402,8 @@ func (r *RBACSupabaseRepository) ListAdminUsers(filter domain.AdminUserFilter) (
 		q["user_type"] = "eq." + v
 	}
 	if v := strings.TrimSpace(filter.Search); v != "" {
-		q["or"] = fmt.Sprintf("(email.ilike.*%s*,first_name.ilike.*%s*,last_name.ilike.*%s*)", v, v, v)
+		v = postgrestLikePattern(v)
+		q["or"] = fmt.Sprintf("(email.ilike.\"*%s*\",first_name.ilike.\"*%s*\",last_name.ilike.\"*%s*\")", v, v, v)
 	}
 
 	var rows []adminUserRow
@@ -405,6 +430,9 @@ func (r *RBACSupabaseRepository) ListAdminUsers(filter domain.AdminUserFilter) (
 			continue
 		}
 		out = append(out, user)
+		if len(out) >= filter.Limit {
+			break
+		}
 	}
 	return out, nil
 }
