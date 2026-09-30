@@ -100,6 +100,103 @@ services:
         value: info
 
   # ─────────────────────────────────────────────────────────────────────────────
+  # Scheduled-Job Workers (AUD-INFRA-006)
+  #
+  # docker-compose gates these behind opt-in profiles (marketplace /
+  # transport-scheduling); Render has no profiles, so flag/dependency-gated
+  # workers idle quietly instead of restart-looping. All run the same
+  # immutable root Dockerfile image as the API service.
+  #
+  # Intentionally NOT deployed here: cmd/fxsmoke (a manual smoke tool, not a
+  # long-running job) and cmd/voting-test-server (test harness).
+  # ─────────────────────────────────────────────────────────────────────────────
+  - type: worker
+    name: spotlight-marketplace-cron
+    plan: starter
+    runtime: docker
+    region: ohio
+    startCommand: /app/marketplace-cron
+    dockerfile: ./Dockerfile
+    dockerContext: ./
+    autoDeploy: true
+
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: spotlight-db
+          property: connectionString
+      - key: FEATURE_MARKETPLACE_ENABLED
+        value: "true"
+      - key: ENVIRONMENT
+        value: production
+      - key: LOG_LEVEL
+        value: info
+
+  # The indexer drains mkt_listings_outbox into Elasticsearch. This blueprint
+  # provisions no ES cluster, so ES_URL stays dashboard-managed; until it is
+  # set the worker idles rather than error-looping against localhost:9200.
+  - type: worker
+    name: spotlight-marketplace-indexer
+    plan: starter
+    runtime: docker
+    region: ohio
+    startCommand: >-
+      /bin/sh -c 'if [ -z "$ES_URL" ]; then
+      echo "marketplace-indexer: ES_URL unset — idling until provisioned";
+      while true; do sleep 86400; done; fi;
+      exec /app/marketplace-indexer'
+    dockerfile: ./Dockerfile
+    dockerContext: ./
+    autoDeploy: true
+
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: spotlight-db
+          property: connectionString
+      - key: ES_URL
+        sync: false
+      - key: FEATURE_MARKETPLACE_ENABLED
+        value: "true"
+      - key: ENVIRONMENT
+        value: production
+      - key: LOG_LEVEL
+        value: info
+
+  # The binary exits 0 immediately when FEATURE_TRANSPORT_SCHEDULING_ENABLED is
+  # unset (cmd/transport-scheduler/main.go); on Render that is a restart loop,
+  # so the wrapper idles until the flag ships with the module.
+  - type: worker
+    name: spotlight-transport-scheduler
+    plan: starter
+    runtime: docker
+    region: ohio
+    startCommand: >-
+      /bin/sh -c 'if [ "$FEATURE_TRANSPORT_SCHEDULING_ENABLED" != "true" ]; then
+      echo "transport-scheduler: flag off — idling until enabled";
+      while true; do sleep 86400; done; fi;
+      exec /app/transport-scheduler'
+    dockerfile: ./Dockerfile
+    dockerContext: ./
+    autoDeploy: true
+
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: spotlight-db
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          name: spotlight-redis
+          property: connectionString
+      - key: FEATURE_TRANSPORT_SCHEDULING_ENABLED
+        value: "false"
+      - key: ENVIRONMENT
+        value: production
+      - key: LOG_LEVEL
+        value: info
+
+  # ─────────────────────────────────────────────────────────────────────────────
   # Admin Dashboard (Next.js 15.1) — MOVED TO RAILWAY
   #
   # The spotlight-admin service was removed from Render. It now deploys from
