@@ -8,14 +8,24 @@ interface Bucket {
 
 const store = new Map<string, Bucket>();
 
+// AUD-PERF-002: the interval prune alone leaves an unbounded window — a
+// caller rotating keys (spoofed IPs/ids) could grow the Map arbitrarily
+// between sweeps. Hard cap: a NEW key past the cap triggers an inline sweep;
+// if the map is still full the new key is denied (fail closed — a limiter
+// that cannot track a key cannot safely permit it). Existing keys are never
+// evicted, so legit traffic keeps its budget.
+const MAX_TRACKED_KEYS = 10_000;
+
+function pruneStale(now: number) {
+  const cutoff = now - 5 * 60_000;
+  for (const [key, bucket] of store) {
+    if (bucket.lastRefill < cutoff) store.delete(key);
+  }
+}
+
 // Prune stale buckets every 5 minutes to prevent unbounded memory growth.
 if (typeof setInterval !== 'undefined') {
-  setInterval(() => {
-    const cutoff = Date.now() - 5 * 60_000;
-    for (const [key, bucket] of store) {
-      if (bucket.lastRefill < cutoff) store.delete(key);
-    }
-  }, 5 * 60_000);
+  setInterval(() => pruneStale(Date.now()), 5 * 60_000);
 }
 
 export interface RateLimitResult {
@@ -31,7 +41,17 @@ export interface RateLimitResult {
  */
 export function checkRateLimit(key: string, limit: number, windowMs: number): RateLimitResult {
   const now = Date.now();
-  const bucket = store.get(key) ?? { tokens: limit, lastRefill: now };
+  let bucket = store.get(key);
+
+  if (!bucket) {
+    if (store.size >= MAX_TRACKED_KEYS) {
+      pruneStale(now);
+      if (store.size >= MAX_TRACKED_KEYS) {
+        return { allowed: false, remaining: 0, resetInMs: windowMs };
+      }
+    }
+    bucket = { tokens: limit, lastRefill: now };
+  }
 
   // Refill proportionally since last check
   const elapsed = now - bucket.lastRefill;
