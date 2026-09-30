@@ -1,0 +1,19 @@
+pre-commit:
+  parallel: true
+  commands:
+    lint:
+      glob: "backend/**/*.go"
+      run: cd backend && mise exec -- golangci-lint run --new
+      stage_fixed: true
+    format:
+      glob: "**/*.go"
+      run: gofmt -s -w {staged_files}
+      stage_fixed: true
+
+pre-push:
+  parallel: true
+  commands:
+    vet:
+      run: cd backend && mise exec -- go vet ./...
+    build:
+      run: mise run build

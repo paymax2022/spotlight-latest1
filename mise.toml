@@ -1,0 +1,51 @@
+
+[tools]
+go = "1.26"
+golangci-lint = "2.13"
+lefthook = "2.1"
+node = "20"
+
+[hooks]
+postinstall = "lefthook install"
+
+[tasks.fmt]
+run = "gofmt -w -s backend tools mobile-app/reactnative/backend"
+
+[tasks.lint]
+run = "cd backend && golangci-lint run"
+
+[tasks."lint:web"]
+run = "cd frontend-web && npm run lint"
+
+[tasks.vet]
+run = "cd backend && go vet ./..."
+
+[tasks."typecheck:web"]
+run = "cd frontend-web && npm run type-check"
+
+[tasks."typecheck:admin"]
+run = "cd frontend-admin && npm run type-check"
+
+[tasks.build]
+run = "cd backend && go build ./..."
+
+[tasks.test]
+run = "cd backend && go test -race ./..."
+
+[tasks."test:web"]
+run = "cd frontend-web && npx vitest run"
+
+[tasks."test:regression"]
+run = "cd frontend-web && npm run test:regression"
+
+[tasks."test:money"]
+run = "cd frontend-web && npm run test:money"
+
+[tasks."contract:check"]
+run = "cd frontend-web && npm run contract:check"
+
+[tasks.bench]
+run = "cd backend && go test -bench=. -benchmem ./..."
+
+[tasks.verify]
+run = "make verify"
