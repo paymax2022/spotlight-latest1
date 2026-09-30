@@ -23,6 +23,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { createSupabaseClient } from '@/lib/supabase';
 import { getDevUrl } from '@/lib/devUrl';
+import { resolveApiBaseUrl } from '@/lib/apiBaseUrl';
 import { openWebSocket } from '@/lib/nativeWebSocket';
 import { api } from '@/api/client';
 import { USE_MOCK } from './api';
@@ -30,7 +31,7 @@ import type { OrderFrame } from './types';
 
 /** Legacy direct URL, used when the signed-ticket endpoint is unreachable. */
 function userWsUrl(): string {
-  const base = getDevUrl(process.env.EXPO_PUBLIC_API_BASE_URL ?? 'http://localhost:3000');
+  const base = getDevUrl(resolveApiBaseUrl());
   return base.replace(/^http/, 'ws').replace(/\/$/, '') + '/api/finance/restaurant/ws';
 }
 

@@ -40,7 +40,8 @@
     "check:env-mocks:staging": "node scripts/check-env-mocks.mjs .env.staging",
     "env:staging": "node scripts/use-env.mjs staging",
     "env:develop": "node scripts/use-env.mjs development",
-    "env:which": "node scripts/use-env.mjs --which"
+    "env:which": "node scripts/use-env.mjs --which",
+    "test:lib": "node --experimental-strip-types --import ./tests/unit/register-ts-paths.mjs --test \"tests/unit/lib/*.spec.ts\""
   },
   "dependencies": {
     "@expo-google-fonts/plus-jakarta-sans": "^0.4.2",

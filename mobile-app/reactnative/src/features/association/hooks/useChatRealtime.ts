@@ -5,6 +5,7 @@ import { Platform } from 'react-native';
 import { useQueryClient } from '@tanstack/react-query';
 import { createSupabaseClient } from '@/lib/supabase';
 import { getDevUrl } from '@/lib/devUrl';
+import { resolveApiBaseUrl } from '@/lib/apiBaseUrl';
 import { openWebSocket } from '@/lib/nativeWebSocket';
 import { USE_MOCK, ASSOCIATION_API_BASE } from '../constants/association.constants';
 
@@ -13,7 +14,7 @@ const KEY = 'association';
 // ws(s):// URL for the caller's own realtime stream, off the same API base the
 // axios client uses (getDevUrl rewrites loopback for a physical device).
 function chatWsUrl(): string {
-  const base = getDevUrl(process.env.EXPO_PUBLIC_API_BASE_URL ?? 'http://localhost:3000');
+  const base = getDevUrl(resolveApiBaseUrl());
   return base.replace(/^http/, 'ws').replace(/\/$/, '') + ASSOCIATION_API_BASE + '/ws';
 }
 
