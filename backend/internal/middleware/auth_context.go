@@ -47,7 +47,17 @@ func requireAuth(supabase *integrations.SupabaseRestClient, rbac services.RBACSe
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"success": false, "error": "invalid token subject"})
 			return
 		}
-		status, _ := rbac.GetUserStatus(id)
+		// Fail closed on a lookup ERROR: GetUserStatus returns ("pending", err)
+		// when PostgREST/Supabase is unreachable, and treating that as an allowed
+		// status let suspended/locked accounts through for the whole outage.
+		// A missing row still resolves to ("pending", nil) and is allowed —
+		// pending is a real status, not an error signal. Same pattern as the
+		// admin-console gate (admin_console_rbac.go resolveVerifiedIdentity).
+		status, serr := rbac.GetUserStatus(id)
+		if serr != nil {
+			c.AbortWithStatusJSON(http.StatusServiceUnavailable, gin.H{"success": false, "error": "account status check unavailable"})
+			return
+		}
 		if status == "suspended" || status == "locked" || status == "deleted" {
 			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"success": false, "error": "account restricted"})
 			return

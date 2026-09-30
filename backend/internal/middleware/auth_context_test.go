@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -168,9 +169,12 @@ func TestRequireAuthContext_StatusGate(t *testing.T) {
 		// Pinning current behaviour: "pending" (the documented default for a
 		// missing platform_users row) is not in the blocked set, so it passes.
 		{status: "pending", wantCode: http.StatusOK},
-		// An empty status (e.g. GetUserStatus errored and returned "") is also
-		// not in the blocked set, so it passes too — pinning current behaviour.
+		// An empty status with no error is not in the blocked set — it passes.
 		{status: "", wantCode: http.StatusOK},
+		// AUD-BE-002: a lookup ERROR must fail closed — a suspended account must
+		// not slip through during a PostgREST/Supabase outage.
+		{status: "", err: errors.New("postgrest unreachable"), wantCode: http.StatusServiceUnavailable},
+		{status: "pending", err: errors.New("timeout"), wantCode: http.StatusServiceUnavailable},
 	}
 	for _, tc := range cases {
 		t.Run("status="+tc.status, func(t *testing.T) {
