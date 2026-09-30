@@ -39,6 +39,12 @@ var allowedInsuranceUploadTypes = map[string]string{
 	"image/webp": ".webp",
 }
 
+// uploadHTTPClient bounds the presigned-R2 PUT. 30s (not the 10s used for
+// GoTrue auth calls) because this carries multi-MB image bodies, but it must
+// still terminate — AUD-REL-003: http.DefaultClient has no timeout, so a
+// stalled R2 connection held the request handler forever.
+var uploadHTTPClient = &http.Client{Timeout: 30 * time.Second}
+
 const insuranceUploadMaxBytes = 8 << 20 // 8MB
 
 func (h *insuranceUploadHandler) Upload(c *gin.Context) {
@@ -94,7 +100,7 @@ func (h *insuranceUploadHandler) Upload(c *gin.Context) {
 	}
 	req.Header.Set("Content-Type", contentType)
 	req.ContentLength = int64(len(data))
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := uploadHTTPClient.Do(req)
 	if err != nil {
 		c.JSON(http.StatusBadGateway, gin.H{"error": "could not upload file"})
 		return

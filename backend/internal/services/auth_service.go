@@ -27,6 +27,11 @@ type AuthService interface {
 	CompleteProfile(userID string, profileType string, metadata map[string]any) error
 }
 
+// gotrueHTTPClient bounds the direct GoTrue calls in this file (signup,
+// password grant, recovery). AUD-REL-003: these ran on http.DefaultClient —
+// no timeout — so a hung GoTrue held the request goroutine forever.
+var gotrueHTTPClient = &http.Client{Timeout: 10 * time.Second}
+
 type authService struct {
 	// otpOperational is true only when the OTP service was ACTUALLY BUILT — flag
 	// on AND pepper AND Brevo credentials AND a database. It is not the flag.
@@ -194,7 +199,7 @@ func (s *authService) RegisterUser(in domain.RegisterRequest) (*RegisterResult, 
 	req.Header.Set("apikey", s.supabase.APIKey())
 	req.Header.Set("Authorization", "Bearer "+s.supabase.APIKey())
 	req.Header.Set("Content-Type", "application/json")
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := gotrueHTTPClient.Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -329,7 +334,7 @@ func (s *authService) LoginUser(in domain.LoginRequest) (map[string]any, error) 
 	req.Header.Set("apikey", s.supabase.APIKey())
 	req.Header.Set("Authorization", "Bearer "+s.supabase.APIKey())
 	req.Header.Set("Content-Type", "application/json")
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := gotrueHTTPClient.Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -399,7 +404,7 @@ func (s *authService) RequestPasswordReset(email string) error {
 	req.Header.Set("apikey", s.supabase.APIKey())
 	req.Header.Set("Authorization", "Bearer "+s.supabase.APIKey())
 	req.Header.Set("Content-Type", "application/json")
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := gotrueHTTPClient.Do(req)
 	if err != nil {
 		return err
 	}
