@@ -9,9 +9,11 @@ vi.mock('@/src/lib/feature-flags', () => ({
   },
 }));
 
-// Read routes (categories, billers, products, transactions, beneficiaries)
-// proxy to the Go backend unconditionally; pay/validate do so only when
-// utilityBillsGoProxy is on. Mocking the proxy keeps both paths off the
+// Read routes (categories, billers, products, transactions) and pay/validate
+// share one dual-path contract: proxy to the Go utilitybills engine when
+// utilityBillsGoProxy is on, otherwise the local src/server/utility
+// implementation answers (fd91af5d — unconditional proxying broke /utility
+// wherever the Go flag was off). Mocking the proxy keeps both paths off the
 // network — without it these tests only passed while a backend happened to be
 // listening on GO_BACKEND_URL, and silently asserted the wrong implementation.
 vi.mock('@/src/lib/go-backend', () => ({
@@ -77,6 +79,7 @@ import {
   adminListUtilityTable,
   adminUpdateUtilityRow,
   adminUtilityReport,
+  listUtilityCategories,
   payUtility,
   requeryPendingUtilityTransactions,
   reverseUtilityTransaction,
@@ -124,7 +127,26 @@ describe('utility customer routes', () => {
     expect(body.success).toBe(false);
   });
 
-  it('returns utility categories for an authenticated user (auth-only, no KYC tier gate)', async () => {
+  it('returns utility categories from the local service when the Go-proxy flag is off (auth-only, no KYC tier gate)', async () => {
+    vi.mocked(listUtilityCategories).mockResolvedValue([{ id: 'airtime', label: 'Airtime' }] as never);
+
+    const response = await getCategories(new Request('http://localhost/api/v1/utility/categories', {
+      headers: withAuth(),
+    }));
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.categories).toHaveLength(1);
+    expect(listUtilityCategories).toHaveBeenCalled();
+    expect(proxyToGoBackend).not.toHaveBeenCalled();
+    expect(requireRequestUser).toHaveBeenCalled();
+    // KYC Tier-1 is intentionally NOT enforced in the utility module — per the
+    // product decision documented in app/api/v1/utility/_utils.ts.
+    expect(requireKycTier).not.toHaveBeenCalled();
+  });
+
+  it('proxies utility categories to the Go engine when the flag is on, keeping the { success, categories } contract', async () => {
+    vi.mocked(featureFlags.utilityBillsGoProxy).mockReturnValue(true);
     vi.mocked(proxyToGoBackend).mockResolvedValue(jsonResponse({ categories: [{ id: 'airtime', label: 'Airtime' }] }));
 
     const response = await getCategories(new Request('http://localhost/api/v1/utility/categories', {
@@ -140,9 +162,8 @@ describe('utility customer routes', () => {
       expect.anything(),
       '/api/finance/utilitybills/categories',
     );
+    expect(listUtilityCategories).not.toHaveBeenCalled();
     expect(requireRequestUser).toHaveBeenCalled();
-    // KYC Tier-1 is intentionally NOT enforced in the utility module — per the
-    // product decision documented in app/api/v1/utility/_utils.ts.
     expect(requireKycTier).not.toHaveBeenCalled();
   });
 
