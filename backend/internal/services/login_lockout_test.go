@@ -91,19 +91,28 @@ func TestValidateLoginStatus_UnknownOrMissingStatusIsNotRefused(t *testing.T) {
 }
 
 // ── bumpFailedLogin ──────────────────────────────────────────────────────
+//
+// AUD-BE-007: the increment + lockout decision moved into the
+// bump_failed_login_attempts RPC so it is one atomic UPDATE — the read-
+// then-PATCH undercounted concurrent failures. The stub therefore asserts the
+// CALL (function name + policy params + no client-computed counter/status),
+// not the SQL outcome, which is exercised by live-DB suites.
 
-// capturePatch runs bumpFailedLogin against a stub PostgREST server and
-// returns the JSON body of the PATCH it sent.
-func capturePatch(t *testing.T, cfg config.Config, u *platformUser) map[string]any {
+// captureBumpRPC runs bumpFailedLogin against a stub PostgREST server,
+// returns the RPC payload, and captures the count it answered with.
+func captureBumpRPC(t *testing.T, cfg config.Config, u *platformUser, rpcReply string) (map[string]any, string) {
 	t.Helper()
 	var body map[string]any
+	var path string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPatch || !strings.Contains(r.URL.Path, "platform_users") {
-			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		path = r.URL.Path
+		if r.Method != http.MethodPost || !strings.Contains(path, "/rest/v1/rpc/bump_failed_login_attempts") {
+			t.Fatalf("bump must be a single atomic RPC — got %s %s (a PATCH would reintroduce the read-modify-write race)", r.Method, path)
 		}
 		raw, _ := io.ReadAll(r.Body)
 		_ = json.Unmarshal(raw, &body)
-		w.WriteHeader(http.StatusOK)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(rpcReply))
 	}))
 	defer srv.Close()
 
@@ -111,56 +120,55 @@ func capturePatch(t *testing.T, cfg config.Config, u *platformUser) map[string]a
 	if err := svc.bumpFailedLogin(u); err != nil {
 		t.Fatalf("bumpFailedLogin: %v", err)
 	}
-	return body
+	return body, path
 }
 
-func TestBumpFailedLogin_IncrementsCounter(t *testing.T) {
+func TestBumpFailedLogin_CallsAtomicRPC(t *testing.T) {
 	cfg := config.Config{MaxFailedLoginAttempts: 5, AccountLockMinutes: 30}
-	body := capturePatch(t, cfg, &platformUser{ID: "u1", FailedLoginAttempts: 2})
+	u := &platformUser{ID: "u1", FailedLoginAttempts: 2}
+	body, path := captureBumpRPC(t, cfg, u, "3")
 
-	got, ok := body["failed_login_attempts"].(float64)
-	if !ok || int(got) != 3 {
-		t.Fatalf("failed_login_attempts = %v, want 3", body["failed_login_attempts"])
+	if !strings.Contains(path, "/rpc/bump_failed_login_attempts") {
+		t.Fatalf("path = %q, want the atomic bump RPC", path)
 	}
-}
-
-func TestBumpFailedLogin_BelowThresholdLeavesStatusAlone(t *testing.T) {
-	cfg := config.Config{MaxFailedLoginAttempts: 5, AccountLockMinutes: 30}
-	body := capturePatch(t, cfg, &platformUser{ID: "u1", FailedLoginAttempts: 2})
-
-	if _, present := body["status"]; present {
-		t.Errorf("status must not be set below the threshold, got: %v", body["status"])
-	}
-	if _, present := body["locked_until"]; present {
-		t.Errorf("locked_until must not be set below the threshold, got: %v", body["locked_until"])
+	if body["p_user_id"] != "u1" {
+		t.Fatalf("p_user_id = %v, want u1", body["p_user_id"])
 	}
 }
 
-func TestBumpFailedLogin_HittingThresholdLocksTheAccount(t *testing.T) {
+func TestBumpFailedLogin_SendsPolicyParamsNotComputedOutcome(t *testing.T) {
 	cfg := config.Config{MaxFailedLoginAttempts: 5, AccountLockMinutes: 30}
-	// 4 + 1 = 5, which meets the default threshold.
-	body := capturePatch(t, cfg, &platformUser{ID: "u1", FailedLoginAttempts: 4})
+	body, _ := captureBumpRPC(t, cfg, &platformUser{ID: "u1", FailedLoginAttempts: 4}, "5")
 
-	if body["status"] != "locked" {
-		t.Fatalf("status = %v, want \"locked\" at the threshold", body["status"])
+	if body["p_max_attempts"] != float64(5) || body["p_lock_minutes"] != float64(30) {
+		t.Fatalf("policy params = %v, want max_attempts=5 lock_minutes=30", body)
 	}
-	lockedUntilStr, _ := body["locked_until"].(string)
-	lockedUntil, err := time.Parse(time.RFC3339, lockedUntilStr)
-	if err != nil {
-		t.Fatalf("locked_until = %q is not a valid RFC3339 timestamp: %v", lockedUntilStr, err)
-	}
-	if !lockedUntil.After(time.Now().UTC()) {
-		t.Errorf("locked_until = %s must be in the future", lockedUntil)
+	// The pre-RPC code computed next/status/locked_until in Go — the race was
+	// exactly that read-modify-write. None of those may appear in the payload.
+	for _, k := range []string{"failed_login_attempts", "status", "locked_until"} {
+		if _, present := body[k]; present {
+			t.Fatalf("payload carries %q — the lock decision must stay inside the atomic UPDATE", k)
+		}
 	}
 }
 
-func TestBumpFailedLogin_PastThresholdStaysLocked(t *testing.T) {
+func TestBumpFailedLogin_StoresReturnedCount(t *testing.T) {
 	cfg := config.Config{MaxFailedLoginAttempts: 5, AccountLockMinutes: 30}
-	// Already over the threshold — must still (re-)lock, not skip.
-	body := capturePatch(t, cfg, &platformUser{ID: "u1", FailedLoginAttempts: 9})
+	u := &platformUser{ID: "u1", FailedLoginAttempts: 2}
+	captureBumpRPC(t, cfg, u, "3")
+	if u.FailedLoginAttempts != 3 {
+		t.Fatalf("FailedLoginAttempts = %d, want the RPC-returned 3", u.FailedLoginAttempts)
+	}
+}
 
-	if body["status"] != "locked" {
-		t.Fatalf("status = %v, want \"locked\" past the threshold", body["status"])
+func TestBumpFailedLogin_RPCErrorPropagates(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+	svc := &authService{supabase: integrations.NewSupabaseRestClient(srv.URL, "key"), cfg: config.Config{}}
+	if err := svc.bumpFailedLogin(&platformUser{ID: "u1"}); err == nil {
+		t.Fatal("RPC failure must propagate — silently skipped bumps are free retries against the lockout budget")
 	}
 }
 
