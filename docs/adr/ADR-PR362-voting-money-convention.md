@@ -1,4 +1,4 @@
-# ADR-PRXXX: Money Convention Boundary — Voting Float NGN vs Ledger Integer Kobo
+# ADR-PR362: Money Convention Boundary — Voting Float NGN vs Ledger Integer Kobo
 
 **Status:** Proposed
 **Date:** 2026-09-30
