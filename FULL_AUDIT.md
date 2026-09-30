@@ -439,7 +439,7 @@ Groups: `(auth)`, `(doctor)`, `(merchant)`, `(tabs)`, `admin`, `ai-notes`, `ai-t
   * `voting/rate-limit.ts` has no hard size cap — attacker-rotated keys grow the Map unbounded between 5-min sweeps (and the `setInterval` pruner never fires on frozen serverless instances).
 * Production impact: abuse controls weaken exactly under the load they're meant to shed; spoofing gives unlimited retries per request; money paths un-limited; free-vote daily cap bypassable.
 * Confidence: HIGH (re-verified).
-* Status: RISK + OBSERVATION — partial fixes merged: **PR #315** (`f7ba24de`, backend `SetTrustedProxies`) and **PR #327** (`e1ca74ca`, bucket-map cap + proxy-aware IP keys + dead `enforceRateLimit` removed). Residual open: per-instance in-memory buckets, and rate-limit coverage on legacy-protected voting routes (cannot add limiters without touching protected files).
+* Status: RISK + OBSERVATION — partial fixes merged: **PR #315** (`f7ba24de`, backend `SetTrustedProxies`), **PR #327** (`e1ca74ca`, bucket-map cap + proxy-aware IP keys + dead `enforceRateLimit` removed); **PR #346** (in review) adds a per-client ceiling at the `proxyToGoBackend` choke point covering ~147 un-limited `/api/v1/*` routes. Residual open: per-instance in-memory buckets reset per replica, and legacy-protected voting routes (`votes/paid/initiate` etc.) still cannot gain limiters without touching protected files.
 
 ### AUD-SEC-002 — Dependabot/dependency-audit posture unknown for npm modules; govulncheck blocks for Go
 
@@ -941,6 +941,8 @@ Running ledger of finding → fix → PR → verification → merge. Statuses ar
 | AUD-PERF-001 | #339 | Request-local RBAC reuse + concurrent authz fan-out | OPEN |
 | AUD-INFRA-006 | #341 | marketplace-cron / indexer / transport-scheduler workers | OPEN — indexer idles until ES_URL provisioned |
 | AUD-SEC-002 | #342 | Dependabot covers all 16 manifest directories | OPEN |
+| AUD-SEC-001 (residual) | #346 | Per-client rate limit at the `proxyToGoBackend` choke point | OPEN |
+| AUD-REL-007 | #347 | ADR proposing PostHog product-analytics pipeline | OPEN — decision record, not implementation |
 
 ### Closed unmerged (superseded / no unique change)
 
