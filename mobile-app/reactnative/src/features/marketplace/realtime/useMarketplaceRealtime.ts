@@ -25,6 +25,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import EventSource from 'react-native-sse';
 import { createSupabaseClient } from '@/lib/supabase';
 import { getDevUrl } from '@/lib/devUrl';
+import { resolveApiBaseUrl } from '@/lib/apiBaseUrl';
 import { useAuthStore } from '@/store/authStore';
 import { MKT_USE_MOCK } from '../api/client';
 import { TX_KEYS } from '../api/transact.hooks';
@@ -33,7 +34,7 @@ import { TX_KEYS } from '../api/transact.hooks';
 const REALTIME_ENABLED = (process.env.EXPO_PUBLIC_REALTIME_ENABLED ?? 'false') === 'true';
 
 // Same base as @/api/client — the frontend-web Next.js server that hosts the proxy.
-const BASE_URL = getDevUrl(process.env.EXPO_PUBLIC_API_BASE_URL ?? 'http://localhost:3000');
+const BASE_URL = getDevUrl(resolveApiBaseUrl());
 
 // The single custom SSE event the marketplace stream emits.
 type MktEvent = 'mkt.message.created';

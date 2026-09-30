@@ -9,6 +9,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { createSupabaseClient } from '@/lib/supabase';
 import { getDevUrl } from '@/lib/devUrl';
+import { resolveApiBaseUrl } from '@/lib/apiBaseUrl';
 import { openWebSocket } from '@/lib/nativeWebSocket';
 import { api } from '@/api/client';
 import { USE_MOCK } from './api';
@@ -19,7 +20,7 @@ import { isLiveTrackable, isTerminalStatus } from './utils';
 // client uses. Kept as a fallback for when the signed-ticket endpoint (below)
 // is unreachable.
 function orderWsUrl(orderId: string): string {
-  const base = getDevUrl(process.env.EXPO_PUBLIC_API_BASE_URL ?? 'http://localhost:3000');
+  const base = getDevUrl(resolveApiBaseUrl());
   const path = `/api/finance/restaurant/orders/${encodeURIComponent(orderId)}/ws`;
   return base.replace(/^http/, 'ws').replace(/\/$/, '') + path;
 }

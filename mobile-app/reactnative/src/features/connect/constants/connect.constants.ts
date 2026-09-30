@@ -1,6 +1,7 @@
 import { mockAllowed } from '@/config/mockPolicy';
 import { Colors } from '@/constants/colors';
 import { getDevUrl } from '@/lib/devUrl';
+import { resolveApiBaseUrl } from '@/lib/apiBaseUrl';
 import type { TierBenefit } from '../types/connect.types';
 
 // Flip to false once the live Go-backend /connect endpoints are reachable from
@@ -29,8 +30,7 @@ export const USE_MOCK = mockAllowed(process.env.EXPO_PUBLIC_CONNECT_USE_MOCK, tr
 // so the loopback host is never rewritten in a release build.
 const CONNECT_API_HOST =
   process.env.EXPO_PUBLIC_CONNECT_API_HOST ??
-  process.env.EXPO_PUBLIC_API_BASE_URL ??
-  'http://localhost:8091';
+  resolveApiBaseUrl('http://localhost:8091');
 export const CONNECT_API_BASE = getDevUrl(`${CONNECT_API_HOST}/api/v1/connect`);
 
 // Module-scoped colors built on the base design tokens (never hardcode hex).

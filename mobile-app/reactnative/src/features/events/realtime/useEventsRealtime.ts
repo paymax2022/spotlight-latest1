@@ -23,13 +23,14 @@ import { useQueryClient } from '@tanstack/react-query';
 import EventSource from 'react-native-sse';
 import { createSupabaseClient } from '@/lib/supabase';
 import { getDevUrl } from '@/lib/devUrl';
+import { resolveApiBaseUrl } from '@/lib/apiBaseUrl';
 import { useAuthStore } from '@/store/authStore';
 import { USE_MOCK } from '../constants/events.constants';
 import { KEYS } from '../hooks';
 
 const REALTIME_ENABLED = (process.env.EXPO_PUBLIC_REALTIME_ENABLED ?? 'false') === 'true';
 
-const BASE_URL = getDevUrl(process.env.EXPO_PUBLIC_API_BASE_URL ?? 'http://localhost:3000');
+const BASE_URL = getDevUrl(resolveApiBaseUrl());
 
 type EventsSSEEvent = 'events.checkin';
 

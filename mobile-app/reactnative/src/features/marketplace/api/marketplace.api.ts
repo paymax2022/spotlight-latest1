@@ -13,6 +13,7 @@
 import axios, { AxiosInstance, AxiosError } from 'axios';
 import * as SecureStore from 'expo-secure-store';
 import { getDevUrl } from '@/lib/devUrl';
+import { resolveApiBaseUrl } from '@/lib/apiBaseUrl';
 
 // NOTE (2026-09-11): the request paths below are `/marketplace/...` while the Go
 // backend mounts marketplace at `/v1/marketplace` (backend/internal/app/
@@ -26,11 +27,10 @@ import { getDevUrl } from '@/lib/devUrl';
 // The old fallback was 'http://localhost:8091/api/v1' — a loopback literal that a
 // device cannot reach. It is derived from the main backend URL now so a release
 // build can never bake a loopback host into the bundle.
-const API_BASE_URL =
-  process.env.EXPO_PUBLIC_API_BASE_URL || 'http://localhost:8091';
+const API_BASE_URL = resolveApiBaseUrl('http://localhost:8091');
 
 function marketplaceWsUrl(): string {
-  const base = getDevUrl(process.env.EXPO_PUBLIC_API_BASE_URL ?? 'http://localhost:3000');
+  const base = getDevUrl(resolveApiBaseUrl());
   const path = '/ws/marketplace/updates';
   return base.replace(/^http/, 'ws').replace(/\/$/, '') + path;
 }

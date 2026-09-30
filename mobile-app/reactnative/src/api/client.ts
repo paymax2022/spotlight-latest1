@@ -1,12 +1,13 @@
 import axios from 'axios';
 import { createSupabaseClient } from '@/lib/supabase';
 import { getDevUrl } from '@/lib/devUrl';
+import { resolveApiBaseUrl } from '@/lib/apiBaseUrl';
 import { promptSignIn } from '@/lib/authRedirect';
 
 // Base URL points to the frontend-web Next.js server, which hosts server-side
 // bill payment operations (wallet debit + provider calls + ledger writes).
 // All read-only catalog and wallet data comes directly from Supabase (see each api/*.ts).
-const baseURL = getDevUrl(process.env.EXPO_PUBLIC_API_BASE_URL ?? 'http://localhost:3000');
+const baseURL = getDevUrl(resolveApiBaseUrl());
 
 declare module 'axios' {
   interface AxiosRequestConfig {
