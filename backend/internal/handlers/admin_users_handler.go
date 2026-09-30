@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -54,7 +55,8 @@ func filterFromQuery(c *gin.Context) domain.AdminUserFilter {
 func (h *AdminUsersHandler) List(c *gin.Context) {
 	rows, err := h.svc.ListAdminUsers(filterFromQuery(c))
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": err.Error()})
+		log.Printf("[admin_users.list] internal error: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": "internal error"})
 		return
 	}
 	actor, _ := middleware.GetAuthenticatedUser(c)
@@ -67,7 +69,8 @@ func (h *AdminUsersHandler) List(c *gin.Context) {
 func (h *AdminUsersHandler) Export(c *gin.Context) {
 	rows, err := h.svc.ListAdminUsers(filterFromQuery(c))
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": err.Error()})
+		log.Printf("[admin_users.export] internal error: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": "internal error"})
 		return
 	}
 	actor, _ := middleware.GetAuthenticatedUser(c)

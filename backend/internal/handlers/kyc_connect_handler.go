@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"errors"
+	"log"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -321,7 +322,8 @@ func writeKycVerifyErr(c *gin.Context, err error) {
 	case errors.Is(err, kycverify.ErrIllegalTransition):
 		c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
 	default:
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		log.Printf("[kyc_connect] internal error: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
 	}
 }
 

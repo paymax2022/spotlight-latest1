@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"log"
 	"net/http"
 	"strings"
 
@@ -31,7 +32,8 @@ func (h *RBACHandler) Me(c *gin.Context) {
 func (h *RBACHandler) ListRoles(c *gin.Context) {
 	rows, err := h.svc.ListRoles()
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": err.Error()})
+		log.Printf("[rbac.list_roles] internal error: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": "internal error"})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "roles": rows})
@@ -99,7 +101,8 @@ func (h *RBACHandler) CloneRole(c *gin.Context) {
 func (h *RBACHandler) ListPermissions(c *gin.Context) {
 	rows, err := h.svc.ListPermissions()
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": err.Error()})
+		log.Printf("[rbac.list_permissions] internal error: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": "internal error"})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "permissions": rows})
@@ -145,7 +148,8 @@ func (h *RBACHandler) UpdatePermission(c *gin.Context) {
 func (h *RBACHandler) PermissionMatrix(c *gin.Context) {
 	matrix, err := h.svc.GetPermissionMatrix()
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": err.Error()})
+		log.Printf("[rbac.permission_matrix] internal error: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": "internal error"})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "matrix": matrix})
