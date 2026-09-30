@@ -1,4 +1,4 @@
-# ADR-PRXXX: Product-Usage Analytics Pipeline
+# ADR-PR347: Product-Usage Analytics Pipeline
 
 **Status:** Proposed
 **Date:** 2026-09-30
