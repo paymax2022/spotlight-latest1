@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"testing"
 
 	"spotlight/backend/internal/domain"
@@ -68,11 +69,13 @@ func TestListAdminUsersSearchTermIsQuoted(t *testing.T) {
 	}
 }
 
-// AUD-BE-003: with an in-memory scoped filter active, PostgREST must be asked
-// for the max window, then the caller's limit applied after filtering —
-// otherwise a filtered listing under-fetches (e.g. limit=5 with only 2
-// matches in the first 5 rows while 5 exist within 500).
-func TestListAdminUsersScopedFilterOverFetches(t *testing.T) {
+// AUD-BE-003: a scoped filter must reach PostgREST itself — with a left-join
+// embed and caller limit, PostgREST truncates the unfiltered page before Go
+// ever sees the matches. The filter is pushed via profiles!inner + ilike, so
+// the caller's limit applies to an already-filtered result set. The in-memory
+// predicates remain as a second layer; here the fake server ignores the
+// pushed filters and returns an unfiltered page, exercising both.
+func TestListAdminUsersScopedFilterPushesDown(t *testing.T) {
 	rows := make([]map[string]any, 0, 10)
 	for i := range 6 {
 		rows = append(rows, adminRow(fmt.Sprintf("u-%d", i), fmt.Sprintf("u%d@x.io", i), "Abuja"))
@@ -88,8 +91,14 @@ func TestListAdminUsersScopedFilterOverFetches(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListAdminUsers: %v", err)
 	}
-	if got := captured.query.Get("limit"); got != "500" {
-		t.Fatalf("fetched limit = %q, want 500 (scoped filter over-fetch)", got)
+	if got := captured.query.Get("profiles.state"); got != "ilike.lagos" {
+		t.Fatalf("profiles.state filter = %q, want ilike.lagos (pushed down)", got)
+	}
+	if got := captured.query.Get("select"); !strings.Contains(got, "profiles!inner") {
+		t.Fatalf("select = %q, want profiles!inner embed for scoped filtering", got)
+	}
+	if got := captured.query.Get("limit"); got != "3" {
+		t.Fatalf("fetched limit = %q, want 3 (limit applies to the filtered page)", got)
 	}
 	if len(users) != 3 {
 		t.Fatalf("returned %d users, want 3 (caller limit applied after filtering)", len(users))

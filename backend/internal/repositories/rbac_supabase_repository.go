@@ -322,10 +322,27 @@ func readMetadataString(m map[string]any, key string) string {
 	return strings.TrimSpace(s)
 }
 
+// postgrestLiteral strips characters that are meaningful in PostgREST's
+// filter DSL (`,` `(` `)` `"` `*`) or SQL LIKE wildcards (`%` `_` `\`) plus
+// control characters, so a caller-supplied term can be safely embedded in
+// `or=(...)` groups and `ilike` patterns (AUD-BE-003).
+func postgrestLiteral(s string) string {
+	return strings.Map(func(r rune) rune {
+		switch r {
+		case '%', '_', '*', '\\', '"', '(', ')', ',':
+			return -1
+		}
+		if r < 0x20 {
+			return -1
+		}
+		return r
+	}, strings.TrimSpace(s))
+}
+
 // adminUserSelect is the platform_users select shared by ListAdminUsers (a
 // filtered, ordered page) and GetAdminUser (a single row by primary key), so
 // the two never drift on which fields/embeds a domain.AdminUser is built from.
-const adminUserSelect = "id,first_name,last_name,email,phone,user_type,status,profile_completed,created_at,profiles!left(state,country)"
+const adminUserSelect = "id,first_name,last_name,email,phone,user_type,status,profile_completed,created_at,profiles!left(state,country,metadata)"
 
 const adminUserOrder = "created_at.desc"
 
@@ -379,21 +396,10 @@ func (r *RBACSupabaseRepository) ListAdminUsers(filter domain.AdminUserFilter) (
 	if filter.Limit <= 0 || filter.Limit > 500 {
 		filter.Limit = 100
 	}
-	// Scoped filters (state/program/contest/school/country) can only be
-	// applied in memory: they live on the embedded profiles row and its JSON
-	// metadata, and pushing them into the query would need profiles!inner,
-	// which drops platform_users rows that have no profile at all. To stop a
-	// filtered page silently under-fetching (limit applied by PostgREST before
-	// the in-memory predicates ran), fetch the max window when any scoped
-	// filter is active and apply the caller's limit after filtering. AUD-BE-003.
-	fetchLimit := filter.Limit
-	if filter.State != "" || filter.Program != "" || filter.Contest != "" || filter.School != "" || filter.Country != "" {
-		fetchLimit = 500
-	}
+	sel := adminUserSelect
 	q := map[string]string{
-		"select": adminUserSelect,
-		"order":  adminUserOrder,
-		"limit":  strconv.Itoa(fetchLimit),
+		"order": adminUserOrder,
+		"limit": strconv.Itoa(filter.Limit),
 	}
 	if v := strings.TrimSpace(filter.Status); v != "" {
 		q["status"] = "eq." + v
@@ -403,8 +409,30 @@ func (r *RBACSupabaseRepository) ListAdminUsers(filter domain.AdminUserFilter) (
 	}
 	if v := strings.TrimSpace(filter.Search); v != "" {
 		v = postgrestLikePattern(v)
-		q["or"] = fmt.Sprintf("(email.ilike.\"*%s*\",first_name.ilike.\"*%s*\",last_name.ilike.\"*%s*\")", v, v, v)
+		q["or"] = fmt.Sprintf(`(email.ilike."*%s*",first_name.ilike."*%s*",last_name.ilike."*%s*")`, v, v, v)
 	}
+	// Scoped filters must reach PostgREST or `limit` truncates the unfiltered
+	// page before Go ever sees the matches (AUD-BE-003). Filtering parent rows
+	// by an embed requires !inner — a left-join embed filter only trims the
+	// embedded array. With no scoped filter the !left embed is kept so users
+	// without a profile row still list.
+	scoped := false
+	for col, v := range map[string]string{
+		"profiles.state":                 filter.State,
+		"profiles.country":               filter.Country,
+		"profiles.metadata->>program_id": filter.Program,
+		"profiles.metadata->>contest_id": filter.Contest,
+		"profiles.metadata->>school_id":  filter.School,
+	} {
+		if lit := postgrestLiteral(v); lit != "" {
+			q[col] = "ilike." + lit
+			scoped = true
+		}
+	}
+	if scoped {
+		sel = strings.Replace(adminUserSelect, "profiles!left", "profiles!inner", 1)
+	}
+	q["select"] = sel
 
 	var rows []adminUserRow
 	if err := r.client.REST(http.MethodGet, "platform_users", q, nil, &rows); err != nil {
