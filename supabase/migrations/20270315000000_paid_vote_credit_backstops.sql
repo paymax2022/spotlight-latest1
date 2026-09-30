@@ -38,8 +38,6 @@ BEGIN
 END;
 $$;
 
-DROP TRIGGER IF EXISTS trg_vote_transactions_terminal_status
-  ON public.vote_transactions;
 CREATE TRIGGER trg_vote_transactions_terminal_status
   BEFORE UPDATE OF payment_status ON public.vote_transactions
   FOR EACH ROW EXECUTE FUNCTION public.guard_vote_transaction_terminal_status();
