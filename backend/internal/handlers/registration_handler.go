@@ -3,7 +3,6 @@ package handlers
 import (
 	"fmt"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -13,8 +12,8 @@ import (
 // RegistrationHandler handles /api/registration/* endpoints for contest registration.
 // All endpoints persist to Supabase and sync with admin dashboard.
 type RegistrationHandler struct {
-	store      *RegistrationStore
-	auditSvc   services.AuditService
+	store    *RegistrationStore
+	auditSvc services.AuditService
 }
 
 func NewRegistrationHandler(store *RegistrationStore, auditSvc services.AuditService) *RegistrationHandler {
@@ -166,7 +165,7 @@ func (h *RegistrationHandler) SaveStep(c *gin.Context) {
 	if h.auditSvc != nil {
 		h.auditSvc.LogAction(userID, "", "save_step", "registration", "application",
 			id, nil, map[string]interface{}{
-				"step": body.StepKey,
+				"step":     body.StepKey,
 				"progress": newPercent,
 			}, getIPAddress(c), c.Request.UserAgent(), "info")
 	}
@@ -453,7 +452,7 @@ func (h *RegistrationHandler) VerifyPayment(c *gin.Context) {
 			"id":     app.ID,
 			"status": app.Status,
 			"formData": gin.H{
-				"payment.paymentStatus":      "paid",
+				"payment.paymentStatus":        "paid",
 				"payment.transactionReference": body.Reference,
 			},
 		},
@@ -473,17 +472,10 @@ func generateShortID() string {
 	return id
 }
 
-// getIPAddress extracts client IP from request
+// getIPAddress extracts the client IP via Gin's proxy-aware ClientIP, which
+// only honours X-Forwarded-For entries from TRUSTED_PROXIES-configured hops.
+// Reading the header directly here would accept a client-controlled leftmost
+// entry verbatim (AUD-SEC-001).
 func getIPAddress(c *gin.Context) string {
-	if ip := c.Request.Header.Get("X-Forwarded-For"); ip != "" {
-		// Take the first IP if there are multiple
-		if idx := strings.Index(ip, ","); idx != -1 {
-			return strings.TrimSpace(ip[:idx])
-		}
-		return strings.TrimSpace(ip)
-	}
-	if ip := c.Request.Header.Get("X-Real-IP"); ip != "" {
-		return strings.TrimSpace(ip)
-	}
-	return c.Request.RemoteAddr
+	return c.ClientIP()
 }

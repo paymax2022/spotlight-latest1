@@ -42,6 +42,15 @@ func NewRouter(cfg config.Config) *gin.Engine {
 		gin.SetMode(gin.ReleaseMode)
 	}
 	r := gin.Default()
+	// Only override Gin's trust-all default when the deployment declares its
+	// LB/proxy ranges. With proxies configured, ClientIP() walks XFF
+	// right-to-left past trusted hops, so a client-supplied leftmost entry can
+	// no longer spoof the IP used for rate limits and OTP budgets.
+	if len(cfg.TrustedProxies) > 0 {
+		if err := r.SetTrustedProxies(cfg.TrustedProxies); err != nil {
+			log.Fatalf("invalid TRUSTED_PROXIES: %v", err)
+		}
+	}
 	r.Use(middleware.CORSMiddleware(cfg.CORSAllowOrigins, cfg.AppEnv))
 
 	health := handlers.NewHealthHandler()
