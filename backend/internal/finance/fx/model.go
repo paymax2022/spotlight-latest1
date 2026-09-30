@@ -53,8 +53,10 @@ type QuoteRequest struct {
 
 // ConvertRequest is the body for POST /finance/fx/convert.
 type ConvertRequest struct {
-	QuoteID        string `json:"quote_id" binding:"required"`
-	IdempotencyKey string `json:"idempotency_key" binding:"required"`
+	QuoteID string `json:"quote_id" binding:"required"`
+	// Not binding-required: the Idempotency-Key header supplies it for header-only
+	// callers, and Convert merges the header before validating non-empty.
+	IdempotencyKey string `json:"idempotency_key"`
 }
 
 // RateResponse is returned from GET /finance/fx/rates.
