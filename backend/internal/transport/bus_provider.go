@@ -323,7 +323,7 @@ func (s *Service) ProviderBookings(ctx context.Context, userID, scheduleID strin
 		return nil, err
 	}
 	defer rows.Close()
-	var out []map[string]any
+	out := []map[string]any{}
 	for rows.Next() {
 		var id, uid, pname, boardStatus, status, qr string
 		var pphone *string

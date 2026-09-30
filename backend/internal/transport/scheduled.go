@@ -323,7 +323,7 @@ func (s *Service) ListScheduled(ctx context.Context, userID, filter, cursor stri
 		return nil, err
 	}
 	defer rows.Close()
-	var out []*ScheduledBooking
+	out := []*ScheduledBooking{}
 	for rows.Next() {
 		b, err := scanScheduled(rows)
 		if err != nil {

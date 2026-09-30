@@ -54,7 +54,7 @@ func (a *AdminService) ListScheduledAdmin(ctx context.Context, f AdminScheduledF
 		return nil, err
 	}
 	defer rows.Close()
-	var out []*ScheduledBooking
+	out := []*ScheduledBooking{}
 	for rows.Next() {
 		b, err := scanScheduled(rows)
 		if err != nil {

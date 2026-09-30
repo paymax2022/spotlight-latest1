@@ -238,7 +238,7 @@ func (a *AdminService) ListEventBookingsAdmin(ctx context.Context, status string
 		return nil, err
 	}
 	defer rows.Close()
-	var out []map[string]any
+	out := []map[string]any{}
 	for rows.Next() {
 		var id, offerID, uid, status string
 		var ticketRef *string

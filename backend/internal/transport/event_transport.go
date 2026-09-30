@@ -305,7 +305,7 @@ func (s *Service) ListEventBookings(ctx context.Context, userID string) ([]map[s
 		return nil, err
 	}
 	defer rows.Close()
-	var out []map[string]any
+	out := []map[string]any{}
 	for rows.Next() {
 		var id, offerID, qr, status, title, offerType string
 		var ticketRef *string
