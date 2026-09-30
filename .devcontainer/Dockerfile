@@ -1,7 +1,7 @@
 # Dev-container base. Go + Node are layered by devcontainer features; here we add
 # the CLIs the build/migrate/deploy loop needs: psql, make, jq, and the supabase
 # CLI (migrations live in supabase/migrations). Keep this lean and pinned.
-FROM mcr.microsoft.com/devcontainers/base:ubuntu-22.04
+FROM mcr.microsoft.com/devcontainers/base:ubuntu-24.04
 
 ARG SUPABASE_CLI_VERSION=2.20.5
 
