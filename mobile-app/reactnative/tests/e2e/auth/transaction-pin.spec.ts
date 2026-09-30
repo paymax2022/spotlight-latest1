@@ -38,10 +38,11 @@ test.describe('Auth E2E - Transaction PIN gate', () => {
     await loginAs(page, undefined, { withPin: false });
     await expect(page.getByText('Create your transaction PIN')).toBeVisible();
 
-    await page.goto('/home', { waitUntil: 'domcontentloaded' });
+    // /home is deliberately reachable without a PIN (the gate only covers
+    // money routes) — navigating into a money surface is what must bounce back.
+    await page.goto('/services/bills', { waitUntil: 'domcontentloaded' });
 
     await expect(page.getByText('Create your transaction PIN')).toBeVisible();
-    await expect(page.getByText('Explore Services')).toBeHidden();
   });
 
   test('setting a 4-digit PIN clears the gate and lands on home', async ({ page }) => {
@@ -59,7 +60,9 @@ test.describe('Auth E2E - Transaction PIN gate', () => {
     await enterPin(page, TEST_TXN_PIN);
     await page.getByText('Set PIN', { exact: true }).click();
 
-    await expect(page.getByText('Explore Services')).toBeVisible();
+    // The gate resumes the money route it interrupted, not home.
+    await expect(page).toHaveURL(/\/services\/bills/);
+    await expect(page.getByText('Create your transaction PIN')).toBeHidden();
   });
 
   test('mismatched confirmation restarts the flow and does not set a PIN', async ({ page }) => {
