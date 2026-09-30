@@ -3,12 +3,21 @@ package integrations
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
 	"strings"
 )
+
+// ErrTokenInvalid marks a definitive GoTrue rejection (401/403) — the bearer
+// token is expired, malformed, or revoked. Every other AuthUser failure
+// (transport error, timeout, 5xx, decode failure) means the auth backend is
+// unreachable/unhealthy, NOT that the token is bad; callers must map it to a
+// 503, not a 401, or a Supabase/Kong blip reports "invalid token" to every
+// logged-in user (AUD-AUTH-001).
+var ErrTokenInvalid = errors.New("token rejected by auth backend")
 
 func (c *SupabaseRestClient) buildRequest(method, path string, query map[string]string, body any) (*http.Request, error) {
 	if !c.Enabled() {
@@ -129,6 +138,9 @@ func (c *SupabaseRestClient) AuthUser(accessToken string) (map[string]any, error
 		return nil, err
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+		return nil, fmt.Errorf("auth user lookup failed: %d: %w", resp.StatusCode, ErrTokenInvalid)
+	}
 	if resp.StatusCode >= 400 {
 		return nil, fmt.Errorf("auth user lookup failed: %d", resp.StatusCode)
 	}

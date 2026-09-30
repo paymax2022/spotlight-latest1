@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"errors"
 	"net/http"
 	"strings"
 	"sync"
@@ -39,7 +40,14 @@ func requireAuth(supabase *integrations.SupabaseRestClient, rbac services.RBACSe
 		token := strings.TrimSpace(h[7:])
 		info, err := supabase.AuthUser(token)
 		if err != nil {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"success": false, "error": "invalid token"})
+			// AUD-AUTH-001: only a definitive rejection means a bad token. A
+			// transport error/5xx means the auth backend is down — answer 503 so
+			// clients don't treat a Supabase/Kong blip as session expiry.
+			if errors.Is(err, integrations.ErrTokenInvalid) {
+				c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"success": false, "error": "invalid token"})
+			} else {
+				c.AbortWithStatusJSON(http.StatusServiceUnavailable, gin.H{"success": false, "error": "authentication service unavailable"})
+			}
 			return
 		}
 		id, _ := info["id"].(string)

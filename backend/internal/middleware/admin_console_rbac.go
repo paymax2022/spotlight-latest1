@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"errors"
 	"net/http"
 	"strings"
 
@@ -125,9 +126,17 @@ func resolveVerifiedIdentity(c *gin.Context, supabase *integrations.SupabaseRest
 	token := strings.TrimSpace(h[7:])
 	info, err := supabase.AuthUser(token)
 	if err != nil {
-		c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
-			"error": "invalid token",
-		})
+		// AUD-AUTH-001: distinguish a real token rejection from an auth-backend
+		// outage — the latter is a 503, not a 401.
+		if errors.Is(err, integrations.ErrTokenInvalid) {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
+				"error": "invalid token",
+			})
+		} else {
+			c.AbortWithStatusJSON(http.StatusServiceUnavailable, gin.H{
+				"error": "authentication service unavailable",
+			})
+		}
 		return "", false
 	}
 	userID, _ := info["id"].(string)
