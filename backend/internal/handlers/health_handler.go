@@ -1,20 +1,51 @@
 package handlers
 
 import (
+	"context"
 	"net/http"
 	"os"
+	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/jackc/pgx/v5/pgxpool"
 
 	"spotlight/backend/internal/platform/buildinfo"
 )
 
-type HealthHandler struct{}
+type HealthHandler struct {
+	pool *pgxpool.Pool
+}
 
 func NewHealthHandler() *HealthHandler { return &HealthHandler{} }
 
+// WithPool supplies the shared DB pool for the readiness probe. The pool is
+// created late in router construction, after /healthz-worthy liveness routes
+// are registered, so it arrives via a setter rather than the constructor.
+func (h *HealthHandler) WithPool(pool *pgxpool.Pool) *HealthHandler {
+	h.pool = pool
+	return h
+}
+
 func (h *HealthHandler) PublicHealth(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"success": true, "service": "backend", "status": "ok"})
+}
+
+// Ready is the readiness probe backing /readyz. Distinct from liveness: the
+// process must also be able to serve DB-backed traffic. A nil pool (dev/test
+// boots without DATABASE_URL) reports not-ready — on deployed tiers a failed
+// pool is fatal at boot anyway, so this state is only reachable locally.
+func (h *HealthHandler) Ready(c *gin.Context) {
+	if h.pool == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"success": false, "status": "not_ready", "reason": "database pool not configured"})
+		return
+	}
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 2*time.Second)
+	defer cancel()
+	if err := h.pool.Ping(ctx); err != nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"success": false, "status": "not_ready", "reason": "database ping failed"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "status": "ready"})
 }
 
 func (h *HealthHandler) GenericHealth(c *gin.Context) {

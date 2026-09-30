@@ -423,6 +423,14 @@ func NewRouter(cfg config.Config) *gin.Engine {
 		log.Fatalf("[router] DATABASE_URL is not set (APP_ENV=%q) — refusing to start with every DB-backed route disabled", cfg.AppEnv)
 	}
 
+	// Probe endpoints at root level, matching what deploy.yml, the Cloud Run
+	// terraform probes (liveness_path/readiness_path), the uptime monitor and
+	// the loadtest all curl. /healthz is liveness (process up); /readyz is
+	// readiness (shared pool alive) — registered after the pool exists.
+	health.WithPool(sharedPool)
+	r.GET("/healthz", health.PublicHealth)
+	r.GET("/readyz", health.Ready)
+
 	// Signup referral attribution. Wired HERE rather than where authHandler is
 	// built, because it needs the shared pool that is only created above — the
 	// same ordering constraint WithSessions works around.
