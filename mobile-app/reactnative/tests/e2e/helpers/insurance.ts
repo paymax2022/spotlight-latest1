@@ -264,6 +264,17 @@ export async function mockInsurance(page: Page, opts: InsuranceStubOptions = {})
     body: JSON.stringify(status < 400 ? { data } : data),
   });
 
+  // Consent is checked by the quote screens before the form renders; left
+  // unmocked it reaches the real backend with the seeded token, 401s, and the
+  // global interceptor signs the test user out mid-flow.
+  await page.route('**/api/v1/insurance/consent**', async (route) => {
+    if (route.request().method() === 'GET') {
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ data: { granted: false } }) });
+      return;
+    }
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ data: { granted: true } }) });
+  });
+
   // Order matters: Playwright matches the most recently registered route first,
   // so the specific paths are registered after the catch-alls they refine.
   await page.route('**/api/v1/insurance/products**', async (route) => {

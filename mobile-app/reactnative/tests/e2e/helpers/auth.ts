@@ -72,6 +72,10 @@ export async function mockAuth(page: Page, user: AnyTestUser = users.funded) {
     });
   });
 
+  await page.route('**/auth/v1/logout**', async (route) => {
+    await route.fulfill({ status: 204, contentType: 'application/json', body: '' });
+  });
+
   await page.route('**/auth/v1/user', async (route) => {
     await route.fulfill({
       status: 200,
