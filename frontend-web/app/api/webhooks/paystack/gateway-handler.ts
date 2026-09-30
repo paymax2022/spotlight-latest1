@@ -3,6 +3,7 @@ import {
   verifyPaystackWebhookSignature,
   verifyPaystackPayment,
 } from '@/src/server/voting/payment/paystack';
+import { bridgedVerifyPaidVote } from '@/src/server/voting-bridge/bridge';
 
 // Webhook handler for the in-app Paystack gateway (the client-side Inline SDK
 // used by the mobile food/voting checkouts). Those charges are created directly
@@ -108,11 +109,34 @@ export async function handleGatewayPaystackWebhook(
       return { processed: false, duplicate: false, error: 'Verification failed' };
     }
 
-    // Server-confirmed. The verified row in payment_webhook_logs is the audit +
-    // reconciliation anchor for the domain (`${domain}`) fulfilment the client
-    // performed on its success callback.
-    // TODO: when food/voting move to server-initiated orders, look the pending
-    // record up by `reference` here and settle it server-side.
+    // Server-confirmed. Fulfil any matching vote transaction server-side —
+    // the client's success callback is not guaranteed to fire (crash,
+    // backgrounding, network drop), and until it did, a paid vote could be
+    // verified-but-never-credited (AUD-FE-003). The bridge path is the same
+    // atomic/idempotent verify the v2 route uses, so a client callback that
+    // arrives later harmlessly no-ops on 'credited'.
+    const { data: tx } = await supabase
+      .from('vote_transactions')
+      .select('id, vote_credit_status')
+      .eq('payment_reference', reference)
+      .maybeSingle();
+
+    if (tx?.id && tx.vote_credit_status !== 'credited') {
+      const result = await bridgedVerifyPaidVote(
+        { transactionId: tx.id, paymentReference: reference },
+        'system:webhook',
+        { ipAddress: '0.0.0.0', userAgent: 'paystack-webhook' },
+      );
+      if (!result.success) {
+        const message = result.error ?? 'vote fulfilment failed';
+        await markProcessed(message);
+        return { processed: false, duplicate: false, error: message };
+      }
+    }
+
+    // Other gateway domains (food/orders) still settle on their client verify
+    // calls — the verified payment_webhook_logs row is their reconciliation
+    // anchor until they grow server-initiated fulfilment.
     await markProcessed();
     return { processed: true, duplicate: false };
   } catch (err) {
