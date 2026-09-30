@@ -3,7 +3,6 @@ package config
 import (
 	"os"
 	"strconv"
-	"strings"
 )
 
 type Config struct {
@@ -16,16 +15,15 @@ type Config struct {
 	SupabaseServiceRoleKey string
 	AdminAPIKey            string
 	CORSAllowOrigins       string
+	// TrustedProxyCIDRs is a CSV of CIDRs/IPs whose X-Forwarded-For/X-Real-Ip
+	// headers Gin may trust when resolving c.ClientIP(). c.ClientIP() feeds
+	// rate limits, audit records, and the suspicious-login engine, so it must
+	// not be caller-controlled. Default: the GCP external HTTPS LB frontend
+	// ranges (the hop in front of Cloud Run). Set TRUSTED_PROXY_CIDRS=none to
+	// distrust forwarded headers entirely (ClientIP = RemoteAddr).
+	TrustedProxyCIDRs      string
 	MaxFailedLoginAttempts int
 	AccountLockMinutes     int
-	// TrustedProxies are CIDRs/IPs allowed to set X-Forwarded-For, passed to
-	// gin.Engine.SetTrustedProxies. Gin's default trusts every proxy, so
-	// ClientIP() honours a client-supplied leftmost XFF entry — spoofable by
-	// anyone (AUD-SEC-001). Deployments behind a LB must set this to the LB
-	// egress ranges; empty leaves the Gin default to avoid changing client-IP
-	// semantics (rate-limit keys, OTP budgets, audit records) on existing
-	// deploys.
-	TrustedProxies []string
 
 	// ── Session / refresh-token hardening (#19) ──────────────────────────────
 	// Feature-flagged surface (default OFF). When OFF, the new self/admin session
@@ -641,22 +639,6 @@ func getEnvBool(key string, fallback bool) bool {
 	return fallback
 }
 
-// getEnvCSV parses a comma-separated env var into trimmed non-empty entries.
-func getEnvCSV(key string) []string {
-	v := os.Getenv(key)
-	if v == "" {
-		return nil
-	}
-	parts := strings.Split(v, ",")
-	out := make([]string, 0, len(parts))
-	for _, p := range parts {
-		if p = strings.TrimSpace(p); p != "" {
-			out = append(out, p)
-		}
-	}
-	return out
-}
-
 func Load() Config {
 	return Config{
 		AppEnv:                 getEnv("APP_ENV", "development"),
@@ -665,9 +647,9 @@ func Load() Config {
 		SupabaseServiceRoleKey: getEnv("SUPABASE_SERVICE_ROLE_KEY", ""),
 		AdminAPIKey:            getEnv("ADMIN_API_KEY", ""),
 		CORSAllowOrigins:       getEnv("CORS_ALLOW_ORIGINS", "http://localhost:3000,http://localhost:4030,http://localhost:8081"),
+		TrustedProxyCIDRs:      getEnv("TRUSTED_PROXY_CIDRS", "130.211.0.0/22,35.191.0.0/16"),
 		MaxFailedLoginAttempts: getEnvInt("AUTH_MAX_FAILED_LOGIN_ATTEMPTS", 5),
 		AccountLockMinutes:     getEnvInt("AUTH_ACCOUNT_LOCK_MINUTES", 30),
-		TrustedProxies:         getEnvCSV("TRUSTED_PROXIES"),
 
 		FeatureSessionHardeningEnabled: getEnvBool("FEATURE_SESSION_HARDENING_ENABLED", false),
 		SuspiciousFailedLoginSpike:     getEnvInt("AUTH_SUSPICIOUS_FAILED_LOGIN_SPIKE", 3),

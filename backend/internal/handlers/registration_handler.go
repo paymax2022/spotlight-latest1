@@ -473,7 +473,7 @@ func generateShortID() string {
 }
 
 // getIPAddress extracts the client IP via Gin's proxy-aware ClientIP, which
-// only honours X-Forwarded-For entries from TRUSTED_PROXIES-configured hops.
+// only honours X-Forwarded-For entries from TRUSTED_PROXY_CIDRS-configured hops.
 // Reading the header directly here would accept a client-controlled leftmost
 // entry verbatim (AUD-SEC-001).
 func getIPAddress(c *gin.Context) string {
