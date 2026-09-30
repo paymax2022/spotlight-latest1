@@ -863,3 +863,38 @@ All ten agents completed. Method: each agent re-verified one producer↔consumer
 | 10 | `eas.json` ↔ mobile API/Supabase consumers | **FE-001 CONFIRMED + amplified** — envless prod profile → `localhost:3000` + lazy Supabase throw + `mockPolicy` treats prod as `development`. **FE-002 PARTIAL/REFUTED** — duplicate `staging-aab` is real but loses only `SENTRY_DISABLE_AUTO_UPLOAD`, not the anon key (severity lowered to LOW) |
 
 Net effect: 3 claims corrected/narrowed (DB-001 refuted, FE-002 refuted, FE-003 narrowed), ~15 confirmed, 8 amplified with worse detail, 4 new findings (BE-009, FE-007, INFRA-010 + the shared-dedup-row race folded into FE-004). Overall verdict unchanged and reinforced: **NOT READY**.
+
+## Fix Records (Remediation Log)
+
+Running ledger of finding → fix → PR → verification → merge. Statuses are authoritative GitHub state at the time each row was last updated; "OPEN" rows are in review/CI.
+
+### New finding surfaced during remediation
+
+* **AUD-BE-010 (HIGH)** — `internal/maps` `olcCodec.Encode` panics with `index out of range [-1]` on `main` (`TestMS3_CoverageOrderAndConfidenceEscalation` → `pluscode.go:74`, reached via `Service.forwardV2`). A production-code panic reachable from geocoding orchestration — currently crashes `go test ./...` for that package. Pre-existing; unrelated to any remediation PR.
+
+### Merged
+
+| Finding | PR | Merge commit | Change | Evidence |
+|---------|----|--------------|--------|----------|
+| (meta) audit document | #285 | `bd431bae` | This file landed on `main` | merged 2026-09-30 |
+| AUD-BE-001 | #286 | `0433100f` | Restored `FeatureContestantSocialEnabled` field + env loader per `2b24b802` | `go build`/`go vet` green; `backend` CI lane green; full `verify` lane (migrate-reset + RLS + tsc + go test -race) green |
+| AUD-INFRA-007 | #288 | `d24d3db7` | Registered `GET /healthz` (liveness) + `GET /readyz` (DB-pool ping, 2s bound, 503 when unconfigured/unhealthy) matching deploy.yml/Terraform/uptime-monitor/loadtest callers; `/api/v1/public/health` unchanged | Runtime-verified on :8080; `verify` lane green |
+| AUD-FE-008 | #291 | `66608372` | Dual-path utility beneficiaries routes for flag-off mode | CI green; merged by parallel session |
+| AUD-FE-002 | #295 | `fac712fa` | Removed duplicate `staging-aab` profile in eas.json (restores `SENTRY_DISABLE_AUTO_UPLOAD`) | CI green; merged by parallel session |
+| AUD-INFRA-001/002 | #296 | `bb585cd4` | Restricted Render datastore allowlists; serve mobile web statically | CI green; merged by parallel session |
+
+### In review
+
+| Finding | PR | Change | Status |
+|---------|----|--------|--------|
+| AUD-BE-005 | #292 | `ChangePassword` now verifies current password via GoTrue password grant (`VerifyPasswordGrant`), writes via `AdminSetPassword`, revokes sessions; false success-audit eliminated; lint-clean | OPEN — CI running |
+| AUD-FE-006 | #287 | `handleApiError` logs + `Sentry.captureException`s unexpected errors before the generic 500; guarded capture; unit test pinning | OPEN (parallel session; supersedes closed #293 — same fix, better tested) |
+| AUD-BE-002 | #294 | `RequireAuthContext` fails closed (503) when `GetUserStatus` errors; missing-row `pending` still allowed; table test extended | OPEN — CI running |
+| AUD-BE-008 | #297 | New `cmd/notification-worker` binary (asynq consumer + provider env plumbing + SIGTERM drain); `in_app`→push double-delivery removed; worker `http.Client` gets 15s timeout | OPEN — CI running |
+| AUD-BE-009 | #298 | Successful login after an *expired* `LockedUntil` clears `status='locked'` (was permanent until admin unlock); typed `platformUserLoginPatch` | OPEN — replaces #289 (auto-closed on base-branch deletion) |
+| AUD-TEST-001 | #290 | Pin utility categories spec to dual-path contract | OPEN (parallel session) |
+| (meta) tooling | #299 | mise toolchain + golangci-lint + lefthook configs | OPEN (parallel session) |
+
+### Baseline CI failures (not merge-blocking, tracked as findings)
+
+`npm audit (frontend-web)`, `npm audit (mobile-app/reactnative)`, `trivy (filesystem)` are red on every PR including docs-only #285 — pre-existing dependency/IaC advisories, see AUD-SEC-002 and infra findings. Everything else (backend, frontend-*, CodeQL, govulncheck, secrets-scan, gitleaks, verify) is expected green before merge.
