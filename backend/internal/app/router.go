@@ -51,6 +51,7 @@ func NewRouter(cfg config.Config) *gin.Engine {
 			log.Fatalf("invalid TRUSTED_PROXIES: %v", err)
 		}
 	}
+	r.Use(middleware.RequestID())
 	r.Use(middleware.CORSMiddleware(cfg.CORSAllowOrigins, cfg.AppEnv))
 
 	health := handlers.NewHealthHandler()
