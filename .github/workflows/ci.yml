@@ -283,7 +283,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version: "1.25.x"
+          go-version-file: backend/go.mod
           cache-dependency-path: backend/go.sum
       # A full-schema drop needs a lock per object and the ~400-migration schema
       # blows the default 64. ALTER SYSTEM needs a restart to take effect.
@@ -430,7 +430,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.25.x'
+          go-version-file: 'backend/go.mod'
       # Pinned version, built from source — no curl|bash installer.
       - name: Install actionlint
         run: go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
