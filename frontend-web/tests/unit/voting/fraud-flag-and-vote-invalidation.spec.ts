@@ -97,9 +97,11 @@ describe('PATCH /api/admin/voting/[contestId]/fraud-alerts — flag resolution i
     );
     expect(res.status).toBe(200);
 
+    // actorId is the constant 'api-key' — the key path ignores caller-supplied
+    // x-actor-id so attribution cannot be forged (AUD-FE-005).
     expect(resolveFraudFlag).toHaveBeenCalledWith(
       'flag-1',
-      'system',
+      'api-key',
       'Confirmed bot cluster, votes reversed separately',
       'actioned',
     );

@@ -124,3 +124,14 @@ export function parseAdminRole(input: string | null | undefined): AdminRole {
 export function hasPermission(role: AdminRole, permission: AdminPermission) {
   return rolePermissions[role]?.includes(permission) ?? false;
 }
+
+// roleIsSubset reports whether every permission `role` holds is also held by
+// `ceiling` — used to let a caller narrow an authenticated identity (JWT, or
+// the shared API key) down to a weaker role without ever elevating past it.
+// NOTE: finance_admin is NOT a subset of super_admin (the finance:adjust:*
+// perms exist only on the finance_* ladder) — subset is about permission
+// sets, not a role hierarchy.
+export function roleIsSubset(role: AdminRole, ceiling: AdminRole): boolean {
+  const allowed = new Set(rolePermissions[ceiling]);
+  return rolePermissions[role].every((p) => allowed.has(p));
+}

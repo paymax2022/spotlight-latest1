@@ -1,5 +1,5 @@
 import { ApiError } from '@/src/lib/api/responses';
-import { hasPermission, parseAdminRole, type AdminPermission } from '@/src/server/admin/rbac';
+import { hasPermission, parseAdminRole, roleIsSubset, type AdminPermission } from '@/src/server/admin/rbac';
 import { createClient, createAdminClient } from '@/lib/supabase/server';
 
 export interface AdminIdentity {
@@ -20,13 +20,28 @@ export async function assertAdminPermission(
   const apiKey = request.headers.get('x-admin-key');
   const expectedKey = process.env.SPOTLIGHT_ADMIN_API_KEY;
   if (expectedKey && apiKey === expectedKey) {
-    const claimedRole = parseAdminRole(
-      request.headers.get('x-admin-role') || request.headers.get('x-spotlight-role'),
-    );
-    if (!hasPermission(claimedRole, permission)) {
+    // The key is a single shared credential — it cannot distinguish callers,
+    // so headers alone may never decide the effective role or the audit actor
+    // (AUD-FE-005). SPOTLIGHT_ADMIN_API_KEY_ROLE optionally caps the key: the
+    // declared role is honored only as a NARROWING of that ceiling (same rule
+    // the JWT path documents), an out-of-ceiling claim is an escalation
+    // attempt and refused outright. x-actor-id is ignored — a caller-forged
+    // identity is worse than a constant one.
+    const declared = request.headers.get('x-admin-role') || request.headers.get('x-spotlight-role');
+    const ceilingRaw = process.env.SPOTLIGHT_ADMIN_API_KEY_ROLE;
+    let role = parseAdminRole(declared);
+    if (ceilingRaw) {
+      const ceiling = parseAdminRole(ceilingRaw);
+      if (!declared) {
+        role = ceiling;
+      } else if (!roleIsSubset(role, ceiling)) {
+        throw new ApiError('Forbidden', 403);
+      }
+    }
+    if (!hasPermission(role, permission)) {
       throw new ApiError('Forbidden', 403);
     }
-    return { role: claimedRole, actorId: request.headers.get('x-actor-id') || 'system' };
+    return { role, actorId: 'api-key' };
   }
 
   // --- path (a): JWT-based auth ---
