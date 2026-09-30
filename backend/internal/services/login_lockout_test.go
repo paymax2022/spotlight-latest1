@@ -164,6 +164,87 @@ func TestBumpFailedLogin_PastThresholdStaysLocked(t *testing.T) {
 	}
 }
 
+// ── successful-login PATCH (the post-auth cleanup write) ─────────────────
+//
+// AUD-BE-009: the success PATCH cleared failed_login_attempts and
+// locked_until but never status, so an expired auto-lockout left the row as
+// status=locked + locked_until=nil — which validateLoginStatus reads as an
+// indefinite ADMIN lock. First login after expiry succeeded, every
+// subsequent one was refused until a manual UnlockUser. These pin that the
+// latch is cleared to "active" only for users who logged in through an
+// expired lock, and untouched for everyone else.
+
+// loginSuccessPatchServer stubs the whole LoginUser path: platform_users GET
+// returns the supplied row, GoTrue token grant succeeds, PATCH bodies are
+// captured into gotPatch, session insert is accepted.
+func loginSuccessPatchServer(t *testing.T, userRow map[string]any, gotPatch *map[string]any) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.Contains(r.URL.Path, "platform_users") && r.Method == http.MethodGet:
+			w.Header().Set("Content-Type", "application/json")
+			b, _ := json.Marshal([]map[string]any{userRow})
+			_, _ = w.Write(b)
+		case strings.Contains(r.URL.Path, "platform_users") && r.Method == http.MethodPatch:
+			raw, _ := io.ReadAll(r.Body)
+			_ = json.Unmarshal(raw, gotPatch)
+			w.WriteHeader(http.StatusOK)
+		case strings.Contains(r.URL.Path, "/auth/v1/token"):
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"access_token":"at","refresh_token":"rt","expires_in":3600,"user":{"id":"g1","email":"u@x.com"}}`))
+		case strings.Contains(r.URL.Path, "auth_sessions"):
+			w.WriteHeader(http.StatusCreated)
+		default:
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+	}))
+}
+
+func TestLoginUser_ExpiredAutoLockClearsStatusToActive(t *testing.T) {
+	past := time.Now().UTC().Add(-time.Minute).Format(time.RFC3339)
+	var patch map[string]any
+	srv := loginSuccessPatchServer(t, map[string]any{
+		"id": "u1", "status": "locked", "failed_login_attempts": 5, "locked_until": past, "deleted_at": nil,
+	}, &patch)
+	defer srv.Close()
+
+	svc := &authService{
+		supabase: integrations.NewSupabaseRestClient(srv.URL, "key"),
+		cfg:      config.Config{MaxFailedLoginAttempts: 5, AccountLockMinutes: 30},
+	}
+	if _, err := svc.LoginUser(domain.LoginRequest{Email: "u@x.com", Password: "pw"}); err != nil {
+		t.Fatalf("expired auto-lock must allow login, got: %v", err)
+	}
+	if patch["status"] != "active" {
+		t.Fatalf("PATCH status = %v, want \"active\" — the lock latch must be cleared or the next login locks forever", patch["status"])
+	}
+	if got, ok := patch["failed_login_attempts"].(float64); !ok || int(got) != 0 {
+		t.Fatalf("failed_login_attempts = %v, want 0", patch["failed_login_attempts"])
+	}
+	if v, present := patch["locked_until"]; !present || v != nil {
+		t.Fatalf("locked_until = %v (present=%v), want an explicit JSON null to clear it", v, present)
+	}
+}
+
+func TestLoginUser_NonLockedLoginDoesNotTouchStatus(t *testing.T) {
+	var patch map[string]any
+	srv := loginSuccessPatchServer(t, map[string]any{
+		"id": "u1", "status": "active", "failed_login_attempts": 1, "locked_until": nil, "deleted_at": nil,
+	}, &patch)
+	defer srv.Close()
+
+	svc := &authService{
+		supabase: integrations.NewSupabaseRestClient(srv.URL, "key"),
+		cfg:      config.Config{MaxFailedLoginAttempts: 5, AccountLockMinutes: 30},
+	}
+	if _, err := svc.LoginUser(domain.LoginRequest{Email: "u@x.com", Password: "pw"}); err != nil {
+		t.Fatalf("active user login must succeed, got: %v", err)
+	}
+	if _, present := patch["status"]; present {
+		t.Fatalf("status must not be written for a non-locked login (would flip e.g. pending→active), got: %v", patch["status"])
+	}
+}
+
 // ── resolveLoginEmail / phoneToEmail ─────────────────────────────────────
 
 func newAuthServiceWithProfiles(t *testing.T, rows []map[string]any) *authService {
