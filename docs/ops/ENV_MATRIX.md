@@ -24,6 +24,7 @@
 | `DATABASE_URL` | web + backend | **SECRET** | money-path | pgx pool; use session-pooler URL |
 | `REDIS_URL` | web + backend | SECRET if hosted has auth | money-path | idempotency / Redlock / asynq |
 | `CORS_ALLOW_ORIGINS` | backend | config | all | lock to real origins in prod |
+| `TRUSTED_PROXIES` | backend | config | all | comma-separated LB/proxy CIDRs allowed to set `X-Forwarded-For`; unset = Gin default trusts all (XFF leftmost entry is client-spoofable). **Set to the platform LB egress ranges at go-live** — until then client IPs used by rate limits, OTP budgets, and consent/audit records are spoofable (AUD-SEC-001) |
 | `APP_PORT` | backend | config | all | default 8080 |
 | `SENTRY_DSN` | frontend-web | config | observability | enables Sentry in prod |
 
