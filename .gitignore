@@ -112,3 +112,20 @@ __pycache__/
 # single `git add -A` from the repo root would have resurrected the vulnerable
 # dependencies the removal existed to get rid of. Ignored so that cannot happen.
 /apps/
+
+# Typecheck scratch — per-slice chunk/tmp configs and captured tsc output.
+# Named check configs that ARE referenced (mapscheck, visitorcheck, ...)
+# remain tracked; only the disposable patterns are ignored.
+.tscscratch/
+tsconfig.chunk*.json
+tsconfig.*.tmp.json
+tsc*.txt
+err.txt
+coverage.out
+parse_err.txt
+
+# Concurrent-session task trackers (per task-tracker.json's own note, the
+# root file is contended by concurrent sessions — they are scratch state,
+# not docs).
+task-tracker.json
+*_TASK_TRACKER.json
