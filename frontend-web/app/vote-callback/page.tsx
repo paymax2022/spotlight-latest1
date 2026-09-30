@@ -103,7 +103,10 @@ export default function VoteCallbackPage() {
             </div>
             <h1 className="text-xl font-bold text-white mb-2">Payment Not Confirmed</h1>
             <p className="text-gray-400 text-sm mb-1">{detail.error}</p>
-            <p className="text-gray-500 text-xs mb-6">No votes were added. You have not been charged.</p>
+            <p className="text-gray-500 text-xs mb-6">
+              If you completed a payment, your votes may still be credited via webhook —
+              check your email for a receipt before paying again.
+            </p>
             <div className="flex gap-3">
               <button
                 onClick={() => router.back()}

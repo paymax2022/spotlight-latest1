@@ -6,6 +6,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { bridgedVerifyPaidVote } from '@/server/voting-bridge/bridge';
 import { validateRequest } from '@/lib/auth/request';
+import { createAdminClient } from '@/lib/supabase/admin';
 
 export async function POST(request: NextRequest) {
   try {
@@ -16,11 +17,27 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
     const { transactionId, paymentReference } = body;
 
-    if (!transactionId || !paymentReference) {
+    if (!paymentReference) {
       return NextResponse.json(
-        { error: 'Missing required fields: transactionId, paymentReference' },
+        { error: 'Missing required field: paymentReference' },
         { status: 400 }
       );
+    }
+
+    // Paystack's browser redirect appends only `reference`/`trxref`, so
+    // callers that never saw the initiation response (vote-callback page)
+    // cannot supply transactionId. Resolve it from the transaction's unique
+    // payment_reference; an unknown reference falls through to the bridge,
+    // which answers 404 — the not-found taxonomy stays in one place.
+    let resolvedTransactionId: string = transactionId ?? '';
+    if (!resolvedTransactionId) {
+      const supabase = createAdminClient();
+      const { data: tx } = await supabase
+        .from('vote_transactions')
+        .select('id')
+        .eq('payment_reference', paymentReference)
+        .maybeSingle();
+      resolvedTransactionId = tx?.id ?? '';
     }
 
     // Get request context
@@ -36,7 +53,7 @@ export async function POST(request: NextRequest) {
     // Verify and credit the vote via bridge
     const result = await bridgedVerifyPaidVote(
       {
-        transactionId,
+        transactionId: resolvedTransactionId,
         paymentReference,
       },
       userId,
