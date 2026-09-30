@@ -6,11 +6,13 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"spotlight/backend/internal/config"
@@ -134,87 +136,113 @@ ON CONFLICT (rail, provider_ref) DO NOTHING`,
 	//    (the event is recorded + idempotent), but log so ops can replay/repair.
 	if err := h.reconcile(c.Request.Context(), rail, evt); err != nil {
 		// Do not leak internals; the event is durably recorded for replay.
+		if errors.Is(err, errNoMatchingObligation) {
+			c.JSON(http.StatusOK, gin.H{"data": "recorded", "reconciled": false, "reason": "no_matching_obligation"})
+			return
+		}
+		if errors.Is(err, errNotSettleEvent) {
+			c.JSON(http.StatusOK, gin.H{"data": "recorded", "reconciled": false, "reason": "event_not_settle"})
+			return
+		}
 		c.JSON(http.StatusOK, gin.H{"data": "recorded", "reconciled": false})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": "ok"})
 }
 
-// reconcile flips the relevant academy state and writes the ledger leg. The
-// settled/approved event is the trigger; the ledger is the source of truth (NL-8).
+// errNoMatchingObligation marks a validly-signed webhook whose provider ref owns
+// no in-flight obligation row (unknown ref, or the row is already terminal). The
+// event is recorded for audit but the pooled escrow must NOT move — posting an
+// escrow→settlement leg for a ref we owe nothing to drains real held funds.
+var errNoMatchingObligation = errors.New("no matching obligation for provider ref")
+
+// errNotSettleEvent marks a validly-signed webhook whose event name is not the
+// rail's settle verb — recorded for audit, never reconciled.
+var errNotSettleEvent = errors.New("event is not a settle/approve event")
+
+// settleEvents is the per-rail settle vocabulary — the only event names that may
+// move money. Any other signed event (failed/reversed/chargeback/…) is recorded
+// in the dedupe table but never reconciles.
+var settleEvents = map[string]string{
+	"bnpl":     "approved",
+	"payout":   "settled",
+	"disburse": "settled",
+	"billing":  "settled",
+}
+
+// reconcile verifies the webhook's provider ref against a settled obligation row
+// and posts the escrow→settlement ledger leg. It deliberately does NOT flip
+// domain state: the owning domain service writes the provider ref inside the
+// same guarded transition that terminates the row (tutor.SettlePayout,
+// edupay.setDisbState, schools.SetBillingPaid), so a committed row in the
+// terminal-success state IS the verified obligation — and raw UPDATEs here would
+// bypass the domain's side-effects (earnings flip, audit rows).
 //
-// NOTE: the per-rail ledger legs use the platform standing accounts. The funds for
-// these rails were held in escrow at create-time (the create adapter's caller debits
-// the user/institution into escrow via the package's existing collect path); on
-// settle we move escrow → settlement. Where the exact owning-row mutation needs the
-// domain service (e.g. mapping reference → disbursement id), a TODO marks the leg
-// that the owning service should complete; the webhook itself is already
-// signature-verified + idempotent so it can be safely re-driven.
+// NOTE: the per-rail ledger legs use the platform standing accounts. The funds
+// for these rails were held in escrow at create-time; on settle we release the
+// OWNING ROW's amount — never the wire's claimed amount_minor — into settlement.
 func (h *academyWebhookHandler) reconcile(ctx context.Context, rail string, evt academyWebhookEvent) error {
-	// The provider ref (evt.Ref) is what the domain persisted at create-time
-	// (academy_orders.bnpl_ref / academy_disbursements.payout_ref /
-	// academy_institution_billing.payment_ref), so it is the correct, stable join
-	// key from the async webhook back to the owning row. Each UPDATE is state-guarded
-	// so it is itself idempotent (a re-drive is a no-op once flipped).
+	if settleEvents[rail] != evt.Event {
+		return errNotSettleEvent
+	}
+	if h.pool == nil {
+		return errNoMatchingObligation
+	}
 	switch rail {
 	case "bnpl":
-		// BNPL approved ⇒ mark the order entitled. Keyed by the stored bnpl_ref.
-		if h.pool != nil {
-			_, err := h.pool.Exec(ctx,
-				`UPDATE academy_orders SET state = 'entitled' WHERE bnpl_ref = $1 AND state = 'bnpl_active'`,
-				evt.Ref)
-			if err != nil {
-				return err
-			}
+		// BNPL approved ⇒ the order must already be entitled (the domain writes
+		// bnpl_ref inside the checkout→bnpl_active→entitled transition). No
+		// ledger leg yet — the principal mapping lives with commerce (TODO).
+		var id string
+		err := h.pool.QueryRow(ctx,
+			`SELECT id FROM academy_orders WHERE bnpl_ref = $1 AND state = 'entitled'`,
+			evt.Ref).Scan(&id)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return errNoMatchingObligation
 		}
-		// TODO(ledger): post the BNPL principal leg via the commerce service once the
-		// order→ledger account mapping is exposed; the entitlement state flip above is
-		// the local state required by commerce.BNPLRail's contract.
-		return nil
+		return err
 
 	case "payout":
-		// Tutor payout settled ⇒ release the held amount escrow → settlement, then
-		// the payout target is credited downstream. (Tutor payout rows live in the
-		// tutor package; the ledger leg is the canonical settlement record.)
-		// TODO(state): flip the tutor payout row state via the tutor service when its
-		// payout-by-ref lookup is exposed; the ledger leg below is the source of truth.
-		return h.releaseEscrowToSettlement(ctx, evt)
+		// Tutor payout settled ⇒ the row must already be 'paid' (domain owns the
+		// requested→paid|failed transition, incl. the earnings flip). Release the
+		// row's amount escrow → settlement; idempotent on academy-rail:<rail>:<ref>.
+		return h.settleFromRow(ctx, rail, evt,
+			`SELECT amount_minor FROM academy_tutor_payouts WHERE payout_ref = $1 AND state = 'paid'`)
 
 	case "disburse":
-		// EduPay disbursement settled ⇒ flip state fee_due/collected → disbursed
-		// (keyed by stored payout_ref) and release escrow → settlement.
-		if h.pool != nil {
-			_, err := h.pool.Exec(ctx,
-				`UPDATE academy_disbursements SET state = 'disbursed' WHERE payout_ref = $1 AND state IN ('fee_due','collected','funding')`,
-				evt.Ref)
-			if err != nil {
-				return err
-			}
-		}
-		return h.releaseEscrowToSettlement(ctx, evt)
+		// EduPay disbursement settled ⇒ row already 'disbursed'/'reconciled'.
+		return h.settleFromRow(ctx, rail, evt,
+			`SELECT amount_minor FROM academy_disbursements WHERE payout_ref = $1 AND state IN ('disbursed','reconciled')`)
 
 	case "billing":
-		// Institution billing charged ⇒ flip open → paid (keyed by stored
-		// payment_ref). Funds settle into the platform settlement account.
-		if h.pool != nil {
-			_, err := h.pool.Exec(ctx,
-				`UPDATE academy_institution_billing SET state = 'paid' WHERE payment_ref = $1 AND state = 'open'`,
-				evt.Ref)
-			if err != nil {
-				return err
-			}
-		}
-		return h.releaseEscrowToSettlement(ctx, evt)
+		// Institution billing settled ⇒ row already 'paid'.
+		return h.settleFromRow(ctx, rail, evt,
+			`SELECT amount_minor FROM academy_institution_billing WHERE payment_ref = $1 AND state = 'paid'`)
 	}
 	return nil
+}
+
+// settleFromRow reads the obligation's committed amount for a settled webhook
+// and posts the escrow→settlement leg. No matching terminal row ⇒ the ref owns
+// nothing — record the event, move nothing.
+func (h *academyWebhookHandler) settleFromRow(ctx context.Context, rail string, evt academyWebhookEvent, amountQuery string) error {
+	var amount int64
+	err := h.pool.QueryRow(ctx, amountQuery, evt.Ref).Scan(&amount)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return errNoMatchingObligation
+	}
+	if err != nil {
+		return err
+	}
+	return h.releaseEscrowToSettlement(ctx, rail, evt, amount)
 }
 
 // releaseEscrowToSettlement posts the settle ledger leg: release the held amount
 // from escrow into settlement (a balanced, idempotent journal). The idem key is
 // derived from the provider ref so a replayed webhook re-uses the same key and the
 // ledger rejects the duplicate (defense-in-depth on top of the dedupe table).
-func (h *academyWebhookHandler) releaseEscrowToSettlement(ctx context.Context, evt academyWebhookEvent) error {
-	if h.ledger == nil || evt.AmountMinor <= 0 {
+func (h *academyWebhookHandler) releaseEscrowToSettlement(ctx context.Context, rail string, evt academyWebhookEvent, amountKobo int64) error {
+	if h.ledger == nil || amountKobo <= 0 {
 		return nil
 	}
 	escrow, err := h.ledger.GetOrCreateStandingAccount(ctx, ledger.AccountEscrow)
@@ -225,11 +253,13 @@ func (h *academyWebhookHandler) releaseEscrowToSettlement(ctx context.Context, e
 	if err != nil {
 		return err
 	}
-	idemKey := "academy-rail:" + evt.Rail + ":" + evt.Ref
+	// Route rail, not evt.Rail — the route is what was authenticated; the body's
+	// rail field is sender-supplied and must not steer the ledger key namespace.
+	idemKey := "academy-rail:" + rail + ":" + evt.Ref
 	return h.ledger.PostJournal(ctx, ledger.JournalEntry{
 		Reference:       evt.Reference,
 		IdempotencyKey:  idemKey,
-		AmountKobo:      evt.AmountMinor,
+		AmountKobo:      amountKobo,    // the owning row's amount — never the wire's claim
 		DebitAccountID:  escrow.ID,     // release the hold
 		CreditAccountID: settlement.ID, // settle to the platform settlement account
 	})
