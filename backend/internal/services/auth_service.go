@@ -433,11 +433,24 @@ func (s *authService) ChangePassword(accessToken, currentPassword, newPassword s
 	}
 	authUser, err := s.supabase.AuthUser(accessToken)
 	if err != nil {
-		return fmt.Errorf("unauthorized")
+		return errors.New("unauthorized")
 	}
 	userID := asString(authUser["id"])
 	if strings.TrimSpace(userID) == "" {
-		return fmt.Errorf("unauthorized")
+		return errors.New("unauthorized")
+	}
+	// The bearer token proves a live session, not knowledge of the credential
+	// being replaced — verify the current password against GoTrue's own grant
+	// before touching anything.
+	email := asString(authUser["email"])
+	if strings.TrimSpace(email) == "" {
+		return errors.New("unauthorized")
+	}
+	if err := s.supabase.VerifyPasswordGrant(email, currentPassword); err != nil {
+		return errors.New("current password is incorrect")
+	}
+	if err := s.supabase.AdminSetPassword(context.Background(), userID, newPassword); err != nil {
+		return errors.New("password update failed")
 	}
 	// Revoke existing sessions after password change.
 	_ = s.supabase.REST(http.MethodPatch, "auth_sessions", map[string]string{
