@@ -55,6 +55,47 @@ services:
         value: production
 
   # ─────────────────────────────────────────────────────────────────────────────
+  # Notification Worker (AUD-INFRA-006 / AUD-BE-008)
+  #
+  # Consumes the asynq queues (critical/default/low) that backend producers
+  # enqueue to. Without this service every queued push/email/SMS sits in Redis
+  # forever — RUN_WORKERS_INPROCESS=false on the web service by design.
+  # ─────────────────────────────────────────────────────────────────────────────
+  - type: worker
+    name: spotlight-notification-worker
+    plan: starter
+    runtime: docker
+    region: ohio
+    startCommand: /app/notification-worker
+    dockerfile: ./Dockerfile
+    dockerContext: ./
+    autoDeploy: true
+
+    envVars:
+      # asynq queue — the only hard dependency
+      - key: REDIS_URL
+        fromService:
+          name: spotlight-redis
+          property: connectionString
+
+      # Notification provider credentials (dashboard-managed secrets)
+      - key: RESEND_API_KEY
+        sync: false
+      - key: RESEND_FROM_EMAIL
+        sync: false
+      - key: TERMII_API_KEY
+        sync: false
+      - key: TERMII_SENDER_ID
+        sync: false
+      - key: EXPO_PUSH_TOKEN
+        sync: false
+
+      - key: ENVIRONMENT
+        value: production
+      - key: LOG_LEVEL
+        value: info
+
+  # ─────────────────────────────────────────────────────────────────────────────
   # Admin Dashboard (Next.js 15.1) — MOVED TO RAILWAY
   #
   # The spotlight-admin service was removed from Render. It now deploys from
