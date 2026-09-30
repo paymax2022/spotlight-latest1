@@ -8,7 +8,11 @@ services:
     runtime: docker
     region: ohio
     startCommand: /app/server
-    healthCheckPath: /api/v1/public/health
+    # /readyz (not /api/v1/public/health): the public health route is a static
+    # 200 liveness ping — it keeps reporting healthy through a runtime DB
+    # outage, so Render would keep routing to a degraded instance. /readyz
+    # pings the shared pgx pool (2s bound) and 503s while the DB is down.
+    healthCheckPath: /readyz
     healthCheckInterval: 30
     dockerfile: ./Dockerfile
     dockerContext: ./
