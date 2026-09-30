@@ -96,6 +96,45 @@ func TestRequireAuthContext_TokenFailingSupabaseVerificationReturns401(t *testin
 	}
 }
 
+// AUD-AUTH-001: a definitive token rejection is a 401 — but an auth-backend
+// OUTAGE (5xx or unreachable) must not masquerade as "invalid token": every
+// logged-in user would see session-expiry during a Supabase blip. It is a 503.
+func TestRequireAuthContext_AuthBackendOutageReturns503(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	srv := authUserServer(t, http.StatusInternalServerError, `{"error":"gotrue down"}`)
+	defer srv.Close()
+	sb := integrations.NewSupabaseRestClient(srv.URL, "key")
+
+	r := gin.New()
+	r.Use(RequireAuthContext(sb, statusRBAC{status: "active"}))
+	reached := false
+	r.GET("/x", func(c *gin.Context) { reached = true; c.Status(http.StatusOK) })
+
+	w := doRequest(r, "Bearer good-token")
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("auth backend 5xx: got %d, want 503 (not a user-facing 401)", w.Code)
+	}
+	if reached {
+		t.Error("downstream handler must not run when token verification could not complete")
+	}
+}
+
+func TestRequireAuthContext_AuthBackendUnreachableReturns503(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	srv := authUserServer(t, http.StatusOK, `{}`)
+	srv.Close() // close immediately: connection refused = transport error, not a rejection
+	sb := integrations.NewSupabaseRestClient(srv.URL, "key")
+
+	r := gin.New()
+	r.Use(RequireAuthContext(sb, statusRBAC{status: "active"}))
+	r.GET("/x", func(c *gin.Context) { c.Status(http.StatusOK) })
+
+	w := doRequest(r, "Bearer good-token")
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("auth backend unreachable: got %d, want 503 (not a user-facing 401)", w.Code)
+	}
+}
+
 // A verification response with no "id" field must also be rejected — an
 // authenticated-looking payload with no usable subject is not a valid user.
 func TestRequireAuthContext_TokenWithNoSubjectReturns401(t *testing.T) {

@@ -437,7 +437,12 @@ func (s *authService) ChangePassword(accessToken, currentPassword, newPassword s
 	}
 	authUser, err := s.supabase.AuthUser(accessToken)
 	if err != nil {
-		return errors.New("unauthorized")
+		// AUD-AUTH-001: a definitive rejection means bad/expired token; any
+		// other failure is an auth-backend outage, not an authz verdict.
+		if errors.Is(err, integrations.ErrTokenInvalid) {
+			return errors.New("unauthorized")
+		}
+		return errors.New("authentication service unavailable")
 	}
 	userID := asString(authUser["id"])
 	if strings.TrimSpace(userID) == "" {
