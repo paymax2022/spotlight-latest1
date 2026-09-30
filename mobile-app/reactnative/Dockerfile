@@ -1,5 +1,5 @@
 # Multi-stage build for Expo web export
-FROM node:20-alpine AS builder
+FROM node:26-alpine AS builder
 WORKDIR /app
 
 # Install dependencies
@@ -11,7 +11,7 @@ COPY . .
 RUN npm run web -- --output-dir dist
 
 # Runtime stage - serve static files
-FROM node:20-alpine
+FROM node:26-alpine
 WORKDIR /app
 
 ENV PORT=8083
