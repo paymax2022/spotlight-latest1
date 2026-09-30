@@ -14,7 +14,8 @@ RUN go mod download \
  && go build -o server ./cmd/server \
  && go build -o marketplace-indexer ./cmd/marketplace-indexer \
  && go build -o marketplace-cron ./cmd/marketplace-cron \
- && go build -o transport-scheduler ./cmd/transport-scheduler
+ && go build -o transport-scheduler ./cmd/transport-scheduler \
+ && go build -o notification-worker ./cmd/notification-worker
 
 # Runtime: minimal Alpine image with compiled binaries
 FROM alpine:3.20
@@ -24,6 +25,7 @@ COPY --from=build /app/server /app/server
 COPY --from=build /app/marketplace-indexer /app/marketplace-indexer
 COPY --from=build /app/marketplace-cron /app/marketplace-cron
 COPY --from=build /app/transport-scheduler /app/transport-scheduler
+COPY --from=build /app/notification-worker /app/notification-worker
 # Run as a non-root user (trivy DS-0002). The binaries are world-readable and
 # the service binds 8080, so no privileged port and nothing to chown — the
 # process simply does not need root to execute a static Go binary.
