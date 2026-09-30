@@ -32,7 +32,9 @@ export interface CastFreeVoteRequest {
 }
 
 export interface VerifyPaidVoteRequest {
-  transactionId: string;
+  /** Internal vote_transactions.id. Optional — AUD-FE-007: Paystack redirects
+   *  carry only paymentReference; the bridge resolves the id from it. */
+  transactionId?: string;
   paymentReference: string;
 }
 
@@ -67,6 +69,9 @@ export interface VoteResponse {
   alreadyProcessed?: boolean;
   /** Paid-vote verify only: votes_purchased + bonus_votes for this transaction. */
   votesCredited?: number;
+  /** Paid-vote verify only: the resolved vote_transactions.id — set even when
+   *  the caller only supplied paymentReference (AUD-FE-007). */
+  transactionId?: string;
 }
 
 /**
@@ -247,11 +252,32 @@ export async function bridgedVerifyPaidVote(
     userAgent: string;
   }
 ): Promise<VoteResponse> {
+  // AUD-FE-007: the Paystack redirect (and any caller that only has the
+  // gateway reference) carries payment_reference, NOT our internal
+  // vote_transactions.id — resolve it here so both the flag-on path and the
+  // protected legacy function receive a real transaction id.
+  let transactionId = req.transactionId;
+  if (!transactionId) {
+    if (!req.paymentReference) {
+      return { success: false, error: 'Missing payment reference', statusCode: 400 };
+    }
+    const { data: txRow } = await createAdminClient()
+      .from('vote_transactions')
+      .select('id')
+      .eq('payment_reference', req.paymentReference)
+      .maybeSingle();
+    if (!txRow) {
+      return { success: false, error: 'Transaction not found', statusCode: 404 };
+    }
+    transactionId = String(txRow.id);
+  }
+  const reqResolved = { ...req, transactionId };
+
   // Same rollout contract as the free path: flag off means legacy, not broken.
   if (!isBridgeEnabled()) {
     try {
       const legacy = await verifyAndCreditPaidVote(
-        req,
+        reqResolved,
         userId,
         context.ipAddress,
         context.userAgent,
@@ -261,6 +287,7 @@ export async function bridgedVerifyPaidVote(
         totalVotes: legacy.newTotalVotes,
         alreadyProcessed: legacy.alreadyProcessed,
         votesCredited: legacy.votesCredited,
+        transactionId: reqResolved.transactionId,
       };
     } catch (error) {
       console.error('[VoteBridge] legacy verifyAndCreditPaidVote error:', error);
@@ -280,7 +307,7 @@ export async function bridgedVerifyPaidVote(
     const { data: tx, error: fetchErr } = await supabase
       .from('vote_transactions')
       .select('*')
-      .eq('id', req.transactionId)
+      .eq('id', reqResolved.transactionId)
       .maybeSingle();
 
     if (fetchErr || !tx) {
@@ -295,10 +322,11 @@ export async function bridgedVerifyPaidVote(
         success: true,
         alreadyProcessed: true,
         votesCredited: tx.total_votes_to_credit ?? undefined,
+        transactionId: reqResolved.transactionId,
       };
     }
 
-    if (tx.payment_reference !== req.paymentReference) {
+    if (tx.payment_reference !== reqResolved.paymentReference) {
       return { success: false, error: 'Payment reference mismatch', statusCode: 400 };
     }
 
@@ -348,8 +376,8 @@ export async function bridgedVerifyPaidVote(
     // more separate calls" approach this replaced never actually serialized
     // anything (each Supabase-js call is its own PostgREST transaction).
     const { data: creditRows, error: creditErr } = await supabase.rpc('credit_paid_vote_transaction', {
-      p_transaction_id: req.transactionId,
-      p_payment_reference: req.paymentReference,
+      p_transaction_id: reqResolved.transactionId,
+      p_payment_reference: reqResolved.paymentReference,
       p_amount_paid: amountPaidNgn,
       p_provider_reference: verification.providerReference ?? null,
       p_paid_at: verification.paidAt ?? null,
@@ -379,6 +407,7 @@ export async function bridgedVerifyPaidVote(
         success: true,
         alreadyProcessed: true,
         votesCredited: credit.total_votes_to_credit ?? undefined,
+        transactionId: reqResolved.transactionId,
       };
     }
 
@@ -389,7 +418,7 @@ export async function bridgedVerifyPaidVote(
       contestId: credit.contest_id,
       contestantId: credit.contestant_id,
       votes: credit.total_votes_to_credit,
-      paymentReference: req.paymentReference,
+      paymentReference: reqResolved.paymentReference,
       ipAddress: context.ipAddress,
       userId: credit.voter_user_id ?? null,
       amountExpectedKobo,
@@ -399,10 +428,10 @@ export async function bridgedVerifyPaidVote(
       domain: 'general',
       action: 'vote_credited',
       actorId: userId,
-      entityId: req.transactionId,
+      entityId: reqResolved.transactionId,
       contestId: credit.contest_id,
       contestantId: credit.contestant_id,
-      paymentReference: req.paymentReference,
+      paymentReference: reqResolved.paymentReference,
       votes: credit.total_votes_to_credit,
       amountPaidKobo,
       amountExpectedKobo,
@@ -415,10 +444,11 @@ export async function bridgedVerifyPaidVote(
       voteId: credit.vote_id ?? undefined,
       alreadyProcessed: false,
       votesCredited: credit.total_votes_to_credit ?? undefined,
+      transactionId: reqResolved.transactionId,
     };
 
     await enqueueOutboxEvent('votes.paid.credited', {
-      transactionId: req.transactionId,
+      transactionId: reqResolved.transactionId,
       contestantId: credit.contestant_id,
       voterId: credit.voter_user_id,
       timestamp: new Date().toISOString(),

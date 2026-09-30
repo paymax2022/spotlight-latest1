@@ -145,12 +145,29 @@ describe('POST /api/v2/votes/paid/verify', () => {
     expect(body.totalVotes).toBe(20);
   });
 
-  it('returns 400 when transactionId is missing', async () => {
+  it('returns 400 when paymentReference is missing', async () => {
+    const req = makeNextRequest('/api/v2/votes/paid/verify', {
+      body: { transactionId: 'tx-001' },
+    });
+    const res = await postPaidVerify(req);
+    expect(res.status).toBe(400);
+  });
+
+  // AUD-FE-007: the Paystack redirect carries only the gateway reference.
+  // A missing transactionId must NOT 400 — the bridge resolves the id from
+  // payment_reference; this was the bug that failed every paid-vote buyer.
+  it('accepts a reference-only request and forwards it to the bridge', async () => {
+    vi.mocked(bridgedVerifyPaidVote).mockResolvedValue({ success: true, voteId: 'v-1' } as any);
     const req = makeNextRequest('/api/v2/votes/paid/verify', {
       body: { paymentReference: 'PAY_ref_001' },
     });
     const res = await postPaidVerify(req);
-    expect(res.status).toBe(400);
+    expect(res.status).toBe(200);
+    expect(vi.mocked(bridgedVerifyPaidVote)).toHaveBeenCalledWith(
+      expect.objectContaining({ paymentReference: 'PAY_ref_001' }),
+      expect.anything(),
+      expect.anything(),
+    );
   });
 
   // The route reads validateRequest's error and then deliberately continues, so

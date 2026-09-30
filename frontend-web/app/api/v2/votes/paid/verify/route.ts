@@ -16,9 +16,12 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
     const { transactionId, paymentReference } = body;
 
-    if (!transactionId || !paymentReference) {
+    // AUD-FE-007: Paystack's redirect carries only the gateway reference —
+    // transactionId is our internal id and is legitimately absent; the bridge
+    // resolves it from payment_reference.
+    if (!paymentReference) {
       return NextResponse.json(
-        { error: 'Missing required fields: transactionId, paymentReference' },
+        { error: 'Missing required field: paymentReference' },
         { status: 400 }
       );
     }
@@ -92,9 +95,9 @@ export async function GET(request: NextRequest) {
     const transactionId = searchParams.get('transactionId');
     const paymentReference = searchParams.get('paymentReference');
 
-    if (!transactionId || !paymentReference) {
+    if (!paymentReference) {
       return NextResponse.json(
-        { error: 'Missing required fields: transactionId, paymentReference' },
+        { error: 'Missing required field: paymentReference' },
         { status: 400 }
       );
     }
@@ -108,7 +111,7 @@ export async function GET(request: NextRequest) {
     // Verify and credit the vote via bridge
     const result = await bridgedVerifyPaidVote(
       {
-        transactionId,
+        transactionId: transactionId ?? undefined,
         paymentReference,
       },
       'webhook',
@@ -125,9 +128,10 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    // Redirect to success page (for webhook or browser callback)
+    // Redirect to success page (for webhook or browser callback) — use the
+    // resolved id, not the query param (absent on Paystack redirects).
     return NextResponse.redirect(
-      new URL(`/voting/success?transactionId=${transactionId}`, request.url)
+      new URL(`/voting/success?transactionId=${result.transactionId ?? ''}`, request.url)
     );
   } catch (error) {
     console.error('[API] /api/v2/votes/paid/verify GET error:', error);
