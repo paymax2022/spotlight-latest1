@@ -665,6 +665,7 @@ Groups: `(auth)`, `(doctor)`, `(merchant)`, `(tabs)`, `admin`, `ai-notes`, `ai-t
 * Production impact: p50 latency dominated by upstream RTTs; Supabase degradation amplifies into full-stack unavailability; Supabase-side request-rate quotas become the scaling ceiling.
 * Confidence: HIGH (code path traced).
 * Status: **FIXED — PR #339 (merged, `06db8fca`).** Independent status/roles/permissions/session lookups fan out concurrently; `RequirePermission` answers from request context with RPC fallback; role middlewares reuse context roles (~6 sequential Supabase RTTs → ~1 per request).
+* **Load-verified residual (2026-10-02, live stack)**: under a 200-VU k6 ramp the per-request `GET /auth/v1/user` GoTrue call becomes the ceiling — Kong logged ~7.2k upstream 500s on `/auth/v1/user` while PostgREST paths stayed 200; local Postgres `max_connections=100` (→500) and PostgREST pool=10 are part of it, but the structural point stands: **GoTrue is in the hot path of every authenticated request**. With AUTH-001 fixed the API now degrades truthfully (wallet calls returned `503`, verified in the access log: 13,741×503 vs 4,817×200 during the ramp) instead of fake `401`s — but capacity is bounded by GoTrue. The remaining lever is the one this finding already names: JWT-local validation (HS256) with remote checks moved off the hot path — needs a revocation-semantics decision, i.e. an ADR, not a drive-by.
 
 ### AUD-PERF-002 — Unbounded in-memory rate-limit stores grow with distinct keys
 
