@@ -9,6 +9,8 @@
  *   return proxyToGoBackend(request, '/api/finance/telemedicine/doctors');
  */
 import { NextResponse } from 'next/server';
+import { getRequestIp } from '@/src/lib/rate-limit/client-ip';
+import { checkRateLimit } from '@/src/lib/voting/rate-limit';
 
 export const GO_BACKEND_URL = process.env.GO_BACKEND_URL || 'http://localhost:8080';
 
@@ -25,11 +27,40 @@ export const GO_BACKEND_URL = process.env.GO_BACKEND_URL || 'http://localhost:80
  */
 const PROXY_TIMEOUT_MS = Number(process.env.PROXY_TIMEOUT_MS ?? 20_000);
 
+/**
+ * Per-client ceiling applied to EVERY proxied call (AUD-SEC-001): ~147 route
+ * handlers funnel through this function, and almost none carried their own
+ * limiter, so payment-initiation and wallet-debit money paths were un-throttled.
+ * Keyed on the proxy-aware client IP (forged XFF collapses into one shared
+ * bucket rather than minting fresh buckets per request). Deliberately generous —
+ * this sheds abusive floods, it does not shape normal UX: a fast dashboard
+ * burst is hundreds of calls, a flood is thousands. 0 disables.
+ */
+function proxyRateLimit(): { limit: number; windowMs: number } {
+  const limit = Number(process.env.PROXY_RATE_LIMIT ?? 600);
+  const windowMs = Number(process.env.PROXY_RATE_WINDOW_MS ?? 60_000);
+  return {
+    limit: Number.isFinite(limit) && limit >= 0 ? Math.floor(limit) : 600,
+    windowMs: Number.isFinite(windowMs) && windowMs > 0 ? windowMs : 60_000,
+  };
+}
+
 export async function proxyToGoBackend(
   request: Request,
   goPath: string,
-  options?: { method?: string; body?: unknown; headers?: Record<string, string> },
+  options?: { method?: string; body?: unknown; headers?: Record<string, string>; rateLimitKey?: string },
 ): Promise<Response> {
+  const { limit, windowMs } = proxyRateLimit();
+  if (limit > 0) {
+    const rl = checkRateLimit(`go-proxy:${options?.rateLimitKey ?? getRequestIp(request)}`, limit, windowMs);
+    if (!rl.allowed) {
+      return NextResponse.json(
+        { success: false, error: 'Too many requests — slow down and retry.' },
+        { status: 429, headers: { 'Retry-After': String(Math.ceil(rl.resetInMs / 1000)) } },
+      );
+    }
+  }
+
   const url = new URL(request.url);
   const targetUrl = `${GO_BACKEND_URL}${goPath}${url.search}`;
 
