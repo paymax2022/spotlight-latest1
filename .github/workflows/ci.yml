@@ -30,23 +30,26 @@ on:
   # Docs-only PUSHES are skipped to conserve private-repository Actions minutes.
   #
   # `pull_request` deliberately has NO paths-ignore. This workflow's jobs are
-  # required status checks on develop (.github/required-checks.txt), and GitHub
-  # reports a path-SKIPPED required check as perpetually "Expected — waiting for
-  # status", not as passed. With a paths-ignore here, a docs-only PR would never
-  # start this workflow and could never merge. Docs-only PRs are cheap now: the
-  # router skips every module lane, leaving only the core gates.
+  # required status checks on develop AND main (.github/required-checks.txt),
+  # and GitHub reports a path-SKIPPED required check as perpetually "Expected —
+  # waiting for status", not as passed. With a paths-ignore here, a docs-only
+  # PR would never start this workflow and could never merge. Docs-only PRs are
+  # cheap now: the router skips every module lane, leaving only the core gates.
+  #
+  # `main` IS included: AUD-TEST-003 — merges land on main (it's the default
+  # branch) and AUD-BE-001 shipped a compile break because no required check
+  # ran on main-bound PRs. The deploy lanes below still only fire via
+  # workflow_dispatch, so a main push here is CI-only.
   push:
-    branches: [develop, staging, prod]
+    branches: [develop, staging, prod, main]
     paths-ignore:
       - '**.md'
       - 'docs/**'
   pull_request:
-    branches: [develop, staging, prod]
-  # Manual dispatch also doubles as the only way to run this pipeline's CI
-  # gates against `main` — push/pull_request above deliberately don't include
-  # it (Railway has no Production branch mapping to `main`, so it never needed
-  # its own push trigger), which meant `main`'s last real CI result could go
-  # stale indefinitely with nothing to refresh it. Both deploy inputs are
+    branches: [develop, staging, prod, main]
+  # Manual dispatch still works for re-running this pipeline against any
+  # branch, but `main` is covered by push/pull_request above (AUD-TEST-003).
+  # Both deploy inputs are
   # optional: leave them blank to run CI only (against whichever branch you
   # pick in the dispatch UI/API `ref`), or fill both in to also deploy — the
   # deploy jobs below still gate strictly on confirm_deploy being the exact
