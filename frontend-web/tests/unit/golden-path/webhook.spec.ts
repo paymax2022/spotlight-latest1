@@ -12,7 +12,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { makeWebhookResult } from './_fixtures';
 
 // ── Module mocks ──────────────────────────────────────────────────────────────
-// All six co-tenant handlers are mocked — this spec tests the ROUTE's dispatch
+// All seven co-tenant handlers are mocked — this spec tests the ROUTE's dispatch
 // and status contract, not the handlers (the real gateway handler throws when
 // PAYSTACK_SECRET_KEY is unset in the test env, which would poison every case).
 
@@ -40,6 +40,10 @@ vi.mock('../../../app/api/webhooks/paystack/gateway-handler', () => ({
   handleGatewayPaystackWebhook: vi.fn(),
 }));
 
+vi.mock('../../../app/api/webhooks/paystack/go-forward', () => ({
+  forwardGoOwnedPaystackEvent: vi.fn(),
+}));
+
 // ── Import after mocks ────────────────────────────────────────────────────────
 
 import { POST } from '../../../app/api/webhooks/paystack/route';
@@ -49,6 +53,7 @@ import { handleDvaTransferWebhook } from '@/src/server/virtual-accounts/webhook'
 import { handleUtilityPaystackWebhook } from '../../../app/api/webhooks/paystack/utility-handler';
 import { handleBankTransferWebhook } from '@/src/server/transfers/bank-webhook';
 import { handleGatewayPaystackWebhook } from '../../../app/api/webhooks/paystack/gateway-handler';
+import { forwardGoOwnedPaystackEvent } from '../../../app/api/webhooks/paystack/go-forward';
 
 const ALL_HANDLERS = [
   handlePaystackWebhook,
@@ -57,6 +62,7 @@ const ALL_HANDLERS = [
   handleUtilityPaystackWebhook,
   handleBankTransferWebhook,
   handleGatewayPaystackWebhook,
+  forwardGoOwnedPaystackEvent,
 ];
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
