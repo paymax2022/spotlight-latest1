@@ -23,6 +23,8 @@ func NewHandler(svc *Service, walletTransfersEnabled, bankTransfersEnabled bool)
 	return &Handler{svc: svc, walletEnabled: walletTransfersEnabled, bankEnabled: bankTransfersEnabled}
 }
 
+const errIdemKeyRequired = "Idempotency-Key required"
+
 func writeError(c *gin.Context, err error) {
 	body := gin.H{
 		"error": err.Error(),
@@ -85,6 +87,10 @@ func (h *Handler) InitiatePaymax(c *gin.Context) {
 	if k := c.GetHeader("Idempotency-Key"); k != "" {
 		req.IdempotencyKey = k
 	}
+	if req.IdempotencyKey == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": errIdemKeyRequired, "code": "invalid_request"})
+		return
+	}
 	wt, err := h.svc.InitiateWalletToWallet(c.Request.Context(), userID, req)
 	if err != nil {
 		writeError(c, err)
@@ -116,6 +122,10 @@ func (h *Handler) InitiateBank(c *gin.Context) {
 	if k := c.GetHeader("Idempotency-Key"); k != "" {
 		req.IdempotencyKey = k
 	}
+	if req.IdempotencyKey == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": errIdemKeyRequired, "code": "invalid_request"})
+		return
+	}
 	bt, err := h.svc.InitiateBankTransfer(c.Request.Context(), userID, req)
 	if err != nil {
 		writeError(c, err)
@@ -146,6 +156,10 @@ func (h *Handler) InitiateBankToBank(c *gin.Context) {
 	}
 	if k := c.GetHeader("Idempotency-Key"); k != "" {
 		req.IdempotencyKey = k
+	}
+	if req.IdempotencyKey == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": errIdemKeyRequired, "code": "invalid_request"})
+		return
 	}
 	bt, err := h.svc.InitiateBankToBank(c.Request.Context(), userID, req)
 	if err != nil {
