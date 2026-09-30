@@ -46,8 +46,15 @@ func normalizeLongitude(lng float64) float64 {
 	return lng
 }
 
-// Encode returns the full (length-10) Plus Code for a coordinate.
+// Encode returns the full (length-10) Plus Code for a coordinate, or "" when
+// the coordinate is not finite — NaN passes clipLatitude/normalizeLongitude
+// untouched and produces a negative digit index (panic, AUD-BE-010), and an
+// infinite lng would spin normalizeLongitude's loops forever. PlusCode is an
+// annotation on the result, not a key, so degrading to empty is safe.
 func (olcCodec) Encode(lat, lng float64) string {
+	if math.IsNaN(lat) || math.IsNaN(lng) || math.IsInf(lat, 0) || math.IsInf(lng, 0) {
+		return ""
+	}
 	lat = clipLatitude(lat)
 	lng = normalizeLongitude(lng)
 	// Keep the latitude digit in range when sitting exactly on the north pole.
@@ -65,8 +72,16 @@ func (olcCodec) Encode(lat, lng float64) string {
 		latVal -= float64(latDigit) * res
 		lngDigit := int(math.Floor(lngVal / res))
 		lngVal -= float64(lngDigit) * res
+		// Clamp BOTH ends: float remainder can drift to -1e-16 after the
+		// subtractions, yielding digit -1 → panic (AUD-BE-010).
+		if latDigit < 0 {
+			latDigit = 0
+		}
 		if latDigit > 19 {
 			latDigit = 19
+		}
+		if lngDigit < 0 {
+			lngDigit = 0
 		}
 		if lngDigit > 19 {
 			lngDigit = 19

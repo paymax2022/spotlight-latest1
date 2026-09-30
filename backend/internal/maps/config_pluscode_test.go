@@ -1,6 +1,7 @@
 package maps
 
 import (
+	"math"
 	"os"
 	"path/filepath"
 	"testing"
@@ -150,5 +151,23 @@ func TestPlusCodeEdgeCases(t *testing.T) {
 	}
 	if _, err := codec.Decode("!!!"); err == nil {
 		t.Fatal("garbage code should error")
+	}
+}
+
+// AUD-BE-010: non-finite coordinates must degrade to "" — NaN produced a
+// negative digit index (panic) and ±Inf lng would spin normalizeLongitude
+// forever.
+func TestPlusCodeNonFiniteInput(t *testing.T) {
+	codec := NewPlusCodec()
+	nan := math.NaN()
+	inf := math.Inf(1)
+	for _, p := range []Point{
+		{Lat: nan, Lng: 3.39}, {Lat: 6.45, Lng: nan}, {Lat: nan, Lng: nan},
+		{Lat: inf, Lng: 0}, {Lat: math.Inf(-1), Lng: 0},
+		{Lat: 0, Lng: inf}, {Lat: 0, Lng: math.Inf(-1)},
+	} {
+		if code := codec.Encode(p.Lat, p.Lng); code != "" {
+			t.Errorf("Encode(%v) = %q, want \"\"", p, code)
+		}
 	}
 }
