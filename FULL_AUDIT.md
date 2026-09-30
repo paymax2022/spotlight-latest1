@@ -339,7 +339,7 @@ Groups: `(auth)`, `(doctor)`, `(merchant)`, `(tabs)`, `admin`, `ai-notes`, `ai-t
   * If a proxy fans out to both: wallet top-ups use **different idempotency keys** in the two pipelines (`topup:<intentId>:CREDIT` vs `paystack:topup:<reference>`) → dual delivery would double-post unless a DB constraint catches it.
 * Production impact: one entire fulfilment plane is structurally dead depending on one dashboard setting; drift risk is invisible in-repo.
 * Confidence: HIGH for the routing structure; the live dashboard URL is UNVERIFIED (external).
-* Status: RISK / MISSING CONTROL — recorded.
+* Status: **PARTIALLY FIXED — PR #338 (in review).** The Next.js receiver now forwards `charge.success` events whose reference carries a Go-exclusive prefix (`feespay:`/`foodorder:`/`rideorder:`/`duespay:`) byte-exact to `/api/webhooks/paystack/go` (signature re-verified by Go), so Go-owned fulfilments fire regardless of which URL the dashboard points at. Forward failures reject → REL-002 retry semantics. **Residual risk retained:** `transfer.*`, DVA credits, and `metadata.user_id` wallet top-ups are claimed by BOTH planes under different idempotency keys — they are deliberately NOT forwarded (would double-post), so those still resolve to whichever single receiver is configured. Full overlap consolidation is open.
 
 ### AUD-FE-005 — Admin API-key path lets the holder self-declare any admin role
 
@@ -662,7 +662,7 @@ Groups: `(auth)`, `(doctor)`, `(merchant)`, `(tabs)`, `admin`, `ai-notes`, `ai-t
 * Evidence: `sendEmail` does `await fetch(resend)` and never checks `res.ok` — a Resend 4xx/5xx resolves normally so failure is undetectable; the caller wraps `sendVoteReceiptEmail` in `void (async () => { try {…} catch {} })()` — explicitly fire-and-forget. No queue, no retry, no dead-letter. `RESEND_API_KEY` missing → silently `console.log`s (dev path).
 * Production impact: voters told "check your email for a receipt" may never receive one; under serverless runtimes the detached async work can be frozen before dispatch. Receipts are a payment-dispute artifact — their absence turns payment queries into manual support cases.
 * Confidence: HIGH.
-* Status: MISSING CONTROL / RISK.
+* Status: **PARTIALLY FIXED — PR #332 (merged, `e209b074`).** `sendEmail` now checks `res.ok`, logs a truncated (≤200 char) provider error body, throws on non-2xx, and bounds the request with `AbortSignal.timeout(10_000)`. Both callers remain fire-and-forget so failures surface in logs without breaking payment responses. Retry/queue delivery is still absent — residual risk retained.
 
 ### AUD-REL-002 — Webhook dispatcher converts all handler failures into HTTP 200 with no retry surface
 
@@ -898,7 +898,7 @@ Running ledger of finding → fix → PR → verification → merge. Statuses ar
 | AUD-BE-008 | #297 | `732d4860` | `cmd/notification-worker` asynq consumer binary; `in_app`→push duplicate removed; worker HTTP client bounded | `service_internal_test.go` pins channel→task mapping; `verify` lane green |
 | AUD-BE-009 | #298 | `10025679` | Expired-lock login unlatches `status='locked'` → `'active'` | `login_lockout_test.go` pins latch-clearing + revoked-session rejection |
 | AUD-SEC-003 | #300 | `3a1fee9a` | Deleted 7 dead client service modules referencing `NEXT_PUBLIC_ADMIN_API_KEY` | 0 importers verified; tsc + regression green |
-| (meta) audit bookkeeping | #301/#306 | `d0f11a1b`/`d17cd487` | Remediation log + fix-record passes | merged 2026-09-30 |
+| (meta) audit bookkeeping | #301/#306 | `9a4584b7`/`d17cd487` | Remediation log + fix-record passes | merged 2026-09-30 |
 | AUD-TEST-004 | #302 | `bd55379e` | Repaired dead/masked CI lanes; aligned Go pins with `go.mod` | CI lanes now execute on `main` |
 | AUD-REL-003 / AUD-BE-006 | #304 | `96278884` | Bounded `http.Client` (10s) for GoTrue auth calls; R2 upload PUT bounded (30s) | `go vet`/`go build` green; `verify` lane green |
 | AUD-BE-010 | #307 | `da5a71c5` | Plus-code digit clamped to `[0,19]`; non-finite lat/lng return `""` | `TestMS3_*` panic gone; `internal/maps` suite green; edge-case tests added |
@@ -907,18 +907,39 @@ Running ledger of finding → fix → PR → verification → merge. Statuses ar
 | AUD-DOC-001 | #314 | `350d2574` | CLAUDE.md stale stack metadata corrected | docs-only |
 | AUD-FE-006 | #287 | `3c99d83d` | `handleApiError`: tagged `console.error` + guarded `Sentry.captureException` for unexpected errors; response contract unchanged | `verify` green; new `responses.spec.ts` 7/7; regression 129/129; tsc clean (superset of closed duplicate #293) |
 | AUD-TEST-001 | #290 | `780a3635` | Categories spec rewritten to pin the intentional flag-gated dual-path contract both directions | `verify` green; spec 16/16; full suite 1140/1140; regression 129/129 |
+| AUD-FE-001 | #311 | `2a5ebae8` | Mobile release builds fail loudly when `EXPO_PUBLIC_API_BASE_URL` is unset | CI green; `verify` lane green |
+| AUD-INFRA-006 | #312 | `44169978` | `notification-worker` Render service definition (the binary from #297 now actually runs) | Config parse-validated; no CI lane exercises render.yaml |
+| AUD-INFRA-008 | #313 | `673d9e78` | Deploy canary replaced `sleep 30` with a tagged-revision `/healthz` probe | deploy.yml verified; `verify` lane green |
+| AUD-SEC-001 (backend) | #315 | `f7ba24de` | `TRUSTED_PROXIES` env → `SetTrustedProxies`; `getIPAddress` → proxy-aware `ClientIP()` (covers registration/verify/KYC/audit IP call sites) | `client_ip_test.go` 3/3 pins spoof-resistance; `verify` lane green (19m, live-DB + migrate-reset) |
+| AUD-INFRA-009 | #316 | `7a8f88b3` | Backup/restore runbook | docs-only |
+| (meta) audit sync | #317 | `4a5b5539` | Remediation log sync — merged fixes, open lanes, closed PRs | docs-only |
+| AUD-BE-003 (partial) | #318 | `6162e995` | Search term quoted/escaped in `or(...)` (`postgrestLikePattern`); scoped filters over-fetch 500 + caller limit applied after in-memory filtering | `admin_users_list_test.go` pins quoting + over-fetch; `verify` green. Residual: `metadata` was still not selected → program/contest/school filters matched nothing; 500-cap still under-fetches on large bases — both fixed in #330 |
+| AUD-INFRA-004 | #319 | `02a303a5` | Removed committed typecheck scratch + session tracker files | docs/hygiene |
+| AUD-REL-005 | #320 | `c7154594` | `RequestID` middleware: mint/echo/sanitize `X-Request-Id`, context propagation | `request_id_test.go` pins mint/echo/sanitize; `verify` lane green |
+| AUD-SEC-002b | #323 | `1a7d8bd5` | Cleared new prod npm advisories blocking the audit gate | audit lanes re-assessed |
+| AUD-REL-006 | #324 | `2e116cc2` | Internal `err.Error()` strings no longer echoed on 500s | `verify` lane green |
+| AUD-REL-004 | #325 | `5c81f1a0` | Runtime healthchecks pointed at `/readyz` instead of the static-200 endpoint | `verify` lane green |
+| AUD-BE-007 | #326 | `39a502bc` | Failed-login counter made atomic via RPC | `verify` lane green |
+| AUD-SEC-001 (frontend) | #327 | `e1ca74ca` | Rate-limit bucket map capped; IP keys un-spoofed; dead helper dropped | `verify` lane green |
+| AUD-FE-005 | #328 | `5cfc3e07` | Admin API-key role capped by env ceiling; audit actor fixed | `verify` lane green |
+| AUD-REL-001 | #332 | `e209b074` | Resend `res.ok` checked + truncated error body logged + throw; request bounded by `AbortSignal.timeout(10s)` | `rel001-email-response-check.spec.ts` 4/4; regression 131/131; `verify` green |
 
 ### In review
 
 | Finding | PR | Change | Status |
 |---------|----|--------|--------|
-| AUD-SEC-001 (partial) | #315 | `TRUSTED_PROXIES` env → `SetTrustedProxies`; `getIPAddress` → proxy-aware `ClientIP()` | OPEN — `verify` running; all other lanes green |
 | (meta) tooling | #299 | mise toolchain + golangci-lint + lefthook configs | OPEN (parallel session) |
-| AUD-FE-007 (dup) | #305 | Second route-layer transactionId resolution attempt | OPEN (parallel session) — overlaps merged #308 |
-| AUD-FE-001 | #311 | Fail loudly when API base URL unset in release builds | OPEN (parallel session) |
-| AUD-INFRA-006 | #312 | Render worker service for `notification-worker` | OPEN (parallel session) |
-| AUD-INFRA-008 | #313 | Tagged-revision healthz probe replaces `sleep 30` canary stub | OPEN (parallel session) |
-| AUD-INFRA-009 | #316 | Backup/restore runbook | OPEN (parallel session) |
+| AUD-BE-004 | #322 | Stop spoofable `ClientIP` via trusted-proxy config | OPEN (parallel session) — complements merged #315 |
+| AUD-DB-002 | #329 | DB backstops for non-atomic paid-vote credit | OPEN (parallel session) |
+| AUD-BE-003 (residual) | #330 | Scoped filters pushed to PostgREST via `profiles!inner` + `ilike` (removes #318's 500-cap under-fetch); `metadata` added to the embed so program/contest/school filters work at all; `postgrestLiteral` sanitizes unquoted filter values | OPEN — rebased onto post-#318 main; `admin_users_list_test.go` + `rbac_supabase_repository_test.go` pin push-down + sanitize |
+| AUD-TEST-003 | #331 | Full gate set on main + main-protection docs | OPEN (parallel session) |
+| AUD-PERF-002 | #333 | Hard-cap in-memory rate-limit key map | OPEN (parallel session) |
+| AUD-REL-005 (otel) | #334 | `otelhttp` instrumentation of the HTTP layer | OPEN (parallel session) |
+| AUD-DOC-003 | #335 | Validate all OpenAPI files in `contract:check` | OPEN (parallel session) |
+| AUD-FE-003 | #336 | Gateway vote charges fulfilled in the webhook | OPEN (parallel session) |
+| AUD-INFRA-003 | #337 | Canonical per-environment deployment matrix | OPEN (parallel session) |
+| AUD-INFRA-010 (partial) | #338 | Next.js receiver forwards Go-exclusive `charge.success` refs (`feespay:`/`foodorder:`/`rideorder:`/`duespay:`) byte-exact to `/api/webhooks/paystack/go`; ambiguous events (transfer.*/DVA/`metadata.user_id` top-ups) deliberately NOT forwarded — different idempotency keys would double-post | OPEN — `go-forward.spec.ts` 10/10 + `webhook.spec.ts` 7/7; regression 131/131; `verify` running. Residual overlap set tracked above |
+| AUD-PERF-001 | #339 | Reuse request-resolved RBAC data in authz middleware | OPEN (parallel session) |
 
 ### Closed unmerged (superseded / no unique change)
 
@@ -927,8 +948,10 @@ Running ledger of finding → fix → PR → verification → merge. Statuses ar
 | #289 | Lockout fix auto-closed when its base branch was deleted; replaced by #298 |
 | #293 | FE-006 duplicate — closed in favor of the stronger #287 |
 | #303 | Fix-log bookkeeping — superseded by #306 |
+| #305 | FE-007 duplicate — closed in favor of the merged #308 |
 | #309 | FE-007 duplicate — closed in favor of the merged #308 |
+| #321 | REL-005 duplicate — closed in favor of the merged #320 |
 
 ### Baseline CI failures (not merge-blocking, tracked as findings)
 
-`npm audit (frontend-web)`, `npm audit (mobile-app/reactnative)`, `trivy (filesystem)` are red on every PR including docs-only #285 — pre-existing dependency/IaC advisories, see AUD-SEC-002 and infra findings. Everything else (backend, frontend-*, CodeQL, govulncheck, secrets-scan, gitleaks, verify) is expected green before merge.
+`npm audit (frontend-web)`, `npm audit (frontend-admin)`, `npm audit (mobile-app/reactnative)`, `trivy (filesystem)` are red on every PR including docs-only #285 — pre-existing dependency/IaC advisories, see AUD-SEC-002 (partially remediated by #323) and infra findings. Everything else (backend, frontend-*, CodeQL, govulncheck, secrets-scan, gitleaks, verify) is expected green before merge.
