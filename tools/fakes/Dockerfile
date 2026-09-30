@@ -2,7 +2,7 @@
 # Stage 1: compile a static binary. Stage 2: minimal non-root runtime.
 
 # ── build ─────────────────────────────────────────────────────────────────────
-FROM golang:1.25-alpine AS build
+FROM golang:1.27-alpine AS build
 WORKDIR /src
 
 # go.mod first for layer caching. There are no external deps (stdlib only), so no
