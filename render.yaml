@@ -118,11 +118,14 @@ services:
   - type: web
     name: spotlight-mobile
     plan: standard
-    runtime: node
     region: ohio
     rootDir: mobile-app/reactnative
-    startCommand: npx expo start --web
-    buildCommand: npm install && npm run build:web
+    # Static export — `expo start --web` is the Metro dev server (unminified,
+    # HMR websocket, not production-sized). `build:web` does not exist; SDK 54
+    # exports to dist/.
+    runtime: static
+    buildCommand: npm install && npx expo export --platform web
+    staticPublishPath: dist
     buildFilter:
       paths:
         - mobile-app/reactnative/**
@@ -134,12 +137,14 @@ services:
     minInstances: 1
 
     envVars:
-      - key: REACT_APP_API_URL
+      # Expo only inlines EXPO_PUBLIC_* vars at build time — REACT_APP_* keys
+      # never reach the bundle (the client would fall back to localhost).
+      - key: EXPO_PUBLIC_API_BASE_URL
         fromService:
           name: spotlight-backend
           property: url
           path: /api/v1
-      - key: REACT_APP_ENVIRONMENT
+      - key: EXPO_PUBLIC_APP_ENV
         value: production
       - key: NODE_ENV
         value: production
@@ -151,9 +156,9 @@ services:
     name: spotlight-redis
     plan: starter
     region: ohio
-    ipAllowList:
-      - source: 0.0.0.0/0
-        description: Allow all (restrict in production)
+    # Empty allowlist = private-network only. The backend reaches it via the
+    # fromService connectionString above; no public endpoint is needed.
+    ipAllowList: []
     maxmemoryPolicy: allkeys-lru
 
   # ─────────────────────────────────────────────────────────────────────────────
@@ -166,9 +171,7 @@ services:
   #   region: ohio
   #   database: spotlight
   #   user: postgres
-  #   ipAllowList:
-  #     - source: 0.0.0.0/0
-  #       description: Allow all (restrict in production)
+  #   ipAllowList: []  # private-network only — never expose Postgres publicly
   #   preDeployCommand: supabase migration up
 
 databases:
@@ -178,9 +181,9 @@ databases:
     version: 15
     databaseName: spotlight
     databaseUser: postgres
-    ipAllowList:
-      - source: 0.0.0.0/0
-        description: Allow all (restrict in production)
+    # Private-network only — the backend connects via the internal
+    # connectionString (envVars above). A public Postgres endpoint is not needed.
+    ipAllowList: []
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Environment Groups (optional - for shared config across services)
