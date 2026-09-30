@@ -60,6 +60,13 @@ func (c *SupabaseRestClient) AdminConfirmEmail(ctx context.Context, userID strin
 	return nil
 }
 
+// Field names shared by GoTrue credential calls — constants so request bodies
+// built in different methods can't drift apart.
+const (
+	gotrueEmailField    = "email"
+	gotruePasswordField = "password"
+)
+
 // VerifyPasswordGrant checks a credential pair against GoTrue's own password
 // grant — the only server-side way to confirm a user knows their current
 // password (the hash is never exposed). A >=400 response means the
@@ -68,8 +75,8 @@ func (c *SupabaseRestClient) AdminConfirmEmail(ctx context.Context, userID strin
 // http.DefaultClient.
 func (c *SupabaseRestClient) VerifyPasswordGrant(email, password string) error {
 	req, err := c.buildRequest(http.MethodPost, "/auth/v1/token",
-		map[string]string{"grant_type": "password"},
-		map[string]any{"email": email, "password": password})
+		map[string]string{"grant_type": gotruePasswordField},
+		map[string]any{gotrueEmailField: email, gotruePasswordField: password})
 	if err != nil {
 		return err
 	}
@@ -77,7 +84,7 @@ func (c *SupabaseRestClient) VerifyPasswordGrant(email, password string) error {
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode >= 400 {
 		return fmt.Errorf("password verification failed: %d", resp.StatusCode)
 	}
