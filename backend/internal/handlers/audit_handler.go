@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"log"
 	"net/http"
 	"strconv"
 
@@ -33,7 +34,8 @@ func auditFilterFromQuery(c *gin.Context) domain.AuditFilter {
 func (h *AuditHandler) AuditLogs(c *gin.Context) {
 	rows, err := h.svc.ListAuditLogs(auditFilterFromQuery(c))
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": err.Error()})
+		log.Printf("[audit.logs] internal error: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": "internal error"})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "logs": rows})
@@ -42,7 +44,8 @@ func (h *AuditHandler) AuditLogs(c *gin.Context) {
 func (h *AuditHandler) LoginActivity(c *gin.Context) {
 	rows, err := h.svc.ListLoginActivity(auditFilterFromQuery(c))
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": err.Error()})
+		log.Printf("[audit.login_activity] internal error: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": "internal error"})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "activity": rows})
@@ -51,7 +54,8 @@ func (h *AuditHandler) LoginActivity(c *gin.Context) {
 func (h *AuditHandler) SecurityEvents(c *gin.Context) {
 	rows, err := h.svc.ListSecurityEvents(auditFilterFromQuery(c))
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": err.Error()})
+		log.Printf("[audit.security_events] internal error: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": "internal error"})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "events": rows})
@@ -60,7 +64,8 @@ func (h *AuditHandler) SecurityEvents(c *gin.Context) {
 func (h *AuditHandler) ExportAuditLogs(c *gin.Context) {
 	rows, err := h.svc.ListAuditLogs(auditFilterFromQuery(c))
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": err.Error()})
+		log.Printf("[audit.export] internal error: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": "internal error"})
 		return
 	}
 	payload, err := json.MarshalIndent(rows, "", "  ")
