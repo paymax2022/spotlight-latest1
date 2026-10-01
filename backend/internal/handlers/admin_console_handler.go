@@ -8,6 +8,21 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+const (
+	keyAmount                        = "amount"
+	keyActive                        = "active"
+	valBtc                           = "BTC"
+	strBuyenabled                    = "buyEnabled"
+	keyBps                           = "bps"
+	strAssetUpdate                   = "asset.update"
+	strEnableEthSellingOnThePlatform = "Enable ETH selling on the platform"
+	keySymbol                        = "symbol"
+	keyMinOrder                      = "minOrder"
+	keyMaxOrder                      = "maxOrder"
+	keyType                          = "type"
+	keySummary                       = "summary"
+)
+
 // AdminConsoleHandler serves the unified /api/v1/admin/* endpoints for the mobile admin console.
 // All endpoints require X-Admin-Role header (set by client) and are gated by RBAC middleware.
 type AdminConsoleHandler struct {
@@ -35,15 +50,15 @@ func (h *AdminConsoleHandler) Dashboard(c *gin.Context) {
 		"failedOrders":       stats.FailedTxns,
 		"reconExceptions":    0, // Phase 2: query reconciliation_exceptions table
 		"revenueToday": gin.H{
-			"amount":   0, // Phase 2: sum fees from last 24h
+			keyAmount:  0, // Phase 2: sum fees from last 24h
 			"currency": "NGN",
 		},
 		"revenueMonth": gin.H{
-			"amount":   0, // Phase 2: sum fees from last 30 days
+			keyAmount:  0, // Phase 2: sum fees from last 30 days
 			"currency": "NGN",
 		},
 		"tradingVolume": gin.H{
-			"amount":   stats.TotalVolume,
+			keyAmount:  stats.TotalVolume,
 			"currency": "NGN",
 		},
 		"providerSummary": []gin.H{
@@ -118,18 +133,18 @@ func (h *AdminConsoleHandler) GetUser(c *gin.Context) {
 		"id":        userID,
 		"name":      "Alice Johnson",
 		"email":     "alice@example.com",
-		"status":    "active",
+		"status":    keyActive,
 		"kycTier":   2,
 		"createdAt": time.Now().Add(-30 * 24 * time.Hour).Format(time.RFC3339),
 		"phone":     "+234 801 234 5678",
 		"country":   "Nigeria",
 		"kycStatus": "approved",
 		"walletBalance": gin.H{
-			"amount":   5250000,
+			keyAmount:  5250000,
 			"currency": "NGN",
 		},
 		"lifetimeVolume": gin.H{
-			"amount":   125000000,
+			keyAmount:  125000000,
 			"currency": "NGN",
 		},
 		"lastActiveAt": time.Now().Add(-2 * time.Hour).Format(time.RFC3339),
@@ -198,39 +213,39 @@ func (h *AdminConsoleHandler) GetAssetControls(c *gin.Context) {
 	assets := []gin.H{
 		{
 			"id":                "ast_001",
-			"symbol":            "BTC",
+			keySymbol:           valBtc,
 			"kind":              "crypto",
-			"buyEnabled":        true,
+			strBuyenabled:       true,
 			"sellEnabled":       true,
 			"withdrawalEnabled": true,
-			"status":            "active",
+			"status":            keyActive,
 			"feeBps":            50,
-			"minOrder":          gin.H{"amount": 50000, "currency": "NGN"},
-			"maxOrder":          gin.H{"amount": 50000000, "currency": "NGN"},
+			keyMinOrder:         gin.H{keyAmount: 50000, "currency": "NGN"},
+			keyMaxOrder:         gin.H{keyAmount: 50000000, "currency": "NGN"},
 		},
 		{
 			"id":                "ast_002",
-			"symbol":            "ETH",
+			keySymbol:           "ETH",
 			"kind":              "crypto",
-			"buyEnabled":        true,
+			strBuyenabled:       true,
 			"sellEnabled":       true,
 			"withdrawalEnabled": true,
-			"status":            "active",
+			"status":            keyActive,
 			"feeBps":            50,
-			"minOrder":          gin.H{"amount": 50000, "currency": "NGN"},
-			"maxOrder":          gin.H{"amount": 50000000, "currency": "NGN"},
+			keyMinOrder:         gin.H{keyAmount: 50000, "currency": "NGN"},
+			keyMaxOrder:         gin.H{keyAmount: 50000000, "currency": "NGN"},
 		},
 		{
 			"id":                "ast_003",
-			"symbol":            "AAPL",
+			keySymbol:           "AAPL",
 			"kind":              "stock",
-			"buyEnabled":        true,
+			strBuyenabled:       true,
 			"sellEnabled":       true,
 			"withdrawalEnabled": false,
-			"status":            "active",
+			"status":            keyActive,
 			"feeBps":            75,
-			"minOrder":          gin.H{"amount": 100000, "currency": "NGN"},
-			"maxOrder":          gin.H{"amount": 100000000, "currency": "NGN"},
+			keyMinOrder:         gin.H{keyAmount: 100000, "currency": "NGN"},
+			keyMaxOrder:         gin.H{keyAmount: 100000000, "currency": "NGN"},
 		},
 	}
 	c.JSON(http.StatusOK, assets)
@@ -251,15 +266,15 @@ func (h *AdminConsoleHandler) UpdateAssetControl(c *gin.Context) {
 	// TODO: Update asset_controls table; emit audit event
 	updated := gin.H{
 		"id":                assetID,
-		"symbol":            "BTC",
+		keySymbol:           valBtc,
 		"kind":              "crypto",
-		"buyEnabled":        patch["buyEnabled"],
+		strBuyenabled:       patch["buyEnabled"],
 		"sellEnabled":       patch["sellEnabled"],
 		"withdrawalEnabled": patch["withdrawalEnabled"],
 		"status":            patch["status"],
 		"feeBps":            patch["feeBps"],
-		"minOrder":          patch["minOrder"],
-		"maxOrder":          patch["maxOrder"],
+		keyMinOrder:         patch[keyMinOrder],
+		keyMaxOrder:         patch[keyMaxOrder],
 	}
 	c.JSON(http.StatusOK, updated)
 }
@@ -297,9 +312,9 @@ func (h *AdminConsoleHandler) GetOrders(c *gin.Context) {
 			"user":        o.Email,
 			"kind":        o.Type,
 			"side":        o.Side,
-			"symbol":      o.Symbol,
+			keySymbol:     o.Symbol,
 			"status":      o.Status,
-			"amount":      gin.H{"amount": o.Amount, "currency": "NGN"},
+			keyAmount:     gin.H{keyAmount: o.Amount, "currency": "NGN"},
 			"createdAt":   o.CreatedAt,
 			"providerRef": o.ProviderRef,
 		})
@@ -322,8 +337,8 @@ func (h *AdminConsoleHandler) GetWithdrawalQueue(c *gin.Context) {
 		result = append(result, gin.H{
 			"reference": w.ID,
 			"user":      w.Email,
-			"symbol":    "BTC", // Phase 2: extract currency
-			"amount":    gin.H{"amount": w.Amount, "currency": "NGN"},
+			keySymbol:   valBtc, // Phase 2: extract currency
+			keyAmount:   gin.H{keyAmount: w.Amount, "currency": "NGN"},
 			"address":   w.Account,
 			"network":   "bitcoin", // Phase 2: from withdrawal_network column
 			"riskScore": 0,         // Phase 2: calculate from transaction history
@@ -354,8 +369,8 @@ func (h *AdminConsoleHandler) ReviewWithdrawal(c *gin.Context) {
 	updated := gin.H{
 		"reference": ref,
 		"user":      "Alice Johnson",
-		"symbol":    "BTC",
-		"amount":    gin.H{"amount": 500000, "currency": "BTC"},
+		keySymbol:   valBtc,
+		keyAmount:   gin.H{keyAmount: 500000, "currency": valBtc},
 		"address":   "1A1z7agoat4QJVA****",
 		"network":   "bitcoin",
 		"riskScore": 15,
@@ -370,16 +385,16 @@ func (h *AdminConsoleHandler) ReviewWithdrawal(c *gin.Context) {
 func (h *AdminConsoleHandler) GetReconciliation(c *gin.Context) {
 	// TODO: Query reconciliation exceptions table; compute deltas between internal ledger and external provider balances
 	recon := gin.H{
-		"asset":       "BTC",
+		"asset":       valBtc,
 		"generatedAt": time.Now().Format(time.RFC3339),
 		"exceptions": []gin.H{
 			{
 				"id":         "recon_001",
-				"asset":      "BTC",
+				"asset":      valBtc,
 				"kind":       "missing_ledger",
-				"internal":   gin.H{"amount": 1000000, "currency": "BTC"},
-				"external":   gin.H{"amount": 1050000, "currency": "BTC"},
-				"delta":      gin.H{"amount": 50000, "currency": "BTC"},
+				"internal":   gin.H{keyAmount: 1000000, "currency": valBtc},
+				"external":   gin.H{keyAmount: 1050000, "currency": valBtc},
+				"delta":      gin.H{keyAmount: 50000, "currency": valBtc},
 				"detectedAt": time.Now().Add(-12 * time.Hour).Format(time.RFC3339),
 			},
 		},
@@ -480,19 +495,19 @@ func (h *AdminConsoleHandler) GetFees(c *gin.Context) {
 			"id":    "fee_001",
 			"label": "Crypto trading fee",
 			"kind":  "crypto_trade",
-			"bps":   50,
+			keyBps:  50,
 		},
 		{
 			"id":    "fee_002",
 			"label": "Stock trading fee",
 			"kind":  "stock_trade",
-			"bps":   75,
+			keyBps:  75,
 		},
 		{
 			"id":    "fee_003",
 			"label": "Withdrawal fee",
 			"kind":  "withdrawal",
-			"bps":   25,
+			keyBps:  25,
 		},
 	}
 	c.JSON(http.StatusOK, fees)
@@ -516,7 +531,7 @@ func (h *AdminConsoleHandler) UpdateFee(c *gin.Context) {
 		"id":    feeID,
 		"label": "Crypto trading fee",
 		"kind":  "crypto_trade",
-		"bps":   req.Bps,
+		keyBps:  req.Bps,
 	}
 	c.JSON(http.StatusOK, updated)
 }
@@ -579,8 +594,8 @@ func (h *AdminConsoleHandler) GetApprovals(c *gin.Context) {
 	approvals := []gin.H{
 		{
 			"id":          "app_001",
-			"type":        "asset.update",
-			"summary":     "Enable ETH selling on the platform",
+			keyType:       strAssetUpdate,
+			keySummary:    strEnableEthSellingOnThePlatform,
 			"requestedBy": "admin@paymax.co",
 			"status":      "pending",
 			"createdAt":   time.Now().Add(-6 * time.Hour).Format(time.RFC3339),
@@ -589,8 +604,8 @@ func (h *AdminConsoleHandler) GetApprovals(c *gin.Context) {
 		},
 		{
 			"id":          "app_002",
-			"type":        "risk.update",
-			"summary":     "Raise daily withdrawal limit to 500k NGN",
+			keyType:       "risk.update",
+			keySummary:    "Raise daily withdrawal limit to 500k NGN",
 			"requestedBy": "risk-admin@paymax.co",
 			"status":      "pending",
 			"createdAt":   time.Now().Add(-3 * time.Hour).Format(time.RFC3339),
@@ -610,8 +625,8 @@ func (h *AdminConsoleHandler) Approve(c *gin.Context) {
 	// TODO: Update approval status to 'approved'; record checker; emit audit; execute the change
 	updated := gin.H{
 		"id":          approvalID,
-		"type":        "asset.update",
-		"summary":     "Enable ETH selling on the platform",
+		keyType:       strAssetUpdate,
+		keySummary:    strEnableEthSellingOnThePlatform,
 		"requestedBy": "admin@paymax.co",
 		"status":      "approved",
 		"createdAt":   time.Now().Add(-6 * time.Hour).Format(time.RFC3339),
@@ -637,8 +652,8 @@ func (h *AdminConsoleHandler) RejectApproval(c *gin.Context) {
 	// TODO: Update approval status to 'rejected'; record checker + reason; emit audit
 	updated := gin.H{
 		"id":          approvalID,
-		"type":        "asset.update",
-		"summary":     "Enable ETH selling on the platform",
+		keyType:       strAssetUpdate,
+		keySummary:    strEnableEthSellingOnThePlatform,
 		"requestedBy": "admin@paymax.co",
 		"status":      "rejected",
 		"createdAt":   time.Now().Add(-6 * time.Hour).Format(time.RFC3339),
@@ -685,21 +700,21 @@ func (h *AdminConsoleHandler) GetAdmins(c *gin.Context) {
 			"name":   "Super Admin",
 			"email":  "admin@paymax.co",
 			"role":   "SuperAdmin",
-			"status": "active",
+			"status": keyActive,
 		},
 		{
 			"id":     "adm_002",
 			"name":   "Compliance Officer",
 			"email":  "compliance@paymax.co",
 			"role":   "ComplianceAdmin",
-			"status": "active",
+			"status": keyActive,
 		},
 		{
 			"id":     "adm_003",
 			"name":   "Risk Manager",
 			"email":  "risk@paymax.co",
 			"role":   "RiskAdmin",
-			"status": "active",
+			"status": keyActive,
 		},
 	}
 	c.JSON(http.StatusOK, admins)

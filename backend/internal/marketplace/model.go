@@ -492,7 +492,7 @@ type CreateReportInput struct {
 }
 
 // validReportTargets is the closed set of reportable target types.
-var validReportTargets = map[string]bool{"listing": true, "seller": true, "chat": true}
+var validReportTargets = map[string]bool{string(AppealTargetListing): true, "seller": true, "chat": true}
 
 // Block mirrors mkt_blocks — a directed block (user_id blocked blocked_user_id).
 type Block struct {
@@ -841,7 +841,7 @@ const (
 	CodeUnauthenticated = "UNAUTHENTICATED"
 	CodeValidation      = "SCHEMA_VALIDATION_FAILED"
 
-	// Listings
+	// CodeListingNotFound — Listings
 	CodeListingNotFound          = "LISTING_NOT_FOUND"
 	CodeListingHasHistory        = "LISTING_HAS_HISTORY"
 	CodeListingNotActive         = "LISTING_NOT_ACTIVE"
@@ -855,7 +855,7 @@ const (
 	CodeContactRevealLimit       = "CONTACT_REVEAL_LIMIT"
 	CodeSellerHasNoPhone         = "SELLER_HAS_NO_PHONE"
 
-	// Orders / escrow
+	// CodeInvalidDeliveryOption — Orders / escrow
 	CodeInvalidDeliveryOption  = "INVALID_DELIVERY_OPTION"
 	CodeBuyerKYCInsufficient   = "BUYER_KYC_TIER_INSUFFICIENT"
 	CodeSelfPurchaseNotAllowed = "SELF_PURCHASE_NOT_ALLOWED"
@@ -874,7 +874,7 @@ const (
 	CodeNotOrderSeller         = "NOT_ORDER_SELLER"
 	CodeNotOrderParty          = "NOT_ORDER_PARTY"
 
-	// Disputes
+	// CodeDisputeNotFound — Disputes
 	CodeDisputeNotFound          = "DISPUTE_NOT_FOUND"
 	CodeDisputeAlreadyOpen       = "DISPUTE_ALREADY_OPEN_FOR_ORDER"
 	CodeInvalidDisputeTransition = "INVALID_DISPUTE_TRANSITION"
@@ -882,7 +882,7 @@ const (
 	CodeAwaitingSecondApproval   = "AWAITING_SECOND_APPROVAL"
 	CodeSameApproverNotAllowed   = "SAME_APPROVER_NOT_ALLOWED"
 
-	// Boosts
+	// CodeBoostNotFound — Boosts
 	CodeBoostNotFound          = "BOOST_NOT_FOUND"
 	CodeInvalidBoostTransition = "INVALID_BOOST_TRANSITION"
 	CodeInvalidBoostTier       = "INVALID_BOOST_TIER"
@@ -890,21 +890,21 @@ const (
 	CodeTierLimitExceeded      = "TIER_LIMIT_EXCEEDED"
 	CodeTierGateUnwired        = "TIER_GATE_UNWIRED"
 
-	// Offers / reviews / misc
+	// CodeOfferNotFound — Offers / reviews / misc
 	CodeOfferNotFound  = "OFFER_NOT_FOUND"
 	CodeReviewNotFound = "REVIEW_NOT_FOUND"
 	CodeReviewExists   = "REVIEW_ALREADY_EXISTS"
 	CodeNotFound       = "NOT_FOUND"
 
-	// Messaging (ADR-023 listings-and-connect "connect" model; non-money metadata)
+	// CodeThreadNotFound — Messaging (ADR-023 listings-and-connect "connect" model; non-money metadata)
 	CodeThreadNotFound      = "THREAD_NOT_FOUND"
 	CodeCannotMessageSelf   = "CANNOT_MESSAGE_SELF"
 	CodeMessageBodyRequired = "MESSAGE_BODY_REQUIRED"
 	CodeMessageBodyTooLong  = "MESSAGE_BODY_TOO_LONG"
-	// Deal reviews (ADR-023: thread-keyed reviews behind the "mark met" signal).
+	// CodeDealNotMet — Deal reviews (ADR-023: thread-keyed reviews behind the "mark met" signal).
 	CodeDealNotMet = "DEAL_NOT_MARKED_MET"
 
-	// Cross-cutting
+	// CodeForbidden — Cross-cutting
 	CodeForbidden           = "FORBIDDEN"
 	CodeIdempotencyReplay   = "IDEMPOTENCY_KEY_REPLAY"
 	CodeIdempotencyMissing  = "IDEMPOTENCY_KEY_REQUIRED"
@@ -913,7 +913,7 @@ const (
 	CodeSearchNotWired      = "SEARCH_NOT_WIRED"
 	CodeNotImplemented      = "NOT_IMPLEMENTED"
 
-	// Account / trust gap endpoints (media presign, saved-items, reports, blocks,
+	// CodeUploadsNotConfigured — Account / trust gap endpoints (media presign, saved-items, reports, blocks,
 	// notification prefs, meetup safe-spots).
 	CodeUploadsNotConfigured = "UPLOADS_NOT_CONFIGURED"
 	CodeAlreadySaved         = "ALREADY_SAVED"

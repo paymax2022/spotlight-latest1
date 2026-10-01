@@ -210,7 +210,7 @@ func (r *Repository) ListAppeals(ctx context.Context, marketID, status string, l
 		q += ` AND status = $2 ORDER BY created_at DESC LIMIT $3 OFFSET $4`
 		args = append(args, status, limit, offset)
 	} else {
-		q += ` ORDER BY created_at DESC LIMIT $2 OFFSET $3`
+		q += sqlOrderByCreatedAtDescLimit
 		args = append(args, limit, offset)
 	}
 	rows, err := r.db.Query(ctx, q, args...)
@@ -312,7 +312,7 @@ func (r *Repository) ApproveAppealDecision(ctx context.Context, id, checkerID st
 	return a, nil
 }
 
-// repository_admin_analytics.go — GET /admin/analytics (MKT-007, ADM-005).
+// AdminAnalytics — repository_admin_analytics.go — GET /admin/analytics (MKT-007, ADM-005).
 // Real, computed from actual rows:
 //   - active_listings / new_listings      : mkt_listings COUNT
 //   - revenue_kobo                        : SUM(mkt_boosts.price_kobo - refunded_kobo)

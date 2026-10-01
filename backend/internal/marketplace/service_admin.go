@@ -8,6 +8,10 @@ import (
 	"time"
 )
 
+const (
+	keyAppeal = "appeal"
+)
+
 // service_admin_users.go — MKT-007 Users/Trust&Safety service layer. Maker-checker
 // mechanism reused VERBATIM from backend/internal/health/makercheck/makercheck.go
 // (Authorize/Approve/Consume) — the closest existing precedent found for this PR
@@ -276,10 +280,10 @@ func (s *Service) LogViewAs(ctx context.Context, adminID, adminRole, userID, rea
 // admin-on-behalf-of-member path — same method, different caller context.
 func (s *Service) FileAppeal(ctx context.Context, appellantID string, in CreateAppealInput) (*Appeal, error) {
 	if in.TargetType != string(AppealTargetListing) && in.TargetType != string(AppealTargetBoost) && in.TargetType != string(AppealTargetUser) {
-		return nil, fieldErr(CodeValidation, "target_type must be listing, boost, or user", "target_type")
+		return nil, fieldErr(CodeValidation, "target_type must be listing, boost, or user", colTargetType)
 	}
 	if in.TargetID == "" {
-		return nil, fieldErr(CodeValidation, "target_id is required", "target_id")
+		return nil, fieldErr(CodeValidation, "target_id is required", colTargetId)
 	}
 	if in.OriginalReasonCode == "" {
 		return nil, fieldErr(CodeValidation, "original_reason_code is required", "original_reason_code")
@@ -292,7 +296,7 @@ func (s *Service) FileAppeal(ctx context.Context, appellantID string, in CreateA
 		return nil, err
 	}
 	if s.audit != nil {
-		s.audit.Audit(ctx, appellantID, "appeal.filed", map[string]any{"appeal_id": a.ID, "target_type": a.TargetType, "target_id": a.TargetID})
+		s.audit.Audit(ctx, appellantID, "appeal.filed", map[string]any{"appeal_id": a.ID, colTargetType: a.TargetType, colTargetId: a.TargetID})
 	}
 	return a, nil
 }
@@ -318,7 +322,7 @@ func (s *Service) SetAppealStatusAdmin(ctx context.Context, adminID, adminRole, 
 	}
 	_ = s.writeAudit(ctx, AuditEntry{
 		AdminID: adminID, AdminRole: adminRole, Action: "appeal.status",
-		TargetType: "appeal", TargetID: id, ReasonCode: reasonCode,
+		TargetType: keyAppeal, TargetID: id, ReasonCode: reasonCode,
 		AfterState: map[string]any{"status": status},
 	})
 	return a, nil
@@ -347,7 +351,7 @@ func (s *Service) DecideAppealAdmin(ctx context.Context, adminID, adminRole, id 
 	}
 	_ = s.writeAudit(ctx, AuditEntry{
 		AdminID: adminID, AdminRole: adminRole, Action: action,
-		TargetType: "appeal", TargetID: id, ReasonCode: in.ReasonCode,
+		TargetType: keyAppeal, TargetID: id, ReasonCode: in.ReasonCode,
 		AfterState: map[string]any{"decision": stored, "status": a.Status, "requires_dual_approval": a.RequiresDualApproval},
 	})
 	return a, nil
@@ -378,14 +382,14 @@ func (s *Service) ApproveAppealAdmin(ctx context.Context, checkerID, checkerRole
 	}
 	_ = s.writeAudit(ctx, AuditEntry{
 		AdminID: checkerID, AdminRole: checkerRole, Action: "appeal.decide.approved",
-		TargetType: "appeal", TargetID: id, ReasonCode: reasonCode,
+		TargetType: keyAppeal, TargetID: id, ReasonCode: reasonCode,
 		BeforeState: map[string]any{"decided_by": *current.DecidedBy},
 		AfterState:  map[string]any{"status": a.Status, "second_approver_id": checkerID},
 	})
 	return a, nil
 }
 
-// service_admin_fraud.go — MKT-007 Fraud signals (read-only). GET
+// ListFraudSignals — service_admin_fraud.go — MKT-007 Fraud signals (read-only). GET
 // /admin/fraud/signals?severity=. Gated on marketplace.admin.users.view (the
 // permission-seeding migration's own comment documents this route under that
 // slug — no new permission was introduced for this PR).

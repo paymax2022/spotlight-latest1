@@ -12,6 +12,10 @@ import (
 	"spotlight/backend/go-common/httperr"
 )
 
+const (
+	keyError = "error"
+)
+
 // Handler exposes the member, admin, and public placement routes.
 type Handler struct {
 	svc *Service
@@ -33,7 +37,7 @@ var errMap = httperr.New(http.StatusInternalServerError,
 
 // mapErr writes the HTTP response for a service error.
 func mapErr(c *gin.Context, err error) {
-	body := gin.H{"error": err.Error()}
+	body := gin.H{keyError: err.Error()}
 	switch {
 	case errors.Is(err, ErrForbidden):
 		body["error"] = "forbidden"
@@ -57,7 +61,7 @@ func mapErr(c *gin.Context, err error) {
 func (h *Handler) CreateCampaign(c *gin.Context) {
 	uid := ginutil.UserID(c)
 	if uid == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
+		c.JSON(http.StatusUnauthorized, gin.H{keyError: "unauthenticated"})
 		return
 	}
 	var body struct {
@@ -69,12 +73,12 @@ func (h *Handler) CreateCampaign(c *gin.Context) {
 		Creative     map[string]any `json:"creative"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: err.Error()})
 		return
 	}
 	ws, err := time.Parse(time.RFC3339, body.WindowStart)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid window_start (RFC3339)"})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: "invalid window_start (RFC3339)"})
 		return
 	}
 	camp, err := h.svc.CreateDraft(c.Request.Context(), uid, CreateInput{
@@ -127,7 +131,7 @@ func (h *Handler) Quote(c *gin.Context) {
 // Submit (member): POST /campaigns/:id/submit — Idempotency-Key required.
 func (h *Handler) Submit(c *gin.Context) {
 	if ginutil.IdempotencyKey(c) == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Idempotency-Key header required"})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: "Idempotency-Key header required"})
 		return
 	}
 	camp, err := h.svc.Submit(c.Request.Context(), ginutil.UserID(c), c.Param("id"))
@@ -141,7 +145,7 @@ func (h *Handler) Submit(c *gin.Context) {
 // Pay (member): POST /campaigns/:id/pay — Idempotency-Key required (PENDING_PAYMENT retry).
 func (h *Handler) Pay(c *gin.Context) {
 	if ginutil.IdempotencyKey(c) == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Idempotency-Key header required"})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: "Idempotency-Key header required"})
 		return
 	}
 	camp, err := h.svc.Pay(c.Request.Context(), ginutil.UserID(c), c.Param("id"))
@@ -299,7 +303,7 @@ func (h *Handler) Events(c *gin.Context) {
 		Events []EventInput `json:"events"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: err.Error()})
 		return
 	}
 	n, err := h.svc.RecordEvents(c.Request.Context(), body.Events)

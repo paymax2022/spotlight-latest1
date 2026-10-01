@@ -6,6 +6,11 @@ import (
 	"spotlight/backend/go-common/ginutil"
 )
 
+const (
+	valProcessing = "PROCESSING"
+	keyStatus     = "status"
+)
+
 // Content-authoring handlers. Authorization lives in the service layer
 // (requireOrgAdmin / requireCapInOrg); nothing here authorizes on its own.
 
@@ -470,7 +475,7 @@ func (h *Handler) RegenerateAiNoteSummary(c *gin.Context) {
 		errMap.Write(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"ok": true, "status": "PROCESSING"})
+	c.JSON(http.StatusOK, gin.H{"ok": true, keyStatus: valProcessing})
 }
 
 // ReactToMessage handles POST /associations/chat/threads/:id/messages/:messageId/react

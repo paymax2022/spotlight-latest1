@@ -16,6 +16,10 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+const (
+	keySuccess = "success"
+)
+
 // Auditor — minimal immutable-audit slice (HL-12). nil is safe.
 type Auditor interface {
 	LogAction(actorUserID, targetUserID, action, module, resourceType, resourceID string, oldValues, newValues map[string]any, ipAddress, userAgent, severity string)
@@ -369,7 +373,7 @@ func (h *Handler) AddNote(c *gin.Context) {
 		ginutil.FailOK(c, http.StatusConflict, err.Error())
 		return
 	}
-	c.JSON(http.StatusCreated, gin.H{"success": true, "note": out})
+	c.JSON(http.StatusCreated, gin.H{keySuccess: true, "note": out})
 }
 
 // Lobby — GET /consults/:id/lobby  (AV join token; provider/patient only)
@@ -384,7 +388,7 @@ func (h *Handler) Lobby(c *gin.Context) {
 		ginutil.FailOK(c, http.StatusForbidden, err.Error())
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"success": true, "av": tok})
+	c.JSON(http.StatusOK, gin.H{keySuccess: true, "av": tok})
 }
 
 // Start — POST /consults/:id/start
@@ -394,7 +398,7 @@ func (h *Handler) Start(c *gin.Context) {
 		ginutil.FailOK(c, http.StatusConflict, err.Error())
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"success": true, "consult": out})
+	c.JSON(http.StatusOK, gin.H{keySuccess: true, "consult": out})
 }
 
 // Complete — POST /consults/:id/complete  (persists clinical note)
@@ -414,5 +418,5 @@ func (h *Handler) Complete(c *gin.Context) {
 		ginutil.FailOK(c, http.StatusConflict, err.Error())
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"success": true, "consult": cs, "note": note})
+	c.JSON(http.StatusOK, gin.H{keySuccess: true, "consult": cs, "note": note})
 }

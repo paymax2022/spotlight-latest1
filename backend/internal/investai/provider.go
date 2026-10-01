@@ -139,7 +139,7 @@ func (m *MockProvider) Reply(_ context.Context, _ []ChatMessage, userMessage str
 	return mockGeneric, nil
 }
 
-// The standing not-financial-advice disclaimer surfaced on every assistant turn.
+// Disclaimer — The standing not-financial-advice disclaimer surfaced on every assistant turn.
 // The InvestAI assistant EDUCATES only — it never gives personalized buy/sell/hold
 // advice, price predictions, or guarantees. See docs/crypto/modules.md → "AI
 // Investment Education Assistant" (Allowed / Prohibited / Guardrails).
@@ -148,7 +148,7 @@ const Disclaimer = "This is general educational information, not financial advic
 	"performance never guarantees future results. Do your own research and consider " +
 	"speaking with a licensed financial adviser before making any decision."
 
-// The standing refusal returned when a prompt seeks personalized advice, a price
+// Refusal — The standing refusal returned when a prompt seeks personalized advice, a price
 // prediction, or a guarantee (mirrors the mobile REFUSAL copy in intent).
 const Refusal = "I can't tell you what to buy, sell, or hold, predict prices, or " +
 	"promise returns — that would be personalized financial advice. What I can do is " +

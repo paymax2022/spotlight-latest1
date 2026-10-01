@@ -10,6 +10,12 @@ import (
 	"strings"
 )
 
+const (
+	keyMaptiler = "maptiler"
+	keyOsrm     = "osrm"
+	keyGeoapify = "geoapify"
+)
+
 // MapTiler is the OpenStack basemap/tile provider. It returns a MapLibre GL
 // style URL + attribution. The API key is embedded server-side in the style URL
 // proxied to the client; for stricter key hygiene point MapsTileStyleURL at a
@@ -25,7 +31,7 @@ func NewMapTiler(apiKey, styleOverride string) *MapTiler {
 	return &MapTiler{apiKey: apiKey, styleURL: styleOverride, defaultMap: "streets-v2"}
 }
 
-func (m *MapTiler) Name() string { return "maptiler" }
+func (m *MapTiler) Name() string { return keyMaptiler }
 
 // BasemapConfig returns the style + attribution for MapLibre GL.
 func (m *MapTiler) BasemapConfig(_ context.Context, surface string) (StyleConfig, error) {
@@ -56,7 +62,7 @@ func NewOSRM(baseURL string) *OSRM {
 	return &OSRM{baseURL: strings.TrimRight(baseURL, "/"), profile: "driving"}
 }
 
-func (o *OSRM) Name() string { return "osrm" }
+func (o *OSRM) Name() string { return keyOsrm }
 
 func (o *OSRM) profileOf(opts RouteOptions) string {
 	if opts.Profile != "" {
@@ -191,7 +197,7 @@ func haversineM(a, b Point) float64 {
 // MockProvider is a deterministic, network-free implementation of every adapter
 // role. It stands in for a real provider when no key is configured, so dev/CI
 // stay fully functional and tests are deterministic. It is registered under the
-// REAL provider's name (e.g. "geoapify", "osrm", "maptiler") and carries that
+// REAL provider's name (e.g. keyGeoapify, keyOsrm, keyMaptiler) and carries that
 // provider's Source so license/coherence behaviour matches production.
 type MockProvider struct {
 	name        string
@@ -337,7 +343,7 @@ func NewGeoapify(apiKey, countryCode string) *Geoapify {
 	return &Geoapify{apiKey: apiKey, countryCode: countryCode, codec: NewPlusCodec()}
 }
 
-func (g *Geoapify) Name() string { return "geoapify" }
+func (g *Geoapify) Name() string { return keyGeoapify }
 
 // geoapifyResp is the subset of the Geoapify GeoJSON we consume.
 type geoapifyResp struct {

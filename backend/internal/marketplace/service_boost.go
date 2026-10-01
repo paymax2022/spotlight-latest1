@@ -302,7 +302,7 @@ func (s *Service) RejectBoost(ctx context.Context, adminID, boostID, reasonCode 
 	_ = s.writeAudit(ctx, AuditEntry{
 		AdminID: adminID, Action: "mkt.boost.reject", TargetType: "boost", TargetID: boostID, ReasonCode: reasonCode,
 		BeforeState: map[string]any{"status": string(from)},
-		AfterState:  map[string]any{"status": string(BoostAutoRefunded), "reason_code": reasonCode},
+		AfterState:  map[string]any{"status": string(BoostAutoRefunded), colReasonCode: reasonCode},
 	})
 	s.notifySafe(ctx, b.SellerID, "mkt.boost.refunded", "Your boost was rejected and refunded: "+reasonCode)
 	return b, nil

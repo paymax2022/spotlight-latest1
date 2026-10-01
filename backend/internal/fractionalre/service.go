@@ -20,6 +20,12 @@ import (
 	"time"
 )
 
+const (
+	keyUnits      = "units"
+	keyStatus     = "status"
+	colAmountKobo = "amount_kobo"
+)
+
 // AssetProvider abstracts an external real-estate broker / data feed (title
 // registry lookups, valuation feeds). A MockAssetProvider ships first so the
 // module runs without an external broker; a real HTTP adapter slots in behind
@@ -317,7 +323,7 @@ func (s *Service) TransferCapTable(ctx context.Context, adminID, assetID, fromUs
 	}
 	_ = s.repo.RecomputeCapTablePct(ctx, assetID)
 	_ = s.audit.log(ctx, adminID, "cap_table.transfer", "asset", assetID, "",
-		map[string]string{"from": fromUser}, map[string]any{"to": toUser, "units": units})
+		map[string]string{"from": fromUser}, map[string]any{"to": toUser, keyUnits: units})
 	return nil
 }
 
@@ -424,10 +430,11 @@ func (s *Service) LimitCheck(ctx context.Context, userID string, requestedKobo i
 // Extracted so the arithmetic is unit-testable without a DB. All values are
 // kobo. remaining is clamped at >= 0; allowed = requested <= remaining;
 // softWarn fires when (ytd + requested) >= 80% of cap.
-func computeRetailCap(annualIncomeKobo, overridesKobo, ytdKobo, requestedKobo int64) (capKobo, remainingKobo int64, allowed, softWarn bool) {
+func computeRetailCap(annualIncomeKobo, overridesKobo, ytdKobo, requestedKobo int64) (int64, int64, bool, bool) {
 	baseCap := annualIncomeKobo * RetailIncomeCapBps / 10000
-	capKobo = baseCap + overridesKobo
-	remainingKobo = max(capKobo-ytdKobo, 0)
+	capKobo := baseCap + overridesKobo
+	remainingKobo := max(capKobo-ytdKobo, 0)
+	var allowed, softWarn bool
 	allowed = requestedKobo <= remainingKobo
 	if capKobo > 0 && (ytdKobo+requestedKobo) >= capKobo*SoftWarnBps/10000 {
 		softWarn = true
@@ -570,7 +577,7 @@ func (s *Service) Transition(ctx context.Context, actorID, id string, to AssetSt
 		return nil, err
 	}
 	_ = s.audit.log(ctx, actorID, "asset.transition", "asset", id, "",
-		map[string]string{"status": string(a.Status)}, map[string]string{"status": string(to)})
+		map[string]string{keyStatus: string(a.Status)}, map[string]string{keyStatus: string(to)})
 	a.Status = to
 	return a, nil
 }
@@ -740,7 +747,8 @@ func nextAutoInvestRun(after time.Time, cadence string) time.Time {
 
 // runAutoInvestOnce executes every due plan exactly once. Returns counts for
 // observability. Per-plan failures never abort the sweep.
-func runAutoInvestOnce(ctx context.Context, d autoInvestRunnerDeps) (executed, failed int) {
+func runAutoInvestOnce(ctx context.Context, d autoInvestRunnerDeps) (int, int) {
+	var executed, failed int
 	now := d.now()
 	plans, err := d.store.ListDueAutoInvest(ctx, now, 100)
 	if err != nil {
@@ -794,8 +802,8 @@ func runAutoInvestOnce(ctx context.Context, d autoInvestRunnerDeps) (executed, f
 		executed++
 		d.audit(ctx, plan.UserID, "auto_invest.run.executed", plan.ID, "",
 			map[string]any{
-				"subscription_id": sub.ID, "offering_id": offering.ID, "units": units,
-				"amount_kobo": sub.AmountKobo, "idempotency_key": key,
+				"subscription_id": sub.ID, "offering_id": offering.ID, keyUnits: units,
+				colAmountKobo: sub.AmountKobo, "idempotency_key": key,
 				"next_run_at": nextRun.UTC().Format(time.RFC3339),
 			})
 	}

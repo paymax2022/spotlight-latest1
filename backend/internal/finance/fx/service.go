@@ -24,6 +24,12 @@ import (
 	"spotlight/backend/internal/provider/maplerad"
 )
 
+const (
+	keyError           = "error"
+	msgUnauthenticated = "unauthenticated"
+	keyData            = "data"
+)
+
 const quoteTTL = 5 * time.Minute
 
 // Service manages FX quotes, conversions, and currency wallets.
@@ -486,17 +492,17 @@ func NewHandler(svc *Service) *Handler {
 func (h *Handler) GetQuote(c *gin.Context) {
 	userID := ginutil.UserID(c)
 	if userID == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
+		c.JSON(http.StatusUnauthorized, gin.H{keyError: msgUnauthenticated})
 		return
 	}
 	var req QuoteRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: err.Error()})
 		return
 	}
 	quote, err := h.svc.GetQuote(c.Request.Context(), userID, req)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: err.Error()})
 		return
 	}
 	c.JSON(http.StatusOK, quote)
@@ -506,12 +512,12 @@ func (h *Handler) GetQuote(c *gin.Context) {
 func (h *Handler) Convert(c *gin.Context) {
 	userID := ginutil.UserID(c)
 	if userID == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
+		c.JSON(http.StatusUnauthorized, gin.H{keyError: msgUnauthenticated})
 		return
 	}
 	var req ConvertRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: err.Error()})
 		return
 	}
 	// Header Idempotency-Key wins over a body field if present.
@@ -519,12 +525,12 @@ func (h *Handler) Convert(c *gin.Context) {
 		req.IdempotencyKey = k
 	}
 	if req.IdempotencyKey == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Idempotency-Key required"})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: "Idempotency-Key required"})
 		return
 	}
 	conv, err := h.svc.Convert(c.Request.Context(), userID, req)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: err.Error()})
 		return
 	}
 	c.JSON(http.StatusOK, conv)
@@ -534,14 +540,14 @@ func (h *Handler) Convert(c *gin.Context) {
 func (h *Handler) ListHistory(c *gin.Context) {
 	userID := ginutil.UserID(c)
 	if userID == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
+		c.JSON(http.StatusUnauthorized, gin.H{keyError: msgUnauthenticated})
 		return
 	}
 	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "20"))
 	offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
 	history, err := h.svc.ListConversions(c.Request.Context(), userID, limit, offset)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: err.Error()})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"conversions": history, "limit": limit, "offset": offset})
@@ -553,7 +559,7 @@ func (h *Handler) GetWallet(c *gin.Context) {
 	currency := c.Param("currency")
 	w, err := h.svc.GetOrCreateCurrencyWallet(c.Request.Context(), userID, currency)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: err.Error()})
 		return
 	}
 	c.JSON(http.StatusOK, w)
@@ -589,10 +595,10 @@ type SetMarkupRequest struct {
 func (h *MarkupHandler) ListRates(c *gin.Context) {
 	rates, err := h.store.ListRates(c.Request.Context())
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: err.Error()})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"data": rates})
+	c.JSON(http.StatusOK, gin.H{keyData: rates})
 }
 
 // SetRate handles PUT /api/finance/admin/fx/markup.
@@ -602,13 +608,13 @@ func (h *MarkupHandler) ListRates(c *gin.Context) {
 func (h *MarkupHandler) SetRate(c *gin.Context) {
 	var req SetMarkupRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: err.Error()})
 		return
 	}
 
 	bps, err := PercentToBPS(req.RatePercent.String())
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: err.Error()})
 		return
 	}
 
@@ -625,13 +631,13 @@ func (h *MarkupHandler) SetRate(c *gin.Context) {
 		req.Notes, ginutil.UserID(c), req.Note)
 	if err != nil {
 		if errors.Is(err, ErrMarkupOutOfRange) {
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			c.JSON(http.StatusBadRequest, gin.H{keyError: err.Error()})
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: err.Error()})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"data": rate})
+	c.JSON(http.StatusOK, gin.H{keyData: rate})
 }
 
 // ListAudit handles GET /api/finance/admin/fx/markup/audit?corridor=&limit=.
@@ -639,10 +645,10 @@ func (h *MarkupHandler) ListAudit(c *gin.Context) {
 	limit := ptr.DerefZero(ginutil.IntParam(c, "limit"))
 	entries, err := h.store.ListAudit(c.Request.Context(), c.Query("corridor"), limit)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: err.Error()})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"data": entries})
+	c.JSON(http.StatusOK, gin.H{keyData: entries})
 }
 
 // Paymax FX markup.

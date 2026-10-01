@@ -13,6 +13,12 @@ import (
 	"spotlight/backend/internal/services"
 )
 
+const (
+	keyError            = "error"
+	strCampaignNotFound = "campaign not found"
+	strInvalidBody      = "invalid body"
+)
+
 // Auto-pause reason strings recorded by the budget governor.
 const (
 	ReasonBudgetExhausted = "budget_exhausted"
@@ -285,7 +291,7 @@ func Register(member, admin *gin.RouterGroup, svc *Service, rbac services.RBACSe
 func (h *Handler) MemberList(c *gin.Context) {
 	list, err := h.svc.ListActive(c.Request.Context())
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: err.Error()})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"campaigns": list})
@@ -294,11 +300,11 @@ func (h *Handler) MemberList(c *gin.Context) {
 func (h *Handler) MemberGet(c *gin.Context) {
 	camp, err := h.svc.Get(c.Request.Context(), c.Param("id"))
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "campaign not found"})
+		c.JSON(http.StatusNotFound, gin.H{keyError: strCampaignNotFound})
 		return
 	}
 	if camp.Status != StatusActive {
-		c.JSON(http.StatusNotFound, gin.H{"error": "campaign not found"})
+		c.JSON(http.StatusNotFound, gin.H{keyError: strCampaignNotFound})
 		return
 	}
 	c.JSON(http.StatusOK, camp)
@@ -307,7 +313,7 @@ func (h *Handler) MemberGet(c *gin.Context) {
 func (h *Handler) AdminList(c *gin.Context) {
 	list, err := h.svc.ListAll(c.Request.Context())
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: err.Error()})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"campaigns": list})
@@ -316,7 +322,7 @@ func (h *Handler) AdminList(c *gin.Context) {
 func (h *Handler) AdminGet(c *gin.Context) {
 	camp, err := h.svc.Get(c.Request.Context(), c.Param("id"))
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "campaign not found"})
+		c.JSON(http.StatusNotFound, gin.H{keyError: strCampaignNotFound})
 		return
 	}
 	c.JSON(http.StatusOK, camp)
@@ -325,12 +331,12 @@ func (h *Handler) AdminGet(c *gin.Context) {
 func (h *Handler) AdminCreate(c *gin.Context) {
 	var in CreateInput
 	if err := c.ShouldBindJSON(&in); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid body"})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: strInvalidBody})
 		return
 	}
 	camp, err := h.svc.Create(c.Request.Context(), in, ginutil.UserID(c))
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: err.Error()})
 		return
 	}
 	c.JSON(http.StatusCreated, camp)
@@ -339,12 +345,12 @@ func (h *Handler) AdminCreate(c *gin.Context) {
 func (h *Handler) AdminUpdate(c *gin.Context) {
 	var in UpdateInput
 	if err := c.ShouldBindJSON(&in); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid body"})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: strInvalidBody})
 		return
 	}
 	camp, err := h.svc.Update(c.Request.Context(), c.Param("id"), in)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: err.Error()})
 		return
 	}
 	c.JSON(http.StatusOK, camp)
@@ -356,7 +362,7 @@ func (h *Handler) AdminEnd(c *gin.Context)      { h.lifecycle(c, h.svc.End) }
 
 func (h *Handler) lifecycle(c *gin.Context, fn func(ctx context.Context, id string) error) {
 	if err := fn(c.Request.Context(), c.Param("id")); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: err.Error()})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"ok": true})
@@ -367,11 +373,11 @@ func (h *Handler) AdminThrottle(c *gin.Context) {
 		Pct int `json:"pct"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid body"})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: strInvalidBody})
 		return
 	}
 	if err := h.svc.Throttle(c.Request.Context(), c.Param("id"), body.Pct); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: err.Error()})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"ok": true, "throttle_pct": body.Pct})
@@ -380,12 +386,12 @@ func (h *Handler) AdminThrottle(c *gin.Context) {
 func (h *Handler) AdminSetBudget(c *gin.Context) {
 	var in BudgetInput
 	if err := c.ShouldBindJSON(&in); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid body"})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: strInvalidBody})
 		return
 	}
 	b, err := h.svc.SetBudget(c.Request.Context(), c.Param("id"), in)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: err.Error()})
 		return
 	}
 	c.JSON(http.StatusOK, b)
@@ -394,7 +400,7 @@ func (h *Handler) AdminSetBudget(c *gin.Context) {
 func (h *Handler) AdminAnalytics(c *gin.Context) {
 	a, err := h.svc.Analytics(c.Request.Context(), c.Param("id"))
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: err.Error()})
 		return
 	}
 	c.JSON(http.StatusOK, a)
@@ -407,7 +413,7 @@ func (h *Handler) AdminEvaluate(c *gin.Context) {
 	_ = c.ShouldBindJSON(&body)
 	a, err := h.svc.EvaluateGuardrails(c.Request.Context(), c.Param("id"), body.FraudBps)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: err.Error()})
 		return
 	}
 	c.JSON(http.StatusOK, a)

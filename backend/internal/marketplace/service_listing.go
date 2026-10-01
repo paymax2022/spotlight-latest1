@@ -652,7 +652,7 @@ func (s *Service) RejectListing(ctx context.Context, adminID, id, reasonCode str
 		// record of a moderation decision, and moderation audit is what gets read
 		// back when a removal is disputed.
 		BeforeState: map[string]any{"status": string(prior)},
-		AfterState:  map[string]any{"status": string(ListingRemovedPolicy), "reason_code": reasonCode},
+		AfterState:  map[string]any{"status": string(ListingRemovedPolicy), colReasonCode: reasonCode},
 	})
 	s.notifySafe(ctx, l.SellerID, "mkt.listing.rejected", "Your listing was removed: "+reasonCode)
 	return l, nil

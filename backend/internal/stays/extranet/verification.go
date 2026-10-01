@@ -14,6 +14,12 @@ import (
 	"spotlight/backend/go-common/ginutil"
 )
 
+const (
+	keyData    = "data"
+	keyError   = "error"
+	keyContent = "content"
+)
+
 // VerificationItemStatus mirrors the frontend's VerificationItemStatus vocabulary
 // exactly (frontend-admin/src/types/staysExtranet.ts) — reused for individual
 // checklist items, the two KYB sub-statuses, and the overall verdict alike, so the
@@ -121,7 +127,7 @@ func (h *Handler) GetVerificationStatus(c *gin.Context) {
 		mapErr(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"data": out})
+	c.JSON(http.StatusOK, gin.H{keyData: out})
 }
 
 // GetBusinessVerification: GET /verification/business — the caller's KYC record.
@@ -131,7 +137,7 @@ func (h *Handler) GetBusinessVerification(c *gin.Context) {
 		mapErr(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"data": out})
+	c.JSON(http.StatusOK, gin.H{keyData: out})
 }
 
 // SubmitForReview: POST /verification/submit — re-validates required checklist
@@ -141,13 +147,13 @@ func (h *Handler) SubmitForReview(c *gin.Context) {
 	out, err := h.svc.SubmitForReview(c.Request.Context(), ginutil.UserID(c))
 	if err != nil {
 		if errors.Is(err, ErrVerificationIncomplete) {
-			c.JSON(http.StatusUnprocessableEntity, gin.H{"error": err.Error()})
+			c.JSON(http.StatusUnprocessableEntity, gin.H{keyError: err.Error()})
 			return
 		}
 		mapErr(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"data": out})
+	c.JSON(http.StatusOK, gin.H{keyData: out})
 }
 
 // AdminDecideKYB (admin): POST /hoteliers/:propertyId/kyb/decision
@@ -168,7 +174,7 @@ func (h *Handler) AdminDecideKYB(c *gin.Context) {
 		Note         string `json:"note"`
 	}
 	if err := c.ShouldBindJSON(&b); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: err.Error()})
 		return
 	}
 	out, err := h.svc.AdminDecideKYB(c.Request.Context(), c.Param("propertyId"), ginutil.UserID(c),
@@ -179,13 +185,13 @@ func (h *Handler) AdminDecideKYB(c *gin.Context) {
 		}, b.Decision, b.Note)
 	if err != nil {
 		if errors.Is(err, ErrBadDecision) || errors.Is(err, ErrDecisionNoteRequired) {
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			c.JSON(http.StatusBadRequest, gin.H{keyError: err.Error()})
 			return
 		}
 		mapErr(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"data": out})
+	c.JSON(http.StatusOK, gin.H{keyData: out})
 }
 
 // ResolvePrimaryProperty returns the property the caller should act on when a
@@ -494,9 +500,9 @@ func (s *Service) buildVerificationStatus(ctx context.Context, propertyID string
 		{Key: "signup", Label: "Hotelier account created", Stage: "signup", Status: VerifApproved, Required: true},
 		{Key: "property", Label: "Property registered (name, type, address, city)", Stage: "property",
 			Status: statusIf(propertyDone), Required: true},
-		{Key: "content", Label: "Property description and at least one room type with a rate plan", Stage: "content",
+		{Key: keyContent, Label: "Property description and at least one room type with a rate plan", Stage: keyContent,
 			Status: statusIf(contentDone), Required: true},
-		{Key: "photos", Label: fmt.Sprintf("At least %d photos uploaded (cover set)", minPhotosForGoLive), Stage: "content",
+		{Key: "photos", Label: fmt.Sprintf("At least %d photos uploaded (cover set)", minPhotosForGoLive), Stage: keyContent,
 			Status: statusIf(photosDone), Required: true,
 			Detail: verificationDetail(statusIf(photosDone), fmt.Sprintf("You have %d — add %d more to go live.", photoCount, max(0, minPhotosForGoLive-photoCount)))},
 		{Key: "business_identity", Label: "Business identity verified (legal name, CAC, TIN, director KYC)", Stage: "verification",

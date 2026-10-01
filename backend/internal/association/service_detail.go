@@ -13,6 +13,12 @@ import (
 	"time"
 )
 
+const (
+	valSuspended = "SUSPENDED"
+	valActive    = "ACTIVE"
+	valOverdue   = "OVERDUE"
+)
+
 // Gap-fill service methods: single-record detail reads, partial profile update,
 // admin audit-log read, ai-note summary regeneration, and chat message
 // reactions. All are DB-backed (persist / read the assoc_* schema). Admin
@@ -490,13 +496,13 @@ func (s *Service) VerifyCard(ctx context.Context, token string) (*CardVerificati
 
 	// Authentic signature is necessary but NOT sufficient — the live record decides.
 	switch {
-	case res.Status == "SUSPENDED":
-		res.Reason = "SUSPENDED"
+	case res.Status == valSuspended:
+		res.Reason = valSuspended
 	case res.Status == "EXPIRED" || expired:
 		res.Reason = "EXPIRED"
-	case res.Status != "ACTIVE":
+	case res.Status != valActive:
 		res.Reason = "REVOKED"
-	case res.PaymentStanding == "OVERDUE":
+	case res.PaymentStanding == valOverdue:
 		res.Reason = "ARREARS"
 	default:
 		res.Valid = true

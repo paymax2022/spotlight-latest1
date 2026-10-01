@@ -8,6 +8,11 @@ import (
 	"time"
 )
 
+const (
+	keyState  = "state"
+	keyReason = "reason"
+)
+
 // Eligibility
 // Re-checked at SUBMIT and at ACTIVATION (scheduler). Splits into:
 //   - External checks (merchant verified + good-standing at required KYC tier;
@@ -197,7 +202,7 @@ func (s *Service) RunActivations(ctx context.Context) (int, error) {
 			continue
 		}
 		_ = s.repo.SetReservationState(ctx, c.ID, StateActive)
-		s.writeAudit(ctx, c.ID, "", "placement.scheduler.activate", map[string]any{"state": string(StateScheduled)}, map[string]any{"state": string(StateActive)})
+		s.writeAudit(ctx, c.ID, "", "placement.scheduler.activate", map[string]any{keyState: string(StateScheduled)}, map[string]any{keyState: string(StateActive)})
 		s.notifySafe(ctx, c.MerchantID, "placement.active", "Your placement is now live.")
 		n++
 	}
@@ -224,8 +229,8 @@ func (s *Service) RunExpirations(ctx context.Context) (int, error) {
 			continue
 		}
 		_ = s.repo.SetReservationState(ctx, c.ID, StateCompleted)
-		s.writeAudit(ctx, c.ID, "", "placement.scheduler.complete", map[string]any{"state": string(c.State)}, map[string]any{
-			"state": string(StateCompleted), "revenue_kobo": c.QuotedPriceKobo,
+		s.writeAudit(ctx, c.ID, "", "placement.scheduler.complete", map[string]any{keyState: string(c.State)}, map[string]any{
+			keyState: string(StateCompleted), "revenue_kobo": c.QuotedPriceKobo,
 		})
 		s.notifySafe(ctx, c.MerchantID, "placement.completed", "Your placement run has completed.")
 		n++
@@ -277,8 +282,8 @@ func (s *Service) RunReconciliation(ctx context.Context) (int, error) {
 			log.Printf("[placement] reconcile cancel conflict campaign=%s: %v", c.ID, err)
 			continue
 		}
-		s.writeAudit(ctx, c.ID, "", "placement.scheduler.reconcile", map[string]any{"state": string(StateScheduled)}, map[string]any{
-			"state": string(StateCancelled), "refunded_kobo": c.QuotedPriceKobo, "reason": "orphaned_hold",
+		s.writeAudit(ctx, c.ID, "", "placement.scheduler.reconcile", map[string]any{keyState: string(StateScheduled)}, map[string]any{
+			keyState: string(StateCancelled), "refunded_kobo": c.QuotedPriceKobo, keyReason: "orphaned_hold",
 		})
 		n++
 	}

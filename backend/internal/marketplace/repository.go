@@ -12,6 +12,14 @@ import (
 	"time"
 )
 
+const (
+	colTargetId   = "target_id"
+	colReasonCode = "reason_code"
+	colTargetType = "target_type"
+
+	sqlOrderByCreatedAtDescLimit = " ORDER BY created_at DESC LIMIT $2 OFFSET $3"
+)
+
 // Repository is the pgx data layer for the marketplace. It NEVER mutates ledger
 // tables — money moves via the finance ledger service; this repo records
 // marketplace-domain rows (listings, orders, disputes, boosts, offers, reviews,
@@ -357,7 +365,7 @@ func (r *Repository) ListSellerListings(ctx context.Context, sellerID string, li
 	if onlyActive {
 		q += ` AND status='active'::listing_status`
 	}
-	q += ` ORDER BY created_at DESC LIMIT $2 OFFSET $3`
+	q += sqlOrderByCreatedAtDescLimit
 	rows, err := r.db.Query(ctx, q, sellerID, limit, offset)
 	if err != nil {
 		return nil, wrapInternal("list seller listings", err)
@@ -683,7 +691,7 @@ func (r *Repository) ListOrders(ctx context.Context, userID, role, status string
 		q += ` AND status=$2 ORDER BY created_at DESC LIMIT $3 OFFSET $4`
 		args = append(args, status, limit, offset)
 	} else {
-		q += ` ORDER BY created_at DESC LIMIT $2 OFFSET $3`
+		q += sqlOrderByCreatedAtDescLimit
 		args = append(args, limit, offset)
 	}
 	rows, err := r.db.Query(ctx, q, args...)
@@ -1741,13 +1749,13 @@ func (s *Service) writeAudit(ctx context.Context, e AuditEntry) error {
 		// non-fatal: money/state already committed; log via external sink
 		if s.audit != nil {
 			s.audit.Audit(ctx, e.AdminID, e.Action+".audit_write_failed", map[string]any{
-				"target_type": e.TargetType, "target_id": e.TargetID, "err": err.Error(),
+				colTargetType: e.TargetType, colTargetId: e.TargetID, "err": err.Error(),
 			})
 		}
 		return nil
 	}
 	if s.audit != nil {
-		detail := map[string]any{"target_type": e.TargetType, "target_id": e.TargetID, "reason_code": e.ReasonCode}
+		detail := map[string]any{colTargetType: e.TargetType, colTargetId: e.TargetID, colReasonCode: e.ReasonCode}
 		maps.Copy(detail, e.AfterState)
 		s.audit.Audit(ctx, e.AdminID, e.Action, detail)
 	}

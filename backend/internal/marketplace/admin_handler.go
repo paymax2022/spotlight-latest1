@@ -128,7 +128,7 @@ func (h *Handler) AdminActivityFeed(c *gin.Context) {
 // AdminAuditLog GET /admin/audit-log?target_type=&target_id=
 func (h *Handler) AdminAuditLog(c *gin.Context) {
 	limit, offset := pageParams(c)
-	rows, err := h.svc.repo.AuditLog(c.Request.Context(), c.Query("target_type"), c.Query("target_id"), limit, offset)
+	rows, err := h.svc.repo.AuditLog(c.Request.Context(), c.Query(colTargetType), c.Query(colTargetId), limit, offset)
 	if err != nil {
 		fail(c, err)
 		return
@@ -266,7 +266,7 @@ func (h *Handler) AdminSetBoostDailyRate(c *gin.Context) {
 	respond(c, http.StatusOK, r)
 }
 
-// admin_analytics_handler.go — GET /admin/analytics?range_days=N (MKT-007,
+// AdminAnalytics — admin_analytics_handler.go — GET /admin/analytics?range_days=N (MKT-007,
 // ADM-005). See repository_admin_analytics.go's package doc for exactly which
 // fields are real vs. structurally-unavailable-and-disclosed-as-0.
 // ⚠️ Bare JSON, not respond()'s {"data": ...} envelope — matches

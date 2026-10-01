@@ -16,6 +16,10 @@ import (
 	"time"
 )
 
+const (
+	keyError = "error"
+)
+
 // ErrTierGateUnwired is returned by PayDues when the Service was constructed
 // without WithTiers — see the comment on that method for why this fails
 // closed instead of treating a nil gate as "unlimited."
@@ -221,12 +225,12 @@ func (h *Handler) Create(c *gin.Context) {
 	userID := ginutil.UserID(c)
 	var req CreateGroupRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: err.Error()})
 		return
 	}
 	g, err := h.svc.Create(c.Request.Context(), userID, req)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: err.Error()})
 		return
 	}
 	c.JSON(http.StatusCreated, g)
@@ -241,7 +245,7 @@ func (h *Handler) List(c *gin.Context) {
 	}
 	groups, err := h.svc.List(c.Request.Context(), userID, limit, offset)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: err.Error()})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": groups})
@@ -250,7 +254,7 @@ func (h *Handler) List(c *gin.Context) {
 func (h *Handler) Get(c *gin.Context) {
 	g, err := h.svc.Get(c.Request.Context(), c.Param("id"))
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "group not found"})
+		c.JSON(http.StatusNotFound, gin.H{keyError: "group not found"})
 		return
 	}
 	c.JSON(http.StatusOK, g)
@@ -262,11 +266,11 @@ func (h *Handler) Invite(c *gin.Context) {
 		UserID string `json:"user_id" binding:"required"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: err.Error()})
 		return
 	}
 	if err := h.svc.Invite(c.Request.Context(), c.Param("id"), inviterID, body.UserID); err != nil {
-		c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
+		c.JSON(http.StatusForbidden, gin.H{keyError: err.Error()})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"ok": true})
@@ -276,12 +280,12 @@ func (h *Handler) PayDues(c *gin.Context) {
 	memberID := ginutil.UserID(c)
 	var req PayDuesRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: err.Error()})
 		return
 	}
 	payment, err := h.svc.PayDues(c.Request.Context(), c.Param("id"), memberID, req)
 	if err != nil {
-		c.JSON(payDuesErrMap.Code(err), gin.H{"error": err.Error()})
+		c.JSON(payDuesErrMap.Code(err), gin.H{keyError: err.Error()})
 		return
 	}
 	c.JSON(http.StatusCreated, payment)

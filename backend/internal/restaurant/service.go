@@ -1673,11 +1673,11 @@ const (
 	EventOrderHandoff   = "restaurant.order.handoff"           // delivered + handed off (code confirmed)
 	EventPickupCodeErr  = "restaurant.order.pickup_code_error" // failed to generate/persist the pickup code
 	EventNewMessage     = "restaurant.chat.message"
-	// Admin ops-console onboarding decision (approve/reject) delivered to the owner.
+	// EventOnboardingDecision — Admin ops-console onboarding decision (approve/reject) delivered to the owner.
 	EventOnboardingDecision = "restaurant.onboarding.decision"
-	// Payout run disbursed to a restaurant owner / rider wallet.
+	// EventPayoutDisbursed — Payout run disbursed to a restaurant owner / rider wallet.
 	EventPayoutDisbursed = "restaurant.payout.disbursed"
-	// Merchant wallet→bank withdrawal lifecycle (money-path audit events).
+	// EventWithdrawalRequested — Merchant wallet→bank withdrawal lifecycle (money-path audit events).
 	EventWithdrawalRequested = "restaurant.withdrawal.requested" // funds reserved, handed to disburser
 	EventWithdrawalPaid      = "restaurant.withdrawal.paid"      // provider confirmed the payout landed
 	EventWithdrawalReversed  = "restaurant.withdrawal.reversed"  // provider failed → funds returned to wallet

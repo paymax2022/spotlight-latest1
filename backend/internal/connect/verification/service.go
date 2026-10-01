@@ -17,6 +17,10 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+const (
+	keyError = "error"
+)
+
 // This file is an ADDITIVE Phase-1 extension: it adds the persistent verification
 // state machine on top of the Phase-0 hashing/redaction/retention primitives. It
 // introduces no changes to existing exported symbols.
@@ -303,17 +307,17 @@ type selfieRequest struct {
 func (h *Handler) Selfie(c *gin.Context) {
 	userID := ginutil.UserID(c)
 	if userID == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
+		c.JSON(http.StatusUnauthorized, gin.H{keyError: "authentication required"})
 		return
 	}
 	var req selfieRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: err.Error()})
 		return
 	}
 	level := VerificationLevel(req.Level)
 	if req.Level != "" && !ValidLevel(level) {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid verification level"})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: "invalid verification level"})
 		return
 	}
 	rec, err := h.svc.SubmitSelfie(c.Request.Context(), LivenessRequest{
@@ -325,7 +329,7 @@ func (h *Handler) Selfie(c *gin.Context) {
 	if err != nil {
 		// Reason codes/decisions surface in the record; only generic error text leaves here
 		// (never the raw payload).
-		c.JSON(http.StatusBadRequest, gin.H{"error": "verification could not be processed"})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: "verification could not be processed"})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": rec})
@@ -336,12 +340,12 @@ func (h *Handler) Selfie(c *gin.Context) {
 func (h *Handler) Status(c *gin.Context) {
 	userID := ginutil.UserID(c)
 	if userID == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
+		c.JSON(http.StatusUnauthorized, gin.H{keyError: "authentication required"})
 		return
 	}
 	rec, err := h.svc.Get(c.Request.Context(), userID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not read verification status"})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: "could not read verification status"})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": rec})

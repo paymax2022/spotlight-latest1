@@ -317,7 +317,7 @@ func (h *Handler) GetAdminOrganisations(c *gin.Context) {
 	f := AdminOrgFilter{
 		Search:    c.Query("search"),
 		Category:  c.Query("category"),
-		Status:    c.Query("status"),
+		Status:    c.Query(keyStatus),
 		Published: ginutil.BoolParam(c, "published"),
 		Verified:  ginutil.BoolParam(c, "verified"),
 		Limit:     limit,

@@ -19,6 +19,11 @@ import (
 	"spotlight/backend/internal/finance/ledger"
 )
 
+const (
+	keyError           = "error"
+	msgUnauthenticated = "unauthenticated"
+)
+
 // Service manages referral codes and reward processing.
 type Service struct {
 	db     *pgxpool.Pool
@@ -176,12 +181,12 @@ func NewHandler(svc *Service) *Handler {
 func (h *Handler) GetMe(c *gin.Context) {
 	userID := ginutil.UserID(c)
 	if userID == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
+		c.JSON(http.StatusUnauthorized, gin.H{keyError: msgUnauthenticated})
 		return
 	}
 	summary, err := h.svc.GetSummary(c.Request.Context(), userID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: err.Error()})
 		return
 	}
 	c.JSON(http.StatusOK, summary)

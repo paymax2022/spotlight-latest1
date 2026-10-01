@@ -11,6 +11,10 @@ import (
 	"spotlight/backend/internal/finance/ledger"
 )
 
+const (
+	keyMaker = "maker"
+)
+
 // SubscribeRequest is the investor commitment into a funding round.
 type SubscribeRequest struct {
 	Units int64 `json:"units" binding:"required"`
@@ -232,7 +236,7 @@ func (s *Service) allocate(ctx context.Context, checkerID string, o *Offering) (
 	}
 	_ = s.repo.UpdateAssetStatus(ctx, o.AssetID, AssetFunded)
 	_ = s.audit.log(ctx, checkerID, "offering.close.allocate", "offering", o.ID, "threshold met",
-		map[string]string{"maker": ptr.Deref(o.CloseProposedBy, "")}, map[string]any{"raised_kobo": o.RaisedKobo})
+		map[string]string{keyMaker: ptr.Deref(o.CloseProposedBy, "")}, map[string]any{"raised_kobo": o.RaisedKobo})
 	o.Status = OfferingFunded
 	return o, nil
 }
@@ -266,7 +270,7 @@ func (s *Service) refundAll(ctx context.Context, checkerID string, o *Offering) 
 	}
 	_ = s.repo.UpdateAssetStatus(ctx, o.AssetID, AssetRefundClose)
 	_ = s.audit.log(ctx, checkerID, "offering.close.refund", "offering", o.ID, "threshold not met",
-		map[string]string{"maker": ptr.Deref(o.CloseProposedBy, "")}, map[string]any{"raised_kobo": o.RaisedKobo})
+		map[string]string{keyMaker: ptr.Deref(o.CloseProposedBy, "")}, map[string]any{"raised_kobo": o.RaisedKobo})
 	o.Status = OfferingRefunded
 	return o, nil
 }

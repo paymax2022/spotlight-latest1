@@ -24,6 +24,10 @@ import (
 	goredis "github.com/redis/go-redis/v9"
 )
 
+const (
+	keyError = "error"
+)
+
 // Service implements the doctor (provider) telemedicine MVP.
 // Money path (RequestPayout) honours every iron rule:
 //  1. requires + dedupes on an Idempotency-Key (Redis lock + DB UNIQUE replay),
@@ -362,28 +366,28 @@ func (h *Handler) PresignUpload(c *gin.Context) {
 		return
 	}
 	if h.presigner == nil || !h.presigner.Configured() {
-		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "uploads are not configured"})
+		c.JSON(http.StatusServiceUnavailable, gin.H{keyError: "uploads are not configured"})
 		return
 	}
 
 	var req PresignUploadRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: err.Error()})
 		return
 	}
 	prefix, ok := uploadKinds[req.Kind]
 	if !ok {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "unsupported upload kind"})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: "unsupported upload kind"})
 		return
 	}
 	ct := strings.ToLower(strings.TrimSpace(req.ContentType))
 	if !allowedUploadContentTypes[ct] {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "unsupported content type"})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: "unsupported content type"})
 		return
 	}
 	ext := strings.ToLower(path.Ext(req.FileName))
 	if !allowedUploadExt[ext] {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "unsupported file extension"})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: "unsupported file extension"})
 		return
 	}
 
@@ -394,10 +398,10 @@ func (h *Handler) PresignUpload(c *gin.Context) {
 	url, err := h.presigner.PresignPut(key, ct, presignTTL)
 	if err != nil {
 		if errors.Is(err, r2.ErrNotConfigured) {
-			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "uploads are not configured"})
+			c.JSON(http.StatusServiceUnavailable, gin.H{keyError: "uploads are not configured"})
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not issue upload url"})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: "could not issue upload url"})
 		return
 	}
 

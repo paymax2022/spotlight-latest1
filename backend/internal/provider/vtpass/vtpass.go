@@ -817,7 +817,7 @@ const (
 	// `String(payload.code) === '1'`, not inferred.
 	balanceSuccessCode = "1"
 
-	// The three health values the adapter can report. Mirrors
+	// HealthHealthy — The three health values the adapter can report. Mirrors
 	// utilitybills.HealthStatus without importing it (provider adapters never
 	// depend on a domain package — the dependency runs the other way).
 	HealthHealthy  = "healthy"

@@ -392,5 +392,3 @@ var AdminTransactionModules = []struct {
 	{"fx_conversion", "FX"},
 	{"utility_bill", "Utility Bills"},
 }
-
-

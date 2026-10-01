@@ -341,7 +341,7 @@ const (
 	AiStatusIdle       AiStatus = "idle"
 	AiStatusGenerating AiStatus = "generating"
 	AiStatusReady      AiStatus = "ready"
-	AiStatusError      AiStatus = "error"
+	AiStatusError      AiStatus = keyError
 )
 
 // AiModelLabel is the display label echoed to the client (NOT a secret; the API
@@ -457,7 +457,7 @@ func parseAiInput(raw json.RawMessage) aiInput {
 // back to the shared handler error mapping.
 func (h *AIHandler) failAI(c *gin.Context, err error) {
 	if errors.Is(err, ErrAIRateLimited) {
-		c.JSON(http.StatusTooManyRequests, gin.H{"error": "AI assist rate limit exceeded, please retry shortly"})
+		c.JSON(http.StatusTooManyRequests, gin.H{keyError: "AI assist rate limit exceeded, please retry shortly"})
 		return
 	}
 	h.fail(c, err)
@@ -468,7 +468,7 @@ func (h *AIHandler) failAI(c *gin.Context, err error) {
 // rawBody) without redeclaring them, exactly like the Wave 4 handlers reuse them.
 // It adds an *AIService for the AI-specific business logic.
 // The generate endpoints return HTTP 200 with an AiEnvelope in EITHER the "ready"
-// or "error" state (the UI drives generating→ready→error from the status field) —
+// or keyError state (the UI drives generating→ready→error from the status field) —
 // a disabled LLM or model failure is a 200 error-envelope, NOT an HTTP 5xx, and it
 // carries NO fabricated medical content. A missing Idempotency-Key is a hard 400.
 // The accept endpoint persists to the clinical note and returns 200.

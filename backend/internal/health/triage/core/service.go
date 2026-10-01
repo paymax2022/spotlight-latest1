@@ -13,6 +13,11 @@ import (
 	"spotlight/backend/go-common/strutil"
 )
 
+const (
+	keyPresent = "present"
+	keyAbsent  = "absent"
+)
+
 // service.go — SessionService orchestrates the AI Symptom Checker session
 // lifecycle. It enforces the SC-safety invariants at the seams:
 //   SC-1  output is framed as POSSIBLE CAUSES + guidance, never a diagnosis.
@@ -197,7 +202,7 @@ func (s *SessionService) Answer(ctx context.Context, userID, sessionID, code, va
 	if code == "" {
 		return nil, fmt.Errorf("core: answer code required")
 	}
-	answer := []triage.Evidence{{Kind: "answer", Code: code, Value: strutil.FirstNonEmpty(value, "present"), Source: "user"}}
+	answer := []triage.Evidence{{Kind: "answer", Code: code, Value: strutil.FirstNonEmpty(value, keyPresent), Source: "user"}}
 	if err := s.repo.appendEvidence(ctx, sessionID, answer); err != nil {
 		return nil, err
 	}
@@ -571,12 +576,12 @@ func normalizeCode(code string) string {
 
 func normalizeValue(v string) string {
 	switch strings.ToLower(strings.TrimSpace(v)) {
-	case "present", "yes", "true":
-		return "present"
-	case "absent", "no", "false":
-		return "absent"
+	case keyPresent, "yes", "true":
+		return keyPresent
+	case keyAbsent, "no", "false":
+		return keyAbsent
 	case "":
-		return "present"
+		return keyPresent
 	default:
 		return "unknown"
 	}

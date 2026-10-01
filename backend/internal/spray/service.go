@@ -23,6 +23,10 @@ import (
 	"time"
 )
 
+const (
+	keyError = "error"
+)
+
 // Auditor mirrors services.AuditService (NL-12); nil is safe.
 type Auditor interface {
 	LogAction(actorUserID, targetUserID, action, module, resourceType, resourceID string, oldValues, newValues map[string]any, ipAddress, userAgent, severity string)
@@ -258,17 +262,17 @@ type sprayRequest struct {
 func (h *Handler) Spray(c *gin.Context) {
 	userID := ginutil.UserID(c)
 	if userID == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
+		c.JSON(http.StatusUnauthorized, gin.H{keyError: "unauthenticated"})
 		return
 	}
 	idem := ginutil.IdempotencyKey(c)
 	if idem == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Idempotency-Key header required"})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: "Idempotency-Key header required"})
 		return
 	}
 	var req sprayRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{keyError: err.Error()})
 		return
 	}
 	sp, err := h.svc.Spray(c.Request.Context(), userID, req.ToUserID, req.ContextRef, idem, req.AmountKobo)
@@ -278,7 +282,7 @@ func (h *Handler) Spray(c *gin.Context) {
 		case errors.Is(err, ErrAMLSingleLimit), errors.Is(err, ErrAMLDailyLimit), errors.Is(err, ErrAMLDailyCount):
 			status = http.StatusForbidden
 		}
-		c.JSON(status, gin.H{"error": err.Error()})
+		c.JSON(status, gin.H{keyError: err.Error()})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "spray": sp})
@@ -287,7 +291,7 @@ func (h *Handler) Spray(c *gin.Context) {
 func (h *Handler) Leaderboard(c *gin.Context) {
 	rows, err := h.svc.Leaderboard(c.Request.Context(), c.Param("contextRef"), 20)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{keyError: err.Error()})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "leaderboard": rows})

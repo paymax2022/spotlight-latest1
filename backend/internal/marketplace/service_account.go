@@ -88,7 +88,7 @@ func (s *Service) CreateReport(ctx context.Context, reporterID string, in Create
 		return nil, fieldErr(CodeInvalidReportTarget, "target_type must be listing, seller, or chat", "target_type")
 	}
 	if strings.TrimSpace(in.TargetID) == "" {
-		return nil, fieldErr(CodeValidation, "target_id is required", "target_id")
+		return nil, fieldErr(CodeValidation, "target_id is required", colTargetId)
 	}
 	if strings.TrimSpace(in.Reason) == "" {
 		return nil, fieldErr(CodeValidation, "reason is required", "reason")

@@ -199,16 +199,16 @@ func DefaultV2Config() V2Config {
 		ProviderOrder: map[CoverageTier][]string{
 			// Google-first across all tiers: address lookup/geocoding standardized on
 			// Google; geoapify/here remain as degraded fallbacks if Google errors.
-			TierGood: {"google", "geoapify", "here"},
-			TierFair: {"google", "geoapify", "here"},
-			TierLow:  {"google", "here", "geoapify"},
+			TierGood: {"google", "geoapify", string(SourceHere)},
+			TierFair: {"google", "geoapify", string(SourceHere)},
+			TierLow:  {"google", string(SourceHere), "geoapify"},
 		},
 		Budgets: map[string]int64{}, // populated from env/JSON; empty = no daily cap
 		CacheTTL: map[string]Duration{
-			"google":    Duration(30 * 24 * time.Hour),
-			"here":      Duration(30 * 24 * time.Hour),
-			"openstack": Duration(90 * 24 * time.Hour),
-			"gazetteer": 0, // never expires
+			"google":           Duration(30 * 24 * time.Hour),
+			string(SourceHere): Duration(30 * 24 * time.Hour),
+			"openstack":        Duration(90 * 24 * time.Hour),
+			"gazetteer":        0, // never expires
 		},
 	}
 	c.Routing.Batch = "osrm"

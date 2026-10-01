@@ -281,7 +281,7 @@ func (h *Handler) GetAiNoteStatus(c *gin.Context) {
 		errMap.Write(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"status": status})
+	c.JSON(http.StatusOK, gin.H{keyStatus: status})
 }
 
 func (h *Handler) CreateAiNote(c *gin.Context) {
@@ -295,7 +295,7 @@ func (h *Handler) CreateAiNote(c *gin.Context) {
 		errMap.Write(c, err)
 		return
 	}
-	c.JSON(http.StatusAccepted, gin.H{"id": id, "status": status})
+	c.JSON(http.StatusAccepted, gin.H{"id": id, keyStatus: status})
 }
 
 func (h *Handler) ApproveAiNote(c *gin.Context) {

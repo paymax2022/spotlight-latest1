@@ -34,7 +34,7 @@ func NewRewardHandler(svc *RewardService, internalSecret string) *RewardHandler 
 func (h *RewardHandler) PostLink(c *gin.Context) {
 	uid := ginutil.UserID(c)
 	if uid == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
+		c.JSON(http.StatusUnauthorized, gin.H{keyError: msgUnauthenticated})
 		return
 	}
 	link, err := h.svc.GetOrCreateLink(c.Request.Context(), uid)
@@ -50,7 +50,7 @@ func (h *RewardHandler) PostLink(c *gin.Context) {
 func (h *RewardHandler) PostAttribute(c *gin.Context) {
 	uid := ginutil.UserID(c)
 	if uid == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
+		c.JSON(http.StatusUnauthorized, gin.H{keyError: msgUnauthenticated})
 		return
 	}
 	var req struct {
@@ -72,7 +72,7 @@ func (h *RewardHandler) PostAttribute(c *gin.Context) {
 func (h *RewardHandler) GetDashboard(c *gin.Context) {
 	uid := ginutil.UserID(c)
 	if uid == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
+		c.JSON(http.StatusUnauthorized, gin.H{keyError: msgUnauthenticated})
 		return
 	}
 	d, err := h.svc.GetDashboard(c.Request.Context(), uid)
@@ -87,7 +87,7 @@ func (h *RewardHandler) GetDashboard(c *gin.Context) {
 func (h *RewardHandler) GetReferrals(c *gin.Context) {
 	uid := ginutil.UserID(c)
 	if uid == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
+		c.JSON(http.StatusUnauthorized, gin.H{keyError: msgUnauthenticated})
 		return
 	}
 	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "50"))
@@ -104,7 +104,7 @@ func (h *RewardHandler) GetReferrals(c *gin.Context) {
 func (h *RewardHandler) GetEarnings(c *gin.Context) {
 	uid := ginutil.UserID(c)
 	if uid == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
+		c.JSON(http.StatusUnauthorized, gin.H{keyError: msgUnauthenticated})
 		return
 	}
 	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "50"))
@@ -121,7 +121,7 @@ func (h *RewardHandler) GetEarnings(c *gin.Context) {
 func (h *RewardHandler) GetMilestones(c *gin.Context) {
 	uid := ginutil.UserID(c)
 	if uid == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
+		c.JSON(http.StatusUnauthorized, gin.H{keyError: msgUnauthenticated})
 		return
 	}
 	achieved, upcoming, err := h.svc.ListMilestones(c.Request.Context(), uid)

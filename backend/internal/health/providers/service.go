@@ -18,6 +18,11 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+const (
+	keyApplication = "application"
+	keySuccess     = "success"
+)
+
 // Auditor is the minimal slice of services.AuditService the package needs (HL-12).
 // Satisfied by the immutable audit service; nil is safe.
 type Auditor interface {
@@ -625,7 +630,7 @@ func (h *Handler) CreateApplication(c *gin.Context) {
 		ginutil.FailOK(c, http.StatusBadRequest, err.Error())
 		return
 	}
-	c.JSON(http.StatusCreated, gin.H{"success": true, "application": app})
+	c.JSON(http.StatusCreated, gin.H{keySuccess: true, keyApplication: app})
 }
 
 // AddCredential — POST /providers/applications/:id/credentials
@@ -645,7 +650,7 @@ func (h *Handler) AddCredential(c *gin.Context) {
 		ginutil.FailOK(c, http.StatusBadRequest, err.Error())
 		return
 	}
-	c.JSON(http.StatusCreated, gin.H{"success": true, "credential": out})
+	c.JSON(http.StatusCreated, gin.H{keySuccess: true, "credential": out})
 }
 
 // PresignCredential — POST /providers/applications/:id/credentials/presign
@@ -672,7 +677,7 @@ func (h *Handler) PresignCredential(c *gin.Context) {
 		ginutil.FailOK(c, http.StatusBadRequest, err.Error())
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"success": true, "presign": res})
+	c.JSON(http.StatusOK, gin.H{keySuccess: true, "presign": res})
 }
 
 // Submit — POST /providers/applications/:id/submit
@@ -687,7 +692,7 @@ func (h *Handler) Submit(c *gin.Context) {
 		ginutil.FailOK(c, http.StatusConflict, err.Error())
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"success": true, "application": app})
+	c.JSON(http.StatusOK, gin.H{keySuccess: true, keyApplication: app})
 }
 
 // Get — GET /providers/applications/:id
@@ -698,7 +703,7 @@ func (h *Handler) Get(c *gin.Context) {
 		ginutil.FailOK(c, http.StatusNotFound, err.Error())
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"success": true, "application": app})
+	c.JSON(http.StatusOK, gin.H{keySuccess: true, keyApplication: app})
 }
 
 // List — GET /providers/applications
@@ -708,7 +713,7 @@ func (h *Handler) List(c *gin.Context) {
 		ginutil.FailOK(c, http.StatusInternalServerError, err.Error())
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"success": true, "applications": apps})
+	c.JSON(http.StatusOK, gin.H{keySuccess: true, "applications": apps})
 }
 
 // Decision — POST /admin .../providers/applications/:id/decision  (RBAC: health.admin.providers)
@@ -731,5 +736,5 @@ func (h *Handler) Decision(c *gin.Context) {
 		ginutil.FailOK(c, http.StatusConflict, err.Error())
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"success": true, "application": app})
+	c.JSON(http.StatusOK, gin.H{keySuccess: true, keyApplication: app})
 }

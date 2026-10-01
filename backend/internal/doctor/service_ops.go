@@ -12,6 +12,10 @@ import (
 	"time"
 )
 
+const (
+	keyFailed = "failed"
+)
+
 // callTokenTTL is how long an issued RTC join token is valid. Tokens are
 // short-lived; clients refresh via POST /calls/:appointmentId/token.
 const callTokenTTL = time.Hour
@@ -274,8 +278,8 @@ func (s *Service) EndCallSession(ctx context.Context, userID, appointmentID, ide
 	}
 	p := parseOpsPatch(raw)
 	status := "ended"
-	if ptr.DerefZero(p.Status) == "failed" {
-		status = "failed"
+	if ptr.DerefZero(p.Status) == keyFailed {
+		status = keyFailed
 	}
 	return s.repo.EndCallSession(ctx, userID, sess.ID, status, raw)
 }
