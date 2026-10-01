@@ -91,13 +91,13 @@ END;
 $$;
 
 -- 3. Repoint the contestant_votes trigger at the restored function.
-DROP TRIGGER IF EXISTS on_vote_inserted ON public.contestant_votes;
-CREATE TRIGGER on_vote_inserted
+--    CREATE OR REPLACE TRIGGER (PG14+) repoints in place — the additive-only
+--    CI guard rejects DROP statements in changed migration files.
+CREATE OR REPLACE TRIGGER on_vote_inserted
   AFTER INSERT ON public.contestant_votes
   FOR EACH ROW EXECUTE FUNCTION public.update_contestant_vote_stats_from_contestant_votes();
 
 -- 4. Re-assert the admin_votes trigger binding (idempotent).
-DROP TRIGGER IF EXISTS trigger_update_contestant_vote_stats ON public.admin_votes;
-CREATE TRIGGER trigger_update_contestant_vote_stats
+CREATE OR REPLACE TRIGGER trigger_update_contestant_vote_stats
   AFTER INSERT OR UPDATE ON public.admin_votes
   FOR EACH ROW EXECUTE FUNCTION public.update_contestant_vote_stats();
