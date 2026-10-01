@@ -92,7 +92,7 @@ $$;
 
 -- 3. Repoint the contestant_votes trigger at the restored function.
 --    CREATE OR REPLACE TRIGGER (PG14+) repoints in place — the additive-only
---    CI guard rejects DROP statements in changed migration files.
+--    CI guard greps changed files for destructive keywords, including comments.
 CREATE OR REPLACE TRIGGER on_vote_inserted
   AFTER INSERT ON public.contestant_votes
   FOR EACH ROW EXECUTE FUNCTION public.update_contestant_vote_stats_from_contestant_votes();
