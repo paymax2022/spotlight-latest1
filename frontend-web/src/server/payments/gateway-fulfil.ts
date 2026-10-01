@@ -24,9 +24,10 @@
  *   - Academy application fee — the academy_applications row does not exist
  *     until the client submits it (the reference is attached at submit), so
  *     there is nothing to look up at payment time.
- *   - OpenMic / reality-TV / contest-registration votes — the cast parameters
- *     (entry, quantity) live only in the client's verify request body, not in
- *     a server-side pending record keyed by reference.
+ *   - Reality-TV / contest-registration votes — the cast parameters (entry,
+ *     quantity) live only in the client's verify request body, not in a
+ *     server-side pending record keyed by reference. (Open Mic votes are
+ *     covered via openmic_vote_paystack_intents.)
  */
 import { createAdminClient } from '@/lib/supabase/server';
 import { bridgedVerifyPaidVote } from '@/src/server/voting-bridge/bridge';
@@ -36,6 +37,12 @@ import {
   markRegistrationPaymentIntentStatus,
   type RegistrationPaymentIntent,
 } from '@/src/server/registration/supabase-store';
+import {
+  getOpenMicVoteIntentByReference,
+  markOpenMicVoteIntent,
+  type OpenMicVoteIntent,
+} from '@/src/server/payments/openmic-vote-intents';
+import { castVote } from '@/src/server/openmic/persistence';
 
 export interface VoteTransactionTarget {
   id: string;
@@ -45,6 +52,7 @@ export interface VoteTransactionTarget {
 export interface GatewayFulfilmentTargets {
   voteTransaction: VoteTransactionTarget | null;
   registrationIntent: RegistrationPaymentIntent | null;
+  openmicIntent?: OpenMicVoteIntent | null;
 }
 
 export interface GatewayFulfilmentResult {
@@ -74,11 +82,12 @@ export async function findGatewayFulfilmentTargets(
   // A failed lookup is thrown, not swallowed — both callers treat it as
   // retryable (webhook: dispatcher 500 → Paystack redelivers; recover: 500 →
   // the caller retries) rather than silently reporting nothing to fulfil.
-  const [voteTransaction, registrationIntent] = await Promise.all([
+  const [voteTransaction, registrationIntent, openmicIntent] = await Promise.all([
     findVoteTransactionByReference(reference),
     getRegistrationPaymentIntentByReference(reference),
+    getOpenMicVoteIntentByReference(reference),
   ]);
-  return { voteTransaction, registrationIntent };
+  return { voteTransaction, registrationIntent, openmicIntent };
 }
 
 /**
@@ -147,6 +156,54 @@ export async function fulfilVerifiedGatewayCharge(
         const message = err instanceof Error ? err.message : String(err);
         return { fulfilled, error: message };
       }
+    }
+  }
+
+  // ── Open Mic paid vote ────────────────────────────────────────────────────
+  // Frozen params + server-quoted amount from openmic_vote_paystack_intents;
+  // the cast itself stays anchored on competition_entry_votes.payment_reference,
+  // so a verify-route win or a webhook replay is a no-op.
+  const omIntent = targets.openmicIntent;
+  if (omIntent && omIntent.status === 'pending') {
+    const supabase = createAdminClient();
+    if (verifiedAmountKobo < omIntent.amount_kobo) {
+      await markOpenMicVoteIntent(
+        reference,
+        'amount_mismatch',
+        `Paystack collected ${verifiedAmountKobo} kobo, below the ${omIntent.amount_kobo} kobo quote`,
+      );
+    } else {
+      const alreadyCast = await supabase
+        .from('competition_entry_votes')
+        .select('id')
+        .eq('payment_reference', reference)
+        .maybeSingle();
+      if (!alreadyCast.data) {
+        try {
+          await castVote({
+            contestId: omIntent.contest_id,
+            submissionId: omIntent.submission_id,
+            voterUserId: omIntent.voter_user_id,
+            source: 'paid',
+            votes: omIntent.votes,
+            paymentReference: reference,
+          });
+        } catch (castErr) {
+          // A concurrent verify may have won the insert — re-check before
+          // treating the failure as retryable.
+          const { data: raced } = await supabase
+            .from('competition_entry_votes')
+            .select('id')
+            .eq('payment_reference', reference)
+            .maybeSingle();
+          if (!raced) {
+            const message = castErr instanceof Error ? castErr.message : String(castErr);
+            return { fulfilled, error: message };
+          }
+        }
+      }
+      await markOpenMicVoteIntent(reference, 'confirmed');
+      fulfilled.push('open_mic_vote');
     }
   }
 
