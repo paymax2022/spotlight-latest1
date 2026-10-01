@@ -44,7 +44,9 @@ func main() {
 	if pool != nil {
 		votingRepo := connectvoting.NewRepository(pool)
 		votingSvc := connectvoting.NewService(votingRepo, nil, nil, nil, nil)
-		connectvoting.Register(r.Group("/api/v1/connect"), votingSvc, cfg)
+		// nil Redis client → vote rate limits run on the in-memory fallback,
+		// which is fine for a single-process test server.
+		connectvoting.Register(r.Group("/api/v1/connect"), votingSvc, cfg, nil)
 		log.Println("Voting routes registered")
 	} else {
 		log.Println("Skipping voting routes - database required")

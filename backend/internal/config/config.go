@@ -464,6 +464,11 @@ type Config struct {
 	MapsRateLimitPerMin    int    // per-user requests/min on /api/finance/maps/* (default 120)
 	MapsBudgetAlertWebhook string // POST budget alerts (50/75/90%) here; "" = log only
 
+	// Connect voting cost guards: per-user POSTs/min on the vote endpoints.
+	// The paid path debits a wallet, so it gets the tighter budget.
+	ConnectFreeVoteRatePerMin int // contests/:id/vote (default 30)
+	ConnectPaidVoteRatePerMin int // contests/:id/paid-vote + vote-bridge debit (default 10)
+
 	MapsHereKey      string // HERE API key (accuracy fallback); mock when empty
 	MapsGazetteerKey string // 32-byte AES key for gazetteer PII (NDPA); Noop when empty
 	MapsV2ConfigPath string // optional JSON override for v2 thresholds/order/budgets
@@ -827,9 +832,12 @@ func Load() Config {
 		MapsMapboxToken:        getEnv("MAPS_MAPBOX_TOKEN", ""),
 		MapsRateLimitPerMin:    getEnvInt("MAPS_RATE_LIMIT_PER_MIN", 120),
 		MapsBudgetAlertWebhook: getEnv("MAPS_BUDGET_ALERT_WEBHOOK", ""),
-		MapsHereKey:            getEnv("MAPS_HERE_KEY", ""),
-		MapsGazetteerKey:       getEnv("MAPS_GAZETTEER_KEY", ""),
-		MapsV2ConfigPath:       getEnv("MAPS_V2_CONFIG_PATH", ""),
+
+		ConnectFreeVoteRatePerMin: getEnvInt("CONNECT_FREE_VOTE_RATE_PER_MIN", 30),
+		ConnectPaidVoteRatePerMin: getEnvInt("CONNECT_PAID_VOTE_RATE_PER_MIN", 10),
+		MapsHereKey:               getEnv("MAPS_HERE_KEY", ""),
+		MapsGazetteerKey:          getEnv("MAPS_GAZETTEER_KEY", ""),
+		MapsV2ConfigPath:          getEnv("MAPS_V2_CONFIG_PATH", ""),
 
 		AnthropicAPIKey: getEnv("ANTHROPIC_API_KEY", ""),
 

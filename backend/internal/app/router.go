@@ -502,7 +502,7 @@ func NewRouter(cfg config.Config) *gin.Engine {
 	referralRewardsSvc, kycVerifySvc := registerFinanceRoutes(r, cfg, supabase, rbacService, sharedPool, rtHub)
 
 	// Paymax Connect module — wired only when FEATURE_CONNECT_ENABLED + shared pool.
-	registerConnectRoutes(r, cfg, supabase, rbacService, sharedPool)
+	registerConnectRoutes(r, cfg, supabase, rbacService, sharedPool, sharedRedis)
 
 	// Paymax Connect wallet endpoints (/api/v1/wallet/*, /api/v1/kyc/*, etc.)
 	// — member-facing wallet balance, gifting, tier progression, and payouts.
