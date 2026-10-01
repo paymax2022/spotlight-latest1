@@ -29,6 +29,14 @@ interface Props {
    */
   currencies?:  string[];
   onSelectCurrency?: (currency: string) => void;
+  /**
+   * True when no balance source could produce a figure. Renders a placeholder
+   * instead of a number — ₦0.00 would read as a real empty wallet and mask
+   * money the user actually has.
+   */
+  balanceUnavailable?: boolean;
+  /** One-line hint under the placeholder (e.g. "pull down to refresh"). */
+  unavailableHint?:   string;
 }
 
 // Minor-unit symbols for the currencies a wallet can be denominated in. The card
@@ -48,6 +56,7 @@ function fmt(n: number, currency: string): string {
 
 export default function BalanceCard({
   balance, currency = 'NGN', quickActions, label, currencies, onSelectCurrency,
+  balanceUnavailable, unavailableHint,
 }: Props) {
   const [hidden, setHidden] = useState(false);
   // Interactive only when the caller supplies both the options and the handler —
@@ -66,20 +75,25 @@ export default function BalanceCard({
         <View>
           <Text style={styles.balanceLabel}>{label ?? 'Total Balance'}</Text>
           <View style={styles.amountRow}>
-            <Text style={styles.amount}>{hidden ? '••••••' : fmt(balance, currency)}</Text>
-            <Pressable
-              onPress={() => setHidden((h) => !h)}
-              style={styles.eyeBtn}
-              hitSlop={8}
-              accessibilityRole="button"
-              accessibilityLabel={hidden ? 'Show balance' : 'Hide balance'}
-            >
-              {hidden
-                ? <Eye    size={18} color="rgba(255,255,255,0.7)" />
-                : <EyeOff size={18} color="rgba(255,255,255,0.7)" />
-              }
-            </Pressable>
+            <Text style={styles.amount}>{balanceUnavailable ? '——' : hidden ? '••••••' : fmt(balance, currency)}</Text>
+            {!balanceUnavailable && (
+              <Pressable
+                onPress={() => setHidden((h) => !h)}
+                style={styles.eyeBtn}
+                hitSlop={8}
+                accessibilityRole="button"
+                accessibilityLabel={hidden ? 'Show balance' : 'Hide balance'}
+              >
+                {hidden
+                  ? <Eye    size={18} color="rgba(255,255,255,0.7)" />
+                  : <EyeOff size={18} color="rgba(255,255,255,0.7)" />
+                }
+              </Pressable>
+            )}
           </View>
+          {balanceUnavailable ? (
+            <Text style={styles.unavailableHint}>{unavailableHint ?? 'Balance unavailable'}</Text>
+          ) : null}
         </View>
 
         {/* Currency pill + QR */}
@@ -167,6 +181,11 @@ const styles = StyleSheet.create({
   },
   eyeBtn: {
     padding: 4,
+  },
+  unavailableHint: {
+    ...Typography.caption,
+    color:     'rgba(255,255,255,0.7)',
+    marginTop: 2,
   },
   topRight: {
     alignItems: 'flex-end',

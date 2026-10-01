@@ -127,6 +127,8 @@ export default function WalletScreen() {
         <BalanceCard
           balance={wallet?.balance ?? 0}
           currency={wallet?.currency ?? 'NGN'}
+          balanceUnavailable={wallet?.balanceUnavailable}
+          unavailableHint="Couldn’t load your balance — pull down to refresh"
           quickActions={[
             { id: 'add',      label: 'Add Money', icon: <Plus      size={20} color={Colors.onPrimary} strokeWidth={2} />, onPress: () => router.push('/wallet/add' as never) },
             { id: 'send',     label: 'Send',      icon: <Send      size={20} color={Colors.onPrimary} strokeWidth={2} />, onPress: () => router.push('/wallet/send' as never) },

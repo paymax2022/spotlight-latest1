@@ -1,4 +1,4 @@
-import { Wallet } from '@/types/wallet';
+import type { Wallet } from '@/types/wallet';
 
 type ApiRecord = Record<string, unknown>;
 
@@ -29,4 +29,33 @@ export function mapWalletFromSupabase(raw: unknown): Wallet {
     ledgerBalance:  balanceNaira,
     pendingBalance: 0,
   };
+}
+
+/**
+ * Derives the spendable balance (kobo) for the direct-Supabase fallback the
+ * same way the server's getBalance() does
+ * (frontend-web/src/server/wallet/service.ts, ADR-045):
+ *
+ *   1. Sum `available_kobo` over the spendable planes the caller already
+ *      filtered to ('user_wallet' + 'wallet', NGN). Nonzero — that IS the
+ *      balance (a negative net is still real, so `!== 0`, not `> 0`).
+ *   2. Net zero AND the unified account carries ledger entries → genuinely
+ *      ₦0 — the money arrived and was spent.
+ *   3. Net zero AND no entries at all → the balance can still sit on the
+ *      legacy `mobile_fintech_accounts` plane (`available_balance`, in
+ *      NAIRA → ×100). The server migrates it inside getBalance(), which a
+ *      KYC-gated user never reaches — the API 403s first — so reading it
+ *      here is the only way that money stays visible instead of being
+ *      masked behind a fabricated ₦0.00.
+ */
+export function resolveFallbackBalanceKobo(input: {
+  spendableRows: ReadonlyArray<{ available_kobo?: unknown } & Record<string, unknown>>;
+  unifiedHasEntries: boolean;
+  legacyBalanceNaira?: number | null;
+}): number {
+  const total = input.spendableRows.reduce((sum, r) => sum + Number(r.available_kobo ?? 0), 0);
+  if (total !== 0) return total;
+  if (input.unifiedHasEntries) return 0;
+  const legacy = Number(input.legacyBalanceNaira ?? 0);
+  return legacy > 0 ? Math.round(legacy * 100) : 0;
 }

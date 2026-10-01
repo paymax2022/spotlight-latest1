@@ -108,6 +108,8 @@ export default function MobilityHomeScreen() {
             <BalanceCard
               balance={wallet.data?.balance ?? 0}
               currency="NGN"
+              balanceUnavailable={wallet.data?.balanceUnavailable}
+              unavailableHint="Couldn’t load your balance — pull down to refresh"
               quickActions={[
                 { id: 'topup', label: 'Top up', icon: <Plus size={20} color={Colors.onPrimary} strokeWidth={2.4} />, onPress: () => router.push('/wallet/add') },
                 { id: 'wallet', label: 'Wallet', icon: <Wallet size={20} color={Colors.onPrimary} strokeWidth={2} />, onPress: () => router.push('/(tabs)/wallet') },
