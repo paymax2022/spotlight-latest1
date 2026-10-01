@@ -78,7 +78,7 @@ func (r *Repository) ListByUser(ctx context.Context, userID string, limit, offse
 		return nil, err
 	}
 	defer rows.Close()
-	var out []Policy
+	out := []Policy{}
 	for rows.Next() {
 		p, err := scanPolicy(rows)
 		if err != nil {
@@ -114,7 +114,7 @@ func (r *Repository) SearchAdmin(ctx context.Context, state, productCode string,
 		return nil, err
 	}
 	defer rows.Close()
-	var out []Policy
+	out := []Policy{}
 	for rows.Next() {
 		p, err := scanPolicy(rows)
 		if err != nil {
@@ -209,7 +209,7 @@ func (r *Repository) ListBeneficiaries(ctx context.Context, policyID string) ([]
 		return nil, err
 	}
 	defer rows.Close()
-	var out []Beneficiary
+	out := []Beneficiary{}
 	for rows.Next() {
 		var b Beneficiary
 		if err := rows.Scan(&b.ID, &b.PolicyID, &b.FullName, &b.Relationship, &b.SharePercent, &b.Phone); err != nil {

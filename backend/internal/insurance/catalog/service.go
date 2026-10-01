@@ -378,7 +378,10 @@ func (s *Service) list(ctx context.Context, f listFilter) ([]Product, error) {
 	}
 	defer rows.Close()
 
-	var out []Product
+	// Non-nil so an empty catalog serializes as {"data":[]} — a nil slice would
+	// emit {"data":null} and clients that do Array.isArray(data) render it as a
+	// broken response rather than an honest empty list (AUD-QA-002).
+	out := []Product{}
 	for rows.Next() {
 		var p Product
 		var formSchema, reqFields, sumRules []byte
@@ -688,7 +691,7 @@ func (s *FloatService) List(ctx context.Context) ([]FloatState, error) {
 	}
 	defer rows.Close()
 
-	var out []FloatState
+	out := []FloatState{}
 	for rows.Next() {
 		var f FloatState
 		if err := rows.Scan(&f.Provider, &f.State, &f.ConsecutiveFailures,
