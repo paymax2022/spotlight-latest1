@@ -66,7 +66,10 @@ import sweep, tests included):
 
 ## Fixes shipped from these notes
 
-- PR (branch `fix/agent3-frontend-findings`): deleted the 4 orphaned
-  `compliance/*-page.tsx` files + this notes file.
-- PR (branch `fix/agent3-dead-pwa-scaffold`): deleted the dead mock-exams
-  PWA/offline-sync cluster listed above.
+- **PR #404** (branch `fix/agent3-frontend-findings`): deleted the 4 orphaned
+  `compliance/*-page.tsx` files + this notes file. Verified: `tsc --noEmit`
+  clean, `npm run lint` 0 errors, `npm run test:regression` 131/131 green.
+- **PR #406** (branch `fix/agent3-dead-pwa-scaffold`): deleted the dead
+  mock-exams PWA/offline-sync cluster listed above (15 files, ~3,880 lines).
+  Verified: `tsc --noEmit` clean, `npm run lint` 0 errors,
+  `npm run test:regression` 131/131 green, zero remaining references via grep.
