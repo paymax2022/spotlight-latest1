@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"log"
 	"net/http"
 	"strings"
 
@@ -61,7 +62,11 @@ type academyWebhookHandler struct {
 // exists (CREATE TABLE IF NOT EXISTS — additive-only, no DROP/rename).
 func newAcademyWebhookHandler(ctx context.Context, pool *pgxpool.Pool, ledgerSvc *ledger.Service, cfg config.Config) *academyWebhookHandler {
 	if pool != nil {
-		_, _ = pool.Exec(ctx, `
+		// The dedupe table is authoritative via migration
+		// (supabase/migrations/*_academy_rail_webhook_events.sql); this runtime
+		// DDL is only a fallback for environments that skipped it. A failure
+		// here means every webhook will 500 on dedupe — surface it loudly.
+		if _, err := pool.Exec(ctx, `
 CREATE TABLE IF NOT EXISTS academy_rail_webhook_events (
     rail            TEXT        NOT NULL,
     provider_ref    TEXT        NOT NULL,
@@ -71,7 +76,9 @@ CREATE TABLE IF NOT EXISTS academy_rail_webhook_events (
     amount_minor    BIGINT      NOT NULL,
     processed_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (rail, provider_ref)
-)`)
+)`); err != nil {
+			log.Printf("[academy-webhooks] ensure dedupe table failed — every inbound rail webhook will fail closed on dedupe until resolved: %v", err)
+		}
 	}
 	return &academyWebhookHandler{
 		pool:   pool,
@@ -288,7 +295,9 @@ func verifyHMAC(secret string, body []byte, header string) bool {
 // webhook routes under /internal/webhooks/academy/*. Gated by the academy flag at
 // the call site.
 func registerAcademyWebhooks(webhooks *gin.RouterGroup, h *academyWebhookHandler) {
-	g := webhooks.Group("/internal/webhooks/academy")
+	// Caller already hands us the /internal/webhooks group — adding the prefix
+	// again here would mount /internal/webhooks/internal/webhooks/academy/*.
+	g := webhooks.Group("/academy")
 	g.POST("/bnpl", h.bnpl)
 	g.POST("/payout", h.payout)
 	g.POST("/disburse", h.disburse)

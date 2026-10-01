@@ -59,9 +59,9 @@ func newAcademyWebhookRouter(t *testing.T) (*gin.Engine, *pgxpool.Pool) {
 		BillingWebhookSecret:  academyWHTestSecret,
 	}
 	h := newAcademyWebhookHandler(context.Background(), pool, ledgerSvc, cfg)
-	// Mount exactly as registerAcademyWebhooks intends: <group>/internal/webhooks/academy/<rail>.
-	// (The doubled /internal/webhooks prefix in the call site is tracked separately.)
-	g := r.Group("")
+	// Mount exactly as the real call site does: an /internal/webhooks group
+	// handed to registerAcademyWebhooks, which adds /academy/<rail>.
+	g := r.Group("/internal/webhooks")
 	registerAcademyWebhooks(g, h)
 	return r, pool
 }
