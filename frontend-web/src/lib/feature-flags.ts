@@ -60,6 +60,14 @@ export const featureFlags = {
   /** EPIC 6 — Fintech admin RBAC (maker-checker) */
   fintechAdmin: () => envFlag('FEATURE_FINTECH_ADMIN_ENABLED'),
 
+  /**
+   * Academy compliance dashboards (app/academy/compliance/*). The UI is built
+   * but its /api/compliance/* endpoints are not implemented, so the pages render
+   * broken (every fetch 404s). Gated off so production never exposes the dead
+   * surface; flip on once the compliance API lands.
+   */
+  academyCompliance: () => envFlag('FEATURE_ACADEMY_COMPLIANCE_ENABLED'),
+
   /** Block 7 — Per-tier daily wallet and vote limits (fail-closed enforcement) */
   tierLimits: () => envFlag('FEATURE_TIER_LIMITS_ENABLED'),
 
